@@ -322,7 +322,13 @@ describe("C. both builds are WIRED, not merely written", () => {
     // Once in the streamed branch, once in the non-streamed one. A single call
     // site would mean one of the two publishes an unchecked answer, which is
     // the shape CX-04's gap had in the first place.
-    assert.equal((src.match(/groundCompassAnswer\(_rawMessage, toolLog\)/g) ?? []).length, 2);
+    //
+    // S79 added a third argument — `liveClaimEvidence`, the band of the live
+    // claims the turn put in the prompt — and it is pinned here too rather than
+    // matched loosely. Both branches must pass BOTH inputs: a branch that
+    // grounded against the tool log alone would be checked against an empty
+    // band on any tool-less turn, which is the vacuity S79 exists to remove.
+    assert.equal((src.match(/groundCompassAnswer\(_rawMessage, toolLog, liveClaimEvidence\)/g) ?? []).length, 2);
     assert.equal((src.match(/const message\s+= _grounded\.text;/g) ?? []).length, 2);
     // The streamed branch cannot un-say what it streamed, so it sends the
     // correction as one more delta rather than fixing only the stored record.

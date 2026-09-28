@@ -34,7 +34,10 @@ import {
   lifecycleStateOf,
   COMMAND_CAPABILITY,
   COMMAND_EVENT,
+  COMMAND_SUBJECT,
+  HIGHLIGHT_KERNEL_FN,
   MEMORY_COMMAND_TYPES,
+  MEMORY_KERNEL_FN,
   type MemoryCommandType,
 } from "../lib/memoryCommandBus.js";
 
@@ -70,9 +73,10 @@ export function makeKernelRpc(state: KernelState) {
     if (state.absent) {
       // PostgREST answers an unknown function with PGRST202. supabase-js
       // RESOLVES with the error bound; it does not throw.
-      return { data: null, error: { code: "PGRST202", message: "Could not find the function public.memory_kernel_execute" } };
+      return { data: null, error: { code: "PGRST202", message: `Could not find the function public.${name}` } };
     }
-    if (name !== "memory_kernel_execute") {
+    if (name === HIGHLIGHT_KERNEL_FN) return highlightRpc(state, args);
+    if (name !== MEMORY_KERNEL_FN) {
       return { data: null, error: { message: `unknown rpc ${name}` } };
     }
 
@@ -287,4 +291,184 @@ export function makeKernelRpc(state: KernelState) {
       return { data: null, error: { message: e?.message ?? "kernel failure" } };
     }
   };
+}
+
+/**
+ * An in-memory MODEL of public.highlight_kernel_execute (migration 2993).
+ *
+ * Deliberately in THIS file and sharing `state.tables` with the Memory model,
+ * because the thing most worth exercising is what the two have in common: one
+ * `memory_command_receipts` table keyed (actor_user_id, idempotency_key), one
+ * `memory_domain_events` stream, one outbox, one audit. A separate fake with
+ * its own tables would make the cross-aggregate idempotency rule — an actor
+ * may not reuse one key for a different command, whichever kernel it went to —
+ * true by construction in the test and untested in fact.
+ *
+ * WHAT IT MODELS, AND WHAT IT DOES NOT. Same limits as the Memory model above:
+ * the transaction, the ordering and the reason codes are modelled; row
+ * locking, the CHECK constraints and RLS are the database's and are asserted
+ * by migration 2993's own postconditions, not here. One thing IS modelled
+ * exactly because it is the point of 2993: the event and outbox rows carry
+ * `highlight_id` and a NULL `memory_id`, never the reverse.
+ */
+function highlightRpc(state: KernelState, args: any) {
+  const c = args?.p_command;
+  const t = (n: string) => (state.tables[n] ??= []);
+
+  if (!c || typeof c !== "object" || !c.command_id || !c.actor_user_id
+      || !c.idempotency_key || typeof c.idempotency_key !== "string"
+      || c.idempotency_key.length < 1 || c.idempotency_key.length > 200
+      || !c.type || typeof c.payload !== "object" || c.payload === null) {
+    return rejected("MEMORY_COMMAND_MALFORMED");
+  }
+  const type = c.type as MemoryCommandType;
+  // The SQL function's IN-list, expressed as the subject map so the two cannot
+  // drift: a command this kernel is not for is UNKNOWN_TYPE to it, which is
+  // exactly what memory_kernel_execute answers for a Highlight command.
+  const known = (MEMORY_COMMAND_TYPES as readonly string[]).includes(type)
+    && COMMAND_SUBJECT[type] === "highlight";
+
+  const snapshot = clone(state.tables);
+  const restore = () => { for (const k of Object.keys(state.tables)) state.tables[k] = snapshot[k] ?? []; };
+
+  const writeAudit = (outcome: string, reason: string | null, eventId: string | null, highlightId: string | null) => {
+    if (state.failOn.has("audit")) throw new Error("memory_command_audit insert failed");
+    t("memory_command_audit").push({
+      id: `audit-${++idCounter}`,
+      command_id: c.command_id,
+      command_type: type,
+      memory_id: null,
+      highlight_id: highlightId,
+      actor_user_id: c.actor_user_id,
+      idempotency_key: c.idempotency_key,
+      outcome,
+      reason,
+      event_id: eventId,
+      created_at: "2026-09-08T00:00:00.000Z",
+    });
+  };
+  const rejectWithAudit = (reason: string, extra: Record<string, unknown> = {}) => {
+    try { writeAudit("rejected", reason, null, c.highlight_id ?? null); }
+    catch (e: any) { restore(); return { data: null, error: { message: e.message } }; }
+    return rejected(reason, extra);
+  };
+
+  if (!known) return rejectWithAudit("MEMORY_COMMAND_UNKNOWN_TYPE", { detail: type });
+
+  // §19 — the SAME receipt table as the Memory kernel.
+  const receipt = t("memory_command_receipts").find(
+    (r) => r.actor_user_id === c.actor_user_id && r.idempotency_key === c.idempotency_key);
+  if (receipt) {
+    if (receipt.command_type !== type) {
+      return rejectWithAudit("MEMORY_IDEMPOTENCY_KEY_REUSED", { detail: `key already used for ${receipt.command_type}` });
+    }
+    try { writeAudit("duplicate", null, receipt.event_id, receipt.highlight_id ?? null); }
+    catch (e: any) { restore(); return { data: null, error: { message: e.message } }; }
+    return {
+      data: {
+        ok: true, duplicate: true, highlight_id: receipt.highlight_id ?? null,
+        event_id: receipt.event_id, event_type: receipt.event_type,
+        result: receipt.result_json, contract_version: 1,
+      },
+      error: null,
+    };
+  }
+
+  if (!c.highlight_id) return rejectWithAudit("MEMORY_COMMAND_MALFORMED", { detail: "highlight_id required" });
+
+  const row = t("highlights").find((h) => h.id === c.highlight_id);
+  if (!row || row.deleted_at != null) return rejectWithAudit("HIGHLIGHT_NOT_FOUND");
+  // §23, re-checked here and not trusted from the caller.
+  if (row.owner_id !== c.actor_user_id) return rejectWithAudit("HIGHLIGHT_AUTH_NOT_OWNER");
+
+  const nowIso = "2026-09-08T00:00:00.000Z";
+  const derived = (r: any): string =>
+    r.archived_at != null ? "HIDDEN"
+    : r.pinned_at != null ? "PINNED"
+    : (r.expires_at != null && r.expires_at <= nowIso) ? "EXPIRED"
+    : "ACTIVE";
+  const fromState = derived(row);
+
+  try {
+    if (state.failOn.has("state")) throw new Error("canonical write failed");
+
+    let result: any;
+    switch (type) {
+      case "PIN_HIGHLIGHT":   row.pinned_at = nowIso;   result = { id: row.id, pinned_at: nowIso }; break;
+      case "UNPIN_HIGHLIGHT": row.pinned_at = null;     result = { id: row.id, pinned_at: null }; break;
+      case "HIDE_HIGHLIGHT":  row.archived_at = nowIso; result = { id: row.id, archived_at: nowIso }; break;
+      // ADDED 2026-09-23 with migration 3001, which admits this command into
+      // the applier. Rehearsed against a real PostgreSQL carrying the replayed
+      // chain before being written here: the function clears `archived_at`,
+      // emits `highlight.hidden` carrying `command_type: UNHIDE_HIGHLIGHT`, and
+      // derives EXPIRED rather than ACTIVE when the highlight's clock has run
+      // out. `derived()` above reproduces that last part already.
+      case "UNHIDE_HIGHLIGHT": row.archived_at = null;  result = { id: row.id, archived_at: null }; break;
+      // WAS `default: row.archived_at = nowIso`, which is how UNHIDE_HIGHLIGHT
+      // came to be modelled as a HIDE: anything not PIN or UNPIN hid the row.
+      // A fake whose default is a state change makes every unmodelled command
+      // silently plausible, so the default now refuses. The applier refuses
+      // unknown names too (2993's vocabulary gate), which is what this models.
+      default:
+        throw new Error(
+          `memoryCommandKernelFake: no highlight branch for ${type}. The real applier ` +
+          `refuses unknown command names rather than guessing; add a case here when a ` +
+          `migration admits one.`);
+    }
+    const toState = derived(row);
+    const eventType = COMMAND_EVENT[type];
+    const eventId = `evt-${++idCounter}`;
+
+    if (state.failOn.has("event")) throw new Error("memory_domain_events insert failed");
+    t("memory_domain_events").push({
+      event_id: eventId,
+      // 2993's memory_domain_events_one_subject: exactly one subject, and for
+      // a Highlight command it is never the Memory column.
+      memory_id: null,
+      highlight_id: row.id,
+      type: eventType,
+      actor_user_id: c.actor_user_id,
+      causation_id: c.command_id,
+      correlation_id: c.correlation_id ?? null,
+      payload_json: {
+        command_type: type,
+        from_state: fromState,
+        to_state: toState,
+        state_provenance: "derived",
+        pinned: type === "PIN_HIGHLIGHT",
+        visibility: null,
+        refs: { highlight_id: row.id, memory_id: null, actor_user_id: c.actor_user_id },
+      },
+      schema_version: 1,
+      occurred_at: c.client_observed_at ?? nowIso,
+      recorded_at: nowIso,
+    });
+
+    if (state.failOn.has("outbox")) throw new Error("memory_event_outbox insert failed");
+    t("memory_event_outbox").push({
+      id: ++idCounter, event_id: eventId, memory_id: null, highlight_id: row.id,
+      type: eventType, created_at: nowIso, published_at: null, attempts: 0,
+    });
+
+    if (state.failOn.has("receipt")) throw new Error("memory_command_receipts insert failed");
+    t("memory_command_receipts").push({
+      actor_user_id: c.actor_user_id, idempotency_key: c.idempotency_key,
+      command_id: c.command_id, command_type: type, memory_id: null,
+      highlight_id: row.id, event_id: eventId, event_type: eventType,
+      result_json: result, created_at: nowIso,
+    });
+
+    writeAudit("accepted", null, eventId, row.id);
+
+    return {
+      data: {
+        ok: true, duplicate: false, highlight_id: row.id, event_id: eventId,
+        event_type: eventType, result, contract_version: 1,
+      },
+      error: null,
+    };
+  } catch (e: any) {
+    restore();
+    return { data: null, error: { message: e?.message ?? "kernel failure" } };
+  }
 }

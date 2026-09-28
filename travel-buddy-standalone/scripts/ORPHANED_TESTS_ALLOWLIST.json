@@ -71,10 +71,6 @@
       "reason": "listed in KNOWN_BROKEN (node runner skips) and not named *.component.test.* (jest skips)"
     },
     {
-      "file": "src/services/__tests__/discovery.liveStatusCached.test.ts",
-      "reason": "listed in KNOWN_BROKEN (node runner skips) and not named *.component.test.* (jest skips)"
-    },
-    {
       "file": "src/services/__tests__/discovery.searchSignal.test.ts",
       "reason": "listed in KNOWN_BROKEN (node runner skips) and not named *.component.test.* (jest skips)"
     },

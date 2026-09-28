@@ -18,7 +18,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { fetchPostMediaMap, mergePostMedia } from "./postMediaResolve.js";
-import { isPostPublished } from "./postVisibility.js";
+import { isPostPublished } from "./postVisibility.js"; import { postPlaceWithheld } from "./postSchemas.js"; // census-media §42: mapPublicPost's decision on the owner's location mode (eventPostForViewer, at the foot of this file)
 
 // ── Demo-event guard ───────────────────────────────────────────────────────────
 
@@ -63,7 +63,7 @@ export interface FetchEventPostsParams {
   radiusKm: number;
   viewerId: string | null;
   blockedIds: Set<string>;
-  seenPostIds: Set<string>;
+  seenPostIds: Set<string>; /** census-discovery §94 (DV-83, hunk §80.7): set to true when a path could not be READ, so the posts are the surviving path's alone (or none). The feed carries it onto its refusal envelope as failedSources "event_posts" instead of serving a failed read as a quiet city. A cache hit is a read that succeeded: a failed read is never cached. */ readStatus?: { readFailed: boolean };
 }
 
 // ── Haversine distance (km) ───────────────────────────────────────────────────
@@ -100,7 +100,7 @@ interface RawPost {
   linkedEventId: string | null;
   linkedEventTitle: string | null;
   venueLabel: string | null;
-  sourceKind: "event_link" | "venue_category";
+  sourceKind: "event_link" | "venue_category"; /** census-media §42: postPlaceWithheld(post), decided once per row so the viewer-independent cache can hold it; applied per viewer by eventPostForViewer */ placeWithheld: boolean;
   /** Only set for Path A — used to check if event is currently live */
   eventStartsAt?: string | null;
   eventEndsAt?: string | null;
@@ -282,7 +282,7 @@ async function fetchPathA(
           status,
           post_status,
           deleted_at,
-          publish_eligible_at
+          publish_eligible_at, location_privacy_mode
         ),
         events!inner (
           id,
@@ -337,7 +337,7 @@ async function fetchPathA(
         sourceKind: "event_link",
         eventStartsAt: event.starts_at ?? null,
         eventEndsAt: event.ends_at ?? null,
-        groupKey: event.id,
+        groupKey: event.id, placeWithheld: postPlaceWithheld(post),
         proximityLat: event.location_lat ?? null,
         proximityLng: event.location_lng ?? null,
       });
@@ -378,7 +378,7 @@ async function fetchPathB(
         status,
         post_status,
         deleted_at,
-        publish_eligible_at,
+        publish_eligible_at, location_privacy_mode,
         discovery_places!posts_location_place_id_fkey (
           name,
           primary_category,
@@ -439,7 +439,7 @@ async function fetchPathB(
         linkedEventTitle: null,
         venueLabel: place.name ?? null,
         sourceKind: "venue_category",
-        groupKey: post.location_place_id ?? null,
+        groupKey: post.location_place_id ?? null, placeWithheld: postPlaceWithheld(post),
         proximityLat,
         proximityLng,
       });
@@ -484,7 +484,7 @@ export async function fetchEventPostsForDiscovery(
     // but the result is NOT written to the cache, because a 5-minute-old empty
     // answer produced by a blip is served to every viewer of that city long
     // after the database has recovered, and nothing retries until it expires.
-    const readFailed = pathA === null || pathB === null;
+    const readFailed = pathA === null || pathB === null; if (readFailed && params.readStatus) params.readStatus.readFailed = true;  // §94 (DV-83): no longer dropped — the feed's envelope says so
 
     // Merge and deduplicate by post id (Path A wins on duplicates for richer metadata)
     const seenIds = new Set<string>();
@@ -534,7 +534,7 @@ export async function fetchEventPostsForDiscovery(
     .map(({ post }) => post);
 
   // Diversity cap: at most 3 posts per event/venue
-  const capped = applyDiversityCap(scored);
+  const capped = applyDiversityCap(scored).map((p) => eventPostForViewer(p, params.viewerId)).filter((p): p is RawPost => p !== null); // census-media §42: the owner's location mode, per viewer, on the page as it was scored and capped, so the set can only shrink and the order is unchanged
 
   // Return as typed DiscoveryEventPost[]
   return capped.map(
@@ -556,4 +556,39 @@ export async function fetchEventPostsForDiscovery(
       sourceKind: p.sourceKind,
     }),
   );
+}
+
+// ── census-media §42: the owner's location mode, per viewer ──────────────────
+// Appended at the tail so no cited line above moves; function declarations hoist.
+/**
+ * What THIS viewer may be told about one cached event post's place, or null
+ * when the post must not be listed for them at all.
+ *
+ * ONE rule, not a new one: `placeWithheld` is lib/postSchemas.postPlaceWithheld,
+ * mapPublicPost's own decision, computed when the row was fetched. It is applied
+ * per viewer, after the (city, radius) cache, because that cache is shared by
+ * every viewer and the author must still see their own post in full; and after
+ * scoring and the diversity cap, on the page exactly as it was assembled, so a
+ * viewer's page can only lose entries and fields, never gain or reorder one.
+ * (Scoring still reads public_lat/public_lng; the write path leaves them null
+ * for every withholding mode, delayedPostPublisher revealing them only for
+ * `none` and the delayed modes.)
+ *
+ * A post whose place is not withheld (mode `none`, an absent mode, a RELEASED
+ * delayed post), and any post seen by its author, is returned untouched: exactly
+ * what this module served before. For anyone else, a withheld post:
+ *   - venue category (Path B) is not listed. It was chosen BECAUSE its tagged
+ *     place is an events venue, it names that place, and the proximity gate runs
+ *     on the place's own coordinates, so a caller moving lat/lng could locate it.
+ *     This is the place-page rule lane P applied to Media (census-media §36.5).
+ *   - event link (Path A) stays listed under the event its author linked it to,
+ *     as Media's event page lists it (MediaExperienceResolver). Its venue is the
+ *     EVENT's venue (`venueLabel`, events.location_name) or nothing, never the
+ *     post's own `location_name`, and its coordinates are withheld. The
+ *     proximity gate keeps using the event's coordinates, which are the event's.
+ */
+function eventPostForViewer(post: RawPost, viewerId: string | null): RawPost | null {
+  if (!post.placeWithheld || (viewerId != null && post.authorId === viewerId)) return post;
+  if (post.sourceKind === "venue_category") return null;
+  return { ...post, venueName: post.venueLabel, publicLat: null, publicLng: null };
 }

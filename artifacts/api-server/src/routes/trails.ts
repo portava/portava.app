@@ -131,10 +131,10 @@ function sendTrailRefusal(res: Response, refusal: Exclude<TrailRefusal, null>): 
       return sendError(res, "not_found", "trail not found");
     case "invalid_request":
       return sendError(res, "invalid_payload", "request refused by 02_Trails rules");
-    case "trails_unavailable":
-    case "no_service_client":
+    case "trails_unavailable": case "no_service_client":
       // 503, not 500: nothing failed. The Trail object is not deployed here.
       return sendError(res, "degraded_unavailable", "trails are not available in this deployment");
+    case "source_unreadable": return sendError(res, "degraded_unavailable", "the content could not be verified; nothing was attached"); // §61, retryable
     default:
       return sendError(res, "db_error", "trail read failed");
   }
@@ -211,7 +211,7 @@ router.get("/v1/discovery/trails/:id", asyncHandler(async (req: Request, res: Re
   const id = uuid.safeParse(req.params.id);
   if (!id.success) return sendError(res, "invalid_payload", "trail id must be a uuid");
 
-  const r = await getTrail(getServiceClient(), id.data);
+  const r = await getTrail(getServiceClient(), id.data, Date.now(), { viewerId: auth.user.id }); // §64: memberCount and status count only what this viewer is served
   if (r.refusal) return sendTrailRefusal(res, r.refusal);
   if (!r.trail) return sendError(res, "not_found", "trail not found");
   res.json({
@@ -262,7 +262,7 @@ router.get("/v1/discovery/trails/:id/modules", asyncHandler(async (req: Request,
   if (!id.success) return sendError(res, "invalid_payload", "trail id must be a uuid");
 
   const sc = getServiceClient();
-  const r = await getTrailModules(sc, id.data);
+  const r = await getTrailModules(sc, id.data, { viewerId: auth.user.id });
   if (r.refusal) return sendTrailRefusal(res, r.refusal);
 
   res.json({
@@ -301,7 +301,7 @@ router.get("/v1/discovery/trails/:id/modules", asyncHandler(async (req: Request,
   // §11's snapshot, after the response and never blocking it — the shape
   // lib/discoveryServeLog.ts already uses for the serve log. At most one row
   // per Trail per hour; a failure is logged inside the service and swallowed.
-  if (r.health) void recordTrailHealthSnapshot(sc, id.data, r.health);
+  if (r.health) void recordTrailHealthSnapshot(sc, id.data, r.health); void settleTrailModulesServe(sc, id.data, r); // §86: flag-on only — the decided §7 moves and the page's own serves (3487)
 }));
 
 router.get("/v1/discovery/trails/:id/related", asyncHandler(async (req: Request, res: Response) => {
@@ -327,7 +327,7 @@ router.get("/v1/discovery/trails/:id/trending", asyncHandler(async (req: Request
   const id = uuid.safeParse(req.params.id);
   if (!id.success) return sendError(res, "invalid_payload", "trail id must be a uuid");
 
-  const r = await trailTrending(getServiceClient(), id.data);
+  const r = await trailTrending(getServiceClient(), id.data, Date.now(), { viewerId: auth.user.id });
   if (r.refusal) return sendTrailRefusal(res, r.refusal);
   // `11` §4's prohibition, honoured: `trending` is a BOOLEAN derived from the
   // Trail's momentum and the momentum number itself is not serialised.
@@ -337,8 +337,8 @@ router.get("/v1/discovery/trails/:id/trending", asyncHandler(async (req: Request
   // `readingProvenance` rather than `momentumProvenance`: see the note on the
   // modules route above — the `11` §4 tripwire forbids the WORD here.
   res.json({
-    trending: (r.momentum ?? 0) > 0,
-    items: r.items,
+    trending: r.momentumUnread ? null : (r.momentum ?? 0) > 0, // H-P8-1 (§58.4, §61, §61.17): a FAILED read is unknown (null), never a measured "not trending"; an empty Trail is a measured false (DC-17)
+    items: r.items, ...(r.moreFromThisPlace ? { moreFromThisPlace: r.moreFromThisPlace } : {}), // §86 follow-up (DV-23): §10 clause 5 on this list — present only when something was held back; GET …/more lists them
     readingProvenance: toPublicProvenance(r.momentumProvenance),
   });
 }));
@@ -381,18 +381,33 @@ const attachmentBody = z.object({
  */
 function sendAttachResult(
   res: Response,
-  r: { attached: number; capRefusals: Array<{ label: { relationship: string; signal: string | null }; reason: string }> },
+  r: {
+    attached: number;
+    capRefusals: Array<{ label: { relationship: string; signal: string | null }; reason: string }>;
+    sourceRefusals?: Array<{ sourceType: string; sourceId: string; reason: string }>; suggested?: number;
+  },
 ): void {
-  if (r.attached === 0) {
+  // census-discovery §61 (DC-20): a label whose content does not exist, that
+  // the caller may not see, or whose type has no table is named with the ids
+  // the CALLER sent — echoing them discloses nothing — and one reason:
+  // `unknown_content` (the same for "no such post" and "a post you may not
+  // see", so the refusal is not an existence oracle) or
+  // `unverifiable_source_type`. Only present when non-empty, so every response
+  // that had no such label is byte-identical to before.
+  const contentRefusals = (r.sourceRefusals ?? []).map((x) => ({ sourceType: x.sourceType, sourceId: x.sourceId, reason: x.reason }));
+  const content = contentRefusals.length > 0 ? { contentRefusals } : {}; const pending = (r.suggested ?? 0) > 0 ? { suggested: r.suggested } : {}; // §86 (DC-20): held for the content's owner
+  if (r.attached === 0 && (r.suggested ?? 0) > 0) { res.status(202).json({ attached: 0, ...pending, refusals: r.capRefusals.map((x) => ({ relationship: x.label.relationship, signal: x.label.signal, reason: x.reason })), ...content }); return; } if (r.attached === 0) {
     res.status(409).json({
-      error: "label_cap_refused",
+      error: r.capRefusals.length === 0 && contentRefusals.length > 0 ? "content_refused" : "label_cap_refused",
       refusals: r.capRefusals.map((x) => ({ relationship: x.label.relationship, signal: x.label.signal, reason: x.reason })),
+      ...content,
     });
     return;
   }
   res.status(201).json({
     attached: r.attached,
     refusals: r.capRefusals.map((x) => ({ relationship: x.label.relationship, signal: x.label.signal, reason: x.reason })),
+    ...content, ...pending,
   });
 }
 
@@ -458,8 +473,107 @@ router.post("/v1/discovery/trails/:id/reports", asyncHandler(async (req: Request
   if (r.refusal) return sendTrailRefusal(res, r.refusal);
   // No moderation outcome is disclosed: §15 makes resolution an admin action,
   // and telling a reporter what happened to a report is a channel for probing
-  // other people's content state.
-  res.status(202).json({ reported: r.reported });
+  // other people's content state. `duplicate` tells the REPORTER only that
+  // their own identical open report already stands (`11` §1, a retry).
+  res.status(202).json(r.duplicate ? { reported: r.reported, duplicate: true } : { reported: r.reported });
 }));
+
+
+// ── census-discovery §86 (lane W10-T): the routes its decisions add ──────────
+//
+// Appended below every cited line. None serves a score (`11` §4, DV-27).
+
+/**
+ * DV-23 — `02` §10 "preserve access through 'more from this place'". Returns,
+ * per module AND for GET …/trending's list, exactly the members that list held
+ * back for this place — for any reason (D-W10T-15) — and counted in its
+ * `moreFromThisPlace[placeId]`; the count and the list come from one
+ * computation, so they cannot disagree (D-W10T-4). Only members this viewer
+ * may be served, as every other read here.
+ */
+router.get("/v1/discovery/trails/:id/places/:placeId/more", asyncHandler(async (req: Request, res: Response) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const id = uuid.safeParse(req.params.id);
+  const placeId = uuid.safeParse(req.params.placeId);
+  if (!id.success || !placeId.success) return sendError(res, "invalid_payload", "ids must be uuids");
+  const cursor = typeof req.query.cursor === "string" && req.query.cursor.length > 0 ? req.query.cursor : null; // §86.14 (D-W10T-17): members older than the window
+  const r = await moreFromThisPlace(getServiceClient(), id.data, placeId.data, { viewerId: auth.user.id, cursor });
+  if (r.refusal) return sendTrailRefusal(res, r.refusal);
+  res.json({ placeId: r.placeId, modules: r.modules, next: r.next });
+}));
+
+/**
+ * DV-23 / D-W10T-15 — EVERYTHING a Trail page holds back, per list (every module and GET …/trending's list):
+ * by place, and the members that have no place to be "more from". No held item is unreachable.
+ * §86.14 (D-W10T-17): the lists are computed over the newest TRAIL_MEMBER_WINDOW members; `next`
+ * is a cursor to the members older than that, `?cursor=` returns one bounded page of them (key
+ * `beyond_window`) with the cursor to the page after. A malformed cursor is 400.
+ */
+router.get("/v1/discovery/trails/:id/more", asyncHandler(async (req: Request, res: Response) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const id = uuid.safeParse(req.params.id);
+  if (!id.success) return sendError(res, "invalid_payload", "trail id must be a uuid");
+  const cursor = typeof req.query.cursor === "string" && req.query.cursor.length > 0 ? req.query.cursor : null; // §86.14 (D-W10T-17)
+  const r = await moreFromThisTrail(getServiceClient(), id.data, { viewerId: auth.user.id, cursor });
+  if (r.refusal) return sendTrailRefusal(res, r.refusal);
+  res.json({ lists: r.lists, next: r.next });
+}));
+
+/**
+ * DV-24 — declare one of §6's five post-creation relationships from this Trail
+ * (D-W10T-8). The creator of both Trails declares it navigable; the creator of
+ * one proposes it for moderation (`reviewState: "pending"`); anyone else 403.
+ */
+router.post("/v1/discovery/trails/:id/relations", asyncHandler(async (req: Request, res: Response) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const id = uuid.safeParse(req.params.id);
+  if (!id.success) return sendError(res, "invalid_payload", "trail id must be a uuid");
+  const body = z.object({
+    toTrailId: z.string().uuid(),
+    edgeType: z.enum(DECLARABLE_TRAIL_EDGE_TYPES),
+  }).strict().safeParse(req.body);
+  if (!body.success) return sendError(res, "invalid_payload", "toTrailId and one of 02 §6's five declarable kinds are required");
+  const r = await declareTrailRelation(getServiceClient(), id.data, body.data.toTrailId, body.data.edgeType, auth.user.id);
+  if (r.refusal === "not_trail_owner") return sendError(res, "forbidden", "only a creator of one of the two Trails may declare a relationship between them");
+  if (r.refusal) return sendTrailRefusal(res, r.refusal);
+  if (r.duplicate) { res.status(200).json({ declared: true, duplicate: true }); return; }
+  res.status(r.reviewState === "pending" ? 202 : 201).json({ declared: true, reviewState: r.reviewState });
+}));
+
+/**
+ * DC-20 — a stranger's suggestion waits for the content's owner (D-W10T-9, 3488).
+ * Mounted under /v1/discovery/trail-suggestions so no `:id` route above can
+ * shadow it. Unknown and not-yours are one answer (404).
+ */
+router.get("/v1/discovery/trail-suggestions/pending", asyncHandler(async (req: Request, res: Response) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const r = await listPendingSuggestions(getServiceClient(), auth.user.id);
+  if (r.refusal) return sendTrailRefusal(res, r.refusal);
+  res.json({ suggestions: r.suggestions });
+}));
+
+for (const decision of ["accept", "decline"] as const) {
+  router.post(`/v1/discovery/trail-suggestions/:id/${decision}`, asyncHandler(async (req: Request, res: Response) => {
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+    const id = uuid.safeParse(req.params.id);
+    if (!id.success) return sendError(res, "invalid_payload", "suggestion id must be a uuid");
+    const r = await decideSuggestion(getServiceClient(), id.data, auth.user.id, decision);
+    if (r.refusal === "unknown_trail") return sendError(res, "not_found", "suggestion not found");
+    if (r.refusal === "invalid_request") return sendError(res, "conflict", "this suggestion was already decided the other way");
+    if (r.refusal) return sendTrailRefusal(res, r.refusal);
+    if (r.state === null && r.attach) { sendAttachResult(res, r.attach); return; } // accepted but refused by §4 / existence: it stays pending
+    res.json({ state: r.state });
+  }));
+}
+
+import {
+  moreFromThisPlace, moreFromThisTrail, declareTrailRelation, DECLARABLE_TRAIL_EDGE_TYPES, listPendingSuggestions, decideSuggestion,
+  settleTrailModulesServe,
+} from "../services/trails/TrailService.js";
 
 export default router;

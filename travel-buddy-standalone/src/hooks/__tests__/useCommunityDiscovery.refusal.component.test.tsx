@@ -141,4 +141,36 @@ describe('useCommunityDiscovery — a refusal is not a cacheable empty city', ()
     await new Promise((r) => setTimeout(r, 20));
     expect(mockGetCommunityPlaces).toHaveBeenCalledTimes(1);
   });
+
+  // census-discovery §80 (DV-83, register D-W10-S1-2): the partial is kept AND
+  // said. `incomplete` is on the state, and a cached replay still carries it.
+  it('§80: a PARTIAL read reports incomplete, and the cached replay still does', async () => {
+    const CITY = 'Partialville80';
+    mockGetCommunityPlaces.mockResolvedValue({
+      ok: true,
+      data: { items: [gem('g80')], city: CITY, total: 1,
+        refusal: { ...REFUSAL, coverage: 'partial' as const } },
+    });
+    const first = await renderHook(() => useCommunityDiscovery(CITY, null));
+    await waitFor(() => expect(first.result.current.gems).toHaveLength(1));
+    expect(first.result.current.incomplete).toBe(true);
+    expect(first.result.current.refused).toBe(false);
+    await act(async () => { first.unmount(); });
+
+    const second = await renderHook(() => useCommunityDiscovery(CITY, null));
+    await waitFor(() => expect(second.result.current.gems).toHaveLength(1));
+    expect(second.result.current.incomplete).toBe(true);
+  });
+
+  it('§80 CONTROL: a complete read, and a refused one, are not incomplete', async () => {
+    mockGetCommunityPlaces.mockResolvedValue({ ok: true, data: { items: [gem('g81')], city: 'Wholeville80', total: 1 } });
+    const whole = await renderHook(() => useCommunityDiscovery('Wholeville80', null));
+    await waitFor(() => expect(whole.result.current.gems).toHaveLength(1));
+    expect(whole.result.current.incomplete).toBe(false);
+
+    mockGetCommunityPlaces.mockResolvedValue({ ok: true, data: { items: [], city: 'Refusedville80', total: 0, refusal: REFUSAL } });
+    const refused = await renderHook(() => useCommunityDiscovery('Refusedville80', null));
+    await waitFor(() => expect(refused.result.current.loading).toBe(false));
+    expect(refused.result.current.incomplete).toBe(false);
+  });
 });

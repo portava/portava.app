@@ -82,19 +82,26 @@ export interface RelatedPerspective {
 /**
  * Whether a media item belongs to the entry-context entity.
  *
- * For a Place (and Place-shaped) context, a media item that is explicitly
- * tagged to a DIFFERENT canonical place is foreign and must be excluded — the
- * viewer is that place's current picture, not a global feed (§46.2). Media with
- * no place id, or a matching id, is kept. For entry contexts whose media
- * legitimately spans places (experience / trip / map), no place filter applies.
+ * For a Place-shaped context — a Place, or a Map cluster, which `GET /media/map`
+ * keys by one canonical place — a media item explicitly tagged to a DIFFERENT
+ * canonical place is foreign and must be excluded: the viewer is that place's
+ * current picture, not a global feed (§46.2). For a People context the entity is
+ * a PERSON, so media attributed to someone else is foreign ("that person / social
+ * context", §14). Media with no place / contributor, or a matching one, is kept.
+ * For entry contexts whose media legitimately spans places (experience / event /
+ * trip), no filter applies — the opening projection already scoped them.
  */
 function belongsToEntity(
   kind: PerspectiveEntryContextKind,
   entityId: string | null,
   m: MediaProjection,
 ): boolean {
-  if (kind !== 'place') return true;
   if (!entityId) return true;
+  if (kind === 'people') {
+    const personId = m.contributor?.id ?? null;
+    return personId == null || personId === entityId;
+  }
+  if (kind !== 'place' && kind !== 'map') return true;
   const placeId = m.place?.id ?? null;
   if (placeId == null) return true; // unlabeled — cannot prove it is foreign
   return placeId === entityId;

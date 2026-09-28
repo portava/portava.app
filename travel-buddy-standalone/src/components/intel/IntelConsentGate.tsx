@@ -13,41 +13,54 @@ import { View, Text, Pressable, ActivityIndicator, StyleSheet } from 'react-nati
 import * as Haptics from 'expo-haptics';
 import { color, space, radius, typography } from '../../theme/tokens.ts';
 import { setIntelConsent, type IntelConsentState } from '../../services/intelConsent.ts';
+import { disclosureFor } from '../../lib/sensing/consentDisclosure.ts';
 
 export interface IntelConsentGateProps {
   onAllow: (state: IntelConsentState) => void;
   onNotNow: () => void;
+  /**
+   * The disclosure version the SERVER will stamp (IntelConsentState.
+   * currentDisclosureVersion). The gate renders that version's exact words and
+   * sends the version back with the grant; with none, or one this build has no
+   * text for, it offers no Allow at all — it never shows older words.
+   */
+  disclosureVersion: string | null;
 }
 
-export function IntelConsentGate({ onAllow, onNotNow }: IntelConsentGateProps) {
+export function IntelConsentGate({ onAllow, onNotNow, disclosureVersion }: IntelConsentGateProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const disclosure = disclosureFor(disclosureVersion);
 
   const allow = useCallback(async () => {
+    if (!disclosure) return;
     setBusy(true);
     setError(null);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-    const state = await setIntelConsent(true);
+    const state = await setIntelConsent(true, disclosure.version);
     setBusy(false);
     if (state && state.enabled && !state.withdrawnAt) {
       onAllow(state);
     } else {
       setError('Could not save that just now — please try again.');
     }
-  }, [onAllow]);
+  }, [onAllow, disclosure]);
 
   return (
     <View style={styles.card} testID="intel-consent-gate">
-      <Text style={styles.title}>Help improve live place intelligence</Text>
-      <Text style={styles.body}>
-        Your Quick Signals can be combined with reports from other travelers to show what a place is
-        like right now.
-      </Text>
-      <Text style={styles.body}>
-        Your identity and exact location aren&apos;t shown publicly with the signal. Portava uses your
-        contribution to generate aggregated place intelligence.
-      </Text>
-      <Text style={styles.muted}>You can turn Intelligence Contributions off anytime in Privacy settings.</Text>
+      {disclosure ? (
+        <>
+          <Text style={styles.title}>{disclosure.title}</Text>
+          {disclosure.paragraphs.map((p) => (
+            <Text key={p} style={styles.body}>{p}</Text>
+          ))}
+          <Text style={styles.muted}>{disclosure.footnote}</Text>
+        </>
+      ) : (
+        <Text style={styles.body} testID="intel-consent-unknown-version">
+          The terms for contributing couldn&apos;t be shown on this version of the app. Please update the app to review them.
+        </Text>
+      )}
 
       {error ? <Text style={styles.error}>{error}</Text> : null}
 
@@ -55,9 +68,10 @@ export function IntelConsentGate({ onAllow, onNotNow }: IntelConsentGateProps) {
         testID="intel-consent-allow"
         accessibilityRole="button"
         accessibilityLabel="Allow and share"
-        disabled={busy}
+        accessibilityState={{ disabled: busy || !disclosure }}
+        disabled={busy || !disclosure}
         onPress={allow}
-        style={({ pressed }) => [styles.primary, pressed && !busy && styles.primaryPressed, busy && styles.primaryBusy]}
+        style={({ pressed }) => [styles.primary, pressed && !busy && styles.primaryPressed, (busy || !disclosure) && styles.primaryBusy]}
       >
         {busy ? <ActivityIndicator size="small" color={color.onInk} /> : null}
         <Text style={styles.primaryText}>Allow &amp; Share</Text>

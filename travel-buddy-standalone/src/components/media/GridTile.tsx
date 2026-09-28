@@ -15,7 +15,7 @@
  * Memoized so scroll recycling does not re-render unchanged cells.
  */
 
-import React, { memo, useRef } from 'react';
+import React, { memo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -69,7 +69,7 @@ function GridTileInner({ item, index, cellWidth, cellHeight, onPress, isVisible 
   const hasVideoUrl = isVideo && !!item.videoUrl && !isProcessing;
 
   const posterUri = item.posterUrl ?? item.thumbnailUrl;
-  const qualifiedViews = item.qualifiedViewCount > 0 ? item.qualifiedViewCount : item.viewCount;
+  const qualifiedViews = item.qualifiedViewCount > 0 ? item.qualifiedViewCount : item.viewCount; const [discWidth, setDiscWidth] = useState(DISC_IDLE_WIDTH); // census-media §40.14: the stamp disc's measured width
 
   // Video ref for imperative play/pause control
   const videoRef = useRef<InstanceType<typeof Video>>(null);
@@ -92,7 +92,7 @@ function GridTileInner({ item, index, cellWidth, cellHeight, onPress, isVisible 
         uri={posterUri}
         width={cellWidth}
         height={cellHeight}
-        resizeMode="cover"
+        resizeMode="cover" fallbackBg={color.mute}
         style={StyleSheet.absoluteFill}
       />
 
@@ -148,12 +148,12 @@ function GridTileInner({ item, index, cellWidth, cellHeight, onPress, isVisible 
       {item.locationVerified && item.locationLabel ? (
         <VerifiedLocationStamp
           locationName={item.locationLabel}
-          style={styles.verifiedStamp}
+          style={[styles.verifiedStamp, { maxWidth: verifiedStampMaxWidth(cellWidth, discWidth) }]}
         />
       ) : null}
 
       {/* ── Bottom row: duration (left) + view count (right) ──────── */}
-      <View style={styles.bottomRow} pointerEvents="none">
+      <View style={styles.bottomRow} pointerEvents="none" testID="grid-tile-meta-row">
         {isVideo && item.durationMs != null ? (
           <Text style={styles.metaText}>{formatDuration(item.durationMs)}</Text>
         ) : null}
@@ -166,13 +166,13 @@ function GridTileInner({ item, index, cellWidth, cellHeight, onPress, isVisible 
       </View>
 
       {/* ── Stamp-it collect button — bottom-right corner ─────────── */}
-      <View style={styles.stampBtnWrapper} pointerEvents="box-none">
+      <View style={styles.stampBtnWrapper} pointerEvents="box-none" testID="grid-tile-stamp-disc" onLayout={(e) => { const w = Math.ceil(e.nativeEvent.layout.width); setDiscWidth((prev) => (prev === w ? prev : w)); }}>
         <StampButton
           entityType="media"
           entityId={item.id}
           initialCount={0}
           initialIsStamped={false}
-          iconSize={16}
+          iconSize={16} tone="onDark"
         />
       </View>
     </Pressable>
@@ -183,7 +183,7 @@ export const GridTile = memo(GridTileInner);
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 
-const SCRIM_BOTTOM = 'rgba(0,0,0,0.48)';
+const SCRIM_BOTTOM = 'rgba(0,0,0,0.55)'; // census-media §31.12: the least alpha at which the 9 px meta line clears 4.5:1 over a white poster; was 0.48
 
 const styles = StyleSheet.create({
   cell: {
@@ -223,7 +223,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 2,
-    backgroundColor: 'rgba(0,0,0,0.45)',
+    backgroundColor: 'rgba(0,0,0,0.55)', // census-media §31.12: the least alpha at which the 8 px badge text clears 4.5:1 over a white poster; was 0.45
     borderRadius: radius.sm,
     paddingHorizontal: 4,
     paddingVertical: 2,
@@ -280,8 +280,22 @@ const styles = StyleSheet.create({
   // ── Stamp-it collect button ─────────────────────────────────────────
   stampBtnWrapper: {
     position: 'absolute',
-    bottom: 4,
+    bottom: 28, // census-media §40: above the bottom meta row (12 + 11 + 4 = 27 tall), as verifiedStamp sits; was bottom: 4, which put the 0.80 disc over the view count
     right: 4,
-    zIndex: 6,
+    zIndex: 6, borderRadius: 999, backgroundColor: 'rgba(17,17,15,0.80)', // census-media §31.13: under the StampButton's onDark tone 0.80 is set by the stamped icon in `signal` (§31.12 had zIndex: 6, borderRadius: 999, backgroundColor: 'rgba(17,17,15,0.95)', for its idle `mute` icon)
   },
 });
+
+// census-media §40.14 — the verified-location stamp and the stamp disc share
+// the band above the meta row (both at bottom 28): the stamp from the left
+// (left 6), the disc from the right (right 4). The stamp is up to ~158 px wide
+// (its name's maxWidth 130, its padding and border), so on a ~190 px tile a
+// long place name ran under the disc. The stamp's maxWidth is now what the
+// disc leaves: the tile, less the stamp's left 6, the disc's right 4, the
+// disc's MEASURED width (36 idle; wider once it shows a count), and an 8 px
+// gap, which also absorbs the stamp's -12° turn (about 2 px each side). The
+// name, already one line, truncates earlier; nothing else about the stamp moves.
+const DISC_IDLE_WIDTH = 36;
+function verifiedStampMaxWidth(cellWidth: number, discWidth: number): number {
+  return cellWidth - 6 - 4 - discWidth - 8;
+}

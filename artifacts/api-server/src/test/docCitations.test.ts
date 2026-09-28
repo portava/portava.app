@@ -637,3 +637,185 @@ describe("status vocabulary — the ROADMAP's own four labels", () => {
     assert.match(roadmap, /\*\*C3\*\* — the divergence report \| \*\*IN PROGRESS\*\* \(5 of 6 requirements\)/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// EXPO ROUTE GROUPS — appended 2026-09-27 (census-media §38.7). Appended rather
+// than inserted so that no line above moves; ESM hoists the two imports below.
+// ---------------------------------------------------------------------------
+
+import { spawnSync } from "node:child_process";
+import os from "node:os";
+
+/**
+ * WHY THE GRAMMAR HAS ROUTE GROUPS IN IT.
+ *
+ * The client groups its Expo Router routes in parenthesised directories:
+ * `app/(tabs)/ai.tsx`, `app/(auth)/onboarding.tsx`, `app/(rent-a-buddy)/…`.
+ * The path segment class had no parenthesis, so until 2026-09-27 such a path
+ * matched NOTHING — not counted, not checked, not reported — by this checker
+ * or by check:citation-targets and check:citation-symbols, which import its
+ * grammar. census-media §38.4 found it by moving three anchors into
+ * `travel-buddy-standalone/app/(tabs)/ai.tsx` one line each and watching every
+ * guard stay green. Measured when it was closed: 44 direct citations in 11
+ * covered documents, plus 9 bare `:NNN` continuations on the same lines.
+ *
+ * Every case in the "is read", "CHECKED" and other-guards suites below was run
+ * against the old grammar and failed there. The "NEVER" suite is the design
+ * constraint: it fails on the obvious wrong fix (parentheses as segment
+ * characters) instead, and its third case fails on the old grammar too.
+ */
+describe("Expo route groups — `app/(tabs)/ai.tsx` is read", () => {
+  it("extracts an unanchored route-group citation", () => {
+    const { citations } = extractCitations("the effect is at `app/(tabs)/ai.tsx:399` today");
+    assert.deepEqual(citations.map((c) => `${c.file}:${c.spec}`), ["app/(tabs)/ai.tsx:399"]);
+    assert.equal(citations[0]?.anchor, undefined);
+  });
+
+  it("extracts an anchored route-group citation, with its anchor", () => {
+    const { citations } = extractCitations(
+      "the guard is `travel-buddy-standalone/app/(tabs)/ai.tsx:112-118#if` and nothing else",
+    );
+    assert.equal(citations.length, 1);
+    assert.equal(citations[0]?.file, "travel-buddy-standalone/app/(tabs)/ai.tsx");
+    assert.equal(citations[0]?.spec, "112-118");
+    assert.equal(citations[0]?.anchor, "if");
+  });
+
+  it("reads a dynamic `[id]` or catch-all segment inside a group", () => {
+    const { citations } = extractCitations(
+      "`app/(rent-a-buddy)/[id].tsx:7#bookingId` and `app/(tabs)/(home)/[...slug].tsx:3`",
+    );
+    assert.deepEqual(
+      citations.map((c) => `${c.file}:${c.spec}${c.anchor ? "#" + c.anchor : ""}`),
+      ["app/(rent-a-buddy)/[id].tsx:7#bookingId", "app/(tabs)/(home)/[...slug].tsx:3"],
+    );
+  });
+
+  it("reads unbackticked prose the same way", () => {
+    const { citations } = extractCitations("see app/(tabs)/ai.tsx:399 for the call");
+    assert.deepEqual(citations.map((c) => `${c.file}:${c.spec}`), ["app/(tabs)/ai.tsx:399"]);
+  });
+
+  it("a following bare :NNN inherits the ROUTE-GROUP file, not the one before it", () => {
+    // Without groups in the grammar the second spec silently belongs to a.ts —
+    // the same false attribution the `[id].tsx` suite above was written for.
+    const { citations } = extractCitations(
+      "`src/services/a.ts:238`, then `app/(tabs)/ai.tsx:112` and `:118`",
+    );
+    assert.deepEqual(
+      citations.map((c) => `${c.file}:${c.spec}`),
+      ["src/services/a.ts:238", "app/(tabs)/ai.tsx:112", "app/(tabs)/ai.tsx:118"],
+    );
+  });
+
+  it("a bare backticked route-group path names the file a following :NNN continues", () => {
+    const { citations, orphans } = extractCitations("`app/(tabs)/ai.tsx`: the guard is at `:112`");
+    assert.equal(orphans.length, 0);
+    assert.deepEqual(citations.map((c) => `${c.file}:${c.spec}:${c.inherited}`), ["app/(tabs)/ai.tsx:112:true"]);
+  });
+});
+
+describe("Expo route groups — a parenthesis is NEVER taken into an ordinary path", () => {
+  // The design constraint. A group is a whole directory segment followed by
+  // `/`, never a character of the segment class: with `(` and `)` added to SEG
+  // (the obvious wrong fix) all three of these go red, as does the real corpus.
+  it("leaves a prose parenthesis outside the path", () => {
+    const { citations } = extractCitations("the fix (routes/x.ts:12) landed");
+    assert.deepEqual(citations.map((c) => c.file), ["routes/x.ts"]);
+  });
+
+  it("reads a group inside a parenthesised aside, and leaves the aside's own parenthesis out", () => {
+    const { citations } = extractCitations("the screen ((tabs)/ai.tsx:3) renders it");
+    assert.deepEqual(citations.map((c) => c.file), ["(tabs)/ai.tsx"]);
+  });
+
+  it("still does not swallow a markdown link", () => {
+    const { citations } = extractCitations("[the runner](scripts/run.ts:12) does it");
+    assert.deepEqual(citations.map((c) => c.file), ["scripts/run.ts"]);
+  });
+});
+
+describe("Expo route groups — citations are CHECKED, not only read", () => {
+  const tree: Record<string, string> = {
+    "docs/x/GUIDE.md": [
+      "anchored and true: `travel-buddy-standalone/app/(tabs)/ai.tsx:2#send(prefill`",
+      "anchored and STALE: `travel-buddy-standalone/app/(tabs)/ai.tsx:1#send(prefill`",
+      "whole anchor STALE, first word true: `travel-buddy-standalone/app/(tabs)/ai.tsx:3#const b = 2`",
+      "past the end: `app/(auth)/sign-in.tsx:99`",
+      "short path, decided by its anchor against the root mock: `app/(tabs)/ai.tsx:2#send(prefill`",
+    ].join("\n"),
+    "travel-buddy-standalone/app/(tabs)/ai.tsx": ["useEffect(() => {", "send(prefillMessage);", "const b = 3;"].join("\n"),
+    "app/(tabs)/ai.tsx": ["// a mock at the repo root", "export {};"].join("\n"),
+    "travel-buddy-standalone/app/(auth)/sign-in.tsx": ["a", "b"].join("\n"),
+  };
+  const byBasename = new Map<string, string[]>([
+    ["ai.tsx", ["travel-buddy-standalone/app/(tabs)/ai.tsx", "app/(tabs)/ai.tsx"]],
+    ["sign-in.tsx", ["travel-buddy-standalone/app/(auth)/sign-in.tsx"]],
+    ["GUIDE.md", ["docs/x/GUIDE.md"]],
+  ]);
+  const readFile = (rel: string): string | null => tree[rel] ?? null;
+  const res = evaluateCitations({ coveredFiles: ["docs/x/GUIDE.md"], readFile, byBasename });
+
+  it("counts all five, and the four that carry an anchor", () => {
+    assert.equal(res.total, 5);
+    assert.equal(res.anchored, 4);
+  });
+
+  it("reports the anchor that moved", () => {
+    assert.deepEqual(
+      res.badAnchor.map((f: { cited: string }) => f.cited),
+      ["travel-buddy-standalone/app/(tabs)/ai.tsx:1#send(prefill"],
+    );
+  });
+
+  it("reports the WHOLE anchor whose first word still holds", () => {
+    // Line 2's moved anchor fails this pass too; line 3 fails ONLY here, which
+    // is what makes the whole-anchor pass the one that has to read the group.
+    assert.deepEqual(res.badFullAnchor.map((f: { line: number }) => f.line), [2, 3]);
+    assert.match(String(res.badFullAnchor[1]?.cited), /^travel-buddy-standalone\/app\/\(tabs\)\/ai\.tsx:3#const b = 2/);
+    assert.equal(res.badAnchor.some((f: { line: number }) => f.line === 3), false);
+  });
+
+  it("reports the citation past the end of its file", () => {
+    assert.deepEqual(res.badRange.map((f: { cited: string }) => f.cited), ["app/(auth)/sign-in.tsx:99"]);
+  });
+
+  it("decides a short path by its anchor, as for any other path with a twin", () => {
+    assert.equal(res.undecidable.length, 0);
+    assert.ok(res.ambiguous.some((a: { line: number }) => a.line === 5), "the short path has two candidates");
+  });
+});
+
+describe("Expo route groups — check:citation-targets and check:citation-symbols read them too", () => {
+  // Both import this grammar, and neither has a suite of its own, so they are
+  // driven here as the CLI runs them: over a throwaway tree (each accepts a
+  // root argument). On the old grammar both judged nothing on this tree.
+  const scripts = path.resolve(HERE, "..", "..", "scripts");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "route-groups-"));
+  const put = (rel: string, lines: string[]): void => {
+    fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+    fs.writeFileSync(path.join(root, rel), lines.join("\n"));
+  };
+  put("docs/architecture/GUIDE.md", [
+    "lands on a bracket: `travel-buddy-standalone/app/(tabs)/ai.tsx:3`",
+    "names a symbol the file lacks: `travel-buddy-standalone/app/(tabs)/ai.tsx:2` `renderGhostThing`",
+    "names a symbol the file has: `travel-buddy-standalone/app/(auth)/sign-in.tsx:2` `signInNow`",
+  ]);
+  put("travel-buddy-standalone/app/(tabs)/ai.tsx", ["useEffect(() => {", "send(prefillMessage);", "})}"]);
+  put("travel-buddy-standalone/app/(auth)/sign-in.tsx", ["export const a = 1;", "export function signInNow() {}"]);
+  const run = (script: string) =>
+    spawnSync(process.execPath, [path.join(scripts, script), root], { encoding: "utf8" });
+
+  it("check:citation-targets judges route-group citations and finds the one on a bracket", () => {
+    const r = run("check-citation-targets.mjs");
+    assert.match(r.stdout, /— 3 single-line unanchored citation\(s\) judged, 1 land on nothing/);
+    assert.equal(r.status, 0, r.stderr);
+  });
+
+  it("check:citation-symbols judges route-group citations and finds the absent symbol", () => {
+    const r = run("check-citation-symbols.mjs");
+    assert.match(r.stdout, /— 2 symbol-naming citation\(s\) judged, 1 name a symbol the cited file does not contain/);
+    assert.equal(r.status, 1, "an absent symbol is over the ceiling of 0");
+    assert.match(r.stderr, /ABSENT .*renderGhostThing/);
+  });
+});

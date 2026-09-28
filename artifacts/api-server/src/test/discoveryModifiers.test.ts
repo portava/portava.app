@@ -190,7 +190,7 @@ describe("loadDiscoveryModifiers — flag ON", () => {
     assert.equal(m.localMomentum.p1, Math.round(raw * MOMENTUM_SCALE_MIN * 1000) / 1000);
     assert.equal(m.localMomentum.p2, undefined, "no activity ⇒ no entry");
     for (const v of Object.values(m.localMomentum)) assert.ok(v > 0 && v <= 1);
-    assert.deepEqual([...new Set(f.reads)].sort(), ["compass_city_confidence", "feature_flags", "rank_events"]);
+    assert.deepEqual([...new Set(f.reads)].sort(), ["compass_city_confidence", "feature_flags", "rank_events", "trend_integrity_reviews"]);  // restated by §93 (H-W10T-1, D-W11X1-5): a claimed place's review is read
   });
 
   it("deep city (depth 100): momentum unscaled, budget 15", async () => {

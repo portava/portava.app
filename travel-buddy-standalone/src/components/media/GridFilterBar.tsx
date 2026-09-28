@@ -211,7 +211,7 @@ const styles = StyleSheet.create({
   },
   chipText: {
     ...t.small,
-    color: color.mute,
+    color: '#696660', // census-media §31.12: `mute` x 0.98, the lightest same-hue grey at 4.5:1 on haze (`mute` is 4.41)
     fontWeight: '600',
   },
   chipTextActive: {

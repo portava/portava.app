@@ -8,14 +8,14 @@
  *    is unknown."                                                       (§14)
  *
  * ── WHY THIS EXISTS ──────────────────────────────────────────────────────────
- * The canonical intel path cannot represent two of the four outcomes:
- * intel_observations.subject_id is `NOT NULL REFERENCES places(id)` (2130:142),
- * so a cluster whose owner is UNKNOWN cannot be stored there at all, and there
- * is no temporary-world-object subject class (census S111). The anonymous
- * sensing path keys on a coarse `zone_id` and so CAN hold an unowned cluster —
- * but nothing said what a consumer may then call it. This module is that rule:
- * a four-outcome subject reference and one pure resolver whose default answer
- * is `unknown`.
+ * This module is the rule: a four-outcome subject reference and one pure
+ * resolver whose default answer is `unknown`. It used to be a rule with nowhere
+ * to apply it — `intel_observations.subject_id` was `NOT NULL REFERENCES
+ * places(id)`, so `unknown` and `temporary_world_object` could not be STORED.
+ * `3002_intel_contribution_identity.sql` made that column nullable (keeping the
+ * places FK for non-null subjects) and added the two subject kinds plus
+ * `intel_observations_subject_resolution_check`, so all four outcomes are
+ * storable and `routes/mapObservations.ts` calls this instead of snapping.
  *
  * ── THE RULE ─────────────────────────────────────────────────────────────────
  * A cluster is assigned to a Place or an Event ONLY on an explicit OWNERSHIP
@@ -108,4 +108,61 @@ export function reconcileSensingSubject(input: ReconcileInput): SensingSubjectRe
 /** True when a subject reference may be rendered as "at <place/event>". */
 export function subjectMayBeNamed(ref: SensingSubjectRef): boolean {
   return ref.kind === "place" || ref.kind === "event";
+}
+
+// ── The storage shape ─────────────────────────────────────────────────────────
+//
+// One resolver answer, expressed in the three columns intel_observations keys a
+// subject on. It lives here rather than in the caller so that every consumer
+// files an unowned cluster the SAME way, and so the mapping from a §18.3
+// outcome to a row is reviewable in one place.
+//
+// The two unowned outcomes deliberately produce `subjectId: null`. That is not a
+// missing value to be filled in later by something helpful — it is the answer.
+// `intel_observations_subject_resolution_check` (migration 3002) refuses the row
+// if a caller pairs an unowned kind with a place id, so a future "just use the
+// nearest one" cannot be reintroduced quietly.
+
+export interface SensingSubjectStorage {
+  /** intel_observations.subject_kind */
+  subjectKind: string;
+  /** intel_observations.subject_id — NULL for `unknown` / `temporary_world_object`. */
+  subjectId: string | null;
+  /** intel_observations.zone_id — REQUIRED whenever subjectId is null. */
+  zoneId: string | null;
+}
+
+/**
+ * Map a resolved subject onto the columns an observation stores it in.
+ *
+ * `place` keeps the caller's own subject kind (the intel vocabulary calls a
+ * venue subject `experience`, not `place`), because the kind is about what the
+ * subject IS to the claim system, not about how it was resolved. `event`,
+ * `temporary_world_object` and `unknown` each name themselves.
+ */
+export function subjectStorageFor(
+  ref: SensingSubjectRef,
+  opts: { placeSubjectKind?: string; zoneId?: string | null } = {},
+): SensingSubjectStorage {
+  switch (ref.kind) {
+    case "place":
+      return {
+        subjectKind: opts.placeSubjectKind ?? "experience",
+        subjectId: ref.id,
+        zoneId: opts.zoneId ?? null,
+      };
+    case "event":
+      return { subjectKind: "event", subjectId: ref.id, zoneId: opts.zoneId ?? null };
+    case "temporary_world_object":
+      return { subjectKind: "temporary_world_object", subjectId: null, zoneId: ref.zoneId };
+    case "unknown":
+      return { subjectKind: "unknown", subjectId: null, zoneId: ref.zoneId };
+  }
+}
+
+/** The subject kinds that assert NO canonical owner. Stored with a null subject_id. */
+export const UNOWNED_SUBJECT_KINDS = ["temporary_world_object", "unknown"] as const;
+
+export function isUnownedSubjectKind(kind: string): boolean {
+  return (UNOWNED_SUBJECT_KINDS as readonly string[]).includes(kind);
 }

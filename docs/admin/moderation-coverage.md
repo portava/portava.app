@@ -65,7 +65,7 @@ The requirement names four media types. Admin coverage differs for each.
 | Profile photo (avatar) | **yes** | **yes** (best-effort) | `src/routes/admin.ts:1407` route, `:1427` `storage.remove` |
 | Profile cover photo | **yes** | **yes** (best-effort) | `src/routes/admin.ts:1438` route, `:1457` `storage.remove` |
 | Postcard image / video | **yes**, but not via an admin route | **yes** | `src/routes/postcards.ts:729` route, `:766` inline admin check, `:787` `storage.remove` |
-| Highlight | **no** | n/a — no storage call at all | `src/routes/highlights.ts:470`, owner-only at `:486` |
+| Highlight | **no** | n/a — no storage call at all | `src/routes/highlights.ts:478`, owner-only at `:494` |
 
 ### Storage trace (specifically requested)
 

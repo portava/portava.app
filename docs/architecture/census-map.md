@@ -35,7 +35,7 @@
 > **3. `geo_zones` holds 0 rows in production — an independent second blocker
 > this census does not record.** M5/M67/M119 attribute Crowd Flow's death solely
 > to the absent consent table. The empty zone model kills it separately:
-> `routes/mapProjection.ts:919#no_zone_model` refuses with `no_zone_model`. *(Line repointed 2026-09-14 from 836, which is 62 lines short of the branch; the fact is unchanged.)* Populating
+> `routes/mapProjection.ts:895#no_zone_model` refuses with `no_zone_model`. *(Line repointed 2026-09-14 from 836, which is 62 lines short of the branch; the fact is unchanged.)* Populating
 > `geo_zones` is an ops action, not a migration, so applying every pending
 > migration would still leave Crowd Flow dark.
 >
@@ -348,9 +348,9 @@ client paths to `travel-buddy-standalone/` unless stated.
 | M2 | ONE persistent Map Shell; the surfaces are coordinated states, not nine tabs | C | `src/features/map/state/mapMachine.ts:1-40` — one pure reducer over three orthogonal axes (mode, overlay, camera); D3 at `:57-64` forbids a secondary mode being silently exited by a selection. |
 | M3 | Live Map / Map Home | C | `mapMachine.ts:105` `HOME_MODE = 'LIVE'`; screen at `app/map/index.tsx`. |
 | M4 | Live Place | C | `src/components/map/LivePlaceSheet.tsx`; model `src/features/map/place/livePlaceModel.ts:2`. |
-| M5 | Crowd Flow | **W** | Producer (`lib/crowdFlowProducer.ts`), gateway lane and client renderer all exist. The mode gate is `src/stores/mapStore.tsx:100#CROWD_FLOW:` — `CROWD_FLOW: inputs.crowdFlowObjectCount > 0` — and the gateway serves zero objects in production. TWO independent blockers, not one: `route_flow_contribution_consent` is absent (M67) **and** `geo_zones` holds no curated rows, which the gateway refuses on separately at `routes/mapProjection.ts:919#no_zone_model`. *(Re-read 2026-09-14: the old citation, line 98, was the §11 TRIP comment two lines above the gate, and the CORRECTION HEADER's line 836 for `no_zone_model` was 62 lines short. Both repointed and anchored; verdict unchanged.)* **Turns red when:** a production `GET /api/map/projection` response over a backfilled viewport carries at least one `objects[].kind === "crowd_flow"`. That needs an ops backfill of `geo_zones` (ops, not a migration) *and* 2218 + 2224 applied (integration owner). Either one alone leaves it W. |
+| M5 | Crowd Flow | **W** | Producer (`lib/crowdFlowProducer.ts`), gateway lane and client renderer all exist. The mode gate is `src/stores/mapStore.tsx:100#CROWD_FLOW:` — `CROWD_FLOW: inputs.crowdFlowObjectCount > 0` — and the gateway serves zero objects in production. TWO independent blockers, not one: `route_flow_contribution_consent` is absent (M67) **and** `geo_zones` holds no curated rows, which the gateway refuses on separately at `routes/mapProjection.ts:895#no_zone_model`. *(Re-read 2026-09-14: the old citation, line 98, was the §11 TRIP comment two lines above the gate, and the CORRECTION HEADER's line 836 for `no_zone_model` was 62 lines short. Both repointed and anchored; verdict unchanged.)* **Turns red when:** a production `GET /api/map/projection` response over a backfilled viewport carries at least one `objects[].kind === "crowd_flow"`. That needs an ops backfill of `geo_zones` (ops, not a migration) *and* 2218 + 2224 applied (integration owner). Either one alone leaves it W. |
 | M6 | Trip Map | C | `src/features/trips/map/tripMapSources.ts`, `tripMapModel.ts`; capability hard-true at `src/stores/mapStore.tsx:96`. |
-| M7 | Locate My Friends | **W** | Complete server (`lib/locateFriendsSession.ts`, 48 KB) and client (`src/services/locateFriends.ts`, `src/components/map/LocateFriendsPanel.tsx`). **All four storage tables are absent from production**: none of `locate_friends_sessions`, `_members`, `_positions`, `_audit` appears in `artifacts/api-server/baseline/20260907_production_tables.txt` (431 names), and all four are created by `` `artifacts/api-server/src/migrations/2219_locate_friends_sessions.sql:74#CREATE TABLE IF NOT EXISTS public.locate_friends_sessions (` ``. *(Re-read 2026-09-14: the old citation — `checkProductionDrift.ts`, lines 176-179 — was wrong twice over — those lines are `wall_telemetry_events` / `passport_telemetry_events`, and **that file does not track any `locate_friends_*` table at all**, so the ratchet is silent about this lane. The baseline table list is the artifact that actually carries the fact.)* **Turns red when:** a refreshed `baseline/*_production_tables.txt` contains the four names. Supplied by the operator with production read access, after the integration owner applies 2219. A CI-only apply does not move it — the baseline is production's. |
+| M7 | Locate My Friends | **W** | Complete server (`lib/locateFriendsSession.ts`, 48 KB) and client (`src/services/locateFriends.ts`, `src/components/map/LocateFriendsPanel.tsx`). **SUPERSEDED 2026-09-26 BY §44 — measured live, all four are now PRESENT on production (0 rows each); the blocker is now the flag `locate_friends_enabled=false`, not the schema. Kept as the record of what was true at the 2026-09-07 baseline.** All four storage tables were absent from production: none of `locate_friends_sessions`, `_members`, `_positions`, `_audit` appears in `artifacts/api-server/baseline/20260907_production_tables.txt` (431 names), and all four are created by `` `artifacts/api-server/src/migrations/2219_locate_friends_sessions.sql:74#CREATE TABLE IF NOT EXISTS public.locate_friends_sessions (` ``. *(Re-read 2026-09-14: the old citation — `checkProductionDrift.ts`, lines 176-179 — was wrong twice over — those lines are `wall_telemetry_events` / `passport_telemetry_events`, and **that file does not track any `locate_friends_*` table at all**, so the ratchet is silent about this lane. The baseline table list is the artifact that actually carries the fact.)* **Turns red when:** a refreshed `baseline/*_production_tables.txt` contains the four names. Supplied by the operator with production read access, after the integration owner applies 2219. A CI-only apply does not move it — the baseline is production's. |
 | M8 | Intent Mode | C | `src/components/map/IntentSheet.tsx:2`; opened at `app/map/index.tsx:2691`. |
 | M9 | Compass Map Recommendations | C | `src/features/map/compass/compassMapModel.ts`; capability hard-true, `src/stores/mapStore.tsx:94`. |
 | M10 | Time Machine | **W** | Producer `lib/temporalProjection.ts`, route `routes/mapProjectionTemporal.ts`, control `src/components/map/TimeMachineControl.tsx`. The capability requires the producer be reachable (`src/stores/mapStore.tsx:108#TIME_MACHINE:`), and the temporal route rides `map_projection_enabled` (`routes/mapProjectionTemporal.ts:429#map_projection_enabled`) and dies on the same `protected_zones` branch (`:575#loadProtectedZones`, answering `:583#protection_unreadable`). *(Re-read 2026-09-14: lines 105-107 were the comment above the gate and 574 a blank line; both repointed and anchored. Verdict unchanged.)* **Turns red when:** 2217 is applied to production *and* `map_projection_enabled` is TRUE there, and `GET /api/map/projection/temporal?offset=+60m` answers `enabled: true` with a non-null `forecast`. Both are integration-owner/ops acts; neither is code. |
@@ -456,10 +456,10 @@ reproduces §8's mock verbatim as the module contract.
 | M62 | Aggregate movement between places or zones | C | `lib/crowdFlowProducer.ts:2`; `produceZoneTransitions` → `deriveCrowdFlow`, zone granularity enforced by type. |
 | M63 | Never expose individual routes or imply continuous tracking | C | `lib/crowdFlowProducer.ts:497-498` — cohort is a `Set` of distinct actors across families; `lib/mapAggregation.ts:399-414` puts `crowd_flow` in `NEVER_AGGREGATED_KINDS` because it already carries its own k decision. |
 | M64 | Five flow states | C | `src/features/map/render/zoneStyle.ts:95` `FLOW_STATES = ['strong','moderate','emerging','dispersing','unusual']`. |
-| M65 | The seven declared input families | **W** | `lib/crowdFlowProducer.ts:289` `WIRED_SIGNAL_SOURCES` is **two** of seven; `:298-300` `DECLARED_BUT_UNFED_FAMILIES` and `:345` `UNFED_FAMILY_BLOCKERS` name, per family, the specific capture that must exist first. Honestly declared, but five families produce nothing. *(Re-read 2026-09-14: all four citations hold at this tree — `:289#WIRED_SIGNAL_SOURCES`, `:298#DECLARED_BUT_UNFED_FAMILIES`, `:345#UNFED_FAMILY_BLOCKERS`.)* **Turns red when:** `WIRED_SIGNAL_SOURCES` names all seven families **and** each newly-named family has a capture writing rows a producer run can observe. This is the one row in this census that no deployment unblocks: `UNFED_FAMILY_BLOCKERS` states, per family, the capture nobody has written (the entries are product work, not migrations). Moving a family into `WIRED_SIGNAL_SOURCES` without its capture would turn this row green while producing nothing — so the evidence required is a producer run observing that family, not a diff of the constant. |
+| M65 | The seven declared input families | **W** | `lib/crowdFlowProducer.ts:290` `WIRED_SIGNAL_SOURCES` is **two** of seven; `:298-300` `DECLARED_BUT_UNFED_FAMILIES` and `:346` `UNFED_FAMILY_BLOCKERS` name, per family, the specific capture that must exist first. Honestly declared, but five families produce nothing. *(Re-read 2026-09-14: all four citations hold at this tree — `:290#WIRED_SIGNAL_SOURCES`, `:299#DECLARED_BUT_UNFED_FAMILIES`, `:346#UNFED_FAMILY_BLOCKERS`.)* **Turns red when:** `WIRED_SIGNAL_SOURCES` names all seven families **and** each newly-named family has a capture writing rows a producer run can observe. This is the one row in this census that no deployment unblocks: `UNFED_FAMILY_BLOCKERS` states, per family, the capture nobody has written (the entries are product work, not migrations). Moving a family into `WIRED_SIGNAL_SOURCES` without its capture would turn this row green while producing nothing — so the evidence required is a producer run observing that family, not a diff of the constant. |
 | M66 | Minimum cohort density | C | `lib/mapAggregation.ts:351` `MIN_ZONE_COHORT = PRIVACY_THRESHOLD_V1.minUniqueActors`. |
-| M67 | Multiple signal families required | **W** | The gate is right — `lib/crowdFlowProducer.ts:497-498` requires ≥ `MIN_SIGNAL_FAMILIES` *observed*, and refuses before it reads (`:914`). But the second family is the accepted-plan hop lane, whose consent record `route_flow_contribution_consent` (`lib/routeHopSignal.ts:115,587`) is **absent from production**: `` `artifacts/api-server/src/scripts/checkProductionDrift.ts:343#route_flow_contribution_consent` `` classifies it unapplied, and the name is not in `baseline/20260907_production_tables.txt`. *(Re-read 2026-09-14: lines 180-183 were `passport_telemetry_events`; repointed and anchored.)* One family in production ⇒ the producer permanently refuses. **Turns red when:** 2224 is applied to production and `observedSignalFamilies()` returns ≥ `MIN_SIGNAL_FAMILIES` for a real viewport. Integration owner applies; the operator's refreshed baseline is the evidence. |
-| M68 | Freshness checks | C | `lib/crowdFlowProducer.ts:509` `SIGNAL_MAX_AGE_MINUTES`; `:653` applied per signal. |
+| M67 | Multiple signal families required | **W** | The gate is right — `lib/crowdFlowProducer.ts:497-498` requires ≥ `MIN_SIGNAL_FAMILIES` *observed*, and refuses before it reads (`:929`). But the second family is the accepted-plan hop lane, whose consent record `route_flow_contribution_consent` (`lib/routeHopSignal.ts:115,587`) is **absent from production**: `` `artifacts/api-server/src/scripts/checkProductionDrift.ts:389#route_flow_contribution_consent` `` classifies it unapplied, and the name is not in `baseline/20260907_production_tables.txt`. *(Re-read 2026-09-14: lines 180-183 were `passport_telemetry_events`; repointed and anchored.)* One family in production ⇒ the producer permanently refuses. **Turns red when:** 2224 is applied to production and `observedSignalFamilies()` returns ≥ `MIN_SIGNAL_FAMILIES` for a real viewport. Integration owner applies; the operator's refreshed baseline is the evidence. |
+| M68 | Freshness checks | C | `lib/crowdFlowProducer.ts:510` `SIGNAL_MAX_AGE_MINUTES`; `:653` applied per signal. |
 | M69 | Privacy gates | C | `lib/crowdFlowProducer.ts:99` per-family consent; migration `2218_crowd_flow.sql:59` states the four gates as the flag's own description. |
 | M70 | Observed movement and inferred cause separately represented | C | `lib/crowdFlowProducer.ts:273-277` `OBSERVED_SIGNAL_FAMILIES` vs `CAUSE_ONLY_SIGNAL_FAMILIES`; `:817` `MAX_INFERRED_CAUSE_CONFIDENCE = 'provisional'` — a cause can never be asserted as strongly as an observation. |
 
@@ -501,7 +501,7 @@ it can run in production: all four tables are absent** (`scripts/checkProduction
 | M92 | Opt-in only | **W** | Structurally perfect and unreachable: `2219_locate_friends_sessions.sql:163#unrepresentable` — *"opted_in_at and consent_source are NOT NULL, so a membership without a recorded consent act is unrepresentable"*. Table absent. |
 | M93 | Group-scoped | **W** | Same migration `2219_locate_friends_sessions.sql:163#unrepresentable`; `src/stores/mapStore.tsx:101#LOCATE_FRIENDS:` refuses the mode without a scope *(repointed 2026-09-14 from lines 66-70, the prop's doc comment)*. Table absent — see M7. |
 | M94 | Temporary and auto-expiring | **W** | `2219_locate_friends_sessions.sql:83#expires_at` is NOT NULL with no default and `:105#interval` CHECK-bounds it to 12 h; expiry is re-enforced on every read so a stalled sweep cannot serve an expired session (`:118#CHECK-bounded`). `src/features/map/presence/locateFriends.ts:490#MAX_SESSION_MS`. Table absent — see M7. |
-| M95 | No public friend tracking | C ⌀ | `lib/locateFriendsSession.ts:105` — *"no `public` member, and adding one would be the §37 non-goal in a single [line]"*; migration `2219:310` "No public read path". Holds vacuously in production, where there is no path at all. |
+| M95 | No public friend tracking | C ⌀ | `lib/locateFriendsSession.ts:110` — *"no `public` member, and adding one would be the §37 non-goal in a single [line]"*; migration `2219:310` "No public read path". Holds vacuously in production, where there is no path at all. |
 | M96 | UI states: Nearby ~40-80 m, Last seen 3m ago, Checkpoint: Food Court | C | `locateFriends.ts:103-116` `PROXIMITY_BUCKETS` + `PROXIMITY_BUCKET_RANGE`; `:435` `APPROXIMATE_DISTANCE_LADDER = [0,40,80,150,300,600,1200]` — the spec's own "~40-80m". Pure client formatting. |
 
 ### §13 Intent Mode (6)
@@ -581,7 +581,7 @@ it can run in production: all four tables are absent** (`scripts/checkProduction
 | M135 | Map Objects as the wire type | C | `lib/mapObjects.ts`; mirrored client-side, drift-guarded. |
 | M136 | Map Ranking | C | `lib/mapProjection.ts:1217#rankObjects` — distance is a **tie-break**, not the sort key, because §5 makes safety and navigation precede popularity. *(Repointed 2026-09-14 from line 1166, 51 lines short.)* |
 | M137 | Privacy / Eligibility stage | C | `routes/mapProjection.ts:29-36` — the block set is resolved **once**, fail-closed, and handed to every people-bearing source so the request cannot hold two answers to "who is blocked"; `lib/mapObjects.ts:426-434` `isServable` drops `privacyClass:'none'` at the boundary whatever produced it. |
-| M138 | Viewport Aggregation | C | `lib/mapAggregation.ts:2`; `:216-238` only wide bands aggregate; `:414` `NEVER_AGGREGATED_KINDS`. |
+| M138 | Viewport Aggregation | C | `lib/mapAggregation.ts:2`; `:216-238` only wide bands aggregate; `lib/mapAggregation.ts:430#export const NEVER_AGGREGATED_KINDS` `NEVER_AGGREGATED_KINDS`. |
 | M139 | The mobile client must not independently reconstruct Portava intelligence rules; the service is the "Map Intelligence Gateway" | **W** | The name and the guard are real — `src/test/gatewayBypassGuard.test.ts:32#READERS` enumerates each privacy-complete reader with every file allowed to call it and a stated reason, and the test fails on any caller absent from that list *(repointed 2026-09-14 from lines 28-33, the doc comment above it)*. But with the flag off, `clientProjection.ts` **is** a second, on-device reconstruction, and it is the one in service. **Turns red when:** M133 turns red — the same flag flip, in the same order. The guard is not the blocker and never was; it holds today. |
 
 ### §20 Data Ownership (13)
@@ -642,7 +642,7 @@ open**. These verdicts describe code that is correct and would run.
 
 *Liveness: `intel_observations` exists in production and holds zero rows with
 `intel_capture_quick_signal` TRUE. The route is also flag-gated —
-`routes/mapObservations.ts:741` `map_contributions_enabled`.*
+`routes/mapObservations.ts:738` `map_contributions_enabled`.*
 
 ### §23 Presence and Privacy (8)
 
@@ -661,7 +661,7 @@ open**. These verdicts describe code that is correct and would run.
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| M179 | Suppress sensitive locations **before** data reaches the client | **W** | The gate is written and cannot fire. `lib/protectedLocations.ts:2#protectedLocations`, `:860#applyProtection` is the last step before serialization, ordered correctly at `routes/mapProjection.ts` and (after PR #393's fix) in the temporal route. But `protected_zones` is **absent from production** (`` `artifacts/api-server/src/scripts/checkProductionDrift.ts:269#protected_zones` ``, and the name is not in `baseline/20260907_production_tables.txt`), so the read errors, `routes/mapProjection.ts:227#loadProtectedZones` returns null and the route answers the refusal envelope at `:1047#protection_unreadable`. *(Re-read 2026-09-14: three of these four citations were wrong — line 849 is a field inside an interface and `applyProtection` is 11 lines below it; drift's `protected_zones` entry is at line 157, not 110; and lines 964-979 are the §19 ordering block, not the envelope, which begins 60 lines later.)* The production behaviour is *refuse everything*, not *suppress sensitive locations* — safe, and not the requirement. **Turns red when:** 2217 is applied to production, a refreshed baseline lists `protected_zones`, and a projection response over a viewport containing a curated zone carries `protection` non-null with at least one object coarsened or withheld. Note the second half: applying the table is necessary and NOT sufficient — an empty `protected_zones` makes `applyProtection([], …)` an identity pass (`routes/mapProjection.ts:195#FAIL-CLOSED`), which suppresses nothing. A curated zone set is an ops act after the migration. |
+| M179 | Suppress sensitive locations **before** data reaches the client | **W** | The gate is written and cannot fire. `lib/protectedLocations.ts:2#protectedLocations`, `:860#applyProtection` is the last step before serialization, ordered correctly at `routes/mapProjection.ts` and (after PR #393's fix) in the temporal route. But `protected_zones` is **absent from production** (`` `artifacts/api-server/src/scripts/checkProductionDrift.ts:315#protected_zones` ``, and the name is not in `baseline/20260907_production_tables.txt`), so the read errors, `routes/mapProjection.ts:235#loadProtectedZones` returns null and the route answers the refusal envelope at `:1023#protection_unreadable`. *(Re-read 2026-09-14: three of these four citations were wrong — line 849 is a field inside an interface and `applyProtection` is 11 lines below it; drift's `protected_zones` entry is at line 157, not 110; and lines 964-979 are the §19 ordering block, not the envelope, which begins 60 lines later.)* The production behaviour is *refuse everything*, not *suppress sensitive locations* — safe, and not the requirement. **Turns red when:** 2217 is applied to production, a refreshed baseline lists `protected_zones`, and a projection response over a viewport containing a curated zone carries `protection` non-null with at least one object coarsened or withheld. Note the second half: applying the table is necessary and NOT sufficient — an empty `protected_zones` makes `applyProtection([], …)` an identity pass (`routes/mapProjection.ts:196#FAIL-CLOSED`), which suppresses nothing. A curated zone set is an ops act after the migration. |
 | M180 | The protected categories (residences, medical, shelters, sensitive government, policy-defined) | C | `lib/protectedLocations.ts:81-88` `PROTECTED_CATEGORIES`; migration `2217:66-72` CHECK-constrains the same five; `:102` `policy_ref NOT NULL` so *"a protected location with no recorded policy"* is unrepresentable; `:135` `'allow'` is deliberately not storable — "a protection row that permits is a hole". |
 | M181 | Safety and access warnings take precedence over activity ranking | C | `lib/mapObjects.ts:284` `safety: 120`; `lib/protectedLocations.ts:210` `PROTECTION_EXEMPT_KINDS = ['safety_notice']` — a hazard notice is never coarsened away. |
 | M182 | The public map never receives more location detail than the viewer is authorized to see | C | `lib/protectedLocations.ts:720#coarsenForZone`, `lib/protectedLocations.ts:798#COARSENED_PAYLOAD_KEYS`; `lib/mapObjects.ts:221-226#verified_firsthand` documents that the strip must be able to delete `sourceClass` because it *"publishes that someone was here"*. *(These three repointed 2026-09-14: line 793 was 5 lines short, and lines 376-381 sat 155 lines past the passage they quote.)* Also `lib/protectedLocations.ts:301#COARSEN_UNSAFE_KINDS` and `:325#RELATIONSHIP_GATED_KINDS` — REPOINTED 2026-09-14 by `check:citation-symbols`: the LINE NUMBERS were right and the FILE was wrong. Both constants live in `protectedLocations.ts`, but `lib/mapObjects.ts:376-381` was cited between them and the opening citation, and a bare `:301` inherits the most recently named file. Anchored so the next shift fails loudly. |
@@ -700,7 +700,7 @@ The persistent rail is M17. The seven long-press actions:
 | M198 | Hidden Gems | C | `mapSearchModel.ts:47`; `searchAdapter.ts:73`. |
 | M199 | Areas | C | `mapSearchModel.ts:48`; `searchAdapter.ts:79-80` (`cities`, `countries`). |
 | M200 | Hashtags | C | `mapSearchModel.ts:49`; `searchAdapter.ts:74`. |
-| M201 | Saved items | C | **Moved W→C 2026-09-13.** The row's finding was right: the client carried the whole branch (`mapSearchModel.ts:50`, `:144-148`, `:64`) and the server had no type that could reach it. It has one now — `` `artifacts/api-server/src/routes/discoverySearch.ts:139#saved` `` is wire vocabulary, produced by `` `artifacts/api-server/src/routes/discoverySearch.ts:1328#async function searchSaved(` `` over the two tables saves actually land in (`wishlist_places` + `discovery_place_saves`, as `savedPlaceProducer` reads them after #446), dispatched at `` `artifacts/api-server/src/routes/discoverySearch.ts:2390#case "saved":` ``. The adapter's `saved` key moved out of the tolerated-alias block into the wire table (`` `travel-buddy-standalone/src/features/map/search/searchAdapter.ts:84#saved:` ``) and `savedKind` is now read from the wire rather than hard-coded (`` `travel-buddy-standalone/src/features/map/search/searchAdapter.ts:261#export function savedKindFromMetadata` ``). The map asks for it: `` `travel-buddy-standalone/src/components/map/MapSearchSheet.tsx:182#searchUnified(q,` ``. Executed: `` `artifacts/api-server/src/test/mapSearchSavedItems.test.ts:168#it("dispatchSearch has a` `` (15 cases; deleting the dispatch case reddens 9, dropping either save table reddens 6). **Not in the `all` fan-out** — see the owner decision in §40. |
+| M201 | Saved items | C | **Moved W→C 2026-09-13.** The row's finding was right: the client carried the whole branch (`mapSearchModel.ts:50`, `:144-148`, `:64`) and the server had no type that could reach it. It has one now — `` `artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:101#saved` `` is wire vocabulary, produced by `` `artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:1290#async function searchSaved(` `` over the two tables saves actually land in (`wishlist_places` + `discovery_place_saves`, as `savedPlaceProducer` reads them after #446), dispatched at `` `artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:2352#case "saved":` ``. The adapter's `saved` key moved out of the tolerated-alias block into the wire table (`` `travel-buddy-standalone/src/features/map/search/searchAdapter.ts:84#saved:` ``) and `savedKind` is now read from the wire rather than hard-coded (`` `travel-buddy-standalone/src/features/map/search/searchAdapter.ts:261#export function savedKindFromMetadata` ``). The map asks for it: `` `travel-buddy-standalone/src/components/map/MapSearchSheet.tsx:187#requestMapSearchPage(q,` (repointed by census-discovery §80.8: the sheet's two `searchUnified` calls became one gateway request) ``. Executed: `` `artifacts/api-server/src/test/mapSearchSavedItems.test.ts:168#it("dispatchSearch has a` `` (15 cases; deleting the dispatch case reddens 9, dropping either save table reddens 6). **Not in the `all` fan-out** — see the owner decision in §40. |
 | M202 | Geographic results centre or frame the relevant map object | C | `mapSearchModel.ts:218` — bounds used where known; `:265-267` a saved area frames as `FOCUS_AREA`, a saved trip as `FOCUS_TRIP`; `:307-309` a saved item inherits the geography of what it saved. `searchAdapter.ts:19` refuses to fall back to the user's position because that "pretends the result is where they are". |
 
 ### §28 Offline and Degraded Mode (8)
@@ -754,7 +754,7 @@ not exist under those names**; every responsibility they name has a home.
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| M236 | Viewport queries | C | `lib/mapProjection.ts:1175#parseBbox` — rejects malformed, out-of-range and antimeridian-crossing viewports rather than guessing; `lib/mapAggregation.ts:105#bboxContains`. *(`parseBbox` repointed 2026-09-14 from line 1124; `bboxContains` was already right and is now anchored.)* |
+| M236 | Viewport queries | C | `lib/mapProjection.ts:1175#parseBbox` — rejects malformed, out-of-range and antimeridian-crossing viewports rather than guessing; `lib/mapAggregation.ts:121#bboxContains`. *(`parseBbox` repointed 2026-09-14 from line 1124; `bboxContains` was already right and is now anchored.)* |
 | M237 | Server aggregation | C | `lib/mapAggregation.ts:2,216-238,272-335`. |
 | M238 | Client clustering | C | `src/features/map/render/collision.ts:474-645`. |
 | M239 | Render thresholds | C | `collision.ts:227-236` `ZOOM_BAND_MIN` → band; `:276-293` `VISIBLE_BY_BAND` built cumulatively so "a kind visible at a wider band is always visible closer in". |
@@ -870,7 +870,7 @@ violation unrepresentable or refuses it. All nine clear that bar.
 | M284 | No public real-time people tracker | C | `lib/locateFriendsSession.ts:4,105` — *"§37 names two things this feature is one careless decision away from becoming"*; there is no `public` member and no public read path (`migrations/2219:310`). |
 | M285 | No permanent exact-location sharing | C | `longPress.ts:323` `SHARE_MAX_TTL_MS = 1 h`; `presenceLadder.ts:529-565` the four-stage decay; `2219:118` the 12-hour CHECK; `locateFriendsSession.ts:874,943` names the exact failure mode it is preventing. |
 | M286 | Not a place-rating directory | C | `lib/mapObjects.ts:363-400` — `MapObject` has **no rating axis at all**; §7's four axes are activity, trend, confidence and freshness. |
-| M287 | No screen full of unranked POI pins | C | `lib/mapProjection.ts:1217#rankObjects`; `collision.ts:634#resolveCollisions`; `lib/mapAggregation.ts:219#AGGREGATING_BANDS` — only `world` and `city` aggregate, so wide bands collapse to cells. *(`rankObjects` and `resolveCollisions` repointed 2026-09-14.)* |
+| M287 | No screen full of unranked POI pins | C | `lib/mapProjection.ts:1217#rankObjects`; `collision.ts:634#resolveCollisions`; `lib/mapAggregation.ts:235#AGGREGATING_BANDS` — only `world` and `city` aggregate, so wide bands collapse to cells. *(`rankObjects` and `resolveCollisions` repointed 2026-09-14.)* |
 | M288 | Compass must not invent live conditions | C | `compassMapModel.ts:8,191`; `lib/mapProjection.ts:675#Never upgrades` — *"if the claims are empty the object is returned untouched"* — enforced in `lib/mapProjection.ts:696#applyLiveClaims`. *(Repointed 2026-09-14 from line 667.)* |
 | M289 | Predictions must not look like observations | C | `lib/mapObjects.ts:112` `FORECAST_KINDS` + `isForecastKind`; `timeMachine.ts:30-39` the discriminated union; `zoneStyle.ts:22-25,183` dashed **and** dimmed; `lib/mapProjectPlace.ts:202` cites §37 twice. |
 | M290 | Paid businesses must not buy factual confidence | C | `lib/mapProjection.ts:518` `sourceCountBucket` nullable and load-bearing; `lib/mapObjects.ts:199-217` publishes the source **class** as a value so a renderer never has to regex English to learn a claim was sponsored; `routes/mapObservations.ts:70` rewards and observations do not join. |
@@ -1159,7 +1159,7 @@ both are work to commission.
 ### An owner decision this pass surfaced and did NOT take
 
 `saved` is deliberately **absent from the server's `type=all` fan-out**
-(`` `artifacts/api-server/src/routes/discoverySearch.ts:2421#// 17 of the 18 non-"all" types run in parallel at FAN_LIMIT items each.` ``).
+(`` `artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:2383#// 17 of the 18 non-"all" types run in parallel at FAN_LIMIT items each.` ``).
 It is the only viewer-scoped search type — a person's own saves, not a public
 corpus — and that fan-out feeds the app's ONE global search as well as the
 map's. Folding a private, always-matching bucket into "All" would change what
@@ -1423,9 +1423,9 @@ budget needs a device and a warm database, but the property the budget RESTS on
 does not.
 
 `routes/mapProjection.ts` carries three module-level read-through caches with
-30 s TTLs — `protected_zones` at `routes/mapProjection.ts:228#_zoneCache`, flow
-`geo_zones` at `routes/mapProjection.ts:282#_flowZoneCache`, and Phase 7's city
-model at `routes/mapProjection.ts:317#_cityZoneCache`. Each exports a
+30 s TTLs — `protected_zones` at `routes/mapProjection.ts:237#_clearProtectedZoneCache`, flow
+`geo_zones` at `routes/mapProjection.ts:258#_flowZoneCache`, and Phase 7's city
+model at `routes/mapProjection.ts:293#_cityZoneCache`. Each exports a
 `_clear*Cache()` hook, and **eleven map test files import one.** Every single one
 uses the hook to DEFEAT the cache so fixtures cannot leak between cases. Not one
 asserted that a cache hit avoids the read. The only thing this corpus pinned
@@ -1449,7 +1449,7 @@ unreadable `geo_zones` to refuse with `no_zone_model`; the route answers
 empty one are different operator problems, and the refusal says which. That is
 better than this pass assumed and is now pinned. And `loadProtectedZones` reads
 `Date.now()` itself while `loadFlowZones` takes the handler's injected `nowMs`,
-even though `routes/mapProjection.ts:486#ONE clock read` states the handler makes
+even though `routes/mapProjection.ts:462#ONE clock read` states the handler makes
 exactly one clock read. The invariant is stated and not held. It is harmless
 today — both are TTL comparisons — and it is not a Map-lane fix to smuggle into
 an evidence pass, so it is recorded here and nowhere else.
@@ -1547,7 +1547,7 @@ sub-property closed; the row's own measurement still needs a running server.
   re-measure the database. §41.7 stands unchanged.
 - **`geo_zones` row count.** The CORRECTION HEADER's "0 rows" is an ops
   observation with no artifact in this tree. The empty-zone refusal path is real
-  and now correctly cited (`routes/mapProjection.ts:919#no_zone_model`); whether
+  and now correctly cited (`routes/mapProjection.ts:895#no_zone_model`); whether
   it fires in production today is not checkable from here.
 - **Flag rows.** `map_projection_enabled`, `map_telemetry_enabled` and
   `map_world_intelligence_enabled` are rows, not tables, so a table list cannot
@@ -1805,8 +1805,8 @@ that inherit it are C.
 
 They are not being graded C, because the criterion is incomplete. A third gate
 exists that no row in this census names: `locate_friends_enabled`
-(`artifacts/api-server/src/lib/locateFriendsSession.ts:99#LOCATE_FRIENDS_FLAG`,
-also read by `services/passport/PassportProjectionService.ts:1793`). It is present
+(`artifacts/api-server/src/lib/locateFriendsSession.ts:112#LOCATE_FRIENDS_FLAG`,
+also read by `services/passport/PassportProjectionService.ts:1878#const LOCATE_FRIENDS_CAPABILITY_FLAG = "locate_friends_enabled"`). It is present
 in production and **FALSE**.
 
 So the true state of §12 is **deployed and switched off** — which is a different
@@ -1854,3 +1854,926 @@ It re-establishes the state of the 56 not-correct rows and nothing else. No othe
 row was re-audited, no verdict letter moves, and the tally below is unchanged from
 §42.6 — deliberately. Re-measuring a blocker is not the same as passing an
 acceptance criterion, and this section is the former.
+
+---
+
+## §44 — 2026-09-26: M7's blocker CHANGED CLASS, and the row still does not move
+
+**Re-measured live against production (`ajrurzioarfkagpuxfnb`, read-only), not
+acknowledged.** `check:census-freshness` named five counted files changed since
+`1fe72289b` and not covered: `lib/crowdFlowProducer.ts`,
+`lib/intelEvidenceCapture.ts`, `lib/locateFriendsSession.ts` (+108),
+`lib/mapAggregation.ts` (+215) and `routes/mapObservations.ts` (+288/−155).
+
+**NO VERDICT MOVES.** One row's stated evidence is now false and is replaced.
+
+### §44.1 M7 — the four tables are NO LONGER absent from production
+
+M7 reads: *"**All four storage tables are absent from production**: none of
+`locate_friends_sessions`, `_members`, `_positions`, `_audit` appears in
+`baseline/20260907_production_tables.txt`"*. That baseline is dated 2026-09-07.
+Measured against the live database today:
+
+| Object | 2026-09-26, production |
+|---|---|
+| `locate_friends_sessions` | **present**, 0 rows |
+| `locate_friends_members` | **present**, 0 rows |
+| `locate_friends_positions` | **present**, 0 rows |
+| `locate_friends_audit` | **present**, 0 rows |
+| `locate_friends_enabled` | **present, FALSE** |
+
+**2219 has been applied to production since that baseline was taken.** The
+schema blocker M7 rests on is gone.
+
+**M7 stays `W`** — and for a blocker of a different kind: the feature is
+flag-gated and the flag is off. That distinction is the whole point of
+re-measuring rather than acknowledging. "The tables do not exist" and "the
+switch is off" are the same verdict and completely different work: the first
+needs a migration applied and sanctioned, the second is one owner decision away.
+A plan built on the old sentence would have budgeted for the wrong thing.
+
+Note also that the row's evidence is a **baseline text file**, which ages
+silently — nothing fails when production moves past it. §43 read the production
+blockers live for exactly this reason; this section extends that to M7.
+
+### §44.2 M5, M65, M67 — re-executed, all three hold
+
+| Row | Test | Result today |
+|---|---|---|
+| M5 | `geo_zones` holds no curated rows | table **present**, **0 rows** — holds |
+| M5 / M67 | `route_flow_contribution_consent` absent from production | **absent** — holds |
+| M65 | `WIRED_SIGNAL_SOURCES` is two of seven | still exactly `next_stop_contribution`, `accepted_plan` — holds |
+
+M5, M65 and M67 all stay `W`, on conditions re-measured today rather than
+carried forward.
+
+`crowdFlowProducer.ts`'s own header remains the honest statement and was
+re-read: *"RUNTIME EFFECT TODAY: STILL NONE IN PRACTICE"*, with four
+independent blockers, none of them in that file. Two observed families now meet
+`MIN_SIGNAL_FAMILIES`, so the producer *could* emit — which changes nothing a
+user can see, and the file says so itself.
+
+### §44.3 What the other diffs are
+
+`mapAggregation.ts` (+215) gains the presence gate —
+`PRIVACY_CLASS_AS_PRESENCE_PRECISION`, `presenceClassUnder`,
+`gatePresenceObject`. That is the Sensing lane's §52 work landing in a file this
+census counts; it is graded in census-sensing, not here.
+`intelEvidenceCapture.ts` (+30) resolves contributor identities through 3310's
+bridge, the same post-3002 correction census-media §18.3 records.
+`routes/mapObservations.ts` is the §22 zone route taking its subject from the
+resolver.
+
+### §44.4 MOVES NOTHING
+
+Totals unchanged. Four rows re-tested against the live database; three hold on
+their original evidence, one holds on replaced evidence and a blocker that has
+changed class.
+
+## Cited, not graded (check:census-scope-coverage)
+
+- NOT-GRADED: artifacts/api-server/src/test/censusIntegrityQualifiedVerdicts.test.ts — the suite of check:census-integrity's verdict tokeniser, cited in §40's "four rows became countable" note, which says of itself that it built nothing and closed no gap: it moved the recount to the numbers this document already stated, and no row cites it
+- NOT-GRADED: artifacts/api-server/src/services/passport/PassportProjectionService.ts — census-passport's subject, cited in §43.2 only as a second reader of the locate_friends_enabled flag; the hold on M7 and the rows that inherit it rests on that flag being FALSE in production and on lib/locateFriendsSession.ts, which this census watches
+
+---
+
+## §45 — 2026-09-27: the §22 evidence row named its contributor's account, and now does not (lane X)
+
+Branch `lane-x-evidence`, cut from `claude/sensing-completion-20260925` at
+`e9e0b0404`. Found by lane I and recorded, not fixed, in census-media §35.7
+item 1 (branch `lane-i-intel`, unmerged at the time of writing).
+
+**BUILT ON BRANCH IS NOT MERGED. MERGED IS NOT DEPLOYED. DEPLOYED IS NOT FLAG
+ENABLED. FLAG ENABLED IS NOT PRODUCTION REALIZED.** No database was read or
+written, no flag was touched, and the two migrations below are applied to no
+database.
+
+**One row is re-evidenced and none moves.** M154 stays C (§45.6).
+
+### §45.1 The defect, measured on the base
+
+- **What was stored.** The ownership proof returned the key it proved,
+  `` `artifacts/api-server/src/lib/intelEvidenceCapture.ts:183#return { ok: true, reference:` ``,
+  and the row stored that value as `reference`
+  (`` `artifacts/api-server/src/lib/intelEvidenceCapture.ts:283#reference: resolved.reference,` ``,
+  unchanged in position).
+- **What the key contains.** Every key the upload route mints starts with the
+  uploader's account id: `` `artifacts/api-server/src/routes/posts.ts:210#const basePath =` ``.
+  The ownership proof depends on exactly that segment.
+- **What 3002 promised about this table.** Its contributor id is a rotating
+  token, `` `artifacts/api-server/src/migrations/3002_intel_contribution_identity.sql:387#COMMENT ON COLUMN public.intel_evidence.actor_id IS` ``.
+  3002 relabels `actor_id` on existing rows and nothing else:
+  `` `artifacts/api-server/src/migrations/3002_intel_contribution_identity.sql:424#'UPDATE public.%I SET actor_id = public.intel_contributor_token(actor_id, now()) WHERE actor_id IS NOT NULL', t);` ``.
+- **So, from 3002 on,** reading one evidence row gave the account, then the
+  observation it supports, then that account's token for that week, and so
+  every other observation stored under that token. No join and no function
+  call was needed.
+- **The gates, both verified on this tree.** The route refuses first on
+  `` `artifacts/api-server/src/routes/mapObservations.ts:738#if (!(await isFlagEnabled(sc, "map_contributions_enabled"))) return reject("feature_disabled");` ``.
+  The capture then refuses on
+  `` `artifacts/api-server/src/lib/intelEvidenceCapture.ts:205#if (!(await isFlagEnabled(sc, "intel_capture_quick_signal"))) return reject("disabled");` ``
+  and on consent,
+  `` `artifacts/api-server/src/lib/intelEvidenceCapture.ts:210#if (!(await hasValidIntelConsent(sc, actorId))) return reject("consent_required");` ``.
+  Recorded production facts: `map_contributions_enabled` has no row (read
+  2026-09-21, `docs/ops/map-completion-checkpoint.md`), so it reads false.
+  `intel_capture_quick_signal` is TRUE (read 2026-09-26,
+  `docs/sensing-contributor-identity-cutover-runbook.md` §3). The path is dark
+  in production because of the first gate alone.
+
+Reading every reader of the column found the same defect twice more:
+
+1. **The media seam's writer** (`lib/media/mediaEvidenceLink.ts`, no
+   production caller, behind `media_evidence_enabled`) mirrored the asset's
+   storage path into `reference`. That path also starts with the owner's
+   account id.
+2. **The only production reader of `reference`, account deletion's
+   `collect_intel_evidence_paths`,** read the rows with
+   `.eq("actor_id", userId)`. From 3002 on that matches no row. So an erased
+   account's evidence photos would have stayed in the bucket, with the step
+   reporting success and a count of 0.
+
+### §45.2 Why the reference is not `media_assets.id`
+
+The task named `media_assets.id` as the preferred reference, if the asset
+exists at capture time. It is refused on both counts:
+
+- **It may not exist.** The upload route writes the canonical row
+  fire-and-forget, `` `artifacts/api-server/src/routes/posts.ts:257#void recordMediaAsset(sc, {` ``,
+  and only while `media_canonical_enabled` is on.
+- **It is not opaque.** `media_assets.owner_user_id` is one join away for any
+  reader of this table. The byte gate itself reads it
+  (`` `artifacts/api-server/src/lib/mediaAccess.ts:397#if ((asset as any)?.owner_user_id) {` ``).
+  That is the same re-identification, derivable instead of direct.
+
+### §45.3 What was built
+
+**A. The sealed reference.** Gate 5 now proves the key as before and then seals
+it: `` `artifacts/api-server/src/lib/intelEvidenceCapture.ts:224#const resolved = resolveAndSealOwnedMediaReference(` ``.
+The stored value is `ievr1.` followed by base64url(iv, ciphertext, tag):
+
+- The key is zero-padded to a multiple of 64 bytes and encrypted with AES-256-GCM
+  (`` `artifacts/api-server/src/lib/intelEvidenceCapture.ts:439#export function sealEvidenceReference(` ``).
+- The encryption key is derived from `INTEL_EVIDENCE_REFERENCE_KEY`, a server
+  secret that is not in the database. It has no fallback, and a value shorter
+  than 32 characters is refused
+  (`` `artifacts/api-server/src/lib/intelEvidenceCapture.ts:401#const secret = process.env.INTEL_EVIDENCE_REFERENCE_KEY;` ``).
+- The observation id is the additional authenticated data, and it also enters
+  the synthetic IV
+  (`` `artifacts/api-server/src/lib/intelEvidenceCapture.ts:412#function referenceAad(observationId: string): Buffer {` ``).
+
+What that gives, each property pinned by a test in §45.7:
+
+- **No account id, in any substring or encoding.**
+- **A double-tap still dedupes.** The same observation and object always
+  produce the same value, so 2223's unique index works unchanged.
+- **One photo on two observations gives two unrelated values.** A value
+  derived from the key alone would have linked the weekly tokens 3002 keeps
+  apart.
+- **A reference moved onto another row does not open.**
+- **Without the key, the capture refuses and stores nothing.** The refusal is
+  `reference_key_unavailable`, which the route maps to 503
+  `server_not_configured`
+  (`` `artifacts/api-server/src/routes/mapObservations.ts:595#reference_key_unavailable: "server_not_configured"` ``).
+  It is decided before any identity or observation read, so it tells the
+  caller nothing about which observation ids exist.
+
+Every existing gate is unchanged and still comes first: both flags, consent,
+the observed-at clamp, the ownership proof, the owned-observation and subject
+check, and retention. One gate was added after consent, Gate 2b (§45.5).
+
+**B. The contributor's reader, through the byte gate.**
+`` `artifacts/api-server/src/lib/intelEvidenceCapture.ts:567#export async function resolveEvidenceMediaForContributor(` ``
+maps an evidence row back to its object. It applies two authorizations in
+order:
+
+1. **The row must be the viewer's own.** Its `actor_id` must be one of the
+   values 3310's bridge derives from the viewer's account
+   (`` `artifacts/api-server/src/lib/intelEvidenceCapture.ts:585#if (!row || !row.actor_id || !new Set(identities.identities).has(String(row.actor_id))) {` ``).
+2. **The byte gate must allow the object**
+   (`` `artifacts/api-server/src/lib/intelEvidenceCapture.ts:603#if (!(await authorizeMediaAccess(sc, viewerId, ref.bucket, ref.path))) {` ``).
+
+The byte gate alone is not enough. For an avatar on a public profile, or a
+photo that is also a public post, it serves the bytes to a stranger. Telling
+that stranger which observation the photo backs would re-identify the
+contributor. A missing row and another person's row get the same answer.
+
+No route calls this reader. Serving evidence to anyone but its contributor is
+still the moderation and visibility decision the module reserves, and lane I's
+MD65 Question 5.
+
+**C. Account deletion finds the bytes again.** The collection step now calls
+`` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:669#collectOwnEvidenceObjectKeys(sc, userId, readAll)` ``.
+That function reads the rows under every identity the account's rows may carry
+(`` `artifacts/api-server/src/lib/intelEvidenceCapture.ts:642#for (const identity of identities.identities) {` ``)
+and opens each reference.
+
+- An opened key still passes the service's own guard: an allowed bucket, no
+  `..`, and a path owner equal to the account being erased.
+- A pre-seal plaintext row is still collected, so a legacy row's bytes are not
+  orphaned.
+- A reference that does not open fails the step, and the receipt carries the
+  warning:
+  `` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:680#if (unopenable > 0) throw new Error(` ``.
+
+The edit is line-neutral. Every citation into the file below line 682 still
+lands on its line.
+
+**D. The seam writer stores no key:**
+`` `artifacts/api-server/src/lib/media/mediaEvidenceLink.ts:154#reference: null,` ``.
+Nothing reads that column for seam rows. The link is `media_asset_id`, and
+the bytes go at deletion through `media_assets`.
+
+**E. Only one module may read `reference`.** The module that seals the value
+is the only one that opens it. A new test scans all of `src/` outside tests
+and migrations, not only `routes/` and `lib/`, and fails on any other file that
+selects `reference` from `intel_evidence`. The old rule never saw
+`services/`, which is why account deletion's parsing reader went unnoticed.
+
+**F. Operator surface.**
+- `INTEL_EVIDENCE_REFERENCE_KEY` is added to the optional boot keys in
+  `lib/envValidation.ts`, so an unset key produces a named warning, and to
+  `artifacts/api-server/.env.example`.
+- The `reference` rationale in `lib/dataRights.ts` now says the value is sealed.
+
+### §45.4 Existing stored rows, measured without a database
+
+**Recorded facts:**
+
+- **Production.** `intel_evidence` held 0 rows on 2026-09-07
+  (`docs/architecture/intel-spine-liveness.md`) and 0 rows on 2026-09-26
+  (`docs/sensing-contributor-identity-cutover-runbook.md` §3).
+- **The route's flag.** Its row is absent from production (2026-09-21, above).
+- **3002.** Not applied to production (the same runbook, §3).
+- **portava-ci.** Every Map flag is FALSE there, `map_contributions_enabled`
+  included (2026-09-20, `docs/ops/map-completion-checkpoint.md`).
+- **No count anywhere.** No document records an `intel_evidence` row count for
+  portava-ci.
+
+**The answer, stated at its strength:**
+
+- **No row with such a reference is recorded anywhere.**
+- **Production.** None can have come from the map path while the flag row is
+  absent.
+- **Pre-3002 databases** (production, today) store the account id in
+  `actor_id` itself, so a plaintext reference there discloses nothing new until
+  3002 is applied. The exposure starts at 3002. 3002 relabels `actor_id` only,
+  so on any database where the map path had written evidence, 3002 would leave
+  those references naming their accounts.
+- **What cannot be excluded without a read:** a row written after the last
+  recorded read, on any database where both flags were on and a person had
+  consented.
+
+**The remediation is prepared, and nothing was run:**
+
+| Step | What | Applied / run |
+| --- | --- | --- |
+| 1 | `artifacts/api-server/src/migrations/3360_intel_evidence_sealed_reference.sql`: adds a CHECK, NOT VALID, requiring every photo or video `reference` to be NULL or sealed. Also adds `intel_evidence_rekey_reference(uuid, text, text)`, which re-seals ONE row from exactly the plaintext value read. That function lifts the append-only row guard for that one UPDATE, as 3002 §5 did for `actor_id`. EXECUTE is granted to `service_role` only. | no database |
+| 2 | `artifacts/api-server/src/scripts/rekeyIntelEvidenceReferences.ts`: a dry run by default that counts the rows and reads only. `--apply` seals each row with the server key and calls the function. It prints counts only, because every value it reads names an account. | not run |
+| 3 | `artifacts/api-server/src/migrations/3361_intel_evidence_sealed_reference_validate.sql`: refuses to apply while any plaintext row remains. Otherwise it VALIDATEs the CHECK and drops the function. | no database |
+
+- **Rollbacks** are in `db/rollback/`, one for each migration. Neither un-seals
+  anything: the key is not in the database, and un-sealing would restore the
+  defect.
+- **Where production facts hold** (0 rows), 3360 and 3361 apply back to back and
+  the script has nothing to do. A dry run is how an operator confirms that on
+  the day.
+- **Apply 3360 with or after the sealing code.** Pre-seal code writing a media
+  evidence row against 3360's CHECK is refused and stores nothing.
+- **Not executed against Postgres.** The shared rules forbid running SQL here,
+  so both migrations and both rollbacks were checked by reading and by the
+  static guards only. The riskiest statement is the `ALTER TABLE … DISABLE
+  TRIGGER` inside a SECURITY DEFINER function. It is 3002 §5's pattern, moved
+  into a function, and only a rehearsal can prove it.
+
+### §45.5 Photos under a consent that names Quick Signals: a fail-closed gate, and the owner question it waits on
+
+**Facts, on the base tree:**
+
+- The evidence path accepted any valid intelligence consent. Gate 2 reads only
+  `enabled` and `withdrawn_at`
+  (`` `artifacts/api-server/src/lib/intelConsent.ts:61#.select("enabled, withdrawn_at")` ``).
+- The only version the server stamps is v1
+  (`` `artifacts/api-server/src/lib/intelConsent.ts:26#export const INTEL_CONSENT_DISCLOSURE_VERSION = "intel_contributions_v1";` ``).
+- v1's words name Quick Signals and nothing else
+  (`` `travel-buddy-standalone/src/lib/sensing/consentDisclosure.ts:60#Your Quick Signals can be combined` ``).
+- The v2 text is not owner-approved and not in force, and its words
+  (`docs/contracts/sensing-consent-disclosure-v2.md`, read 2026-09-27) do not
+  name photos or videos either.
+- The photo step on the map sheet says only "Answer one of these, then you can
+  add a photo to it."
+- **Production, read-only, by the integrator on 2026-09-27:**
+  - `map_contributions_enabled` and `media_evidence_enabled` have no row;
+  - `intel_evidence` has 0 rows;
+  - `intel_capture_quick_signal` is true.
+
+  Nothing has been kept. The gap was latent, and would have opened the day the
+  map flag was turned on.
+
+**Built on this branch, at the coordinator's request: Gate 2b, fail-closed and
+decision-free.**
+
+- **The rule.** A photo or video is kept as evidence only when the
+  contributor's RECORDED `consent_version` is in an explicit list of versions
+  whose words name photos:
+  `` `artifacts/api-server/src/lib/intelEvidenceCapture.ts:211#const photos = await consentCoversPhotoEvidence(sc, actorId);` ``.
+- **The list is EMPTY**
+  (`` `artifacts/api-server/src/lib/intelEvidenceCapture.ts:788#export const PHOTO_EVIDENCE_CONSENT_VERSIONS` ``).
+  No version in force names photos. v2 was read and does not name them either,
+  and it is not approved, so it is left out.
+- **The refusal.** Every media contribution is refused with
+  `consent_does_not_cover_photos`, HTTP 409
+  (`` `artifacts/api-server/src/lib/http.ts:108#consent_does_not_cover_photos: 409,` ``).
+  It is decided before any row is read or written, so nothing is stored: no
+  evidence, and no observation.
+- **The tap is unaffected.** It is a separate request on the observation arrow
+  and never reaches this gate. The test asserts both halves:
+  `` `artifacts/api-server/src/test/intelEvidenceReference.test.ts:660#it("under v1: the tap is recorded` ``.
+- **What stayed unchanged.** No consent word, no consent version, no granted
+  scope. `SENSING_ANON_GRANTED_SCOPES` is untouched.
+- **A test seam.** It names a fictional covering version, so suites can still
+  exercise the path after the gate. A test pins that no product file calls it.
+
+**RED WHEN** a contributor holding only v1 (or v2, or no recorded version)
+gets a photo or video kept, or a tap stops being recorded because of this gate.
+
+**The owner step it waits on.** Approve disclosure words that name photos and
+videos kept as evidence. Then ship, in ONE release:
+
+- that version as `INTEL_CONSENT_DISCLOSURE_VERSION`;
+- its words on the client;
+- its string in `PHOTO_EVIDENCE_CONSENT_VERSIONS`.
+
+**The question, exactly.** *May the map evidence path keep a person's photo or
+video, attached to their own report, under an Intelligence Contributions
+consent whose words do not mention photos? If not, which of these should the
+product do?* Each answer now maps onto the gate:
+
+| Option | What it permits | What it costs, and where |
+| --- | --- | --- |
+| **A. A disclosure version that names photos.** Draft words for the owner to edit: *"If you add a photo or video to a report, Portava keeps it with that report as evidence. It is not shown to other people, is kept for up to 180 days, and is deleted with your account."* | Photos are stored only for people whose recorded `consent_version` carries those words. Everyone on v1 is refused photo evidence until they re-consent (the gate's current answer); their taps are unaffected. | Owner-approved copy, then the one release above. The client's existing `needsReconsent` prompts the re-consent. |
+| **B. A per-photo notice on the photo step,** on top of the standing consent. The same words are shown before upload. | Anyone with valid consent, v1 included, may attach a photo after seeing words that name photos, once per photo. No re-consent campaign is needed. | Owner-approved sheet copy. A strict-schema field on the media payload of `POST /api/map/observations` saying which notice was shown, with the notice version recorded in `intel_evidence.detail`. Gate 2b would accept that field in place of a listed consent version. Not built. |
+| **C. Rule that v1 already covers it.** Read *"Portava uses your contribution"* as including an attached photo. | Photos kept under v1. | One string, `intel_contributions_v1`, added to the list, as the owner's recorded ruling. Lane I and this lane both flag the words as not covering it. |
+| **D. Store no photo until A or B exists.** | Nothing is stored. | None: this is the gate's behaviour today. The client still offers the photo step (§45.9 item 5). |
+
+Nothing is live today. The path is behind a flag whose row is absent in
+production, and it also needs `INTEL_EVIDENCE_REFERENCE_KEY`.
+
+### §45.6 Rows
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| M154 | C | **C** | Re-evidenced; does not move. The Evidence stage still attaches only to an existing, owned observation. It now stores a reference that names no account: `` `artifacts/api-server/src/lib/intelEvidenceCapture.ts:224#const resolved = resolveAndSealOwnedMediaReference(` ``, pinned by `` `artifacts/api-server/src/test/intelEvidenceReference.test.ts:241#it("no stored reference, for forty accounts, contains any account id in any substring or encoding"` ``. Before this section the C never asked whose identity the stored row carries, and from 3002 on the row carried the account (§45.1), the same gap the port's cache note found for M203–M210. Under §21's stated convention (code that is correct and would run), activation is not graded. Activation now needs `INTEL_EVIDENCE_REFERENCE_KEY` as well as both flags and consent, and, for a photo to be kept at all, an owner-approved disclosure version in Gate 2b's list (§45.5). |
+
+**For census-sensing's integrator, not restated here, because the rows are not
+this census's.** census-sensing §27.5 grades S118 ("the stored side cannot be
+reverse-linked to an account") W with implementation "complete".
+
+- **S118's "complete" was not true on the base tree.** This column
+  reverse-linked every map-evidenced observation once 3002 applied.
+- **On this branch it holds for the map path.**
+- **It does not hold for the media seam's callerless writer,** whose
+  `media_asset_id` still joins to `media_assets.owner_user_id`. That half is
+  census-media §35.4, MD65 Question 3, an owner decision.
+- **S19** (no permanent profile foreign key in a contribution record) was
+  touched only in spirit. The key was a stored account id, not a foreign key.
+
+Neither verdict moves: both wait on the production cutover.
+
+### §45.7 Mutations, each seen red, every file restored byte-identical
+
+Each mutation was applied to the final tree, the named suites were run, and the
+file was restored and compared byte for byte (`filecmp`, then `sha256sum -c`
+over all five mutated files).
+
+| # | Mutation | File | Went red |
+| --- | --- | --- | --- |
+| mutation X1 | THE FIX OUT: Gate 5 stores the plain key again | `lib/intelEvidenceCapture.ts` | 5: forty-accounts no-uuid; two observations unrelated; no-key refusal; and mapMediaEvidence's "stores a SEALED storage key" and "writes exactly one intel_evidence row" |
+| mutation X2 | seal not bound to its observation (AAD and IV without the id) | same | 4: unrelated across observations; two observations unrelated; moved reference refused; deletion's unopenable case |
+| mutation X3 | reader's contributor check removed | same | refuses a stranger the byte gate alone would serve |
+| mutation X4 | reader's byte gate removed | same | refuses the contributor an object the byte gate refuses |
+| mutation X5 | deletion reads the account id only, no tokens | same | 3: every-identity collection; unopenable case; no-key case |
+| mutation X6 | deletion treats a sealed value as a plain key | same | the same 3 |
+| mutation X7 | deletion swallows an unopenable reference | `services/accountDeletion/AccountDeletionService.ts` | 2: unopenable case; no-key case |
+| mutation X8 | a constant fallback key | `lib/intelEvidenceCapture.ts` | 4: no-fallback codec case; reader's "says why"; remediation refuses without a key; capture's no-key refusal |
+| mutation X9 | a second reader selects `reference` | `lib/media/mediaEvidenceLink.ts` | 2: this lane's one-module scan and mapMediaEvidence's existing "no route and no serving library" scan |
+| mutation X10 | seam writer mirrors the storage path again | same | the seam writer stores no storage key |
+| mutation X11 | padding no longer hides the key's length | `lib/intelEvidenceCapture.ts` | 5: length hidden; forty-accounts no-uuid; round trip; both reader cases that open a reference |
+| mutation G1 | GATE 2b OUT: the consent-coverage line removed | `lib/intelEvidenceCapture.ts` | 3: under v1 the photo is refused and the tap recorded; the recorded version is what decides; no version or a withdrawn grant keeps nothing |
+| mutation G2 | v1 added to the shipped list | same | 2: the shipped list is empty; under v1 the photo is refused |
+| mutation G3 | the gate ignores the recorded version | same | 2: the recorded version is what decides; no version keeps nothing |
+| mutation G4 | the refusal is not a 409 | `lib/http.ts` | the route answers it as HTTP 409 |
+| mutation G5 | a product file calls the test seam | `routes/mapObservations.ts` | no product code widens the list through the test seam |
+
+The suite is `artifacts/api-server/src/test/intelEvidenceReference.test.ts`
+(26 cases, registered on the `test` line). The existing `mapMediaEvidence`,
+`intelContributorConsentBridge`, `accountDeletionEvidenceMedia`,
+`accountDeletionPagination`, `mediaEvidenceSeam`, `mapObservations` and
+`dataRights` suites stay green. The two that drive a successful capture now
+configure a key, as a deployment must, and give their consenting contributors
+the fictional covering version, because they test what happens after Gate 2b.
+
+### §45.8 Checks, and the stale files this lane leaves for the integrator
+
+Everything was run on Node 24 at the lane's final tree.
+
+**Passing:**
+
+- `typecheck` is clean. `typecheck:tests` has 863 diagnostics across 115 files,
+  which is the baseline and not above it.
+- `check:doc-citations` is clean. The UNANCHORED count is 6356 (ceiling 6434);
+  this section adds 31 anchored citations and no unanchored one.
+- `check:citation-targets` is at its ceiling, 165 / 165.
+- These pass: `check:census-integrity`, `check:census-row-move-labels`,
+  `check:test-registration`, `check:security-definer-oracles`,
+  `check:schema-references`, `check:writerless-reads`, `check:enum-literals`.
+- `check:census-scope-coverage` passes. census-map cites 120 files and watches
+  120, which is 100%.
+- The touched and adjacent suites pass: 49 files, 1072 tests. Seven
+  error-envelope suites also pass (122 tests), for the new 409 code in
+  `lib/http.ts`.
+
+**Failing, as expected:**
+
+- `check:all` fails only on the five live-database checks (write-path-columns,
+  missing-live-columns, authorization-contract, media-objects,
+  rank-events-surfaces) and on `check:census-freshness`.
+
+**Stale files.** `check:census-freshness` names three censuses and three
+files. The acknowledgement ledger is the integrator's, so each is listed with
+its argument:
+
+- census-map, `artifacts/api-server/src/test/intelEvidenceReference.test.ts`.
+  The file is new, and this lane added it to census-map's scope as M154's
+  evidence. §45.6 re-reads M154 against it.
+- census-trust, `lib/envValidation.ts`. One OPTIONAL key is appended to line 44.
+  No required key, boot exit or trust verdict changes.
+- census-trips and census-trust, `lib/http.ts`. One error code,
+  `consent_does_not_cover_photos` (409), is appended on two existing lines
+  (the union and the status map). No existing code, status, retryable set or
+  sanitised set changes, and no trips or trust route emits it.
+
+**Changed but already named by an existing acknowledgement.** The check
+cannot tell this lane's change from the one that was acknowledged, so each is
+argued here:
+
+- `lib/intelEvidenceCapture.ts` and `routes/mapObservations.ts` (census-map;
+  census-sensing and census-highlights-memories also watch the route). This
+  section re-reads M154, the row that grades the capture module. The route
+  change is one reason-to-status mapping added on an existing line, and it
+  alters no other row's evidence.
+- `services/accountDeletion/AccountDeletionService.ts` (census-trust,
+  census-layover, census-highlights-memories, census-wall, census-sensing). One
+  collection step now reads under every stored identity and opens sealed
+  references. The edit is line-neutral, and no other step changes.
+- `lib/dataRights.ts` (census-sensing). One rationale string changes. The
+  classification does not.
+- `lib/media/mediaEvidenceLink.ts` (census-media). The callerless seam writer
+  stores `reference: null`. No MD row moves (census-media §39).
+- `docs/architecture/telegraph-phase0-inventory.md` (census-telegraph). It was
+  regenerated because the migration count went from 607 to 609. Neither new
+  migration touches a messaging table.
+
+This section does not restate the census headline, because no row moved.
+
+### §45.9 Found while doing it, recorded and not fixed
+
+1. **The seam's `media_asset_id` is still a derivable account link**
+   (§45.6). It is MD65 Question 3's to decide, and the writer has no caller.
+2. **There is no key-rotation tool.** Rotating the key orphans every sealed
+   reference from account deletion until each row is re-sealed under the new
+   key. Both `.env.example` and the module say to treat the key as stable.
+3. **The photo sheet shows no retention or visibility words** (§45.5).
+   Whichever option the owner picks decides this copy.
+4. **3360's function has not been rehearsed** (§45.4). Rehearse it on
+   portava-ci before any database it is applied to holds a plaintext row.
+5. **The client does not know about Gate 2b.** Once the map flag is on and
+   while the list is empty, the sheet still offers the photo step. It uploads
+   the bytes through `POST /api/media/upload` before the attach is refused, and
+   after the 409 it offers "Try attaching it again", which is refused again.
+   - The uploaded object is the person's own, referenced by nothing. Like any
+     abandoned upload, account deletion does not find it (see the
+     AccountDeletionService header).
+   - Before the map flag is turned on, the client should not offer the step
+     while the person's consent does not cover photos. That needs a coverage
+     bit on the consent state and a client change. Neither is built here.
+6. **The media seam's writer has no consent check of any kind.** It has no
+   caller, and it must pass Gate 2b the day one is wired (MD65).
+
+### §45.10 Cited, not graded (check:census-scope-coverage)
+
+- NOT-GRADED: artifacts/api-server/src/routes/posts.ts — the upload route, cited in §45.1 and §45.2 only for the shape of the key it mints (`<account>/<ms>.<ext>`) and for its fire-and-forget canonical write; no Map row grades media upload, and the evidence verdict rests on lib/intelEvidenceCapture.ts, which this census watches.
+- NOT-GRADED: artifacts/api-server/src/migrations/3002_intel_contribution_identity.sql — the Sensing migration whose tokenised contributor id defines the exposure; census-sensing grades it (S19, S97, S111, S118) and watches it, and no Map row rests on it.
+- NOT-GRADED: artifacts/api-server/src/lib/mediaAccess.ts — the byte gate, cited in §45.2 for its read of media_assets.owner_user_id and in §45.3 as the second authorization of the contributor reader; census-media grades it, and M154 rests on the capture module and its test, not on the gate.
+- NOT-GRADED: artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts — account deletion's evidence collection step, cited in §45.1 and §45.3 as the reader this lane repaired; the deletion service is graded by census-trust and the other censuses that watch it, and no Map row grades erasure.
+- NOT-GRADED: artifacts/api-server/src/lib/media/mediaEvidenceLink.ts — Media's callerless evidence seam, cited in §45.1, §45.3 and §45.6 for its reference column; census-media grades it (MD53, MD65), and no Map row does.
+- NOT-GRADED: artifacts/api-server/src/lib/http.ts — the shared error envelope, cited in §45.5 and §45.7 only for the 409 status of the new consent_does_not_cover_photos code; census-trips and census-trust watch it, and no Map row grades the envelope.
+- NOT-GRADED: artifacts/api-server/src/lib/intelConsent.ts — cited in §45.5 for which consent columns the gate reads and which version the server stamps; census-sensing grades consent, and §45.5 is an owner question, not a verdict.
+- NOT-GRADED: travel-buddy-standalone/src/lib/sensing/consentDisclosure.ts — cited in §45.5 for the words of consent v1; census-sensing grades the disclosure, and §45.5 moves no row.
+- NOT-GRADED: artifacts/api-server/src/migrations/3360_intel_evidence_sealed_reference.sql — the remediation migration, applied to no database, cited in §45.4 as prepared work; M154 rests on the application's seal, which it does not depend on.
+- NOT-GRADED: artifacts/api-server/src/migrations/3361_intel_evidence_sealed_reference_validate.sql — the remediation's closing migration, applied to no database, cited in §45.4 only.
+- NOT-GRADED: artifacts/api-server/src/scripts/rekeyIntelEvidenceReferences.ts — the remediation script, not run, cited in §45.4 only.
+- NOT-GRADED: artifacts/api-server/src/lib/envValidation.ts — cited in §45.3 for the boot warning naming the new key; census-trust watches it, and no Map row grades boot configuration.
+- NOT-GRADED: artifacts/api-server/src/lib/dataRights.ts — cited in §45.3 for the updated rationale text of intel_evidence.reference; the classification itself is unchanged and no Map row grades it.
+
+### §45.11 3360 and 3361, rehearsed on the local harness (and lane P's 3350–3352, at the coordinator's request)
+
+This supersedes two statements above: §45.4's "Not executed against
+Postgres", and §45.9 item 4, which asked for portava-ci. The coordinator
+directed the repo's LOCAL harness instead. **Nothing ran on portava-ci or on
+production.** No flag was touched.
+
+**Where it ran.**
+
+- The harness's own scripts, `scripts/local-db/up.sh` and then
+  `scripts/local-db/run-tests.sh`, on a dedicated cluster so that no other
+  lane's cluster was touched: `LOCAL_DB_DIR=/tmp/portava-local-db-lanex`,
+  `LOCAL_DB_PORT=54371`, database `portava_local`.
+- **PostgreSQL 16.13** (Ubuntu 16.13-0ubuntu0.24.04.1). Production reads
+  17.6 (the integrator's read). Nothing rehearsed here depends on the
+  difference; §45.11.3 says what 3350 needs from both.
+- up.sh's own line, on the final tree:
+  `local-db: ready (booted): postgresql://postgres@127.0.0.1:54371/portava_local — baseline 388 tables; chain from 2093: 329 applied in order, 12 known-unreplayable of 341, 2 of those applied on retry`.
+  3350–3352 (in their reshaped form), 3359 and 3360–3361 are not among the
+  skipped.
+- run-tests.sh's own lines:
+
+  ```
+      ok 1 - 1. on a table with no plaintext row, 3360 then 3361 leave the CHECK validated and the function dropped
+      ok 2 - 2. rollbacks unwind in order (3360's refuses first), and 3360 applies on top of plaintext rows
+      ok 3 - 3. the CHECK refuses a NEW plaintext photo or video reference, and admits sealed, NULL and a text_note
+      ok 4 - 4. the re-seal function is service_role's only, and changes exactly ONE row
+      ok 5 - 5. an EXCEPTION between the DISABLE and the ENABLE leaves the guard enabled, aborted or caught
+      ok 6 - 6. 3361 refuses while a plaintext row remains, changing nothing; then validates and drops the function
+      ok 7 - 7. both rollbacks run cleanly afterwards, in order
+  ok 1 - census-map §45.11 — migrations 3360 and 3361, rehearsed on real PostgreSQL
+  # tests 143
+  # pass 143
+  # fail 0
+  # skipped 0
+  local-db tests: pass=143 fail=0 skipped=0 (exit 0)
+  ```
+
+#### §45.11.1 What the suite proves, against the database
+
+The suite is `artifacts/api-server/src/test/db/intelEvidenceSealedReference.db.test.ts`
+(7 cases, registered on the `test` line, where it skips without a database like
+every `src/test/db` suite).
+
+- **It applies each migration the way the runner does.** It uses the runner's
+  own classifier and its own statement,
+  `` `scripts/src/apply-migrations.ts:984#export function buildApplyStatement(args: {` ``,
+  so the body and its ledger row are one transaction:
+  `` `artifacts/api-server/src/test/db/intelEvidenceSealedReference.db.test.ts:92#function runnerApply(filename: string, sql: string)` ``.
+- **The CHECK** refuses a new plaintext photo or video reference. It admits a
+  sealed one, a NULL one and a plaintext `text_note`.
+- **The re-seal function** is refused to `anon` and `authenticated`
+  ("permission denied for function"). Under `service_role` it re-seals the
+  named row and leaves a second row holding the same plaintext value on
+  another observation untouched. A stale call returns false and changes
+  nothing. A value of the wrong shape is refused. A direct UPDATE afterwards is
+  still refused by the append-only guard.
+- **The `DISABLE TRIGGER` is re-enabled on every path.** `pg_trigger.tgenabled`
+  reads `O` after a success, a stale call and a refusal. It also reads `O` after
+  a unique violation raised between the DISABLE and the ENABLE, both when that
+  aborts the statement and when a caller catches it and reads the trigger in
+  the same transaction:
+  `` `artifacts/api-server/src/test/db/intelEvidenceSealedReference.db.test.ts:319#caught:O` ``.
+  PostgreSQL's subtransaction rollback undoes the DISABLE with the UPDATE.
+- **3361** refuses while a plaintext row remains, and validates nothing, drops
+  nothing and writes no ledger row:
+  `` `artifacts/api-server/src/test/db/intelEvidenceSealedReference.db.test.ts:329#a refused 3361 wrote no ledger row` ``.
+  Once every row is sealed it validates the CHECK and drops the function.
+- **Both rollbacks** run cleanly afterwards, in order, and 3360's refuses to
+  run first.
+
+#### §45.11.2 Found by the rehearsal, and fixed: a rolled-back file stayed "applied"
+
+The runner writes a `schema_migration_ledger` row in each file's own
+transaction. Neither rollback removed it. So after a rollback, the runner's
+next plan would have taken 3360 or 3361 as applied and never re-applied it.
+Each rollback now deletes its own file's row, and its postcondition refuses to
+commit if the row is still there:
+`` `db/rollback/2026-09-27-3360-intel-evidence-sealed-reference-rollback.sql:53#DELETE FROM public.schema_migration_ledger` ``,
+`` `db/rollback/2026-09-27-3361-intel-evidence-sealed-reference-validate-rollback.sql:122#DELETE FROM public.schema_migration_ledger` ``.
+This is the convention of the 10 rollbacks in `db/rollback/` that already do
+so. The other 110 do not, and lane P's three are among them (§45.11.3).
+
+#### §45.11.3 Lane P's 3350, 3351 and 3352, applied the way the runner applies them
+
+At the coordinator's request, after merging `wave8-integration` at
+`2a60f9c3b` (lane P's 3350 reshaped into one BEGIN…COMMIT with its
+postcondition after the COMMIT). None of those files was changed by this lane.
+
+- **The chain, stopped before 3350** (`LOCAL_DB_TO=3350`):
+  `local-db: ready (booted): postgresql://postgres@127.0.0.1:54371/portava_local — baseline 388 tables; chain from 2093 to before 3350: 319 applied in order, 12 known-unreplayable of 331, 2 of those applied on retry`.
+- **Then the runner's own code** (`classifyMigration`, `buildApplyStatement`,
+  `runPlan`). Each statement was sent as ONE query string (`psql -c`), as the
+  Management API receives one `query`: body and ledger row in one transaction,
+  then any postcondition tail in its own. The rollbacks ran newest first, with
+  `psql -f`. The script's output, with its column-header and `(1 row)` lines
+  dropped:
+
+  ```
+  server_version 16.13 (Ubuntu 16.13-0ubuntu0.24.04.1)
+    [state before] 0 |  | 0 | 0 |
+  classify 3350_media_neighborhood_only_location_mode.sql: unwrapped, postconditions after COMMIT
+  classify 3351_media_find_busier_flag.sql: unwrapped, postconditions none (inside the transaction)
+  classify 3352_media_perspective_vantage.sql: unwrapped, postconditions none (inside the transaction)
+    [3350 apply exit 0] (no output)
+    [3350 postcondition exit 0] NOTICE:  3350: neighborhood_only label present; 0 post(s) carry it on this database (0 on a first apply).
+    [3351 apply exit 0] (no output)
+    [3352 apply exit 0] NOTICE:  3352: posts.perspective_vantage present; 0 post(s) carry a vantage on this database (0 on a first apply).
+  outcome 3350_media_neighborhood_only_location_mode.sql: applied
+  outcome 3351_media_find_busier_flag.sql: applied
+  outcome 3352_media_perspective_vantage.sql: applied
+  ledger checksum matches file bytes 3350_media_neighborhood_only_location_mode.sql: t
+  ledger checksum matches file bytes 3351_media_find_busier_flag.sql: t
+  ledger checksum matches file bytes 3352_media_perspective_vantage.sql: t
+    [state after apply] 1 | media_find_busier_enabled=false,media_neighborhood_only_mode_enabled=false,media_perspective_vantage_enabled=false | 1 | 1 | 3350_media_neighborhood_only_location_mode.sql:manual,3351_media_find_busier_flag.sql:manual,3352_media_perspective_vantage.sql:manual
+    [rollback 3352 exit 0] (no output)
+    [state after rollback 3352] 1 | media_find_busier_enabled=false,media_neighborhood_only_mode_enabled=false | 0 | 0 | 3350_media_neighborhood_only_location_mode.sql:manual,3351_media_find_busier_flag.sql:manual,3352_media_perspective_vantage.sql:manual
+    [rollback 3351 exit 0] (no output)
+    [state after rollback 3351] 1 | media_neighborhood_only_mode_enabled=false | 0 | 0 | 3350_media_neighborhood_only_location_mode.sql:manual,3351_media_find_busier_flag.sql:manual,3352_media_perspective_vantage.sql:manual
+    [rollback 3350 exit 0] (no output)
+    [state after rollback 3350] 1 |  | 0 | 0 | 3350_media_neighborhood_only_location_mode.sql:manual,3351_media_find_busier_flag.sql:manual,3352_media_perspective_vantage.sql:manual
+  ```
+
+  The state columns are: the `neighborhood_only` label count, the three flags,
+  the `posts.perspective_vantage` column, its CHECK, and the ledger rows.
+- **What it shows.**
+  - All three applied, their postconditions held, and all three flags were
+    seeded FALSE. The ledger checksums match the files' bytes.
+  - 3350's `ALTER TYPE … ADD VALUE` ran inside the runner's transaction on 16.
+    Both 16 and 17 allow ADD VALUE in a transaction block (since 12). Neither
+    allows USING the new label before COMMIT, and 3350's reshaped form does
+    not: its only comparison is in the tail, after the COMMIT, on `::text`.
+  - Each rollback exited 0 and removed what its header says it removes.
+- **Recorded for lane P, not changed here.**
+  - 3350's rollback leaves the enum label, as its header says (PostgreSQL has
+    no `DROP VALUE`).
+  - **All three rollbacks leave their ledger rows** (`applied_by` manual). The
+    runner would therefore never apply 3350, 3351 or 3352 again after a
+    rollback. This is the gap §45.11.2 closed for 3360 and 3361.
+- **The same runner-shaped run for this lane's own files**, on the same
+  database afterwards, with the rollbacks as they stood before §45.11.2:
+  - 3360 and 3361 classified `unwrapped` with no tail, and both applied
+    (`exit 0`, no output) with ledger checksums matching the files;
+  - then the CHECK read `validated=true`, the function was gone, and the guard
+    read `O`;
+  - after the 3361 rollback: `validated=false`, the function back, guard `O`;
+  - after the 3360 rollback: no CHECK, no function, guard `O`, and the ledger
+    still listing both files as applied. That last line is what exposed
+    §45.11.2.
+
+#### §45.11.4 SQL mutations, each seen red on the harness, every file restored byte-identical
+
+Each mutation was applied to one of the four SQL files, the suite was run
+against the harness, and the file was restored (`filecmp`, then
+`sha256sum -c` over all four: OK). The unmutated run after them: 7/7.
+
+| # | Mutation | File | Cases red (of 7) |
+| --- | --- | --- | --- |
+| mutation S1 | the CHECK admits a plaintext photo or video | 3360 | 2: the CHECK case; 3361's refusal |
+| mutation S2 | the CHECK added VALID (NOT VALID removed) | 3360 | 7 |
+| mutation S3 | anon and authenticated may execute the function (revokes and their postcondition removed) | 3360 | 1: the service_role-only case |
+| mutation S4 | the guard is not re-enabled after the UPDATE | 3360 | 4 |
+| mutation S5 | the exception is swallowed between DISABLE and ENABLE | 3360 | 1: the exception-path case |
+| mutation S6 | the re-seal is not limited to the named row | 3360 | 2: the exactly-one-row case; 3361's case |
+| mutation S7 | 3361's plaintext precondition removed | 3361 | 1: 3361's refusal |
+| mutation S8 | 3361 does not drop the function | 3361 | 7 |
+| mutation S9 | 3360's rollback runs while 3361 is applied | 3360 rollback | 6 |
+| mutation S10 | 3360's rollback leaves the function | 3360 rollback | 5 |
+| mutation S11 | 3361's rollback does not re-create the function | 3361 rollback | 5 |
+| mutation S12 | 3360's rollback keeps its ledger row (DELETE and its postcondition removed) | 3360 rollback | 6 |
+| mutation S13 | 3361's rollback keeps its ledger row (DELETE and its postcondition removed) | 3361 rollback | 5 |
+
+A red count above the named case includes later cases that fail because the
+table was left in the wrong shape. The suite's `before` resets that shape
+without reading the migration files, so a mutated file cannot leave the next
+run stuck.
+
+#### §45.11.5 Lane V's 3359, applied the way the runner applies it, and its rollback both ways
+
+At the coordinator's request, after merging `wave8-integration` at
+`1a5164fc3`, which carries lane V's 3359 (`passport_postcards.media_url` loses
+NOT NULL). 3359 and its rollback were not changed by this lane.
+
+- **The chain, stopped before 3359** (`LOCAL_DB_TO=3359`):
+  `local-db: ready (booted): postgresql://postgres@127.0.0.1:54371/portava_local — baseline 388 tables; chain from 2093 to before 3359: 326 applied in order, 12 known-unreplayable of 338, 2 of those applied on retry`.
+- **Then** one throwaway account and three posts were seeded, 3359 was applied
+  through the runner's own `classifyMigration`, `buildApplyStatement` and
+  `runPlan` (one query string, body and ledger row in one transaction), and
+  the rollback was run with `psql -f`, first with a NULL cover present and
+  then with none. The "resolve" step stands in for the operator's deliberate
+  resolution that the rollback's message asks for: it deletes the one NULL-cover
+  row. The script's output, verbatim except that each `DETAIL: Failing row
+  contains (…)` line and the worktree prefix of the rollback's path are
+  shortened here:
+
+  ```
+  server_version 16.13 (Ubuntu 16.13-0ubuntu0.24.04.1)
+    [state before] media_url is_nullable=NO | null covers=0 | ledger 3359=none
+    [NULL cover BEFORE 3359 exit 1] ERROR:  null value in column "media_url" of relation "passport_postcards" violates not-null constraint
+    [NULL cover BEFORE 3359 exit 1] DETAIL:  Failing row contains (…).
+    [non-NULL cover BEFORE 3359 (control) exit 0] (no output)
+  classify 3359_passport_postcard_cover_nullable.sql: unwrapped, postconditions none (inside the transaction)
+    [3359 apply exit 0] (no output)
+  outcome 3359_passport_postcard_cover_nullable.sql: applied
+  ledger checksum matches file bytes: t
+    [state after 3359] media_url is_nullable=YES | null covers=0 | ledger 3359=manual
+    [NULL cover AFTER 3359 exit 0] (no output)
+    [state with a NULL cover] media_url is_nullable=YES | null covers=1 | ledger 3359=manual
+    [rollback WITH a NULL cover exit 3] psql:…/db/rollback/2026-09-27-3359-passport-postcard-cover-nullable-rollback.sql:30: ERROR:  ROLLBACK REFUSED: 1 passport_postcards row(s) have no cover (media_url IS NULL). Restoring NOT NULL would need a value, and the only one available is a held or removed file. Resolve those rows deliberately first, then re-run this file.
+    [rollback WITH a NULL cover exit 3] CONTEXT:  PL/pgSQL function inline_code_block line 6 at RAISE
+    [state after the refused rollback] media_url is_nullable=YES | null covers=1 | ledger 3359=manual
+    [resolve: delete the NULL-cover row exit 0] (no output)
+    [rollback with NO NULL cover exit 0] (no output)
+    [state after the rollback] media_url is_nullable=NO | null covers=0 | ledger 3359=manual
+    [NULL cover AFTER the rollback exit 1] ERROR:  null value in column "media_url" of relation "passport_postcards" violates not-null constraint
+    [NULL cover AFTER the rollback exit 1] DETAIL:  Failing row contains (…).
+    [cleanup exit 0] (no output)
+  ```
+
+- **What it shows.**
+  - Before 3359 a NULL cover is refused by the column (a non-NULL one, the
+    control, is written). After it, a NULL cover is written.
+  - With a NULL cover present, the rollback refuses (psql exit 3) and changes
+    nothing: the column stays nullable and the row stays.
+  - With none, it restores NOT NULL, and a NULL cover is refused again.
+- **Recorded for lane V, not changed here.** Like lane P's three (§45.11.3),
+  3359's rollback leaves its ledger row (`applied_by` manual). After that
+  rollback the runner would never apply 3359 again.
+
+### §45.12 The server says whether a photo would be kept, and the map offers the photo step only then
+
+This supersedes §45.9 item 5 and the client clause in §45.5's option D.
+
+**Server.**
+
+- `GET` and `PUT /v1/intel/consent` now carry `coversPhotoEvidence`:
+  `` `artifacts/api-server/src/routes/intel.ts:177#res.json(withPhotoEvidenceCoverage(out.state));` ``.
+- **It is Gate 2b's own predicate**, not a copy:
+  `` `artifacts/api-server/src/lib/intelEvidenceCapture.ts:852#export function photoEvidenceCoveredBy(` ``.
+  The gate calls the same function:
+  `` `artifacts/api-server/src/lib/intelEvidenceCapture.ts:822#if (!photoEvidenceCoveredBy(state, allowed))` ``.
+  The bit is true only for an enabled, unwithdrawn grant whose RECORDED
+  `consent_version` is in `PHOTO_EVIDENCE_CONSENT_VERSIONS`. That list is
+  empty, so the bit is false for every account today. Nothing invents
+  coverage.
+- **An unreadable consent row** still answers 500, and carries no bit at all.
+- **Tests:** four cases in section G of the capture suite. The last asserts
+  the route's answer equals the gate's outcome for every state:
+  `` `artifacts/api-server/src/test/intelEvidenceReference.test.ts:852#the route's answer and the gate's answer are the same for every state` ``.
+
+**Client.**
+
+- **The predicate reads the server's answer and nothing else:**
+  `` `travel-buddy-standalone/src/features/map/truth/photoEvidenceCoverage.ts:37#return state.coversPhotoEvidence === true;` ``.
+  It never derives coverage from a version string on the device, because
+  which words name photos is the server's list.
+- **The hook** reads the consent once each time capture is enabled, and not
+  at all while it is off:
+  `` `travel-buddy-standalone/src/hooks/usePhotoEvidenceCoverage.ts:24#if (!enabled) return;` ``.
+- **The map passes the picker to the sheet only on the server's yes:**
+  `` `travel-buddy-standalone/app/map/index.tsx:792#const requestContributionMedia = photoEvidenceCovered ? pickContributionMedia : undefined;` ``.
+  Without a picker the sheet has no photo step
+  (`` `travel-buddy-standalone/src/components/map/MapContributionSheet.tsx:199#const mediaOffered = onRequestMedia != null` ``),
+  so nothing is uploaded and no orphan object is created.
+- **The client type** gains the optional field:
+  `` `travel-buddy-standalone/src/services/intelConsent.ts:25#coversPhotoEvidence?: boolean;` ``.
+- **FAIL-CLOSED.** The step is withheld when the bit is false, absent (an
+  older server), not a boolean, when the read returns nothing or throws, and
+  when the grant is disabled or withdrawn. Until the read lands, it is hidden.
+  A consent granted elsewhere while the map stays mounted is seen on the next
+  mount, which is the safe direction.
+- **Line-neutral.**
+  - `app/map/index.tsx`: lines 69, 722 and 792 are extended in place. Lane I's
+    `onRequestMedia={requestContributionMedia}` stays on line 2905, and no
+    cited line moves.
+  - `services/intelConsent.ts`: line 25 is extended in place.
+  - `routes/intel.ts`: lines 177 and 189 are extended in place, and the import
+    is appended after the file's last line. The PUT keeps its old answer when
+    the write succeeded but the read-back did not: no state, so no bit.
+- **Tests:**
+  - the screen:
+    `` `travel-buddy-standalone/app/map/__tests__/photoStepCoverage.component.test.tsx:411#is withheld when the server says it would not` ``,
+    6 cases;
+  - the predicate:
+    `` `travel-buddy-standalone/src/features/map/truth/__tests__/photoEvidenceCoverage.test.ts:34#only a boolean true counts` ``,
+    4 cases;
+  - the sheet without a picker:
+    `` `travel-buddy-standalone/src/components/map/__tests__/MapContributionSheet.mediaEvidence.component.test.tsx:282#the tap is reported, the photo step is never announced, and nothing is uploaded` ``.
+
+**RED WHEN** the map offers the photo step, or starts an upload, for an
+account whose consent read did not answer `coversPhotoEvidence: true`; or the
+server answers true for a version that is not in Gate 2b's list.
+
+**Orphans before this change.** None can exist in production from this path:
+`map_contributions_enabled` has no row there (§45.5, the integrator's read of
+2026-09-27).
+
+| # | Mutation | File | Went red |
+| --- | --- | --- | --- |
+| mutation G6 | the consent read is not decorated with the bit | `routes/intel.ts` | 3: the shipped list says false; the recorded version decides; route and gate agree |
+| mutation G7 | the bit is true whatever the list says | `lib/intelEvidenceCapture.ts` | 3: the shipped list says false; the recorded version decides (route and gate) |
+| mutation C1 | the picker is handed to the sheet unconditionally | `app/map/index.tsx` | 4: withheld on false, on absent, on unreadable, on a throw |
+| mutation C2 | the consent is read while capture is off | the hook | 1: no read while capture is off |
+| mutation C3 | a valid grant alone offers the step (the bit ignored) | the predicate | 4: withheld on false and on absent (screen); a v1 grant without the yes; only a boolean true |
+| mutation C4 | any truthy bit counts | the predicate | 1: only a boolean true |
+| mutation C5 | the sheet offers the step without a picker | `MapContributionSheet.tsx` | 1: no picker, no step, no upload |
+
+Every mutated file was restored and compared byte for byte (`filecmp`, then
+`sha256sum -c`).
+
+### §45.13 Cited, not graded, by §45.11 and §45.12 (check:census-scope-coverage)
+
+- NOT-GRADED: artifacts/api-server/src/routes/intel.ts — the consent read and write, cited in §45.12 only because they now carry the derived coverage bit; census-sensing and census-highlights-memories watch it, census-sensing grades consent, and no Map row rests on it.
+- NOT-GRADED: travel-buddy-standalone/src/services/intelConsent.ts — the client consent service, cited in §45.12 for the optional coversPhotoEvidence field on its state type; the consent flow is census-sensing's, and no Map row rests on this file.
+- NOT-GRADED: scripts/src/apply-migrations.ts — the migration runner, cited in §45.11 for the statement the rehearsal reuses so that each file and its ledger row are one transaction; no Map row grades how migrations are applied.
+- NOT-GRADED: db/rollback/2026-09-27-3360-intel-evidence-sealed-reference-rollback.sql — the remediation's first rollback, run only on the local harness, cited in §45.11 for its ledger-row removal; no verdict rests on it.
+- NOT-GRADED: db/rollback/2026-09-27-3361-intel-evidence-sealed-reference-validate-rollback.sql — the remediation's second rollback, run only on the local harness, cited in §45.11 for its ledger-row removal; no verdict rests on it.
+
+### §45.14 Checks for §45.11–§45.13, and the stale files this round leaves
+
+Everything was run on Node 24 at the lane's final tree, after merging
+`wave8-integration` at `1a5164fc3`.
+
+**Passing:**
+
+- **Server.** `typecheck` is clean. `typecheck:tests` has 863 diagnostics
+  across 115 files, the baseline.
+- **Client.** `typecheck` (with the import-extension check) is clean.
+  `typecheck:tests` has 173 across 60, the baseline. eslint reports 0 errors
+  on the seven touched client files; its 59 warnings are unused
+  eslint-disable directives already in `app/map/index.tsx`. Every `lint:*`
+  script and `check:route-registry` pass.
+- `check:doc-citations` is clean. The UNANCHORED count is 6372 (ceiling 6434).
+  §45.11–§45.13 add 18 anchored citations and no unanchored one.
+- `check:citation-targets` is at its ceiling, 165 / 165.
+- `check:census-scope-coverage` passes. census-map cites 127 files and watches
+  127 (100%), with 20 declared NOT-GRADED.
+- These pass: `check:census-row-move-labels`, `check:test-registration` (1491
+  registered), `check:security-definer-oracles`, `check:schema-references`,
+  `check:writerless-reads`, `check:enum-literals`.
+- **The harness:** 143/143, skipped 0 (§45.11).
+- **The client suites:** jest 5 suites, 51/51; the predicate's node suite, 4/4.
+
+**Failing, and not this lane's:**
+
+- **The touched and adjacent server suites:** 53 files, 1196 tests, 1195 pass.
+  The one failure is a date bomb in
+  `accountDeletionSensingRevocationReach` ("one reference removed (P2)",
+  2 !== 1).
+  - Its fixture pins NOW to 2026-09-26T07:00Z, and its "standing" snapshot
+    expires at NOW + 24 h, so it has read as withdrawn since 07:00 UTC today.
+  - With the clock moved back one day (`CLOCK_OFFSET_DAYS=-1` through
+    the repo's clock-offset preload) the same suite is 14/14.
+  - Recorded, not fixed: the file is not this lane's.
+- **`check:all`** fails on the five live-database checks (write-path-columns,
+  missing-live-columns, authorization-contract, media-objects,
+  rank-events-surfaces), on `check:census-freshness`, and on
+  `check:census-integrity`.
+  - The integrity failure is census-media's stated headline (C 401 / W 37 /
+    N 12) against its rows (C 408 / W 34 / N 8).
+  - It is inherited. Putting `wave8-integration`'s census-media at
+    `2a60f9c3b` into this tree gives the same error, and this lane's only
+    census-media change is one prose line.
+
+**Stale files.** `check:census-freshness` names these of this lane's files. The
+acknowledgement ledger is the integrator's, so each is listed with its
+argument:
+
+- **census-map:** the rehearsal suite, the hook, `photoEvidenceCoverage.ts`
+  and its test, the screen's coverage test, the sheet's test, and
+  `intelEvidenceReference.test.ts`. §45.11 and §45.12 are this census's own
+  reading of every one of them. M154 is unchanged: the evidence path it grades
+  now also withholds the photo step the server would refuse.
+- **census-media, `lib/intelEvidenceCapture.ts`.** Two exports are appended at
+  the end of the file: the predicate and the decorator. Gate 2b's condition
+  line now calls the predicate, with the same logic it had inline. No MD row
+  moves (census-media §39's new line).
+- **census-trips, the rehearsal suite.** census-trips watches `src/test/db/`.
+  The suite touches only `intel_evidence`, its two migrations and the ledger;
+  no trip table or function. `lib/http.ts` was argued in §45.8.
+- **census-trust.** `lib/envValidation.ts` and `lib/http.ts`, as argued in
+  §45.8, are unchanged since.
+
+**Changed, but already named by an existing acknowledgement.** The check
+cannot tell this lane's change from the acknowledged one:
+
+- `app/map/index.tsx` (census-map, census-discovery). Three line-neutral
+  edits; the sheet gets its picker only on the server's yes. No Discovery
+  surface is touched.
+- `routes/intel.ts` (census-sensing, census-highlights-memories). The consent
+  read and write gain one derived boolean. Stamping, versioning and scopes are
+  unchanged.
+
+The others are not watched by any census: `services/intelConsent.ts` on the
+client, and the two rollbacks. The api package manifest and the freshness
+script are machinery.
+
+The other stale entries (MentionInput, tokens, ReportSheet,
+PassportMemoryService, mediaLocationVisibility, eventPostsDiscovery, and
+census-media's other 87) arrived with the merges and are not this lane's.
+
+This section does not restate any census headline, because no row moved.

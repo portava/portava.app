@@ -48,6 +48,7 @@ import {
   ISSUABLE_COMMANDS,
   LEGACY_PATH_COMMANDS,
   UNIMPLEMENTED_COMMANDS,
+  unimplementedCommandsFrom,
 } from "../domain/telegraph/commands/telegraphCommands.js";
 
 const ALICE = "aaaaaaaa-0000-4000-8000-000000000001";
@@ -128,7 +129,21 @@ function makeClient(state: State = {}) {
 
     const target: any = {
       select() { return proxy; },
-      insert(row: any) { pending = { op: "insert", payload: row }; return proxy; },
+      /**
+       * INSERT lands in the fake's own table and is returned by `single()`.
+       *
+       * It used to record the write and return nothing, which was enough while
+       * no command on this endpoint inserted. CREATE_COORDINATION_SESSION does,
+       * and it reads its own row back — so a fake that returned some OTHER row
+       * from `messages` would have let the idempotency tests pass against a
+       * message the command never wrote.
+       */
+      insert(row: any) {
+        const stored = { id: `ins-${((db[table] ??= []).length) + 1}`, ...row };
+        pending = { op: "insert", payload: stored };
+        db[table]!.push(stored);
+        return proxy;
+      },
       upsert(row: any) {
         pending = { op: "upsert", payload: row };
         const list = Array.isArray(row) ? row : [row];
@@ -151,7 +166,12 @@ function makeClient(state: State = {}) {
       maybeSingle() {
         const err = injected();
         if (err) return Promise.resolve({ data: null, error: err });
-        return Promise.resolve({ data: rowsNow()[0] ?? null, error: null });
+        return Promise.resolve({ data: pending?.op === "insert" ? pending.payload : rowsNow()[0] ?? null, error: null });
+      },
+      single() {
+        const err = injected();
+        if (err) return Promise.resolve({ data: null, error: err });
+        return Promise.resolve({ data: pending?.op === "insert" ? pending.payload : rowsNow()[0] ?? null, error: null });
       },
       then(resolve: (v: any) => void, reject?: (e: any) => void) {
         const err = injected();
@@ -295,11 +315,39 @@ describe("POST /telegraph/commands — the door", () => {
     assert.match(String(body.message), /POST \/api\/threads\/:threadId\/messages/);
   });
 
-  it("answers 501 for a §13.1 command nothing implements", async () => {
+  it("CREATE_COORDINATION_SESSION is ISSUABLE, and refuses without an idempotency key", async () => {
+    // It answered 501 "nothing in this repository implements it" while the §9
+    // session entity existed, which is the same wrong-direction refusal
+    // SET_COORDINATION_STATUS used to give. It is now issued here — and it
+    // still refuses a call with no idempotency key, with a 400, because a
+    // generated key would make every retry a new evening.
     _setTestClient(makeClient(), true);
     const { status, body } = await post({ type: "CREATE_COORDINATION_SESSION", conversationId: THREAD, params: {} });
-    assert.equal(status, 501);
-    assert.equal(body.error, "not_implemented");
+    assert.equal(status, 400);
+    assert.match(String(body.message), /idempotencyKey is required/);
+  });
+
+  it("UNIMPLEMENTED_COMMANDS is empty, so the 501 branch has no §13.1 occupant", () => {
+    // Recorded rather than deleted: the branch is the shape of the answer for
+    // the next §13.1 command that arrives unbuilt, and the exhaustiveness test
+    // above is what keeps a command from falling through to "unknown" instead.
+    assert.deepEqual([...UNIMPLEMENTED_COMMANDS], []);
+  });
+
+  it("the 501 rule still holds: a §13.1 command with no home is unimplemented", () => {
+    // Kept from the lane that DERIVED this list. `UNIMPLEMENTED_COMMANDS` is
+    // empty today, so the route's 501 branch is unreachable in fact; the rule
+    // that feeds it is still checked, against a hypothetical nineteenth
+    // command. Without this, emptying the list would have silently taken the
+    // branch's only coverage with it.
+    const derived = unimplementedCommandsFrom(
+      [...TELEGRAPH_COMMANDS, "TELEPORT_USER"],
+      ISSUABLE_COMMANDS,
+      LEGACY_PATH_COMMANDS,
+    );
+    assert.deepEqual(derived, ["TELEPORT_USER"],
+      "a spec-named command with neither an issuable slot nor a legacy home must be reported " +
+      "unimplemented, so the door answers 501 rather than 'you made that up'");
   });
 
   it("answers 400 for a command nobody has heard of", async () => {

@@ -43,7 +43,7 @@ export function useMediaWorld(params: WorldParams = {}): UseMediaWorldResult {
     return () => abortRef.current?.abort();
     // Reload when the coarse location/city inputs change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [load, params.cityId, params.lat, params.lng]);
+  }, [load, params.cityId, params.city, params.lat, params.lng]);
 
   return { state, reload: load };
 }

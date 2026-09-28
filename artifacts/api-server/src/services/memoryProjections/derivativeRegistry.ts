@@ -13,24 +13,23 @@
  *
  * CENSUS: section 18 row 12, "Derivative registration (source Memory version,
  *         type, destination, generatedAt, revocation state)" - NOT-BUILT:
- *         "`memory_derivative_registry` absent; nothing records where a
- *         derivative went."
+ *         "`memory_derivative_registry` absent; nothing records where it went."
  *
  * THE CLIENT FACT THIS FILE IS BUILT AROUND. supabase-js RESOLVES on a database
  * error. `const { data } = await sc.from("memories").select(...)` with `.error`
  * unbound therefore renders an unreadable table as an empty array, and for a
- * projection that is fatal: a failed derivation becomes the sentence "you have
- * no memories". Every read below binds `error` and every failure returns a
- * structured refusal. There is no try/catch around a supabase read in this file
- * because such a catch is dead code - the promise resolves, it does not throw.
+ * projection that is fatal: a failed derivation becomes the sentence "you have no
+ * memories". Every read below binds `error` and every failure returns a structured
+ * refusal. There is no try/catch around a supabase read here: such a catch is dead
+ * code - the promise resolves, it does not throw.
  *
  * Writes bind `.select()` for the same reason in reverse: an UPDATE that matched
- * zero rows errors nothing, so without the select this module could report a
- * revocation that revoked nothing.
+ * zero rows errors nothing, so without it this module could report a revocation
+ * that revoked nothing.
  */
 
 import type {
-  MemoryItemRow,
+  HighlightPolicyRow, HighlightSourceRow, MemoryItemRow,
   MemorySourceRow,
   MemoryTagRow,
   ProjectedRow,
@@ -113,17 +112,17 @@ export interface ProjectionSources {
   memories: MemorySourceRow[];
   items: MemoryItemRow[];
   tags: MemoryTagRow[];
+  /** Empty unless asked for; a FAILED read is a refusal, never an empty array. */
+  highlights: HighlightSourceRow[]; highlight_policies: HighlightPolicyRow[];
 }
 
 /**
- * Read everything a projection derives from, for one owner.
- *
- * Deleted rows are read too: a projection must be able to tell "this Memory is
- * gone" from "this Memory was never read", and the second is a refusal.
+ * Read everything a projection derives from, for one owner. Deleted rows are read
+ * too: a projection must tell "this Memory is gone" from "this was never read".
  */
 export async function readProjectionSources(
   client: ClientLike,
-  scope: ProjectionScope,
+  scope: ProjectionScope, opts: { includeHighlights?: boolean } = {},
 ): Promise<ProjectionResult<ProjectionSources>> {
   const memRes = await client.from("memories").select(MEMORY_COLUMNS).eq("owner_id", scope.owner_id);
   if (memRes.error) {
@@ -166,7 +165,8 @@ export async function readProjectionSources(
     tags = (tagRes.data ?? []) as MemoryTagRow[];
   }
 
-  return { ok: true, value: { memories, items, tags } };
+  const hl = opts.includeHighlights ? await readHighlightSources(client, scope) : NO_HIGHLIGHT_SOURCES;
+  return hl.ok ? { ok: true, value: { memories, items, tags, ...hl.value } } : hl;
 }
 
 export interface DerivedProjection {
@@ -209,7 +209,7 @@ export async function deriveProjection(
     return { ok: false, reason: "projection_not_configured", detail: def.unavailable_reason, retryable: false };
   }
 
-  const sources = await readProjectionSources(client, scope);
+  const sources = await readProjectionSources(client, scope, { includeHighlights: readsHighlights(def) });
   if (!sources.ok) return sources;
 
   const rows = def.build({
@@ -217,13 +217,13 @@ export async function deriveProjection(
     memories: sources.value.memories,
     items: sources.value.items,
     tags: sources.value.tags,
-    significance: opts.significance,
+    significance: opts.significance, highlights: { rows: sources.value.highlights, policies: sources.value.highlight_policies },
   });
 
   // The source version covers the rows the builder could see, not only the rows
   // it emitted: a Memory that was filtered OUT is still an input, and if it
   // changes so that it now qualifies, the projection is stale.
-  const version = sourceVersionOf(sources.value.memories);
+  const version = sourceVersionOf(sources.value.memories, sources.value.highlights, sources.value.highlight_policies);
 
   // Contribution is the narrower relation, and it is what the cleanup graph
   // walks. A projection with no memory_id in its whitelist contributes nothing
@@ -411,9 +411,9 @@ export async function projectionStaleness(
   projectionId: ProjectionId,
   scope: ProjectionScope,
 ): Promise<ProjectionResult<StalenessVerdict>> {
-  const sources = await readProjectionSources(client, scope);
+  const sources = await readProjectionSources(client, scope, { includeHighlights: readsHighlights(getProjectionDefinition(projectionId)) });
   if (!sources.ok) return sources;
-  const current = sourceVersionOf(sources.value.memories);
+  const current = sourceVersionOf(sources.value.memories, sources.value.highlights, sources.value.highlight_policies);
 
   const reg = await readRegistration(client, projectionId, scope);
   if (!reg.ok) {
@@ -515,3 +515,108 @@ export async function revokeDerivativesForMemory(
   return { ok: true, value: { revoked: updated.length, scope_keys: updated.map((u) => u.scope_key).sort() } };
 }
 
+// ═════════════════════════════════════════════════════════════════════════════
+// §12's HIGHLIGHTS, AND §10's POLICY OVER THEM.
+//
+// Appended rather than placed beside the Memory reads, and that is a deliberate
+// cost. This file is cited BY LINE NUMBER from docs/architecture/
+// census-highlights-memories.md, which this lane may not edit; declaring these
+// where they read best moved `derivativeRegistry.ts:252#RegistrationRow`,
+// `:287#rebuildProjection`, `:409#projectionStaleness` and
+// `:464#revokeDerivativesForMemory`, and turned `check:doc-citations` from
+// green to red. A line-numbered citation makes another document's contract out
+// of this file's line count; appending is what avoids paying that twice.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * §12's Highlights, read for the §18 projection whose subject is one.
+ *
+ * NARROW ON PURPOSE. Every column `public.highlights` carries that this
+ * projection must never publish — `caption`, `media_url`, `location_name`, the
+ * filter columns — is absent from this list, so it cannot reach a builder at
+ * all. The field whitelist is the second line of that defence, not the first.
+ */
+const HIGHLIGHT_COLUMNS =
+  "id, owner_id, visibility, created_at, updated_at, expires_at, deleted_at, archived_at, " +
+  "pinned_at, lifetime_class, location_city, location_country";
+
+/**
+ * §10's policy, narrowed to the two dimensions a projection acts on. Migration
+ * 2721, applied to production at 20260915055812.
+ */
+const HIGHLIGHT_POLICY_COLUMNS = "highlight_id, location_precision, consent_share";
+
+/** What a projection that does not declare `highlights` gets: nothing, read nowhere. */
+const NO_HIGHLIGHT_SOURCES = {
+  ok: true as const,
+  value: { highlights: [] as HighlightSourceRow[], highlight_policies: [] as HighlightPolicyRow[] },
+};
+
+/**
+ * THE DECLARATION DECIDES WHAT IS READ. `source_tables` is one of §18's own
+ * registration fields, so deriving the read from it keeps the declaration
+ * honest rather than letting a second, drifting list decide — and every
+ * projection that does NOT declare `highlights` issues exactly the queries it
+ * always did.
+ */
+function readsHighlights(def: { source_tables: readonly string[] } | null): boolean {
+  return def !== null && def.source_tables.includes("highlights");
+}
+
+/**
+ * Read one owner's Highlights AND the §10 policy over them, in ONE step.
+ *
+ * THE POLICY IS NOT OPTIONAL AND IS NOT READ SEPARATELY. An absent policy set
+ * is not "no policy"; it is a read that did not happen, and an audience-specific
+ * projection built from one would publish a Highlight whose owner's consent and
+ * precision were never consulted. An unreadable policy table is therefore a
+ * REFUSAL — §10's ladder is a publication limit, and an unreadable limit must
+ * never be served as an absent one (28.11).
+ *
+ * Deleted and archived rows ARE read, for the reason the memories read gives: a
+ * projection must tell "this Highlight is gone" from "this Highlight was never
+ * read". The builder filters them; the read does not hide them.
+ */
+async function readHighlightSources(
+  client: ClientLike,
+  scope: ProjectionScope,
+): Promise<ProjectionResult<{ highlights: HighlightSourceRow[]; highlight_policies: HighlightPolicyRow[] }>> {
+  const hlRes = await client.from("highlights").select(HIGHLIGHT_COLUMNS).eq("owner_id", scope.owner_id);
+  if (hlRes.error) {
+    return {
+      ok: false, reason: "source_unavailable", table: "highlights",
+      detail: `highlights unreadable: ${hlRes.error.message ?? "unknown error"}`,
+      retryable: !isSchemaAbsent(hlRes.error),
+    };
+  }
+  if (!Array.isArray(hlRes.data)) {
+    return {
+      ok: false, reason: "source_unavailable", table: "highlights",
+      detail: "highlights read returned no row array", retryable: true,
+    };
+  }
+  const highlights = hlRes.data as HighlightSourceRow[];
+  if (highlights.length === 0) return { ok: true, value: { highlights, highlight_policies: [] } };
+
+  // Scoped by owner_id, not by the ids just read: 2721 carries `owner_id`, one
+  // owner's policy set is small, and an owner filter cannot return a policy row
+  // for somebody else's Highlight.
+  const polRes = await client
+    .from("highlight_projection_policies")
+    .select(HIGHLIGHT_POLICY_COLUMNS)
+    .eq("owner_id", scope.owner_id);
+  if (polRes.error) {
+    return {
+      ok: false, reason: "source_unavailable", table: "highlight_projection_policies",
+      detail: `highlight_projection_policies unreadable: ${polRes.error.message ?? "unknown error"}`,
+      retryable: !isSchemaAbsent(polRes.error),
+    };
+  }
+  if (!Array.isArray(polRes.data)) {
+    return {
+      ok: false, reason: "source_unavailable", table: "highlight_projection_policies",
+      detail: "highlight_projection_policies read returned no row array", retryable: true,
+    };
+  }
+  return { ok: true, value: { highlights, highlight_policies: polRes.data as HighlightPolicyRow[] } };
+}

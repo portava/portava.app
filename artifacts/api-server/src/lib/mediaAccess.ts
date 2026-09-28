@@ -24,9 +24,12 @@ import {
   authorizeMediaContext,
 } from "./mediaVisibility.js";
 import {
-  resolveStoryRetentionConfig,
-  retentionDatesFor,
-} from "../services/stories/storyRetentionPolicy.js";
+  historyBoundEnabled,
+  membershipSelect,
+  visibleFromOf,
+  withinWindow,
+} from "../services/groupChatHistoryBound.js";
+import { resolveStoryRetentionConfig, retentionDatesFor } from "../services/stories/storyRetentionPolicy.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -363,7 +366,7 @@ async function decide(
   }
 
   if (bucket !== "post-media") return false;
-
+  { const posterOf = derivedPosterBase(path); if (posterOf !== null) return decide(sc, viewerId, bucket, posterOf); } // §37: a poster IS its video
   // 1. Owner sees their own bytes — unless they deleted the story that holds
   //    them, in which case "deleted" has to mean deleted for them too.
   const pathOwner = ownerFromPath(path);
@@ -477,11 +480,11 @@ async function decide(
     // The moderation carrier could not be read. Nothing later in this function
     // can answer the question it was asked, so deny rather than fall through.
     if (pmErr) return false;
-    const pmRows = ((pms as any[]) ?? []);
+    const pmRows = ((pms as any[]) ?? []); if (pmRows.length === 0) { const original = await originalOfRecordedVariant(sc, path, urlForms); if (original === "deny") return false; if (original !== null) return decide(sc, viewerId, bucket, original); } // §23.7: a recorded, server-derived variant IS its original
     if (pmRows.length > 0) {
       // A truncated page cannot support a deny-if-any scan: an unservable row
       // could be the one that did not fit. Deny instead of guessing.
-      if (pmRows.length >= POST_MEDIA_ATTACHMENT_CAP) return false;
+      if (pmRows.length >= POST_MEDIA_ATTACHMENT_CAP) return false;  if (pmRows.some((r) => String(r?.processing_status ?? "") !== "ready")) return false;  // census-discovery §56 (DV-77): a row that is not `ready` may hold the UNSTRIPPED original (/complete strips in place, THEN marks ready) — never served to anyone but its owner (branch 1)
       // ANY attachment moderated away denies the object. A rejection is recorded
       // per attachment, and this function answers about the BYTES — one post's
       // clean row is not authority to serve what another post's row removed.
@@ -583,7 +586,11 @@ async function decide(
   try {
     const { data: msgs, error: msgsErr } = await sc
       .from("messages")
-      .select("thread_id, sender_id")
+      // `created_at` is here for the §14.3 window below. It is a column
+      // `messages` has had since the baseline, so naming it unconditionally
+      // cannot make this query fail on a database that has not run 2400 — only
+      // the MEMBERSHIP select has to stay conditional, and it does.
+      .select("thread_id, sender_id, created_at")
       .or(`media_url.in.${inList},media_thumbnail_url.in.${inList}`)
       .limit(1);
     noteLookupFailure("3c messages", msgsErr, { bucket, path });
@@ -608,9 +615,31 @@ async function decide(
       // denies it. Returning false here would let a forged message row SUPPRESS an
       // object its real owner is entitled to publish elsewhere.
       if (owner && owner === (msg as any).sender_id) {
+        // §14.3 GROUP HISTORY BOUNDS, THE MEDIA DOOR.
+        //
+        // Membership alone was the whole test here, and membership alone is
+        // what migration 2400 exists because of: syncTripChatMembers adds every
+        // newly accepted trip member to the trip thread, so "is in the thread"
+        // was true for a person the thread's older messages are not theirs to
+        // read. Every TEXT reader in this tree now excludes messages created
+        // before the caller's `visible_from_at`; this branch decides whether to
+        // hand over BYTES from a PRIVATE bucket for the same messages. A media
+        // URL reachable without the bound is the same disclosure through
+        // another door, and the door that gives up more.
+        //
+        // The flag polarity is the lane's, not this file's: `historyBoundEnabled`
+        // is FALSE ON ERROR (lib/featureFlags.isFlagEnabled), so an unreadable
+        // `feature_flags` leaves thread media exactly as reachable as it is
+        // today rather than denying every member their own thread's photos.
+        // This file's own deny-on-unreadable posture still governs the two
+        // reads that decide ACCESS — `messages` and `message_thread_members`
+        // — and both keep it.
+        const boundOn = await historyBoundEnabled(sc);
         const { data: member, error: memberErr } = await sc
           .from("message_thread_members")
-          .select("user_id")
+          // Conditional, so a build carrying this code never names a column a
+          // database without 2400 would reject with 42703.
+          .select(membershipSelect("user_id", boundOn))
           .eq("thread_id", msg.thread_id)
           .eq("user_id", viewerId)
           .is("left_at", null)
@@ -618,7 +647,38 @@ async function decide(
         // Returned directly: an unreadable membership table denies a member's own
         // thread media exactly as it denies a non-member's.
         noteLookupFailure("3c thread membership", memberErr, { bucket, path, threadId: msg.thread_id });
-        return Boolean(member);
+        if (!member) return false;
+        const visibleFrom = visibleFromOf(member as any, boundOn);
+        // A POLICY deny, not a lookup failure, so it does not go through
+        // noteLookupFailure (which exists to make an undecidable branch
+        // diagnosable). This branch decided.
+        //
+        // Q6, AT THE MEDIA DOOR — AND IT IS A NO-OP HERE, WHICH IS WORTH
+        // SAYING RATHER THAN LEAVING A READER TO ASSUME OTHERWISE.
+        //
+        // This branch is only reached when `owner === msg.sender_id`. Q6 only
+        // fires when the VIEWER is that sender. The two together give
+        // `owner === viewerId` — and `decide()` returned true for exactly that
+        // four branches above, at "1. Owner always sees their own bytes"
+        // (`pathOwner === viewerId`). So the exception cannot change a decision
+        // here today. It is wired in regardless, because the alternative is
+        // leaving the one call site in the tree that spells the window rule
+        // differently, and because this is the branch that hands over BYTES
+        // from a PRIVATE bucket: if step 1 ever narrows, this door must already
+        // be carrying the same rule as every text reader.
+        //
+        // WHAT IS LOAD-BEARING HERE IS THE LIMIT, and it is unchanged: ANOTHER
+        // member's protected attachment from before this member's window stays
+        // refused. `senderId` is then not `viewerId`, the predicate returns
+        // false, and the bytes are not served. An accessible own MESSAGE is
+        // never a key to somebody else's OBJECT — each object is decided by ITS
+        // OWN row's sender, one call at a time.
+        //
+        // The membership read above is `.is("left_at", null)`: an INACTIVE
+        // member has no `member` row here and was already refused.
+        if (!withinWindow((msg as any).created_at, visibleFrom,
+                          { senderId: (msg as any).sender_id, viewerId })) return false;
+        return true;
       }
     }
   } catch { /* fall through */ }
@@ -844,7 +904,7 @@ export async function mediaAccessDeadline(
   path: string,
 ): Promise<number | null> {
   if (bucket !== "post-media") return null;
-
+  { const posterOf = derivedPosterBase(path); if (posterOf !== null) return mediaAccessDeadline(sc, viewerId, bucket, posterOf); } // §37: a poster keeps its video's deadline
   const owner = ownerFromPath(path);
   if (owner && owner === viewerId) return null; // owner archive: no boundary
 
@@ -891,4 +951,87 @@ export async function mediaAccessDeadline(
   } catch {
     return Date.now();
   }
+}
+
+// ── §37 video posters ─────────────────────────────────────────────────────────
+// A postcard video's poster is stored at `<storage_path>.poster.jpg`, a path the
+// SERVER derives from the slot (routes/postcardMediaTransport.ts) and the only
+// thumbnail path /complete admits. The one-line branch at the top of decide()
+// therefore authorizes a poster by authorizing the video it was cut from —
+// exactly that audience, no wider and no narrower — instead of letting it fall
+// through every branch to §4's deny as an unreferenced object. Imported at the
+// TAIL so no line above moves (census-highlights-memories cites this file by
+// line); ESM hoists imports, so evaluation order is unchanged.
+import { derivedPosterBase } from "./mediaPosterPath.js";
+
+// ── Server-derived image variants (census-media §23.7) ───────────────────────
+// `post_media` records the server-derived variants of its object: the feed-size
+// derivative (`feed_storage_path` / `feed_url`, 0208) and the thumbnail
+// (`thumbnail_storage_path` / `thumbnail_url`). Branch 3a matched
+// `storage_path` only, so a viewer entitled to the image was refused its
+// variant: no branch named it, and §4 denies. With `media_private_buckets_enabled`
+// on, that is every non-owner's feed image. The fix is lane D's poster rule
+// (§37), generalised: a variant IS its original, so the ONE line in 3a decides
+// the original instead — its moderation, its post's rules, its own attachment
+// override and its trip context all apply, and nothing wider can.
+//
+// What makes that safe is that the original is taken from a ROW, and only
+// believed when the variant is a server-derived NAME of it:
+//   `<original>.feed.jpg` / `<original>.thumb.jpg` (postcards), or
+//   `<original minus its extension>.feed.jpg` / `.thumb.jpg` (general posts).
+// A row that names someone else's object as its variant fails that test, and
+// is ignored. Nothing under a client-writable prefix is ever a variant.
+// Each lookup is its own `.eq` / `.in`, whose values the client encodes, and
+// never a string-built `.or()`, because `path` is chosen by the caller.
+// Appended at the tail so no cited line above moves.
+const DERIVED_VARIANT_SUFFIXES = [".feed.jpg", ".thumb.jpg"] as const;
+const VARIANT_CLIENT_WRITABLE_PREFIXES = ["memories/", "stories/"] as const;
+
+/** Pure: is `variant` a server-derived name of `original`? */
+export function isDerivedVariantOf(variant: string, original: string): boolean {
+  if (typeof variant !== "string" || typeof original !== "string") return false;
+  if (!variant || !original || variant === original) return false;
+  const stem = original.replace(/\.[^/.]+$/, "");
+  return DERIVED_VARIANT_SUFFIXES.some(
+    (suffix) => variant === `${original}${suffix}` || (stem !== original && variant === `${stem}${suffix}`),
+  );
+}
+
+/**
+ * The original a recorded variant was derived from. `null` when `path` is not
+ * a recorded variant (3a falls through exactly as before). `"deny"` when it
+ * cannot be decided: a lookup failed, a page was truncated, or two rows name
+ * different originals.
+ */
+async function originalOfRecordedVariant(
+  sc: SupabaseClient,
+  path: string,
+  urlForms: string[],
+): Promise<string | null | "deny"> {
+  if (!DERIVED_VARIANT_SUFFIXES.some((suffix) => path.endsWith(suffix))) return null;
+  if (VARIANT_CLIENT_WRITABLE_PREFIXES.some((prefix) => path.startsWith(prefix))) return null;
+  const rowsNaming = (col: "feed_storage_path" | "thumbnail_storage_path" | "feed_url" | "thumbnail_url") => {
+    const q = sc.from("post_media").select("storage_path");
+    return (col.endsWith("_url") ? q.in(col, urlForms) : q.eq(col, path)).limit(POST_MEDIA_ATTACHMENT_CAP);
+  };
+  const results = await Promise.all([
+    rowsNaming("feed_storage_path"),
+    rowsNaming("thumbnail_storage_path"),
+    rowsNaming("feed_url"),
+    rowsNaming("thumbnail_url"),
+  ]);
+  const originals = new Set<string>();
+  for (const { data, error } of results) {
+    noteLookupFailure("3a derived variant", error, { path });
+    if (error) return "deny";
+    const rows = (data as any[]) ?? [];
+    if (rows.length >= POST_MEDIA_ATTACHMENT_CAP) return "deny";
+    for (const row of rows) {
+      const original = typeof row?.storage_path === "string" ? row.storage_path : "";
+      if (isDerivedVariantOf(path, original)) originals.add(original);
+    }
+  }
+  if (originals.size === 0) return null;
+  if (originals.size > 1) return "deny";
+  return [...originals][0]!;
 }

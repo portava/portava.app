@@ -17,14 +17,14 @@
  * has no id", and `suggestBody`/the telemetry field turn that into null rather
  * than into a joinable-looking empty string.
  */
-import type { InputSuggestion } from '../types/inputSuggestion.ts';
+import type { InputSuggestion, SuggestRefusal } from '../types/inputSuggestion.ts'; import { parseMapSearchRefusal } from '../search/mapSearch.ts';
 
 export interface RawSuggestBody {
   requestId?: unknown;
   policyVersion?: unknown;
   schemaVersion?: unknown;
   suggestions?: unknown;
-  serverMs?: unknown;
+  serverMs?: unknown; refusal?: unknown;
 }
 
 export interface ParsedSuggestBody {
@@ -38,7 +38,7 @@ export interface ParsedSuggestBody {
    */
   schemaVersion: number | null;
   suggestions: InputSuggestion[];
-  serverMs: number | undefined;
+  serverMs: number | undefined; /** census-discovery §80 — the serve's coverage; absent when it read everything. */ refusal?: SuggestRefusal;
 }
 
 /** Wall-clock ceiling. A "latency" beyond this is a clock, not a serve. */
@@ -53,7 +53,7 @@ export function parseSuggestBody(body: RawSuggestBody | null | undefined): Parse
       : null,
     schemaVersion: parseSchemaVersion(b.schemaVersion),
     suggestions: Array.isArray(b.suggestions) ? (b.suggestions as InputSuggestion[]) : [],
-    serverMs: parseServerMs(b.serverMs),
+    serverMs: parseServerMs(b.serverMs), ...(parseMapSearchRefusal(b.refusal) ? { refusal: parseMapSearchRefusal(b.refusal) } : {}),
   };
 }
 

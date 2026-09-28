@@ -27,7 +27,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { searchKey, haversineKm } from '../canonicalLocations';
 import { nameSimilarity, isSamePlace, type PlaceLike } from '../places/placeResolve';
-import { safeOrIlikeValue } from '../postgrestFilter';
+import { escapeLikePattern, escapeOrValue } from '../postgrestFilter'; const safeOrIlikeValue = (v: string): string => escapeLikePattern(escapeOrValue(v)); // census-discovery §80 round 3: strip the .or() structure FIRST, then LIKE-escape — the shared helper's order strips the escapes it just added
 
 // ── Canonical dedup entity (the shape both sides compare on) ───────────────────
 

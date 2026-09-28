@@ -54,6 +54,16 @@ FIRST ATTEMPT WAS WRONG AND THE GUARD CAUGHT IT. I allocated 3000-3010 on the
 reasoning that main's highest sequential number is 2995, so 3000+ was "free".
 `check:migration-prefixes` refused all nine files: the canonical band is
 2100-2999 (`/^2[1-9]\d{2}_/`), and a 4-digit prefix >= 3000 is rejected outright.
+
+> **NO LONGER TRUE, 2026-09-23.** PR #527 extended the band to admit 3000-3999
+> (`artifacts/api-server/src/scripts/migrationPrefixRules.ts:58#NEW_NUMERIC_PREFIX_RE`),
+> for the reason this section ran into from the other side: 2100-2999 filled up.
+> The paragraph above is left as written because it is a record of what happened
+> and the reasoning it corrects was genuinely wrong AT THE TIME — 3000 was not
+> free then, and "the highest number plus a round-up" was never the test. What
+> changed is the band, not the rule that a number must be allocated before it is
+> used. The allocation this document went on to make, inside 2100-2999, still
+> stands and is still applied; nothing here is renumbered.
 The four incoming media files were already NUMBERED 3000-3003 by their author, so
 they were never importable at those numbers either.
 

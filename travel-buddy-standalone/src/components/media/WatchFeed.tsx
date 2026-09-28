@@ -120,7 +120,7 @@ function FeedToggle({ feedType, onChange }: FeedToggleProps) {
 const ft = StyleSheet.create({
   row: {
     flexDirection: 'row',
-    gap: space.md,
+    gap: space.md, paddingHorizontal: space.md, paddingTop: space.xs, borderRadius: 999, backgroundColor: 'rgba(17,17,15,0.71)', // census-media §31.12: an ink backing, the least alpha at which the inactive label clears 4.5:1 over a white frame
   },
   tab: {
     paddingBottom: 4,

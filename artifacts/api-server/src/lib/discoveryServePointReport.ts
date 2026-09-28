@@ -64,7 +64,7 @@ export const SERVE_POINT_LABEL: Readonly<Record<number, string>> = {
   [DiscoveryServePoint.SUGGEST]:                "Suggest (GET /discovery/suggest)",
   [DiscoveryServePoint.COMMUNITY]:              "Community (GET /discovery/community)",
   [DiscoveryServePoint.HIDDEN_GEMS]:            "Hidden gems (GET /hidden-gems, /hidden-gems/nearby)",
-  [DiscoveryServePoint.MAP_SEARCH]:             "Map discovery (GET /map/search)",
+  [DiscoveryServePoint.MAP_SEARCH]:             "Map discovery (GET /map/search)", [DiscoveryServePoint.OUTPUT_KINDS]: "Output kinds (GET /v1/discovery/recommendations/:kind)",  // census-discovery §94, on this line so no cited line moves
 };
 
 /** Every serve point the writer can emit, ascending. */

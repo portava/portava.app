@@ -128,7 +128,7 @@ Declared at
 > nothing in this repository declares a supported width range. The theme defines
 > no breakpoints (the single width constant, `layout.maxWidth: 720` at
 > `travel-buddy-standalone/src/theme/tokens.ts:265`, is a desktop/tablet content
-> cap the Wall does not use), and **the Wall reads no viewport width at all** —
+> cap the Wall does not use), and **the Wall reads no viewport width at all** — (SUPERSEDED by census-wall §16, 2026-09-26: the Wall image picker now reads the window width and scale, so that grep finds wallItemShared.tsx and wallPrefetch.ts; it only chooses which stored image to fetch, and no LAYOUT switches on width)
 > `grep -rn 'useWindowDimensions\|Dimensions.get'` over the Wall component tree
 > returns nothing. Width therefore switches no layout in the Wall; it only moves
 > where text wraps, how tall a fixed-aspect media well is, and whether the chip

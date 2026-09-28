@@ -63,4 +63,11 @@ export interface PlaceCurrentView {
   heroMedia: MediaProjection[];
   /** Neighborhood / city label for the header. */
   areaName?: string | null;
+  /**
+   * §18 Visual Consensus as the server concluded it (services/media/mediaIntelligence.ts).
+   * Absent from an older server and from the fixture path — never guessed.
+   */
+  consensus?: VisualConsensusView | null;
 }
+
+import type { VisualConsensusView } from '../../../services/media/mediaIntelligence.ts';

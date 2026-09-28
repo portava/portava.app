@@ -4,7 +4,7 @@
  * This is the unification-layer spine (§3/§4/§42). It WRAPS existing systems and
  * reimplements nothing:
  *
- *   - Candidate generation delegates to `dispatchSearch` (routes/discoverySearch)
+ *   - Candidate generation delegates to `dispatchSearch` (./searchCandidates)
  *     — the same per-type query + match-tier ranking + fail-closed privacy code
  *     paths /discovery/search and /discovery/suggest use.
  *   - Canonical city rows come from `suggestCanonicalLocations`
@@ -25,14 +25,14 @@
 import { fetchBlockedSet } from '../blocks';
 import { normalizeLocationName, type CanonicalRow } from '../canonicalLocations';
 import { logger } from '../logger';
-import type { SearchQueryContext } from '../../routes/discoverySearchHelpers';
+import type { SearchQueryContext } from './searchQueryHelpers';
 import {
   dispatchSearch,
   fetchAgeRestrictedSet,
   canonicalToCityResult,
   mergeCitySuggestions,
   type SearchResult,
-} from '../../routes/discoverySearch';
+} from './searchCandidates';
 import {
   resolveGeoCandidates,
   zeroCharGeoDefaults,
@@ -223,7 +223,7 @@ export interface GenerateParams {
   /** §18 IANA timezone for temporal-window normalization (optional). */
   tz?: string | null;
   /** §22 per-request opt-in for AI-assisted writing (default false). */
-  aiAssist?: boolean;
+  aiAssist?: boolean; /** census-discovery §80: an optional coverage sink; absent ⇒ exactly as before. */ coverage?: GatewayCoverage;
 }
 
 function uniq<T>(arr: T[]): T[] {
@@ -238,7 +238,7 @@ export async function generateSuggestions(
   sc: any,
   params: GenerateParams,
 ): Promise<InputSuggestion[]> {
-  const { context, policy, text, userId, limit, sessionContext, lat, lng, city, draft, tz, aiAssist } = params;
+  const { context, policy, text, userId, limit, sessionContext, lat, lng, city, draft, tz, aiAssist, coverage } = params;
 
   // no_assistance fields produce nothing (§6). generic_text lands here.
   if (policy.mode === 'no_assistance') return [];
@@ -560,12 +560,12 @@ export async function generateSuggestions(
       const otherTypes = dispatchTypes.filter((t) => t !== 'cities');
       if (otherTypes.length > 0) {
         let other = await dispatchAndProject(sc, otherTypes, {
-          q, userId, context, policy, lat, lng, city, temporalWindow, taskConstraint,
+          q, userId, context, policy, lat, lng, city, temporalWindow, taskConstraint, coverage,
         });
         // §10 second attempt — same rule as the city path above.
         if (other.length === 0 && norm.correctedQuery) {
           const retry = await dispatchAndProject(sc, otherTypes, {
-            q: norm.correctedQuery, userId, context, policy, lat, lng, city, temporalWindow, taskConstraint,
+            q: norm.correctedQuery, userId, context, policy, lat, lng, city, temporalWindow, taskConstraint, coverage,
           });
           if (retry.length > 0) { other = retry; correctionHelped = true; }
         }
@@ -588,7 +588,7 @@ export async function generateSuggestions(
           Promise.all(
             dispatchTypes.map((t) =>
               dispatchSearch(sc, key, userId, blockedSet, ageRestrictedSet, t, 0, perType, ctx)
-                .catch(() => [] as SearchResult[]),
+                .catch(() => { noteTypeUnreadable(coverage, t); return [] as SearchResult[]; }),
             ),
           );
         let perTypeResults = await runDispatch(q);
@@ -604,7 +604,7 @@ export async function generateSuggestions(
         // §18 feasibility over the WHOLE candidate set for this request, so the
         // verdict is consistent across types (an out-of-Trip-city event and an
         // out-of-Trip-city place are demoted by the same rule).
-        const allCandidates = perTypeResults.flat();
+        let geoCityResults = geoRes.rows.map(canonicalToCityResult); [perTypeResults, geoCityResults] = await protectGatewayCandidates(sc, perTypeResults, geoCityResults); const allCandidates = perTypeResults.flat();
         const verdict = classifyFeasibility(allCandidates, taskConstraint);
 
         // §17/G109 venue bindings. Only for GEO PICKER contexts: a picker is a
@@ -623,7 +623,7 @@ export async function generateSuggestions(
         dispatchTypes.forEach((t, idx) => {
           let items = perTypeResults[idx] ?? [];
           if (t === 'cities' && geoRes.rows.length > 0) {
-            items = mergeCitySuggestions(geoRes.rows.map(canonicalToCityResult), items, perType);
+            items = mergeCitySuggestions(geoCityResults, items, perType);
           }
           for (const r of items) {
             if (seenIds.has(r.id)) continue;
@@ -638,7 +638,7 @@ export async function generateSuggestions(
             );
           }
         });
-      }
+      } else noteEligibilityUnreadable(coverage);
       // else: fail-closed — no entity suggestions when eligibility is unknown.
     }
   }
@@ -895,23 +895,29 @@ async function dispatchAndProject(
     temporalWindow: TemporalWindow | null;
     /** §16/§17 active-task bounds resolved once by the caller. */
     taskConstraint: TaskConstraint;
+    /** census-discovery §80 — the optional coverage sink. */
+    coverage?: GatewayCoverage;
   },
 ): Promise<InputSuggestion[]> {
   const [blockedSet, ageRestrictedSet] = await Promise.all([
     fetchBlockedSet(sc, p.userId),
     fetchAgeRestrictedSet(sc),
   ]);
-  // Fail-closed (§29): unknown eligibility ⇒ no entity suggestions.
-  if (blockedSet === null || ageRestrictedSet === null) return [];
+  // Fail-closed (§29): unknown eligibility ⇒ no entity suggestions — and, since
+  // §80, the coverage sink is told so rather than the answer reading as empty.
+  if (blockedSet === null || ageRestrictedSet === null) {
+    noteEligibilityUnreadable(p.coverage);
+    return [];
+  }
 
   const perType = Math.max(2, Math.ceil(p.policy.maxSuggestions / types.length));
   const ctx: SearchQueryContext = { lat: p.lat, lng: p.lng, userCity: p.city, nearbyIntent: false };
-  const perTypeResults = await Promise.all(
+  const [perTypeResults] = await protectGatewayCandidates(sc, await Promise.all(
     types.map((t) =>
       dispatchSearch(sc, p.q, p.userId, blockedSet, ageRestrictedSet, t, 0, perType, ctx)
-        .catch(() => [] as SearchResult[]),
+        .catch(() => { noteTypeUnreadable(p.coverage, t); return [] as SearchResult[]; }),
     ),
-  );
+  ), []);
 
   const verdict = classifyFeasibility(perTypeResults.flat(), p.taskConstraint);
   const out: InputSuggestion[] = [];
@@ -950,4 +956,132 @@ function applySessionBias(
     else rest.push(s);
   }
   return [...boosted, ...rest];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// census-discovery §80 (lane W10-S1) — coverage and protection on the gateway.
+//
+// Written below everything else so that no line the censuses cite above moves;
+// the edits above are in place, one line each.
+//
+// 1. COVERAGE (DV-83, register D-W10-S1-2). The gateway's typeahead contract is
+//    fail-soft — a type whose read fails yields no rows, and unknown block/age
+//    state yields no entity rows. Before §80 that was ALSO silent: the envelope
+//    was byte-identical to "nothing matched", which is the masquerade
+//    lib/discoveryRefusal.ts exists to stop, and after E-9 (D-W10-S1-4) the
+//    gateway is the global search's only typeahead. The optional sink below
+//    records what failed; `generateSuggestionsWithCoverage` turns it into the
+//    Discovery refusal vocabulary on the envelope. `generateSuggestions`'
+//    return value is unchanged, sink or no sink.
+//
+// 2. PROTECTION (B04, register D-W10-S1-3). The §24 protected-zone pass decides
+//    each CANDIDATE by its stored position before projection, on this path as
+//    on `GET /discovery/search` and `/discovery/suggest`: a row inside a
+//    suppress zone is not suggested by name either (§46.4's reported gap,
+//    census-input-intelligence G190's gateway leg). Behind the same flag
+//    (3366); OFF, absent or unreadable, the candidates are the same arrays.
+//
+// 3. THE MAP FIELD (A08 reason 3, register D-W10-S1-5). `global_search` /
+//    `map.search` is served by lib/inputAssistance/searchPage.ts.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** What a serve could not read. Mutable, request-scoped, never shared. */
+export interface GatewayCoverage {
+  eligibilityUnreadable: boolean;
+  unreadableTypes: Set<string>;
+}
+
+export function newGatewayCoverage(): GatewayCoverage {
+  return { eligibilityUnreadable: false, unreadableTypes: new Set() };
+}
+
+function noteTypeUnreadable(coverage: GatewayCoverage | undefined, type: string): void {
+  coverage?.unreadableTypes.add(type);
+}
+
+function noteEligibilityUnreadable(coverage: GatewayCoverage | undefined): void {
+  if (coverage) coverage.eligibilityUnreadable = true;
+}
+
+/**
+ * The refusal a serve's coverage amounts to, or null when it read everything.
+ * "nothing" when eligibility was unknown (no entity row can be served) or when
+ * every dispatched type failed; "partial" when some did.
+ */
+export function gatewayCoverageRefusal(
+  coverage: GatewayCoverage,
+  dispatchedTypes: readonly string[],
+): DiscoveryRefusal | null {
+  if (coverage.eligibilityUnreadable) {
+    return discoveryRefusal("transient_db", "visibility_state_unreadable", GATEWAY_ROUTE);
+  }
+  if (coverage.unreadableTypes.size === 0) return null;
+  const failed = [...coverage.unreadableTypes].sort();
+  const all = dispatchedTypes.length > 0 && dispatchedTypes.every((t) => coverage.unreadableTypes.has(t));
+  return discoveryRefusal(
+    "transient_db", "suggest_sources_unreadable", GATEWAY_ROUTE, all ? "nothing" : "partial", failed,
+  );
+}
+
+/**
+ * The §24 pass over a request's candidates, in one read of the policy. Identity
+ * (the same arrays) when the pass is off or no zone is registered; otherwise each
+ * row is kept, coarsened or dropped by `applySearchProtection`'s decision.
+ */
+export async function protectGatewayCandidates(
+  sc: any,
+  perType: SearchResult[][],
+  extra: SearchResult[],
+): Promise<[SearchResult[][], SearchResult[]]> {
+  const flat = [...perType.flat(), ...extra];
+  if (flat.length === 0) return [perType, extra];
+  const kept = await protectSearchResults(sc, flat, GATEWAY_ROUTE);
+  if (kept === flat) return [perType, extra];
+  const key = (r: SearchResult) => `${r.type}\u0000${r.id}`;
+  const byKey = new Map(kept.map((r) => [key(r), r] as const));
+  const pick = (rows: SearchResult[]) =>
+    rows.map((r) => byKey.get(key(r))).filter((r): r is SearchResult => r !== undefined);
+  return [perType.map(pick), pick(extra)];
+}
+
+/**
+ * One serve, with its coverage. The route calls this; `generateSuggestions`
+ * stays the coverage-free function every existing caller and test uses.
+ */
+export async function generateSuggestionsWithCoverage(
+  sc: any,
+  params: GenerateParams,
+): Promise<GatewayServe> {
+  if (params.context === "global_search" && params.policy.fieldId === MAP_SEARCH_FIELD_ID) {
+    return generateMapSearchPage(
+      sc,
+      {
+        text: params.text,
+        userId: params.userId,
+        lat: params.lat,
+        lng: params.lng,
+        city: params.city,
+        tz: params.tz ?? null,
+      },
+      POLICY_VERSION,
+    );
+  }
+  const coverage = newGatewayCoverage();
+  const suggestions = await generateSuggestions(sc, { ...params, coverage });
+  const dispatched = uniq((params.policy.entityTypes ?? []).map(entityToSearchType));
+  return { suggestions, refusal: gatewayCoverageRefusal(coverage, dispatched) };
+}
+
+import { protectSearchResults } from "../discoverySearchProtection";
+import { discoveryRefusal, type DiscoveryRefusal } from "../discoveryRefusal";
+import {
+  GATEWAY_ROUTE,
+  MAP_SEARCH_FIELD_ID,
+  generateMapSearchPage,
+  type GatewayServe,
+} from "./searchPage";
+
+/** The refusal a serve that threw carries: nothing was read, so nothing is a result. */
+export function gatewayFailureRefusal(): DiscoveryRefusal {
+  return discoveryRefusal("transient_db", "suggest_failed", GATEWAY_ROUTE);
 }

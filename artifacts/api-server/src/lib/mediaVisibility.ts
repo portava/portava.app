@@ -41,15 +41,81 @@ export type MediaVisibilityOverride =
 
 type OverrideResult = { allowed: boolean; resolved: boolean };
 
-async function hasRelationship(
+/** The §6.1 entity an attachment links to — the key the `shared_moment` audience resolves through. */
+export type MediaAttachmentEntity = { entityType: string; entityId: string };
+
+/** At most this many Moments are consulted for one entity's `shared_moment` audience. */
+const SHARED_MOMENT_LOOKUP_CAP = 50;
+
+/**
+ * THE §6.1/§33 AUDIENCE RULE FOR ONE OVERRIDE VALUE — shared by the byte path
+ * (lib/mediaAccess, through `authorizeMediaAttachment`) and the projection path
+ * (services/media/MediaProjectionService), so the two can never disagree about
+ * who an attachment is for.
+ *
+ * An override only NARROWS. Every caller has already applied the parent
+ * entity's own visibility before asking, so:
+ *
+ *   null / inherit   no narrowing — the parent's audience stands. (`inherit`
+ *                    used to DENY every non-owner here, which made an explicit
+ *                    "same as the post" attachment owner-only: a correct
+ *                    audience written through POST /media/:id/attachments hid
+ *                    the media from everyone the post was shown to.)
+ *   public           no narrowing (it cannot widen past a parent already checked).
+ *   private          the owner only.
+ *   followers        the viewer follows the owner.
+ *   following        the owner follows the viewer.
+ *   trip_crew        accepted crew of the CONTEXT trip (or, for an event
+ *                    context, its going/maybe RSVPs and host roles). No context ⇒ deny.
+ *   shared_moment    an ACCEPTED member of a Shared Moment this entity belongs
+ *                    to: the Moment itself for entity_type='shared_moment', or
+ *                    every Moment the post was contributed to AND approved into
+ *                    for entity_type='post'. (It used to resolve as trip_crew,
+ *                    i.e. the wrong audience: trip crew who were not in the
+ *                    Moment saw the media, and Moment members who were not crew
+ *                    did not.)
+ *   anything else    deny — an audience this module does not model is not guessed at.
+ *
+ * Fail-closed throughout: any read error denies.
+ */
+export async function mayViewUnderOverride(
   sc: SupabaseClient,
   viewerId: string,
   ownerId: string,
-  visibility: MediaVisibilityOverride,
+  override: unknown,
+  opts: { context?: MediaContext; entity?: MediaAttachmentEntity } = {},
 ): Promise<boolean> {
+  if (override == null) return true;
   if (viewerId === ownerId) return true;
-  if (visibility === "public") return true;
-  if (visibility === "private" || visibility === "inherit") return false;
+  const o = String(override);
+  try {
+    switch (o) {
+      case "inherit":
+      case "public":
+        return true;
+      case "private":
+        return false;
+      case "followers":
+      case "following":
+        return await hasFollowRelationship(sc, viewerId, ownerId, o);
+      case "trip_crew":
+        return await isContextParticipant(sc, viewerId, opts.context);
+      case "shared_moment":
+        return await isSharedMomentAudience(sc, viewerId, opts.entity);
+      default:
+        return false;
+    }
+  } catch {
+    return false;
+  }
+}
+
+async function hasFollowRelationship(
+  sc: SupabaseClient,
+  viewerId: string,
+  ownerId: string,
+  visibility: "followers" | "following",
+): Promise<boolean> {
   // `user_follows` is (follower_id, following_id, created_at) — there is NO `id`
   // column, in production or in CI. Selecting one raised 42703, PostgREST
   // RESOLVED that as `{ data: null, error }`, and `!error && Boolean(data)`
@@ -59,25 +125,83 @@ async function hasRelationship(
   // made two of the seven audiences dead letters. `follower_id` is the column
   // lib/mediaAccess.ts:~232 and lib/profileVisibility.ts:156 already spell for
   // the identical existence check.
-  if (visibility === "followers") {
-    const { data, error } = await sc
-      .from("user_follows")
-      .select("follower_id")
-      .eq("follower_id", viewerId)
-      .eq("following_id", ownerId)
-      .maybeSingle();
-    return !error && Boolean(data);
+  const [follower, following] = visibility === "followers" ? [viewerId, ownerId] : [ownerId, viewerId];
+  const { data, error } = await sc
+    .from("user_follows")
+    .select("follower_id")
+    .eq("follower_id", follower)
+    .eq("following_id", following)
+    .maybeSingle();
+  return !error && Boolean(data);
+}
+
+async function isContextParticipant(
+  sc: SupabaseClient,
+  viewerId: string,
+  context: MediaContext | undefined,
+): Promise<boolean> {
+  if (!context) return false;
+  if (context.contextType === "trip") {
+    // The repo has exactly ONE definition of "accepted trip member"
+    // (lib/http.requireTripMember, mirrored by authz.is_trip_crew in
+    // migrations 2334/2337): role IN (owner, co_host, member, viewer) AND
+    // no explicit non-accepted status, with a trips.owner_id fallback when
+    // no membership row exists. An inline role-only filter here would have
+    // admitted a member whose row still says status='pending' and denied a
+    // trip owner who has no trip_members row at all, so this branch calls
+    // the canonical helper instead of restating half of it. A read failure
+    // raises, and the enclosing catch denies — fail-closed as everywhere
+    // else in this module.
+    return isAcceptedTripMember(sc, context.contextId, viewerId);
   }
-  if (visibility === "following") {
+  const [{ data: rsvp, error: rsvpError }, { data: role, error: roleError }] =
+    await Promise.all([
+      sc.from("event_rsvps").select("status")
+        .eq("event_id", context.contextId).eq("user_id", viewerId)
+        .in("status", ["going", "maybe"]).maybeSingle(),
+      sc.from("event_roles").select("role")
+        .eq("event_id", context.contextId).eq("user_id", viewerId)
+        .in("role", ["host", "co_host", "moderator"]).maybeSingle(),
+    ]);
+  return !rsvpError && !roleError && Boolean(rsvp || role);
+}
+
+/**
+ * The `shared_moment` audience: an accepted member of a Moment this entity is
+ * in. A Moment references a post through an APPROVED contribution — a pending
+ * or removed contribution does not put the post in the Moment, the same rule
+ * MediaActionResolver's §28 edge applies.
+ */
+async function isSharedMomentAudience(
+  sc: SupabaseClient,
+  viewerId: string,
+  entity: MediaAttachmentEntity | undefined,
+): Promise<boolean> {
+  if (!entity || !entity.entityId) return false;
+  let momentIds: string[];
+  if (entity.entityType === "shared_moment") {
+    momentIds = [entity.entityId];
+  } else if (entity.entityType === "post") {
     const { data, error } = await sc
-      .from("user_follows")
-      .select("follower_id")
-      .eq("follower_id", ownerId)
-      .eq("following_id", viewerId)
-      .maybeSingle();
-    return !error && Boolean(data);
+      .from("shared_moment_contributions")
+      .select("moment_id")
+      .eq("post_id", entity.entityId)
+      .eq("status", "approved")
+      .limit(SHARED_MOMENT_LOOKUP_CAP);
+    if (error || !Array.isArray(data)) return false;
+    momentIds = [...new Set((data as any[]).map((r) => String(r?.moment_id ?? "")).filter(Boolean))];
+  } else {
+    return false;
   }
-  return false;
+  if (momentIds.length === 0) return false;
+  const { data: m, error: mErr } = await sc
+    .from("shared_moment_memberships")
+    .select("moment_id")
+    .eq("user_id", viewerId)
+    .eq("status", "accepted")
+    .in("moment_id", momentIds)
+    .limit(1);
+  return !mErr && Array.isArray(m) && m.length > 0;
 }
 
 /**
@@ -90,7 +214,7 @@ export async function authorizeMediaAttachment(
   viewerId: string,
   ownerId: string,
   mediaAssetId: string | null | undefined,
-  entity: { entityType: string; entityId: string },
+  entity: MediaAttachmentEntity,
   context?: MediaContext,
 ): Promise<boolean> {
   if (!mediaAssetId) return true;
@@ -104,38 +228,7 @@ export async function authorizeMediaAttachment(
       .maybeSingle();
     if (error) return false;
     if (!data || (data as any).visibility_override == null) return true;
-
-    const override = String((data as any).visibility_override) as MediaVisibilityOverride;
-    if (override === "trip_crew" || override === "shared_moment") {
-      if (!context) return false;
-      if (context.contextType === "trip") {
-        // The repo has exactly ONE definition of "accepted trip member"
-        // (lib/http.requireTripMember, mirrored by authz.is_trip_crew in
-        // migrations 2334/2337): role IN (owner, co_host, member, viewer) AND
-        // no explicit non-accepted status, with a trips.owner_id fallback when
-        // no membership row exists. An inline role-only filter here would have
-        // admitted a member whose row still says status='pending' and denied a
-        // trip owner who has no trip_members row at all, so this branch calls
-        // the canonical helper instead of restating half of it. A read failure
-        // raises, and the enclosing catch denies — fail-closed as everywhere
-        // else in this module.
-        return isAcceptedTripMember(sc, context.contextId, viewerId);
-      }
-      const [{ data: rsvp, error: rsvpError }, { data: role, error: roleError }] =
-        await Promise.all([
-          sc.from("event_rsvps").select("status")
-            .eq("event_id", context.contextId).eq("user_id", viewerId)
-            .in("status", ["going", "maybe"]).maybeSingle(),
-          sc.from("event_roles").select("role")
-            .eq("event_id", context.contextId).eq("user_id", viewerId)
-            .in("role", ["host", "co_host", "moderator"]).maybeSingle(),
-        ]);
-      return !rsvpError && !roleError && Boolean(rsvp || role);
-    }
-    if (!["inherit", "public", "private", "followers", "following"].includes(override)) {
-      return false;
-    }
-    return hasRelationship(sc, viewerId, ownerId, override);
+    return mayViewUnderOverride(sc, viewerId, ownerId, (data as any).visibility_override, { context, entity });
   } catch {
     return false;
   }

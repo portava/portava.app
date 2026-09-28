@@ -50,7 +50,7 @@ import {
   runWithAskProjections,
   type AskRankingProjections,
 } from "../compass/CompassPlatformContext.js";
-import { buildOpportunities, opportunityWorldValueKeys, projectForSurface } from "../lib/opportunityEngine.js";
+import { buildOpportunities, opportunityWorldValueKeys, projectForSurface, type SurfaceProjection } from "../lib/opportunityEngine.js";
 import { parseIntentMode } from "../lib/intentModes.js";
 import { certifiedLayoverSnapshot, isDegradedRefusal } from "../services/airport/LayoverSnapshot.js";
 import {
@@ -134,7 +134,11 @@ import { buildRememberSurface } from "../compass/PassportRemembersService.js";
 import { generateRecap, buildOnThisDay, type RecapKind } from "../compass/MemoryRecapsService.js";
 import { recordIntentFromQuery } from "../lib/intentMemory.js";
 import { buildLiveChatContextLines }             from "../compass/CompassLiveEngine.js";
-import { buildTripContextLines }                 from "../compass/CompassTripContext.js";
+import {
+  buildTripContextLines,
+  buildTripWorldContext,
+  formatTripWorldContextLines,
+}                                                from "../compass/CompassTripContext.js";
 import { getOpenAI }                             from "../lib/openai.js";
 import { COMPASS_ASK_PROMPT, COMPASS_ASK_PROMPT_VERSION } from "../lib/prompts/compass-v1.js";
 import {
@@ -159,10 +163,21 @@ import {
   type ToolExecution,
 } from "../compass/CompassTools.js";
 import {
+  EMPTY_GROUNDING_EVIDENCE,
   enforceCompassGroundingEnvelope,
+  mergeGroundingEvidence,
   readGroundingEvidence,
+  type GroundingEvidence,
   type GroundingResult,
 } from "../compass/CompassGroundingEnvelope.js";
+import {
+  buildLiveClaimContext,
+  type LiveClaimSubject,
+} from "../compass/CompassLiveClaimContext.js";
+import {
+  buildSensingPresenceContext,
+  sensingCohortRefsForZones,
+} from "../compass/CompassSensingPresenceProducer.js";
 import { buildCompassContext as buildLocationCompassContext } from "../services/location/CompassLocationContext.js";
 import { buildCompassMediaContext, formatMediaContextLines } from "../compass/CompassMediaContext.js";
 import { resolveViewer as resolveMediaViewer } from "../services/media/MediaProjectionService.js";
@@ -1105,6 +1120,12 @@ const askBodySchema = z.object({
    *  CompassMediaContext and appended to the context block — never a raw string.
    *  Additive: absent ⇒ chat is unchanged. */
   mediaId:             z.string().uuid().optional(),
+  /** S39: the caller's OWN current coarse sensing zone(s) — the spatial-bucket
+   *  label its capture module stamps on its contributions, never a coordinate.
+   *  Present only while on-device capture is running. The route asks the
+   *  publication store for these zones' k-gated presence aggregate behind the
+   *  `surface` scope and `sensing_presence_context_enabled`; absent ⇒ no read. */
+  sensingZoneIds:      z.array(z.string().min(1).max(64)).max(5).optional(),
   stream:              z.boolean().default(false),
 });
 
@@ -1363,17 +1384,29 @@ async function runToolCallingLoop(
 
 /**
  * Sensing `:148` output boundary — read the answer back against the confidence
- * band of the turn's OWN tool results before publishing it.
+ * band of the turn's inputs before publishing it.
+ *
+ * S79: "its inputs" is BOTH halves, and it used to be one. The tool log was the
+ * whole band, so a turn in which the model called no tool was checked against
+ * nothing: `truthClass` was null and the two truth-class triggers could not
+ * fire, leaving the answer constrained by prompt text alone. `contextEvidence`
+ * is the live claims this turn put IN THE PROMPT
+ * (`compass/CompassLiveClaimContext`), folded in fail-weak, so the checker now
+ * has a band to convict against even on a tool-less turn.
  *
  * Called on both the streamed and the non-streamed branch, with the same tool
- * log both branches already carry, so the two cannot drift. See
+ * log and the same context band, so the two cannot drift. See
  * `compass/CompassGroundingEnvelope.ts` for why a refusal appends rather than
  * replaces, and for what it deliberately does not police.
  */
-function groundCompassAnswer(message: string, toolLog: ToolExecution[]): GroundingResult {
+function groundCompassAnswer(
+  message: string,
+  toolLog: ToolExecution[],
+  contextEvidence: GroundingEvidence = EMPTY_GROUNDING_EVIDENCE,
+): GroundingResult {
   return enforceCompassGroundingEnvelope(
     message,
-    readGroundingEvidence(toolLog.map((t) => t.result)),
+    mergeGroundingEvidence(readGroundingEvidence(toolLog.map((t) => t.result)), contextEvidence),
   );
 }
 
@@ -1424,7 +1457,7 @@ router.post("/compass/ask", async (req, res) => {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid request");
     return;
   }
-  const { prompt, city, conversationId: incomingConvId, tripId, circleOwnerId, mediaId, stream, intentMode } = parsed.data;
+  const { prompt, city, conversationId: incomingConvId, tripId, circleOwnerId, mediaId, stream, intentMode, sensingZoneIds } = parsed.data;
 
   // ── Conversation resolve ──────────────────────────────────────────────────
   let conversationId: string;
@@ -1486,6 +1519,15 @@ router.post("/compass/ask", async (req, res) => {
   let topItemsContext:        string[]        = [];
   /** Place ids among the top items — the subjects the shared context kernel is assembled for. */
   let topPlaceIds:            string[]        = [];
+  /**
+   * S79 — the same subjects PAIRED WITH THE NAME the model will write. The
+   * kernel keys on the opaque id, but `CompassGroundingEnvelope` binds a
+   * sentence to a subject by name, so a band carried under an id could never be
+   * attached to the prose that mentions the place.
+   */
+  let topSubjects:            LiveClaimSubject[] = [];
+  /** S79 — the band of the live claims this turn put in the prompt. */
+  let liveClaimEvidence:      GroundingEvidence  = EMPTY_GROUNDING_EVIDENCE;
   let structuredLines:        string[]        = [];
   let modeWeightingLines:     string[]        = [];
 
@@ -1524,6 +1566,18 @@ router.post("/compass/ask", async (req, res) => {
       .filter((d) => d.type === "place")
       .map((d) => String((d.data as Record<string, unknown> | null)?.id ?? String(d.id ?? "").replace(/^place:/, "")))
       .filter((id) => id.length > 0);
+    // The name here is the RAW title, not the UGC-wrapped one: it is used to
+    // match the model's prose, and the model writes the title without the
+    // wrapper. The wrapper is applied where the name reaches the PROMPT.
+    topSubjects = feedSection.items
+      .slice(0, 5)
+      .map((itm: any) => (itm.item ?? {}) as Record<string, unknown>)
+      .filter((d) => d.type === "place")
+      .map((d) => ({
+        subjectId: String((d.data as Record<string, unknown> | null)?.id ?? String(d.id ?? "").replace(/^place:/, "")),
+        name: String(d.title ?? d.name ?? "").slice(0, 200).trim(),
+      }))
+      .filter((s: LiveClaimSubject) => s.subjectId.length > 0 && s.name.length > 0);
     topItemsContext = feedSection.items.slice(0, 5).map((itm: any) => {
       const d    = (itm.item ?? {}) as Record<string, unknown>;
       // `title` here can be raw UGC (a post body, a host-entered event title), so
@@ -1696,6 +1750,15 @@ router.post("/compass/ask", async (req, res) => {
   //     The kernel half is UNGATED, exactly as the assembler above is.
   let askKernel: Awaited<ReturnType<typeof assembleAskKernel>> | null = null;
   let askProjections: AskRankingProjections | null = null;
+  /**
+   * S83 — the opportunity projection, when `opportunity_engine_enabled` let it
+   * run AND it cleared the §5 world-value guard. `undefined` means the gated
+   * half never ran, which `TripWorldContext` keeps distinct from "ran and
+   * promoted nothing".
+   */
+  let promotedOpportunities: readonly SurfaceProjection[] | undefined;
+  /** The opportunity block, held until the S83 block is in front of it — see below. */
+  let opportunityLines: string[] = [];
   try {
     askKernel = await assembleAskKernel(sc, user.id, topPlaceIds, {
       utcOffsetMinutes: tzOffsetForRequest(req),
@@ -1707,6 +1770,49 @@ router.post("/compass/ask", async (req, res) => {
     ctxLines.push(...formatKernelLines(askKernel));
     askProjections = { kernel: askKernel.kernel, readable: askKernel.readable };
   } catch { /* non-fatal — proceed without the kernel */ }
+
+  // ── S79: the live claims themselves, by name and with their §5.1 band ─────
+  // FIRST HALF OF THE ROW, AND IT HAS TO BE FIRST. The kernel above already
+  // carries a crowd density and a truth class per subject, but under an opaque
+  // subject id, and none of it ever reached the output checker. This block puts
+  // the claims in the prompt under the NAME the model writes, and keeps the
+  // band so `groundCompassAnswer` can hold the answer to it below — the census's
+  // order, because a checker over an empty context is vacuous.
+  //
+  // Reads through lib/liveClaimRead's own gates (flag, privacy_eligible, TTL),
+  // so it degrades to "no current evidence" rather than to a stale value
+  // presented as current. Never fatal.
+  try {
+    const live = await buildLiveClaimContext(sc, topSubjects, { now: new Date(turnNowMs) });
+    if (live.lines.length > 0) ctxLines.push(...live.lines);
+    liveClaimEvidence = live.evidence;
+  } catch { /* non-fatal — proceed without live claims, and with no band */ }
+
+  // ── S39: zone presence — the k-gated sensing aggregate, read-only ─────────
+  // census-sensing §21.4's blocker #3 was that a turn carries a city and no
+  // sensing zone. The zone now arrives WITH the ask: the caller's own current
+  // coarse spatial bucket, stamped by its capture module, present only while
+  // on-device capture runs. The producer is a pure READER of what the
+  // publisher (lib/sensingPublicationScheduler) already decided to serve —
+  // asking a question cannot cause a publication — and it refuses, in this
+  // order, unless the contribution policy grants `surface` (an owner consent
+  // act, ungranted today; checked before any read) and
+  // sensing_presence_context_enabled is true (3004, seeded FALSE). So on every
+  // deployment this block adds no line; what it adds when the owner acts is an
+  // observed/unknown zone state with an unlabelled activity ordinal — no
+  // person, no count. Placed before the S83/opportunity family because CX-11
+  // attributes everything after the opportunity header to that projection.
+  // Never fatal.
+  try {
+    if (Array.isArray(sensingZoneIds) && sensingZoneIds.length > 0) {
+      const presence = await buildSensingPresenceContext(
+        sc,
+        sensingCohortRefsForZones(sensingZoneIds, turnNowMs),
+        { nowMs: turnNowMs },
+      );
+      if (presence.lines.length > 0) ctxLines.push(...presence.lines);
+    }
+  } catch { /* non-fatal — proceed without zone presence */ }
 
   // (c) CX-11 — downstream of the Opportunity Engine (lib/opportunityEngine),
   //     which answers only behind its pilot flag (migration 2840, seeded
@@ -1720,7 +1826,21 @@ router.post("/compass/ask", async (req, res) => {
       const { opportunities, refusals } = buildOpportunities(askKernel.kernel, nowMs);
       const wire = projectForSurface(opportunities, "compass");
       if (opportunityWorldValueKeys(wire).length === 0) {
-        ctxLines.push(...formatOpportunityLines(wire, refusals));
+        // HELD, NOT PUSHED YET. The opportunity block must be the LAST of the
+        // platform-context family on the prompt: `compassPlatformChain` CX-11
+        // reads everything from its header to the end of the context and
+        // refuses any §5 world value there, so a later block naming a crowd or
+        // a forecast would be attributed to the opportunity projection. The
+        // S83 block below carries exactly those words (legitimately — it
+        // projects the KERNEL's world, as formatKernelLines already does), so
+        // it goes in front and these lines follow it.
+        // CCL-05's order (ranker < home < kernel < opportunities) is preserved.
+        opportunityLines = formatOpportunityLines(wire, refusals);
+        // S83 — the same admitted projection the ranker gets, so the trip world
+        // context cannot show a different set of opportunities from the prompt.
+        // Set ONLY inside this flag read and only past the world-value guard,
+        // so `undefined` keeps meaning "the gated half never ran".
+        promotedOpportunities = wire;
         // CCL-05 — the opportunity half of what the ranker consumes. It is set
         // ONLY inside this flag read, so with `opportunity_engine_enabled` off
         // (every deployment) the field stays undefined and the ranker cannot
@@ -1732,6 +1852,31 @@ router.post("/compass/ask", async (req, res) => {
       }
     }
   } catch { /* non-fatal — proceed without opportunities */ }
+
+  // ── S83: TripWorldContext — the five parts, hung on the current trip ──────
+  // The census scored S83 BUILT-BUT-WRONG because CompassTripContext was trip
+  // grounding only: "no world state, no opportunities, no disruptions, no
+  // sessions". It now PROJECTS all five, composing owners that already exist
+  // rather than computing anything: the kernel's world and the opportunity
+  // projection are handed in (so the prompt and the ranker cannot see two
+  // different worlds), and disruptions, the viewer's open ExperienceSession and
+  // the trip crew are read on the trip itself.
+  //
+  // A part whose source could not answer is SAID to be unavailable rather than
+  // omitted — the same honesty rule formatHomeProjectionLines keeps, and the
+  // one that stops "we could not check" becoming "your day is clear".
+  // Never fatal.
+  try {
+    const tripWorld = await buildTripWorldContext(sc, user.id, {
+      now: new Date(turnNowMs),
+      kernel: askKernel?.kernel ?? null,
+      opportunities: promotedOpportunities,
+    });
+    ctxLines.push(...formatTripWorldContextLines(tripWorld));
+  } catch { /* non-fatal — proceed without the trip world projection */ }
+
+  // The held opportunity block, now last of the platform-context family.
+  ctxLines.push(...opportunityLines);
 
   // ── Phase 12: live-session grounding ──────────────────────────────────────
   // While a live session is active, chat answers are grounded in the rolling
@@ -1807,7 +1952,7 @@ router.post("/compass/ask", async (req, res) => {
       // Sensing `:148`. The tokens are already on the wire — the client rebuilds
       // the bubble from the accumulated deltas — so the correction is sent as
       // one more delta rather than by rewriting what was said.
-      const _grounded    = groundCompassAnswer(_rawMessage, toolLog);
+      const _grounded    = groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence);
       const message      = _grounded.text;
       if (_grounded.correction && !res.writableEnded) {
         req.log.warn(
@@ -1879,7 +2024,7 @@ router.post("/compass/ask", async (req, res) => {
     const _rawMessage  = finalRaw === "" ? SUMMARISE_EMPTY_FALLBACK_MESSAGE : _parsed.message;
     // Sensing `:148` — the same boundary the streamed branch applies, on the
     // same tool log, so the two branches cannot publish different answers.
-    const _grounded    = groundCompassAnswer(_rawMessage, toolLog);
+    const _grounded    = groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence);
     const message      = _grounded.text;
     if (_grounded.correction) {
       req.log.warn(

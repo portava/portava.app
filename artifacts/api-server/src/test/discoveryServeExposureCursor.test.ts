@@ -56,6 +56,7 @@ import {
   DISCOVERY_SERVE_LOG_FLAG,
   invalidateServeLogFlagCache,
 } from "../lib/discoveryServeLog.js";
+import { recommendationRecordsFromServeRequest } from "../lib/discoveryRecommendationRecord.js";
 
 const USER  = "aaaa1111-0000-0000-0000-0000000000c2";
 const TOKEN = "dc22-tok";
@@ -276,19 +277,36 @@ describe("DC-22 leg 1 — the served exposure id reaches the client", () => {
     );
   });
 
-  it("R3. an anonymous serve carries no recommendationId — no exposure record exists to bind to", async () => {
+  // R3 WAS "an anonymous serve carries no recommendationId — no exposure record
+  // exists to bind to". Its premise stopped being true in census-discovery §48:
+  // every serve, anonymous included, now writes ONE per-request row
+  // (`public.recommendations`, migration 3376) from which each item's id is
+  // re-derived, and `04` §5 requires an id on EVERY served item. The pin is
+  // therefore INVERTED, not relaxed: it still refuses an id that joins to
+  // nothing — it now demands that the anonymous ids join to the record the
+  // same request wrote, which is the property the old wording was protecting.
+  it("R3. an anonymous serve carries a recommendationId per item, and every one is recoverable from the request row it wrote", async () => {
     const f = fakeClient({ serveLog: true });
+    const requestRows: any[] = [];
+    f.client.rpc = async (name: string, params: any) => {
+      if (name === "record_discovery_serve_request") requestRows.push(params.p_row);
+      return { data: "written", error: null };
+    };
     _setTestServiceClient(f.client);
     _injectTestCacheEntry(KEY, candidates());
 
     const body = await serve(url, "", { auth: false });
     assert.ok(body.places.length > 0, "precondition: the anonymous request was served");
-    for (const p of body.places) {
-      assert.equal(
-        p.recommendationId, undefined,
-        "the serve log writes nothing for an anonymous caller, so an id here would join to no row at all",
-      );
-    }
+    const deadline = Date.now() + 3_000;
+    while (requestRows.length === 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
+    assert.equal(requestRows.length, 1, "the anonymous serve wrote its one per-request row");
+    assert.equal(requestRows[0].user_id, null, "and attributed it to nobody");
+    assert.deepEqual(f.rankEventRows(), [], "no user-keyed exposure row exists for an anonymous caller");
+    assert.deepEqual(
+      body.places.map((p) => p.recommendationId),
+      recommendationRecordsFromServeRequest(requestRows[0]).map((r) => r.recommendation_id),
+      "an anonymous id that joined to nothing would be the defect the old R3 guarded against; these join to the request row",
+    );
   });
 
   it("R4. the id binds the SERVE — the same page fetched twice yields two sets of ids", async () => {

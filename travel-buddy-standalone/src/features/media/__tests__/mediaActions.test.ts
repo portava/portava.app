@@ -230,6 +230,15 @@ test('every known action id resolves to a supported execution with a full ref se
       sourceExperienceId: T,
       experienceId: T,
       sourceType: 'place',
+      // census-media §21 ids: Quieter/Cheaper carry the Compass prompt, the
+      // invite / gem ids ride on `id`, and Save Route needs its (two+) stops.
+      prompt: 'Find a quieter version of this',
+      id: M,
+      stops: [
+        { sourceType: 'place', sourceId: P, title: 'A' },
+        { sourceType: 'place', sourceId: T, title: 'B' },
+      ],
+      candidates: [{ eventId: T, title: 'An event', startsAt: null }],
     };
     const exec = resolveMediaActionExecution(action({ id, target: { method: 'GET', endpoint: '/x', params } }), REFS);
     assert.notEqual(exec.kind, 'unsupported', `action ${id} should be supported`);

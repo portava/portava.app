@@ -57,6 +57,7 @@ import {
   type MemoryKernelResult,
 } from "../../lib/memoryCommandBus.js";
 import { logger } from "../../lib/logger.js";
+import { countAcceptedCommand } from "./memoryKernelMetrics.js";
 
 // ── Result shape ─────────────────────────────────────────────────────────────
 
@@ -101,6 +102,13 @@ export interface CommandAudit {
   commandId: string;
   commandType: MemoryCommandType;
   memoryId: string | null;
+  /**
+   * §17/§24. The Highlight a Highlight command named. Present alongside
+   * `memoryId` rather than replacing it, because §24 asks the log to name the
+   * subject and "which aggregate" is part of that: a line with a null memoryId
+   * and no second field would say only that something happened to nothing.
+   */
+  highlightId?: string | null;
   actorUserId: string;
   idempotencyKey: string;
   outcome: "accepted" | "duplicate" | "rejected";
@@ -150,8 +158,14 @@ export type MemoryFailureClass =
   | "unclassified";
 
 const VALIDATION_REASONS = new Set(["MEMORY_COMMAND_MALFORMED", "MEMORY_COMMAND_UNKNOWN_TYPE", "invalid_payload"]);
-const AUTHORIZATION_REASONS = new Set(["MEMORY_AUTH_NOT_OWNER", "MEMORY_AUTH_NOT_PARTICIPANT", "MEMORY_AUTH_IDEMPOTENCY_KEY_FOREIGN", "forbidden"]);
-const NOT_FOUND_REASONS = new Set(["MEMORY_NOT_FOUND", "MEMORY_ITEM_NOT_FOUND", "MEMORY_TAG_NOT_FOUND", "not_found"]);
+// HIGHLIGHT_AUTH_NOT_OWNER is classed `authorization` even though the HTTP
+// answer it produces is a 404 — the class describes what KIND of thing went
+// wrong, which is the question a dashboard asks, and the status code describes
+// what the caller is told, which is a privacy decision. Filing it under
+// not_found to match the status would hide a rise in ownership refusals inside
+// a rise in typos.
+const AUTHORIZATION_REASONS = new Set(["MEMORY_AUTH_NOT_OWNER", "MEMORY_AUTH_NOT_PARTICIPANT", "MEMORY_AUTH_IDEMPOTENCY_KEY_FOREIGN", "HIGHLIGHT_AUTH_NOT_OWNER", "forbidden"]);
+const NOT_FOUND_REASONS = new Set(["MEMORY_NOT_FOUND", "MEMORY_ITEM_NOT_FOUND", "MEMORY_TAG_NOT_FOUND", "HIGHLIGHT_NOT_FOUND", "not_found"]);
 const LIFECYCLE_REASONS = new Set(["MEMORY_LIFECYCLE_TERMINAL", "MEMORY_LIFECYCLE_INVALID_TRANSITION", "MEMORY_LIFECYCLE_UNKNOWN_STATE"]);
 const IDEMPOTENCY_REASONS = new Set(["MEMORY_IDEMPOTENCY_KEY_REUSED"]);
 const INFRASTRUCTURE_REASONS = new Set(["MEMORY_KERNEL_UNAVAILABLE", "db_error", "server_not_configured"]);
@@ -189,6 +203,7 @@ export function failureClassOf(a: Pick<CommandAudit, "outcome" | "reason">): Mem
 export function auditCommand(a: CommandAudit): void {
   const line = {
     memoryId: a.memoryId,
+    highlightId: a.highlightId ?? null,
     commandId: a.commandId,
     eventId: a.eventId ?? null,
     commandType: a.commandType,
@@ -204,6 +219,29 @@ export function auditCommand(a: CommandAudit): void {
   };
   if (a.outcome === "rejected") logger.warn(line, "memory command rejected");
   else logger.info(line, "memory command applied");
+
+  // §24's correction rates are counted HERE because this is the one place every
+  // command outcome passes through, on BOTH paths — the kernel path and the
+  // legacy direct write. That matters for what the figures mean: these counters
+  // are live TODAY, with `memory_kernel_enabled` false, because the audit line
+  // above is written either way. They are not waiting on the flag.
+  //
+  // ONLY `accepted` IS COUNTED. A `duplicate` is an idempotent replay of a
+  // command already counted (§19), so counting it would inflate both the
+  // numerator and the denominator with an operation that changed nothing. A
+  // `rejected` command never happened, and is already counted by reason at
+  // lib/memoryCommandBus.ts#readMemoryCommandRejectedTotal.
+  if (a.outcome === "accepted") {
+    // `hadCandidate` is FALSE for every CREATE_MEMORY in this tree, and that is
+    // a measurement rather than a default: §6's candidate pipeline has no
+    // production caller at all (services/memoryProjections/evidence.ts is
+    // reachable from no route, and its storage — memory_evidence /
+    // memory_episodes, migration 2320 — is written and unapplied). So
+    // `explicit_memory_without_candidate_rate` reads 1.0 today, which is the
+    // true figure: every Memory in this system is explicit. When a candidate
+    // pipeline lands, this argument is where it reports itself.
+    countAcceptedCommand(a.commandType, false);
+  }
 }
 
 // ── Command selection for a PATCH (§17) ──────────────────────────────────────
@@ -399,6 +437,13 @@ export interface DispatchInput<T> {
   sc: SupabaseClient | any;
   commandType: MemoryCommandType;
   memoryId: string | null;
+  /**
+   * The Highlight subject, for a command whose COMMAND_SUBJECT is "highlight".
+   * `executeMemoryCommand` routes on the command TYPE, not on which of these
+   * two is set, so passing the wrong one is a rejected command and never a
+   * command applied to the wrong aggregate.
+   */
+  highlightId?: string | null;
   actorUserId: string;
   idempotencyKey: string;
   payload: Record<string, unknown>;
@@ -443,6 +488,7 @@ export async function dispatchMemoryCommand<T>(input: DispatchInput<T>): Promise
     if (!legacy.ok) {
       auditCommand({
         commandId, commandType: input.commandType, memoryId: input.memoryId,
+        highlightId: input.highlightId ?? null,
         actorUserId: input.actorUserId, idempotencyKey: input.idempotencyKey,
         outcome: "rejected", reason: legacy.http.code, durable: false,
         sourceVersion: input.sourceVersion ?? null,
@@ -451,6 +497,7 @@ export async function dispatchMemoryCommand<T>(input: DispatchInput<T>): Promise
     }
     auditCommand({
       commandId, commandType: input.commandType, memoryId: input.memoryId,
+      highlightId: input.highlightId ?? null,
       actorUserId: input.actorUserId, idempotencyKey: input.idempotencyKey,
       outcome: "accepted", eventId: null, durable: false,
       sourceVersion: input.sourceVersion ?? null,
@@ -461,6 +508,7 @@ export async function dispatchMemoryCommand<T>(input: DispatchInput<T>): Promise
   const result = await executeMemoryCommand(kernel, {
     commandId,
     memoryId: input.memoryId,
+    highlightId: input.highlightId ?? null,
     actorUserId: input.actorUserId,
     idempotencyKey: input.idempotencyKey,
     type: input.commandType,
@@ -470,6 +518,7 @@ export async function dispatchMemoryCommand<T>(input: DispatchInput<T>): Promise
   if (!result.ok) {
     auditCommand({
       commandId, commandType: input.commandType, memoryId: input.memoryId,
+      highlightId: input.highlightId ?? null,
       actorUserId: input.actorUserId, idempotencyKey: input.idempotencyKey,
       outcome: "rejected", reason: result.reason,
       sourceVersion: input.sourceVersion ?? null,
@@ -483,6 +532,7 @@ export async function dispatchMemoryCommand<T>(input: DispatchInput<T>): Promise
 
   auditCommand({
     commandId, commandType: input.commandType, memoryId: result.memoryId,
+    highlightId: result.highlightId,
     actorUserId: input.actorUserId, idempotencyKey: input.idempotencyKey,
     outcome: result.duplicate ? "duplicate" : "accepted", eventId: result.eventId, durable: true,
     sourceVersion: input.sourceVersion ?? null,

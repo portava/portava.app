@@ -1083,6 +1083,23 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     ownerOnly: true,
   },
 
+  // ── Highlights ──────────────────────────────────────────────────────────────
+
+  {
+    // §21 Archive's "unless explicitly requested". `GET /highlights/archived`
+    // is the only read on the Highlights surface that returns archived rows;
+    // without this screen an archived Highlight is unreachable from inside the
+    // app, which would make Archive an irreversible removal wearing a softer
+    // word than Delete. Owner-only: the route is scoped to the caller.
+    key: 'highlights-archived',
+    path: 'highlights/archived',
+    title: 'Archived Highlights',
+    parent: null,
+    icon: null,
+    requiresAuth: true,
+    ownerOnly: true,
+  },
+
   // ── Hashtag ───────────────────────────────────────────────────────────────
 
   {
@@ -1167,6 +1184,15 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     path: 'memory/edit',
     title: 'Edit Memory',
     parent: 'memory-detail',
+    icon: null,
+    requiresAuth: true,
+    ownerOnly: true,
+  },
+  {
+    key: 'memory-search',
+    path: 'memory/search',
+    title: 'Search Memories',
+    parent: null,
     icon: null,
     requiresAuth: true,
     ownerOnly: true,
@@ -2046,6 +2072,50 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     icon: null,
     requiresAuth: true,
     adminOnly: true,
+  },
+
+  // ── Media client IA (census-media §19) — appended at the end so no cited
+  //    line above moves.
+  {
+    key: 'media-map',
+    path: 'media-map/index',
+    title: 'Media Map',
+    parent: null,
+    icon: null,
+    requiresAuth: false,
+    // §4/§21 Media Map (census-media §19). Additive; reached from the World
+    // shell's lens Map modes and by deep link. Positions come from the
+    // canonical Map gateway — the screen owns no location engine.
+  },
+  {
+    key: 'media-search',
+    path: 'media-search/index',
+    title: 'Media Search',
+    parent: null,
+    icon: null,
+    requiresAuth: false,
+    // §4/§38 Media Search (census-media §19). Additive; reached from the World
+    // shell header and the viewer's "Where was this taken?".
+  },
+  {
+    key: 'media-timeline',
+    path: 'media-timeline/index',
+    title: 'Media Timeline',
+    parent: null,
+    icon: null,
+    requiresAuth: false,
+    // §4/§17 Media Timeline / Time Rail (census-media §19). Also mounted as the
+    // Time mode of the NOW and PLACES lenses.
+  },
+  {
+    key: 'media-contribute',
+    path: 'media-contribute/index',
+    title: 'Add your view',
+    parent: null,
+    icon: null,
+    requiresAuth: true,
+    // §4 Media Contribution (census-media §19). A current perspective of one
+    // canonical place, through the existing upload + post write.
   },
 ];
 

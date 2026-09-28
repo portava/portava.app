@@ -38,6 +38,8 @@ const mockFreshToken = freshToken as jest.MockedFunction<typeof freshToken>;
 const fetchMock = jest.fn(() => Promise.resolve({ ok: true } as Response));
 
 const ORIGINAL_FETCH = global.fetch;
+/** §63 (DV-37): every outcome now names its action with a fresh v4 `client_event_id`. */
+const KEY = expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
 const ORIGINAL_BASE  = process.env.EXPO_PUBLIC_API_BASE_URL;
 
 beforeEach(() => {
@@ -97,7 +99,7 @@ it("surface 'discovery' ⇒ posts { item_id, surface: 'discovery', outcome } to 
   expect(url).toBe('https://api.test/api/rank-events/outcome');
   expect(init.method).toBe('POST');
   expect((init.headers as Record<string, string>).Authorization).toBe('Bearer test-token');
-  expect(postedBody()).toEqual({ item_id: 'node/12345', surface: 'discovery', outcome: 'tap' });
+  expect(postedBody()).toEqual({ item_id: 'node/12345', surface: 'discovery', outcome: 'tap', client_event_id: KEY });
 });
 
 it('a served sessionId is echoed; without one the key is absent rather than null', async () => {
@@ -108,13 +110,13 @@ it('a served sessionId is echoed; without one the key is absent rather than null
   await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
   expect(postedBody(0)).toEqual({
     item_id: 'db/abc', surface: 'discovery', outcome: 'save',
-    session_id: '5e550000-0000-0000-0000-000000000001',
+    session_id: '5e550000-0000-0000-0000-000000000001', client_event_id: KEY,
   });
 
   const withoutSession = await renderHook(() => useRankOutcome({ surface: 'discovery', sessionId: null }));
   await act(async () => { withoutSession.result.current.reportSave('db/abc'); });
   await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-  expect(postedBody(1)).toEqual({ item_id: 'db/abc', surface: 'discovery', outcome: 'save' });
+  expect(postedBody(1)).toEqual({ item_id: 'db/abc', surface: 'discovery', outcome: 'save', client_event_id: KEY });
 });
 
 // ── 3. dedup ──────────────────────────────────────────────────────────────────
@@ -149,7 +151,7 @@ it("reportTripAdd posts outcome 'trip_add' in the SAME envelope as every other o
   expect(url).toBe('https://api.test/api/rank-events/outcome');
   expect(init.method).toBe('POST');
   expect(postedBody()).toEqual({
-    item_id: 'node/12345', surface: 'discovery', outcome: 'trip_add',
+    item_id: 'node/12345', surface: 'discovery', outcome: 'trip_add', client_event_id: KEY,
   });
 });
 

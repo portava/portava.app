@@ -289,7 +289,7 @@ it changes feed behaviour, and that is a product decision. It is inconsistent wi
    `thread_id` and only decide when `ownerFromPath(path) === sender_id`,
    otherwise fall through. Closing the voice write path alone does **not** close
    the hole, because —
-2. **`routes/messaging.ts:3160`, `POST /threads/:threadId/media`, has the same
+2. **`routes/messaging.ts:3167`, `POST /threads/:threadId/media`, has the same
    gap and is pre-existing.** It validates `appStorageUrlInfo` and does not check
    `ownerFromPath`. `AccountDeletionService.ts:714` already documents this in so
    many words: *"a sender can store a key belonging to somebody else and the row

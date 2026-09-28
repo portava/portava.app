@@ -20,7 +20,7 @@ import type { CompassRecommendation } from '../src/services/compass';
 import { CompassTravelerRow } from '../src/components/compass/CompassTravelerRow';
 import { useActiveLocation } from '../src/hooks/useActiveLocation';
 import { parseSearchIntent, intentSummary } from '../src/lib/compassIntent';
-import { SearchSuggestionsPanel } from '../src/components/search/SearchSuggestionsPanel';
+import { SearchSuggestionsPanel } from '../src/components/search/SearchSuggestionsPanel'; import { SEARCH_PARTIAL_NOTICE } from '../src/services/discoveryCoverageNotice';
 import { useGlobalSearchSuggestions } from '../src/hooks/useGlobalSearchSuggestions';
 import { getSubmitQuery } from '../src/platform/input-assistance/search/globalSearch';
 import { getAddToTripTarget, getOpenCompassTarget } from '../src/platform/input-assistance/search/smartActions';
@@ -164,7 +164,7 @@ export default function SearchScreen() {
     // `coverage: 'nothing'` — the suggest read was refused, not empty. Carried
     // to the panel so it does not print "no quick matches" on the server's
     // behalf when the server never reached the table.
-    refused: suggestRefused,
+    refused: suggestRefused, incomplete: suggestIncomplete, // §80 (DV-83): a partial typeahead is said, not passed off as whole
   } = useGlobalSearchSuggestions(query, {
     lat: userCoords?.lat,
     lng: userCoords?.lng,
@@ -678,7 +678,7 @@ export default function SearchScreen() {
         <View style={styles.partialBanner}>
           <AlertCircle size={14} color={color.warn} />
           <Text style={styles.partialBannerText}>
-            These results are incomplete — part of the search couldn’t be run.
+            {SEARCH_PARTIAL_NOTICE}
           </Text>
         </View>
       )}
@@ -695,7 +695,7 @@ export default function SearchScreen() {
           onPickResult={handleSuggestionPick}
           actionSuggestions={actionSuggestions}
           onPickAction={handleSuggestionAction}
-          refused={suggestRefused}
+          refused={suggestRefused} incomplete={suggestIncomplete}
         />
       ) : loading ? (
         <View style={styles.center}>

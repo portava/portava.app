@@ -28,8 +28,8 @@ import { space, radius, type as t, icon, dot} from '../../../src/theme/tokens';
 import { updateTelegraphChatSettings, getTelegraphChatSettings } from '../../../src/services/telegraphChat';
 import {
   getTagPermission, updateTagPermission,
-  type TagPermission, TAG_PERMISSION_OPTIONS,
-} from '../../../src/services/tagging';
+  type TagPermission, tagPermissionOptions, fetchPendingTags, withoutPendingTag, type PendingTag,
+} from '../../../src/services/tagging'; import { PendingTagInbox } from '../../../src/components/PendingTagInbox';
 import { useLanguagePreference } from '../../../src/context/LanguagePreferenceContext';
 import { useRentABuddyFlag } from '../../../src/hooks/useRentABuddyFlag';
 
@@ -98,6 +98,9 @@ export default function ConnectedFeaturesScreen() {
   const [tagPermission, setTagPermission] = useState<TagPermission>('anyone');
   const [tagLoading, setTagLoading] = useState(true);
   const [tagBusy, setTagBusy] = useState(false);
+  // census-discovery §95 (DV-76, §81.4 R3): "Ask me first" only when the server offers it.
+  const [approvalAvailable, setApprovalAvailable] = useState(false);
+  const [pendingTags, setPendingTags] = useState<PendingTag[]>([]);
 
   // Language picker modal
   const [langPickerVisible, setLangPickerVisible] = useState(false);
@@ -130,6 +133,11 @@ export default function ConnectedFeaturesScreen() {
       if (!alive) return;
       if (res.ok && res.data) setTagPermission(res.data.tagPermission);
       setTagLoading(false);
+    });
+    fetchPendingTags().then((r) => {
+      if (!alive || r.status !== 'ok') return;   // disabled or unreadable: the four options, no inbox
+      setApprovalAvailable(true);
+      setPendingTags(r.tags);
     });
     return () => { alive = false; };
   }, []);
@@ -353,7 +361,7 @@ export default function ConnectedFeaturesScreen() {
         {tagLoading ? (
           <View style={styles.loadRow}><ActivityIndicator color={PP.ink} /></View>
         ) : (
-          TAG_PERMISSION_OPTIONS.map((opt, i) => (
+          tagPermissionOptions(approvalAvailable, tagPermission).map((opt, i) => (
             <View key={opt.key}>
               {i > 0 && <SettingsDivider />}
               <Pressable
@@ -377,6 +385,9 @@ export default function ConnectedFeaturesScreen() {
             </View>
           ))
         )}
+        {approvalAvailable && (pendingTags.length > 0 || tagPermission === 'approval_required') ? (
+          <PendingTagInbox tags={pendingTags} onAnswered={(id) => setPendingTags((cur) => withoutPendingTag(cur, id))} />
+        ) : null}
       </SettingsSection>
 
       {/* Preferred Translation Language */}

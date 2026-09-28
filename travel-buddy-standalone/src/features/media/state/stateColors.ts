@@ -17,7 +17,7 @@ export const FRESHNESS_COLOR: Record<FreshnessClass, string> = {
   live: '#3DD6C4',
   fresh: '#35B4A6',
   recent: '#7C9C98',
-  historical: '#6B6862',
+  historical: '#908C84', // was #6B6862, a light-ground grey: 1.83:1 as a dot on a selected Media Map row (mediaContrast.test.ts)
 };
 
 /**
@@ -33,7 +33,7 @@ export const OBSERVATION_COLOR: Record<ObservationClass, string> = {
   inferred: '#8B9DFF',
   user_claimed: '#9C988F',
   predicted: '#E6A94B', // amber
-  generated: '#6B6862',
+  generated: '#908C84', // was #6B6862: 3.40:1 as label text on the ground (mediaContrast.test.ts)
 };
 
 /** Whether an observation class should render as a dashed / forecast treatment. */

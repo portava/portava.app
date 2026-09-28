@@ -400,7 +400,7 @@ preserved in §36.1 as the record of that measurement.
 > has asserted eleven times and never counted: it classifies **every one of the
 > 130 BUILT-BUT-WRONG rows** by one mechanical question — *would a production
 > deploy and a flag flip, with no code change, make this row true?* The answer is
-> **OWNER 103 · BOTH 21 · BRANCH 1 · NEITHER 5**. The headline's own sentence —
+> **OWNER 103 · BOTH 21 · BRANCH 1 · NEITHER 5** *(over 130 at `f8384ea5b`; recounted 2026-09-27 over today's 128 W rows: OWNER 102 · BOTH 24 · BRANCH 0 · NEITHER 1 · unclassified 1, §76)*. The headline's own sentence —
 > *"the overwhelming majority are wrong for one reason: no database has 2779–2803
 > and the flags are seeded FALSE"* — **is true, and is now a number**: 103 of 130
 > need nothing from this branch at all, and 124 of 130 cannot close without the
@@ -706,7 +706,7 @@ Nothing in this section exists. The evidence is one grep, run over
 | TR73 | `occurredAt` distinct from `recordedAt` | **C** | **Moved N→C.** `2420_trip_kernel_foundation.sql:112#occurred_at` is the client-observed instant and `:113#recorded_at` is when the database wrote it. Two columns, distinct, exactly as §4.3 asks. |
 | TR74 | Outbox pattern for asynchronous consumers | **C** | **Moved N→C.** `2420_trip_kernel_foundation.sql:156#trip_outbox`, written in the same transaction as the event (`2590:818#trip_outbox`) and indexed on the unpublished set. |
 | TR75 | Workers publish/retry idempotently | **W** | Two trip workers exist and both are real: `server/trips/projectionWorkers/tripReminderScheduler.ts` (with `is_sent` + `reminder_delivered_at` + `reminder_retry_count`, migrations `0138`–`0140`) and `server/trips/projectionWorkers/tripCrewLiveShareScheduler.ts`. They are timer-driven pollers over their own tables, not outbox consumers, and the reminder one is idempotent by a `is_sent` flag rather than by event id. |
-| TR76 | Consumers persist processed event IDs or use deterministic projection version checks | **C** | **Moved N→C.** A projection worker exists and is registered: `lib/mapTripProjectionWorker.ts:82#runTripMapProjectionPass` drains unpublished outbox rows in `aggregate_version` order per trip and stamps `published_at`; `:126#startTripMapProjectionScheduler` is called at `index.ts:162#startTripOutboxWorker`. |
+| TR76 | Consumers persist processed event IDs or use deterministic projection version checks | **C** | **Moved N→C.** A projection worker exists and is registered: `lib/mapTripProjectionWorker.ts:82#runTripMapProjectionPass` drains unpublished outbox rows in `aggregate_version` order per trip and stamps `published_at`; `:126#startTripMapProjectionScheduler` is called at `index.ts:202#startTripOutboxWorker`. |
 
 ### §5 Database Schema
 
@@ -3356,7 +3356,7 @@ stopped being true, and the next reader trusts the reason.
    The verdict stays W — `trip_activity_log` is still what the *route* layer
    writes — but "nearest table" is no longer true.
 3. **TR334** (N) says `grep -rli "offlineBundle|offline.*queue|queuedOperation"`
-   over the client returns *nothing*. It returns `travel-buddy-standalone/src/services/layover.ts:382#statusCapability: ReturnNowStatusCapability;`
+   over the client returns *nothing*. It returns `travel-buddy-standalone/src/services/layover.ts:436#statusCapability: ReturnNowStatusCapability;`
    and four more — the **Layover** offline bundle. The verdict holds (there is
    no *trip* bundle, signed or otherwise); the grep as written does not.
 4. **TR213 `explainTripDecision`** (N) holds, and so does its reason — there is
@@ -3648,7 +3648,7 @@ carried a freshness (TR368). No metric measured read-model lag (TR394).
   `serveMapProjection`, `server/trips/readRoutes/tripMapProjection.ts:81#serveMapProjection`,
   so the two paths cannot serve two projections), `/crew` (`:261#crew`),
   `/context` (`:303#context`), `/safety` (`:327#safety`);
-  registered at `routes/index.ts:178#tripProjectionsRouter`. Every
+  registered at `routes/index.ts:179#tripProjectionsRouter`. Every
   response spreads the envelope; every failed read that a projection IS is
   refused with `TRIP_PROJECTION_UNAVAILABLE` on the wire
   (`:108#TRIP_PROJECTION_UNAVAILABLE`), and a flag-off crew
@@ -4088,7 +4088,7 @@ forwarded them.
   coordinates AND the attempt is counted —
   `stale_presence_render_attempt_total` (`:260#stale_presence_render_attempt_total`)
   — so TR399's regression is measurable where it is refused.
-  `domain/trips/services/TripCrewLocationService.ts:193#last_known_at`
+  `domain/trips/services/TripCrewLocationService.ts:347#last_known_at`
   forwards the three columns (`:297#lastKnownAt`). The legacy
   `freshness` bucket stays on the card, computed on the same instant.
 - **Tests.** `src/test/tripPresenceFreshnessClass.test.ts` (8): the classes at
@@ -4332,7 +4332,7 @@ order: 217 files, 35 database tests, 0 skipped.
   `plan_scope = 'subgroup'` must name a subgroup (`:93#trip_plan_items_subgroup_scope_named`)
   and the kernel requires an ACTIVE one the actor is in; a live-share scoped
   to a subgroup (`:100#subgroup_id`) reaches its current members only
-  (`domain/trips/services/TripCrewLocationService.ts:274#subgroupScoped`,
+  (`domain/trips/services/TripCrewLocationService.ts:428#subgroupScoped`,
   `:277#subgroup_id`); `DISSOLVE_SUBGROUP` (`:267#DISSOLVE_SUBGROUP`) is the
   creator's or a host's and stops those shares; a named member who is not
   crew is `TRIP_SUBGROUP_MEMBER_NOT_CREW` (`:220#TRIP_SUBGROUP_MEMBER_NOT_CREW`).
@@ -5047,7 +5047,7 @@ re-derives and cites rather than argues.
   file can say.
 - **§24 the CI gate** — `src/scripts/checkTripDecisionDiff.ts:39#--update`
   is `check:trip-decision-diff`, in `check:all`
-  (`artifacts/api-server/scripts/run-all-checks.sh:247#check:trip-decision-diff`):
+  (`artifacts/api-server/scripts/run-all-checks.sh:264#check:trip-decision-diff`):
   exit 1 with the classified report when a decision moved, exit 2 when it
   cannot run. `golden.json` is the tree's record with the note that explains
   its last change. The test (`src/test/tripDecisionDiff.test.ts:102#mutation`)
@@ -5117,7 +5117,7 @@ re-derives and cites rather than argues.
   `trip_map_projection_applied` and retried by `attempts`
   (`src/migrations/2520_trip_map_projection_worker.sql:53#trip_map_projection_applied`),
   is scheduled at boot (`lib/mapTripProjectionWorker.ts:126#startTripMapProjectionScheduler`,
-  `src/index.ts:162#startTripOutboxWorker()`), and §41's pipeline
+  `src/index.ts:202#startTripOutboxWorker()`), and §41's pipeline
   test drains it twice on a real database and the second drain applies
   nothing (`src/test/db/tripKernelPipeline.db.test.ts:127#§19.4`).
 
@@ -5181,7 +5181,7 @@ counting exactly one direct dispatch in the router itself
 (`src/scripts/checkTripPushPolicy.ts:75#routerCalls`). **`check:write-path-columns`**
 named 2782 and 2785's tables and 2783's `trip_goals.scope` / `weight` as
 absent from the CI schema — true until merge, ledgered where 2780/2781/2784
-already were (`src/scripts/checkWritePathColumns.ts:212#trip_transport_segments`) —
+already were (`src/scripts/checkWritePathColumns.ts:216#trip_transport_segments`) —
 and one read it could not see: the pulse's seven context reads took a table
 *name*, and now take a built query
 (`domain/trips/projections/TripPulseProjection.ts:154#PromiseLike`). Making them
@@ -5388,7 +5388,7 @@ mutations are named with the rows.
   its own so one failure does not stop the other, DISABLED / NO_CLIENT /
   ERROR told apart; 2792 seeds the flag FALSE with both functions as its
   precondition (`migrations/2792_trip_retention_sweep_flag.sql:36#trip_retention_sweep_enabled`);
-  `index.ts` starts it (`src/index.ts:116#startTripProjectionWorkers();`).
+  `index.ts` starts it (`src/index.ts:120#startTripProjectionWorkers();`).
   `test/tripRetentionScheduler.test.ts:53#BOTH` pins the flag gate, both rpc
   names, the string-count coercion and the partial failure. Mutation: the
   flag check removed (2 red).
@@ -5598,10 +5598,10 @@ under a mutation before its commit.
   been offline and replayed its last fix on reconnect moved the traveller
   back in time — last-write-wins across stale devices, the thing the row
   names. A client may now say WHEN it observed the fix
-  (`coords.observedAt`; `routes/location.ts:39#observedAtOf(v:` refuses the
+  (`coords.observedAt`; `routes/location.ts:48#observedAtOf(v:` refuses the
   far future); that instant becomes `last_known_at`, and a fix observed
   before the one already stored is not written over it
-  (`routes/location.ts:167#staleObservation`): the rest of the request
+  (`routes/location.ts:246#staleObservation`): the rest of the request
   (permission, place, manual city) still applies, and the client is told —
   200, `observation: "stale_ignored"`, `TRIP_PRESENCE_STALE`, both instants
   named. A client that sends no `observedAt` is the legacy shape and gets
@@ -6556,7 +6556,7 @@ code changes in this section.
   writer are one worker
   (`lib/mapTripProjectionWorker.ts:126#startTripOutboxWorker as startTripMapProjectionScheduler`),
   started beside the reminder, live-share and retention schedulers
-  (`src/index.ts:162#startTripOutboxWorker();`); the reservation
+  (`src/index.ts:202#startTripOutboxWorker();`); the reservation
   extractor is the one integration adapter
   (`routes/tripReservations.ts:157#extractReservations(text)`). What §24
   names exists piece by piece; the `server/trips/` layout, with an outbox
@@ -6622,10 +6622,10 @@ rows stay W with the reason narrowed to the gate alone.
   the result carries `attention` (consulted, mode, suppressed, reason,
   withheld) and both tool declarations name `tripId`. The trip brief —
   `GET /compass/recommendations?surface=trip&tripId=` — consults the same
-  switch (`routes/compass.ts:4124#tripAttention = await readTripAttention(sc, tripId, user.id);`)
+  switch (`routes/compass.ts:4269#tripAttention = await readTripAttention(sc, tripId, user.id);`)
   after the member partition and before the static safety note, which is
   therefore never withheld, and returns the reading
-  (`routes/compass.ts:4272#attention: attentionOnTheWire(tripAttention, attentionWithheld)`);
+  (`routes/compass.ts:4417#attention: attentionOnTheWire(tripAttention, attentionWithheld)`);
   the client shows it as read — one line, even with nothing left to show
   (`travel-buddy-standalone/src/components/TripPage.tsx:840#testID="compass-brief-attention"`).
   Tests through `executeCompassTool` with the health fixture's open regroup
@@ -6656,12 +6656,12 @@ rows stay W with the reason narrowed to the gate alone.
   `TRIP_TEMPORAL_CONFLICT`, the commitments named
   (`routes/rentABuddy.ts:2187#error: "trip_time_conflict"`); every other verdict
   rides on the 201. Discovery search takes `tripId`
-  (`routes/discoverySearch.ts:2637#tripId: ctxTripId,`), reads the windows once
-  (`routes/discoverySearch.ts:830#const read = await readTripWindows(sc, ctx.tripId, userId);`),
+  (`routes/discoverySearch.ts:192#tripId: ctxTripId,`), reads the windows once
+  (`lib/inputAssistance/searchCandidates.ts:792#const read = await readTripWindows(sc, ctx.tripId, userId);`),
   places each event's start against them as `metadata.tripFit`
   (`domain/trips/services/TripFreedomConsumers.ts:153#export function fitInstantToWindows(`)
   and leads with the ones that fit, stably, AFTER the match-tier ranking
-  (`routes/discoverySearch.ts:852#function leadWithTripFit(`). Tests: the
+  (`lib/inputAssistance/searchCandidates.ts:814#function leadWithTripFit(`). Tests: the
   verdicts against the real freedom projection on the health fixture's Paris
   trip — 13:00 local FITS, 11:30 crosses A, 17:30 runs into B's reserved
   travel, a later date OUTSIDE_TRIP, no start time UNPLACED, gate closed or
@@ -6794,7 +6794,7 @@ share a suffix — was found by the compiler and fixed by hand
   (`server/trips/projectionWorkers/index.ts:29#export const TRIP_PROJECTION_WORKERS`,
   `server/trips/projectionWorkers/index.ts:35#export function startTripProjectionWorkers(`);
   `src/index.ts` starts the two things
-  (`src/index.ts:162#startTripOutboxWorker();`, `src/index.ts:116#startTripProjectionWorkers();`)
+  (`src/index.ts:202#startTripOutboxWorker();`, `src/index.ts:120#startTripProjectionWorkers();`)
   where it used to start four. `integrationAdapters/` holds the reservation
   extractor (`server/trips/integrationAdapters/reservationExtract.ts:86#export async function extractReservations(`),
   consumed by the reservations route
@@ -7469,7 +7469,7 @@ a FLOOR and BOTH is a CEILING, deliberately.
 | **BRANCH** | **1** | 0.8 % |
 | **NEITHER** | **5** | 3.8 % |
 
-**The headline's claim is TRUE, and it is now a number.** 103 of 130 need nothing
+*(Recounted 2026-09-27 over today's 128 W rows: OWNER 102 · BOTH 24 · BRANCH 0 · NEITHER 1 · unclassified 1, §76.)* **The headline's claim is TRUE, and it is now a number.** 103 of 130 need nothing
 from this branch at all; **124 of 130 cannot close without the owner**; and the
 BRANCH list — the one this pass existed to find — **is one row long**. That is the
 most useful thing this section says, and it is not flattering to the branch: a lane
@@ -7477,12 +7477,12 @@ that is 99.1 % constructed has run out of work it can do by itself.
 
 **Three facts the classification rests on, each read rather than assumed:**
 
-1. **Production carries 2420 and nothing after it in the kernel chain.**
+1. **Production carries 2420 and nothing after it in the kernel chain.** **SUPERSEDED 2026-09-16, corrected 2026-09-27:** true when measured; the same file now records 2450, 2500 and 2590 as applied (end of this fact).
    `artifacts/api-server/src/lib/capability/production-applied-migrations.json:47#2420_trip_kernel_foundation`
    records the apply on 2026-09-08. 2450, 2500 and 2590 are absent, which is why
    production's `trip_kernel_execute` is the plan-family-only one. So `trips.version`,
    `trip_events`, `trip_outbox` and `trip_command_receipts` ARE deployed, and the
-   thirteen rows that rest only on them are gated by a FLAG, not by a migration.
+   thirteen rows that rest only on them are gated by a FLAG, not by a migration. **Corrected 2026-09-27 against the same file:** 2450, 2500 and 2590 are no longer absent. `artifacts/api-server/src/lib/capability/production-applied-migrations.json:291#2450_trip_kernel_trip_and_participant_families`, `:295#2500_trip_kernel_join_via_link_and_host` and `:299#2590_trip_kernel_add_plan_attachment_columns` record them applied on 2026-09-16 (versions 20260916202751, 20260916203101 and 20260916203224, ledger instants in UTC), the same evening as 2760–2795, with the 2796 repair at 2026-09-17 03:10. So "plan-family-only" no longer follows from this file. The thirteen rows are still gated by `trip_kernel_enabled`, which fact 2 and §75.1 record as FALSE; no verdict moves.
 2. **2760–2795 were in portava-ci or in no database at all when this was
    measured; SUPERSEDED 2026-09-17 — they are now in PRODUCTION.** The clause is
    corrected in place rather than appended because its citation pointed at a
@@ -7508,7 +7508,7 @@ that is 99.1 % constructed has run out of work it can do by itself.
 
 The class is of the row as counted at `f8384ea5b`. TR144 is the BRANCH row and
 §68.3 closes it, so after this section the live distribution over the remaining
-**129** W rows is **OWNER 103 · BOTH 21 · BRANCH 0 · NEITHER 5**.
+**129** W rows is **OWNER 103 · BOTH 21 · BRANCH 0 · NEITHER 5**. *(Recounted 2026-09-27 over today's 128 W rows: OWNER 102 · BOTH 24 · BRANCH 0 · NEITHER 1 · unclassified 1, §76.)*
 
 | id | class | what stands in the way | what closes it |
 | --- | --- | --- | --- |
@@ -7637,10 +7637,10 @@ The class is of the row as counted at `f8384ea5b`. TR144 is the BRANCH row and
 | TR437 | BOTH | `route_plans` keeps its own optimizer and checkpoint state, and the gate is FALSE | delete the second optimizer, then flip the gate |
 | TR440 | BOTH | fourteen mixed read/write routers stay under `routes/`; moving them under `readRoutes/` before TR378 splits them would file writes as reads | TR378's conversion, then the move |
 | TR144 | BRANCH | the §8.4 tight-arrival trigger fires, and its `participantIds` were empty on every input, so "alert affected participants" named nobody | CLOSED HERE — §68.3 |
-| TR128 | NEITHER | no routed travel-time provider exists, so FEASIBLE is unprovable and no window can be certified | a routed provider — a subsystem nobody has written |
-| TR267 | NEITHER | the departure-time term is a static band table, not a traffic or transit source | the same routed provider |
-| TR341 | NEITHER | no routed travel-time provider exists, so FEASIBLE is unprovable and no window can be certified | a routed provider — a subsystem nobody has written |
-| TR412 | NEITHER | no routed travel-time provider exists, so FEASIBLE is unprovable and no window can be certified | a routed provider — a subsystem nobody has written |
+| TR128 | BOTH (was NEITHER; reclassified 2026-09-27, §76) | no routed travel-time provider exists, so FEASIBLE is unprovable and no window can be certified | a routed provider — a subsystem nobody has written; written and not wired since 6c785f074 (2026-09-17): wire it at the Trips seams (branch) once the owner enables the Routes API, sets the key and accepts the per-call spend (owner) — §76 |
+| TR267 | BOTH (was NEITHER; reclassified 2026-09-27, §76) | the departure-time term is a static band table, not a traffic or transit source | the same routed provider; written and not wired since 6c785f074 (2026-09-17): wire it at the Trips seams (branch) once the owner enables the Routes API, sets the key and accepts the per-call spend (owner) — §76 |
+| TR341 | BOTH (was NEITHER; reclassified 2026-09-27, §76) | no routed travel-time provider exists, so FEASIBLE is unprovable and no window can be certified | a routed provider — a subsystem nobody has written; written and not wired since 6c785f074 (2026-09-17): wire it at the Trips seams (branch) once the owner enables the Routes API, sets the key and accepts the per-call spend (owner) — §76 |
+| TR412 | BOTH (was NEITHER; reclassified 2026-09-27, §76) | no routed travel-time provider exists, so FEASIBLE is unprovable and no window can be certified | a routed provider — a subsystem nobody has written; written and not wired since 6c785f074 (2026-09-17): wire it at the Trips seams (branch) once the owner enables the Routes API, sets the key and accepts the per-call spend (owner) — §76 |
 | TR427 | NEITHER | recurring commitments and routine-aware context do not exist in any form | a recurrence and routine subsystem nobody has written |
 
 ### 68.3 The BRANCH group, built: §8.4's tight arrival had no one to alert
@@ -7740,7 +7740,7 @@ fourteen routers under `routes/` are mixed read/write, so filing them under
 
 §68 asked one question of each of the 130 W rows — *would a production deploy
 and a flag flip, with NO code change, make this row true?* — and answered
-**OWNER 103 · BOTH 21 · BRANCH 1 · NEITHER 5**, concluding that "a lane that is
+**OWNER 103 · BOTH 21 · BRANCH 1 · NEITHER 5** *(recounted 2026-09-27 over today's 128 W rows: OWNER 102 · BOTH 24 · BRANCH 0 · NEITHER 1 · unclassified 1, §76)*, concluding that "a lane that is
 99.1 % constructed has run out of work it can do by itself."
 
 §68.5 then said, in its own words, what would falsify that:
@@ -7775,13 +7775,13 @@ ledger** and **13 are 2420 itself, which IS applied** — and those thirteen row
 TR407) name `trip_kernel_enabled` in the same cell, which is §68's own fact 1
 restated by the data rather than by a sentence. Two flags carry the rest:
 `trip_kernel_enabled` (14 rows) and `trip_operational_projections_enabled`
-(13 rows).
+(13 rows). **Corrected 2026-09-27; true when measured on 2026-09-15:** the 168 are no longer absent. Re-run today over the same 181 references (distinct migration numbers per §68.2 row, range endpoints included: the rule that reproduces 181 and 13 exactly), all 168 are recorded as applied. They name 24 migrations, from `artifacts/api-server/src/lib/capability/production-applied-migrations.json:307#2760_trip_stages` to `:443#2794_trip_meeting_checkpoints`, stamped 2026-09-16 between 20:14 and 21:01 UTC. The rows they sit on stay `W` on the two flags, both FALSE per §68.1 fact 2 and §75.1.
 
 **So §68's headline claim is TRUE and is now reproducible rather than asserted.**
 The derivation is a directory listing plus set membership over the census's own
 table; anyone can re-derive the three numbers (181 / 168 / 13) from
 `docs/architecture/census-trips.md` §68.2, `artifacts/api-server/src/migrations/`
-and that JSON ledger, with no judgement anywhere in the loop.
+and that JSON ledger, with no judgement anywhere in the loop. (Re-run on 2026-09-27, the same loop yields 181 / 0 / 13; see the correction above.)
 
 **The 18, by reading.** These are the only rows where a mis-classification can
 hide, because they are the only ones whose blocker is a human sentence:
@@ -7800,7 +7800,7 @@ TR437 · TR440 · TR144 · TR128 · TR267 · TR341 · TR412 · TR427
   is the port's honest stub: `routed: true`, and an `estimate()` that returns
   `NO_ROUTED_PROVIDER` every time. There is no second implementation. Holds, and
   NEITHER is the right class — a routed provider is an external service, not a
-  file.
+  file. **Corrected 2026-09-27, verdicts unmoved; true when written on 2026-09-15:** the port now has two more routed implementations. `artifacts/api-server/src/domain/trips/contracts/GoogleRoutesTravelTimeProvider.ts:151#export function createGoogleRoutesTravelTimeProvider(` (6c785f074, 2026-09-17) is PREPARED, NOT WIRED: nothing but its own suite imports it. The corridor adapter (74890f906, 2026-09-22) is wired into the Layover seam only, and it refuses unless both of its switches are set. Every Trips seam still binds the straight-line provider, e.g. `artifacts/api-server/src/routes/tripFeasibility.ts:111#const PROVIDER = straightLineTravelTimeProvider;`, so no Trips window can yet be certified and the four rows stay `W`. What no longer holds is the NEITHER reason as written: the provider is a file now, and what remains is wiring it plus an owner's spend decision. Whether that moves the four rows out of NEITHER is a reclassification this correction does not make (census-media §38.8). *(Made on 2026-09-27 in §76: the four are BOTH.)*
 - **TR256** — *"§14.1's `anchor` is not a thing"*. 2610 adds a *map* anchor (the
   trip's destination coordinate for the `trip_stop` layer), which is a different
   object from §14.1's private anchor; §31.3.1 already states the condition
@@ -7819,7 +7819,7 @@ TR437 · TR440 · TR144 · TR128 · TR267 · TR341 · TR412 · TR427
 | TR174 | OWNER — *"§48's bundle is issued only where its signing secret is set"* | **not OWNER** | That is the blocker on the §59.2 MOVE (N→W), not on the row reaching C. The row's own reason is the one §63 states and §59.2 repeats: *"the tiles are named as not carried"* — `artifacts/api-server/src/domain/trips/services/TripOfflineBundle.ts:242#mapTiles:` says `"a client permission the server does not hold"`. Setting a secret on a deployment changes nothing about that, so the four-way test answers NO and the row cannot be OWNER. It is the client's tile cache plus a tile provider's terms — **not built here, and named so it stops being filed as work an owner is waiting on.** |
 
 **The live distribution over the 128 W rows after this section is therefore
-OWNER 102 · BOTH 20 · BRANCH 0 · NEITHER 5 · unclassified 1 (TR174).** §68's
+OWNER 102 · BOTH 20 · BRANCH 0 · NEITHER 5 · unclassified 1 (TR174).** *(Recounted 2026-09-27: OWNER 102 · BOTH 24 · BRANCH 0 · NEITHER 1 · unclassified 1, once §76 moved TR128, TR267, TR341 and TR412 from NEITHER to BOTH.)* §68's
 sentence — *"the BRANCH list is one row long"* — was wrong by one at the moment
 it was written, and the miss was in exactly the place §68.5 predicted.
 
@@ -7943,7 +7943,7 @@ C column invites, and because "I looked and it held" is a measurement too:
 ### 69.6 The ceiling, and what this section does not claim
 
 - **One row closed, and it is the only one available.** 128 W rows remain and
-  **127 of them need an owner** (102 OWNER · 20 BOTH · 5 NEITHER); TR174 needs a
+  **127 of them need an owner** (102 OWNER · 20 BOTH · 5 NEITHER; recounted 2026-09-27 after §76: 102 OWNER · 24 BOTH · 1 NEITHER); TR174 needs a
   tile provider's terms and a client cache. Nothing here changes that arithmetic
   by more than one.
 - **No migration was written and no flag was flipped**, which is the point: TR35
@@ -8522,7 +8522,7 @@ exactly its old answer.
 It stays `W`. **2782 is in no database**, and that is the shape of this whole
 census: of 128 `W` rows, ~90 need a migration applied or a flag flipped, 26 need
 both a deployment step and a code step, and 4 need a routed travel-time provider
-nobody has written. **No `W` row in census-trips can reach `C` by code alone.**
+nobody has written. *(Corrected 2026-09-27: that provider is now written, prepared and not wired, so those four are BOTH, §76.)* **No `W` row in census-trips can reach `C` by code alone.**
 The right bookkeeping move for TR229 in §68.2 is `BOTH → OWNER`, not a verdict.
 
 Two survivors from eleven mutations, and one was a real defect in the lane's own
@@ -8580,7 +8580,7 @@ is the production ledger; parsed in full it carries **34** migrations at or abov
 too, exactly as §68's fact 1 states. So every `W` row whose last statement rests on
 a table from 2760-2795 — the overwhelming majority — is blocked on an apply this
 branch may not perform, and the §68/§69 distribution stands as re-derived:
-**OWNER 102 · BOTH 20 · BRANCH 0 · NEITHER 5 · unclassified 1 (TR174)**.
+**OWNER 102 · BOTH 20 · BRANCH 0 · NEITHER 5 · unclassified 1 (TR174)**. **Corrected 2026-09-27; true when written on 2026-09-15:** parsed in full today, the same file carries **101** migrations at or above 2410, and **every one of 2760–2795 is among them**, stamped 2026-09-16 between 20:14 and 21:01 UTC (`artifacts/api-server/src/lib/capability/production-applied-migrations.json:307#2760_trip_stages` to `:447#2795_trip_kernel_write_guards`). 2450, 2500 and 2590 were applied the same evening, and the 2796 repair at 2026-09-17 03:10 (`:451#2796_trip_reservation_history_security_definer`). The apply this paragraph says the branch may not perform has been performed; those rows now wait on the two flags, both FALSE per §68.1 fact 2 and §75.1. This correction moves no verdict and re-derives no class. **Recounted 2026-09-27 (§76):** OWNER 102 · BOTH 24 · BRANCH 0 · NEITHER 1 · unclassified 1.
 
 **The 37 rows whose last statement names no migration and no flag were re-read
 one at a time**, because a prose blocker is where a misclassification hides — the
@@ -8646,7 +8646,7 @@ had answered.**
    — "These user IDs are not accepted trip members: …"**, naming real crew members,
    out of a query that never answered, on a request that should have been retried.
 4. **`TripCrewLiveShareService.getActiveLiveShares`.**
-   `artifacts/api-server/src/domain/trips/services/TripCrewLiveShareService.ts:195#if (error) throw new CrewMapUnavailableError`.
+   `artifacts/api-server/src/domain/trips/services/TripCrewLiveShareService.ts:206#if (error) throw new CrewMapUnavailableError`.
    An unreadable sessions table answered `200 { liveShares: [] }` — *"nobody on
    this trip is sharing their location"* — which is a statement about the crew that
    a member acts on by not looking for anyone. It now refuses with the crew map's
@@ -8833,7 +8833,7 @@ is mechanical: `artifacts/api-server/src/lib/capability/production-applied-migra
 is the production ledger, and **not one of 2760-2795 appears in it**. So the
 OWNER/BOTH classification of the `W` column is not a judgement call for the
 majority of those rows — it is a fact about what is deployed. **§73's refusal to
-claim any closure is confirmed**, and this reviewer reached it independently.
+claim any closure is confirmed**, and this reviewer reached it independently. **Corrected 2026-09-27; true at `a97bfdac0`:** every one of 2760–2795 now appears in that file, stamped 2026-09-16 between 20:14 and 21:01 UTC, and 2796 at 2026-09-17 03:10; §73.1's correction cites the lines. The deploy half is done, and the two flags, both FALSE per §68.1 fact 2 and §75.1, are what the `W` rows wait on. No verdict moves.
 
 ### §74.2 The injected clock — a real defect closed, and no row rests on the defect
 
@@ -8941,7 +8941,7 @@ can see what changed and check it. `head_commit` is NOT re-declared.*
 §68.2 classified 130 `W` rows by one question — *would a production deploy and a
 flag flip, with NO code change, make this row true?* — and put **21** in the
 **BOTH** class: an owner deploy AND a branch change. §69.2 moved one of the 21
-(TR35) to BRANCH and closed it, leaving 20. Every one of them was then blocked on
+(TR35) to BRANCH and closed it, leaving 20 *(24 since §76 moved the four routed-provider rows from NEITHER on 2026-09-27; none of those four is among the rows this section built)*. Every one of them was then blocked on
 the deploy, and §70.5's sentence — *"No `W` row in census-trips can reach `C` by
 code alone"* — held for exactly that reason.
 
@@ -9154,7 +9154,7 @@ history that carries values is a schema decision, not a code one.
 
 ### §75.6 The sixteen BOTH rows this pass did NOT close, with the exact blocker
 
-Re-read against the tree at `bfdc033bb`, after the deploy. **None of these is
+Re-read against the tree at `bfdc033bb`, after the deploy. *(Since §76, 2026-09-27, four more BOTH rows are open as well: TR128, TR267, TR341 and TR412, which wait on wiring a routed provider and on the owner's spend decision.)* **None of these is
 work this branch can do**, and each reason is a fact about the tree or an open
 decision rather than a judgement:
 
@@ -9206,3 +9206,117 @@ ceiling of 234).
 `check:authorization-contract`, `check:media-objects` and
 `check:rank-events-surfaces` exit **2** without live credentials — **NOT RUN, not
 passed**; nothing above rests on them.
+
+## Cited, not graded (check:census-scope-coverage)
+
+- NOT-GRADED: app/trip/[id].tsx — the root-level legacy Expo app's trip screen, which the checker's resolver matches by path; §29.6's fail-closed table and §56's preamble both mean the travel-buddy-standalone client's app/trip/[id].tsx, the screen that mounts TripReadinessCard and TripTodayCard, which is watched through travel-buddy-standalone/app/trip/, and no verdict rests on the root copy
+- NOT-GRADED: travel-buddy-standalone/src/services/layover.ts — census-layover's client service, cited in §39.5 item 3 only as the Layover offline bundle that TR334's original grep matched by accident; that item says the verdict held regardless, and TR334 now rests on src/features/trips/offline/ (§57)
+- NOT-GRADED: scripts/src/saved-places-truncate-guard.test.ts — named in §41.1 only as the suite that set the psql-over-a-child-process convention src/test/db/localDb.ts follows; TR430 and TR431 rest on the database suites under src/test/db/, which are watched
+- NOT-GRADED: travel-buddy-standalone/scripts/run-node-tests.mjs — the client's node test runner, named in §56.1 only because its KNOWN_BROKEN list explains why shared/auth.ts reads the token lazily; no row rests on the runner
+- NOT-GRADED: artifacts/api-server/src/routes/messaging.ts — Telegraph's direct-message route, named in the real-clock section ("The real-clock class, third and fourth instance") only as a file the concurrently running batch had changed, checked out at HEAD and ruled out as the cause of the four clock failures; that section says no verdict moves
+- NOT-GRADED: artifacts/api-server/src/routes/groupChat.ts — Telegraph's group-chat route, named beside routes/messaging.ts in the real-clock section only as the other file ruled out as the cause of the four clock failures; no Trips row rests on it
+- NOT-GRADED: artifacts/api-server/src/test/compass-trip-context.test.ts — a Compass suite, named in §71.1 only because its fake client implements no .or(), which is why the projection's query was left unchanged; the plan window §71.1 built is pinned in tripProjections.test.ts, which is watched
+- NOT-GRADED: artifacts/api-server/src/test/geofence.test.ts — named in §72's exit-code table only to explain why typecheck:tests was red (another lane fixed that file mid-session and the baseline had not been re-recorded); nothing in this census grades geofencing
+- NOT-GRADED: artifacts/api-server/scripts/check-test-registration.mjs — a guard script outside src/scripts/, so the global NOT_GRADED pattern does not reach it; cited in §72's exit-code table as a check that was run, not as evidence for any row
+- NOT-GRADED: artifacts/api-server/src/services/intel/IntelCaptureService.ts — the Intel capture service (census-map watches services/intel/), cited in §70.6, §73.2 and §73.5 only as a caller of the membership boolean that has no catch; §74.3 records that no census-trips row grades the intel crew token it computes
+- NOT-GRADED: artifacts/api-server/src/domain/telegraph/policies/requestOrigin.ts — Telegraph's request-origin policy, cited in §73.2 and §73.5 only as the second caller of isAcceptedTripMember that would need a catch before the boolean may throw; that conversion is recorded as open work, and no row moves on it
+
+## §76 TR128, TR267, TR341 and TR412 move from NEITHER to BOTH, and the distribution is recounted from the rows — 2026-09-27
+
+*Written 2026-09-27 by lane E (census-media §38.12), at the integrator's request.
+This is a **blocker classification, not a verdict**. Every letter stays `W`, no
+verdict column is edited, and `head_commit` is not re-declared.*
+
+### §76.1 The rule, which is this census's own
+
+§68.1 asks one question of each `W` row: *would a production deploy and a flag
+flip, with NO code change, make this row true?* It defines four classes:
+- **OWNER** — yes: a migration and/or a flag, and nothing on this branch.
+- **BOTH** — an owner deploy AND a branch change.
+- **BRANCH** — pure code.
+- **NEITHER** — a subsystem nobody has written.
+
+Its tie-break sends a row that could plausibly sit in two classes to the harder
+one. §69.2 and §73.1 apply the same test, and §69.2 moves a row whose stated
+blocker is wrong.
+
+### §76.2 Why the four were NEITHER, and why that no longer holds
+
+§68.2 gives all four the same blocker, "no routed travel-time provider exists".
+What closes them is "a routed provider — a subsystem nobody has written". That
+subsystem has since been written:
+- The adapter is
+  `artifacts/api-server/src/domain/trips/contracts/GoogleRoutesTravelTimeProvider.ts:151#export function createGoogleRoutesTravelTimeProvider(`
+  (6c785f074, 2026-09-17). It is `routed: true`, traffic-aware for driving and
+  able to answer transit, and it has its own suite.
+- It is **PREPARED, NOT WIRED**: nothing but that suite imports it.
+- Every Trips seam still binds the straight-line provider:
+  `artifacts/api-server/src/routes/tripFeasibility.ts:111#const PROVIDER = straightLineTravelTimeProvider;`,
+  TripFreedomProjection.ts line 45 and TripRouteChainProjection.ts line 42.
+- Each seam is a module constant by design, "so that turning a routed provider
+  on is a reviewed code change".
+
+**The test, asked again.**
+- **Would a deploy and a flag flip make the four true, with no code change?** No.
+  Binding the provider at the seams is a code change: the branch half.
+- **Would code alone?** No. The adapter makes a billed call to an API the owner
+  must enable, with a key the owner must set, and nothing in this repository caps
+  the spend: the owner half. TR267 and TR341 are also served only behind
+  `trip_operational_projections_enabled`, which §68.1 fact 2 and §75.1 record as
+  FALSE in production.
+- Both halves are needed, so the class is **BOTH**.
+
+**The tie-break.** NEITHER would stay plausible only if a subsystem nobody has
+written still stood in the way. The four rows' own blocker names only the routed
+provider. The adapter answers a point estimate (p50 = p75 = p90) and says so in
+its header. That is a limit of the measurement, not an unwritten subsystem, and
+none of the four blockers names a distribution.
+
+The four rows, each moved from NEITHER (§68.2) to BOTH (§76):
+- **TR128**: the owner enables the Routes API, sets the key and accepts the
+  spend; the branch then wires a routed provider at the Trips seams.
+- **TR267**: the same, plus `trip_operational_projections_enabled`.
+- **TR341**: the same, plus `trip_operational_projections_enabled`.
+- **TR412**: the same as TR128.
+
+### §76.3 The recount, from the rows and not by hand
+
+The rule:
+1. Each §68.2 row's class is the first word of its class cell.
+2. §69.2's table overrides it where it moves a row. TR35 becomes BRANCH. TR174
+   becomes "not OWNER", counted as unclassified, as §69.2 counts it.
+3. Only rows whose LAST statement is `W` are counted, read from
+   `CENSUS_INTEGRITY_DUMP=ALL`. Those are the 128 rows §68.2 classified, minus
+   TR35 and TR144, which are now `C`.
+
+TR229 keeps its BOTH label. §70.5 argued BOTH → OWNER, but no section moved the
+label, and §75.6 still counts it among the BOTH rows.
+
+| | OWNER | BOTH | BRANCH | NEITHER | unclassified | rows |
+| --- | --- | --- | --- | --- | --- | --- |
+| before §76 | 102 | 20 | 0 | 5 | 1 | 128 |
+| after §76 | **102** | **24** | **0** | **1** (TR427) | **1** (TR174) | **128** |
+
+The "before" row equals what §69.2 and §73.1 state. That is the check that the
+rule reads the rows the way those sections did.
+
+### §76.4 Where the distribution was restated
+
+Each restatement is line-neutral and dated, and it keeps the old numbers:
+- line 403 (the §68 summary);
+- line 7472 (after §68.1's table);
+- line 7511 (§68.2);
+- line 7743 (§69's opening);
+- line 7822 (§69.2);
+- line 7946 (§69.6);
+- line 8525 (§70.5's "4 need a routed travel-time provider nobody has written");
+- line 8583 (§73.1);
+- line 8944 (§75.1's BOTH count);
+- line 9157 (§75.6).
+
+§68.2's four rows now carry the new class and name the old one, and §69.1's
+TR128 bullet (line 7803) points here.
+
+**What this does not do.** No verdict letter moves. All four stay `W`, because
+no Trips window can be certified until a routed provider is wired. This section
+enables no API, sets no key and wires nothing.

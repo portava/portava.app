@@ -173,7 +173,7 @@ const CHIP_HEIGHT = 34;
 const styles = StyleSheet.create({
   root: {
     gap: space.sm,
-    paddingTop: space.sm,
+    paddingTop: space.sm, paddingBottom: space.sm, backgroundColor: 'rgba(17,17,15,0.81)', // census-media §31.12: an ink backing under the chips, the least alpha at which each chip label and selected fill clears over a white image
   },
   areaRow: {
     flexDirection: 'row',
@@ -227,7 +227,7 @@ const styles = StyleSheet.create({
     color: color.onInkMute,
   },
   catChipLabelActive: {
-    color: color.onInk,
+    color: color.ink, // census-media §31.12: ink on `signal` is 5.72:1; `onInk` was 3.14
     fontWeight: '700',
   },
   chipPressed: {

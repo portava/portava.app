@@ -376,8 +376,138 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/domain/trips/services/TripCrewLocationService.ts",
     "artifacts/api-server/src/test/tripPresenceFreshnessClass.test.ts",
     "artifacts/api-server/src/test/tripCloseout.test.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): the client's src/features/trips/, whole — TR439 grades the directory itself, and §56–§65 grade TR193, TR130, TR317, TR390, TR334, TR421, TR432, TR318, TR281, TR169 and TR342 on its today, timeline, closeout, offline, disruption, map, planning and shared files.
+    "travel-buddy-standalone/src/features/trips/",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): the §40.3 operational-projections gate's registration, and the §41.1 local database (shim, baseline, unreplayable list) that TR430 and TR431 were executed on.
+    "artifacts/api-server/src/lib/capability/registry.ts",
+    "artifacts/api-server/scripts/local-db/shim.sql",
+    "artifacts/api-server/baseline/20260819_baseline_structure.sql",
+    "artifacts/api-server/scripts/local-db/KNOWN_UNREPLAYABLE.json",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): §42–§55's evidence — the migrations, routes and suites their "What was built" lists name for the row moves that follow (TR200, TR351, TR221, TR204, TR287, TR75, TR379, TR224–TR253, the §52 regroup, the §53 write guards, the §54 post-trip projections, the §55 flag-off twin), and the pulse, opportunity and replan route suites those rows are pinned by.
+    "artifacts/api-server/src/lib/pushWithRetry.ts",
+    "artifacts/api-server/src/routes/location.ts",
+    "artifacts/api-server/src/test/tripAttentionPolicy.test.ts",
+    "artifacts/api-server/src/test/tripExperienceCompiler.test.ts",
+    "artifacts/api-server/src/test/tripSnapshotReplayContract.test.ts",
+    "artifacts/api-server/src/test/tripDecisionRiskImpact.test.ts",
+    "artifacts/api-server/src/migrations/2520_trip_map_projection_worker.sql",
+    "artifacts/api-server/src/test/tripReplanMeetingRescue.test.ts",
+    "artifacts/api-server/src/test/tripSensingPolicy.test.ts",
+    "artifacts/api-server/src/test/tripCompassCrewState.test.ts",
+    "artifacts/api-server/src/migrations/2794_trip_meeting_checkpoints.sql",
+    "artifacts/api-server/src/routes/tripMeetingCheckpoints.ts",
+    "artifacts/api-server/src/test/tripMeetingCheckpointsRoute.test.ts",
+    "artifacts/api-server/src/migrations/2795_trip_kernel_write_guards.sql",
+    "artifacts/api-server/src/test/tripBoredRoute.test.ts",
+    "artifacts/api-server/src/test/tripTransportReliability.test.ts",
+    "artifacts/api-server/src/test/tripPulseProjection.test.ts",
+    "artifacts/api-server/src/test/tripOpportunityProjection.test.ts",
+    "artifacts/api-server/src/test/tripReplanRoutes.test.ts",
+    "artifacts/api-server/src/routes/tripPostTrip.ts",
+    "artifacts/api-server/src/test/tripPlan.test.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): §58–§62's consumers — the map pin (TR166), the Map cache (TR174), the §17.2 switch applied by Compass (TR319), the windows consumed by Buddy and Discovery (TR133), the departure assumption (TR267), the outbox starter (TR440), the route plan as a view over the plan (TR437) and the sanitizer carve-out (TR206), with their suites.
+    "travel-buddy-standalone/src/components/map/EntityMarkers.tsx",
+    "travel-buddy-standalone/src/features/map/cache/mapCache.ts",
+    "artifacts/api-server/src/test/tripCompassAttention.test.ts",
+    "artifacts/api-server/src/test/compassSurfaces.test.ts",
+    "artifacts/api-server/src/test/tripAttentionFilter.test.ts",
+    "travel-buddy-standalone/src/components/__tests__/CompassTripBrief.attention.component.test.tsx",
+    "artifacts/api-server/src/test/tripFreedomConsumers.test.ts",
+    "artifacts/api-server/src/routes/rentABuddy.ts",
+    "artifacts/api-server/src/test/rentABuddy.test.ts",
+    "artifacts/api-server/src/routes/discoverySearch.ts",
+    "artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts", // census-discovery §70: routes/discoverySearch.ts's searchers moved here
+    "artifacts/api-server/src/test/discoverySearch.test.ts",
+    "artifacts/api-server/src/test/tripDepartureAssumptions.test.ts",
+    "artifacts/api-server/src/lib/projections/registry.ts",
+    "artifacts/api-server/src/test/tripCommandsEndpoint.test.ts",
+    "artifacts/api-server/src/routes/routePlan.ts",
+    "artifacts/api-server/src/test/tripRouteChainProjection.test.ts",
+    "artifacts/api-server/src/test/compass-structured-context.test.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): TR5's Telegraph consumer (§66–§67) — cited on the TR5 verdict rows.
+    "artifacts/api-server/src/routes/telegraphChat.ts",
+    "artifacts/api-server/src/services/telegraphChatSuggestions.ts",
+    "artifacts/api-server/src/test/tripTelegraphProjection.test.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): §68–§74's production facts and W-column evidence — the production ledger and 2026-09-08 snapshot, the one ungated writer (TR1, TR435), the trip_events writer (TR89), the lifecycle suite (TR35), the layover seam (TR425) and the roster-unreadable controls TR414 rests on.
+    "artifacts/api-server/src/lib/capability/production-applied-migrations.json",
+    "artifacts/api-server/src/lib/capability/snapshots/20260908-production-schema.json",
+    "artifacts/api-server/src/services/appeals/resolveAppeal.ts",
+    "artifacts/api-server/src/services/appeals/roleAtRemoval.ts",
+    "artifacts/api-server/src/test/tripLifecycle.test.ts",
+    "artifacts/api-server/src/migrations/0127_layover_system.sql",
+    "artifacts/api-server/src/test/tripCrewRosterUnreadable.test.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): §75's code half of TR116, TR150, TR153 and TR290 — the plan reader and the four suites a central regrade will check.
+    "artifacts/api-server/src/routes/plan.ts",
+    "artifacts/api-server/src/test/tripPlanPrivacyScope.test.ts",
+    "artifacts/api-server/src/test/tripPlanAttendanceDownstream.test.ts",
+    "artifacts/api-server/src/test/tripProposalContract.test.ts",
+    "artifacts/api-server/src/test/tripReservationReimport.test.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14), at integration: the router registry — TR222, TR1, TR134, TR374 and TR440 grade whether trip routes are registered in it; counted once the checker resolved `routes/index.ts:179#tripProjectionsRouter` by its anchor.
+    "artifacts/api-server/src/routes/index.ts",
   ],
   "census-layover.md": [
+    // ── ADDED 2026-09-22 by the INTEGRATING lane, because check:census-scope-coverage
+    // ── went red and the remedy it prescribes is this one, never the floor.
+    //
+    // MEASURED BOTH SIDES BEFORE TOUCHING ANYTHING. At `4f89330b9` — the six-lane
+    // merge, before §41-§44 were written — this census was ALREADY at 89 % against
+    // its 0.97 floor. So the gap arrived with the lanes' own citations and §41-§44
+    // took it 89 % -> 87 %; it is not a defect this pass introduced, and it is not
+    // one this pass gets to leave either. The census-highlights-memories half of
+    // the same failure IS this pass's and is fixed in that entry.
+    //
+    // Every path below is a subject this census GRADES, not a file it mentions:
+    //   lib/providers/routeCorridorProvider.ts + returnRouteRisk.ts and their two
+    //     suites — the routed corridor §12.1 wired into the certified action
+    //     universe; six rows (L60, L68-L71, L282) moved N -> W on them.
+    //   test/layoverApiLifecycle.test.ts — §41 moves L239 and L221 on it.
+    //   lib/layoverExternalEventScheduler.ts + routes/layoverEvents.ts +
+    //     test/db/layoverExternalEventsDedup.db.test.ts — §40's ingest, drain and
+    //     real-database suite.
+    //   lib/layoverCrewExpiryScheduler.ts — the crew half of the same chain.
+    //   lib/crowdState.ts — L276's whole verdict is about what this module exports
+    //     and whether the airport surface calls it (§43's "capability that exists
+    //     in lib/ and is never called is NOT BUILT in this census's usage").
+    //   migrations 2981, 2982, 2986, 2992 — layover migrations this census cites
+    //     by name; 2986 is §42's fanout indexes.
+    //   travel-buddy-standalone/src/lib/layoverPlanCache.ts and the sensing-cadence
+    //     suite — L151/L233's offline cache and the L164/L168 guard §41.4 rests on.
+    //
+    //   test/schedulerRegistration.test.ts — added on a SECOND look, and the
+    //     distinction from test/docCitations.test.ts is worth stating because the
+    //     first draft of this entry got it wrong and excluded both as "a guard's
+    //     own suite". They are not the same. The census rests a factual claim on
+    //     the scheduler guard's STATE — "before this it was an exported function
+    //     nothing called, which is the state `schedulerRegistration.test.ts`
+    //     exists to refuse, and that test was red until the call was added" — so
+    //     its red/green is the evidence for a row's "IS scheduled" half. The
+    //     citation guard, by contrast, is a corpus-wide tool this census reports
+    //     on. Evidence goes in scope; instrumentation does not.
+    //
+    // STILL DELIBERATELY NOT ADDED, extending the list the floor comment in
+    // checkCensusScopeCoverage.ts already names: test/docCitations.test.ts is a
+    // guard's own suite — machinery this census REPORTS ON rather than grades;
+    // routes/messaging.ts and
+    // 2795_trip_kernel_write_guards.sql belong to Telegraph and Trips; and
+    // lib/capability/snapshots/current.ts is corpus-wide capability machinery that
+    // every census cites when it needs to say what production carries.
+    "artifacts/api-server/src/lib/providers/routeCorridorProvider.ts",
+    "artifacts/api-server/src/lib/providers/returnRouteRisk.ts",
+    "artifacts/api-server/src/test/providerRouteCorridor.test.ts",
+    "artifacts/api-server/src/test/providerReturnRouteRisk.test.ts",
+    "artifacts/api-server/src/test/layoverApiLifecycle.test.ts",
+    "artifacts/api-server/src/lib/layoverCrewExpiryScheduler.ts",
+    "artifacts/api-server/src/lib/layoverExternalEventScheduler.ts",
+    "artifacts/api-server/src/test/schedulerRegistration.test.ts",
+    "artifacts/api-server/src/lib/crowdState.ts",
+    "artifacts/api-server/src/routes/layoverEvents.ts",
+    "artifacts/api-server/src/test/db/layoverExternalEventsDedup.db.test.ts",
+    "artifacts/api-server/src/migrations/2981_layover_event_ingest_flag.sql",
+    "artifacts/api-server/src/migrations/2982_layover_traveller_observation_submissions.sql",
+    "artifacts/api-server/src/migrations/2986_layover_sessions_fanout_indexes.sql",
+    "artifacts/api-server/src/migrations/2992_layover_decision_record_and_operational_tables.sql",
+    "travel-buddy-standalone/src/lib/layoverPlanCache.ts",
+    "travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts",
     // ── ADDED 2026-09-15: §24's own two modules, which §24.9 says are covered ──
     // by an acknowledgement and which NOTHING was watching, so they could not be.
     //
@@ -424,20 +554,20 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/routes/discovery.ts",
     "artifacts/api-server/src/compass/TelegraphConversationTools.ts",
     "artifacts/api-server/src/routes/rentABuddyRollout.ts",
-    // ── ADDED 2026-09-22 by the ENTRY GATE lane (§27) ────────────────────────
+    // ── ADDED 2026-09-22 by the ENTRY GATE lane (§45, RENUMBERED FROM §27 AT INTEGRATION 2026-09-23) ────────────────────────
     // This census measured 132 cited / 127 watched — exactly its 96% floor —
-    // before §27 was written. §27 cites four more files and only one of them was
+    // before §45 was written. §45 cites four more files and only one of them was
     // in scope, which took it to 94% and turned check:census-scope-coverage red.
     // That is the guard working: a census cannot grade a file it does not watch.
-    //   lib/entryRequirements.ts — L48's verdict rests on it entirely. §27.1
-    //     grades `readCorridor`'s three-state read, and §27.3's whole argument
+    //   lib/entryRequirements.ts — L48's verdict rests on it entirely. §45.1
+    //     grades `readCorridor`'s three-state read, and §45.3's whole argument
     //     for W-not-C is that this file's table has no INSERT in any migration.
     //     If a migration ever seeds a corridor, or `readCorridor` collapses its
     //     three states back to two, L48 moves — and nothing here was watching.
     //   test/layoverEntryGate.test.ts — the suite that pins L34 and L48,
-    //     including the monotonicity property §27.4 counts toward L235. A row
+    //     including the monotonicity property §45.4 counts toward L235. A row
     //     held in place by a test ages when that test does.
-    //   routes/entryRequirements.ts — §27.9 rests a claim on this file's
+    //   routes/entryRequirements.ts — §45.9 rests a claim on this file's
     //     CONTENTS: that it makes the identical `isFlagEnabled(sc, ENTRY_FLAG)`
     //     call, which is why the gate's own UNRESOLVABLE entry is a copy of an
     //     existing judgement rather than a new one. Same shape as
@@ -553,6 +683,39 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // not watch cannot notice the grep starting to return something.
     "artifacts/api-server/src/lib/liveClaimRead.ts",
     "artifacts/api-server/src/services/airport/",
+    // ── ADDED 2026-09-22 by §27: the §14 crew's persistence half, and the two
+    // migrations three sections now rest verdicts on. Same shape of gap as the
+    // 2026-09-15 entry above, and found the same way — by the coverage floor.
+    //
+    //   services/layover/ — `LayoverCrewStore.ts` is where `createCrew`,
+    //     `joinCrew` and `leaveCrew` live, and §27.4 moves L185/L186/L188 to `C`
+    //     ON those three functions. The solver they feed has been watched for a
+    //     year under `services/airport/`; the storage that finally gave it
+    //     members was in a SIBLING directory nothing watched, so the three rows
+    //     this census now scores `C` rested on a file it could not age. The
+    //     directory also holds their two suites, which are the acceptance
+    //     evidence those verdicts cite.
+    //   2984_layover_crews.sql — §26.2 moves L28 and L29 to `C` on this file
+    //     existing and being applied, and §27.5 rests the "no database-level
+    //     scope underneath the route layer" argument on its zero-policy,
+    //     zero-grant postcondition. A verdict resting on a migration's CONTENT
+    //     has to age when that content moves.
+    //   2971_layover_discovery_mode_flag.sql — §24.6, §25.2 and §29.3 all keep
+    //     L269 at `W` on the specific ground that this file is NOT applied. If
+    //     it changes, the reason three sections give for that verdict changes
+    //     with it.
+    //   2985_layover_events_crew_vocabulary.sql — 2984's deploy dependency, and
+    //     §26.1 records that it was MISSED on the first attempt, producing "a
+    //     feature that looks built and audits nothing" because every crew audit
+    //     row was rejected by the `layover_events.event_type` CHECK and swallowed
+    //     by `emitEvent`'s non-fatal warn. §27.4's `C` on L185 cites the
+    //     `crew_joined` audit as evidence, so that verdict rests on this file's
+    //     vocabulary and must age with it. §26.1 also notes `check:enum-literals`
+    //     cannot see this class, which is the whole reason it needs watching.
+    "artifacts/api-server/src/services/layover/",
+    "artifacts/api-server/src/migrations/2984_layover_crews.sql",
+    "artifacts/api-server/src/migrations/2985_layover_events_crew_vocabulary.sql",
+    "artifacts/api-server/src/migrations/2971_layover_discovery_mode_flag.sql",
     "artifacts/api-server/src/routes/airport.ts",
     "travel-buddy-standalone/src/services/layover.ts",
     "travel-buddy-standalone/src/components/layover/",
@@ -604,8 +767,88 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/trustEmitterWiring.test.ts",
     "artifacts/api-server/src/test/migrationDeployability.test.ts",
     "artifacts/api-server/src/migrations/2462_meetup_time_votes_write_boundary.sql",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): the evidence L271 (§14.1-§14.3), L19/L162 (§17.2), L56/L57/L178 (§18.1), L196 and L269 (§35) rest on.
+    "artifacts/api-server/src/test/layoverTelegraphMessage.test.ts",
+    "artifacts/api-server/src/lib/threadMessage.ts",
+    "artifacts/api-server/src/test/layoverStampOccurrence.test.ts",
+    "artifacts/api-server/src/services/memory/occurrenceGate.ts",
+    "artifacts/api-server/src/domain/trips/invariants/TripFreedomEngine.ts",
+    "artifacts/api-server/src/index.ts",
+    "travel-buddy-standalone/eas.json",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): §18.9's three server suites, which that section asks the integrator to scope — one is cited, two are named in prose only because citing them would have failed this check.
+    "artifacts/api-server/src/test/layoverTemporalFreedom.test.ts",
+    "artifacts/api-server/src/test/layoverEnvelope.test.ts",
+    "artifacts/api-server/src/test/layoverScenarioMatrix.test.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): L169 and L267 cite `app/trip/[id].tsx`, which the guard resolves to the legacy repo-root mock (113 lines); the trip screen whose lines they cite is travel-buddy-standalone's, so both are watched rather than one chosen.
+    "travel-buddy-standalone/app/trip/[id].tsx",
+    "app/trip/[id].tsx",
   ],
   "census-highlights-memories.md": [
+    // ── ADDED 2026-09-22 by the INTEGRATING lane. THIS HALF IS THIS PASS'S OWN
+    // ── DEFECT, measured rather than assumed: at `4f89330b9` this census was at
+    // 99 % against its 0.98 floor, and §W and §X took it to 97 %. The layover
+    // entry's gap predates the same pass; this one does not.
+    //
+    // Both paths are subjects this census grades:
+    //   2994_memory_relations_and_outbox_consumer.sql — `memory_relations`, the
+    //     outbox claim/ack/fail functions and the claimable index, all of which
+    //     §12.2-§12.3 and the H1xx outbox rows turn on.
+    //   test/highlightsApiUnhideBoundary.test.ts — §X repoints it to the
+    //     three-artifact invariant over the vocabulary, the applier and the route,
+    //     and grades H159's boundary on it.
+    //
+    // NOT ADDED, on the precedent the layover entry above extends:
+    // 0179_stamp_criteria_engine.sql belongs to Passport and is cited in passing.
+    // (Its citation is also bare, so it resolves onto the STRAY ROOT COPY rather
+    // than onto src/migrations/ — docs/stray-sql-inventory-and-disposition.md
+    // item 2 owns that repair, together with deleting the strays.)
+    "artifacts/api-server/src/migrations/2994_memory_relations_and_outbox_consumer.sql",
+    "artifacts/api-server/src/test/highlightsApiUnhideBoundary.test.ts",
+    // ── ADDED 2026-09-23 by §Y. THE RULING DIRECTLY ABOVE IS REVERSED, on the ──
+    // ── facts that changed, not on the pressure of a red check. ──────────────
+    //
+    // The 2026-09-22 comment ruled scripts/migrationPrefixRules.ts out as
+    // "machinery this census reports on, not a subject", and at the time that was
+    // right: §X.4 named the 2100-2999 band only to explain why the amendment it
+    // wanted could not be written — the census cited the rule the way it cites a
+    // guard that measured it.
+    //
+    // §Y is a different relationship. PR #527 extended the band to 3000-3999, and
+    // the amendment §X.4 had recorded as unbuildable became buildable in the same
+    // hour; 3001 below EXISTS because of the line that module now carries. So the
+    // module is no longer evidence about why this census could not act — it is a
+    // precondition of a migration this census grades, and if the band moves again
+    // §Y's argument for 3001's filename goes stale and must be re-read. That is
+    // exactly what CENSUS_SCOPE is for.
+    //
+    // It is deliberately NOT put in checkCensusScopeCoverage.ts's NOT_GRADED
+    // list, which would have been the cheaper way to go green: that list is
+    // GLOBAL, so one entry stops all thirteen censuses watching a file, and this
+    // module is imported by the APPLIER (scripts/src/apply-migrations.ts) as well
+    // as by two guards — it is shared rule code, not a checker. NOT_GRADED's own
+    // comment names that as the thing that would make it wrong.
+    //
+    // 3001_highlight_kernel_admits_unhide.sql is a subject outright: it is the
+    // CREATE OR REPLACE that makes the §17 applier admit UNHIDE_HIGHLIGHT, which
+    // is what §Y moves H159's boundary on.
+    "artifacts/api-server/src/scripts/migrationPrefixRules.ts",
+    "artifacts/api-server/src/migrations/3001_highlight_kernel_admits_unhide.sql",
+    // ── ADDED 2026-09-23 by §Y.7: the un-hide's CLIENT half. ────────────────
+    // §Y.4 wired the route and §Y.6 said the migration is applied nowhere;
+    // between those two it would be easy to read the un-hide as a server
+    // capability with no caller. §Y.7 follows the chain and finds the screen,
+    // the client service, and four tests that were there all along — which is
+    // what makes H159's `W` mean "not deployed" rather than "not built".
+    //
+    // A section that rests its argument on a screen must age when that screen
+    // changes, so all four are watched. These are SUBJECTS: the archive screen
+    // and its service are the surface H159's requirement is about, and the two
+    // suites are the evidence §Y.7 cites — the same category as
+    // highlightsApiUnhideBoundary.test.ts above, not machinery.
+    "travel-buddy-standalone/app/highlights/archived.tsx",
+    "travel-buddy-standalone/src/services/highlights.ts",
+    "travel-buddy-standalone/app/highlights/__tests__/archived.screen.component.test.tsx",
+    "travel-buddy-standalone/src/services/__tests__/highlights.archive.component.test.ts",
     // ── ADDED 2026-09-15: §M and §O's OWN suites, which the ledger could not ──
     // name because this scope did not.
     //
@@ -778,6 +1021,67 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // while changing what this census can claim — the same argument that put
     // test/storyHighlightVisibility.test.ts in this list above.
     "artifacts/api-server/src/test/memoryParticipantLadder.test.ts",
+    // ── WIDENED 2026-09-22 by section Q, on the same argument every test file ──
+    // above was added on: each is the EVIDENCE a row's verdict now cites, so
+    // deleting it would not change the code and would change what this census
+    // can claim.
+    //   highlightLifetimeAndPin.test.ts — §Q's evidence for H94–H97. It drives
+    //     POST /highlights with a §4 class through to the stored column and back
+    //     out of the profile read with its provenance, and pins PERMANENT's
+    //     refusal-by-name on a database without 2975. Three mutations in §Q.2
+    //     turn it red.
+    //   memorySearchRoute.test.ts — §Q's evidence for H110 and H111, whose
+    //     shared blocker was "no route imports the module". It also carries the
+    //     `deterministicMatchCount` case §Q.3 added after a mutation found the
+    //     original green when the field was replaced by the page size.
+    //   highlightSourceLinks.test.ts — §Q's red-first evidence for H32, the
+    //     first TypeScript writer for `highlight_sources`.
+    //   highlightConsentEnforcementMap.test.ts — §Q.5's evidence that the §10
+    //     enforcement map served on `GET /highlights/:id/projection-policy` is
+    //     DERIVED from the gate rather than retyped beside it.
+    //   highlightsSpecHarness.ts — not a suite but the fake all four drive. §Q.1
+    //     changed its generated primary key from `new-<hex>` to a UUID, which is
+    //     the shape every table it stands in for actually has; a harness that
+    //     invents a key shape the database cannot is how a correct handler is
+    //     made to look broken. It is watched for the same reason
+    //     `highlightRouteHarness.ts` is cited in §P.6.
+    "artifacts/api-server/src/test/highlightLifetimeAndPin.test.ts",
+    "artifacts/api-server/src/test/memorySearchRoute.test.ts",
+    "artifacts/api-server/src/test/highlightSourceLinks.test.ts",
+    "artifacts/api-server/src/test/highlightConsentEnforcementMap.test.ts",
+    "artifacts/api-server/src/test/highlightsSpecHarness.ts",
+    // ── AND FIVE THIS SCOPE SHOULD ALREADY HAVE HAD, found by running ────────
+    // check:census-scope-coverage after the five above went in. Each was cited
+    // by §P or by the body and watched by nothing, which is the same hole §O
+    // recorded about its own three suites one widening ago.
+    //   verifyFlowHighlightControls.test.ts — §P.1's whole argument, the
+    //     PUT → GET → feed → DELETE flow that falsified §O.2's "they will stay
+    //     empty". Cited twice.
+    //   highlightPublicProjectionEnforcement.test.ts — §P.2's 39 cases and
+    //     twelve mutations, and §Q.5 drives it too.
+    //   highlightRouteHarness.ts — the table-backed fake both of those suites
+    //     drive. §P.6 names it by name and this scope did not watch it.
+    //   2975_highlights_permanent_lifetime.sql — H98's ENTIRE blocker. The row
+    //     is NOT-BUILT because `highlights.expires_at` is still NOT NULL, and
+    //     this migration is the thing that changes that. §Q.9 names its landing
+    //     as one of four events that turn the section red, so a change to it
+    //     must age the document.
+    //   2320_memory_episode_provenance_spine.sql — PR #470's migration, which
+    //     H18, H19, H23 and H24 each cite as "unmerged PR #470 only". If it
+    //     merges or changes, four rows change.
+    //
+    // NOT ADDED, and said rather than left silent, per the guard's own second
+    // remedy: `0179_stamp_criteria_engine.sql` is cited by BASENAME with no
+    // path, in §N's account of the criteria engine minting a stamp the Passport
+    // then counted. This repository holds several files with that basename in
+    // frozen non-executable roots, so there is no single path to watch, and
+    // adding one would assert a resolution the citation does not make. It is
+    // the one citation this census still does not watch.
+    "artifacts/api-server/src/test/verifyFlowHighlightControls.test.ts",
+    "artifacts/api-server/src/test/highlightPublicProjectionEnforcement.test.ts",
+    "artifacts/api-server/src/test/highlightRouteHarness.ts",
+    "artifacts/api-server/src/migrations/2975_highlights_permanent_lifetime.sql",
+    "artifacts/api-server/src/migrations/2320_memory_episode_provenance_spine.sql",
     // WIDENED 2026-09-13 by section F, which worked §25's H239 from the SURFACE
     // end — "planned activity without occurrence cannot earn a visit
     // Memory/Stamp" — and found that one of the five Passport-stamp seams in the
@@ -920,6 +1224,15 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/memoryProfileLocationProtection.test.ts",
     "artifacts/api-server/src/test/memoryPatchConcurrency.test.ts",
     "artifacts/api-server/src/test/highlightProfilePrecisionClamp.test.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): the evidence for §G's non-temporal endSession, §I.4's red-before-green store assertion, §N.3's presence-evidence select, §P.5's ungated Highlight surfaces and §W.3/§X.2's un-hide applier.
+    "artifacts/api-server/src/migrations/2993_highlight_command_boundary.sql",
+    "artifacts/api-server/src/services/airport/LayoverSessionService.ts",
+    "artifacts/api-server/src/test/memoriesTripMemoryDegraded.test.ts",
+    "artifacts/api-server/src/test/stampCriteriaPresenceEvidence.test.ts",
+    "artifacts/api-server/src/routes/engagement.ts",
+    "artifacts/api-server/src/routes/collections.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14), at integration: §N.1 grades the presence join in distinctStampField; counted once the checker resolved `lib/stamps/criteria/metrics.ts:96#…` by its anchor.
+    "artifacts/api-server/src/lib/stamps/criteria/metrics.ts",
 ],
   // Trust has NO SPEC — its 52 requirements are 20 inbound obligations from
   // other surfaces' specs plus 32 contracts its own code asserts. That makes the
@@ -1050,6 +1363,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/routes/telegraph.ts",
     "artifacts/api-server/src/routes/safeReturn.ts",
     "artifacts/api-server/src/routes/discoverySearch.ts",
+    "artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts", // census-discovery §70: routes/discoverySearch.ts's searchers moved here
     "artifacts/api-server/src/routes/adminPortavaPosts.ts",
     "artifacts/api-server/src/services/interactionPermissions.ts",
     "artifacts/api-server/src/services/passport/PassportConsumerProjections.ts",
@@ -1134,6 +1448,29 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/services/identityVerification/providerErasure.ts",
     "artifacts/api-server/src/test/verificationProviderErasure.test.ts",
     "artifacts/api-server/src/services/identityVerification/retention.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): the evidence cited on rows TV-0e/TV-2c, TV-2a, TV-3a, TV-4b, TV-6c, TV-U7, TRV2-10, C18, C30 and A18/TRV2-02, and by §18.2 for keeping TV-5b at NB. This census's floor is 100 %, so every file it cites is either here or declared.
+    "artifacts/api-server/src/lib/http.ts",
+    "artifacts/api-server/src/test/trustNullableScores.test.ts",
+    "travel-buddy-standalone/app/(rent-a-buddy)/index.tsx",
+    "travel-buddy-standalone/app/u/[username].tsx",
+    "travel-buddy-standalone/app/event/[id].tsx",
+    "travel-buddy-standalone/app/(rent-a-buddy)/buddy/[id].tsx",
+    "artifacts/api-server/src/index.ts",
+    "travel-buddy-standalone/src/components/BuddyCard.tsx",
+    "travel-buddy-standalone/src/components/compass/CompassTravelerRow.tsx",
+    "travel-buddy-standalone/app/(rent-a-buddy)/offers.tsx",
+    "travel-buddy-standalone/src/components/layover/LayoverPeopleSection.tsx",
+    "artifacts/api-server/src/services/appeals/resolveAppeal.ts",
+    "artifacts/api-server/src/test/zeroRowTrustAdjudication.test.ts",
+    "artifacts/api-server/src/test/trustProfileUnreadableDowngrade.test.ts",
+    "artifacts/api-server/src/services/phoneVerification/PhoneVerificationService.ts",
+    "artifacts/api-server/src/test/sensingAnonStore.test.ts",
+    "artifacts/api-server/src/routes/rentABuddySpec.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): §17.3's is_over_18 finding — the client surfaces the verified bit as display data and no gate reads it, which is TV-5b's subject.
+    "travel-buddy-standalone/src/services/verification.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): TV-3a cites `app/post/[id].tsx`, which the guard resolves to the legacy repo-root mock (22 lines); the report entry point it means is travel-buddy-standalone's, so both are watched rather than one chosen.
+    "travel-buddy-standalone/app/post/[id].tsx",
+    "app/post/[id].tsx",
   ],
   // The Wall's 205 requirements are graded against a scope DELIBERATELY wider
   // than services/wall/ + features/wall/, for the reason §3 of that census
@@ -1217,6 +1554,43 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/wallOpportunityLoader.test.ts",
     "artifacts/api-server/src/test/wallOpportunityRoute.test.ts",
     "artifacts/api-server/src/test/wallPromotionDisclosure.test.ts",
+    "artifacts/api-server/src/test/wallFeedVariant.test.ts",
+    "artifacts/api-server/src/lib/media/mediaProjection.ts",
+    // WIDENED 2026-09-26 by census-wall §16 (W151 re-read and rebuilt): its
+    // citations took census-wall to 86 watched of 91 cited, under the 95% floor.
+    // The two files above are what W151's C now rests on.
+    //   - wallFeedVariant.test.ts is the row's server proof.
+    //   - lib/media/mediaProjection.ts holds the Media v2 post_media embed
+    //     (MEDIA_PROJECTION_POST_MEDIA_COLUMNS) and the mapping that carries
+    //     feed_url to the Wall's media lane. An edit there can break W151 with
+    //     no Wall file changing.
+    // Left unwatched on purpose, because they are cited but not graded:
+    //   - services/media/MediaProjectionService.ts, cited only for the
+    //     extractor's blind spot;
+    //   - the app config, cited for the supported-device range.
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): verdict-row evidence — W166's brand accents, W10's tab registration, W170's video controls and the jest proof §9 ran, W152/W204's failure-vs-empty suite.
+    "travel-buddy-standalone/src/theme/tokens.ts",
+    "app/(tabs)/_layout.tsx",
+    "travel-buddy-standalone/src/components/ui/SharedVideoPlayer.tsx",
+    "travel-buddy-standalone/src/components/ui/__tests__/SharedVideoPlayer.component.test.tsx",
+    "artifacts/api-server/src/test/wallFailureVsEmpty.test.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): W71 — the typo half's end-to-end proof and the two normalizers its row names, and the voice intake §14.2 moves the row on.
+    "artifacts/api-server/src/test/wallSessionIntent.test.ts",
+    "artifacts/api-server/src/routes/discoverySearchHelpers.ts", "artifacts/api-server/src/lib/inputAssistance/searchQueryHelpers.ts", // census-discovery §80: the helpers moved here verbatim; the Wall cites applyAliases at this path
+    "artifacts/api-server/src/lib/inputAssistance/queryNormalizer.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/voice/voiceIntake.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): W146 — the Wall's own live-DB suite §13.1 names as the fixture shape the benchmark follows.
+    "artifacts/api-server/src/test/wallSessionIntentLiveDb.test.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): W151's C and W118 — server caps the client pins, the shared signing cache, the phone-only app config, and the SELECT that composes Media v2's embed (W118's row grades that delegation, so the §16.8 "left unwatched" note above no longer holds for it or for app.json).
+    "artifacts/api-server/src/lib/mediaProcessing.ts",
+    "travel-buddy-standalone/src/services/mediaUrl.ts",
+    "travel-buddy-standalone/app.json",
+    "artifacts/api-server/src/services/media/MediaProjectionService.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): W72 — §17's postcard-link writer and the Quick Media suite that proves the fix.
+    "artifacts/api-server/src/routes/postcards.ts",
+    "artifacts/api-server/src/test/wallQuickMedia.test.ts",
+    // WIDENED 2026-09-27 by lane E (census-media §38.11): W10 now spells its tab-registration citation as the standalone screen, so the guard checks the file the row means rather than the repo-root mock above.
+    "travel-buddy-standalone/app/(tabs)/_layout.tsx",
   ],
   // Discovery has NO SPEC. Its 67 rows are 25 inbound obligations from other
   // surfaces' specs, 9 rows shared with the Global Input Intelligence census,
@@ -1332,6 +1706,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/2089_media_assets_ready_requires_dimensions.sql",
     "travel-buddy-standalone/src/components/ui/SharedVideoPlayer.tsx",
     "artifacts/api-server/src/routes/discoverySearch.ts",
+    "artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts", // census-discovery §70: routes/discoverySearch.ts's searchers moved here
     "artifacts/api-server/src/routes/mapSearch.ts",
     "travel-buddy-standalone/src/components/CachedImage.tsx",
     "artifacts/api-server/src/migrations/2041_media_ranking_snapshots.sql",
@@ -1373,6 +1748,282 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/generated/liveColumns.json",
     "artifacts/api-server/baseline/20260819_baseline_structure.sql",
     "migrations/0043_tags_hashtags.sql",
+    // WIDENED 2026-09-26 by the integration owner (census-media §19, §20,
+    // §23): two files the merged pass GRADES, not merely mentions. The route
+    // registry is where §19's five new screens become reachable at all, so
+    // MD25–MD28's reachability rests on it; the Telegraph share loader's media
+    // gate is the one §20 changed to accept §36's `active`. Watching them keeps
+    // the census above its floor for the right reason.
+    "travel-buddy-standalone/src/navigation/portavaRoutes.ts",
+    "artifacts/api-server/src/services/telegraph/shareables.ts",
+    // WIDENED 2026-09-26 by census-media §21 (Lane C). §21 moves 36 rows on
+    // what these files do and what these suites assert, and cited them, which
+    // took check:census-scope-coverage to 87% against its 96% floor. Each is
+    // named because a silent edit to it can falsify a §21 verdict: the §24
+    // term library and the §44/§45 producers (lib/mediaAnalytics.ts had been
+    // cited since §11 and watched by nothing), the post_event_links writer,
+    // the client halves the actions and signals run through, and the six
+    // proof suites. Named one by one for the reason the 2026-09-15 entry gives.
+    "artifacts/api-server/src/lib/mediaRankingSignals.ts",
+    "artifacts/api-server/src/lib/mediaAnalytics.ts",
+    "artifacts/api-server/src/lib/mediaEventLinks.ts",
+    "artifacts/api-server/src/test/mediaRankingObjectives.test.ts",
+    "artifacts/api-server/src/test/mediaContributorTripExpertise.test.ts",
+    "artifacts/api-server/src/test/mediaActionsSection21.test.ts",
+    "artifacts/api-server/src/test/mediaOutcomeSignals.test.ts",
+    "artifacts/api-server/src/test/hiddenGemOutcome.test.ts",
+    "artifacts/api-server/src/test/mediaEventLink.test.ts",
+    "travel-buddy-standalone/src/hooks/useMediaAnalytics.ts",
+    "travel-buddy-standalone/src/services/mediaInteractions.ts",
+    "travel-buddy-standalone/src/services/hiddenGems.ts",
+    "travel-buddy-standalone/src/services/hiddenGemsMappers.ts",
+    "travel-buddy-standalone/src/services/sharedMoments.ts",
+    "travel-buddy-standalone/src/services/routePlan.ts",
+    "travel-buddy-standalone/src/components/ShareSheet.tsx",
+    "travel-buddy-standalone/src/components/CommentsSheet.tsx",
+    "travel-buddy-standalone/src/components/gems/GemContributeSection.tsx",
+    // WIDENED 2026-09-26 by census-media §22, because check:census-scope-coverage
+    // required it: §22 grades MD275/276/281/284/295–301/320/321/323/325 on these
+    // files and their tests, and a census that grades a file must go stale when
+    // it moves. The client §40 modules live under services/media/ (a directory,
+    // tests included); the server video transport is named file by file. The
+    // two mount points §22 cites (routes/index.ts, app/_layout.tsx) are NOT
+    // added — they change for every feature, and nothing in them is graded.
+    "travel-buddy-standalone/src/services/media/",
+    "travel-buddy-standalone/src/services/media.ts",
+    "travel-buddy-standalone/src/services/mediaUrl.ts",
+    "travel-buddy-standalone/src/services/stories.ts",
+    "travel-buddy-standalone/src/services/memories.ts",
+    "travel-buddy-standalone/src/components/PostcardComposer.tsx",
+    "travel-buddy-standalone/src/components/PulseCreate.tsx",
+    "travel-buddy-standalone/src/components/__tests__/PostcardComposer.videoPoster.component.test.tsx",
+    "travel-buddy-standalone/src/components/__tests__/PulseCreate.locationPrivacy.component.test.tsx",
+    "artifacts/api-server/src/lib/videoProbe.ts",
+    "artifacts/api-server/src/lib/mediaPosterPath.ts",
+    "artifacts/api-server/src/lib/mediaVideoPoster.ts",
+    "artifacts/api-server/src/lib/postcardMediaTransport.ts",
+    "artifacts/api-server/src/lib/postSchemas.ts",
+    "artifacts/api-server/src/routes/postcardMediaTransport.ts",
+    "artifacts/api-server/src/routes/mediaVideoPoster.ts",
+    "artifacts/api-server/src/test/mediaVideoTransport.test.ts",
+    "artifacts/api-server/src/test/mediaVideoPosterGeneral.test.ts",
+    "artifacts/api-server/src/test/mediaPrivacyClientParity.test.ts",
+    // WIDENED 2026-09-26 by the integration owner at the lane D merge (census-
+    // media §22, §23.4): the root layout is where §22 mounts the upload resume
+    // (MD284) and the offline warm-up (MD295–MD301), and §22 cites both mounts.
+    // Watching it kept the census above its 96% floor after the four lanes met.
+    "travel-buddy-standalone/app/_layout.tsx",
+    // WIDENED 2026-09-26 by census-media §23.8, because check:census-scope-coverage
+    // required it: §20.5 (P1), §23.2 and §23.8 grade production's canonical state
+    // on this migration being applied (it is what 3321's precondition reads), so
+    // a change to it must age the census. routes/index.ts stays out, as above.
+    "artifacts/api-server/src/migrations/2470_media_asset_canonical_columns_flag_agnostic.sql",
+    // WIDENED 2026-09-26 by census-media §28.8: the byte-gate route that signs
+    // (or masks) every Media object; §28.8 grades its header mask and §23.7 its
+    // variant path through lib/mediaAccess, so a change to it must age the census.
+    "artifacts/api-server/src/routes/mediaFile.ts",
+    // WIDENED 2026-09-26 by the integration owner at the lane I merge (census-
+    // media §29.7, §28.9): MD288's C verdict rests on these two routes passing the
+    // viewer's point (gated on `ok`) to the World shell and to Search, so a change
+    // to either can falsify it. Lane I measured media at 215/225 without them.
+    "travel-buddy-standalone/app/media-search/index.tsx",
+    "travel-buddy-standalone/app/media-world/index.tsx",
+    // WIDENED 2026-09-26 by census-media §30 (Lane J), because
+    // check:census-scope-coverage required it (93% against the 96% floor).
+    // MD338's C rests on the boot call that starts the processing worker
+    // (src/index.ts), on the flag seed that gates it and the retry (3338), on
+    // the suite that proves both and the double and fixtures that suite trusts
+    // (§30.8), on the GPS parser the worker refuses a stored still with and
+    // the test that measured sharp's GPS gap, on the two repo guards §30.3
+    // says now cover the worker, and on the lifecycle test §30.11 item 4 finds
+    // vacuous. A change to any of them can falsify §30, so each ages the census.
+    "artifacts/api-server/src/index.ts",
+    "artifacts/api-server/src/migrations/3338_media_processing_worker_flag.sql",
+    "artifacts/api-server/src/test/mediaProcessingWorker.test.ts",
+    "artifacts/api-server/src/test/helpers/postgrestOracle.ts",
+    "artifacts/api-server/src/test/videoProbeFixtures.ts",
+    "artifacts/api-server/src/lib/exifFacts.ts",
+    "artifacts/api-server/src/test/exifFacts.test.ts",
+    "artifacts/api-server/src/test/schedulerRegistration.test.ts",
+    "artifacts/api-server/src/test/backgroundWorkerWiring.test.ts",
+    "artifacts/api-server/src/test/mediaAssetsRecord.test.ts",
+    // WIDENED 2026-09-26 by census-media §32 (Lane M), because
+    // check:census-scope-coverage required it (95% against the 96% floor).
+    // §32.4 grades the backfill script as staging its rows with the signature
+    // the dimension sweep finishes (mediaCanonicalRead's B3), and §32.6's
+    // privacy case drives the byte gate through a copy of mediaAccess.test.ts's
+    // query double. A change to either can falsify §32, so each ages the census.
+    "artifacts/api-server/src/scripts/backfill-media-assets.ts",
+    "artifacts/api-server/src/test/mediaAccess.test.ts",
+    // WIDENED 2026-09-26 by census-media §31.13 (lane K), because
+    // check:census-scope-coverage required it (228/239, 95%, against the 96%
+    // floor). MD403's §31.13 evidence rests on three shared components'
+    // optional props (StampButton's tone, AppHeader's overlayTint, EmptyState's
+    // primaryAction.fill) rendering as Media needs while every other caller is
+    // unchanged, so a change to any of them can falsify it. The Grid's
+    // full-screen viewer and the Media tab route are measured and fixed there
+    // too; the coverage check cannot see them (its citation pattern skips
+    // brackets and parentheses), but the same reason applies.
+    "travel-buddy-standalone/src/components/stamps/StampButton.tsx",
+    "travel-buddy-standalone/src/components/ui/AppHeader.tsx",
+    "travel-buddy-standalone/src/components/ui/EmptyState.tsx",
+    "travel-buddy-standalone/app/media-viewer/[id].tsx",
+    "travel-buddy-standalone/app/(tabs)/media.tsx",
+    // WIDENED 2026-09-27 by census-media §31.13 (lane K, pass 4), because
+    // check:census-scope-coverage required it (245/258, 95%, against the 96%
+    // floor). MD403's §31.13.5 evidence rests on CreationAssist's optional
+    // quietColor reaching CorrectionBanner and EntitySuggestionRow, so a change
+    // to any of the three can falsify it. census-input-intelligence watches the
+    // same files through its directory entry; watching them here as well makes
+    // an edit to them age both censuses, which is the point.
+    "travel-buddy-standalone/src/platform/input-assistance/creation/CreationAssist.tsx",
+    "travel-buddy-standalone/src/platform/input-assistance/components/CorrectionBanner.tsx",
+    "travel-buddy-standalone/src/platform/input-assistance/components/EntitySuggestionRow.tsx",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): §20's canonical contract — MD38, MD41, MD43, MD255, MD274·MD351 and MD369 — the audience rule, the two migrations and the proof suites §20.2 and §20.8 name.
+    "artifacts/api-server/src/lib/mediaVisibility.ts",
+    "artifacts/api-server/src/lib/postVisibility.ts",
+    "artifacts/api-server/src/migrations/3320_media_canonical_contract_constraints.sql",
+    "artifacts/api-server/src/migrations/3321_media_moderation_canonical_state.sql",
+    "artifacts/api-server/src/test/mediaCanonicalLayers.test.ts",
+    "artifacts/api-server/src/test/mediaModerationCanonical.test.ts",
+    "artifacts/api-server/src/test/db/mediaCanonicalContract.db.test.ts",
+    "artifacts/api-server/src/test/mediaEvidenceEligibility.test.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): verdict-row evidence for MD51 (the Shared Moment edge), MD150 (the conflict state on the live-claim envelope) and MD252 (the sequencing anchor's tests).
+    "artifacts/api-server/src/migrations/2064_shared_moments_foundation.sql",
+    "artifacts/api-server/src/lib/liveClaimRead.ts",
+    "artifacts/api-server/src/test/compassCensusClosure.test.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): the Expo routes MD25, MD26 and MD28 are reached through, and the place screens MD153 and MD262 are graded on.
+    "travel-buddy-standalone/app/media-map/index.tsx",
+    "travel-buddy-standalone/app/media-timeline/index.tsx",
+    "travel-buddy-standalone/app/media-contribute/index.tsx",
+    "travel-buddy-standalone/app/place/[id].tsx",
+    "travel-buddy-standalone/src/components/place/living/LivingDestinationPage.tsx",
+    "travel-buddy-standalone/src/components/selectors/LocationPrivacySelector.tsx",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): §9/§10/§12 — MD105's shared hide writer and its suite (mutation M8), MD112's duplicate detector, and the flag seeds §9.9 and §12.8 read the flag-dark ceiling from.
+    "artifacts/api-server/src/lib/postHide.ts",
+    "artifacts/api-server/src/test/postHide.test.ts",
+    "artifacts/api-server/src/lib/inputAssistance/duplicateDetection.ts",
+    "artifacts/api-server/src/migrations/2038_media_admin_flags.sql",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): MD227's Tagged bucket (§11.3.2, §13) — the tags table, its writer, and the schema-strict helper and live-schema suite that now back the row.
+    "artifacts/api-server/src/migrations/0044_tags_hashtags.sql",
+    "artifacts/api-server/src/services/tagging/TaggingService.ts",
+    "artifacts/api-server/src/test/helpers/schemaStrictSupabase.ts",
+    "artifacts/api-server/src/test/mediaTaggedBucketLiveSchema.test.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): §21.1 E — the gem duplicate scan the add-gem form now shares with /gems/submit, and the gem page's visit-outcome sentence.
+    "artifacts/api-server/src/lib/inputAssistance/creation.ts",
+    "travel-buddy-standalone/app/gems/submit.tsx",
+    "travel-buddy-standalone/app/gems/[id].tsx",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): §23.7's client variant request, §24.3's MD288 radius and MD162's blocker (the Map's place projector, its zone model and the bypass guard), §28.7/§28.10's upload refusal proof.
+    "travel-buddy-standalone/src/components/PostcardTile.tsx",
+    "artifacts/api-server/src/lib/mapProjectPlace.ts",
+    "artifacts/api-server/src/routes/mapProjection.ts",
+    "artifacts/api-server/src/test/gatewayBypassGuard.test.ts",
+    "artifacts/api-server/src/test/mediaUploadHardening.test.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): MD403 (§31.12.4, §31.13.3, §31.13.5) — the shared components measured inside Media's layouts, the stamp count's reachability, and the absent-prop proof suites.
+    "travel-buddy-standalone/src/components/ui/Avatar.tsx",
+    "travel-buddy-standalone/src/components/ui/DisplayMediaImage.tsx",
+    "travel-buddy-standalone/src/hooks/useStamp.ts",
+    "travel-buddy-standalone/src/components/stamps/__tests__/StampButton.tone.component.test.tsx",
+    "travel-buddy-standalone/src/components/ui/__tests__/AppHeader.overlayTint.component.test.tsx",
+    "travel-buddy-standalone/src/components/ui/__tests__/EmptyState.fill.component.test.tsx",
+    "travel-buddy-standalone/src/components/__tests__/CachedImage.fallbackBg.component.test.tsx",
+    "travel-buddy-standalone/src/platform/input-assistance/creation/__tests__/CreationAssist.quietColor.component.test.tsx",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): MD338 (§30, §32) — the receipt reader §32.1's privacy argument rests on, and the byte gate's fail-closed suite §30 and §32.9 ran as regression evidence.
+    "artifacts/api-server/src/services/intel/PresenceVerifier.ts",
+    "artifacts/api-server/src/test/mediaAccessFailClosed.test.ts",
+    // WIDENED 2026-09-27 by lane I (census-media §35): the facts §35.5's MD65/MD53/MD58/MD197/MD162 statements and §35.4's owner questions rest on — the Map evidence path and its consent gate, the consent bridge's contract, the consent text in force, 3002's identity boundary, the aggregator's evidence lift and the crowd-flow payload's zone ids.
+    "artifacts/api-server/src/lib/intelEvidenceCapture.ts",
+    "artifacts/api-server/src/routes/mapObservations.ts",
+    "artifacts/api-server/src/lib/intelConsent.ts",
+    "travel-buddy-standalone/src/lib/sensing/consentDisclosure.ts",
+    "artifacts/api-server/src/migrations/3002_intel_contribution_identity.sql",
+    "artifacts/api-server/src/lib/intelProjectionAggregator.ts",
+    "artifacts/api-server/src/lib/mapAggregation.ts",
+    // WIDENED 2026-09-27 by lane I (census-media §35): the two suites §35.5's MD37 and MD197 statements rest on.
+    "artifacts/api-server/src/test/mediaAssetSourceDeclared.test.ts",
+    "artifacts/api-server/src/test/mediaContributorReputationSelfOnly.test.ts",
+    // WIDENED 2026-09-27 by lane V (census-media §37): MD63/MD269/MD277/MD280/MD283/MD289/MD293 rest on the vendor-stage flags 3355–3358 and the suite that tests the seams (the seams themselves sit under lib/media/, watched above).
+    "artifacts/api-server/src/migrations/3355_media_vision_provider_flag.sql",
+    "artifacts/api-server/src/migrations/3356_media_moderation_classifier_flag.sql",
+    "artifacts/api-server/src/migrations/3357_media_transcoder_flag.sql",
+    "artifacts/api-server/src/migrations/3358_media_captions_flag.sql",
+    "artifacts/api-server/src/test/mediaVendorSeams.test.ts",
+    // WIDENED 2026-09-27 by census-media §33 (lane T, H7): MD403 now grades the shared sheets Media opens — the role tokens, the sheets and the components drawn inside them that §33 changed, the pairs fixture and the design-system regression guard, and the four nested sheets MD403's RED WHEN names as unmeasured.
+    "travel-buddy-standalone/src/theme/tokens.ts",
+    "travel-buddy-standalone/src/theme/__tests__/sharedSheetContrast.pairs.ts",
+    "travel-buddy-standalone/src/theme/__tests__/sharedSheetContrast.consumers.test.ts",
+    "travel-buddy-standalone/src/components/selectors/GlobalPlacePicker.tsx",
+    "travel-buddy-standalone/src/components/PlanPickerController.tsx",
+    "travel-buddy-standalone/src/platform/input-assistance/components/DisambiguationSheet.tsx",
+    "travel-buddy-standalone/src/components/MentionInput.tsx",
+    "travel-buddy-standalone/src/components/MentionSuggestionList.tsx",
+    "travel-buddy-standalone/src/components/DateTimePickerField.tsx",
+    "travel-buddy-standalone/src/components/itinerary/LockTypeSelector.tsx",
+    "travel-buddy-standalone/src/components/RichText.tsx",
+    "travel-buddy-standalone/src/components/TagPreviewSheet.tsx",
+    "travel-buddy-standalone/src/components/ProfilePreviewCard.tsx",
+    "travel-buddy-standalone/src/components/EngagementUserListSheet.tsx",
+    "travel-buddy-standalone/src/components/ReportSheet.tsx",
+    // WIDENED 2026-09-27 by census-media §34 (lane F): the F1/F2 flag seeds every §34 row's ACTIVATION names, the playback manager MD425's tap-to-play rests on, and the suites that prove each flag's OFF state is today and its ON state the spec.
+    "artifacts/api-server/src/migrations/3340_media_tab_world_default_flag.sql",
+    "artifacts/api-server/src/migrations/3341_media_watch_context_overlay_flag.sql",
+    "artifacts/api-server/src/migrations/3342_media_watch_tap_to_play_flag.sql",
+    "artifacts/api-server/src/migrations/3343_media_watch_stage24_ranking_flag.sql",
+    "artifacts/api-server/src/test/mediaWatchStage24Ranking.test.ts",
+    "travel-buddy-standalone/src/hooks/useWatchPlayback.ts",
+    "travel-buddy-standalone/src/hooks/__tests__/useWatchPlayback.autoplay.component.test.tsx",
+    "travel-buddy-standalone/app/(tabs)/__tests__/media.worldDefault.component.test.tsx",
+    "travel-buddy-standalone/app/(tabs)/__tests__/media.worldDefaultSwitch.component.test.tsx",
+    "travel-buddy-standalone/app/(tabs)/__tests__/media.watchChip.component.test.tsx",
+    // WIDENED 2026-09-27 by lane P (census-media §36): MD262, MD101 and MD82–MD85/MD444's C rest on migrations 3350–3352 and the four suites that prove them, and §36.5's narrowings on the gem/privacy disclosure suite that now asserts them.
+    "artifacts/api-server/src/migrations/3350_media_neighborhood_only_location_mode.sql",
+    "artifacts/api-server/src/migrations/3351_media_find_busier_flag.sql",
+    "artifacts/api-server/src/migrations/3352_media_perspective_vantage.sql",
+    "artifacts/api-server/src/test/mediaNeighborhoodOnlyMode.test.ts",
+    "artifacts/api-server/src/test/mediaFindBusier.test.ts",
+    "artifacts/api-server/src/test/mediaPerspectiveVantage.test.ts",
+    "artifacts/api-server/src/test/mediaProductDecisionPlumbing.test.ts",
+    "artifacts/api-server/src/test/mediaGemAndPrivacyDisclosure.test.ts",
+    // WIDENED 2026-09-27 by lane V (census-media §37.8): MD269's restated evidence — a held or flagged postcard file neither counts nor becomes the passport cover — rests on this suite's §37.8 block.
+    "artifacts/api-server/src/test/postcards.test.ts",
+    // WIDENED 2026-09-27 by census-media §33.13 (lane T follow-up): what ReportSheet opens for a safety photo — the photo button, the source sheet and the photo card, now measured Media-flow surfaces MD403 rests on.
+    "travel-buddy-standalone/src/components/ui/MediaPickerButton.tsx",
+    "travel-buddy-standalone/src/components/ui/MediaSourceSheet.tsx",
+    "travel-buddy-standalone/src/components/ui/MediaAttachmentTray.tsx",
+    // WIDENED 2026-09-27 by census-media §40 (lane R): the viewer's page-dots layout suite, which §40.3 cites as the pin on the dots' own slot (the route file itself is already watched above).
+    "travel-buddy-standalone/app/media-viewer/__tests__/pageDots.layout.component.test.tsx",
+    // WIDENED 2026-09-27 by census-media §42 (lane Q, integration): the suite that proves Pulse, Discovery event posts and the trip feed apply mapPublicPost's rule, which §42 cites as its evidence; §36's disclosure rule is graded through it outside Media.
+    "artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts",
+    // WIDENED 2026-09-27 by lane V (census-media §37.10): the readers of passport_postcards.media_url that §37.10.3's null cover rests on (MD269) — a change to any of them can break "every reader handles a null cover".
+    "artifacts/api-server/src/routes/passport.ts",
+    "travel-buddy-standalone/src/components/PostcardsTab.tsx",
+    "travel-buddy-standalone/src/types/models.ts",
+    "travel-buddy-standalone/src/utils/destinationGrouping.ts",
+    "travel-buddy-standalone/app/destinations/[city].tsx",
+    "travel-buddy-standalone/src/services/profile.ts",
+    // WIDENED 2026-09-27 by census-media §37.10 (integration): MD269's activation now names 3359 (a postcard with no countable file gets a null cover), so the migration and its rollback are graded.
+    "artifacts/api-server/src/migrations/3359_passport_postcard_cover_nullable.sql",
+    "db/rollback/2026-09-27-3359-passport-postcard-cover-nullable-rollback.sql",
+    // WIDENED 2026-09-27 by census-media §40.12–§40.13 (lane R, round 2): the inset hook the Gems and Watch rails and the Gems bottom content now take their tab-bar and FAB clearance from; a change to useLayoverAwareBottomInset can move them under the tab button again.
+    "travel-buddy-standalone/src/hooks/useBottomInset.ts",
+    // WIDENED 2026-09-27 by census-media §44 (lane G1): migration 3362 (the client roles' column grants on posts), its rollback, and the database suite that proves both, which §44 cites as the fix for §42.6 item 5.
+    "artifacts/api-server/src/migrations/3362_posts_client_column_grants.sql",
+    "db/rollback/2026-09-27-3362-posts-client-column-grants-rollback.sql",
+    "artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts",
+    // WIDENED 2026-09-27 by census-media §43 (lane G2): the owner-aware form of mapPublicPost's place rule that §43's five readers share, and the suite §43 cites as its evidence (including its both-ways cases).
+    "artifacts/api-server/src/lib/postPlaceDisclosure.ts",
+    "artifacts/api-server/src/test/postLocationModeRemainingReaders.test.ts",
+    // WIDENED 2026-09-27 by census-media §44.11 (lane G1 follow-up): migration 3363 (the client roles' column grants on the three tables holding a copy of a post's place), its rollback, and the database suite that proves both.
+    "artifacts/api-server/src/migrations/3363_place_copies_client_column_grants.sql",
+    "db/rollback/2026-09-27-3363-place-copies-client-column-grants-rollback.sql",
+    "artifacts/api-server/src/test/db/placeCopiesClientColumnGrants.db.test.ts",
+    // WIDENED 2026-09-27 by census-media §44.18 (lane G1, write boundaries): migrations 3364 (pulse_geo_tags) and 3365 (post_media, 2158's write intent as a narrowing), their rollbacks, and the two database suites that prove them.
+    "artifacts/api-server/src/migrations/3364_pulse_geo_tags_write_boundary.sql",
+    "db/rollback/2026-09-27-3364-pulse-geo-tags-write-boundary-rollback.sql",
+    "artifacts/api-server/src/migrations/3365_post_media_write_boundary.sql",
+    "db/rollback/2026-09-27-3365-post-media-write-boundary-rollback.sql",
+    "artifacts/api-server/src/test/db/pulseGeoTagsWriteBoundary.db.test.ts",
+    "artifacts/api-server/src/test/db/postMediaWriteBoundary.db.test.ts",
   ],
   // census-telegraph.md — declared 2026-09-11 on the same basis as Media above:
   // 451 requirements out of CANNOT BE CHECKED, a clock started rather than a
@@ -1579,6 +2230,24 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/telegraphConversationCapabilities.test.ts",
     "artifacts/api-server/src/test/telegraphNeedsAction.test.ts",
     "travel-buddy-standalone/src/features/telegraph/",
+    // WIDENED 2026-09-22 by the §16/§18 MEDIA / VOICE / COMPASS lane (§34).
+    // Five files §34 rests its measurements on, each cited there and none
+    // watched before. `check:census-scope-coverage` caught the gap the moment
+    // the section landed, which is the check doing exactly its job: a census
+    // that cites a file it does not watch is a census that can go stale in
+    // silence on its own evidence.
+    //
+    // `lib/translation.ts` is the important one. §34.1's whole finding is that
+    // `DetectLanguageResult.confidence` existed in THAT file and was discarded
+    // by `messageTranslation.ts`, so T240 and T242 now rest on the producer as
+    // much as on the consumer — and the consumer was already watched while the
+    // producer was not. That asymmetry is precisely how §29.3's "a verdict can
+    // rest on a file that a cited file CALLS" goes wrong.
+    "artifacts/api-server/src/lib/translation.ts",
+    "artifacts/api-server/src/migrations/2991_message_translations_confidence.sql",
+    "artifacts/api-server/src/test/translationConfidence.test.ts",
+    "artifacts/api-server/src/test/telegraphContextObjectsHonesty.test.ts",
+    "artifacts/api-server/src/test/voicePipelineAuthority.test.ts",
     // WIDENED A THIRD TIME 2026-09-12: the §1–§11 lane (census-telegraph §10)
     // added the Shared Context Rail, the share contract, the typed kinds, the
     // coordination surface, unsend, memory notes and the lifecycle routes.
@@ -1619,11 +2288,128 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // quoted — a test a census rests a closure on is a file that census counts.
     "artifacts/api-server/src/test/messagingSwallowedReadHonesty.test.ts",
     "travel-buddy-standalone/app/messages/",
+    // ADDED 2026-09-22 by the §32 reports reconciliation. §32 rules that the
+    // unified `public.reports` already satisfies Telegraph's reporting
+    // requirement and that no second system may be built — and it rests that
+    // ruling partly on the unified path having REAL readers, of which this
+    // end-to-end moderation FK verification is one. Same principle as
+    // `messagingSwallowedReadHonesty.test.ts` above: a proof a census rests a
+    // closure on is a file that census counts. It sits in `src/scripts/`, but
+    // it is not the `check*.ts` machinery the note below excludes — it is
+    // evidence, and if it is deleted or stops exercising `reports`, §32's
+    // ruling should age with it. Citing it without watching it is what pushed
+    // this census below its coverage floor.
+    "artifacts/api-server/src/scripts/verifyModerationFkE2E.ts",
+    // ADDED 2026-09-22 for the coordination-lifecycle lane (census-telegraph §33).
+    // The lane's three new suites are the evidence §33 rests T168, T187-T192,
+    // T150 and T266 on — the coordination command's two doors, the four §13.2
+    // events, the expiry sweeps and the Discover Together intersection. Same
+    // principle as the two entries above: a proof a census rests a closure on is
+    // a file that census counts, and citing them without watching them is what
+    // pushed the coverage ratio below its floor.
+    "artifacts/api-server/src/test/telegraphCoordinationLifecycle.test.ts",
+    "artifacts/api-server/src/test/telegraphLifecycleEvents.test.ts",
+    "artifacts/api-server/src/test/telegraphDiscoverTogether.test.ts",
+    // And the suite whose STALE case §33 replaced. T168 used to be closed by a
+    // test asserting `POST /telegraph/commands` answers 501 for a §13.1 command
+    // "nothing implements" — which stopped being true when the coordination
+    // session entity arrived, so the test was pinning a lie. It now asserts the
+    // command is issuable, still refuses a call with no idempotency key, and that
+    // UNIMPLEMENTED_COMMANDS is EMPTY so the §13.1 partition stays exhaustive.
+    // §33 rests T168 on that file; this census must therefore age with it.
+    "artifacts/api-server/src/test/telegraphCommandRoute.test.ts",
+    // ADDED 2026-09-22 for the saved-messages lane. T80's evidence is this file:
+    // it is what pins that an edit records the PREVIOUS body, that a missing
+    // `message_edits` table degrades loudly (`recorded: false` and a 503, never
+    // `{versions: []}`), and that the history read re-authorizes like the message
+    // content it is. T80 stays W on a DEPLOYMENT ceiling — migration 2811 is
+    // unapplied to production — so this census must age with the file that would
+    // notice if the code stopped behaving that way.
+    "artifacts/api-server/src/test/telegraphMessageEditHistory.test.ts",
+    // WIDENED 2026-09-22 at the §34/§35 merge. Five proofs these two sections
+    // rest verdicts and findings on, none of which this census aged with before.
+    // §34 grades the departed-member gates on the first, and names the other two
+    // as the reason two unfiltered membership reads in the same file are CORRECT
+    // rather than defects — a ruling that stops being true the day either of
+    // those suites stops holding the dedupe/rejoin behaviour. §35's two are the
+    // red-first evidence for the dispatch-table fail-open and the command
+    // vocabulary; a verdict resting on "the table fails closed" must age with the
+    // file that would notice if it stopped.
+    "artifacts/api-server/src/test/telegraphMembershipHonesty.test.ts",
+    "artifacts/api-server/src/test/messagingThreadDedupe.test.ts",
+    "artifacts/api-server/src/test/messagingThreadRejoinWrite.test.ts",
+    "artifacts/api-server/src/test/telegraphDispatchTablePrototypeKeys.test.ts",
+    "artifacts/api-server/src/test/telegraphCreateCoordinationSession.test.ts",
+    // WIDENED 2026-09-22 by the location/proximity/privacy lane
+    // (census-telegraph §31): §4's Nearby surface and §30A.2's
+    // ReachablePersonProjection are built here, and §17.8/§30A.7's device-bound
+    // precise location lands on the two /me/location-state handlers and their
+    // client. Every path below is CITED by §31, so an edit to any of them ages
+    // the seven rows that section moved — which is exactly what should happen
+    // to a verdict that rests on a bucket ladder or a fail-closed gate.
+    "artifacts/api-server/src/lib/proximityBuckets.ts",
+    "artifacts/api-server/src/lib/invisibleMode.ts",
+    "artifacts/api-server/src/lib/preciseLocationDevice.ts",
+    "artifacts/api-server/src/lib/mapTravelers.ts",
+    "artifacts/api-server/src/services/telegraph/",
+    "artifacts/api-server/src/routes/nearbyReachable.ts",
+    "artifacts/api-server/src/migrations/2990_nearby_reachable_flag.sql",
+    "artifacts/api-server/src/routes/location.ts",
+    "artifacts/api-server/src/routes/index.ts",
+    "artifacts/api-server/src/test/proximityBuckets.test.ts",
+    "artifacts/api-server/src/test/invisibleMode.test.ts",
+    "artifacts/api-server/src/test/nearbyRankOrderChannel.test.ts",
+    "artifacts/api-server/src/test/reachablePersonProjection.test.ts",
+    "artifacts/api-server/src/test/reachablePeopleFailClosed.test.ts",
+    "artifacts/api-server/src/test/preciseLocationDeviceBinding.test.ts",
+    "artifacts/api-server/src/test/nearbyReachableRoute.test.ts",
+    "travel-buddy-standalone/src/hooks/useActiveLocation.ts",
+    "travel-buddy-standalone/src/hooks/activeLocation.state.ts",
+    "travel-buddy-standalone/src/hooks/__tests__/activeLocation.deviceBoundPrecision.test.ts",
+    // Cited by §31 as the pattern the client half copies, not as a Telegraph
+    // behaviour — but a census that rests an argument on another lane's module
+    // should notice when that module changes.
+    "travel-buddy-standalone/src/platform/input-assistance/services/policyStore.ts",
     // STILL NOT WATCHED, deliberately: src/scripts/check*.ts, guardRegistry.ts,
     // generateTelegraphInventory.ts, rlsDispositions.ts, the two workflow YAMLs,
     // and the other censuses this one cross-references. Those are machinery and
     // neighbours this census NAMES; none of them is a Telegraph behaviour it
     // GRADES, and the same exclusion is already in force for Sensing and Media.
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): files verdict rows cite — T9/T28/T262/T266's shared-context routes, T262's Trips command route, T344's routes/telegraph.ts, T79's search, T220's two block helpers, T31's 2217 and T290's permissions suite.
+    "artifacts/api-server/src/routes/telegraphSharedContext.ts",
+    "artifacts/api-server/src/server/trips/commandRoute.ts",
+    "artifacts/api-server/src/routes/telegraph.ts",
+    "artifacts/api-server/src/services/telegraphSearch.ts",
+    "artifacts/api-server/src/lib/blocks.ts",
+    "artifacts/api-server/src/lib/exclusionSet.ts",
+    "artifacts/api-server/src/migrations/2217_protected_locations.sql",
+    "artifacts/api-server/src/test/telegraphProjectionPermissions.test.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): the red-first suites prose sections rest moves and held verdicts on — §14.2/§14.3 (T79, T344/T438), §15, §16.3, §18.2, §19.3, §19.6 item 4, §20.3, §23.2, §24.7 and §27.1–§27.3 (T178, T233, T416).
+    "artifacts/api-server/src/test/telegraphDeletedMediaRedaction.test.ts",
+    "artifacts/api-server/src/test/telegraphInboxFailsLoud.test.ts",
+    "artifacts/api-server/src/test/telegraphShareFamilies.test.ts",
+    "artifacts/api-server/src/test/messageLanguageProvenance.test.ts",
+    "artifacts/api-server/src/test/telegraphNotFoundHonesty.test.ts",
+    "artifacts/api-server/src/test/telegraphDurableContextHonesty.test.ts",
+    "artifacts/api-server/src/test/exclusionFailClosedRoutes.test.ts",
+    "artifacts/api-server/src/test/telegraphChatOutageHonesty.test.ts",
+    "artifacts/api-server/src/test/telegraphLegacyReadMarkerThreshold.test.ts",
+    "artifacts/api-server/src/test/telegraphMentionBlockFailClosed.test.ts",
+    "artifacts/api-server/src/test/telegraphDeliveryReceipts.test.ts",
+    "artifacts/api-server/src/test/telegraphStreamResume.test.ts",
+    "artifacts/api-server/src/test/telegraphFanoutBounds.test.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): code prose arguments rest on — §10.9's shared write gates, §19.6 item 1's retranslate gate, and §33.3's expiry readers that make the availability sweep safe.
+    "artifacts/api-server/src/lib/telegraphThreadWrite.ts",
+    "artifacts/api-server/src/lib/retranslateGate.ts",
+    "artifacts/api-server/src/services/passport/PassportProjectionService.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): schema facts in the frozen legacy migration root — T260's meetups.chat_thread_id join (§11.9) and §16.2's "no CHECK on language_detection_source".
+    "migrations/0013_availability_meetups.sql",
+    "migrations/0009_translation.sql",
+    "migrations/APPLY_THESE_IN_ORDER.sql",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): the bare spelling forty T-row citations write; this checker resolves it to the root app/ mock, so it is listed beside the travel-buddy-standalone/app/messages/ prefix above, which holds the screen they grade.
+    "app/messages/[id].tsx",
+    // WIDENED 2026-09-27 at the merge of main (#529) into the Discovery integration branch: §31.5 cites the executed unsend probe as the evidence that the receipt lock is observed; on main this census's floor predates 1.0.
+    "artifacts/api-server/src/test/db/telegraphUnsend.db.test.ts",
   ],
   // census-map.md, census-sensing.md, census-compass.md and
   // census-input-intelligence.md — declared 2026-09-11 on the same basis as
@@ -1643,6 +2429,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   "census-map.md": [
     // ── ADDED 2026-09-14 by the scope-coverage finding ──────────────────────
     "artifacts/api-server/src/routes/discoverySearch.ts",
+    "artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts", // census-discovery §70: routes/discoverySearch.ts's searchers moved here
     // ADDED 2026-09-14 on the Map lane's request. `geoZoneSeed.test.ts` now
     // carries M256's evidence — the first assertions in this repository that a
     // cache HIT avoids the read, where eleven map suites had only ever used the
@@ -1719,6 +2506,18 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/2295_map_world_intelligence_flag.sql",
     "artifacts/api-server/src/migrations/2520_trip_map_projection_worker.sql",
     "artifacts/api-server/src/migrations/2610_map_trip_projection_anchor.sql",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): the Trip Map's two client files — the sources and the model that M6, M71–M82 and M145 cite on their verdict rows.
+    "travel-buddy-standalone/src/features/trips/map/tripMapSources.ts",
+    "travel-buddy-standalone/src/features/trips/map/tripMapModel.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): M201's executed evidence for the saved-items search.
+    "artifacts/api-server/src/test/mapSearchSavedItems.test.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): the PLACE-lane defect §41.3–§41.4 name as M123's blocker and re-execute for M42 before 2963 repointed the lane.
+    "artifacts/api-server/src/migrations/2191_memory_projector_content_and_support.sql",
+    // WIDENED 2026-09-27 by lane X (census-map §45): M154's executed evidence that the stored evidence reference names no account.
+    "artifacts/api-server/src/test/intelEvidenceReference.test.ts",
+    // WIDENED 2026-09-27 by lane X (census-map §45.11–§45.12): the local-harness rehearsal of 3360/3361, and the hook that decides whether the map offers the photo step.
+    "artifacts/api-server/src/test/db/intelEvidenceSealedReference.db.test.ts",
+    "travel-buddy-standalone/src/hooks/usePhotoEvidenceCoverage.ts",
   ],
   "census-sensing.md": [
     // ADDED 2026-09-14 on the Sensing lane's standing request. The scope covered
@@ -1798,6 +2597,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/scripts/backfill-canonical-places.ts",
     "artifacts/api-server/src/compass/CompassSafetyFilter.ts",
     "artifacts/api-server/src/routes/discoverySearch.ts",
+    "artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts", // census-discovery §70: routes/discoverySearch.ts's searchers moved here
     "artifacts/api-server/src/services/hiddenGems/HiddenGemContributionService.ts",
     "artifacts/api-server/src/compass/CompassIntentModeEngine.ts",
     "artifacts/api-server/src/services/wall/WallRankingService.ts",
@@ -1825,6 +2625,11 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // and rollbacks, and the suites the C verdicts rest on. Everything here
     // existed unchanged at 42aeac38 except src/test/sensingAnonStore.test.ts,
     // which is acknowledged in the ledger.
+    // ── S39's CONSUMER SIDE, registered 2026-09-26 with decision #9 ────────
+    // The formatter was never in this scope, so an edit to the one module
+    // S39 is graded on did not age this census. The producer joins it.
+    "artifacts/api-server/src/compass/CompassSensingPresence.ts",
+    "artifacts/api-server/src/compass/CompassSensingPresenceProducer.ts",
     "artifacts/api-server/src/lib/sensingAnonService.ts",
     "artifacts/api-server/src/lib/sensingAuthPosture.ts",
     "artifacts/api-server/src/lib/sensingContributionPolicy.ts",
@@ -1859,6 +2664,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/sensingAnonStore.test.ts",
     "artifacts/api-server/src/test/sensingAnonService.test.ts",
     "artifacts/api-server/src/test/sensingAuthPosture.test.ts",
+    "artifacts/api-server/src/test/compassSensingPresenceProducer.test.ts",
     "artifacts/api-server/src/test/sensingContributionPolicy.test.ts",
     "artifacts/api-server/src/test/sensingContributionSession.test.ts",
     "artifacts/api-server/src/test/sensingDifferencingGate.test.ts",
@@ -1957,6 +2763,126 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "db/rollback/2026-09-12-2841-experience-session-flag-rollback.sql",
     "artifacts/api-server/src/test/experienceSession.test.ts",
     "artifacts/api-server/src/test/experienceSessionsRoute.test.ts",
+    // WIDENED 2026-09-25 (census-sensing §15-§17). check:census-scope-coverage
+    // put this census at 89% against a floor of 90%: §16 re-derived S3/S106
+    // against the four REAL fusion call sites and §15/§17 cited the modules that
+    // replaced deleted evidence, and none of those paths were watched. A census
+    // that cites a file to settle a verdict and then does not age when that file
+    // moves is the gap the scope check exists to close.
+    //
+    // The fusion store and its unrepresentability proof — §16's whole subject.
+    // `presence/domain/` was already here; `presence/fusion/` is where the
+    // store that domain describes actually lives.
+    "artifacts/api-server/src/presence/fusion/",
+    "artifacts/api-server/src/test/presenceFusionUnrepresentable.test.ts",
+    // The four production callers of `presenceFusion.admit`. §16.2 counts them
+    // against `read`/`resolve`/`clear`, so a fifth caller — or a first reader —
+    // must age this census. Two are already watched (mapAggregation,
+    // locateFriendsSession); these are the other two.
+    "artifacts/api-server/src/lib/circleResponseShaper.ts",
+    "artifacts/api-server/src/domain/trips/services/TripCrewLocationService.ts",
+    // Cited by §15.5 as NEW modules in other censuses' scopes — but they are
+    // sensing subject matter (grounding envelope, session revocation reach,
+    // experience-session bridge) and this census names them.
+    "artifacts/api-server/src/compass/CompassLiveClaimContext.ts",
+    "artifacts/api-server/src/services/memoryProjections/experienceSessionBridge.ts",
+    "artifacts/api-server/src/services/memoryProjections/sessionRevocationReach.ts",
+    // Long-standing sensing citations that were never watched. safetyPolicy is
+    // cited six times and intelProjectionAggregator four; a verdict resting on
+    // six citations of a file nothing watches is exactly the standing-claim
+    // problem this corpus is built to catch.
+    "artifacts/api-server/src/lib/safetyPolicy.ts",
+    "artifacts/api-server/src/lib/intelProjectionAggregator.ts",
+    "artifacts/api-server/src/lib/intelConsent.ts",
+    "artifacts/api-server/src/routes/hiddenGems.ts",
+    "artifacts/api-server/src/test/intelLiveStateEndpoint.test.ts",
+    "artifacts/api-server/src/test/intelPresenceVerification.test.ts",
+    "artifacts/api-server/src/test/safetyPublicationPath.test.ts",
+    // S19/S97/S111/S118 all turn on this migration; §17 grades its precondition.
+    "artifacts/api-server/src/migrations/3002_intel_contribution_identity.sql",
+    // WIDENED 2026-09-26 (census-sensing §24.4): S112's production caller and
+    // its suite. The reach module itself is already watched above; the caller
+    // is what changed the row's measurement, so it must age this census too.
+    "artifacts/api-server/src/services/accountDeletion/sensingRevocationReach.ts",
+    "artifacts/api-server/src/test/accountDeletionSensingRevocationReach.test.ts",
+    // WIDENED 2026-09-26 (census-sensing §26): S112's provenance and erasure
+    // recompute, the 3312 feature path, the S39/S24 publisher and zone
+    // identity, and the client build the six client rows now rest on.
+    "artifacts/api-server/src/services/accountDeletion/sensingErasureRecompute.ts",
+    "artifacts/api-server/src/test/sensingErasureRecompute.test.ts",
+    "artifacts/api-server/src/test/intelProjection.test.ts",
+    "artifacts/api-server/src/migrations/3311_intel_snapshot_input_provenance.sql",
+    "artifacts/api-server/src/migrations/3312_sensing_anon_contribution_features.sql",
+    "artifacts/api-server/src/migrations/3313_sensing_publication_flag.sql",
+    "db/rollback/2026-09-26-3311-intel-snapshot-input-provenance-rollback.sql",
+    "db/rollback/2026-09-26-3312-sensing-anon-contribution-features-rollback.sql",
+    "db/rollback/2026-09-26-3313-sensing-publication-flag-rollback.sql",
+    "artifacts/api-server/src/routes/sensingIngest.ts",
+    "artifacts/api-server/src/lib/sensingWindowAggregate.ts",
+    "artifacts/api-server/src/lib/sensingPublicationScheduler.ts",
+    "artifacts/api-server/src/test/sensingPublicationScheduler.test.ts",
+    "artifacts/api-server/src/test/sensingReducedFeatures.test.ts",
+    "artifacts/api-server/src/test/sensingIngestRoute.test.ts",
+    "artifacts/api-server/src/test/sensingConsumersPresence.test.ts",
+    "docs/contracts/sensing-contribution-wire-v1.json",
+    "docs/ops/sensing-cutover-runbook.md",
+    "travel-buddy-standalone/src/lib/sensing/",
+    "travel-buddy-standalone/src/services/sensing/",
+    "travel-buddy-standalone/src/services/compass.ts",
+    "travel-buddy-standalone/src/services/__tests__/compass.sensingZone.test.ts",
+    "travel-buddy-standalone/app/_layout.tsx",
+    // WIDENED 2026-09-26 (census-sensing §25, owner decision A): the consent-
+    // scope proof and the files it grades. S3/S106 moved on this evidence, so
+    // every file that carries it must age this census.
+    "artifacts/api-server/src/test/presenceFusionConsent.test.ts",
+    "artifacts/api-server/src/test/presenceFusionStore.test.ts",
+    "artifacts/api-server/src/test/presenceWireCircleCrew.test.ts",
+    "artifacts/api-server/src/test/locateFriendsSession.test.ts",
+    // The two remaining revocation points the fused read depends on.
+    "artifacts/api-server/src/domain/trips/services/TripCrewLiveShareService.ts",
+    "artifacts/api-server/src/routes/circle.ts",
+    // WIDENED 2026-09-26 (census-sensing §27): S112's memory stage (the writer,
+    // 3314 and its proofs), the consent layer S39/S24 now rest on (the scopes a
+    // disclosure covers, 3315, the displayed-version rule and the client gate),
+    // and the session issuer S18/S32 were re-derived against. §27 grades each.
+    "artifacts/api-server/src/services/memoryProjections/sessionMemoryStore.ts",
+    "artifacts/api-server/src/test/sessionMemoryStore.test.ts",
+    "artifacts/api-server/src/test/db/sessionMemoryLineage.db.test.ts",
+    "artifacts/api-server/src/migrations/3314_memory_projection_claim_refs.sql",
+    "artifacts/api-server/src/migrations/3315_sensing_anon_surface_consent.sql",
+    "db/rollback/2026-09-26-3314-memory-projection-claim-refs-rollback.sql",
+    "db/rollback/2026-09-26-3315-sensing-anon-surface-consent-rollback.sql",
+    "artifacts/api-server/src/lib/sensingConsentScopes.ts",
+    "artifacts/api-server/src/routes/sensingSession.ts",
+    "artifacts/api-server/src/test/sensingSessionRoute.test.ts",
+    "artifacts/api-server/src/test/intelConsent.test.ts",
+    "docs/contracts/sensing-consent-disclosure-v2.md",
+    "travel-buddy-standalone/src/components/intel/IntelConsentGate.tsx",
+    //
+    // DELIBERATELY NOT ADDED, because this census cites them as context rather
+    // than grading them, and widening scope to whatever a census mentions would
+    // make every census stale on every commit: routes/admin.ts,
+    // routes/moderation.ts, routes/meetups.ts, routes/telegraphChat.ts,
+    // lib/envValidation.ts, migrations/2402_telegraph_membership_rls_recursion.sql,
+    // baseline/20260819_baseline_structure.sql and app.json. Nor any src/scripts/
+    // path: the header above records that doing so broke CI on b94a6fae.
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): the §2.1 decision route's Live gate, and the boot and router wiring §22.1 (S92), §26.3 (S39/S24) and §27.3 (S18/S32's session issuer) rest on.
+    "artifacts/api-server/src/lib/compassDecisionAssembly.ts",
+    "artifacts/api-server/src/index.ts",
+    "artifacts/api-server/src/routes/index.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): the proofs for S79 (§24.1), S83 (§24.2) and S112 (§22.2), S112's production caller (§24.4–§27.1), and §26.4's S49/S92 controlled-test rows.
+    "artifacts/api-server/src/test/compassGroundingLiveClaims.test.ts",
+    "artifacts/api-server/src/test/sensingConsumersTripWorld.test.ts",
+    "artifacts/api-server/src/test/sensingConsumersRevocationReach.test.ts",
+    "artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts",
+    "artifacts/api-server/src/test/memoryProjectionScheduler.test.ts",
+    "artifacts/api-server/src/test/discoveryCacheBEligibility.test.ts",
+    "artifacts/api-server/src/test/mapDiscoveryCandidateConsumer.test.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): S39's presence-context flag (3004, §21.1) and S29's permission surface — the §26.2 opt-in screen, the client app.json, and the bare app.json S29's §10.5 verdict row writes (this checker resolves it to the root mock), which therefore leaves the not-added list above.
+    "artifacts/api-server/src/migrations/3004_sensing_presence_context_flag.sql",
+    "travel-buddy-standalone/app/settings/intel-prompts.tsx",
+    "travel-buddy-standalone/app.json",
+    "app.json",
   ],
   "census-compass.md": [
     // B8, 2026-09-14: three modules census-compass grades and did not watch.
@@ -2116,6 +3042,25 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/services/airport/LayoverTravelTime.ts",
     "artifacts/api-server/src/routes/saves.ts",
     "artifacts/api-server/src/migrations/2778_trip_operational_projections_flag.sql",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): the evidence cited on rows CT-01, CT-09, CT-11, CX-06 and CPH-14, and §11.4's server half of CP-02.
+    "artifacts/api-server/src/test/compassCensusClosure.test.ts",
+    "artifacts/api-server/src/domain/trips/commands/tripKernel.ts",
+    "artifacts/api-server/src/routes/tripDecisions.ts",
+    "travel-buddy-standalone/src/services/compass.ts",
+    "artifacts/api-server/src/services/passport/PassportConsumerProjections.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): the code and suites §17.1, §24.1-§24.3, §25.2-§25.3 and §27.3/§27.6/§27.7 move or keep CX-04, CL-05, CCL-03/08/09/13/14, C1-01, CTG-08, CP-02 and CPH-EVAL on.
+    "artifacts/api-server/src/test/compassCpv2Grounding.test.ts",
+    "artifacts/api-server/src/lib/compassPolicy.ts",
+    "artifacts/api-server/src/test/compassDecision.test.ts",
+    "artifacts/api-server/src/test/compassAutopilotRevalidation.test.ts",
+    "artifacts/api-server/src/lib/compassDecisionActions.ts",
+    "artifacts/api-server/src/test/compassDecisionActions.test.ts",
+    "artifacts/api-server/src/test/compassConversationPhase1Schema.test.ts",
+    "artifacts/api-server/src/services/interactionPermissions.ts",
+    "artifacts/api-server/src/test/helpers/postgrestOrFilter.ts",
+    "scripts/src/compass-eval-history.mjs",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): CG-01, CG-02, CG-04 and CP-04 cite `app/(tabs)/ai.tsx`, which the guard resolves to this legacy repo-root mock (113 lines); the lines they cite are travel-buddy-standalone's copy, already watched above, so both are watched rather than one chosen.
+    "app/(tabs)/ai.tsx",
   ],
   // Input Intelligence is the thinnest-citing of the six (36 of 81 backticked
   // paths resolve) and the most client-weighted: its subject is the typing
@@ -2140,6 +3085,15 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // resolves whichever it reads.
     "artifacts/api-server/src/test/inputAssistanceCompatibility.test.ts",
     "artifacts/api-server/src/lib/circleResponseShaper.ts",
+    // ── ADDED 2026-09-26 by §33 ──────────────────────────────────────────
+    // G136 names these two to EXCLUDE them: every approximate_area site in
+    // the tree is the Circles visibility mode, not a Hidden Gem producer.
+    // They are watched because that exclusion is EVIDENCE — if a Hidden Gem
+    // approximate_area producer ever appeared in either file, G136's W would
+    // be wrong and the row should age. NOT_GRADED was not used: it is for
+    // machinery, and a service and a route are product code.
+    "artifacts/api-server/src/compass/CompassSocialEngine.ts",
+    "artifacts/api-server/src/routes/circle.ts",
     "artifacts/api-server/src/lib/locationPurposes.ts",
     "app/_layout.tsx",
     // ── ADDED 2026-09-21 by the INTEGRATING LANE, for the §44/§57 lane ───────
@@ -2160,6 +3114,30 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.zeroState.component.test.tsx",
     "artifacts/api-server/src/test/inputAssistanceSelectionMemoryLiveDbStatus.test.ts",
     "travel-buddy-standalone/scripts/run-node-tests.mjs",
+    // ── ADDED 2026-09-21 by §31, for the offline substrate ──────────────────
+    // Ten files the eight rows §31.3 moves cite as their evidence. Four of them
+    // are SHIPPED DATA, which is the unusual half and the reason this block is
+    // not optional: G197's `C` rests on 250 country names and G198's on ~270
+    // city names, so an edit to either artifact can falsify a verdict without
+    // touching a line of executable code. A census that grades a data file and
+    // does not watch it is the same inversion as one that grades a test and
+    // does not watch it.
+    "travel-buddy-standalone/src/platform/input-assistance/data/countries.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/data/cities.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/data/languages.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/data/interests.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/services/localDictionary.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/services/__tests__/localDictionary.test.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/services/localRecentsStore.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/services/__tests__/localRecentsPersistence.test.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/services/installLocalRecents.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.offline.component.test.tsx",
+    // G198's bound IS this file's key set, and G197's country pin is measured
+    // against this one — they are cited as the artifacts the new ones are
+    // derived from and pinned to, so a rename or a trimmed list there moves a
+    // verdict here.
+    "travel-buddy-standalone/src/lib/cityCentroids.ts",
+    "travel-buddy-standalone/src/lib/countryCentroids.ts",
     // ── ADDED 2026-09-21 by §14 (the scattered §27–§56 rows) ────────────────
     // Every path below is cited as EVIDENCE by a row §14 moved or re-read, and
     // scope-coverage measured the census at exactly its 98% floor before them:
@@ -2400,6 +3378,17 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/lib/mapProducers/worldMomentProducer.ts",
     "artifacts/api-server/src/routes/locateFriends.ts",
     "artifacts/api-server/src/routes/safeReturn.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): the suites G85/G86/G89/G100/G109/G226/G228/G232 cite on their rows and G57's evidence names, which the old citation pattern never counted.
+    "artifacts/api-server/src/test/inputAssistancePersonalization.test.ts",
+    "artifacts/api-server/src/test/inputAssistanceSavedEntities.test.ts",
+    "artifacts/api-server/src/test/inputAssistanceVenueBinding.test.ts",
+    "artifacts/api-server/src/test/inputAssistanceSelectionMemoryLiveDb.test.ts",
+    "artifacts/api-server/src/test/canonicalLocations.test.ts",
+    "artifacts/api-server/src/test/canonicalSearchKeyProductionShape.test.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): G359/G364's Compass screen and G147's onboarding screen — the standalone file, and the bare spellings the rows write, which this checker resolves to the root app/ mock (the app/_layout.tsx precedent above).
+    "travel-buddy-standalone/app/(tabs)/ai.tsx",
+    "app/(tabs)/ai.tsx",
+    "app/(auth)/onboarding.tsx",
   ],
   "census-discovery.md": [
     // ── ADDED 2026-09-15 by §43: the registry B05 now rests on ──────────────
@@ -2622,6 +3611,17 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/discoveryShadow.test.ts",
     "artifacts/api-server/src/test/discoveryNegativeSignalWriter.test.ts",
     "artifacts/api-server/src/test/discoveryLocalMomentum.test.ts",
+    // ADDED by census-discovery §47. The suites §47's findings rest on — cache-B
+    // revocation, per-viewer isolation of the shared caches, the legacy golden
+    // and the season reason — plus the golden fixture and the scenario module
+    // that produced it. A weakened golden or a loosened revocation assertion
+    // must age this census, or DSV2-05/06's strengthened `C` and DC-25's move
+    // stand on evidence nothing watches.
+    "artifacts/api-server/src/test/discoveryCacheRevocation.test.ts",
+    "artifacts/api-server/src/test/discoveryServePathIsolation.test.ts",
+    "artifacts/api-server/src/test/discoverySeasonReason.test.ts",
+    "artifacts/api-server/src/test/fixtures/discoveryLegacyGolden.json",
+    "artifacts/api-server/src/test/helpers/discoveryLegacyScenarios.ts",
     // Cited once by a cross-surface row; the Layover lane owns the file, this
     // census only grades what it reads from it.
     "artifacts/api-server/src/services/airport/__tests__/layoverPresenceDegraded.test.ts",
@@ -2771,6 +3771,664 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/features/map/intent/intentModel.ts",
     "artifacts/api-server/src/lib/discoveryCacheEligibility.ts",
     "artifacts/api-server/src/test/discoveryCacheBEligibility.test.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): the evidence cited on rows DV-03, DV-05, DV-35, DV-40, DSV2-09 and A05.
+    "artifacts/api-server/src/lib/discoveryRecommendationId.ts",
+    "artifacts/api-server/migrations/0055_compass_admin.sql",
+    "artifacts/api-server/src/lib/compassDecision.ts",
+    "artifacts/api-server/src/migrations/2091_discovery_engine_mode_flags.sql",
+    "artifacts/api-server/src/migrations/0202_rank_events_living_page_watch_feed_surfaces.sql",
+    "artifacts/api-server/src/migrations/0197_rank_events_analytics_columns.sql",
+    "artifacts/api-server/src/lib/intentModes.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): DV-83's refusal-envelope consumers — §18.6's audited consumers, §21.2's panel fix and its two failing-first suites, and the tab screen §29.3 leaves open.
+    "travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx",
+    "travel-buddy-standalone/app/(tabs)/_layout.tsx",
+    "travel-buddy-standalone/src/components/search/SearchSuggestionsPanel.tsx",
+    "travel-buddy-standalone/src/components/search/__tests__/SearchSuggestionsPanel.refusal.component.test.tsx",
+    "travel-buddy-standalone/app/__tests__/search.refusal.component.test.tsx",
+    "travel-buddy-standalone/app/(tabs)/discovery.tsx",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): §29.3 cites `app/(tabs)/discovery.tsx`, which the guard resolves to the legacy repo-root mock (80 lines); the screen it means is travel-buddy-standalone's, watched just above, so both are watched rather than one chosen.
+    "app/(tabs)/discovery.tsx",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): evidence for keeping a verdict — A14 stays W on the layover travel-time provider (provenance row, §39.6), and §41.1 corrects DV-44's evidence with mediaFeed's live watch_feed writer.
+    "artifacts/api-server/src/services/airport/LayoverTravelTime.ts",
+    "artifacts/api-server/src/routes/mediaFeed.ts",
+    // WIDENED 2026-09-27 by census-discovery §48 (P3 telemetry): DV-37/38/39/45 moved to C on the contract module, 3375/3376 and their rollbacks, and six suites; DV-40/46/78/44 stay W on the map-search stamp, the client echo, the dismiss writer/reader and the writer-proof suite.
+    "artifacts/api-server/src/lib/discoveryRecommendationRecord.ts",
+    "artifacts/api-server/src/routes/mapSearch.ts",
+    "artifacts/api-server/src/lib/discoveryDismissed.ts",
+    "artifacts/api-server/src/migrations/3375_rank_events_schema_version_admitted.sql",
+    "artifacts/api-server/src/migrations/3376_discovery_recommendations_per_request.sql",
+    "db/rollback/2026-09-27-3375-rank-events-schema-version-admitted-rollback.sql",
+    "db/rollback/2026-09-27-3376-discovery-recommendations-per-request-rollback.sql",
+    "artifacts/api-server/src/test/discoveryRecommendationRecord.test.ts",
+    "artifacts/api-server/src/test/discoveryRecommendationPropagationE2E.test.ts",
+    "artifacts/api-server/src/test/discoveryTelemetryWriters.test.ts",
+    "artifacts/api-server/src/test/discoverySurfaceWriterProof.test.ts",
+    "artifacts/api-server/src/test/discoveryServeExposureCursor.test.ts",
+    "artifacts/api-server/src/test/db/discoveryTelemetryConstraints.db.test.ts",
+    "artifacts/api-server/src/test/db/discoveryTelemetryIdempotency.db.test.ts",
+    // WIDENED 2026-09-27 by census-discovery §50.10 (integrator): DSV2-04 moves W -> C on the server leg of why-now validity, and this suite is its evidence.
+    "artifacts/api-server/src/test/discoveryCandidateWhyNowValidity.test.ts",
+    "travel-buddy-standalone/src/hooks/useRankOutcome.ts",
+    "travel-buddy-standalone/src/components/discovery/PlaceCard.tsx",
+    // WIDENED 2026-09-27 by census-discovery §46 (search safety, lane P1): B01 moves W -> C on
+    // the stored-fold reader and 2220's generated column; B04 stays W on the search adapter,
+    // the one protected_zones reader it consumes, 2217's table and 3366's FALSE seed; B02 is
+    // pinned by its own suite; serve points 8 and 9 consume P3's served-recommendation
+    // contract. Each verdict row in §46 cites these, so each is graded and watched.
+    "artifacts/api-server/src/lib/discoverySearchCanonical.ts",
+    "artifacts/api-server/src/lib/discoverySearchProtection.ts",
+    "artifacts/api-server/src/lib/discoverySearchExposure.ts",
+    "artifacts/api-server/src/lib/protectedZoneStore.ts",
+    "artifacts/api-server/src/migrations/2217_protected_locations.sql",
+    "artifacts/api-server/src/migrations/2220_canonical_locations_search_key.sql",
+    "artifacts/api-server/src/migrations/3366_discovery_search_protected_zones_flag.sql",
+    "db/rollback/2026-09-27-3366-discovery-search-protected-zones-flag-rollback.sql",
+    "artifacts/api-server/src/test/discoverySearchSafetyContracts.test.ts",
+    "artifacts/api-server/src/test/discoverySearchProtection.test.ts",
+    "artifacts/api-server/src/test/discoverySearchCanonicalFold.test.ts",
+    "artifacts/api-server/src/test/discoverySearchExposure.test.ts",
+    "artifacts/api-server/src/test/discoverySearchQueryPolicy.test.ts",
+    "artifacts/api-server/src/test/discoverySearchTestKit.ts",
+    "artifacts/api-server/src/test/db/discoverySearchCanonicalFold.db.test.ts",
+    "artifacts/api-server/src/test/db/discoverySearchProtection.db.test.ts",
+    "artifacts/api-server/src/test/db/discoverySearchPsqlClient.ts",
+    // WIDENED 2026-09-27 by §50 (lane P4, client correctness): DSV2-04's client leg (the chips, the reader and its
+    // device-clock expiry, the card that mounts them), C19's byline resolver, the served-id echo, the viewer scope that
+    // governs both device caches, and the suites that are §50's evidence.
+    "travel-buddy-standalone/src/services/discoveryViewerScope.ts",
+    "travel-buddy-standalone/src/features/discovery/candidateProjection.ts",
+    "travel-buddy-standalone/src/components/discovery/DiscoveryCandidateChips.tsx",
+    "travel-buddy-standalone/src/features/discovery/communityByline.ts",
+    "travel-buddy-standalone/src/features/discovery/__tests__/candidateProjection.expiry.component.test.ts",
+    "travel-buddy-standalone/src/features/discovery/__tests__/candidateProjection.component.test.ts",
+    "travel-buddy-standalone/src/components/discovery/__tests__/PlaceCard.candidateProjection.component.test.tsx",
+    "travel-buddy-standalone/src/components/discovery/__tests__/PlaceCard.whyNowExpiry.component.test.tsx",
+    "travel-buddy-standalone/src/services/__tests__/discovery.viewerScope.component.test.ts",
+    "travel-buddy-standalone/src/hooks/__tests__/useCommunityDiscovery.viewerScope.component.test.tsx",
+    "travel-buddy-standalone/src/hooks/__tests__/useRankOutcome.recommendationId.component.test.ts",
+    "travel-buddy-standalone/src/context/__tests__/SessionContext.discoveryViewer.component.test.tsx",
+    // WIDENED 2026-09-27 by census-discovery §51 (P7 Trails): DV-20, DV-25 and DC-02 moved to C on the two Trail libraries this census grades and had never watched, migrations 3380/3381 and their rollbacks, and the Trails suites whose red-before runs carry every §51 verdict; the harness bridge is watched because the database suite's evidence runs through it.
+    "artifacts/api-server/src/lib/discoveryTrailObject.ts",
+    "artifacts/api-server/src/lib/discoveryTrailHealth.ts",
+    "artifacts/api-server/src/migrations/3380_content_trails_label_cap_serialised.sql",
+    "artifacts/api-server/src/migrations/3381_trail_lifecycle_transitions.sql",
+    "db/rollback/2026-09-27-3380-content-trails-label-cap-serialised-rollback.sql",
+    "db/rollback/2026-09-27-3381-trail-lifecycle-transitions-rollback.sql",
+    "artifacts/api-server/src/test/discoveryTrailServedIds.test.ts",
+    "artifacts/api-server/src/test/discoveryTrailAccess.test.ts",
+    "artifacts/api-server/src/test/discoveryTrailSchemaContract.test.ts",
+    "artifacts/api-server/src/test/discoveryTrailRoutes.test.ts",
+    "artifacts/api-server/src/test/discoveryTrailProvenance.test.ts",
+    "artifacts/api-server/src/test/db/trailsConstraints.db.test.ts",
+    "artifacts/api-server/src/test/db/trailsService.db.test.ts",
+    "artifacts/api-server/src/test/db/trailPostgrestBridge.ts",
+    // WIDENED 2026-09-27 by census-discovery §52 (P10/P11 creator ledger): DV-65/66/67/68/69/63,
+    // DV-26 and DC-23 move N -> W and DV-56..60/64/74 are re-graded on these migrations, their
+    // rollbacks, the creator-ledger modules, the two route files and the suites that pin them.
+    // Each §52 verdict row cites them, so each is graded and watched.
+    "artifacts/api-server/src/migrations/3385_creator_share_ledger_includes_creator_entries.sql",
+    "artifacts/api-server/src/migrations/3386_creator_attribution_recommendation_link.sql",
+    "artifacts/api-server/src/migrations/3387_creator_ledger_integrity_and_audit.sql",
+    "db/rollback/2026-09-27-3385-creator-share-ledger-includes-creator-entries-rollback.sql",
+    "db/rollback/2026-09-27-3386-creator-attribution-recommendation-link-rollback.sql",
+    "db/rollback/2026-09-27-3387-creator-ledger-integrity-and-audit-rollback.sql",
+    "artifacts/api-server/src/lib/creatorShareCanonical.ts",
+    "artifacts/api-server/src/lib/creatorServedRecommendation.ts",
+    "artifacts/api-server/src/lib/creatorRuleEvaluation.ts",
+    "artifacts/api-server/src/lib/creatorLedgerStatus.ts",
+    "artifacts/api-server/src/lib/creatorLedgerPlans.ts",
+    "artifacts/api-server/src/lib/creatorAttributionScheduler.ts",
+    "artifacts/api-server/src/services/creators/CreatorAttributionService.ts",
+    "artifacts/api-server/src/services/creators/CreatorLedgerOperations.ts",
+    "artifacts/api-server/src/services/creators/CreatorLedgerReader.ts",
+    "artifacts/api-server/src/services/creators/CreatorAttributionProducers.ts",
+    "artifacts/api-server/src/services/creators/PayoutProvider.ts",
+    "artifacts/api-server/src/services/ledger/CanonicalShareReader.ts",
+    "artifacts/api-server/src/routes/creatorEconomy.ts",
+    "artifacts/api-server/src/routes/adminCreatorLedger.ts",
+    "artifacts/api-server/src/test/creatorLedgerPure.test.ts",
+    "artifacts/api-server/src/test/creatorPayoutProviderBoundary.test.ts",
+    "artifacts/api-server/src/test/creatorLedgerMigrationShape3385.test.ts",
+    "artifacts/api-server/src/test/creatorAttributionScheduler.test.ts",
+    "artifacts/api-server/src/test/creatorTypeService.test.ts",
+    "artifacts/api-server/src/test/creatorLedgerRowSchemaDrift.test.ts",
+    "artifacts/api-server/src/test/db/creatorLedgerLifecycle.db.test.ts",
+    "artifacts/api-server/src/test/db/creatorLedgerRoutes.db.test.ts",
+    "artifacts/api-server/src/test/db/creatorLedgerPsqlClient.ts",
+    // WIDENED 2026-09-27 by census-discovery §53 (people privacy adapters, lane P5x): A24 moves
+    // N -> C on the Invisible gate for every Discovery people surface; B03 stays W with four of
+    // its five legs built on the marketplace reader; the /community byline avatar gate and the
+    // opt-out refusal are §53's residual repairs. Each verdict row cites these, so each is watched.
+    "artifacts/api-server/src/lib/discoveryPeoplePrivacy.ts",
+    "artifacts/api-server/src/lib/discoveryPeopleBuddy.ts",
+    "artifacts/api-server/src/test/discoveryPeopleInvisible.test.ts",
+    "artifacts/api-server/src/test/discoveryPeopleBuddy.test.ts",
+    "artifacts/api-server/src/test/discoveryCommunityAvatar.test.ts",
+    // A24's row rests on the one definition of Invisible it consumes, and A08's on the
+    // client suite that pins the legacy-typeahead latch; both are graded, so both are watched.
+    "artifacts/api-server/src/lib/invisibleMode.ts",
+    "travel-buddy-standalone/src/hooks/__tests__/useGlobalSearchSuggestions.singleSystem.component.test.tsx",
+    // WIDENED 2026-09-27 by census-discovery §55 (P6 outcome measurement): DV-41 moved to W on the dwell writer, its
+    // vocabulary, the 3395 flag and rollback, the client emitter, its hook and the sheet that mounts it; DSV2-12 and DV-19
+    // moved to W on the two read-only reports, their read and scripts; and the suites whose red-before runs carry them.
+    "artifacts/api-server/src/lib/discoveryDwell.ts",
+    "artifacts/api-server/src/lib/discoveryDwellVocabulary.ts",
+    "artifacts/api-server/src/lib/discoveryTraceCoverage.ts",
+    "artifacts/api-server/src/lib/discoveryOutcomeReport.ts",
+    "artifacts/api-server/src/lib/discoveryTraceRead.ts",
+    "artifacts/api-server/src/scripts/reportDiscoveryTraceCoverage.ts",
+    "artifacts/api-server/src/scripts/reportDiscoveryOutcomes.ts",
+    "artifacts/api-server/src/migrations/3395_discovery_dwell_telemetry_flag.sql",
+    "db/rollback/2026-09-27-3395-discovery-dwell-telemetry-flag-rollback.sql",
+    "artifacts/api-server/src/test/discoveryDwell.test.ts",
+    "artifacts/api-server/src/test/discoveryTraceCoverage.test.ts",
+    "artifacts/api-server/src/test/discoveryOutcomeReport.test.ts",
+    "artifacts/api-server/src/test/discoveryTraceRead.test.ts",
+    "artifacts/api-server/src/test/db/discoveryOutcomeMeasurement.db.test.ts",
+    "travel-buddy-standalone/src/services/discoveryDwell.ts",
+    "travel-buddy-standalone/src/hooks/useDiscoveryDwell.ts",
+    "travel-buddy-standalone/src/components/discovery/PlaceDetailSheet.tsx",
+    "travel-buddy-standalone/src/services/__tests__/discoveryDwell.component.test.ts",
+    "travel-buddy-standalone/src/hooks/__tests__/useDiscoveryDwell.component.test.ts",
+    "travel-buddy-standalone/src/components/discovery/__tests__/PlaceDetailSheet.dwell.component.test.tsx",
+    // WIDENED 2026-09-27 by §54 (lane P9, database and rollout): DV-71 and DC-15 move W -> C on 3390, the
+    // query-path document and its check; DV-82's seven producers; DV-72's rebuild proofs. Each file below is a
+    // verdict's evidence, so a weakened migration, test or registry must age this census.
+    "artifacts/api-server/src/lib/discoveryStopMeasurements.ts",
+    "artifacts/api-server/src/migrations/3390_discovery_rls_explicit_policies.sql",
+    "artifacts/api-server/src/migrations/3391_discovery_stop_condition_measurements.sql",
+    "db/rollback/2026-09-27-3390-discovery-rls-explicit-policies-rollback.sql",
+    "db/rollback/2026-09-27-3391-discovery-stop-condition-measurements-rollback.sql",
+    "artifacts/api-server/src/scripts/checkDiscoveryQueryPaths.ts",
+    "artifacts/api-server/src/test/discoveryStopSevenConditions.test.ts",
+    "artifacts/api-server/src/test/discoveryQueryPathsCheck.test.ts",
+    "artifacts/api-server/src/test/db/discoveryRlsExplicitPolicies.db.test.ts",
+    "artifacts/api-server/src/test/db/discoveryStopMeasurements.db.test.ts",
+    "artifacts/api-server/src/test/db/discoveryDerivedRebuild.db.test.ts",
+    "docs/discovery/query-paths.md",
+    "docs/discovery/query-paths-explain.sql",
+    // ── §56 (lane P5-A, cross-architecture adapters I) ── the files §56's verdict rows rest on. A13/A14: the
+    // Hidden Gems layover window, and the surfaces §56.3 re-derived for A13 (Compass, Safe Return, Layover's own
+    // recommendations). DV-77: the abandoned-upload sweep, its scheduler and flag, the ingest route and the relay.
+    // A21: what Telegraph can execute. DV-51: the graph builder. Each is graded by a §56 row, so each is watched.
+    "artifacts/api-server/src/lib/discoveryLayoverGems.ts",
+    "artifacts/api-server/src/test/discoveryLayoverGems.test.ts",
+    "artifacts/api-server/src/test/discoveryLayoverMode.test.ts",
+    "artifacts/api-server/src/test/hiddenGems.test.ts",
+    "artifacts/api-server/src/services/airport/LayoverCompassService.ts",
+    "artifacts/api-server/src/services/airport/LayoverSafeReturnService.ts",
+    "artifacts/api-server/src/services/airport/LayoverReturnEscalation.ts",
+    "artifacts/api-server/src/services/airport/LayoverRecommendationService.ts",
+    "artifacts/api-server/src/services/media/PendingUploadSweep.ts",
+    "artifacts/api-server/src/lib/media/pendingUploadSweepScheduler.ts",
+    "artifacts/api-server/src/migrations/3400_media_pending_upload_sweep_flag.sql",
+    "db/rollback/2026-09-27-3400-media-pending-upload-sweep-flag-rollback.sql",
+    "artifacts/api-server/src/test/mediaPendingUploadSweep.test.ts",
+    "artifacts/api-server/src/routes/postcards.ts",
+    "artifacts/api-server/src/lib/mediaAccess.ts",
+    "artifacts/api-server/src/routes/telegraphCommands.ts",
+    "artifacts/api-server/src/compass/CompassGraphEngine.ts",
+    // WIDENED 2026-09-27 by census-discovery §57 (cross-architecture adapters II, lane P5-B):
+    // A25's Map fold and its two suites, A10's newly named direct Trip reader, A07/A03's
+    // live-safety suites, A11's property suite and A10's inventory ratchet. Every §57 verdict
+    // row cites these, so each is watched. lib/liveClaimRead.ts is watched too: §57's E1 and
+    // F1 rest on its expiry filter and its failed-read branch. compass/CompassLiveConstraints.ts,
+    // cited only to name another lane's gate, is declared NOT-GRADED in the census.
+    "artifacts/api-server/src/lib/mapDiscoveryCandidates.ts",
+    "artifacts/api-server/src/lib/liveClaimRead.ts",
+    "artifacts/api-server/src/services/location/DiscoveryLocationContext.ts",
+    "artifacts/api-server/src/test/mapDiscoveryCandidateConsumer.test.ts",
+    "artifacts/api-server/src/test/mapDiscoveryCandidateAdapter.test.ts",
+    "artifacts/api-server/src/test/discoveryLiveRank.test.ts",
+    "artifacts/api-server/src/test/discoveryLiveSafetyPrecedence.test.ts",
+    "artifacts/api-server/src/test/discoveryLiveSafetyCompassPath.test.ts",
+    "artifacts/api-server/src/test/discoveryFreeTimeDuplicate.test.ts",
+    "artifacts/api-server/src/test/discoveryTripReadInventory.test.ts",
+    // §56.14 (integrator): the snapshot entry fix's suite; A13 and A14 are restated on it.
+    "artifacts/api-server/src/test/layoverSnapshotEntry.test.ts",
+    // census-discovery §59 (verification lane P12): its own suites and bridge.
+    "artifacts/api-server/src/test/db/discoveryVerifyBridge.ts",
+    "artifacts/api-server/src/test/db/discoveryVerifyChain.db.test.ts",
+    "artifacts/api-server/src/test/db/discoveryVerifyExplain.db.test.ts",
+    "artifacts/api-server/src/test/db/discoveryVerifyPhase03.db.test.ts",
+    "artifacts/api-server/src/test/discoveryVerifyAudit.test.ts",
+    // §59's graded evidence outside Discovery's own files: DC-26's class suites
+    // and DV-76's tagging code, test and the production baseline it reads.
+    "artifacts/api-server/baseline/20260819_baseline_structure.sql",
+    "artifacts/api-server/src/lib/enrichSpans.ts",
+    "artifacts/api-server/src/services/tagging/TaggingService.ts",
+    "artifacts/api-server/src/test/tagging.test.ts",
+    "artifacts/api-server/src/test/portavaRank.test.ts",
+    "artifacts/api-server/src/test/discoveryPde.test.ts",
+    "artifacts/api-server/src/test/placeMomentumSqlParity.test.ts",
+    "artifacts/api-server/src/test/creatorLedgerProperties.test.ts",
+    "artifacts/api-server/src/test/ciWorkflowArchitecture.test.ts",
+    "artifacts/api-server/src/test/discoveryDivergenceReport.test.ts",
+    // WIDENED 2026-09-27 by census-discovery §60 (client consumers + the end-to-end leg, lane P13):
+    // DC-33's route→client suite, DV-83's static consumer guard and its two new proof suites.
+    // The client files §60 grades (services/discovery.ts, DiscoveryCategoryTab.tsx, ForYouTab.tsx,
+    // the rail, the community/suggest hooks) were already watched.
+    "artifacts/api-server/src/test/discoveryClientRouteE2E.test.ts",
+    "travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryCategoryTab.loadMoreRefusal.component.test.tsx",
+    "travel-buddy-standalone/src/hooks/__tests__/useGlobalSearchSuggestions.refused.component.test.tsx",
+    // WIDENED 2026-09-27 by §58 (lane P8, trending and ecosystem): DV-80 moves N -> W on the monitor report; DC-21,
+    // DV-33 and DC-07 stay W on the read-only trend API, 3410's snapshot parity and their suites. Each is evidence.
+    "artifacts/api-server/src/lib/discoveryTrendExplanation.ts",
+    "artifacts/api-server/src/lib/discoveryEcosystemGovernor.ts",
+    "artifacts/api-server/src/routes/discoveryTrending.ts",
+    "artifacts/api-server/src/scripts/reportDiscoveryEcosystem.ts",
+    "artifacts/api-server/src/migrations/3410_discovery_trend_snapshot_parity.sql",
+    "db/rollback/2026-09-27-3410-discovery-trend-snapshot-parity-rollback.sql",
+    "artifacts/api-server/src/test/discoveryTrendingApi.test.ts",
+    "artifacts/api-server/src/test/discoveryEcosystemGovernor.test.ts",
+    "artifacts/api-server/src/test/db/discoveryTrendSnapshotParity.db.test.ts",
+    "artifacts/api-server/src/test/db/discoveryEcosystemReport.db.test.ts",
+    // census-discovery §62 (P15): migrations 3420–3422 and their rollbacks, its
+    // suites, and the two files DV-76 now grades from — the tagging route P3
+    // drives and the permission engine whose 'nobody' gap P4 pins.
+    "artifacts/api-server/src/migrations/3420_rank_events_outcome_receipts.sql",
+    "artifacts/api-server/src/migrations/3421_ranking_debug_samples_content_id_nullable.sql",
+    "artifacts/api-server/src/migrations/3422_tags_client_write_boundary.sql",
+    "db/rollback/2026-09-27-3420-rank-events-outcome-receipts-rollback.sql",
+    "db/rollback/2026-09-27-3421-ranking-debug-samples-content-id-nullable-rollback.sql",
+    "db/rollback/2026-09-27-3422-tags-client-write-boundary-rollback.sql",
+    "artifacts/api-server/src/test/discoveryKeyedOutcome.test.ts",
+    "artifacts/api-server/src/test/discoveryDebugSample.test.ts",
+    "artifacts/api-server/src/test/discoveryPdeGraphReading.test.ts",
+    "artifacts/api-server/src/test/discoveryPdeGraphReading.fixture.ts",
+    "artifacts/api-server/src/test/discoveryQueryPathsConstraints.test.ts",
+    "artifacts/api-server/src/routes/tags.ts",
+    "artifacts/api-server/src/services/interactionPermissions.ts",
+    // WIDENED 2026-09-27 by census-discovery §61 (P14, Trails integrity): DC-03 moves on 3415 and
+    // the service seam that calls it; DC-20 is re-graded on the attach check; DV-72 is re-graded on
+    // 3416's projection. Every §61 verdict row cites these, their rollbacks or the suites that were
+    // seen red, so each is watched.
+    "artifacts/api-server/src/services/trails/trailProposal.ts",
+    "artifacts/api-server/src/services/trails/trailAttachIntegrity.ts",
+    "artifacts/api-server/src/migrations/3415_trail_proposal_serialised.sql",
+    "artifacts/api-server/src/migrations/3416_trail_relations_projection.sql",
+    "db/rollback/2026-09-27-3415-trail-proposal-serialised-rollback.sql",
+    "db/rollback/2026-09-27-3416-trail-relations-projection-rollback.sql",
+    "artifacts/api-server/src/test/discoveryTrailIntegrity.test.ts",
+    "artifacts/api-server/src/test/db/trailsProposalRace.db.test.ts",
+    "artifacts/api-server/src/test/db/trailsAttachIntegrity.db.test.ts",
+    "artifacts/api-server/src/test/db/trailRelationsRebuild.db.test.ts",
+    // §61 integrator addendum: DV-20's letter fold, DV-25's SQL store (3417, its rollback) and the suite that pins it.
+    "artifacts/api-server/src/lib/discoveryTrailFold.ts",
+    "artifacts/api-server/src/migrations/3417_place_momentum_dismiss_excluded.sql",
+    "db/rollback/2026-09-27-3417-place-momentum-dismiss-excluded-rollback.sql",
+    "artifacts/api-server/src/test/db/placeMomentumDismiss.db.test.ts",
+    // §63 (lane P16): the evidence DV-76, DV-37 and DV-52 are restated from.
+    "artifacts/api-server/src/test/tagPermissionVocabulary.test.ts",
+    "artifacts/api-server/src/test/discoveryServedGraphReading.test.ts",
+    "artifacts/api-server/src/test/fixtures/discoveryServedGraphReadingGolden.json",
+    "travel-buddy-standalone/src/hooks/__tests__/useRankOutcome.clientEventId.component.test.ts",
+    "travel-buddy-standalone/src/services/__tests__/rankEvents.clientEventId.component.test.ts",
+    "travel-buddy-standalone/src/hooks/__tests__/useRankOutcome.component.test.ts",
+    // census-discovery §66 (re-verification lane P20): DV-30, C32, DC-26 and B01 move C -> W on this suite.
+    "artifacts/api-server/src/test/discoveryVerifyAudit2.test.ts",
+    // WIDENED 2026-09-27 by census-discovery §64 (P17, Trail member visibility): DC-20's re-grade
+    // cites the two suites that were seen red on the event and route rules and on the counts.
+    "artifacts/api-server/src/test/discoveryTrailMemberVisibility.test.ts",
+    "artifacts/api-server/src/test/db/trailsMemberVisibility.db.test.ts",
+    // census-discovery §69 (row audit P29): the restated DV-53, DV-55, DC-24, DC-13, DV-12, DC-01 and DV-70 statements cite this suite.
+    "artifacts/api-server/src/test/discoveryRowAudit29.test.ts",
+    // §69 also cites these two: DV-54's restated repeated-history leg rests on the seen-penalty case, and DV-75's on the third verdict job.
+    "artifacts/api-server/src/test/discoveryCategoryAffinity.test.ts",
+    ".github/workflows/unwired-checks.yml",
+    // census-discovery §68 (lane P21): DC-17's store-owned versions and place_momentum.feature_version
+    // (3435, its rollback), A03's signal-grounded nearby_now sentence, and the suites both rows cite.
+    "artifacts/api-server/src/migrations/3435_place_momentum_feature_version.sql",
+    "db/rollback/2026-09-28-3435-place-momentum-feature-version-rollback.sql",
+    "artifacts/api-server/src/test/discoveryDerivedProvenance.test.ts",
+    "artifacts/api-server/src/test/discoveryDerivedProvenanceGolden.test.ts",
+    "artifacts/api-server/src/test/discoveryReasonTruth.test.ts",
+    "artifacts/api-server/src/test/db/placeMomentumFeatureVersion.db.test.ts",
+    "artifacts/api-server/src/test/discoveryDerivedStoreProvenance.test.ts",
+    "artifacts/api-server/src/test/discoveryRankProvenance.test.ts",
+    // A03's "open" is backed only by Compass's open_now factor, which fires on isOpenNow === true; §68.1 cites it.
+    "artifacts/api-server/src/compass/CompassRecommendationEngine.ts",
+    // census-discovery §71 (lane P31, the intent-mode sender): A05 and DV-42 are restated on the
+    // selector, its suites and the parity suite; the selector rests on the app's flag read and the
+    // route that reports 2850; A05's For You gap rests on the Compass feed hook taking no mode.
+    "travel-buddy-standalone/src/components/discovery/DiscoveryIntentModeSelector.tsx",
+    "travel-buddy-standalone/src/services/__tests__/discovery.intentMode.test.ts",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryIntentModeSelector.component.test.tsx",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryScreen.intentMode.component.test.tsx",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryTabs.intentMode.component.test.tsx",
+    "artifacts/api-server/src/test/discoveryIntentModeSender.test.ts",
+    "travel-buddy-standalone/src/context/FeatureFlagsContext.tsx",
+    "artifacts/api-server/src/routes/featureFlags.ts",
+    "travel-buddy-standalone/src/hooks/compass/useCompassFeed.ts",
+    // census-discovery §73 (lane P27, letter-fold completeness): DV-20 and B01 move W -> C on the table, its two
+    // SQL twins and the enumeration suite. The other files §73 cites were already watched.
+    "artifacts/api-server/src/lib/latinLetterFold.ts",
+    "artifacts/api-server/src/migrations/3440_canonical_search_key_letter_fold.sql",
+    "artifacts/api-server/src/migrations/3441_trail_letter_fold_decompose_first.sql",
+    "artifacts/api-server/src/test/discoveryLetterFoldCompleteness.test.ts",
+    // census-discovery §67 (lane P19b, graph revocation): DV-51's revocation leg is graded on this
+    // suite (every edge family revoked then rebuilt, against a scratch build; the fail-visible guards).
+    // compass/CompassGraphEngine.ts, the code it grades, is already watched above (§56).
+    "artifacts/api-server/src/test/compassGraphRevocation.test.ts",
+    // WIDENED 2026-09-28 by census-discovery §65 (P19, Layover consumers take the border-entry
+    // input): A13 is re-graded on every inline certification site, so the consumers that
+    // certify, the resolver they now share with the snapshot, and the suites seen red are watched.
+    "artifacts/api-server/src/services/airport/LayoverBuddyGate.ts",
+    "artifacts/api-server/src/services/airport/LayoverEventReplanner.ts",
+    "artifacts/api-server/src/services/airport/LayoverReplanService.ts",
+    "artifacts/api-server/src/services/airport/LayoverExternalReplanPort.ts",
+    "artifacts/api-server/src/services/airport/LayoverNotificationService.ts",
+    "artifacts/api-server/src/services/airport/layoverEntryGate.ts",
+    "artifacts/api-server/src/test/layoverConsumerEntry.test.ts",
+    "artifacts/api-server/src/test/layoverEntryGate.test.ts",
+    "artifacts/api-server/src/test/layoverRouteSafetyInputs.test.ts",
+    "artifacts/api-server/src/test/layoverSafeReturnAbort.test.ts",
+    // census-discovery §74 (lane P32, independent verification of §73): DV-20 and B01 go C -> W on this
+    // suite (combining diacritics outside U+0300–U+036F; listTrails compares strings). The code it grades
+    // is already watched (§46, §51, §61, §73).
+    "artifacts/api-server/src/test/discoveryVerifyAudit3.test.ts",
+    // census-discovery §70 (search platform boundary, P30): A08 and the drift-footer fix cite these.
+    "artifacts/api-server/src/test/searchPlatformBoundary.test.ts",
+    "artifacts/api-server/src/test/searchPlatformGolden.test.ts",
+    "artifacts/api-server/src/test/fixtures/searchPlatformGolden.json",
+    // §70 names it as A08's remaining platform-direction work, and searchPlatformBoundary B5 pins its lib/ importers.
+    "artifacts/api-server/src/routes/discoverySearchHelpers.ts",
+    // census-discovery §75 (lane P33, DC-17 part 2): §68.6's hunks built — Trail health's snapshot columns (3436,
+    // its rollback), the suite that pins the hunks and its Trails fake, and the harness suite over 3436. The lib
+    // files and the two changed suites §75 cites (discoveryTrendingApi, discoveryServedGraphReading) were already watched.
+    "artifacts/api-server/src/migrations/3436_trail_health_snapshot_provenance.sql",
+    "db/rollback/2026-09-28-3436-trail-health-snapshot-provenance-rollback.sql",
+    "artifacts/api-server/src/test/discoveryDerivedProvenanceHunks.test.ts",
+    "artifacts/api-server/src/test/helpers/fakeTrailsDb.ts",
+    "artifacts/api-server/src/test/db/trailHealthSnapshotProvenance.db.test.ts",
+    // census-discovery §76 (lane P34): A03's sentence is restated on files already watched above
+    // (discoveryReasonCodes, discoveryReasonTruth, discoveryCandidate, the golden). §76.3's claim
+    // that the client folds with the server's letter table rests on the client copy of that table
+    // and the two suites that pin it (the parity suite fails on any drift in key, value or order).
+    "travel-buddy-standalone/src/lib/latinLetterFold.ts",
+    "artifacts/api-server/src/test/clientLetterFoldParity.test.ts",
+    "travel-buddy-standalone/src/lib/__tests__/cityCentroidsLetterFold.test.ts",
+    // census-discovery §83 (lane W10-D, rollout and the portava-ci apply): DC-26, DC-18, DV-70 and DC-27
+    // are graded on the apply plan, the production rollout (DC-27's record template), the approval request
+    // and the harness rehearsal driver and seed that produced the plan's evidence.
+    "docs/ops/discovery-portava-ci-apply-plan.md",
+    "docs/ops/discovery-production-rollout.md",
+    "docs/ops/discovery-owner-approval-request.md",
+    "artifacts/api-server/scripts/local-db/rehearse-pending-apply.ts",
+    "artifacts/api-server/scripts/local-db/rehearse-pending-apply.seed.sql",
+    // census-discovery §78 (lane W10-R2, scoring designs): A18, DV-09, DV-12, DV-18, DC-13 and DV-54 are
+    // graded on these modules, migrations, rollbacks and suites. portavaRank, DRS, the reason-code map and
+    // three of the four restated suites were already watched. DV-18's producer rests on the Map's trip reader.
+    "artifacts/api-server/src/lib/discoveryRankFlags.ts",
+    "artifacts/api-server/src/lib/discoveryRankDesigns.ts",
+    "artifacts/api-server/src/lib/discoveryRankObjectives.ts",
+    "artifacts/api-server/src/lib/discoveryRankIntegrity.ts",
+    "artifacts/api-server/src/lib/discoveryRankIntent.ts",
+    "artifacts/api-server/src/lib/discoveryRankTrip.ts",
+    "artifacts/api-server/src/lib/discoveryRankDiversity.ts",
+    "artifacts/api-server/src/lib/mapProjectionTripRead.ts",
+    "artifacts/api-server/src/migrations/3450_discovery_surface_objectives_flag.sql",
+    "artifacts/api-server/src/migrations/3451_discovery_engagement_integrity_flag.sql",
+    "artifacts/api-server/src/migrations/3452_discovery_feature_families_flag.sql",
+    "artifacts/api-server/src/migrations/3453_discovery_intent_trip_terms_flags.sql",
+    "artifacts/api-server/src/migrations/3454_discovery_diversity_axes_flag.sql",
+    "db/rollback/2026-09-28-3450-discovery-surface-objectives-flag-rollback.sql",
+    "db/rollback/2026-09-28-3451-discovery-engagement-integrity-flag-rollback.sql",
+    "db/rollback/2026-09-28-3452-discovery-feature-families-flag-rollback.sql",
+    "db/rollback/2026-09-28-3453-discovery-intent-trip-terms-flags-rollback.sql",
+    "db/rollback/2026-09-28-3454-discovery-diversity-axes-flag-rollback.sql",
+    "artifacts/api-server/src/test/portavaRankDesignGolden.test.ts",
+    "artifacts/api-server/src/test/fixtures/portavaRankGolden.json",
+    "artifacts/api-server/src/test/helpers/portavaRankGoldenScenarios.ts",
+    "artifacts/api-server/src/test/discoveryRankObjectives.test.ts",
+    "artifacts/api-server/src/test/discoveryRankIntent.test.ts",
+    "artifacts/api-server/src/test/discoveryRankTrip.test.ts",
+    "artifacts/api-server/src/test/discoveryRankIntegrity.test.ts",
+    "artifacts/api-server/src/test/discoveryRankDiversity.test.ts",
+    "artifacts/api-server/src/test/discoveryRankDesigns.test.ts",
+    "artifacts/api-server/src/test/db/discoveryRankDesignFlags.db.test.ts",
+    "artifacts/api-server/src/test/discoveryTrailModifier.test.ts",
+    // census-discovery §85 (lane W10-R3): DC-12, DC-11, DC-01, DV-49, DV-53, DV-55 and DC-17 are re-graded
+    // on the candidate modules, the city-confidence producer's windowed reads, migrations 3480–3484, their
+    // rollbacks and the suites that pin them. lib/discoveryPde.ts, lib/discoveryRankProvenance.ts,
+    // lib/discoveryRecommendationRecord.ts, compass/CompassGraphEngine.ts and FeedSlotAllocator.ts were
+    // already watched.
+    "artifacts/api-server/src/lib/discoveryCandidates/pipelineFlags.ts",
+    "artifacts/api-server/src/lib/discoveryCandidates/candidateSources.ts",
+    "artifacts/api-server/src/lib/discoveryCandidates/retrievals.ts",
+    "artifacts/api-server/src/lib/discoveryCandidates/materialize.ts",
+    "artifacts/api-server/src/lib/discoveryCandidates/generate.ts",
+    "artifacts/api-server/src/lib/discoveryCandidates/stages.ts",
+    "artifacts/api-server/src/lib/discoveryCandidates/viewerColdStart.ts",
+    "artifacts/api-server/src/lib/discoveryCandidates/explorationInventory.ts",
+    "artifacts/api-server/src/lib/discoveryCandidates/outcomeLearning.ts",
+    "artifacts/api-server/src/lib/discoveryCandidates/integrity.ts",
+    "artifacts/api-server/src/lib/discoveryCandidates/graphReadingProvenance.ts",
+    "artifacts/api-server/src/lib/discoveryCandidates/outputKinds.ts",
+    "artifacts/api-server/src/compass/cityConfidenceWindowedReads.ts",
+    "artifacts/api-server/src/migrations/3480_discovery_candidate_sources_flag.sql",
+    "artifacts/api-server/src/migrations/3481_discovery_exploration_inventory_flag.sql",
+    "artifacts/api-server/src/migrations/3482_discovery_cold_start_flag.sql",
+    "artifacts/api-server/src/migrations/3483_discovery_pipeline_stages_flags.sql",
+    "artifacts/api-server/src/migrations/3484_compass_city_confidence_provenance.sql",
+    "db/rollback/2026-09-28-3480-discovery-candidate-sources-flag-rollback.sql",
+    "db/rollback/2026-09-28-3481-discovery-exploration-inventory-flag-rollback.sql",
+    "db/rollback/2026-09-28-3482-discovery-cold-start-flag-rollback.sql",
+    "db/rollback/2026-09-28-3483-discovery-pipeline-stages-flags-rollback.sql",
+    "db/rollback/2026-09-28-3484-compass-city-confidence-provenance-rollback.sql",
+    "artifacts/api-server/src/test/discoveryCandidatePipelineGolden.test.ts",
+    "artifacts/api-server/src/test/compassCityConfidenceWindow.test.ts",
+    "artifacts/api-server/src/test/discoveryCandidateSources.test.ts",
+    "artifacts/api-server/src/test/discoveryExplorationInventory.test.ts",
+    "artifacts/api-server/src/test/discoveryColdStart.test.ts",
+    "artifacts/api-server/src/test/discoveryPipelineStages.test.ts",
+    "artifacts/api-server/src/test/discoveryOutputKinds.test.ts",
+    "artifacts/api-server/src/test/helpers/fakeCandidateDb.ts",
+    "artifacts/api-server/src/test/helpers/candidateWorld.ts",
+    "artifacts/api-server/src/test/db/discoveryCandidatePipelineMigrations.db.test.ts",
+    // census-discovery §79 (lane W10-R4, one ranking pipeline): C32, DC-24, DV-03, A05, A07 and DC-14 are
+    // graded on this suite and the client test, the 3455/3456 flag gates, their migrations and rollbacks.
+    "artifacts/api-server/src/lib/discoveryOnePipeline.ts",
+    "artifacts/api-server/src/test/discoveryOnePipeline.test.ts",
+    "artifacts/api-server/src/migrations/3455_discovery_for_you_pde_flag.sql",
+    "artifacts/api-server/src/migrations/3456_discovery_cache_a_ranked_flag.sql",
+    "db/rollback/2026-09-28-3455-discovery-for-you-pde-enabled-rollback.sql",
+    "db/rollback/2026-09-28-3456-discovery-cache-a-ranked-enabled-rollback.sql",
+    "travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.onePipeline.component.test.tsx",
+    // census-discovery §81 (lane W10-S2, cross-architecture adapters and product rules): A10, A11, A13, A14,
+    // A21, DV-51, DV-76 and DV-77 are graded on these files, migrations and suites.
+    "artifacts/api-server/src/services/airport/LayoverPlaceDwell.ts",
+    "artifacts/api-server/src/domain/trips/contracts/tripViewerProjections.ts",
+    "artifacts/api-server/src/lib/discoveryTripViewerConsumer.ts",
+    "artifacts/api-server/src/services/discovery/DiscoveryWishlistSave.ts",
+    "artifacts/api-server/src/routes/postcardMediaTransport.ts",
+    "artifacts/api-server/src/migrations/3465_layover_consumer_flags.sql",
+    "artifacts/api-server/src/migrations/3466_layover_place_dwell.sql",
+    "artifacts/api-server/src/migrations/3467_cross_architecture_flags.sql",
+    "artifacts/api-server/src/migrations/3468_tag_permission_approval_required.sql",
+    "artifacts/api-server/src/migrations/3469_compass_graph_decay_flag.sql",
+    "artifacts/api-server/src/test/layoverSnapshotConsumers.test.ts",
+    "artifacts/api-server/src/test/layoverPlaceDwell.test.ts",
+    "artifacts/api-server/src/test/discoveryTripViewerProjections.test.ts",
+    "artifacts/api-server/src/test/telegraphDiscoveryAction.test.ts",
+    "artifacts/api-server/src/test/mediaPendingUploadRule.test.ts",
+    "artifacts/api-server/src/test/tagPermissionApprovalRequired.test.ts",
+    "artifacts/api-server/src/test/compassGraphDecay.test.ts",
+    "artifacts/api-server/src/test/discoveryFreeTimeRetirement.test.ts",
+    // census-discovery §82 (lane W10-O, outcomes and stop conditions): DV-82/DC-32 (the armed halt values,
+    // 3470), DV-37 (the keyless retry), DV-19 (the judgement and enrichment), DV-78 (immediate_skip, the
+    // separation pins) and DC-22/DC-32/DV-41 (the ruled values) are graded on these.
+    "artifacts/api-server/src/lib/discoveryDwellSkip.ts",
+    "artifacts/api-server/src/migrations/3470_discovery_stop_enforcement_flag.sql",
+    "db/rollback/2026-09-28-3470-discovery-stop-enforcement-flag-rollback.sql",
+    "artifacts/api-server/src/test/discoveryStopEnforcement.test.ts",
+    "artifacts/api-server/src/test/discoveryKeylessOutcome.test.ts",
+    "artifacts/api-server/src/test/discoveryOutcomeJudgement.test.ts",
+    "artifacts/api-server/src/test/discoveryDwellSkip.test.ts",
+    "artifacts/api-server/src/test/discoveryNegativeFeedbackSeparation.test.ts",
+    "artifacts/api-server/src/test/discoveryRulingsPinned.test.ts",
+    "artifacts/api-server/src/test/db/discoveryOutcomeEnrichment.db.test.ts",
+    // §82.2 DV-78 grades D-W10-O-6 on its dismiss → ITEM_HIDDEN mapping (hide ≡ not_interested).
+    "artifacts/api-server/src/services/ranking/rankingAnalytics.ts",
+    // census-discovery §86 (lane W10-T, Trails product rules and admin actions): DV-13, DV-23 graded C;
+    // DV-21, DV-22, DV-24, DC-04, DC-05, DV-74, DC-20 restated. The migrations, their rollbacks, the new
+    // services and admin route, and the suites the rows cite. TrailService, the health/object libs and
+    // routes/trails.ts were already watched.
+    "artifacts/api-server/src/migrations/3485_discovery_trail_exploration_flags.sql",
+    "artifacts/api-server/src/migrations/3486_trail_moderation_audit.sql",
+    "artifacts/api-server/src/migrations/3487_trail_member_exposures.sql",
+    "artifacts/api-server/src/migrations/3488_trail_content_suggestions.sql",
+    "db/rollback/2026-09-28-3485-discovery-trail-exploration-flags-rollback.sql",
+    "db/rollback/2026-09-28-3486-trail-moderation-audit-rollback.sql",
+    "db/rollback/2026-09-28-3487-trail-member-exposures-rollback.sql",
+    "db/rollback/2026-09-28-3488-trail-content-suggestions-rollback.sql",
+    "artifacts/api-server/src/services/trails/trailExploration.ts",
+    "artifacts/api-server/src/services/trails/trailAdmin.ts",
+    "artifacts/api-server/src/routes/adminTrails.ts",
+    "artifacts/api-server/src/test/discoveryTrailProductRules.test.ts",
+    "artifacts/api-server/src/test/discoveryTrailExploration.test.ts",
+    "artifacts/api-server/src/test/adminTrailsRoutes.test.ts",
+    "artifacts/api-server/src/test/helpers/fakeTrailRulesDb.ts",
+    "artifacts/api-server/src/test/db/trailsModeration.db.test.ts",
+    "docs/architecture/discovery-decision-register.md",
+    "artifacts/api-server/src/test/discoveryTrailModifier.test.ts", // §86.8: two DC-05 cases restated
+    // census-discovery §84 (lane W10-R1, trending: the held designs built): the v2 trend model and its SQL twin
+    // (3475 flags, 3476 store, 3477 rebuild, their rollbacks), the scheduler, the retest, the governor's proposal
+    // half, and the four suites that grade DV-28..DV-34, DV-80, DC-06, DC-07 and DC-21.
+    "artifacts/api-server/src/lib/discoveryTrendNormalised.ts",
+    "artifacts/api-server/src/lib/discoveryTrendRebuildScheduler.ts",
+    "artifacts/api-server/src/lib/discoveryTrendRediscovery.ts",
+    "artifacts/api-server/src/lib/discoveryEcosystemBounds.ts",
+    "artifacts/api-server/src/migrations/3475_discovery_trend_v2_flags.sql",
+    "artifacts/api-server/src/migrations/3476_discovery_trend_v2_store.sql",
+    "artifacts/api-server/src/migrations/3477_discovery_trend_v2_rebuild.sql",
+    "db/rollback/2026-09-28-3475-discovery-trend-v2-flags-rollback.sql",
+    "db/rollback/2026-09-28-3476-discovery-trend-v2-store-rollback.sql",
+    "db/rollback/2026-09-28-3477-discovery-trend-v2-rebuild-rollback.sql",
+    "artifacts/api-server/src/test/discoveryTrendNormalised.test.ts",
+    "artifacts/api-server/src/test/discoveryTrendingLists.test.ts",
+    "artifacts/api-server/src/test/discoveryTrendOps.test.ts",
+    "artifacts/api-server/src/test/db/discoveryTrendNormalisedParity.db.test.ts",
+    // census-discovery §80 (lane W10-S1): B02, A08, DV-83 and B04 are graded on the gateway's Map
+    // page and coverage envelope, the partial wording's home, the Map sheet's platform transport, and
+    // the suites seen red. lib/inputAssistance/ (searchPage.ts, searchQueryHelpers.ts) is watched above.
+    "artifacts/api-server/src/routes/inputAssistance.ts",
+    "artifacts/api-server/src/lib/eventPostsDiscovery.ts", // §80: DV-83's remaining ground (the feed's event-post read)
+    "artifacts/api-server/src/migrations/3460_discovery_search_protection_scope.sql",
+    "artifacts/api-server/src/test/inputAssistanceMapSearchPage.test.ts",
+    "artifacts/api-server/src/test/db/discoverySearchProtectionGateway.db.test.ts",
+    "travel-buddy-standalone/src/services/discoveryCoverageNotice.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/search/mapSearch.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/search/__tests__/mapSearch.test.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/services/inputAssistance.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/services/suggestResponse.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/hooks/useInputAssistance.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.coverage.component.test.tsx",
+    "travel-buddy-standalone/src/components/map/__tests__/MapSearchSheet.refusal.component.test.tsx",
+    "travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.refusal.component.test.tsx",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryCategoryTab.refusal.component.test.tsx",
+    "travel-buddy-standalone/src/hooks/__tests__/useCommunityDiscovery.refusal.component.test.tsx",
+    "travel-buddy-standalone/app/map/__tests__/projectedPlaces.component.test.tsx",
+    // §80.12 (follow-up): the request budget's suite.
+    "travel-buddy-standalone/src/platform/input-assistance/services/__tests__/requestTimeout.component.test.ts",
+    // census-discovery §91 (lane W10-I, integration): DC-11, DC-17, DV-09, DC-01, A18 and A07 are graded on the
+    // integration suite, the output-kinds route and the client's Live-safety notice with its two suites.
+    "artifacts/api-server/src/routes/discoveryOutputKinds.ts",
+    "artifacts/api-server/src/test/discoveryIntegrationHooks.test.ts",
+    "travel-buddy-standalone/src/components/discovery/liveUnchecked.ts",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryCategoryTab.liveSafety.component.test.tsx",
+    "travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.liveSafety.component.test.tsx",
+    // §80.13 (round 3): the missing-policy fallback and the refresh on use.
+    "travel-buddy-standalone/src/hooks/__tests__/useGlobalSearchSuggestions.missingPolicy.component.test.tsx",
+    "travel-buddy-standalone/src/platform/input-assistance/services/policyRefreshOnUse.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/services/__tests__/policyRefreshOnUse.component.test.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/services/installInputPolicySync.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/services/policyStore.ts",
+    // §80.15 (round 4): the served-answer signal the handoff reads.
+    "travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.answeredText.component.test.tsx",
+    // §80.13 (round 3): the routed helper, cited then; fixed in §80.14.
+    "artifacts/api-server/src/lib/postgrestFilter.ts",
+    // §80.14: the helper's suite, which drives both route callers over HTTP.
+    "artifacts/api-server/src/test/postgrestFilterLikeEscape.test.ts",
+    // census-discovery §95 (lane W11-X3, projections and client): DV-72, DV-34, DC-12, A21 and DV-76 are graded on
+    // the Trail-derived co-occurrence (3495/3496, its reader and tick, the harness suite), the post-after-visit
+    // leg, the generated-row parity, the pending-tag route, and the client's Save and "Ask me first" legs.
+    "artifacts/api-server/src/migrations/3495_place_cooccurrence_trail_projection.sql",
+    "artifacts/api-server/src/migrations/3496_discovery_w11x3_flags.sql",
+    "db/rollback/2026-09-28-3495-place-cooccurrence-trail-projection-rollback.sql",
+    "db/rollback/2026-09-28-3496-discovery-w11x3-flags-rollback.sql",
+    "artifacts/api-server/src/migrations/3497_discovery_trend_post_convergence_stored.sql", // §95.9 (O-1)
+    "db/rollback/2026-09-28-3497-discovery-trend-post-convergence-stored-rollback.sql",
+    "artifacts/api-server/src/test/db/discoveryTrendPostConvergenceStored.db.test.ts",
+    "artifacts/api-server/src/lib/discoveryPlaceCooccurrence.ts",
+    "artifacts/api-server/src/lib/discoveryTrendPostConvergence.ts",
+    "artifacts/api-server/src/lib/discoveryPlaceAggregates.ts",
+    "artifacts/api-server/src/test/db/placeCooccurrenceRebuild.db.test.ts",
+    "artifacts/api-server/src/test/discoveryPlaceCooccurrence.test.ts",
+    "artifacts/api-server/src/test/discoveryTrendPostConvergence.test.ts",
+    "artifacts/api-server/src/test/discoveryCandidateRowParity.test.ts",
+    "artifacts/api-server/src/test/tagPendingInbox.test.ts",
+    "travel-buddy-standalone/src/services/discoveryCardSave.ts",
+    "travel-buddy-standalone/src/services/tagging.ts",
+    "travel-buddy-standalone/src/components/PendingTagInbox.tsx",
+    "travel-buddy-standalone/app/profile/edit/connected.tsx",
+    "travel-buddy-standalone/src/services/__tests__/discoveryCardSave.telegraph.component.test.ts",
+    "travel-buddy-standalone/src/services/__tests__/tagging.askMeFirst.component.test.ts",
+    "travel-buddy-standalone/src/components/__tests__/DiscoveryCardMessage.telegraphSave.component.test.tsx",
+    "travel-buddy-standalone/src/components/__tests__/PendingTagInbox.component.test.tsx",
+    // census-discovery §93 (lane W11-X1, ranker core): A11, DV-31, DV-09 and DV-74 are graded on the surface
+    // objective ranker, its flag migration, the Trip Planning call site and the three new suites.
+    "artifacts/api-server/src/lib/discoverySurfaceObjectiveRank.ts",
+    "artifacts/api-server/src/migrations/3500_discovery_surface_objective_rank_flags.sql",
+    "artifacts/api-server/src/routes/trips-expansion.ts",
+    "artifacts/api-server/src/test/discoveryRediscoveryRetestServe.test.ts",
+    "artifacts/api-server/src/test/discoveryTrendReviewSuppression.test.ts",
+    "artifacts/api-server/src/test/discoverySurfaceObjectiveRank.test.ts",
+    // census-discovery §94 (lane W11-X2, serve path): DV-83 is graded on the feed's event-post suite and the
+    // rail's coverage suite; C19, DC-17, DC-01 and A07 on the byline golden, the platform provenance module and
+    // suite, the output-kinds serve log and its client call, and the Live claim read's failure suite; 3490 and
+    // 3491 with their rollbacks.
+    "artifacts/api-server/src/test/discoveryFeedEventPostsCoverage.test.ts",
+    "artifacts/api-server/src/test/discoveryCommunityBylineCanonical.test.ts",
+    "artifacts/api-server/src/lib/discoveryPlatformGraphProvenance.ts",
+    "artifacts/api-server/src/test/discoveryPlatformGraphProvenance.test.ts",
+    "artifacts/api-server/src/test/discoveryOutputKindsServeLog.test.ts",
+    "artifacts/api-server/src/test/liveClaimReadFailure.test.ts",
+    "artifacts/api-server/src/migrations/3490_discovery_serve_path_flags.sql",
+    "artifacts/api-server/src/migrations/3491_discovery_recommendations_output_kinds_serve_point.sql",
+    "db/rollback/2026-09-28-3490-discovery-serve-path-flags-rollback.sql",
+    "db/rollback/2026-09-28-3491-discovery-recommendations-output-kinds-serve-point-rollback.sql",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryEventPostsRail.coverage.component.test.tsx",
+    "travel-buddy-standalone/src/services/discoveryRecommendations.ts",
+    "travel-buddy-standalone/src/services/__tests__/discoveryRecommendations.test.ts",
+    "travel-buddy-standalone/src/components/discovery/DiscoveryOutputKindsRail.tsx",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryOutputKindsRail.component.test.tsx",
+    // census-discovery §97 (lane W11-S, safety and recovery): DV-82 and DC-32 are graded on the stop gate, its
+    // readers and its suite; DC-18 on the eleven rollback files §97 wrote (rehearsed on the harness).
+    "artifacts/api-server/src/lib/discoveryStopGate.ts",
+    "artifacts/api-server/src/test/discoveryStopGate.test.ts",
+    "db/rollback/2026-09-28-2289-discovery-ranking-modifiers-flag-rollback.sql",
+    "db/rollback/2026-09-28-2297-rank-events-dismiss-outcome-rollback.sql",
+    "db/rollback/2026-09-28-2892-place-momentum-rollback.sql",
+    "db/rollback/2026-09-28-2893-rank-events-retire-writerless-surfaces-rollback.sql",
+    "db/rollback/2026-09-28-2894-rank-events-trip-add-outcome-rollback.sql",
+    "db/rollback/2026-09-28-2901-rent-buddy-earnings-entries-rollback.sql",
+    "db/rollback/2026-09-28-2921-creator-earning-entries-rollback.sql",
+    "db/rollback/2026-09-28-2930-creator-share-canonical-view-rollback.sql",
+    "db/rollback/2026-09-28-2995-rank-events-discovery-dismissed-index-rollback.sql",
+    "db/rollback/2026-09-28-3440-canonical-search-key-letter-fold-rollback.sql",
+    "db/rollback/2026-09-28-3441-trail-letter-fold-decompose-first-rollback.sql",
+    // census-discovery §94.11 (lane W11-X2, round 2): DV-83 re-graded on the Overpass suite, the rail refresh on the
+    // real ForYouTab, and the bounded feed call.
+    "artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts",
+    "travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.railRefresh.component.test.tsx",
+    "travel-buddy-standalone/src/services/__tests__/discovery.feedTimeout.test.ts",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryEventPostsRail.refusal.component.test.tsx",  // §94.11 cites its restated transport-failure control
+    // census-discovery §98 (DV-83, the parallel session's rounds): the suites its C rests on.
+    "artifacts/api-server/src/test/discoveryFeedNoServiceClient.test.ts",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryEventPostsRail.refresh.component.test.tsx",
+    "travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.pullToRefresh.component.test.tsx",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //
@@ -2852,6 +4510,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/routes/compass.ts",
     "artifacts/api-server/src/routes/discovery.ts",
     "artifacts/api-server/src/routes/discoverySearch.ts",
+    "artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts", // census-discovery §70: routes/discoverySearch.ts's searchers moved here
     "artifacts/api-server/src/routes/follows.ts",
     "artifacts/api-server/src/routes/geofence.ts",
     "artifacts/api-server/src/routes/hiddenGems.ts",
@@ -2946,6 +4605,32 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // Repo-root staging copies of two stamp components. P66 cites these paths BY NAME (census-passport.md line 302) and they resolve, so they are what check:census-scope-coverage counts; §16 later re-cites the standalone copies, which are listed above. Both are watched rather than one chosen, because choosing would be this entry deciding which citation §16 superseded.
     "src/components/PassportStampCard.tsx",
     "src/components/PassportStamps.tsx",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): the evidence cited on rows P59, P61, P75, P126, P128, P129, P132, P138, P158/F9, P159 and P169, and §14.6's P61 pins.
+    "artifacts/api-server/src/lib/entryRequirements.ts",
+    "artifacts/api-server/src/domain/telegraph/policies/travelScamSignals.ts",
+    "artifacts/api-server/src/lib/places/placeCollectionsWorker.ts",
+    "artifacts/api-server/src/test/passportStampTypeVocabulary.test.ts",
+    "artifacts/api-server/src/test/unifiedStamps.test.ts",
+    "artifacts/api-server/src/compass/CompassGraphEngine.ts",
+    "artifacts/api-server/src/test/passportJourneyEventsRecommendations.test.ts",
+    "artifacts/api-server/src/test/passportWorldHierarchy.test.ts",
+    "travel-buddy-standalone/app/passport/country/[country].tsx",
+    "travel-buddy-standalone/src/features/telegraph/theme/telegraphTheme.ts",
+    "travel-buddy-standalone/app/(tabs)/_layout.tsx",
+    "travel-buddy-standalone/src/components/passport/PassportVerifiedSeal.tsx",
+    "travel-buddy-standalone/src/theme/tokens.ts",
+    "travel-buddy-standalone/src/lib/travelerState.ts",
+    "travel-buddy-standalone/app/passport/[username].tsx",
+    "travel-buddy-standalone/app/passport/event/[token].tsx",
+    "artifacts/api-server/src/test/passportListIdentityProjection.test.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): P45's pin (§13.2) and the two D-WORD tripwires §19.4 names.
+    "artifacts/api-server/src/test/passportDomainTrustBasis.test.ts",
+    "artifacts/api-server/src/test/passportTrustEvidenceConfidence.test.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): P2, P87 and P168 cite `app/(tabs)/passport.tsx` and `app/(tabs)/ai.tsx`, which the guard resolves to the legacy repo-root mocks; the lines they cite are travel-buddy-standalone's, so both copies of each are watched, as for the two stamp components above.
+    "travel-buddy-standalone/app/(tabs)/passport.tsx",
+    "travel-buddy-standalone/app/(tabs)/ai.tsx",
+    "app/(tabs)/passport.tsx",
+    "app/(tabs)/ai.tsx",
   ],
 };
 
@@ -3121,11 +4806,18 @@ for (const f of files) {
     // output said so. Unioning the two working-tree diffs closes that: a
     // pre-commit run now measures what the commit will contain, and a clean
     // tree gives exactly the old answer, so CI is unaffected.
+    //
+    // AND UNTRACKED FILES. Neither working-tree diff lists a file git does not
+    // track yet, so a NEW file in a counted directory passed this check locally
+    // and failed it in CI the moment it was committed: on 2026-09-26 three
+    // censuses went red on PR #528 for exactly that reason, after a green local
+    // run. `ls-files --others --exclude-standard` names what `git add` would add.
     const committed = git(["diff", "--name-only", `${commit}..${head}`, "--", ...scope]);
     const staged = git(["diff", "--name-only", "--cached", "--", ...scope]);
     const unstaged = git(["diff", "--name-only", "--", ...scope]);
+    const untracked = git(["ls-files", "--others", "--exclude-standard", "--", ...scope]);
     changed = [...new Set(
-      [committed, staged, unstaged].flatMap((out) => out.split("\n")).filter(Boolean),
+      [committed, staged, unstaged, untracked].flatMap((out) => out.split("\n")).filter(Boolean),
     )].sort();
   } catch {
     problems.push(`::error::${f}: git could not diff ${commit}..HEAD, though ${commit.slice(0, 8)} resolves and is an ancestor of HEAD. This is not the unreachable-declaration case; read the git error above.`);

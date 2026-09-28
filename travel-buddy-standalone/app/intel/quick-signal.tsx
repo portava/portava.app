@@ -222,6 +222,7 @@ export default function QuickSignalScreen() {
     // First use (or after withdrawal): require explicit consent before any capture.
     body = (
       <IntelConsentGate
+        disclosureVersion={consent?.currentDisclosureVersion ?? null}
         onAllow={(state) => setConsent(state)}
         onNotNow={() => { if (router.canGoBack()) router.back(); }}
       />

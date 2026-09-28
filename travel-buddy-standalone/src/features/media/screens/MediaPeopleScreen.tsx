@@ -19,19 +19,19 @@ import { avatar, color, radius, space } from '../../../theme/tokens.ts';
 import { CachedImage } from '../../../components/CachedImage.tsx';
 import type { MediaProjection } from '../types/media.ts';
 import type { PeopleLensGroup, PeopleLensProjection } from '../types/peopleLens.ts';
-import { fetchPeople } from '../services/mediaProjection.ts';
-import { useLensProjection } from '../hooks/useLensProjection.ts';
+import { peopleOffline } from '../../../services/media/mediaOffline.ts'; // §39: offline, the Trip Crew perspectives cached
+import { useOfflineLens } from '../../../services/media/useOfflineLens.ts';
 import { PerspectiveMosaic } from '../components/PerspectiveMosaic.tsx';
 import { FreshnessBadge } from '../components/FreshnessBadge.tsx';
 import { LensStateView } from '../components/LensStateView.tsx';
 
 export interface MediaPeopleScreenProps {
-  onOpenMedia?: (media: MediaProjection) => void;
+  onOpenMedia?: (media: MediaProjection) => void; /** §14 People entry context — preferred over onOpenMedia (census-media §19). */ onOpenPerson?: (group: PeopleLensGroup, media: MediaProjection) => void;
 }
 
-export function MediaPeopleScreen({ onOpenMedia }: MediaPeopleScreenProps) {
-  const fetcher = useCallback((opts: { signal: AbortSignal }) => fetchPeople({ signal: opts.signal }), []);
-  const { state, reload } = useLensProjection<PeopleLensProjection>(
+export function MediaPeopleScreen({ onOpenMedia, onOpenPerson }: MediaPeopleScreenProps) {
+  const fetcher = useCallback((opts: { signal: AbortSignal }) => peopleOffline({ signal: opts.signal }), []);
+  const { state, reload, cachedLabel } = useOfflineLens<PeopleLensProjection>(
     fetcher,
     (data) => data.people.length === 0,
     [],
@@ -50,12 +50,19 @@ export function MediaPeopleScreen({ onOpenMedia }: MediaPeopleScreenProps) {
 
   return (
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      {cachedLabel ? <Text style={styles.intro}>{cachedLabel} — your Trip Crew only</Text> : null}
       <Text style={styles.intro}>
         From people you follow and your Trip Crew. Sharing a photo never reveals someone&apos;s precise
         live location.
       </Text>
       {state.data.people.map((group) => (
-        <PeopleGroupSection key={group.contributor.id} group={group} onOpenMedia={onOpenMedia} />
+        <PeopleGroupSection
+          key={group.contributor.id}
+          group={group}
+          // §14 "People → that person / social context": a tap pages THIS
+          // person's perspectives, not everyone's (census-media §19, MD90).
+          onOpenMedia={onOpenPerson ? (m) => onOpenPerson(group, m) : onOpenMedia}
+        />
       ))}
     </ScrollView>
   );
@@ -75,7 +82,7 @@ function PeopleGroupSection({
     <View style={styles.group}>
       <View style={styles.header}>
         {c.avatarUrl ? (
-          <CachedImage source={{ uri: c.avatarUrl }} style={styles.avatar} resizeMode="cover" />
+          <CachedImage source={{ uri: c.avatarUrl }} style={styles.avatar} resizeMode="cover" fallbackBg={color.mute} />
         ) : (
           <View style={[styles.avatar, styles.avatarFallback]} />
         )}

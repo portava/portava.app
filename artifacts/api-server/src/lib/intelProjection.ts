@@ -138,6 +138,16 @@ export interface ProjectionInput {
   freshness?: { ageSeconds: number; ttlSeconds: number };
   /** Table 17 lineage: the claim rows (with their versions) this input came from. */
   inputClaimVersions?: InputClaimVersion[];
+  /**
+   * FORWARD provenance (3311): the intel_observations.id values the aggregator
+   * READ for this input — the fresh, consented cohort. Written to both snapshot
+   * tables so an erasure can find exactly which state rested on which evidence
+   * (services/accountDeletion/sensingRevocationReach) and recompute or retract
+   * it (sensingErasureRecompute). Opaque ids naming no contributor; never
+   * served. Absent means "unrecorded", which the reach treats as
+   * subject-granularity, never as "rested on nothing".
+   */
+  inputObservationIds?: readonly string[];
   /** §24 candidate counts, for the lineage log line. */
   candidateLineage?: ProjectionCandidateLineage;
   /**
@@ -251,6 +261,8 @@ export interface ProjectedSnapshot {
   confidence_components: ConfidenceReplayRecord;
   algorithm_version: string;
   input_claim_versions: InputClaimVersion[];
+  /** 3311 forward provenance — see ProjectionInput.inputObservationIds. Empty when unrecorded. */
+  input_observation_ids: string[];
   /** Table 17 conflict_state, in the PERSISTED vocabulary the 2273 CHECKs admit
    *  ('none' | 'contextualized' | 'material'). Column added in I1; unit I2 (2275)
    *  populates it — projectClaim leaves it null and projectAndStore writes the
@@ -454,11 +466,76 @@ export async function projectClaim(
       // Exact lineage (Table 17). An input assembled without claim identity
       // (tests, ad-hoc callers) records an empty array — honest, not invented.
       input_claim_versions: Array.isArray(input.inputClaimVersions) ? input.inputClaimVersions : [],
+      // 3311: only well-formed uuids, de-duplicated — the column is uuid[] and a
+      // stray string would fail the whole write.
+      input_observation_ids: uniqueUuids(input.inputObservationIds),
       conflict_state: null,
     },
     privacy,
     scored,
   };
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The provenance list as the uuid[] column will accept it. */
+export function uniqueUuids(ids: readonly unknown[] | null | undefined): string[] {
+  if (!Array.isArray(ids)) return [];
+  const out = new Set<string>();
+  for (const id of ids) if (typeof id === "string" && UUID_RE.test(id)) out.add(id.toLowerCase());
+  return [...out];
+}
+
+/**
+ * PostgREST's answer when a row names a column the schema cache lacks —
+ * `PGRST204` ("Could not find the 'x' column…"), or Postgres's own 42703. Only
+ * a complaint about THIS column triggers the fallback; anything else is an
+ * ordinary write failure and stays one.
+ */
+function isUnknownProvenanceColumn(error: unknown): boolean {
+  const e = error as { code?: unknown; message?: unknown } | null | undefined;
+  const code = String(e?.code ?? "");
+  const message = String(e?.message ?? "");
+  return (code === "PGRST204" || code === "42703" || message.includes("schema cache")) && message.includes("input_observation_ids");
+}
+
+let provenanceUnavailableLogged = false;
+/** TEST SEAM. */
+export function _resetProvenanceFallbackLog(): void { provenanceUnavailableLogged = false; }
+
+/**
+ * Write a row that carries `input_observation_ids`; if the database does not
+ * have 3311 yet, write it WITHOUT the column and say so, loudly, once.
+ *
+ * WHY A FALLBACK AND NOT A REFUSAL. This writer is the only thing that turns
+ * observations into servable state. Refusing every projection because a
+ * provenance column is missing would stop the whole intel spine on a code
+ * deploy that beat its migration — the failure mode census-sensing §14.8
+ * exists to prevent. Degrading to "provenance unrecorded" keeps the spine
+ * serving and the deletion reach honest: an unrecorded provenance falls back
+ * to subject granularity (over-inclusive), never to "rested on nothing".
+ * The cutover runbook still applies 3311 BEFORE this code, so in the
+ * intended order this branch never runs.
+ */
+async function writeWithProvenanceFallback<T extends Record<string, unknown>>(
+  write: (row: T) => PromiseLike<{ error?: unknown } | null | undefined>,
+  row: T,
+  what: string,
+): Promise<{ error: unknown; provenance: "recorded" | "unrecorded" }> {
+  const first = await write(row);
+  const firstError = first?.error ?? null;
+  if (!firstError || !isUnknownProvenanceColumn(firstError)) return { error: firstError, provenance: "recorded" };
+  if (!provenanceUnavailableLogged) {
+    provenanceUnavailableLogged = true;
+    logger.warn(
+      { event: "intel.projection.provenance_unavailable", what, err: firstError },
+      "intelProjection: input_observation_ids is not a column on this database (3311 not applied); writing WITHOUT provenance — the deletion reach falls back to subject granularity until 3311 lands",
+    );
+  }
+  const { input_observation_ids: _dropped, ...without } = row as Record<string, unknown>;
+  void _dropped;
+  const second = await write(without as T);
+  return { error: second?.error ?? null, provenance: "unrecorded" };
 }
 
 /**
@@ -520,7 +597,12 @@ export async function projectAndStore(
         privacy_reason: r.privacy.reason,
         generated_at: now.toISOString(),
       };
-      const { error: versionError } = await sc.from("intel_state_snapshot_versions").insert(version);
+      const versionWrite = await writeWithProvenanceFallback(
+        (row) => sc.from("intel_state_snapshot_versions").insert(row),
+        version as unknown as Record<string, unknown>,
+        "intel_state_snapshot_versions.insert",
+      );
+      const versionError = versionWrite.error;
       if (versionError) {
         tally.skipped++;
         logger.warn(
@@ -542,9 +624,12 @@ export async function projectAndStore(
       if (input.sourceClass && (SOURCE_CLASSES as readonly string[]).includes(input.sourceClass)) {
         currentRow.source_class = input.sourceClass;
       }
-      const { error } = await sc
-        .from("intel_state_snapshots")
-        .upsert(currentRow, { onConflict: "subject_id,zone_id,claim_type" });
+      const currentWrite = await writeWithProvenanceFallback(
+        (row) => sc.from("intel_state_snapshots").upsert(row, { onConflict: "subject_id,zone_id,claim_type" }),
+        currentRow,
+        "intel_state_snapshots.upsert",
+      );
+      const error = currentWrite.error;
       if (error) {
         tally.skipped++;
         logger.warn({ err: error, version_id: version.id }, "intelProjection: upsert failed");
@@ -563,6 +648,10 @@ export async function projectAndStore(
           claim_type: input.claimType,
           algorithm_version: PROJECTION_ALGORITHM_VERSION,
           input_claim_versions: r.snapshot.input_claim_versions,
+          // 3311: the COUNT of observations this row rests on, and whether the
+          // ids themselves were recorded. Never the ids, never an actor.
+          input_observation_count: r.snapshot.input_observation_ids.length,
+          provenance: versionWrite.provenance === "recorded" && currentWrite.provenance === "recorded" ? "recorded" : "unrecorded",
           confidence: r.snapshot.confidence,
           confidence_band: r.snapshot.confidence_band,
           privacy_eligible: r.snapshot.privacy_eligible,

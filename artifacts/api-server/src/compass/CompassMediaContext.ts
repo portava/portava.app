@@ -60,7 +60,7 @@ import { normalizeConflictState, type ConflictState } from "../lib/intelConflict
 import { wrapUgc } from "./CompassStructuredContext.js";
 import {
   loadEligibleMediaRow,
-  resolveMediaEntities,
+  resolveMediaEntities, isFindBusierEnabled,
   type MediaEntityRef,
 } from "../services/media/MediaActionResolver.js";
 import type { ViewerResolved } from "../services/media/MediaProjectionService.js";
@@ -74,13 +74,13 @@ export interface CompassMediaViewerContext {
   subjectCity: string | null;
 }
 
-/** §32 "find a quieter or cheaper version" — the two comparable axes. */
-export type CompassComparatorAxis = "quieter" | "cheaper";
+/** §32 "find a quieter or cheaper version" — the two comparable axes — and §15's "Busier" (census-media §36, MD101), offered only while media_find_busier_enabled. */
+export type CompassComparatorAxis = "quieter" | "cheaper" | "busier";
 
 /** The claim type that grounds each comparator axis. One source, named once. */
 export const COMPARATOR_AXIS_CLAIM: Readonly<Record<CompassComparatorAxis, string>> = {
   quieter: "crowd.level",
-  cheaper: "price.cover",
+  cheaper: "price.cover", busier: "crowd.level", // busier: the other direction of the quieter reading — one claim type, two axes
 };
 
 /** The claim type that grounds a §32 "where should we go after this?" answer. */
@@ -198,9 +198,9 @@ function unexpired(c: ComparatorCandidateClaim, nowMs: number): boolean {
  */
 export function buildComparatorBaselines(
   claims: readonly ComparatorCandidateClaim[],
-  nowMs: number,
+  nowMs: number, axes: readonly CompassComparatorAxis[] = SECTION32_COMPARATOR_AXES, // census-media §36: §32's two unless the caller adds §15's busier
 ): CompassComparatorBaseline[] {
-  const axes = Object.keys(COMPARATOR_AXIS_CLAIM) as CompassComparatorAxis[];
+  // `axes` is the caller's (was: every key of COMPARATOR_AXIS_CLAIM); the default is §32's two, so a caller that says nothing gets exactly what it got before busier existed.
   return axes.map((axis) => {
     const claimType = COMPARATOR_AXIS_CLAIM[axis];
     const hit = claims.find((c) => c.claimType === claimType && unexpired(c, nowMs)) ?? null;
@@ -311,7 +311,7 @@ export async function buildCompassMediaContext(
       subjectCity: entities.city,
     },
     permittedIntelligenceRefs,
-    comparator: buildComparatorBaselines(permittedAnchor ? anchorClaims : [], nowMs),
+    comparator: buildComparatorBaselines(permittedAnchor ? anchorClaims : [], nowMs, await comparatorAxesFor(sc)), // census-media §36: busier only while media_find_busier_enabled
     sequencing: buildSequencingAnchor(permittedAnchor, entities.city, anchorClaims, nowMs),
   };
 }
@@ -398,4 +398,24 @@ export function formatMediaContextLines(ctx: CompassMediaContext): string[] {
   }
 
   return lines;
+}
+
+// ── §15 "Find … Busier" (census-media §36, MD101) ───────────────────────────
+// Appended at the tail so no cited line above moves; ESM hoists the function,
+// and the const below is initialised before any call can read it.
+
+/** §32's own two axes, in the order they have always been reported. */
+export const SECTION32_COMPARATOR_AXES: readonly CompassComparatorAxis[] = ["quieter", "cheaper"];
+
+/** §32's two, then §15's busier — the order the rail offers them. */
+export const WITH_BUSIER_COMPARATOR_AXES: readonly CompassComparatorAxis[] = ["quieter", "cheaper", "busier"];
+
+/**
+ * The comparator axes a context reports. §32's two, plus `busier` only while
+ * `media_find_busier_enabled` is on — so with the flag off (the seed) the
+ * context, and the prompt built from it, are exactly what they were. A failed
+ * flag read is "off".
+ */
+export async function comparatorAxesFor(sc: SupabaseClient): Promise<readonly CompassComparatorAxis[]> {
+  return (await isFindBusierEnabled(sc)) ? WITH_BUSIER_COMPARATOR_AXES : SECTION32_COMPARATOR_AXES;
 }

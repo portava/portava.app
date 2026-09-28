@@ -63,17 +63,28 @@ interface State {
   membershipError?: boolean;
   optOut?: boolean;
   rosterError?: boolean;
+  /**
+   * Telegraph §14.3. `historyBound` seeds the feature_flags row
+   * telegraph_history_bound_enabled; `aliceVisibleFrom` is the caller's window
+   * on TRIP_THREAD. Both default to today's production state — no flag row and
+   * no bound — so every case above this line is untouched.
+   */
+  historyBound?: boolean;
+  aliceVisibleFrom?: string | null;
 }
 
 function fixture(state: State) {
   return {
-    feature_flags: [],
+    feature_flags: state.historyBound === undefined
+      ? []
+      : [{ flag: "telegraph_history_bound_enabled", enabled: state.historyBound }],
     message_threads: [
       { id: TRIP_THREAD, thread_type: "trip", status: "active", trip_id: TRIP_ID, circle_owner_id: null, is_e2ee: false },
       { id: FOREIGN, thread_type: "direct", status: "active", trip_id: null, circle_owner_id: null, is_e2ee: false },
     ],
     message_thread_members: [
-      { thread_id: TRIP_THREAD, user_id: ALICE, role: "member", left_at: null, last_read_at: null },
+      { thread_id: TRIP_THREAD, user_id: ALICE, role: "member", left_at: null, last_read_at: null,
+        visible_from_at: state.aliceVisibleFrom ?? null },
       { thread_id: TRIP_THREAD, user_id: BOB, role: "member", left_at: null, last_read_at: null },
       { thread_id: TRIP_THREAD, user_id: CARL, role: "member", left_at: null, last_read_at: null },
       { thread_id: FOREIGN, user_id: BOB, role: "member", left_at: null, last_read_at: null },
@@ -376,5 +387,94 @@ describe("Telegraph §18.3 — the boundary sentence, enforced", () => {
     const out: any = await executeTelegraphConversationTool(sc, ALICE, "telegraph_find_safe_public_meetup", ARGS);
     assert.equal(out.safetyBasis, "public_staffed_category_only");
     assert.ok(/crime|lighting|opening hours|public, staffed/i.test(String(out.note)), String(out.note));
+  });
+});
+
+/* ─────────────── §14.3 — Compass answers inside the caller's window ──────── */
+
+/**
+ * §18.3's boundary sentence is "Compass sees only data authorized to the
+ * conversational context", and §14.3 says what that means for a member added
+ * later: the context they are authorized to STARTS when their membership does.
+ * Two of the eight accessors read `messages` directly, so two of the eight can
+ * carry pre-membership content out through the model instead of through the
+ * thread read — `getSharedPlaces` returns a card's TITLE and its summary text,
+ * and `getConversationContext` returns the KINDS of object that were shared
+ * and, by their presence, that they were shared at all.
+ *
+ * The bound is resolved ONCE, in `gateConversation`, and handed to the tools as
+ * `gate.visibleFrom`. That is deliberate: a ninth tool written later takes the
+ * conversation id from the same object, so it takes the window with it.
+ *
+ * m1 is the only `subtype` row in the fixture (a discovery_card at
+ * 2026-05-03); m2 is plain prose at 2026-05-04. A window opening at 2026-05-04
+ * therefore puts exactly the card outside it.
+ */
+describe("Telegraph §14.3 — Compass cannot answer from before the caller joined", () => {
+  const WINDOW = "2026-05-04T00:00:00.000Z";
+
+  it("CONTROL — with no bound, the shared place and its kind are both returned", async () => {
+    const sc = makeClient();
+    const places: any = await executeTelegraphConversationTool(
+      sc, ALICE, "telegraph_get_shared_places", ARGS,
+    );
+    assert.equal(places.places.length, 1);
+    assert.equal(places.places[0].title, "Sky36 Rooftop");
+
+    const ctx: any = await executeTelegraphConversationTool(
+      sc, ALICE, "telegraph_get_conversation_context", ARGS,
+    );
+    assert.deepEqual(ctx.recentObjectKinds, ["discovery_card"]);
+  });
+
+  it("flag OFF (the production seed): a bound on the row changes nothing", async () => {
+    const sc = makeClient({ historyBound: false, aliceVisibleFrom: WINDOW });
+    const places: any = await executeTelegraphConversationTool(
+      sc, ALICE, "telegraph_get_shared_places", ARGS,
+    );
+    assert.equal(places.places.length, 1, "OFF must be byte-identical to today");
+  });
+
+  it("flag ON: a place shared before the caller's window is not returned", async () => {
+    const sc = makeClient({ historyBound: true, aliceVisibleFrom: WINDOW });
+    const places: any = await executeTelegraphConversationTool(
+      sc, ALICE, "telegraph_get_shared_places", ARGS,
+    );
+    assert.equal(places.authorized, true, "the tool still answers — it is narrower, not refused");
+    assert.deepEqual(
+      places.places, [],
+      "a pre-membership card's title and summary are message CONTENT; reaching them through the model is the same disclosure",
+    );
+  });
+
+  it("flag ON: the conversation context does not even report that the card exists", async () => {
+    const sc = makeClient({ historyBound: true, aliceVisibleFrom: WINDOW });
+    const ctx: any = await executeTelegraphConversationTool(
+      sc, ALICE, "telegraph_get_conversation_context", ARGS,
+    );
+    assert.equal(ctx.authorized, true);
+    assert.deepEqual(ctx.recentObjectKinds, []);
+  });
+
+  it("flag ON: THE OTHER HALF — a member with a NULL bound still gets everything", async () => {
+    const sc = makeClient({ historyBound: true, aliceVisibleFrom: null });
+    const places: any = await executeTelegraphConversationTool(
+      sc, ALICE, "telegraph_get_shared_places", ARGS,
+    );
+    assert.equal(places.places.length, 1);
+    const ctx: any = await executeTelegraphConversationTool(
+      sc, ALICE, "telegraph_get_conversation_context", ARGS,
+    );
+    assert.deepEqual(ctx.recentObjectKinds, ["discovery_card"]);
+  });
+
+  it("the gate hands the window to every tool, so a ninth one cannot forget it", async () => {
+    const sc = makeClient({ historyBound: true, aliceVisibleFrom: WINDOW });
+    const gate: any = await gateConversation(sc, ALICE, ARGS);
+    assert.equal(gate.authorized, true);
+    assert.equal(gate.visibleFrom, WINDOW);
+
+    const off: any = await gateConversation(makeClient({ historyBound: false, aliceVisibleFrom: WINDOW }), ALICE, ARGS);
+    assert.equal(off.visibleFrom, null, "OFF must resolve to no bound even when the column carries one");
   });
 });

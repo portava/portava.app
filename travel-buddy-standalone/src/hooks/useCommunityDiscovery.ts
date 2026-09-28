@@ -11,7 +11,7 @@ import type { DiscoveryItem, TravelerPick } from '../data/discovery.ts';
 import { getCommunityPlaces } from '../services/discovery.ts';
 import type { CommunityPlaceItem, DiscoveryPlace } from '../services/discovery.ts';
 import { communityBylineText } from '../features/discovery/communityByline.ts';
-
+import { currentDiscoveryScope, isCurrentDiscoveryScope, onDiscoveryScopeChange, type DiscoveryScope } from '../services/discoveryViewerScope.ts';
 function timeAgo(isoString: string): string {
   const diff = Date.now() - new Date(isoString).getTime();
   const mins = Math.floor(diff / 60_000);
@@ -134,16 +134,16 @@ interface CommunityDiscoveryState {
    * only thing that keeps the two apart, and the cache decision below is the
    * first consumer of it.
    */
-  refused: boolean;
+  refused: boolean; /** census-discovery §80 (DV-83): a PARTIAL answer — the rows are real, the list may be short. Cached WITH the rows. */ incomplete: boolean;
 }
 
-const EMPTY: CommunityDiscoveryState = { gems: [], picks: [], places: [], loading: false, refused: false };
+const EMPTY: CommunityDiscoveryState = { gems: [], picks: [], places: [], loading: false, refused: false, incomplete: false };
 
 // ── Module-level stale-while-revalidate cache ─────────────────────────────────
-// Persists across navigation so returning to the Explore tab shows content
-// instantly from the previous fetch while a background refresh runs.
+// Persists across navigation so returning to the Explore tab shows content instantly from the
+// previous fetch while a background refresh runs. PER VIEWER — see VIEWER SCOPE at the foot of this file.
 const COMM_CACHE_TTL = 5 * 60 * 1_000; // 5 minutes
-interface CommCacheEntry { state: CommunityDiscoveryState; at: number }
+interface CommCacheEntry { state: CommunityDiscoveryState; at: number; scope: DiscoveryScope }
 const _communityCache = new Map<string, CommCacheEntry>();
 
 function commCacheKey(city: string, sortBy?: string | null) {
@@ -152,13 +152,13 @@ function commCacheKey(city: string, sortBy?: string | null) {
 
 export function useCommunityDiscovery(city: string | null, sortBy?: string | null): CommunityDiscoveryState {
   const cKey = city ? commCacheKey(city, sortBy) : null;
-  const cachedEntry = cKey ? _communityCache.get(cKey) : null;
+  const cachedEntry = cKey ? liveCommEntry(cKey) : null;
 
   // Initialise directly from the module cache so the very first render can show
   // previously-seen content without waiting for any network call.
   const [state, setState] = useState<CommunityDiscoveryState>(() => {
     if (cachedEntry) return { ...cachedEntry.state, loading: false };
-    if (city) return { gems: [], picks: [], places: [], loading: true, refused: false };
+    if (city) return { gems: [], picks: [], places: [], loading: true, refused: false, incomplete: false };
     return EMPTY;
   });
   const abortRef = useRef<AbortController | null>(null);
@@ -195,7 +195,7 @@ export function useCommunityDiscovery(city: string | null, sortBy?: string | nul
       // `coverage: "nothing"` means the server did not read the table. The empty
       // arrays above are padding, not a result.
       const refused = result.data.refusal?.coverage === 'nothing';
-      const fresh: CommunityDiscoveryState = { gems, picks, places, loading: false, refused };
+      const fresh: CommunityDiscoveryState = { gems, picks, places, loading: false, refused, incomplete: result.data.refusal?.coverage === 'partial' };
       setState(fresh);
       // Update the module cache for the next mount — BUT NEVER WITH A REFUSAL.
       //
@@ -209,7 +209,15 @@ export function useCommunityDiscovery(city: string | null, sortBy?: string | nul
       // notice the server had recovered.
       //
       // A `partial` refusal IS cached: the items it carries are real.
-      if (cKey && !refused) _communityCache.set(cKey, { state: fresh, at: Date.now() });
+      //
+      // Nor with an answer whose scope moved while it was in flight: the
+      // service already discarded one fetched for another viewer, and one that
+      // predates a block or dismissal is shown but not kept. Tagged with the
+      // scope it was FETCHED in, which is the only scope that may read it.
+      const scope = result.scope ?? currentDiscoveryScope();
+      if (cKey && !refused && isCurrentDiscoveryScope(scope)) {
+        _communityCache.set(cKey, { state: fresh, at: Date.now(), scope });
+      }
     } catch {
       if (!ctrl.signal.aborted) {
         setState((prev) => ({ ...prev, loading: false }));
@@ -223,7 +231,7 @@ export function useCommunityDiscovery(city: string | null, sortBy?: string | nul
       return;
     }
     // Skip the network call if the cache is still fresh
-    const hit = cKey ? _communityCache.get(cKey) : null;
+    const hit = cKey ? liveCommEntry(cKey) : null;
     if (hit && Date.now() - hit.at < COMM_CACHE_TTL) {
       setState({ ...hit.state, loading: false });
       return;
@@ -232,5 +240,48 @@ export function useCommunityDiscovery(city: string | null, sortBy?: string | nul
     return () => { abortRef.current?.abort(); };
   }, [city, load, cKey]);
 
+  // An account switch or sign-out while this hook is MOUNTED: the gems on
+  // screen are the previous viewer's — their bylines, their blocks — so they
+  // are dropped and re-fetched as the new viewer rather than left up until
+  // the next remount. A viewer being learned for the first time (undefined →
+  // somebody) is not a switch: nothing on screen belonged to anybody else.
+  useEffect(() => {
+    let viewer = currentDiscoveryScope().viewer;
+    return onDiscoveryScopeChange(() => {
+      const next = currentDiscoveryScope().viewer;
+      if (next === viewer) return;
+      const switched = viewer !== undefined;
+      viewer = next;
+      if (!switched || !city) return;
+      setState({ gems: [], picks: [], places: [], loading: true, refused: false, incomplete: false });
+      void load(city);
+    });
+  }, [city, load]);
+
   return state;
+}
+
+// ── VIEWER SCOPE ───────────────────────────────────────────────────────────────
+//
+// The community read is sent with the viewer's token, and what it returns is
+// the viewer's: bylines are withheld or shown per viewer, and submitters the
+// viewer blocked (or who blocked them) or muted are removed. So every entry in
+// the module cache above carries the viewer + epoch it was written in and is
+// readable only in that scope, and every scope change — an account switch, a
+// sign-out, a block, a mute, a dismissal — clears it
+// (services/discoveryViewerScope.ts).
+onDiscoveryScopeChange(() => _communityCache.clear());
+
+/** Test seam: how many community states the module holds — a previous viewer's must not sit in memory. */
+export function _communityCacheSizeForTests(): number {
+  return _communityCache.size;
+}
+
+/** A cached community state, only if it was written in the CURRENT scope; anything else is dropped. */
+function liveCommEntry(key: string): CommCacheEntry | null {
+  const entry = _communityCache.get(key);
+  if (!entry) return null;
+  if (isCurrentDiscoveryScope(entry.scope)) return entry;
+  _communityCache.delete(key);
+  return null;
 }

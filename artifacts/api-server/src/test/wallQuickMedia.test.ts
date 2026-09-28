@@ -43,7 +43,7 @@ interface Fixture {
   profiles?: any[];
   tripMembers?: Array<{ trip_id: string; user_id: string; role: string }>;
   flags?: Record<string, boolean>;
-  throwOn?: string;
+  throwOn?: string; passportPostcards?: Array<{ id: string; post_id: string }>;
 }
 
 const PROFILES_DEFAULT = [
@@ -136,7 +136,7 @@ function fakeClient(f: Fixture) {
         const rows = (f.tripMembers ?? []).filter((m) => m.user_id === eqs.user_id && (!ins.role || ins.role.includes(m.role)));
         return { data: rows.map((m) => ({ trip_id: m.trip_id })), error: null };
       }
-      if (table === "trips") return { data: [], error: null };
+      if (table === "trips") return { data: [], error: null }; if (table === "passport_postcards") return { data: (f.passportPostcards ?? []).filter((r) => !ins.id || ins.id.includes(r.id)), error: null };
       return { data: single ? null : [], error: null };
     }
     const b: any = {
@@ -394,5 +394,53 @@ describe("GET /wall/quick-media", () => {
     use({ ...HAPPY_LIVE, flags: { wall_enabled: true } });
     const res = await fetch(`${base}/wall/quick-media`);
     assert.equal(res.status, 401);
+  });
+});
+
+// census-wall §17 — a `postcard` attachment names a passport_postcards id, not a post id.
+// Quick Media used to read it as a post id, so the asset was dropped whenever the postcard
+// link was read first, even though its own `post` link was readable.
+describe("census-wall §17 — Quick Media resolves a postcard link to the post that published it", () => {
+  const PC = "pc-1";
+  it("a postcard link read FIRST no longer hides an asset its readable post publishes", async () => {
+    const items = await loadQuickMediaItems(fakeClient({
+      ...HAPPY,
+      attachments: [
+        { media_asset_id: "asset-1", entity_type: "postcard", entity_id: PC },
+        { media_asset_id: "asset-1", entity_type: "post", entity_id: "post-1" },
+      ],
+      passportPostcards: [{ id: PC, post_id: "post-1" }],
+    }), VIEWER, { nowMs: NOW });
+    assert.equal(items.length, 1);
+    assert.equal(items[0].postId, "post-1");
+  });
+
+  it("a postcard-only link resolves through passport_postcards.post_id", async () => {
+    const items = await loadQuickMediaItems(fakeClient({
+      ...HAPPY,
+      attachments: [{ media_asset_id: "asset-1", entity_type: "postcard", entity_id: PC }],
+      passportPostcards: [{ id: PC, post_id: "post-1" }],
+    }), VIEWER, { nowMs: NOW });
+    assert.equal(items.length, 1);
+    assert.equal(items[0].postId, "post-1");
+  });
+
+  it("the resolved post's own policy still decides: a private post's postcard stays hidden", async () => {
+    const items = await loadQuickMediaItems(fakeClient({
+      ...HAPPY,
+      attachments: [{ media_asset_id: "asset-1", entity_type: "postcard", entity_id: PC }],
+      passportPostcards: [{ id: PC, post_id: "post-1" }],
+      posts: [post({ visibility: "private" })],
+    }), VIEWER, { nowMs: NOW });
+    assert.equal(items.length, 0);
+  });
+
+  it("an unresolvable postcard link publishes nothing (deny by default)", async () => {
+    const items = await loadQuickMediaItems(fakeClient({
+      ...HAPPY,
+      attachments: [{ media_asset_id: "asset-1", entity_type: "postcard", entity_id: PC }],
+      passportPostcards: [],
+    }), VIEWER, { nowMs: NOW });
+    assert.equal(items.length, 0);
   });
 });

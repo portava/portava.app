@@ -201,7 +201,7 @@ disposition `remove-from-seed`, and their retirement follows.
 | `RENT_BUDDY_OFFERS_ENABLED` | **true** | `api:routes/rentABuddyRollout.ts:271` | **KEEP** | getFlag(); 403 offers_unavailable |
 | `RENT_BUDDY_PACKAGES_ENABLED` | **true** | `api:routes/rentABuddyRollout.ts:258` | **KEEP** | getFlag(); 403 packages_unavailable |
 | `city_launch_mode` | false | `app:src/screens/admin/featureFlags.machine.ts:34` | **KEEP** → **RETIRED 2026-08-13** | APP-TREE ONLY — banner only, NO server enforcement; owner ruled, retired by `2087_retire_city_launch_mode.sql` |
-| `disable_messaging` | false | `api:routes/messaging.ts:1684` | **KEEP** | isKillSwitchEngaged, fail-CLOSED; also :1997 |
+| `disable_messaging` | false | `api:routes/messaging.ts:1691` | **KEEP** | isKillSwitchEngaged, fail-CLOSED; also :2004 |
 | `disable_posting` | false | `api:routes/posts.ts:447` | **KEEP** | isKillSwitchEngaged, fail-CLOSED |
 | `disable_rent_buddy_booking` | false | `api:routes/rentABuddy.ts:1005` | **KEEP** | isKillSwitchEngaged |
 | `invite_only_beta` | false | `api:routes/auth.ts:128` | **KEEP** | isFlagEnabled; gates signup form |

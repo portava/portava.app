@@ -350,7 +350,14 @@ describe("isEvidenceEligible — the media→intel contract", () => {
     assert.equal(typeof e.provenanceConfidence, "number");
     assert.equal(typeof e.captureConfidence, "number");
     assert.equal(typeof e.locationConfidence, "number");
-    assert.equal(e.expiresAt, undefined, "media side never stamps an operational expiry");
+    // Census-media §20 (MD75): the eligible asset now carries its OPERATIONAL
+    // expiry — capture + 24 h, the instant freshnessClass turns 'historical'.
+    // (This line used to pin `undefined`, the declined design.)
+    assert.equal(
+      e.expiresAt,
+      new Date(Date.parse(minutesAgo(5)) + 24 * 60 * 60 * 1000).toISOString(),
+      "an eligible asset's operational lifetime ends 24 h after capture",
+    );
   });
 });
 
@@ -398,7 +405,14 @@ function makeFake(opts: { flagEnabled: boolean; asset?: Record<string, unknown> 
         },
         update(row: any) {
           ops.push({ table, kind: "update", row });
-          return { eq() { return Promise.resolve({ error: null }); } };
+          // recordMediaEdit is a compare-and-set since census-media §20 (MD38):
+          // `.eq("id").eq("version", v).select("id, version")`, and it counts the
+          // rows that came back. This fake is the row at the version it was read.
+          const u: any = {
+            eq() { return u; },
+            select() { return Promise.resolve({ data: [{ id: "asset-1", version: 2 }], error: null }); },
+          };
+          return u;
         },
       };
     },
@@ -452,7 +466,7 @@ describe("recordMediaEdit — appends lineage + recomputes eligibility", () => {
     const existing = initProvenance({ sourceType: "camera", capturedAt: minutesAgo(5) });
     const { client, ops } = makeFake({
       flagEnabled: true,
-      asset: { source_type: "camera", captured_at: minutesAgo(5), provenance: existing },
+      asset: { source_type: "camera", captured_at: minutesAgo(5), provenance: existing, version: 1 },
     });
     const res = await recordMediaEdit(client, "asset-1", "crop", { at: minutesAgo(2) });
     assert.ok(res);
@@ -470,7 +484,7 @@ describe("recordMediaEdit — appends lineage + recomputes eligibility", () => {
     });
     const { client, ops } = makeFake({
       flagEnabled: true,
-      asset: { source_type: "camera", captured_at: minutesAgo(5), provenance: existing },
+      asset: { source_type: "camera", captured_at: minutesAgo(5), provenance: existing, version: 1 },
     });
     const res = await recordMediaEdit(client, "asset-1", "generative_fill", { at: minutesAgo(1) });
     assert.equal(res!.evidenceEligible, false, "the generative edit removes live-evidence eligibility");

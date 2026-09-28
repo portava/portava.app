@@ -37,6 +37,7 @@ import { isFlagEnabled } from "./featureFlags.js";
 import { observationsHaveEligibleMediaEvidence } from "./media/mediaEvidenceLink.js";
 import { assessConflict, type ConflictAssessment, type ConflictVote } from "./intelConflict.js";
 import { clusterByIndependence, type IndependenceObservation } from "./intelIndependence.js";
+import { readConsentedContributors } from "./intelConsent.js";
 import { logger } from "./logger.js";
 
 const clamp01 = (x: number): number => (x < 0 ? 0 : x > 1 ? 1 : x);
@@ -181,28 +182,41 @@ export async function assembleClaimInput(sc: SupabaseClient, claim: ClaimRow, no
   // D4 consent parity with system promotion (2174, which JOINs
   // intel_contribution_consent): an actor who WITHDREW consent must not keep
   // inflating the privacy-gate cohort for an existing claim. Keep only
-  // observations from actors with a currently-valid consent (enabled AND not
-  // withdrawn). Fail-soft/conservative in keeping with this module's design — a
-  // consent-query error leaves the consented set EMPTY (the count drops), it can
-  // never inflate a cohort.
-  const actorIds = [...new Set(freshObsAll.map((o) => o.actor_id).filter(Boolean))];
+  // observations from contributors with a currently-valid consent (enabled AND
+  // not withdrawn).
+  //
+  // THIS IS NO LONGER A JOIN, AND IT CANNOT BE ONE AGAIN. Migration 3002 replaces
+  // the account id stored in `actor_id` with a rotating contributor token whose
+  // pepper no application role can read, so `.in("user_id", actorIds)` against
+  // intel_contribution_consent stopped matching anything the day it lands — and,
+  // being a filter rather than an error, it would have returned ZERO ROWS
+  // WITHOUT FAILING. This read is where that becomes catastrophic rather than
+  // merely wrong: `evidenceComplete` is lowered on an ERROR, so an empty result
+  // is treated as a measured fact, the cohort collapses to zero actors, and the
+  // privacy gate's suppression is PUBLISHED — "no live intelligence" asserted
+  // over a venue a consenting cohort had just described. lib/intelConsent's
+  // readConsentedContributors is the only thing in this process that can answer
+  // the question on either schema, and it reports "could not tell" as a
+  // FAILURE, distinct from "nobody consented".
+  //
+  // The two outcomes must never be collapsed: an `ok:true` answer with an empty
+  // set means the database was asked and said nobody, and the suppression it
+  // produces is honest; anything else withholds.
+  const actorIds = [...new Set(freshObsAll.map((o) => o.actor_id).filter(Boolean))] as string[];
+  const consentAnswer = await readConsentedContributors(sc, actorIds);
   let consentedActors = new Set<string>();
-  if (actorIds.length > 0) {
-    const { data: consentRows, error: consentErr } = await sc
-      .from("intel_contribution_consent")
-      .select("user_id")
-      .in("user_id", actorIds)
-      .eq("enabled", true)
-      .is("withdrawn_at", null);
-    if (consentErr) {
-      // A CONSENT READ THAT FAILED IS NOT A CONSENT THAT WAS GIVEN, and it is
-      // not a consent that was refused either. Emptying the set (the old
-      // behaviour) at least never inflated a cohort, but it did publish the
-      // resulting suppression as a fact. Withhold instead.
-      evidenceComplete = false;
-      logger.warn({ err: consentErr, claim: claim.id }, "intelProjectionAggregator: contribution-consent read failed; claim will be withheld");
-    }
-    consentedActors = new Set(((consentRows as any[]) ?? []).map((r) => r.user_id as string));
+  if (!consentAnswer.ok) {
+    // A CONSENT READ THAT FAILED IS NOT A CONSENT THAT WAS GIVEN, and it is
+    // not a consent that was refused either. Emptying the set (the old
+    // behaviour) at least never inflated a cohort, but it did publish the
+    // resulting suppression as a fact. Withhold instead.
+    evidenceComplete = false;
+    logger.warn(
+      { reason: consentAnswer.reason, detail: consentAnswer.detail, claim: claim.id },
+      "intelProjectionAggregator: contribution-consent could not be established; claim will be withheld",
+    );
+  } else {
+    consentedActors = consentAnswer.consented;
   }
   const freshObs = freshObsAll.filter((o) => o.actor_id && consentedActors.has(o.actor_id));
   const distinctActors = new Set(freshObs.map((o) => o.actor_id)).size;
@@ -660,6 +674,9 @@ export async function assembleClaimInput(sc: SupabaseClient, claim: ClaimRow, no
     // Replay inputs + lineage (I1).
     freshness: { ageSeconds, ttlSeconds: ttl },
     inputClaimVersions,
+    // 3311 forward provenance: the fresh, CONSENTED observations this input was
+    // assembled from — the same `obsIds` the independence read was keyed on.
+    inputObservationIds: obsIds,
     candidateLineage,
     // §10 conflict state, persisted on the snapshot (intel_state_snapshots.
     // conflict_state, migration 2275) so the read path can suppress the strong

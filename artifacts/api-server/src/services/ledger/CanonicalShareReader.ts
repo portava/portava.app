@@ -32,18 +32,21 @@
  *
  * RUNTIME EFFECT: NONE today. No route calls it; it is the read DV-64 names,
  * and the reconciliation it performs is the one the portava-ci rehearsal runs
- * in SQL.
+ * in SQL. Since 3385 the view projects THREE ledgers and the independent
+ * per-ledger read below reads all three (census-discovery §52).
  */
 import {
   CREATOR_SHARE_LEDGER,
   type CanonicalShareRow,
   type CreatorShare,
+  type CreatorEarningEntryRowLike,
   type CreatorShareLedgerViewRow,
   type IntelRewardLedgerRowLike,
   type Reconciliation,
   type RentBuddyEarningsEntryRowLike,
   creatorShares,
   fromViewRow,
+  projectCreatorEarningEntryRow,
   projectEarningsEntryRow,
   projectRewardLedgerRow,
   reconcile,
@@ -51,6 +54,7 @@ import {
 
 const REWARD_LEDGER = "intel_reward_ledger";
 const EARNINGS_ENTRIES = "rent_buddy_earnings_entries";
+const CREATOR_EARNING_ENTRIES = "creator_earning_entries";
 
 /** PostgREST's own ceiling is 1000; this stays under it and is overridable. */
 export const DEFAULT_PAGE_SIZE = 500;
@@ -73,13 +77,19 @@ async function readAll<T>(
   sc: any,
   relation: string,
   columns: string,
-  orderBy: string,
+  orderBy: string | readonly string[],
   pageSize: number,
   narrow?: (q: any) => any,
 ): Promise<ReadResult<T[]>> {
   const out: T[] = [];
+  // The order must be a UNIQUE key. On the view `source_entry_id` alone is not:
+  // an intel_reward_ledger row projects twice (qiu, credit) under one id, and
+  // rows tied on the sort key may come back in a different order on the next
+  // page's query — one skipped, one read twice (census-discovery §52).
+  const keys = typeof orderBy === "string" ? [orderBy] : orderBy;
   for (let from = 0; ; from += pageSize) {
-    let q = sc.from(relation).select(columns).order(orderBy, { ascending: true });
+    let q = sc.from(relation).select(columns);
+    for (const k of keys) q = q.order(k, { ascending: true });
     if (narrow) q = narrow(q);
     const { data, error } = await q.range(from, from + pageSize - 1);
     if (error) return fail(error);
@@ -113,7 +123,7 @@ export async function readCanonicalShareRows(
 ): Promise<ReadResult<CanonicalShareRow[]>> {
   const page = opts.pageSize ?? DEFAULT_PAGE_SIZE;
   const r = await readAll<CreatorShareLedgerViewRow>(
-    sc, CREATOR_SHARE_LEDGER, VIEW_COLUMNS, "source_entry_id", page,
+    sc, CREATOR_SHARE_LEDGER, VIEW_COLUMNS, ["source_ledger", "source_entry_id", "unit_kind"], page,
   );
   if (!r.ok) return r;
   try {
@@ -155,12 +165,28 @@ export async function readPerLedgerShareRows(
   );
   if (!entries.ok) return entries;
 
+  // The third ledger (2921), which 3385 added to the view. Read here too, or the
+  // reconciliation would report every one of its rows as an entry the view
+  // INVENTED. A database where 2921 is not applied has no such rows, and only
+  // that exact case (the relation does not exist) reads as empty; any other
+  // failure refuses the whole call, as every other read here does.
+  const creatorEntries = await readAll<CreatorEarningEntryRowLike>(
+    sc, CREATOR_EARNING_ENTRIES,
+    "id,creator_type,attribution_id,account,entry_reason,amount_minor,currency," +
+    "cash_settled_minor,rule_version,beneficiary_user_id,reverses_entry_id,occurred_at",
+    "id", page,
+  );
+  if (!creatorEntries.ok && !/42P01|does not exist|could not find the table/i.test(creatorEntries.detail)) {
+    return creatorEntries;
+  }
+
   try {
     return {
       ok: true,
       value: [
         ...rewards.value.flatMap(projectRewardLedgerRow),
         ...entries.value.flatMap(projectEarningsEntryRow),
+        ...(creatorEntries.ok ? creatorEntries.value.flatMap(projectCreatorEarningEntryRow) : []),
       ],
     };
   } catch (e) {

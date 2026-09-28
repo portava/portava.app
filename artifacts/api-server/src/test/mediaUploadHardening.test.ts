@@ -33,7 +33,7 @@ function rawReq(method: string, path: string, body: Buffer | null, contentType: 
     const url = new URL(path, base);
     const headers: Record<string, string> = { authorization: `Bearer ${TOKEN}`, "content-type": contentType };
     if (body) headers["content-length"] = String(body.length);
-    const r = http.request({ hostname: url.hostname, port: Number(url.port), path: url.pathname, method, headers }, (res) => {
+    const r = http.request({ hostname: url.hostname, port: Number(url.port), path: url.pathname, method, headers, agent: false }, (res) => { // agent:false — never a pooled keep-alive socket the server has already destroyed (census-media §28.12)
       let raw = ""; res.on("data", (c) => (raw += c));
       res.on("end", () => { let p: any; try { p = JSON.parse(raw); } catch { p = raw; } resolve({ status: res.statusCode ?? 0, body: p }); });
     });
@@ -268,8 +268,35 @@ describe("POST /api/media/upload — hardening", () => {
       Buffer.from([0, 0, 0, 24]), Buffer.from("ftypisom"),
       Buffer.alloc(101 * 1024 * 1024, 1),
     ]);
-    const r = await rawReq("POST", "/api/media/upload", bigVideo, "video/mp4");
-    assert.equal(r.body.error, "invalid_payload");
+    // census-media §28.7: the body is now read BOUNDED — the server answers 400
+    // and stops reading the moment the largest per-kind ceiling is passed, so a
+    // client still writing may see the socket reset before it reads the answer.
+    // Either outcome is a refusal; what must never happen is an upload.
+    const r = await rawReq("POST", "/api/media/upload", bigVideo, "video/mp4").catch((e: any) => ({ status: 0, body: { error: e?.code } }));
+    assert.ok(r.body.error === "invalid_payload" || r.body.error === "ECONNRESET" || r.body.error === "EPIPE", `refused, got ${JSON.stringify(r.body)}`);
+    assert.equal(client._uploads.length, 0);
+  });
+
+  it("authenticates BEFORE reading the body: an unauthenticated caller is refused without the server waiting for its bytes", async () => {
+    // Declares 200 MB, sends 16 bytes and never ends the body. Before §28.7 the
+    // route buffered until 'end' (which never comes) and only then authenticated,
+    // so this request hung; now the 401 comes back at once.
+    const client = makeClient();
+    setClients(client);
+    const url = new URL("/api/media/upload", base);
+    const res = await new Promise<{ status: number; body: any }>((resolve, reject) => {
+      const r = http.request({ agent: false, // census-media §28.12: a fresh connection, never a stale pooled one
+        hostname: url.hostname, port: Number(url.port), path: url.pathname, method: "POST",
+        headers: { "content-type": "image/jpeg", "content-length": String(200 * 1024 * 1024) },
+      }, (resp) => {
+        let raw = ""; resp.on("data", (c) => (raw += c));
+        resp.on("end", () => { let b: any; try { b = JSON.parse(raw); } catch { b = raw; } resolve({ status: resp.statusCode ?? 0, body: b }); });
+      });
+      r.on("error", (e: any) => reject(new Error(`connection error before any answer: ${e?.code ?? e} (reusedSocket=${(r as any).reusedSocket}) — census-media §28.12`)));
+      r.write(Buffer.alloc(16, 1));
+      setTimeout(() => { r.destroy(); reject(new Error("no answer within 3 s — the route waited for the body before authenticating")); }, 3000).unref();
+    });
+    assert.equal(res.status, 401);
     assert.equal(client._uploads.length, 0);
   });
 
@@ -279,9 +306,9 @@ describe("POST /api/media/upload — hardening", () => {
   // to storage and returns metadata for the client to use when writing its own
   // post_media row.  For IMAGES the server always measures dimensions
   // (processImage() — reject on failure), so width/height are never null when
-  // this route succeeds.  For VIDEOS there is no server-side transcode tier, so
-  // the route returns width=null, height=null — the client must obtain
-  // dimensions itself before writing a 'ready' row.
+  // this route succeeds.  For VIDEOS they are READ from the container (§37,
+  // lib/videoProbe.ts — see mediaVideoTransport.test.ts); a container that
+  // states no video track, like the stub below, still yields width=null.
   //
   // The authoritative enforcement is the DB-level CHECK constraint added by
   // migration 2088 (post_media_ready_has_dimensions): ANY post_media INSERT or
@@ -290,7 +317,7 @@ describe("POST /api/media/upload — hardening", () => {
   // any future path that might use this route's storage URL directly.  This
   // test confirms the route's null-dimension contract so the constraint stays
   // as the only guard needed.
-  it("video upload: route returns null width/height — dimensions not server-measured (DB constraint is the backstop)", async () => {
+  it("video upload: a container stating no video track returns null width/height (DB constraint is the backstop)", async () => {
     const client = makeClient();
     setClients(client);
     // Minimal valid ftyp box recognised by sniffMedia() as video/mp4.
@@ -304,8 +331,8 @@ describe("POST /api/media/upload — hardening", () => {
     const r = await rawReq("POST", "/api/media/upload", mp4Stub, "video/mp4");
     assert.equal(r.status, 201, `expected 201, got ${r.status}: ${JSON.stringify(r.body)}`);
     assert.equal(r.body.processed, false, "videos must not report processed=true");
-    assert.equal(r.body.width,  null, "video width must be null — no server-side measurement");
-    assert.equal(r.body.height, null, "video height must be null — no server-side measurement");
+    assert.equal(r.body.width,  null, "no video track → nothing to measure → null, never a guess");
+    assert.equal(r.body.height, null, "no video track → nothing to measure → null, never a guess");
     // One storage upload (the video bytes); no thumbnail or feed variant for videos.
     assert.equal(client._uploads.length, 1, "only the raw video should be stored");
   });
@@ -489,7 +516,7 @@ describe("POST /api/postcards/:id/media/:mediaId/complete — null-dim guard rej
           return {
             async upload() { return { data: null, error: null }; },
             getPublicUrl() { return { data: { publicUrl: "" } }; },
-            async download() { return { data: null, error: { message: "not implemented" } }; },
+            async download() { return { data: { arrayBuffer: async () => new Uint8Array(AUDIO_ONLY_M4A).buffer }, error: null }; }, // census-media §37.8: the stored container states NO display size, so neither source gives one
             // /complete range-reads the uploaded video's first 64 bytes to
             // verify them, since the client wrote straight to Storage and the
             // declared fileSizeBytes proves nothing. The video here is VALID —
@@ -556,23 +583,23 @@ describe("POST /api/postcards/:id/media/:mediaId/complete — null-dim guard rej
       "DB update must not be attempted when width/height are null — app guard fires first");
   });
 
-  it("rejects dimensionless video WITHOUT any storage round-trip — cheap check runs first", async () => {
-    // ORDERING REGRESSION TEST. The case above cannot see ordering: it mocks
-    // createSignedUrl to succeed, so the dimension guard is reached whether the
-    // storage verification runs before it or after it. That is precisely how
-    // the ordering defect survived — the verification was added ahead of the
-    // guard, and on a dimensionless payload the request paid a signed URL and a
-    // range read only to fail in the catch with the generic
-    // "Video could not be verified. Please re-upload.", losing the specific
-    // message the assertion above was deliberately written for.
+  it("a dimensionless video is PROBED, not refused on its face; with the store down the answer is the store's (census-media §37.8)", async () => {
+    // EXPECTATION CHANGED ON PURPOSE (census-media §37.8). This test used to be
+    // "rejects dimensionless video WITHOUT any storage round-trip": /complete
+    // refused a payload with no width/height before reading storage, so the
+    // specific dimension message stayed reachable with the store down. That was
+    // right while the client's figure was the only source of a video's size.
+    // Since census-media §22, /complete probes the stored container, so a
+    // client that sends no dimensions for a video whose container states them
+    // was refused for a size the server reads itself.
     //
-    // Here storage is armed to EXPLODE if touched. A dimensionless video must
-    // be rejected before anything reaches the store, with the specific message.
-    // If someone moves the verification back ahead of the guard, this fails on
-    // the storageTouched assertion; if someone deletes the pre-check, it fails
-    // on the message. Fail-closed on storage is not weakened by any of this —
-    // a payload WITH dimensions still goes through full byte verification, and
-    // the case above still covers that path.
+    // The new rule: refuse only when NEITHER source states a size (the case
+    // above, whose stored container states none). So a dimensionless payload
+    // MUST reach storage, and with storage failing the size is genuinely
+    // unknown: the answer is the retryable storage failure, never the dimension
+    // message, and nothing is written. Removing the probe-first order, or
+    // restoring the pre-check, turns this red on the storageTouched assertion.
+    // Fail-closed on storage is unchanged: nothing is marked ready here.
     let storageTouched = false;
     const client: any = makePostcardsClient();
     const realStorageFrom = client.storage.from.bind(client.storage);
@@ -582,11 +609,11 @@ describe("POST /api/postcards/:id/media/:mediaId/complete — null-dim guard rej
         ...handle,
         async createSignedUrl() {
           storageTouched = true;
-          throw new Error("storage must not be touched for a locally-rejectable payload");
+          throw new Error("the store is down");
         },
         async download() {
           storageTouched = true;
-          throw new Error("storage must not be touched for a locally-rejectable payload");
+          throw new Error("the store is down");
         },
       };
     };
@@ -598,14 +625,14 @@ describe("POST /api/postcards/:id/media/:mediaId/complete — null-dim guard rej
       { mimeType: "video/mp4", fileSizeBytes: 1024, width: null, height: null },
     );
 
-    assert.equal(storageTouched, false,
-      "a payload rejectable from the request body alone must not reach storage");
-    assert.equal(r.status, 400, `expected 400, got ${r.status}: ${JSON.stringify(r.body)}`);
-    assert.equal(r.body.error, "invalid_payload");
-    assert.match(
+    assert.equal(storageTouched, true,
+      "a dimensionless video must be probed — its container may state the size");
+    assert.equal(r.status, 503, `expected the storage failure (503), got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.error, "degraded_unavailable");
+    assert.doesNotMatch(
       String(r.body.message ?? r.body.detail ?? JSON.stringify(r.body)),
       /width.*height|height.*width/i,
-      "the specific dimension message must survive — not the generic verification failure",
+      "an unknown size is not reported as a missing one",
     );
     assert.equal(client._wasUpdateAttempted(), false);
   });
@@ -763,3 +790,59 @@ describe("a story signed URL cannot outlive the story", () => {
     );
   });
 });
+
+// census-media §28.10 — a refused upload is refused BEFORE its body is read. Each request
+// declares 200 MB, sends 16 bytes and never ends the body, so an answer can only come from a
+// route that decided without waiting for the bytes (the same shape as the §28.7 case).
+function refusedBeforeBody(contentType: string): Promise<{ status: number; body: any }> {
+  const url = new URL("/api/media/upload", base);
+  return new Promise((resolve, reject) => {
+    const r = http.request({ agent: false, // census-media §28.12: a fresh connection, never a stale pooled one
+      hostname: url.hostname, port: Number(url.port), path: url.pathname, method: "POST",
+      headers: { authorization: `Bearer ${TOKEN}`, "content-type": contentType, "content-length": String(200 * 1024 * 1024) },
+    }, (resp) => {
+      let raw = ""; resp.on("data", (c) => (raw += c));
+      resp.on("end", () => { let b: any; try { b = JSON.parse(raw); } catch { b = raw; } resolve({ status: resp.statusCode ?? 0, body: b }); });
+    });
+    r.on("error", (e: any) => reject(new Error(`connection error before any answer: ${e?.code ?? e} (reusedSocket=${(r as any).reusedSocket}) — census-media §28.12`)));
+    r.write(Buffer.alloc(16, 1));
+    setTimeout(() => { r.destroy(); reject(new Error("no answer within 3 s — the route waited for the body before refusing")); }, 3000).unref();
+  });
+}
+
+describe("census-media §28.10 — /media/upload refuses before reading the body", () => {
+  it("the kill switch answers feature_disabled without waiting for the bytes", async () => {
+    const client = makeClient({ flags: { disable_media_uploads: true } });
+    setClients(client);
+    const r = await refusedBeforeBody("image/jpeg");
+    assert.equal(r.body.error, "feature_disabled");
+    assert.equal(client._uploads.length, 0);
+  });
+
+  it("an unsupported declared type is refused without waiting for the bytes", async () => {
+    const client = makeClient();
+    setClients(client);
+    const r = await refusedBeforeBody("application/x-msdownload");
+    assert.equal(r.status, 400);
+    assert.equal(r.body.error, "invalid_payload");
+    assert.equal(client._uploads.length, 0);
+  });
+
+  it("CONTROL: an admitted upload still stores, and the budget is charged once, not twice", async () => {
+    setClients(makeClient());
+    _resetRateLimit("media_upload", USER_ID);
+    const jpeg = await sharp({ create: { width: 8, height: 8, channels: 3, background: "#222" } }).jpeg().toBuffer();
+    const r = await rawReq("POST", "/api/media/upload", jpeg, "image/jpeg");
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    // One upload must leave the bucket at 1: a probe with limit 2 is then still allowed.
+    // Charged twice (before AND after the read), the bucket is at 2 and the probe is refused.
+    assert.equal(checkRateLimit("media_upload", USER_ID, 2, UPLOAD_RATE_WINDOW_MS).allowed, true, "the upload budget was charged more than once");
+    _resetRateLimit("media_upload", USER_ID);
+  });
+});
+
+// Imported at the TAIL so no cited line above moves (census-media §28.10); ESM hoists imports.
+import { checkRateLimit, _resetRateLimit } from "../lib/rateLimit.js";
+import { UPLOAD_RATE_WINDOW_MS } from "../lib/mediaPipeline.js";
+// census-media §37.8: a real container that states no display size (an audio-only M4A).
+import { AUDIO_ONLY_M4A } from "./videoProbeFixtures.js";

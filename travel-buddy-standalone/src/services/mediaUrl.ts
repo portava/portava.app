@@ -23,7 +23,7 @@
  */
 
 import { useState, useEffect, useMemo } from 'react';
-import { batchSignUrls } from '../lib/batchSignMedia.ts';
+import { batchSignUrls, lastSignOutcome } from '../lib/batchSignMedia.ts';
 
 /** The two Supabase storage buckets that are private. */
 export const PRIVATE_BUCKETS: string[] = ['post-media', 'profile-media'];
@@ -98,7 +98,46 @@ export async function hydrateMediaUrls(
     result[url] = signedUrl && signedUrl !== url ? signedUrl : null;
   }
 
+  const unsigned = privateBucketUrls.filter((u) => result[u] === null);
+  if (unsigned.length > 0) await applyOfflineCopies(unsigned, result);
+
   return result;
+}
+
+/**
+ * §39 offline / degraded mode, at the one place every surface resolves media.
+ *
+ * For a private reference that did NOT come back signed, the reason decides:
+ *   • the sign endpoint was UNREACHABLE → the copy the offline media cache
+ *     stored for this account (services/media/mediaCache.ts), if any, is
+ *     served as a local file — a picture from when it was last authorized,
+ *     labelled "Cached · updated …" by the surface that shows its projection;
+ *   • the server DENIED it → whatever the cache holds of it is deleted now. A
+ *     device copy never outlives a refusal the device has been told about.
+ * Anything else (never attempted, no session) resolves to null exactly as
+ * before. Never throws: a cache that cannot answer is a cache miss.
+ */
+async function applyOfflineCopies(refs: string[], result: Record<string, string | null>): Promise<void> {
+  try {
+    const { getMediaCache } = await import('./media/mediaCache.ts');
+    const cache = await getMediaCache();
+    for (const ref of refs) {
+      const outcome = lastSignOutcome(ref);
+      if (outcome === 'unreachable') {
+        result[ref] = await cache.localFileFor(ref);
+      } else if (outcome === 'denied') {
+        void cache.forgetRef(ref);
+      }
+    }
+  } catch {
+    // no cache available — the refs stay null, the designed fallback
+  }
+}
+
+/** True for a reference into one of the PRIVATE buckets (it must be signed to load). */
+export function isPrivateMediaRef(url: string): boolean {
+  const bucket = extractBucket(url);
+  return bucket !== null && PRIVATE_BUCKETS.includes(bucket);
 }
 
 /**

@@ -205,15 +205,18 @@ describe('DiscoveryEventPostsRail — a refused feed is distinguishable on scree
     expect(queryByTestId('discovery-event-posts-rail')).toBeNull();
   });
 
-  it('CONTROL: a transport failure is not a refusal and still renders nothing', async () => {
-    // `ok: false` is the network dying, not the server declining to look. The
-    // rail has never claimed anything about it and must not start.
+  it('CONTROL (restated §94.10, D-W11X2-11): a transport failure is not a refusal, and not silence either', async () => {
+    // `ok: false` is the network dying, not the server declining to look, so it
+    // is still NOT the refused state. Until §94.10 it rendered nothing, which is
+    // exactly what a quiet city renders: a failure that looked like an absence.
+    // Register D-W11X2-11 (under D-W10-S1-2) decided it says it could not check.
     mockGetDiscoveryFeed.mockResolvedValue({ ok: false as const, error: 'Network error' });
 
-    const { queryByTestId } = await render(<DiscoveryEventPostsRail destination="Miami" />);
-    await waitFor(() => expect(mockGetDiscoveryFeed).toHaveBeenCalled());
+    const { queryByTestId, findByTestId } = await render(<DiscoveryEventPostsRail destination="Miami" />);
+    expect(await findByTestId('discovery-event-posts-rail-unavailable')).toBeTruthy();
     expect(queryByTestId('discovery-event-posts-rail-refused')).toBeNull();
     expect(queryByTestId('discovery-event-posts-rail')).toBeNull();
+    expect(mockUseRankOutcome).toHaveBeenLastCalledWith({ surface: 'discovery', sessionId: null });
   });
 
   it('CONTROL: a PARTIAL refusal that served posts renders the posts, not the refused state', async () => {

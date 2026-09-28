@@ -465,33 +465,33 @@ describe("GET /api/discovery/search — buddy launch-eligibility gate", () => {
   }
 
   it("flag row ABSENT: legacy behaviour — a verified buddy is returned (the seed's world)", async () => {
-    setup({ profiles: [buddyRow], feature_flags: [] });
+    setup({ profiles: [buddyRow], rent_buddy_profiles: [eligibleMarketplaceRow(BUDDY)], feature_flags: [] });
     assert.deepEqual(await buddyIds("buddies"), [BUDDY]);
   });
 
   it("gate explicitly FALSE: legacy behaviour, even while the marketplace is unlaunched", async () => {
-    setup({ profiles: [buddyRow], feature_flags: [gateOff, unlaunched] });
+    setup({ profiles: [buddyRow], rent_buddy_profiles: [eligibleMarketplaceRow(BUDDY)], feature_flags: [gateOff, unlaunched] });
     assert.deepEqual(await buddyIds("buddies"), [BUDDY]);
   });
 
   it("gate ON + marketplace unlaunched: buddies withheld; the same person still appears as a traveler", async () => {
-    setup({ profiles: [buddyRow], feature_flags: [gateOn, unlaunched] });
+    setup({ profiles: [buddyRow], rent_buddy_profiles: [eligibleMarketplaceRow(BUDDY)], feature_flags: [gateOn, unlaunched] });
     assert.deepEqual(await buddyIds("buddies"), [], "an unlaunched marketplace has no buddy candidates");
     assert.deepEqual(await buddyIds("travelers"), [BUDDY], "the gate is about the BUDDY role, not the person");
   });
 
   it("gate ON + marketplace flag ABSENT: withheld — absence of a launch is not a launch", async () => {
-    setup({ profiles: [buddyRow], feature_flags: [gateOn] });
+    setup({ profiles: [buddyRow], rent_buddy_profiles: [eligibleMarketplaceRow(BUDDY)], feature_flags: [gateOn] });
     assert.deepEqual(await buddyIds("buddies"), []);
   });
 
   it("gate ON + marketplace launched: buddies returned", async () => {
-    setup({ profiles: [buddyRow], feature_flags: [gateOn, launched] });
+    setup({ profiles: [buddyRow], rent_buddy_profiles: [eligibleMarketplaceRow(BUDDY)], feature_flags: [gateOn, launched] });
     assert.deepEqual(await buddyIds("buddies"), [BUDDY]);
   });
 
   it("feature_flags UNREADABLE: the gate fails toward legacy (buddies unchanged)", async () => {
-    setup({ profiles: [buddyRow], feature_flags: [gateOn, unlaunched] }, ["feature_flags"]);
+    setup({ profiles: [buddyRow], rent_buddy_profiles: [eligibleMarketplaceRow(BUDDY)], feature_flags: [gateOn, unlaunched] }, ["feature_flags"]);
     assert.deepEqual(await buddyIds("buddies"), [BUDDY],
       "an unreadable GATE must not switch behaviour — that is the capability-flag polarity");
   });
@@ -1789,3 +1789,19 @@ describe("GET /api/discovery/search — events carry tripFit when a trip is in c
     assert.equal("tripFit" in results[0].metadata, false);
   });
 });
+
+// census-discovery §53 (B03): a buddy is suggested only when the MARKETPLACE row
+// says it may be — listed, unrestricted, and offering at least one category it
+// is approved for (lib/discoveryPeopleBuddy.ts). The launch-gate suite above pins
+// the LAUNCH leg, so its buddy carries an eligible marketplace row and the launch
+// gate stays the only variable; the eligibility legs are pinned in
+// src/test/discoveryPeopleBuddy.test.ts. Declared at the end (hoisted) so the
+// anchored citations into this file do not move.
+function eligibleMarketplaceRow(userId: string) {
+  return {
+    id: "ff000000-0000-4000-a000-00000000b0b1", user_id: userId, categories: ["city"],
+    category_approvals: {}, nightlife_admin_approved: false, status: "active", admin_status: "active",
+    risk_hold: false, risk_review_status: "normal", verification_status: "unverified",
+    id_verified: false, phone_verified: false,
+  };
+}

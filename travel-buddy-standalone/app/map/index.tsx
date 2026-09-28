@@ -31,7 +31,7 @@ import { MapFloatingControls } from '../../src/components/map/MapFloatingControl
 import { pruneBaseMapRegions } from '../../src/features/map/cache/offlineBaseMap.ts';
 import { AskCompassBar } from '../../src/components/map/AskCompassBar.tsx';
 import { useLocationContext } from '../../src/context/LocationContext.tsx';
-import { getDiscoveryPlaces } from '../../src/services/discovery.ts';
+import { getDiscoveryPlaces } from '../../src/services/discovery.ts'; import { isPartialEmpty, listPartialNotice } from '../../src/services/discoveryCoverageNotice.ts';
 import type { DiscoveryPlace, DiscoveryCategory } from '../../src/services/discovery.ts';
 import { getPassportMap } from '../../src/services/passportStamps.ts';
 import type { PassportMapMarker } from '../../src/services/passportStamps.ts';
@@ -66,7 +66,7 @@ import { IntentSheet } from '../../src/components/map/IntentSheet.tsx';
 import { LayersSheet, loadLayerPreferences } from '../../src/components/map/LayersSheet.tsx';
 import { LivePlaceSheet } from '../../src/components/map/LivePlaceSheet.tsx';
 import { WhyShownSheet } from '../../src/components/map/WhyShownSheet.tsx';
-import { MapContributionSheet } from '../../src/components/map/MapContributionSheet.tsx';
+import { MapContributionSheet } from '../../src/components/map/MapContributionSheet.tsx'; import { usePhotoEvidenceCoverage } from '../../src/hooks/usePhotoEvidenceCoverage.ts';
 import { MapBottomActions } from '../../src/components/map/MapBottomActions.tsx';
 import { LivePulseCard } from '../../src/components/map/LivePulseCard.tsx';
 import { MapHeader, mapHeaderStackOffset } from '../../src/components/map/MapHeader.tsx';
@@ -719,7 +719,7 @@ function FullScreenMapScreenInner() {
    * artifact is evidence for an observation, not a position, and
    * `intel_evidence` must not become a second location store.
    */
-  const requestContributionMedia = useCallback(
+  const pickContributionMedia = useCallback( // offered to the sheet only when photo evidence is covered — see `requestContributionMedia` below
     async (kind: MediaKind): Promise<MapMediaAsset | null> => {
       const assets = await pickMedia({
         title: kind === 'video' ? 'Add video' : 'Add photo',
@@ -789,7 +789,7 @@ function FullScreenMapScreenInner() {
    * such key and the entry points stay hidden — which is the correct direction.
    */
   const contributionsEnabled =
-    isFlagEnabled('map_contributions_enabled') && isFlagEnabled('intel_capture_quick_signal');
+    isFlagEnabled('map_contributions_enabled') && isFlagEnabled('intel_capture_quick_signal'); const photoEvidenceCovered = usePhotoEvidenceCoverage(contributionsEnabled); const requestContributionMedia = photoEvidenceCovered ? pickContributionMedia : undefined; // census-map §45.12: no photo step, so no upload, unless the server says this account's consent covers photos (fail-closed)
 
   const {
     enabledLayers,
@@ -1066,7 +1066,7 @@ function FullScreenMapScreenInner() {
   // surface meaningful feedback instead of a silent blank pin layer.
   const [places, setPlaces] = useState<DiscoveryPlace[]>([]);
   const [placesLoading, setPlacesLoading] = useState(false);
-  const [placesError, setPlacesError] = useState<string | null>(null);
+  const [placesError, setPlacesError] = useState<string | null>(null); const [placesPartial, setPlacesPartial] = useState(false); // census-discovery §80 (DV-83): the layer's answer was PARTIAL
   // Increment to re-trigger the places fetch (retry mechanism).
   const [placesRetryCount, setPlacesRetryCount] = useState(0);
   // Tracks whether at least one places fetch has settled (success or error).
@@ -1137,20 +1137,20 @@ function FullScreenMapScreenInner() {
       // the error card with a retry, which is the right offer for a transient
       // read failure. `partial` is NOT routed here: the places it carries are
       // real, and drawing them beats refusing them.
-      if (res.ok && res.data?.refusal?.coverage === 'nothing') {
+      if (res.ok && (res.data?.refusal?.coverage === 'nothing' || isPartialEmpty(res.data?.refusal, res.data?.places))) { setPlacesPartial(false); // §80: a partial with no places is not a zero-results map either
         setPlaces([]);
         setPlacesError('Could not read nearby places — this is not a statement about what is here.');
       } else if (res.ok && Array.isArray(res.data?.places)) {
-        setPlaces(res.data.places);
+        setPlaces(res.data.places); setPlacesPartial(res.data.refusal?.coverage === 'partial');
         setPlacesError(null);
       } else {
-        setPlaces([]);
+        setPlaces([]); setPlacesPartial(false);
         setPlacesError((!res.ok && res.error) ? res.error : 'Could not load nearby places');
       }
     }).catch((e: unknown) => {
       if (cancelled) return;
       placesFetchedRef.current = true;
-      setPlaces([]); // clear any stale pins so the error card is visible
+      setPlaces([]); setPlacesPartial(false); // clear any stale pins so the error card is visible
       setPlacesLoading(false);
       setPlacesError(e instanceof Error ? e.message : 'Network error');
     });
@@ -2674,7 +2674,7 @@ function FullScreenMapScreenInner() {
           </Text>
         </View>
       ) : null}
-
+      {legacyPlacesActive && placesPartial && places.length > 0 ? (<View style={[s.cityBanner, showCityLocationBanner ? { top: 26 } : null]} pointerEvents="none" testID="map-places-partial"><AlertTriangle size={12} color="#fff" /><Text style={s.cityBannerText}>{listPartialNotice('places')}</Text></View>) : null}
       {/* Passport mode banner */}
       {mode === 'passport' ? (
         <View style={s.modeBanner} pointerEvents="none">

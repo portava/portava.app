@@ -30,7 +30,7 @@
  *          LLM calls (Compass): protected gems excluded entirely.
  */
 import { Router } from "express";
-import { randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto"; import { recordGemContributionSignal, recordGemAcceptedSignal, recordGemArrivalIfAttributable } from "../lib/mediaAnalytics.js";
 import { z } from "zod";
 import { requireUser, sendError, canEditPlan } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
@@ -85,9 +85,9 @@ import {
   deriveGemProjection,
 } from "../services/hiddenGems/HiddenGemContributionService.js";
 import { GEM_CONTRIBUTION_TYPES } from "../lib/hiddenGemState.js";
-import { logDiscoveryServe, DiscoveryServePoint } from "../lib/discoveryServeLog.js";
+import { logDiscoveryServe, DiscoveryServePoint } from "../lib/discoveryServeLog.js";  import { stampServedRecommendations, exposureForResponse, serveClockOf } from "../lib/discoveryRecommendationRecord.js";  // census-discovery §48 — serve point 11's response carries the ids its serve-log rows do
 
-import { isAdmin } from "../lib/requireAdmin.js";
+import { isAdmin } from "../lib/requireAdmin.js";  import { layoverGemWindow, gemsUnderLayoverMode, certifiedWindowKeys, LAYOVER_WINDOW_UNREADABLE_MESSAGE } from "../lib/discoveryLayoverGems.js";  // census-discovery §56 (A13/A14): the layover window is the certified snapshot's
 
 const router = Router();
 
@@ -197,7 +197,7 @@ const checkinSchema = z.object({
 // §16.3 structured gem contribution — an observation, never a canonical flip.
 const contributionSchema = z.object({
   contributionType: z.enum(GEM_CONTRIBUTION_TYPES),
-  notes: z.string().max(500).optional().nullable(),
+  notes: z.string().max(500).optional().nullable(), originMediaId: z.string().uuid().optional().nullable(),
 });
 
 // ── Helper: resolve caller ID from bearer token (optional auth) ───────────────
@@ -398,7 +398,7 @@ router.post("/hidden-gems", async (req, res) => {
   try {
     const gem = await submitGem(sc, { ...parsed.data, submittedBy: user.id });
     const safe = await applyGemPrivacy(gem, sc, user.id);
-    res.status(201).json({ ok: true, gem: safe });
+    res.status(201).json({ ok: true, gem: safe }); recordGemContributionSignal(sc, { userId: user.id, gemId: String((gem as any).id), kind: "gem_submission" });
   } catch (err: any) {
     sendError(res, "db_error", err.message);
   }
@@ -422,10 +422,10 @@ router.get("/hidden-gems", async (req, res) => {
   if (req.query.city) opts.city = req.query.city as string;
   if (req.query.neighborhood) opts.neighborhood = req.query.neighborhood as string;
   if (req.query.category) opts.category = req.query.category as string;
-  if (req.query.layoverSafe === "1") {
-    opts.layoverSafe = true;
-    if (req.query.availableMinutes) opts.minLayoverMinutes = parseInt(req.query.availableMinutes as string);
-  }
+  const layoverWindow = req.query.layoverSafe === "1" ? await layoverGemWindow(sc, callerId) : null;  // §56 (A14): see GET /hidden-gems/layover-safe below
+  if (layoverWindow?.kind === "refused") { sendError(res, "degraded_unavailable", LAYOVER_WINDOW_UNREADABLE_MESSAGE); return; }
+  if (layoverWindow) { opts.layoverSafe = true; if (layoverWindow.kind === "certified") opts.minLayoverMinutes = layoverWindow.minutes;
+    else if (req.query.availableMinutes) opts.minLayoverMinutes = parseInt(req.query.availableMinutes as string); }  // not in a layover: the caller's hypothetical, as before
   if (req.query.verificationLevel) opts.verificationLevel = req.query.verificationLevel as string;
   if (req.query.submittedBy)       opts.submittedBy = req.query.submittedBy as string;
 
@@ -518,7 +518,7 @@ router.get("/hidden-gems", async (req, res) => {
       return sendError(res, "db_error", err.message);
     }
   }
-
+  if (layoverWindow?.kind === "certified" && layoverWindow.minutes < 1) { res.json({ gems: [], total: 0 }); return; }  // §56: a certified window with no usable minutes admits nothing — never "no filter"
   try {
     // Use weighted discovery ranking (verif weight + saves + visits + vibe-tag match)
     const { discoverGems } = await import("../services/hiddenGems/HiddenGemDiscoveryService.js");
@@ -531,7 +531,7 @@ router.get("/hidden-gems", async (req, res) => {
       limit: opts.limit,
     });
     const rawGems = ranked.map((r) => r.gem);
-    const safe = await applyGemPrivacyBatch(rawGems, sc, callerId, callerTripId);
+    const gatedGems = await gemsUnderLayoverMode(sc, callerId, layoverWindow, await applyGemPrivacyBatch(rawGems, sc, callerId, callerTripId), "GET /hidden-gems"); if (!gatedGems.ok) { sendError(res, "degraded_unavailable", gatedGems.message); return; } const safe = gatedGems.gems;  // §56 (A14): in Layover mode, only the certified action universe
     const gemIds3 = (safe as any[]).map((g: any) => g.id as string);
     const [agg3, projections3] = await Promise.all([
       batchFetchGemAggregates(sc, gemIds3),
@@ -544,7 +544,7 @@ router.get("/hidden-gems", async (req, res) => {
       if (p) { base.gemState = p.gemState; base.gemConfidence = p.gemConfidence; }
       return base;
     });
-    res.json({ gems: enriched3, total: enriched3.length });
+    res.json({ gems: stampServedRecommendations(enriched3, exposureForResponse(res, callerId ?? null)), total: enriched3.length, ...certifiedWindowKeys(layoverWindow, gatedGems.summary) });  // §48 DV-40 — every served gem carries its exposure id, anonymous included
 
     // Serve point 11 — this route ranks (discoverGems: verification weight +
     // saves + visits + vibe-tag match) and served its results to users while
@@ -560,7 +560,7 @@ router.get("/hidden-gems", async (req, res) => {
     void logDiscoveryServe(sc, {
       userId:     callerId ?? "",
       servePoint: DiscoveryServePoint.HIDDEN_GEMS,
-      route:      "GET /hidden-gems",
+      route:      "GET /hidden-gems", ...serveClockOf(exposureForResponse(res, callerId ?? null)),  // §48 — the SAME exposure the response carries
       items:      enriched3.map((g: any) => ({ id: String(g.id), kind: "gem" as const })),
       context:    {
         city:         opts.city ?? null,
@@ -614,23 +614,23 @@ router.get("/hidden-gems/layover-safe", async (req, res) => {
     sendError(res, "feature_disabled"); return;
   }
 
-  const availableMinutes = parseInt(req.query.availableMinutes as string);
-  if (!Number.isFinite(availableMinutes) || availableMinutes < 1) {
+  // census-discovery §56 (A13/A14): in a LIVE layover the window is the certified snapshot's `usableMinutes` and the
+  // query figure is ignored — it can neither widen nor narrow it; only a caller who is in no layover states a hypothetical.
+  const callerId = await resolveCallerId(req, sc);
+  const window = await layoverGemWindow(sc, callerId);
+  if (window.kind === "refused") { sendError(res, "degraded_unavailable", LAYOVER_WINDOW_UNREADABLE_MESSAGE); return; }
+  const availableMinutes = window.kind === "certified" ? window.minutes : parseInt(req.query.availableMinutes as string);
+  if (window.kind === "stated" && (!Number.isFinite(availableMinutes) || availableMinutes < 1)) {
     sendError(res, "invalid_payload", "availableMinutes must be a positive integer");
     return;
   }
-
-  const callerId = await resolveCallerId(req, sc);
   const city = req.query.city as string | undefined;
-
   try {
-    const gems = await listGems(sc, {
-      city,
-      layoverSafe: true,
-      minLayoverMinutes: availableMinutes,
-    });
+    // A certified window with no usable minutes admits nothing — never "no filter", and never a 400 about the client.
+    const gems = availableMinutes < 1 ? [] : await listGems(sc, { city, layoverSafe: true, minLayoverMinutes: availableMinutes });
     const safe = await applyGemPrivacyBatch(gems, sc, callerId);
-    res.json({ gems: safe, total: safe.length, availableMinutes });
+    const gated = await gemsUnderLayoverMode(sc, callerId, window, safe, "GET /hidden-gems/layover-safe"); if (!gated.ok) { sendError(res, "degraded_unavailable", gated.message); return; }
+    res.json({ gems: gated.gems, total: gated.gems.length, availableMinutes, ...certifiedWindowKeys(window, gated.summary) });
   } catch (err: any) {
     sendError(res, "db_error", err.message);
   }
@@ -731,7 +731,7 @@ router.get("/hidden-gems/nearby", async (req, res) => {
       }),
     );
 
-    res.json({ ok: true, gems });
+    res.json({ ok: true, gems: stampServedRecommendations(gems, exposureForResponse(res, user.id)) });  // §48 DV-40 — every served gem carries its exposure id
 
     // Serve point 11 — same reasoning as GET /hidden-gems above; the `route`
     // field is what separates the two in the corpus. findNearbyGems ranks by
@@ -739,7 +739,7 @@ router.get("/hidden-gems/nearby", async (req, res) => {
     void logDiscoveryServe(sc, {
       userId:     user.id,
       servePoint: DiscoveryServePoint.HIDDEN_GEMS,
-      route:      "GET /hidden-gems/nearby",
+      route:      "GET /hidden-gems/nearby", ...serveClockOf(exposureForResponse(res, user.id)),  // §48 — the SAME exposure the response carries
       items:      gems.map((g: any) => ({ id: String(g.id), kind: "gem" as const })),
       // Never the caller's coordinates — spec §8: precise GPS is not logged.
       context:    { radiusKm: parsed.data.radiusKm, category: parsed.data.category ?? null },
@@ -783,7 +783,7 @@ router.get("/hidden-gems/:id", async (req, res) => {
     // coordinate values beyond presence, so it is privacy-neutral.
     const projection = await deriveGemProjection(sc, gem);
     (safe as any).gemState = projection.gemState;
-    (safe as any).gemConfidence = projection.gemConfidence;
+    (safe as any).gemConfidence = projection.gemConfidence; (safe as any).visitOutcomes = await import("../services/hiddenGems/HiddenGemOutcomeService.js").then((m) => m.readGemOutcomeSummary(sc, String((gem as any).id))).catch(() => ({ determined: false, reason: "unreadable" })); // §16.1 OUTCOME: verified visits linked to what the visitor reported (census-media §21)
 
     // Attach guide profile if gem has guide_verified_by
     let guideProfile: any = null;
@@ -957,7 +957,7 @@ router.post("/hidden-gems/:id/verify-visit", async (req, res) => {
     const result = await recordGpsCheckin(sc, req.params.id, user.id, latitude, longitude);
 
     if (result.error === "gem_not_found") { sendError(res, "not_found", "Gem not found"); return; }
-    if (result.error === "gem_not_active") { sendError(res, "invalid_payload", "Gem is not active"); return; }
+    if (result.error === "gem_not_active") { sendError(res, "invalid_payload", "Gem is not active"); return; } if (result.ok && !result.isSuspicious) recordGemArrivalIfAttributable(sc, { userId: user.id, gemId: req.params.id });
 
     // Fire-and-forget: Passport stamp + suggested memory after verified visit
     if (result.ok && !result.isSuspicious) {
@@ -1141,7 +1141,7 @@ router.post("/hidden-gems/:id/contribute", async (req, res) => {
     if (result.error === "gem_not_found") { sendError(res, "not_found", "Gem not found"); return; }
     if (result.error === "gem_not_active") { sendError(res, "invalid_payload", "Gem is not active"); return; }
     if (result.error === "invalid_contribution_type") { sendError(res, "invalid_payload", "Invalid contribution type"); return; }
-    if (!result.ok) { sendError(res, "db_error", "Failed to record contribution"); return; }
+    if (!result.ok) { sendError(res, "db_error", "Failed to record contribution"); return; } if (!result.alreadyObserved) recordGemContributionSignal(sc, { userId: user.id, gemId: req.params.id, kind: parsed.data.contributionType, originMediaId: parsed.data.originMediaId ?? null });
 
     // Re-derive the projection so the caller sees the state as it now reads.
     const gem = await getGem(sc, req.params.id);
@@ -1541,6 +1541,11 @@ router.post("/admin/hidden-gems/:id/verify", async (req, res) => {
   } catch (err: any) {
     sendError(res, "db_error", err.message);
     return;
+  }
+
+  // census-media §21 — §44 "Contribution … accepted", attributed to the submitter.
+  if (parsed.data.result === "approved" && gemRow && (gemRow as any).submitted_by) {
+    recordGemAcceptedSignal(sc, { submitterId: String((gemRow as any).submitted_by), gemId: req.params.id });
   }
 
   // Fire-and-forget: award hidden_gem_explorer stamp to the submitter on approval.

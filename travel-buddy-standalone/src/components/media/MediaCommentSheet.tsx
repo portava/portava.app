@@ -10,6 +10,8 @@
  */
 import React from 'react';
 import { CommentsSheet } from '../CommentsSheet.tsx';
+import { mediaSignalRecorder } from '../../services/mediaInteractions.ts';
+import { emitMediaSignal } from '../../features/media/telemetry/mediaTelemetry.ts';
 
 interface MediaCommentSheetProps {
   /** Media item (post) ID. */
@@ -32,6 +34,8 @@ export function MediaCommentSheet({ mediaId, visible, onClose, onCountChange }: 
       postId={mediaId}
       onClose={onClose}
       onCountChange={onCountChange ?? (() => {})}
+      // §44 Comment (census-media §21) — a media surface, a comment the server accepted.
+      onCommentPosted={() => emitMediaSignal(mediaSignalRecorder, 'comment', { mediaId, surface: 'media_comments' })}
     />
   );
 }

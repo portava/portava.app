@@ -31,7 +31,7 @@ import { DisplayMediaImage } from './ui/DisplayMediaImage.tsx';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 import { TG } from '../theme/telegraphTokens.ts';
 import { TripWishlistPicker, type AddToTripPayload } from './discovery/TripWishlistPicker.tsx';
-import { toggleSave } from '../services/discoveryBookmarks.ts';
+import { toggleSave } from '../services/discoveryBookmarks.ts'; import { saveDiscoveryCardViaTelegraph } from '../services/discoveryCardSave.ts';
 import { useShareRevocation, revokedLabel } from '../features/telegraph/sharing/useShareRevocation.ts';
 import { legacySourceTypeToObjectType } from '../features/telegraph/sharing/shareApi.ts';
 
@@ -199,8 +199,8 @@ export function DiscoveryCardMessage({ body, mine, threadId = null, messageId = 
           <View style={[card.divider, mine && card.dividerMine]} />
           <Pressable
             style={[card.actionBtn, mine && card.actionBtnMine]}
-            onPress={async () => {
-              // Real save via discovery bookmarks — no fake success alerts.
+            testID="discovery-card-save" onPress={async () => {
+              const viaTelegraph = await saveDiscoveryCardViaTelegraph(payload); if (viaTelegraph.kind === 'saved') { Alert.alert('Saved', viaTelegraph.message); return; } if (viaTelegraph.kind !== 'fallback') { Alert.alert('Could not save', viaTelegraph.message); return; }  // census-discovery §95 (A21, §81.4 R1): a Telegraph command first; with the server's telegraph_discovery_actions_enabled off it answers feature_disabled and the real save via discovery bookmarks below runs, unchanged (no fake success alerts)
               try {
                 const res = await toggleSave({
                   id: payload.sourceId,

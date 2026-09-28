@@ -46,7 +46,7 @@ export function ExperienceMosaic({ experiences, onOpen }: ExperienceMosaicProps)
                 heroes.map((m, i) => (
                   <View key={m.id || i} style={styles.heroCell}>
                     {m.thumbnailUrl ? (
-                      <CachedImage source={{ uri: m.thumbnailUrl }} style={styles.heroImg} resizeMode="cover" />
+                      <CachedImage source={{ uri: m.thumbnailUrl }} style={styles.heroImg} resizeMode="cover" fallbackBg={color.mute} />
                     ) : (
                       <View style={[styles.heroImg, styles.heroFallback]} />
                     )}

@@ -14,7 +14,7 @@ interface EmptyStateProps {
   description?: string;
   primaryAction?: {
     label: string;
-    onPress: () => void;
+    onPress: () => void; /** Optional button fill (census-media §31.13), e.g. a darker shade where onInk on `signal` is below 4.5:1. Absent: renders exactly as before. */ fill?: string;
   };
 }
 
@@ -28,7 +28,7 @@ export function EmptyState({ icon: Icon, title, description, primaryAction }: Em
       {description ? <Text style={styles.description}>{description}</Text> : null}
       {primaryAction ? (
         <Pressable
-          style={({ pressed }) => [styles.btn, pressed && { opacity: layout.pressedOpacity }]}
+          style={({ pressed }) => (primaryAction.fill === undefined ? [styles.btn, pressed && { opacity: layout.pressedOpacity }] : [styles.btn, { backgroundColor: primaryAction.fill }, pressed && { opacity: layout.pressedOpacity }])}
           onPress={primaryAction.onPress}
           accessibilityRole="button"
           accessibilityLabel={primaryAction.label}

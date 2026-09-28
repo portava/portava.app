@@ -85,9 +85,15 @@ router.get(
     }
 
     const boundOn = await historyBoundEnabled(sc);
-    const { data: mine, error: mineErr } = await sc
-      .from("message_thread_members")
-      .select(membershipSelect("user_id", boundOn))
+    // Two LITERAL select lists rather than one computed list. The flag gate is
+    // unchanged: a database without 2400 is still never asked for the column.
+    // What changes is that `check:write-path-columns` can resolve both branches
+    // and verify them against the live schema, so this site no longer needs the
+    // UNRESOLVED_ALLOWLIST entry it used to carry.
+    const mineQuery = boundOn
+      ? sc.from("message_thread_members").select("user_id, visible_from_at")
+      : sc.from("message_thread_members").select("user_id");
+    const { data: mine, error: mineErr } = await mineQuery
       .eq("thread_id", threadId)
       .eq("user_id", user.id)
       .maybeSingle();

@@ -75,7 +75,7 @@ export type ApiErrorCode =
   | "e2ee_thread"
   | "no_key_package"
   | "upstream_error"
-  | "degraded_unavailable";
+  | "degraded_unavailable" | "consent_does_not_cover_photos"; // the last: a map photo/video refused because the recorded consent disclosure names no photos (lib/intelEvidenceCapture Gate 2b)
 
 const STATUS: Record<ApiErrorCode, number> = {
   server_not_configured: 503,
@@ -105,7 +105,7 @@ const STATUS: Record<ApiErrorCode, number> = {
   e2ee_thread: 422,
   no_key_package: 404,
   upstream_error: 502,
-  degraded_unavailable: 503,
+  degraded_unavailable: 503, consent_does_not_cover_photos: 409,
 };
 
 /**

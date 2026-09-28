@@ -14,6 +14,8 @@ import {
   getIntelConsentState,
   setIntelConsent,
   INTEL_CONSENT_DISCLOSURE_VERSION,
+  LEGACY_CLIENT_DISCLOSURE_VERSION,
+  displayedDisclosureMatches,
 } from "../lib/intelConsent.js";
 
 const A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -106,6 +108,33 @@ describe("D4 consent — model", () => {
     assert.equal(st.consentVersion, INTEL_CONSENT_DISCLOSURE_VERSION);
     assert.ok(st.consentedAt, "consented_at recorded");
     assert.equal(st.withdrawnAt, null);
+  });
+
+  it("a grant carrying the disclosure version the client DISPLAYED is recorded only if it is the version the server stamps", async () => {
+    const db = consentDb();
+    const stale = await setIntelConsent(db as any, A, true, "some_older_or_newer_text");
+    assert.deepEqual(stale, { ok: false, reason: "disclosure_version_mismatch" });
+    assert.equal(db._rows.size, 0, "nothing recorded: the person saw text other than what would be stamped");
+    const same = await setIntelConsent(db as any, A, true, INTEL_CONSENT_DISCLOSURE_VERSION);
+    assert.equal(same.ok, true);
+    assert.equal(unwrap(await getIntelConsentState(db as any, A)).consentVersion, INTEL_CONSENT_DISCLOSURE_VERSION);
+  });
+
+  it("a grant with NO displayed version is evidence of the v1 copy only — it may not be recorded once the stamp moves past v1", () => {
+    // Old clients hard-coded the v1 words and send only { enabled }.
+    assert.equal(LEGACY_CLIENT_DISCLOSURE_VERSION, "intel_contributions_v1");
+    assert.equal(displayedDisclosureMatches(undefined, "intel_contributions_v1"), true, "today: a legacy grant matches the stamp");
+    assert.equal(displayedDisclosureMatches(undefined, "sensing_contributions_v2"), false, "after a bump: a legacy grant saw v1 words and is refused");
+    assert.equal(displayedDisclosureMatches("sensing_contributions_v2", "sensing_contributions_v2"), true);
+    assert.equal(displayedDisclosureMatches("intel_contributions_v1", "sensing_contributions_v2"), false);
+  });
+
+  it("a WITHDRAWAL is never refused for a version mismatch — turning consent off must always work", async () => {
+    const db = consentDb();
+    await setIntelConsent(db as any, A, true);
+    const off = await setIntelConsent(db as any, A, false, "whatever_the_client_showed");
+    assert.equal(off.ok, true);
+    assert.equal(await hasValidIntelConsent(db as any, A), false);
   });
 
   it("withdrawal immediately blocks future capture and records the withdrawal instant", async () => {

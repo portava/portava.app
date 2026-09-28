@@ -13,7 +13,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { VisibilityTier } from "./PassportPrivacyGuard.js";
 import { logger as rootLogger } from "../../lib/logger.js";
-import { recordEntityMedia } from "../../lib/mediaAssets.js";
+import { recordEntityMedia, MEDIA_SOURCE_UNDECLARED } from "../../lib/mediaAssets.js";
 
 const logger = rootLogger.child({ service: "PassportMemoryService" });
 
@@ -139,7 +139,7 @@ export async function createMemory(
       publicUrl: input.photoUrl,
       entityType: "memory",
       entityId: memoryId,
-      isCover: true,
+      isCover: true, sourceType: MEDIA_SOURCE_UNDECLARED, // a memory photo's §6 source is never declared (census-media §35, MD37)
     });
   }
 

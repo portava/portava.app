@@ -10,6 +10,7 @@
  */
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
+import { measured } from "./helpers/measuredScore.js";
 import http from "node:http";
 import express from "express";
 
@@ -700,6 +701,19 @@ describe("trust-admin routes — cap/override (C22: removal must be observed)", 
     // A second user with the same kind of cap, so a rule that ignored scoping
     // would have something to hit by accident.
     tables.trust_caps.push(capRow({ id: "00000000-0000-0000-0000-0000000000c7", user_id: USER_B, category: "communication" }));
+    // Q1 (2026-09-22): `communication` must be MEASURED for `persistedScore` to
+    // be a number at all — an unscored category now reads back as null, which
+    // is the correct read-back value but would make the `typeof === "number"`
+    // assertion below unsatisfiable. Seeding real events keeps that assertion
+    // exactly as strong as it was (the route still has to report a number it
+    // READ rather than one it computed) instead of weakening it to accept null.
+    for (let i = 0; i < 3; i++) {
+      tables.trust_events.push({
+        id: `ev-comm-${i}`, user_id: USER_A, event_type: "MESSAGE_REPLIED",
+        category: "communication", delta: 5, severity: "minor",
+        status: "applied", source_type: "user_action", metadata: {}, created_at: new Date().toISOString(),
+      });
+    }
     setClients({ tables });
 
     const { status, body } = await httpReq("POST", `/admin/trust/users/${USER_A}/cap/override`, {
@@ -913,7 +927,7 @@ describe("Service: full event → recalc → public level round-trip", () => {
     await db.from("trust_events").insert({ user_id: USER_A, event_type: "HOST_QUALITY_RATING", category: "host_quality", delta: 10, severity: "minor", status: "applied", source_type: "user_action" });
 
     const result = await recalculateTrustScore(db, USER_A);
-    assert.ok(result.overall_score > 0);
+    assert.ok(measured(result.overall_score) > 0);
     assert.ok(["new_traveler","building_trust","reliable_traveler","trusted_traveler","highly_trusted","city_trusted"].includes(result.public_level));
 
     const profile = await getTrustProfile(db, USER_A);
@@ -921,22 +935,50 @@ describe("Service: full event → recalc → public level round-trip", () => {
     assert.equal(profile!.overall_score, result.overall_score);
   });
 
-  it("new user with no events computes 50 ARITHMETICALLY but is never persisted as one", async () => {
+  /**
+   * THIS TEST USED TO PIN THE DEFECT, and TWO lanes fixed it independently.
+   *
+   * It read:
+   *
+   *   it("new user with no events gets neutral baseline (score=50, reliable_traveler)")
+   *     assert.equal(result.overall_score, 50);
+   *     assert.equal(result.public_level, "reliable_traveler");
+   *
+   * — that is, it asserted as CORRECT the exact behaviour Q1 (owner decision
+   * 2026-09-22) identifies as the defect: a user with zero trust events scored
+   * a fabricated 50.00 and was published as a `reliable_traveler` on the
+   * strength of nine neutrals nobody measured.
+   *
+   * Q1 (this branch) fixed the VALUE: an unmeasured profile scores `null`, so
+   * there is no 50 to publish. PR #449 (main) fixed the WRITE: a zero-evidence
+   * user is not PERSISTED at all, because row absence is the canonical "no
+   * earned trust" representation that getDisplayTrustScore, lib/trustScore and
+   * TrustPrivacyGuard already honour — and because PassportProjectionService
+   * maps public_level through LEVEL_RANK into capability grants, persisting a
+   * fabricated `reliable_traveler` handed canHostTrip, canUseCrewLocation and
+   * canContributeLiveIntel to every user on the first flag enable.
+   *
+   * On the merged tree BOTH hold, so this test asserts both. #449's version of
+   * these lines expected `50` / `reliable_traveler` from the arithmetic, which
+   * was true on ITS base and is not true here: Q1 removed the 50 upstream of
+   * the persistence decision. Taking #449's numbers would have re-pinned the
+   * fabrication this row exists to forbid, so the VALUE assertions are ours and
+   * the PERSISTENCE assertions are theirs. Neither lane's guarantee is dropped,
+   * and the test is stronger than either was alone.
+   */
+  it("new user with no events is NOT SCORED (null), NOT promoted, and NOT persisted", async () => {
     const tables = makeTables();
     const db = makeTrustClient(tables);
     const result = await recalculateTrustScore(db, USER_B);
 
-    // The arithmetic is unchanged: nine empty categories at a neutral 50 with
-    // weights summing to 1.000 is 50, and 50 >= level_reliable.
-    assert.equal(result.overall_score, 50);
-    assert.equal(result.public_level, "reliable_traveler");
+    // Q1 — the value.
+    assert.equal(result.overall_score, null,
+      "no events means no score — a 50 here would be a fabricated measurement");
+    assert.equal(result.public_level, "new_traveler",
+      "and no standing to show — never a promotion earned by nine inventions");
 
-    // …but it must never become STATE. This assertion is the whole point: this
-    // test's old name claimed a zero-evidence user "gets" that baseline, and
-    // nothing checked whether it was written. It was — and because
-    // PassportProjectionService maps public_level through LEVEL_RANK into
-    // capability grants, persisting it handed canHostTrip, canUseCrewLocation
-    // and canContributeLiveIntel to every user on the first flag enable.
+    // #449 — the write. A correct value that is still written as state would
+    // leave a row claiming the user was measured.
     assert.equal(result.persisted, false, "a zero-evidence user must not be persisted");
     assert.equal(
       tables.trust_profiles.length, 0,
@@ -1005,7 +1047,7 @@ describe("Service: admin confirm event triggers recalculation", () => {
     assert.ok(caps.length > 0, "at least one cap should be active");
 
     const result = await recalculateTrustScore(db, USER_A);
-    assert.ok(result.categories.location_honesty <= 50, `location_honesty should be ≤50, got ${result.categories.location_honesty}`);
+    assert.ok(measured(result.categories.location_honesty) <= 50, `location_honesty should be ≤50, got ${result.categories.location_honesty}`);
   });
 
   it("dismissing a serious event leaves no caps", async () => {
@@ -1051,11 +1093,11 @@ describe("Service: adminOverrideScore → adminRemoveOverride restores score", (
 
     await adminOverrideScore(db, ADMIN, USER_A, "plan_attendance", 5, "Test");
     const capped = await recalculateTrustScore(db, USER_A);
-    assert.ok(capped.categories.plan_attendance <= 5, `got ${capped.categories.plan_attendance}`);
+    assert.ok(measured(capped.categories.plan_attendance) <= 5, `got ${capped.categories.plan_attendance}`);
 
     await adminRemoveOverride(db, ADMIN, USER_A, "plan_attendance", "Restoring");
     const restored = await recalculateTrustScore(db, USER_A);
-    assert.ok(restored.categories.plan_attendance >= capped.categories.plan_attendance);
+    assert.ok(measured(restored.categories.plan_attendance) >= measured(capped.categories.plan_attendance));
   });
 });
 
@@ -1085,7 +1127,7 @@ describe("D-OVERRIDE: adminOverrideScore caps, and a cap only binds downward", (
       await db.from("trust_events").insert({ user_id: USER_A, event_type: "PLAN_ATTENDED", category: "plan_attendance", delta: 10, severity: "minor", status: "applied", source_type: "user_action" });
     }
     const natural = (await recalculateTrustScore(db, USER_A)).categories.plan_attendance;
-    assert.ok(natural > 20, `fixture must earn a natural score well above the override; got ${natural}`);
+    assert.ok(measured(natural) > 20, `fixture must earn a natural score well above the override; got ${natural}`);
 
     await adminOverrideScore(db, ADMIN, USER_A, "plan_attendance", 20, "Downward");
     const after = (await recalculateTrustScore(db, USER_A)).categories.plan_attendance;
@@ -1098,7 +1140,7 @@ describe("D-OVERRIDE: adminOverrideScore caps, and a cap only binds downward", (
     // One negative event, so the natural score sits below the neutral 50.
     await db.from("trust_events").insert({ user_id: USER_B, event_type: "PLAN_NO_SHOW", category: "plan_attendance", delta: -20, severity: "minor", status: "applied", source_type: "user_action" });
     const natural = (await recalculateTrustScore(db, USER_B)).categories.plan_attendance;
-    assert.ok(natural < 90, `fixture must sit below the override; got ${natural}`);
+    assert.ok(measured(natural) < 90, `fixture must sit below the override; got ${natural}`);
 
     await adminOverrideScore(db, ADMIN, USER_B, "plan_attendance", 90, "Upward");
 
@@ -1264,7 +1306,7 @@ describe("Scoring: positive movement is ramped, negative movement is not", () =>
     const r = await recalculateTrustScore(db, USER_A);
     // 50 + (6*5) * confidence(1/5) = 56 — not the old 50 + 30 = 80.
     assert.ok(
-      r.categories.host_quality > 50 && r.categories.host_quality < 60,
+      measured(r.categories.host_quality) > 50 && measured(r.categories.host_quality) < 60,
       `expected a damped gain in 50..60, got ${r.categories.host_quality}`,
     );
   });
@@ -1276,7 +1318,7 @@ describe("Scoring: positive movement is ramped, negative movement is not", () =>
 
     const r = await recalculateTrustScore(db, USER_A);
     // Five events of equal weight → confidence 1 → the full 50 + 30.
-    assert.equal(Math.round(r.categories.host_quality), 80);
+    assert.equal(Math.round(measured(r.categories.host_quality)), 80);
   });
 
   it("volume alone cannot inflate a score beyond the honest mean", async () => {
@@ -1286,7 +1328,7 @@ describe("Scoring: positive movement is ramped, negative movement is not", () =>
 
     const r = await recalculateTrustScore(db, USER_A);
     // The mean (not the sum) is used, so 200 events land where 5 do.
-    assert.equal(Math.round(r.categories.host_quality), 80);
+    assert.equal(Math.round(measured(r.categories.host_quality)), 80);
   });
 
   it("a single negative event bites at FULL strength on first occurrence", async () => {
@@ -1324,7 +1366,7 @@ describe("Scoring: positive movement is ramped, negative movement is not", () =>
 
     const r = await recalculateTrustScore(db, USER_A);
     assert.ok(
-      r.categories.respect_safety > 50,
+      measured(r.categories.respect_safety) > 50,
       `documents the limitation: the mean stays positive, got ${r.categories.respect_safety}`,
     );
   });
@@ -1356,7 +1398,7 @@ describe("Scoring: positive movement is ramped, negative movement is not", () =>
     const rFresh = await recalculateTrustScore(makeTrustClient(fresh), USER_A);
     const rStale = await recalculateTrustScore(makeTrustClient(stale), USER_A);
     assert.ok(
-      rStale.categories.host_quality < rFresh.categories.host_quality,
+      measured(rStale.categories.host_quality) < measured(rFresh.categories.host_quality),
       `stale evidence must confer less credit (fresh=${rFresh.categories.host_quality}, stale=${rStale.categories.host_quality})`,
     );
   });
@@ -1690,7 +1732,12 @@ describe("Trust: zero evidence is not earned trust", () => {
 
     assert.equal(r.persisted, true, "real evidence must be scored and stored");
     assert.equal(tables.trust_profiles.length, 1);
-    assert.ok(r.categories.host_quality > 50, "the evidenced category moves above neutral");
+    // Q1 made the category nullable, so "is it scored at all" is now a separate
+    // question from "what is the score" — and asserting it is the stronger read:
+    // a null here would mean the evidence produced no measurement.
+    const hq = r.categories.host_quality;
+    assert.notEqual(hq, null, "evidence must produce a measurement, not an absence");
+    assert.ok(hq! > 50, "the evidenced category moves above neutral");
   });
 
   it("a category WITH evidence is still scored correctly after the change", async () => {
@@ -1699,29 +1746,48 @@ describe("Trust: zero evidence is not earned trust", () => {
     const r = await recalculateTrustScore(makeTrustClient(tables), USER_A);
 
     assert.equal(r.persisted, true);
+    const rs = r.categories.respect_safety;
+    assert.notEqual(rs, null, "evidence must produce a measurement, not an absence");
     assert.ok(
-      r.categories.respect_safety < 50,
+      rs! < 50,
       "negative evidence must still lower the evidenced category",
     );
   });
 
-  it("KNOWN LIMIT, pinned so it is not mistaken for correct: unevidenced categories still carry 50", async () => {
-    // This is the per-category half of the contract gap. trust_profiles' nine
-    // category columns and overall_score are all `numeric(5,2) NOT NULL DEFAULT
-    // 50.00`, so there is no way to persist "this one category is unscored". A
-    // user with a single negative event is therefore pulled UP toward 50 by the
-    // eight fabricated neutrals — an inflation of a bad actor. Closing this
-    // needs a migration and an owner decision, so it is asserted here as a
-    // KNOWN state rather than left to be rediscovered as a surprise.
+  it("an unevidenced category is NOT SCORED, and does not drag the overall up", async () => {
+    // WAS: `it("KNOWN LIMIT, pinned so it is not mistaken for correct: unevidenced
+    // categories still carry 50")`, asserting host_quality === 50 and
+    // overall > respect_safety.
+    //
+    // THE LIMIT IT PINNED IS CLOSED ON THIS BRANCH, and #449's own comment named
+    // the two things that would close it: *"Closing this needs a migration and an
+    // owner decision"*. The migration is 2999 (it drops NOT NULL and DEFAULT 50
+    // from the nine category columns and overall_score) and the owner decision is
+    // Q1, both of which are on this branch and neither of which existed on #449's
+    // base. So the assertions are REVERSED rather than relaxed — and reversed is
+    // the right word: the old ones would now fail, because an unevidenced category
+    // really is `null` here, verified by running it.
+    //
+    // The defect it described was precise and is worth keeping in view: a user
+    // with a single negative event used to be pulled UP toward 50 by eight
+    // fabricated neutrals, inflating a bad actor. Renormalising over the
+    // categories actually present is what removes that, and this test is now the
+    // pin on the removal.
     const tables = makeTables();
     tables.trust_events.push(ev("respect_safety", -20));
     const r = await recalculateTrustScore(makeTrustClient(tables), USER_A);
 
-    assert.equal(r.categories.host_quality, 50, "unevidenced category is still a fabricated 50");
-    assert.ok(
-      r.overall_score > r.categories.respect_safety,
-      "and it drags the overall UP away from the only real measurement — " +
-      `overall ${r.overall_score} vs evidenced ${r.categories.respect_safety}`,
+    assert.equal(
+      r.categories.host_quality, null,
+      "an unevidenced category is unscored, not a fabricated 50",
+    );
+
+    const measured = r.categories.respect_safety;
+    assert.notEqual(measured, null, "the evidenced category must be scored, or this test proves nothing");
+    assert.equal(
+      r.overall_score, measured,
+      "with exactly one category measured, renormalisation makes the overall THAT " +
+      "measurement — no eight invented neutrals dragging a bad actor upward",
     );
   });
 
@@ -1738,18 +1804,43 @@ describe("Trust: zero evidence is not earned trust", () => {
     assert.equal(tables.trust_profiles.length, 1);
   });
 
-  it("BOUNDARY: 50 is inclusive of level_reliable, which is why a fabricated 50 promoted", async () => {
+  it("BOUNDARY: level_reliable=50 is inclusive — which is why the OLD fabricated 50 promoted, and why removing it matters", async () => {
+    // #449 wrote this to explain WHY a fabricated 50 was dangerous rather than
+    // merely untidy: `scoreToLevel` compares `>=` against `level_reliable = 50`,
+    // so the neutral default landed exactly ON the promotion boundary and granted
+    // capabilities. That explanation is correct and is the reason to keep this
+    // test.
+    //
+    // What it can no longer do is DEMONSTRATE the fabrication on a zero-evidence
+    // user, because Q1 removed it upstream: there is no 50 to sit on the boundary.
+    // So the boundary is asserted where it still lives — in scoreToLevel itself —
+    // and the zero-evidence path asserts the fabrication's ABSENCE. #449's own
+    // persistence assertion is kept unchanged.
     const tables = makeTables();
     const db = makeTrustClient(tables);
     const r = await recalculateTrustScore(db, USER_B);
-    assert.equal(r.overall_score, 50);
+
+    // The fabrication that used to land on the boundary is gone.
+    assert.equal(r.overall_score, null, "no evidence produces no score to sit on the boundary");
+    assert.equal(r.public_level, "new_traveler");
+
+    // The boundary itself is unchanged, and is asserted through the REAL path
+    // rather than by exporting a private `scoreToLevel` for a test: one MEASURED
+    // category at exactly neutral renormalises to an overall of exactly 50, and
+    // 50 still promotes. That is the `>=` this test exists to pin — now shown on
+    // a user who was actually measured, which is the only kind that should reach
+    // a level at all.
+    const atBoundary = makeTables();
+    atBoundary.trust_events.push(ev("host_quality", 0));
+    const b = await recalculateTrustScore(makeTrustClient(atBoundary), USER_A);
+    assert.equal(b.overall_score, 50, "one measured category at neutral is an overall of 50");
     assert.equal(
-      r.public_level, "reliable_traveler",
-      "scoreToLevel uses >= against level_reliable=50, so the neutral default " +
-      "lands exactly ON the promotion boundary — the reason this defect granted " +
-      "capabilities rather than merely looking untidy",
+      b.public_level, "reliable_traveler",
+      "and 50 promotes — `>=` against level_reliable=50, which is why a " +
+      "fabricated 50 granted capabilities rather than merely looking untidy",
     );
-    // And the whole point: that computation reaches no persisted state.
+
+    // #449's point, unchanged: that computation reaches no persisted state.
     assert.equal(tables.trust_profiles.length, 0);
   });
 });
@@ -1792,6 +1883,21 @@ describe("D-OVERRIDE precedence, expiry and removal — characterization, not a 
     const tables = makeTables();
     const db = makeTrustClient(tables);
 
+    // Q1 (2026-09-22): respect_safety must be MEASURED for this test to be
+    // about cap precedence at all. Before nullable scores, a category with no
+    // events still produced the fabricated neutral 50, so the ceilings had
+    // something to clamp by accident; now an unmeasured category stays null and
+    // no ceiling binds on it, which would make the assertions below vacuously
+    // true without testing anything. Seeding real positive events restores the
+    // test's actual subject — two ceilings folding with Math.min over a genuine
+    // score — rather than papering over the null.
+    for (let i = 0; i < 6; i++) {
+      await db.from("trust_events").insert({
+        user_id: USER_A, event_type: "SAFE_RETURN_COMPLETED", category: "respect_safety",
+        delta: 10, severity: "minor", status: "applied", source_type: "user_action",
+      });
+    }
+
     // A confirmed serious finding capped respect_safety at 40.
     await createCap(db, {
       userId: USER_A, category: "respect_safety", ceilingScore: 40,
@@ -1805,7 +1911,7 @@ describe("D-OVERRIDE precedence, expiry and removal — characterization, not a 
     // combine as 40 — the admin's 90 is inert. Under PIN semantics this is the
     // single most visible behavioural change: the admin would win.
     const after = (await recalculateTrustScore(db, USER_A)).categories.respect_safety;
-    assert.ok(after <= 40, `the moderation ceiling still binds; got ${after}`);
+    assert.ok(measured(after) <= 40, `the moderation ceiling still binds; got ${after}`);
     assert.notEqual(after, 90, "an override cannot grant relief from another cap today");
   });
 
@@ -1919,7 +2025,7 @@ describe("D-OVERRIDE: the ceiling the owner ruled for must PERSIST", () => {
       });
     }
     const before = await recalculateTrustScore(db, USER_A);
-    assert.ok(before.categories.plan_attendance > 20,
+    assert.ok(measured(before.categories.plan_attendance) > 20,
       `fixture must earn a natural score well above the ceiling; got ${before.categories.plan_attendance}`);
 
     const result = await adminOverrideScore(db, ADMIN, USER_A, "plan_attendance", 20, "Watchlist");

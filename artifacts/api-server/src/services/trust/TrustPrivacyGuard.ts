@@ -111,9 +111,16 @@ export async function getSafeTrustSummary(
   const profile = profileRead.state === "ok" ? profileRead.profile : null;
   const publicLevel: PublicTrustLevel = profile?.public_level ?? "new_traveler";
 
-  // Top 2 strongest categories (above 60)
+  // Top 2 strongest categories (above 60).
+  //
+  // Q1 (owner decision 2026-09-22): an UNSCORED category (`null`) is dropped
+  // first and explicitly. A category nobody measured is not a strength, and it
+  // must not be sorted against ones that were — `null` coerces to 0 in both the
+  // comparison and the subtraction, so it would silently ride along as a very
+  // weak measurement rather than as the absence of one.
   const strengths = profile
     ? Object.entries(profile.categories)
+        .filter((e): e is [string, number] => e[1] !== null && Number.isFinite(e[1] as number))
         .filter(([, s]) => s >= 60)
         .sort(([, a], [, b]) => b - a)
         .slice(0, 2)
@@ -161,8 +168,11 @@ export async function getPublicTrustBadge(
   const profile = profileRead.state === "ok" ? profileRead.profile : null;
   const level: PublicTrustLevel = profile?.public_level ?? "new_traveler";
 
+  // Q1: same rule as getSafeTrustSummary — an unscored category is not a
+  // strength and is dropped before it can be coerced to 0 and sorted.
   const strengths = profile
     ? Object.entries(profile.categories)
+        .filter((e): e is [string, number] => e[1] !== null && Number.isFinite(e[1] as number))
         .filter(([, s]) => s >= 65)
         .sort(([, a], [, b]) => b - a)
         .slice(0, 2)

@@ -316,23 +316,38 @@ export async function listRestrictionsForAudit(
   return { state: "ok", rows: ((data as RestrictionAuditRow[]) ?? []) };
 }
 
-/** Max restrictions lifted in one sweep. Bounded for the same reason the user
- *  recalculation loop is: an unbounded statement on a table that can grow is a
- *  latent outage, and a partial sweep that says so is better than a whole one
- *  that times out. The remainder rolls to the next pass. */
+/**
+ * Max restrictions lifted in ONE sweep.
+ *
+ * Bounded for the same reason the user-recalculation loop is bounded: an
+ * unbounded statement against a table that only grows is a latent outage, and a
+ * partial sweep that SAYS it is partial is worth more than a whole one that
+ * times out and lifts nothing. The remainder is not dropped — it rolls to the
+ * next pass, and the pass runs every six hours.
+ */
 export const RESTRICTION_EXPIRY_BATCH = 500;
 
+/**
+ * What one sweep did. Three outcomes the caller must be able to tell apart,
+ * because the old `Promise<number>` collapsed two of them into the number 0.
+ */
 export interface ExpireRestrictionsResult {
   /** How many restrictions this pass actually lifted. */
   expired: number;
-  /** True when the batch cap was hit and more remain — never read as full coverage. */
+  /**
+   * The batch cap was reached, so there may be more still due. Never read a
+   * truncated sweep as full coverage.
+   */
   truncated: boolean;
-  /** True when a read or write errored. DISTINCT from expired:0. */
+  /**
+   * A read or a write errored, so this pass CANNOT SAY what is still due.
+   * Distinct from `expired: 0`, which means the sweep worked and found nothing.
+   */
   failed: boolean;
 }
 
 /**
- * Lift restrictions whose `expires_at` has passed.
+ * Expire restrictions whose expires_at has passed.
  *
  * TWO DEFECTS THIS REPLACES, both of the same family.
  *
@@ -360,6 +375,18 @@ export interface ExpireRestrictionsResult {
  *
  * Now: select-then-update in bounded batches, `error` read on BOTH halves, and a
  * result that separates "nothing to do" from "could not tell".
+ *
+ * Shape: select the due set (bounded, oldest term first) and then lift exactly
+ * those ids. Two statements rather than one because the cap has to be applied
+ * to a SELECT — PostgREST has no LIMIT on an UPDATE — and because the count of
+ * what was lifted then comes from the write's own `.select("id")` rather than
+ * from an assumption.
+ *
+ * NO STARVATION. The due-set read filters `lifted_at IS NULL`, so every row
+ * this pass lifts leaves the due set; and it is ordered by `expires_at`
+ * ascending, so the longest-overdue rows are taken first and nothing can be
+ * overtaken indefinitely by newer arrivals. Repeated passes therefore drain the
+ * backlog: whatever a bounded pass leaves behind is the head of the next one.
  */
 export async function expireOldRestrictions(
   db: SupabaseClient,
@@ -389,25 +416,28 @@ export async function expireOldRestrictions(
   if (due.length === 0) return { expired: 0, truncated: false, failed: false };
 
   const ids = due.map((r) => String(r?.id ?? "")).filter(Boolean);
+  // `>= limit` rather than `> limit`: a full batch is indistinguishable from a
+  // full batch plus more, so a sweep that fills its cap reports truncation even
+  // when it happened to drain the table exactly. Over-reporting "there may be
+  // more" is the safe direction — the next pass confirms it with expired: 0.
+  const truncated = ids.length >= limit;
+
   try {
     const { data, error } = await db
       .from("trust_restrictions")
       .update({ lifted_at: nowIso })
       .in("id", ids)
-      // Re-assert the predicate: another pass may have lifted these between the
-      // read and the write, and lifting twice would overwrite the first
-      // lifted_at with a later instant.
+      // Re-assert the predicate the read used. A concurrent pass may have
+      // lifted some of these between the read and this write, and lifting
+      // twice would overwrite the FIRST lifted_at with a later instant —
+      // moving the recorded moment a sanction ended. Do not remove this.
       .is("lifted_at", null)
       .select("id");
     if (error) {
       trustRestrictionLogger.warn({ err: error, due: ids.length }, "expireOldRestrictions: lift failed");
       return { expired: 0, truncated: false, failed: true };
     }
-    return {
-      expired: ((data as any[]) ?? []).length,
-      truncated: ids.length >= limit,
-      failed: false,
-    };
+    return { expired: ((data as any[]) ?? []).length, truncated, failed: false };
   } catch (err) {
     trustRestrictionLogger.warn({ err, due: ids.length }, "expireOldRestrictions: lift threw");
     return { expired: 0, truncated: false, failed: true };
