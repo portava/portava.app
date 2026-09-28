@@ -16977,6 +16977,171 @@ Run after the last edit.
 
 Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
 
+## §101 — DV-83 round 5 (lane W11-X2): cursor pages state their coverage, the end claim needs a read that did not fail, held rows belong to their city, the output kinds and the no-client arms refuse, and DV-83 moves W → C
+
+*Written 2026-09-28 by lane W11-X2 (round 5) on `disc-w11-x2-r5`, from `faeeb50bc`. It closes the four paths and the two further findings of §100.11, with the verifier's probes copied in as red tests, and the round's own sweep closes three more. Decisions are in `docs/architecture/discovery-decision-register.md`, section "W11-X2 round 5", D-W11X2-28 to D-W11X2-35.*
+
+*No migration and no new flag. Each change alters output only when a Discovery read failed, answered `partial`, belongs to another city or section, or when no service client exists. The output-kinds change sits behind its existing FALSE flag, and its flag-off 404 is pinned byte-identical. Every edit in a cited file is line-neutral: lines are changed in place, and new code is appended at a file's foot.*
+
+*All evidence is controlled: jest over the real screens, tabs and hooks, and in-process routes over fake worlds. None of it is production evidence, and no client build carrying the change has shipped.*
+
+### 101.1 A cursor page states its coverage, on search (§100.11 finding 1; D-W11X2-28, D-W11X2-30)
+
+- **Before.** The cursor arm appended page 2's rows and never read `refusal` (`travel-buddy-standalone/app/search.tsx:310#} else {`). A `partial` page 2 was shown as complete; a `nothing` page 2, a transport failure and a thrown read on page 2 were silent.
+- **Now.**
+  - A partial cursor page adds its `failedSources` to the set the incomplete notice is drawn from, so the list says it is incomplete as page 1 would (`travel-buddy-standalone/app/search.tsx:310#} else { if (res.data.refusal?.coverage === 'partial') {`).
+  - A refused, failed or thrown cursor page raises `moreFailed` (`travel-buddy-standalone/app/search.tsx:233#else setMoreFailed(true);`, `travel-buddy-standalone/app/search.tsx:255#} else setMoreFailed(true);`, `travel-buddy-standalone/app/search.tsx:318#else setMoreFailed(true);`). The footer says "Couldn’t load more results just now." with "Tap to retry", in page 1's error styles (`travel-buddy-standalone/app/search.tsx:928#testID="search-more-failed"`). The cursor is kept, so a tap or a scroll asks again; a retry or a new page-1 search clears it.
+
+### 101.2 "N places found" is claimed only after a read that did not fail (§100.11 finding 2; D-W11X2-29)
+
+- **Before.** Hydration from the cache never set `total`, so after a failed refresh over a cached page `total` stayed 0: the footer called the cached page the whole set, and load-more was refused locally. The footer was also printed beside a partial page whenever `places.length >= total`.
+- **Now.**
+  - Hydration sets the cached page's own total (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:558#setTotal(cachedResult.total);`), so load-more still asks page 2 after a failed refresh (E1).
+  - The end claim needs the last read not to have failed, no partial page in the list, and a known total (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:716#!error && !partial && total > 0 && places.length >= total && places.length > 0 ?`). `0` beside rows on screen is an unknown total, never "the end".
+
+### 101.3 A failed load-more is said, on the category tab (§100.10; D-W11X2-30)
+
+- A failed page ≥ 2 is recorded beside the page-1 `refreshFailed` (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:501#setMoreFailed(nextPage > 1);`). The footer draws "Couldn’t load more places just now." with "Try again", in the tab's existing `moreRefused` style: no new colour token (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:716#testID="discovery-category-more-failed"`). Scrolling asks again as well; a refused page 2 keeps §55's `moreRefused` footer, which does not re-ask on scroll during an outage.
+- The wording has one home (`travel-buddy-standalone/src/services/discoveryCoverageNotice.ts:89#export function listMoreFailedNotice(noun: string): string {`), and the consumer guard's G8 pins it.
+
+### 101.4 The output kinds answer a failed read as unavailable (§100.11 finding 3; D-W11X2-33)
+
+- `materialiseCandidates` records every read it could not make; `rankEmergingForViewer` now answers `unavailable` for any of them, not only `discovery_places` (`artifacts/api-server/src/lib/discoveryCandidates/outputKinds.ts:165#if (mat.failedReads.length > 0) return`). A failed blocks or standing read drops authored rows (fail closed); a failed canonical read loses canonical candidates. Either way the list was not the list.
+- The route already sends `unavailable` as 503 degraded_unavailable with the reason (`artifacts/api-server/src/routes/discoveryOutputKinds.ts:82#if (ranked.status === "unavailable" || ranked.status === "flag_off") {`), and the rail already renders its failed-read state (§100, D-W11X2-27). The envelope has no partial form, so partial is not offered.
+- Behind `discovery_output_kinds_enabled`, seeded FALSE. The flag-off 404 body is byte-identical with and without the failing reads (F1).
+
+### 101.5 GET /discovery/community with no service client is a refusal (§100.11 finding 4; D-W11X2-31)
+
+- The arm sends the D11 envelope, `upstream_unavailable` / `community_service_unavailable`, coverage `nothing`, beside the read-failure arm's padding (`artifacts/api-server/src/routes/discovery.ts:2868#sendDiscoveryRefusal(res, { items: [], city, total: 0 }, discoveryRefusal("upstream_unavailable", "community_service_unavailable"`). The old line's text is kept in its trailing comment, so §100.11's anchor still lands on the arm it describes.
+- The hook treats `nothing` as refused and never caches it; CS6 pins that with this body.
+
+### 101.6 Held community rows belong to their city (§100.11 "also found"; D-W11X2-32)
+
+- The hook now records the city its rows were read for. A read for another city starts from nothing held, while in flight and when it fails (`travel-buddy-standalone/src/hooks/useCommunityDiscovery.ts:171#const sameCity = heldCityRef.current === commCityOf(c);`). A failed read for the same city, a sort change included, keeps that city's rows under §100's stale line (§100's F3, unchanged; C1, C3, C4).
+
+### 101.7 The sweep: three more paths, closed (D-W11X2-34, D-W11X2-35)
+
+This round read every client consumer of GET /discovery, /discovery/feed, /discovery/counts, /discovery/search, /discovery/suggest, /discovery/community, saved-ids and the output-kinds route, and every Discovery route's no-client arm, looking for a failed or partial read rendered as empty or complete, cached as complete, or answered as an empty collection without a refusal.
+
+- **Found and closed.**
+  1. **The For You tab's Compass feed.** With 3455 FALSE (production's state) a signed-in viewer's For You tab is replaced by `useCompassFeed`'s items. The hook kept one feed per viewer: its AsyncStorage entry was keyed by user alone and seeded `data` on mount, a failed read kept whatever `data` held, and `CompassPicksSection` reads another section through the same hook and entry. A city switch whose Compass read failed, or a mount whose cached feed was another city's or section's, drew that feed as this city's; §100's stale line explicitly excluded Compass items. Now the hook returns `data` and `error` only for the `section:city` they were read for (`travel-buddy-standalone/src/hooks/compass/useCompassFeed.ts:83#const scoped = dataScope === scope ? data : null;`); the cache stores the scope beside the feed and replays only into it (`travel-buddy-standalone/src/services/compass.ts:1688#parsed._scope !== scope`); and the tab draws its existing stale line over a kept Compass feed whose refresh failed (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:327#compass.error != null && items.some`). One storage entry per viewer remains, so sign-out still clears it.
+  2. **GET /discovery's DB halves with no service client.** `queryDbPlaces` and `queryCanonicalPlaces` answered `[]` ("read, and empty"), so with Overpass up the anonymous page was the OSM rows alone with no refusal. They now answer `null`, the halves' own "unreadable" (`artifacts/api-server/src/routes/discovery.ts:1016#if (!sc) return null;`, `artifacts/api-server/src/routes/discovery.ts:1194#if (!sc) return null;`), which the route already names in `failedSources`.
+  3. **saved-ids with no service client** answered `{ ids: [] }` past its auth gate; it now refuses as its read-failure arm does (`artifacts/api-server/src/routes/discovery.ts:3437#saved_ids_service_unavailable`). The client already maps `nothing` to `refused`.
+- **Read and found sound.** `app/map/index.tsx`'s places layer (refusal, partial-empty and transport are the error card; partial draws a banner); the counts badge row (reset per query; partial and refused omitted, §100.2); `DiscoveryEventPostsRail` (a failure clears the posts and says so); `DiscoveryOutputKindsRail` (a failure clears the items and says so); `useSearchSuggestions` (§100); `MapSearchSheet` (one page; no cursor); the service's page cache (never holds a `nothing` body; a partial body is replayed as partial, §99); the server's Cache A and the Compass candidate cache (a request with a failed source is fingerprinted apart, §47); the trending lists (a failed eligibility or trend read is 503; a failed Trails read is named in the body); `listTrails` and the Shared Moments loaders (a failed read is `unavailable`).
+- **Recorded, not a failed read.**
+  - GET /discovery/feed's `events`, `memories` and `sections` arrays are always `[]`: they are never read, and no client reads them.
+  - While a new destination's feed read is in flight, `DiscoveryEventPostsRail` still shows the previous destination's posts; when that read fails it clears them and says so.
+- **Out of scope.** `/map/search`, `/hidden-gems*`, `/pulse*` and `/featured` are not Discovery endpoints; each carries its own coverage design.
+
+### 101.8 Tests, seen red, and mutations
+
+- **New suites.**
+  - `travel-buddy-standalone/app/__tests__/search.loadMore.component.test.tsx` (8): SP1 is the verifier's probe, unchanged (`travel-buddy-standalone/app/__tests__/search.loadMore.component.test.tsx:246#SP1 page 1 complete, page 2 PARTIAL`); SP2–SP6, C1, C2.
+  - `travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryCategoryTab.endClaim.component.test.tsx` (20): Q1–Q9 are the verifier's probes, unchanged; E1–E7, C1–C3.
+  - `travel-buddy-standalone/src/hooks/__tests__/useCommunityDiscovery.citySwitch.component.test.tsx` (10): CS1 is the verifier's probe; CS2–CS6, C1–C4.
+  - `travel-buddy-standalone/src/hooks/compass/__tests__/useCompassFeed.scope.component.test.tsx` (7): H1–H6, C1.
+  - `travel-buddy-standalone/src/services/__tests__/compass.feedCacheScope.component.test.ts` (5): S1–S4, C1.
+  - `travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.compassScope.component.test.tsx` (3): Y1, Y2, C1.
+  - `artifacts/api-server/src/test/discoveryOutputKindsFailedReads.test.ts` (11): OK-P1 and OK-P2 are the verifier's probes, re-pointed at this tree's modules; U1–U4, R1, C1–C3, F1.
+  - `artifacts/api-server/src/test/discoveryNoServiceClientRefusals.test.ts` (7): NC1 is the verifier's probe; NC2, NC3, C1, ND1, ND2, NS1. Its guard-coverage exemption follows `discoveryFeedNoServiceClient.test.ts`'s.
+- **Existing suite extended.** `discoveryRefusalConsumers.guard` registers the new branches and proofs on existing lines, and G8 pins `listMoreFailedNotice`. Nothing is removed and no assertion is restated.
+- **Red first.** Each was run at the unfixed code; the output is kept in the lane's scratch.
+  - Search: SP1–SP6 red; C1, C2 green.
+  - DiscoveryCategoryTab: Q4, Q5, Q7, Q8 and E1–E6 red (10); Q1–Q3, Q4c, Q6, Q9, E7 and C1–C3 green. Q1 and Q9 pin §100's behaviour; their red is D-M8 and D-M9 below, the two mutations that survived the lane's own round-4 suites.
+  - Community: CS1–CS3 red; CS4–CS6, C1, C2 green. C3 and C4 were written after the fix; C4's red is H-M6.
+  - Compass hook: H1–H3 and H5 red; H4, C1 green. H6 was written after the fix; its red is K-M4.
+  - Compass cache: written after the fix; its red is K-M5, which is the pre-fix behaviour.
+  - ForYouTab: Y1 red; Y2 and C1 green. Y2 pins the tab's side of the hook's new contract.
+  - Output kinds: OK-P1, OK-P2, U1–U4 and R1 red; C1–C3 and F1 green.
+  - No client: NC1, NC2, ND1, ND2 and NS1 red; NC3 and C1 green.
+- **Mutations.** 30 of 30 killed. Each was applied alone, its suite run, and the file restored byte-identical (sha256 checked).
+
+| # | mutation | red |
+|---|---|---|
+| X-M1 | a partial cursor page not raised | SP1 |
+| X-M2 | a refused cursor page silent | SP2 |
+| X-M3 | a failed cursor page silent | SP3, SP5, SP6 |
+| X-M4 | a thrown cursor page silent | SP4 |
+| X-M5 | the line not cleared by a retry | SP5 |
+| X-M6 | a new page 1 inherits the failure | SP6 |
+| X-M7 | the footer line removed | SP2–SP6 |
+| D-M8 | the list's stale line over a cached PARTIAL page removed | Q9 |
+| D-M9 | hydration drops the cached page's partial flag | Q1, Q9 |
+| D-M10 | hydration does not set `total` | E1 |
+| D-M11 | the end claim after a failed read | E2 |
+| D-M12 | the end claim beside a partial page | Q7, Q8, E6 |
+| D-M13 | the end claim on an unknown total | E3 |
+| D-M14 | a failed load-more not recorded | Q5, E4, E5 |
+| D-M15 | a failed load-more never cleared | E4, E5 |
+| D-M16 | the load-more line removed | Q5, E4, E5 |
+| H-M4 | another city's rows held | CS1–CS3 |
+| H-M5 | a fresh read does not mark its city held | C1, §100's F3 |
+| H-M6 | a cache replay does not mark its city held | C4 |
+| K-M1 | the hook returns another scope's feed | H2, H3, H5 |
+| K-M2 | the cache read unscoped | H1 |
+| K-M3 | the cache write unscoped | H1 |
+| K-M4 | the hook returns another scope's error | H6 |
+| K-M5 | the cache ignores the scope | S2–S4 |
+| Y-M1 | a failed Compass refresh over its feed silent | Y1 |
+| O-M1 | the output kinds ignore a non-place failed read | OK-P1, OK-P2, U1–U4, R1 |
+| N-M1 | the community no-client arm a quiet city | NC1, NC2 |
+| N-M2 | the curated half "read, and empty" with no client | ND1, ND2 |
+| N-M3 | the canonical half "read, and empty" with no client | ND1, ND2 |
+| N-M4 | saved-ids "you saved nothing" with no client | NS1 |
+
+- **Existing tests, run at the final tree.**
+  - Every server suite that names `routes/discovery`, `discoveryCandidates/outputKinds` or `discoveryCandidates/materialize`, plus the two new ones: 105 files, 1,982 tests, 1,981 pass. The one failure is `discoveryClientRouteE2E`'s known Node 22 load failure (`truncateDisplayName`, §76.5), unchanged.
+  - The client component suites under the Discovery components, hooks, services, search, map, Compass and shared components: 340 suites, 2,286 tests, all green.
+  - `discoveryRefusalConsumers.guard` (node:test): 8 of 8.
+
+### 101.9 Checks
+
+Run after the last edit.
+
+- **`artifacts/api-server`, all clean:**
+  - `typecheck`;
+  - `typecheck:tests`: 863 against a baseline of 863;
+  - `check:test-registration` (the two new suites are on the `test` line);
+  - `check:doc-citations`: 0 broken anchors, with unanchored citations at their ceiling of 6,434;
+  - `check:citation-targets`: 163 against a ceiling of 163; `check:citation-symbols`;
+  - `check:census-integrity` (discovery: C 101 / W 85 / N 2 / X 0 over 188), `check:census-freshness`, `check:census-scope-coverage` and `check:census-row-move-labels`;
+  - `check:enum-literals`, `check:async-handlers`, `check:discovery-query-paths`, `check:route-auth-gate`;
+  - `check:guard-coverage`: the new no-client suite names the Supabase env vars only to delete them, so it carries an exemption in `discoveryFeedNoServiceClient.test.ts`'s words (`artifacts/api-server/scripts/check-guard-coverage.mjs`).
+- **Acknowledgements.** Appended, with argued reasons, for census-discovery (its files, plus `useCompassFeed.ts`, `services/compass.ts` and the new suites); census-passport, -sensing, -trust and -layover for `routes/discovery.ts`; census-input-intelligence for `app/search.tsx`; census-compass, -trips and -sensing for `services/compass.ts`. `services/compass.ts` and the new suites join this census's CENSUS_SCOPE.
+- **`travel-buddy-standalone`:** `tsc --noEmit -p .` (clean), `typecheck:tests` (173 against 173) and `check:all` (ALL CHECKS PASSED: node tests, 705 component suites and 4,534 tests, typecheck, typecheck:tests and the lints).
+- **Not run:**
+  - the harness, since no migration was added;
+  - `check:write-path-columns`, which needs live credentials. No write payload changed;
+  - the full api-server `pnpm test`. The 105 suites that touch the changed server files were run instead.
+
+### 101.10 DV-83, restated
+
+§100.11's four paths and two further findings are closed, each with the verifier's probe red first and green now, and the sweep closed three more. Every clause of DV-83's criterion holds on every path this lane examined:
+
+1. Producers send the failure: the output kinds (`unavailable`), the community route, saved-ids and GET /discovery's DB halves with no service client.
+2. Nothing refused or partial is cached as complete: the community hook caches no refusal (CS6); the Compass feed cache replays only into its own scope.
+3. No refused body or transport failure is rendered as empty or complete: cursor pages on search and the category tab, the end claim, a city switch, and a failed Compass refresh.
+4. Consumers branch on coverage: a partial cursor page raises the incomplete notice, and the end claim reads `partial`.
+
+An independent re-verification at the merged head is owed before the integrator accepts the move, as §100.11 asks.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§100.11's four paths are closed, each with its verifier probe red first, and the round's sweep closed three more; 30 of 30 mutations killed.** **A cursor page states its coverage.** A partial page 2 raises search's incomplete notice (`travel-buddy-standalone/app/search.tsx:310#} else { if (res.data.refusal?.coverage === 'partial') {`; SP1, X-M1), and a refused, failed or thrown page 2 is said with a retry on search and on the category tab (`travel-buddy-standalone/app/search.tsx:255#} else setMoreFailed(true);`, `travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:501#setMoreFailed(nextPage > 1);`; SP2–SP6, Q5, E4, E5). **The end claim needs a read that did not fail.** Hydration sets the cached page's total, and "N places found" needs no failed read, no partial page and a known total (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:716#!error && !partial && total > 0 && places.length >= total && places.length > 0 ?`; Q4, Q7, Q8, E1–E3, E6). **Held rows belong to their city and section.** The community hook drops another city's rows (`travel-buddy-standalone/src/hooks/useCommunityDiscovery.ts:171#const sameCity = heldCityRef.current === commCityOf(c);`; CS1–CS3), and the For You tab's Compass feed is returned and replayed only for its own section and city, with a failed refresh over it said (`travel-buddy-standalone/src/hooks/compass/useCompassFeed.ts:83#const scoped = dataScope === scope ? data : null;`, `travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:327#compass.error != null && items.some`; H1–H6, S1–S4, Y1). **Producers send the failure.** Any failed materialise read makes an output kind unavailable, a 503 with its reason (`artifacts/api-server/src/lib/discoveryCandidates/outputKinds.ts:165#if (mat.failedReads.length > 0) return`; OK-P1, OK-P2, U1–U4, R1; flag-off byte-identical, F1). With no service client, the community route and saved-ids refuse and GET /discovery names its two DB halves as unread (`artifacts/api-server/src/routes/discovery.ts:2868#sendDiscoveryRefusal(res, { items: [], city, total: 0 }, discoveryRefusal("upstream_unavailable", "community_service_unavailable"`, `artifacts/api-server/src/routes/discovery.ts:1016#if (!sc) return null;`; NC1, NC2, ND1, ND2, NS1). Every path §94, §94.11, §98, §99 and §100 closed still holds: their suites pass unchanged. **Stated limits.** Controlled evidence only; no client build carrying these changes has shipped. The output kinds sit behind `discovery_output_kinds_enabled`, seeded FALSE. An independent re-verification at the merged head is owed, as §100.11 asks. |
+
+**Headline.** DV-83 moves W → C. `check:census-integrity` counts **C 101 / W 85 / N 2 / X 0** over 188: CONSTRUCTED 186 / 188 = **98.9 %**, CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged.
+
+### 101.11 Left open, and what would turn this red
+
+- **Seen and not built.** The two "recorded, not a failed read" items in 101.7. §99.7's A07 note (the hydration does not restate `liveUnchecked`) is unchanged.
+- **What would turn DV-83 red again:**
+  - a partial, refused or failed cursor page drawn as complete or silent (SP1–SP6, Q5, E4, E5);
+  - "N places found" after a failed read, beside a partial page, or on an unknown total (Q4, Q7, Q8, E1–E3, E6);
+  - another city's or section's rows presented under this one (CS1–CS3, H2, H3, H5, S2–S4);
+  - an output kind answering a failed read as `empty` or a shorter `ranked` (U1–U4, R1);
+  - a no-client arm answering an empty collection without a refusal (NC1, ND1, NS1);
+  - any path §100.10 lists.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/lib/capability/prerequisitesCore.ts — §93.8 names its function-granular gate boundary as why the Compass KNOWN entry was struck; it is the prerequisite checker's own machinery, and no Discovery verdict rests on it.

@@ -1064,6 +1064,22 @@ const EXEMPT = [
   },
 
   {
+    file: 'src/test/discoveryNoServiceClientRefusals.test.ts',
+    pinnedTestEnv: true,
+    reason:
+      'Registered unit test for the Discovery routes on the NO-SERVICE-CLIENT path (census-discovery §101, DV-83): '
+      + 'GET /discovery/community, GET /discovery/community/saved-ids and GET /discovery\'s two DB halves must refuse, '
+      + 'not answer an empty or complete list. Same shape as discoveryFeedNoServiceClient.test.ts: it names SUPABASE_URL '
+      + 'and SUPABASE_SERVICE_ROLE_KEY only to `delete` them from process.env before a dynamic import() of '
+      + 'src/lib/supabase.js, because isServiceClientReady is a load-time const. The detector is NAME-BASED and cannot '
+      + 'tell that deletion from a read. The file constructs no client and calls createClient nowhere; it asserts in '
+      + 'before() that getServiceClient() is null, and its one test seam (_setTestClient, for saved-ids\' auth gate) is '
+      + 'a plain object with an auth.getUser stub and a profiles stub, never a Supabase client. Overpass is answered by '
+      + 'a fetch override and Nominatim is refused. EXEMPTION MEANS UNGUARDED, NOT SAFE — if this file ever stops '
+      + 'deleting those variables, or ever constructs a client, the exemption is void and it must import the guard.',
+  },
+
+  {
     file: 'src/test/wallSessionIntentLiveDbStatus.test.ts',
     pinnedTestEnv: true,
     reason:

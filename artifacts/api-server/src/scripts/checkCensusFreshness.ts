@@ -4437,6 +4437,17 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryCategoryTab.failedRead.component.test.tsx",
     "travel-buddy-standalone/src/hooks/__tests__/useCommunityDiscovery.failedRead.component.test.tsx",
     "travel-buddy-standalone/src/hooks/__tests__/useSearchSuggestions.failedRead.component.test.tsx",
+    // census-discovery §101 (lane W11-X2, round 5): DV-83 re-graded on cursor pages, the end claim, a city switch,
+    // the Compass feed's scope, the output kinds' failed reads and the no-service-client arms.
+    "travel-buddy-standalone/app/__tests__/search.loadMore.component.test.tsx",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryCategoryTab.endClaim.component.test.tsx",
+    "travel-buddy-standalone/src/hooks/__tests__/useCommunityDiscovery.citySwitch.component.test.tsx",
+    "travel-buddy-standalone/src/hooks/compass/__tests__/useCompassFeed.scope.component.test.tsx",
+    "travel-buddy-standalone/src/services/__tests__/compass.feedCacheScope.component.test.ts",
+    "travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.compassScope.component.test.tsx",
+    "travel-buddy-standalone/src/services/compass.ts",  // §101 grades its feed cache's scope (D-W11X2-34)
+    "artifacts/api-server/src/test/discoveryOutputKindsFailedReads.test.ts",
+    "artifacts/api-server/src/test/discoveryNoServiceClientRefusals.test.ts",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

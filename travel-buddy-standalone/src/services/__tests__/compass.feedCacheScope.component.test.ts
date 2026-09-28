@@ -39,9 +39,9 @@ jest.mock('@react-native-async-storage/async-storage', () => {
 });
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getCachedFeed, setCachedFeed } from '../compass.ts';
+import { getCachedFeed, setCachedFeed, type CompassFeedResponse } from '../compass.ts';
 
-const FEED = { sections: [{ name: 'for_you', items: [] }], nextCursor: null, fallback: false, compassEnabled: true };
+const FEED: CompassFeedResponse = { sections: [{ name: 'for_you', items: [], total: 0 }], nextCursor: null, fallback: false, compassEnabled: true };
 
 beforeEach(async () => { await AsyncStorage.clear(); });
 

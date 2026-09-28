@@ -2084,3 +2084,91 @@ No APPROVAL REQUIRED entry is added. Arming the stop (D-W10-O-3) and gate 2 (D-W
 - **Decision.** A network failure or a thrown read reaches the rail's existing failed-read state (`travel-buddy-standalone/src/components/discovery/DiscoveryOutputKindsRail.tsx:72#r.reason === 'unavailable' || r.reason === 'network'`), as a 503 already did. A 404 (the flag is off at the server), a sign-out, `invalid` and `not_configured` still render nothing: none of them is a read that failed. O5's "a transport failure renders nothing" entry is removed by this decision, and O8 and O9 pin the new behaviour. The rail is behind `discovery_output_kinds_enabled`, seeded FALSE, and sends no request with it off (O1). The flag-off output is therefore byte-identical.
 - **Reversibility.** Revert lines 72 and 74. Nothing is stored.
 - **Where.** Tests: `DiscoveryOutputKindsRail.component.test.tsx` O8, O9 and O10.
+
+## W11-X2 round 5 — DV-83's §100.11 paths: cursor pages, the end claim, a city switch, the output kinds and the no-client arms (census §101)
+
+*Lane W11-X2, round 5, 2026-09-28, branch `disc-w11-x2-r5` from `faeeb50bc`. Census section §101. Row: DV-83 (held at W by §100.11). No migration and no new flag: each change alters output only when a Discovery read failed, answered `partial`, belongs to another city or section, or when no service client exists. The output-kinds change sits behind its existing FALSE flag. Every edit in a cited file is line-neutral. All evidence is controlled.*
+
+### D-W11X2-28 — a partial cursor page makes the search list incomplete
+
+- **The question.** §100.11 finding 1: *"On a cursor page, `travel-buddy-standalone/app/search.tsx:310#} else {` appends the rows and never reads `refusal`. The incomplete notice is set only on page 1."*
+- **Options considered.**
+  - (a) Set the notice from any page's coverage, adding the page's `failedSources` to the set page 1 set.
+  - (b) A separate per-page notice beside the rows that page added. The screen has one list; a second sentence about part of it is noise, and the person cannot tell which rows are which.
+  - (c) Leave it. That is the defect.
+- **Decision.** (a). The list is incomplete once any page of it was; the notice is the same sentence page 1 uses (`SEARCH_PARTIAL_NOTICE`), so the screen says one thing. A new page-1 search clears it, as before. Implemented on the cursor arm, in place (`travel-buddy-standalone/app/search.tsx:310#} else { if (res.data.refusal?.coverage === 'partial') {`).
+- **Reversibility.** Revert line 310. Nothing is stored.
+- **Where.** Tests: `search.loadMore` SP1 (the verifier's probe) and C2.
+
+### D-W11X2-29 — "N places found" is claimed only after a read that did not fail, beside no partial page, with a known total
+
+- **The question.** §100.11 finding 2: after a failed refresh over a cached page *"`total` stays at its initial 0 … so the footer claims the cached page is the whole set"*, and the footer is printed *"beside the partial notice"*.
+- **Options considered.**
+  - (a) Hydrate `total` from the cached page, and gate the end claim on `!error && !partial && total > 0`.
+  - (b) Hydrate only. A failed refresh over a cached page whose total equals its rows would still claim the end about a set nobody re-read; a partial page would still carry it.
+  - (c) Remove the footer. It is a true and useful statement after a complete read of the whole set.
+- **Decision.** (a). The cached page carries the server's own total, so hydration sets it (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:558#setTotal(cachedResult.total);`); that also unblocks load-more after a failed refresh (the guard compares against it). The end claim needs the last read not to have failed, no partial page in the list, and a known total, `0` with rows on screen being unknown (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:716#!error && !partial && total > 0 && places.length >= total && places.length > 0 ?`). A partial list shows its notice and no end claim.
+- **Reversibility.** Revert lines 558, 561 and 716. Nothing is stored.
+- **Where.** Tests: `DiscoveryCategoryTab.endClaim` Q4, Q7, Q8 (the verifier's probes), E1–E3, E6 and C1–C3.
+
+### D-W11X2-30 — a failed load-more (page ≥ 2) is said, with a retry, on both lists
+
+- **The question.** §100.10 and §100.11: *"A failed load-more (page 2 and later) is silent on DiscoveryCategoryTab and search"*; on search a page-2 `nothing` refusal is silent too.
+- **Options considered.**
+  - (a) A footer line, "Couldn’t load more places just now." / "… results …", with the retry each list already uses (DiscoveryCategoryTab's "Try again" button in its `moreRefused` style; search's "Tap to retry" in its page-1 error style). Scrolling to the end also asks again, because the cursor and the page are kept.
+  - (b) Replace the list with the error state. It would throw away real rows.
+  - (c) A toast. Transient; a person who looks away misses it, and the list then ends without a word.
+- **Decision.** (a). No new colour token: the line reuses each screen's existing styles (§100's `sharedSheetContrast` lesson). The wording has one home, `listMoreFailedNotice` (`travel-buddy-standalone/src/services/discoveryCoverageNotice.ts:89#export function listMoreFailedNotice(noun: string): string {`). DiscoveryCategoryTab records a failed page ≥ 2 as `moreFailed` beside the page-1 `refreshFailed` (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:501#setMoreFailed(nextPage > 1);`); its refused page 2 keeps §55's `moreRefused` footer, which stops scroll-retries during an outage. Search raises one flag for a failed, thrown or refused cursor page (`travel-buddy-standalone/app/search.tsx:233#else setMoreFailed(true);`, `travel-buddy-standalone/app/search.tsx:255#} else setMoreFailed(true);`); a retry or a new page-1 search clears it.
+- **Reversibility.** Revert the named lines. Nothing is stored.
+- **Where.** Tests: `search.loadMore` SP2–SP6 and C1; `DiscoveryCategoryTab.endClaim` Q5, E4, E5 and E7; the consumer guard's G8 pins the wording.
+
+### D-W11X2-31 — GET /discovery/community with no service client is a refusal
+
+- **The question.** §100.11 finding 4: *"`artifacts/api-server/src/routes/discovery.ts:2868#res.json({ items: [], city, total: 0 });` sends no refusal, and `useCommunityDiscovery` caches that answer for 5 minutes. §98 fixed the same class for the feed."*
+- **Options considered.**
+  - (a) The D11 envelope: `upstream_unavailable` / `community_service_unavailable`, coverage `nothing`, beside the read-failure arm's padding. The service client is the route's upstream, as §98 classed the feed's.
+  - (b) A 503. Every other Discovery refusal keeps its 200 envelope (`DISCOVERY_REFUSAL_STATUS`), and the client's `!res.ok` arm would then call it a transport failure.
+- **Decision.** (a), on the same line (`artifacts/api-server/src/routes/discovery.ts:2868#sendDiscoveryRefusal(res, { items: [], city, total: 0 }, discoveryRefusal("upstream_unavailable", "community_service_unavailable"`). The hook already treats `nothing` as refused and never caches it (its `if (cKey && !refused …)` guard), which `useCommunityDiscovery.citySwitch` CS6 pins with this body. The old line's text is kept in the trailing comment, so §100.11's anchor still lands on the arm it describes.
+- **Reversibility.** Revert line 2868. Nothing is stored.
+- **Where.** Tests: `discoveryNoServiceClientRefusals` NC1 (the verifier's probe), NC2, NC3 and C1; `useCommunityDiscovery.citySwitch` CS6.
+
+### D-W11X2-32 — the community hook keeps held rows only for the city they were read for
+
+- **The question.** §100.11 "also found": *"After a city switch, a failed community read keeps the previous city's gems under the new city's stale line."*
+- **Options considered.**
+  - (a) Track the city the held rows belong to. A read for another city starts from nothing held; a failed read for the same city keeps its rows under the stale line (§100's F3).
+  - (b) Key on city AND sort. A sort change over the same city would then drop the city's own rows on a failed read, which are the right city's places and are still true; §100's F3 pins that they stay.
+  - (c) Clear on every failure. That undoes D-W11X2-26's kept rows.
+- **Decision.** (a). While another city's read is in flight its rows are not shown either (CS3), since those are the wrong city's places, not a stale answer about this one (`travel-buddy-standalone/src/hooks/useCommunityDiscovery.ts:171#const sameCity = heldCityRef.current === commCityOf(c);`). A cache replay marks its city held (C3, C4).
+- **Reversibility.** Revert lines 164, 171, 199, 230, 236 and 256, and the foot helper. Nothing is stored.
+- **Where.** Tests: `useCommunityDiscovery.citySwitch` CS1 (the verifier's probe), CS2–CS5, C1–C4; §100's F1–F5 unchanged.
+
+### D-W11X2-33 — any failed materialise read makes an output kind unavailable
+
+- **The question.** §100.11 finding 3: *"`rankEmergingForViewer` refuses only a failed `discovery_places` read. A failed blocks, standing or canonical-places read makes the route answer 200 with `items: []` and no error."*
+- **Options considered.**
+  - (a) Every entry in `failedReads` makes the answer `unavailable`, reason the first failed read; the route already sends that as 503 degraded_unavailable with the reason, and the rail already renders its failed-read state.
+  - (b) A partial answer. The envelope (`11` §5's items / cursor) has no coverage field, and the rows it would carry are exactly the ones a failed eligibility read could not clear, or a subset missing the canonical candidates; adding a partial form is a contract change for a flag-off route with one client.
+  - (c) Only blocks and standing. A failed canonical read loses candidates the same way.
+- **Decision.** (a), appended on line 165 after the existing `discovery_places` arm (`artifacts/api-server/src/lib/discoveryCandidates/outputKinds.ts:165#if (mat.failedReads.length > 0) return`). The aggregate merge's failure is not in `failedReads` and removes no row (it merges nothing, as the route does), so it does not refuse. A read that was never owed (no authored candidate, so no blocks read) is not a failure (C2). Behind `discovery_output_kinds_enabled`, seeded FALSE; the flag-off 404 is pinned byte-identical (F1).
+- **Reversibility.** Delete the appended statement. Nothing is stored.
+- **Where.** Tests: `discoveryOutputKindsFailedReads` OK-P1, OK-P2 (the verifier's probes), U1–U4, R1, C1–C3, F1.
+
+### D-W11X2-34 — the For You tab's Compass feed is this section's and this city's, and its failed refresh is said
+
+- **The question.** Found by this round's sweep. With `discovery_for_you_pde_enabled` FALSE (3455, production's state) the For You tab of a signed-in viewer is replaced by `useCompassFeed`'s items. The hook kept ONE feed per viewer: the AsyncStorage entry was keyed by user alone and seeded `data` on mount, and a failed read kept whatever `data` held. `CompassPicksSection` reads another section through the same hook and the same entry. So a city switch whose Compass read failed, or a mount whose cached feed was another city's or section's, drew another city's recommendations as this city's, and §100's stale line explicitly excluded Compass items.
+- **Options considered.**
+  - (a) Scope the feed: the hook returns `data` and `error` only for the `section:city` they were read for; the cache stores that scope beside the feed and replays only into it; the tab draws its existing stale line over a kept Compass feed whose refresh failed.
+  - (b) Key the storage by scope. Leaves one entry per city per viewer in storage, and `clearCachedFeed` (sign-out) would no longer clear them.
+  - (c) Drop the cache. It is the instant paint the hook exists for.
+- **Decision.** (a). One storage entry per viewer, as before, so sign-out still clears it; an entry written before §101 (no scope) is never replayed into a scope. A caller that passes no scope is unchanged. The failure of the Compass upgrade with nothing held leaves the GET /discovery baseline on screen, which is a complete read of its own, with its own coverage (§99, §100). Implemented at `travel-buddy-standalone/src/hooks/compass/useCompassFeed.ts:83#const scoped = dataScope === scope ? data : null;`, `travel-buddy-standalone/src/services/compass.ts:1688#parsed._scope !== scope` and `travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:327#compass.error != null && items.some`.
+- **Reversibility.** Revert the named lines. The stored `_scope` field is ignored by the old code.
+- **Where.** Tests: `useCompassFeed.scope` H1–H6 and C1; `compass.feedCacheScope` S1–S4 and C1; `ForYouTab.compassScope` Y1, Y2 and C1.
+
+### D-W11X2-35 — with no service client, GET /discovery's two DB halves are unread, and saved-ids refuses
+
+- **The question.** Found by this round's sweep. `queryDbPlaces` and `queryCanonicalPlaces` answered `[]` ("read, and empty") when `getServiceClient()` is null, so with Overpass up GET /discovery served the OSM rows alone with no refusal: a city with no curated places. `GET /discovery/community/saved-ids` answered `{ ids: [] }` ("you saved nothing") past its auth gate.
+- **Options considered.** (a) `null`, the halves' own "unreadable", which the route already turns into `failedSources` (`discovery_places`, `places`); saved-ids sends the D11 envelope as its read-failure arm does, class `upstream_unavailable`. (b) Leave them: in a deployment with no client `requireUser` already answers server_not_configured, and the anonymous GET /discovery is the only one of the three reachable. It is reachable, and the criterion reads "never".
+- **Decision.** (a) (`artifacts/api-server/src/routes/discovery.ts:1016#if (!sc) return null;`, `artifacts/api-server/src/routes/discovery.ts:1194#if (!sc) return null;`, `artifacts/api-server/src/routes/discovery.ts:3437#saved_ids_service_unavailable`). The client's `getSavedPlaceIds` already maps `nothing` to `refused` and writes no bookmark state.
+- **Reversibility.** Revert the three lines. Nothing is stored.
+- **Where.** Tests: `discoveryNoServiceClientRefusals` ND1, ND2 and NS1.
