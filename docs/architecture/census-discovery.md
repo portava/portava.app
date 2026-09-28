@@ -16186,6 +16186,44 @@ The verifier confirmed B02 and A08 `C` at `de6d2bfbc` and reported four remainin
 
 **What would turn this red:** anything §80.11–§80.14 list, plus an empty or mixed list during the handoff (the handoff case), an in-word emoji in a spaceless script leaving a gap (Q8e), or the gateway's key diverging from the emoji-free word (Q8e parity).
 
+## §96 — Owner approval request consolidated (lane W11-P)
+
+*Written 2026-09-28 by lane W11-P on `disc-w11-approvals`, at integration head `3fd11f858`. Docs only. No code, migration, test or flag changed. Nothing was applied to `portava-ci` or to production. **No row moves**, and the headline is unchanged at 101 C / 85 W / 2 N / 0 X.*
+
+**What `docs/ops/discovery-owner-approval-request.md` now contains.** It is rewritten in full, and it replaces W10-D's pack (§83).
+1. **A one-screen summary.** 101 C. 87 open, split two ways:
+   - 51 wait only on production. 14 of them are `C`-gradable on a production read-back, 2 need one code commit after 14 days, and 35 need production rows;
+   - 36 wait on an owner policy answer. 24 are named by their `AWAITS OWNER APPROVAL:` marker, and 12 are reached only through an activation that is gated on such an answer.
+   - By marker: 55 rows carry only `IMPLEMENTATION-COMPLETE; awaits:`, 19 carry both markers, 11 W and 2 N carry only `AWAITS OWNER APPROVAL:`.
+2. **Step 0 and 25 numbered actions**, in the order they must happen. Each gives the exact SQL, file list or setting, its category, prerequisites, the rows it unblocks, monitoring and stop conditions, recovery (the rollback file or flag flip), the consequence either way, and a recommendation.
+3. **Step 0, the `portava-ci` apply, which is not a decision.** It says what the owner does, and what the next session runs. The owner either sets `SUPABASE_URL` and `SUPABASE_PROJECT_TOKEN` for the environment, or connects the Supabase connector at https://claude.ai/customize/connectors, then starts a new session. The next session runs the applier's dry run and apply, certify with `--files`, `audit:schema`, and the `CI (live DB)` workflow. The 2481 ledger entry is not touched.
+4. **The questions this lane may not answer**, each with a recommended answer: consent (9, 12, 15, 16, 17, 18), retention (11), money (22) and one product definition (25, B01's ß/æ/œ).
+5. **A map** from every `W10D-…` id and every later register entry to its action, and **an index** of all 87 open rows with the actions each needs.
+
+**Verified against the tree, not copied.**
+- Every migration number and flag name in the document was checked to exist in `artifacts/api-server/src/migrations`, by script. `LAYOVER_ROUTED_CORRIDOR_ENABLED` is named as the environment variable it is, not a flag.
+- Every rollback file named exists in `db/rollback/`.
+- The pending set was recomputed with the applier's own `planApply` and `classifyMigration`: 73 files, 51 with a post-`COMMIT` tail, and no refusal.
+
+**The other two ops documents.**
+- `docs/ops/discovery-portava-ci-apply-plan.md` gains §8: the 73 files with their sha256 and rollback files, and the pre-flight additions (38 more seeded flags, 53 in all). §8.3 says what is rehearsed. 3435's amended bytes (§84) and the 32 files 3450–3500 have not been through the applier from the modelled baseline; W10-F's §7 covered 41.
+- `docs/ops/discovery-production-rollout.md` gains §9: P1 extended to this tree, every new flag with its activation action, and the stop-condition changes since `debd5ad4f`.
+- The earlier sections of both documents are unchanged except for three line-neutral pointers each. The anchored lines this census cites in them (rollout plan 39, 106 and 291; apply plan 30, 344, 352, 393, 431, 449 and 490) did not move. The approval request's anchored citation in DC-27's §83 statement (line 92, anchor "A5 — Phase F gates") still holds: line 92 is the map's row for W10D-A5.
+
+**Gaps found, stated in the document, not fixed.**
+- A tripped stop resolves the engine mode to legacy but does not turn off `discovery_for_you_pde_enabled`, `discovery_cache_a_ranked_enabled` or any §78/§85 design flag, because `artifacts/api-server/src/lib/discoveryOnePipeline.ts` reads no stop state. Gate 2's recovery is therefore a manual flag flip.
+- No `db/rollback/` file exists for 3440, 3441, the P0 files or 2893; each has an in-file reversal. 2901, 2921 and 2930 have neither.
+- The C-11 fix migration does not exist until the owner answers C-11.
+
+**Decisions:** D-W11P-1 (one ordered list), D-W11P-2 (the counting rule) and D-W11P-3 (question 25 is carried with its recorded reading), in `docs/architecture/discovery-decision-register.md`, section W11-P. No APPROVAL REQUIRED entry is added or answered.
+
+**Checks run** (in `artifacts/api-server`, after the last edit): `check:census-integrity`, `check:doc-citations`, `check:citation-targets`, `check:citation-symbols`, `check:census-freshness`, `check:census-scope-coverage` and `check:census-row-move-labels`, all passing. **Not run:** the harness, and any test suite, because no code or migration changed; anything against `portava-ci` or production, for which there are no credentials.
+
+**What would turn this red:**
+- a migration landing or changing bytes before the apply, which changes §8.1's list;
+- a row statement changing its marker, which changes §1's counts;
+- line 92 of the approval request moving.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/lib/capability/prerequisitesCore.ts — §93.8 names its function-granular gate boundary as why the Compass KNOWN entry was struck; it is the prerequisite checker's own machinery, and no Discovery verdict rests on it.

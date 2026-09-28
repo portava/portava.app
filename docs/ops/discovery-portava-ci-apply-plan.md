@@ -1,4 +1,4 @@
-# Discovery — the `portava-ci` apply plan (40 migrations)
+# Discovery — the `portava-ci` apply plan (40 migrations at `debd5ad4f`; **73 at `3fd11f858`**, §8)
 
 *Prepared 2026-09-28 by lane W10-D on `disc-w10-d-rollout` (base `debd5ad4f`, whose migration tree is byte-identical to PR #528's head `84318d1b2`). Census section: census-discovery §83.*
 
@@ -8,7 +8,7 @@
 |---|---|
 | Target | `portava-ci`, ref `hwokxgbmezheskbzskfr`. Never production (`ajrurzioarfkagpuxfnb`): the applier refuses that ref by construction. |
 | Authority | Owner, 2026-09-28: *"after checking dependencies, preserving existing data and flag values, and verifying recovery and postconditions. Do not modify the intentional 2481 ledger entry."* |
-| Set | 40 files, `3338` … `3441`, listed in §1. **Plus whatever lands after `debd5ad4f`**: at W10-F's tree that is `3436`, so **41** (§1.3, §7). |
+| Set | 40 files, `3338` … `3441`, listed in §1. **Plus whatever lands after `debd5ad4f`**: at W10-F's tree that is `3436`, so **41** (§1.3, §7). **At `3fd11f858` the set is 73: §8 is the current list, and it supersedes §1.2 for the apply.** |
 | Rehearsal | Local PostgreSQL 16 harness, port 55455, from a restored pre-apply baseline (§4); re-run by W10-F on port 55458 after the fixes (§7). Controlled evidence, not `portava-ci` evidence. |
 | Blockers found | The apply itself passes. **W10-D found four certification blockers (§5.3, F1–F4); W10-F found a fifth (F5) and landed all five (census-discovery §87).** On the harness, `certify:migrations` itself now passes stages 1–4, and `audit:schema` reports nothing in or caused by the set (§7). None was a data risk. |
 
@@ -80,7 +80,7 @@ The set was recomputed with the repository's own logic, not copied:
 
 ### 1.3 Plus whatever lands after `debd5ad4f`
 
-Wave-10 lanes are adding migrations now (for example the ranker designs' flags, seeded FALSE). Every file that lands after `debd5ad4f` joins this set in byte order. Before the apply:
+Wave-10 lanes are adding migrations now (for example the ranker designs' flags, seeded FALSE). Every file that lands after `debd5ad4f` joins this set in byte order (**at `3fd11f858`: 33 more, 73 in all, listed in §8**). Before the apply:
 
 1. Re-run the dry run (§2, step 2) on the exact tree that will be applied. The list must be these 40 plus the new files, and nothing else.
 2. For every new file, add a row to §3 (dependencies, what it creates, rows touched, postconditions, recovery) and re-run §4 on the harness.
@@ -521,3 +521,174 @@ The 3 failures are in `trailsMemberVisibility` (TV6) and `trailsService` (H4 and
 - The apply itself on `portava-ci` (steps 1–8), and a green `schema drift` run for the applied tree.
 - Step 3's emitter covers the 40 by name. At this tree `3436` is pending too, so it is not in the zero-persistence file. Extend `CI_PENDING_84318D1B2`, or rely on step 4's own stop-at-first-failure.
 - The 8 catalogue lines the 3385/3390/3410 rollbacks leave tighter (§4.4) are unchanged. They are not this lane's files.
+
+---
+
+## 8. The pending set at `3fd11f858` (lane W11-P, census-discovery §96)
+
+*Lane W11-P, 2026-09-28, branch `disc-w11-approvals` at integration head `3fd11f858`. Docs only. **Nothing was applied to `portava-ci` or to production**, and this session still has no `portava-ci` credentials. What the owner must do to unblock the apply is in `docs/ops/discovery-owner-approval-request.md` §3. This section replaces §1.2 as the list to apply; §1–§7 stay as the record of §83 and §87.*
+
+### 8.1 The 73, in apply order
+
+**How the list was computed.** The applier was imported as a library (`scripts/src/apply-migrations.ts`: `listMigrationFiles`, `planApply`, `assertUnambiguousOrder`, `classifyMigration`, `checksumOf`). It planned against a modelled ledger in which every numbered file below `3338`, and `3350`, is proven applied, as §1.1 models `portava-ci`.
+- `assertUnambiguousOrder` passed, and no file is `REFUSED`.
+- The model does not carry the 27 date-named files (`20260720_…` to `20260815_…`). CI's own dry run on `84318d1b2` did not list them, so `portava-ci` records them; they are left out below.
+- **The real list is whatever the dry run prints against the real ledger (step 4 of 8.4).** It must be these 73, plus any file `main` adds before the merge, and nothing else.
+
+Rows 1–38 and 40–41 are §1.2's 40. Row 39 (`3436`) and rows 42–73 are the 33 added since `debd5ad4f`. `sha256` is the first 12 hex digits at `3fd11f858`. Against §1.2 and §7.1, only `3435` differs: it was amended by census §84 (D-W10-R1-17, "3435 (amended)") after W10-F's rehearsal, from `9c8418705d59` to `ea4620ab120b`.
+
+| # | file | shape | sha256 | rollback file (`db/rollback/`) |
+|---|---|---|---|---|
+| 1 | `3338_media_processing_worker_flag.sql` | unwrapped | `eab83e0eb25a` | `2026-09-26-3338-media-processing-worker-flag-rollback.sql` |
+| 2 | `3340_media_tab_world_default_flag.sql` | unwrapped | `2cba1cac5a0f` | `2026-09-27-3340-media-tab-world-default-flag-rollback.sql` |
+| 3 | `3341_media_watch_context_overlay_flag.sql` | unwrapped | `61ba39d3bad8` | `2026-09-27-3341-media-watch-context-overlay-flag-rollback.sql` |
+| 4 | `3342_media_watch_tap_to_play_flag.sql` | unwrapped | `3b7814ab09ac` | `2026-09-27-3342-media-watch-tap-to-play-flag-rollback.sql` |
+| 5 | `3343_media_watch_stage24_ranking_flag.sql` | unwrapped | `a639ea2e19f3` | `2026-09-27-3343-media-watch-stage24-ranking-flag-rollback.sql` |
+| 6 | `3351_media_find_busier_flag.sql` | unwrapped | `f32653d1c04b` | `2026-09-27-3351-media-find-busier-flag-rollback.sql` |
+| 7 | `3352_media_perspective_vantage.sql` | unwrapped | `f536af0ce70c` | `2026-09-27-3352-media-perspective-vantage-rollback.sql` |
+| 8 | `3355_media_vision_provider_flag.sql` | unwrapped | `2f7d81d0b249` | `2026-09-27-3355-media-vision-provider-flag-rollback.sql` |
+| 9 | `3356_media_moderation_classifier_flag.sql` | unwrapped | `8d519c54f64e` | `2026-09-27-3356-media-moderation-classifier-flag-rollback.sql` |
+| 10 | `3357_media_transcoder_flag.sql` | unwrapped | `948728ad3287` | `2026-09-27-3357-media-transcoder-flag-rollback.sql` |
+| 11 | `3358_media_captions_flag.sql` | unwrapped | `02d2f73e87d7` | `2026-09-27-3358-media-captions-flag-rollback.sql` |
+| 12 | `3359_passport_postcard_cover_nullable.sql` | unwrapped | `dbb7c5740f13` | `2026-09-27-3359-passport-postcard-cover-nullable-rollback.sql` |
+| 13 | `3360_intel_evidence_sealed_reference.sql` | unwrapped | `00e4ba752a14` | `2026-09-27-3360-intel-evidence-sealed-reference-rollback.sql` |
+| 14 | `3361_intel_evidence_sealed_reference_validate.sql` | unwrapped | `641b88a08b23` | `2026-09-27-3361-intel-evidence-sealed-reference-validate-rollback.sql` |
+| 15 | `3362_posts_client_column_grants.sql` | unwrapped +post | `137e41e660f8` | `2026-09-27-3362-posts-client-column-grants-rollback.sql` |
+| 16 | `3363_place_copies_client_column_grants.sql` | unwrapped +post | `8189a754d60f` | `2026-09-27-3363-place-copies-client-column-grants-rollback.sql` |
+| 17 | `3364_pulse_geo_tags_write_boundary.sql` | unwrapped +post | `b94335b6572c` | `2026-09-27-3364-pulse-geo-tags-write-boundary-rollback.sql` |
+| 18 | `3365_post_media_write_boundary.sql` | unwrapped +post | `0fc0f3f72606` | `2026-09-27-3365-post-media-write-boundary-rollback.sql` |
+| 19 | `3366_discovery_search_protected_zones_flag.sql` | unwrapped +post | `00a8a197a69b` | `2026-09-27-3366-discovery-search-protected-zones-flag-rollback.sql` |
+| 20 | `3375_rank_events_schema_version_admitted.sql` | unwrapped +post | `88a598246d96` | `2026-09-27-3375-rank-events-schema-version-admitted-rollback.sql` |
+| 21 | `3376_discovery_recommendations_per_request.sql` | unwrapped +post | `c26eea613294` | `2026-09-27-3376-discovery-recommendations-per-request-rollback.sql` |
+| 22 | `3380_content_trails_label_cap_serialised.sql` | unwrapped +post | `e117087c803f` | `2026-09-27-3380-content-trails-label-cap-serialised-rollback.sql` |
+| 23 | `3381_trail_lifecycle_transitions.sql` | unwrapped +post | `eaa77232c5a8` | `2026-09-27-3381-trail-lifecycle-transitions-rollback.sql` |
+| 24 | `3385_creator_share_ledger_includes_creator_entries.sql` | unwrapped | `67c756623199` | `2026-09-27-3385-creator-share-ledger-includes-creator-entries-rollback.sql` |
+| 25 | `3386_creator_attribution_recommendation_link.sql` | unwrapped | `9c293bd49d63` | `2026-09-27-3386-creator-attribution-recommendation-link-rollback.sql` |
+| 26 | `3387_creator_ledger_integrity_and_audit.sql` | unwrapped | `04f22c759c87` | `2026-09-27-3387-creator-ledger-integrity-and-audit-rollback.sql` |
+| 27 | `3390_discovery_rls_explicit_policies.sql` | unwrapped | `9d8477bd6750` | `2026-09-27-3390-discovery-rls-explicit-policies-rollback.sql` |
+| 28 | `3391_discovery_stop_condition_measurements.sql` | unwrapped | `bf6b6ff95bea` | `2026-09-27-3391-discovery-stop-condition-measurements-rollback.sql` |
+| 29 | `3395_discovery_dwell_telemetry_flag.sql` | unwrapped +post | `7053b7a5ec4a` | `2026-09-27-3395-discovery-dwell-telemetry-flag-rollback.sql` |
+| 30 | `3400_media_pending_upload_sweep_flag.sql` | unwrapped +post | `97be7f79b1f7` | `2026-09-27-3400-media-pending-upload-sweep-flag-rollback.sql` |
+| 31 | `3410_discovery_trend_snapshot_parity.sql` | unwrapped +post | `a2d3287c487b` | `2026-09-27-3410-discovery-trend-snapshot-parity-rollback.sql` |
+| 32 | `3415_trail_proposal_serialised.sql` | unwrapped +post | `11e135efdbf6` | `2026-09-27-3415-trail-proposal-serialised-rollback.sql` |
+| 33 | `3416_trail_relations_projection.sql` | unwrapped +post | `c16b1636f8a8` | `2026-09-27-3416-trail-relations-projection-rollback.sql` |
+| 34 | `3417_place_momentum_dismiss_excluded.sql` | unwrapped +post | `e90c4f77e04f` | `2026-09-27-3417-place-momentum-dismiss-excluded-rollback.sql` |
+| 35 | `3420_rank_events_outcome_receipts.sql` | unwrapped +post | `9ffb97fce682` | `2026-09-27-3420-rank-events-outcome-receipts-rollback.sql` |
+| 36 | `3421_ranking_debug_samples_content_id_nullable.sql` | unwrapped +post | `539adc0a74aa` | `2026-09-27-3421-ranking-debug-samples-content-id-nullable-rollback.sql` |
+| 37 | `3422_tags_client_write_boundary.sql` | unwrapped +post | `27ee9f6a4093` | `2026-09-27-3422-tags-client-write-boundary-rollback.sql` |
+| 38 | `3435_place_momentum_feature_version.sql` | unwrapped +post | `ea4620ab120b` | `2026-09-28-3435-place-momentum-feature-version-rollback.sql` |
+| 39 | `3436_trail_health_snapshot_provenance.sql` | unwrapped +post | `e9e8f6bb89de` | `2026-09-28-3436-trail-health-snapshot-provenance-rollback.sql` |
+| 40 | `3440_canonical_search_key_letter_fold.sql` | unwrapped | `4307723dfde5` | none — footer reversal (§3) |
+| 41 | `3441_trail_letter_fold_decompose_first.sql` | unwrapped | `8f26a6919e70` | none — footer reversal (§3) |
+| 42 | `3450_discovery_surface_objectives_flag.sql` | unwrapped +post | `4044d84afa01` | `2026-09-28-3450-discovery-surface-objectives-flag-rollback.sql` |
+| 43 | `3451_discovery_engagement_integrity_flag.sql` | unwrapped +post | `1a73b4653ac1` | `2026-09-28-3451-discovery-engagement-integrity-flag-rollback.sql` |
+| 44 | `3452_discovery_feature_families_flag.sql` | unwrapped +post | `b1bac69233a3` | `2026-09-28-3452-discovery-feature-families-flag-rollback.sql` |
+| 45 | `3453_discovery_intent_trip_terms_flags.sql` | unwrapped +post | `465d51f3df90` | `2026-09-28-3453-discovery-intent-trip-terms-flags-rollback.sql` |
+| 46 | `3454_discovery_diversity_axes_flag.sql` | unwrapped +post | `09b7bc707f78` | `2026-09-28-3454-discovery-diversity-axes-flag-rollback.sql` |
+| 47 | `3455_discovery_for_you_pde_flag.sql` | unwrapped +post | `03d64e036183` | `2026-09-28-3455-discovery-for-you-pde-enabled-rollback.sql` |
+| 48 | `3456_discovery_cache_a_ranked_flag.sql` | unwrapped +post | `1ab75ecc4a50` | `2026-09-28-3456-discovery-cache-a-ranked-enabled-rollback.sql` |
+| 49 | `3460_discovery_search_protection_scope.sql` | unwrapped | `4cc721434321` | `2026-09-28-3460-discovery-search-protection-scope-rollback.sql` |
+| 50 | `3465_layover_consumer_flags.sql` | unwrapped +post | `d15caae1efb7` | `2026-09-28-3465-layover-consumer-flags-rollback.sql` |
+| 51 | `3466_layover_place_dwell.sql` | unwrapped +post | `6b36b7723c8d` | `2026-09-28-3466-layover-place-dwell-rollback.sql` |
+| 52 | `3467_cross_architecture_flags.sql` | unwrapped +post | `97fecf9092fe` | `2026-09-28-3467-cross-architecture-flags-rollback.sql` |
+| 53 | `3468_tag_permission_approval_required.sql` | unwrapped +post | `165ea0584256` | `2026-09-28-3468-tag-permission-approval-required-rollback.sql` |
+| 54 | `3469_compass_graph_decay_flag.sql` | unwrapped +post | `379214b39902` | `2026-09-28-3469-compass-graph-decay-flag-rollback.sql` |
+| 55 | `3470_discovery_stop_enforcement_flag.sql` | unwrapped +post | `30cbe5d865da` | `2026-09-28-3470-discovery-stop-enforcement-flag-rollback.sql` |
+| 56 | `3475_discovery_trend_v2_flags.sql` | unwrapped +post | `949d21b51837` | `2026-09-28-3475-discovery-trend-v2-flags-rollback.sql` |
+| 57 | `3476_discovery_trend_v2_store.sql` | unwrapped +post | `68b579b67ee9` | `2026-09-28-3476-discovery-trend-v2-store-rollback.sql` |
+| 58 | `3477_discovery_trend_v2_rebuild.sql` | unwrapped +post | `d79f421ce89a` | `2026-09-28-3477-discovery-trend-v2-rebuild-rollback.sql` |
+| 59 | `3480_discovery_candidate_sources_flag.sql` | unwrapped +post | `586d50e9b3fc` | `2026-09-28-3480-discovery-candidate-sources-flag-rollback.sql` |
+| 60 | `3481_discovery_exploration_inventory_flag.sql` | unwrapped +post | `4e516cbeec09` | `2026-09-28-3481-discovery-exploration-inventory-flag-rollback.sql` |
+| 61 | `3482_discovery_cold_start_flag.sql` | unwrapped +post | `494599a781f0` | `2026-09-28-3482-discovery-cold-start-flag-rollback.sql` |
+| 62 | `3483_discovery_pipeline_stages_flags.sql` | unwrapped +post | `d4a1cfbe8d81` | `2026-09-28-3483-discovery-pipeline-stages-flags-rollback.sql` |
+| 63 | `3484_compass_city_confidence_provenance.sql` | unwrapped +post | `d8a8639382ea` | `2026-09-28-3484-compass-city-confidence-provenance-rollback.sql` |
+| 64 | `3485_discovery_trail_exploration_flags.sql` | unwrapped +post | `3d4c81615b84` | `2026-09-28-3485-discovery-trail-exploration-flags-rollback.sql` |
+| 65 | `3486_trail_moderation_audit.sql` | unwrapped +post | `87981591335f` | `2026-09-28-3486-trail-moderation-audit-rollback.sql` |
+| 66 | `3487_trail_member_exposures.sql` | unwrapped +post | `b88c2860eae9` | `2026-09-28-3487-trail-member-exposures-rollback.sql` |
+| 67 | `3488_trail_content_suggestions.sql` | unwrapped +post | `fe1212fdb269` | `2026-09-28-3488-trail-content-suggestions-rollback.sql` |
+| 68 | `3490_discovery_serve_path_flags.sql` | unwrapped +post | `bbc15fc5a7d0` | `2026-09-28-3490-discovery-serve-path-flags-rollback.sql` |
+| 69 | `3491_discovery_recommendations_output_kinds_serve_point.sql` | unwrapped +post | `c247691bc8c4` | `2026-09-28-3491-discovery-recommendations-output-kinds-serve-point-rollback.sql` |
+| 70 | `3495_place_cooccurrence_trail_projection.sql` | unwrapped +post | `ed80b931ceb8` | `2026-09-28-3495-place-cooccurrence-trail-projection-rollback.sql` |
+| 71 | `3496_discovery_w11x3_flags.sql` | unwrapped +post | `4270815582ef` | `2026-09-28-3496-discovery-w11x3-flags-rollback.sql` |
+| 72 | `3497_discovery_trend_post_convergence_stored.sql` | unwrapped +post | `b1e2440a6d5c` | `2026-09-28-3497-discovery-trend-post-convergence-stored-rollback.sql` |
+| 73 | `3500_discovery_surface_objective_rank_flags.sql` | unwrapped +post | `8fee881cf87b` | `2026-09-28-3500-discovery-surface-objective-rank-flags-rollback.sql` |
+
+- **51 of the 73 carry a post-`COMMIT` postcondition tail.**
+- **Every file has a rollback file except 3440 and 3441.** For those two, the reversal is the file's footer (§3). 3441's footer must run before 3415's rollback (§7.4).
+- **Rollback order for the new files.** 3476's rollback refuses while 3477's v2 rebuild exists, so roll back 3477 first. 3497's comes before 3477's. 3491's refuses while any serve-point-13 row exists. 3468's refuses while a profile holds `approval_required`. 3486's refuses while audit or review rows exist, and 3488's while suggestions are pending.
+
+### 8.2 Pre-flight additions to §2.1
+
+```sql
+-- (a') None of the 73 has a ledger row; 2481 and 3350 are recorded verbatim, as in §2.1 (a).
+SELECT count(*) FROM public.schema_migration_ledger
+ WHERE filename ~ '^(3338|3340|3341|3342|3343|3351|3352|3355|3356|3357|3358|3359|3360|3361|3362|3363|3364|3365|3366|3375|3376|3380|3381|3385|3386|3387|3390|3391|3395|3400|3410|3415|3416|3417|3420|3421|3422|3435|3436|3440|3441|3450|3451|3452|3453|3454|3455|3456|3460|3465|3466|3467|3468|3469|3470|3475|3476|3477|3480|3481|3482|3483|3484|3485|3486|3487|3488|3490|3491|3495|3496|3497|3500)_';   -- 0
+
+-- (b') The 38 flags the 33 new files seed. Each must be ABSENT or FALSE (§3's flag rule applies unchanged).
+SELECT flag, enabled FROM public.feature_flags WHERE flag IN (
+  'discovery_surface_objectives_enabled','discovery_engagement_integrity_enabled','discovery_feature_families_enabled',
+  'discovery_intent_term_enabled','discovery_trip_match_enabled','discovery_diversity_axes_enabled',
+  'discovery_for_you_pde_enabled','discovery_cache_a_ranked_enabled',
+  'layover_snapshot_consumers_enabled','layover_place_dwell_enabled',
+  'discovery_trip_viewer_projections_enabled','telegraph_discovery_actions_enabled',
+  'tag_permission_approval_required_enabled','tag_permission_consent_copy_enabled',
+  'compass_graph_decay_enabled','discovery_stop_enforcement_enabled',
+  'discovery_trend_normalised_enabled','discovery_trend_rebuild_scheduler_enabled','discovery_trend_snapshot_retention_enabled',
+  'discovery_trend_lists_enabled','discovery_trend_rediscovery_retest_enabled',
+  'discovery_candidate_sources_enabled','discovery_circle_candidates_enabled','discovery_exploration_inventory_enabled',
+  'discovery_cold_start_enabled','discovery_integrity_stage_enabled','discovery_outcome_learning_enabled','discovery_output_kinds_enabled',
+  'compass_city_confidence_windowed_reads_enabled','discovery_trail_exploration_enabled','discovery_trail_health_order_enabled',
+  'discovery_community_byline_canonical_enabled','discovery_platform_graph_provenance_enabled',
+  'discovery_place_cooccurrence_enabled','discovery_trend_post_convergence_enabled',
+  'discovery_trail_objective_rank_enabled','discovery_trending_objective_rank_enabled','discovery_trip_planning_objective_rank_enabled');
+-- Three of the 33 change a flag row they do not seed:
+--   3460 rewrites the DESCRIPTION of discovery_search_protected_zones_enabled (3366), never its state;
+--   3467 corrects the description of media_pending_upload_sweep_enabled (3400);
+--   3477 and 3497 only READ flags.
+```
+
+In all, the 73 seed **53 flags**: §2.1 (b)'s 15, and these 38. The data preconditions of the 33 are each file's own `$pre$` blocks. For example:
+- 3468 adds an enum value;
+- 3476 needs `place_momentum` (2892);
+- 3486 needs 3381's transition functions;
+- 3491 needs `recommendations` (3376);
+- 3497 needs 3477's rebuild.
+
+Step 3's zero-persistence file checks every one of them once it is extended (8.3).
+
+### 8.3 What has, and has not, been rehearsed
+
+| files | rehearsed how | where |
+|---|---|---|
+| the 40 of §1.2, and 3436 | through the applier, from the modelled pre-3338 baseline: apply, idempotence, every rollback, re-apply, certify stage 4, `audit:schema` | §4 (W10-D) and §7 (W10-F), local harness |
+| 3435's amended bytes, and the 32 files 3450–3500 | only in each lane's standard chain (`scripts/local-db/up.sh`, psql replay) and its DB suites, and in the integrator's merged-chain harness run (census §90) | local harness |
+
+**So before the `portava-ci` apply, the next session re-runs §4 on the harness over all 73.**
+1. Add the 33 files to the driver's expected list (`CI_PENDING_84318D1B2` in `rehearse-pending-apply.ts`, which step 3's emitter also reads).
+2. Then run: `plan`, `apply`, idempotence, `rollback` over all 73 in dependency order, re-apply, stage 4, and `objects`.
+
+This is controlled evidence, not `portava-ci` evidence. It is recommended, not a gate the owner set.
+
+### 8.4 The command sequence at this tree
+
+§2's steps, with these values:
+1. **Step 1:** §2.1, plus 8.2.
+2. **Step 2** (dry run): expect `Would apply 73 migration(s), IN THIS ORDER:`, the list of 8.1, and `apply-migrations --dry-run PASSED — 73 pending`. There must be no `Ledger rows with no file on disk` line and no `REFUSED`. `Proven applied, skipped` should read 223, as CI printed on `84318d1b2`, unless `portava-ci` has recorded more since.
+3. **Step 3:** the zero-persistence file, once extended (8.3). Expect `all 73 bodies and postconditions held; rolling back.`
+4. **Step 4** (apply): 73 lines `→ <file>: applied + recorded (one transaction)`, and 51 lines `→ <file>: postconditions verified (separate transaction)`.
+5. **Step 5:** `NOTHING TO DO`. The proven count is step 2's skipped count plus 73: 296 if it was 223.
+6. **Step 6:** certify with all 73 named:
+
+   ```bash
+   cd artifacts/api-server
+   pnpm run certify:migrations -- --files 3338_media_processing_worker_flag.sql,3340_media_tab_world_default_flag.sql,3341_media_watch_context_overlay_flag.sql,3342_media_watch_tap_to_play_flag.sql,3343_media_watch_stage24_ranking_flag.sql,3351_media_find_busier_flag.sql,3352_media_perspective_vantage.sql,3355_media_vision_provider_flag.sql,3356_media_moderation_classifier_flag.sql,3357_media_transcoder_flag.sql,3358_media_captions_flag.sql,3359_passport_postcard_cover_nullable.sql,3360_intel_evidence_sealed_reference.sql,3361_intel_evidence_sealed_reference_validate.sql,3362_posts_client_column_grants.sql,3363_place_copies_client_column_grants.sql,3364_pulse_geo_tags_write_boundary.sql,3365_post_media_write_boundary.sql,3366_discovery_search_protected_zones_flag.sql,3375_rank_events_schema_version_admitted.sql,3376_discovery_recommendations_per_request.sql,3380_content_trails_label_cap_serialised.sql,3381_trail_lifecycle_transitions.sql,3385_creator_share_ledger_includes_creator_entries.sql,3386_creator_attribution_recommendation_link.sql,3387_creator_ledger_integrity_and_audit.sql,3390_discovery_rls_explicit_policies.sql,3391_discovery_stop_condition_measurements.sql,3395_discovery_dwell_telemetry_flag.sql,3400_media_pending_upload_sweep_flag.sql,3410_discovery_trend_snapshot_parity.sql,3415_trail_proposal_serialised.sql,3416_trail_relations_projection.sql,3417_place_momentum_dismiss_excluded.sql,3420_rank_events_outcome_receipts.sql,3421_ranking_debug_samples_content_id_nullable.sql,3422_tags_client_write_boundary.sql,3435_place_momentum_feature_version.sql,3436_trail_health_snapshot_provenance.sql,3440_canonical_search_key_letter_fold.sql,3441_trail_letter_fold_decompose_first.sql,3450_discovery_surface_objectives_flag.sql,3451_discovery_engagement_integrity_flag.sql,3452_discovery_feature_families_flag.sql,3453_discovery_intent_trip_terms_flags.sql,3454_discovery_diversity_axes_flag.sql,3455_discovery_for_you_pde_flag.sql,3456_discovery_cache_a_ranked_flag.sql,3460_discovery_search_protection_scope.sql,3465_layover_consumer_flags.sql,3466_layover_place_dwell.sql,3467_cross_architecture_flags.sql,3468_tag_permission_approval_required.sql,3469_compass_graph_decay_flag.sql,3470_discovery_stop_enforcement_flag.sql,3475_discovery_trend_v2_flags.sql,3476_discovery_trend_v2_store.sql,3477_discovery_trend_v2_rebuild.sql,3480_discovery_candidate_sources_flag.sql,3481_discovery_exploration_inventory_flag.sql,3482_discovery_cold_start_flag.sql,3483_discovery_pipeline_stages_flags.sql,3484_compass_city_confidence_provenance.sql,3485_discovery_trail_exploration_flags.sql,3486_trail_moderation_audit.sql,3487_trail_member_exposures.sql,3488_trail_content_suggestions.sql,3490_discovery_serve_path_flags.sql,3491_discovery_recommendations_output_kinds_serve_point.sql,3495_place_cooccurrence_trail_projection.sql,3496_discovery_w11x3_flags.sql,3497_discovery_trend_post_convergence_stored.sql,3500_discovery_surface_objective_rank_flags.sql
+   ```
+
+7. **Step 7:** `pnpm run audit:schema`. Expect `✔ Live schema contains every object claimed by the migrations.`
+8. **Step 8:** §2.2. Also:
+   - read the 38 new flag rows, every one FALSE;
+   - read 2481's and 3350's ledger rows, which must be byte-identical to step 1.
+9. **The live DB workflow.** Re-run `CI (live DB)` (`.github/workflows/live-db.yml`) on the PR head. `schema drift` and `live DB · verdict (cancelled or skipped is not a pass)` must both be green. That run is the rehearsal record (D-W10D-1), which DC-26 is graded on.
+10. **Merge** at once (§5.4). Do not change any of the 73 files between the apply and the merge.
+
+**The 2481 ledger entry is not touched.** It is outside the set. The applier writes only the row of the file it applies (§3), steps 1 and 8 read the row before and after, and `--apply-unproven` is not used.
