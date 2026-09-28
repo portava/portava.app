@@ -1,62 +1,26 @@
--- 3435_place_momentum_feature_version.sql
--- Discovery derived-store provenance (census-discovery DC-17, §68, lane P21).
---
--- `10` §5: "Derived features must retain: source event window · feature version ·
--- model version · computation time". A `place_momentum` row retained three:
---   source event window  computed_at together with window_ms (3410)
---   model version        model_version = 'discovery-trend-state-v1' (2892)
---   computation time     computed_at (2892)
--- and NOT the fourth. `event_weights` stores three weights but not the dismiss
--- arm, so a row written after 3417 (a dismiss weighs 0) and a row written before
--- it (a dismiss weighs 2) carry identical provenance although their rows were
--- weighed differently (census §61.5: "A row written after 3417 therefore does not
--- say that dismisses were excluded. That is DC-17's field-level question.").
---
--- This file adds `feature_version text` and replaces rebuild_place_momentum with
--- 3417's body byte for byte except THREE things: one constant (`c_feature`), one
--- column in the INSERT list with its value, and one line in ON CONFLICT. No weight,
--- window, threshold, sentence, filter or plan changes: every column 3417 wrote is
--- written with the same value (src/test/db/placeMomentumFeatureVersion.db.test.ts F1).
---
--- ROWS WRITTEN BEFORE THIS FILE keep feature_version NULL and are NOT backfilled:
--- between 3410 and 3417 a dismiss weighed 2, after 3417 it weighs 0, and a stored
--- row does not say which body wrote it. NULL is "not recorded", never a guess.
---
--- It REQUIRES 3417 and refuses without it: laid over 3410's body it would undo
--- DV-25's exclusion, and laid under 3417 it would be silently undone.
---
--- NOT applied to portava-ci (hwokxgbmezheskbzskfr). §84 (W10-R1) renamed c_feature from its first spelling, 'discovery-weighted-activity-v2' (same definition; harness-only file).
+-- Rollback for 3477_discovery_trend_v2_rebuild.sql (census-discovery §84, lane W10-R1)
+-- NOT applied to portava-ci (hwokxgbmezheskbzskfr) at the time of writing.
 -- NOT applied to travel-buddy (ajrurzioarfkagpuxfnb).
--- Rehearsed on the local PostgreSQL 16 harness only (scripts/local-db/up.sh).
 --
--- `10` §4: the function reads the same rows through the same plan; one more
--- written column changes no access path, and no index is created.
+-- WHAT 3477 DID: replaced rebuild_place_momentum with a dispatcher (3435's body
+-- behind one flag line) and added rebuild_place_momentum_v2,
+-- discovery_trend_windows_v2 and four IMMUTABLE helpers.
 --
--- Rollback: db/rollback/2026-09-28-3435-place-momentum-feature-version-rollback.sql
--- (restores 3417's body verbatim and drops the column; deletes no row).
+-- WHAT THIS DOES: restores 3435's rebuild_place_momentum VERBATIM (copied from
+-- 3435 by the lane that wrote both, and compared with it by
+-- src/test/discoveryTrendNormalised.test.ts N-RB), then drops the v2 functions.
+-- It deletes no row: v2 rows already stored stay, labelled by their own
+-- model_version; whether they are kept is a retention question.
 
 BEGIN;
 
 DO $pre$
-DECLARE d text;
 BEGIN
-  IF to_regclass('public.place_momentum') IS NULL
-     OR to_regprocedure('public.rebuild_place_momentum(timestamptz)') IS NULL THEN
-    RAISE EXCEPTION 'PRECONDITION FAILED (3435): 2892''s place_momentum and rebuild_place_momentum must exist. Apply 2892, 3410 and 3417 first.';
-  END IF;
-  d := pg_get_functiondef('public.rebuild_place_momentum(timestamptz)'::regprocedure);
-  IF position('WHEN outcome = ''dismiss'' THEN 0' IN d) = 0
-     OR position('surface = c_surface' IN d) = 0 OR position('served_at >= v_prior_since' IN d) = 0 THEN
-    RAISE EXCEPTION 'PRECONDITION FAILED (3435): rebuild_place_momentum is not 3417''s. Apply 3417_place_momentum_dismiss_excluded.sql first; this file replaces 3417''s body and would otherwise undo or be undone by it.';
+  IF to_regprocedure('public.rebuild_place_momentum(timestamptz)') IS NULL THEN
+    RAISE EXCEPTION 'PRECONDITION FAILED (3477 rollback): rebuild_place_momentum does not exist.';
   END IF;
 END
 $pre$;
-
-ALTER TABLE public.place_momentum ADD COLUMN IF NOT EXISTS feature_version text;
-
-COMMENT ON COLUMN public.place_momentum.feature_version IS
-  '`10` §5 feature version (census-discovery DC-17, 3435): what one rank_events row '
-  'contributed to this row. NULL on rows written before 3435, which recorded none.';
 
 CREATE OR REPLACE FUNCTION public.rebuild_place_momentum(p_now timestamptz DEFAULT now())
 RETURNS integer
@@ -197,34 +161,28 @@ COMMENT ON FUNCTION public.rebuild_place_momentum(timestamptz) IS
   'impression still counts at served_at, the dismissal adds nothing.'
   ' 3435 (DC-17): every row records its feature_version.';
 
+DROP FUNCTION IF EXISTS public.rebuild_place_momentum_v2(timestamptz);
+DROP FUNCTION IF EXISTS public.discovery_trend_windows_v2(timestamptz, text);
+DROP FUNCTION IF EXISTS public.place_momentum_classify_v2(boolean, boolean, boolean, double precision);
+DROP FUNCTION IF EXISTS public.place_momentum_lifecycle_v2(text, text, boolean, timestamptz, timestamptz);
+DROP FUNCTION IF EXISTS public.place_momentum_driver_v2(text, integer, integer, integer);
+DROP FUNCTION IF EXISTS public.place_momentum_reason_v2(text, text);
+
+DELETE FROM public.schema_migration_ledger WHERE filename = '3477_discovery_trend_v2_rebuild.sql';
+
 COMMIT;
 
--- ── Postconditions (read-only: what persisted) ──────────────────────────────
 DO $post$
 DECLARE d text := pg_get_functiondef('public.rebuild_place_momentum(timestamptz)'::regprocedure);
 BEGIN
-  PERFORM 1 FROM information_schema.columns
-   WHERE table_schema = 'public' AND table_name = 'place_momentum'
-     AND column_name = 'feature_version' AND data_type = 'text';
-  IF NOT FOUND THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3435): place_momentum.feature_version (text) is missing.';
+  IF position('rebuild_place_momentum_v2' IN d) > 0 THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3477 rollback): rebuild_place_momentum still dispatches to v2.';
   END IF;
-  IF position('c_feature    CONSTANT text := ''discovery-row-activity-v2''' IN d) = 0
-     OR position('feature_version         = EXCLUDED.feature_version' IN d) = 0 THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3435): rebuild_place_momentum does not write feature_version.';
+  IF position('c_feature    CONSTANT text := ''discovery-row-activity-v2''' IN d) = 0 THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3477 rollback): the restored body is not 3435''s.';
   END IF;
-  IF position('WHEN outcome = ''dismiss'' THEN 0' IN d) = 0 THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3435): rebuild_place_momentum lost 3417''s dismiss exclusion.';
-  END IF;
-  IF position('surface = c_surface' IN d) = 0 OR position('served_at >= v_prior_since' IN d) = 0 THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3435): rebuild_place_momentum lost 3410''s Discovery surface and window scope.';
-  END IF;
-  IF (SELECT prosecdef FROM pg_proc WHERE oid = 'public.rebuild_place_momentum(timestamptz)'::regprocedure) THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3435): rebuild_place_momentum must stay SECURITY INVOKER (10 §6).';
-  END IF;
-  IF has_function_privilege('anon', 'public.rebuild_place_momentum(timestamptz)', 'EXECUTE')
-     OR has_function_privilege('authenticated', 'public.rebuild_place_momentum(timestamptz)', 'EXECUTE') THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3435): a client role may execute rebuild_place_momentum.';
+  IF to_regprocedure('public.rebuild_place_momentum_v2(timestamptz)') IS NOT NULL THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3477 rollback): rebuild_place_momentum_v2 remains.';
   END IF;
 END
 $post$;

@@ -73,7 +73,7 @@
 import type { MomentumRow } from "./discoveryLocalMomentum.js";
 // NOT type-only, and safe: lib/discoveryRankProvenance imports nothing, so it
 // cannot close a cycle back through either of the two modules that use it.
-import { derivedStoreProvenance, type DerivedStoreProvenance, type DerivedStoreVersions } from "./discoveryRankProvenance.js";
+import { derivedStoreProvenance, type DerivedStoreProvenance, type DerivedStoreVersions } from "./discoveryRankProvenance.js"; import { computeTrendStatesV2, type TrendContext, type TrendDriver, type TrendLifecycle } from "./discoveryTrendNormalised.js";  // §84 (W10-R1): v2, behind discovery_trend_normalised_enabled
 
 /** `03` §9's stages, in the specification's own order. */
 export const TREND_STATES = [
@@ -126,7 +126,7 @@ export interface TrendEvidence {
 }
 
 export interface TrendReading {
-  state: DiscoveryTrendState;
+  state: DiscoveryTrendState; /** §84 v2 only (absent on a v1 reading): `03` §4 lifecycle and the claim's driver. */ lifecycle?: TrendLifecycle; driver?: TrendDriver | null;
   evidence: TrendEvidence;
   /**
    * census-discovery DC-17 — what computed this reading, over which rows, when.
@@ -188,8 +188,8 @@ function weightFor(outcome: string): number {
  */
 export function computeTrendStates(
   rows: readonly MomentumRow[],
-  nowMs: number,
-): Record<string, TrendReading> {
+  nowMs: number, opts: TrendModelOptions = {},  // §84: absent ⇒ v1, byte for byte (golden G2, G10)
+): Record<string, TrendReading> { if (opts.model === "v2") return computeTrendStatesNormalised(rows, nowMs, opts.context ?? {});
   const recentSince = nowMs - TREND_RECENT_MS;
   const midSince    = nowMs - TREND_MID_MS;
   const priorSince  = nowMs - TREND_PRIOR_MS;
@@ -326,9 +326,92 @@ export const TREND_STATE_MODEL_VERSION = "discovery-trend-state-v1";
  * `LOCAL_MOMENTUM_FEATURE_VERSION` and 3435's `place_momentum.feature_version`
  * (dismiss 0 since §61.17 H1). Pinned equal to both by a test, not imported.
  */
-export const TREND_FEATURE_VERSION = "discovery-weighted-activity-v2";
+export const TREND_FEATURE_VERSION = "discovery-row-activity-v2";  // §84: renamed from 3435's first spelling so no version NAME contains "weight" (B2); 3435 amended to match
 
 const TREND_STATE_VERSIONS: DerivedStoreVersions = {
   modelVersion:   TREND_STATE_MODEL_VERSION,
   featureVersion: TREND_FEATURE_VERSION,
 };
+
+// ── census-discovery §84 (lane W10-R1): the exposure-normalised model ────────
+//
+// Behind `discovery_trend_normalised_enabled` (3475, seeded FALSE). A caller
+// that does not pass `{ model: "v2" }` gets the v1 arithmetic above, unchanged.
+// The v2 arithmetic lives in lib/discoveryTrendNormalised; this is its
+// adapter to the `TrendReading` shape every consumer already reads.
+
+/** Which trend arithmetic to run. */
+export interface TrendModelOptions {
+  model?: "v1" | "v2";
+  /** v2 only: place context (creator, cell, Trails, age, content class). */
+  context?: TrendContext;
+}
+
+/** v2's model: exposure-normalised, independence-capped, six normalisers. MUST equal 3477's `c_model`. */
+export const TREND_STATE_MODEL_VERSION_V2 = "discovery-trend-state-v2";
+
+/**
+ * v2's per-row contribution: a served row is EXPOSURE (the denominator), an
+ * outcome is activity (save 3, other positive 2, dismiss and analytics none),
+ * capped per independence cluster. MUST equal 3477's `c_feature` and
+ * lib/discoveryLocalMomentum `LOCAL_MOMENTUM_FEATURE_VERSION_V2`.
+ */
+export const TREND_FEATURE_VERSION_V2 = "discovery-exposure-activity-v3";
+
+const TREND_STATE_VERSIONS_V2: DerivedStoreVersions = {
+  modelVersion:   TREND_STATE_MODEL_VERSION_V2,
+  featureVersion: TREND_FEATURE_VERSION_V2,
+};
+
+function computeTrendStatesNormalised(
+  rows: readonly MomentumRow[], nowMs: number, context: TrendContext,
+): Record<string, TrendReading> {
+  const priorSince = nowMs - TREND_PRIOR_MS;
+  const provenance = derivedStoreProvenance({ kind: "bounded", startMs: priorSince, endMs: nowMs }, nowMs, TREND_STATE_VERSIONS_V2);
+  const out: Record<string, TrendReading> = {};
+  for (const [id, r] of Object.entries(computeTrendStatesV2(rows, nowMs, { context }))) {
+    out[id] = { state: r.state, evidence: r.evidence, provenance, lifecycle: r.lifecycle, driver: r.driver };
+  }
+  return out;
+}
+
+/**
+ * DV-33 (D-W10R1-9, D-W10R1-10): the v2 sentence — what drove the claim, and
+ * the neighbourhood only when the caller has established that naming it is
+ * allowed (lib/discoveryTrendExplanation's k-floor). Without a driver it is
+ * v1's sentence. Mirrored, without the neighbourhood, by 3477's stored
+ * `reason` (src/test/discoveryTrendNormalised.test.ts N-SQL).
+ */
+export function explainTrendReading(state: DiscoveryTrendState, driver: TrendDriver | null, neighbourhood: string | null = null): string | null {
+  const at = neighbourhood ? ` in ${neighbourhood}` : "";
+  switch (state) {
+    case "emerging":
+      return driver === "trip_adds" ? `New${at || " around here"}, and being added to trips by several independent travellers.`
+        : driver === "saves" ? `New${at || " around here"}, and being saved by several independent travellers.`
+        : `Emerging${at} across several independent traveller groups.`;
+    case "trending":
+      return driver === "trip_adds" ? `Frequently added to trips${at} in the last couple of days.`
+        : driver === "saves" ? `Saved more than usual${at} in the last couple of days.`
+        : `Picking up${at} across independent traveller groups in the last couple of days.`;
+    case "established":
+      return driver === "trip_adds" ? `Consistently added to trips${at}, not just this week.`
+        : driver === "saves" ? `Consistently saved${at}, not just this week.`
+        : `Consistently busy${at || " here"}, not just this week.`;
+    case "cooling":
+      return `Quieter${at} than it has been recently.`;
+    case "rediscovered":
+      return driver === "trip_adds" ? `Being added to trips again${at} after a quiet spell.`
+        : driver === "saves" ? `Being saved again${at} after a quiet spell.`
+        : `Getting attention again${at} after a quiet spell.`;
+    default:
+      return null;
+  }
+}
+
+/** DV-33: the closed driver vocabulary served beside a reason code. */
+export const TREND_DRIVER_CODES = ["trend_driver_trip_adds", "trend_driver_saves", "trend_driver_independent_groups"] as const;
+export type TrendDriverCode = (typeof TREND_DRIVER_CODES)[number];
+export function trendDriverCode(driver: TrendDriver | null | undefined): TrendDriverCode | null {
+  return driver === "trip_adds" ? "trend_driver_trip_adds" : driver === "saves" ? "trend_driver_saves"
+    : driver === "independent_groups" ? "trend_driver_independent_groups" : null;
+}
