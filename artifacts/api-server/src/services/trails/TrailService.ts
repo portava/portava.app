@@ -476,7 +476,7 @@ export interface TrailModule {
    * "§9 could not be evaluated". A module that reported `[]` for both would let
    * a failed `rank_events` read look like a Trail with no new content.
    */
-  explorationSlots: string[] | null; /** §86 (DV-23): per place, the members this module held back and counted in `moreFromThisPlace` — never serialised; GET …/places/:placeId/more returns them. */ heldBackByPlace?: Record<string, TrailModule["items"]>;
+  explorationSlots: string[] | null; /** §86 (DV-23, D-W10T-15): per place, EVERY member this module held back (any clause, the creator cap, the page bound) and counted in `moreFromThisPlace`; `heldBackUnplaced`, those with no place — never serialised; GET …/places/:placeId/more and GET …/more return them. */ heldBackByPlace?: Record<string, TrailModule["items"]>; heldBackUnplaced?: TrailModule["items"];
 }
 
 export interface TrailModulesResult {
@@ -768,7 +768,7 @@ export async function getTrailModules(
     const d = diversifyTrailModule(considered.map(saturationItem), { pageSize }); // §86 (DV-23): §10's five clauses
     const kept = new Set(d.page.map((i) => i.id));
     const items = healthOrderedIf(rows, demoted).filter((r) => kept.has(r.id)).map(toItem);
-    return { key, objective, horizonMs, items, moreFromThisPlace: d.moreFromThisPlace, explorationSlots: null, ...heldBackItems(d.heldBackByPlace, rows) };
+    return { key, objective, horizonMs, items, moreFromThisPlace: d.moreFromThisPlace, explorationSlots: null, ...heldBackItems(d, rows) };
   };
 
   const byConfidence = [...served].sort((a, b) => Number(b.confidence) - Number(a.confidence));
@@ -903,7 +903,7 @@ export interface TrailTrendingResult {
   /** Trail-level momentum in [0,1] from the SHIPPING momentum kernel, or null. */
   momentum: number | null; /** §61.17: set ONLY when the Trail-momentum read FAILED — `momentum: null` alone also means "no members", a measured empty (DC-17). */ momentumUnread?: true; /** §86 (DV-74): a trend integrity review in force suppresses this Trail's trend. */ trendSuppressed?: true;
   /** Member items with momentum, strongest first. Never a raw score to a client. */
-  items: Array<{ id: string; sourceType: string; sourceId: string }>;
+  items: Array<{ id: string; sourceType: string; sourceId: string }>; /** §86 follow-up (DV-23): §10's clause 5 on the trending list — counts per place (serialised when non-empty) and every held-back member (never serialised; GET …/more returns them). */ moreFromThisPlace?: Record<string, number>; heldBackByPlace?: Record<string, TrailModule["items"]>; heldBackUnplaced?: TrailModule["items"];
   /**
    * DC-17 — the per-item momentum reading's provenance, or `null` when no
    * reading was taken (no members, or the loader threw). Same meaning, and the
@@ -990,14 +990,14 @@ export async function trailTrending(
       seen.add(key);
       return true;
     });
-  const capped = new Set(diversifyTrailPage(ranked.map((r) => ({
-    id: r.id, placeId: r.clusterPlaceId, contributorId: r.creatorId ?? r.contributor_id,
-  })), { pageSize: TRAIL_TRENDING_PAGE_SIZE }).page.map((i) => i.id));
+  const linked = linkVenueClusters(ranked, await readMemberGeography(sc, ranked)); // §86 follow-up (DV-23): a venue post and the place member of that venue are one cluster here too
+  const d = diversifyTrailModule(linked.map(moduleSaturationItem), { pageSize: TRAIL_TRENDING_PAGE_SIZE }); // all five of §10's clauses, exactly as every module applies them
+  const capped = new Set(d.page.map((i) => i.id));
   const items = ranked
     .filter((r) => capped.has(r.id))
-    .map((r) => ({ id: r.id, sourceType: r.source_type, sourceId: r.source_id }));
+    .map((r) => ({ id: r.id, sourceType: r.source_type, sourceId: r.source_id })); const held = { ...(Object.keys(d.moreFromThisPlace).length > 0 ? { moreFromThisPlace: d.moreFromThisPlace } : {}), ...heldBackItems(d, linked) };
   const review = opts.ignoreTrendReview ? "none" : await readTrendReviewVerdict(sc, "trail", trailId); if (review !== "none") return { refusal: null, momentum: review === "suppressed" ? 0 : null, items: [], momentumProvenance, ...(review === "suppressed" ? { trendSuppressed: true as const } : { momentumUnread: true as const }) }; // §86 (DV-74): suppressed → a measured "not trending"; unreadable → unknown, never a claim
-  return { refusal: null, momentum: trailMomentum, items, momentumProvenance, ...(trailRead ? {} : { momentumUnread: true as const }) }; // §61.17: the route serves `trending: null` only for THIS
+  return { refusal: null, momentum: trailMomentum, items, momentumProvenance, ...held, ...(trailRead ? {} : { momentumUnread: true as const }) }; // §61.17: the route serves `trending: null` only for THIS
 }
 
 // ── The MODIFIER load (DV-18's trail_affinity producer) ─────────────────────
@@ -1846,15 +1846,22 @@ function healthOrderedIf<T extends { id: string }>(rows: readonly T[], demoted: 
   return demoted ? healthOrdered(rows, demoted) : [...rows];
 }
 
-/** `{ heldBackByPlace }` when this module held anything back for a place, else `{}` — so a module that held nothing back is byte-identical to before §86. */
-function heldBackItems(held: Record<string, string[]>, rows: readonly ServableMember[]): { heldBackByPlace?: Record<string, TrailModule["items"]> } {
+/** `{ heldBackByPlace, heldBackUnplaced }`, each only when non-empty — so a module that held nothing back is byte-identical to before §86. */
+function heldBackItems(
+  d: { heldBackByPlace: Record<string, string[]>; heldBackUnplaced: string[] }, rows: readonly ServableMember[],
+): { heldBackByPlace?: Record<string, TrailModule["items"]>; heldBackUnplaced?: TrailModule["items"] } {
   const byId = new Map(rows.map((r) => [r.id, r]));
+  const asItems = (ids: readonly string[]) => ids.map((id) => byId.get(id)).filter((r): r is ServableMember => r !== undefined)
+    .map((r) => ({ id: r.id, sourceType: r.source_type, sourceId: r.source_id, contentState: r.content_state }));
   const out: Record<string, TrailModule["items"]> = {};
-  for (const [place, ids] of Object.entries(held)) {
-    out[place] = ids.map((id) => byId.get(id)).filter((r): r is ServableMember => r !== undefined)
-      .map((r) => ({ id: r.id, sourceType: r.source_type, sourceId: r.source_id, contentState: r.content_state }));
-  }
-  return Object.keys(out).length > 0 ? { heldBackByPlace: out } : {};
+  for (const [place, ids] of Object.entries(d.heldBackByPlace)) out[place] = asItems(ids);
+  const unplaced = asItems(d.heldBackUnplaced);
+  return { ...(Object.keys(out).length > 0 ? { heldBackByPlace: out } : {}), ...(unplaced.length > 0 ? { heldBackUnplaced: unplaced } : {}) };
+}
+
+/** One member as §10's diversity pass reads it: the creator where the source has one, its cluster place, media kind and text. */
+function moduleSaturationItem(r: ServableMember) {
+  return { id: r.id, placeId: r.clusterPlaceId, contributorId: r.creatorId ?? r.contributor_id, mediaType: r.mediaType ?? null, text: r.text ?? null };
 }
 
 // ── DC-05 / DV-23: where members are, and which place members are one venue ───
@@ -1944,10 +1951,30 @@ export async function readMemberImpressions(sc: any, members: readonly MemberRow
 // ── DV-13: one creator across the whole Trail page ────────────────────────────
 
 function boundCreatorsAcrossPage(served: readonly ServableMember[], r: TrailModulesResult): TrailModulesResult {
-  const creatorOf = new Map(served.map((s) => [s.id, s.creatorId ?? s.contributor_id ?? null]));
-  const removed = creatorPageBoundRemovals(r.modules, (id) => creatorOf.get(id) ?? null);
+  const byId = new Map(served.map((s) => [s.id, s]));
+  const creatorOf = (id: string) => { const s = byId.get(id); return s ? (s.creatorId ?? s.contributor_id ?? null) : null; };
+  const removed = creatorPageBoundRemovals(r.modules, creatorOf);
   if (removed.size === 0) return r;
-  return { ...r, modules: r.modules.map((m) => ({ ...m, items: m.items.filter((i) => !removed.has(i.id)) })) };
+  // D-W10T-15: an item the page bound removes is HELD BACK, not erased — counted and listed under its place
+  // (or listed as unplaced) in the module that removed it, exactly as the module's own caps hold items.
+  return {
+    ...r,
+    modules: r.modules.map((m) => {
+      const gone = m.items.filter((i) => removed.has(i.id));
+      if (gone.length === 0) return m;
+      const more = { ...m.moreFromThisPlace };
+      const byPlace: Record<string, TrailModule["items"]> = { ...(m.heldBackByPlace ?? {}) };
+      const unplaced: TrailModule["items"] = [...(m.heldBackUnplaced ?? [])];
+      for (const it of gone) {
+        const place = byId.get(it.id)?.clusterPlaceId ?? null;
+        if (place) { more[place] = (more[place] ?? 0) + 1; byPlace[place] = [...(byPlace[place] ?? []), it]; } else unplaced.push(it);
+      }
+      return {
+        ...m, items: m.items.filter((i) => !removed.has(i.id)), moreFromThisPlace: more,
+        ...(Object.keys(byPlace).length > 0 ? { heldBackByPlace: byPlace } : {}), ...(unplaced.length > 0 ? { heldBackUnplaced: unplaced } : {}),
+      };
+    }),
+  };
 }
 
 // ── DV-22 / DV-21 / DC-04: the modules behind discovery_trail_exploration_enabled ─
@@ -1965,12 +1992,10 @@ function buildTrailModule(
     seen.add(k);
     return true;
   });
-  const d = diversifyTrailModule(considered.map((r) => ({
-    id: r.id, placeId: r.clusterPlaceId, contributorId: r.creatorId ?? r.contributor_id, mediaType: r.mediaType ?? null, text: r.text ?? null,
-  })), { pageSize });
+  const d = diversifyTrailModule(considered.map(moduleSaturationItem), { pageSize });
   const kept = new Set(d.page.map((i) => i.id));
   const items = base.filter((r) => kept.has(r.id)).map((r) => ({ id: r.id, sourceType: r.source_type, sourceId: r.source_id, contentState: r.content_state }));
-  return { key, objective, horizonMs, items, moreFromThisPlace: d.moreFromThisPlace, explorationSlots: null, ...heldBackItems(d.heldBackByPlace, rows) };
+  return { key, objective, horizonMs, items, moreFromThisPlace: d.moreFromThisPlace, explorationSlots: null, ...heldBackItems(d, rows) };
 }
 
 /** Normalised response on measured rows for hidden_gems' order: judged items by rate, then the least-exposed. */
@@ -2082,24 +2107,51 @@ export async function settleTrailModulesServe(sc: any, trailId: string, r: Trail
 
 // ── DV-23: "preserve access through more from this place" ─────────────────────
 
+export type HeldBackListKey = TrailModule["key"] | "trending";
+
 export interface MoreFromPlaceResult {
   refusal: TrailRefusal;
   placeId: string;
-  /** Per module, exactly the members that module counted in `moreFromThisPlace[placeId]`. */
-  modules: Array<{ key: TrailModule["key"]; items: TrailModule["items"] }>;
+  /** Per module (and the trending list), exactly the members it counted in `moreFromThisPlace[placeId]`. */
+  modules: Array<{ key: HeldBackListKey; items: TrailModule["items"] }>;
+}
+
+/** Every list this viewer is served for a Trail, with what each held back: the modules, then GET …/trending's list. */
+async function heldBackLists(
+  sc: any, trailId: string, opts: { viewerId?: string | null; nowMs?: number },
+): Promise<{ refusal: TrailRefusal; lists: Array<{ key: HeldBackListKey; byPlace: Record<string, TrailModule["items"]>; unplaced: TrailModule["items"] }> }> {
+  const r = await getTrailModules(sc, trailId, { viewerId: opts.viewerId ?? null, nowMs: opts.nowMs });
+  if (r.refusal) return { refusal: r.refusal, lists: [] };
+  const t = await trailTrending(sc, trailId, opts.nowMs ?? Date.now(), { viewerId: opts.viewerId ?? null });
+  const lists = r.modules.map((m) => ({ key: m.key as HeldBackListKey, byPlace: m.heldBackByPlace ?? {}, unplaced: m.heldBackUnplaced ?? [] }));
+  if (!t.refusal) lists.push({ key: "trending", byPlace: t.heldBackByPlace ?? {}, unplaced: t.heldBackUnplaced ?? [] });
+  return { refusal: null, lists };
 }
 
 export async function moreFromThisPlace(
   sc: any, trailId: string, placeId: string, opts: { viewerId?: string | null; nowMs?: number } = {},
 ): Promise<MoreFromPlaceResult> {
-  const r = await getTrailModules(sc, trailId, { viewerId: opts.viewerId ?? null, nowMs: opts.nowMs });
-  if (r.refusal) return { refusal: r.refusal, placeId, modules: [] };
+  const h = await heldBackLists(sc, trailId, opts);
+  if (h.refusal) return { refusal: h.refusal, placeId, modules: [] };
   return {
     refusal: null, placeId,
-    modules: r.modules
-      .map((m) => ({ key: m.key, items: m.heldBackByPlace?.[placeId] ?? [] }))
-      .filter((m) => m.items.length > 0),
+    modules: h.lists.map((l) => ({ key: l.key, items: l.byPlace[placeId] ?? [] })).filter((m) => m.items.length > 0),
   };
+}
+
+export interface MoreFromTrailResult {
+  refusal: TrailRefusal;
+  /** Per list, EVERY member it held back: by place, and those with no place (D-W10T-15). */
+  lists: Array<{ key: HeldBackListKey; byPlace: Record<string, TrailModule["items"]>; unplaced: TrailModule["items"] }>;
+}
+
+/** D-W10T-15: nothing a Trail page holds back is unreachable — including an item with no place to be "more from". */
+export async function moreFromThisTrail(
+  sc: any, trailId: string, opts: { viewerId?: string | null; nowMs?: number } = {},
+): Promise<MoreFromTrailResult> {
+  const h = await heldBackLists(sc, trailId, opts);
+  if (h.refusal) return { refusal: h.refusal, lists: [] };
+  return { refusal: null, lists: h.lists.filter((l) => Object.keys(l.byPlace).length > 0 || l.unplaced.length > 0) };
 }
 
 // ── DV-74: a trend integrity review in force ──────────────────────────────────

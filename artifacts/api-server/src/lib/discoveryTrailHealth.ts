@@ -662,12 +662,12 @@ export function creatorPageBoundRemovals(
       }
     }
     const bound = Math.max(MAX_PER_CONTRIBUTOR_PER_PAGE, Math.floor(seenContent.size * TRAIL_PAGE_CREATOR_SHARE));
-    let worst: string | null = null, worstCount = 0;
+    let worst: string | undefined, worstCount = 0; // `undefined`, not null: the creator-less exemption above is the ONE guard (a null key must not also read as "no creator")
     for (const [c, list] of byCreator) {
       if (list.length <= bound) continue;
-      if (list.length > worstCount || (list.length === worstCount && worst !== null && c < worst)) { worst = c; worstCount = list.length; }
+      if (list.length > worstCount || (list.length === worstCount && worst !== undefined && c < worst)) { worst = c; worstCount = list.length; }
     }
-    if (worst === null) return removed;
+    if (worst === undefined) return removed;
     const tail = byCreator.get(worst)!.at(-1)!;
     // Remove EVERY row of that content from the page (it may sit in several modules).
     for (const mod of modules) for (const it of mod.items) if (`${it.sourceType}:${it.sourceId}` === tail.content) removed.add(it.id);
@@ -708,15 +708,18 @@ export const TRAIL_MEDIA_SHARE_PER_PAGE = 1 / 2;
  *   reduce repeated viewpoints           one item per (creator, place): the same
  *                                        person's second take on the same place
  *                                        is held back (`viewpoint_cap`)
- *   preserve "more from this place"      every item held back FOR A PLACE (place
- *                                        cap, viewpoint, near-duplicate with a
- *                                        place) is counted AND listed per place
+ *   preserve "more from this place"      EVERY item the page holds back, for ANY
+ *                                        reason (place cap, viewpoint, near-duplicate,
+ *                                        creator cap, media) is counted AND listed
+ *                                        under its place when it has one, and listed
+ *                                        in `heldBackUnplaced` when it has none
+ *                                        (D-W10T-15), so nothing held is unreachable
  *
  * Nothing is deleted: every held item is returned with its reason.
  */
 export function diversifyTrailModule<T extends ModuleSaturationItem>(
   items: readonly T[], opts: { pageSize: number },
-): SaturationResult<T> & { heldBackByPlace: Record<string, string[]> } {
+): SaturationResult<T> & { heldBackByPlace: Record<string, string[]>; heldBackUnplaced: string[] } {
   const pageSize = Math.max(0, opts?.pageSize ?? 0);
   const mediaTypes = new Set(items.map((i) => i?.mediaType).filter((m): m is string => typeof m === "string" && m.length > 0));
   const maxMedia = mediaTypes.size >= 2 ? Math.max(1, Math.ceil(pageSize * TRAIL_MEDIA_SHARE_PER_PAGE)) : null;
@@ -725,6 +728,7 @@ export function diversifyTrailModule<T extends ModuleSaturationItem>(
   const suppressed: Array<{ id: string; reason: SuppressionReason }> = [];
   const moreFromThisPlace: Record<string, number> = {};
   const heldBackByPlace: Record<string, string[]> = {};
+  const heldBackUnplaced: string[] = [];
   const byContributor = new Map<string, number>();
   const byPlace = new Map<string, number>();
   const byMedia = new Map<string, number>();
@@ -738,6 +742,8 @@ export function diversifyTrailModule<T extends ModuleSaturationItem>(
     if (typeof p === "string" && p) {
       moreFromThisPlace[p] = (moreFromThisPlace[p] ?? 0) + 1;
       (heldBackByPlace[p] ??= []).push(item.id);
+    } else {
+      heldBackUnplaced.push(item.id);
     }
   };
   const nearDuplicate = (item: T): boolean => {
@@ -768,7 +774,6 @@ export function diversifyTrailModule<T extends ModuleSaturationItem>(
     if (!item || typeof item.id !== "string") continue;
     if (page.length >= pageSize) continue; // beyond the page is pagination, not suppression
     const why = blocked(item);
-    if (why === "contributor_cap") { suppressed.push({ id: item.id, reason: why }); continue; }
     if (why) { holdForPlace(item, why); continue; }
     const md = item.mediaType;
     if (maxMedia !== null && typeof md === "string" && md && (byMedia.get(md) ?? 0) >= maxMedia) { mediaHeld.push(item); continue; }
@@ -776,13 +781,12 @@ export function diversifyTrailModule<T extends ModuleSaturationItem>(
   }
   // Work-conserving: media diversity reorders what fills the page, it never leaves it short.
   for (const item of mediaHeld) {
-    if (page.length >= pageSize) { suppressed.push({ id: item.id, reason: "media_cap" }); continue; }
+    if (page.length >= pageSize) { holdForPlace(item, "media_cap"); continue; }
     const why = blocked(item);
-    if (why === "contributor_cap") { suppressed.push({ id: item.id, reason: why }); continue; }
     if (why) { holdForPlace(item, why); continue; }
     admit(item);
   }
-  return { page, suppressed, moreFromThisPlace, heldBackByPlace };
+  return { page, suppressed, moreFromThisPlace, heldBackByPlace, heldBackUnplaced };
 }
 
 // ── DC-05 (D-W10T-7): health orders the Trail's own modules ──────────────────

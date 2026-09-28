@@ -138,3 +138,23 @@ Lane W10-T (census-discovery §86), branch `disc-w10-t-trails`, cut from `a65817
 - **Recommended action.** Prune `trail_member_exposures` rows older than 31 days daily (only 30 are read). Keep audit rows (moderation accountability, as §52/C-11). Delete decided suggestions 90 days after `decided_at`.
 - **Consequence of approving.** A scheduled prune must be built; nothing read changes. **Of declining.** Rows accumulate; nothing served changes.
 - **Recovery path.** None needed for declining; an approved prune is a job that can be stopped.
+
+### D-W10T-15 — DV-23 follow-up: every list applies §10's five clauses, and nothing held back is unreachable
+
+- **The question.** An independent verifier ran at `de2ae1ca0` and found two gaps. GET …/trending still used the old creator-and-place pass: no text, no media kind, no viewpoint, no venue link, and no access to what it held back. On /modules, items held by the per-module creator cap, and items removed by the DV-13 page bound, were neither counted nor listed; in one fixture the bound emptied a whole module and nothing listed the removed posts. D-W10T-4(b) promised access to what a page holds back.
+- **Options considered.**
+  - (a) Count only the place-clause items, and let the rest be "pagination". The creator cap and the page bound then silently hide content (§11: "not silently erase").
+  - (b) Backfill the page bound from other creators. It changes what DV-13 bounds, and still leaves the per-module cap's items unreachable.
+  - (c) Record every item any list holds back, whatever held it, under its place when it has one, and as unplaced otherwise, and make all of them reachable.
+- **Decision and rationale.** (c), with four parts.
+  - GET …/trending runs the same pass every module runs (`diversifyTrailModule`), over venue-linked clusters, with each post's text and media kind.
+  - Every held item counts under its place. Trending serialises `moreFromThisPlace` only when it is non-empty, so a response with nothing held keeps its prior shape.
+  - `GET …/places/:placeId/more` lists each module's held items for the place, and trending's under the key `trending`.
+  - A new `GET /v1/discovery/trails/:id/more` lists everything held back, per list, by place and unplaced. An item with no place still has a door.
+  - The page bound itself is unchanged (D-W10T-2); what it removes is recorded in the module that removed it.
+- **Reversibility.** Code only; no migration, no flag. Reverting restores the earlier counts.
+- **Where it is implemented.**
+  - `lib/discoveryTrailHealth.ts`: `diversifyTrailModule`, including `heldBackUnplaced`.
+  - `services/trails/TrailService.ts`: `trailTrending`, `boundCreatorsAcrossPage`, `moduleSaturationItem`, `heldBackLists`, `moreFromThisPlace`, `moreFromThisTrail`.
+  - `routes/trails.ts`.
+  - Tests: `discoveryTrailProductRules.test.ts` F1–F6, with G1–G3 and H pinning DV-13 and the wiring.
