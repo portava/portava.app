@@ -13761,11 +13761,18 @@ This is controlled evidence: PostgreSQL 16 at `127.0.0.1:55458`, data dir `/var/
 
 ### 87.5 Checks
 
-Listed in the lane report, with their results. Not run:
-- anything against `portava-ci` or production;
-- `check:write-path-columns`, which needs live credentials.
-
-The set adds no table and no write path, so its extractor has nothing new to find.
+Run at this tree, after the last edit to each file:
+- **Pass:**
+  - `typecheck`; `typecheck:tests` at the baseline (863 across 115);
+  - `check:migration-prefixes` (648 files), `check:test-registration`, `check:schema-references`, `check:writerless-reads`, `check:enum-literals`, `check:production-drift`, `check:census-policy-citations`;
+  - `check:census-integrity`, `check:census-freshness`, `check:census-scope-coverage` (census-discovery 409 cited, 409 watched), `check:census-row-move-labels`;
+  - `check:doc-citations` (RESULT clean, unanchored 6434 at the ceiling), `check:citation-targets` (164/164), `check:citation-symbols` (0 missing, 34 far).
+- **Suites:** 294/294 over every suite that reads a changed file, including `migrationAssertionBlockClassification`, `auditSchemaAuthzResolution`, `conditionalClaimAudit`, the media rollback pins, `migrationApplyOrder`, `ciWorkflowArchitecture` and `productionDriftExtraction`. The 14 `*ensus*` suites with `discoveryRowAudit29`: 232/232.
+- **The rehearsal driver** type-checks clean under `--strict`.
+- **Not run:**
+  - anything against `portava-ci` or production;
+  - `check:write-path-columns`, which needs live credentials. The set adds no table and no write path, so its extractor has nothing new to find.
+  - the full api-server `pnpm test`.
 
 ### 87.6 What would turn this red
 
