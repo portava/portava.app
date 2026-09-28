@@ -17,6 +17,22 @@
  *     fire-and-forget writer actually sent.
  *
  * Anything it does not model throws rather than matching everything.
+ *
+ * CHECKED AGAINST THE REAL CLIENT: registered in helpers/supabaseConformance.ts
+ * (`trailsSubject`), so supabaseContract.test.ts measures it against the real
+ * supabase-js client. Do not loosen it to make a test pass.
+ * NOT MODELLED — every entry below is a declared gap the contract enforces:
+ *   refused  — single/zero-rows, single/one-row, single/many-rows,
+ *              update/zero-rows-no-select, update/many-rows-no-select,
+ *              update/zero-rows-with-select, update/many-rows-with-select,
+ *              delete/many-rows-no-select, delete/many-rows-with-select,
+ *              insert/with-select-single, rpc/success, rpc/error-resolves,
+ *              rpc/unknown-function (TrailService never calls these verbs)
+ *   divergent — insert/unique-violation-23505 (no unique constraints),
+ *              error/unknown-column-42703 (only `missingColumns` fail),
+ *              select/count-exact (no count surface),
+ *              rls/denied-read-yields-zero-rows, rls/denied-write-yields-42501
+ *              (no service-vs-user distinction)
  */
 import { orPredicate } from "./postgrestOrFilter.js";
 
@@ -31,6 +47,8 @@ export interface FakeTrailsDbOptions {
   missingColumns?: string[];
   /** Tables whose INSERT answers this error (counted in `insertAttempts`), e.g. 42P01 or a timeout. */
   insertFailure?: Record<string, { code: string; message: string }>;
+  /** Tables whose every read answers this exact error (the contract's worlds); `erroring` answers a timeout. */
+  readFailure?: Record<string, { code: string; message: string }>;
 }
 
 type Settled = { data: Row[] | Row | null; error: { code: string; message: string } | null };
@@ -54,6 +72,7 @@ export interface FakeBuilder extends PromiseLike<Settled> {
 
 export interface FakeTrailsDb {
   from(table: string): FakeBuilder;
+  rpc(): never;
   tables: Record<string, Row[]>;
   inserts: Array<{ table: string; payload: Row }>;
   /** Every INSERT attempted, per table — including the ones that failed. */
@@ -89,6 +108,8 @@ export function makeFakeTrailsDb(seed: Record<string, Row[]>, opts: FakeTrailsDb
       return out.map((r) => ({ ...r }));
     };
     const fault = (): Settled | null => {
+      const failed = opts.readFailure?.[table];
+      if (failed) return { data: null, error: failed };
       if (broken.has(table)) return timeout();
       const absent = selected.find((c) => missing.has(c));
       if (absent) return noColumn(table, absent);
@@ -116,23 +137,48 @@ export function makeFakeTrailsDb(seed: Record<string, Row[]>, opts: FakeTrailsDb
       maybeSingle() {
         const f = fault();
         if (f) return Promise.resolve(f);
-        return Promise.resolve({ data: rows()[0] ?? null, error: null });
+        const found = rows();
+        // PostgREST refuses more than one row here (PGRST116), as the real client reports.
+        if (found.length > 1) return Promise.resolve({ data: null, error: { code: "PGRST116", message: "JSON object requested, multiple (or no) rows returned" } });
+        return Promise.resolve({ data: found[0] ?? null, error: null });
       },
       insert(payload: Row) {
-        const cols = Object.keys(payload ?? {});
-        const absent = cols.find((c) => missing.has(c));
-        insertAttempts[table] = (insertAttempts[table] ?? 0) + 1;
-        const forced = opts.insertFailure?.[table];
-        const settled: Settled = forced ? { data: null, error: forced } : broken.has(table) ? timeout() : absent ? noColumn(table, absent) : { data: null, error: null };
-        if (!settled.error) { inserts.push({ table, payload }); store().push({ ...payload }); }
-        const done = Promise.resolve(settled);
-        return { select: () => undefined, maybeSingle: () => done, then: done.then.bind(done) };
+        // Lazy, like supabase-js: nothing is sent until the builder is continued
+        // (.then / await / .maybeSingle()), and it is sent at most once.
+        let sent: Settled | null = null;
+        const exec = (): Settled => {
+          if (sent) return sent;
+          const cols = Object.keys(payload ?? {});
+          const absent = cols.find((c) => missing.has(c));
+          insertAttempts[table] = (insertAttempts[table] ?? 0) + 1;
+          const forced = opts.insertFailure?.[table];
+          sent = forced ? { data: null, error: forced } : broken.has(table) ? timeout() : absent ? noColumn(table, absent) : { data: null, error: null };
+          if (!sent.error) { inserts.push({ table, payload }); store().push({ ...payload }); }
+          return sent;
+        };
+        const withRows = (): Settled => { const r = exec(); return r.error ? r : { data: [{ ...payload }], error: null }; };
+        type Then = Promise<Settled>["then"];
+        const selected = {
+          then: ((...a: Parameters<Then>) => Promise.resolve(withRows()).then(...a)) as Then,
+          maybeSingle: (): Promise<Settled> =>
+            Promise.resolve(withRows()).then((r): Settled => (r.error ? r : { data: (r.data as Row[])[0] ?? null, error: null })),
+          single: (): never => { throw new Error("fakeTrailsDb does not model insert().select().single()"); },
+        };
+        return {
+          select: () => selected,
+          maybeSingle: (): Promise<Settled> => Promise.resolve(exec()),
+          then: ((...a: Parameters<Then>) => Promise.resolve(exec()).then(...a)) as Then,
+        };
       },
       then(res, rej) {
         return Promise.resolve(run()).then(res, rej);
       },
     };
+    // Verbs TrailService never calls: refused honestly, never matched loosely.
+    const refuse = (what: string) => (): never => { throw new Error(`fakeTrailsDb does not model ${what}`); };
+    Object.assign(b, { single: refuse(".single()"), update: refuse(".update()"), delete: refuse(".delete()"), upsert: refuse(".upsert()") });
     return b;
   }
-  return { from, tables, inserts, insertAttempts };
+  const rpc = (): never => { throw new Error("fakeTrailsDb does not model .rpc()"); };
+  return { from, rpc, tables, inserts, insertAttempts };
 }
