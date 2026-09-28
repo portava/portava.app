@@ -46,9 +46,9 @@ function user(label: string): string {
   return id;
 }
 
-function trail(state = "active", over: { destination?: string; title?: string; parent?: string } = {}): string {
+function trail(state = "active", over: { destination?: string; title?: string; parent?: string; createdBy?: string } = {}): string {
   const id = randomUUID();
-  exec(`INSERT INTO public.trails (id, slug, title, destination, lifecycle_status, parent_trail_id) VALUES ('${id}', '${TAG}-${id.slice(0, 8)}', '${over.title ?? `${TAG} ${id.slice(0, 8)}`}', ${over.destination ? `'${over.destination}'` : "NULL"}, '${state}', ${over.parent ? `'${over.parent}'` : "NULL"});`);
+  exec(`INSERT INTO public.trails (id, slug, title, destination, lifecycle_status, parent_trail_id, created_by) VALUES ('${id}', '${TAG}-${id.slice(0, 8)}', '${over.title ?? `${TAG} ${id.slice(0, 8)}`}', ${over.destination ? `'${over.destination}'` : "NULL"}, '${state}', ${over.parent ? `'${over.parent}'` : "NULL"}, ${over.createdBy ? `'${over.createdBy}'` : "NULL"});`);
   return id;
 }
 
@@ -157,12 +157,14 @@ describe("H2 — DV-13: one creator cannot dominate any module, on any request",
     const t = trail();
     const aPosts = Array.from({ length: 6 }, () => post(a));
     const [bPost, cPost] = [post(b), post(c)];
-    // Suggested by third parties, as the product allows: the contributor is NOT the author.
-    for (const [i, p] of aPosts.entries()) {
-      const res = await attachContentToTrail(sc(), t, [{ sourceType: "post", sourceId: p, relationship: "primary" }],
-        { userId: attachers[i % 3]!, mode: "suggest" });
-      assert.equal(res.attached, 1, JSON.stringify(res));
-    }
+    // RESTATED by census-discovery §86 (D-W10T-9): a third party's suggestion is now PENDING for the author
+    // and never a membership, so rows whose contributor is NOT the author are seeded directly — the shape
+    // any membership written before §86 has — and DV-13's cap must still key on the author.
+    for (const [i, p] of aPosts.entries()) member(t, "post", p, attachers[i % 3]!);
+    const pending = await attachContentToTrail(sc(), t, [{ sourceType: "post", sourceId: post(a), relationship: "primary" }],
+      { userId: attachers[0]!, mode: "suggest" });
+    assert.equal(pending.attached, 0, "a stranger's suggestion is held for the author");
+    assert.equal(pending.suggested, 1);
     await attachContentToTrail(sc(), t, [{ sourceType: "post", sourceId: bPost, relationship: "primary" }], { userId: b, mode: "attach" });
     await attachContentToTrail(sc(), t, [{ sourceType: "post", sourceId: cPost, relationship: "primary" }], { userId: c, mode: "attach" });
     // Move three of the author's posts along §7's relation into `evergreen`, through the 3381 trigger.
@@ -203,7 +205,7 @@ describe("H3 — DV-23: near-duplicates of one place are clustered and stay reac
 
   test("one place attached as primary and two Signals in ONE request is one item on the page", async () => {
     const [viewer, c] = [user("h3w"), user("h3c")];
-    const t = trail();
+    const t = trail("active", { createdBy: c }); // §86 (D-W10T-9): an authorless place is attached by the Trail's creator
     const place = canonicalPlace(); // §61: attach requires the place to exist
     const res = await attachContentToTrail(sc(), t, [
       { sourceType: "place", sourceId: place, relationship: "primary" },
@@ -305,7 +307,7 @@ describe("H5 — DC-20 over HTTP on the real schema", { skip: !HAVE_DB }, () => 
 describe("H6 — DC-04: the promotion goes through the transition trigger; an archived Trail stays archived", { skip: !HAVE_DB }, () => {
   test("first content promotes proposed → active; archived refuses a move in TypeScript AND at the database", async () => {
     const u = user("h6a");
-    const t = trail("proposed");
+    const t = trail("proposed", { createdBy: u }); // §86 (D-W10T-9): an authorless place is attached by the Trail's creator
     const res = await attachContentToTrail(sc(), t, [{ sourceType: "place", sourceId: canonicalPlace(), relationship: "primary" }], { userId: u, mode: "attach" });
     assert.equal(res.attached, 1);
     assert.equal(scalar(`SELECT lifecycle_status FROM public.trails WHERE id = '${t}';`), "active");

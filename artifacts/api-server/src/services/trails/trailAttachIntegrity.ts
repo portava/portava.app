@@ -45,17 +45,17 @@
  * caller is told `source_unreadable` (503, retryable) rather than having an
  * unverified id admitted or a readable one refused as unknown.
  *
- * NOT DECIDED HERE, and deliberately: who may attach at the author's-statement
- * confidence, and whether a third party's suggestion spends the content's §4
- * budget (§51.10 question 5). Any signed-in user may still attach any content
- * they can see, at the confidences `attachContentToTrail` has always used.
+ * WHO MAY ATTACH is decided by the caller (census-discovery §86, D-W10T-9:
+ * TrailService.routeLabelsByOwnership), from the owner this verdict reports per
+ * label (`ownerIds`): only the content's owner attaches; anyone else's suggestion
+ * waits for that owner (3488) and spends none of the content's §4 budget.
  */
 import type { MemberRow, ServableMember } from "./TrailService.js";
 
 /** The `02` §3 components whose ids this repository can verify. */
 export const VERIFIABLE_TRAIL_SOURCE_TYPES = ["post", "place", "event", "route"] as const;
 
-export type AttachSourceRefusalReason = "unknown_content" | "unverifiable_source_type";
+export type AttachSourceRefusalReason = "unknown_content" | "unverifiable_source_type" | "not_content_owner" | "invalid_label"; // §86: the last two are the caller's
 
 export interface AttachSourceRefusal {
   sourceType: string;
@@ -70,7 +70,7 @@ export interface AttachSourceVerdict {
   unreadable: string[] | null;
   /** Per label, in request order: null = verified, else why it is refused. */
   reasons: Array<AttachSourceRefusalReason | null>;
-  refusals: AttachSourceRefusal[];
+  refusals: AttachSourceRefusal[]; /** §86 (DC-20): per label, the content's owner as `servableMembers` resolved it (author, host, route owner, submitter); `null` = authorless; absent for a refused label. */ ownerIds?: Array<string | null | undefined>;
 }
 
 type AttachLabel = { sourceType: string; sourceId: string; relationship: string; signal?: string | null };
@@ -89,7 +89,7 @@ export async function verifyAttachSources(
 ): Promise<AttachSourceVerdict> {
   const reasons: Array<AttachSourceRefusalReason | null> = labels.map((l) =>
     (VERIFIABLE_TRAIL_SOURCE_TYPES as readonly string[]).includes(l?.sourceType) ? null : "unverifiable_source_type");
-  const unread = new Set<string>();
+  const unread = new Set<string>(); const ownerIds: Array<string | null | undefined> = labels.map(() => undefined);
 
   // ── place: a row in either place table ────────────────────────────────────
   const placeIds = [...new Set(labels.filter((l, i) => reasons[i] === null && l.sourceType === "place").map((l) => l.sourceId))];
@@ -133,7 +133,7 @@ export async function verifyAttachSources(
       servable = [];
     }
     if (unread.size > 0) return { unreadable: [...unread].sort(), reasons, refusals: [] };
-    const kept = new Set(servable.map((m) => m.id));
+    const kept = new Set(servable.map((m) => m.id)); for (const m of servable) ownerIds[Number(m.id.slice("attach-candidate-".length))] = m.creatorId;
     for (const c of candidates) {
       if (!kept.has(c.id)) reasons[Number(c.id.slice("attach-candidate-".length))] = "unknown_content";
     }
@@ -144,5 +144,5 @@ export async function verifyAttachSources(
     const reason = reasons[i];
     if (reason) refusals.push({ sourceType: l.sourceType, sourceId: l.sourceId, relationship: l.relationship, signal: l.signal ?? null, reason });
   });
-  return { unreadable: null, reasons, refusals };
+  return { unreadable: null, reasons, refusals, ownerIds };
 }

@@ -254,24 +254,39 @@ describe("DC-05 — §11's nine Trail-health metrics", () => {
     assert.ok(!withGeo.unmeasured.includes("geographic_diversity"));
   });
 
-  // PARTIAL geo data is the realistic case and it is the one that could go
-  // wrong quietly: three of four items in a cell would compute a diversity of
-  // 0.75 over a denominator of 3, which is a different Trail's number. Refusing
-  // to measure is the only honest answer, and a mutation that defaults the
-  // partial case to 0 must be caught here rather than in production.
-  it("PARTIAL geo cells are still UNMEASURED — a metric is never computed over a different denominator", () => {
+  // RESTATED by census-discovery §86 (D-W10T-7, DC-05). The rule this pinned —
+  // "partial cells are unmeasured" — meant a Trail with ONE route (which has no
+  // single location) or one unplaced post could never be measured, and §51.6
+  // graded geographic_diversity "always null". The metric is now DEFINED over
+  // the members that have a cell: distinct cells / located members. What stays
+  // pinned is the refusal to invent: no cell at all is still null, never 0.
+  it("PARTIAL geo cells are measured over the LOCATED members only (§86), and no cell at all stays UNMEASURED", () => {
     const partial = computeTrailHealth({ ...HEALTHY, geoCellByItem: { p1: "g1", p2: "g2" } });
-    assert.equal(partial.metrics.geographic_diversity, null);
-    assert.ok(partial.unmeasured.includes("geographic_diversity"));
+    assert.equal(partial.metrics.geographic_diversity, 1, "two located members in two cells");
+    assert.ok(!partial.unmeasured.includes("geographic_diversity"));
+    const same = computeTrailHealth({ ...HEALTHY, geoCellByItem: { p1: "g1", p2: "g1", p3: "g1" } });
+    assert.equal(same.metrics.geographic_diversity, 0.333, "three located members, one cell");
+    const none = computeTrailHealth({ ...HEALTHY, geoCellByItem: {} });
+    assert.equal(none.metrics.geographic_diversity, null);
+    assert.ok(none.unmeasured.includes("geographic_diversity"));
   });
 
+  // RESTATED by census-discovery §86 (D-W10T-7, DC-05): new_creator_exposure is an
+  // EXPOSURE share now, so without impressions it is unmeasured (null), not the
+  // membership share 0 this case used to pin. The exposure cases are in
+  // discoveryTrailProductRules.test.ts (H1–H3).
   it("one contributor owning the whole Trail reads as total concentration (§10, DV-13)", () => {
     const h = computeTrailHealth({
       ...HEALTHY,
       members: HEALTHY.members.map((m) => ({ ...m, contributor_id: "a" })),
     });
     assert.equal(h.metrics.contributor_concentration, 1);
-    assert.equal(h.metrics.new_creator_exposure, 0);
+    assert.equal(h.metrics.new_creator_exposure, null, "no impressions supplied: unmeasured, never a membership share");
+    const shown = computeTrailHealth({
+      ...HEALTHY, members: HEALTHY.members.map((m) => ({ ...m, contributor_id: "a", created_at: daysAgo(60) })),
+      impressionsBySource: { p1: 10, p2: 10, p3: 10, p4: 10 },
+    });
+    assert.equal(shown.metrics.new_creator_exposure, 0, "every impression went to a contributor who is not new to the Trail");
   });
 
   it("repeated postings about one place read as duplicate density and low place diversity", () => {

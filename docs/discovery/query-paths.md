@@ -228,6 +228,14 @@ One row per table or index that a migration in `artifacts/api-server/src/migrati
 | table | `rank_event_outcome_receipts` | `rank_event_outcome_receipts` | 3420 | QP-25 | one row per keyed outcome that landed. Its primary key `(user_id, client_event_id)` is the only index: the idempotency arbiter, the lookup, and account erasure's cascade (§62) |
 | table | `trail_relations` | `trail_relations` | 3416 | not a hot path: a derived projection (`10` §3) that nothing reads and only `rebuild_trail_relations` writes (QP-27) | the Trail Graph of `05` §2 over declared relations and common content. 0 rows in production (3416 unapplied; 0 Trails). Rebuildable by construction (census-discovery §61, DV-72) |
 | index | `idx_trail_relations_to` | `trail_relations` | 3416 | not a hot path: "relations into a Trail", for a reader that does not exist yet (QP-27) | (to_trail_id, relation). Out-relations use the primary key (from_trail_id, to_trail_id, relation) |
+| index | `idx_trails_destination_key` | `trails` | 3441 | QP-13 | `listTrails`' destination filter on the stored key (census-discovery §77); row added by §86, whose check found it unregistered |
+| table | `discovery_admin_audit_events` | `discovery_admin_audit_events` | 3486 | not a hot path: one append per Trail admin action, read per Trail by the admin audit route (`subject_id`) | census-discovery §86 (DV-74); append-only; absent from production |
+| index | `daae_idempotency_key_unique` | `discovery_admin_audit_events` | 3486 | not a hot path: the replay arbiter, probed once per admin action | one audit row per idempotency key |
+| index | `idx_daae_subject` | `discovery_admin_audit_events` | 3486 | not a hot path: the admin audit route, one Trail's rows newest first | (subject_kind, subject_id, created_at DESC) |
+| table | `trail_member_exposures` | `trail_member_exposures` | 3487 | not a hot path while `discovery_trail_exploration_enabled` (3485) is FALSE; when on, read once per GET …/modules: `trail_id = $1 AND served_on >= $2` through the primary key's leading `trail_id` | census-discovery §86 (DV-22); one row per (Trail, member, UTC day), no viewer id; absent from production |
+| table | `trail_content_suggestions` | `trail_content_suggestions` | 3488 | not a hot path: one insert per stranger's suggestion; the owner's pending list | census-discovery §86 (DC-20); absent from production |
+| index | `uq_tcs_pending_label` | `trail_content_suggestions` | 3488 | not a hot path: the one-open-suggestion-per-label arbiter, probed on insert (23505 is a retry) | partial on `state = 'pending'` |
+| index | `idx_tcs_owner_pending` | `trail_content_suggestions` | 3488 | not a hot path: GET /v1/discovery/trail-suggestions/pending, one owner's open rows newest first | partial on `state = 'pending'` |
 
 ## 5. What would turn this red
 

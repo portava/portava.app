@@ -905,7 +905,7 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
       "migration and its tests calls rebuild_trail_relations or selects from the table, " +
       "so it stays empty after the merge. Strike it off in the change that applies 3416 " +
       "to PRODUCTION.",
-  },
+  }, /* census-discovery §86 (lane W10-T), on this line so no cited line below moves: */ discovery_admin_audit_events: { classification: "unapplied", note: "Migration 3486 (census-discovery §86, `11` §8/§10, DV-74): the append-only audit of Trail lifecycle moves, merges, curation, edge reviews and trend integrity reviews, written only inside the 3486 functions. Harness only. Its writers (services/trails/trailAdmin.ts) answer 503 without it, so nothing is changed unaudited. Strike it off when 3486 reaches PRODUCTION." }, trend_integrity_reviews: { classification: "unapplied", note: "Migration 3486 (census-discovery §86, `11` §8 trend integrity review): admin verdicts. The one reader (TrailService.readTrendReviewVerdict) treats the absent table as no review. Harness only. Strike it off when 3486 reaches PRODUCTION." }, trail_member_exposures: { classification: "unapplied", note: "Migration 3487 (census-discovery §86, DV-22): a Trail's own module serves per member per day, no viewer id. Read and written only behind discovery_trail_exploration_enabled (3485, FALSE). Harness only. Strike it off when 3487 reaches PRODUCTION." }, trail_content_suggestions: { classification: "unapplied", note: "Migration 3488 (census-discovery §86, DC-20): a third party's pending Trail suggestion, awaiting the content's owner. Without it a stranger's suggestion answers 503 (fail closed; never spends the owner's budget). Harness only. Strike it off when 3488 reaches PRODUCTION." },
 };
 
 /**
