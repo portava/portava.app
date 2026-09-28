@@ -15611,7 +15611,8 @@ Port 55463, data under `/var/tmp/w11x2-*`, stopped and deleted afterwards.
 - Both 3490 flags and `discovery_output_kinds_enabled` read FALSE; the constraint reads `CHECK (((serve_point >= 1) AND (serve_point <= 13)))`, validated.
 - Re-applying 3490 and 3491 is idempotent. 3490's postcondition refuses a flag found ON, and its rollback refuses while one is TRUE; with both FALSE it removes them, and 3490 re-applies.
 - Through `record_discovery_serve_request`: serve point 13 is written and 14 refused by `recommendations_serve_point_check`. 3491's rollback refuses while a 13 row exists; with none it restores 1–12 (13 is then refused), and 3491 re-applies.
-- `scripts/local-db/run-tests.sh`: RESULT_PLACEHOLDER.
+- `scripts/local-db/run-tests.sh`: 415 tests, 414 pass, 1 fail, 0 cancelled, 0 skipped. It includes `discoveryTelemetryConstraints` with serve point 13 admitted and 14 refused.
+  - **The one failure is not this lane's, and is stated rather than hidden:** `db/discoverySearchProtection.db.test.ts` Z4 expects 3366's rollback to delete its flag row. Since §87 (`224bfa68c`) that rollback keeps a row whose description is not 3366's seed, and §80's 3460 rewrites that description, so on the full chain the row is kept (the rollback's own NOTICE says so). Neither file, nor the suite, is touched here; it fails identically run alone. It is routed to the owners of §80/§87.
 
 ### 94.5 Checks run, and what was not run
 
@@ -15636,7 +15637,17 @@ CHECKS_PLACEHOLDER
 
 ### 94.8 Headline, restated from the rows
 
-HEADLINE_PLACEHOLDER
+DV-83 moves W → C; no other row changes bucket. `check:census-integrity` at this tree counts the discovery census's latest row statements as:
+
+| bucket | count |
+|---|---|
+| BUILT-AND-CORRECT | **101** |
+| BUILT-BUT-WRONG | **85** |
+| NOT-BUILT | **2** |
+| CANNOT-VERIFY | **0** |
+
+- CONSTRUCTED 186 / 188 = **98.9 %**. CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged.
+- C19 and DC-17 now carry `IMPLEMENTATION-COMPLETE; awaits:` (neither did before §94); DC-01 and A07 keep theirs with corrected awaits.
 
 ## Cited, not graded (check:census-scope-coverage)
 
