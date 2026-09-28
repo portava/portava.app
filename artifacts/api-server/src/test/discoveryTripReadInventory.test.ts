@@ -50,6 +50,11 @@ function discoveryFiles(): string[] {
   ];
   const files = dirs.flatMap(([dir, re]) => readdirSync(dir).filter((f) => re.test(f)).map((f) => path.join(dir, f)));
   files.push(path.join(SRC, "services", "location", "DiscoveryLocationContext.ts"));
+  // census-discovery §70 moved Discovery search's per-type searchers (searchTrips,
+  // searchPlans) out of routes/discoverySearch.ts into the platform layer. They
+  // still serve GET /discovery/search, so their Trip reads are still Discovery's
+  // to account for, and the inventory follows them rather than losing them.
+  files.push(path.join(SRC, "lib", "inputAssistance", "searchCandidates.ts"));
   return files.sort();
 }
 
@@ -70,9 +75,9 @@ function tripReads(): Array<{ file: string; table: string; fn: string; at: numbe
 }
 
 const EXPECTED = [
-  "routes/discoverySearch.ts · trips · searchTrips",
-  "routes/discoverySearch.ts · trip_plan_items · searchPlans",
-  "routes/discoverySearch.ts · trips · searchPlans",
+  "lib/inputAssistance/searchCandidates.ts · trips · searchTrips",
+  "lib/inputAssistance/searchCandidates.ts · trip_plan_items · searchPlans",
+  "lib/inputAssistance/searchCandidates.ts · trips · searchPlans",
   "services/location/DiscoveryLocationContext.ts · trips · getNextTripCity",
 ].map((s) => s.split("/").join(path.sep)).sort();
 
@@ -83,7 +88,7 @@ describe("§57 A10 — every direct Trip read left in Discovery, named", () => {
   });
 
   it("I2 both `trips` reads in discoverySearch sit in the LEGACY arm, beside a projection arm, behind the capability", () => {
-    const reads = tripReads().filter((r) => r.file.endsWith("discoverySearch.ts") && r.table === "trips");
+    const reads = tripReads().filter((r) => r.file.endsWith("searchCandidates.ts") && r.table === "trips");
     assert.equal(reads.length, 2);
     for (const r of reads) {
       const gateAt = r.text.lastIndexOf('if (gate.source === "projection")', r.at);

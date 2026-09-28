@@ -65,6 +65,11 @@ export interface SkippedSite {
 
 
 function listTsFiles(dir: string): string[] {
+  // A single-FILE entry scans that file alone. Added for census-discovery §70:
+  // check:write-path-columns scans routes/ but not lib/, and §70 moved Discovery
+  // search's read sites from routes/discoverySearch.ts into one lib/ file, which
+  // that check now names on its own rather than widening to all of lib/.
+  if (statSync(dir).isFile()) return [dir];
   const out: string[] = [];
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);

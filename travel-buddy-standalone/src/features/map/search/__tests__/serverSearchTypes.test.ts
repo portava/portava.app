@@ -12,8 +12,10 @@
  * copies of the same mistake agreeing with each other.
  *
  * So this test refuses to name the types at all. It reads `SEARCH_TYPES` out of
- * `artifacts/api-server/src/routes/discoverySearch.ts` — the same declaration
- * the route's own `SearchType` union is derived from — and requires the adapter
+ * `artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts` — the same
+ * declaration the route's own `SearchType` union is derived from (it moved there
+ * from `routes/discoverySearch.ts` with the searchers, census-discovery §70,
+ * and the route re-exports it) — and requires the adapter
  * to have an opinion about every member. A type added to the server and not to
  * the adapter fails HERE, at the seam, instead of silently vanishing from map
  * search.
@@ -41,7 +43,7 @@ import { MAP_SEARCH_RESULT_TYPES } from '../mapSearchModel.ts';
 
 // ── Reading the server's own declaration ─────────────────────────────────────
 
-const SERVER_ROUTE_REL = 'artifacts/api-server/src/routes/discoverySearch.ts';
+const SERVER_ROUTE_REL = 'artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts';
 
 /**
  * Walk up from this file until the monorepo root that holds the api-server.

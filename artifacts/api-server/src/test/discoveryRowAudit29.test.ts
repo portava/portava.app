@@ -20,10 +20,16 @@
  *                     trust factor is the constant 0.6 on every Discovery row.
  *  Q4  DC-01          Trails exist and are LISTED newest-first; no Discovery
  *                     ranker has a Trail candidate kind.
- *  Q5  DV-70          FINDING, pinned: `check:production-drift` prints that
- *                     `schema_migration_ledger` is missing whenever anything is
- *                     unapplied, while the production snapshot it compares
- *                     against lists that table.
+ *  Q5  DV-70          FIXED in §70 (lane P30). §69 pinned the finding that
+ *                     `check:production-drift` printed "schema_migration_ledger
+ *                     is the one to fix first" whenever anything was unapplied,
+ *                     while the snapshot it reads lists that table. The footer
+ *                     is now `unappliedFooter`, which prints the line only when
+ *                     the snapshot does not list the ledger. Q5 asserts the
+ *                     fixed behaviour by CALLING that function on the real
+ *                     snapshot, with two controls: the snapshot without the
+ *                     table must bring the line back, and the pre-§70 footer
+ *                     (unconditional) must be rejected by the same reading.
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -32,6 +38,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { socialProofScore } from "../lib/portavaRank.js";
+import { LEDGER_TABLE, snapshotTableNames, unappliedFooter } from "../scripts/checkProductionDrift.js";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const SRC = resolve(__dir, "..");
@@ -141,22 +148,34 @@ describe("§69 Q4 (DC-01): Trails are listed by recency, and no Discovery ranker
   });
 });
 
-describe("§69 Q5 (DV-70): FINDING, pinned — the drift footer contradicts the snapshot", () => {
-  const script = read("scripts/checkProductionDrift.ts");
+describe("§69 Q5 (DV-70), fixed in §70: the drift footer names the ledger only when the snapshot lacks it", () => {
   const snapshot = readFileSync(resolve(SRC, "../baseline/20260922_production_tables.txt"), "utf8");
-  const reads = (s: string, snap: string) => ({
-    snapshotHasLedger: /^schema_migration_ledger$/m.test(snap),
-    footerSaysMissing: /schema_migration_ledger is the one to fix first: without it/.test(s),
+  const LEDGER_LINE = /schema_migration_ledger is the one to fix first: without it/;
+  type Footer = (unapplied: readonly string[], production: ReadonlySet<string>) => string[];
+  const reads = (footer: Footer, snap: string) => {
+    const production = new Set(snapshotTableNames(snap));
+    return {
+      snapshotHasLedger: production.has(LEDGER_TABLE),
+      footerSaysMissing: footer(["some_unapplied_table"], production).some((l) => LEDGER_LINE.test(l)),
+    };
+  };
+
+  it("the snapshot lists schema_migration_ledger, and the footer no longer says production lacks it", () => {
+    // Goes red if the unconditional footer comes back, or the snapshot loses the table: then re-read DV-70's statement.
+    assert.deepEqual(reads(unappliedFooter, snapshot), { snapshotHasLedger: true, footerSaysMissing: false });
   });
 
-  it("LIMIT, pinned: the snapshot lists schema_migration_ledger while the footer says production lacks it", () => {
-    // Goes red when the footer is corrected (or the snapshot loses the table): then re-read DV-70's §69 statement.
-    assert.deepEqual(reads(script, snapshot), { snapshotHasLedger: true, footerSaysMissing: true });
-  });
-
-  it("control: the reading sees the table dropped from the snapshot", () => {
+  it("control: the snapshot without the table brings the ledger line back", () => {
     const mutated = snapshot.replace(/^schema_migration_ledger$/m, "");
     assert.notEqual(mutated, snapshot, "the mutation must apply");
-    assert.equal(reads(script, mutated).snapshotHasLedger, false);
+    assert.deepEqual(reads(unappliedFooter, mutated), { snapshotHasLedger: false, footerSaysMissing: true });
+  });
+
+  it("control: the pre-§70 footer, which printed the line unconditionally, is rejected by the same reading", () => {
+    const unconditional: Footer = (unapplied, production) => [
+      ...unappliedFooter(unapplied, new Set([...production].filter((t) => t !== LEDGER_TABLE))),
+    ];
+    assert.equal(reads(unconditional, snapshot).footerSaysMissing, true);
+    assert.deepEqual(unappliedFooter([], new Set()), [], "nothing unapplied prints no footer at all");
   });
 });

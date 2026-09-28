@@ -45,7 +45,7 @@
  * not be guessed.
  */
 import { applyAliases } from '../../routes/discoverySearchHelpers';
-import { sanitizeQuery } from '../../routes/discoverySearch';
+import { sanitizeQuery } from './searchCandidates';
 import { searchKey } from '../canonicalLocations';
 import type { InputContext, InputSuggestion } from './types';
 

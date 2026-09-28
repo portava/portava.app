@@ -134,7 +134,7 @@ trigger bodies. It also carries a caveat this document inherits verbatim:
 
 > A dynamic `.from(expr)` anywhere makes attribution incomplete, and the run says so rather than
 > pretending otherwise. […] This check errs toward silence: an unattributable write means a table
-> is NOT reported. — `checkWriterlessReads.ts:39-40`, `:344-345`
+> is NOT reported. — `checkWriterlessReads.ts:39-40`, `:346-347`
 
 **How that caveat lands here.** Dynamic `.from(table)` does occur in this lane: three
 `fetchIn<T>()` helpers take the table name as a parameter —
@@ -268,7 +268,7 @@ without a read or a write. The eighth — reward — gets `true`, performs a rea
 ones (`intelCoverage`, `intelObservability`, and the missions routes) are `requireAdmin`-gated
 (`routes/intelCoverage.ts:61,72,101,113,123,137,158,176`;
 `routes/intelObservability.ts:55`) — admin-gated is not unreachable, unlike the
-internal-secret-gated-with-no-caller shape `checkWriterlessReads.ts:224-236` warns about.
+internal-secret-gated-with-no-caller shape `checkWriterlessReads.ts:226-238` warns about.
 
 ---
 

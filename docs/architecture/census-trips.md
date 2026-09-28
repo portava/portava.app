@@ -5181,7 +5181,7 @@ counting exactly one direct dispatch in the router itself
 (`src/scripts/checkTripPushPolicy.ts:75#routerCalls`). **`check:write-path-columns`**
 named 2782 and 2785's tables and 2783's `trip_goals.scope` / `weight` as
 absent from the CI schema — true until merge, ledgered where 2780/2781/2784
-already were (`src/scripts/checkWritePathColumns.ts:212#trip_transport_segments`) —
+already were (`src/scripts/checkWritePathColumns.ts:216#trip_transport_segments`) —
 and one read it could not see: the pulse's seven context reads took a table
 *name*, and now take a built query
 (`domain/trips/projections/TripPulseProjection.ts:154#PromiseLike`). Making them
@@ -6656,12 +6656,12 @@ rows stay W with the reason narrowed to the gate alone.
   `TRIP_TEMPORAL_CONFLICT`, the commitments named
   (`routes/rentABuddy.ts:2187#error: "trip_time_conflict"`); every other verdict
   rides on the 201. Discovery search takes `tripId`
-  (`routes/discoverySearch.ts:2637#tripId: ctxTripId,`), reads the windows once
-  (`routes/discoverySearch.ts:830#const read = await readTripWindows(sc, ctx.tripId, userId);`),
+  (`routes/discoverySearch.ts:192#tripId: ctxTripId,`), reads the windows once
+  (`lib/inputAssistance/searchCandidates.ts:792#const read = await readTripWindows(sc, ctx.tripId, userId);`),
   places each event's start against them as `metadata.tripFit`
   (`domain/trips/services/TripFreedomConsumers.ts:153#export function fitInstantToWindows(`)
   and leads with the ones that fit, stably, AFTER the match-tier ranking
-  (`routes/discoverySearch.ts:852#function leadWithTripFit(`). Tests: the
+  (`lib/inputAssistance/searchCandidates.ts:814#function leadWithTripFit(`). Tests: the
   verdicts against the real freedom projection on the health fixture's Paris
   trip — 13:00 local FITS, 11:30 crosses A, 17:30 runs into B's reserved
   travel, a later date OUTSIDE_TRIP, no start time UNPLACED, gate closed or

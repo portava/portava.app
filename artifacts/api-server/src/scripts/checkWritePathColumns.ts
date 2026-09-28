@@ -103,7 +103,11 @@ import { extractSchemaReferences } from "./lib/schemaReferenceExtract.js";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const API_ROOT = resolve(__dir, "../..");
-const SCAN_DIRS = [resolve(__dir, "../routes"), resolve(__dir, "../services"), resolve(__dir, "../domain"), resolve(__dir, "../server")];
+const SCAN_DIRS = [resolve(__dir, "../routes"), resolve(__dir, "../services"), resolve(__dir, "../domain"), resolve(__dir, "../server"),
+  // census-discovery §70 moved every per-type search read out of routes/discoverySearch.ts into this
+  // lib/ file. Named here, alone, so those read sites stay under the live-column check they were under
+  // in routes/; lib/ as a whole is not scanned by this check and is not widened by this line.
+  resolve(__dir, "../lib/inputAssistance/searchCandidates.ts")];
 const VERBOSE = process.argv.includes("--verbose");
 const PRINT_UNRESOLVED_ALLOWLIST = process.argv.includes(
   "--print-unresolved-allowlist",

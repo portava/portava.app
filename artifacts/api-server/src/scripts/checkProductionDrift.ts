@@ -999,6 +999,14 @@ export function stripSqlNoise(sql: string): string {
   return out.join("");
 }
 
+/** The snapshot's table names: one per line, blank lines and `#` comments skipped. */
+export function snapshotTableNames(raw: string): string[] {
+  return raw
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0 && !l.startsWith("#"));
+}
+
 function readProductionSnapshot(): Set<string> {
   const path = join(BASELINE_DIR, PRODUCTION_SNAPSHOT);
   let raw: string;
@@ -1013,10 +1021,7 @@ function readProductionSnapshot(): Set<string> {
     );
     process.exit(2);
   }
-  const names = raw
-    .split("\n")
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0 && !l.startsWith("#"));
+  const names = snapshotTableNames(raw);
   if (names.length === 0) {
     console.error(`check:production-drift: ${PRODUCTION_SNAPSHOT} contains no table names.`);
     process.exit(2);
@@ -1161,6 +1166,32 @@ export function undeclaredEntries(
     .sort();
 }
 
+/**
+ * The lines printed under a passing run's "Unapplied" list.
+ *
+ * The ledger line used to be printed whenever anything was unapplied, and it
+ * said production has no `schema_migration_ledger`. The snapshot this check
+ * reads has listed that table since 2026-09-15 (KNOWN_PRODUCTION_GAPS strikes
+ * it off above), so the footer contradicted the file two screens up.
+ * census-discovery §69 (DV-70) found it and §70 made it conditional: the
+ * line is printed only when the snapshot does NOT list the ledger, which is
+ * the only case in which it is true.
+ */
+export const LEDGER_TABLE = "schema_migration_ledger";
+
+export function unappliedFooter(unapplied: readonly string[], production: ReadonlySet<string>): string[] {
+  if (unapplied.length === 0) return [];
+  const lines = ["\n  Unapplied — code in the tree pointed at storage production does not have:"];
+  for (const t of unapplied) lines.push(`    ${t}`);
+  if (!production.has(LEDGER_TABLE)) {
+    lines.push(
+      "\n  schema_migration_ledger is the one to fix first: without it, nothing can\n" +
+        "  establish which migrations production has, and apply-migrations.ts cannot run there.",
+    );
+  }
+  return lines;
+}
+
 function main(): void {
   const production = readProductionSnapshot();
   const declared = declaredTables();
@@ -1280,14 +1311,7 @@ function main(): void {
       `✓ No unrecorded production drift. ${Object.keys(KNOWN_PRODUCTION_GAPS).length} table(s) on the ratchet, ` +
         `of which ${unapplied.length} are UNAPPLIED and must reach zero.`,
     );
-    if (unapplied.length > 0) {
-      console.log("\n  Unapplied — code in the tree pointed at storage production does not have:");
-      for (const [t] of unapplied) console.log(`    ${t}`);
-      console.log(
-        "\n  schema_migration_ledger is the one to fix first: without it, nothing can\n" +
-          "  establish which migrations production has, and apply-migrations.ts cannot run there.",
-      );
-    }
+    for (const line of unappliedFooter(unapplied.map(([t]) => t), production)) console.log(line);
   }
 
   process.exit(failed ? 1 : 0);

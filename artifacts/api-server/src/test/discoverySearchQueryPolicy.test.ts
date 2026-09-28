@@ -121,8 +121,12 @@ describe("Q5 — /discovery/suggest follows the same rule", () => {
 describe("Q6 — the gateway's emoji strip is a different surface", () => {
   it("routes/discoverySearch.ts does not import the input gateway's query normaliser", async () => {
     const { readFile } = await import("node:fs/promises");
-    const src = await readFile(new URL("../routes/discoverySearch.ts", import.meta.url), "utf8");
-    assert.ok(!/queryNormalizer/.test(src), "the Discovery route started using the gateway's emoji policy without an owner decision (D5)");
-    assert.ok(!/stripEmoji|stripsEmoji/.test(src));
+    // census-discovery §70: the searchers the route dispatches to live in the
+    // platform module now, so the same rule is held there too.
+    for (const rel of ["../routes/discoverySearch.ts", "../lib/inputAssistance/searchCandidates.ts"]) {
+      const src = await readFile(new URL(rel, import.meta.url), "utf8");
+      assert.ok(!/queryNormalizer/.test(src), `${rel}: Discovery search started using the gateway's emoji policy without an owner decision (D5)`);
+      assert.ok(!/stripEmoji|stripsEmoji/.test(src));
+    }
   });
 });
