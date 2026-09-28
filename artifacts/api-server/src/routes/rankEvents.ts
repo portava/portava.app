@@ -213,14 +213,14 @@ router.post("/rank-events/outcome", asyncHandler(async (req, res) => {
     query = query.eq("session_id", session_id);
   }
 
-  const receipt = await readOutcomeReceipt(sc, user.id, clientEventId, req.log); const picked = receipt.error || receipt.hit ? receipt : claimedId ? await readClaimedExposure(sc, user.id, claimedId, req.log) : await readUpgradableExposure(sc, query, {
+  const receipt = await readOutcomeReceipt(sc, user.id, clientEventId, req.log); const picked = receipt.error || receipt.hit ? receipt : claimedId ? await readClaimedExposure(sc, user.id, claimedId, req.log) : await readKeylessOrUpgradable(sc, query, clientEventId, {
     userId: user.id, itemId: item_id, surface, outcome, sessionId: session_id,
   }, req.log);
   if (picked.error) {
     req.log.error({ err: picked.error }, "rank-events/outcome: select failed");
     sendError(res, "db_error", picked.error.message); return;
   }
-  const row = picked.row; if (receipt.hit) { await answerKeyedReplay(sc, res, receipt.hit, { userId: user.id, itemId: item_id, surface, outcome, sessionId: session_id ?? null }, req.log); return; }  // §62 DV-37
+  const row = picked.row; if (receipt.hit) { await answerKeyedReplay(sc, res, receipt.hit, { userId: user.id, itemId: item_id, surface, outcome, sessionId: session_id ?? null }, req.log); return; } if ("keylessReplay" in picked && picked.keylessReplay) { res.json({ ok: true, duplicate: true }); return; }  // §62 DV-37; §82 D-W10-O-5 — a keyless retry
   if (!row) {
     sendError(res, "not_found", "No matching impression row found for this item");
     return;
@@ -1382,4 +1382,103 @@ async function settleKeyedOutcomeUpdate(
     }
   }
   return settleOutcomeUpdate(sc, rowId, outcome, recommendationId, firstErr, log, cas);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// census-discovery §82 (lane W10-O) — DV-37 / D-9: a KEYLESS outcome is accepted,
+// marked unkeyed, and a retry of it lands once. Register D-W10-O-5.
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// APPENDED, below every cited line. The handler reaches it through two edits,
+// each on a line it already had: the upgradable lookup is called through
+// `readKeylessOrUpgradable`, and a keyless replay is answered beside the keyed
+// one.
+//
+// THE QUESTION (§62.7 Q1): every client build shipped before §62's H1 sends
+// outcomes with no `client_event_id`. Mint a key for them on the server, refuse
+// them, or accept them marked unkeyed?
+//
+//   * A server-minted key is minted per REQUEST, so a retry gets a new one: it
+//     would identify nothing, and it would make an unkeyed outcome look keyed.
+//   * Refusing them loses every outcome the shipped builds record — every
+//     "Not interested", open, save and trip add — until the keyed build is the
+//     floor. Refusal becomes right only then, and that is a release decision.
+//   * DECIDED: accept them, MARKED unkeyed, and bound the retry. The mark is
+//     3420's own column: a keyless outcome leaves `outcome_client_event_id`
+//     NULL, so every reader can tell a keyed landing from an unkeyed one.
+//
+// THE RETRY BOUND. Without a key the server cannot tell a retry from a second
+// action, so it uses the natural key the defect is about: (viewer, item,
+// surface[, session]) and the outcome. A keyless outcome that would move a
+// SECOND exposure while the same outcome — or one that subsumes it — LANDED on
+// another exposure of that key within KEYLESS_OUTCOME_RETRY_WINDOW_MS is a
+// retry: answered 200 `{ duplicate: true }`, nothing moves, no Compass link, no
+// negative signal, no analytics row.
+//
+// WHY TEN MINUTES. A shipped build's retry is the user pressing again, or the
+// app re-sending on the next screen: seconds to minutes, inside one visit. Ten
+// minutes is also CACHE_B_TTL_MS: inside it, a second serve of the same item is
+// most likely the SAME ranked page replayed from Cache B, i.e. the same
+// recommendation, so "the same outcome on another exposure of it" is the same
+// act. What it costs: a GENUINE repeat of the same act on a genuinely new serve
+// inside ten minutes counts once. For `dismiss` that cannot happen (a dismissed
+// place is filtered from every serve path). For a tap it can; the funnel then
+// under-counts one repeat open, which is the lesser error than V7's double
+// negative signal. Outside the window the keyless path behaves as before.
+//
+// A KEYED request never takes this path: the client said, by minting a new key,
+// that it is a new action, and the key — not a clock — is its arbiter.
+
+/** The landing read's columns (a literal const, so check:write-path-columns resolves it). */
+export const KEYLESS_LANDING_COLUMNS = "id, outcome, outcome_at";
+
+/** How long a keyless landing makes the same keyless outcome on another exposure a retry. */
+export const KEYLESS_OUTCOME_RETRY_WINDOW_MS = 10 * 60_000;
+
+/**
+ * The outcomes whose landing makes a keyless `outcome` a retry: the outcome
+ * itself, and every funnel outcome that can have consumed it (the rows a retry
+ * would find "already past" this rung). `dismiss` is terminal and stands alone.
+ */
+export function keylessLandingOutcomesFor(outcome: OutcomeValue): readonly OutcomeValue[] {
+  if (outcome === DISMISS) return [DISMISS];
+  return OUTCOME_VALUES.filter((o) => o === outcome || (o !== DISMISS && upgradableOutcomesFor(o).includes(outcome)));
+}
+
+/**
+ * The upgradable lookup, and — for a KEYLESS outcome that found a row — the
+ * retry check. `keylessReplay: true` means "answer duplicate, move nothing".
+ * A failed landing read is returned as an error (the handler answers 500):
+ * guessing either way could double-count the retry this exists to recognise,
+ * and the client will retry.
+ */
+async function readKeylessOrUpgradable(
+  sc: any,
+  query: any,
+  clientEventId: string | undefined,
+  f: { userId: string; itemId: string; surface: string; outcome: OutcomeValue; sessionId?: string },
+  log: RouteLog | undefined,
+): Promise<{ row: any | null; error: any | null; keylessReplay: boolean }> {
+  const picked = await readUpgradableExposure(sc, query, f, log);
+  if (picked.error || !picked.row || clientEventId) return { ...picked, keylessReplay: false };
+  const nowMs = Date.now();
+  let landed = sc.from("rank_events")
+    .select(KEYLESS_LANDING_COLUMNS)
+    .eq("user_id", f.userId)
+    .eq("item_id", f.itemId)
+    .eq("surface", f.surface)
+    .in("outcome", [...keylessLandingOutcomesFor(f.outcome)]);
+  if (f.sessionId) landed = landed.eq("session_id", f.sessionId);
+  // Newest landing first, NULLs last (PostgreSQL puts NULLs FIRST on DESC). The
+  // window is applied below rather than as a range filter, so the check needs
+  // nothing of a client beyond the filters the upgradable lookup already uses.
+  const r = await landed.order("outcome_at", { ascending: false, nullsFirst: false }).limit(5);
+  if (r?.error) {
+    (log?.error ?? console.error).call(log ?? console, { err: r.error }, "rank-events/outcome: keyless retry check failed");
+    return { row: null, error: r.error, keylessReplay: false };
+  }
+  // The window: only a landing at or after (now − window) is a retry.
+  const hit = ((r?.data as Array<{ id: unknown; outcome_at: unknown }>) ?? []).some((x) =>
+    x.id !== picked.row.id && typeof x.outcome_at === "string" && Date.parse(x.outcome_at) >= nowMs - KEYLESS_OUTCOME_RETRY_WINDOW_MS);
+  return hit ? { row: null, error: null, keylessReplay: true } : { ...picked, keylessReplay: false };
 }

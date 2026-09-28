@@ -199,14 +199,19 @@ describe("DISCOVERY_ENGINE_MODE — caching (mechanic M5)", () => {
   beforeEach(() => invalidateDiscoveryEngineModeCache());
 
   it("M. resolves once inside the TTL", async () => {
-    let reads = 0;
+    // Restated (census-discovery §82): the uncached non-legacy resolution now also
+    // refreshes the stop measurements, which read the arming flag
+    // (discovery_stop_enforcement_enabled) — so reads are counted PER FLAG. The
+    // mode is still read once per TTL window, and so is the arming flag.
+    const reads = new Map<string, number>();
     const client = {
       from() {
         const q: any = {
+          _flag: "",
           select() { return q; },
-          eq() { return q; },
+          eq(_c: string, v: string) { q._flag = v; return q; },
           maybeSingle() {
-            reads += 1;
+            reads.set(q._flag, (reads.get(q._flag) ?? 0) + 1);
             return Promise.resolve({ data: { enabled: true, metadata: { mode: "shadow" } }, error: null });
           },
         };
@@ -216,7 +221,10 @@ describe("DISCOVERY_ENGINE_MODE — caching (mechanic M5)", () => {
     for (let i = 0; i < 5; i++) {
       assert.equal((await resolveDiscoveryEngineMode(client)).mode, "shadow");
     }
-    assert.equal(reads, 1, "the mode is read once per TTL window, not per request");
+    await new Promise((r) => setImmediate(r));
+    assert.equal(reads.get(DISCOVERY_ENGINE_MODE_FLAG), 1, "the mode is read once per TTL window, not per request");
+    assert.ok((reads.get("discovery_stop_enforcement_enabled") ?? 0) <= 1, "the arming flag is read at most once per TTL window too");
+    assert.deepEqual([...reads.keys()].filter((k) => k !== DISCOVERY_ENGINE_MODE_FLAG && k !== "discovery_stop_enforcement_enabled"), [], "no other flag is read");
   });
 
   it("M2. the flag names are the ones the migration and docs use", () => {

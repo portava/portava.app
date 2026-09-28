@@ -355,11 +355,14 @@ describe("exposure denominator — N impressions / M conversions", () => {
 
     // M = 5 conversions through the real outcome route. Each upgrades the most
     // recent still-upgradable impression row, exactly as production would.
+    // Restated (census-discovery §82, D-W10-O-5): five DISTINCT taps, each with
+    // its own client_event_id; five identical keyless taps inside ten minutes are
+    // one tap and its retries, and now land once.
     for (let i = 0; i < 5; i++) {
       const r = await fetch(`${url}/api/rank-events/outcome`, {
         method:  "POST",
         headers: { Authorization: "Bearer alice-token", "Content-Type": "application/json" },
-        body:    JSON.stringify({ item_id: ITEM, surface: "discovery", outcome: "tap" }),
+        body:    JSON.stringify({ item_id: ITEM, surface: "discovery", outcome: "tap", client_event_id: `9a9a9a9a-0000-4000-8000-${String(i).padStart(12, "0")}` }),
       });
       assert.equal(r.status, 200, `conversion ${i + 1} must land on an impression row`);
     }

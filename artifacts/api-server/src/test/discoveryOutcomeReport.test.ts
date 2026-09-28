@@ -15,7 +15,7 @@
  *   O3  an arm with ZERO sample is "insufficient_sample" with null figures —
  *       never 0 % — in the totals and at every serve point either arm reached
  *   O4  every `01` §12 item with no input is listed UNMEASURED with its missing
- *       input, never as a number; dismiss is "dismiss rate", never regret
+ *       input, never as a number; dismiss is the hide rate (§82), never regret
  *   O5  a stray outcome for an unmeasured item is reported as a finding
  *   O6  anonymous serves: counted when observed, "unobserved" (not 0) when not
  *   O7  NO READER ADDED HERE COUNTS DWELL — idle, passive or active — AS AN
@@ -116,9 +116,11 @@ describe("DV-19 — outcomes by arm over a controlled corpus", () => {
 
   it("O4. every §12 item with no input is UNMEASURED with its missing input; dismiss is never called regret", () => {
     const r = buildOutcomeReport(rows, requests);
+    // Restated (census-discovery §82, D-W10-O-10/11): low regret, the report rate,
+    // creator diversity and new-creator discovery now have an input (the
+    // enrichment read) and are no longer UNMEASURED; five items have none.
     assert.deepEqual(r.unmeasured.map((u) => u.id), [
-      "completed_visits", "event_attendance", "successful_trip_actions", "low_regret",
-      "creator_diversity", "new_creator_discovery", "trail_freshness", "repeat_traveler_satisfaction",
+      "completed_visits", "event_attendance", "successful_trip_actions", "trail_freshness", "repeat_traveler_satisfaction",
     ]);
     for (const u of r.unmeasured) {
       assert.ok(u.missingInput.length > 20, `${u.id} names what is missing`);
@@ -126,9 +128,9 @@ describe("DV-19 — outcomes by arm over a controlled corpus", () => {
       for (const c of [...r.arms, ...r.byServePoint]) assert.equal(c.metrics[u.id], undefined, `${u.id} never carries a figure`);
     }
     // All eleven `01` §12 items are accounted for, measured or not.
-    assert.equal(OUTCOME_METRICS.length, 12, "eleven §12 items, with low regret/hide/report split into dismiss_rate and low_regret");
+    assert.equal(OUTCOME_METRICS.length, 13, "eleven §12 items, with low regret/hide/report split into three rates (§82, D-W10-O-11)");
     const dismiss = OUTCOME_METRICS.find((m) => m.id === "dismiss_rate")!;
-    assert.match(dismiss.spec, /ONLY the dismiss rate/);
+    assert.match(dismiss.spec, /the hide rate/, "restated (§82, D-W10-O-6): the dismiss rate IS the hide rate on Discovery");
     assert.doesNotMatch(dismiss.id, /regret/);
   });
 

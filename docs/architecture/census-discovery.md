@@ -14283,6 +14283,179 @@ CONSTRUCTED 183 / 188 = **97.3 %**, up from 96.8 %. CORRECT 94 / 188 = **50.0 %*
 - A decayed edge retired on a read that failed or was capped (D5); any byte of the flag-off graph moving (D0).
 - Any flag in 3465–3469 seeded or read as ON.
 
+## §82 — Outcomes, telemetry product rules and stop conditions (lane W10-O): seven halt values decided and armed by a FALSE flag, keyless outcomes land once, "improves" defined, and five approval requests written
+
+*Written 2026-09-28 by lane W10-O on `disc-w10-o-outcomes`, branched from `debd5ad4f`, under the owner's 2026-09-28 delegation. The decisions are in `docs/architecture/discovery-decision-register.md`, section "W10-O", entries D-W10-O-1 … D-W10-O-15. Migration 3470 is applied to the local PostgreSQL 16 harness (port 55454) and to nothing else. Nothing here is merged, deployed, applied to `portava-ci` or production, or flag-enabled. No verdict moves, so the headline is not restated.*
+
+### 82.1 What was decided
+
+| id | row | decision |
+|---|---|---|
+| D-W10-O-1 | DV-82, DC-32 | The seven halt values, each a named config value; one 10-minute window. Where no source exists, the value errs toward halting, because a halt only resolves to legacy. |
+| D-W10-O-2 | DV-82 | Armed, an unreadable database measurement halts. |
+| D-W10-O-3 | DV-82 | **APPROVAL REQUIRED:** arming in production (3390, 3391 and 3470 applied, then the flag TRUE naming the values version). |
+| D-W10-O-4 | DC-32 | §47.8's eight defaults ruled PROVISIONAL at their current values, review by 2027-03-31, each with the evidence that would move it. |
+| D-W10-O-5 | DV-37 | Keyless outcomes are accepted and marked unkeyed (the NULL key). A keyless retry on a second exposure inside 10 minutes is a duplicate. |
+| D-W10-O-6 | DV-78 | On Discovery, `hide` ≡ `not_interested`: one control, one token (`dismiss`). |
+| D-W10-O-7 | DV-78 | `immediate_skip`: the sheet was opened and nothing stronger followed, with less than 2 000 ms of foreground dwell. Derived downstream. |
+| D-W10-O-8 | DV-41 | The 10 s interaction window is ratified, passive dwell is never interest, and card dwell waits for consent. |
+| D-W10-O-9 | DV-41, DV-78 | **APPROVAL REQUIRED:** dwell collection (consent). It states exactly what is collected and the wording needed. |
+| D-W10-O-10 | DV-19 | "Improves" is judged per serve point, with n ≥ 1 000 per arm, \|z\| ≥ 1.96 on both funnel bounds and a relative change of at least 5 %. PDE improves only if an intent item improves and nothing worsens. New-creator means new to the platform. |
+| D-W10-O-11 | DV-19 | Low regret, hide and report are three rates. |
+| D-W10-O-12 | DC-22 | The confidence priors 0.8 / 0.6 / 0.4 / 0.2 are ratified as PROVISIONAL class priors. |
+| D-W10-O-13 | DC-22 | **APPROVAL REQUIRED:** 2361's flag TRUE in production. |
+| D-W10-O-14 | DV-44 | **APPROVAL REQUIRED:** 2893 applied to production: the exact file, its dependencies, the pre-flight read and the reversal. |
+| D-W10-O-15 | DV-37 | **APPROVAL REQUIRED:** deploy, apply 3420 in production and ship the keyed build as the floor. |
+
+### 82.2 Row statements
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-82 | W | **W** | **All seven now have a decided halt value, a producer, and the caller that halts.** The values are named constants in `artifacts/api-server/src/lib/discoveryStopConditions.ts:596#export const ARMED_STOP_CONDITION_RULINGS` (D-W10-O-1): rejection > 5 % and gap > 10 % (≥ 20 attempts); creator HHI > 0.25 (≥ 100 resolved); reports + hides > 5 % (≥ 100 exposures); any cache bypass; any RLS deviation; any live double count. Armed, an unreadable measurement also halts (`artifacts/api-server/src/lib/discoveryStopConditions.ts:226#const tripped = STOP_CONDITIONS.filter((c) => readings[c].state === "tripped" || haltsOnUnreadable(`, D-W10-O-2). The arming read is `artifacts/api-server/src/lib/discoveryStopConditions.ts:627#export async function refreshStopEnforcement(`. It arms only when the flag is TRUE AND names `STOP_ENFORCEMENT_VALUES_VERSION`. Its caller is the refresh the resolver already runs (`artifacts/api-server/src/lib/discoveryStopMeasurements.ts:182#const [set] = await Promise.all(`), and the halt is taken at `artifacts/api-server/src/lib/discoveryEngineMode.ts:320#void refreshDiscoveryStopMeasurements(sc); const stop = evaluateStopConditions();`. Armed, each of the five trips above its value, clears at it and refuses a thin sample, and one cache bypass resolves `legacy / stop_condition` through the real resolver (`artifacts/api-server/src/test/discoveryStopEnforcement.test.ts:348#it("G7a. armed: one cache bypass resolves legacy / stop_condition"`). Flag off is byte-identical to `debd5ad4f`: two goldens captured before the edit (`artifacts/api-server/src/test/discoveryStopEnforcement.test.ts:182#it("G2b. the tripping scenario reproduces its golden"`), and `discoveryStopSevenConditions` passes unchanged. **Why W:** the flag is seeded FALSE (`artifacts/api-server/src/migrations/3470_discovery_stop_enforcement_flag.sql:69#discovery_stop_enforcement_enabled`), and arming is production activation. IMPLEMENTATION-COMPLETE; awaits: 3390, 3391 and 3470 applied in production + `discovery_stop_enforcement_enabled` TRUE with `metadata.values_version = "stop-values-2026-09-28.1"` (APPROVAL REQUIRED D-W10-O-3) + a non-legacy `DISCOVERY_ENGINE_MODE`, under which one production stop evaluation reads all seven ruled. |
+| DC-32 | W | **W** | **4 of 5 legs are ruled rather than silent; the fifth is another lane's flag.** Exploration budget: PASS, unchanged. Momentum cap: PASS, unchanged. Thresholds: the seven stop values are decided and recorded (D-W10-O-1), not "a lane's proposal"; they are armed only by 3470 (DV-82 above). Freshness and the other §47.8 values: each is ruled PROVISIONAL at its current value, with a review date and the evidence that would move it (D-W10-O-4). The code is pinned to the register (`artifacts/api-server/src/test/discoveryRulingsPinned.test.ts:46#it("R1. D-W10-O-4: §47.8's defaults, each ruled PROVISIONAL at this value"`), so a value cannot drift silently. Sensitive-location policy: the approved module is reused behind 3366 (FALSE, A-3; §69.3). That leg belongs to B04's lane and is not counted as PASS while unapplied (§31.2). IMPLEMENTATION-COMPLETE; awaits: 3366 applied and on in production (A-3, B04) + the stop values armed in production (APPROVAL REQUIRED D-W10-O-3). |
+| DV-37 | W | **W** | **§62.7 Q1 is answered, and a KEYLESS retry now lands once.** Keyless outcomes are accepted and marked unkeyed: 3420's `outcome_client_event_id` stays NULL (D-W10-O-5). A keyless outcome that would move a second exposure of the same (viewer, item, surface[, session]) is answered `duplicate` and moves nothing, if the same outcome, or one that subsumes it, landed on another exposure within `KEYLESS_OUTCOME_RETRY_WINDOW_MS` (`artifacts/api-server/src/routes/rankEvents.ts:1436#export const KEYLESS_OUTCOME_RETRY_WINDOW_MS = 10 * 60_000;`, `artifacts/api-server/src/routes/rankEvents.ts:1455#async function readKeylessOrUpgradable(`). The handler reaches it from the line it already had (`artifacts/api-server/src/routes/rankEvents.ts:216#const receipt = await readOutcomeReceipt(`). V7's pattern is closed: one "Not interested", retried after a second serve, moves one exposure and sends one negative signal. This holds through the real route (`artifacts/api-server/src/test/discoveryKeylessOutcome.test.ts:111#it("L1. a keyless 'Not interested', retried after a second serve, moves ONE exposure`) and on PostgreSQL 16 (`artifacts/api-server/src/test/db/discoveryVerifyChain.db.test.ts:408#test("V7d. STILL PINNED (§62, owner decision)`, restated). By decision, the same act on a new serve AFTER the window counts again (`artifacts/api-server/src/test/discoveryKeylessOutcome.test.ts:133#it("L3. the same outcome OUTSIDE the window is a new action`). Keyed outcomes keep §62's receipt. IMPLEMENTATION-COMPLETE; awaits: this tree deployed + 3420 applied in production + the keyed client build (§62.7 H1) shipped as the oldest supported build + one production `rank_event_outcome_receipts` row (APPROVAL REQUIRED D-W10-O-15). |
+| DV-19 | W | **W** | **What "improves" means is decided, the items with an input are measured, and the report judges them.** The rule is `artifacts/api-server/src/lib/discoveryOutcomeReport.ts:640#export function judgeOutcomeImprovement(` (D-W10-O-10). It judges per serve point, never pooled, with ≥ 1 000 units per arm. A rate differs when \|z\| ≥ 1.96 and the relative change is ≥ 5 %, on BOTH funnel bounds; creator HHI differs by 10 % relative. PDE improves only when useful saves or itinerary additions improve and nothing worsens anywhere, so place opens alone never pass (`artifacts/api-server/src/test/discoveryOutcomeJudgement.test.ts:145#it("J4c. place opens alone never suffice`). Four more §12 items now have an input, read by `artifacts/api-server/src/lib/discoveryOutcomeReport.ts:532#export const OUTCOME_ENRICHMENT_SQL`: low regret, the report rate (D-W10-O-11), creator diversity and new-creator discovery (new to the platform). The read is read-only and projects no user id (`artifacts/api-server/src/test/db/discoveryOutcomeEnrichment.db.test.ts:94#test("E2. no user id leaves the database"`). Hide is the dismiss rate (D-W10-O-6). The five with no possible input are named unmeasured, never 0: completed visits, event attendance, successful trip actions (defined; needs Trips' plan-item projection, E-7), Trail freshness and repeat traveler satisfaction (`artifacts/api-server/src/test/discoveryOutcomeJudgement.test.ts:76#it("J1. all eleven`). All figures are controlled evidence: the fixtures and the harness. IMPLEMENTATION-COMPLETE; awaits: production measurement — this tree deployed, a non-legacy `DISCOVERY_ENGINE_MODE` in production so a PDE arm exists, and one `report:discovery-outcomes` read of production in which both arms reach 1 000 exposures at a serve point and the judgement returns `improves`. |
+| DV-78 | W | **W** | **Negative feedback is decided for all six of `04` §4's kinds; five are in force, and `immediate_skip` is built with no input until dwell is collected.** `not_interested` ≡ `hide` on Discovery: one control (`travel-buddy-standalone/src/components/discovery/PlaceCard.tsx:545#accessibilityLabel={`), one token, the analytics event both already map to (`artifacts/api-server/src/services/ranking/rankingAnalytics.ts:130#dismiss:  RankingEvent.ITEM_HIDDEN,`) (D-W10-O-6). `immediate_skip` is derived downstream from dwell: opened, nothing stronger, and under `artifacts/api-server/src/lib/discoveryDwellSkip.ts:44#export const IMMEDIATE_SKIP_MAX_FOREGROUND_MS = 2_000;` of foreground time (D-W10-O-7). It exists only where dwell is collected, and reads UNOBSERVED otherwise (`artifacts/api-server/src/test/discoveryDwellSkip.test.ts:66#it("S3. per arm; with no dwell rows at all the figure is UNOBSERVED`). `report`, `mute` and `block` are verified separate from ranking. The cross-viewer negative statistic is written for `dismiss` only. No ranker reads a report table. On Discovery the ranker's report, hide, mute and block inputs are constants. Block and mute are eligibility filters, and the one ranking-side read of `blocks` only excludes interactions (`artifacts/api-server/src/test/discoveryNegativeFeedbackSeparation.test.ts:64#it("N1. the cross-viewer negative statistic is written for`, N2–N5). **Still 5 of 8 in force.** Dwell and `immediate_skip` wait on consent. AWAITS OWNER APPROVAL: D-W10-O-9. Trail open waits on D-1 Q2, another owner item, and was not built here. |
+| DV-41 | W | **W** | **Consent is the only blocker left.** §55.10 Q2–Q4 are decided (D-W10-O-8): the 10 s window is ratified (`travel-buddy-standalone/src/services/discoveryDwell.ts:70#export const DWELL_INTERACTION_WINDOW_MS = 10_000;`), passive-foreground dwell is never interest (`artifacts/api-server/src/lib/discoveryDwellVocabulary.ts:25#export function dwellCountsAsInterest(`), and card dwell waits for the same consent. Both are pinned (`artifacts/api-server/src/test/discoveryRulingsPinned.test.ts:65#it("R3. D-W10-O-8`). The consent request states exactly what is collected and the wording needed. AWAITS OWNER APPROVAL: D-W10-O-9. After approval: 3395 applied and its flag TRUE in production, and one production `place_dwell` row. |
+| DC-22 | W | **W** | **Both of §35.4's halves are settled on this tree; what remains is activation.** The confidence priors are ratified as PROVISIONAL class priors (D-W10-O-12), pinned at `artifacts/api-server/src/lib/discoveryCandidate.ts:269#export const CONFIDENCE_PRIOR` (`artifacts/api-server/src/test/discoveryRulingsPinned.test.ts:61#it("R2. D-W10-O-12`). The deploy-ordering blocker is gone: `lib/discoveryLiveRank.ts` is in this tree. Reason labels are the grounded `01` §11 codes with plain-language text, carried on the projection (`artifacts/api-server/src/test/discoveryCandidate.test.ts:453#describe("I9. the projection carries reasons`) behind `artifacts/api-server/src/migrations/2361_discovery_candidate_projection_flag.sql:37#discovery_candidate_projection_enabled`. IMPLEMENTATION-COMPLETE; awaits: this tree deployed + `discovery_candidate_projection_enabled` TRUE in production (APPROVAL REQUIRED D-W10-O-13) + one production `GET /api/discovery` page whose items carry `discoveryCandidate.reasons` with text. |
+| DV-44 | W | **W** | Unchanged in code: the retirement is in force in code (`artifacts/api-server/src/test/discoverySurfaceWriterProof.test.ts:77#it("P1. production admits 15`). The approval request is written (D-W10-O-14): the exact file, its two dependencies (2298 in force; zero rows on the seven), the pre-flight read, the consequences of approving and declining, and the reversal SQL. IMPLEMENTATION-COMPLETE; awaits: `2893_rank_events_retire_writerless_surfaces.sql` applied to production (APPROVAL REQUIRED D-W10-O-14). |
+
+### 82.3 DV-82 — the seven, as armed
+
+| condition | producer | the call that feeds it | armed value | armed, unreadable halts |
+|---|---|---|---|---|
+| `event_rejection_rate` | `recordServeLogOutcome` | `lib/discoveryServeLog.ts` | > 0.05, ≥ 20 attempts | n/a (in-process) |
+| `recommendation_logging_gap` | `recordServeLogOutcome` | `lib/discoveryServeLog.ts` | > 0.10, ≥ 20 attempts | n/a |
+| `creator_concentration` | `refreshDiscoveryStopMeasurements` → 3391 | `lib/discoveryEngineMode.ts` | HHI > 0.25, ≥ 100 resolved | yes |
+| `reports_hides` | same | same | > 0.05, ≥ 100 exposures | yes |
+| `cache_bypass` | `recordRankObligation` | `routes/discovery.ts` | any bypass | n/a |
+| `rls_leak` | same as creator | same | any deviation | yes |
+| `attribution_double_count` | same as creator | same | any live double count | yes |
+
+`stale`, `no_evidence` and `input_absent` never halt (G4b). The values version is pinned to the values (G5-version). Change a value and the version must change with it, and a flag armed for the old version then reads DISARMED until someone approves the new one.
+
+### 82.4 Files outside this lane's ownership list, each edit minimal
+
+- `artifacts/api-server/src/lib/discoveryStopMeasurements.ts`: two lines, line-neutral. The import line gains `refreshStopEnforcement`, and the refresh reads the arming flag beside the measurement. This is the caller DV-82 needs. The alternative, a new call in `lib/discoveryEngineMode.ts`, is a third lane's file.
+- `artifacts/api-server/src/scripts/reportDiscoveryOutcomes.ts`: reads the enrichment and prints the judgement after the numbers. A failed enrichment read leaves the four items UNOBSERVED and says so.
+- Tests restated (82.6). Every other edit is in owned files, and each existing line of `routes/rankEvents.ts`, `lib/discoveryStopConditions.ts` and `lib/discoveryOutcomeReport.ts` that the census cites kept its position. New code is appended, and changed lines were edited in place.
+- No client file changed. `PlaceCard.tsx` and `useRankOutcome.ts` needed nothing: the keyed client half is §63's, and D-W10-O-6 keeps the one control.
+
+### 82.5 Tests, seen red, and mutations
+
+Written failing first:
+- `discoveryStopEnforcement` (G, 39 cases): RED on import (no `ARMED_STOP_CONDITION_RULINGS`), then G1b and G5-3470 RED until the register and 3470 existed.
+- `discoveryKeylessOutcome` (L, 8): RED on import, then **behaviourally RED** with the helpers present and unwired: L1, L2 and L7 failed against the old handler.
+- `discoveryOutcomeJudgement` (J, 14): RED on import.
+- `discoveryDwellSkip` (S, 5): RED on module-not-found.
+
+Verification pins, green at first run because they pin code that already held, each carrying a mutation control:
+- `discoveryNegativeFeedbackSeparation` (N, 5);
+- `discoveryRulingsPinned` (R, 4).
+
+Harness suite `db/discoveryOutcomeEnrichment` (E, 4): E3 failed once on the test's own row read, which was fixed.
+
+**P24: 28 mutations, applied one at a time; every one RED; every file restored byte-identical (sha256 checked after each).**
+- Stop conditions:
+  - M1: armed table never used.
+  - M2: armed table always used (G2's goldens red).
+  - M3: unreadable never halts.
+  - M4: values version unchecked.
+  - M5: the caller drops the arming read.
+  - M6, M7: two values changed.
+- Keyless outcomes:
+  - M8: the handler bypasses the check (L and V7d red on PostgreSQL).
+  - M9: the replay not answered.
+  - M10: window ignored.
+  - M11: session scope dropped.
+  - M12: applied to keyed requests.
+  - M13: a failed read guessed as no-hit.
+  - M14: subsuming outcomes dropped.
+- Outcome judgement:
+  - M15: one funnel bound suffices.
+  - M16: no intent rule.
+  - M17: guardrail ignored.
+  - M18: no minimum change.
+  - M19: regret over all exposures.
+  - M20: unobserved reads as 0.
+  - M21: raw creator id projected (E2 red on PostgreSQL).
+  - M22: every creator new.
+- Immediate skip: M23 (idle counted as foreground), M24 (a save can be a skip).
+- Migration: M25, 3470 seeded TRUE (G5-3470 and E4 red).
+- Pins: M26 (`authorPenalty` 0.35 → 0.3), M27 (a confidence prior drifts), M28 (a report wired into the negative statistic).
+
+### 82.6 Existing tests restated, and why
+
+Each asserts the new behaviour a recorded decision chose, and none is weakened:
+- `discoveryKeyedOutcome` K2's tail. A second keyless dismiss inside the window was "still counted" and is now `duplicate` (D-W10-O-5). The genuine later action moved to L3.
+- `db/discoveryVerifyChain` V7d, line-neutral, with the cited title kept as a prefix. The retry now lands once.
+- `rankEventsTripAddOutcome` "selects exactly the list". The handler's second rank_events select, the landing read, is on its own named list, `KEYLESS_LANDING_COLUMNS`. Every exposure lookup still uses exactly `exposureColumns()`.
+- `discoveryNegativeSignalWriter` C1 and C3, and `distributionStatsExposure` G. Their 30, 29 and 5 repeated actions were keyless and identical inside a millisecond, which the rule now counts once. Each is now a distinct keyed action, so the classifier's boundary is still exercised at exactly 30/100, 29/100 and 5/100.
+- `discoveryEngineMode` M. Reads are counted per flag. The mode is still read once per TTL window, the arming flag at most once, and no other flag is read.
+- `discoveryOutcomeReport` O4. Five items are unmeasured, not eight, and the dismiss rate is the hide rate (D-W10-O-6, D-W10-O-11).
+
+### 82.7 Checks
+
+Run at this tree after the last edit, in `artifacts/api-server`, and all pass:
+- `typecheck`;
+- `typecheck:tests` (863 across 115, at baseline);
+- `check:test-registration`, `check:migration-prefixes`, `check:schema-references`, `check:writerless-reads`, `check:enum-literals`, `check:production-drift`, `check:flag-polarity` (the arming flag is seeded and read through `getFlagRow`), `check:discovery-query-paths`, `check:async-handlers`, `check:census-policy-citations`;
+- `check:census-integrity`, `check:doc-citations`, `check:citation-targets`, `check:citation-symbols`, `check:census-freshness`, `check:census-scope-coverage`, `check:census-row-move-labels`.
+
+3470 adds no table and no column, so no `KNOWN_PRODUCTION_GAPS` entry. Its flag row is new in production when applied, like 3395's.
+
+Harness (PostgreSQL 16, port 55454):
+- The whole chain was rebuilt from 2093 with 3470 in order: 356 applied, 12 known-unreplayable (2 of those applied on retry).
+- This lane's suites pass on it: `db/discoveryOutcomeEnrichment` 4/4, `db/discoveryVerifyChain` with V7d restated, `db/discoveryOutcomeMeasurement` and `db/discoveryStopMeasurements`.
+- `scripts/local-db/run-tests.sh` (all 55 `db/*.db.test.ts`, serial) ended pass=376, fail=5, skipped=0, on a machine shared with other lanes' concurrent typechecks. None of the five failing files imports a file this lane changed.
+  - `trailsConstraints` L0 and `tripPlanLifecycle` (START_PLAN, SKIP_PLAN) pass when re-run alone (13/13, 8/8).
+  - `trailsMemberVisibility` (TV1, TV6) and `trailsService` H4 still fail when re-run alone. Their errors are `fetch failed` from the in-process HTTP bridge under that load, and on a third run one step took 201 s and was refused `invalid JWT`.
+  - They are recorded as unresolved, not as passes, and not as this lane's.
+
+Test suites: every suite that imports or reads a file changed here was run; the lane report has the counts. `discoveryClientRouteE2E` fails with a `SyntaxError` on `travel-buddy-standalone/src/utils/identity.ts`, identically at `debd5ad4f` before any edit. It is not this lane's.
+
+**Not run:**
+- `check:write-path-columns`, which needs live credentials. Reasoned instead:
+  - the one new write-path read is `.select(KEYLESS_LANDING_COLUMNS)` on `rank_events`, a literal const naming `id, outcome, outcome_at`, all columns the outcome UPDATE already writes;
+  - the enrichment SQL is psql, not a PostgREST call;
+  - no write payload changed.
+- The full api-server suite, the client `check:all` (no client file changed), and any read of production or `portava-ci`.
+
+### 82.8 Read-only SQL for production
+
+These turn the harness evidence into production evidence, and D-W10-O-3 step 3 asks for them before arming.
+
+```sql
+-- DV-82 baselines, last 7 days: creator HHI of Discovery exposures (resolved only), and (dismiss + reports) per exposure.
+WITH ex AS (SELECT r.item_id, r.outcome FROM public.rank_events r
+             WHERE r.surface = 'discovery' AND r.event_type IS NULL AND r.outcome <> 'analytics' AND r.served_at > now() - interval '7 days'),
+     cr AS (SELECT dp.submitted_by FROM ex JOIN public.discovery_places dp
+              ON dp.id = CASE WHEN ex.item_id ~* '^db/[0-9a-f-]{36}$' THEN (substring(ex.item_id FROM 4))::uuid END
+             WHERE dp.submitted_by IS NOT NULL)
+SELECT (SELECT count(*) FROM cr) AS resolved,
+       (SELECT sum((c::float / (SELECT count(*) FROM cr)) ^ 2) FROM (SELECT count(*) AS c FROM cr GROUP BY submitted_by) g) AS hhi,
+       (SELECT count(*) FROM ex) AS exposures,
+       (SELECT count(*) FROM ex WHERE outcome = 'dismiss') AS dismisses,
+       (SELECT count(*) FROM public.discovery_place_reports WHERE created_at > now() - interval '7 days') AS place_reports;
+-- DV-82: the arming row (absent until 3470; must read false until D-W10-O-3 is approved).
+SELECT flag, enabled, metadata FROM public.feature_flags WHERE flag = 'discovery_stop_enforcement_enabled';
+-- DV-37: keyed vs unkeyed outcomes on Discovery exposures (the NULL key is the unkeyed mark; needs 3420).
+SELECT outcome, count(*) FILTER (WHERE outcome_client_event_id IS NULL) AS unkeyed, count(*) FILTER (WHERE outcome_client_event_id IS NOT NULL) AS keyed
+  FROM public.rank_events WHERE surface = 'discovery' AND event_type IS NULL AND outcome <> 'impression' AND outcome_at > now() - interval '30 days' GROUP BY 1;
+-- DV-19: pnpm run report:discovery-outcomes -- --db-url <read-only URL> --days 30 --json   (numbers, then the judgement)
+-- DC-22: SELECT enabled FROM public.feature_flags WHERE flag = 'discovery_candidate_projection_enabled';
+-- DV-44: D-W10-O-14's pre-flight (surface distribution and the live constraint definition).
+```
+
+### 82.9 What would turn this red
+
+- **Flag-off drift.** Any change to the evaluator's flag-off output turns G2 red. Any armed value that changes without a version bump turns G5-version red.
+- **The caller disappearing.** If the refresh stops reading the arming flag, G6 goes red. If the resolver stops refreshing, §54's A3 goes red.
+- **A keyless retry landing twice**, or a keyed request taking the window path: L1–L8, and V7d on PostgreSQL.
+- **A reader projecting a user id**, or folding an unobserved item into 0: E2, J2, J6.
+- **A ranker reading `immediate_skip`**, a report table, or the block or mute set as a score: S4, N2, N4, N5.
+- **A ruled value drifting from its register entry**: R1–R3.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/compass/CompassExplanationEngine.ts — §13.7 item 3 names Compass's HMAC recommendation-token signer as a refactor this lane declined to make in another lane's file. Discovery's recommendation id is minted by lib/discoveryRecommendationId.ts, and no Discovery verdict rests on the signer.
@@ -14326,9 +14499,10 @@ CONSTRUCTED 183 / 188 = **97.3 %**, up from 96.8 %. CORRECT 94 / 188 = **50.0 %*
 - NOT-GRADED: artifacts/api-server/src/lib/mapAggregation.ts — §76.2 quotes its activity-zone title ("in this area") as existing wording for the new nearby_now sentence; census-map grades the aggregation, and no Discovery verdict rests on it.
 - NOT-GRADED: travel-buddy-standalone/src/components/passport/memoryViews.ts — §76.3 names it as getCityCentroid's one app caller, to show the client fold is on a user-visible path; no Discovery row grades the Memories map.
 - NOT-GRADED: travel-buddy-standalone/src/components/MemoriesTab.tsx — §76.3 cites the memory modal's free-text City field, to show the fold matches user-typed text; no Discovery row grades the modal.
-- NOT-GRADED: travel-buddy-standalone/src/utils/identity.ts — §76.5 cites the export §68.7 said was missing, to show the E2E suite's local load failure is Node 22's and not the tree's; no Discovery verdict rests on the identity helpers.
+- NOT-GRADED: travel-buddy-standalone/src/utils/identity.ts — §76.5 cites the export §68.7 said was missing, to show that the E2E suite's local load failure comes from Node 22 and not from the tree. §82.7 also names it, as the cause of that same `discoveryClientRouteE2E` failure; §76.5's measurement is the correct cause (the suite passes 13/13 on Node 24, which CI uses). No Discovery verdict rests on the identity helpers, and neither section changed them.
 - NOT-GRADED: travel-buddy-standalone/src/platform/input-assistance/data/cities.ts — §76.3 names it only to say it reads the centroid name tables and not the fold; census-input-intelligence grades it.
 
 - NOT-GRADED: artifacts/api-server/src/routes/pulse.ts — §78.9 H3 gives the one-line spread that lets Pulse rank on its own `01` §9 objective; the hunk is for the integrator, and no §78 verdict rests on the route as it stands.
 
 - NOT-GRADED: travel-buddy-standalone/src/services/tagging.ts — §81.4 names it only as the target of routed hunk R3 (the "Ask me first" option); no §81 verdict rests on the client file.
+

@@ -223,7 +223,7 @@ export function evaluateStopConditions(nowMs: number = Date.now(), opts: StopEva
     readings.cache_bypass = judgeObligations(since, nowMs, rulings);
     for (const c of DATABASE_MEASURED) readings[c] = judgeMeasurement(c, nowMs, rulings);
 
-    const tripped = STOP_CONDITIONS.filter((c) => readings[c].state === "tripped");
+    const tripped = STOP_CONDITIONS.filter((c) => readings[c].state === "tripped" || haltsOnUnreadable(readings[c], rulings[c]));  // §82 D-W10-O-2: armed, "cannot read" halts
     return { ...base, tripped, attempts, eventRejectionRate, loggingGapRate, readings };
   } catch (err) {
     logger.warn({ err }, "discoveryStopConditions: evaluation threw — reporting all-clear rather than halting on our own bug");
@@ -246,7 +246,7 @@ export function evaluateStopConditions(nowMs: number = Date.now(), opts: StopEva
  * enforced stop is not this section's call — but it travels with every reading
  * so nobody quotes 5 % as policy.
  */
-export type StopRulingStatus = "owner_ruled" | "unratified_proposal";
+export type StopRulingStatus = "owner_ruled" | "unratified_proposal" | "delegated_decision";  // §82: `delegated_decision` = decided under the owner's 2026-09-28 delegation (register D-W10-O-1), armed only by 3470
 
 export interface StopRuling {
   /** The measured value ABOVE which the condition trips. Every measure here is higher-is-worse. */
@@ -429,7 +429,7 @@ export function stopMeasurementsSnapshot(): ReadonlyMap<DatabaseMeasuredConditio
 }
 
 function _resetExtendedStopState(): void {
-  _measurements.clear();
+  _measurements.clear(); _stopEnforcement = "disarmed";  // §82: a reset disarms
   _obligations.length = 0;
   _obligationNext = 0;
 }
@@ -437,7 +437,7 @@ function _resetExtendedStopState(): void {
 function effectiveRulings(
   over: Partial<Record<DiscoveryStopCondition, StopRuling | null>> | undefined,
 ): Record<DiscoveryStopCondition, StopRuling | null> {
-  const out = { ...STOP_CONDITION_RULINGS } as Record<DiscoveryStopCondition, StopRuling | null>;
+  const out = { ...(stopEnforcementArmed() ? ARMED_STOP_CONDITION_RULINGS : STOP_CONDITION_RULINGS) } as Record<DiscoveryStopCondition, StopRuling | null>;  // §82: flag OFF ⇒ exactly the table above
   if (over) for (const c of STOP_CONDITIONS) if (c in over) out[c] = over[c] ?? null;
   return out;
 }
@@ -497,4 +497,143 @@ function judgeMeasurement(
   if (m.state === "unreadable") return { ...idle, state: "unreadable", ...withDetail };
   if (m.state === "input_absent") return { ...idle, state: "input_absent", ...withDetail };
   return judge(c, m.value, m.sample, rulings, m.detail);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// census-discovery §82 (lane W10-O) — DV-82 / DC-32: the seven halt values,
+// DECIDED, and ARMED only by a flag seeded FALSE.
+//
+// APPENDED, for the same reason as the block above: the census cites this file
+// by line (:101, :121, :197, :276, :296, :415). Four existing lines were edited
+// IN PLACE (the tripped filter, the status union, effectiveRulings and the
+// reset); no line above moved.
+//
+// WHAT WAS DECIDED (docs/architecture/discovery-decision-register.md, D-W10-O-1
+// and D-W10-O-2, under the owner's 2026-09-28 delegation of routine product
+// decisions). `12` gives words, not numbers: "rises", "appear", "spikes",
+// "increase materially", "reappears", "occur", "double-counts". No spec, and no
+// ROADMAP step, gives a number for any of them. So each value below is a
+// CONSERVATIVE choice, and "conservative" has one meaning here: a trip can only
+// ever move a request to `legacy` — what production already serves — so the
+// cost of a false halt is a paused rollout, and the cost of a missed halt is a
+// user-facing defect. When in doubt, halt.
+//
+//   event_rejection_rate       > 5 % of ≥ 20 serve-log insert attempts. The
+//                              healthy value is 0; kept (§12.5's value).
+//   recommendation_logging_gap > 10 % of served items over ≥ 20 attempts. Kept.
+//   creator_concentration      HHI > 0.25 over ≥ 100 resolved exposures: more
+//                              concentrated than four creators sharing the page
+//                              equally. 0.25 is the classic "highly
+//                              concentrated" line for an HHI on the 0–1 scale.
+//   reports_hides              (dismisses + reports) / exposures > 5 % over
+//                              ≥ 100 exposures.
+//   cache_bypass               ANY bypass: "reappears" names an event, not a
+//                              rate. One owed rank served unranked halts.
+//   rls_leak                   ANY deviation from 3390's posture: "occur".
+//   attribution_double_count   ANY live double count: "double-counts".
+//   unreadable                 armed, a database measurement that cannot be
+//                              read halts too (D-W10-O-2). Arming is only
+//                              recommended with 3391 applied (APPROVAL REQUIRED,
+//                              D-W10-O-3), so "unreadable" then means a real
+//                              failure, not a missing function.
+//
+// One window for all seven: STOP_WINDOW_MS (10 min). Evidence ages out, so a
+// halt recovers on its own once the cause is gone.
+//
+// ARMING IS PRODUCTION ACTIVATION, SO IT IS A FLAG. `discovery_stop_enforcement_enabled`
+// (migration 3470) is seeded FALSE and never turned on by this lane. OFF,
+// absent or unreadable, the evaluator uses STOP_CONDITION_RULINGS exactly as
+// before (src/test/discoveryStopEnforcement.test.ts G2 pins two goldens
+// captured before this edit). ON, it uses ARMED_STOP_CONDITION_RULINGS.
+//
+// THE CALLER. The flag is read by `refreshStopEnforcement`, called from
+// `refreshDiscoveryStopMeasurements` — the refresh the engine-mode resolver
+// already runs (not awaited) on every uncached non-legacy resolution. So the
+// arming state follows the flag within one resolver cache period, and a
+// legacy deployment never reads it (legacy has nothing to halt).
+// ═════════════════════════════════════════════════════════════════════════════
+import { getFlagRow } from "./featureFlags.js";
+
+/** The arming flag (3470), seeded FALSE. `*_enabled` ⇒ CAPABILITY: read fail-closed via getFlagRow. */
+export const STOP_ENFORCEMENT_FLAG = "discovery_stop_enforcement_enabled";
+
+/**
+ * The version of the decided table below. Arming requires the flag row to be
+ * TRUE **and** its `metadata.values_version` to name exactly this string, so an
+ * approval arms the values it approved and nothing else: change any value and
+ * bump this, and a flag armed for the old values reads DISARMED until someone
+ * approves the new ones (register D-W10-O-3). It also means a row that merely
+ * reads `enabled: true` — a stub, a copy-pasted row — never arms anything.
+ */
+export const STOP_ENFORCEMENT_VALUES_VERSION = "stop-values-2026-09-28.1";
+
+/** Creator concentration: HHI of Discovery exposures across creators above which the rollout halts. */
+export const CREATOR_CONCENTRATION_HHI_THRESHOLD = 0.25;
+/** …over at least this many exposures whose creator resolved. */
+export const CREATOR_CONCENTRATION_MIN_RESOLVED = 100;
+/** Reports and hides: (dismisses + place reports + Trail reports) / exposures above which the rollout halts. */
+export const REPORTS_HIDES_RATE_THRESHOLD = 0.05;
+/** …over at least this many exposures. */
+export const REPORTS_HIDES_MIN_EXPOSURES = 100;
+/** Cache bypass: the share of owed ranks served unranked above which the rollout halts. 0 ⇒ any bypass. */
+export const CACHE_BYPASS_SHARE_THRESHOLD = 0;
+/** …over at least this many owed ranks (one is enough: a bypass is an event). */
+export const CACHE_BYPASS_MIN_OBLIGATIONS = 1;
+/** RLS: posture deviations above which the rollout halts. 0 ⇒ any deviation. */
+export const RLS_LEAK_DEVIATION_THRESHOLD = 0;
+/** …from one catalogue read. */
+export const RLS_LEAK_MIN_SAMPLE = 1;
+/** Attribution: live double-count groups above which the rollout halts. 0 ⇒ any. */
+export const ATTRIBUTION_DOUBLE_COUNT_THRESHOLD = 0;
+/** …over at least one attribution in the window. */
+export const ATTRIBUTION_DOUBLE_COUNT_MIN_SAMPLE = 1;
+/** Armed, does an `unreadable` database measurement halt? (D-W10-O-2) */
+export const STOP_UNREADABLE_HALTS_WHEN_ARMED = true;
+
+const DECIDED = "census-discovery §82, register D-W10-O-1 (decided under the owner's 2026-09-28 delegation; armed only by 3470)";
+
+/** The rulings in effect when `discovery_stop_enforcement_enabled` is ON. All seven. */
+export const ARMED_STOP_CONDITION_RULINGS: Readonly<Record<DiscoveryStopCondition, StopRuling>> = {
+  event_rejection_rate:       { threshold: EVENT_REJECTION_RATE_THRESHOLD, minSample: STOP_MIN_SAMPLE, status: "delegated_decision", source: `${DECIDED}: §12.5's 5 % kept`, haltOnUnreadable: false },
+  recommendation_logging_gap: { threshold: LOGGING_GAP_THRESHOLD, minSample: STOP_MIN_SAMPLE, status: "delegated_decision", source: `${DECIDED}: §12.5's 10 % kept`, haltOnUnreadable: false },
+  creator_concentration:      { threshold: CREATOR_CONCENTRATION_HHI_THRESHOLD, minSample: CREATOR_CONCENTRATION_MIN_RESOLVED, status: "delegated_decision", source: `${DECIDED}: HHI > 0.25 over >= 100 resolved exposures`, haltOnUnreadable: STOP_UNREADABLE_HALTS_WHEN_ARMED },
+  reports_hides:              { threshold: REPORTS_HIDES_RATE_THRESHOLD, minSample: REPORTS_HIDES_MIN_EXPOSURES, status: "delegated_decision", source: `${DECIDED}: > 5 % of >= 100 exposures`, haltOnUnreadable: STOP_UNREADABLE_HALTS_WHEN_ARMED },
+  cache_bypass:               { threshold: CACHE_BYPASS_SHARE_THRESHOLD, minSample: CACHE_BYPASS_MIN_OBLIGATIONS, status: "delegated_decision", source: `${DECIDED}: any bypass`, haltOnUnreadable: false },
+  rls_leak:                   { threshold: RLS_LEAK_DEVIATION_THRESHOLD, minSample: RLS_LEAK_MIN_SAMPLE, status: "delegated_decision", source: `${DECIDED}: any deviation`, haltOnUnreadable: STOP_UNREADABLE_HALTS_WHEN_ARMED },
+  attribution_double_count:   { threshold: ATTRIBUTION_DOUBLE_COUNT_THRESHOLD, minSample: ATTRIBUTION_DOUBLE_COUNT_MIN_SAMPLE, status: "delegated_decision", source: `${DECIDED}: any live double count`, haltOnUnreadable: STOP_UNREADABLE_HALTS_WHEN_ARMED },
+};
+
+// Declaration merging (same module): a ruling may say that "cannot read" halts.
+// Absent — as on every flag-off ruling — it does not, exactly as before.
+export interface StopRuling {
+  /** When true, an `unreadable` reading of this condition trips (D-W10-O-2). */
+  haltOnUnreadable?: boolean;
+}
+
+/** Where this process believes the arming flag stands. Unknown and failed reads are DISARMED. */
+let _stopEnforcement: "armed" | "disarmed" = "disarmed";
+
+/** Is the decided table in force in this process? */
+export function stopEnforcementArmed(): boolean {
+  return _stopEnforcement === "armed";
+}
+
+/**
+ * Read `discovery_stop_enforcement_enabled` and arm or disarm. Armed only when
+ * the row is TRUE and names STOP_ENFORCEMENT_VALUES_VERSION. Fail-closed:
+ * FALSE, absent, another values version, an error, a throw and no client all
+ * DISARM, which is the pre-§82 behaviour. Never throws.
+ */
+export async function refreshStopEnforcement(sc: unknown): Promise<void> {
+  try {
+    const row = sc ? await getFlagRow(sc, STOP_ENFORCEMENT_FLAG) : null;
+    const armed = row?.enabled === true && row.metadata?.["values_version"] === STOP_ENFORCEMENT_VALUES_VERSION;
+    _stopEnforcement = armed ? "armed" : "disarmed";
+  } catch {
+    _stopEnforcement = "disarmed";
+  }
+}
+
+function haltsOnUnreadable(reading: StopConditionReading, ruling: StopRuling | null): boolean {
+  return reading.state === "unreadable" && ruling?.haltOnUnreadable === true;
 }
