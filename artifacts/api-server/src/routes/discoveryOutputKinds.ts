@@ -38,7 +38,7 @@ import { Router, type Request, type Response } from "express";
 import { requireUser, sendError } from "../lib/http.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { getServiceClient } from "../lib/supabase.js"; import { exposureForResponse, serveClockOf, servedRecommendationId } from "../lib/discoveryRecommendationRecord.js"; import { logServeUnlessRefused } from "../lib/discoveryRefusal.js"; import { DiscoveryServePoint, type ServedItem } from "../lib/discoveryServeLog.js";  // §94: the serve log
-import { isFlagEnabled } from "../lib/featureFlags.js";
+import { isFlagEnabled } from "../lib/featureFlags.js"; import { unlessDiscoveryStopped } from "../lib/discoveryStopGate.js";
 import { loadPdeViewer } from "../lib/discoveryPde.js";
 import {
   rankTrailsForViewer, rankSharedMomentsForViewer, rankEmergingForViewer, type RankedKind,
@@ -59,7 +59,7 @@ router.get("/v1/discovery/recommendations/:kind", asyncHandler(async (req: Reque
   if (!sc) return sendError(res, "degraded_unavailable", "recommendations are not available in this deployment", { reason: "no_service_client" });
 
   // Literal at the read site (check:flag-polarity reads call sites).
-  if (!(await isFlagEnabled(sc, "discovery_output_kinds_enabled"))) {
+  if (!(await unlessDiscoveryStopped(sc, await isFlagEnabled(sc, "discovery_output_kinds_enabled")))) {  // census-discovery §97: a stopped rollout answers the flag-off 404
     return sendError(res, "feature_disabled", "these recommendations are not enabled");
   }
 
