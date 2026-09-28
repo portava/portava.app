@@ -4154,6 +4154,8 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryCategoryTab.refusal.component.test.tsx",
     "travel-buddy-standalone/src/hooks/__tests__/useCommunityDiscovery.refusal.component.test.tsx",
     "travel-buddy-standalone/app/map/__tests__/projectedPlaces.component.test.tsx",
+    // §80.12 (follow-up): the request budget's suite.
+    "travel-buddy-standalone/src/platform/input-assistance/services/__tests__/requestTimeout.component.test.ts",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

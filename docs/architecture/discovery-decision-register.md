@@ -46,6 +46,17 @@ Lane W10-S1, 2026-09-28, branch `disc-w10-s1-search`. Census section: census-dis
   - Code: `artifacts/api-server/src/routes/discoverySearch.ts:140#let q = applyAliases(stripEmoji(qAfterHandle));` and `artifacts/api-server/src/routes/discoverySearch.ts:414#const q = sanitizeQuery(applyAliases(stripEmoji(`, which apply `stripEmoji` from `lib/inputAssistance/queryNormalizer.ts`. `lib/inputAssistance/searchPage.ts` `prepareSearchQuery` does the same.
   - Tests: `src/test/discoverySearchQueryPolicy.test.ts` Q2–Q6, restated as the visible diff §46.5 said they would be; `src/test/inputAssistanceMapSearchPage.test.ts` "E: an emoji in the query".
 
+- **The follow-up (independent verification at `bc0ba4a94`, decided and built the same day).** Four gaps in the first strip were found:
+  - **Subdivision flags** (🏴 + TAG characters U+E0020–U+E007F) left invisible tags in the key. The TAG block is now part of the emoji class, so "🏴 pub" searches "pub", and the flag alone is refused.
+  - **Keycaps** kept their base character, so "1️⃣ bar" searched "1 bar" and "*️⃣*️⃣" searched "* *". The whole sequence `[0-9#*]️?⃣` is now removed.
+  - **An emoji inside a word.** Rule: an emoji between two LOWERCASE letters is inside one word and is removed without a gap ("caf☕e" searches "cafe"). Anywhere else it separates, as a space: between words, at an edge, or before an UPPERCASE letter that starts a new word ("Sky🔥Bar" searches "Sky Bar"). The trade-off: "Sky🔥bar", all lowercase, joins to "Skybar". "caf☕e" does not find "Café Luna", for the same reason "cafe" does not: Discovery's free-text place names are matched accent-sensitively, which is outside G62 (§46.3's stated limit of B01). "caf☕é luna" does find it.
+  - **A literal `*`** is PostgREST's like-wildcard, so "**" matched every row. `sanitizeQuery` now drops `*` the way it drops `(`, `)` and `,`.
+  - One function serves both callers, so the gateway's key is the same (Q8c).
+  - **Where:**
+    - `lib/inputAssistance/queryNormalizer.ts`: the class line, the `stripEmoji` line, and `KEYCAP_RE` / `IN_WORD_EMOJI_RE` at the foot;
+    - `lib/inputAssistance/searchCandidates.ts` `sanitizeQuery`;
+    - pinned by `discoverySearchQueryPolicy` Q7a–Q7e (every hidden-mark class, one at a time), Q8a–Q8c and Q9.
+
 ### D-W10-S1-2 — partial coverage: may a consumer render `partial` as complete, and in what words (DV-83 ground 2; D-8, second half)
 
 - **Question:** census-discovery §60.8 Q1, verbatim: *"May a Discovery consumer render a `coverage: "partial"` answer as a complete result with no notice … Or must every consumer that renders a list surface `failedSources` … If the second, which wording is ratified?"*
@@ -152,6 +163,14 @@ Lane W10-S1, 2026-09-28, branch `disc-w10-s1-search`. Census section: census-dis
   - Code: `travel-buddy-standalone/src/hooks/useGlobalSearchSuggestions.ts`.
   - Tests: `useGlobalSearchSuggestions.singleSystem.component.test.tsx`. The first case is restated from "every keystroke still fetches the legacy typeahead" to "no keystroke fetches it", because this decision changed it. A control and a never-matching-mount case were added.
 
+- **The timeout (follow-up).** With E-9 the fallback starts only on `unavailable`, and a gateway that accepted the connection and never answered was never `unavailable`. Every request to `POST /input-assistance/suggest`, from both the typeahead and the Map page, now has a **5 000 ms** budget (`SUGGEST_TIMEOUT_MS`).
+  - When the budget runs out, the request is aborted and reported as `unavailable`, which starts the legacy typeahead. The Map sheet shows its error line.
+  - The caller's own abort of a superseded keystroke stays `aborted`.
+  - Why 5 s: it is two orders of magnitude over GII §33's 100–150 ms debounce, so a slow but live serve is not cut off, and a person still typing gets the fallback while it helps. GII names no latency number.
+  - **Where:**
+    - Code: `travel-buddy-standalone/src/platform/input-assistance/services/inputAssistance.ts` (`withBudget`).
+    - Tests: `services/__tests__/requestTimeout.component.test.ts`, with fake timers.
+
 ### D-W10-S1-5 — the Map search sheet on the gateway (A08 reason 3)
 
 - **Question:** census-discovery §70.3: *"Moving it would change what a person sees … it carries none of the `refusal.coverage` notices the sheet renders."*
@@ -173,6 +192,11 @@ Lane W10-S1, 2026-09-28, branch `disc-w10-s1-search`. Census section: census-dis
 - **Where it is implemented:**
   - Code: `lib/inputAssistance/searchPage.ts`, `lib/inputAssistance/gateway.ts`, `routes/inputAssistance.ts`, `travel-buddy-standalone/src/platform/input-assistance/search/mapSearch.ts`, `services/inputAssistance.ts` `requestMapSearchPage`, and `components/map/MapSearchSheet.tsx`.
   - Tests: `inputAssistanceMapSearchPage.test.ts`, `mapSearch.test.ts` and `MapSearchSheet.refusal.component.test.tsx`.
+
+- **Nothing searchable (follow-up).** For "🔥", "((", "@a" (the second keystroke of every handle search) or a subdivision flag, the gateway page answers a `validation` / `query_too_short` refusal on both lanes. Before the move this was the route's `400`.
+  - The sheet now treats class `validation` as not-enough-to-search: the state it already has for a one-character query. It shows no rows, no outage sentence, no "Nothing matched", and no error line.
+  - It does not print the route's developer message ("q must be at least 2 characters after sanitization"), which the old error line did. That is the only visible difference, and it removes a message nobody should have seen.
+  - **Where:** `MapSearchSheet.tsx` (`tooShortNow`) and `mapSearch.ts` (`tooShort`). Tests: sheet case (11) with the outage control (11b), and `mapSearch.test.ts` V1.
 
 ### D-W10-S1-6 — the search helpers join the platform module (A08, the residual §70 named)
 
