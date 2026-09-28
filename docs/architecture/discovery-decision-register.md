@@ -1330,3 +1330,65 @@ Lane W10-S1, 2026-09-28, branch `disc-w10-s1-search`. Census section: census-dis
   - An archived or unknown Trail refuses a cursor page (404), as it refuses every Trail read.
 - **Reversibility.** Code only.
 - **Where it is implemented.** `services/trails/TrailService.ts`: `decodeMemberCursor` and `olderMembersPage`. Tests: `discoveryTrailProductRules.test.ts` K1 and K2, and J4 for the id tiebreak.
+
+## W11-A — open-row audit
+
+*Lane W11-A, 2026-09-28, branch `disc-w11-audit` from `3478500bb`. Census section §92. This lane graded no code and changed none. It classed the 37 census-discovery rows that carried neither `IMPLEMENTATION-COMPLETE; awaits:` nor `AWAITS OWNER APPROVAL:`. Before writing a new request it searched this register and `docs/ops/discovery-owner-approval-request.md`, and it reuses an existing id wherever one already covers the decision. Three decisions had no request, so they are written below.*
+
+### D-W11A-1 — how an open row is classed, and when it carries both markers
+
+- **The question:** the integrator's brief for §92. Each unmarked row goes into exactly one class. (P) waits only on production state or evidence. (O) waits on a decision this programme may not make. (B) waits on code that no decision blocks.
+- **Options considered:**
+  - (a) Every production step is an owner decision, so every P row also carries `AWAITS OWNER APPROVAL`. Rejected: the marker would then carry no information. The rollout plan's standard steps (apply P0/P1, deploy, the A4 flag plan) are already requested as one pack (W10D-A1, A3, A4).
+  - (b) A row is P when all that remains is one of those standard steps plus the evidence it produces. It is O when a named request needs an answer of substance: consent, money, retention, a data-collection yes such as W10D-A2, or a GitHub setting. An O row that is otherwise implementation-complete carries both markers. **Chosen.**
+- **Decision and rationale:** (b). It follows the lane rules' split between "waits on production activation or evidence" and "waits on a non-delegated owner decision". A P row names the pack id that covers its activation inside its `awaits:` list, so the approval is still traceable.
+- **Reversibility:** a bookkeeping rule. Restating a row under (a) loses nothing.
+- **Where it is implemented:** census-discovery §92.1–§92.2. No code.
+
+### D-W11A-2 — §6 D9's remaining defaults are product decisions, and stand as coded
+
+- **The question:** census-discovery §6 D9: *"Ratify or replace the `DiscoveryCandidate` mapping defaults … the truth-class rules …, the per-class confidence priors (0.8/0.6/0.4/0.2), and the ≤3-feature `whyForUser`."* A03 and A25 still cite "D9 unratified" as a ground (§57).
+- **Options considered:**
+  - (a) Keep D9 as an owner question. Rejected: it is a product mapping, not consent, money, retention or activation, and the owner delegated those on 2026-09-28.
+  - (b) Ratify the remaining defaults as coded. **Chosen.**
+- **Decision and rationale:** (b). D-W10-O-12 already ratified the priors and the reason labels. The truth-class rules never assign a class that no producer backs (never `inferred` or `predicted` from static facts), which is Sensing §5.1's rule that *"prediction must never be rendered indistinguishably from observation"*. `whyForUser` is empty whenever no per-user ranker ran. Neither needs an owner answer. What remains before A03 and A25 is activation only: W10D-A4a and D-W10-O-13.
+- **Reversibility:** a later lane may replace either mapping by a register entry. Nothing is stored.
+- **Where it is implemented:** `artifacts/api-server/src/lib/discoveryCandidate.ts`, unchanged. Census §92.1 (A03, A25).
+
+### AR-W11A-1 — APPROVAL REQUIRED: the Buddy payment-eligibility leg (B03; commercial terms)
+
+- **The question:** B03 (G71/G283) asks for *"launch/safety/payment eligibility"*. Four legs are built. The payment leg is not: *"There is no payment processor … No column says a buddy can be paid"* (`artifacts/api-server/src/lib/discoveryPeopleBuddy.ts:64#PAYMENT — NOT BUILT, AND NOT FAKED`). What makes a buddy payment-eligible depends on which processor and payout relationship the marketplace uses, and `09` §1 defers real payouts. That is a commercial term.
+- **What is built up to the decision:** safety, category, availability and launch. Launch is behind `discovery_buddy_launch_gate_enabled` (2360, FALSE; W10D-A4b). Every read fails closed.
+- **Recommended action (exact):**
+  1. Approve that B03's payment leg is a read of a per-buddy payout-readiness state, written by the payment-processor integration you choose under W10D-B6.
+  2. Until a processor exists, approve W10D-A4b as written: `discovery_buddy_launch_gate_enabled` TRUE after the API deploy. While `rent_buddy_enabled` is FALSE, no buddy is suggested, so no unpaid-able buddy is shown.
+  3. No processor, fee or payout term is chosen here.
+- **If approved:** once a processor writes a readiness state, a lane builds the leg behind a new flag seeded FALSE: a buddy with no ready state is not a Buddy suggestion, and an unreadable state withholds. B03 can then reach `C` on production evidence.
+- **If declined:** B03 stays `W`. The launch gate still keeps buddies off the search surface while the marketplace is off.
+- **Recovery:** nothing is built, so there is nothing to undo. The launch gate reverts with `UPDATE public.feature_flags SET enabled = false WHERE flag = 'discovery_buddy_launch_gate_enabled';`.
+
+### AR-W11A-2 — APPROVAL REQUIRED: which people-derived signals may count as independent convergence (DV-34; consent and data use)
+
+- **The question:** `03` §6 names five convergence signals: unrelated travellers, *"multiple circles visit independently"*, *"saves convert into visits"*, *"visitors post afterward"*, and *"activity occurs across multiple networks"*. §84 computes the first from `rank_events` through Sensing's clustering (D-W10-R1-4). That module refuses identity joins (`artifacts/api-server/src/lib/intelIndependence.ts:39#privacy-invasive identity joins`). The others need circle membership, crews, and visit records (`passport_stamps`, `circle_checkins`, `plan_checkins`). Using them to rank a public trend is a new use of that data. D-W10-R3-4 already treats "your circle" as consent for candidates, for the same reason.
+- **What is built up to the decision:** the unrelated-traveller leg, behind the §84 flags (FALSE).
+- **Buildable without this decision:** the "visitors post afterward" leg, read only from PUBLISHED, PUBLIC Memories. D-W10-R3-5 already uses that basis for candidates. It is work item W11A-B9 in §92.3.
+- **Recommended action (exact):**
+  - (a) **Decline circle and crew membership as a trend input for now.** A circle is small and identified, so "independent circles" discloses who went where to exactly the people who can tell. This follows W10D-C5's recommendation on personal projections.
+  - (b) **Decline visit records (`passport_stamps`, `circle_checkins`, `plan_checkins`) as a trend input for now.** They are location history, and their collection purpose is the traveller's own passport and plans.
+  - (c) Note that declining (a) and (b) leaves DV-34 short of `03` §6's full list. The row stays `W` until either is approved.
+- **If approved instead (either signal):** a lane builds the signal as aggregated counts only, never naming anyone. It needs at least 2 distinct circles, or 2 distinct travellers, per place per window, and sits behind a new flag seeded FALSE. The approval must name the consent basis. Circle signals should also honour `circle_visibility_settings` and `circle_member_visibility_overrides`.
+- **If declined:** DV-34 stays `W` on the missing legs. Nothing reads circles or visits for trends.
+- **Recovery:** nothing is built. Any later build is flag-gated and stores nothing (the trend tables are derived and rebuildable), so turning the flag off restores the prior state.
+
+### AR-W11A-3 — APPROVAL REQUIRED: one production path that records the graph reading for debugging (DV-52; production activation and retention)
+
+- **The question:** DV-52, `05` §9: *"it remains explainable enough for debugging."* The code is complete. §63 records the reading on a served page under `discovery_ranking_modifiers_enabled` (2289), and the DRS debug sample lands under `RANKING_EXPERIMENT_ENABLED` (`artifacts/api-server/src/services/ranking/DiscoveryRankingService.ts:1257#if (experimentEnabled && db) {`). 3421 makes it land on production's structure. No production deployment has either switch on. 2289 is a held-design flag that W10D-A4f keeps FALSE. `RANKING_EXPERIMENT_ENABLED`'s production value has never been read (§57.10 Q5).
+- **Recommended action (exact):**
+  1. Pre-flight, read-only: `SELECT flag, enabled FROM public.feature_flags WHERE flag IN ('RANKING_EXPERIMENT_ENABLED','discovery_ranking_modifiers_enabled');`.
+  2. Apply 3421 with batch P1 (W10D-A1), then deploy the API (W10D-A3).
+  3. Keep 2289 FALSE, as W10D-A4f says. Turn on the debug sampler, not the modifiers, because the sampler changes no order: `UPDATE public.feature_flags SET enabled = true WHERE flag = 'RANKING_EXPERIMENT_ENABLED';`.
+  4. Leave it on until one `ranking_debug_samples` row with `surface = 'discovery'` and a non-null `content_type` exists. Then set it FALSE again.
+  5. The samples carry `viewer_id`. The existing `purge_old_ranking_debug_samples()` deletes them by `sampled_at`; 3421's rollback header gives its horizon as 7 days. Whether that purge is scheduled in production was not read here. If it is not, the samples wait for the horizon you set in W10D-C8.
+- **If approved:** DV-52 gets its production evidence from one sampled serve. Every DRS surface writes samples while the flag is on, so the window should be short.
+- **If declined:** DV-52 stays `W`. It can instead wait for 2289's own production request, which comes with §78's measured designs.
+- **Recovery:** `UPDATE public.feature_flags SET enabled = false WHERE flag = 'RANKING_EXPERIMENT_ENABLED';`. Sample rows can be deleted by id, and no served order depended on them.
