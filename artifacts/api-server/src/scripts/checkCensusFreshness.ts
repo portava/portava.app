@@ -4156,6 +4156,14 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/app/map/__tests__/projectedPlaces.component.test.tsx",
     // §80.12 (follow-up): the request budget's suite.
     "travel-buddy-standalone/src/platform/input-assistance/services/__tests__/requestTimeout.component.test.ts",
+    // §80.13 (round 3): the missing-policy fallback and the refresh on use.
+    "travel-buddy-standalone/src/hooks/__tests__/useGlobalSearchSuggestions.missingPolicy.component.test.tsx",
+    "travel-buddy-standalone/src/platform/input-assistance/services/policyRefreshOnUse.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/services/__tests__/policyRefreshOnUse.component.test.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/services/installInputPolicySync.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/services/policyStore.ts",
+    // §80.13 (round 3): the routed helper, cited, not changed.
+    "artifacts/api-server/src/lib/postgrestFilter.ts",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

@@ -57,6 +57,13 @@ Lane W10-S1, 2026-09-28, branch `disc-w10-s1-search`. Census section: census-dis
     - `lib/inputAssistance/searchCandidates.ts` `sanitizeQuery`;
     - pinned by `discoverySearchQueryPolicy` Q7a–Q7e (every hidden-mark class, one at a time), Q8a–Q8c and Q9.
 
+- **The backslash (round 3, independent verification of `5a434ec7b`).** In a LIKE pattern `\` is the escape character, and the search pattern escaped `%` and `_` but not `\` itself. So "kiosk\" sent `%kiosk\%`, where the trailing `\` escaped the closing wildcard, and "k\iosk" sent `%k\iosk%`, which matches "kiosk". Rule: **every user string that reaches a LIKE pattern is literal**; `\`, `%` and `_` are each escaped with `\`.
+  - `lib/inputAssistance/searchCandidates.ts` `sqlPattern` now escapes `\` as well. "kiosk\" finds only the row that literally holds it, "k\iosk" does not find "Kiosk Row", and "100%" does not match "1000 Lakes".
+  - `lib/inputAssistance/duplicateDetection.ts` spliced names into `.or()` through the shared `lib/postgrestFilter.ts#safeOrIlikeValue`, which LIKE-escapes first and then strips `\` as an `.or()` structural character, so it removes the escapes it has just added: a place named "100%" was scanned as `100<anything>`. The scan now strips the `.or()` structure first and LIKE-escapes second, so no user backslash survives and the escapes do.
+  - Every other place a user string reaches `ilike` on the search and gateway paths was checked and is safe by construction: `discoverySearchCanonical.ts` and `canonicalLocations.ts` match on `searchKey` / `normalizeLocationName` output (`[a-z0-9\s]` only), and `socialIdentity.ts` matches a hashtag slug (`[A-Za-z0-9]`).
+  - **Not changed here:** the shared helper itself. It is not this lane's file, and `routes/follows.ts` and `routes/tags.ts` use it; it is routed in census-discovery §80.13.
+  - Pinned by `discoverySearchQueryPolicy` Q10a–Q10d and Q11a. The in-word rule is also pinned for Greek and Cyrillic (Q8d: "αθ🔥ήνα" → "αθήνα", "моск🔥ва" → "москва", "Москва🔥Питер" → "Москва Питер").
+
 ### D-W10-S1-2 — partial coverage: may a consumer render `partial` as complete, and in what words (DV-83 ground 2; D-8, second half)
 
 - **Question:** census-discovery §60.8 Q1, verbatim: *"May a Discovery consumer render a `coverage: "partial"` answer as a complete result with no notice … Or must every consumer that renders a list surface `failedSources` … If the second, which wording is ratified?"*
@@ -170,6 +177,16 @@ Lane W10-S1, 2026-09-28, branch `disc-w10-s1-search`. Census section: census-dis
   - **Where:**
     - Code: `travel-buddy-standalone/src/platform/input-assistance/services/inputAssistance.ts` (`withBudget`).
     - Tests: `services/__tests__/requestTimeout.component.test.ts`, with fake timers.
+
+- **The missing policy (round 3, independent verification of `5a434ec7b`).** With no authoritative policy table — never fetched, the fetch failed, another account's table, past the 12 h expiry, or a newer `policyVersion` noted — `global_search` resolves to the conservative policy, whose `minChars` is unreachable. The gateway hook then returns before any request and reports `unavailable = false`, so under (c) the legacy typeahead never started either: the search bar did nothing. The table was refetched only on auth events, so a failed startup fetch stayed failed for the session, and a mounted hook never re-read the store.
+  - **Decision:** a non-authoritative `global_search` policy counts as the gateway being unavailable, and the legacy typeahead runs. The gateway still obeys the conservative policy and sends nothing. The fallback is `GET /discovery/suggest`, the same matcher (`dispatchSearch`) the gateway calls, with the server's own rules applied, so this does not widen what the viewer may see; it keeps search working while the assistance policy is missing.
+  - **Refresh on use.** While the field is used without a current table, the policy is fetched again, through the store and fetcher `installInputPolicySync` installed, at most once per 30 s (`POLICY_RETRY_MIN_GAP_MS`) and one at a time. It is not a schedule: no typing, no fetch. A failed fetch still relaxes nothing (`refreshPolicies` installs only a payload that survives `PolicyStore.install`).
+  - **A mounted screen picks the table up.** `useInputAssistance` keys its resolved policy on `policyEpoch()` (active account, held account, version, and whether the table is current), so a table that lands, expires or is superseded changes the field on the next render instead of the next mount. The search hook re-renders when a refresh installs a table, so the gateway takes over again without a keystroke.
+  - **Scope:** only `global_search` falls back to the legacy route, because only it has one. Refresh on use is wired from this hook only; the `policyEpoch()` re-read applies to every field.
+  - **Reversibility:** `legacyEnabled` and `preferGateway` in `useGlobalSearchSuggestions.ts`, the memo key in `useInputAssistance.ts`, and the `bindPolicyRefreshOnUse` call in `installInputPolicySync.ts`, each one line.
+  - **Where:**
+    - Code: `travel-buddy-standalone/src/hooks/useGlobalSearchSuggestions.ts` (`legacyEnabled`, `preferGateway`, `usePolicyRefreshOnUse`); `platform/input-assistance/hooks/useInputAssistance.ts` (the memo key and `policyAuthoritative` in the result); `platform/input-assistance/services/policyStore.ts#policyEpoch`; `platform/input-assistance/services/policyRefreshOnUse.ts` (new); `platform/input-assistance/services/installInputPolicySync.ts` (the binding).
+    - Tests: `src/hooks/__tests__/useGlobalSearchSuggestions.missingPolicy.component.test.tsx`, which runs the real gateway hook inside the real search hook with no policy seeded, and `services/__tests__/policyRefreshOnUse.component.test.ts`. The two mocked-gateway suites (`singleSystem`, `refused`) now state `policyAuthoritative: true` in their stand-in, the premise every case there already described (a healthy gateway); no assertion changed.
 
 ### D-W10-S1-5 — the Map search sheet on the gateway (A08 reason 3)
 
