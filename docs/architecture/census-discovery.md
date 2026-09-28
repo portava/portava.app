@@ -13180,12 +13180,15 @@ CONSTRUCTED 182 / 188 = **96.8 %**, unchanged. CORRECT 94 / 188 = **50.0 %**, do
 | D12, D13 | `useInputAssistance` caches a partial / drops `refusal` | the new coverage suite |
 | G7, G8, G8b, G3 (guard) | a partial branch removed, the wording changed, a literal instead of the module, a stale import | guard G7, G8, G8, G3 |
 | W1–W3 | 3460 flips the flag / drops the gateway from the description; the splitter is the identity | db W0 / W0 / W2 |
+| D12b | the cache gate rewritten without the refusal check, after it was restored to the text `inputAssistanceFieldInventory` pins | the new coverage suite |
+| M1, M2 | the Map page asks for `places` instead of `saved` / the sheet's request changes | `serverSearchTypes` "ASKS for it" |
 
 **Existing assertions restated, each named:**
 - `discoverySearchQueryPolicy` Q2–Q6. §46.5 said these would change as the visible diff of D5.
 - `useGlobalSearchSuggestions.singleSystem`'s first case. It pinned the proving window that E-9 retired.
 - `MapSearchSheet.refusal` (1)–(8). Same screens, new transport. Case (7)'s "saved lane THREW" became the server-side refusal it now arrives as.
 - `searchPlatformBoundary` B5. Its list shrank to empty, which is what the shrink-only list was for.
+- The Map client's `serverSearchTypes` "the map search sheet actually ASKS for it". It read the sheet's `searchUnified(q, 'saved'` call. It now reads both hops: the sheet's gateway request, and the gateway page's `saved` dispatch. It was seen green only after it went red under two mutations (MUT-M1, the page asking for `places`; MUT-M2, the sheet's request changed).
 
 **Not weakened:** no assertion was deleted or skipped.
 
