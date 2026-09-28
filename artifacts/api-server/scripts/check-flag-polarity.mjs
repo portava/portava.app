@@ -1413,6 +1413,7 @@ const DIRECT_READS = [
       `(\`{ error: { message: "TypeError: fetch failed" }, status: 0 }\`), so a catch here means a non-builder ` +
       `client — a wiring bug — not an unhealthy database, and blanking every content type for a wiring bug ` +
       `would hide it behind an empty feed.` },
+  { file: 'lib/discoveryCandidates/pipelineFlags.ts', shape: 'bulk', reason: `\`.in("flag", [...])\` over the eight census-discovery §85 flags (3480–3484), each a literal at the read site and a *_enabled CAPABILITY by convention. Verified by hand at W10-I (§91): an \`error\`, a non-array \`data\` or a throw leaves the ON set empty, and a row counts only when it names the flag AND \`enabled === true\` — every stage off. Fail-closed.` },
   { file: 'services/ranking/DiscoveryRankingService.ts', shape: 'bulk', reason: `\`.in("flag", [...])\` over five SCREAMING_CASE ranking boosts, each individually present in CLASSIFIED. ${V}: catch → {}, boosts off. Fail-closed.` },
   { file: 'services/ranking/MediaFeedRankingService.ts', shape: 'bulk', reason: `\`.in("flag", [...])\` over eight SCREAMING_CASE media ranking flags, each individually present in CLASSIFIED. ${V}: a \`defaults\` object of all-false is returned on failure. Fail-closed.` },
   { file: 'routes/adminRankingConfig.ts',            shape: 'bulk', reason: `Admin listing of ranking flags for display. ${V}: not a gate.` },

@@ -70,7 +70,7 @@ describe("DC-11 — learn from outcomes", () => {
 describe("DC-11 — integrity checks (DV-12's detector, lane W10-R2)", () => {
   const INT: PipelineFlags = { ...PIPELINE_FLAGS_OFF, integrityStage: true };
 
-  it("I1. with no detector registered the stage says detector_absent and changes nothing", async () => {
+  it("I1. with no detector registered the stage says detector_absent and changes nothing", async () => { registerEngagementIntegrityDetector(null);  // §91: lib/discoveryPde.ts now registers DV-12's detector at load; this case's premise is that none is
     const base = await rankForViewer(pool(), viewer(), { sc: makeFakeCandidateDb(world()), served: true, nowMs: NOW, pipelineFlags: { ...PIPELINE_FLAGS_OFF } });
     const o = await rankForViewer(pool(), viewer(), { sc: makeFakeCandidateDb(world()), served: true, nowMs: NOW, pipelineFlags: INT });
     assert.equal(o.stages.integrity!.status, "detector_absent");

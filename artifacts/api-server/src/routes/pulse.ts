@@ -677,7 +677,7 @@ router.get("/pulse", async (req, res) => {
           interestTags,
           placeAffinities,
         },
-        { publisherBoost: publisherBoostEnabled },
+        { publisherBoost: publisherBoostEnabled, ...(await surfaceObjectiveOptions(sc, "pulse")) },  // census-discovery §78 H3 (DV-09), integrated §91: `{}` with discovery_surface_objectives_enabled off, so the options are key for key what they were
       );
       // NOT logged here. `ranked` is the CANDIDATE POOL — posts + events +
       // plans + buddies, ~60 rows — and at this point it has not been re-ordered
@@ -2027,3 +2027,6 @@ export function pulsePostsForViewer<T extends { id?: unknown }>(rows: readonly a
       : p,
   );
 }
+
+// census-discovery §78 H3 (DV-09), integrated by lane W10-I (§91): Pulse ranks on its own `01` §9 objective when the flag is on.
+import { surfaceObjectiveOptions } from "../lib/discoveryRankDesigns.js";

@@ -4,7 +4,7 @@ import {
 } from 'react-native';
 import { Search } from 'lucide-react-native';
 import type { DiscoveryCategory, DiscoveryContextMode, DiscoveryFilters, DiscoveryPlace } from '../../services/discovery.ts';
-import { getDiscoveryPlaces, getCachedDiscoveryPlaces } from '../../services/discovery.ts'; import { listPartialNotice, listPartialEmptyTitle, LIST_PARTIAL_EMPTY_BODY } from '../../services/discoveryCoverageNotice.ts';
+import { getDiscoveryPlaces, getCachedDiscoveryPlaces } from '../../services/discovery.ts'; import { listPartialNotice, listPartialEmptyTitle, LIST_PARTIAL_EMPTY_BODY } from '../../services/discoveryCoverageNotice.ts'; import { liveClaimsUnchecked, LIVE_UNCHECKED_NOTICE } from './liveUnchecked.ts';  // census-discovery §91 (A07)
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import PlaceCard from './PlaceCard.tsx';
 import { PlaceSkeletonList } from './PlaceSkeleton.tsx';
@@ -410,7 +410,7 @@ export function DiscoveryCategoryTab({
   const [error, setError]           = useState<string | null>(null);
   const [page, setPage]             = useState(1);
   const [total, setTotal]           = useState(0);  const [moreRefused, setMoreRefused] = useState(false); const [partial, setPartial] = useState(false);  // DV-83: page ≥ 2 was REFUSED — see load(); §80: a page came back PARTIAL
-  const [locationNudge, setLocationNudge] = useState(false);
+  const [locationNudge, setLocationNudge] = useState(false); const [liveUnchecked, setLiveUnchecked] = useState(false);  // census-discovery §91 (A07): the served page's "now" claims were withheld (meta.liveSafety)
   const loadingMore                 = useRef(false);
   const nudgeOpacity                = useRef(new Animated.Value(0)).current;
   const nudgeTimer                  = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -519,7 +519,7 @@ export function DiscoveryCategoryTab({
     if (nextPage === 1 && res.data.refusal?.coverage === 'nothing') {
       setError("We couldn't load places just now — this is on our side, not your filters.");
       setPlaces([]);
-      setTotal(0); setPartial(false);
+      setTotal(0); setPartial(false); setLiveUnchecked(false);
       return;
     }
 
@@ -542,7 +542,7 @@ export function DiscoveryCategoryTab({
     }
 
     const filtered = applyClientFilters(res.data.places); const pagePartial = res.data.refusal?.coverage === 'partial'; setPartial((prev) => (nextPage === 1 ? pagePartial : prev || pagePartial)); // §80: page 1 decides; a later partial page keeps the line up
-    setTotal(res.data.total);
+    setTotal(res.data.total); setLiveUnchecked((prev) => (nextPage === 1 ? false : prev) || liveClaimsUnchecked(res.data));  // §91 (A07): a new page-1 query restates it; a later page can only add it
     // Replace on page-1 (new query), append on subsequent pages (pagination).
     setPlaces((prev) => nextPage === 1 ? filtered : [...prev, ...filtered]);
     setPage(nextPage);
@@ -631,7 +631,7 @@ export function DiscoveryCategoryTab({
 
   return (
     <View style={{ flex: 1 }}>
-
+      {liveUnchecked && places.length > 0 ? <Text style={[styles.endText, { paddingHorizontal: 16, paddingTop: 8 }]} testID="discovery-live-unchecked">{LIVE_UNCHECKED_NOTICE}</Text> : null}
       {locationNudge && (
         <Animated.View style={[nudge.bar, { opacity: nudgeOpacity }]} pointerEvents="none">
           <Text style={nudge.text}>📍 Location updated — re-sorting nearest places</Text>

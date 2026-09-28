@@ -31,7 +31,7 @@ beforeEach(() => invalidateDiscoveryModifiersFlagCache());
 const T_OLD = "55555555-5555-4555-8555-555555555501";
 const T_NEW = "55555555-5555-4555-8555-555555555502";
 const trailRow = (id: string, createdMsAgo: number): Row => ({
-  id, slug: `slug-${id.slice(-2)}`, title: `Trail ${id.slice(-2)}`, description: null, destination: "miami", place_scope: null,
+  id, slug: `slug-${id.slice(-2)}`, title: `Trail ${id.slice(-2)}`, description: null, destination: "miami", destination_key: "miami", place_scope: null, // §91: 3441's stored key, which listTrails compares since §77
   parent_trail_id: null, lifecycle_status: "active", created_by: null, created_at: iso(createdMsAgo), updated_at: iso(createdMsAgo),
 });
 

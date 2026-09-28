@@ -280,7 +280,7 @@ export interface DiscoveryResult {
    * Present when the server refused. `places: []` beside a `coverage: "nothing"`
    * refusal is NOT a result — see the Refusals block at the top of this file.
    */
-  refusal?: DiscoveryRefusal;
+  refusal?: DiscoveryRefusal; /** census-discovery §79/§91 (A07): `liveSafety` is present only when a Live read this page owed FAILED, so its "open around now" claims were withheld. */ meta?: { liveSafety?: { readable: false; claimsWithheld: number } };
 }
 
 // ── Live venue status (Phase 8 live intelligence) ─────────────────────────────

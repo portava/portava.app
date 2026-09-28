@@ -1392,3 +1392,112 @@ Lane W10-S1, 2026-09-28, branch `disc-w10-s1-search`. Census section: census-dis
 - **If approved:** DV-52 gets its production evidence from one sampled serve. Every DRS surface writes samples while the flag is on, so the window should be short.
 - **If declined:** DV-52 stays `W`. It can instead wait for 2289's own production request, which comes with §78's measured designs.
 - **Recovery:** `UPDATE public.feature_flags SET enabled = false WHERE flag = 'RANKING_EXPERIMENT_ENABLED';`. Sample rows can be deleted by id, and no served order depended on them.
+
+## W10-I — integration of the wave-10 ranking lanes (census-discovery §91)
+
+*Lane W10-I, branch `disc-w10-i-integration` from `6594dd495` (§78, §85 and §79 merged). Every behaviour below stays behind the lanes' flags, all seeded FALSE; with every flag off the three lanes' goldens pass unchanged. The evidence is controlled: in-process routes over in-memory databases, plus the local PostgreSQL 16 harness. None of it is production evidence, and nothing here claims real-world effectiveness.*
+
+### D-W10-I-1 — §85's P2 golden and §78's six flag reads
+
+- **The question.** `discoveryCandidatePipelineGolden` P2 went red after §78 merged. Did §78 change `rankForViewer`'s flag-off output?
+- **Finding.** No. P2's three output hashes (order, scores, features, `stages`, governor) are byte-identical. What moved is P4's pin on the READ sequence. DRS's `withDiscoveryNegativeFeedback` reads §78's six flags (`loadRankDesignFlags`, cached per client) on the `discovery` surface, so the sequence gained six `feature_flags` reads. With those six removed, the sequence hashes to the golden captured at `6d1e7090b` exactly.
+- **Options considered.**
+  - (a) Gate the read behind its own flag. Impossible: a flag gate must read its flag.
+  - (b) Re-capture the golden. Declined: the lane rules forbid re-capturing to go green, and nothing in the output moved.
+  - (c) Recognise §78's reads in P4 as §85 already recognises its own one read, and assert that each §78 flag is read at most once.
+- **Decision.** (c). The fake records the flag name of an `eq("flag", …)` read, as it already did for `in("flag", …)`. P4 removes exactly the reads of the six `RANK_DESIGN_FLAGS` names and asserts that none repeats. The golden hash is unchanged. No reason-code or DRS behaviour was re-gated, because none changed flag-off output.
+- **Reversibility.** Revert the test and fake lines. Nothing is stored.
+- **Where.** `test/discoveryCandidatePipelineGolden.test.ts` (P2), `test/helpers/fakeCandidateDb.ts`.
+
+### D-W10-I-2 — §85's K2 fixture takes §77's stored Trail key
+
+- **The question.** `discoveryOutputKinds` K2 ("Trails are ranked, not listed") went red.
+- **Finding.** This was not §78. §77, merged after R3's base `6d1e7090b`, makes `listTrails` compare 3441's stored `destination_key`. K2's fixture Trail rows had no such column, so the listing was empty.
+- **Decision.** The fixture rows carry `destination_key: "miami"`, the value `trailDestinationKey("miami")` computes and 3441 stores. The assertion is unchanged.
+- **Where.** `test/discoveryOutputKinds.test.ts`, one line.
+
+### D-W10-I-3 — DC-11's integrity stage calls DV-12's detector: what it may do, and under which flags
+
+- **The question.** D-W10-R3-8 left `registerEngagementIntegrityDetector(<R2's detector>)` to the integrator. §85's stage asks a detector for a per-item verdict (`keep`, `discount` or `withhold`). §78's detector (`detectEngagementAbuse`, read through `loadEngagementIntegrity`) measures per-place save evidence. Someone has to decide the mapping.
+- **Options considered.**
+  - (a) Discount any place whose read saves are mostly abusive by any `03` §12 pattern. Consequence: a third party can farm, automate, pod-save or new-account-save a COMPETITOR's place and sink it. That is a sabotage lever.
+  - (b) Withhold such places. Consequence: the same lever, made worse. A manipulated count does not make a place unsafe, and withholding it would be a penalty on its submitter (`01` §10).
+  - (c) Discount only when more than half of a place's read saves carry a pattern the SUBMITTER'S OWN SIDE produced: `self_network` (the saver is the submitter, or they follow each other) or `reciprocal`. Third-party patterns are neutralised where they belong, inside the score, by §78's evidence discount under 3451. Never withhold.
+- **Decision.** (c). The count is a lower bound: a save carrying both self-serving patterns is counted once, so the stage errs toward keeping.
+  - **The data-use gate.** The detector reads other accounts' save times, account ages, follow edges and open gaming reviews. D-W10-R2-A1 step 4 asks the owner to confirm exactly that data use before `discovery_engagement_integrity_enabled` (3451) is turned on. So the detector runs only with 3451 on, as well as the stage's own `discovery_integrity_stage_enabled` (3483). With 3451 off it reads nothing and answers `"off"`, which the stage records as the new status `detector_off`. A failed or truncated read answers null (`detector_failed`) and changes nothing.
+  - The detector is registered at `lib/discoveryPde.ts`'s module load, so every `rankForViewer` caller has it.
+- **Reversibility.** Either flag off. To unwire it, remove the registration line; the stage then records `detector_absent`.
+- **Where.** `lib/discoveryRankIntegrity.ts` (`engagementIntegrityStageDetector`, `integrityStageVerdict`), `lib/discoveryCandidates/integrity.ts` (the `"off"` answer and `detector_off`), `lib/discoveryPde.ts` (the registration). Tests: `discoveryIntegrationHooks.test.ts` I1–I3; mutations M8–M12.
+
+### D-W10-I-4 — DC-01's three output kinds are served at `GET /v1/discovery/recommendations/:kind`
+
+- **The question.** §85 hunk R2: serve `rankTrailsForViewer`, `rankSharedMomentsForViewer` and `rankEmergingForViewer` when `discovery_output_kinds_enabled` is on, in a route shape taken from the specs.
+- **Options considered.**
+  - (a) Reorder `GET /trails` (`11` §3 "list/search Trails"). Consequence: a listing API silently becomes a personal recommendation, and the Trails lane's list contract and its §64 member rules sit under a Discovery flag.
+  - (b) Add a `category=trails` tab to `GET /discovery`. Consequence: its envelope, caches, serve points and client are all place-shaped.
+  - (c) One route in `11` §5's Recommendation API shape. Inputs: the surface (the kind) and the session context (`destination`). Outputs: `items`, and `cursor: null` for one page of at most 50, the rankers' own cap.
+- **Decision.** (c).
+  - Signed-in only, since every order is the viewer's own.
+  - The flag is read as a literal per request.
+  - `11` §9 error semantics: 401; 404 `feature_disabled` for the flag off or an unknown kind; 400 `invalid_payload` for emerging discoveries without a destination; 503 `degraded_unavailable` carrying the ranker's reason. A failed read never answers 200 with an empty list.
+  - No reason labels are served: the three rankers run with every modifier off, and no grounded reason code describes a Trail or a Shared Moment.
+- **Not logged, and why.** The other serve points write `rank_events` impressions and a per-request `recommendations` row. 3376's `recommendations_serve_point_check` admits serve points 1–12 only, and 0153's `rank_events.item_kind` has no Trail or Shared Moment kind. Widening them is a migration, and this lane has no migration range. So no `recommendation_id` is minted, since an id that joins to no row misleads. This is routed as an open item (census §91.7).
+- **Reversibility.** Flag off returns 404. To remove the route, delete the route file and its mount.
+- **Where.** `routes/discoveryOutputKinds.ts`, mounted in `routes/index.ts` line-neutrally. Tests: K1–K5; mutations M13–M15.
+
+### D-W10-I-5 — §78's four score terms are storable on a served row
+
+- **The question.** §78's awaits clauses name production rows "whose features carry `intentMatch`" (A18) or "`negativeFeedback`" (DC-13). DV-39's storage screen (`screenFeaturesForStorage`) refuses any key `DISCOVERY_FEATURE_KEY_CLASSES` does not classify, and none of `intentMatch`, `tripMatch`, `explorationValue` or `negativeFeedback` was classified. A served row would therefore store them only as names in `privacyRefused`, so the evidence §78 awaits could never exist.
+- **Decision.** Classify all four as `derived_ranking_signal`, the class of every other per-item score component (`interestTag`, `categoryAffinity`, `trailAffinity`, …). Each is a number and never a position. Each exists only while its flag is on. The row's `reasonCodes` were already derived from the unscreened features, so nothing else changes.
+- **Where.** `lib/discoveryRecommendationRecord.ts`, on the existing classification line. Test: H2, and mutation M4.
+
+### D-W10-I-6 — where the hooks sit (§78 H1–H3, §85 R1)
+
+- **H1.** `rankForViewer` loads the designs just before the rank clock (`prT0`), so the rank clock still brackets only the ranker. Both `rankCandidates` branches go through `rankWithDesigns`. That is `applyRankDesigns` then `rankCandidates`, and with the designs inactive it is `rankCandidates(candidates, viewerContext, {})`. `{}` is `rankCandidates`' own default. `stages.rankDesigns` is assigned only when a design flag is on.
+- **H2.** The raw `?intentMode=` goes to both served calls (serve points 1/2/3 and 6) and to both shadow calls. Shadows therefore compare like with like; on a shadow run the mode is read only under 3453. The Compass-path shadow passes its already-parsed mode, which `loadViewerIntent` accepts.
+- **H3.** Pulse spreads `surfaceObjectiveOptions(sc, "pulse")` into its own options. With 3450 off that is `{}`.
+- **R1.** `category` goes to the two SERVED calls only, because generation runs only on served runs (D-W10-R3-1). `servedGraphReadingFeatures` adds a seventh key, `graphProvenance`, only when the reading carries a provenance record, which happens only under 3484 with the modifiers on. It is classified `record_metadata`, as its per-row twin `graphReadingProvenance` is.
+- **§85's flag read.** It is made literal (`.in("flag", [eight literals])`) and declared a `bulk` DIRECT_READS entry in `check:flag-polarity`, as DRS's bulk read is. No INERT_SEEDED_FLAGS entry was added: all eight flags are read. X0 pins the literals equal to `PIPELINE_FLAG_NAMES`.
+
+### D-W10-I-7 — the client says when a page's "now" claims were withheld (A07)
+
+- **Decision.** When a GET /discovery page carries `meta.liveSafety.readable === false`, both Discovery tabs show one quiet line: "We couldn't check what's live nearby just now." That is the first sentence of DiscoveryEventPostsRail's existing refusal copy.
+  - The category tab clears it on each new page-1 answer.
+  - For You shows it only while the GET /discovery page is what is on screen, never over the Compass feed, which it does not describe.
+- **Where.** `travel-buddy-standalone/src/components/discovery/liveUnchecked.ts`, which is its own module because the component suites mock `services/discovery.ts` exhaustively; the two tabs, edited line-neutrally; and the `meta` type on `DiscoveryResult`.
+
+### D-W10-I-8 — `fakeCandidateDb` joins the Supabase conformance contract
+
+- **Decision.** It is registered as `candidateSubject`. Four behaviours now match the real client instead of being declared as gaps:
+  - a write is sent only when awaited or continued, and at most once;
+  - `maybeSingle()` over more than one row answers PGRST116;
+  - the contract's own read and write errors are passed through (`readFailure`, `writeFailure`);
+  - `count` is present only when requested.
+- `.single()` and RETURNING after a write now throw an honest refusal. No §85 path uses either.
+- The remaining divergences are declared and named in the double's header:
+  - writes are recorded, never applied;
+  - no constraints;
+  - no schema;
+  - an rpc resolves empty;
+  - no RLS.
+- **Where.** `test/helpers/fakeCandidateDb.ts`, `test/helpers/supabaseConformance.ts`. The §85 suites pass 104/104 on the changed double.
+
+### D-W10-I-9 — §85's unapplied objects under a production-ON Compass flag
+
+- **The question.** `check:flag-schema-prerequisites` found that `COMPASS_V1_RULE_BASED_ENABLED`, ON in production, reaches through GET /discovery and `rankForViewer` to two §85 reads of schema production lacks. The first is `compass_city_confidence.{model_version,feature_version,source_window}` (3484) in `loadGraphReadingProvenance`. The second is `place_momentum` (2892) in `loadInventoryBuckets`.
+- **Finding.** With every flag FALSE, production issues neither query. `pdePreRankStages` returns the inert pipe, and `pdePostRankStages` returns before any read. Each read has its own inner flag besides:
+  - the provenance read needs 3484's flag, which 3484 seeds in the same file as the columns, and 2289;
+  - the inventory read needs 3481.
+  Both degrade to a recorded status. Nothing needed gating.
+- **Decision.** Record the pair as the checker prescribes: an `unguarded` KNOWN entry, appended at the END of the map (census-compass cites this file's lines). The entry lists all seven objects and states each inner flag and each degradation. It says STRIKE when 3484 and 2892 are applied to production.
+- **Where.** `src/scripts/checkFlagSchemaPrerequisites.ts`. `snapshotFreshnessGuard` and the prerequisite suites pass 16/16.
+
+### D-W10-I-A1 — **APPROVAL REQUIRED**: activation-order amendments that follow from this integration
+
+- **Recommended action, exact.** Amend D-W10-R3-13 and D-W10-R2-A1 as follows. Nothing else in either changes.
+  1. D-W10-R3-13 step 7 (`discovery_integrity_stage_enabled = true`) goes after D-W10-R2-A1 step 4's data-use confirmation, and after `discovery_engagement_integrity_enabled` is TRUE. Until then the stage records `detector_off` and reads nothing.
+  2. D-W10-R3-13 step 8 (`discovery_output_kinds_enabled = true`) is satisfied on the code side, because a route now serves the kinds. Turn it on only after a migration widens 3376's `recommendations_serve_point_check` to admit a serve point for the kinds and a logging commit lands, so that served kinds are measured (§91.7).
+  3. D-W10-R2-A1 step 1 (integrate hunks H1–H3) is done at this branch. Steps 2–4 are unchanged.
+- **Consequence of approving.** The integrity stage cannot run on data whose use the owner has not confirmed, and no output kind is served unmeasured.
+- **Consequence of declining.** Both flags can be switched on in D-W10-R3-13's original order. The integrity stage would still record `detector_off` until 3451 is on, and the kinds would be served without impressions.
+- **Recovery path.** Any flag off takes effect on the next read (30-second caches). Nothing here writes.

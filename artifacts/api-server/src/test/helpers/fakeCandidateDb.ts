@@ -15,6 +15,31 @@
  * `{ data: null, error }`; it does not reject. Every read is recorded in
  * `reads` (table plus the filters named), and every write in `writes`, never
  * applied, so a suite can assert which tables a path consulted.
+ *
+ * CHECKED AGAINST THE REAL CLIENT: registered in helpers/supabaseConformance.ts
+ * (`candidateSubject`, census-discovery §91), so supabaseContract.test.ts
+ * measures it against the real supabase-js client. Registering it changed four
+ * behaviours to the real client's, rather than declaring them: a write is SENT
+ * only when the builder is awaited or continued (and at most once), as the
+ * real builder is lazy; `maybeSingle()` over more than one row answers
+ * PGRST116; `readFailure` / `writeFailure` answer the caller's own error; and
+ * `count` is present only when `select(cols, { count })` asked for it. Do not
+ * loosen it to make a test pass.
+ * NOT MODELLED — every entry below is a declared gap the contract enforces:
+ *   refused  — single/zero-rows, single/one-row, single/many-rows (no §85
+ *              path calls `.single()`); update/zero-rows-with-select,
+ *              update/many-rows-with-select, delete/many-rows-with-select,
+ *              insert/with-select-returns-rows, insert/with-select-single
+ *              (writes are recorded, never applied, so RETURNING is refused
+ *              rather than answered empty)
+ *   divergent — write/read-after-write-visible (writes are recorded, never
+ *              applied), insert/unique-violation-23505 (no constraints),
+ *              error/unknown-column-42703 (only `missingColumns` fail),
+ *              rpc/success, rpc/error-resolves, rpc/unknown-function (an rpc
+ *              is recorded and resolves empty; no function is modelled, and
+ *              DRS's analytics rpc must not fail the §85 suites),
+ *              rls/denied-read-yields-zero-rows, rls/denied-write-yields-42501
+ *              (no service-vs-user distinction)
  */
 import { orPredicate } from "./postgrestOrFilter.js";
 
@@ -25,6 +50,10 @@ export interface FakeCandidateDbOptions {
   erroring?: string[];
   /** Table → columns that table lacks: a select or upsert naming one answers 42703. */
   missingColumns?: Record<string, string[]>;
+  /** Table → the exact error every read of it answers (the contract's worlds); `erroring` answers a timeout. */
+  readFailure?: Record<string, { code: string; message: string }>;
+  /** Table → the exact error every write to it answers; a failed write is not recorded. */
+  writeFailure?: Record<string, { code: string; message: string }>;
 }
 
 export interface FakeRead { table: string; ops: string[] }
@@ -66,17 +95,21 @@ export function makeFakeCandidateDb(tables: Record<string, Row[]>, opts: FakeCan
       let limitN: number | null = null;
       let range: [number, number] | null = null;
       let selectCols: string | null = null;
-      let write: FakeWrite | null = null;
+      let write: FakeWrite | null = null; let sent = false; let countRequested = false;
       const missing = new Set(opts.missingColumns?.[table] ?? []);
       const record = (op: string) => { ops.push(op); };
 
       const b: any = {
-        select(cols?: string) { selectCols = cols ?? "*"; record(`select(${cols ?? "*"})`); return b; },
-        insert(p: unknown) { write = { table, op: "insert", payload: p }; db.writes.push(write); return b; },
-        upsert(p: unknown, o?: unknown) { write = { table, op: "upsert", payload: p, options: o }; db.writes.push(write); return b; },
-        update(p: unknown) { write = { table, op: "update", payload: p }; db.writes.push(write); return b; },
-        delete() { write = { table, op: "delete", payload: null }; db.writes.push(write); return b; },
-        eq(c: string, v: unknown) { record(`eq(${c})`); preds.push((r) => r[c] === v); return b; },
+        select(cols?: string, o?: { count?: string }) {
+          if (write) throw new Error(`fakeCandidateDb: RETURNING after ${write.op} (.select() on a write) is not modelled — writes are recorded, never applied`);
+          selectCols = cols ?? "*"; countRequested = !!o?.count; record(`select(${cols ?? "*"})`); return b;
+        },
+        // Recorded when SENT (awaited or continued), at most once — the real builder is lazy.
+        insert(p: unknown) { write = { table, op: "insert", payload: p }; return b; },
+        upsert(p: unknown, o?: unknown) { write = { table, op: "upsert", payload: p, options: o }; return b; },
+        update(p: unknown) { write = { table, op: "update", payload: p }; return b; },
+        delete() { write = { table, op: "delete", payload: null }; return b; },
+        eq(c: string, v: unknown) { record(`eq(${c})`); if (c === "flag") record(`eq(flag=${String(v)})`); preds.push((r) => r[c] === v); return b; },
         neq(c: string, v: unknown) { record(`neq(${c})`); preds.push((r) => r[c] !== v); return b; },
         in(c: string, vs: unknown[]) { record(`in(${c})`); if (c === "flag") record(`in(flag=${[...vs].map(String).sort().join("|")})`); const s = new Set(vs); preds.push((r) => s.has(r[c])); return b; },
         is(c: string, v: unknown) { record(`is(${c})`); preds.push((r) => (v === null ? r[c] == null : r[c] === v)); return b; },
@@ -98,7 +131,7 @@ export function makeFakeCandidateDb(tables: Record<string, Row[]>, opts: FakeCan
         limit(n: number) { record(`limit(${n})`); limitN = n; return b; },
         range(a: number, z: number) { record(`range(${a},${z})`); range = [a, z]; return b; },
         maybeSingle() { return settle(true); },
-        single() { return settle(true); },
+        single() { throw new Error("fakeCandidateDb: .single() is not modelled (no §85 path calls it); use maybeSingle()"); },
         then(onF: any, onR: any) { return settle(false).then(onF, onR); },
       };
 
@@ -114,11 +147,16 @@ export function makeFakeCandidateDb(tables: Record<string, Row[]>, opts: FakeCan
         const absent = missingNamed();
         if (write) {
           if (absent) return { data: null, error: { code: "42703", message: `column "${absent}" does not exist` } };
+          const wf = opts.writeFailure?.[table];
+          if (wf) return { data: null, error: { ...wf } };
+          if (!sent) { sent = true; db.writes.push(write); }
           return { data: null, error: null };
         }
         db.reads.push({ table, ops: [...ops] });
         if (absent) return { data: null, error: { code: "42703", message: `column ${table}.${absent} does not exist` } };
         if (erroring.has(table)) return { data: null, error: { code: "57014", message: `${table} unavailable` } };
+        const rf = opts.readFailure?.[table];
+        if (rf) return { data: null, error: { ...rf } };
         let out = (db.tables[table] ?? []).filter((r) => preds.every((p) => p(r)));
         if (orders.length > 0) {
           out = [...out].sort((a, z) => {
@@ -129,8 +167,10 @@ export function makeFakeCandidateDb(tables: Record<string, Row[]>, opts: FakeCan
         if (range) out = out.slice(range[0], range[1] + 1);
         if (limitN !== null) out = out.slice(0, limitN);
         const data = out.map((r) => ({ ...r }));
-        if (one) return { data: data[0] ?? null, error: null };
-        return { data, error: null, count: data.length };
+        if (one) return data.length > 1
+          ? { data: null, error: { code: "PGRST116", message: "JSON object requested, multiple (or no) rows returned" } }
+          : { data: data[0] ?? null, error: null };
+        return countRequested ? { data, error: null, count: data.length } : { data, error: null };
       }
       return b;
     },
