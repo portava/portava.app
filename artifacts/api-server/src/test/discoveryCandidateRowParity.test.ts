@@ -4,8 +4,8 @@
  * GENERATED Discovery row and one the route read — `distanceKm` null, and the
  * vote/review aggregates absent — are closed.
  *
- *   R1  the restated helpers are the route's, token for token (haversineKm,
- *       batchFetchVoteAndRatingAggregates)
+ *   R1  ONE implementation (routed hunk R-X3-2, landed in census §94): the route
+ *       and generated rows both import haversineKm and batchFetchVoteAndRatingAggregates
  *   R2  with a centre, a generated curated row and a generated canonical row
  *       carry the route's distanceKm; with none, null (as queryDbPlaces)
  *   R3  a generated curated row carries the route's aggregates; a canonical
@@ -32,13 +32,6 @@ const LIB = readFileSync(new URL("../lib/discoveryPlaceAggregates.ts", import.me
 const ON: PipelineFlags = { ...PIPELINE_FLAGS_OFF, candidateSources: true };
 const CENTER = { lat: 25.76, lng: -80.2 };
 
-/** One top-level function's text, from its signature to the closing brace at column 0. */
-function fnText(src: string, signature: string): string {
-  const at = src.indexOf(signature);
-  assert.ok(at >= 0, signature);
-  const end = src.indexOf("\n}\n", at);
-  return src.slice(at, end + 2).replace(/^export /, "").replace(/\s+/g, " ");
-}
 
 function withAggregates(): Record<string, Row[]> {
   const w = world();
@@ -59,11 +52,18 @@ function withAggregates(): Record<string, Row[]> {
 beforeEach(() => invalidateDiscoveryModifiersFlagCache());
 
 describe("R — a generated row is the route's row, distance and aggregates included", () => {
-  it("R1 the restated helpers are the route's, token for token", () => {
-    assert.equal(fnText(LIB, "export function haversineKm("), fnText(ROUTE, "function haversineKm("));
-    const route = fnText(ROUTE, "async function batchFetchVoteAndRatingAggregates(").replace("sc: ReturnType<typeof getServiceClient>,", "sc: any,");
-    assert.equal(fnText(LIB, "export async function batchFetchVoteAndRatingAggregates("), route);
-    // The route's rounding, used at each of its distance sites.
+  it("R1 one implementation: the route and the generated rows both use lib/discoveryPlaceAggregates (R-X3-2)", () => {
+    // Before census §94 the route held private copies and this case compared them token for token.
+    // The copies are gone: there is ONE body, and both readers import it, so there is nothing left to drift.
+    const IMPORT = /import \{[^}]*\bhaversineKm\b[^}]*\bbatchFetchVoteAndRatingAggregates\b[^}]*\} from "\.\.\/lib\/discoveryPlaceAggregates\.js";/;
+    assert.match(ROUTE, IMPORT, "the route imports both helpers from the one module");
+    assert.ok(!/\nfunction haversineKm\(/.test(ROUTE), "the route declares no private haversineKm");
+    assert.ok(!/\nasync function batchFetchVoteAndRatingAggregates\(/.test(ROUTE), "the route declares no private aggregate batch");
+    assert.ok(!/\ntype VoteRatingAgg\b/.test(ROUTE), "nor its private row type");
+    const MATERIALIZE = readFileSync(new URL("../lib/discoveryCandidates/materialize.ts", import.meta.url), "utf8");
+    assert.match(MATERIALIZE, /import \{[^}]*\bservedDistanceKm\b[^}]*\bbatchFetchVoteAndRatingAggregates\b[^}]*\} from "\.\.\/discoveryPlaceAggregates\.js";/, "generated rows use the same module");
+    assert.ok(LIB.includes("export function haversineKm(") && LIB.includes("export async function batchFetchVoteAndRatingAggregates("));
+    // The route's rounding, used at each of its distance sites, is servedDistanceKm's.
     assert.ok(ROUTE.includes("Math.round(haversineKm(centerLat, centerLng, lat, lng) * 10) / 10"));
     assert.equal(servedDistanceKm({ lat: 0, lng: 0 }, 0, 1), Math.round(haversineKm(0, 0, 0, 1) * 10) / 10);
     assert.equal(servedDistanceKm({ lat: 0, lng: 0 }, 0, 1), 111.2);

@@ -563,3 +563,28 @@ describe("R2p — §94 (DC-17): the platform path's served rows carry the platfo
     });
   }
 });
+
+// ── R1c: census-discovery §94 (lane W11-X2), routed hunk R-X3-1 from §95 ────
+// A generated row carries the request's distance. §95 gave `rankForViewer` a
+// `center` option (lib/discoveryCandidates/stages.ts); until the served calls
+// pass the request's distance reference, a generated row is served with
+// `distanceKm: null` while every pooled row beside it carries one.
+
+const seedGeneratedFood = (w: WorldState) => {
+  for (let i = 0; i < 200; i++) w.tables.discovery_places!.push(communityRow(`fill-${i}`, { saved_count: 0, rating: null, lat: 26.6, lng: -80.19 }));
+  w.tables.discovery_places!.push(communityRow(GEN, { name: "Generated Food", saved_count: 50, rating: 4.9, lat: 25.78, lng: -80.2 }));
+  w.tables.place_momentum = [{ place_id: `db/${GEN}`, trend_state: "trending", recent_rate: 9, computed_at: "2026-09-28T03:00:00.000Z", source_surface: "discovery" }];
+};
+
+describe("R1c — §94 (R-X3-1): a generated row is served with the request's distance", () => {
+  for (const [name, path, seed] of [["for_you (serve point 1)", CACHE_A_PATH, seedGenerated], ["food (serve point 6)", COLD_PATH, seedGeneratedFood]] as const) {
+    it(`${name}: the generated row carries a non-null distanceKm, measured from the request`, async () => {
+      const s = await serve(path, [flag("discovery_candidate_sources_enabled", true)], seed);
+      assertServed(name, s);
+      const gen = (s.body.places as any[]).find((p) => p.id === `db/${GEN}`);
+      assert.ok(gen, `precondition: the row was generated onto the page: ${s.ids.join(", ")}`);
+      assert.equal(typeof gen.distanceKm, "number", `generated row distanceKm: ${JSON.stringify(gen.distanceKm)}`);
+      assert.ok(gen.distanceKm >= 0 && gen.distanceKm < 5, `measured from the request's point (25.77, -80.19): ${gen.distanceKm}`);
+    });
+  }
+});
