@@ -44,6 +44,12 @@ interface ForYouTabProps {
   onAddToPlan: (item: { id: string; name: string; category: string; address?: string | null }) => void;
   onAddToRoute?: (draft: RouteStopDraft) => void;
   contextMode?: import('../../services/discovery.ts').DiscoveryContextMode | null;
+  /**
+   * Sensing §8 intent mode the user chose (census-discovery §71), sent as
+   * `?intentMode=` on GET /discovery. Null / absent ⇒ not sent. The screen
+   * remounts this tab when it changes (its `key`), so it is fixed per instance.
+   */
+  intentMode?: import('../../services/discovery.ts').DiscoveryIntentMode | null;
   lat?: number | null;
   lng?: number | null;
   userLat?: number | null;
@@ -82,17 +88,17 @@ function compassItemToPlace(item: import('../../services/compass.ts').CompassFee
   };
 }
 
-export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode, lat, lng, userLat, userLng, fallbackZoom, viewMode = 'list', sortBy, listTopInset, bottomInset, onRefresh }: ForYouTabProps) {
+export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode, intentMode, lat, lng, userLat, userLng, fallbackZoom, viewMode = 'list', sortBy, listTopInset, bottomInset, onRefresh }: ForYouTabProps) {
   const { isAuthed }            = useSession();
   // SWR: seed from in-memory client cache so second opens paint instantly.
   const [items, setItems]       = useState<ForYouItem[]>(() => {
     if (!destination) return [];
-    const cached = getCachedDiscoveryPlaces(destination, 'for_you', 25, 1);
+    const cached = getCachedDiscoveryPlaces(destination, 'for_you', 25, 1, intentMode);
     return cached?.places.slice(0, 15).map((p) => ({ kind: 'osm' as const, place: p })) ?? [];
   });
   const [loading, setLoading]   = useState<boolean>(() => {
     if (!destination) return false;
-    return getCachedDiscoveryPlaces(destination, 'for_you', 25, 1) === null;
+    return getCachedDiscoveryPlaces(destination, 'for_you', 25, 1, intentMode) === null;
   });
   const [refreshing, setRefreshing] = useState(false);
   // 'refused' is a FOURTH state and not a flavour of 'none'.
@@ -250,7 +256,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
     // Fire OSM as baseline. Compass upgrades items via its own useEffect when enabled.
     const osmPromise = getDiscoveryPlaces(
       destination, 'for_you',
-      { radiusKm: 25, openNow: false, minRating: null, sortBy: sortBy ?? null },
+      { radiusKm: 25, openNow: false, minRating: null, sortBy: sortBy ?? null, ...(intentMode ? { intentMode } : {}) },
       1, contextMode, null, null, null, lat, lng, nearestUserLat, nearestUserLng,
     );
 
@@ -277,7 +283,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
       if (!stale()) { setLoading(false); setRefreshing(false); }
     });
 
-  }, [destination, isAuthed, sortBy, lat, lng, userLat, userLng, contextMode]);
+  }, [destination, isAuthed, sortBy, lat, lng, userLat, userLng, contextMode, intentMode]);
 
   // Reset state and start loading when destination, auth, or sort/coord changes.
   // load() identity changes when any dependency changes, so this effect fires
@@ -298,7 +304,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
     );
     if (!compassActive) {
       const cachedResult = destination
-        ? getCachedDiscoveryPlaces(destination, 'for_you', 25, 1)
+        ? getCachedDiscoveryPlaces(destination, 'for_you', 25, 1, intentMode)
         : null;
       if (cachedResult) {
         setItems(cachedResult.places.slice(0, 15).map((p) => ({ kind: 'osm' as const, place: p })));
