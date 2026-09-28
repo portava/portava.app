@@ -1051,7 +1051,7 @@ const EXEMPT = [
     file: 'src/test/discoveryFeedNoServiceClient.test.ts',
     pinnedTestEnv: true,
     reason:
-      'Registered unit test for GET /discovery/feed on the NO-SERVICE-CLIENT path (census-discovery §97, DV-83): '
+      'Registered unit test for GET /discovery/feed on the NO-SERVICE-CLIENT path (census-discovery §98, DV-83): '
       + 'a presented Bearer token with no client to resolve it must be refused as an unresolved viewer, not served '
       + 'as an anonymous empty feed. Same shape as authSignupStatusNoClient.test.ts: it names SUPABASE_URL and '
       + 'SUPABASE_SERVICE_ROLE_KEY only to `delete` them from process.env before a dynamic import() of '

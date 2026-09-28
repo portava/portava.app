@@ -40,7 +40,7 @@ import { _clearEventPostsCache } from "../lib/eventPostsDiscovery.js";
 const _originalFetch = globalThis.fetch;
 globalThis.fetch = (async (url: any, init?: any) => {
   const s = String(typeof url === "string" ? url : (url as URL).href ?? "");
-  if (s.includes("overpass-api.de") || s.includes("nominatim.openstreetmap.org")) throw new Error("Network blocked in test environment");
+  if (s.includes("overpass-api.de")) return new Response(JSON.stringify({ elements: [] }), { status: 200, headers: { "content-type": "application/json" } }); if (s.includes("overpass-api.de") || s.includes("nominatim.openstreetmap.org")) throw new Error("Network blocked in test environment");
   return _originalFetch(url, init);
 }) as typeof globalThis.fetch;
 
@@ -60,7 +60,8 @@ function venuePost(id: string) {
   };
 }
 
-function fakeClient(opts: { errorTables?: string[]; rows?: Record<string, any[]> } = {}) {
+type AuthMode = "ok" | "throws" | "retryable" | "server_error" | "invalid_token" | "rate_limited";
+function fakeClient(opts: { errorTables?: string[]; rows?: Record<string, any[]>; auth?: AuthMode } = {}) {
   const errorTables = new Set(opts.errorTables ?? []);
   const rowsFor: Record<string, any[]> = {
     feature_flags: [{ flag: "discovery_serve_log_enabled", enabled: true }],
@@ -89,7 +90,18 @@ function fakeClient(opts: { errorTables?: string[]; rows?: Record<string, any[]>
     return b;
   }
   return {
-    auth: { getUser: async (t: string) => t === TOKEN ? { data: { user: { id: VIEWER } }, error: null } : { data: { user: null }, error: { message: "bad token" } } },
+    auth: {
+      getUser: async (t: string) => {
+        const mode = opts.auth ?? "ok";
+        if (mode === "throws") throw new Error("fetch failed");
+        // supabase-js's two failure shapes: a retryable transport failure (status 0 or 5xx), and a definitive 4xx.
+        if (mode === "retryable") return { data: { user: null }, error: { name: "AuthRetryableFetchError", message: "fetch failed", status: 0 } };
+        if (mode === "server_error") return { data: { user: null }, error: { name: "AuthApiError", message: "upstream", status: 503 } };
+        if (mode === "rate_limited") return { data: { user: null }, error: { name: "AuthApiError", message: "over_request_rate_limit", status: 429 } };
+        if (mode === "invalid_token") return { data: { user: null }, error: { name: "AuthApiError", message: "invalid JWT", status: 401, code: "bad_jwt" } };  // §98 (D-W11X2-21): Auth names its verdict; a code-less 4xx is V9's case
+        return t === TOKEN ? { data: { user: { id: VIEWER } }, error: null } : { data: { user: null }, error: { name: "AuthApiError", message: "bad token", status: 401, code: "bad_jwt" } };
+      },
+    },
     from,
     rpc: async () => ({ data: null, error: null }),
   };
@@ -234,10 +246,53 @@ describe("GET /discovery/feed — a failed event-post read is on the envelope (D
     assert.deepEqual(good.body.posts.map((p: any) => p.id), ["p-2"]);
     assert.equal(good.body.refusal, undefined);
   });
+
+  // ── Round 2 (§94.10): the viewer's identity is part of the event-post read ──
+  // With a Bearer token present the read is OWED. If the identity lookup fails
+  // (a throw, or supabase-js's retryable/5xx error), the read was not performed:
+  // that is a failed source, never a quiet city. A definitive 4xx (an invalid or
+  // expired token) means there is no viewer, as with no header (C2).
+
+  it("V1 a Bearer token whose identity lookup THROWS: the event-post read failed, not empty", async () => {
+    setClient({ auth: "throws", rows: { posts: [venuePost("p-1")] } });
+    const r = await get(FEED_POSTS_ONLY);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.posts, []);
+    assert.equal(r.body.refusal?.code, "feed_viewer_unresolved", JSON.stringify(r.body));
+    assert.equal(r.body.refusal?.coverage, "nothing");
+    assert.deepEqual(r.body.refusal?.failedSources, ["event_posts"]);
+  });
+
+  it("V2 AuthRetryableFetchError (status 0) and a 5xx: failed, with places kept as partial", async () => {
+    for (const auth of ["retryable", "server_error"] as const) {
+      setClient({ auth });
+      _setTestDbPlacesOverride(async () => [DB_PLACE as any]);
+      const r = await get(FEED_WITH_PLACES);
+      assert.equal(r.status, 200);
+      assert.ok(r.body.places.length >= 1, auth);
+      assert.equal(r.body.refusal?.coverage, "partial", `${auth}: ${JSON.stringify(r.body.refusal)}`);
+      assert.deepEqual(r.body.refusal?.failedSources, ["event_posts"], auth);
+    }
+  });
+
+  it("V4 the auth server rate-limiting the lookup (429) is a failure, not an anonymous viewer", async () => {
+    setClient({ auth: "rate_limited", rows: { posts: [venuePost("p-1")] } });
+    const r = await get(FEED_POSTS_ONLY);
+    assert.equal(r.body.refusal?.code, "feed_viewer_unresolved", JSON.stringify(r.body));
+    assert.deepEqual(r.body.refusal?.failedSources, ["event_posts"]);
+  });
+
+  it("V3 CONTROL: an invalid or expired token (a definitive 401) is no viewer, as with no header — no refusal", async () => {
+    setClient({ auth: "invalid_token", rows: { posts: [venuePost("p-1")] } });
+    const r = await get(FEED_POSTS_ONLY);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.posts, []);
+    assert.equal(r.body.refusal, undefined);
+  });
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
-// census-discovery §97 (DV-83, §94.10): an UNRESOLVED viewer is a failed read.
+// census-discovery §98 (DV-83, §94.10): an UNRESOLVED viewer is a failed read.
 // Appended at the tail so the anchored cases above (E1 :152, E5 :199) keep
 // their lines.
 //
@@ -396,5 +451,5 @@ describe("GET /discovery/feed — an unresolved viewer's event-post read is a fa
   });
 });
 
-// §97: the per-request serve row's RPC name, imported at the foot so no line above moves.
+// §98: the per-request serve row's RPC name, imported at the foot so no line above moves.
 import { SERVE_REQUEST_RPC } from "../lib/discoveryServeLog.js";

@@ -50,10 +50,10 @@ interface Props {
   kind: OutputKind;
   destination: string | null;
   /** The viewer is signed in: every order this route serves is the viewer's own. */
-  enabled: boolean; /** census-discovery §97: bumped by the tab's pull-to-refresh. */ refreshKey?: number;
+  enabled: boolean; /** census-discovery §98: bumped by the tab's pull-to-refresh. */ refreshKey?: number;
 }
 
-export function DiscoveryOutputKindsRail({ kind, destination, enabled, refreshKey = 0 }: Props) {  // census-discovery §97: refreshKey is the tab's pull-to-refresh, so "try again" can be done
+export function DiscoveryOutputKindsRail({ kind, destination, enabled, refreshKey = 0 }: Props) {  // census-discovery §98: refreshKey is the tab's pull-to-refresh, so "try again" can be done
   const flagOn = useFeatureFlags().isEnabled(DISCOVERY_OUTPUT_KINDS_FLAG);
   const active = enabled && flagOn && (kind !== 'emerging_discoveries' || !!destination);
   const [items, setItems] = useState<OutputKindItem[]>([]);

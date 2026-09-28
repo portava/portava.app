@@ -4404,7 +4404,28 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/services/__tests__/discoveryRecommendations.test.ts",
     "travel-buddy-standalone/src/components/discovery/DiscoveryOutputKindsRail.tsx",
     "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryOutputKindsRail.component.test.tsx",
-    // census-discovery §97 (DV-83's second round): the suites its C rests on.
+    // census-discovery §97 (lane W11-S, safety and recovery): DV-82 and DC-32 are graded on the stop gate, its
+    // readers and its suite; DC-18 on the eleven rollback files §97 wrote (rehearsed on the harness).
+    "artifacts/api-server/src/lib/discoveryStopGate.ts",
+    "artifacts/api-server/src/test/discoveryStopGate.test.ts",
+    "db/rollback/2026-09-28-2289-discovery-ranking-modifiers-flag-rollback.sql",
+    "db/rollback/2026-09-28-2297-rank-events-dismiss-outcome-rollback.sql",
+    "db/rollback/2026-09-28-2892-place-momentum-rollback.sql",
+    "db/rollback/2026-09-28-2893-rank-events-retire-writerless-surfaces-rollback.sql",
+    "db/rollback/2026-09-28-2894-rank-events-trip-add-outcome-rollback.sql",
+    "db/rollback/2026-09-28-2901-rent-buddy-earnings-entries-rollback.sql",
+    "db/rollback/2026-09-28-2921-creator-earning-entries-rollback.sql",
+    "db/rollback/2026-09-28-2930-creator-share-canonical-view-rollback.sql",
+    "db/rollback/2026-09-28-2995-rank-events-discovery-dismissed-index-rollback.sql",
+    "db/rollback/2026-09-28-3440-canonical-search-key-letter-fold-rollback.sql",
+    "db/rollback/2026-09-28-3441-trail-letter-fold-decompose-first-rollback.sql",
+    // census-discovery §94.11 (lane W11-X2, round 2): DV-83 re-graded on the Overpass suite, the rail refresh on the
+    // real ForYouTab, and the bounded feed call.
+    "artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts",
+    "travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.railRefresh.component.test.tsx",
+    "travel-buddy-standalone/src/services/__tests__/discovery.feedTimeout.test.ts",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryEventPostsRail.refusal.component.test.tsx",  // §94.11 cites its restated transport-failure control
+    // census-discovery §98 (DV-83, the parallel session's rounds): the suites its C rests on.
     "artifacts/api-server/src/test/discoveryFeedNoServiceClient.test.ts",
     "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryEventPostsRail.refresh.component.test.tsx",
     "travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.pullToRefresh.component.test.tsx",

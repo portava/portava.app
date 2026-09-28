@@ -1,5 +1,5 @@
 /**
- * DiscoveryEventPostsRail — a pull refetches the rail (census-discovery §97,
+ * DiscoveryEventPostsRail — a pull refetches the rail (census-discovery §98,
  * DV-83; the second path §94.10's verifier found).
  *
  * The refused state tells the user "Pull to refresh". The rail fetched only
@@ -67,7 +67,7 @@ const healthy = (posts: DiscoveryEventPost[]) => ({
 
 beforeEach(() => { jest.clearAllMocks(); });
 
-describe('DiscoveryEventPostsRail — a pull reaches the rail (§97, DV-83)', () => {
+describe('DiscoveryEventPostsRail — a pull reaches the rail (§98, DV-83)', () => {
   it('R1 a new refreshKey with the same place refetches, and a healthy answer replaces the refused copy', async () => {
     mockGetDiscoveryFeed.mockResolvedValue(REFUSED);
     const r = await render(<DiscoveryEventPostsRail destination="Miami" refreshKey={0} />);

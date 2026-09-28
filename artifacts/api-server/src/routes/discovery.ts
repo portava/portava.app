@@ -677,12 +677,12 @@ async function queryOverpass(
       headers: { "User-Agent": "TravelBuddy/1.0 (travel-buddy-app; discovery)" },
     });
   } catch {
-    return [];
+    return overpassFailed();  // census-discovery §94.10: [] as before, MARKED — the read did not happen
   }
 
-  if (!res.ok) return [];
+  if (!res.ok) return overpassFailed();
 
-  const data = (await res.json()) as { elements: OsmElement[] };
+  let data: { elements: OsmElement[] }; try { data = (await res.json()) as { elements: OsmElement[] }; } catch { return overpassFailed(); }
   if (!data?.elements?.length) return [];
 
   return data.elements
@@ -2068,7 +2068,7 @@ router.get("/discovery", async (req, res) => {
       queryOverpassDeduped(coords.lat, coords.lng, radiusM, category),
       loadCuratedAndCanonicalPlaces(destination, category, distRef.lat, distRef.lng, viewerBlockedIds),
     ]);
-    const osmMs = Date.now() - osmT0;
+    const osmMs = Date.now() - osmT0; if (overpassReadFailed(osmPlaces)) dbFailedSources.push(DISCOVERY_OVERPASS_SOURCE);  // census-discovery §94.10 (DV-83): an Overpass read that failed is a failed source on every cold serve path (4, 5, 6), not a smaller city
 
     // Enrich OSM places with real save counts from discovery_places before
     // merging and caching.  A single batch SELECT by osm_id attaches savedCount
@@ -2497,7 +2497,7 @@ router.get("/discovery/counts", async (req, res) => {
         // DIFFERENT number — and a category badge reading 12 when the real
         // answer is unknown is exactly the corrupt accounting the ruling names.
         // Rejecting routes it into the failed-category set below.
-        if (dbPlaces === null) throw new Error(`discovery_places unreadable for ${cat}`);
+        if (dbPlaces === null) throw new Error(`discovery_places unreadable for ${cat}`); if (overpassReadFailed(osmPlaces)) throw new Error(`overpass unreadable for ${cat}`);  // census-discovery §94.10: the same rule for the OSM half
         const enriched = osmPlaces.length > 0 ? await enrichOsmSavedCounts(osmPlaces) : osmPlaces;
         if (enriched.length > 0) setCacheA(k, { places: enriched, cachedAt: Date.now() });
         return { cat, total: mergeAndDedup(enriched, dbPlaces).length };
@@ -2616,7 +2616,7 @@ router.get("/discovery/feed", async (req, res) => {
   // ── Viewer identity for event-post pipeline ───────────────────────────────
   // Auth header is optional on the feed; block-checking requires a viewer id.
   // When unauthenticated, pass null → fetchEventPostsForDiscovery returns [].
-  let viewerId: string | null = null; let viewerUnresolved = false;  // census-discovery §97 (DV-83, §94.10): a Bearer token was presented and no viewer came back. The event-post read is then owed and cannot happen, which is a failed read, never an anonymous request's empty one
+  let viewerId: string | null = null; let viewerUnresolved = false;  // census-discovery §98 (DV-83, §94.10): a Bearer token was presented and no viewer came back. The event-post read is then owed and cannot happen, which is a failed read, never an anonymous request's empty one
   let blockedIds = new Set<string>();
   // Same block relationship, kept separately for places because the two
   // consumers want opposite behaviour when the read FAILS: event posts have
@@ -2630,7 +2630,7 @@ router.get("/discovery/feed", async (req, res) => {
       const authHeader = req.headers.authorization;
       if (authHeader?.startsWith("Bearer ")) {
         const token = authHeader.slice(7);
-        const { data: userData, error: userError } = await sc.auth.getUser(token); if (!userData?.user?.id && authServiceUnreachable(userError)) viewerUnresolved = true;  // §97: a REJECTED token (4xx) is an anonymous caller; an auth service that did not answer leaves the viewer unresolved
+        const { data: userData, error: userErr } = await sc.auth.getUser(token); if (!userData?.user?.id && userErr && authServiceUnreachable(userErr)) viewerUnresolved = true;  // §98 (D-W11X2-21): a REJECTED token (Auth's coded 4xx verdict, or auth-js's named rejection) is an anonymous caller; a lookup that did not happen (throw, network, 408, 429, 5xx, a code-less 4xx, no status) leaves the viewer unresolved
         if (userData?.user?.id) {
           viewerId = userData.user.id;
           // Both directions of the block relationship, through the one helper
@@ -2656,7 +2656,7 @@ router.get("/discovery/feed", async (req, res) => {
           }
         }
       }
-    } else if (req.headers.authorization?.startsWith("Bearer ")) viewerUnresolved = true;  // §97: a presented token and no service client to resolve it with
+    } else if (req.headers.authorization?.startsWith("Bearer ")) viewerUnresolved = true;  // §98: a presented token and no service client to resolve it with
   } catch (err) {
     // Reached for an unresolved viewer (the documented case) AND for a rejected
     // blocks read that threw rather than resolving. Both leave `blockedIds`
@@ -2664,11 +2664,11 @@ router.get("/discovery/feed", async (req, res) => {
     req.log.warn(
       { err, userId: viewerId },
       "discovery/feed: viewer/block-state resolution rejected — blocked users are NOT being filtered from event posts",
-    ); if (viewerId === null && req.headers.authorization?.startsWith("Bearer ")) viewerUnresolved = true;  // §97: a thrown resolution is an unresolved viewer, not an anonymous one
+    ); if (viewerId === null && req.headers.authorization?.startsWith("Bearer ")) viewerUnresolved = true;  // §98: a thrown resolution is an unresolved viewer, not an anonymous one
   }
 
   // ── Fetch places across all requested categories ───────────────────────────
-  try { const eventPostsReadStatus = { readFailed: viewerUnresolved };  // census-discovery §94 (DV-83, hunk §80.7): whether the event-post read FAILED (§97: or was owed to a viewer who could not be resolved) — carried onto the envelope below, never served as a quiet city
+  try { const eventPostsReadStatus = { readFailed: viewerUnresolved };  // census-discovery §94 (DV-83, hunk §80.7): whether the event-post read FAILED (§98: or was owed to a viewer who could not be resolved) — carried onto the envelope below, never served as a quiet city
     // TODO: denormalize is_event_post flag at write time to avoid per-request join
     const [categoryResults, eventPosts] = await Promise.all([
       Promise.all(
@@ -2684,9 +2684,9 @@ router.get("/discovery/feed", async (req, res) => {
           // serves its OSM half — that half is a real result and withholding it
           // would be its own lie — but the category is recorded so the envelope
           // can say the community rows are missing rather than absent.
-          const dbReadFailed = dbPlaces === null;
+          const dbReadFailed = dbPlaces === null; const osmReadFailed = overpassReadFailed(rawOsmPlaces);  // §94.10: the OSM half can fail too
           const dbRows = dbPlaces ?? [];
-          return { cat, osmPlaces, dbPlaces: dbRows, dbReadFailed, merged: mergeAndDedup(osmPlaces, dbRows) };
+          return { cat, osmPlaces, dbPlaces: dbRows, dbReadFailed, osmReadFailed, merged: mergeAndDedup(osmPlaces, dbRows) };
         }),
       ),
       // Event-post pipeline — only runs when we have a viewer identity for block-checking;
@@ -2714,7 +2714,7 @@ router.get("/discovery/feed", async (req, res) => {
     let totalOsm = 0;
     let totalDb  = 0;
     const failedCats: string[] = [];
-    for (const { cat, osmPlaces, dbPlaces, dbReadFailed, merged } of categoryResults) {
+    for (const { cat, osmPlaces, dbPlaces, dbReadFailed, osmReadFailed, merged } of categoryResults) { if (osmReadFailed && !failedCats.includes(DISCOVERY_OVERPASS_SOURCE)) failedCats.push(DISCOVERY_OVERPASS_SOURCE);  // §94.10 (DV-83)
       totalOsm += osmPlaces.length;
       totalDb  += dbPlaces.length;
       if (dbReadFailed) failedCats.push(cat);
@@ -3843,7 +3843,7 @@ const DISCOVERY_DISMISSED_SOURCE = "rank_events";
  * as shipped says `discovery_places_read_failed` for that case; broadening it to
  * cover both halves would silently re-label every refusal already in flight.
  */
-function discoveryPlaceSourcesCode(failedSources: readonly string[]): string {
+function discoveryPlaceSourcesCode(failedSources: readonly string[]): string { const withOverpass = overpassSourcesCode(failedSources); if (withOverpass) return withOverpass;  // census-discovery §94.10: Overpass reports too
   const curated   = failedSources.includes(DISCOVERY_CURATED_SOURCE);
   const canonical = failedSources.includes(DISCOVERY_CANONICAL_SOURCE);
   if (curated && canonical) return "discovery_place_sources_read_failed";
@@ -3899,11 +3899,11 @@ interface CuratedAndCanonicalPlaces {
  * choice here is one helper or four copies of the same decision — and four
  * copies is how three of them stay right and the fourth quietly stops refusing.
  *
- * WHY THE COVERAGE IS "partial" AND NEVER "nothing". This route reads three
+ * WHY THE COVERAGE IS "partial" UNLESS EVERY RETRIEVAL FAILED. This route reads three
  * retrievals: Overpass, the canonical `places` registry, and curated
  * `discovery_places`. The two DB halves can now BOTH report that they failed —
- * `places` could not until §30.5's third open item was closed — and Overpass
- * cannot, so a request never reaches here knowing that every source refused.
+ * `places` could not until §30.5's third open item was closed — and since §94.10
+ * Overpass can too; only when all three failed and nothing was served is it "nothing".
  * That is `GET /discovery/search`'s rule verbatim — "partial as long
  * as ANY source answered, even when this page happens to be empty". It is also
  * what keeps the second half of D11 intact: `sendDiscoveryRefusal` marks a
@@ -3965,7 +3965,7 @@ function sendDiscoveryPlacesEnvelope<T extends { total: number }>(
     res,
     body,
     discoveryRefusal(
-      "transient_db", discoveryPlaceSourcesCode(failedSources), "GET /discovery", "partial", failedSources,
+      onlyOverpassFailed(failedSources) ? "upstream_unavailable" : "transient_db", discoveryPlaceSourcesCode(failedSources), "GET /discovery", everyRetrievalFailed(failedSources) && envelope.total === 0 ? "nothing" : "partial", failedSources,  // §94.10: with Overpass reportable, every retrieval CAN now fail; only then, with nothing served, is the answer "nothing"
     ),
   );
 }
@@ -4510,8 +4510,76 @@ import { isFlagEnabled } from "../lib/featureFlags.js";
 // census-discovery §94 (routed hunk R-X3-2): the two per-row aggregate helpers, ONE implementation shared with generated rows (lib/discoveryCandidates/materialize.ts). At the foot so no cited line moves.
 import { haversineKm, batchFetchVoteAndRatingAggregates } from "../lib/discoveryPlaceAggregates.js";
 
+// census-discovery §94.10 (lane W11-X2, round 2; DV-83). Whether a failed
+// identity lookup is a FAILURE (the lookup did not happen: retry later) or an
+// ANSWER (this token names nobody). supabase-js reports a transport failure as
+// `AuthRetryableFetchError` with status 0 (the network) or 502/503/504, and the
+// auth server's refusal as `AuthApiError` with its HTTP status. A missing
+// status, 0, a 5xx, a 408 timeout or a 429 rate limit is a lookup that did not
+// happen; any other 4xx is a definitive "this token names nobody", which is the
+// anonymous case, exactly as a request with no header. Decided on the status
+// alone: every retryable error carries one of the failure statuses. A
+// declaration, so it hoists above its use.
+function isTransientAuthError(err: unknown): boolean {
+  // census-discovery §98 (D-W11X2-21): superseded. The feed and every caller use
+  // ONE rule, authServiceUnreachable at the foot, which keeps this rule's
+  // fail-closed reading of a status-less error and adds Auth's own verdict codes.
+  return authServiceUnreachable(err);
+}
+
+// ── census-discovery §94.10 (lane W11-X2, round 2; DV-83): Overpass reports a failed read ──
+//
+// `queryOverpass` answered `[]` for a transport failure, a non-OK status (the
+// rate limit this deployment has hit) and an unparseable body, exactly as for a
+// city with nothing tagged. So GET /discovery's OSM half could not fail on the
+// wire: `sendDiscoveryPlacesEnvelope` said so in as many words ("Overpass cannot
+// [report]"), and a consumer could not branch on a failure it was never sent.
+// The value is unchanged — every caller still gets an empty array — but the
+// failure is MARKED (a WeakSet on the array, the idiom lib/discoveryRefusal.ts
+// and lib/liveClaimRead.ts use), so the serve paths can name it.
+
+/** The name GET /discovery (and the feed) give the Overpass retrieval on `failedSources`. */
+const DISCOVERY_OVERPASS_SOURCE = "overpass";
+const _failedOverpassReads = new WeakSet<object>();
+
+/** An empty Overpass answer that says the read FAILED. Fresh per call. */
+function overpassFailed(): DiscoveryPlace[] {
+  const out: DiscoveryPlace[] = [];
+  _failedOverpassReads.add(out);
+  return out;
+}
+
+/** True when this Overpass answer is empty because the read failed, not because nothing is there. */
+function overpassReadFailed(result: readonly unknown[]): boolean {
+  return _failedOverpassReads.has(result);
+}
+
+const PLACE_RETRIEVALS = [DISCOVERY_OVERPASS_SOURCE, DISCOVERY_CURATED_SOURCE, DISCOVERY_CANONICAL_SOURCE];
+
+/** Overpass failed and no DB retrieval did (the dismissal filter is not a retrieval). */
+function onlyOverpassFailed(failedSources: readonly string[]): boolean {
+  return failedSources.includes(DISCOVERY_OVERPASS_SOURCE)
+    && !failedSources.includes(DISCOVERY_CURATED_SOURCE) && !failedSources.includes(DISCOVERY_CANONICAL_SOURCE);
+}
+
+/** All three place retrievals failed: nothing on the page can be a result. */
+function everyRetrievalFailed(failedSources: readonly string[]): boolean {
+  return PLACE_RETRIEVALS.every((s) => failedSources.includes(s));
+}
+
 /**
- * census-discovery §97 (DV-83, §94.10): did Supabase Auth fail to ANSWER
+ * The code when Overpass is among the failures, or null to let the DB-only rules
+ * decide. Overpass alone is `overpass_unavailable` (the seventh class, an
+ * upstream this deployment calls and does not operate); Overpass with a DB half
+ * is the combined `discovery_place_sources_read_failed`.
+ */
+function overpassSourcesCode(failedSources: readonly string[]): string | null {
+  if (!failedSources.includes(DISCOVERY_OVERPASS_SOURCE)) return null;
+  return onlyOverpassFailed(failedSources) ? "overpass_unavailable" : "discovery_place_sources_read_failed";
+}
+
+/**
+ * census-discovery §98 (DV-83, §94.10): did Supabase Auth fail to ANSWER
  * `getUser(token)`, as opposed to rejecting the token?
  *
  * auth-js reports an unreachable or failing auth service as
@@ -4533,15 +4601,15 @@ import { haversineKm, batchFetchVoteAndRatingAggregates } from "../lib/discovery
  *
  * Only a failure to answer leaves the viewer UNRESOLVED; a rejection is an
  * answer, and the caller is anonymous. An error with no status and no known
- * name is treated as a rejection, the feed's documented posture for a token it
- * cannot use.
+ * name is NOT a verdict: nothing says the token was evaluated, so it leaves the
+ * viewer unresolved (D-W11X2-21, keeping §94.10's fail-closed reading).
  */
 function authServiceUnreachable(error: unknown): boolean {
   const e = error as { name?: unknown; status?: unknown; code?: unknown } | null | undefined;
   if (!e) return false;
   if (e.name === "AuthRetryableFetchError" || e.name === "AuthUnknownError") return true;
   if (e.name === "AuthSessionMissingError" || e.name === "AuthInvalidJwtError") return false;
-  if (typeof e.status !== "number") return false;
+  if (typeof e.status !== "number") return true;  // no status, no known name: not a verdict (D-W11X2-21)
   if (e.status === 0 || e.status === 408 || e.status === 429 || e.status >= 500) return true;
   return e.status >= 400 && !(typeof e.code === "string" && e.code !== "");
 }

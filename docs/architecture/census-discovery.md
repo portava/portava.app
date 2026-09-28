@@ -15855,7 +15855,7 @@ All in `artifacts/api-server` unless stated, at this tree.
 
 | ID | from | **to** | evidence |
 |---|---|---|---|
-| DV-83 | W | **C** | **§80's last ground is closed: the feed no longer absorbs a failed event-post read, and the rail branches on it.** The criterion: every consumer of a Discovery envelope that can carry `refusal` branches on `coverage`, not on `ok` alone; no refused body is written to a client cache; no refused body is rendered as an empty result. §60 closed ground 3 (the static guard) and §80 closed ground 2 (`partial` is never rendered as complete, D-W10-S1-2). What §80.1 left was server-side: `lib/eventPostsDiscovery.ts` dropped `readFailed` and the route caught a thrown fetch to `[]`, so the "Live from events" rail could not branch on a failure it was never sent. **Now:** the read reports the failure (`artifacts/api-server/src/lib/eventPostsDiscovery.ts:487#if (readFailed && params.readStatus) params.readStatus.readFailed = true;`), a thrown fetch is a failed read (`artifacts/api-server/src/routes/discovery.ts:2706#eventPostsReadStatus.readFailed = true;`), and the feed names it (`artifacts/api-server/src/routes/discovery.ts:2750#if (eventPostsReadStatus.readFailed) failedCats.push("event_posts");`). Both paths failing is `coverage: "nothing"` with `failedSources: ["event_posts"]` and no exposure (`artifacts/api-server/src/test/discoveryFeedEventPostsCoverage.test.ts:152#it("E1 both event-post paths fail`); one path failing keeps and logs the surviving posts as `partial` (E2); the route's catch arm is reached and reported (`artifacts/api-server/src/test/discoveryFeedEventPostsCoverage.test.ts:199#it("E5 a THROWN event-post fetch`); a healthy read carries no refusal (C1). The rail keeps the posts under one "may be incomplete" line (`travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryEventPostsRail.coverage.component.test.tsx:70#it('P1. partial, event_posts failed, posts pr`), renders the partial-empty state instead of silence (P2), and ignores a partial that names only place categories (P3). The guard now holds the rail's partial branch (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts:350#it('G7. §80: every consumer that renders a list`); its n/a set is two files, both of which render no list. The rail holds no cache, and `getDiscoveryFeed` caches nothing (§60.2). **Not flag-gated:** each change alters output only when a read fails. **Branch only; no client build carrying the rail change has shipped.** |
+| DV-83 | W | **C** | **§80's last ground is closed: the feed no longer absorbs a failed event-post read, and the rail branches on it.** The criterion: every consumer of a Discovery envelope that can carry `refusal` branches on `coverage`, not on `ok` alone; no refused body is written to a client cache; no refused body is rendered as an empty result. §60 closed ground 3 (the static guard) and §80 closed ground 2 (`partial` is never rendered as complete, D-W10-S1-2). What §80.1 left was server-side: `lib/eventPostsDiscovery.ts` dropped `readFailed` and the route caught a thrown fetch to `[]`, so the "Live from events" rail could not branch on a failure it was never sent. **Now:** the read reports the failure (`artifacts/api-server/src/lib/eventPostsDiscovery.ts:487#if (readFailed && params.readStatus) params.readStatus.readFailed = true;`), a thrown fetch is a failed read (`artifacts/api-server/src/routes/discovery.ts:2706#eventPostsReadStatus.readFailed = true;`), and the feed names it (`artifacts/api-server/src/routes/discovery.ts:2750#if (eventPostsReadStatus.readFailed) failedCats.push("event_posts");`). Both paths failing is `coverage: "nothing"` with `failedSources: ["event_posts"]` and no exposure (`artifacts/api-server/src/test/discoveryFeedEventPostsCoverage.test.ts:164#it("E1 both event-post paths fail`); one path failing keeps and logs the surviving posts as `partial` (E2); the route's catch arm is reached and reported (`artifacts/api-server/src/test/discoveryFeedEventPostsCoverage.test.ts:211#it("E5 a THROWN event-post fetch`); a healthy read carries no refusal (C1). The rail keeps the posts under one "may be incomplete" line (`travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryEventPostsRail.coverage.component.test.tsx:74#it('P1. partial, event_posts failed, posts pr`), renders the partial-empty state instead of silence (P2), and ignores a partial that names only place categories (P3). The guard now holds the rail's partial branch (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts:350#it('G7. §80: every consumer that renders a list`); its n/a set is two files, both of which render no list. The rail holds no cache, and `getDiscoveryFeed` caches nothing (§60.2). **Not flag-gated:** each change alters output only when a read fails. **Branch only; no client build carrying the rail change has shipped.** |
 | C19 | W | **W** | **The server half is built; activation waits on the release floor.** Behind `discovery_community_byline_canonical_enabled` (`artifacts/api-server/src/migrations/3490_discovery_serve_path_flags.sql:53#discovery_community_byline_canonical_enabled`, seeded FALSE), `GET /discovery/community` emits `submittedBy.name` as the real name iff `nameAllowed`, else null (`artifacts/api-server/src/routes/discovery.ts:3095#...(bylineCanonical ? { name: nameAllowed ?`, D-W11X2-3). With the flag on, an opted-out submitter's name is null and the handle still travels (`artifacts/api-server/src/test/discoveryCommunityBylineCanonical.test.ts:141#it("B1 ON: an opted-out submitter's name is`), and no served name starts with `@` for any viewer (`artifacts/api-server/src/test/discoveryCommunityBylineCanonical.test.ts:159#it("B4 ON: no served name starts with '@'`). With it absent or FALSE the served body is byte-identical to the golden captured at `3cc027a06` (`artifacts/api-server/src/test/discoveryCommunityBylineCanonical.test.ts:126#it("G0 flag ABSENT: the served body is the g`; G1). `discoveryClientRouteE2E` X3 cannot load under this runner's Node 22 (§76.5); the client resolver it runs is unchanged, and B1's shape is exactly what X3 feeds it for Bob. IMPLEMENTATION-COMPLETE; awaits: the oldest supported app build carrying `features/discovery/communityByline.ts` (§60.8 Q2's first half, release state) + 3490 applied to production (W10D-A1 batch) + the API build carrying §94 deployed (W10D-A3) + flag discovery_community_byline_canonical_enabled TRUE in production (AR-W11X2-1) + one production `GET /discovery/community` response in which no `submittedBy.name` starts with "@". |
 | DC-17 | W | **W** | **The platform path now records its reading's four facts; every leg §91 left is code-complete.** Where the platform's coverage store answers (CPV2-12), the served reading is Compass's read-time fold of the platform's cells, so its record names that fold (`artifacts/api-server/src/lib/discoveryPlatformGraphProvenance.ts:60#export const PLATFORM_COVERAGE_FOLD_MODEL_VERSION`), what one cell contributes, the cells the read admitted and the reading's own clock (D-W11X2-4). It is served only for the SAME reading (`artifacts/api-server/src/lib/discoveryPlatformGraphProvenance.ts:114#if (newest !== reading.computedAt`), and makes no claim when the governing read's cap made the corpus unreproducible (`artifacts/api-server/src/lib/discoveryPlatformGraphProvenance.ts:97#if (raw.length >= PLATFORM_COVERAGE_READ_CAP)`). It is wired where the reading's provenance is loaded (`artifacts/api-server/src/lib/discoveryCandidates/graphReadingProvenance.ts:41#platformGraphReadingProvenance(sc, reading)`), behind `discovery_platform_graph_provenance_enabled` (3490, FALSE). On serve points 1 and 6, every served row on the platform path stores `graphProvenance` with all four facts (`artifacts/api-server/src/test/discoveryIntegrationHooks.test.ts:545#every served row stores all four facts of the PLATFORM reading`), and with the flag off it stores `{ status: "platform_producer" }` exactly as before. The versions are pinned to the code they name (`artifacts/api-server/src/test/discoveryPlatformGraphProvenance.test.ts:126#it("V1 the versions are pinned to`). The Compass path stands as §85/§91 built it. IMPLEMENTATION-COMPLETE; awaits: 3435, 3436, 3484 and 3490 applied to production (W10D-A1) + the API build carrying §94 deployed (W10D-A3) + flags discovery_ranking_modifiers_enabled (2289), compass_city_confidence_windowed_reads_enabled (3484), discovery_platform_graph_provenance_enabled (3490) and discovery_trend_rebuild_scheduler_enabled (3475, so 3435's windows are written) TRUE in production + one production served `rank_events` row with `features.graphProvenance.status = 'recorded'` on each producer path (`graphSource` `compass_graph` and `platform_coverage`). |
 | DC-01 | W | **W** | **§91's two stated limits are closed: the kinds are logged, and a client asks for them.** Each served page writes one impression per item at serve point 13 and one per-request row (`artifacts/api-server/src/routes/discoveryOutputKinds.ts:93#logServeUnlessRefused(res, sc, {`; `artifacts/api-server/src/test/discoveryOutputKindsServeLog.test.ts:97#it("L1 a served Trails page writes`), and each served item carries its impression's recommendation id (L2). 3491 admits serve point 13 (`artifacts/api-server/src/migrations/3491_discovery_recommendations_output_kinds_serve_point.sql:63#CHECK (serve_point BETWEEN 1 AND 13) NOT VALID`). The client asks only behind the same flag (`travel-buddy-standalone/src/components/discovery/DiscoveryOutputKindsRail.tsx:58#const active = enabled && flagOn`; `travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryOutputKindsRail.component.test.tsx:41#it('O1 flag`), and a failed read is never silence (O4). The criterion ("PDE should rank or recommend") stands as §91 graded it. IMPLEMENTATION-COMPLETE; awaits: 3483 applied to production + 3376 (W10D-A2) and 3491 (AR-W11X2-2) applied to production + the API build and a client build carrying §94 shipped (W10D-A3) + flag discovery_output_kinds_enabled TRUE in production (D-W10-R3-13 step 8, amended by D-W10-I-A1) + one production 200 from the route for each of the three kinds, each with its serve point 13 `recommendations` row. |
@@ -16232,26 +16232,228 @@ An independent verifier checked §94.1's C claim at `3fd11f858` and confirmed ev
 |---|---|---|---|
 | DV-83 | C | **W** | §94.1's claim is not yet supported. A failed viewer resolution still hides the event-post read (verifier, §94.10), and the refused rail cannot be refreshed. Everything else §94.1 lists holds under mutation. |
 
-## §97 — DV-83's two remaining paths (lane W11-X2, second round): an unresolved viewer's event-post read is a failed read, and a pull refetches the rails; DV-83 moves W → C after three rounds of independent verification
+## §97 — Safety and recovery (lane W11-S)
 
-*Written 2026-09-28 on `claude/sensing-completion-20260925`, from `756af1f12` through `fec5f11ff` (on top of `532227796`, the media test fix and the Node runtime pin). It closes the two paths §94.10's verifier found. The decisions are D-W11X2-10 and D-W11X2-11, in `docs/architecture/discovery-decision-register.md` section `## W11-X2, second round`. No migration, no flag, and nothing was applied to `portava-ci` or production. Every edit to a cited file is line-neutral, except one helper appended at the foot of `routes/discovery.ts`. All evidence was measured on Node 24.21.0, CI's pin.*
+*Written 2026-09-28 by lane W11-S on `disc-w11-safety`, from integration head `532227796`. It closes the three engineering gaps lane W11-P routed (§96): a tripped stop did not reach the gate-2 and design flags, eleven files had no rollback file, and the pending set had not been rehearsed end to end. Decisions are in `docs/architecture/discovery-decision-register.md`, section "W11-S", D-W11S-1 … D-W11S-6. **No row changes bucket**, so the headline is not restated. Nothing was merged to `main`, applied to `portava-ci` or production, deployed or flag-enabled. All evidence is controlled (in-process routes over in-memory databases, and the local PostgreSQL 16 harness); none of it is production evidence.*
 
-### 97.1 Row statement
+### 97.1 A stopped Discovery reads every rollout flag OFF (D-W11S-1)
+
+- **Before.** A tripped `12` condition resolved `DISCOVERY_ENGINE_MODE` to legacy and nothing else. 3455 and 3456 serve PDE in every mode, and serve point 6 runs §78's designs and §85's stages for every signed-in viewer in `legacy` too. Their readers never read the stop, so recovery was a manual flip (approval request action 8).
+- **Now.** `artifacts/api-server/src/lib/discoveryStopGate.ts:72#export async function discoveryStopHalt(` answers whether the stop is engaged: a tripped condition, as the resolver evaluates it, or `disable_discovery_pde` TRUE, read fail-closed and cached 30 s. The gate is consulted only by a reader whose flag reads ON, so a flag-off serve reads and serves exactly what it did. The readers:
+  - 3455: `artifacts/api-server/src/lib/discoveryOnePipeline.ts:56#return unlessDiscoveryStopped(sc, await cachedFlag(DISCOVERY_FOR_YOU_PDE_FLAG` (and 3456 on line 62);
+  - §78's six: `artifacts/api-server/src/lib/discoveryRankFlags.ts:99#return anyRankDesignEnabled(flags) && (await discoveryStopHalt(sc)) !== null`, which also covers DRS's negative-feedback input, DV-12's detector and Pulse's objective;
+  - §85's eight: `artifacts/api-server/src/lib/discoveryCandidates/pipelineFlags.ts:114#return Object.values(flags).some(Boolean) && (await discoveryStopHalt(sc)) !== null`;
+  - the output-kinds route, after its unchanged flag check: `artifacts/api-server/src/routes/discoveryOutputKinds.ts:64#} if (!(await unlessDiscoveryStopped(sc, true))) return sendError(res, "feature_disabled"`.
+- **The gate also measures.** The resolver refreshes 3391's four database conditions only for a non-legacy mode. The 3455/3456 readers now run the same refresh, at most once per 30 s (`artifacts/api-server/src/lib/discoveryStopGate.ts:75#if (opts.measure === true && sc && nowMs - s.refreshedAt >= TTL_MS)`), so an armed RLS deviation halts 3456 in `legacy` mode. The §78/§85 readers do not refresh, because shadow runs hand them a write-suppressed client whose `rpc` answers inertly.
+- **Not a latch**, as the engine mode is not: when the stop clears, the flags read as set.
+- **Not gated, each with its reason** (register): `discovery_live_rank_enabled` (a safety demotion), 3500, 3485, 3490, 3496 and 2361.
+
+### 97.2 Row statements
 
 | ID | from | **to** | evidence |
 |---|---|---|---|
-| DV-83 | W | **C** | **§94.10's two paths are closed, and an independent verifier confirmed both after three rounds.** (1) `GET /discovery/feed` now tells an anonymous request from one whose viewer could not be resolved (`artifacts/api-server/src/routes/discovery.ts:2619#let viewerUnresolved = false;`). A presented token whose resolution threw (`artifacts/api-server/src/routes/discovery.ts:2667#if (viewerId === null && req.headers.authorization?.startsWith("Bearer ")) viewerUnresolved = true;`), that had no client to resolve it (`artifacts/api-server/src/routes/discovery.ts:2659#} else if (req.headers.authorization?.startsWith("Bearer ")) viewerUnresolved = true;`), or whose auth service did not answer (`artifacts/api-server/src/routes/discovery.ts:2633#authServiceUnreachable(userError)) viewerUnresolved = true;`; the rule is `artifacts/api-server/src/routes/discovery.ts:4539#function authServiceUnreachable(error: unknown): boolean {`) starts the event-post read as failed (`artifacts/api-server/src/routes/discovery.ts:2671#{ readFailed: viewerUnresolved }`). §94's own path then names `event_posts`, under `upstream_unavailable` / `feed_viewer_unresolved` (`artifacts/api-server/src/routes/discovery.ts:2759#viewerUnresolved ? "feed_viewer_unresolved"`). The refusal carries coverage `nothing` and writes no exposure and no per-request serve row (`artifacts/api-server/src/test/discoveryFeedEventPostsCoverage.test.ts:276#it("V1 getUser THROWS`). A code-less 4xx never evaluated the token (`artifacts/api-server/src/test/discoveryFeedEventPostsCoverage.test.ts:378#it("V9 a 4xx with no Auth error code`); Auth's coded verdicts stay anonymous (`artifacts/api-server/src/test/discoveryFeedEventPostsCoverage.test.ts:361#it("C7 CONTROL`), as does no client with no token (`artifacts/api-server/src/test/discoveryFeedNoServiceClient.test.ts:85#it("N1 a Bearer token and no client`). (2) Every pull bumps the rails' key (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:324#setRailRefreshKey((k) => k + 1);`), and the rail refetches on it (`travel-buddy-standalone/src/components/discovery/DiscoveryEventPostsRail.tsx:99#}, [destination, lat, lng, radiusKm, refreshKey]);`; `travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryEventPostsRail.refresh.component.test.tsx:71#it('R1 a new refreshKey`). §94.1's other clauses hold unchanged under mutation (§94.10). |
+| DV-82 | W | **W** | **The halt now reaches every path the rollout turns on, not only the engine mode.** A tripped stop, or `disable_discovery_pde` TRUE, reads 3455, 3456, §78's six and §85's eight flags OFF at their readers (`artifacts/api-server/src/lib/discoveryStopGate.ts:72#export async function discoveryStopHalt(`). Through the real router, with the stop tripped: the 3455 `for_you` page is byte-identical to its flag-off page at serve points 5 and 4 (`artifacts/api-server/src/test/discoveryStopGate.test.ts:244#it("G1. 3455 ON + stop TRIPPED`); a signed-in Cache A hit in legacy mode is the unranked flag-off page (`artifacts/api-server/src/test/discoveryStopGate.test.ts:260#it("G2. 3456 ON + stop TRIPPED`); `rankForViewer` scores exactly as with no design flag (`artifacts/api-server/src/test/discoveryStopGate.test.ts:331#it("G3a. rankForViewer with 3450 + 3453 ON and the stop TRIPPED`) and no pipeline flag (`artifacts/api-server/src/test/discoveryStopGate.test.ts:385#it("G4b. rankForViewer with 3480 + 3483 ON and the stop TRIPPED`); the output-kinds route answers its flag-off 404. The manual stop does the same (`artifacts/api-server/src/test/discoveryStopGate.test.ts:277#it("G5. the manual stop`). In legacy mode the 3456 reader measures 3391's conditions itself, so an armed RLS deviation halts it (`artifacts/api-server/src/test/discoveryStopGate.test.ts:291#it("G6. legacy mode, 3456 ON, stop ARMED`). With every flag OFF, a tripped serve is byte-identical and reads nothing new (`artifacts/api-server/src/test/discoveryStopGate.test.ts:223#it("B0. BYTE-IDENTITY`). §82's evidence for the seven values stands. IMPLEMENTATION-COMPLETE; awaits: 3390, 3391 and 3470 applied in production + `discovery_stop_enforcement_enabled` TRUE with `metadata.values_version = "stop-values-2026-09-28.1"` (APPROVAL REQUIRED D-W10-O-3) + a non-legacy `DISCOVERY_ENGINE_MODE` or 3455/3456 on, under which one production stop evaluation reads all seven ruled. |
+| DC-32 | W | **W** | **The thresholds leg now halts what it protects.** The seven values (D-W10-O-1) are unchanged, and once armed a trip returns every rollout flag to its flag-off output, not only the engine mode (`artifacts/api-server/src/test/discoveryStopGate.test.ts:291#it("G6. legacy mode, 3456 ON, stop ARMED`, and DV-82 above). The other four legs are as §82 graded them. Sensitive-location policy still waits on 3366 (A-3, B04). IMPLEMENTATION-COMPLETE; awaits: 3366 applied and on in production (A-3, B04) + the stop values armed in production (APPROVAL REQUIRED D-W10-O-3). |
+| DC-18 | W | **W** | **Every file in the set, and every P0, P2 and P3 file, now has a guarded rollback file, and the whole pending set is rehearsed end to end.** Eleven were missing (2289, 2297, 2892, 2893, 2894, 2901, 2921, 2930, 2995, 3440, 3441); each now deletes its ledger row and refuses where user or financial rows or an ON flag would be lost. 2901's and 2921's refuse while their ledgers hold any row, because a true rollback would destroy financial records (`docs/ops/discovery-portava-ci-apply-plan.md:726#### 8.6 Rollback files for the files that had none`). On the harness, from the modelled `portava-ci` baseline, all **73** applied (51 tails), stage 4 re-ran 115 blocks, all 73 rolled back with every ledger row removed and the data identical, and re-apply matched to 0 lines (`docs/ops/discovery-portava-ci-apply-plan.md:712#| rollback, all 73, newest first |`). The nine older rollbacks matched a no-apply baseline to 0 of 12,190 catalogue lines, and re-apply to 0 of 12,320 (`docs/ops/discovery-portava-ci-apply-plan.md:744#**Rehearsal (final bytes).**`). `certify:migrations` itself passes stages 1–4 over the 73. The rehearsal found one defect, 3460's post-commit block, fixed before any apply (D-W11S-3). *Never edit an applied migration* still needs a live checksum comparison; 3460 was applied nowhere. IMPLEMENTATION-COMPLETE; awaits: the `portava-ci` apply and its green `schema drift` run (the rehearsal record) + an operator read of production's applied-body checksums against the repository. |
+| DC-27 | W | **W** | **AWAITS OWNER APPROVAL: W10D-A5 (Phase F gates 1 and 2, E-2); awaits: a filled rollout record showing rehearse, verdict checks, shadow, cohort, observe, expand, in that order.** The record template stands (`docs/ops/discovery-production-rollout.md:291#8. DC-27`). Two facts in §83's statement are stale. First, the seven stop values are decided (§82, D-W10-O-1), not `null`. Second, the "observe" step's stop is now automatic for gate 2 as well: a trip returns 3455, 3456 and the design flags to their flag-off output without an operator (DV-82 above). The sequence has not begun, so the row stays W. |
 
-### 97.2 What was built, and what the verifier changed
+### 97.3 Files outside this lane, each edit minimal
 
-**Path 1 (D-W11X2-10).** The event-post read is owed whenever a Bearer token is presented. When no viewer can be resolved from it, the read cannot happen, and that is a failed read, not an anonymous request's empty one. `authServiceUnreachable` separates "Auth did not answer" from "Auth rejected the token":
+- `lib/discoveryOnePipeline.ts`, `lib/discoveryRankFlags.ts`, `lib/discoveryCandidates/pipelineFlags.ts` and `routes/discoveryOutputKinds.ts`. Each import rides an existing line, or sits at the file's foot below the cited line 89 (`pipelineFlags.ts`). Each gated return is edited in place. The route's cited flag check (line 62, §91) is unchanged; the stop check rides line 64's closing brace. `discoveryRankFlags.ts` gains a four-line helper after `loadRankDesignFlags`, below its cited line 78. No cited line moved.
+- `migrations/3460_discovery_search_protection_scope.sql`: two lines added inside its `$post$` block, and no statement changed. It is applied nowhere.
+- `db/rollback/…3385…`: 2930's comment is restored before the REVOKEs.
+- `scripts/local-db/rehearse-pending-apply.ts`: the list is inserted after line 71's cited constant.
+- Line-neutral pointers in the approval request (lines 158, 241, 242, 375, 509, 533, 644 and 645) and the rollout plan's §7 table. The apply plan gains 8.5 and 8.6, and three of its 8.1 rows are updated in place.
+
+### 97.4 Tests, seen red, and mutations
+
+- **`discoveryStopGate.test.ts`** has 17 cases and is registered on the `test` line.
+  - Against the tree before the fix, **ten were red**: G1, G2, G5, G6, G3a, G3b, G3c, G4a, G4b and G4c.
+  - B0 and the controls C1, C2, C3a, C3c and C4c were green, as they must be. B1 was added after the fix; M10 turns it red.
+  - While building, G3a caught a real defect: the §78 reader refreshed the measurements through a shadow run's write-suppressed client, which counted a suppressed write and would record false `unreadable` readings. The refresh moved to the 3455/3456 readers only.
+- **Mutations.** Each was applied alone, the suite run, and the file restored byte-identical (sha256 checked). All eleven went red:
+
+| # | mutation | red |
+|---|---|---|
+| M1 | 3455 reader ignores the stop | G1, G5 |
+| M2 | 3456 reader ignores the stop | G2, G5, G6 |
+| M3 | §78 reader ignores the stop | G3a, G3b, G3c |
+| M4 | §85 reader ignores the stop | G4a, G4b |
+| M5 | output-kinds route ignores the stop | G4c |
+| M6 | manual stop ignored | G5 |
+| M7 | the 3455/3456 readers do not measure | G6 |
+| M8 | every reader measures (shadow clients too) | G3a |
+| M9 | the gate always halts | C1, C2, C3a, G3b, C3c, G4a, C4c |
+| M10 | the gate is consulted with the flag off | B1 |
+| M11 | a tripped condition is not a halt | G1, G2, G6, G3a, G3b, G3c, G4a, G4b, G4c |
+
+- **Harness controls for 3460** (97.5): the pre-§97 bytes fail the post-commit re-run. The fixed block fails on a description without the gateway, and on a changed state inside the transaction.
+- **Existing tests.** No assertion was changed. Every test file that imports a changed file was run with the suites around them (169 files, `discovery*`, `pulse*`, `portava*` and entry wiring): 2,774 tests, 2,771 pass. The three failures are pre-existing and unrelated:
+  - `discoveryClientRouteE2E`: the Node 22 load failure, §76.5;
+  - `discoveryPlaceWriteBoundary` and `portavaFeaturedWriteBoundary`: the CI Supabase guard refuses them without live credentials.
+- The run also covered `creatorLedgerMigrationShape3385`, `migrationApplyOrder` and `entryWiringNotCommentedOut`: 69 of 69 pass.
+
+### 97.5 Harness results (port 55465; data deleted afterwards)
+
+- **The pending set** (apply plan 8.5), from the modelled `portava-ci` baseline:
+  - plan: 73, identical to 8.1;
+  - apply: 73, with 51 tails;
+  - stage 4: 115 blocks pass, 32 `$pre$` held back;
+  - objects: 57 of 58 present, 1 absent by design;
+  - the 92 pre-existing flags are identical, and 52 new flags are all FALSE;
+  - the apply is idempotent;
+  - rollback: 73 of 73, every ledger row removed, data identical, catalogue 7 lines tighter (8 before D-W11S-5);
+  - re-apply: 0 lines differ;
+  - the zero-persistence file holds for all 73 and leaves the catalogue unchanged.
+- **The tools**, run through the fetch preload against a fake ref:
+  - `certify:migrations`: stages 1–4 pass (680 ledger files, 59 objects, 115 blocks, 32 `$pre$`), and stage 5 stops on `audit:schema`;
+  - `audit:schema`: 37 findings after the apply, 0 of them absent from the pre-apply baseline's 156, all in the eleven unreplayable harness files;
+  - `check:missing-live-columns`: the same 4 harness columns.
+- **Negative control:** with 3455's flag pre-set TRUE, the apply stops at 3455 and the flag stays TRUE. But 3455 is recorded, because its check is post-commit (D-W11S-4; the apply plan's §3 claim is corrected in 8.5).
+- **The eleven rollbacks** (apply plan 8.6):
+  - the nine older ones match a no-apply baseline to 0 lines, and re-apply to 0 lines;
+  - 3440 and 3441 round-trip inside the 73;
+  - 16 refusal controls, each exit 3 with nothing changed.
+- **`scripts/local-db/run-tests.sh`** on a fresh full chain (388 applied, 12 known-unreplayable, 2 on retry): **427 / 427 pass, 0 skipped**.
+
+### 97.6 Checks
+
+Run in `artifacts/api-server` after the last edit, all clean:
+- `tsc -p tsconfig.json --noEmit`;
+- `check-test-typecheck`: 863 against a baseline of 863;
+- `check:test-registration`, `check:migration-prefixes`, `check:schema-references`, `check:writerless-reads`, `check:enum-literals`, `check:production-drift` and `check:flag-polarity`. The gate reads `disable_discovery_pde` through `isKillSwitchEngaged`, already seeded and read;
+- `check:telegraph-inventory`: passed with no regeneration needed;
+- `node --import tsx/esm src/scripts/checkFlagSchemaPrerequisites.ts`: OK, 2 unguarded, all known;
+- `check:census-integrity`, `check:doc-citations`, `check:citation-targets`, `check:citation-symbols`, `check:census-freshness`, `check:census-scope-coverage` and `check:census-row-move-labels`.
+
+`pnpm run typecheck`'s first half (`tsc -b ../../lib/api-zod ../../lib/db`) cannot run in this worktree: `lib/db` has no `node_modules` link (`drizzle-orm`, `pg`), and that is untouched. Its second half, the package typecheck, is the `tsc` line above.
+
+**Not run:**
+- `check:write-path-columns`, which needs live credentials. Reasoned instead: the only new read is `isKillSwitchEngaged`'s existing `feature_flags` select, and no write payload changed;
+- the full api-server `pnpm test`;
+- the client `check:all` (no client file changed);
+- anything against `portava-ci` or production.
+
+### 97.7 What would turn this red
+
+- A gated reader stops consulting the gate, or the gate stops treating a trip or the manual stop as a halt: M1–M6 and M11.
+- The gate is consulted with a flag off, or a flag-off serve's bytes move: B0, B1, and §79's Z0, §85's P1–P3 and §78's G1–G3.
+- The shadow client refreshes the measurements: M8.
+- A rollback file stops deleting its ledger row, or stops refusing over user or financial rows or an ON flag: the harness controls in apply plan 8.6.
+- A migration in the set changing bytes before the apply: re-run 8.5.
+- A `+post` flag file applied over a TRUE row, if the pre-flight is skipped: D-W11S-4.
+
+### 94.11 Round 2: the independent verifier's five findings on DV-83, closed; DV-83 restated W → C
+
+*Written 2026-09-28 by lane W11-X2 on `disc-w11-x2-serve`, after merging `disc-integration` at `3fd11f858` and then `532227796` (which holds DV-83 at W in the integrator's §94.10). An independent verifier confirmed every clause §94 built, each mutation killed, and found five places where a failure still read as an absence. Each is closed below, failing-first. Decisions D-W11X2-10 to D-W11X2-14. All evidence is controlled; no client build carrying the client changes has shipped.*
+
+**The five findings, and what each is now.**
+
+1. **Identity resolution hid the event-post read.** With a Bearer token, a thrown or transient `auth.getUser` left the viewer unresolved and the feed served `posts: []` with no refusal. Now a missing status, 0, 408, 429 or a 5xx is a lookup that did not happen, and the owed read is failed (`artifacts/api-server/src/routes/discovery.ts:2633#userErr && authServiceUnreachable(userErr)`, `artifacts/api-server/src/routes/discovery.ts:2667#viewerUnresolved = true;  // §98: a thrown`, `artifacts/api-server/src/routes/discovery.ts:2671#const eventPostsReadStatus = { readFailed: viewerUnresolved }`). Pinned by `artifacts/api-server/src/test/discoveryFeedEventPostsCoverage.test.ts:256#it("V1 a Bearer token whose identi` (the throw), V2 (`AuthRetryableFetchError` status 0 and a 503, places kept as `partial`) and `artifacts/api-server/src/test/discoveryFeedEventPostsCoverage.test.ts:278#it("V4 the auth server rate-limiti` (429). A definitive 401 is still the anonymous case (V3), and so is no header (C2). D-W11X2-10.
+2. **A pull did not refetch the rail.** `handleRefresh` now bumps the rail's `refreshKey` (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:323#setRailRefreshKey(`). On the real ForYouTab with the real rail: refused, then a pull, then a second `getDiscoveryFeed` call and the posts it answered (`travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.railRefresh.component.test.tsx:135#it('R1 refused → pull → the ra`); without a pull it asks once (R2). D-W11X2-13.
+3. **A hung request never resolved.** `getDiscoveryFeed` aborts at `DISCOVERY_FEED_TIMEOUT_MS` = 15 s (`travel-buddy-standalone/src/services/discovery.ts:1378#export const DISCOVERY_FEED_TIMEOUT_MS = 15_000;`, the Compass section budget) and answers `{ ok: false, error: 'timeout' }` (`travel-buddy-standalone/src/services/__tests__/discovery.feedTimeout.test.ts:58#it('T1 a request still pending at the budget`, fake timers; T2 an answer inside the budget is served). D-W11X2-12.
+4. **A transport failure rendered nothing**, which is what a quiet city renders. Under D-W10-S1-2 it now renders the rail's own "couldn't check" sentence under its own testID (`travel-buddy-standalone/src/components/discovery/DiscoveryEventPostsRail.tsx:121#if (unavailable) {`), for a 5xx, the network and the timeout (`travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryEventPostsRail.coverage.component.test.tsx:130#U1. ${name} is the`) and a rejected call (U2), and it clears once a later load answers (U3). The old control is restated by decision, not deleted: a transport failure is still not the refused state, and is no longer silence (`travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryEventPostsRail.refusal.component.test.tsx:208#it('CONTROL (restated §`). D-W11X2-11.
+5. **Overpass returned `[]` silently.** In DV-83's scope, by §80.1's own reasoning (D-W11X2-14). `queryOverpass` now marks a thrown fetch, a non-OK status and an unparseable body (`artifacts/api-server/src/routes/discovery.ts:683#if (!res.ok) return overpassFailed();`). The cold serve paths name it (`artifacts/api-server/src/routes/discovery.ts:2071#if (overpassReadFailed(osmPlaces)) dbFailedSources.push`): `partial`, `["overpass"]`, `overpass_unavailable`, `upstream_unavailable`, DB rows kept and logged (`artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:114#O1–O3 Overpass ${mode}: part`). All three retrievals failing is `nothing` with no exposure (`artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:129#it("O4 all three retrievals failed`); the feed names it (O5); a failure is never cached (O6); the counts refuse such a category (`artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:162#it("O7 counts: every category whose`); an empty answer is not a failure (`artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:174#it("C1 CONTROL: Overpass answering e`).
+
+**Fixtures, stated.** Ten suites and `helpers/discoveryLegacyScenarios.ts` stubbed Overpass with a throw where they meant "Overpass answered nothing". Each now answers an empty 200 on the same line. No assertion changed, and every golden passes unre-captured (§79 Z0/L0, §47's legacy suite, `discoveryCandidatePipelineGolden`), which is the evidence that nothing else moved. `discoveryClientRouteE2E` gets the same line and cannot load on this runner's Node 22.
+
+**Tests seen red first.** Against `3fd11f858`'s `routes/discovery.ts` (file swap, sha256-restored): V1, V2, V4 and O1–O7 red; V3, C1 and the feed's controls green. Against the base client: `ForYouTab.railRefresh` R1 red (one feed call); `discovery.feedTimeout` red (no budget); U1 and U2 red (nothing rendered). U3 is killed by R13 below.
+
+**Mutations (round 2).** 22 of 22 killed, each restored and sha256-checked. R4 and R13 survived their first run, and each was killed by a new case (V4, U3). R4's first form tested a redundant name check, which was removed: every retryable error carries a failure status.
+
+| # | mutation | red |
+|---|---|---|
+| R1 | a transient `getUser` error ignored | V2 |
+| R2 | a thrown lookup not counted | V1 |
+| R3 | every auth error treated as transient | V3 |
+| R4 | 408/429 not transient | V4 |
+| R5 | the read status not seeded from the lookup | V1, V2 |
+| R6 | the pull does not bump the key | R1 |
+| R7 | the rail ignores the key | R1 |
+| R8 | the budget never aborts | T1 |
+| R9 | a timeout reported as a network error | T1 |
+| R10 | a 60 s budget | T3 |
+| R11 | `ok: false` not marked unavailable | U1, the restated control |
+| R12 | a rejected call not marked | U2 |
+| R13 | a healthy answer does not clear it | U3 |
+| R14 | a non-OK Overpass status unmarked | O1–O4 |
+| R15 | a thrown Overpass fetch unmarked | O2, O5 |
+| R16 | an unparseable body throws the route | O3 |
+| R17 | the cold path does not name it | O1–O3 |
+| R18 | the feed does not name it | O5 |
+| R19 | the counts do not refuse | O7 |
+| R20 | always `partial` | O4 |
+| R21 | always `transient_db` | O1–O3 |
+| R22 | an empty answer marked failed | C1, O7 |
+
+**DV-83, restated.**
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§94.10's hold is answered: every clause, on every path the verifier named and every path this lane found.** The criterion: every consumer of a Discovery envelope that can carry `refusal` branches on `coverage`, not on `ok` alone; no refused body is written to a client cache; no refused body is rendered as an empty result. **Consumers.** The eleven files the guard derives still branch on coverage (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts:311#it('G2. every file that consumes a carrier`), and every list-rendering consumer names a partial answer (G7). The rail, the one consumer §94 changed, also names a transport failure (U1, U2) and refetches on a pull (R1). **Caches.** The client's three caches write no `nothing` body (§60.2, unchanged); the rail and the feed call cache nothing. **Producers, so a consumer is SENT the failure.** The feed's event-post read (E1–E5), the viewer lookup that gates it (V1–V4), and Overpass on GET /discovery's cold paths, the feed and the counts (O1–O7) all reach the envelope instead of reading as an empty result, and a hung feed call is bounded (T1). The other server absorptions this lane searched for are either named already (suggest's per-type failures, §80) or are not lists (the new-to-me annotation and saved-count enrichment, which add fields and never remove rows). **Not flag-gated.** Each change alters output only when a read fails. **Stated limits.** Branch only: no client build carrying the rail's changes has shipped. `discoveryClientRouteE2E` cannot load on Node 22 here; its Overpass stub is changed to answer empty and is unrun. |
+
+**Checks** are in 94.12.
+
+### 94.12 Round 2: checks, and the headline
+
+All at the final tree: `disc-integration` at `532227796` merged in, with the round-2 code (`e9687cac6`).
+
+- **Headline.** DV-83 moves W → C again (§94.10's hold is answered in 94.11). `check:census-integrity` counts **C 101 / W 85 / N 2 / X 0** over 188: CONSTRUCTED 98.9 %, CORRECT 53.7 %, the same as 94.8. §96's summary counted 100 C at `3fd11f858` + §94.10; that count is superseded here, and §96's per-action map is unaffected, because DV-83 is not an activation row.
+- **`artifacts/api-server`, all clean:** `typecheck`; `typecheck:tests` at 863 against a baseline of 863; `check:test-registration`, `check:migration-prefixes`, `check:schema-references`, `check:writerless-reads`, `check:enum-literals`, `check:production-drift`, `check:flag-polarity`, `check:discovery-query-paths`, `check:route-auth-gate`, `check:telegraph-inventory`, `check:async-handlers`; `checkFlagSchemaPrerequisites.ts` (2 unguarded, both known); `uncheckedSupabaseReads` 69/69; and, after the last edit, `check:census-integrity`, `check:census-freshness` (acknowledgements appended for census-discovery and census-sensing: the Overpass stubs, the three new suites, the restated rail control), `check:census-scope-coverage`, `check:census-row-move-labels`, `check:census-policy-citations`, `check:doc-citations`, `check:citation-targets`, `check:citation-symbols`.
+- **The full api-server `npm test`:** 28,510 tests, 28,509 pass. The one failure is `discoveryClientRouteE2E`'s Node 22 load failure (§76.5).
+- **Every suite importing `routes/discovery.ts`, plus this lane's suites:** 712 tests, 711 pass, the same E2E load failure.
+- **Mutations:** 22 of 22 round-2 mutations killed (94.11), each restored and sha256-checked, re-run on this final tree after the merge.
+- **Client:** `typecheck` clean; `typecheck:tests` at 173 against a baseline of 173; the Discovery component suites 342/342 in 53 files (jest, including `ForYouTab.railRefresh` and the rail's coverage and refusal suites); the Discovery node suites 134/134 (`discovery.feedTimeout` included; `discovery.searchSignal` excluded as the runner's KNOWN_BROKEN list does); `check:all` "ALL CHECKS PASSED".
+- **Not run:** the harness (round 2 adds no migration); `check:write-path-columns`, `check:authorization-contract` and `check:rank-events-surfaces` (live credentials; round 2 adds no write). `discoveryClientRouteE2E` cannot load on Node 22.
+
+**What would turn DV-83 red again:** a server path that answers a failed read with an empty collection and no refusal (E1–E5, V1–V4, O1–O7 cover the ones found); a consumer rendering a transport failure, a refusal or a partial as an empty result (U1–U3, P1–P5b, the refused suite, G7); a pull that does not reach the rail (R1); an unbounded feed call (T1).
+
+## §98 — DV-83's two remaining paths, from a parallel session, reconciled with §94.11 at integration
+
+*Integrator, 2026-09-28. A second session, working on `claude/sensing-completion-20260925` after `532227796`, fixed the same two §94.10 findings as lane W11-X2's round 2 (§94.11). Its register entries are D-W11X2-15 and -16. On that branch it named its census section "§97"; that number is W11-S's here, so its comments and register references read §98. The independent verifier's round-2 result on §94.11 is recorded in §98.1, and it holds DV-83 at W.*
+
+- **Server, unresolved viewer.** One classifier (X2's `isTransientAuthError`) and one flag (`viewerUnresolved`). The refusal is the other session's `upstream_unavailable` / `feed_viewer_unresolved`. When a place category also failed, D-W11X2-1's places code and class stand. The route diff against §94.11 is 6 lines changed in place, and no cited line moves. Register D-W11X2-17 gives the reasons for each choice.
+- **Client, pull-to-refresh.** One `railRefreshKey` in `ForYouTab`. A pull passes it to `DiscoveryEventPostsRail` and to each `DiscoveryOutputKindsRail`, whose failure copy asks the user to try again. The other session's rail test (`DiscoveryEventPostsRail.refresh.component.test.tsx` R1, R2) and its third `ForYouTab.pullToRefresh` case are kept.
+- **Tests.** `discoveryFeedEventPostsCoverage.test.ts`: 21/21, which is §94.11's E1–E5, C1–C3 and V1–V4 plus the other session's V1–V6 and C4–C6. X2's V1 and V4 now expect `feed_viewer_unresolved`. The narrower classifier fails X2's V4 (429), so the kept rule is the one a test pins.
+- **Also merged from that branch, and not Discovery rows.**
+  - The media worker test's second hang fix (census-media).
+  - The Node-major pin check `nodeRuntimePin.test.ts` with its session hook.
+  - `communityByline.test.ts`, which pins the byline's privacy rule through the identity chain on any Node.
+
+### 98.1 Integrator: DV-83 held at W again after the round-2 verification
+
+The verifier checked §94.11 at `49b8a28e8` and confirmed that all five round-1 findings are closed: identity failure, pull-to-refresh, the 15 s feed bound, transport failure, and Overpass on the wire. Each probe was re-run and each fix mutated, and every mutation turned its test red. The verifier then found two new places where a failed or partial read is shown as complete:
+
+1. **Overpass's in-body failure is not read.** `routes/discovery.ts` `queryOverpass` returns the elements of an HTTP 200 without reading `remark`. The query sets `[timeout:20]`. When Overpass exceeds that, or runs out of memory, it answers 200 with a `runtime error: …` remark and empty or truncated elements. Probed with a faked response: GET /discovery serves the smaller city with no refusal and writes it to Cache A and to L2 for 2 hours. The category counts answer 200 with `Cache-Control: public, max-age=300`.
+2. **ForYouTab replays a cached partial page as complete.** The cache hydration sets `source 'none'` and `osmPartial false`, and the partial notice requires `source === 'osm'`. A cached `partial` / `["overpass"]` page therefore renders its card with no partial notice while the refetch loads. The same page fresh from the network shows the notice.
+
+Neither touches a migration. Both go to a follow-up lane.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | C | **W** | §94.11 closes §94.10's five findings under mutation. Two paths still present a failed or partial read as complete: an Overpass 200 carrying a `runtime error` remark, which is also cached, and ForYouTab's cached replay of a `partial` page (§98.1). |
+### The parallel session's third round, at its own branch (§98.2–§98.8; written there as §97, renumbered at integration)
+
+*Its title there: DV-83's two remaining paths (lane W11-X2, second round): an unresolved viewer's event-post read is a failed read, and a pull refetches the rails; DV-83 moves W → C after three rounds of independent verification.*
+
+*Written 2026-09-28 on `claude/sensing-completion-20260925`, from `756af1f12` through `fec5f11ff` (on top of `532227796`, the media test fix and the Node runtime pin). It closes the two paths §94.10's verifier found. The decisions are D-W11X2-15 and D-W11X2-16, in `docs/architecture/discovery-decision-register.md` section `## DV-83's two remaining paths, from a parallel session (§98)`. No migration, no flag, and nothing was applied to `portava-ci` or production. Every edit to a cited file is line-neutral, except one helper appended at the foot of `routes/discovery.ts`. All evidence was measured on Node 24.21.0, CI's pin.*
+
+### 98.2 Row statement
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§94.10's two paths are closed, and an independent verifier confirmed both after three rounds.** (1) `GET /discovery/feed` now tells an anonymous request from one whose viewer could not be resolved (`artifacts/api-server/src/routes/discovery.ts:2619#let viewerUnresolved = false;`). A presented token whose resolution threw (`artifacts/api-server/src/routes/discovery.ts:2667#if (viewerId === null && req.headers.authorization?.startsWith("Bearer ")) viewerUnresolved = true;`), that had no client to resolve it (`artifacts/api-server/src/routes/discovery.ts:2659#} else if (req.headers.authorization?.startsWith("Bearer ")) viewerUnresolved = true;`), or whose auth service did not answer (`artifacts/api-server/src/routes/discovery.ts:2633#userErr && authServiceUnreachable(userErr)) viewerUnresolved = true;`; the rule is `artifacts/api-server/src/routes/discovery.ts:4607#function authServiceUnreachable(error: unknown): boolean {`) starts the event-post read as failed (`artifacts/api-server/src/routes/discovery.ts:2671#{ readFailed: viewerUnresolved }`). §94's own path then names `event_posts`, under `upstream_unavailable` / `feed_viewer_unresolved` (`artifacts/api-server/src/routes/discovery.ts:2759#viewerUnresolved ? "feed_viewer_unresolved"`). The refusal carries coverage `nothing` and writes no exposure and no per-request serve row (`artifacts/api-server/src/test/discoveryFeedEventPostsCoverage.test.ts:331#it("V1 getUser THROWS`). A code-less 4xx never evaluated the token (`artifacts/api-server/src/test/discoveryFeedEventPostsCoverage.test.ts:433#it("V9 a 4xx with no Auth error code`); Auth's coded verdicts stay anonymous (`artifacts/api-server/src/test/discoveryFeedEventPostsCoverage.test.ts:416#it("C7 CONTROL`), as does no client with no token (`artifacts/api-server/src/test/discoveryFeedNoServiceClient.test.ts:85#it("N1 a Bearer token and no client`). (2) Every pull bumps the rails' key (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:323#setRailRefreshKey((k) => k + 1);`), and the rail refetches on it (`travel-buddy-standalone/src/components/discovery/DiscoveryEventPostsRail.tsx:99#}, [destination, lat, lng, radiusKm, refreshKey]);`; `travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryEventPostsRail.refresh.component.test.tsx:71#it('R1 a new refreshKey`). §94.1's other clauses hold unchanged under mutation (§94.10). |
+
+### 98.3 What was built, and what the verifier changed
+
+**Path 1 (D-W11X2-15).** The event-post read is owed whenever a Bearer token is presented. When no viewer can be resolved from it, the read cannot happen, and that is a failed read, not an anonymous request's empty one. `authServiceUnreachable` separates "Auth did not answer" from "Auth rejected the token":
 
 - **Unresolved:** a throw; no service client; `AuthRetryableFetchError` or `AuthUnknownError`; status 0, 408, 429 or ≥ 500; any other 4xx that carries no Auth error code.
 - **Rejection:** a 4xx with a code (`bad_jwt`, `session_not_found`, `user_not_found`, …); `AuthSessionMissingError` and `AuthInvalidJwtError` by name; an error with no status and no known name.
 
 A rejection is anonymous and owes no read, which is C2's posture. If a place category also failed, D-W11X2-1's places code and class stand, with both sources named.
 
-**Path 2 (D-W11X2-11).** `ForYouTab` bumps `refreshKey` on every pull and passes it to `DiscoveryEventPostsRail` and to each `DiscoveryOutputKindsRail`. Both rails refetch on it.
+**Path 2 (D-W11X2-16).** `ForYouTab` bumps `refreshKey` on every pull and passes it to `DiscoveryEventPostsRail` and to each `DiscoveryOutputKindsRail`. Both rails refetch on it.
 
 **Three rounds of independent verification** (a separate agent; it read the code, probed with a real auth-js 2.108.2 client against a fake auth server, and mutated only a scratch mirror):
 
@@ -16266,7 +16468,7 @@ A rejection is anonymous and owes no read, which is C2's posture. If a place cat
 2. **Round 2 (at `13bc80889`): path 2 CONFIRMED; path 1 NOT CONFIRMED** on one residual. The API gateway refusing this server's own key answers 401 "Invalid API key" with no code, and was read as a rejection. It also found that nothing pinned a 403 `bad_jwt`, and that O7 tested only one pull. Fixed in `fec5f11ff`.
 3. **Round 3 (at `fec5f11ff`): both paths CONFIRMED.** Every shape lands where the register says. That includes a 403 HTML page from a web firewall (unresolved) and the legacy `{"code":403,"error_code":"bad_jwt"}` body (anonymous). Current GoTrue always codes a token rejection for requests carrying the version header auth-js sends. The rule's limit (a pre-2024 self-hosted GoTrue, or a proxy stripping that header, would over-refuse an expired token) is stated in the register. The one cheap survivor it listed, a code-less 400, is pinned by V9 in the final commit.
 
-### 97.3 Tests, seen red first, and mutations
+### 98.4 Tests, seen red first, and mutations
 
 | suite | cases | red first |
 |---|---:|---|
@@ -16303,16 +16505,16 @@ The refresh cases have their own file. The coverage suite's P5 unmounts a root b
   - the refused state stuck (R1, ForYouTab).
 - **Survived, and changing nothing in practice** (per the verifier): an empty-string code or any truthy code read as a verdict, since auth-js only sets `code` from string fields; and a status-less, name-less error read as unreachable, since every error `getUser` returns has a status or a handled name.
 
-### 97.4 Found, routed, not decided
+### 98.5 Found, routed, not decided
 
-- **An unresolved viewer is served community places as an anonymous request is.** Their own blocks and mutes cannot be known, so they cannot be applied. Failing those rows closed would silently withhold places, which is a product choice; D-W11X2-10 routes it.
+- **An unresolved viewer is served community places as an anonymous request is.** Their own blocks and mutes cannot be known, so they cannot be applied. Failing those rows closed would silently withhold places, which is a product choice; D-W11X2-15 routes it.
 - **The client's two silent paths**, which the verifier judged outside the literal criterion:
   - a transport failure (`ok: false`) makes the rail render nothing, which is deliberate and tested;
   - a signed-in client whose token refresh fails sends no Authorization header, so the server's anonymous answer is accurate for the request it received.
 
   Both show the same "nothing live" silence as path 1, and both are the client auth state's to fix.
 
-### 97.5 Checks run, and what was not run
+### 98.6 Checks run, and what was not run
 
 On Node 24.21.0:
 
@@ -16330,13 +16532,13 @@ On Node 24.21.0:
 
 CI on `35062c636` was red on standalone `check:all` for exactly O6 (1 of 4,411), which `13bc80889` fixes. **Not run:** anything against `portava-ci` or production.
 
-### 97.6 What would turn this red
+### 98.7 What would turn this red
 
 - **An unresolved viewer served as a quiet city again:** V1–V9 or N1 go red.
 - **An Auth verdict refused:** C4, C5, C7 or C8 go red.
 - **A pull that no longer reaches a rail, or reaches it only once:** R1, ForYouTab's two pulls, or O6/O7 go red.
 
-### 97.7 Headline, restated from the rows
+### 98.8 Headline, restated from the rows
 
 DV-83 moves W → C, and no other row changes bucket. `check:census-integrity` at this tree counts the discovery census's latest row statements as:
 
@@ -16350,24 +16552,44 @@ DV-83 moves W → C, and no other row changes bucket. `check:census-integrity` a
 - CONSTRUCTED 186 / 188 = **98.9 %**. CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged.
 - These counts equal §94.8's, because §94.10's hold is lifted and nothing else moved.
 
+### 98.9 Integrator: at the merged head DV-83 stays W, and the auth classifier is one rule
 
-### 97.8 Final-head live CI: what was this PR's, and what is the owner's
+*Integrator, 2026-09-28, merging the parallel session's third round (§98.2–§98.8) into the integration head `bc656b9c3`.*
 
-*Added 2026-09-28 after reading the `CI (live DB)` run on `7943a31ba`. No row changes. Nothing was applied to `portava-ci` or production.*
+- **The two paths §98.2 closes are closed here too.** The feed tests (`discoveryFeedEventPostsCoverage.test.ts` V1–V9, C4–C8; `discoveryFeedNoServiceClient.test.ts` N1, N2) and the rail tests (R1, R2, ForYouTab's two pulls, O6, O7) run against this tree.
+- **One auth-lookup classifier (register D-W11X2-21).** `authServiceUnreachable` is the classifier. It keeps the third round's verdict test: a coded 4xx, or a named auth-js rejection, is an anonymous caller. It keeps §94.10's reading of a status-less error: nothing says the token was evaluated, so the viewer is unresolved. §98.4's verifier recorded that reading as a surviving mutant that changes nothing in practice. X2's `isTransientAuthError` now delegates to it. X2's V3 control keeps its assertion; its fixture carries Auth's `code: "bad_jwt"`, as a real rejection does. This supersedes §98's first bullet.
+- **Why the row does not move to C here.** §98.2's C was measured on its own branch. The two defects §98.1 found at `49b8a28e8` are in code that branch shares with this tree, and neither is fixed at this head:
+  1. `queryOverpass` does not read Overpass's in-body `runtime error` remark.
+  2. ForYouTab's cache hydration replays a `partial` page as complete.
+- **What is next.** A follow-up lane (W11-X2 round 3) closes both defects, with failing-first tests and mutations. It is integrated as its own section after this merge. The row moves only after an independent re-verification at that head.
 
-Between the run on `532227796` and the run on `7943a31ba`, someone applied migrations to `portava-ci` out of band, up to about 3466. `check:all` then failed 3 of 46 checks. Two of those failures were this PR's, because the migrations and the code involved exist only on this branch, not on `main`:
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | C | **W** | §98.2's two paths are closed at this head as well: V1–V9, C4–C8, N1, N2, R1, R2, O6 and O7, with one auth classifier (D-W11X2-21). §98.1's two defects are still open here: an Overpass 200 whose `runtime error` remark is not read and whose answer is cached, and ForYouTab's cached replay of a `partial` page as complete. |
 
-- **`check:write-path-columns`: two NEW unresolvable sites.** Both are in the Layover dwell reader and writer, which used `.from(LAYOVER_PLACE_DWELL_TABLE)`. The extractor cannot resolve a constant, so it bucketed both as `dynamic table name`, and the live column check never saw them. They now name the table literally (`artifacts/api-server/src/services/airport/LayoverPlaceDwell.ts:121#.from("layover_place_dwell")`, `artifacts/api-server/src/services/airport/LayoverPlaceDwell.ts:161#db.from("layover_place_dwell").upsert(`). The shared extractor now resolves both, with the 5 and 8 columns 3466 declares. Neither site is in `UNRESOLVED_ALLOWLIST`, so nothing there goes stale. `layoverPlaceDwell.test.ts` passes 15/15.
-- **`check:authorization-contract`: 7 violations, all narrowings.** 3362 and 3363 revoke client table-level SELECT on `posts`, `passport_postcards` and `post_media`, in favour of column-level SELECT. 3390 adds three RESTRICTIVE `discovery_places_deny_*_clients` policies. Each migration is committed on this branch, and the contract's own rule is that such a change updates the contract in the same PR. The four entries are updated in place, with no line added or removed. The update was checked offline through `evaluateContract`. The previous contract, run against the reported live state, reproduces the 7 violations word for word. The new contract finds 0. It still reports a re-granted posts SELECT as BROADENED, and a dropped deny policy as missing. `authorizationContractGuard.test.ts` passes 8/8. Column-level SELECT stays unpinned by the contract, as before: its invariant 1 is table-level.
+Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %; both equal §98.1's.
 
-**The owner's, not this PR's.** None of these is a code change, and none was acted on:
+## §99 — Final-head live CI (integration): two failures this branch owned, fixed; no row changes
 
-- `check:write-path-columns` and `check:missing-live-columns` still fail. They name tables and columns declared by the migrations `audit:schema` lists as unapplied on `portava-ci`: 3476, 3477, 3484, 3486, 3487, 3488, 3495 and 3497.
-- The schema-drift job's dry run reports that the ledger's checksum for `3460_discovery_search_protection_scope.sql` (`7900067214cdbb2b…`) matches neither committed version of that file:
-  - the version on disk, `4cc721434321a8cd…` (`0dfbf93b8`);
-  - the earlier version, `cb88b973c2ae042b…` (`4c70c50d6`).
+*Added 2026-09-28 on `claude/sensing-completion-20260925`, merged over `2d7ee259e`. This section is based on the `CI (live DB)` run on `7943a31ba`. Nothing was applied to `portava-ci` or production. No row changes bucket.*
 
-  Some uncommitted variant was applied, and the ledger has to be reconciled by hand.
+**What that run saw, and why.** It ran while `docs/ops/discovery-portava-ci-apply-plan.md` §8.8's owner-authorized apply of the 73 files was reaching `portava-ci`. So `audit:schema` still listed 3476, 3477, 3484, 3486, 3487, 3488, 3495 and 3497 as unapplied. The dry run also reported 3460's ledger checksum (`7900067214cdbb2b…`) as unlike the file on disk (`4cc721434321a8cd…`). That mismatch was not drift. The apply sent 3460 as it stands at `a9ce69090`, after `7bdbbeb0f` made its postcondition re-runnable. `7943a31ba` predates `7bdbbeb0f`. At this merged head the file hashes to the ledger's value. §8.8 reads 680 ledger rows after the last file. So the missing-object failures from `check:write-path-columns` and `check:missing-live-columns`, and the dry run's mismatch, should clear on the next live run. That run is the confirmation; this section does not claim it.
+
+The run also showed two failures that come from this branch's code or migrations. Neither is on `main`. Both are fixed here:
+
+- **`check:write-path-columns`: two NEW unresolvable sites.** Both are in the Layover dwell reader and writer, which used `.from(LAYOVER_PLACE_DWELL_TABLE)`. The extractor cannot resolve a constant, so it bucketed both as `dynamic table name`, and the live column check never saw them. They now name the table literally (`artifacts/api-server/src/services/airport/LayoverPlaceDwell.ts:121#.from("layover_place_dwell")`, `artifacts/api-server/src/services/airport/LayoverPlaceDwell.ts:161#db.from("layover_place_dwell").upsert(`). The shared extractor now resolves both, with the 5 and 8 columns 3466 declares. Neither site was in `UNRESOLVED_ALLOWLIST`, so nothing there goes stale.
+- **`check:authorization-contract`: 7 violations, all narrowings.** 3362 and 3363 revoke client table-level SELECT on `posts`, `passport_postcards` and `post_media`, in favour of column-level SELECT. 3390 adds three RESTRICTIVE `discovery_places_deny_*_clients` policies. Each migration is on this branch, and the contract's own rule is that such a change updates the contract in the same PR. The four entries are updated in place, with no line added or removed. The update was checked offline through `evaluateContract`. The previous contract, run against the reported live state, reproduces the 7 violations word for word. The new contract finds 0. It still reports a re-granted posts SELECT as BROADENED, and a dropped deny policy as missing. None of the eight files still pending at that run touches a contract table, so the new contract also describes the fully applied state. `authorizationContractGuard.test.ts` passes 8/8. As before, column-level SELECT stays unpinned: the contract's invariant 1 is table-level.
+
+**Checks.** Each was run after the last edit, on Node 24.21.0:
+- `layoverPlaceDwell` 15/15.
+- The 14 suites that read the changed files: 181/181.
+- `typecheck`.
+- `check:schema-references`.
+- `check:doc-citations`.
+- `check:citation-targets` 164/164.
+- `check:census-integrity`, `check:census-freshness`, `check:census-scope-coverage` and `check:census-row-move-labels`.
+
+**Not run:** anything against `portava-ci` or production.
 
 ## Cited, not graded (check:census-scope-coverage)
 
@@ -16418,5 +16640,7 @@ Between the run on `532227796` and the run on `7943a31ba`, someone applied migra
 - NOT-GRADED: artifacts/api-server/src/test/mediaProcessingWorker.test.ts — §90 names it only to record a load-sensitive hang in a full local run (it passes 42 of 42 alone); census-media grades the worker, and no Discovery verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/migrationApplyOrder.test.ts — §95.7 cites it only as the applier's own suite, run to show 3495 and 3496 are appliable (BEGIN before any `$pre$` block); it is shared migration machinery, and no Discovery verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/entryWiringNotCommentedOut.test.ts — §90 names it as the regression test for entry wiring hidden inside line comments (DC-07's scheduler, DV-74's admin router); it guards the entry files, and no Discovery verdict rests on its text.
-- NOT-GRADED: artifacts/api-server/src/test/authSignupStatusNoClient.test.ts — §97.5 names it only as the precedent for discoveryFeedNoServiceClient.test.ts's guard-coverage exemption (clear the Supabase env, then import); it tests the auth signup-status route, and no Discovery verdict rests on it.
-- NOT-GRADED: artifacts/api-server/src/test/authorizationContractGuard.test.ts — §97.8 names it only as the contract evaluator's self-test, run after the contract's four entries were brought to the applied migrations; it guards shared authorization machinery, and no Discovery verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/nodeRuntimePin.test.ts — §98 names it only as merged from the parallel session. It checks the suite's Node major against .replit and is CI machinery, so no Discovery verdict rests on it.
+- NOT-GRADED: travel-buddy-standalone/src/features/discovery/communityByline.test.ts — §98 names it only as merged from the parallel session. It unit-tests the byline's privacy rule through the identity chain on any Node, and no verdict in this census rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/authSignupStatusNoClient.test.ts — §98.6 names it only as the precedent for discoveryFeedNoServiceClient.test.ts's guard-coverage exemption (clear the Supabase env, then import); it tests the auth signup-status route, and no Discovery verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/authorizationContractGuard.test.ts — §99 names it only as the contract evaluator's self-test, run after the contract's four entries were brought to the applied migrations; it guards shared authorization machinery, and no Discovery verdict rests on it.

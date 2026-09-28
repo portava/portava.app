@@ -6,7 +6,7 @@
  *   2. invokes the onRefresh prop passed by the parent discovery screen
  *   3. clears the refreshing spinner once the re-fetch resolves
  *   4. re-fetches the "Live from events" rail, whose refused copy asks for a pull
- *      (census-discovery §97, DV-83)
+ *      (census-discovery §98, DV-83)
  *
  * testID "main-scroll" on the FlatList lets us reach refreshControl via
  * scroll.props.refreshControl.props.onRefresh / .refreshing.
@@ -29,7 +29,7 @@ jest.mock('../../../services/discovery', () => ({
   getSavedPlaceIds:         jest.fn().mockResolvedValue([]),
   getCachedDiscoveryPlaces: (...args: unknown[]) => mockGetCachedDiscoveryPlaces(...args),
   // DiscoveryEventPostsRail (serve point 7) calls this. Its default is a non-ok
-  // result, on which the rail renders nothing; the §97 case below sets its own.
+  // result, on which the rail renders nothing; the §98 case below sets its own.
   getDiscoveryFeed:         (...args: unknown[]) => mockGetDiscoveryFeed(...args),
 }));
 
@@ -165,7 +165,7 @@ describe('ForYouTab — pull-to-refresh', () => {
     });
   });
 
-  it('refetches the "Live from events" rail too, so its refused copy ("Pull to refresh") can be acted on (census-discovery §97, DV-83)', async () => {
+  it('refetches the "Live from events" rail too, so its refused copy ("Pull to refresh") can be acted on (census-discovery §98, DV-83)', async () => {
     const refused = { ok: true, data: { places: [], posts: [], nextCursor: null, total: 0, destination: 'Lisbon', sourceSummary: { seededDbCount: 0, osmCount: 0, userCreatedCount: 0 }, sessionId: null, refusal: { class: 'upstream_unavailable', code: 'feed_viewer_unresolved', route: 'GET /discovery/feed', coverage: 'nothing', failedSources: ['event_posts'] } } };
     const healthy = { ok: true, data: { places: [], posts: [], nextCursor: null, total: 0, destination: 'Lisbon', sourceSummary: { seededDbCount: 0, osmCount: 0, userCreatedCount: 0 }, sessionId: 'sess-2' } };
     mockGetDiscoveryFeed.mockResolvedValue(refused);

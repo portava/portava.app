@@ -19,7 +19,7 @@
  * needs one of these flags, and importing the designs module would drag the
  * Trails, Trips, Passport and Trust readers into every DRS consumer.
  */
-import { getFlagRow } from "./featureFlags.js";
+import { getFlagRow } from "./featureFlags.js"; import { discoveryStopHalt } from "./discoveryStopGate.js";  // census-discovery §97
 
 export const DISCOVERY_SURFACE_OBJECTIVES_FLAG = "discovery_surface_objectives_enabled";
 export const DISCOVERY_ENGAGEMENT_INTEGRITY_FLAG = "discovery_engagement_integrity_enabled";
@@ -77,7 +77,7 @@ function state(row: { enabled: boolean; metadata: Record<string, unknown> | null
  */
 export async function loadRankDesignFlags(sc: any, nowMs: number = Date.now()): Promise<RankDesignFlags> {
   if (!sc) return ALL_RANK_DESIGN_FLAGS_OFF;
-  if (cache && cache.client === sc && nowMs - cache.at < TTL_MS) return cache.flags;
+  if (cache && cache.client === sc && nowMs - cache.at < TTL_MS) return stopped(sc, cache.flags);
   const [objectives, integrity, families, intent, tripMatch, diversity] = await Promise.all([
     getFlagRow(sc, "discovery_surface_objectives_enabled"),
     getFlagRow(sc, "discovery_engagement_integrity_enabled"),
@@ -91,5 +91,10 @@ export async function loadRankDesignFlags(sc: any, nowMs: number = Date.now()): 
     intent: state(intent), tripMatch: state(tripMatch), diversity: state(diversity),
   };
   cache = { client: sc, at: nowMs, flags };
-  return flags;
+  return stopped(sc, flags);
+}
+
+/** census-discovery §97 (D-W11S-1): while the Discovery stop is engaged every §78 design reads OFF — the flag-off ranker. Consulted only when a flag is ON. */
+async function stopped(sc: unknown, flags: RankDesignFlags): Promise<RankDesignFlags> {
+  return anyRankDesignEnabled(flags) && (await discoveryStopHalt(sc)) !== null ? ALL_RANK_DESIGN_FLAGS_OFF : flags;
 }

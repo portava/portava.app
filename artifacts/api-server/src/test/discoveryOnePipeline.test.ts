@@ -76,7 +76,7 @@ import { liveClaimReadFailures, withLiveClaimsWithheld, liveSafetyDegradation, L
 const _originalFetch = globalThis.fetch;
 globalThis.fetch = async (url: string | URL | Request, init?: RequestInit) => {
   const u = String(typeof url === "string" ? url : (url as URL).href ?? "");
-  if (u.includes("overpass-api.de") || u.includes("nominatim.openstreetmap.org")) throw new Error("Network blocked in test environment");
+  if (u.includes("overpass-api.de")) return new Response(JSON.stringify({ elements: [] }), { status: 200, headers: { "content-type": "application/json" } }); if (u.includes("overpass-api.de") || u.includes("nominatim.openstreetmap.org")) throw new Error("Network blocked in test environment");
   return _originalFetch(url as string, init);
 };
 

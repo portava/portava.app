@@ -92,11 +92,11 @@ describe('DiscoveryOutputKindsRail (§94)', () => {
   it('O6 ForYouTab renders the rail for all three kinds, gated on the viewer being signed in', () => {
     const src = readFileSync(join(__dirname, '..', 'ForYouTab.tsx'), 'utf8');
     expect(src).toContain("import { DiscoveryOutputKindsRail } from './DiscoveryOutputKindsRail.tsx';");
-    // Restated by §97 (register D-W11X2-11): the rails also take the tab's pull, so the wiring now carries refreshKey.
+    // Restated by §98 (register D-W11X2-16): the rails also take the tab's pull, so the wiring now carries refreshKey.
     expect(src).toContain("{(['trails', 'shared_moments', 'emerging_discoveries'] as const).map((k) => <DiscoveryOutputKindsRail key={k} kind={k} destination={destination} enabled={isAuthed} refreshKey={railRefreshKey} />)}");
   });
 
-  it('O7 (§97) a failed rail refetches on a new refreshKey, the tab\'s pull, and not on a re-render with the same key', async () => {
+  it('O7 (§98) a failed rail refetches on a new refreshKey, the tab\'s pull, and not on a re-render with the same key', async () => {
     mockFlags = { discovery_output_kinds_enabled: true };
     mockGet.mockResolvedValue({ ok: false, reason: 'unavailable' });
     const r = await render(<DiscoveryOutputKindsRail kind="trails" destination="Miami" enabled refreshKey={0} />);

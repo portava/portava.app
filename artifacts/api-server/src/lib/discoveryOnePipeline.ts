@@ -27,7 +27,7 @@
  * served, so that is the owner's decision (Phase F gate 2; register entry
  * D-W10R4-2). Nothing here turns anything on.
  */
-import { isFlagEnabled } from "./featureFlags.js";
+import { isFlagEnabled } from "./featureFlags.js"; import { unlessDiscoveryStopped } from "./discoveryStopGate.js";  // census-discovery §97: a tripped stop reads both OFF
 
 /** Literal names so check-flag-polarity resolves the reads. */
 export const DISCOVERY_FOR_YOU_PDE_FLAG = "discovery_for_you_pde_enabled";
@@ -53,11 +53,11 @@ async function cachedFlag(key: string, read: () => Promise<boolean>): Promise<bo
 /** 3455. Only a signed-in `for_you` request can be governed by it; everything else answers false without a read. */
 export async function forYouPdeEnabled(sc: any, category: string, viewerId: string | null): Promise<boolean> {
   if (category !== "for_you" || !viewerId || !sc) return false;
-  return cachedFlag(DISCOVERY_FOR_YOU_PDE_FLAG, () => isFlagEnabled(sc, DISCOVERY_FOR_YOU_PDE_FLAG));
+  return unlessDiscoveryStopped(sc, await cachedFlag(DISCOVERY_FOR_YOU_PDE_FLAG, () => isFlagEnabled(sc, DISCOVERY_FOR_YOU_PDE_FLAG)), { measure: true });  // §97 (D-W11S-1): ON + stopped ⇒ the flag-off page
 }
 
 /** 3456. An anonymous request has no viewer to rank for, so it answers false without a read. */
 export async function cacheARankedEnabled(sc: any, viewerId: string | null): Promise<boolean> {
   if (!viewerId || !sc) return false;
-  return cachedFlag(DISCOVERY_CACHE_A_RANKED_FLAG, () => isFlagEnabled(sc, DISCOVERY_CACHE_A_RANKED_FLAG));
+  return unlessDiscoveryStopped(sc, await cachedFlag(DISCOVERY_CACHE_A_RANKED_FLAG, () => isFlagEnabled(sc, DISCOVERY_CACHE_A_RANKED_FLAG)), { measure: true });  // §97 (D-W11S-1)
 }

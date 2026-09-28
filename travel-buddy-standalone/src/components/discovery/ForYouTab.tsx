@@ -100,7 +100,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
     if (!destination) return false;
     return getCachedDiscoveryPlaces(destination, 'for_you', 25, 1, intentMode) === null;
   });
-  const [refreshing, setRefreshing] = useState(false); const [railRefreshKey, setRailRefreshKey] = useState(0);  // census-discovery §97 (DV-83, §94.10): the rails' own reads follow the pull too
+  const [refreshing, setRefreshing] = useState(false);
   // 'refused' is a FOURTH state and not a flavour of 'none'.
   //
   // Owner ruling, 2026-09-14: "A distinguishable response body alone is
@@ -109,7 +109,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
   // 'none' here is exactly the consumer-side collapse the sentence forbids —
   // the user is told "there is nothing in Lisbon" when the truth is "we never
   // managed to look".
-  const [source, setSource]     = useState<'compass' | 'osm' | 'none' | 'refused'>('none'); const [osmPartial, setOsmPartial] = useState(false); // §80 (DV-83): the OSM lane answered PARTIAL
+  const [source, setSource]     = useState<'compass' | 'osm' | 'none' | 'refused'>('none'); const [osmPartial, setOsmPartial] = useState(false); const [railRefreshKey, setRailRefreshKey] = useState(0); // §80 (DV-83): the OSM lane answered PARTIAL
   // The saved-places read is a separate surface with a separate failure: your
   // bookmarks are not the place list, and one can fail while the other works.
   const [savedIdsUnavailable, setSavedIdsUnavailable] = useState(false); const [liveUnchecked, setLiveUnchecked] = useState(false);  // census-discovery §91 (A07): the GET /discovery page's "now" claims were withheld (meta.liveSafety)
@@ -320,8 +320,8 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
   }, [load]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleRefresh = () => {
-    setRefreshing(true);
-    load(true); setRailRefreshKey((k) => k + 1);
+    setRefreshing(true); setRailRefreshKey((k) => k + 1);  // census-discovery §94.10: a pull asks the Live-from-events rail again, as its refused copy promises
+    load(true);
     onRefresh?.();
   };
 

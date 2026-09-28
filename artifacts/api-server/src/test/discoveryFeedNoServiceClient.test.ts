@@ -1,11 +1,11 @@
 /**
- * census-discovery §97 (DV-83, §94.10) — GET /discovery/feed with NO SERVICE
+ * census-discovery §98 (DV-83, §94.10) — GET /discovery/feed with NO SERVICE
  * CLIENT and a presented Bearer token is an unresolved viewer, not an
  * anonymous one.
  *
  * With no client the viewer cannot be resolved at all, so the event-post read
- * the token asks for cannot happen. Before §97 that answered 200 with no posts
- * and no refusal: the "nothing live" screen, found by §97's independent
+ * the token asks for cannot happen. Before §98 that answered 200 with no posts
+ * and no refusal: the "nothing live" screen, found by §98's independent
  * verifier after the first round had called this case unreachable.
  *
  *   N1  a Bearer token and no client: refused upstream_unavailable / feed_viewer_unresolved, "nothing", ["event_posts"]
@@ -81,7 +81,7 @@ before(async () => {
 
 after(() => { server.close(); globalThis.fetch = _originalFetch; });
 
-describe("GET /discovery/feed with no service client (DV-83, §97)", () => {
+describe("GET /discovery/feed with no service client (DV-83, §98)", () => {
   it("N1 a Bearer token and no client: refused upstream_unavailable / feed_viewer_unresolved, coverage 'nothing'", async () => {
     const r = await get(FEED_POSTS_ONLY, true);
     assert.equal(r.status, 200);

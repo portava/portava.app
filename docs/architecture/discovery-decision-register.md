@@ -1802,6 +1802,42 @@ W10D-C5 (the three personal projections) and AR-W11A-2 (circles, crews, visits) 
 - **Reversibility.** Revert the two in-place edits and restore the copies from git.
 - **Where.** `routes/discovery.ts` (two lines in place, the padded deletions, one foot import); `test/discoveryIntegrationHooks.test.ts` R1c (appended); `test/discoveryCandidateRowParity.test.ts` R1 (restated). §95's DC-12 citation of R1 is repointed to the restated case, and its sentence "The route does not pass the centre yet (routed hunk R-X3-1)" is superseded by §94.
 
+### D-W11X2-10 — a failed identity lookup on the feed is a failed event-post read (DV-83, round 2)
+
+- **The question.** The independent verifier (census §94.11): with a valid Bearer token, `auth.getUser` throwing or answering `AuthRetryableFetchError` left `viewerId` null, the feed sent `Promise.resolve([])`, and the answer was 200, `posts: []`, no refusal — the rail's "nothing live" screen for a read nobody performed.
+- **Options considered.** (a) Refuse the whole feed. The places half really was read, and discarding it is the opposite defect. (b) Treat the owed event-post read as failed: `failedSources: ["event_posts"]` under the feed's existing coverage rule. (c) Treat every `getUser` error as a failure. A definitive 4xx (invalid or expired token) then reads as an outage, and every signed-out client with a stale token sees "couldn't check".
+- **Decision.** (b), classified on the error's status. A missing status, 0, 408, 429 or any 5xx is a lookup that did not happen (supabase-js's `AuthRetryableFetchError` carries 0 or 502–504; the auth server's rate limit is an `AuthApiError` 429). Any other 4xx means the token names nobody: the anonymous case, exactly as a request with no header (C2, V3). A thrown lookup with a Bearer header is a failure (V1). The block read throwing after the viewer resolved keeps its documented fail-open posture; it is not an identity failure.
+- **Where.** `routes/discovery.ts` (the feed's viewer block, in place; `isTransientAuthError` at the foot). Tests: `discoveryFeedEventPostsCoverage` V1–V4.
+
+### D-W11X2-11 — the rail says "couldn't check" on a transport failure (DV-83 under D-W10-S1-2)
+
+- **The question.** The rail rendered nothing for `ok: false` (a 5xx, the network, now the request budget), pinned by "CONTROL: a transport failure is not a refusal and still renders nothing". Nothing is what a quiet city renders.
+- **Options considered.** (a) Keep silence: a transport failure reads as an absence, the masquerade D-W10-S1-2 forbids for a partial answer. (b) The refused state itself: indistinguishable in tests from a server refusal, which differ for attribution. (c) The same honest sentence under its own testID.
+- **Decision.** (c). "We couldn't check what's live nearby just now — this isn't a sign that nothing is happening. Pull to refresh." — the rail's existing refused copy, now one constant — under `discovery-event-posts-rail-unavailable`. Neither state keeps a session id. A later load that answers clears it. The existing control is restated, not deleted: it still asserts a transport failure is NOT the refused state, and now asserts it is not silence.
+- **Where.** `travel-buddy-standalone/src/components/discovery/DiscoveryEventPostsRail.tsx`. Tests: `DiscoveryEventPostsRail.coverage` U1–U3; `DiscoveryEventPostsRail.refusal` CONTROL (restated).
+
+### D-W11X2-12 — `getDiscoveryFeed` is bounded at 15 s
+
+- **The question.** A hung request never resolved, so the rail never appeared in any state.
+- **Decision.** 15 000 ms, `DISCOVERY_FEED_TIMEOUT_MS`, the Compass section budget (`services/compass.ts` `COMPASS_SECTION_TIMEOUT_MS`): the feed's only caller is a supplementary strip in the For You tab, beside the Compass sections, and should give up on the same clock. Longer than the server's own upstream budgets for the event-post path, which reads only the database (the rail asks `includePlaces=0`). A timeout answers `{ ok: false, error: 'timeout' }`, the transport-failure shape, which D-W11X2-11 renders.
+- **Where.** `travel-buddy-standalone/src/services/discovery.ts` (in place; the constant at the foot). Tests: `discovery.feedTimeout` T1–T4, with node:test's fake timers.
+
+### D-W11X2-13 — a pull refetches the rail
+
+- **Decision.** `ForYouTab.handleRefresh` bumps a `refreshKey` that the rail takes as an effect input, so the "Pull to refresh" the refused and unavailable copy promises is true. Nothing else is refetched by it.
+- **Where.** `ForYouTab.tsx` (in place), `DiscoveryEventPostsRail.tsx`. Tests: `ForYouTab.railRefresh` R1, R2 on the real ForYouTab and the real rail.
+
+### D-W11X2-14 — Overpass reports a failed read, and DV-83 covers it
+
+- **The question.** Is `queryOverpass`'s silent `[]` (routes/discovery.ts, the OSM half of GET /discovery, the feed and the counts) inside DV-83?
+- **Finding.** Yes. DV-83's criterion is the consumer leg, but §80.1 already held that a server path which absorbs a failure blocks it — *"the rail cannot branch on a failure it is never sent"* — and the event posts were graded on exactly that. The places list is a carrier of the same envelope, and `sendDiscoveryPlacesEnvelope` recorded the gap in its own words ("Overpass cannot [report]"). So DV-83 cannot be `C` while it stands.
+- **Decision.** `queryOverpass` returns the same empty array, MARKED as failed (a WeakSet, the idiom of `lib/discoveryRefusal.ts`), for a thrown fetch, a non-OK status and an unparseable body; an answered empty list is unmarked.
+  - GET /discovery's cold serve paths (4, 5, 6) add `"overpass"` to `failedSources`. Overpass alone is `overpass_unavailable`, class `upstream_unavailable` (the owner's seventh class); with a DB half it is the combined `discovery_place_sources_read_failed`. Coverage stays `partial` while any retrieval answered; with all three failed and nothing served it is `nothing`, so no exposure is logged.
+  - The feed names `"overpass"` beside its categories. The counts treat such a category as failed, D11's own rule there ("a count taken over the OSM half alone is not a smaller number, it is a DIFFERENT number").
+  - A failed read is never cached (Cache A writes only OSM rows that exist).
+  - **Fixtures.** Ten suites and the legacy-scenario helper stubbed Overpass with a throw where they meant "Overpass answered nothing". A throw is now an outage the route names, so each answers an empty 200 instead, on the same line. No assertion changed, and every golden (§79 Z0/L0, §47's legacy suite) passes unre-captured, which is the evidence that nothing else moved. `discoveryClientRouteE2E` gets the same one-line change and cannot load on this runner's Node 22 (§76.5).
+- **Where.** `routes/discovery.ts` (in place, and the helpers at the foot). Tests: `discoveryOverpassFailedSource` O1–O7, C1.
+
 ## W11-P — the owner approval request, consolidated
 
 *Lane W11-P, 2026-09-28, branch `disc-w11-approvals` at integration head `3fd11f858`. Census section §96. Docs only. The document is `docs/ops/discovery-owner-approval-request.md`. The apply plan gains §8 and the rollout plan gains §9. No approval entry is added and none is answered: every action in the document is an existing APPROVAL REQUIRED entry, deduplicated.*
@@ -1840,11 +1876,71 @@ W10D-C5 (the three personal projections) and AR-W11A-2 (circles, crews, visits) 
 - The document states the manual recovery: action 8's SQL, also added to rollout plan §9.3.
 - Making those reads honour a trip is a routine engineering change for the serve-path owner. This lane does not build it.
 
-## W11-X2, second round — DV-83's two remaining paths (§97)
+## W11-S — safety and recovery
 
-*2026-09-28, on `claude/sensing-completion-20260925` after `532227796` and the integration of the media test fix. Census section §97. Row: DV-83 (held at W by §94.10). No migration and no flag. Both changes are line-neutral in every cited file.*
+*Lane W11-S, 2026-09-28, branch `disc-w11-safety` at integration head `532227796`. Census section §97. Rows restated: DV-82, DC-32, DC-18, DC-27. Work items: the three gaps lane W11-P routed (approval request §4 action 8 and §3; apply plan §8.3). No migration added. One unapplied migration corrected (3460). Eleven rollback files written, one rollback file corrected (3385). Harness: PostgreSQL 16 on port 55465, data under `/var/tmp/w11s-*`, deleted afterwards. All evidence is controlled; none is production evidence, and nothing was applied to `portava-ci` or production.*
 
-### D-W11X2-10 — a signed-in request whose viewer cannot be resolved is a failed event-post read (DV-83, §94.10)
+### D-W11S-1 — a stopped Discovery reads every rollout flag OFF, at the flag's own reader
+
+- **The question.** W11-P, register "Finding, routed and not decided": *"`lib/discoveryOnePipeline.ts` reads only `discovery_for_you_pde_enabled` and `discovery_cache_a_ranked_enabled`, and not the stop state. Neither does the §78 flag reader. So with gate 2 on, a trip does not return `for_you` or Cache A to their pre-§79 order."* `12` "Stop conditions": *"Stop rollout if: event rejection rises, recommendation logging gaps appear, creator concentration spikes …"*.
+- **Options considered.**
+  - (a) Keep the manual flag flip (approval request action 8). Consequence: the automatic half of the stop protects only `DISCOVERY_ENGINE_MODE`; 3455 and 3456 serve PDE in every mode, and serve point 6 runs §78's designs and §85's stages for every signed-in viewer in `legacy` too, so a trip leaves most of the rollout serving.
+  - (b) Check the stop at each serve point in `routes/discovery.ts`. Consequence: four call sites in the route plus every other caller of `rankForViewer` (the output-kinds route, the Map reader, Pulse's objective), each a place to forget.
+  - (c) Check it at the readers: `forYouPdeEnabled`, `cacheARankedEnabled`, `loadRankDesignFlags` (§78's six), `loadPipelineFlags` (§85's eight) and the output-kinds route's own flag read. A stopped Discovery reads each of those flags OFF, which is exactly what the manual recovery does.
+  - (d) As (c), but latched until a human clears it. Consequence: the engine mode is not latched (a cleared condition returns the configured mode on the next resolution), so a latch here would make the two halves disagree.
+- **Decision.** (c), not latched, through one module, `lib/discoveryStopGate.ts`.
+  - **What halts:** a tripped `12` condition (`evaluateStopConditions`, the verdict the resolver takes, in-process), or the manual stop `disable_discovery_pde` TRUE, read fail-closed through `isKillSwitchEngaged` and cached 30 s per client. Every gated path is PDE serving, so the switch named "disable PDE" disables it on each of them; the resolver already reads it for `pde` (D3=B).
+  - **Only when the flag reads ON.** A reader whose flag is OFF never reaches the gate, so flag-off reads and bytes are unchanged, pinned by B0/B1 and by the untouched goldens (§79 Z0, §85 P1–P3, §78 G1–G3).
+  - **The gate also measures.** The resolver refreshes 3391's four database conditions only for a non-legacy mode, and 3455/3456 serve in `legacy`. So the 3455 and 3456 readers run the same single-flight refresh, at most once per 30 s per client (G6). The §78/§85 readers do not: they are handed a write-suppressed client on shadow runs, whose `rpc` answers inertly, and a refresh through it would record four false `unreadable` readings that halt once armed (M8 proves the difference). Action 10 activates those flags in `pde` cohorts, where the resolver measures.
+  - **Scope.** 3455, 3456, 3450–3454 (including Pulse's objective, which shares 3450 and so returns to its flag-off order too), 3480–3484's pipeline reads (including the output kinds and 3484's served graph-provenance leg). **Not** gated, each with its reason: `discovery_live_rank_enabled` (2850) is Sensing's safety demotion, and turning a demotion of dangerous places off automatically is not a safe fall-back; 3500's objective ranks (Trail, Trending, Trip Planning), 3485's Trail exploration, 3490, 3496 and 2361's projection serve surfaces the stop does not measure or change no order. Their recovery stays the flag flip in the approval request.
+- **Reversibility.** Revert the five one-line hunks (`discoveryOnePipeline.ts` ×2 plus its import line, `discoveryRankFlags.ts`, `pipelineFlags.ts`, `routes/discoveryOutputKinds.ts`) and delete the module. Nothing is stored.
+- **Where.** `artifacts/api-server/src/lib/discoveryStopGate.ts`; the readers above. Tests: `src/test/discoveryStopGate.test.ts` B0, B1, G1–G6 and controls C1–C4c; mutations M1–M11 (census §97.4).
+
+### D-W11S-2 — a rollback file for every file that had none, and what each refuses
+
+- **The question.** Approval request §3 and §4: *"2901, 2921 and 2930 have no rollback file and no in-file reversal note"*; *"No `db/rollback/` file exists for 3440, 3441, the P0 files 2289, 2297, 2892, 2894 and 2995, or 2893."*
+- **Options considered.** (a) Leave the in-file notes (the gap is "the file form, not the method"). Consequence: 2297's and 2894's notes DELETE user rows, 2892's drops a table under later files that build on it, and 2901/2921/2930 have nothing. (b) Files in the style of W10-F's: guarded, deleting their own ledger row, with postconditions, refusing where data or an ON flag would be lost.
+- **Decision.** (b), eleven files, each rehearsed (census §97.5).
+  - **Refuse, never delete, where user or financial data would be lost:** 2297 while a `dismiss` row exists; 2894 while a `trip_add` row exists; 2901 and 2921 while their ledgers hold any row (the owner's retention question, W10D-B0 / C-11). **For 2901 and 2921 a true rollback is unsafe once a row exists, so those files are the refusing kind.**
+  - **Refuse where an ON flag would be lost:** 2289 while its flag is TRUE (and keep a row 2289 did not write); 2921 and 2930 while `creator_attribution_enabled` is TRUE.
+  - **Refuse while a later file builds on it** (newest first): 2297 under 2894 or 2995; 2892 under 3410, 3435 or 3476 (a column outside its fifteen), 3476 or 3477; 2901 under 2930 or 3387; 2921 under 3385 or 3387; 2930 under 3385; 2893 unless the CHECK is exactly its eight.
+  - **2892 refuses while `place_momentum` holds any row.** The rows are derived, but whether their `rank_events` source still exists is a retention fact the file cannot check; the operator deletes them deliberately and re-runs.
+  - **3440 and 3441 are their footers as files,** with 2220's and 3415's function bodies copied byte for byte by script. 3441's stored slugs are not rewritten back, and its file says so with a NOTICE count.
+- **Reversibility.** Each file is run only as the recovery for a named failure; re-applying the forward file restores the catalogue exactly (0 of 12,320 lines differ, §97.5).
+- **Where.** `db/rollback/2026-09-28-{2289,2297,2892,2893,2894,2901,2921,2930,2995,3440,3441}-…-rollback.sql`.
+
+### D-W11S-3 — 3460's postcondition is re-runnable after COMMIT
+
+- **Found by the rehearsal.** Certify stage 4 re-runs every assertion-only non-`$pre$` block after commit. 3460's `$post$` reads `_3460_before`, a `TEMP … ON COMMIT DROP` table, so the re-run fails with `relation "_3460_before" does not exist`: W10-F's F4 defect in a file that landed after F4.
+- **Options.** (a) Retag the block `$pre$`: the description check would never be re-run. (b) When the temp table is absent (after commit), re-check only what the committed database can answer, the description; inside the applying transaction, the state check runs as before.
+- **Decision.** (b), line-neutral (two lines added at the top of the block's body; no statement changed). 3460 is applied nowhere (apply plan §8.1, its own header), so this is not an edit of an applied migration.
+- **Where.** `artifacts/api-server/src/migrations/3460_discovery_search_protection_scope.sql`. Controls: after commit, a description without the gateway fails; inside a transaction, a changed state still fails (census §97.6).
+
+### D-W11S-4 — a `+post` flag file records its ledger row before it can refuse a TRUE flag
+
+- **Found by the rehearsal's negative control.** With `discovery_for_you_pde_enabled` pre-set TRUE, the apply stopped at 3455 (`POSTCONDITION FAILED (3455): … is ON`), and the flag kept its TRUE value, as the plan requires. But 3455 **was recorded** in the ledger: its "ships OFF" check sits in the post-`COMMIT` tail, which the applier runs after the body and its ledger row commit. Apply plan §3 says a file *"is never recorded"* in that case; that is true of 3351 (W10-D's control, an in-transaction check) and false of the 26 flag-seeding files whose only TRUE check is after COMMIT: 3366, 3395, 3400, 3410, 3450–3456, 3465, 3467–3470, 3475, 3480–3485, 3490, 3496, 3500.
+- **Options.** (a) Move the TRUE check into each file's transaction: 26 files rewritten for a case the pre-flight already excludes. (b) Correct the plan: the pre-flight reads (§2.1 (b), §8.2 (b')) require every one of these flags ABSENT or FALSE before the apply, and the operator stops if one is not; state the recovery if it happens anyway.
+- **Decision.** (b). No value is overwritten either way, and certify stage 4 re-runs the same `$post$` block, so a TRUE flag under a recorded file is never silent. Recovery: turning the flag off is a production decision; until then the file stays recorded and its rollback refuses while the flag is TRUE.
+- **Where.** Apply plan §8.5.
+
+### D-W11S-5 — 3385's rollback restores 2930's view comment; the seven tighter privilege lines stay
+
+- **The question.** Apply plan §4.4 and §7.4: after every rollback, eight catalogue lines differ from the baseline, all tighter or equal.
+- **Decision.** The one cosmetic line (3385's comment left on the restored view) is fixed: the rollback now sets 2930's comment, verbatim. The other seven are privileges 3390's and 3410's rollbacks do not re-grant to `anon` and `authenticated`. Re-granting them would widen client access to restore a state the rollout itself judged wrong, so they stay, stated.
+- **Where.** `db/rollback/2026-09-27-3385-creator-share-ledger-includes-creator-entries-rollback.sql`.
+
+### D-W11S-6 — the rehearsal driver rehearses the current set
+
+- **Decision.** `rehearse-pending-apply.ts` gains `PENDING_AT_3FD11F858` (apply plan §8.1's 73, with §8.1's `+post` shapes), used by `plan`, `postconditions`, `rollback` and `emit-rollback-rehearsal`. `REHEARSE_SET=84318d1b2` selects the historical 40. Line 71, which the census cites, did not move. The zero-persistence file now covers all 73 (step 3 of the apply plan's §8.4).
+- **Where.** `artifacts/api-server/scripts/local-db/rehearse-pending-apply.ts`.
+
+No APPROVAL REQUIRED entry is added. Arming the stop (D-W10-O-3) and gate 2 (D-W10R4-2) remain the owner's; D-W11S-1 changes only what happens after either trips.
+
+## DV-83's two remaining paths, from a parallel session (§98)
+
+*2026-09-28, on `claude/sensing-completion-20260925` after `532227796` and the integration of the media test fix. Census section §98 (written as §97 on the branch, renumbered at integration: §97 is W11-S). Row: DV-83 (held at W by §94.10). No migration and no flag. Both changes are line-neutral in every cited file.*
+
+### D-W11X2-15 — a signed-in request whose viewer cannot be resolved is a failed event-post read (DV-83, §94.10)
 
 - **The question.** §94.10: *"A signed-in viewer whose identity cannot be resolved has the event-post read skipped silently … an `auth.getUser` throw, or an `AuthRetryableFetchError`, answers 200 with no posts and no refusal, the same screen as 'nothing live'."* Which failures make a viewer unresolved rather than anonymous, and what does the envelope say?
 - **Options considered.**
@@ -1853,13 +1949,35 @@ W10D-C5 (the three personal projections) and AR-W11A-2 (circles, crews, visits) 
   - Class: (i) `transient_db`, as the other event-post failures; (ii) `upstream_unavailable`, the owner's 2026-09-14 class for a dependency this deployment calls and does not operate.
 - **Decision.** (b) and (ii). The unresolved state starts the event-post read as failed (`readFailed: viewerUnresolved`), so the existing path names `"event_posts"` in `failedSources` and the existing coverage rule decides `nothing` or `partial`. Code `feed_viewer_unresolved`. When a place category also failed, the places code and `transient_db` stand, as in D-W11X2-1, with both sources named. No exposure is logged for a refused answer, and nothing is cached.
 - **The limit of the rule, stated.** It relies on Auth coding its rejections, which hosted Supabase Auth does for every request that sends `X-Supabase-Api-Version ≥ 2024-01-01` (auth-js sends it; the verifier read `supabase/auth`'s `internal/api/errors.go`, which falls back to `unknown` rather than no code). Two setups would read an expired token as unresolved and show the refused copy instead of the anonymous empty rail: a self-hosted GoTrue from before error codes existed, and a proxy between the api-server and Auth that strips the version header. Neither applies here (every Supabase URL in the repo is `*.supabase.co`), and the failure is an over-refusal, never a silent empty answer.
-- **Not decided here, routed.** An unresolved viewer is served community places as an anonymous request is: their own blocks and mutes cannot be applied because they cannot be known. Failing those rows closed would silently withhold places, which is a product choice. §97 records it as a finding.
+- **Not decided here, routed.** An unresolved viewer is served community places as an anonymous request is: their own blocks and mutes cannot be applied because they cannot be known. Failing those rows closed would silently withhold places, which is a product choice. §98 records it as a finding. A server with no service client is a deployment misconfiguration; with a Bearer token presented it is an unresolved viewer too (N1).
 - **Reversibility.** Revert the six in-place lines in `routes/discovery.ts` and the helper at its foot. Nothing is stored.
-- **Where.** `artifacts/api-server/src/routes/discovery.ts` (the feed; `authServiceUnreachable` at the foot). Tests: `src/test/discoveryFeedEventPostsCoverage.test.ts` V1–V9 and C4–C8, appended below the anchored cases; `src/test/discoveryFeedNoServiceClient.test.ts` N1, N2. §97's independent verifier found three gaps across two rounds, each fixed before the row moved: 429 and 408 classed as rejections, the no-client case left silent, and the gateway's code-less 401 read as a rejection.
+- **Where.** `artifacts/api-server/src/routes/discovery.ts` (the feed; `authServiceUnreachable` at the foot). Tests: `src/test/discoveryFeedEventPostsCoverage.test.ts` V1–V9 and C4–C8, appended below the anchored cases; `src/test/discoveryFeedNoServiceClient.test.ts` N1, N2. §98's independent verifier (the parallel session's) found three gaps across two rounds, each fixed before the row moved: 429 and 408 classed as rejections, the no-client case left silent, and the gateway's code-less 401 read as a rejection.
 
-### D-W11X2-11 — a pull refetches the rails whose copy asks for one (DV-83, §94.10)
+### D-W11X2-16 — a pull refetches the rails whose copy asks for one (DV-83, §94.10)
 
 - **The question.** §94.10: *"Pull-to-refresh also does not refetch the rail its refused copy asks the user to pull."* `DiscoveryEventPostsRail` fetched only when its destination or coordinates changed.
 - **Decision.** `ForYouTab` bumps a `refreshKey` on every pull and passes it to `DiscoveryEventPostsRail` and to each `DiscoveryOutputKindsRail`, whose failure copy says "Try again in a moment." Each rail adds the key to its fetch effect's dependencies, so a pull refetches it and nothing else does.
 - **Reversibility.** Drop the prop; the rails return to fetching on place changes only.
 - **Where.** `travel-buddy-standalone/src/components/discovery/ForYouTab.tsx`, `DiscoveryEventPostsRail.tsx`, `DiscoveryOutputKindsRail.tsx` (line-neutral). Tests: `DiscoveryEventPostsRail.refresh.component.test.tsx` R1, R2; `ForYouTab.pullToRefresh.component.test.tsx`'s third case (every pull, not only the first); `DiscoveryOutputKindsRail.component.test.tsx` O6 (restated: the wiring carries `refreshKey`) and O7 (two pulls).
+
+### D-W11X2-17 — reconciling the two implementations of the same two paths
+
+- **What happened.** Lane W11-X2's round 2 (D-W11X2-10, -13) and a parallel session (D-W11X2-15, -16) fixed the same two §94.10 paths on separate branches. Both were merged at integration. The server had to end with one classifier and one flag. The client had to end with one refresh key.
+- **Classifier (superseded by D-W11X2-21).** X2's `isTransientAuthError` is kept, and `authServiceUnreachable` is dropped. X2's rule covers every case the other rule covers: a network failure (status 0), a 5xx, `AuthRetryableFetchError`, and `AuthUnknownError` (no status). It also covers a 408, a 429 and any error without a status, which the other rule read as a rejection. The narrower rule would serve a rate-limited lookup as an anonymous quiet city, which X2's V4 test forbids. A definitive 4xx, including `AuthInvalidJwtError` (400), stays anonymous under both rules. That is C2's posture, and the other session's C4 and C5 controls pass unchanged.
+- **Code and class.** The other session's `feed_viewer_unresolved` / `upstream_unavailable` is kept. The auth service is a dependency this deployment calls, and a distinct code keeps an alert on `feed_event_posts_read_failed` from firing for an auth outage. X2's V1 and V4 assertions now expect it. They are no weaker: each still requires a refusal, the same `failedSources`, and the same coverage.
+- **Flag and wiring.** One variable (`viewerUnresolved`) and one set on the thrown path. X2's duplicate line was restored to its original text, so the route diff stays line-neutral (6 lines changed in place). The client keeps one `railRefreshKey`: the other session's duplicate declaration was restored. It keeps the other session's wider wiring, which passes the key to the output-kinds rails too.
+- **Where.** `routes/discovery.ts`; `ForYouTab.tsx`; `src/test/discoveryFeedEventPostsCoverage.test.ts` (21/21).
+
+### D-W11X2-21 — one auth-lookup classifier, after the parallel session's third round
+
+- **What happened.** After D-W11X2-17 kept X2's `isTransientAuthError`, the parallel session pushed its third round. That round refined `authServiceUnreachable` with three changes: a 4xx is Auth's verdict only when it carries Auth's error `code`, `AuthSessionMissingError` and `AuthInvalidJwtError` are rejections by name, and 429/408 are failures. Its independent verifier checked each change. The two rules now disagreed in both directions. X2's rule read a code-less 401, such as the gateway refusing this server's own key, as an anonymous caller. The refined rule read an error with no status and no known name as a rejection.
+- **Decision.** One rule, fail-closed wherever the two rules disagreed. `authServiceUnreachable` is the classifier; line 2633 of the feed calls it, and `isTransientAuthError` now only delegates to it.
+  - It keeps the refined rule's verdict test: a coded 4xx, or a named auth-js rejection, is an anonymous caller.
+  - It keeps X2's reading of a missing status: an error with no status and no known name is not a verdict, so the viewer is unresolved.
+  - Every other disagreement also resolves to "unresolved". DV-83 forbids serving a failure as an empty answer; wrongly refusing is the recoverable error, and a silent quiet city is not.
+- **Tests.**
+  - The parallel session's V1–V9, C4–C8, N1 and N2 pass unchanged.
+  - X2's V3 control (a definitive 401 is anonymous) keeps its assertion. Its fixture now carries Auth's `code: "bad_jwt"`, as a real Supabase Auth rejection does. The code-less 401 is the refined rule's V9 case, and V9 asserts the opposite outcome.
+  - The same code is added to the fixture's wrong-token answer on line 102.
+- **Reversibility.** Revert line 2633's call and the one line at the foot that reads a status-less error; nothing is stored.
+- **Where.** `artifacts/api-server/src/routes/discovery.ts` (line 2633; `isTransientAuthError`'s body; `authServiceUnreachable` at the foot); `src/test/discoveryFeedEventPostsCoverage.test.ts` lines 101–102.

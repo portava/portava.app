@@ -52,6 +52,8 @@ UPDATE public.feature_flags
 DO $post$
 DECLARE before_count int; after_state boolean; before_state boolean;
 BEGIN
+  IF to_regclass('pg_temp._3460_before') IS NULL THEN  -- census-discovery §97 (W11-S): re-run after COMMIT (certify:migrations stage 4); the BEFORE snapshot went with its transaction, so only the description is re-checked
+    IF EXISTS (SELECT 1 FROM public.feature_flags WHERE flag = 'discovery_search_protected_zones_enabled' AND description NOT LIKE '%/input-assistance/suggest%') THEN RAISE EXCEPTION 'POSTCONDITION FAILED (3460): the description does not name the gateway'; END IF; RETURN; END IF;
   SELECT count(*) INTO before_count FROM _3460_before;
   IF before_count = 0 THEN
     RAISE NOTICE '3460: discovery_search_protected_zones_enabled is absent (3366 unapplied) — nothing to describe';

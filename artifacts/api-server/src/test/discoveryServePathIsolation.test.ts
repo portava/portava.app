@@ -60,7 +60,7 @@ function useNetwork(overpass: boolean): void {
     const s = String(typeof url === "string" ? url : (url as URL).href ?? "");
     if (s.includes("overpass-api.de")) {
       overpassCalls++;
-      if (!overpass) throw new Error("Network blocked in test environment");
+      if (!overpass) return new Response(JSON.stringify({ elements: [] }), { status: 200, headers: { "content-type": "application/json" } });  // census-discovery §94.10: "off" means Overpass answered empty; a throw is now an outage the route names
       return new Response(JSON.stringify(overpassBody([
         { id: 11, name: "Taco Stand", amenity: "fast_food" },
         { id: 12, name: "Bistro Doce", amenity: "restaurant", lat: 25.775 },

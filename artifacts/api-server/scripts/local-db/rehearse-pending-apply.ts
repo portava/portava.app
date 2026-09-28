@@ -111,6 +111,99 @@ export const CI_PENDING_84318D1B2: readonly string[] = [
   "3441_trail_letter_fold_decompose_first.sql",
 ];
 
+/**
+ * The pending set at `3fd11f858` (docs/ops/discovery-portava-ci-apply-plan.md
+ * §8.1, lane W11-P): the 40 above plus 33 added since, 73 in all. Lane W11-S
+ * (census-discovery §97) rehearses THIS set; `REHEARSE_SET=84318d1b2` selects
+ * the historical 40 again.
+ */
+export const PENDING_AT_3FD11F858: readonly string[] = [
+  "3338_media_processing_worker_flag.sql",
+  "3340_media_tab_world_default_flag.sql",
+  "3341_media_watch_context_overlay_flag.sql",
+  "3342_media_watch_tap_to_play_flag.sql",
+  "3343_media_watch_stage24_ranking_flag.sql",
+  "3351_media_find_busier_flag.sql",
+  "3352_media_perspective_vantage.sql",
+  "3355_media_vision_provider_flag.sql",
+  "3356_media_moderation_classifier_flag.sql",
+  "3357_media_transcoder_flag.sql",
+  "3358_media_captions_flag.sql",
+  "3359_passport_postcard_cover_nullable.sql",
+  "3360_intel_evidence_sealed_reference.sql",
+  "3361_intel_evidence_sealed_reference_validate.sql",
+  "3362_posts_client_column_grants.sql",
+  "3363_place_copies_client_column_grants.sql",
+  "3364_pulse_geo_tags_write_boundary.sql",
+  "3365_post_media_write_boundary.sql",
+  "3366_discovery_search_protected_zones_flag.sql",
+  "3375_rank_events_schema_version_admitted.sql",
+  "3376_discovery_recommendations_per_request.sql",
+  "3380_content_trails_label_cap_serialised.sql",
+  "3381_trail_lifecycle_transitions.sql",
+  "3385_creator_share_ledger_includes_creator_entries.sql",
+  "3386_creator_attribution_recommendation_link.sql",
+  "3387_creator_ledger_integrity_and_audit.sql",
+  "3390_discovery_rls_explicit_policies.sql",
+  "3391_discovery_stop_condition_measurements.sql",
+  "3395_discovery_dwell_telemetry_flag.sql",
+  "3400_media_pending_upload_sweep_flag.sql",
+  "3410_discovery_trend_snapshot_parity.sql",
+  "3415_trail_proposal_serialised.sql",
+  "3416_trail_relations_projection.sql",
+  "3417_place_momentum_dismiss_excluded.sql",
+  "3420_rank_events_outcome_receipts.sql",
+  "3421_ranking_debug_samples_content_id_nullable.sql",
+  "3422_tags_client_write_boundary.sql",
+  "3435_place_momentum_feature_version.sql",
+  "3436_trail_health_snapshot_provenance.sql",
+  "3440_canonical_search_key_letter_fold.sql",
+  "3441_trail_letter_fold_decompose_first.sql",
+  "3450_discovery_surface_objectives_flag.sql",
+  "3451_discovery_engagement_integrity_flag.sql",
+  "3452_discovery_feature_families_flag.sql",
+  "3453_discovery_intent_trip_terms_flags.sql",
+  "3454_discovery_diversity_axes_flag.sql",
+  "3455_discovery_for_you_pde_flag.sql",
+  "3456_discovery_cache_a_ranked_flag.sql",
+  "3460_discovery_search_protection_scope.sql",
+  "3465_layover_consumer_flags.sql",
+  "3466_layover_place_dwell.sql",
+  "3467_cross_architecture_flags.sql",
+  "3468_tag_permission_approval_required.sql",
+  "3469_compass_graph_decay_flag.sql",
+  "3470_discovery_stop_enforcement_flag.sql",
+  "3475_discovery_trend_v2_flags.sql",
+  "3476_discovery_trend_v2_store.sql",
+  "3477_discovery_trend_v2_rebuild.sql",
+  "3480_discovery_candidate_sources_flag.sql",
+  "3481_discovery_exploration_inventory_flag.sql",
+  "3482_discovery_cold_start_flag.sql",
+  "3483_discovery_pipeline_stages_flags.sql",
+  "3484_compass_city_confidence_provenance.sql",
+  "3485_discovery_trail_exploration_flags.sql",
+  "3486_trail_moderation_audit.sql",
+  "3487_trail_member_exposures.sql",
+  "3488_trail_content_suggestions.sql",
+  "3490_discovery_serve_path_flags.sql",
+  "3491_discovery_recommendations_output_kinds_serve_point.sql",
+  "3495_place_cooccurrence_trail_projection.sql",
+  "3496_discovery_w11x3_flags.sql",
+  "3497_discovery_trend_post_convergence_stored.sql",
+  "3500_discovery_surface_objective_rank_flags.sql",
+];
+
+/** §8.1's `+post` column for the 33 added after 84318d1b2. */
+const POST_AFTER_84318D1B2 = new Set([
+  "3436", "3450", "3451", "3452", "3453", "3454", "3455", "3456", "3465", "3466", "3467", "3468", "3469",
+  "3470", "3475", "3476", "3477", "3480", "3481", "3482", "3483", "3484", "3485", "3486", "3487", "3488",
+  "3490", "3491", "3495", "3496", "3497", "3500",
+]);
+
+/** The set this run rehearses (W11-S): the 73 unless REHEARSE_SET=84318d1b2. */
+const PENDING: readonly string[] = process.env.REHEARSE_SET === "84318d1b2" ? CI_PENDING_84318D1B2 : PENDING_AT_3FD11F858;
+const PENDING_LABEL = process.env.REHEARSE_SET === "84318d1b2" ? "CI's dry run on 84318d1b2" : "apply plan §8.1 (3fd11f858)";
+
 /** The shapes the same CI dry run printed, for the same files. */
 const CI_SHAPES_WITH_POSTCONDITIONS = new Set([
   "3362", "3363", "3364", "3365", "3366", "3375", "3376", "3380", "3381",
@@ -268,25 +361,25 @@ function plan(): string[] {
   if (order.length > 0) die(`order undefined: ${order.join("; ")}`);
   if (p.drifted.length > 0) die(`drift: ${p.drifted.map((d) => d.filename).join(", ")}`);
   const same =
-    p.pending.length === CI_PENDING_84318D1B2.length &&
-    p.pending.every((f, i) => f === CI_PENDING_84318D1B2[i]);
+    p.pending.length === PENDING.length &&
+    p.pending.every((f, i) => f === PENDING[i]);
   console.log("");
   console.log(
     same
-      ? `plan: IDENTICAL to CI's dry run on 84318d1b2 (${p.pending.length} files, same order).`
-      : `plan: DIFFERS from CI's dry run on 84318d1b2 — here ${p.pending.length}, CI 40.` +
-          `\n  only here: ${p.pending.filter((f) => !CI_PENDING_84318D1B2.includes(f)).join(", ") || "-"}` +
-          `\n  only CI  : ${CI_PENDING_84318D1B2.filter((f) => !p.pending.includes(f)).join(", ") || "-"}`,
+      ? `plan: IDENTICAL to ${PENDING_LABEL} (${p.pending.length} files, same order).`
+      : `plan: DIFFERS from ${PENDING_LABEL} — here ${p.pending.length}, expected ${PENDING.length}.` +
+          `\n  only here: ${p.pending.filter((f) => !PENDING.includes(f)).join(", ") || "-"}` +
+          `\n  only expected: ${PENDING.filter((f) => !p.pending.includes(f)).join(", ") || "-"}`,
   );
   const shapeMismatch = p.pending.filter((f) => {
     const c = classify(f);
     if (c.kind === "refuse") return true;
     const hasPost = c.postconditions.trim() !== "";
-    return hasPost !== CI_SHAPES_WITH_POSTCONDITIONS.has(f.slice(0, 4));
+    return hasPost !== (CI_SHAPES_WITH_POSTCONDITIONS.has(f.slice(0, 4)) || POST_AFTER_84318D1B2.has(f.slice(0, 4)));
   });
   console.log(
     shapeMismatch.length === 0
-      ? "plan: every shape (unwrapped / +postconditions) matches CI's."
+      ? "plan: every shape (unwrapped / +postconditions) matches the expected list's."
       : `plan: shape differs from CI for ${shapeMismatch.join(", ")}`,
   );
   return p.pending;
@@ -537,15 +630,15 @@ function emitRollbackRehearsal(out: string): void {
   const parts = ["-- Generated by scripts/local-db/rehearse-pending-apply.ts emit-rollback-rehearsal.",
     "-- ONE transaction, ending in ROLLBACK: it changes nothing it runs against.",
     "BEGIN;"];
-  for (const f of CI_PENDING_84318D1B2) {
+  for (const f of PENDING) {
     const c = classifyMigration(read(f), f);
     if (c.kind === "refuse") die(`${f} is refused: ${c.reason}`);
     parts.push(`-- ── ${f} (sha256 ${checksumOf(read(f))}) ──`, c.body.trim());
     if (c.postconditions.trim()) parts.push(`-- ${f}: postconditions`, c.postconditions.trim());
   }
-  parts.push("DO $w10d$ BEGIN RAISE NOTICE 'W10-D rollback rehearsal: all 40 bodies and postconditions held; rolling back.'; END $w10d$;", "ROLLBACK;", "");
+  parts.push(`DO $w10d$ BEGIN RAISE NOTICE 'W10-D rollback rehearsal: all ${PENDING.length} bodies and postconditions held; rolling back.'; END $w10d$;`, "ROLLBACK;", "");
   writeFileSync(out, parts.join("\n"));
-  console.log(`emit-rollback-rehearsal: ${CI_PENDING_84318D1B2.length} files -> ${out}`);
+  console.log(`emit-rollback-rehearsal: ${PENDING.length} files -> ${out}`);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -556,12 +649,12 @@ switch (cmd) {
   case "model-ledger": modelLedger(); break;
   case "plan": plan(); break;
   case "apply": await apply(); break;
-  case "postconditions": postconditions(args.length ? args : CI_PENDING_84318D1B2); break;
+  case "postconditions": postconditions(args.length ? args : PENDING); break;
   case "objects": objects(); break;
   case "catalog": fingerprint("catalog", args[0] ?? die("label?")); break;
   case "data": fingerprint("data", args[0] ?? die("label?")); break;
   case "diff": diff(args[0], args[1], args[2] ?? "catalog"); break;
-  case "rollback": rollback(args.length ? args : CI_PENDING_84318D1B2); break;
+  case "rollback": rollback(args.length ? args : PENDING); break;
   case "emit-rollback-rehearsal": emitRollbackRehearsal(args[0] ?? join(WORK, "portava-ci-rollback-rehearsal.sql")); break;
   default: die(`unknown subcommand '${cmd ?? ""}'`);
 }
