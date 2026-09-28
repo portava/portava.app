@@ -399,3 +399,101 @@ export interface DerivedStoreVersions {
   /** Bump when what one event contributes (which rows, what weight) changes. */
   featureVersion: string;
 }
+
+// ── census-discovery §75 (DC-17, lane P33, H-P21-2): the PDE feature vector's provenance ──
+//
+// §48 stamped `modelVersion` on every PDE-ranked Discovery row and nothing else
+// of `10` §5's four facts: no feature version, no window, and only the SERVE
+// clock (`served_at`), which is not when the vector was computed — and the
+// momentum input inside it can be up to MOMENTUM_CACHE_TTL_MS older again (§68.2).
+// Declared at the foot so no cited line above moves.
+
+/**
+ * The feature SET `portavaRank.scoreCandidate` emits on the PDE path: which
+ * signals exist, what each measures and how each is weighted before it reaches
+ * the score. Bump when a feature is added, removed, or its definition or weight
+ * changes. Pinned against the ranker's key list by a test, so adding a feature
+ * without a bump fails.
+ */
+export const DISCOVERY_PDE_FEATURE_VERSION = "portava-rank-features-v1";
+
+/** The provenance one PDE `rankForViewer` run stamps on every row it scored. */
+export interface PdeFeatureProvenance {
+  /** `06` §5 feature_version — DISCOVERY_PDE_FEATURE_VERSION. */
+  featureVersion: string;
+  /** Epoch ms the ranker ran (the clock read immediately before `rankCandidates`). Never the serve clock. */
+  rankedAt: number;
+  /**
+   * The corpus the vector could have read. Its inputs are the viewer's history
+   * and the candidates' aggregates, which have no oldest event — the same
+   * `unbounded_start` reading `rankSourceWindow` gives the Compass rank (§38.5).
+   */
+  sourceWindow: DerivedStoreWindow;
+  /**
+   * The momentum INPUT's own record: its window, versions and computation clock,
+   * which can be older than `rankedAt` by up to the momentum cache's TTL.
+   * `undefined` when momentum was not an input (the modifiers were off);
+   * `null` when it was an input but its reading's record was not available.
+   */
+  momentum?: DerivedStoreProvenance | null;
+}
+
+/**
+ * One rank's provenance, from the clock the caller already read for it. The
+ * window is derived from that one clock so the two cannot drift.
+ */
+export function pdeFeatureProvenance(rankedAt: number, momentum?: DerivedStoreProvenance | null): PdeFeatureProvenance {
+  return {
+    featureVersion: DISCOVERY_PDE_FEATURE_VERSION,
+    rankedAt,
+    sourceWindow: rankSourceWindow(rankedAt),
+    ...(momentum === undefined ? {} : { momentum }),
+  };
+}
+
+/**
+ * Scored candidate → the provenance of the rank that scored it. A WeakMap, so
+ * the record rides with the exact objects `rankForViewer` returned, whichever
+ * route logs them, WITHOUT a field on the candidate: the served projection and
+ * the feature vector are byte-for-byte what they were, and a candidate no PDE
+ * run scored (Compass, pulse, a fixture) simply has no entry.
+ */
+const PDE_FEATURE_PROVENANCE = new WeakMap<object, PdeFeatureProvenance>();
+
+/** Record that these scored candidates came from the rank `p` describes. */
+export function stampPdeFeatureProvenance(scored: ReadonlyArray<object>, p: PdeFeatureProvenance): void {
+  for (const s of scored) PDE_FEATURE_PROVENANCE.set(s, p);
+}
+
+/** The provenance of the rank that scored this candidate, or undefined when no PDE run did. */
+export function pdeFeatureProvenanceOf(scored: object): PdeFeatureProvenance | undefined {
+  return PDE_FEATURE_PROVENANCE.get(scored);
+}
+
+/**
+ * The `rank_events.features` keys a PDE-scored Discovery row carries (§75,
+ * H-P21-2), each classified `record_metadata` in DISCOVERY_FEATURE_KEY_CLASSES
+ * (lib/discoveryRecommendationRecord.ts). No key at all when no PDE run scored
+ * the candidate, so every other writer's rows are exactly what they were.
+ * `momentumProvenance` is absent when momentum was not an input, as §63's graph
+ * keys are absent with the modifiers off.
+ */
+export const PDE_FEATURE_PROVENANCE_KEYS = ["featureVersion", "rankedAt", "sourceWindow", "momentumProvenance"] as const;
+
+export function pdeFeatureProvenanceFeatures(scored: object): Record<string, unknown> {
+  const p = pdeFeatureProvenanceOf(scored);
+  if (!p) return {};
+  return {
+    featureVersion: p.featureVersion,
+    rankedAt:       p.rankedAt,
+    sourceWindow:   { kind: p.sourceWindow.kind, startMs: p.sourceWindow.startMs, endMs: p.sourceWindow.endMs },
+    ...(p.momentum === undefined ? {} : {
+      momentumProvenance: p.momentum === null ? null : {
+        modelVersion:   p.momentum.modelVersion,
+        featureVersion: p.momentum.featureVersion,
+        computedAt:     p.momentum.computedAt,
+        window:         { kind: p.momentum.window.kind, startMs: p.momentum.window.startMs, endMs: p.momentum.window.endMs },
+      },
+    }),
+  };
+}

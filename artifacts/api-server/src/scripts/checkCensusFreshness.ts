@@ -4106,6 +4106,14 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // suite (every edge family revoked then rebuilt, against a scratch build; the fail-visible guards).
     // compass/CompassGraphEngine.ts, the code it grades, is already watched above (§56).
     "artifacts/api-server/src/test/compassGraphRevocation.test.ts",
+    // census-discovery §75 (lane P33, DC-17 part 2): §68.6's hunks built — Trail health's snapshot columns (3436,
+    // its rollback), the suite that pins the hunks and its Trails fake, and the harness suite over 3436. The lib
+    // files and the two changed suites §75 cites (discoveryTrendingApi, discoveryServedGraphReading) were already watched.
+    "artifacts/api-server/src/migrations/3436_trail_health_snapshot_provenance.sql",
+    "db/rollback/2026-09-28-3436-trail-health-snapshot-provenance-rollback.sql",
+    "artifacts/api-server/src/test/discoveryDerivedProvenanceHunks.test.ts",
+    "artifacts/api-server/src/test/helpers/fakeTrailsDb.ts",
+    "artifacts/api-server/src/test/db/trailHealthSnapshotProvenance.db.test.ts",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

@@ -40,7 +40,7 @@ import {
 } from "../lib/discoveryTrendExplanation.js";
 import {
   TREND_STATES, TREND_REASON_CODES, trendReasonFor, explainTrendState,
-  TREND_EVENT_WEIGHTS, TREND_RECENT_MS, TREND_MID_MS, TREND_PRIOR_MS,
+  TREND_EVENT_WEIGHTS, TREND_RECENT_MS, TREND_MID_MS, TREND_PRIOR_MS, TREND_FEATURE_VERSION,
 } from "../lib/discoveryTrendState.js";
 import { MOMENTUM_CACHE_TTL_MS } from "../lib/discoveryLocalMomentum.js";
 import { PRIVACY_THRESHOLD_V1 } from "../lib/intelContracts.js";
@@ -66,7 +66,7 @@ const pm = (place: string, state: string, recent: number | null, window: number 
   place_id: place, computed_at: iso(60_000), trend_state: state,
   recent_rate: 12, mid_rate: 4, prior_rate: 2, total_weight: 99,
   recent_unique_travelers: recent, window_unique_travelers: window,
-  model_version: "discovery-trend-state-v1",
+  model_version: "discovery-trend-state-v1", feature_version: TREND_FEATURE_VERSION,  // §75: as 3435 writes it
   window_ms: { recent_ms: TREND_RECENT_MS, mid_ms: TREND_MID_MS, prior_ms: TREND_PRIOR_MS },
   source_surface: "discovery", ...over,
 });
@@ -117,7 +117,7 @@ const SEED = (): Record<string, Row[]> => ({
  */
 function makeDb(
   seed: Record<string, Row[]>,
-  faults: { missing?: string[]; missingColumn?: string[]; erroring?: string[]; failFromCall?: Record<string, number> } = {},
+  faults: { missing?: string[]; missingColumn?: string[]; erroring?: string[]; failFromCall?: Record<string, number>; missingSelect?: string[] } = {},  // §75: `missingSelect` — a SELECT naming one of these columns answers 42703
 ) {
   const tables: Record<string, Row[]> = {
     profiles: [USER, OTHER].map((id) => ({ id, account_status: "active" })),
@@ -128,10 +128,10 @@ function makeDb(
   function from(table: string) {
     const filters: Array<(r: Row) => boolean> = [];
     let orders: Array<{ col: string; asc: boolean }> = [];
-    let limitN: number | null = null;
+    let limitN: number | null = null; let selected: string[] = [];
     const fault = (): { code: string; message: string } | null => {
       if (faults.missing?.includes(table)) return { code: "42P01", message: `relation "public.${table}" does not exist` };
-      if (faults.missingColumn?.includes(table)) return { code: "42703", message: `column ${table}.source_surface does not exist` };
+      if (faults.missingColumn?.includes(table)) return { code: "42703", message: `column ${table}.source_surface does not exist` }; const absent = selected.find((c) => faults.missingSelect?.includes(c)); if (absent) return { code: "42703", message: `column ${table}.${absent} does not exist` };
       if (faults.erroring?.includes(table)) return { code: "57014", message: "canceling statement due to statement timeout" };
       // Fail every read of `table` after the first n succeeded.
       const n = faults.failFromCall?.[table];
@@ -148,10 +148,10 @@ function makeDb(
         out = [...out].sort((a, b) => (String(a[o.col] ?? "") < String(b[o.col] ?? "") ? -1 : String(a[o.col] ?? "") > String(b[o.col] ?? "") ? 1 : 0) * (o.asc ? 1 : -1));
       }
       if (limitN !== null) out = out.slice(0, limitN);
-      return { data: out.map((r) => ({ ...r })), error: null };
+      return { data: out.map((r) => (selected.length > 0 ? Object.fromEntries(selected.filter((c) => c in r).map((c) => [c, r[c]])) : { ...r })), error: null };  // §75: project to the SELECTED columns, as PostgREST does, so a column the read did not name cannot reach the code
     };
     const b: any = {
-      select() { return b; },
+      select(cols?: string) { selected = String(cols ?? "").split(",").map((c) => c.trim()).filter(Boolean); return b; },
       eq(c: string, v: any) { filters.push((r) => r[c] === v); return b; },
       neq(c: string, v: any) { filters.push((r) => r[c] !== v); return b; },
       in(c: string, v: any[]) { filters.push((r) => v.includes(r[c])); return b; },
@@ -286,7 +286,7 @@ describe("B — `11` §4: a state and a reason, never a raw score", () => {
     withDb();
     const r = await get(ALL, USER);
     const allowed = new Set(["explanations", "readingProvenance", "recommendationId", "itemId", "trend", "unavailable",
-      "state", "reason", "code", "text", "computedAt", "window", "start", "end", "modelVersion"]);
+      "state", "reason", "code", "text", "computedAt", "window", "start", "end", "modelVersion", "featureVersion"]);  // §75 H-P21-1
     // No number anywhere: the only values are ids, codes, sentences and instants.
     const walk = (v: unknown): void => {
       assert.notEqual(typeof v, "number", "a numeric value reached the client");
@@ -297,7 +297,7 @@ describe("B — `11` §4: a state and a reason, never a raw score", () => {
     };
     walk(r.body);
     for (const leak of ["momentum", "score", "travel", "weight", "_rate", "Rate", "total"]) {
-      assert.ok(!r.text.includes(leak), `the body carries "${leak}"`);
+      assert.ok(!r.text.split(JSON.stringify(TREND_FEATURE_VERSION)).join('""').includes(leak), `the body carries "${leak}"`);  // §75: the ONE exempt string is the closed feature-version label ("…-weighted-activity-v2"), a name and not a weight; B3 pins it to that exact constant
     }
   });
 
@@ -305,7 +305,7 @@ describe("B — `11` §4: a state and a reason, never a raw score", () => {
     withDb();
     const r = await get(R.trending, USER);
     const p = r.body.readingProvenance;
-    assert.equal(p.modelVersion, "discovery-trend-state-v1");
+    assert.equal(p.modelVersion, "discovery-trend-state-v1"); assert.equal(p.featureVersion, TREND_FEATURE_VERSION, "§75 H-P21-1: the run's feature version, as 3435 stored it");
     assert.equal(Date.parse(p.window.end), Date.parse(p.computedAt));
     assert.equal(Date.parse(p.window.end) - Date.parse(p.window.start), TREND_PRIOR_MS);
   });
@@ -384,7 +384,7 @@ describe("E — a snapshot that is not current is never served as a claim", () =
   it("E2. the freshness bound is the in-process reading's own lifetime, and it is inclusive", () => {
     assert.equal(TREND_SNAPSHOT_MAX_AGE_MS, MOMENTUM_CACHE_TTL_MS);
     const now = Date.parse("2031-04-01T00:10:00.000Z");
-    const run = (msAgo: number) => ({ computedAt: new Date(now - msAgo).toISOString(), modelVersion: "m", priorMs: TREND_PRIOR_MS });
+    const run = (msAgo: number) => ({ computedAt: new Date(now - msAgo).toISOString(), modelVersion: "m", featureVersion: null, priorMs: TREND_PRIOR_MS });
     assert.equal(isCurrentRun(run(TREND_SNAPSHOT_MAX_AGE_MS), now), true);
     assert.equal(isCurrentRun(run(TREND_SNAPSHOT_MAX_AGE_MS + 1), now), false);
     assert.equal(isCurrentRun(run(-1), now), false, "a future-dated run is not current");
@@ -503,5 +503,56 @@ describe("I — one closed reason vocabulary, stored and served identically", ()
     assert.equal(hours("c_mid_ms"), TREND_MID_MS);
     assert.equal(hours("c_prior_ms"), TREND_PRIOR_MS);
     assert.match(BODY, /c_surface\s+CONSTANT text := 'discovery'/, "the corpus is the loader's surface");
+  });
+});
+
+// ── §75 (lane P33, DC-17 H-P21-1): the feature version, and a deployment without it ─
+
+describe("§75 H-P21-1 — the wire record names its feature version; a database without 3435 still answers", () => {
+  it("P1. with 3435: the run's feature_version is served on readingProvenance, and a pre-3435 run's NULL is served as null", async () => {
+    withDb();
+    const withIt = await get(ALL, USER);
+    assert.equal(withIt.status, 200);
+    assert.equal(withIt.body.readingProvenance.featureVersion, TREND_FEATURE_VERSION);
+    const seed = SEED();
+    seed["place_momentum"] = seed["place_momentum"]!.map((r) => ({ ...r, feature_version: null }));
+    withDb(seed);
+    const legacy = await get(ALL, USER);
+    assert.equal(legacy.status, 200);
+    assert.equal(legacy.body.readingProvenance.featureVersion, null, "a row 3435 did not write is 'not recorded'");
+    assert.deepEqual(legacy.body.explanations, withIt.body.explanations, "the answers do not depend on the provenance column");
+  });
+
+  it("P2. WITHOUT 3435 (feature_version answers 42703): a 200, featureVersion null, and every other byte the with-column answer", async () => {
+    const seed = SEED();  // ONE seed, so both answers are over the same instants
+    withDb(seed);
+    const withIt = await get(ALL, USER);
+    const db = withDb(seed, { missingSelect: ["feature_version"] });
+    const without = await get(ALL, USER);
+    assert.equal(without.status, 200, JSON.stringify(without.body));
+    assert.equal(without.body.readingProvenance.featureVersion, null);
+    const { featureVersion: _a, ...restWith } = withIt.body.readingProvenance;
+    const { featureVersion: _b, ...restWithout } = without.body.readingProvenance;
+    assert.deepEqual(restWithout, restWith, "computedAt, window and modelVersion are served as before");
+    assert.deepEqual(without.body.explanations, withIt.body.explanations, "every explanation is served as before");
+    assert.ok(db.reads.filter((t) => t === "place_momentum").length >= 3, "the head read was retried once without the column, then the rows were read");
+  });
+
+  it("P3. the retry is classified exactly as before: 3410 absent too ⇒ trend_store_absent; a timeout on the retry ⇒ trend_read_failed", async () => {
+    withDb(SEED(), { missingSelect: ["feature_version"], missingColumn: ["place_momentum"] });
+    const absent = await get(ALL, USER);
+    assert.equal(absent.status, 503);
+    assert.equal(absent.body.reason, "trend_store_absent");
+    withDb(SEED(), { missingSelect: ["feature_version"], failFromCall: { place_momentum: 1 } });
+    const failed = await get(ALL, USER);
+    assert.equal(failed.status, 503);
+    assert.equal(failed.body.reason, "trend_read_failed", "a timeout is never relabelled as a missing column");
+  });
+
+  it("P4. only a MISSING COLUMN is retried: a timeout on the first head read is still trend_read_failed, with one read", async () => {
+    const db = withDb(SEED(), { erroring: ["place_momentum"] });
+    const r = await get(ALL, USER);
+    assert.equal(r.body.reason, "trend_read_failed");
+    assert.equal(db.reads.filter((t) => t === "place_momentum").length, 1, "no retry on an unknown answer");
   });
 });
