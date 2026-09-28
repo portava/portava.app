@@ -11,7 +11,7 @@ const logger = rootLogger.child({ service: "LayoverNotificationService" });
 import type { LayoverSession } from "./LayoverSessionService.js";
 import type { AirportProfile } from "./AirportProfileService.js";
 import { certifySessionFeasibility, certificationHeader } from "./LayoverFeasibility.js"; import { resolveLayoverEntry, layoverAirportCountry } from "./layoverEntryGate.js";
-import { formatLocalTime } from "./AirportTime.js";
+import { formatLocalTime } from "./AirportTime.js"; import { consumerLayoverRecord } from "./LayoverSnapshot.js";
 
 export interface RiskyLayoverContext {
   isNightLayover: boolean;
@@ -96,7 +96,7 @@ export async function sendReturnDeadlineReminder(
   minutesBefore: number,
   nowMs: number = Date.now(),
 ): Promise<ReturnReminderResult> {
-  const record = certifySessionFeasibility(airport, session, { nowMs, entry: await resolveLayoverEntry(db, session.userId, layoverAirportCountry(airport)) });
+  const record = (await consumerLayoverRecord(db, airport, session, nowMs)) ?? certifySessionFeasibility(airport, session, { nowMs, entry: await resolveLayoverEntry(db, session.userId, layoverAirportCountry(airport)) });
   const hardReturn = record.deadline.hardReturnTime;
   const returnStr = formatLocalTime(airport.timezone ?? "UTC", hardReturn);
 

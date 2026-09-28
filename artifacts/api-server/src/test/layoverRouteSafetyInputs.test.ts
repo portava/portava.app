@@ -159,11 +159,11 @@ describe("census L256 — no merchant input can reach a layover safety constrain
     const call = ROUTE_SRC.match(/layoverBuddyDecision\(((?:[^()]|\((?:[^()]|\([^()]*\))*\))*)\)/); // balanced to two levels: an argument may itself be a call
     assert.ok(call, "the buddy route must still consult the layover safety gate");
     const args = call![1].split(/,(?![^(]*\))/).map((a) => a.trim()).filter(Boolean);
-    assert.deepEqual( // census-discovery §65 adds the clock and the TRAVELLER'S OWN border corridor (§6.1's named entry input) — neither is a marketplace value
-      args, ["airport", "session", "Date.now()", "await sessionEntry(sc, airport, session)"],
+    assert.deepEqual( // census-discovery §65 adds the clock and the TRAVELLER'S OWN border corridor (§6.1's named entry input); §81 adds the certified snapshot's record of THIS session — none is a marketplace value
+      args, ["airport", "session", "Date.now()", "buddySnapRecord ? null : await sessionEntry(sc, airport, session)", "buddySnapRecord"],
       "the safety gate took an argument that is not the airport or the traveller's own session — " +
         "a marketplace value reaching this call is exactly what L256 forbids",
-    );
+    ); assert.match(ROUTE_SRC, /const buddySnapRecord = await consumerLayoverRecord\(sc, airport, session, Date\.now\(\)\);/, "census-discovery §81: the record handed to the gate must be the snapshot of THIS airport and session, and nothing else");
   });
 
   it("the gate runs BEFORE the marketplace is read — §9.1 is an order, not only a rule", () => {

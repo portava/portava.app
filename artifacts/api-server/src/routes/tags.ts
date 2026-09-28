@@ -13,7 +13,7 @@ import { getServiceClient } from '../lib/supabase.js';
 import { nameVisibilitySet } from '../lib/publicIdentity.js';
 import { isUuid } from '../lib/followDecisions.js';
 import { resolveInteractionPermissions } from '../services/interactionPermissions.js';
-import { isKillSwitchEngaged } from '../lib/featureFlags.js';
+import { isKillSwitchEngaged, isFlagEnabled } from '../lib/featureFlags.js';
 import {
   assertMayTagSource,
   checkHourlyTagLimit,
@@ -81,7 +81,7 @@ router.post('/tags', async (req, res) => {
   //   3. Location-type sources require friendship (stricter privacy for location context)
   let perms: Awaited<ReturnType<typeof resolveInteractionPermissions>>;
   try {
-    perms = await resolveInteractionPermissions(sc, user.id, tagged_user_id);
+    perms = await resolveInteractionPermissions(sc, user.id, tagged_user_id, (await isFlagEnabled(sc, TAG_PERMISSION_CONSENT_COPY_FLAG)) ? { tagDefinitions: 'consent_copy' } : {}); // census-discovery §81 (§63.7 Q5, APPROVAL REQUIRED)
   } catch (err) {
     req.log.error({ err }, 'permission engine failed for tag create');
     sendError(res, 'db_error', 'Permission check failed', { exposeDetail: true });
@@ -456,14 +456,14 @@ router.get('/me/tag-permission', async (req, res) => {
 
 const TagPermissionSchema = z.object({
   tagPermission: z.enum(['anyone', 'interacted', 'friends_only', 'nobody']),
-});
+}); const TagPermissionWithApprovalSchema = z.object({ tagPermission: z.enum(['anyone', 'interacted', 'friends_only', 'nobody', 'approval_required']) }); // census-discovery §81 (D-W10S2-8): 'approval_required' is choosable only behind its flag
 
 router.patch('/me/tag-permission', async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { client, user } = auth;
 
-  const parsed = TagPermissionSchema.safeParse(req.body);
+  const parsed = ((await isFlagEnabled(client, TAG_PERMISSION_APPROVAL_REQUIRED_FLAG)) ? TagPermissionWithApprovalSchema : TagPermissionSchema).safeParse(req.body);
   if (!parsed.success) {
     sendError(res, 'invalid_payload', parsed.error.issues.map((i) => i.message).join('; '));
     return;
@@ -566,6 +566,68 @@ router.delete('/admin/tags/:id', async (req, res) => {
   }
 
   res.status(200).json({ ok: true });
+});
+
+// ─── census-discovery §81 (DV-76; register D-W10S2-8, D-W10S2-9) ───────────────
+//
+// `approval_required` ("Ask me first"): §62.7 Q3 asked whether the pending path
+// should be reachable or removed. It is kept and made reachable, because the
+// spec's own Phase 0.3 names "pending tag visibility" as a thing to fix — it
+// presupposes a pending state — and because it is a NEW choice a user makes
+// for themselves: nobody's existing setting changes. The engine already maps
+// it to `canTagPending`, TaggingService already writes `pending` for it, and
+// `enrichSpans` already renders only `approved` tags. What was missing: the
+// enum value (migration 3468), a way to choose it (PATCH above), and a way for
+// the tagged user to APPROVE a pending tag (below). Rejecting is the existing
+// `DELETE /api/tags/:id`. Both behind `tag_permission_approval_required_enabled`
+// (3468, seeded FALSE): off, the PATCH refuses the value exactly as before and
+// this route answers `feature_disabled`.
+
+export const TAG_PERMISSION_APPROVAL_REQUIRED_FLAG = 'tag_permission_approval_required_enabled';
+export const TAG_PERMISSION_CONSENT_COPY_FLAG = 'tag_permission_consent_copy_enabled';
+
+// ─── POST /api/tags/:id/approve — the tagged user approves a pending tag ───────
+
+router.post('/tags/:id/approve', async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
+  if (!(await isFlagEnabled(sc, TAG_PERMISSION_APPROVAL_REQUIRED_FLAG))) {
+    sendError(res, 'feature_disabled', 'Approving tags is not enabled');
+    return;
+  }
+
+  const tagId = req.params.id;
+  if (!isUuid(tagId)) { sendError(res, 'invalid_payload', 'Invalid tag id'); return; }
+
+  const { data: existing, error: readErr } = await sc
+    .from('tags')
+    .select('id, tagged_user_id, status, suppressed')
+    .eq('id', tagId)
+    .maybeSingle();
+  if (readErr) { sendError(res, 'db_error', 'Could not read the tag'); return; }
+  // One answer for "no such tag" and "not your tag", so a stranger cannot probe
+  // which tag ids exist.
+  if (!existing || (existing as any).tagged_user_id !== user.id) { sendError(res, 'not_found', 'Tag not found'); return; }
+  if ((existing as any).suppressed === true) { sendError(res, 'conflict', 'This tag was removed'); return; }
+  if ((existing as any).status === 'approved') { res.status(200).json({ ok: true, tagId, status: 'approved', alreadyApproved: true }); return; }
+  if ((existing as any).status !== 'pending') { sendError(res, 'conflict', 'Only a pending tag can be approved'); return; }
+
+  // Compare-and-set on `pending`: a concurrent removal or a second approval
+  // cannot turn into a second state change.
+  const { data: updated, error } = await sc
+    .from('tags')
+    .update({ status: 'approved' })
+    .eq('id', tagId)
+    .eq('tagged_user_id', user.id)
+    .eq('status', 'pending')
+    .select('id');
+  if (error) { req.log.error({ err: error }, 'tag approve failed'); sendError(res, 'db_error', 'Could not approve the tag'); return; }
+  if (!Array.isArray(updated) || updated.length !== 1) { sendError(res, 'conflict', 'The tag changed while it was being approved'); return; }
+  res.status(200).json({ ok: true, tagId, status: 'approved' });
 });
 
 export default router;

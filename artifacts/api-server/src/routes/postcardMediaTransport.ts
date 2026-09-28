@@ -33,7 +33,7 @@ import { getServiceClient } from "../lib/supabase.js";
 import { checkRateLimit } from "../lib/rateLimit.js";
 import { isKillSwitchEngaged } from "../lib/featureFlags.js";
 import { MEDIA_SIZE_LIMITS, verifyUploadedBytes, type MediaKind } from "../lib/mediaPipeline.js";
-import { makeVideoPoster } from "../lib/mediaProcessing.js";
+import { makeVideoPoster } from "../lib/mediaProcessing.js"; import { renewPendingSlot } from "../services/media/PendingUploadSweep.js";
 import {
   POSTER_MAX_BYTES,
   POSTER_MAX_DIM,
@@ -226,7 +226,7 @@ router.post(
       return;
     }
     const summary = summarizeParts(listed.parts, totalBytes, RESUMABLE_CHUNK_BYTES);
-    const minted = await mintPartUploadUrls(bucket, slot.storage_path, summary.missing);
+    const renewed = summary.missing.length > 0 ? await renewPendingSlot(ctx.sc, slot.id) : { ok: true as const }; const minted = renewed.ok ? await mintPartUploadUrls(bucket, slot.storage_path, summary.missing) : { ok: false as const, failure: { kind: "infra" as const, message: `slot renewal failed: ${renewed.message}` } }; // census-discovery §81 (DV-77): the sweep must see every live authority before it exists
     if (!minted.ok) {
       req.log?.error?.({ mediaId: slot.id, err: minted.failure.message }, "upload session: signing failed");
       sendError(res, "upstream_error", "We couldn't prepare the upload. Please try again.");

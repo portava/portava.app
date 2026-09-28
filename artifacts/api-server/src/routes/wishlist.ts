@@ -4,7 +4,7 @@ import { z } from "zod";
 import { logger as rootLogger } from "../lib/logger.js";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
-import { patchOsmSavedCount } from "./discovery.js";
+import { patchOsmSavedCount } from "./discovery.js"; import { saveDiscoveryPlace } from "../services/discovery/DiscoveryWishlistSave.js";
 
 const wishlistLogger = rootLogger.child({ route: "wishlist" });
 
@@ -281,16 +281,16 @@ router.post("/wishlist", async (req, res) => {
 
   const { placeId, placeData, listId } = parsed.data;
 
-  const { error } = await sc.client.from("wishlist_places").upsert(
-    {
-      user_id:    sc.user.id,
-      place_id:   placeId,
-      place_data: placeData,
-      list_id:    listId,
-      saved_at:   new Date().toISOString(),
-    },
-    { onConflict: "user_id,place_id,list_id" },
-  );
+  // Discovery's ONE save path (census-discovery §81, A21): the same row,
+  // payload and conflict key this route used to write inline, now shared with
+  // Telegraph's `discovery_save_place` action so the two doors cannot drift.
+  // The OSM popularity hook below stays this route's (trackOsm not passed).
+  const saved = await saveDiscoveryPlace(sc.client, sc.user.id, {
+    placeId,
+    placeData,
+    listId,
+  });
+  const error = saved.ok ? null : { message: saved.message };
 
   if (error) {
     sendError(res, "db_error", (error as { message: string }).message);

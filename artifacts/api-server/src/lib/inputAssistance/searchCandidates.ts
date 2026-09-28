@@ -38,7 +38,7 @@ import {
   haversineKm,
   type SearchQueryContext,
 } from "../../routes/discoverySearchHelpers.js";
-import { readTripWindows, fitInstantToWindows } from "../../domain/trips/services/TripFreedomConsumers.js";
+import { readTripWindows, fitInstantToWindows } from "../../domain/trips/services/TripFreedomConsumers.js"; import { discoveryTripViewerProjectionsOn, planItemRowsFromProjection } from "../discoveryTripViewerConsumer.js"; // census-discovery §81 (A10)
 import {
   normalizeLocationName,
   type CanonicalRow,
@@ -966,8 +966,8 @@ async function searchPlans(
 ): Promise<SearchResult[]> {
   if (blockedSet === null || ageRestrictedSet === null) return [];
   try {
-    const pat = sqlPattern(q);
-    const { data, error } = await sc
+    const pat = sqlPattern(q); // census-discovery §81 (A10): the plan items come from Trips' projection when its flag is on
+    const { data, error } = (await discoveryTripViewerProjectionsOn(sc)) ? await planItemRowsFromProjection(sc, { pattern: pat, offset, limit: fetchLimit }) : await sc
       .from("trip_plan_items")
       .select("id, title, trip_id, creator_id, created_at")
       .ilike("title", pat)

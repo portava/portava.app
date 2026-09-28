@@ -135,7 +135,7 @@ import { airportPoint } from "../services/airport/LayoverTravelTime.js";
 // The session→airport lookup itself, published by the Layover contract. This
 // router had its own copy of the rule until it was collapsed into that one;
 // see `resolveAirportForSession` below.
-import { resolveSessionAirport } from "../services/airport/LayoverSnapshot.js";
+import { resolveSessionAirport, consumerLayoverRecord, consumerLayoverSnapshot } from "../services/airport/LayoverSnapshot.js"; import { upsertCuratedDwell, deleteCuratedDwell, DWELL_SOURCE_CLASSES, DWELL_CONFIDENCE, DWELL_MIN_MINUTES, DWELL_MAX_MINUTES } from "../services/airport/LayoverPlaceDwell.js";
 // Every feasibility number this file publishes comes from ONE call to
 // `certifySessionFeasibility` per request. `assess`, `computeWindow` and
 // `adviseLeaving` are deliberately NOT imported here any more: four handlers
@@ -1073,7 +1073,7 @@ router.get("/airport/sessions/:id/safety", async (req, res) => {
   // journey in it, against the same certified deadline as everything else in
   // this response. Its bands are `adviseLeaving`'s own, so `overallRating` and
   // `advice.verdict` below cannot contradict each other.
-  const record = certifySessionFeasibility(airport, session, {
+  const record = (await consumerLayoverRecord(sc, airport, session, Date.now())) ?? certifySessionFeasibility(airport, session, {
     nowMs: Date.now(),
     entry: await sessionEntry(sc, airport, session),
   });
@@ -1200,7 +1200,7 @@ router.post("/airport/sessions/:id/compass", async (req, res) => {
   const stopsRead = await loadStops(sc, session.id);
   const answer = await answerLayoverQuestion(sc, {
     question: parsed.data.question,
-    session,
+    session, snapshot: await consumerLayoverSnapshot(sc, airport, session, Date.now()), // census-discovery §81: null (flag off) keeps the legacy certification below
     airport, entry: await sessionEntry(sc, airport, session), // census-discovery §65: the answer certifies with the snapshot's entry input
     recommendations: recsRead.ok ? (recsRead.recommendations as unknown as Array<Record<string, unknown>>) : undefined,
     recommendationsUnavailableReason: recsRead.ok ? null : "layover_recommendations_unreadable",
@@ -1372,7 +1372,7 @@ router.post("/airport/sessions/:id/return-now", async (req, res) => {
   if (!airport) return;
 
   const nowMs = Date.now();
-  const record = certifySessionFeasibility(airport, session, { nowMs, entry: await sessionEntry(sc, airport, session) });
+  const record = (await consumerLayoverRecord(sc, airport, session, nowMs)) ?? certifySessionFeasibility(airport, session, { nowMs, entry: await sessionEntry(sc, airport, session) });
 
   const flagOn = await isFlagEnabled(sc, "layover_safe_return_status_enabled");
   const statusEnabled = flagOn && LAYOVER_RETURNING_READERS_WIDENED;
@@ -1535,11 +1535,11 @@ router.post("/airport/sessions/:id/disruption", async (req, res) => {
 
   // (2) Recompute, do not append.
   let recompute: ReturnType<typeof recomputeForDisruption> | null = null;
-  let record = certifySessionFeasibility(airport, session, { nowMs, entry: await sessionEntry(sc, airport, session) });
+  const snapRecord = await consumerLayoverRecord(sc, airport, session, nowMs); let record = snapRecord ?? certifySessionFeasibility(airport, session, { nowMs, entry: await sessionEntry(sc, airport, session) });
 
   if (newDepartureIso !== null) {
     recompute = recomputeForDisruption(airport, session, {
-      state,
+      state, ...(snapRecord ? { before: snapRecord } : {}), // census-discovery §81: the snapshot's record IS the current session's, so it is not certified twice
       newDepartureTime: newDepartureIso,
       newBoardingTime: newBoardingIso === undefined ? undefined : newBoardingIso,
       nowMs, entry: record.inputs.entry, // census-discovery §65: the SAME entry fact this request certified with, not a second read
@@ -1650,7 +1650,7 @@ router.post("/airport/sessions/:id/return-deadline", async (req, res) => {
   const airport = await airportOr503(sc, res, session);
   if (!airport) return;
 
-  const record     = certifySessionFeasibility(airport, session, { nowMs: Date.now(), entry: await sessionEntry(sc, airport, session) });
+  const record     = (await consumerLayoverRecord(sc, airport, session, Date.now())) ?? certifySessionFeasibility(airport, session, { nowMs: Date.now(), entry: await sessionEntry(sc, airport, session) });
   const hardReturn = record.deadline.hardReturnTime;
   const remindAt   = new Date(hardReturn.getTime() - parsed.data.minutesBefore * 60000);
 
@@ -2222,7 +2222,7 @@ router.get("/airport/sessions/:id/overview", async (req, res) => {
   // is measured against come from different moments (src/test/splitClockGuard).
   const nowMs   = Date.now();
   const now     = new Date(nowMs);
-  const record  = certifySessionFeasibility(airport, session, { nowMs, entry: await sessionEntry(sc, airport, session) });
+  const record  = (await consumerLayoverRecord(sc, airport, session, nowMs)) ?? certifySessionFeasibility(airport, session, { nowMs, entry: await sessionEntry(sc, airport, session) });
   const stops   = await stopsOr503(sc, res, session.id);
   if (!stops) return;
   const planFit = computePlanFit(record, stops);
@@ -2372,7 +2372,7 @@ async function requireOwnedSession(req: any, res: any): Promise<{ sc: any; user:
 async function respondWithStops(res: any, sc: any, session: LayoverSession) {
   const airport = await airportOr503(sc, res, session);
   if (!airport) return;
-  const record  = certifySessionFeasibility(airport, session, { nowMs: Date.now(), entry: await sessionEntry(sc, airport, session) });
+  const record  = (await consumerLayoverRecord(sc, airport, session, Date.now())) ?? certifySessionFeasibility(airport, session, { nowMs: Date.now(), entry: await sessionEntry(sc, airport, session) });
   const stops   = await stopsOr503(sc, res, session.id);
   if (!stops) return;
   res.json({
@@ -3436,13 +3436,13 @@ router.get("/airport/sessions/:id/buddies", async (req, res) => {
   // said they could not leave the airport and get back in time was handed a
   // list of people to go and meet in the city, by the same server that had
   // already computed `verdict: "no"` for them in the same session.
-  //
+  const buddySnapRecord = await consumerLayoverRecord(sc, airport, session, Date.now()); // census-discovery §81: the snapshot's record, or null (flag off)
   // §9.1's "HARD GATE … before any optimisation" is an ORDER as much as a rule,
   // so this runs before the profiles are read. The decision belongs to the
   // layover domain (services/airport/LayoverBuddyGate.ts) and certifies the
   // session exactly once, so this list and the countdown on the same screen
   // cannot disagree about whether leaving is possible.
-  const { safetyGate, trustRequirement } = layoverBuddyDecision(airport, session, Date.now(), await sessionEntry(sc, airport, session));
+  const { safetyGate, trustRequirement } = layoverBuddyDecision(airport, session, Date.now(), buddySnapRecord ? null : await sessionEntry(sc, airport, session), buddySnapRecord);
   if (!safetyGate.passed) {
     res.json({ ok: true, city, buddies: [], reason: "safety_gate_not_passed", safetyGate });
     return;
@@ -4202,6 +4202,45 @@ router.post("/admin/airport/reports/:id/resolve", async (req, res) => {
   if (error) { sendError(res, "db_error", error.message); return; }
   if (!data) { sendError(res, "not_found", "Recommendation not found"); return; }
   res.json({ ok: true, id: (data as any).id, status: (data as any).status });
+});
+
+// ── Admin: the curated per-place dwell (census-discovery §81, A14; D-W10S2-3) ─
+//
+// The ONE writer of `layover_place_dwell` (migration 3466). A dwell is a
+// statement about one place by someone accountable for it — the venue's own
+// published figure, or a curator's timed visit — with its confidence and its
+// evidence in words. Never a category default. Read by Discovery's Layover
+// mode only while `layover_place_dwell_enabled` is on; writing a row changes
+// nothing a traveller sees until then.
+
+const placeDwellSchema = z.object({
+  activityMin: z.number().int().min(DWELL_MIN_MINUTES).max(DWELL_MAX_MINUTES),
+  sourceClass: z.enum(DWELL_SOURCE_CLASSES),
+  confidence:  z.enum(DWELL_CONFIDENCE),
+  evidence:    z.string().trim().min(1).max(500),
+});
+
+router.put("/admin/airport/place-dwell/:placeId", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const parsed = placeDwellSchema.safeParse(req.body);
+  if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload"); return; }
+  const r = await upsertCuratedDwell(admin.sc, req.params.placeId, admin.userId, parsed.data);
+  if (!r.ok) {
+    if (r.reason === "invalid") { sendError(res, "invalid_payload", r.message); return; }
+    if (r.reason === "place_not_found") { sendError(res, "not_found", r.message); return; }
+    sendError(res, "degraded_unavailable", r.message);
+    return;
+  }
+  res.json({ ok: true, dwell: r.dwell });
+});
+
+router.delete("/admin/airport/place-dwell/:placeId", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const r = await deleteCuratedDwell(admin.sc, req.params.placeId);
+  if (!r.ok) { sendError(res, "degraded_unavailable", r.message); return; }
+  res.json({ ok: true });
 });
 
 export default router;

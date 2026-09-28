@@ -123,7 +123,7 @@ import {
   type ReplanCandidate,
 } from "./LayoverEventReplanner.js";
 import { snapshotIdFor } from "./layoverLedger.js"; import { resolveLayoverEntry, layoverAirportCountry } from "./layoverEntryGate.js";
-import { safeReturnPosture, type SafeReturnPosture } from "./LayoverSafeReturnService.js";
+import { safeReturnPosture, type SafeReturnPosture } from "./LayoverSafeReturnService.js"; import { isFlagEnabled } from "../../lib/featureFlags.js";
 import { airportPoint, placePoint } from "./LayoverTravelTime.js";
 import type { LayoverReasonCode, ReturnCorridorRisk } from "./LayoverSafetyEngine.js";
 import {
@@ -322,12 +322,12 @@ export async function resolveSessionAirport(
 export async function certifiedLayoverSnapshot(
   db: SupabaseClient,
   userId: string,
-  opts: { sessionId?: string | null; nowMs?: number } = {},
+  opts: { sessionId?: string | null; nowMs?: number; loaded?: LoadedLayoverSession } = {},
 ): Promise<LayoverSnapshotResult> {
   const nowMs = opts.nowMs ?? Date.now();
 
-  const read = opts.sessionId
-    ? await getSession(db, opts.sessionId, userId)
+  const read = opts.loaded ? { ok: true as const, session: opts.loaded.session } // census-discovery §81: a consumer that already holds the session
+    : opts.sessionId ? await getSession(db, opts.sessionId, userId)
     : await getActiveSession(db, userId);
   if (!read.ok) {
     return {
@@ -343,7 +343,7 @@ export async function certifiedLayoverSnapshot(
   }
   const session = read.session;
 
-  const resolved = await resolveSessionAirport(db, session);
+  const resolved = opts.loaded ? { ok: true as const, airport: opts.loaded.airport } : await resolveSessionAirport(db, session);
   if (!resolved.ok) {
     return { ok: false, reason: "airport_profiles_unreadable", message: resolved.message };
   }
@@ -690,4 +690,80 @@ export async function certifiedActionUniverse(
     refusedIds: idsIn(["BLOCKED", "CLOSED"]),
     unmeasuredIds: idsIn("UNMEASURED"),
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// census-discovery §81 (A13; register D-W10S2-1) — the consumers read THIS door
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Layover `:66` — *"All surfaces consume the same certified LayoverSnapshot /
+// RecommendationContract; no duplicate time-budget logic"* — and `:803` —
+// *"One canonical LayoverSnapshot drives Trips, Compass, Discovery, Map and
+// Safe Return"*. Discovery's Layover mode and Compass's tools already read
+// `certifiedLayoverSnapshot`. The dashboard (Trips card, Map envelope), Safe
+// Return, the recommendations, the buddy gate and the in-layover Compass answer
+// each called `certifySessionFeasibility` themselves. §65 gave every one of
+// them the snapshot's entry input, so the INPUTS agree; this section makes them
+// read the snapshot itself, so there is one certification per request and one
+// place a certified figure comes from.
+//
+// Appended rather than interleaved, so every line the censuses cite above
+// keeps its number.
+//
+// WHAT MOVES AND WHAT DOES NOT. A consumer surface — a figure published about
+// the traveller's CURRENT layover — reads the snapshot. A COUNTERFACTUAL
+// certification is not a surface and stays on the engine: Compass's §12.1
+// value-of-information flips (a session with one answer changed), Safe
+// Return's `after` for a disruption (the session with its new departure),
+// the replanner's before/after under an external event's live conditions,
+// and the crew wrapper for OTHER travellers' sessions. Each of those asks
+// "what would the engine certify for a session that is not this one", which
+// no snapshot of this one can answer. `layoverSnapshotConsumers.test.ts`
+// enumerates them and fails on any other inline certification.
+//
+// FLAG. With `layover_snapshot_consumers_enabled` OFF (the seed, migration
+// 3465) or unreadable, `consumerLayoverSnapshot` answers null and every
+// consumer takes its legacy arm, byte-identical. ON, every consumer except the
+// Compass answer publishes the SAME record it did (same inputs through the
+// same engine — the parity cases pin that); the Compass answer's usable
+// minutes change from its own `cutoff − now − buffer` to the record's
+// envelope figure, which differs early in a layover (before the exit delay
+// has elapsed) — the visible change the flag exists for.
+
+/** A session and its airport, as a consumer that has already loaded them holds them. */
+export interface LoadedLayoverSession {
+  session: LayoverSession;
+  airport: AirportProfile;
+}
+
+/** Seeded FALSE by migration 3465. */
+export const LAYOVER_SNAPSHOT_CONSUMERS_FLAG = "layover_snapshot_consumers_enabled";
+
+/**
+ * The snapshot a consumer surface reads for a session it already loaded, or
+ * `null` when the consumers are not switched onto it (flag off or unreadable
+ * — `isFlagEnabled` is fail-closed), in which case the caller takes its legacy
+ * arm. With `loaded`, the snapshot reads neither `layover_sessions` nor
+ * `airport_profiles`; its one read is the entry corridor, and
+ * `resolveLayoverEntry` never refuses, so an ON flag always yields a snapshot.
+ */
+export async function consumerLayoverSnapshot(
+  db: SupabaseClient,
+  airport: AirportProfile,
+  session: LayoverSession,
+  nowMs: number,
+): Promise<LayoverSnapshot | null> {
+  if (!(await isFlagEnabled(db, LAYOVER_SNAPSHOT_CONSUMERS_FLAG))) return null;
+  const read = await certifiedLayoverSnapshot(db, session.userId, { nowMs, loaded: { session, airport } });
+  return read.ok ? read.snapshot : null;
+}
+
+/** The snapshot's certified record, for a consumer that publishes record-shaped output. */
+export async function consumerLayoverRecord(
+  db: SupabaseClient,
+  airport: AirportProfile,
+  session: LayoverSession,
+  nowMs: number,
+): Promise<LayoverFeasibilityRecord | null> {
+  return (await consumerLayoverSnapshot(db, airport, session, nowMs))?.certifiedRecord ?? null;
 }

@@ -905,7 +905,7 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
       "migration and its tests calls rebuild_trail_relations or selects from the table, " +
       "so it stays empty after the merge. Strike it off in the change that applies 3416 " +
       "to PRODUCTION.",
-  },
+  }, /* §81 (W10-S2): on this line so every cited line below keeps its number */ layover_place_dwell: { classification: "unapplied", note: "Migration 3466 (census-discovery §81, A14, D-W10S2-3): the Layover domain's curated per-place dwell with provenance (source_class, confidence, evidence). Rehearsed on the local PostgreSQL harness only; applied to no Supabase project. Written only by PUT /api/admin/airport/place-dwell/:placeId; read only by services/airport/LayoverPlaceDwell.ts readCuratedDwell while layover_place_dwell_enabled (3465, seeded FALSE) is ON, so at the seed nothing reads it. Strike it off in the change that applies 3466 to PRODUCTION." },
 };
 
 /**

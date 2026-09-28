@@ -22,7 +22,7 @@ import {
 // 0 is a FACT, landside 0 is an ABSENCE. `layover_recommendations.travel_time_min`
 // is `INTEGER NOT NULL DEFAULT 0` exactly like `layover_plan_stops.travel_min`,
 // so the read path needs the same classifier the plan path already uses.
-import { statedTravelMin, statedDurationMin } from "./LayoverPlanFit.js";
+import { statedTravelMin, statedDurationMin } from "./LayoverPlanFit.js"; import { consumerLayoverRecord } from "./LayoverSnapshot.js";
 import { airportPoint, placePoint, landsideLeg, travelTimeProvenanceColumn, type TravelTimeProvider } from "./LayoverTravelTime.js";
 // §8 — the outer edge of the safe envelope, which is the half a straight-line
 // LOWER BOUND can certify. See LayoverEnvelope's header for why the inner edge
@@ -470,7 +470,7 @@ export async function generateRecommendations(
   // below is rated against THIS record's deadline — previously each candidate
   // re-derived it, and the audit event derived it a third time. One record,
   // one deadline, one audit trail.
-  const certified = certifySessionFeasibility(airport, session, { nowMs, entry: await resolveLayoverEntry(db, session.userId, layoverAirportCountry(airport)) });
+  const certified = (await consumerLayoverRecord(db, airport, session, nowMs)) ?? certifySessionFeasibility(airport, session, { nowMs, entry: await resolveLayoverEntry(db, session.userId, layoverAirportCountry(airport)) });
 
   // ── §9.1 THE HARD GATE — MEASURED IN USABLE TIME, NOT SCHEDULED TIME ──────
   //

@@ -256,7 +256,7 @@ const ALL_FALSE: Omit<
 
 export interface ResolveOptions {
   sourceType?: string | null;
-  sourceId?: string | null;
+  sourceId?: string | null; /** census-discovery §81 (DV-76, §63.7 Q5 — APPROVAL REQUIRED): "consent_copy" reads `interacted` and `friends_only` as the settings copy words them, on the arms this engine observes; absent = the engine's own reading. Only POST /api/tags passes it, and only behind `tag_permission_consent_copy_enabled`. */ tagDefinitions?: "engine" | "consent_copy";
 }
 
 export async function resolveInteractionPermissions(
@@ -811,9 +811,9 @@ export async function resolveInteractionPermissions(
     case "everyone":
     case "anyone":              canTag = true; break;
     case "friends":
-    case "friends_only":        canTag = isFriend; break;
+    case "friends_only":        canTag = isFriend; if (opts.tagDefinitions === "consent_copy") canTag = viewerFollowsTarget && targetFollowsViewer; break; // copy: "Only mutual follows and circle members" — the circle arm is not observed here, so it refuses
     case "followers":           canTag = viewerFollowsTarget; break;
-    case "interacted":          canTag = isFriend || viewerFollowsTarget || targetFollowsViewer; break;
+    case "interacted":          canTag = isFriend || viewerFollowsTarget || targetFollowsViewer; if (opts.tagDefinitions === "consent_copy") canTag = targetFollowsViewer; break; // copy: "Only people you've followed or messaged" — the tagged user followed the tagger; the message arm is not observed here, so it refuses
     // census-discovery §62 cites this line as it read before §63: `default:                    canTag = true;` — an unknown value ALLOWED. It now fails closed, below.
     case "no_one":
     case "nobody":              canTag = false; break;

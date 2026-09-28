@@ -1491,7 +1491,7 @@ function requireInternalSecret(req: any, res: any): boolean {
 }
 
 /** How old a pending row must be before it is considered an orphan (ms). Defined with the pass, in services/media/PendingUploadSweep.ts. */
-const ORPHAN_CUTOFF_MS = PENDING_UPLOAD_ORPHAN_CUTOFF_MS; // 1 hour
+const ORPHAN_CUTOFF_MS = PENDING_UPLOAD_ORPHAN_CUTOFF_MS; // 2 h 30 of no activity — census-discovery §81 (D-W10S2-6)
 
 router.post('/postcards/sweep-orphans', async (req, res) => {
   if (!requireInternalSecret(req, res)) return;
