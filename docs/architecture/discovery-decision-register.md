@@ -1981,3 +1981,41 @@ No APPROVAL REQUIRED entry is added. Arming the stop (D-W10-O-3) and gate 2 (D-W
   - The same code is added to the fixture's wrong-token answer on line 102.
 - **Reversibility.** Revert line 2633's call and the one line at the foot that reads a status-less error; nothing is stored.
 - **Where.** `artifacts/api-server/src/routes/discovery.ts` (line 2633; `isTransientAuthError`'s body; `authServiceUnreachable` at the foot); `src/test/discoveryFeedEventPostsCoverage.test.ts` lines 101–102.
+
+## W11-X2 round 3 — DV-83's two §98.1 paths (census §99)
+
+*Lane W11-X2, round 3, 2026-09-28, branch `disc-w11-x2-r3` from `a9ce69090`. Census section §99. Row: DV-83 (held at W by §98.1). No migration and no flag: each change alters output only when a read failed or a cached page is partial. Every edit in a cited file is line-neutral. All evidence is controlled.*
+
+### D-W11X2-18 — Overpass's in-body failure is a failed read, empty or truncated
+
+- **The question.** §98.1 finding 1: *"`queryOverpass` returns the elements of an HTTP 200 without reading `remark` … When Overpass exceeds that, or runs out of memory, it answers 200 with a `runtime error: …` remark and empty or truncated elements."* Which remark forms are failures, and what happens to a truncated set?
+- **What Overpass sends.** As far as this lane can establish (from Overpass's error-output kinds, reasoned from its implementation; no live Overpass answer could be fetched here), every message Overpass writes into `remark` comes from its error-output channel and starts with its kind: `runtime error:`, `static error:`, `parse error:`, `encoding error:` (the query failed, or stopped part-way), or `runtime remark:` / `static remark:` / `encoding remark:` (informational; the answer is whole). The two forms §98.1 names are `runtime error: Query timed out in "query" at line N after S seconds.` and `runtime error: Query run out of memory using about M MB of RAM.` Overpass answers a static or parse error with HTTP 400 in practice, and that is already a failed read (the non-OK arm, §94.11).
+- **Options considered.**
+  - (a) Only a remark starting `runtime error` fails. A future error kind, or a message not in either form, would again be served as a smaller city.
+  - (b) A remark naming an error, anywhere in it, fails. A remark in no Overpass form fails too, and so does a non-string remark or a JSON body with no `elements` array. An informational `<kind> remark:` passes. This is fail-closed on anything unrecognised, and it does not treat the informational kind as a failure.
+  - (c) Any non-empty remark fails. Consequence: an informational remark would refuse and un-cache a whole answer.
+  - Truncated elements: (i) keep and serve them, marked; (ii) discard them, so the answer is the marked empty array.
+- **Decision.** (b) and (ii). A truncated set is whatever Overpass had written when it stopped, in quadtile order, not distance order. Serving it as the nearest places, or counting it, misstates the city, and nothing says how much is missing. Discarding it reuses §94.11's single marker (`overpassFailed()`), so every path §94.11 wired handles it with no new branch:
+  - the cold serve paths name `"overpass"` (`partial` while a DB half answered);
+  - the feed names it beside its categories;
+  - the counts refuse that category, with no public `Cache-Control`;
+  - Cache A, L2 and the stale-L2 revalidation write nothing (each writes only OSM rows that exist).
+  An empty remark (`""`) is treated as no remark.
+- **Reversibility.** Revert line 686 and the foot helper. Nothing is stored; a failed read was never cached.
+- **Where.** `artifacts/api-server/src/routes/discovery.ts` (`queryOverpass` line 686 in place; `overpassAnswerFailed` at the foot). Tests: `discoveryOverpassFailedSource` X1–X6 (red first), controls C2–C4. Mutations S1–S10.
+
+### D-W11X2-19 — the counts name an Overpass-only failure as the upstream's
+
+- **The question.** The verifier's residual (§98.1): the counts route labels an Overpass-only failure `transient_db` / `category_counts_failed`. D-W11X2-14 names Overpass alone `upstream_unavailable` / `overpass_unavailable` on GET /discovery.
+- **Options considered.** (a) Leave it: an alert on `transient_db` sends an operator to the database for an upstream outage. (b) Change the class only and keep `category_counts_*`: the class is then right, but the code still names the route's outcome rather than the dependency, which is inconsistent with GET /discovery and with `classifyRefusal`, which carries the upstream's own code. (c) When every failed category failed on its Overpass read alone, use `upstream_unavailable` and the upstream's code (`overpass_unavailable`). When any failed category failed on its DB half, or for any other reason, keep `transient_db` and the route's code.
+- **Decision.** (c). The fan-out throws `UpstreamUnavailableError("overpass", "overpass_unavailable")` for an Overpass-only category (its DB half is checked first, so a category where both failed counts as a DB failure). The refusal's class and code come from the rejections. `coverage` still says `nothing` or `partial`, and `failedSources` still names the categories whose counts are unknown. O7 is restated by this decision: it asserted `category_counts_failed` for an Overpass 429, and now asserts `overpass_unavailable` and `upstream_unavailable`. It is no weaker: it still requires `counts: {}` and `coverage: "nothing"`. The D11 suite's counts cases (DB failures) are unchanged and pass.
+- **Reversibility.** Revert lines 2500, 2525 and 2538 and the foot helper.
+- **Where.** `routes/discovery.ts`. Tests: `discoveryOverpassFailedSource` O7 (restated), X7, C5, C6. Mutations K1–K4.
+
+### D-W11X2-20 — ForYouTab replays a cached page with its own source and coverage
+
+- **The question.** §98.1 finding 2: *"The cache hydration sets `source 'none'` and `osmPartial false`, and the partial notice requires `source === 'osm'`. A cached `partial` / `["overpass"]` page therefore renders its card with no partial notice while the refetch loads."*
+- **Options considered.** (a) Stop caching partial bodies. The service caches them on purpose, because their rows are real (the comment on `travel-buddy-standalone/src/services/discovery.ts`'s cache write says so). A partial city would then show a skeleton on every open. (b) Restate the page on hydration, as `DiscoveryCategoryTab` does: `source` is `'osm'` when the cached page has places and `'none'` when it has none; `osmPartial` is `refusal?.coverage === 'partial'`.
+- **Decision.** (b). It is applied twice. First, in the hydration effect. Second, in the `useState` initialisers, because the tab seeds its cards from the cache on the first render, so the frame painted before the effect runs must carry the page's coverage too. A cached partial page with no places is the partial-empty state. A cached complete page, or no cache, shows no notice. The refetch then restates both values from the network answer, as before. The source label on a hydrated page now reads as the network would label it ("Popular spots"), where it read "Curated picks" until the refetch answered.
+- **Reversibility.** Revert lines 112 and 315 of `ForYouTab.tsx`.
+- **Where.** `travel-buddy-standalone/src/components/discovery/ForYouTab.tsx`. Tests: `ForYouTab.cachedPartial.component.test.tsx` H0–H3 (red first), controls C1–C4. Mutations F1–F7.
