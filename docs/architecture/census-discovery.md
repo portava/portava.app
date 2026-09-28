@@ -13399,6 +13399,45 @@ None of those files changed.
 
 **What would turn this red:** `postgrestFilterLikeEscape.test.ts`, or any new `.or()` ilike caller that escapes before it strips.
 
+### 80.15 Round 4: two surviving mutants, a gap during the handoff, and uncased scripts
+
+The verifier confirmed B02 and A08 `C` at `de6d2bfbc` and reported four remaining gaps. All four are closed here. Neither row changes verdict.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| B02 | C | **C** | **Uncased scripts are decided and pinned, and the gateway's key now agrees with the route's in every script.** Q8d's title said "script-neutral"; the rule reads case, so it was not. Thai, CJK and the other scripts written without spaces separated at an emoji: "กรุง🔥เทพ" searched "กรุง เทพ", which cannot find "กรุงเทพ". The in-word join now also applies between two letters of a script written without spaces (`artifacts/api-server/src/lib/inputAssistance/queryNormalizer.ts:648#const SPACELESS`, `artifacts/api-server/src/lib/inputAssistance/queryNormalizer.ts:649#const IN_WORD_EMOJI_RE`). Arabic and Hebrew, which space their words, keep the separating default, and a script change is a boundary (`artifacts/api-server/src/test/discoverySearchQueryPolicy.test.ts:350#describe("Q8e`). The gateway transliterated before it stripped, so an in-word emoji split the word the transliteration dictionary looks up: "моск🔥ва" keyed "moskva" where "москва" keys "moscow". It now strips first (`artifacts/api-server/src/lib/inputAssistance/queryNormalizer.ts:559#const hadEmoji = containsEmoji(body)`; `artifacts/api-server/src/test/discoverySearchQueryPolicy.test.ts:374#it("the gateway's key is the same as`). Register `D-W10-S1-1`, "Uncased scripts". **Branch only; no deploy.** |
+| A08 | C | **C** | **The legacy-to-gateway handoff never shows an empty list, and both mounted-field refresh paths are pinned.** When the policy table landed mid-typing, the legacy hook switched off at once and the gateway, not yet answered, was shown empty for about one debounce. `handoff` now keeps the legacy rows, and the legacy hook that keeps them current, until the gateway has answered the query currently typed (`travel-buddy-standalone/src/hooks/useGlobalSearchSuggestions.ts:158#const handoff`, `travel-buddy-standalone/src/hooks/useGlobalSearchSuggestions.ts:161#enabled: legacyEnabled || handoff`). "Answered" is the gateway hook's new `answeredText`: the text of a served answer (network or exact cache), never a local-tier list (`travel-buddy-standalone/src/platform/input-assistance/hooks/useInputAssistance.ts:314#setAnsweredText(trimmed)`; `travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.answeredText.component.test.tsx:59#a served answer names its text`). Proven in `travel-buddy-standalone/src/hooks/__tests__/useGlobalSearchSuggestions.missingPolicy.component.test.tsx:246#the handoff never shows an EMPTY gateway list`. The two mutants that survived round 3 are pinned: the re-render when a table lands (`travel-buddy-standalone/src/hooks/__tests__/useGlobalSearchSuggestions.missingPolicy.component.test.tsx:211#a table that lands AFTER the legacy rows settled`) and the shared in-flight refresh (`travel-buddy-standalone/src/hooks/__tests__/useGlobalSearchSuggestions.missingPolicy.component.test.tsx:229#TWO mounted fields share the one refresh`; `travel-buddy-standalone/src/platform/input-assistance/services/__tests__/policyRefreshOnUse.component.test.ts:111#a call made while an attempt is IN FLIGHT`). Register `D-W10-S1-4`, "The handoff". **Branch only; no client build carrying it has shipped.** |
+
+**The jest/act caveat.** A table lands on a promise, and a state update made by a promise lands at the next `act` boundary. Each new case resolves its deferred fetch inside `act` and then makes no keystroke, so anything that moves the screen afterwards was caused by the table landing. The round-3 case could not tell the two apart: the legacy request was still settling when the table landed, and its own state update re-rendered the hook. That is why removing the re-render survived it.
+
+**Seen red first** (lane run log):
+- The handoff case: 1 of 8 in `missingPolicy`, against the round-3 hook.
+- Q8e: the Thai/Han/kana join (1 of 38 at first run) and the gateway-key parity (1 of 38 after the join, before the reorder).
+- Q8e's Arabic/Hebrew and script-boundary cases, the two mutant pins, the in-flight unit case and `useInputAssistance.answeredText` are pins. Each was green on arrival against the behaviour it pins, and its evidence is the mutations below.
+
+**Restated, not weakened:** Q8d's title. It now names what the rule reads, case, and points to Q8e for the scripts without case. Its assertions are unchanged.
+
+**Mutations,** each restored byte-identical by sha256:
+
+| id | mutation | red |
+|---|---|---|
+| R1 | no re-render when a table lands | round-4 cases: lands after settle, two fields, handoff |
+| R2 | no shared in-flight attempt | two fields; the in-flight unit case |
+| H1 | `handoff` always false | the handoff case |
+| H2 | `handoff` ignores `answeredText` | round-3 retried-on-use case and all three round-4 cases |
+| H3 | the legacy hook is not kept running during the handoff | the handoff case |
+| H4 | a local-tier list counts as an answer | `useInputAssistance.answeredText` |
+| U1 | no join for scripts written without spaces | Q8e join and parity |
+| U2 | every uncased letter joins | Q8e Arabic/Hebrew |
+| U3 | Han dropped from the spaceless set | Q8e join and parity |
+| U4 | no emoji detected before transliteration | Q8c, Q8e parity, the caption/picker case, "Sky Bar 🔥" |
+
+**Pointer repairs** (line-neutral, census-wall): the two W71 pointers now read `queryNormalizer.ts:565#applyAliases(romanized)`. W71's verdict is unchanged, and the census-wall acknowledgement says so.
+
+**Headline:** unchanged, 96 C / 86 W / 5 N / 1 X, CORRECT 96 / 188 = **51.1 %**.
+
+**What would turn this red:** anything §80.11–§80.14 list, plus an empty or mixed list during the handoff (the handoff case), an in-word emoji in a spaceless script leaving a gap (Q8e), or the gateway's key diverging from the emoji-free word (Q8e parity).
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/services/airport/AirportProfileService.ts — §80.14 names `searchAirports` as a third caller of `safeOrIlikeValue` whose query changes with the helper; census-layover grades the airport service (with an argued acknowledgement), and no Discovery verdict rests on it.

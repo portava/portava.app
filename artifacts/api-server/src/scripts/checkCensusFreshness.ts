@@ -4162,6 +4162,8 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/platform/input-assistance/services/__tests__/policyRefreshOnUse.component.test.ts",
     "travel-buddy-standalone/src/platform/input-assistance/services/installInputPolicySync.ts",
     "travel-buddy-standalone/src/platform/input-assistance/services/policyStore.ts",
+    // §80.15 (round 4): the served-answer signal the handoff reads.
+    "travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.answeredText.component.test.tsx",
     // §80.13 (round 3): the routed helper, cited then; fixed in §80.14.
     "artifacts/api-server/src/lib/postgrestFilter.ts",
     // §80.14: the helper's suite, which drives both route callers over HTTP.
