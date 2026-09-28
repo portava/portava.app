@@ -38,7 +38,7 @@ import { invalidateRankDesignFlagCache } from "../lib/discoveryRankFlags.js";
 import { objectiveForSurface } from "../lib/discoveryRankObjectives.js";
 import { rankCandidates } from "../lib/portavaRank.js";
 import {
-  trailPickCandidate, tripPlanningObjectiveOrder, SURFACE_OBJECTIVE_RANK_FLAGS, loadSurfaceObjective,
+  trailPickCandidate, tripPlanningObjectiveOrder, tripPlanningRankInputs, trendingObjectiveOrder, SURFACE_OBJECTIVE_RANK_FLAGS, loadSurfaceObjective,
 } from "../lib/discoverySurfaceObjectiveRank.js";
 import { clearProtectedZoneCache } from "../lib/protectedZoneStore.js";
 import tripsExpansionRouter from "../routes/trips-expansion.js";
@@ -197,8 +197,8 @@ describe("S — Trail: `02` §8's Personalized Picks on `01` §9's Trail objecti
 // [P2, P3, P5]; `emerging` stays after it: P1.
 const K = TREND_DISCLOSURE_MIN_TRAVELERS;
 const RUN_AGO = 60_000;
-const pm = (n: number, state: string, velocity: number | null): Row => ({
-  place_id: `db/${PL(n)}`, computed_at: rel(RUN_AGO), trend_state: state, recent_rate: 0.3, mid_rate: 0.1, prior_rate: 0, total_weight: 12,
+const pm = (n: number, state: string, velocity: number | null, run: string): Row => ({
+  place_id: `db/${PL(n)}`, computed_at: run, trend_state: state, recent_rate: 0.3, mid_rate: 0.1, prior_rate: 0, total_weight: 12,
   recent_unique_travelers: K + 3, window_unique_travelers: K + 9, model_version: TREND_STATE_MODEL_VERSION_V2, feature_version: TREND_FEATURE_VERSION_V2,
   window_ms: { recent_ms: 172_800_000, mid_ms: 604_800_000, prior_ms: TREND_PRIOR_MS }, source_surface: "discovery",
   recent_exposures: 40, mid_exposures: 40, prior_exposures: 0, recent_groups: 5, mid_groups: 3, prior_groups: 0,
@@ -215,11 +215,12 @@ const dp = (n: number, createdAgo: number): Row => ({
  * fails the SECOND discovery_places read — the objective's own feature read;
  * the first is eligibility.
  */
-function trendDb(flags: Row[], opts: { failFeatureRead?: boolean } = {}) {
+function trendDb(flags: Row[], opts: { failFeatureRead?: boolean; featureReadIsFirst?: boolean } = {}) {
+  const run = rel(RUN_AGO);
   const tables: Record<string, Row[]> = {
     feature_flags: flags, profiles: [{ id: U(1), account_status: "active" }, { id: VIEWER, account_status: "active" }],
     blocks: [], protected_zones: [], compass_user_preferences: [], area_momentum: [], trend_integrity_reviews: [],
-    place_momentum: [pm(3, "trending", 3.1), pm(2, "trending", 2.0), pm(5, "trending", 1.7), pm(1, "emerging", null)],
+    place_momentum: [pm(3, "trending", 3.1, run), pm(2, "trending", 2.0, run), pm(5, "trending", 1.7, run), pm(1, "emerging", null, run)],  // ONE run: every row carries the same computed_at
     discovery_places: [dp(3, 300 * D), dp(2, D), dp(5, 30 * D), dp(1, 2 * D)],
   };
   let placesReads = 0;
@@ -228,7 +229,7 @@ function trendDb(flags: Row[], opts: { failFeatureRead?: boolean } = {}) {
     let orders: Array<{ col: string; asc: boolean }> = [];
     let limitN: number | null = null; let range: [number, number] | null = null;
     const result = () => {
-      if (table === "discovery_places" && ++placesReads === 2 && opts.failFeatureRead) return { data: null, error: { code: "57014", message: "timeout" } };
+      if (table === "discovery_places" && ++placesReads === (opts.featureReadIsFirst ? 1 : 2) && opts.failFeatureRead) return { data: null, error: { code: "57014", message: "timeout" } };
       let out = (tables[table] ?? []).filter((r) => filters.every((fn) => fn(r)));
       for (const o of [...orders].reverse()) out = [...out].sort((a, b) => (String(a[o.col] ?? "") < String(b[o.col] ?? "") ? -1 : String(a[o.col] ?? "") > String(b[o.col] ?? "") ? 1 : 0) * (o.asc ? 1 : -1));
       if (range) out = out.slice(range[0], range[1] + 1);
@@ -287,6 +288,10 @@ describe("S — Trending: the Trending objective inside each claimed state", () 
     const out = await trendingByLocation(db, VIEWER, "lisbon", Date.now());
     assert.ok(out.ok);
     if (out.ok) assert.deepEqual(out.body.items.map((i) => i.placeId), TRENDING_OFF);
+    // The entry point itself: a failed feature read hands back the caller's SAME array — no re-rank on what was read.
+    invalidateRankDesignFlagCache();
+    const rows = [{ place_id: `db/${PL(3)}`, trend_state: "trending", velocity: 3.1 }, { place_id: `db/${PL(2)}`, trend_state: "trending", velocity: 2 }];
+    assert.equal(await trendingObjectiveOrder(trendDb(ON(SURFACE_OBJECTIVE_RANK_FLAGS.trending), { failFeatureRead: true, featureReadIsFirst: true }), rows, Date.now()), rows);
   });
 });
 
@@ -366,6 +371,13 @@ describe("S — Trip Planning: GET /trips/:tripId/nearby-places on the Trip Plan
     ];
     const trip = { destination_city: "Lisbon", destination_lat: DEST.lat, destination_lng: DEST.lng };
     assert.deepEqual((await tripPlanningObjectiveOrder(db, VIEWER, trip, places)).map((p) => p.id), [PB, PC, PA]);
+    invalidateRankDesignFlagCache();
+    // Each input on its own, by hand: trip fit 1/(1 + d/25) inside 50 km, and route fit as the distance itself.
+    const { cands, ctx } = tripPlanningRankInputs(VIEWER, trip, places, new Map([[PA, 5], [PB, 5], [PC, 5]]), undefined, Date.now());
+    const km = Object.fromEntries(cands.map((c) => [c.id, c.distanceKm!]));
+    assert.ok(Math.abs(km[PB]! - 1.0) < 0.01 && Math.abs(km[PC]! - 5.0) < 0.01 && Math.abs(km[PA]! - 30.0) < 0.05, JSON.stringify(km));
+    for (const id of [PA, PB, PC]) assert.ok(Math.abs(ctx.tripMatch![id]! - 1 / (1 + km[id]! / 25)) < 1e-9, `trip fit of ${id}`);
+    assert.deepEqual(cands.map((c) => c.likeCount), [5, 5, 5], "saves are the saves read");
     invalidateRankDesignFlagCache();
     const same = await tripPlanningObjectiveOrder(tripDb([]), VIEWER, trip, places);
     assert.equal(same, places, "off: the SAME array comes back");

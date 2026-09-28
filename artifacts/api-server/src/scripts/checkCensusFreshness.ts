@@ -4339,6 +4339,14 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/components/discovery/liveUnchecked.ts",
     "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryCategoryTab.liveSafety.component.test.tsx",
     "travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.liveSafety.component.test.tsx",
+    // census-discovery §93 (lane W11-X1, ranker core): A11, DV-31, DV-09 and DV-74 are graded on the surface
+    // objective ranker, its flag migration, the Trip Planning call site and the three new suites.
+    "artifacts/api-server/src/lib/discoverySurfaceObjectiveRank.ts",
+    "artifacts/api-server/src/migrations/3500_discovery_surface_objective_rank_flags.sql",
+    "artifacts/api-server/src/routes/trips-expansion.ts",
+    "artifacts/api-server/src/test/discoveryRediscoveryRetestServe.test.ts",
+    "artifacts/api-server/src/test/discoveryTrendReviewSuppression.test.ts",
+    "artifacts/api-server/src/test/discoverySurfaceObjectiveRank.test.ts",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

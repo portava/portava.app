@@ -231,6 +231,20 @@ export async function tripPlanningObjectiveOrder<P extends TripPlanningPlace>(
     return places;
   }
   const viewer = await loadPdeViewer(sc, viewerId, trip.destination_city ?? null);
+  const { cands, ctx } = tripPlanningRankInputs(viewerId, trip, places, saves, viewer.categoryAffinities, nowMs);
+  return rankOnSurfaceObjective(cands, ctx, objective).map((s) => s.candidate.__place);
+}
+
+/**
+ * The Trip Planning ranker's inputs, PURE: trip fit (the §78 kernel, the planned
+ * trip as the context whatever its dates), route fit (distance from the trip's
+ * destination), saves and the viewer's category affinity. Exported so each
+ * input is pinned on its own, not only through the order it produces.
+ */
+export function tripPlanningRankInputs<P extends TripPlanningPlace>(
+  viewerId: string, trip: PlannedTrip, places: readonly P[], saves: ReadonlyMap<string, number>,
+  categoryAffinities: Record<string, number> | undefined, nowMs: number,
+): { cands: Array<RankCandidate & { __place: P }>; ctx: ViewerContext } {
   const tripMatch = tripFitMap(places, [{
     id: "planned", destinationCity: trip.destination_city ?? null,
     destinationLat: finite(trip.destination_lat) ? trip.destination_lat : null, destinationLng: finite(trip.destination_lng) ? trip.destination_lng : null,
@@ -242,6 +256,5 @@ export async function tripPlanningObjectiveOrder<P extends TripPlanningPlace>(
       ? haversineKm(trip.destination_lat, trip.destination_lng, p.lat, p.lng) : null,
     __place: p,
   }));
-  const ctx: ViewerContext = { userId: viewerId, nowMs, categoryAffinities: viewer.categoryAffinities, tripMatch };
-  return rankOnSurfaceObjective(cands, ctx, objective).map((s) => s.candidate.__place);
+  return { cands, ctx: { userId: viewerId, nowMs, categoryAffinities, tripMatch } };
 }

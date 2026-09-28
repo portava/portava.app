@@ -173,9 +173,13 @@ describe("§57 A11 — Discovery never reaches the ranker's own free-time arithm
     // MERGES the §78 design inputs onto the context discoveryPde builds, so it is
     // a second module that touches a ViewerContext. It is pinned here by name,
     // and below it is held to the same rule — it must never add a free-time field.
-    assert.deepEqual(builders, [path.join("lib", "discoveryPde.ts"), path.join("lib", "discoveryRankDesigns.ts")], `another Discovery module builds a ranker context: ${builders.join(", ")}`);
-    const designs = readFileSync(path.join(SRC, "lib", "discoveryRankDesigns.ts"), "utf8").split("\n").map((l) => l.replace(/\/\/.*$/, "").replace(/^\s*\*.*$/, "")).join("\n");
-    assert.equal(/\bavailable(Minutes|Now)\b/.test(designs), false, "the §78 design hook hands the ranker a free-time input");
+    // Restated by census-discovery §93 (lane W11-X1, D-W11X1-3): lib/discoverySurfaceObjectiveRank.ts builds the
+    // ranker contexts of DV-09's Trail, Trending and Trip Planning surfaces; pinned by name and held to the same rule.
+    assert.deepEqual(builders, [path.join("lib", "discoveryPde.ts"), path.join("lib", "discoveryRankDesigns.ts"), path.join("lib", "discoverySurfaceObjectiveRank.ts")], `another Discovery module builds a ranker context: ${builders.join(", ")}`);
+    for (const mod of ["discoveryRankDesigns.ts", "discoverySurfaceObjectiveRank.ts"]) {
+      const code = readFileSync(path.join(SRC, "lib", mod), "utf8").split("\n").map((l) => l.replace(/\/\/.*$/, "").replace(/^\s*\*.*$/, "")).join("\n");
+      assert.equal(/\bavailable(Minutes|Now)\b/.test(code), false, `${mod} hands the ranker a free-time input`);
+    }
 
     const pde = readFileSync(path.join(SRC, "lib", "discoveryPde.ts"), "utf8");
     const at = pde.indexOf("const viewerContext: ViewerContext = {");

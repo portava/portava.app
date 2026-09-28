@@ -1501,3 +1501,88 @@ Lane W10-S1, 2026-09-28, branch `disc-w10-s1-search`. Census section: census-dis
 - **Consequence of approving.** The integrity stage cannot run on data whose use the owner has not confirmed, and no output kind is served unmeasured.
 - **Consequence of declining.** Both flags can be switched on in D-W10-R3-13's original order. The integrity stage would still record `detector_off` until 3451 is on, and the kinds would be served without impressions.
 - **Recovery path.** Any flag off takes effect on the next read (30-second caches). Nothing here writes.
+
+## W11-X1 — ranker core
+
+*Lane W11-X1, 2026-09-28, branch `disc-w11-x1-ranker` from `3cc027a06`. Census section §93. Items W11A-B1 (A11), W11A-B4 (DV-31), W11A-B3 (DV-09) and hunk H-W10T-1 (§86.9). Every new behaviour is behind a flag seeded FALSE, or changes nothing until an admin records a verdict. The evidence is controlled: in-process routes and libraries over in-memory databases, plus the local PostgreSQL 16 harness. None of it is production evidence, and nothing here claims real-world effectiveness.*
+
+### D-W11X1-1 — A11: the dead free-time arms are deleted, and what the golden does about it
+
+- **The question.** §81.4 hunk R2 (D-W10S2-7 decided the deletion; §92.3 W11A-B1 routed it here): delete `availableNow` and `availableMinutes` from `ViewerContext` and both arms of `availabilityFitScore`. §78's `portavaRankGolden.json` pins every flag-off byte of the ranker, and its `full`, `layover` and `noNeighbourhood` fixture viewers SET the two fields. The deletion therefore moves 30 of the golden's 40 hashes, although no production caller ever set either field (`discoveryFreeTimeRetirement` F1).
+- **Options considered.**
+  - (a) Keep the arms. Declined: D-W10S2-7 decided the deletion, and Trips `:185` forbids the independent calculation.
+  - (b) Re-capture the golden from the new ranker. Declined as stated: that is going green by fiat.
+  - (c) Remove the two fields from the fixture's viewers, and re-capture the golden with the BASE ranker (`3cc027a06`) over those viewers. Then prove that the new ranker reproduces that file byte for byte, from the stripped viewers AND from the original viewers.
+- **Decision.** (c). Transcript (§93.4): base ranker on stripped viewers = new ranker on stripped viewers = new ranker on the original viewers, sha256 `665bb6a6…` for all three. The ten `empty` hashes did not move; the 30 that moved are exactly the scenarios whose viewer set a deleted field. The deletion is line-neutral: comment lines take the places of the deleted lines, so no census citation into `portavaRank.ts` moves. The `availabilityFit` feature stays in the record as 0, so stored feature keys keep their shape (a free-time fit from Temporal Freedom windows can later land as its own term).
+- **Tests restated, none weakened:**
+  - `discoveryFreeTimeRetirement` F2 now asserts the arms are GONE (red at `3cc027a06`);
+  - `discoveryFreeTimeDuplicate` P2 was P1's control ("a timed candidate DOES move"). It now asserts the timed candidate no longer moves (red at `3cc027a06`);
+  - `portavaRank` "availability fit" asserts 0 for the old inputs (was 1, -0.5, 1). The event-beats-viral case drops `availableNow` from its context and still passes.
+- **Reversibility.** Restore from history; the golden's old file is in history too.
+- **Where.** `lib/portavaRank.ts` (`ViewerContext`, `availabilityFitScore`), `test/helpers/portavaRankGoldenScenarios.ts`, `test/fixtures/portavaRankGolden.json`.
+
+### D-W11X1-2 — DV-31: where the rediscovery retest sits on the page
+
+- **The question.** §84.5 hunk H-W10R1-1: call `planRediscoveryRetest` inside `rankForViewer`, after the exploration governor.
+- **Decision.** As §84.5 gives it, with four stated details.
+  - It runs after the governor and before §85's post-rank stages, and only with the modifiers (2289) on. The retest pool IS the momentum load's own v2 readings for the candidate key, and that load runs only with the modifiers on. With them off nothing is read, so §47's L0 and §85's pipeline golden cannot move.
+  - The key is the same expression the momentum load was given.
+  - The moved row is stamped `rediscoveryRetest: 1`. DV-39's screen classifies the key as `exposure_coordinate` ("where/when/how an item was served"), so a served row stores it. `stages.rediscoveryRetest` records `{ id, slot, fromIndex }`, only when a place moved.
+  - Never fatal: a throw leaves the governor's page.
+- **Tests.** `discoveryRediscoveryRetestServe` Q0–Q3, through signed-in GET /discovery. Q0 pins the flag-off page to a golden captured at `3cc027a06`, before the hunk. `discoveryTrendOps` R5 ("nothing on a serve path calls it") is restated to name `lib/discoveryPde.ts` as the one caller.
+- **Reversibility.** `discovery_trend_rediscovery_retest_enabled` (3475) off. To unwire it, remove the one call.
+- **Where.** `lib/discoveryPde.ts` (`pdeRediscoveryRetestStage`, appended), `lib/discoveryRecommendationRecord.ts` (one key on the registry's last line).
+
+### D-W11X1-3 — DV-09: the three new rankers each have their own flag, and need 3450 too
+
+- **The question.** W11A-B3: route Trail, Trending and Trip Planning through `surfaceObjectiveOptions`, each behind a FALSE flag, and build the smallest honest ranker where none exists.
+- **Options considered.**
+  - (a) 3450 alone. Consequence: turning on the objectives for Discovery would also turn on three new rankers at once, with no way to roll back one surface.
+  - (b) A surface flag alone, ranking on Discovery's default weights when 3450 is off. Consequence: a fourth objective nobody specified.
+  - (c) A surface flag (3500, seeded FALSE) AND 3450, read in that order. Either off ⇒ the call site's own array, untouched.
+- **Decision.** (c). Migration 3500 seeds `discovery_trail_objective_rank_enabled`, `discovery_trending_objective_rank_enabled` and `discovery_trip_planning_objective_rank_enabled` FALSE. With the surface flag off, 3450 is not read. Each ranker is portavaRank itself (`rankCandidates` with `objective`), with no exploration slot and the ranker's default diversity plus the objective's own.
+- **Reversibility.** Any of the four flags off, on the next request. Rollback file for 3500 in `db/rollback/`.
+- **Where.** `lib/discoverySurfaceObjectiveRank.ts`; `src/migrations/3500_discovery_surface_objective_rank_flags.sql`. Tests: `discoverySurfaceObjectiveRank` S0–S5.
+
+### D-W11X1-4 — DV-09: the product details of each surface's ranker
+
+- **Trail: `02` §8's "Personalized Picks" spotlight.** It is a named spotlight nobody served, and it is the one place on a Trail page where ranking for the viewer is the product.
+  - The four existing modules keep their own §8 objectives (recency, momentum, durable quality, curation). Re-ranking them would overwrite what §8 says each is for.
+  - Candidates are the members the viewer may be served (§64), minus members out of active rotation (§7). In the explored branch they are the decided states.
+  - Inputs: the creator (followed authors, from `loadPdeViewer`), the member's place (place affinity), the attach time (recency; events fresher and places evergreen come from the objective), and `trail_relevance` = the member's own membership confidence. Inside one Trail, `01` §9's "Trail relevance" and "confidence" are the same fact. It is still capped (TRAIL_AFFINITY_MAX_CONTRIBUTION).
+  - The module is appended last, so every existing module key keeps its index. It passes through the same §10 diversity and DV-13 page bound as every module. Objective label: `trail_objective`.
+- **Trending: GET …/trending/places only, inside each claimed state.** D-W10-R1-13's state order (trending, emerging, rediscovered) stays first, because a list names states that claim a gain.
+  - Inside a state the Trending objective orders by the place's freshness (`discovery_places.created_at`), velocity (normalised to the state's fastest, because the ranker clamps a momentum input to [0,1]; still under the owner's cap), verified status and saves (de-emphasised).
+  - `for-you` keeps its decided affinity-first order, and `emerging` its fold. Both are other `11` §4 actions with their own decided orders.
+  - The objective re-orders and never decides what is listed. An unread feature read leaves the decided order. No number reaches the wire.
+- **Trip Planning: GET /trips/:tripId/nearby-places.** It is the one Discovery list the product serves inside a trip.
+  - Trip fit uses §78's kernel (`tripFitMap`) with the trip being planned as the context, whatever its dates. A trip being planned is the trip in question, and a far-off start date is not a reason to rank it as no trip.
+  - Route fit ≈ distance from the trip's destination. Saves are `discovery_places.saved_count` (save/add-to-trip behaviour). The viewer's category affinity comes from `loadPdeViewer`.
+  - Rating is not a portavaRank term, so it remains the tie-break (the input order). The response shape is unchanged; only the order moves.
+- **Not claimed.** "Itinerary utility" and "budget/availability" have no input here (Trips publishes no plan-item projection, E-7). The Trip Planning objective ranks on what exists.
+
+### D-W11X1-5 — H-W10T-1: a suppressed place review reaches the trend classifier's consumers
+
+- **The question.** §86.9: `trend_integrity_reviews` records `suppressed` on a place, but nothing read it.
+- **Decision.**
+  - `lib/discoveryTrendState` asks `TrailService.readTrendReviewVerdict(sc, "place", id)` for every reading that could publish something: a claim, or a v2 reading the retest could pick. `id` is the trend store's own place key verbatim (`rank_events.item_id` = `place_momentum.place_id`), the id an admin sees in the evidence.
+  - **suppressed** → the reading stays, as no claim: `unknown`, lifecycle `inactive`, no driver. No reason code, no sentence, no list, no retest.
+  - **unread** → the reading is removed ("not computed"), following D-W10T-11's "an unreadable review answers null, never a claim".
+  - **none** → unchanged. 3486 absent reads `none`.
+  - Applied where readings are made public: `loadLocalMomentum` (the served trend states and the retest pool), and the trend API's two stored-row readers (`readTrendSnapshot`, `readLocatedRun`).
+- **Limits, stated.**
+  - The momentum SCALAR (a capped ranking modifier, never a public claim) is not changed by a verdict. Zeroing it is a separate anti-manipulation choice, left to `03` §12's owner.
+  - One indexed single-row read per claimed place; a batch read is a follow-up.
+- **Tests restated, none weakened.** Four test fakes that threw on, or could not chain, the new read now model the table as readable and empty. The goldens they hold are unchanged. `discoveryModifiers` "thin city" adds `trend_integrity_reviews` to the tables the loader reads.
+- **Where.** `lib/discoveryTrendState.ts` (appended), one line each in `lib/discoveryLocalMomentum.ts` and `lib/discoveryTrendExplanation.ts`. Tests: `discoveryTrendReviewSuppression` T1–T4.
+
+### D-W11X1-A1 — **APPROVAL REQUIRED**: production activation of DV-09's last three surfaces and of DV-31's page call
+
+- **Recommended action, exact values, in order:**
+  1. Apply 3450 and 3500 to `portava-ci`, then to production (both only seed FALSE rows).
+  2. Set `discovery_surface_objectives_enabled = true` (3450), per D-W10-R2-A1.
+  3. Then each surface on its own, one at a time (none of the three logs a served rank today, so the rollback is the only instrument): `discovery_trip_planning_objective_rank_enabled = true`, then `discovery_trail_objective_rank_enabled = true`, then `discovery_trending_objective_rank_enabled = true` (this one also needs `discovery_trending_api_enabled` and `discovery_trend_lists_enabled`, D-W10-R1-17 step 5).
+  4. D-W10-R1-17 step 6 (`discovery_trend_rediscovery_retest_enabled = true`) is now satisfiable on the code side, because H-W10R1-1 is merged here. It still needs 2289 and the v2 flag on.
+- **If approved.** Each surface ranks on its own `01` §9 objective, and a cooled place gets its periodic retest slot.
+- **If declined.** Every deployment serves exactly today's bytes on all three surfaces and on GET /discovery (S0, Q0).
+- **Recovery.** Any flag off takes effect on the next request (the §78 flag cache is 30 s). 3500's rollback deletes its three rows only while they are FALSE. Nothing these flags gate writes anything.

@@ -57,9 +57,18 @@ const COOLED = "node/1";
 /**
  * sha256 of Q0's flag-off page — served ids in order, then each served
  * impression's item and ranking features (the clock-bound provenance keys
- * dropped) — captured at 3cc027a06 with `discoveryPde.ts` BEFORE the hunk.
+ * dropped) — at FIXED_NOW, captured with `lib/discoveryPde.ts` as it stood at
+ * 3cc027a06, BEFORE the hunk.
  */
 const FLAG_OFF_GOLDEN = "77d378a68886743b85be7268ecbf69762ffdc5800f5b1f032203daa76c433a85";
+
+/**
+ * The clock is PINNED for the whole suite: the exploration governor seeds its
+ * allocation by the hour (FeedSlotAllocator, `nowMs / 3_600_000`) and the
+ * retest rotates by the day, so an unpinned golden would move with the clock.
+ */
+const FIXED_NOW = Date.parse("2026-09-27T12:03:17Z");
+const realNow = Date.now;
 
 const realFetch = globalThis.fetch;
 let server: Server;
@@ -166,6 +175,7 @@ function assertServed(name: string, s: Served): void {
 const MODIFIERS_V2 = [flag("discovery_ranking_modifiers_enabled", true), flag("discovery_trend_normalised_enabled", true)];
 
 before(async () => {
+  Date.now = () => FIXED_NOW;
   server = createServer(express()
     .use((req, _res, next) => { (req as any).log = pino({ level: "silent" }); next(); })
     .use(discoveryRouter));
@@ -179,6 +189,7 @@ before(async () => {
 });
 
 after(async () => {
+  Date.now = realNow;
   globalThis.fetch = realFetch;
   resetCaches();
   _setTestServiceClient(null);
