@@ -16351,6 +16351,24 @@ DV-83 moves W → C, and no other row changes bucket. `check:census-integrity` a
 - These counts equal §94.8's, because §94.10's hold is lifted and nothing else moved.
 
 
+### 97.8 Final-head live CI: what was this PR's, and what is the owner's
+
+*Added 2026-09-28 after reading the `CI (live DB)` run on `7943a31ba`. No row changes. Nothing was applied to `portava-ci` or production.*
+
+Between the run on `532227796` and the run on `7943a31ba`, someone applied migrations to `portava-ci` out of band, up to about 3466. `check:all` then failed 3 of 46 checks. Two of those failures were this PR's, because the migrations and the code involved exist only on this branch, not on `main`:
+
+- **`check:write-path-columns`: two NEW unresolvable sites.** Both are in the Layover dwell reader and writer, which used `.from(LAYOVER_PLACE_DWELL_TABLE)`. The extractor cannot resolve a constant, so it bucketed both as `dynamic table name`, and the live column check never saw them. They now name the table literally (`artifacts/api-server/src/services/airport/LayoverPlaceDwell.ts:121#.from("layover_place_dwell")`, `artifacts/api-server/src/services/airport/LayoverPlaceDwell.ts:161#db.from("layover_place_dwell").upsert(`). The shared extractor now resolves both, with the 5 and 8 columns 3466 declares. Neither site is in `UNRESOLVED_ALLOWLIST`, so nothing there goes stale. `layoverPlaceDwell.test.ts` passes 15/15.
+- **`check:authorization-contract`: 7 violations, all narrowings.** 3362 and 3363 revoke client table-level SELECT on `posts`, `passport_postcards` and `post_media`, in favour of column-level SELECT. 3390 adds three RESTRICTIVE `discovery_places_deny_*_clients` policies. Each migration is committed on this branch, and the contract's own rule is that such a change updates the contract in the same PR. The four entries are updated in place, with no line added or removed. The update was checked offline through `evaluateContract`. The previous contract, run against the reported live state, reproduces the 7 violations word for word. The new contract finds 0. It still reports a re-granted posts SELECT as BROADENED, and a dropped deny policy as missing. `authorizationContractGuard.test.ts` passes 8/8. Column-level SELECT stays unpinned by the contract, as before: its invariant 1 is table-level.
+
+**The owner's, not this PR's.** None of these is a code change, and none was acted on:
+
+- `check:write-path-columns` and `check:missing-live-columns` still fail. They name tables and columns declared by the migrations `audit:schema` lists as unapplied on `portava-ci`: 3476, 3477, 3484, 3486, 3487, 3488, 3495 and 3497.
+- The schema-drift job's dry run reports that the ledger's checksum for `3460_discovery_search_protection_scope.sql` (`7900067214cdbb2b…`) matches neither committed version of that file:
+  - the version on disk, `4cc721434321a8cd…` (`0dfbf93b8`);
+  - the earlier version, `cb88b973c2ae042b…` (`4c70c50d6`).
+
+  Some uncommitted variant was applied, and the ledger has to be reconciled by hand.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/lib/capability/prerequisitesCore.ts — §93.8 names its function-granular gate boundary as why the Compass KNOWN entry was struck; it is the prerequisite checker's own machinery, and no Discovery verdict rests on it.
@@ -16401,3 +16419,4 @@ DV-83 moves W → C, and no other row changes bucket. `check:census-integrity` a
 - NOT-GRADED: artifacts/api-server/src/test/migrationApplyOrder.test.ts — §95.7 cites it only as the applier's own suite, run to show 3495 and 3496 are appliable (BEGIN before any `$pre$` block); it is shared migration machinery, and no Discovery verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/entryWiringNotCommentedOut.test.ts — §90 names it as the regression test for entry wiring hidden inside line comments (DC-07's scheduler, DV-74's admin router); it guards the entry files, and no Discovery verdict rests on its text.
 - NOT-GRADED: artifacts/api-server/src/test/authSignupStatusNoClient.test.ts — §97.5 names it only as the precedent for discoveryFeedNoServiceClient.test.ts's guard-coverage exemption (clear the Supabase env, then import); it tests the auth signup-status route, and no Discovery verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/authorizationContractGuard.test.ts — §97.8 names it only as the contract evaluator's self-test, run after the contract's four entries were brought to the applied migrations; it guards shared authorization machinery, and no Discovery verdict rests on it.

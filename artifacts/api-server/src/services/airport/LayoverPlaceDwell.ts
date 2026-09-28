@@ -118,7 +118,7 @@ export async function readCuratedDwell(
   const ids = [...new Set(subjects.filter((s): s is string => typeof s === "string" && UUID.test(s)))];
   if (ids.length === 0) return { state: "read", byPlace: new Map() };
   const { data, error } = await db
-    .from(LAYOVER_PLACE_DWELL_TABLE)
+    .from("layover_place_dwell")
     .select("place_id, activity_min, source_class, confidence, evidence")
     .in("place_id", ids);
   if (error) {
@@ -158,7 +158,7 @@ export async function upsertCuratedDwell(
   if (place.error) return { ok: false, reason: "unreadable", message: String(place.error.message ?? "discovery_places unreadable") };
   if (!place.data) return { ok: false, reason: "place_not_found", message: "no such discovery place" };
   const nowIso = new Date().toISOString();
-  const { error } = await db.from(LAYOVER_PLACE_DWELL_TABLE).upsert({
+  const { error } = await db.from("layover_place_dwell").upsert({
     place_id: placeId,
     activity_min: candidate.activityMin,
     source_class: candidate.sourceClass,
