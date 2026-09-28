@@ -13082,6 +13082,98 @@ CONSTRUCTED 182 / 188 = **96.8 %**, unchanged. CORRECT 94 / 188 = **50.0 %**, do
   - the query fold and the stored fold stripping the 91 marks, which turns B2 and H4 red, with H1 still green;
   - the owner answering question 4 with the market-letters reading.
 
+## §83 — Database rollout, the `portava-ci` apply and the owner approval pack (lane W10-D): the 40-file apply is one mechanical step, rehearsed end to end; Q66-3 is decided; DC-27 gets its record and moves X → W; nothing is applied
+
+*Written 2026-09-28 by lane W10-D on `disc-w10-d-rollout`, branched from `debd5ad4f`, whose migration tree is byte-identical to PR #528's head `84318d1b2`. No application code, migration or workflow was changed. This session has no `portava-ci` credentials: **nothing was applied to `portava-ci` or to production, nothing was deployed, and no flag was turned on.** `head_commit` is not re-declared.*
+
+This lane adds:
+- `docs/ops/discovery-portava-ci-apply-plan.md`: the 40-file apply as one verified step;
+- `docs/ops/discovery-production-rollout.md`: the production rollout, with DC-27's record template;
+- `docs/ops/discovery-owner-approval-request.md`: every non-delegated decision as a concrete request;
+- the rehearsal driver `artifacts/api-server/scripts/local-db/rehearse-pending-apply.ts` and its seed `rehearse-pending-apply.seed.sql`;
+- the register section `## W10-D`, and an entry in `docs/migrations.md`.
+
+### 83.1 Row statements
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DC-26 | W | **W** | **IMPLEMENTATION-COMPLETE; awaits: the 40 pending migrations (3338–3441) applied to `portava-ci` + one green `schema drift` run on `portava-ci` for the applied tree (with apply-plan F1 landed, or 3360's allowlisted function the only finding).** Q66-3 is decided (D-W10D-1): that run is the rehearsal `12` names (`docs/specs/discovery-v1/12_Claude_Code_Implementation.md:189#- CI rehearsal`). What this lane adds is everything short of the event. The pending set is recomputed with the applier's own `planApply` and matches CI's dry run on `84318d1b2` file for file and shape for shape (`docs/ops/discovery-portava-ci-apply-plan.md:30#**Result: identical`). The rehearsal on a restored baseline covers apply, idempotence, every rollback and a re-apply whose catalogue equals the first apply's (`docs/ops/discovery-portava-ci-apply-plan.md:346#- **Re-apply after rollback:**`). The workflow still applies only on `main` (`.github/workflows/live-db.yml:764#THE APPLY. Default branch only`), and the pin that the step exists holds (`artifacts/api-server/src/test/ciWorkflowArchitecture.test.ts:912#it("has a step that applies migrations (not only the dry run)"`). Harness evidence is controlled evidence: no rehearsal event exists on `portava-ci`. |
+| DC-18 | W | **W** | **IMPLEMENTATION-COMPLETE; awaits: the `portava-ci` apply and its green `schema drift` run (the rehearsal record) + an operator read of production's applied-body checksums against the repository.** *New migration per behaviour* passes as before. *Rollout order* now exists as a document: migrations → API → client → flags, with the creator ledger behind C-11 and 2893 last or never (`docs/ops/discovery-production-rollout.md:106#1.5 Batch P2`). *Rollbacks:* 38 of the 40 pending files ship one, and all 38 ran on the harness. 3440's reversal (its footer, via 2220) ran too. The eleven media rollbacks leave their ledger row, and that is recorded for the operator (`docs/ops/discovery-portava-ci-apply-plan.md:338#- **Rollbacks:**`). *Never edit an applied migration* still needs a live checksum comparison. The applier refuses drift by construction, but only an operator can read production's bodies. |
+| DV-70 | W | **W** | **IMPLEMENTATION-COMPLETE; awaits: the 40 applied to `portava-ci` + batches P0–P1 (and P2 after C-11) applied to production + an operator's live read of columns, functions and policies. AWAITS OWNER APPROVAL: W10D-A1.** The drift is now explained file by file for both databases. `portava-ci`'s 40, each with dependencies, rows touched, postconditions and recovery, are in the apply plan §3. Production's state per Discovery file comes with its source and date, from the 2026-09-22 snapshot and the 2026-09-27 reads (`docs/ops/discovery-production-rollout.md:39#1.2 Production`). "Zero unexplained drift" also needs every Discovery table applied or retired in production and a live read beyond tables, so it is not met. |
+| DC-27 | X | **W** | **AWAITS OWNER APPROVAL: W10D-A5 (Phase F gates 1 and 2, E-2); awaits: a filled rollout record showing rehearse, verdict checks, shadow, cohort, observe, expand, in that order.** The X rested on *"no rollout record exists"* (§69.2). The record now exists as a template that `12`'s sequence is graded against, with one row per phase and an evidence cell each row cannot close without (`docs/ops/discovery-production-rollout.md:291#8. DC-27`). The steps it records are specified with their gates, cohort values and stop rules, in the mode sequence M1–M5 and in the approval request (`docs/ops/discovery-owner-approval-request.md:92#A5 — Phase F gates`). **The row is therefore now verifiable, and the answer is that the sequence has not begun:** W, not C. Five of the seven stop halt values are still `null` at this tree (A-5, another lane), so the "observe" gate cannot yet trip on them. |
+
+### 83.2 Decisions (register `## W10-D`)
+
+- **D-W10D-1: Q66-3.** A pre-merge `portava-ci` apply, followed by a green `schema drift` run on the PR tree, is the CI rehearsal (`docs/architecture/discovery-decision-register.md:30#D-W10D-1 — Q66-3`).
+- **D-W10D-2:** a TRUE flag found by a seed file stops the apply and is never overwritten.
+- **D-W10D-3:** flag-seed recovery never deletes a pre-existing row.
+- **D-W10D-4:** `certify:migrations` runs with `--files`.
+- **D-W10D-5:** production order, and the creator ledger waits on C-11.
+- **APPROVAL REQUIRED:** W10D-A1…A7, W10D-B0…B11, W10D-C1…C8 and W10D-D1, in full in `docs/ops/discovery-owner-approval-request.md`.
+
+### 83.3 Found by the rehearsal, and routed (not this lane's files)
+
+These are exact failures, with the fix each needs. None is a defect in what the apply writes.
+- **F1.** After the apply, `audit:schema` still reports `3360 … missing function intel_evidence_rekey_reference`, because 3361 drops it by design. The fix is an `ALLOWLIST` entry in `auditMigrationsVsLive.ts`.
+- **F2.** Certify stage 4 fails on six untagged second-apply guards (the first `DO $$` block of 3362, 3363, 3364, 3365, 3421 and 3422). The fix is to retag each `$pre$`.
+- **F3.** 3360's `$post$` block asserts a function 3361 drops.
+- **F4.** 3390's `$post$` block reads a temp table that no longer exists after commit.
+
+F2–F4 must land before the apply. The detail is in the apply plan §5.3 (`docs/ops/discovery-portava-ci-apply-plan.md:387#5.3 Four fixes`).
+
+Two more findings:
+- The eleven media rollbacks 3338–3359, and 3350's, do not delete their ledger row, which contradicts `docs/migrations.md`'s 2026-09-27 entry.
+- A pre-merge apply turns `main`'s certify stage 1 red until #528 merges (apply plan §5.4).
+
+### 83.4 Tests seen red, and mutations
+
+- No application code was changed, so there is no fix to mutate. No test file was added.
+- **Negative controls, each seen red:**
+  - With `media_find_busier_enabled` TRUE in a copy of the baseline, the apply stopped at 3351 (`failed`). The flag kept TRUE, and 3351 has no ledger row.
+  - The same TRUE flag made the zero-persistence rehearsal file stop at 3351's postcondition (psql exit 3), with the catalogue unchanged.
+- The plan comparison fails loudly on any difference from CI's list (`artifacts/api-server/scripts/local-db/rehearse-pending-apply.ts:70#export const CI_PENDING_84318D1B2`).
+- The certify stage-4 reproduction went red on the eight files of F2–F4. That is recorded, not fixed.
+
+### 83.5 Harness
+
+This is controlled evidence: PostgreSQL 16 at `127.0.0.1:55455`, data dir `/var/tmp/w10d-localdb`.
+- **Baseline:** `LOCAL_DB_TO=3338 up.sh` (314 applied in order, 12 known-unreplayable, 2 on retry), plus 3350, the modelled ledger and the seed.
+- **Apply:** 40 applied, 19 tails verified.
+- **Data:** all 92 pre-existing flags, and every seeded row, byte-identical. The one exception is 3440's documented `search_key` recompute (Ǿresund `resund` → `oresund`).
+- **Idempotent re-run:** `NOTHING TO DO`.
+- **Rollback:** 38 rollbacks plus 3440's reversal, with the catalogue within 8 lines of the baseline, every one tighter.
+- **Re-apply:** the catalogue equals the first apply's (0 of 12,536 lines differ).
+- **Stop measurement:** `discovery_stop_measurements` answers `rls_leak.deviations = 0`.
+- **The zero-persistence rehearsal file:** passes, and changes nothing.
+- **`run-tests.sh`:**
+  - 377/377 on a fresh standard chain;
+  - 374/377 on the rehearsed database. The three failures are rehearsal artefacts: the seed collides with K6, and the applier's ledger rows break G4-5 and G5-5's psql-replay assumption. Each passes on the standard chain (25/25).
+- The cluster was stopped and its data dir deleted at the end.
+
+### 83.6 Checks
+
+CHECKS_PLACEHOLDER
+
+### 83.7 Headline, restated from the rows
+
+With DC-27 moving X → W, `check:census-integrity` counts the rows as follows:
+
+| bucket | count |
+|---|---|
+| BUILT-AND-CORRECT | **94** |
+| BUILT-BUT-WRONG | **89** |
+| NOT-BUILT | **5** |
+| CANNOT-VERIFY | **0** |
+
+CONSTRUCTED 183 / 188 = **97.3 %**, up from 96.8 %. CORRECT 94 / 188 = **50.0 %**, unchanged. The denominator is unchanged.
+
+### 83.8 What would turn this red
+
+- **A file of the 40 changing bytes after the rehearsal.** For example, a §74 fix to 3440/3441, or F2–F4. §1.3 of the apply plan then requires the dry run and the harness rehearsal again. After the `portava-ci` apply, any such change is drift, which the applier refuses.
+- **A new migration landing after `debd5ad4f`.** It joins the set as "whatever lands after", with its own §3 row and a re-run.
+- **`portava-ci`'s dry run printing anything but the 40** (or the 40 plus the new files), a `REFUSED` line, or a `Ledger rows with no file on disk` line.
+- **The PR's `schema drift` run staying red after the apply** on anything other than F1's finding. DC-26 would then stay W on a real gap.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/compass/CompassExplanationEngine.ts — §13.7 item 3 names Compass's HMAC recommendation-token signer as a refactor this lane declined to make in another lane's file. Discovery's recommendation id is minted by lib/discoveryRecommendationId.ts, and no Discovery verdict rests on the signer.

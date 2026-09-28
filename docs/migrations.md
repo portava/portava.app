@@ -3684,3 +3684,19 @@ What it leaves:
   checksum is reported as a mismatch.
 - If the PR does not merge, the owner can run `db/rollback/` for 3350. It removes the flag row and the
   ledger row and leaves the label inert, because PostgreSQL cannot drop an enum value.
+
+## 2026-09-28 — the 40 pending on `portava-ci` (3338 … 3441): REHEARSED on the local harness; NOT applied anywhere
+
+Lane W10-D (census-discovery §83) prepared the owner-authorised `portava-ci` apply. This session holds no `portava-ci` credentials, so **nothing was applied to `portava-ci` or to production.** The procedure, with expected outputs, is `docs/ops/discovery-portava-ci-apply-plan.md`.
+
+- **The set.** `planApply` over a ledger modelled from this file's entries gives the same 40 files, in the same order and with the same shapes, as CI's own dry run against `portava-ci` on `84318d1b2` (run 36392056669).
+- **The harness rehearsal**, on a restored pre-3338 baseline with seeded data and flag values, used the applier's own functions with a psql transport:
+  - 40 applied, 19 post-`COMMIT` tails verified;
+  - every pre-existing row and flag byte-identical, the one documented exception being 3440's `search_key` recompute;
+  - a second apply was a no-op;
+  - 38 rollback files ran newest first, plus 3440's footer reversal;
+  - the re-apply's catalogue is identical to the first apply's;
+  - `run-tests.sh` passes 377/377 on a fresh chain.
+- **Found, and recorded for the operator:**
+  - The eleven media rollbacks 3338–3359 do not delete their ledger row. **Neither does 3350's.** The 2026-09-27 entry above says 3350's rollback removes the ledger row; it does not. Add `DELETE FROM public.schema_migration_ledger WHERE filename = '3350_media_neighborhood_only_location_mode.sql';` to that recovery.
+  - After the apply, `certify:migrations` stage 4 fails on 3360, 3362, 3363, 3364, 3365, 3390, 3421 and 3422, and `audit:schema` still reports 3360's function, which 3361 drops by design. None of these is a defect in what is applied. The fixes (F1–F4) are in the apply plan §5.3.

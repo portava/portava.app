@@ -4134,6 +4134,14 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/fixtures/searchPlatformGolden.json",
     // §70 names it as A08's remaining platform-direction work, and searchPlatformBoundary B5 pins its lib/ importers.
     "artifacts/api-server/src/routes/discoverySearchHelpers.ts",
+    // census-discovery §83 (lane W10-D, rollout and the portava-ci apply): DC-26, DC-18, DV-70 and DC-27
+    // are graded on the apply plan, the production rollout (DC-27's record template), the approval request
+    // and the harness rehearsal driver and seed that produced the plan's evidence.
+    "docs/ops/discovery-portava-ci-apply-plan.md",
+    "docs/ops/discovery-production-rollout.md",
+    "docs/ops/discovery-owner-approval-request.md",
+    "artifacts/api-server/scripts/local-db/rehearse-pending-apply.ts",
+    "artifacts/api-server/scripts/local-db/rehearse-pending-apply.seed.sql",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //
