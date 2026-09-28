@@ -24,11 +24,15 @@
  *     a refusal suite). An entry whose file no longer imports what it claims is
  *     stale and fails too, so the registry cannot rot into a list of names.
  *
+ *  4. census-discovery §80 (register D-W10-S1-2) decided the row's open question
+ *     (§60.8 Q1): a consumer may NOT render `coverage: "partial"` as a complete
+ *     answer. Every consumer that RENDERS A LIST names the branch that says the
+ *     list is incomplete (`partialBranches`, G7); one that renders no list says
+ *     why the rule does not reach it. The wording has one home,
+ *     `services/discoveryCoverageNotice.ts`, and G8 pins its text.
+ *
  * WHAT IT DOES NOT CHECK. Whether the branch is RIGHT is the proof suite's job;
- * a fragment in a file is evidence the branch exists, not that it works. And it
- * takes no position on `coverage: "partial"` — the row's open owner question
- * (census-discovery §28.5 item 2) — beyond recording, per consumer, what it
- * does with one today.
+ * a fragment in a file is evidence the branch exists, not that it works.
  *
  * Run: node --import tsx/esm --test src/services/__tests__/discoveryRefusalConsumers.guard.test.ts
  */
@@ -58,6 +62,15 @@ const EXPECTED_CARRIERS = [
   'searchUnified',
 ];
 
+/**
+ * census-discovery §80 (A08 reason 3): the Map search sheet reads the input
+ * gateway's search page, whose envelope carries the same refusal vocabulary.
+ * Carriers outside `services/discovery.ts`, pinned by module.
+ */
+const EXTRA_CARRIERS: Record<string, string[]> = {
+  'src/platform/input-assistance/services/inputAssistance.ts': ['requestMapSearchPage'],
+};
+
 /** Hooks that take a carrier's answer and hand a `refused` flag on. Their importers are consumers too. */
 const WRAPPERS: Record<string, string> = {
   useCommunityDiscovery: 'src/hooks/useCommunityDiscovery.ts',
@@ -72,8 +85,14 @@ interface Consumer {
   branches: string[];
   /** Suites that prove the branch, each with a phrase that must appear in it. */
   proofs: Array<{ file: string; mentions: string }>;
-  /** What a `coverage: "partial"` answer does here today (§28.5 item 2 — undecided policy). */
+  /** What a `coverage: "partial"` answer does here (§80, D-W10-S1-2). */
   partial: string;
+  /**
+   * §80: the source fragments that say "incomplete" — for a consumer that
+   * renders a list, non-empty (G7). Empty only where `partial` says why the
+   * rule does not reach this file.
+   */
+  partialBranches: string[];
 }
 
 const CONSUMERS: Record<string, Consumer> = {
@@ -84,8 +103,16 @@ const CONSUMERS: Record<string, Consumer> = {
       '{community.refused && (',
       "setSavedIdsUnavailable(res.reason !== 'signed_out');",
     ],
-    proofs: [{ file: 'src/components/discovery/__tests__/ForYouTab.refusal.component.test.tsx', mentions: 'for-you-community-refused' }],
-    partial: 'rows rendered as a complete answer',
+    proofs: [
+      { file: 'src/components/discovery/__tests__/ForYouTab.refusal.component.test.tsx', mentions: 'for-you-community-refused' },
+      { file: 'src/components/discovery/__tests__/ForYouTab.refusal.component.test.tsx', mentions: 'for-you-partial' },
+    ],
+    partial: 'rows kept, one "may be incomplete" line per lane; no rows is never "No recommendations yet"',
+    partialBranches: [
+      "{source === 'osm' && osmPartial && (",
+      "{source === 'none' && osmPartial && (",
+      '{community.incomplete && !community.refused && (',
+    ],
   },
   'src/components/discovery/DiscoveryCategoryTab.tsx': {
     uses: ['getCachedDiscoveryPlaces', 'getDiscoveryPlaces'],
@@ -97,49 +124,57 @@ const CONSUMERS: Record<string, Consumer> = {
       { file: 'src/components/discovery/__tests__/DiscoveryCategoryTab.refusal.component.test.tsx', mentions: 'does NOT tell the user to adjust their filters' },
       { file: 'src/components/discovery/__tests__/DiscoveryCategoryTab.loadMoreRefusal.component.test.tsx', mentions: 'a refused page 2 is not the last page' },
     ],
-    partial: 'rows rendered as a complete answer (a partial page with no rows reads "No places found")',
+    partial: 'rows kept under a "may be incomplete" line; no rows is the partial-empty state with a retry, never "No places found"',
+    partialBranches: ['ListHeaderComponent={partial ?', ') : places.length === 0 && partial ? ('],
   },
   'src/components/discovery/DiscoveryEventPostsRail.tsx': {
     uses: ['getDiscoveryFeed'],
     branches: ["setRefused(res.data.refusal?.coverage === 'nothing');", 'if (refused) {'],
     proofs: [{ file: 'src/components/discovery/__tests__/DiscoveryEventPostsRail.refusal.component.test.tsx', mentions: 'discovery-event-posts-rail-refused' }],
-    partial: 'posts rendered',
+    partial: "n/a — the feed's partial names PLACE categories (failedCats); this rail renders only event posts, which that partial does not cover",
+    partialBranches: [],
   },
   'src/hooks/useCommunityDiscovery.ts': {
     uses: ['getCommunityPlaces'],
     branches: ["const refused = result.data.refusal?.coverage === 'nothing';", 'if (cKey && !refused && isCurrentDiscoveryScope(scope)) {'],
     proofs: [{ file: 'src/hooks/__tests__/useCommunityDiscovery.refusal.component.test.tsx', mentions: 'refused' }],
-    partial: 'rows kept and cached',
+    partial: 'rows kept and cached WITH `incomplete`, so a cached replay still says so',
+    partialBranches: ["incomplete: result.data.refusal?.coverage === 'partial'"],
   },
   'src/hooks/useSearchSuggestions.ts': {
     uses: ['getSearchSuggestions'],
     branches: ["const refusedNow = res.refusal?.coverage === 'nothing';"],
     proofs: [{ file: 'src/hooks/__tests__/useSearchSuggestions.refusal.component.test.tsx', mentions: 'refused' }],
-    partial: 'groups kept and cached',
+    partial: 'groups kept and cached WITH `incomplete`, so a cached replay still says so',
+    partialBranches: ["setIncomplete(!refusedNow && res.refusal?.coverage === 'partial');", "incomplete: res.refusal?.coverage === 'partial' });"],
   },
   'src/hooks/useGlobalSearchSuggestions.ts': {
     uses: ['useSearchSuggestions'],
-    branches: ['refused: preferGateway ? false : legacy.refused,'],
+    branches: ["refused: preferGateway ? gateway.refusal?.coverage === 'nothing' : legacy.refused,"],
     proofs: [{ file: 'src/hooks/__tests__/useGlobalSearchSuggestions.refused.component.test.tsx', mentions: 'the hook reports refused' }],
-    partial: 'groups passed through',
+    partial: 'groups passed through with `incomplete`, from the legacy read or the gateway envelope',
+    partialBranches: ["incomplete: preferGateway ? gateway.refusal?.coverage === 'partial' : legacy.incomplete,"],
   },
   'app/search.tsx': {
     uses: ['searchUnified', 'useGlobalSearchSuggestions'],
     branches: ["if (res.data.refusal?.coverage === 'nothing') {", 'refused: suggestRefused,', 'refused={suggestRefused}'],
     proofs: [{ file: 'app/__tests__/search.refusal.component.test.tsx', mentions: 'refus' }],
-    partial: 'rows rendered with the "incomplete" notice naming failedSources',
+    partial: 'rows rendered with the "incomplete" notice; the suggestions panel says it too',
+    partialBranches: ['{SEARCH_PARTIAL_NOTICE}', 'incomplete={suggestIncomplete}'],
   },
   'src/components/map/MapSearchSheet.tsx': {
-    uses: ['searchUnified'],
-    branches: ["const allRefusedEverything = allRefusal?.coverage === 'nothing';"],
+    uses: ['requestMapSearchPage'],
+    branches: ["const allRefusedEverything = allRefusal?.coverage === 'nothing';", "const savedFailed = res.savedRefusal?.coverage === 'nothing';"],
     proofs: [{ file: 'src/components/map/__tests__/MapSearchSheet.refusal.component.test.tsx', mentions: 'refus' }],
-    partial: 'rows rendered with the "incomplete" notice',
+    partial: 'rows rendered with the "incomplete" notice, per lane',
+    partialBranches: ["const allPartial = allRefusal?.coverage === 'partial';", 'const NOTICE_PARTIAL = SEARCH_PARTIAL_NOTICE;'],
   },
   'app/map/index.tsx': {
     uses: ['getDiscoveryPlaces'],
-    branches: ["if (res.ok && res.data?.refusal?.coverage === 'nothing') {"],
+    branches: ["if (res.ok && (res.data?.refusal?.coverage === 'nothing' || isPartialEmpty(res.data?.refusal, res.data?.places))) {"],
     proofs: [{ file: 'app/map/__tests__/projectedPlaces.component.test.tsx', mentions: 'a refusal is not a zero-results map' }],
-    partial: 'pins drawn',
+    partial: 'pins drawn under a "may be incomplete" banner; no places is the retryable error card, never the zero-results state',
+    partialBranches: ['isPartialEmpty(res.data?.refusal, res.data?.places)', 'testID="map-places-partial"'],
   },
   // Prefetch: the answers are DISCARDED (warmed into the service's own cache,
   // which never holds a `coverage: "nothing"` body — discovery.refusal suite).
@@ -148,6 +183,7 @@ const CONSUMERS: Record<string, Consumer> = {
     branches: ['getDiscoveryCategoryCountsBatch(prefetchCity, 10).catch(() => {});', ').catch(() => {});\n    }, 300);'],
     proofs: [{ file: 'src/services/__tests__/discovery.refusal.component.test.tsx', mentions: 'DOES NOT CACHE a refused body' }],
     partial: 'n/a — nothing rendered',
+    partialBranches: [],
   },
   // The badge row: the SERVICE omits a refused category (absent key), and the
   // row renders an absent count as no count — never as a dimmed zero.
@@ -155,7 +191,8 @@ const CONSUMERS: Record<string, Consumer> = {
     uses: ['getDiscoveryCategoryCounts'],
     branches: ['const isEmpty = !countsLoading && count !== undefined && count === 0;'],
     proofs: [{ file: 'src/services/__tests__/discovery.refusal.component.test.tsx', mentions: 'OMITS a refused category rather than reporting it as a real zero' }],
-    partial: 'the real count shown',
+    partial: 'n/a — a count badge, not a list: the service omits a failed category and the badge renders an absent key as no count',
+    partialBranches: [],
   },
 };
 
@@ -247,6 +284,10 @@ function derivedConsumers(carriers: string[]): Map<string, string[]> {
     const src = read(file);
     const used = new Set<string>();
     for (const n of valueImports(file, src, SERVICE)) if (n === '<dynamic>' || carriers.includes(n)) used.add(n);
+    for (const [mod, names] of Object.entries(EXTRA_CARRIERS)) {
+      if (file === mod) continue;
+      for (const n of valueImports(file, src, mod)) if (names.includes(n)) used.add(n);
+    }
     for (const [hook, hookFile] of Object.entries(WRAPPERS)) {
       if (file === hookFile) continue;
       for (const n of valueImports(file, src, hookFile)) if (n === hook || n === '<dynamic>') used.add(hook);
@@ -304,5 +345,37 @@ describe('DV-83 — every refusal-carrying Discovery read has an accounted consu
   it('G6. the census count: census-discovery §60 records ELEVEN consumer files — if this moves, so must the census', () => {
     assert.equal(consumers.size, 11, `measured ${consumers.size}: ${[...consumers.keys()].join(', ')}`);
     assert.equal(Object.keys(CONSUMERS).length, 11);
+  });
+
+  it('G7. §80: every consumer that renders a list says "incomplete" — the branch is present; the rest say why not', () => {
+    for (const [file, c] of Object.entries(CONSUMERS)) {
+      const src = read(file);
+      if (c.partialBranches.length === 0) {
+        assert.match(c.partial, /^n\/a — /, `${file}: no partial branch, and no stated reason the rule does not reach it`);
+        continue;
+      }
+      for (const b of c.partialBranches) assert.ok(src.includes(b), `${file}: the partial branch is gone — expected to find:\n  ${b}`);
+    }
+    const na = Object.entries(CONSUMERS).filter(([, c]) => c.partialBranches.length === 0).map(([f]) => f).sort();
+    assert.deepEqual(na, ['app/(tabs)/_layout.tsx', 'app/(tabs)/discovery.tsx', 'src/components/discovery/DiscoveryEventPostsRail.tsx'],
+      'the set of consumers the partial rule does not reach changed — say why here, and in census-discovery');
+  });
+
+  it('G8. §80: the ratified wording has one home, and its text is pinned', async () => {
+    const n = await import('../discoveryCoverageNotice.ts');
+    assert.equal(n.SEARCH_PARTIAL_NOTICE, 'These results are incomplete — part of the search couldn’t be run.');
+    assert.equal(n.SEARCH_PARTIAL_EMPTY_TITLE, 'Some of this search could not run.');
+    assert.equal(n.listPartialNotice('places'), 'Some places couldn’t be loaded just now, so this list may be incomplete.');
+    assert.equal(n.listPartialEmptyTitle('places'), 'Some places couldn’t be loaded just now');
+    assert.equal(n.LIST_PARTIAL_EMPTY_BODY, 'This is on our side, not your filters. Try again in a moment.');
+    // Every rendering consumer takes its sentence from that module, not from a
+    // literal of its own.
+    for (const file of [
+      'src/components/discovery/ForYouTab.tsx', 'src/components/discovery/DiscoveryCategoryTab.tsx',
+      'src/components/search/SearchSuggestionsPanel.tsx', 'src/components/map/MapSearchSheet.tsx',
+      'app/search.tsx', 'app/map/index.tsx',
+    ]) {
+      assert.match(read(file), /from '[./]+(?:src\/)?services\/discoveryCoverageNotice(?:\.ts)?'/, `${file} does not import the ratified wording`);
+    }
   });
 });

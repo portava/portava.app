@@ -31,7 +31,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MapPin, Search as SearchIcon, X as XIcon } from 'lucide-react-native';
 import { mapChrome } from '../../theme/mapChrome.ts';
 import { space, radius, type as t } from '../../theme/tokens.ts';
-import { searchUnified } from '../../services/discovery.ts';
+import { postSearchSignal } from '../../services/discovery.ts';
+import { requestMapSearchPage } from '../../platform/input-assistance/services/inputAssistance.ts';
+import { SEARCH_PARTIAL_NOTICE } from '../../services/discoveryCoverageNotice.ts';
 import { toMapSearchResults } from '../../features/map/search/searchAdapter.ts';
 import {
   frameFor,
@@ -85,7 +87,7 @@ interface SearchNotice {
 
 const NOTICE_ALL_REFUSED =
   'Search couldn’t be run just now. This is not an empty result — try again in a moment.';
-const NOTICE_PARTIAL = 'These results are incomplete — part of the search couldn’t be run.';
+const NOTICE_PARTIAL = SEARCH_PARTIAL_NOTICE; // census-discovery §80: the ratified wording's one home
 const NOTICE_SAVED_REFUSED =
   'Your saved items couldn’t be read, so they are missing from these results.';
 /**
@@ -171,17 +173,18 @@ export function MapSearchSheet({
         lng: lng ?? undefined,
         city: city ?? undefined,
       };
-      // TWO REQUESTS, ON PURPOSE. §27's ninth heading is "Saved items", and it
-      // is the only viewer-scoped type the search has: a person's own saves,
-      // not a public corpus. It is deliberately absent from the server's `all`
-      // fan-out, because that fan-out also feeds the app's one global search
-      // and folding a private always-matching bucket into "All" everywhere is
-      // an owner's call, not a side effect of lighting up a Map heading. So the
-      // MAP asks for it, for the map's own sheet.
-      const [res, savedRes] = await Promise.all([
-        searchUnified(q, 'all', null, opts).catch(() => null),
-        searchUnified(q, 'saved', null, opts).catch(() => null),
-      ]);
+      // ONE REQUEST, TO THE SHARED PLATFORM (census-discovery §80, A08 reason 3,
+      // register D-W10-S1-5). This sheet used to be its own engine: two
+      // `GET /discovery/search` requests per keystroke, `type=all` and §27's
+      // ninth heading `type=saved` (viewer-scoped, and deliberately absent from
+      // the `all` fan-out that also feeds the app's one global search). It is
+      // now the `map.search` field of the input gateway's `global_search`
+      // context, which serves it as a SEARCH PAGE: the same two lanes, read by
+      // the same platform searchers behind the same eligibility reads and the
+      // same §24 protected-zone pass, and each lane's coverage on the envelope
+      // — `refusal` for the fan-out, `savedRefusal` for the saved heading. The
+      // notices below are unchanged because the facts they read are unchanged.
+      const res = await requestMapSearchPage(q, opts).catch(() => null);
       // A stale response must not replace a newer one.
       if (seq !== seqRef.current) return;
       setLoading(false);
@@ -192,12 +195,16 @@ export function MapSearchSheet({
         return;
       }
       setError(null);
+      // The person searched, whatever the server could read — the same Compass
+      // intent signal `searchUnified` sent, once per answered query now that the
+      // query is one request rather than two.
+      postSearchSignal(q, { city: city ?? null });
 
       // A 200 CAN STILL BE A REFUSAL — see the SearchNotice block above. These
       // two booleans are the whole difference between "nothing matched" and
-      // "nothing was searched", and they must be read off `data.refusal`
-      // because `res.ok` is true in both cases.
-      const allRefusal = res.data.refusal;
+      // "nothing was searched", and they must be read off the page's coverage
+      // because a refused page is still a successful request.
+      const allRefusal = res.refusal;
       const allRefusedEverything = allRefusal?.coverage === 'nothing';
       const allPartial = allRefusal?.coverage === 'partial';
 
@@ -206,29 +213,21 @@ export function MapSearchSheet({
       // because the ninth was unreachable would be the worse outcome. What it
       // IS, since 2026-09-14, is a fact the person has to be told: without the
       // notice below, an unreadable save set and an empty one are the same
-      // screen.
-      const savedFailed =
-        !savedRes || !savedRes.ok || savedRes.data.refusal?.coverage === 'nothing';
-      // The saved shelf can now be INCOMPLETE as well as absent: one of its two
-      // source tables unreadable while the other answers. Its rows are real and
-      // are kept — discarding them would be the opposite defect, the same one
-      // the `all` lane's `partial` handling above exists to avoid — but the
-      // person is told the list may be short. Before the server grew this
-      // channel a single-table outage reached here as a plain 200 and was
-      // indistinguishable from a complete shelf.
-      const savedPartial =
-        !savedFailed && savedRes !== null && savedRes.ok &&
-        savedRes.data.refusal?.coverage === 'partial';
-      const savedResults =
-        savedRes && savedRes.ok && savedRes.data.refusal?.coverage !== 'nothing'
-          ? savedRes.data.results
-          : [];
+      // screen. Its own refusal says which.
+      const savedFailed = res.savedRefusal?.coverage === 'nothing';
+      // The saved shelf can also be INCOMPLETE: one of its two source tables
+      // unreadable while the other answers. Its rows are real and are kept, and
+      // the person is told the list may be short.
+      const savedPartial = !savedFailed && res.savedRefusal?.coverage === 'partial';
 
       setNotice(noticeFor(allRefusedEverything, allPartial, savedFailed, savedPartial));
-      // A `coverage: "nothing"` body carries no served results, so there is
-      // nothing to keep; `partial` does, and they are kept.
+      // A `coverage: "nothing"` lane carries no served results, so there is
+      // nothing to keep from it — the fan-out's refusal empties the page, the
+      // saved lane's drops only its own heading; `partial` rows are kept.
       setResults(
-        allRefusedEverything ? [] : toMapSearchResults([...res.data.results, ...savedResults]),
+        allRefusedEverything
+          ? []
+          : toMapSearchResults(savedFailed ? res.results.filter((r) => r.type !== 'saved') : res.results),
       );
     },
     [lat, lng, city],

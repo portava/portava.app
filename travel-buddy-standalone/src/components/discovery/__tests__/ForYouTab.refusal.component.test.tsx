@@ -373,3 +373,82 @@ describe('ForYouTab — a refused community lane is distinguishable on screen', 
     expect(screen.queryByTestId('for-you-community-refused')).toBeNull();
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// (4) census-discovery §80 (DV-83, register D-W10-S1-2): A PARTIAL LIST SAYS SO
+//
+// §60.8 Q1 is decided: a consumer may not render a `coverage: "partial"` answer
+// as a complete one. The rows stay (case (2)'s last test and case (3)'s last
+// test still hold), and ONE notice says the list may be incomplete, in the
+// browse-list wording `services/discoveryCoverageNotice.ts` holds. A partial with
+// no rows is not "No recommendations yet".
+// ─────────────────────────────────────────────────────────────────────────────
+
+const PARTIAL_PLACES = 'Some places couldn’t be loaded just now, so this list may be incomplete.';
+const PARTIAL_COMMUNITY = 'Some traveler places couldn’t be loaded just now, so this list may be incomplete.';
+
+describe('ForYouTab — a partial answer is not presented as a whole one (§80)', () => {
+  it('OSM lane PARTIAL with places: the places render AND the incomplete notice is stated', async () => {
+    mockGetDiscoveryPlaces.mockResolvedValue({
+      ok: true,
+      data: {
+        places: [{ id: 'p1', name: 'Cafe A', category: 'food', type: null, description: null,
+          distanceKm: null, lat: null, lng: null, tags: [], address: null, website: null,
+          phone: null, openingHours: null, rating: null, isOpenNow: null }],
+        total: 1, destination: 'Lisbon', cached: false,
+        refusal: { ...PLACES_REFUSAL, coverage: 'partial' as const, failedSources: ['food'] },
+      },
+    });
+    await renderTab();
+    expect(await screen.findByTestId('for-you-partial')).toBeTruthy();
+    expect(screen.getByText(PARTIAL_PLACES)).toBeTruthy();
+    expect(screen.queryByTestId('for-you-refused')).toBeNull();
+  });
+
+  it('OSM lane PARTIAL with no places: never "No recommendations yet"', async () => {
+    mockGetDiscoveryPlaces.mockResolvedValue({
+      ok: true,
+      data: { places: [], total: 0, destination: 'Lisbon', cached: false,
+        refusal: { ...PLACES_REFUSAL, coverage: 'partial' as const, failedSources: ['food'] } },
+    });
+    await renderTab();
+    expect(await screen.findByTestId('for-you-partial-empty')).toBeTruthy();
+    expect(screen.queryByText('No recommendations yet')).toBeNull();
+  });
+
+  it('CONTROL: a complete OSM answer states no incomplete notice', async () => {
+    mockGetDiscoveryPlaces.mockResolvedValue({
+      ok: true,
+      data: {
+        places: [{ id: 'p1', name: 'Cafe A', category: 'food', type: null, description: null,
+          distanceKm: null, lat: null, lng: null, tags: [], address: null, website: null,
+          phone: null, openingHours: null, rating: null, isOpenNow: null }],
+        total: 1, destination: 'Lisbon', cached: false,
+      },
+    });
+    await renderTab();
+    await waitFor(() => expect(mockGetDiscoveryPlaces).toHaveBeenCalled());
+    await act(async () => {});
+    expect(screen.queryByTestId('for-you-partial')).toBeNull();
+    expect(screen.queryByText(PARTIAL_PLACES)).toBeNull();
+  });
+
+  it('community lane PARTIAL: the gems render AND the lane says it may be incomplete', async () => {
+    mockCommunityState.current = {
+      gems: [COMMUNITY_GEM], picks: [], places: [], loading: false, refused: false, incomplete: true,
+    };
+    await renderTab();
+    expect(await screen.findByTestId('hidden-gems-section')).toBeTruthy();
+    expect(screen.getByTestId('for-you-community-partial')).toBeTruthy();
+    expect(screen.getByText(PARTIAL_COMMUNITY)).toBeTruthy();
+  });
+
+  it('CONTROL: a complete community lane states nothing', async () => {
+    mockCommunityState.current = {
+      gems: [COMMUNITY_GEM], picks: [], places: [], loading: false, refused: false, incomplete: false,
+    };
+    await renderTab();
+    expect(await screen.findByTestId('hidden-gems-section')).toBeTruthy();
+    expect(screen.queryByTestId('for-you-community-partial')).toBeNull();
+  });
+});

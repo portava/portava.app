@@ -134,10 +134,10 @@ interface CommunityDiscoveryState {
    * only thing that keeps the two apart, and the cache decision below is the
    * first consumer of it.
    */
-  refused: boolean;
+  refused: boolean; /** census-discovery §80 (DV-83): a PARTIAL answer — the rows are real, the list may be short. Cached WITH the rows. */ incomplete: boolean;
 }
 
-const EMPTY: CommunityDiscoveryState = { gems: [], picks: [], places: [], loading: false, refused: false };
+const EMPTY: CommunityDiscoveryState = { gems: [], picks: [], places: [], loading: false, refused: false, incomplete: false };
 
 // ── Module-level stale-while-revalidate cache ─────────────────────────────────
 // Persists across navigation so returning to the Explore tab shows content instantly from the
@@ -158,7 +158,7 @@ export function useCommunityDiscovery(city: string | null, sortBy?: string | nul
   // previously-seen content without waiting for any network call.
   const [state, setState] = useState<CommunityDiscoveryState>(() => {
     if (cachedEntry) return { ...cachedEntry.state, loading: false };
-    if (city) return { gems: [], picks: [], places: [], loading: true, refused: false };
+    if (city) return { gems: [], picks: [], places: [], loading: true, refused: false, incomplete: false };
     return EMPTY;
   });
   const abortRef = useRef<AbortController | null>(null);
@@ -195,7 +195,7 @@ export function useCommunityDiscovery(city: string | null, sortBy?: string | nul
       // `coverage: "nothing"` means the server did not read the table. The empty
       // arrays above are padding, not a result.
       const refused = result.data.refusal?.coverage === 'nothing';
-      const fresh: CommunityDiscoveryState = { gems, picks, places, loading: false, refused };
+      const fresh: CommunityDiscoveryState = { gems, picks, places, loading: false, refused, incomplete: result.data.refusal?.coverage === 'partial' };
       setState(fresh);
       // Update the module cache for the next mount — BUT NEVER WITH A REFUSAL.
       //
@@ -253,7 +253,7 @@ export function useCommunityDiscovery(city: string | null, sortBy?: string | nul
       const switched = viewer !== undefined;
       viewer = next;
       if (!switched || !city) return;
-      setState({ gems: [], picks: [], places: [], loading: true, refused: false });
+      setState({ gems: [], picks: [], places: [], loading: true, refused: false, incomplete: false });
       void load(city);
     });
   }, [city, load]);

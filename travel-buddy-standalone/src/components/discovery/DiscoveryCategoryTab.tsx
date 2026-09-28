@@ -4,7 +4,7 @@ import {
 } from 'react-native';
 import { Search } from 'lucide-react-native';
 import type { DiscoveryCategory, DiscoveryContextMode, DiscoveryFilters, DiscoveryPlace } from '../../services/discovery.ts';
-import { getDiscoveryPlaces, getCachedDiscoveryPlaces } from '../../services/discovery.ts';
+import { getDiscoveryPlaces, getCachedDiscoveryPlaces } from '../../services/discovery.ts'; import { listPartialNotice, listPartialEmptyTitle, LIST_PARTIAL_EMPTY_BODY } from '../../services/discoveryCoverageNotice.ts';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import PlaceCard from './PlaceCard.tsx';
 import { PlaceSkeletonList } from './PlaceSkeleton.tsx';
@@ -409,7 +409,7 @@ export function DiscoveryCategoryTab({
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError]           = useState<string | null>(null);
   const [page, setPage]             = useState(1);
-  const [total, setTotal]           = useState(0);  const [moreRefused, setMoreRefused] = useState(false);  // DV-83: page ≥ 2 was REFUSED — see load()
+  const [total, setTotal]           = useState(0);  const [moreRefused, setMoreRefused] = useState(false); const [partial, setPartial] = useState(false);  // DV-83: page ≥ 2 was REFUSED — see load(); §80: a page came back PARTIAL
   const [locationNudge, setLocationNudge] = useState(false);
   const loadingMore                 = useRef(false);
   const nudgeOpacity                = useRef(new Animated.Value(0)).current;
@@ -519,7 +519,7 @@ export function DiscoveryCategoryTab({
     if (nextPage === 1 && res.data.refusal?.coverage === 'nothing') {
       setError("We couldn't load places just now — this is on our side, not your filters.");
       setPlaces([]);
-      setTotal(0);
+      setTotal(0); setPartial(false);
       return;
     }
 
@@ -541,7 +541,7 @@ export function DiscoveryCategoryTab({
       lastFetchedCoords.current = { lat: nearestUserLat, lng: nearestUserLng };
     }
 
-    const filtered = applyClientFilters(res.data.places);
+    const filtered = applyClientFilters(res.data.places); const pagePartial = res.data.refusal?.coverage === 'partial'; setPartial((prev) => (nextPage === 1 ? pagePartial : prev || pagePartial)); // §80: page 1 decides; a later partial page keeps the line up
     setTotal(res.data.total);
     // Replace on page-1 (new query), append on subsequent pages (pagination).
     setPlaces((prev) => nextPage === 1 ? filtered : [...prev, ...filtered]);
@@ -555,7 +555,7 @@ export function DiscoveryCategoryTab({
       ? getCachedDiscoveryPlaces(destination, category, filters.radiusKm, 1, intentMode)
       : null;
     if (cachedResult) {
-      setPlaces(cachedResult.places);
+      setPlaces(cachedResult.places); setPartial(cachedResult.refusal?.coverage === 'partial');
       setLoading(false);
     } else {
       setPlaces([]);
@@ -650,7 +650,7 @@ export function DiscoveryCategoryTab({
             <Text style={styles.retryText}>Try again</Text>
           </Pressable>
         </View>
-      ) : places.length === 0 ? (
+      ) : places.length === 0 && partial ? (<View style={styles.center} testID="discovery-category-partial-empty"><Text style={styles.emptyTitle}>{listPartialEmptyTitle('places')}</Text><Text style={styles.emptyDesc}>{LIST_PARTIAL_EMPTY_BODY}</Text><Pressable style={styles.retryBtn} onPress={() => load(1, filters, true)}><Text style={styles.retryText}>Try again</Text></Pressable></View>) : places.length === 0 ? (
         <View style={styles.center}>
           <Text style={styles.emptyTitle}>No places found</Text>
           <Text style={styles.emptyDesc}>
@@ -660,7 +660,7 @@ export function DiscoveryCategoryTab({
       ) : (
         <FlatList
           testID="main-scroll"
-          data={places}
+          data={places} ListHeaderComponent={partial ? <Text style={styles.emptyDesc} testID="discovery-category-partial">{listPartialNotice('places')}</Text> : null}
           keyExtractor={(item) => item.id}
           renderItem={({ item }) => (
             <PlaceCard

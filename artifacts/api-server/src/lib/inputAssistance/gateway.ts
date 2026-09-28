@@ -1028,7 +1028,7 @@ export function gatewayCoverageRefusal(
  * (the same arrays) when the pass is off or no zone is registered; otherwise each
  * row is kept, coarsened or dropped by `applySearchProtection`'s decision.
  */
-async function protectGatewayCandidates(
+export async function protectGatewayCandidates(
   sc: any,
   perType: SearchResult[][],
   extra: SearchResult[],
