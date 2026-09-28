@@ -8,9 +8,9 @@
 |---|---|
 | Target | `portava-ci`, ref `hwokxgbmezheskbzskfr`. Never production (`ajrurzioarfkagpuxfnb`): the applier refuses that ref by construction. |
 | Authority | Owner, 2026-09-28: *"after checking dependencies, preserving existing data and flag values, and verifying recovery and postconditions. Do not modify the intentional 2481 ledger entry."* |
-| Set | 40 files, `3338` … `3441`, listed in §1. **Plus whatever lands after `debd5ad4f`** (§1.3). |
-| Rehearsal | Local PostgreSQL 16 harness, port 55455, from a restored pre-apply baseline (§4). Controlled evidence, not `portava-ci` evidence. |
-| Blockers found | The apply itself passes. **Certification does not pass at this tree without four small fixes in other lanes' files (§5.3, F1–F4).** None of them is a data risk. |
+| Set | 40 files, `3338` … `3441`, listed in §1. **Plus whatever lands after `debd5ad4f`**: at W10-F's tree that is `3436`, so **41** (§1.3, §7). |
+| Rehearsal | Local PostgreSQL 16 harness, port 55455, from a restored pre-apply baseline (§4); re-run by W10-F on port 55458 after the fixes (§7). Controlled evidence, not `portava-ci` evidence. |
+| Blockers found | The apply itself passes. **W10-D found four certification blockers (§5.3, F1–F4); W10-F found a fifth (F5) and landed all five (census-discovery §87).** On the harness, `certify:migrations` itself now passes stages 1–4, and `audit:schema` reports nothing in or caused by the set (§7). None was a data risk. |
 
 ---
 
@@ -76,7 +76,7 @@ The set was recomputed with the repository's own logic, not copied:
 | 39 | `3440_canonical_search_key_letter_fold.sql` | unwrapped | `e8e86d91f0a0` | none — reversal in the file's footer (§3) |
 | 40 | `3441_trail_letter_fold_decompose_first.sql` | unwrapped | `a5f2ab459f25` | none — forward fix (§3) |
 
-¹ **These eleven rollback files do not delete their ledger row** (measured, §4.4). Recovery must add `DELETE FROM public.schema_migration_ledger WHERE filename = '<file>';`, or the applier will treat the migration as still applied. The same is true of 3350's rollback, although `docs/migrations.md`'s 2026-09-27 entry says it removes the ledger row. It does not.
+¹ **RESOLVED by W10-F (§7.4).** At `debd5ad4f` these rollback files did not delete their ledger row — twelve, not eleven, measured again in §7.4 — and neither did 3350's. Each now deletes it in its own transaction and asserts it is gone. **The sha256 column is `debd5ad4f`'s:** 3360, 3362–3365, 3390, 3421 and 3422 changed bytes for F2–F4, and 3440/3441 for census §77. §7.1 lists the digests at W10-F's tree; the ledger records the digest of the tree actually applied.
 
 ### 1.3 Plus whatever lands after `debd5ad4f`
 
@@ -84,7 +84,7 @@ Wave-10 lanes are adding migrations now (for example the ranker designs' flags, 
 
 1. Re-run the dry run (§2, step 2) on the exact tree that will be applied. The list must be these 40 plus the new files, and nothing else.
 2. For every new file, add a row to §3 (dependencies, what it creates, rows touched, postconditions, recovery) and re-run §4 on the harness.
-3. If any of the 40 files changes bytes before the apply (for example a fix to 3440/3441 from census §74, or F2–F4 below), re-run §4. The ledger records the checksum at apply time. **After the apply, none of these files may change again**: a changed applied file is drift, and the applier refuses to run over it.
+3. If any of the 40 files changes bytes before the apply (for example a fix to 3440/3441 from census §74, or F2–F4 below), re-run §4. The ledger records the checksum at apply time. **After the apply, none of these files may change again**: a changed applied file is drift, and the applier refuses to run over it. *(Done once by W10-F, §7: `3436` landed, 3440/3441 changed for §77, and F2–F4 changed eight files; §4 was re-run on all of it.)*
 
 ---
 
@@ -119,7 +119,7 @@ Would apply 40 migration(s), IN THIS ORDER:
 apply-migrations --dry-run PASSED — 40 pending, 223 already recorded, nothing written.
 ```
 
-There must be no `Ledger rows with no file on disk` line and no `REFUSED`. If the tree carries files from §1.3, the count grows by exactly those.
+There must be no `Ledger rows with no file on disk` line and no `REFUSED`. If the tree carries files from §1.3, the count grows by exactly those. **At W10-F's tree: 41**, the 40 plus `3436_trail_health_snapshot_provenance.sql` (39th, `+postconditions`), measured on the harness (§7.2).
 
 **Step 3 — zero-persistence rehearsal on `portava-ci` (recommended).** This is the check that proves every dependency against `portava-ci`'s own catalogue before anything persists.
 
@@ -137,7 +137,7 @@ It writes one SQL file: `BEGIN;`, every body exactly as the applier would send i
 pnpm --filter @workspace/scripts run db:apply-migrations
 ```
 
-Expected: 40 lines `→ <file>: applied + recorded (one transaction)`, 19 lines `→ <file>: postconditions verified (separate transaction)` (the `+post` files), the backfill NOTE, then:
+Expected: 40 lines `→ <file>: applied + recorded (one transaction)`, 19 lines `→ <file>: postconditions verified (separate transaction)` (the `+post` files), the backfill NOTE, then (at W10-F's tree, with 3436: 41 and 20):
 
 ```
 apply-migrations PASSED — 40 migration(s) applied and recorded in public.schema_migration_ledger, each in one transaction with its ledger row.
@@ -154,13 +154,16 @@ cd artifacts/api-server
 pnpm run certify:migrations -- --files 3338_media_processing_worker_flag.sql,3340_media_tab_world_default_flag.sql,3341_media_watch_context_overlay_flag.sql,3342_media_watch_tap_to_play_flag.sql,3343_media_watch_stage24_ranking_flag.sql,3351_media_find_busier_flag.sql,3352_media_perspective_vantage.sql,3355_media_vision_provider_flag.sql,3356_media_moderation_classifier_flag.sql,3357_media_transcoder_flag.sql,3358_media_captions_flag.sql,3359_passport_postcard_cover_nullable.sql,3360_intel_evidence_sealed_reference.sql,3361_intel_evidence_sealed_reference_validate.sql,3362_posts_client_column_grants.sql,3363_place_copies_client_column_grants.sql,3364_pulse_geo_tags_write_boundary.sql,3365_post_media_write_boundary.sql,3366_discovery_search_protected_zones_flag.sql,3375_rank_events_schema_version_admitted.sql,3376_discovery_recommendations_per_request.sql,3380_content_trails_label_cap_serialised.sql,3381_trail_lifecycle_transitions.sql,3385_creator_share_ledger_includes_creator_entries.sql,3386_creator_attribution_recommendation_link.sql,3387_creator_ledger_integrity_and_audit.sql,3390_discovery_rls_explicit_policies.sql,3391_discovery_stop_condition_measurements.sql,3395_discovery_dwell_telemetry_flag.sql,3400_media_pending_upload_sweep_flag.sql,3410_discovery_trend_snapshot_parity.sql,3415_trail_proposal_serialised.sql,3416_trail_relations_projection.sql,3417_place_momentum_dismiss_excluded.sql,3420_rank_events_outcome_receipts.sql,3421_ranking_debug_samples_content_id_nullable.sql,3422_tags_client_write_boundary.sql,3435_place_momentum_feature_version.sql,3440_canonical_search_key_letter_fold.sql,3441_trail_letter_fold_decompose_first.sql
 ```
 
-Expected at `debd5ad4f`, **without** F1–F4 (§5.3):
-- Stage 1 passes: 647 files, 647 ledger rows, 384 not comparable (backfill).
-- Stages 2 and 3 were not reproduced offline (§4.6), so no expectation is claimed.
-- **Stage 4 fails** on the eight files in §5.3. Each failure is a false alarm, proven on the harness.
-- Stage 5 (`audit:schema`, `check:missing-live-columns`) is not reached.
+*Historical — expected at `debd5ad4f`, **without** F1–F4 (§5.3):* stage 1 passes; stage 4 fails on the eight files of §5.3, each a false alarm; stage 5 is not reached. W10-F reproduced exactly that with the tool itself (§7.3, "before").
 
-With F1–F4 landed before the apply, the expected result is `certify:migrations PASSED`.
+**Expected at W10-F's tree (F1–F5 landed), measured with `certify:migrations` itself on the harness (§7.3):**
+- Stage 1 passes: every file on disk has a ledger row (648 at W10-F's tree; `portava-ci` also carries 384 backfill rows, not comparable).
+- Stage 2: `24 declared object(s) present.` (26 with 3436 in `--files`). Stage 3: RLS and the policy-shape wiring pass.
+- Stage 4: `59 assertion block(s) re-run against the committed database.`, `21 $pre$ precondition block(s) held back`, and 3386/3387 named as preconditions-only (60 and 22 with 3436).
+- Stage 5: `audit:schema` and `check:missing-live-columns` — see step 7.
+- Result: **`certify:migrations PASSED`**. On the harness, stage 5 stops on objects the harness never had (§7.3); on `portava-ci`, which carries them, none is expected. That last step is inferred, not measured.
+
+Add `3436_trail_health_snapshot_provenance.sql` to `--files` when it is in the applied set.
 
 **Step 7 — audit.**
 
@@ -168,7 +171,9 @@ With F1–F4 landed before the apply, the expected result is `certify:migrations
 cd artifacts/api-server && pnpm run audit:schema
 ```
 
-Expected at `debd5ad4f` **without F1**: exit 1 with exactly one finding, `✖ 3360_intel_evidence_sealed_reference.sql — missing function intel_evidence_rekey_reference`. 3361 drops that function by design, and the auditor reads each file's claims independently (§5.3 F1). Every other one of CI's 58 missing objects is gone (§4.3). With F1: `✔ Live schema contains every object claimed by the migrations.`
+*Historical — at `debd5ad4f`, without F1 and F5:* exit 1, and not with one finding as W10-D predicted but seven: `3360 … missing function intel_evidence_rekey_reference` (F1) and six `missing grant select on {posts, passport_postcards, post_media} to {anon, authenticated}` under 2148, 2151 and 2158 (F5). W10-F measured both with `audit:schema` itself on the harness (§7.3). Every other one of CI's 58 missing objects is gone (§4.3).
+
+**Expected at W10-F's tree:** `✔ Live schema contains every object claimed by the migrations.` On the harness, the findings left after the apply are a subset of what the pre-apply baseline already reported — 37 findings in 11 files the harness cannot replay or never had (§7.3) — and none is in, or caused by, the set.
 
 **Step 8 — post-apply reads.** Run §2.2.
 
@@ -184,7 +189,7 @@ SELECT filename, applied_by, applied_at, checksum FROM public.schema_migration_l
 -- (b) Flag values: the 14 flags the set seeds. Each must be ABSENT or FALSE.
 --     A TRUE row makes its file's postcondition refuse (the apply stops there,
 --     keeping the TRUE value: proven in §4.2). Record which rows PRE-EXIST:
---     their rollback would delete them (§3, flag-seed recovery).
+--     since W10-F their rollback keeps them (§3, flag-seed recovery; §7.4).
 SELECT flag, enabled, left(description, 60) FROM public.feature_flags WHERE flag IN (
   'media_processing_worker_enabled','MEDIA_TAB_WORLD_DEFAULT_ENABLED','MEDIA_WATCH_CONTEXT_OVERLAY_ENABLED',
   'MEDIA_WATCH_TAP_TO_PLAY_ENABLED','MEDIA_WATCH_STAGE24_RANKING_ENABLED','media_find_busier_enabled',
@@ -249,31 +254,31 @@ SELECT public.discovery_stop_measurements(now() - interval '1 day', now()) -> 'r
 
 **The one rule for flag values.** Every flag-seeding file (3338, 3340–3343, 3351, 3352, 3355–3358, 3366, 3395, 3400, 3410) inserts its row `ON CONFLICT (flag) DO NOTHING`, so an existing row keeps its value and its description. Its postcondition then refuses if the row reads TRUE, so the apply stops rather than record a file whose "ships OFF" claim is false. No file updates an existing flag row. Proven in §4.2.
 
-**The one rule for flag-seed recovery.** Each flag-seed rollback deletes the row while it reads FALSE. If §2.1 (b) found the row PRE-EXISTING, the rollback would delete a row this apply did not create (measured in §4.4 on 3351). For those files, recovery is `DELETE FROM public.schema_migration_ledger WHERE filename = …` only, leaving the row in place.
+**The one rule for flag-seed recovery (W10-F, §7.4).** Each flag-seed rollback (3338, 3340–3343, 3350, 3351, 3352, 3355–3358, 3366, 3395, 3400, 3410) deletes the flag row only while it reads FALSE **and** carries its forward file's own seed description, byte for byte (an md5 in the rollback). A row that existed before the apply kept its own description (`ON CONFLICT DO NOTHING`), so the rollback keeps it and says so in a NOTICE. Every one of them, and 3359's, now deletes its forward file's ledger row. *(At `debd5ad4f` the rollback deleted a pre-existing row, measured in §4.4 on 3351, and twelve left their ledger row.)*
 
-**Postconditions are verified four ways.** (1) In the applying transaction (every file). (2) The post-`COMMIT` tail, run by the applier (the 19 `+post` files). (3) `certify:migrations` stage 4, which re-runs every assertion-only non-`$pre$` block after commit (§4.3: 64 blocks). (4) `audit:schema`'s object claims, and the catalogue fingerprint on the harness.
+**Postconditions are verified four ways.** (1) In the applying transaction (every file). (2) The post-`COMMIT` tail, run by the applier (the 19 `+post` files). (3) `certify:migrations` stage 4, which re-runs every assertion-only non-`$pre$` block after commit (§7.3: 59 blocks, 21 `$pre$` held). (4) `audit:schema`'s object claims, and the catalogue fingerprint on the harness.
 
 | file | depends on | creates / changes | existing rows | postconditions (and how verified) | recovery |
 |---|---|---|---|---|---|
-| 3338 | `feature_flags`; `media_processing_attempts` (2951) | flag `media_processing_worker_enabled` FALSE | none; an existing row is kept | row present; not TRUE; NOTICE counts the queued/failed assets a flip would claim | rollback deletes the FALSE row (refuses if TRUE) **+ ledger DELETE** |
+| 3338 | `feature_flags`; `media_processing_attempts` (2951) | flag `media_processing_worker_enabled` FALSE | none; an existing row is kept | row present; not TRUE; NOTICE counts the queued/failed assets a flip would claim | rollback deletes its own FALSE row (refuses if TRUE; keeps a pre-existing row) and its ledger row (W10-F) |
 | 3340 | `feature_flags` | flag `MEDIA_TAB_WORLD_DEFAULT_ENABLED` FALSE | none | present; not TRUE | as 3338 |
 | 3341 | `feature_flags` | flag `MEDIA_WATCH_CONTEXT_OVERLAY_ENABLED` FALSE | none | present; not TRUE | as 3338 |
 | 3342 | `feature_flags` | flag `MEDIA_WATCH_TAP_TO_PLAY_ENABLED` FALSE | none | present; not TRUE | as 3338 |
 | 3343 | `feature_flags` | flag `MEDIA_WATCH_STAGE24_RANKING_ENABLED` FALSE | none | present; not TRUE | as 3338 |
-| 3351 | `feature_flags` | flag `media_find_busier_enabled` FALSE | none | present; not TRUE | as 3338; **deletes a pre-existing row** (§4.4) |
-| 3352 | `posts` | `posts.perspective_vantage text NULL` + CHECK over the §12 vocabulary; flag `media_perspective_vantage_enabled` FALSE | catalogue-only ADD COLUMN (no rewrite); the CHECK validates existing rows, all NULL | column present; flag present, not TRUE; vantage count reported | rollback drops constraint, column, flag row **+ ledger DELETE**; free while no row carries a vantage |
+| 3351 | `feature_flags` | flag `media_find_busier_enabled` FALSE | none | present; not TRUE | as 3338; a pre-existing row is kept (§7.4; at `debd5ad4f` it was deleted, §4.4) |
+| 3352 | `posts` | `posts.perspective_vantage text NULL` + CHECK over the §12 vocabulary; flag `media_perspective_vantage_enabled` FALSE | catalogue-only ADD COLUMN (no rewrite); the CHECK validates existing rows, all NULL | column present; flag present, not TRUE; vantage count reported | rollback drops constraint, column, its own flag row and its ledger row (W10-F); free while no row carries a vantage |
 | 3355 | `feature_flags` | flag `media_vision_provider_enabled` FALSE | none | present; not TRUE | as 3338 |
 | 3356 | `feature_flags` | flag `media_moderation_classifier_enabled` FALSE | none | present; not TRUE | as 3338 |
 | 3357 | `feature_flags` | flag `media_transcoder_enabled` FALSE | none | present; not TRUE | as 3338 |
 | 3358 | `feature_flags` | flag `media_captions_enabled` FALSE | none | present; not TRUE | as 3338 |
-| 3359 | `passport_postcards.media_url NOT NULL` (baseline) | `DROP NOT NULL` | none | column nullable | rollback `SET NOT NULL` (fails if a NULL was written since; that failure is the point) **+ ledger DELETE** |
-| 3360 | `intel_evidence` (2130), `.reference` (2223) | CHECK `intel_evidence_media_reference_sealed` NOT VALID; `intel_evidence_rekey_reference(uuid,text,text)` (service_role); column comment | none: NOT VALID skips existing rows | constraint present; function created; no end-user EXECUTE; no append-only trigger disabled | rollback file (drops the function and the constraint, restores the column comment, deletes its ledger row) |
+| 3359 | `passport_postcards.media_url NOT NULL` (baseline) | `DROP NOT NULL` | none | column nullable | rollback `SET NOT NULL` (fails if a NULL was written since; that failure is the point) and deletes its ledger row (W10-F) |
+| 3360 | `intel_evidence` (2130), `.reference` (2223) | CHECK `intel_evidence_media_reference_sealed` NOT VALID; `intel_evidence_rekey_reference(uuid,text,text)` (service_role); column comment | none: NOT VALID skips existing rows | constraint present; function created (or, once 3361 has run, dropped with the constraint validated: F3); no end-user EXECUTE; no append-only trigger disabled | rollback file (drops the function and the constraint, restores the column comment, deletes its ledger row) |
 | 3361 | 3360; **0 plaintext photo/video references** | `VALIDATE CONSTRAINT`; `DROP FUNCTION intel_evidence_rekey_reference` | reads every row (validation); writes none. `portava-ci` had 0 `intel_evidence` rows on 2026-09-27 | validated; function gone | rollback file (recreates 3360's function; constraint back to NOT VALID) |
 | 3362 | `posts` RLS on; the exact column set (after 3352); client SELECT as 2148 left it; no column ACLs | REVOKE table SELECT from anon/authenticated; GRANT SELECT on 40 columns | none | tail: no private or withheld column readable by a client role; none lost; no table-level client privilege; service_role reads all | rollback restores table-level SELECT exactly; deletes its ledger row |
 | 3363 | `pulse_geo_tags`, `passport_postcards`, `post_media`: RLS on, exact columns, client table SELECT | column-level SELECT for client roles on the three tables | none | tail: no place column readable by a client role | rollback file (restores table SELECT) |
 | 3364 | `pulse_geo_tags` owned by the applying role; plain client write grants | REVOKE client writes; records the prior ACL in the table comment | none | tail: no client write privilege | rollback restores the exact recorded ACL |
 | 3365 | `post_media` owned by the applying role; 2158's descriptor columns | client writes narrowed to 2158's allowlists | none | tail: anon writes nothing; authenticated only inside the allowlists | rollback restores the recorded ACL |
-| 3366 | `feature_flags` | flag `discovery_search_protected_zones_enabled` FALSE | none | present; not TRUE | rollback deletes the FALSE row and its ledger row |
+| 3366 | `feature_flags` | flag `discovery_search_protected_zones_enabled` FALSE | none | present; not TRUE | rollback deletes its own FALSE row (a pre-existing one is kept) and its ledger row |
 | 3375 | `rank_events.schema_version` (2890), every row = 1 | CHECK `schema_version IN (1)` | validates every row once (ACCESS EXCLUSIVE, one scan) | a version-2 probe is refused and not persisted; surface CHECK intact | rollback drops the CHECK; free |
 | 3376 | `auth.users`, `rank_events` | table `recommendations` (service-role only, RLS, append-only), writer `record_discovery_serve_request(jsonb)`, 2 indexes, 2 policies | none | tail: a client probe is refused; function service-role only | rollback drops the table; **refuses once rows exist** unless forced, because the rows are the only record of anonymous serves |
 | 3380 | 2910's label-cap function and trigger; no content with two primaries | advisory lock added to `content_trails_label_cap()`; partial UNIQUE index `uq_content_trails_one_primary` | index build reads `content_trails` | tail: index present; function locks | rollback restores 2910's body, drops the index |
@@ -281,11 +286,11 @@ SELECT public.discovery_stop_measurements(now() - interval '1 day', now()) -> 'r
 | 3385 | 2930's view, 2921's table, `cee_account_known` | `CREATE OR REPLACE VIEW creator_share_ledger` with a third partition | none | in-transaction: 14 columns, account CASE total, no service_role UPDATE | rollback restores 2930's definition (**leaves 3385's view comment**, §4.4) |
 | 3386 | 2920; `rank_events.recommendation_id` (2891) | `creator_attributions.recommendation_id` + shape CHECK + existence trigger + partial index | ADD COLUMN NULL (catalogue-only) | in-transaction only (no re-runnable block) | rollback refuses while 3387 is applied, or while any attribution carries an id |
 | 3387 | 2920, 2921, `creator_rule_versions`, 3386, 2901's table | 4 triggers, 6 functions, `creator_ledger_audit_events`, `creator_ledger_append(jsonb)`, FKs → ON DELETE CASCADE | FK swap validates existing rows (0 on every reachable DB) | in-transaction only | rollback refuses while the audit table holds rows |
-| 3390 | `auth.uid()`, the three roles, the core Discovery tables and the client policies it preserves | explicit policies on the 16 Discovery tables; REVOKE TRUNCATE/REFERENCES/TRIGGER from client roles | none | in-transaction `$post$` (reads a temp table: F4) | rollback drops its policies (**does not re-grant** the three revoked privileges, §4.4) |
+| 3390 | `auth.uid()`, the three roles, the core Discovery tables and the client policies it preserves | explicit policies on the 16 Discovery tables; REVOKE TRUNCATE/REFERENCES/TRIGGER from client roles | none | `$post$` reads the catalogue only, re-runnable after commit (F4); the literal lists and service_role's BEFORE snapshot are checked in the applying transaction | rollback drops its policies (**does not re-grant** the three revoked privileges, §4.4) |
 | 3391 | `rank_events.outcome_at`, `discovery_places`, `discovery_place_reports`, 3390 | partial index `rank_events_discovery_served_at`; `discovery_stop_measurements(since, until)` | index build under SHARE lock on `rank_events` | function answers; `rls_leak.deviations = 0` (§4.3) | rollback drops both |
-| 3395 | `feature_flags` | flag `discovery_dwell_telemetry_enabled` FALSE | none | present; not TRUE | rollback deletes the FALSE row and its ledger row |
+| 3395 | `feature_flags` | flag `discovery_dwell_telemetry_enabled` FALSE | none | present; not TRUE | rollback deletes its own FALSE row (a pre-existing one is kept) and its ledger row |
 | 3400 | `feature_flags` | flag `media_pending_upload_sweep_enabled` FALSE | none | present; not TRUE | as 3395 |
-| 3410 | `place_momentum` (2892), `rank_events.surface` | 3 nullable columns; `rebuild_place_momentum` corpus/window/explanation repaired; flag `discovery_trending_api_enabled` FALSE | ADD COLUMN NULL; nothing schedules a rebuild | tail: parity with the classifier; flag not TRUE | rollback restores 2892's body, drops the columns and the flag row (**leaves the two functions' EXECUTE revoked** from anon/authenticated, §4.4) |
+| 3410 | `place_momentum` (2892), `rank_events.surface` | 3 nullable columns; `rebuild_place_momentum` corpus/window/explanation repaired; flag `discovery_trending_api_enabled` FALSE | ADD COLUMN NULL; nothing schedules a rebuild | tail: parity with the classifier; flag not TRUE | rollback restores 2892's body, drops the columns and its own flag row (**leaves the two functions' EXECUTE revoked** from anon/authenticated, §4.4) |
 | 3415 | 2910's `trails.canonicalization`; UTF8 | 8 functions incl. `trail_propose` | none (probe rolls back) | tail: verdicts, slug parity, isolation guard | rollback drops the 8 functions |
 | 3416 | 2910's tables | `trail_relations` (service role), `rebuild_trail_relations(ts)` | none (probe rolls back) | tail: rebuild reproduces declared, parent and common-content relations | rollback drops both |
 | 3417 | 2892 + 3410's body | `rebuild_place_momentum`: dismiss weighs 0 | none | tail: the body is 3410's but for one arm | rollback restores 3410's body |
@@ -293,8 +298,9 @@ SELECT public.discovery_stop_measurements(now() - interval '1 day', now()) -> 'r
 | 3421 | `ranking_debug_samples.content_id NOT NULL`; 2060's columns | `DROP NOT NULL` | none | tail: a sample without content_id lands (probe rolls back) | rollback **deletes samples without content_id**, then SET NOT NULL |
 | 3422 | `tags` owned by the applying role; parties-only SELECT policies | REVOKE client writes on `tags`; prior ACL recorded in the comment | none | tail: no client write privilege | rollback restores the recorded ACL |
 | 3435 | 3417's body | `place_momentum.feature_version`; `rebuild_place_momentum` writes it | ADD COLUMN NULL; old rows stay NULL | tail: every 3417 column written with the same value | rollback restores 3417's body and drops the column |
+| 3436 | 2910's `trail_health_snapshots` | two NULLABLE columns, `feature_version` and `source_window` (landed after `debd5ad4f`, census-discovery §75) | ADD COLUMN NULL (catalogue-only); old rows stay NULL | tail (`+postconditions`) | rollback file drops both columns and deletes its ledger row (§7.4) |
 | 3440 | 2220's generated `search_key`; `pg_trgm`; UTF8 | replaces `input_normalize_city_key`; **drops and re-adds `canonical_locations.search_key`, recomputing every row, under ACCESS EXCLUSIVE**; rebuilds the trigram index | **rewrites `search_key` on every row**. `name`, `normalized_name` and `display_name` are untouched | in-transaction: column generated, index present, 2220's three launch keys, Ǿresund → oresund, ß unchanged | **no rollback file.** The footer's reversal was rehearsed (§4.4): `DROP INDEX canonical_locations_search_key_trgm_idx; ALTER TABLE canonical_locations DROP COLUMN search_key;` then re-run 2220, then `DELETE` 3440's ledger row. Reversing reopens §66.5's defect |
-| 3441 | 3415's `trail_letter_fold`; UTF8 | replaces `trail_letter_fold` | none | in-transaction | **no rollback file.** Forward fix, or re-run 3415's `CREATE OR REPLACE FUNCTION public.trail_letter_fold` block and `DELETE` 3441's ledger row. Rolling back 3415 removes the function outright (rehearsed) |
+| 3441 | 3415's three fold functions; UTF8 | at W10-F's tree (§77): replaces `trail_letter_fold`, `trail_canonical_slug`, `trail_normalised_destination`; adds `trails.destination_key` (generated, stored) and `idx_trails_destination_key` | **recomputes `trails.slug` where it differs from the new canonical slug**, and computes `destination_key` for every Trail | in-transaction | **no rollback file.** Forward fix, or the footer's REVERSAL: drop the index and the column FIRST, then re-run 3415's three function blocks and `DELETE` 3441's ledger row. **3415's rollback fails while the column exists** (`cannot drop function trail_normalised_destination(text)`, measured §7.4); the driver now runs the footer first |
 
 **The 2481 entry.** 2481 is outside the pending set (its row is `applied_by='ci'`, 2026-09-09) and nothing in this set names it. The applier writes a ledger row only for the file it is applying (`ON CONFLICT (filename)` on that filename), so 2481's row cannot be touched. §2.1 (a) and §2.2 read it before and after; the two readings must be identical.
 
@@ -309,7 +315,7 @@ SELECT public.discovery_stop_measurements(now() - interval '1 day', now()) -> 'r
 
 ## 4. Rehearsal on the local harness (controlled evidence)
 
-**Environment:** PostgreSQL 16 at `127.0.0.1:55455`, data dir `/var/tmp/w10d-localdb` (mode 777, 1 MB WAL segments), work dir `/var/tmp/w10d-work`. Driver: `artifacts/api-server/scripts/local-db/rehearse-pending-apply.ts`. Seed: `rehearse-pending-apply.seed.sql`. Run 2026-09-28.
+**Environment:** PostgreSQL 16 at `127.0.0.1:55455`, data dir `/var/tmp/w10d-localdb` (mode 777, 1 MB WAL segments), work dir `/var/tmp/w10d-work`. Driver: `artifacts/api-server/scripts/local-db/rehearse-pending-apply.ts`. Seed: `rehearse-pending-apply.seed.sql`. Run 2026-09-28. *This section is W10-D's run at `debd5ad4f`, kept as the record of the defects; §7 is W10-F's re-run after the fixes.*
 
 ### 4.1 The restored baseline
 
@@ -379,21 +385,22 @@ On `84318d1b2` (run 36392056669):
 ### 5.2 What the apply changes
 
 After step 4, on the PR's next push or re-run:
-- **`schema drift`:** the dry run prints `Would apply: NOTHING`. `audit:schema` finds 57 of the 58 objects and **still reports 3360's function** until F1 lands. With F1, the job is green. That green run is the `portava-ci` rehearsal record (§6).
+- **`schema drift`:** the dry run prints `Would apply: NOTHING`. `audit:schema` finds 57 of the 58 objects; the 58th, 3360's function, is dropped by 3361 by design and is allowlisted (F1), and the six table-level SELECT grants 3362/3363 take back are allowlisted (F5). With F1–F5 landed (W10-F), the job is expected green. That green run is the `portava-ci` rehearsal record (§6).
 - **`check:all + live_pulse gate`:** every object both column checks named is present (§4.3), so both should pass. That is inferred from their own output, not re-run here.
 - **The two skipped jobs** run for the first time on this tree, and their result is not predicted here.
 - **`live DB · verdict`** turns green when all of the above pass.
 
-### 5.3 Four fixes needed first, found by the rehearsal (not this lane's files)
+### 5.3 Five fixes needed first — all landed by W10-F (census-discovery §87)
 
 | id | file (owner) | defect | exact fix | why it matters |
 |---|---|---|---|---|
-| **F1** | `artifacts/api-server/src/scripts/auditMigrationsVsLive.ts` (CI/database owner) | 3360 claims `function:intel_evidence_rekey_reference`, and 3361 drops it by design. The auditor reads each file's claims independently, so after the apply it reports the function missing forever. | Add `"function:intel_evidence_rekey_reference"` to `ALLOWLIST` with the same reasoning as the `intel_append_only_stmt` entry: created by 3360, dropped by 3361 once no plaintext key remains. | Without it, `schema drift` and certify stage 5 stay red after a correct apply. It can land before or after the apply. |
-| **F2** | the first `DO $$` block of 3362 (line 88), 3363 (68), 3364 (55), 3365 (58), 3421 (48) and 3422 (84) (media G1 lane; P15) | Precondition blocks written `DO $$ … $$;` that refuse a second apply ("already carries 3364's record", "content_id is already nullable", "do not both hold table-level SELECT"). Certify stage 4 re-runs every untagged block after commit, so each fails by construction: the same trap as 2965 (`migrationSqlBlocks.ts`, `isPreconditionDoBlock`). | Retag each of those six blocks `DO $pre$ … $pre$;`. No statement changes. | Certify stage 4 fails on six correctly applied files. |
-| **F3** | `artifacts/api-server/src/migrations/3360_intel_evidence_sealed_reference.sql:186#DO $post$` (census-map §45 lane) | Its `$post$` block asserts the rekey function exists, and 3361 (applied right after it) drops the function. Re-run after 3361, the block fails. | Guard the function assertion on 3361 not having run, for example `IF to_regprocedure(…) IS NULL AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='intel_evidence_media_reference_sealed' AND convalidated) THEN RAISE …`. | Certify stage 4 fails on 3360. |
-| **F4** | `artifacts/api-server/src/migrations/3390_discovery_rls_explicit_policies.sql:254#DO $post$` (P9 lane) | Its `$post$` block reads `_p3390_tables`, a `TEMP … ON COMMIT DROP` table created in the same transaction. Re-run after commit, it fails with `relation "_p3390_tables" does not exist`. | Inline the table list as a `VALUES` list in the block, or tag the block `$pre$`. `rls_leak` from 3391 already re-measures the posture after commit (§4.3). | Certify stage 4 fails on 3390. |
+| **F1** | `artifacts/api-server/src/scripts/auditMigrationsVsLive.ts` (CI/database owner) | 3360 claims `function:intel_evidence_rekey_reference`, and 3361 drops it by design. The auditor reads each file's claims independently, so after the apply it reports the function missing forever. | Add `"function:intel_evidence_rekey_reference"` to `ALLOWLIST` with the same reasoning as the `intel_append_only_stmt` entry: created by 3360, dropped by 3361 once no plaintext key remains. | Without it, `schema drift` and certify stage 5 stay red after a correct apply. It can land before or after the apply. **Landed (W10-F).** |
+| **F2** | the first `DO $$` block of 3362 (line 88), 3363 (68), 3364 (55), 3365 (58), 3421 (48) and 3422 (84) (media G1 lane; P15) | Precondition blocks written `DO $$ … $$;` that refuse a second apply ("already carries 3364's record", "content_id is already nullable", "do not both hold table-level SELECT"). Certify stage 4 re-runs every untagged block after commit, so each fails by construction: the same trap as 2965 (`migrationSqlBlocks.ts`, `isPreconditionDoBlock`). | Retag each of those six blocks `DO $pre$ … $pre$;`. No statement changes. | Certify stage 4 fails on six correctly applied files. **Landed (W10-F): line-neutral, the six tags only.** |
+| **F3** | `artifacts/api-server/src/migrations/3360_intel_evidence_sealed_reference.sql:186#DO $post$` (census-map §45 lane) | Its `$post$` block asserts the rekey function exists, and 3361 (applied right after it) drops the function. Re-run after 3361, the block fails. | Guard the function assertion on 3361 not having run, for example `IF to_regprocedure(…) IS NULL AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='intel_evidence_media_reference_sealed' AND convalidated) THEN RAISE …`. | Certify stage 4 fails on 3360. **Landed (W10-F):** when the function is absent the block now requires the constraint VALIDATED (3361's state); when present it still checks no end-user EXECUTE. Controls in §7.5. |
+| **F4** | `artifacts/api-server/src/migrations/3390_discovery_rls_explicit_policies.sql:258#DO $post$` (P9 lane) | Its `$post$` block reads `_p3390_tables`, a `TEMP … ON COMMIT DROP` table created in the same transaction. Re-run after commit, it fails with `relation "_p3390_tables" does not exist`. | Inline the table list as a `VALUES` list in the block, or tag the block `$pre$`. `rls_leak` from 3391 already re-measures the posture after commit (§4.3). | Certify stage 4 fails on 3390. **Landed (W10-F):** the table and kept-path lists are literals in the block, which reads only the catalogue; in the applying transaction it checks them against the temp tables and service_role against its BEFORE snapshot. Controls in §7.5. |
+| **F5** | `auditMigrationsVsLive.ts` `ALLOWLIST` (found by W10-F) | 2148, 2151 and 2158 claim table-level `GRANT SELECT` to anon/authenticated on `posts`, `passport_postcards` and `post_media`. 3362 and 3363 take those grants back by design and grant column SELECT instead; the auditor reads `role_table_grants`, which has no column grants, so after the apply it reports six grants missing. W10-D's objects check covered only what CI named before the apply, so it could not see this. | Six `grant:<table>.<role>.select` entries, reasoned like the `portava_featured` pair (2160 superseded by 2332). | `schema drift` and certify stage 5 stay red after a correct apply. **Landed (W10-F).** |
 
-**F2–F4 change the bytes of unapplied files, so they must land BEFORE the apply.** Afterwards they would be drift. F1 is a script change and can land at any time. If the owner wants the apply before these land, the apply is still safe. The consequence is only that step 6 and step 7 fail with exactly the messages above, and those can be adjudicated from this section.
+**F2–F4 change the bytes of unapplied files, so they must land BEFORE the apply.** Afterwards they would be drift. F1 and F5 are script changes and can land at any time. W10-F checked that none of the changed files is applied anywhere (§7.1). If the owner wants the apply before these land, the apply is still safe. The consequence is only that step 6 and step 7 fail with exactly the messages above, and those can be adjudicated from this section.
 
 ### 5.4 The ordering hazard on `main`
 
@@ -409,4 +416,108 @@ This is the state `docs/migrations.md` records as the historical cause of `CI (l
 ## 6. Q66-3, DC-18, DC-26, DV-70 — what this plan settles and what it does not
 
 - **Q66-3 is decided (register D-W10D-1): a pre-merge `portava-ci` apply followed by a green `schema drift` run on this tree IS the CI rehearsal** that `12` and `10` §7 name. The workflow's `schema-drift` job on `portava-ci` is the rehearsal: it computes the plan against the ledger, audits the live schema against every claim, and on `main` applies and certifies. A pre-merge apply by the applier, plus that job green on the PR head, exercises the same code against the same database.
-- **None of the four rows moves on this plan.** Each stays `IMPLEMENTATION-COMPLETE; awaits:` until the apply happens and a green `schema drift` run exists on `portava-ci` for the applied tree. Census §83 has the statements.
+- **None of the four rows moves on this plan.** Each stays `IMPLEMENTATION-COMPLETE; awaits:` until the apply happens and a green `schema drift` run exists on `portava-ci` for the applied tree. Census §83 has the statements, restated by §87 after F1–F5.
+
+---
+
+## 7. W10-F: F1–F5 landed, and the rehearsal re-run (census-discovery §87)
+
+*Lane W10-F, 2026-09-28, branch `disc-w10-f-certify` from `f3047e54d`. Harness: PostgreSQL 16 at `127.0.0.1:55458`, data dir `/var/tmp/w10f-localdb`, work dir `/var/tmp/w10f-work`. Controlled evidence. **Nothing was applied to `portava-ci` or to production.***
+
+### 7.1 What changed, and that none of it is applied anywhere
+
+| file | change | sha256 (first 12) at W10-F |
+|---|---|---|
+| `3360_intel_evidence_sealed_reference.sql` | F3: `$post$` accepts the function's absence only with the constraint validated | `00e4ba752a14` |
+| `3362`, `3363`, `3364`, `3365`, `3421`, `3422` | F2: the six second-apply guards retagged `DO $pre$ … END $pre$;`, line-neutral | `137e41e660f8`, `8189a754d60f`, `b94335b6572c`, `0fc0f3f72606`, `539adc0a74aa`, `27ee9f6a4093` |
+| `3390_discovery_rls_explicit_policies.sql` | F4: `$post$` reads only the catalogue | `9d8477bd6750` |
+| `auditMigrationsVsLive.ts` | F1 + F5: seven `ALLOWLIST` entries, nothing else | — |
+| 17 files in `db/rollback/` | 3338, 3340–3343, 3350, 3351, 3352, 3355–3359, 3366, 3395, 3400, 3410: a flag row is deleted only if its forward file wrote it; every one deletes its forward file's ledger row | — |
+| `rehearse-pending-apply.ts` | 3441's and 3440's REVERSAL footers run in `rollback`; `objects` expects 3360's function ABSENT | — |
+
+Also changed since `debd5ad4f`, by other lanes: 3440 (`4307723dfde5`) and 3441 (`8f26a6919e70`) for census §77, and the new `3436` (`e9e8f6bb89de`).
+
+**Applied state, re-read before any byte changed:**
+- `portava-ci`: `docs/migrations.md`'s 2026-09-27 entry records 3350 applied and 3352 and 3360 **not** applied; its 2026-09-28 entry records the 40 applied nowhere; CI's dry run on `84318d1b2` lists all 40 as pending.
+- production: the latest committed snapshot (`20260922-production-schema.json`) has watermark `20260922155706`, before any of these files existed. `discovery-production-rollout.md` records "nothing since" 2910 and 2220. `sensing-production-approval-request.md` records 3338–3362 unapplied there and 3363–3365 as approval steps H14–H16.
+- So no changed migration is applied anywhere. The rollback files carry no checksum in any ledger. 3350's rollback changed although 3350 is applied to `portava-ci`, because the rollback is a separate, never-run file.
+
+### 7.2 The set at this tree
+
+The same restored baseline as §4.1 (`LOCAL_DB_TO=3338`: 314 applied in order, 12 known-unreplayable, 2 on retry; 3350; `model-ledger` 225 rows; the seed; snapshot database `w10f_baseline`, catalogue 12,320 lines, the same count as §4.1). `plan` printed **41**: the 40 of §1.2 in the same order, plus `3436_trail_health_snapshot_provenance.sql` at position 39 with `+postconditions`.
+
+### 7.3 `certify:migrations` and `audit:schema`, the tools themselves, before and after
+
+**How the tools were pointed at the harness.** `certify:migrations`, `check:migration-ledger`, `audit:schema` and `check:missing-live-columns` each reach the database through one call: `fetch` to the Management API's `/v1/projects/<ref>/database/query`. They ran **unchanged**, through `pnpm run`, with a preload (`NODE_OPTIONS=--import=<scratch>/w10f-fetch-shim.mjs`) that replaces `globalThis.fetch`:
+- It answers that endpoint for one **fake** project ref, `w10fharness55458`, by running the query on `127.0.0.1:55458` and returning the last statement's rows as JSON.
+- It throws on every other URL.
+- `SUPABASE_URL=https://w10fharness55458.supabase.co`, with `CI_SUPABASE_PROJECT_REF` set to the same fake ref and `KNOWN_PROD_PROJECT_REF=ajrurzioarfkagpuxfnb`. The in-process target guard passed on that basis.
+- No real project ref and no real token were present.
+
+The shim and its wrapper are scratch files, not in the tree. Command: `certify:migrations --files <the 40 of §1.2>`.
+
+| | before (bytes at `f3047e54d`) | after (F1–F5) |
+|---|---|---|
+| stage 1 | `check:migration-ledger PASSED` — 648 files, 266 sha256 matched, 382 backfill | same |
+| stage 2 | `24 declared object(s) present.` | same |
+| stage 3 | pass | pass |
+| stage 4 | **FAILED**: `57 assertion block(s) re-run`, `15 $pre$ held`, and 8 ✖: 3360 (`…was not created`), 3362, 3363, 3364, 3365, 3421, 3422 (their `PRECONDITION FAILED` guards), 3390 (`relation "_p3390_tables" does not exist`) | **pass**: `59 assertion block(s) re-run against the committed database.`, `21 $pre$ … held back`; 3386/3387 named preconditions-only |
+| stage 5 | not reached | reached; `audit:schema` exits 1, on harness artefacts only (below) |
+
+With `3436` added to `--files`, the after run reads 26 objects, 60 blocks and 22 `$pre$`, with the same verdicts.
+
+**`audit:schema`, as sets of findings** (file :: claim):
+- **pre-apply baseline:** 101 findings in 26 files.
+- **after the apply, before the fixes:** 44 in 15 files. That is the baseline's harness artefacts plus **seven the set causes**: `3360 … missing function intel_evidence_rekey_reference` (F1), and `missing grant select on posts|passport_postcards|post_media to anon|authenticated` under 2148, 2151 and 2158 (F5).
+- **after the apply, after the fixes:** 37 in 11 files, **every one of them already in the pre-apply baseline**:
+  - `0067`, `0068` and `0103` (three policies the baseline structure lacks);
+  - 2276–2279, 2970, 3002, 3003 and 3310, all in `KNOWN_UNREPLAYABLE.json`.
+  - None is in the set. CI's run on `84318d1b2` listed none of them, so `portava-ci` carries them.
+
+The after-fixes set is also exactly what certify's stage 5 printed. `check:missing-live-columns` gives the same answer before and after: 4 columns, all from 2276, 2279 and 2970 (harness artefacts).
+
+**So on the harness, certification is clean for the set. The full `certify:migrations PASSED` line needs a database that holds the 11 unreplayable files' objects**, which `portava-ci` does and the harness cannot. That last step is inferred, not measured.
+
+### 7.4 Apply, tails, idempotence, rollbacks, re-apply
+
+| step | before (at `f3047e54d`) | after (F1–F5 and the rollback fixes) |
+|---|---|---|
+| apply | 41 applied, 20 post-`COMMIT` tails verified | the same, from a fresh copy of `w10f_baseline` |
+| catalogue after apply | 12,540 lines | identical to before: 0 of 12,540 lines differ. The fixes change no applied object. |
+| flags after apply | — | all 92 pre-existing rows identical, including `updated_at`; 14 added, all FALSE. Each added row's md5(description) equals the md5 the rollbacks carry, computed by PostgreSQL from each forward file's literal. |
+| idempotent re-apply | — | `NOTHING TO DO — 266 proven row(s), 0 pending`; `plan`: `Would apply: NOTHING` |
+| rollbacks | 3436 → 3416 ran, then **3415's rollback FAILED**: `cannot drop function trail_normalised_destination(text) because other objects depend on it` (3441's `trails.destination_key`, since §77). After 3441's footer, the rest ran; **12 left their ledger row** (3338, 3340–3343, 3351, 3352, 3355–3359) | `rollback` over all 41: 3441's and 3440's footers ran, then 39 rollback files, **every one removing its own ledger row**. Only 3350's row remains, as on `portava-ci`. |
+| data after all rollbacks | differs from baseline: **92 → 91 flags** (3351's rollback deleted the pre-existing `media_find_busier_enabled`) | **identical to the baseline** (0 of 19 lines). The pre-existing row survives with its own description. |
+| catalogue after all rollbacks | the 8 tighter lines of §4.4 | the same 8 lines. They come from the 3385/3390/3410 rollbacks and are out of scope. |
+| re-apply after rollback | — | `plan` printed the 41 again; all applied; catalogue equal to the first apply's (0 of 12,540) |
+| stage 4 over 41, after the re-apply | — | `60 block(s) re-run after commit, 22 $pre$ block(s) held back … every re-run block passed.` |
+| objects (`objects`) | 57 of 58 present, `✖ 3360 function intel_evidence_rekey_reference` | `57 of 58 … present; 1 absent by design`, exit 0 |
+| stop measurement | — | `rls_leak`: `{"state": "measured", "deviations": 0}` |
+| step 3's rehearsal file | — | 305,961 bytes on a fresh `w10f_baseline` copy: `all 40 bodies and postconditions held; rolling back.`, psql exit 0, catalogue unchanged |
+
+### 7.5 Controls and mutations
+
+- **Mutations, each seen red then restored byte-identical (sha256):**
+  - each of the eight migrations reverted to `f3047e54d`'s bytes, then stage 4 re-run on the applied database. Each went red with exactly its §7.3 "before" error, and green again once restored;
+  - `auditMigrationsVsLive.ts` reverted, then `audit:schema`: the seven F1/F5 findings returned (44 in 15 files), and went away once it was restored.
+- **3360 `$post$`, in a transaction rolled back after each case:**
+  - constraint NOT VALID and no function: `POSTCONDITION FAILED: … was not created.`;
+  - function present with EXECUTE granted to anon: `… an end-user role can execute …`;
+  - 3360 alone (function present, service_role only, constraint NOT VALID): passes.
+- **3390, its body run in a transaction rolled back after each case:**
+  - unchanged: `3390 OK`;
+  - one kept-path literal altered: `… literals differ from _p3390_tables / _p3390_keep`;
+  - `REVOKE TRIGGER … FROM service_role` before the block: `1 table(s) changed service_role privileges`.
+- **3390, after commit:** `GRANT TRUNCATE … TO anon` makes the `$post$` block alone fail with `discovery_cache TRUNCATE anon: still held`, so the post-commit block still reads the catalogue.
+
+### 7.6 `run-tests.sh`, on a fresh standard chain at this tree
+
+`up.sh`: 356 applied in order, 12 known-unreplayable, 2 on retry. Result: **377 / 380 pass, 0 skipped**. Every suite that runs a file this lane changed passes: 3360/3361, 3362, 3363, 3364, 3365, 3390, 3366 (Z4, the rollback) and 3395 (B1, the rollback), as well as 3391's stop measurements.
+
+The 3 failures are in `trailsMemberVisibility` (TV6) and `trailsService` (H4 and the TV block), with `fetch failed` against the suite's own in-process HTTP server and `canceling statement due to statement timeout` in the log. Re-run alone, the failing cases changed each time: 4 failed, then 2. Load average was about 17 on 4 cores. Neither suite reads a file this lane changed, and the chain's DDL is the same at `f3047e54d`: the fixes touch only assertion blocks and rollback files. W10-D's 377/377 was at `debd5ad4f`, before §77 changed the Trail service. Not investigated further.
+
+### 7.7 What is still owed
+
+- The apply itself on `portava-ci` (steps 1–8), and a green `schema drift` run for the applied tree.
+- Step 3's emitter covers the 40 by name. At this tree `3436` is pending too, so it is not in the zero-persistence file. Extend `CI_PENDING_84318D1B2`, or rely on step 4's own stop-at-first-failure.
+- The 8 catalogue lines the 3385/3390/3410 rollbacks leave tighter (§4.4) are unchanged. They are not this lane's files.

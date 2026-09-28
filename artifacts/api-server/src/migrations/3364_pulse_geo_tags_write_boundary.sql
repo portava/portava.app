@@ -52,7 +52,7 @@
 
 BEGIN;
 
-DO $$
+DO $pre$
 DECLARE
   rel     regclass := to_regclass('public.pulse_geo_tags');
   bad     text;
@@ -116,7 +116,7 @@ BEGIN
   PERFORM set_config('g1_3364.attacl_before',
     coalesce((SELECT string_agg(attname || '=' || coalesce(attacl::text, '-'), ';' ORDER BY attnum)
                 FROM pg_attribute WHERE attrelid = rel AND attnum > 0 AND NOT attisdropped), ''), true);
-END $$;
+END $pre$;
 
 REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
   ON TABLE public.pulse_geo_tags

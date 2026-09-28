@@ -48,8 +48,20 @@ BEGIN
   END IF;
 END $$;
 
-DELETE FROM public.feature_flags
-  WHERE flag = 'media_perspective_vantage_enabled' AND enabled = FALSE;
+-- Only the row 3352 wrote (W10-F, census-discovery §87). 3352 inserts ON
+-- CONFLICT (flag) DO NOTHING, so a row that existed before it kept its own
+-- description. A row whose description is not 3352's seed text byte for
+-- byte (the md5 below) was not written by 3352, and is kept.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM public.feature_flags
+              WHERE flag = 'media_perspective_vantage_enabled' AND md5(coalesce(description, '')) <> '417dbcc7dd94fa6a15cff3f9e965bab6') THEN
+    RAISE NOTICE '3352 rollback: media_perspective_vantage_enabled was not written by 3352 (its description is not 3352''s seed), so it is kept.';
+  ELSE
+    DELETE FROM public.feature_flags
+      WHERE flag = 'media_perspective_vantage_enabled' AND enabled = FALSE;
+  END IF;
+END $$;
 
 ALTER TABLE public.posts DROP CONSTRAINT IF EXISTS posts_perspective_vantage_check;
 ALTER TABLE public.posts DROP COLUMN IF EXISTS perspective_vantage;
@@ -58,14 +70,26 @@ DO $$
 DECLARE present int; col int;
 BEGIN
   SELECT count(*) INTO present FROM public.feature_flags
-    WHERE flag = 'media_perspective_vantage_enabled';
+    WHERE flag = 'media_perspective_vantage_enabled' AND md5(coalesce(description, '')) = '417dbcc7dd94fa6a15cff3f9e965bab6';
   IF present <> 0 THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED: media_perspective_vantage_enabled still present after rollback (% row(s))', present;
+    RAISE EXCEPTION 'POSTCONDITION FAILED: media_perspective_vantage_enabled (the row 3352 wrote) still present after rollback (% row(s))', present;
   END IF;
   SELECT count(*) INTO col FROM information_schema.columns
     WHERE table_schema = 'public' AND table_name = 'posts' AND column_name = 'perspective_vantage';
   IF col <> 0 THEN
     RAISE EXCEPTION 'POSTCONDITION FAILED: posts.perspective_vantage still present after rollback';
+  END IF;
+END $$;
+
+-- The applier wrote 3352's ledger row in 3352's own transaction; without
+-- this delete it would take 3352 as still applied and never re-apply it.
+DELETE FROM public.schema_migration_ledger
+ WHERE filename = '3352_media_perspective_vantage.sql';
+
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM public.schema_migration_ledger WHERE filename = '3352_media_perspective_vantage.sql') THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED: the ledger still records 3352 as applied after rollback.';
   END IF;
 END $$;
 

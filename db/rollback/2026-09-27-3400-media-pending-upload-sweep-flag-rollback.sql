@@ -35,8 +35,20 @@ BEGIN
   END IF;
 END $$;
 
-DELETE FROM public.feature_flags
-  WHERE flag = 'media_pending_upload_sweep_enabled' AND enabled = FALSE;
+-- Only the row 3400 wrote (W10-F, census-discovery §87). 3400 inserts ON
+-- CONFLICT (flag) DO NOTHING, so a row that existed before it kept its own
+-- description. A row whose description is not 3400's seed text byte for
+-- byte (the md5 below) was not written by 3400, and is kept.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM public.feature_flags
+              WHERE flag = 'media_pending_upload_sweep_enabled' AND md5(coalesce(description, '')) <> '9b571bb51b3141bf31219c8cd4e7d39e') THEN
+    RAISE NOTICE '3400 rollback: media_pending_upload_sweep_enabled was not written by 3400 (its description is not 3400''s seed), so it is kept.';
+  ELSE
+    DELETE FROM public.feature_flags
+      WHERE flag = 'media_pending_upload_sweep_enabled' AND enabled = FALSE;
+  END IF;
+END $$;
 
 DELETE FROM public.schema_migration_ledger
   WHERE filename = '3400_media_pending_upload_sweep_flag.sql';
@@ -47,7 +59,8 @@ COMMIT;
 DO $post$
 BEGIN
   IF EXISTS (SELECT 1 FROM public.feature_flags
-              WHERE flag = 'media_pending_upload_sweep_enabled') THEN
+              WHERE flag = 'media_pending_upload_sweep_enabled'
+                AND md5(coalesce(description, '')) = '9b571bb51b3141bf31219c8cd4e7d39e') THEN
     RAISE EXCEPTION 'POSTCONDITION FAILED (3400 rollback): media_pending_upload_sweep_enabled is still present.';
   END IF;
   IF EXISTS (SELECT 1 FROM public.schema_migration_ledger

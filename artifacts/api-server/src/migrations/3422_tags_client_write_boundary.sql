@@ -81,7 +81,7 @@
 
 BEGIN;
 
-DO $$
+DO $pre$
 DECLARE
   rel     regclass := to_regclass('public.tags');
   bad     text;
@@ -154,7 +154,7 @@ BEGIN
     (SELECT string_agg(format('%s|%s|%s|%s|%s', polname, polcmd, polroles::text,
                               coalesce(pg_get_expr(polqual, polrelid), '-'), coalesce(pg_get_expr(polwithcheck, polrelid), '-')), ';' ORDER BY polname)
        FROM pg_policy WHERE polrelid = rel), true);
-END $$;
+END $pre$;
 
 REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
   ON TABLE public.tags

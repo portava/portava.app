@@ -65,7 +65,7 @@
 
 BEGIN;
 
-DO $$
+DO $pre$
 DECLARE
   spec jsonb := $spec${
     "pulse_geo_tags": {
@@ -146,7 +146,7 @@ BEGIN
       RAISE EXCEPTION 'PRECONDITION FAILED (3363): % already carries column-level SELECT for a client role (%); the rollback could not restore it.', t, bad;
     END IF;
   END LOOP;
-END $$;
+END $pre$;
 
 -- ── pulse_geo_tags ──────────────────────────────────────────────────────────
 REVOKE SELECT ON TABLE public.pulse_geo_tags FROM anon, authenticated;

@@ -153,8 +153,20 @@ ALTER TABLE public.place_momentum
   DROP COLUMN IF EXISTS window_unique_travelers,
   DROP COLUMN IF EXISTS source_surface;
 
-DELETE FROM public.feature_flags
-  WHERE flag = 'discovery_trending_api_enabled' AND enabled = FALSE;
+-- Only the row 3410 wrote (W10-F, census-discovery §87). 3410 inserts ON
+-- CONFLICT (flag) DO NOTHING, so a row that existed before it kept its own
+-- description. A row whose description is not 3410's seed text byte for
+-- byte (the md5 below) was not written by 3410, and is kept.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM public.feature_flags
+              WHERE flag = 'discovery_trending_api_enabled' AND md5(coalesce(description, '')) <> 'd3f444520ff28c7ceb67779618f0c9b9') THEN
+    RAISE NOTICE '3410 rollback: discovery_trending_api_enabled was not written by 3410 (its description is not 3410''s seed), so it is kept.';
+  ELSE
+    DELETE FROM public.feature_flags
+      WHERE flag = 'discovery_trending_api_enabled' AND enabled = FALSE;
+  END IF;
+END $$;
 
 DO $$
 BEGIN
@@ -170,7 +182,8 @@ COMMIT;
 DO $post$
 DECLARE src text;
 BEGIN
-  IF EXISTS (SELECT 1 FROM public.feature_flags WHERE flag = 'discovery_trending_api_enabled') THEN
+  IF EXISTS (SELECT 1 FROM public.feature_flags WHERE flag = 'discovery_trending_api_enabled'
+                AND md5(coalesce(description, '')) = 'd3f444520ff28c7ceb67779618f0c9b9') THEN
     RAISE EXCEPTION 'POSTCONDITION FAILED (3410 rollback): discovery_trending_api_enabled is still present.';
   END IF;
   IF EXISTS (SELECT 1 FROM information_schema.columns
