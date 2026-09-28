@@ -13082,6 +13082,174 @@ CONSTRUCTED 182 / 188 = **96.8 %**, unchanged. CORRECT 94 / 188 = **50.0 %**, do
   - the query fold and the stored fold stripping the 91 marks, which turns B2 and H4 red, with H1 still green;
   - the owner answering question 4 with the market-letters reading.
 
+## §75 — Derived features keep their provenance, part 2 (lane P33): the trend API, the PDE feature vector and Trail health retain all four facts, a measured Trail boolean is never served with null provenance, and the graph reading stays 1 of 4 on a blocker in the producer
+
+*Written 2026-09-28 by lane P33 on `disc-p33-provenance-hunks`, branched from `ed9ab3ca0`. It owns DC-17 and builds §68.6's routed hunks H-P21-1 to H-P21-5. It changes provenance fields only. The 2026-08-15 ranker hold (§58.12 question 2, §66.9 question 1) forbids moving any computed value, score, state, order or served boolean, and none moved except the one field H-P21-5 names: a provenance record served where `null` stood. §68's golden, extended to G9 and captured at `ed9ab3ca0`, holds this (75.4). Migration 3436 is applied to the local harness only, not to `portava-ci` and not to production. Nothing is deployed or flag-enabled. `head_commit` is not re-declared. The headline does not move, because DC-17 does not move.*
+
+**Method.** DC-17 was re-read in its criterion's own words: *"Derived features must retain: source event window · feature version · model version · computation time"* (`docs/specs/discovery-v1/10_Database_Architecture.md:115#Derived features must retain:`). §68.2's grading rule is kept: a field that is present but names something that did not compute the number is FAIL. Each hunk was built only where §68.6 routed it, each is pinned by a runnable test that was seen red, and every value those paths compute is held to a hash captured before any edit.
+
+### 75.1 Row statement
+
+| ID | was | now | evidence |
+|---|---|---|---|
+| DC-17 | W | **W** | **Eight of the nine derived features §68.2 graded now retain all four facts in code, and one does not.** The table in 75.2 grades each feature. **Built here.** (1) The trend API's wire record serves the run's `feature_version` (`artifacts/api-server/src/lib/discoveryTrendExplanation.ts:199#featureVersion: run.featureVersion`). A database without 3435 degrades it to `featureVersion: null` and serves everything else, because a 42703/PGRST204 on the head read is retried without the column (`artifacts/api-server/src/lib/discoveryTrendExplanation.ts:281#isMissingColumnError(head.error)`). P1–P4 pin both paths (`artifacts/api-server/src/test/discoveryTrendingApi.test.ts:526#it("P2. WITHOUT 3435`). (2) Every PDE-scored `rank_events` row carries `featureVersion`, `rankedAt`, `sourceWindow` and, when momentum was an input, `momentumProvenance` (`artifacts/api-server/src/lib/rankLog.ts:686#...pdeFeatureProvenanceFeatures(scored)`), stamped by the rank itself (`artifacts/api-server/src/lib/discoveryPde.ts:614#stampPdeFeatureProvenance(scored`) and classified `record_metadata` for DV-39's screen (`artifacts/api-server/src/lib/discoveryRecommendationRecord.ts:584#momentumProvenance: "record_metadata"`). (3) Trail health carries its window, feature version and clock in memory (`artifacts/api-server/src/lib/discoveryTrailHealth.ts:236#memberCount: n, ...trailHealthProvenance(nowMs)`) and in `trail_health_snapshots` through 3436 (`artifacts/api-server/src/migrations/3436_trail_health_snapshot_provenance.sql:54#ADD COLUMN IF NOT EXISTS feature_version text`), behind a column-absent latch (`artifacts/api-server/src/services/trails/TrailService.ts:1806#trailSnapshotProvenanceColumns = "absent";`). (4) H-P21-5: when only the per-item read fails, `trending` is served with the fold's own record instead of `null` (`artifacts/api-server/src/services/trails/TrailService.ts:972#if (!itemRead) momentumProvenance = localMomentumProvenance(nowMs)`). **Why still W.** The served graph reading is 1 of 4, and H-P21-4 cannot be built without changing a computed value or another owner's producer (75.3, H-P21-4). Three scope limits also remain: 3435 and 3436 are applied to the harness only, and nothing calls the rebuild (DC-07). **What turns it C:** the graph reading's producers recording a model version, a feature version and a statable window (75.3's three blockers resolved), pinned by a runnable test; and 3435 and 3436 applied where the rebuild and the snapshot writer run. |
+
+### 75.2 DC-17, feature by feature, at `ed9ab3ca0` and now
+
+This updates §68.2. Each cell is graded against the criterion's four facts.
+
+| derived feature | served / stored | window | feature v. | model v. | computed at | §68 | now |
+|---|---|---|---|---|---|---|---|
+| Compass rank features and scores | candidate projection (2361), Cache B | PASS | PASS | PASS | PASS | 4/4 | 4/4 |
+| local momentum (`MomentumMap.provenance`) | Trail `readingProvenance`; the PDE feature `localMomentum` | PASS | PASS | PASS | PASS | 4/4 | 4/4 |
+| trend reading (`TrendReading.provenance`) | `DiscoveryModifiers.trendStates` | PASS | PASS | PASS | PASS | 4/4 | 4/4 |
+| stored trend reading (`place_momentum`) | the trend API | PASS | PASS on rows written after 3435 | PASS | PASS | 4/4 (harness) | 4/4 (harness) |
+| Trail `trending` and `trending_now` order | GET …/trending, …/modules | PASS | PASS | PASS | PASS | 4/4 except one path | **4/4** (H-P21-5 closes the path) |
+| trend API wire record (`TrendReadingProvenance`) | GET trend explanation | PASS | FAIL → PASS; `null` = not recorded (pre-3435 row, or 3435 absent) | PASS | PASS | 3/4 | **4/4** (where 3435 is applied) |
+| PDE per-item feature vector (`rank_events.features`) | `rank_events`, both PDE serve points | FAIL → PASS, `unbounded_start` at the rank clock | FAIL → PASS, `portava-rank-features-v1` | PASS | FAIL → PASS, `rankedAt`; the momentum input's own clock beside it | 1/4 | **4/4** |
+| served graph reading (§62.5, §63.4) | `pde_stages`, request context, the six row keys | FAIL | FAIL | FAIL | PASS | 1/4 | **1/4** (H-P21-4 blocked) |
+| Trail health (`computeTrailHealth` / `trail_health_snapshots`) | the Trail-affinity scale, the snapshot | FAIL → PASS | FAIL → PASS | PASS | FAIL → PASS in memory; stored `captured_at` is now the computation clock | 1/4 · 2/4 | **4/4 · 4/4** (stored: where 3436 is applied) |
+
+**The inventory is §68.2's.** It covers what §68 found Discovery serves or ranks with. The DRS re-rank's boosts, the governor's per-item keys (which DV-39's screen refuses, §63.4) and the live-rank claim reads were not graded here. A later grader who finds another derived feature should add a row, not assume this table is complete.
+
+### 75.3 What was built, hunk by hunk
+
+- **H-P21-1: the trend API's wire record.** `TrendRun` and `TrendReadingProvenance` gain `featureVersion: string | null`, on their existing lines (`artifacts/api-server/src/lib/discoveryTrendExplanation.ts:103#modelVersion: string; /** §75 (DC-17, H-P21-1)`). It is served after the three §58 fields. The head read selects `feature_version` (`artifacts/api-server/src/lib/discoveryTrendExplanation.ts:277#select("computed_at, model_version, window_ms, feature_version")`).
+  - **Deploy order, now safe both ways.** A 42703 or PGRST204 on that read is detected with `isMissingColumnError`, the classifier §4x code shares (`lib/capability/schemaCapability.ts`). The read is then retried once with the three §58 columns. If the retry also fails (3410's `source_surface` absent, or a timeout), it is classified exactly as before. A timeout on the first read is not retried (P4). No process latch is kept, so a deployment picks the column up the moment 3435 lands, at the cost of one extra head read per request until then.
+  - **The suite's closed-shape tripwire has one narrow exemption.** B2 forbids the substring "weight" anywhere in the body, and 3435's feature version is `discovery-weighted-activity-v2`. B2 now scans the body with that one string removed, and B3 pins `featureVersion` to exactly that constant, so no other value can use the exemption. B2's no-number walk is unchanged. A version NAME is not a weight. Renaming the version would need a new migration over 3435's constant. That was not done here, because 3435's postconditions and V-tests pin the constant.
+  - The suite's fake now projects rows to the selected columns, as PostgREST does. Without that, the retry could never omit a column.
+- **H-P21-2: the PDE per-item record.** `DISCOVERY_PDE_FEATURE_VERSION = "portava-rank-features-v1"` names `portavaRank.scoreCandidate`'s feature set (`artifacts/api-server/src/lib/discoveryRankProvenance.ts:418#export const DISCOVERY_PDE_FEATURE_VERSION`). Q6 pins it to a digest of the ranker's key list, weights and caps, so a new feature without a bump goes red (`artifacts/api-server/src/test/discoveryDerivedProvenanceHunks.test.ts:122#it("Q6.`).
+  - **Where the record comes from.** `rankForViewer` stamps one record per rank on the scored objects it returns, through a WeakMap, not a field. The candidates, the served projection and the feature vector are therefore byte-for-byte what they were. The rank clock is `prT0`, the clock the function already read immediately before `rankCandidates`. It is not the injected governor clock (Q1 is red under that mutation) and not the serve clock.
+  - **The momentum input's own record.** `DiscoveryModifiers` carries it beside the scaled number, as `momentumProvenance` (`artifacts/api-server/src/lib/discoveryModifiers.ts:214#momentumProvenance = reading.provenance`). Its clock can be up to MOMENTUM_CACHE_TTL_MS older than `rankedAt`, and the row keeps both. The key is ABSENT with the modifiers off, because momentum was not an input, as §63's graph keys are. It is `null` when the momentum load threw.
+  - **What was deliberately not done: the per-request row.** A rank clock in the logImpression CONTEXT would enter `recommendations.context_hash`, a computed digest, and make every serve's digest unique. So the four keys are written per item, after the storage screen, beside `modelVersion`. The per-request row is unchanged.
+  - **DV-39.** The four keys are classified `record_metadata`, as `modelVersion` is (Q5), and no served row refuses one (the §63 suite's §75 block). No other writer passes these key names, so no other writer's rows change.
+- **H-P21-3: Trail health.** `TrailHealth` gains `featureVersion`, `computedAt` and `sourceWindow` on its `memberCount` line (`artifacts/api-server/src/lib/discoveryTrailHealth.ts:129#memberCount: number; /** §75 (DC-17, H-P21-3)`). The values come from `trailHealthProvenance(nowMs)` (`artifacts/api-server/src/lib/discoveryTrailHealth.ts:523#export function trailHealthProvenance`). The feature version is `trail-member-rows-v1` (`artifacts/api-server/src/lib/discoveryTrailHealth.ts:505#export const TRAIL_HEALTH_FEATURE_VERSION`). The window is `unbounded_start` at the clock, because members of any age count.
+  - **Stated limit.** The caller reads a Trail's newest 500 members, as the momentum loader's window is its newest MOMENTUM_ROW_LIMIT rows (§30). That is recorded as a limit of the read, not as a window this record invents.
+  - **3436** adds two nullable columns and nothing else. It has pre- and postconditions, a rollback in `db/rollback/`, no backfill and no default. `trail_health_snapshots` exists in production (2910), and two nullable columns without a default are a catalogue-only change.
+  - **The writer** (`artifacts/api-server/src/services/trails/TrailService.ts:1792#async function insertTrailHealthSnapshotRow`) sends both columns. On a missing-column answer it latches the process and writes 2910's five columns exactly as before, so 3436 may deploy before or after the code. A missing table is still `unavailable`, and a timeout is still `failed`, with no retry and no latch (R4).
+  - **`captured_at` is now the computation clock.** `recordTrailHealthSnapshot` defaults its clock to the one the health carries (`artifacts/api-server/src/services/trails/TrailService.ts:430#nowMs = Number.isFinite(health?.computedAt)`). Before, the route passed none, so `captured_at` was the WRITE clock, later by the read's duration, while the comment above the insert said it was the computation clock. This is the one stored provenance value that changes. It is a clock, not a computed value, and the hourly skip it bounds moves by the same milliseconds.
+- **H-P21-4: the graph reading. NOT built. What blocks it, exactly.** The served reading is `graphReadingOf(modifiers)` (`artifacts/api-server/src/lib/discoveryPde.ts:1105#export function graphReadingOf`). It is a copy of `CityConfidence`, which has two producers. Neither can record all four facts without changing a computed value or another owner's producer.
+  1. **The window cannot be stated for the Compass producer's corpus.** `computeCityConfidenceIndex` reads `compass_graph_edges` and `compass_graph_nodes` with `.limit(20000)` and no `order` (`artifacts/api-server/src/compass/CompassGraphEngine.ts:1452#db.from("compass_city_models").select("city, time_slices, sample_size").limit(1000)`, and the two `.limit(20000)` reads below it). Above the cap, the corpus is whatever subset the planner returns. Any window recorded for it would name a corpus nobody can reproduce. Making it statable means ordering or paging those reads, and for any city whose edges exceed the cap that changes `depth_score`, which is a computed value under the ranker hold.
+  2. **Failed reads are silently zero.** The same reads destructure `data` and drop `error`, so a failed read scores a city as having zero visitors or events. A record could not tell a real corpus from an empty one without changing that handling, and changing it changes the score a failed read produces.
+  3. **Where the platform governs, the producer is not Compass's.** `getCityConfidence` serves `intel_coverage_snapshots` (lib/intelCoverage*) wherever it has cells (`artifacts/api-server/src/compass/CompassGraphEngine.ts:1615#.limit(PLATFORM_COVERAGE_READ_LIMIT)`). CPV2-12 says Compass never writes that store and never re-runs its producer. A version stamped by the Compass producer would therefore be false exactly when the platform answers.
+  - **What could be done without moving a value, and why it was not.** A model version for `scoreCityDepth` could be stamped as a constant. It would need a new column on `compass_city_confidence`, a latch at the upsert and at `getCityConfidence`'s select (lines census-compass cites), and new keys through `servedGraphReadingFeatures` in `routes/discovery.ts`. That would take the reading from 1 of 4 to at most 3 of 4, with the window still missing and still FAIL on the platform path. That is a partial field this lane judged worse than the stated gap, and it is routed with the blockers.
+  - `CompassGraphEngine.ts` is untouched, so no line §67 or census-compass cites moved.
+- **H-P21-5: Trail `trending` when only the per-item read fails.** The boolean is measured by the fold, `trailMomentumFromRankEvents`. That calls `computeLocalMomentum(folded, nowMs)` and returns `.values` only, and it lives in a file outside this lane (lib/discoveryTrailAffinity.ts).
+  - The kernel's record depends on the clock alone, never on the rows. So `localMomentumProvenance(nowMs)` (`artifacts/api-server/src/lib/discoveryLocalMomentum.ts:369#export function localMomentumProvenance`) is computed BY the kernel over no rows. S2 pins it equal to the kernel's record over the folded rows, over no rows and over a subset.
+  - TrailService serves it only when the Trail read succeeded and the item read did not (S1, S3).
+  - **§64.13's non-disclosure edge and §61.17's empty-Trail contract are untouched.** Both return from `none(null)` before either read (`artifacts/api-server/src/services/trails/TrailService.ts:950#if (servable.length === 0`). S5 and S6 pin `false` with `null` provenance for an empty Trail and for an all-withheld one, under every read outcome. A mutation that serves a record there turns both red.
+  - **The Trail read failing** still serves `trending: null`. That path was not in H-P21-5 and is unchanged (75.7 #1).
+
+### 75.4 The byte-identity proof, tests seen red (P24), and mutations
+
+**Golden.** `discoveryDerivedProvenanceGolden.test.ts` gains G6–G9 at its foot, so §68's cited G1 line does not move (`artifacts/api-server/src/test/discoveryDerivedProvenanceGolden.test.ts:334#it("G6. the trend API`). Each hashes, with provenance removed:
+
+- G6: the trend API's head read (run and rows) over a 15-place fixture, and every explanation fresh, stale, one minute inside the freshness bound and one minute outside it;
+- G7: PDE `rankForViewer` with the modifiers on and G1's momentum: order, scores and every feature;
+- G8: the nine metrics, the unmeasured list and the multiplier over twelve fixed-seed Trails, one of them empty;
+- G9: `trailTrending`'s momentum, unread mark and items under all four read outcomes and for the empty Trail.
+
+The four hashes were captured at `ed9ab3ca0` with the code unchanged. G6 was recaptured there after the two freshness-edge cases were added. **The final golden file passes 10/10 against `ed9ab3ca0`'s nine changed modules, copied back from HEAD, and 10/10 after every edit.** §63's served-row golden fixture (`fixtures/discoveryServedGraphReadingGolden.json`) is unchanged. Its comparisons strip exactly the four new keys, which are asserted on their own at the foot (`artifacts/api-server/src/test/discoveryServedGraphReading.test.ts:376#every ranked row carries the four facts`). So every served order, response byte, other feature byte and per-request context digest is still the pre-§63 golden.
+
+**Seen red.** With `ed9ab3ca0`'s modules, the new suite and the §63 suite fail to load (the new exports do not exist), and the trend suite fails B3, P1 and P2. Each hunk was also reverted alone, one edit at a time, and every file was restored with its sha256 checked:
+
+| revert or mutation | red |
+|---|---|
+| H-P21-1: `readingProvenance` without `featureVersion` | B3, P1, P2 |
+| H-P21-1: no retry on the missing column | P2, P3 |
+| H-P21-1 mutation: retry on ANY head-read error | P4 |
+| H-P21-2: no stamp in `rankForViewer` | Q1–Q3; all 7 §75 row checks in the §63 suite |
+| H-P21-2: rankLog no longer writes the keys | the 7 §75 row checks |
+| H-P21-2 mutation: the governor clock as the rank clock | Q1 |
+| H-P21-2 mutation: momentum record with the modifiers off | Q1; the 3 modifiers-off row checks |
+| H-P21-2 mutation: `loadDiscoveryModifiers` drops the record | the 4 modifiers-on row checks |
+| H-P21-2 mutation: `momentumProvenance` unclassified | Q5; the §63 suite's classification check |
+| H-P21-3: `computeTrailHealth` without the three facts | R1–R4 |
+| H-P21-3: the writer omits `feature_version` | R2; harness H1 |
+| H-P21-3: no latch retry | R3 |
+| H-P21-3: `captured_at` back to the write clock | R2 |
+| H-P21-3 mutation: latch on ANY insert error | R4 |
+| H-P21-5: the fold's record not served | S1, S3 |
+| H-P21-5 mutation: a record served when the Trail read fails | S4 |
+| H-P21-5 mutation: a record served for an all-withheld Trail | S5, S6 |
+| H-P21-5 mutation: the kernel helper's clock off by 1 ms | S1, S2 |
+| golden: the disclosure floor k + 1 | G6 |
+| golden: the freshness bound doubled | G6. It **survived** before the two edge cases were added, which is why they exist. |
+| golden: portavaRank's `distance` weight 0.35 → 0.36 | G3, G7, Q6 |
+| golden: `TRAIL_HEALTH_MIN_SCALE` 0.85 → 0.86 | G8 |
+| golden: `TRAIL_FRESH_WINDOW_MS` 7 → 8 days | G8 |
+| golden: Trail items filter `> 0` → `>= 0` | G9 |
+| golden: the unread mark dropped | G9 |
+
+§68.4's standing caveat applies to G6–G9 too. Each is a corpus detector, not a proof over all inputs.
+
+### 75.5 The harness (controlled evidence, not production evidence)
+
+- **The cluster.** Lane P21's PG16 cluster was reused: `LOCAL_DB_DIR=/var/tmp/p21-localdb`, port 55444, with `LOCAL_DB_WORK=/var/tmp/p33-localdb-work`. `scripts/local-db/up.sh` dropped and re-replayed the database from this tree. The baseline has 388 tables. 356 migrations were applied in order, 3435, 3436, 3440 and 3441 among them. 12 are known-unreplayable, and 2 of those applied on retry.
+- **`scripts/local-db/run-tests.sh`: 380 of 380 pass, with 0 skipped.** That includes the new `db/trailHealthSnapshotProvenance.db.test.ts` (H1–H3, `artifacts/api-server/src/test/db/trailHealthSnapshotProvenance.db.test.ts:113#test("H3.`) and §58's `discoveryTrendSnapshotParity`, which calls the changed head read.
+- **What H3 shows on a real server.** With 3436 rolled back inside a transaction, the writer's provenance insert answers SQLSTATE 42703, the code the latch keys on, and the legacy insert is accepted. 3436 re-applied twice is clean.
+- **3436 rolled back for real.** The suite refused to run (its precondition). After re-applying 3436 twice it passed 3/3. The second apply only noted "already exists, skipping".
+- **Nothing else.** No SQL was run against `portava-ci` or production.
+
+### 75.6 Checks and runs at this tree
+
+- **Types.** `typecheck` exit 0. `typecheck:tests` is 863 across 115, the baseline, with no file above it. The new files use no `any` and no `@ts-expect-error`. The new fake's row type is `Record<string, unknown>`.
+- **Suites.** The new suite is registered on the `test` line after the golden, and the DB suite after `placeMomentumFeatureVersion.db.test.ts`. `check:test-registration` passes.
+  - The run covered every unit suite that imports a changed module, plus every suite that scans migrations, rollbacks, the census or the source tree: 194 files. **3,645 of 3,648 pass.**
+  - The 3 failures fail identically with `ed9ab3ca0`'s modules copied back. `discoveryClientRouteE2E.test.ts` fails on the module-link error §68.7 and §73.6 record. `memoryKernelTransactionLive.test.ts` and `wallSessionIntentLiveDb.test.ts` are refused by the CI Supabase guard, because they need live credentials.
+- **Static checks, exit 0:**
+  - `check:production-drift`. `trail_health_snapshots` is present in production and needs no entry. Columns are not on that ratchet, as with 3435.
+  - `check:discovery-query-paths`: 62 of 62, clean, and no index was created.
+  - `check:migration-prefixes`, `check:schema-references` and `check:writerless-reads`.
+  - `check:unissued-supabase-writes`, `check:silent-supabase-writes`, `check:not-null-writes`, `check:async-handlers`, `check:location-purposes`, `check:data-rights` and `check:enum-literals`.
+- **Not run, because they need a live Supabase target and the guard refused one:** `check:rank-events-surfaces`, `check:write-path-columns`, `check:write-path-hazard`, `check:migration-ledger` and `check:missing-live-columns`. The full api-server `pnpm test` was not run. No client test ran, because no client file changed.
+- The census checks after this section's last edit are listed in the commit's report.
+
+### 75.7 Recorded, not fixed
+
+1. **The Trail read failing, alone.** `trending` is `null` (unknown), and `readingProvenance` still names the per-item reading that did succeed. That record is true of the ORDER's input, but it sits beside an unknown boolean. H-P21-5 was scoped to the opposite path, and this one is unchanged (S4 pins it).
+2. **Files outside the brief's list, each for a reason in the hunk's own routing (§68.6), and each edited line-neutrally:**
+   - `lib/rankLog.ts` (one line: the per-item record is built there);
+   - `lib/discoveryModifiers.ts` (the momentum record's carrier, which §68.6 names);
+   - `lib/discoveryRecommendationRecord.ts` (DV-39's classification, which the brief requires);
+   - `lib/discoveryTrendExplanation.ts` (the trend API's read and wire record);
+   - `lib/discoveryRankProvenance.ts` and `lib/discoveryLocalMomentum.ts`, feet only.
+
+   `CompassGraphEngine.ts`, `routes/discovery.ts`, `routes/trails.ts`, `lib/discoveryTrailAffinity.ts` and every forbidden file are untouched.
+3. **The Trail modifier's health scales.** `loadViewerTrailModifier` computes a `TrailHealth` per followed Trail. That record now carries all four facts, and the multiplier derived from it enters `trailAffinity`. The PDE row's rank-level record covers the vector it lands in. No separate per-Trail record is stored for it, and none was before.
+
+### 75.8 Owner questions (carried forward, not re-asked)
+
+- §66.9 question 1 and §58.12 question 2: the ranker hold. Nothing here needed an answer, because nothing moved. H-P21-4's blocker 1 is exactly a question for it: may the city-confidence reads be ordered, which moves `depth_score` above the cap?
+- §58.12 question 4: rebuild cadence and retention. Until it is answered, no deployment writes `place_momentum.feature_version`.
+- §68.8's `nearby_now` copy question is unchanged.
+- **Approval item: 3435 and 3436 to `portava-ci`, then production.** 3436 is columns only on a live table and can deploy before or after the code (75.3). 3435 must precede any rebuild that should record a feature version.
+
+### 75.9 Freshness and scope
+
+- **CENSUS_SCOPE for census-discovery gains:**
+  - 3436 and its rollback;
+  - the new suites `discoveryDerivedProvenanceHunks` and `db/trailHealthSnapshotProvenance`, and the helper `helpers/fakeTrailsDb.ts`;
+  - the two changed suites this section cites, `discoveryTrendingApi` and `discoveryServedGraphReading`.
+- **Acknowledgements:**
+  - **census-discovery's entry** names those files, plus `lib/discoveryModifiers.ts` and `lib/discoveryTrailHealth.ts`. It argues that DC-17 is restated here and does not move.
+  - **census-sensing, census-passport and census-highlights-memories** watch `lib/discoveryModifiers.ts`. Their entries argue that the one added field is provenance, read by nothing that computes, and that G7 and §63's golden hold every served byte.
+  - **census-trips** watches `src/test/db/`. Its entry argues that the new suite seeds its own `trails` and `trail_health_snapshots` rows and touches no `trip_*` object.
+
+### 75.10 What would turn this red
+
+- The trend wire record without its feature version, or a missing column failing the read: P1–P4.
+- A PDE row without its four facts, a wrong rank clock, or a momentum record where momentum was no input: Q1–Q3 and the §63 suite's §75 block.
+- A ranker feature change without a version bump: Q6.
+- Trail health without its facts, in memory or stored, or a snapshot lost to a missing column: R1–R4 and harness H1–H3.
+- A measured `trending` served with `null` provenance, or a record served where §61.17 or §64.13 require `null`: S1 and S3–S6.
+- Any computed value moving: G1–G9, and §63's served-row golden.
+- **What would turn DC-17 C:** 75.1's "What turns it C".
+
+### 75.11 Nothing applied, nothing deployed; the headline is unchanged
+
+3436 is applied to the local harness only. Nothing is flag-enabled. DC-17 stays W, so no row moves. `check:census-integrity` counts census-discovery at C 96, W 86, N 5 and X 1 over 188, as §73.12 states. CONSTRUCTED 182 / 188 = 96.8 % and CORRECT 96 / 188 = 51.1 % are unchanged.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/compass/CompassExplanationEngine.ts — §13.7 item 3 names Compass's HMAC recommendation-token signer as a refactor this lane declined to make in another lane's file. Discovery's recommendation id is minted by lib/discoveryRecommendationId.ts, and no Discovery verdict rests on the signer.
@@ -13117,3 +13285,6 @@ CONSTRUCTED 182 / 188 = **96.8 %**, unchanged. CORRECT 94 / 188 = **50.0 %**, do
 - NOT-GRADED: artifacts/api-server/src/services/airport/LayoverFeasibility.ts — §65.2 cites the `entry` option's documented default ("Omitted = unresolved") as the fact that made an omitted input a silent `entry_unverified`; §65 changed nothing in the engine, census-layover grades it, and no §65 verdict rests on it beyond that sentence.
 - NOT-GRADED: artifacts/api-server/src/services/airport/__tests__/layoverCompassEntryBoundary.test.ts — §65.5 cites its positive control as the case that went red when this lane first overrode every model answer under a certified `no`, which is why that override was withdrawn; census-layover grades the Compass boundary, and no §65 verdict rests on it.
 - NOT-GRADED: travel-buddy-standalone/src/features/map/search/__tests__/serverSearchTypes.test.ts — §70.5 names it as a Map client test whose path constant followed `SEARCH_TYPES` into the platform module; census-map grades it, and no Discovery verdict rests on it.
+
+- NOT-GRADED: artifacts/api-server/src/test/memoryKernelTransactionLive.test.ts — §75.6 names it only as one of three suites that fail identically with and without §75's changes (the CI Supabase guard refuses it without live credentials); no Discovery verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/wallSessionIntentLiveDb.test.ts — §75.6 names it only as one of three suites that fail identically with and without §75's changes (the CI Supabase guard refuses it without live credentials); census-wall grades it, and no Discovery verdict rests on it.

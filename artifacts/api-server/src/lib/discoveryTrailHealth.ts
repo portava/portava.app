@@ -126,7 +126,7 @@ export interface TrailHealth {
    */
   freshTodayShare: number | null;
   /** Member count the metrics were computed over — §11's exposure denominator. */
-  memberCount: number;
+  memberCount: number; /** §75 (DC-17, H-P21-3): `10` §5's other three facts — see `TrailHealthProvenance` at the foot. */ featureVersion: string; computedAt: number; sourceWindow: DerivedStoreWindow;
 }
 
 const round3 = (n: number) => Math.round(n * 1000) / 1000;
@@ -167,7 +167,7 @@ export function computeTrailHealth(input: TrailHealthInput): TrailHealth {
       unmeasured: [...TRAIL_HEALTH_METRICS],
       modelVersion: TRAIL_HEALTH_MODEL_VERSION,
       freshTodayShare: null,
-      memberCount: 0,
+      memberCount: 0, ...trailHealthProvenance(nowMs),  // §75: an empty measurement is still a measurement at a clock
     };
   }
 
@@ -233,7 +233,7 @@ export function computeTrailHealth(input: TrailHealthInput): TrailHealth {
     unmeasured: TRAIL_HEALTH_METRICS.filter((k) => metrics[k] === null),
     modelVersion: TRAIL_HEALTH_MODEL_VERSION,
     freshTodayShare: share(freshToday, n),
-    memberCount: n,
+    memberCount: n, ...trailHealthProvenance(nowMs),  // §75 (DC-17, H-P21-3)
   };
 }
 
@@ -486,3 +486,46 @@ export function fairExposureSlots(
 
   return { slots: qualified.slice(0, slotCount), denominators, decisions, retestable };
 }
+
+// ── census-discovery §75 (DC-17, lane P33, H-P21-3): the other three facts ─────
+//
+// `10` §5: "Derived features must retain: source event window · feature
+// version · model version · computation time". Trail health kept the model
+// version only (`TRAIL_HEALTH_MODEL_VERSION`); the snapshot added its clock as
+// `captured_at`, and nothing kept a window or a feature version (§68.2: 1 of 4
+// in memory, 2 of 4 stored). Declared at the foot so no cited line above moves.
+
+/**
+ * What ONE input row contributes to §11's nine metrics: a `content_trails`
+ * member's source_id, contributor_id, confidence, content_state and created_at,
+ * and the Trail's open-report count (distinct reporters per member). Bump when
+ * a metric reads a new member field or counts a row differently. The ARITHMETIC
+ * over those rows is `TRAIL_HEALTH_MODEL_VERSION`'s.
+ */
+export const TRAIL_HEALTH_FEATURE_VERSION = "trail-member-rows-v1";
+
+/** The three facts `computeTrailHealth` stamps beside its model version. */
+export interface TrailHealthProvenance {
+  featureVersion: string;
+  /** Epoch ms the metrics were computed against — the `nowMs` every age above is measured from. */
+  computedAt: number;
+  /**
+   * Members of ANY age count (freshness and staleness are metrics OVER the
+   * members, not a filter on them), so the corpus has no oldest event:
+   * `unbounded_start`, ending at the computation clock. The stated limit is the
+   * caller's read, not this function: TrailService reads a Trail's newest 500
+   * members, as the momentum loader's window is its newest MOMENTUM_ROW_LIMIT rows.
+   */
+  sourceWindow: DerivedStoreWindow;
+}
+
+/** Pure: the provenance of one health computation at `nowMs`. */
+export function trailHealthProvenance(nowMs: number): TrailHealthProvenance {
+  return {
+    featureVersion: TRAIL_HEALTH_FEATURE_VERSION,
+    computedAt:     nowMs,
+    sourceWindow:   { kind: "unbounded_start", startMs: null, endMs: nowMs },
+  };
+}
+
+import type { DerivedStoreWindow } from "./discoveryRankProvenance.js";

@@ -354,3 +354,18 @@ const LOCAL_MOMENTUM_VERSIONS: DerivedStoreVersions = {
   modelVersion:   LOCAL_MOMENTUM_MODEL_VERSION,
   featureVersion: LOCAL_MOMENTUM_FEATURE_VERSION,
 };
+
+// ── census-discovery §75 (DC-17, lane P33, H-P21-5) ───────────────────────────
+
+/**
+ * The record `computeLocalMomentum` stamps on ANY computation it runs at
+ * `nowMs` — its bounds, versions and clock depend on the clock alone, never on
+ * the rows. A caller whose rows reached this kernel through another function
+ * (the Trail fold, lib/discoveryTrailAffinity `trailMomentumFromRankEvents`,
+ * which returns `.values` only) can therefore state that computation's
+ * provenance without a second read. Computed BY the kernel, not restated, so it
+ * cannot drift from it; pinned equal to a real computation's record by a test.
+ */
+export function localMomentumProvenance(nowMs: number): DerivedStoreProvenance {
+  return computeLocalMomentum([], nowMs).provenance;
+}

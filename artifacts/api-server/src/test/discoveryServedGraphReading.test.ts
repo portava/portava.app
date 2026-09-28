@@ -125,7 +125,7 @@ async function waitFor(pred: () => boolean, ms = 3_000): Promise<boolean> {
 }
 
 const withoutIds = (f: Record<string, unknown>) => {
-  const { recommendationId: _r, serveId: _s, ...rest } = f;
+  const { recommendationId: _r, serveId: _s, featureVersion: _fv, rankedAt: _ra, sourceWindow: _sw, momentumProvenance: _mp, ...rest } = f;  // §75 (H-P21-2): the four PDE provenance keys are compared apart, at the foot — every OTHER byte stays the pre-§63 golden
   return rest;
 };
 
@@ -356,5 +356,43 @@ describe("H6 — servedGraphReadingFeatures, directly", () => {
     } });
     assert.deepEqual(out, { graphDepth: null, graphTier: null, graphSource: null, graphComputedAt: null, momentumScale: 0.5, explorationBudgetPct: 20 });
     assert.deepEqual(Object.keys(out), [...GRAPH_KEYS]);
+  });
+});
+
+// ── census-discovery §75 (DC-17, lane P33, H-P21-2): the vector's own provenance ─
+//
+// Every PDE-ranked row now carries four record keys beside `modelVersion`:
+// `featureVersion`, `rankedAt` (the rank clock), `sourceWindow`, and — only when
+// momentum was an input, i.e. the modifiers ran — `momentumProvenance`. They are
+// stripped by `withoutIds` above, so every golden comparison in this file still
+// proves that nothing ELSE a row, the response or the context digest carries
+// moved. Here they are asserted on their own. Appended at the foot so the cited
+// lines above do not move.
+import { DISCOVERY_PDE_FEATURE_VERSION } from "../lib/discoveryRankProvenance.js";
+import { LOCAL_MOMENTUM_MODEL_VERSION, LOCAL_MOMENTUM_FEATURE_VERSION, MOMENTUM_BASELINE_WINDOW_MS } from "../lib/discoveryLocalMomentum.js";
+
+describe("§75 H-P21-2 — a PDE row names its feature version, its rank clock, its window and the momentum input's record", () => {
+  for (const name of Object.keys(SCENARIOS)) {
+    it(`${name}: every ranked row carries the four facts; the momentum record exactly when the modifiers ran`, () => {
+      const c = captured[name]!;
+      assertPreconditions(name, c);
+      const on = SCENARIOS[name]!.modifiers === true;
+      for (const r of c.rawRows) {
+        const f = r.features;
+        assert.equal(f.featureVersion, DISCOVERY_PDE_FEATURE_VERSION);
+        assert.equal(f.rankedAt, FIXED_NOW, "the rank clock — the ranker ran under the frozen clock, and it is not the serve clock's string");
+        assert.deepEqual(f.sourceWindow, { kind: "unbounded_start", startMs: null, endMs: f.rankedAt }, "one clock, so the window cannot drift from it");
+        assert.equal(f.modelVersion, "portava-rank-pde-2026-09", "beside §48's model version");
+        if (!on) { assert.ok(!("momentumProvenance" in f), `${name}: momentum was not an input, so no momentum record`); continue; }
+        assert.deepEqual(f.momentumProvenance, {
+          modelVersion: LOCAL_MOMENTUM_MODEL_VERSION, featureVersion: LOCAL_MOMENTUM_FEATURE_VERSION, computedAt: FIXED_NOW,
+          window: { kind: "bounded", startMs: FIXED_NOW - MOMENTUM_BASELINE_WINDOW_MS, endMs: FIXED_NOW },
+        }, `${name}: the momentum input's own window, versions and computation clock`);
+        for (const k of ["featureVersion", "rankedAt", "sourceWindow", "momentumProvenance"]) assert.ok(!((f.privacyRefused ?? []) as string[]).includes(k), `${name}: the screen refused ${k}`);  // the governor keys it refused before §63 it still refuses (H5)
+      }
+    });
+  }
+  it("each of the four keys is classified record_metadata, and none is a position", () => {
+    for (const k of ["featureVersion", "rankedAt", "sourceWindow", "momentumProvenance"]) assert.equal(featureKeyClass(k), "record_metadata", k);
   });
 });

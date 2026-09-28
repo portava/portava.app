@@ -30,7 +30,7 @@
  *
  * place_momentum's lineage (`10` §9 — source window, versions, computation
  * time) is asserted on the rebuilt rows too (P3). trail_health_snapshots
- * stores no source window and no feature version: census-discovery §54, DC-17.
+ * gained a source window and a feature version in 3436 (census-discovery §75, DC-17; trailHealthSnapshotProvenance.db.test.ts).
  */
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";

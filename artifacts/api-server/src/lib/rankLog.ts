@@ -624,7 +624,7 @@ function reportFatigueWriteFailure(err: unknown): void {
 
 import { servedRecommendationId, serveIdFor, screenFeaturesForStorage, isDuplicateExposureReplay, DISCOVERY_EVENT_SCHEMA_VERSION, DISCOVERY_EVENT_PRIVACY_CLASS, type ServeExposure } from "./discoveryRecommendationRecord.js";
 import { isMissingRecommendationIdSchema, noteRecommendationIdAbsent, recommendationIdSchemaAbsent } from "./rankEventsProvenance.js";
-import { DISCOVERY_PDE_MODEL_VERSION } from "./discoveryRankProvenance.js";
+import { DISCOVERY_PDE_MODEL_VERSION, pdeFeatureProvenanceFeatures } from "./discoveryRankProvenance.js";
 import { reasonCodesFromSignals } from "./discoveryReasonCodes.js";
 import { logDiscoveryServeRequest, type DiscoveryServePointId } from "./discoveryServeLog.js";
 
@@ -683,7 +683,7 @@ function discoveryRecordFeatures(
   return {
     ...screened.kept,
     recommendationId: servedRecommendationId(e, position, scored.candidate.id),
-    modelVersion:     DISCOVERY_PDE_MODEL_VERSION,
+    modelVersion:     DISCOVERY_PDE_MODEL_VERSION,  ...pdeFeatureProvenanceFeatures(scored),  // §75 (DC-17, H-P21-2): featureVersion, rankedAt, sourceWindow, momentumProvenance — the record's own keys, after the screen like modelVersion; none when no PDE run scored this candidate
     reasonCodes:      reasonCodesFromSignals(signals),
     schemaVersion:    DISCOVERY_EVENT_SCHEMA_VERSION,
     privacyClass:     DISCOVERY_EVENT_PRIVACY_CLASS,

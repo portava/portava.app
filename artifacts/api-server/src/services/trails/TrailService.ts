@@ -427,7 +427,7 @@ export async function getTrail(sc: any, trailId: string, nowMs = Date.now(), opt
  * failure is logged and swallowed — a diagnostic must not break a read.
  */
 export async function recordTrailHealthSnapshot(
-  sc: any, trailId: string, health: TrailHealth, nowMs = Date.now(),
+  sc: any, trailId: string, health: TrailHealth, nowMs = Number.isFinite(health?.computedAt) ? health.computedAt : Date.now(),  // §75 (DC-17, H-P21-3): default to the COMPUTATION clock the health carries, so `captured_at` is what the comment below says it is
 ): Promise<"written" | "skipped_recent" | "unavailable" | "failed"> {
   if (!sc || !health || health.memberCount === 0) return "skipped_recent";
   const since = new Date(nowMs - 3_600_000).toISOString();
@@ -436,7 +436,7 @@ export async function recordTrailHealthSnapshot(
   if (error) return isMissingRelation(error) ? "unavailable" : "failed";
   if ((data ?? []).length > 0) return "skipped_recent";
 
-  const { error: writeError } = await sc.from("trail_health_snapshots").insert({
+  const { error: writeError } = await insertTrailHealthSnapshotRow(sc, health, {  // §75 (DC-17, H-P21-3): + feature_version and source_window (3436), behind a column-absent latch — see the foot
     trail_id: trailId,
     metrics: health.metrics,
     model_version: TRAIL_HEALTH_MODEL_VERSION,
@@ -969,7 +969,7 @@ export async function trailTrending(
   let trailMomentum: number | null = null;
   const trailRead = await readMemberEvents(sc, servable, nowMs, null);
   if (trailRead) {
-    trailMomentum = trailMomentumFromRankEvents(trailRead.rows, servable, nowMs)[trailId] ?? 0; // H-P8-1 (§58.4, §61): the read SUCCEEDED, so no entry is a measured 0; only a failed read leaves null
+    if (!itemRead) momentumProvenance = localMomentumProvenance(nowMs); trailMomentum = trailMomentumFromRankEvents(trailRead.rows, servable, nowMs)[trailId] ?? 0; // H-P8-1 (§58.4, §61): the read SUCCEEDED, so no entry is a measured 0; only a failed read leaves null — §75 (DC-17, H-P21-5): only the per-item read failed, so the boolean below IS measured — by the fold's own kernel call, whose record is this one (same kernel, same clock; pinned equal by a test), never null beside a measured answer.
   } else {
     logger.warn({ trailId }, "trail trending event read failed");
   }
@@ -1754,4 +1754,64 @@ async function servedTrailView(sc: any, members: readonly MemberRow[], viewerId:
     reportCount: null, // the view feeds §12's word and the count only; `report_rate` stays the whole Trail's
     nowMs,
   });
+}
+
+// ── census-discovery §75 (DC-17, lane P33, H-P21-3): the snapshot keeps its window and feature version ─
+//
+// 3436 adds `feature_version` and `source_window` to `trail_health_snapshots`.
+// A deployment without 3436 answers 42703 / PGRST204 for either column; the
+// first such answer latches this process and the row is written with the five
+// pre-3436 columns, exactly as before — a missing PROVENANCE column must never
+// cost the snapshot it describes. Declared at the foot, with its imports (ES
+// imports are hoisted), so no cited line above moves.
+
+import { isMissingColumnError } from "../../lib/capability/schemaCapability.js";
+import { localMomentumProvenance } from "../../lib/discoveryLocalMomentum.js";
+
+/** `unknown` until a write proves 3436 absent here. Process-wide, like 2891's latch (lib/rankEventsProvenance). */
+let trailSnapshotProvenanceColumns: "unknown" | "absent" = "unknown";
+
+/** Test seam: the latch is process-wide, so a suite simulating a 3436-less database must reset it. */
+export function _resetTrailSnapshotProvenanceLatch(): void {
+  trailSnapshotProvenanceColumns = "unknown";
+}
+
+/** Has a write established that 3436's two columns are absent on this database? */
+export function trailSnapshotProvenanceAbsent(): boolean {
+  return trailSnapshotProvenanceColumns === "absent";
+}
+
+interface TrailHealthSnapshotRow {
+  trail_id: string;
+  metrics: TrailHealth["metrics"];
+  model_version: string;
+  member_count: number;
+  captured_at: string;
+}
+
+async function insertTrailHealthSnapshotRow(sc: any, health: TrailHealth, row: TrailHealthSnapshotRow): Promise<{ error: any }> {
+  if (trailSnapshotProvenanceColumns !== "absent") {
+    const w = health.sourceWindow;
+    const first = await sc.from("trail_health_snapshots").insert({
+      trail_id: row.trail_id, metrics: row.metrics, model_version: row.model_version,
+      member_count: row.member_count, captured_at: row.captured_at,
+      feature_version: health.featureVersion,
+      source_window: {
+        kind: w.kind,
+        start: w.startMs === null ? null : new Date(w.startMs).toISOString(),
+        end: new Date(w.endMs).toISOString(),
+      },
+    });
+    if (!first?.error || !isMissingColumnError(first.error)) return { error: first?.error ?? null };
+    trailSnapshotProvenanceColumns = "absent";
+    logger.warn(
+      { code: first.error.code, migration: "3436_trail_health_snapshot_provenance.sql" },
+      "trail health snapshot: feature_version / source_window unavailable — written without them until 3436 is applied here",
+    );
+  }
+  const legacy = await sc.from("trail_health_snapshots").insert({
+    trail_id: row.trail_id, metrics: row.metrics, model_version: row.model_version,
+    member_count: row.member_count, captured_at: row.captured_at,
+  });
+  return { error: legacy?.error ?? null };
 }

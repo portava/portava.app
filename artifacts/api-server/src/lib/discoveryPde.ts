@@ -611,7 +611,7 @@ export async function rankForViewer<T extends PdePlace>(
     ? rankCandidates(candidates, viewerContext, { exploration: false })
     : rankCandidates(candidates, viewerContext);
   const portavaRankMs = Date.now() - prT0;
-  stages.portavaRank = true;
+  stages.portavaRank = true; stampPdeFeatureProvenance(scored, pdeFeatureProvenance(prT0, modifiers.enabled ? (modifiers.momentumProvenance ?? null) : undefined));  // census-discovery §75 (DC-17, H-P21-2): provenance only — the feature version, the rank clock (read above, before the ranker ran), its window and the momentum input's own record ride with these scored objects to rank_events; nothing reads them to rank
 
   const scoredById = new Map<string, ScoredCandidate<RankCandidate>>(
     scored.map((s) => [(s.candidate as PlaceCandidate<T>).__place.id, s]),
@@ -1115,3 +1115,7 @@ export function graphReadingOf(m: DiscoveryModifiers): PdeGraphReading {
     explorationBudgetPct: m.explorationBudgetPct,
   };
 }
+
+// census-discovery §75 (DC-17, lane P33): the PDE feature vector's provenance (see the
+// stamp after `rankCandidates` above). Imported at the foot so no cited line moves.
+import { pdeFeatureProvenance, stampPdeFeatureProvenance } from "./discoveryRankProvenance.js";

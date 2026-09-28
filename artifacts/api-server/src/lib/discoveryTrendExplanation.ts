@@ -48,7 +48,7 @@
  * rebuild (2892, 3410), so until an owner rules a cadence every response
  * degrades this way, with the reason stated.
  */
-import { isMissingSchemaError } from "./capability/schemaCapability.js";
+import { isMissingColumnError, isMissingSchemaError } from "./capability/schemaCapability.js";
 import { PRIVACY_THRESHOLD_V1 } from "./intelContracts.js";
 import { meetsKAnonymity } from "./kAnonymity.js";
 import { MOMENTUM_CACHE_TTL_MS } from "./discoveryLocalMomentum.js";
@@ -100,7 +100,7 @@ export interface ExposureBinding {
 export interface TrendRun {
   /** ISO instant the rebuild ran for (`place_momentum.computed_at`). */
   computedAt: string;
-  modelVersion: string;
+  modelVersion: string; /** §75 (DC-17, H-P21-1): `place_momentum.feature_version` (3435); null when the row predates 3435 or this database lacks the column — "not recorded", never a guess. */ featureVersion: string | null;
   /** The oldest window's length in ms, from the row's own `window_ms`; null if unreadable. */
   priorMs: number | null;
 }
@@ -124,7 +124,7 @@ export interface TrendExplanation {
 export interface TrendReadingProvenance {
   computedAt: string;
   window: { start: string; end: string } | null;
-  modelVersion: string;
+  modelVersion: string; /** §75 (DC-17, H-P21-1): the run's feature version; null = not recorded (a pre-3435 row, or a database without 3435). */ featureVersion: string | null;
 }
 
 export interface TrendExplanationResponse {
@@ -155,7 +155,7 @@ export function isCurrentRun(run: TrendRun, nowMs: number): boolean {
   return age >= 0 && age <= TREND_SNAPSHOT_MAX_AGE_MS;
 }
 
-function provenanceOf(run: TrendRun): TrendReadingProvenance {
+function provenanceOf(run: TrendRun): Omit<TrendReadingProvenance, "featureVersion"> {
   const end = Date.parse(run.computedAt);
   const window = Number.isFinite(end) && run.priorMs !== null && run.priorMs > 0
     ? { start: new Date(end - run.priorMs).toISOString(), end: new Date(end).toISOString() }
@@ -196,7 +196,7 @@ export function explainExposures(
     return { recommendationId: rid, itemId, trend: { state, reason }, unavailable: null };
   });
 
-  return { explanations, readingProvenance: run ? provenanceOf(run) : null };
+  return { explanations, readingProvenance: run ? { ...provenanceOf(run), featureVersion: run.featureVersion } : null };  // §75 H-P21-1: the feature version rides after the three §58 fields
 }
 
 /**
@@ -274,10 +274,22 @@ function failureOf(error: unknown): { ok: false; reason: "trend_store_absent" | 
  */
 export async function readTrendSnapshot(sc: any, itemIds: readonly string[]): Promise<SnapshotRead> {
   try {
-    const head = await sc.from("place_momentum").select("computed_at, model_version, window_ms")
+    let head = await sc.from("place_momentum").select("computed_at, model_version, window_ms, feature_version")
       .eq("source_surface", "discovery")
       .order("computed_at", { ascending: false })
       .limit(1);
+    if (head?.error && isMissingColumnError(head.error)) {
+      // §75 (DC-17, H-P21-1): 3435 must deploy before this column is read, and a
+      // deployment without it must not turn a missing PROVENANCE column into a
+      // failed trend read. Re-read the §58 columns alone: if THAT fails too
+      // (3410's source_surface absent, or anything else) it is classified
+      // exactly as before, and if it succeeds the run is served with
+      // `featureVersion: null` — "not recorded", which is what it is.
+      head = await sc.from("place_momentum").select("computed_at, model_version, window_ms")
+        .eq("source_surface", "discovery")
+        .order("computed_at", { ascending: false })
+        .limit(1);
+    }
     if (head?.error) return failureOf(head.error);
     const top = Array.isArray(head?.data) ? (head.data[0] as Record<string, unknown> | undefined) : undefined;
     if (!top || typeof top["computed_at"] !== "string") return { ok: true, run: null, rows: [] };
@@ -286,6 +298,7 @@ export async function readTrendSnapshot(sc: any, itemIds: readonly string[]): Pr
     const run: TrendRun = {
       computedAt: new Date(Date.parse(top["computed_at"] as string)).toISOString(),
       modelVersion: String(top["model_version"] ?? ""),
+      featureVersion: typeof top["feature_version"] === "string" && top["feature_version"] !== "" ? (top["feature_version"] as string) : null,
       priorMs: Number.isFinite(prior) && prior > 0 ? prior : null,
     };
     if (itemIds.length === 0) return { ok: true, run, rows: [] };

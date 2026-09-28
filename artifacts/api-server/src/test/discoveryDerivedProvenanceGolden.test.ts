@@ -162,3 +162,195 @@ describe("§68 DC-17 — provenance-only: every computed value is byte-identical
   it("G4. Compass rank provenance: features, scores, reasons, candidate source", () => { assert.equal(sha(compassValues()), GOLDEN.compass); });
   it("G5. reason codes for every mapped, guardrailed and unknown signal key", () => { assert.equal(sha(codeValues()), GOLDEN.codes); });
 });
+
+// ════════════════════════════════════════════════════════════════════════════
+// census-discovery §75 (lane P33, DC-17): the golden extended over every value
+// §75's hunks touch. Appended at the foot, imports included (ES imports are
+// hoisted), so no line above that a census cites moves. Captured at
+// `ed9ab3ca0`, the tree BEFORE §75's edits, with provenance removed:
+//
+//   G6  the trend API: the head read's run and rows, and every explanation
+//   G7  PDE `rankForViewer`: order, scores and every feature, modifiers on
+//   G8  Trail health: the nine metrics, the multiplier, and the served view
+//   G9  Trail `trending`: the momentum, the unread mark and the items behind
+//       the served boolean, under all four read outcomes (both succeed, only
+//       the per-item read fails, only the Trail read fails, both fail) and
+//       for the empty Trail
+// ════════════════════════════════════════════════════════════════════════════
+import { explainExposures, readTrendSnapshot, TREND_DISCLOSURE_MIN_TRAVELERS as K } from "../lib/discoveryTrendExplanation.js";
+import { rankForViewer, type PdePlace } from "../lib/discoveryPde.js";
+import { inertModifiers } from "../lib/discoveryModifiers.js";
+import { computeTrailHealth, trailHealthScale, type TrailMemberForHealth } from "../lib/discoveryTrailHealth.js";
+import { trailTrending } from "../services/trails/TrailService.js";
+import { _resetLocalMomentumCacheForTest } from "../lib/discoveryLocalMomentum.js";
+import { makeFakeTrailsDb, type Row } from "./helpers/fakeTrailsDb.js";
+
+/** §75's goldens, captured at ed9ab3ca0 (before its edits), provenance removed. */
+const GOLDEN_P33 = {
+  trendApi: "7aedb91a8557e7b51d51f1e64216050bfb09e8df6d8f14dd1d899ac7a4b6aa49",
+  pde:      "c007ea42fc88ac4da38dc297a70240c44a0a285380cc8e8aae3c465b0841bccb",
+  health:   "8c7a2b95e03313bfec60e09d9ecaa970c211a3b265708f9495d3da91a1da0151",
+  trending: "972e6ebd12ccf7f2df10cbb5ddd2bf37e66256849b3d119f43c9068c97da6c67",
+};
+
+// ── §75 (lane P33) ───────────────────────────────────────────────────────────
+
+/** A fake PostgREST over `place_momentum` for the trend API's two reads. */
+function trendDb(rows: Row[]) {
+  return {
+    from(table: string) {
+      const filters: Array<(r: Row) => boolean> = [];
+      let desc = false; let limitN: number | null = null;
+      interface B extends PromiseLike<{ data: Row[]; error: null }> {
+        select(): B; eq(c: string, v: unknown): B; in(c: string, v: unknown[]): B;
+        order(c: string, o?: { ascending?: boolean }): B; limit(n: number): B;
+      }
+      const b: B = {
+        select() { return b; },
+        eq(c: string, v: unknown) { filters.push((r) => r[c] === v); return b; },
+        in(c: string, v: unknown[]) { filters.push((r) => v.includes(r[c])); return b; },
+        order(_c: string, o?: { ascending?: boolean }) { desc = o?.ascending === false; return b; },
+        limit(n: number) { limitN = n; return b; },
+        then(res, rej) {
+          if (table !== "place_momentum") throw new Error(`trendDb: ${table}`);
+          let out = rows.filter((r) => filters.every((f) => f(r)));
+          out = [...out].sort((a, z) => (String(a["computed_at"]) < String(z["computed_at"]) ? -1 : 1) * (desc ? -1 : 1));
+          if (limitN !== null) out = out.slice(0, limitN);
+          return Promise.resolve({ data: out.map((r) => ({ ...r })), error: null as null }).then(res, rej);
+        },
+      };
+      return b;
+    },
+  };
+}
+
+async function trendApiValues() {
+  const at = new Date(NOW - 60_000).toISOString();
+  const older = new Date(NOW - 2 * HOUR).toISOString();
+  const states = ["trending", "emerging", "established", "unknown", "cooling", "rediscovered", "bogus"];
+  const pm: Row[] = [];
+  for (let i = 0; i < 14; i++) {
+    pm.push({
+      place_id: `place-${i}`, computed_at: at, trend_state: states[i % states.length],
+      recent_unique_travelers: i % 4 === 0 ? null : K - 1 + (i % 3), window_unique_travelers: K + (i % 2),
+      model_version: "discovery-trend-state-v1", feature_version: "discovery-weighted-activity-v2",
+      window_ms: { recent_ms: 172_800_000, mid_ms: 604_800_000, prior_ms: 2_592_000_000 }, source_surface: "discovery",
+    });
+  }
+  pm.push({ ...pm[0]!, computed_at: older, trend_state: "cooling" });
+  const ids = Array.from({ length: 16 }, (_, i) => `place-${i}`);
+  const read = await readTrendSnapshot(trendDb(pm), ids);
+  assert.equal(read.ok, true, "the head read succeeded");
+  if (!read.ok || !read.run) throw new Error("no run");
+  const run = { computedAt: read.run.computedAt, modelVersion: read.run.modelVersion, priorMs: read.run.priorMs };  // featureVersion deliberately excluded
+  const rids = ids.map((id, i) => `rid-${String(i).padStart(2, "0")}`.padEnd(22, "x"));
+  const bindings = ids.slice(0, 15).map((itemId, i) => ({ recommendationId: rids[i]!, itemId }));
+  const explained = explainExposures(rids, bindings, read.run, read.rows, NOW);
+  const stale = explainExposures(rids, bindings, { ...read.run, computedAt: older }, read.rows, NOW);
+  // Either side of the freshness bound (TREND_SNAPSHOT_MAX_AGE_MS = 10 min), so moving it is caught.
+  const edge = (msAgo: number) => explainExposures(rids, bindings, { ...read.run!, computedAt: new Date(NOW - msAgo).toISOString() }, read.rows, NOW).explanations;
+  return { run, rows: read.rows, explanations: explained.explanations, stale: stale.explanations, justFresh: edge(9 * 60_000), justStale: edge(11 * 60_000) };  // readingProvenance deliberately excluded
+}
+
+async function pdeValues() {
+  const places: PdePlace[] = Array.from({ length: 24 }, (_, i) => ({
+    id: i % 4 === 0 ? `db/place-${i}` : `node/${i}`,
+    category: ["cafe", "bar", "museum", "park"][i % 4]!,
+    distanceKm: (i * 0.9) % 7,
+    savedCount: (i * 7) % 30,
+    tags: i % 3 === 0 ? ["rooftop"] : ["local"],
+    rating: 3 + (i % 3),
+  }));
+  const localMomentum: Record<string, number> = {};
+  for (const [k, v] of Object.entries(momentumValues())) {
+    const n = Number(k.slice("place-".length));
+    if (n < 24) localMomentum[n % 4 === 0 ? `db/place-${n}` : `node/${n}`] = v;
+  }
+  const modifiers = { ...inertModifiers("flag_off"), enabled: true, reason: "flag_on" as const, localMomentum, momentumScale: 1, explorationBudgetPct: 20 };
+  const outcome = await rankForViewer(places, {
+    userId: "viewer-1", city: "lisbon", followedIds: new Set(), interestTags: new Set(["rooftop"]),
+    categoryAffinities: { cafe: 0.8, bar: 0.3 },
+  }, { sc: null, served: false, modifiers, nowMs: NOW, candidateKey: "golden:pde" });
+  return {
+    order: outcome.ranked.map((p) => p.id),
+    scored: [...outcome.scoredById.entries()].map(([id, s]) => ({ id, score: s.score, features: s.features })),
+    stages: { portavaRank: outcome.stages.portavaRank, modifiers: outcome.stages.modifiers, governor: outcome.stages.governor },
+  };
+}
+
+function healthValues() {
+  const r = rng(7501);
+  const out: unknown[] = [];
+  for (let t = 0; t < 12; t++) {
+    const n = t === 0 ? 0 : 1 + Math.floor(r() * 14);
+    const members: TrailMemberForHealth[] = Array.from({ length: n }, () => ({
+      source_id: `s-${Math.floor(r() * 6)}`,
+      contributor_id: r() < 0.15 ? null : `u-${Math.floor(r() * 4)}`,
+      confidence: Math.round(r() * 100) / 100,
+      content_state: r() < 0.1 ? "archived_from_active_rotation" : "just_arrived",
+      created_at: new Date(NOW - r() * 120 * 24 * HOUR).toISOString(),
+    }));
+    const h = computeTrailHealth({ members, reportCount: t % 3 === 0 ? null : t, nowMs: NOW });
+    out.push({ metrics: h.metrics, unmeasured: h.unmeasured, modelVersion: h.modelVersion, freshTodayShare: h.freshTodayShare, memberCount: h.memberCount, scale: trailHealthScale(h) });
+  }
+  return out;
+}
+
+const T_G = "22222222-2222-4222-8222-2222222222a1";
+const P_G = ["33333333-3333-4333-8333-3333333333a1", "33333333-3333-4333-8333-3333333333b1", "33333333-3333-4333-8333-3333333333c1"];
+
+async function trendingValues() {
+  const iso = (msAgo: number) => new Date(NOW - msAgo).toISOString();
+  const seed = (): Record<string, Row[]> => ({
+    trails: [{ id: T_G, slug: "slug-g", title: "Trail G", description: null, destination: "bangkok", place_scope: null,
+      parent_trail_id: null, lifecycle_status: "active", created_by: "11111111-1111-4111-8111-111111111111",
+      created_at: iso(86_400_000), updated_at: iso(86_400_000) }],
+    content_trails: P_G.map((p, i) => ({ id: `m${i}`, trail_id: T_G, source_type: "place", source_id: p, relationship: "primary",
+      signal: null, source: "user", confidence: 0.9, contributor_id: `u-${i}`, content_state: "just_arrived", created_at: iso(3_600_000 * (i + 1)) })),
+    rank_events: [
+      ...Array.from({ length: 9 }, (_, i) => ({ id: `a${i}`, item_id: P_G[0], surface: "discovery", outcome: "save", served_at: iso(3_600_000 + i), outcome_at: iso(3_600_000 + i) })),
+      ...Array.from({ length: 4 }, (_, i) => ({ id: `b${i}`, item_id: P_G[1], surface: "trips", outcome: "tap", served_at: iso(7_200_000 + i), outcome_at: iso(7_200_000 + i) })),
+      ...Array.from({ length: 3 }, (_, i) => ({ id: `c${i}`, item_id: P_G[2], surface: "discovery", outcome: "impression", served_at: iso(20 * 86_400_000 + i), outcome_at: null })),
+    ],
+  });
+  const out: Record<string, unknown> = {};
+  const cases: Array<[string, Parameters<typeof makeFakeTrailsDb>[1], boolean]> = [
+    ["both", {}, false], ["itemFails", { failRankEvents: "discovery" }, false],
+    ["trailFails", { failRankEvents: "all_surfaces" }, false], ["bothFail", { erroring: ["rank_events"] }, false],
+    ["empty", {}, true],
+  ];
+  for (const [name, opts, empty] of cases) {
+    _resetLocalMomentumCacheForTest();
+    const s = seed();
+    if (empty) s["content_trails"] = [];
+    const r = await trailTrending(makeFakeTrailsDb(s, opts), T_G, NOW);
+    out[name] = { refusal: r.refusal, momentum: r.momentum, momentumUnread: r.momentumUnread ?? null, items: r.items };  // momentumProvenance deliberately excluded
+  }
+  return out;
+}
+
+describe("§75 DC-17 (lane P33) — provenance-only: every value its hunks touch is byte-identical to ed9ab3ca0", () => {
+  const show = process.env["P33_PRINT_GOLDEN"] === "1";
+  it("G6. the trend API: the head read's run and rows, and every explanation (fresh and stale)", async () => {
+    const v = await trendApiValues();
+    const disclosed = v.explanations.filter((e) => e.trend !== null).map((e) => e.trend!.state);
+    assert.ok(new Set(disclosed).size >= 3, `precondition: several states are disclosed (${disclosed.join(",")})`);
+    assert.ok(v.explanations.some((e) => e.unavailable === "insufficient_evidence"), "precondition: the floor withholds some");
+    const h = sha(v); if (show) console.log("trendApi", h); assert.equal(h, GOLDEN_P33.trendApi);
+  });
+  it("G7. PDE rankForViewer: order, scores and every feature, modifiers on", async () => {
+    const v = await pdeValues();
+    assert.ok(v.scored.some((s) => (s.features["localMomentum"] ?? 0) > 0), "precondition: momentum reached the ranker");
+    const h = sha(v); if (show) console.log("pde", h); assert.equal(h, GOLDEN_P33.pde);
+  });
+  it("G8. Trail health: the nine metrics, the unmeasured list and the multiplier", () => {
+    const h = sha(healthValues()); if (show) console.log("health", h); assert.equal(h, GOLDEN_P33.health);
+  });
+  it("G9. Trail trending: momentum, the unread mark and items, under all four read outcomes and the empty Trail", async () => {
+    const v = await trendingValues() as Record<string, { momentum: number | null; momentumUnread: boolean | null }>;
+    assert.ok((v["both"]!.momentum ?? 0) > 0, "precondition: the Trail is trending when both reads succeed");
+    assert.equal(v["itemFails"]!.momentum, v["both"]!.momentum, "precondition: the item-read failure leaves the Trail's measured boolean");
+    assert.equal(v["trailFails"]!.momentumUnread, true, "precondition: the Trail-read failure is unread");
+    const h = sha(v); if (show) console.log("trending", h); assert.equal(h, GOLDEN_P33.trending);
+  });
+});
