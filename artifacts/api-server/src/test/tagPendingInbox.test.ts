@@ -29,7 +29,7 @@ const B = "bbbbbbbb-0000-4000-8000-0000000000b2";   // the person tagged, the ca
 const C = "cccccccc-0000-4000-8000-0000000000c3";   // a second tagger
 const tag = (id: string, over: Record<string, unknown> = {}) => ({
   id, source_type: "post", source_id: "eeeeeeee-0000-4000-8000-0000000000e5", tagger_id: A, tagged_user_id: B,
-  status: "pending", suppressed: false, tagged_at: "2026-09-27T10:00:00.000Z", ...over,
+  status: "pending", suppressed: false, created_at: "2026-09-27T10:00:00.000Z", ...over,
 });
 const T1 = "d1d1d1d1-0000-4000-8000-000000000001";
 const T2 = "d2d2d2d2-0000-4000-8000-000000000002";
@@ -86,7 +86,7 @@ describe("I — GET /me/tags/pending", () => {
   it("I2 flag ON: only the caller's pending, unremoved tags, newest first, tagger by @handle", async () => {
     stage(true, [
       tag(T1),
-      tag(T2, { tagger_id: C, tagged_at: "2026-09-28T09:00:00.000Z" }),
+      tag(T2, { tagger_id: C, created_at: "2026-09-28T09:00:00.000Z" }),
       tag(T3, { status: "approved" }),
       tag(T4, { suppressed: true }),
       tag(T5, { tagged_user_id: A, tagger_id: C }),
@@ -121,3 +121,25 @@ describe("I — GET /me/tags/pending", () => {
     assert.equal(r.status, 401, r.raw);
   });
 });
+
+// census-discovery §99: the inbox read against the LIVE tags schema. Live `tags` carries `created_at` and no
+// `tagged_at` (docs/design/tagging-directions.md; snapshot src/test/generated/liveColumns.json), and PostgREST
+// fails the WHOLE statement on an unknown column. I1–I5's fixture carried whatever key the route read, so they
+// passed while the live read could never run. I6 drives the same route through makeSchemaStrictClient, which
+// answers 42703 for a column the live table does not have.
+describe("I6 — GET /me/tags/pending against the LIVE tags schema", () => {
+  it("I6 names only live columns, and lists newest first by created_at", async () => {
+    const strict = makeSchemaStrictClient({
+      feature_flags: [{ flag: TAG_PERMISSION_APPROVAL_REQUIRED_FLAG, enabled: true }],
+      profiles: [{ id: A, handle: "ana", username: null }, { id: C, handle: null, username: "cy" }],
+      tags: [tag(T1), tag(T2, { tagger_id: C, created_at: "2026-09-28T09:00:00.000Z" })],
+    });
+    _setTestClient({ from: strict.from, auth: { getUser: async (token: string) => ({ data: { user: { id: token } }, error: null }) } }, true);
+    const r = await get(B, "/me/tags/pending");
+    assert.deepEqual(strict.deadColumnErrors, [], `the inbox named a column live tags does not have: ${JSON.stringify(strict.deadColumnErrors)}`);
+    assert.equal(r.status, 200, r.raw);
+    assert.deepEqual(r.body.tags.map((t: { id: string; taggedAt: string | null }) => [t.id, t.taggedAt]), [[T2, "2026-09-28T09:00:00.000Z"], [T1, "2026-09-27T10:00:00.000Z"]]);
+  });
+});
+
+import { makeSchemaStrictClient } from "./helpers/schemaStrictSupabase.js";

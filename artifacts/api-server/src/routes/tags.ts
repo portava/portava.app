@@ -656,10 +656,10 @@ router.get('/me/tags/pending', async (req, res) => {
 
   const { data, error } = await sc
     .from('tags')
-    .select('id, source_type, source_id, tagger_id, tagged_user_id, status, suppressed, tagged_at')
+    .select('id, source_type, source_id, tagger_id, tagged_user_id, status, suppressed, created_at')
     .eq('tagged_user_id', user.id)
     .eq('status', 'pending')
-    .order('tagged_at', { ascending: false })
+    .order('created_at', { ascending: false })
     .limit(PENDING_TAG_INBOX_LIMIT);
   if (error || !Array.isArray(data)) { sendError(res, 'db_error', 'Could not read your pending tags'); return; }
   const rows = (data as any[]).filter((t) => t.tagged_user_id === user.id && t.status === 'pending' && t.suppressed !== true);
@@ -676,7 +676,7 @@ router.get('/me/tags/pending', async (req, res) => {
       id: t.id,
       sourceType: t.source_type,
       sourceId: t.source_id,
-      taggedAt: t.tagged_at ?? null,
+      taggedAt: t.created_at ?? null, // live tags has created_at, not tagged_at (census-discovery §99)
       taggerId: t.tagger_id,
       taggerHandle: handles.get(t.tagger_id) ?? null,
     })),
