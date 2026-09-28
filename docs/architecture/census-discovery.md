@@ -16186,6 +16186,57 @@ The verifier confirmed B02 and A08 `C` at `de6d2bfbc` and reported four remainin
 
 **What would turn this red:** anything §80.11–§80.14 list, plus an empty or mixed list during the handoff (the handoff case), an in-word emoji in a spaceless script leaving a gap (Q8e), or the gateway's key diverging from the emoji-free word (Q8e parity).
 
+### 94.11 Round 2: the independent verifier's five findings on DV-83, closed; DV-83 restated W → C
+
+*Written 2026-09-28 by lane W11-X2 on `disc-w11-x2-serve`, after merging `disc-integration` at `3fd11f858`. An independent verifier confirmed every clause §94 built, each mutation killed, and found five places where a failure still read as an absence. Each is closed below, failing-first. Decisions D-W11X2-10 to D-W11X2-14. All evidence is controlled; no client build carrying the client changes has shipped.*
+
+**The five findings, and what each is now.**
+
+1. **Identity resolution hid the event-post read.** With a Bearer token, a thrown or transient `auth.getUser` left the viewer unresolved and the feed served `posts: []` with no refusal. Now a missing status, 0, 408, 429 or a 5xx is a lookup that did not happen, and the owed read is failed (`artifacts/api-server/src/routes/discovery.ts:2633#if (userErr && isTransientAuthError(userErr))`, `artifacts/api-server/src/routes/discovery.ts:2664#viewerResolutionFailed = true; req.log.warn(`, `artifacts/api-server/src/routes/discovery.ts:2671#const eventPostsReadStatus = { readFailed: viewerResolutionFailed }`). Pinned by `artifacts/api-server/src/test/discoveryFeedEventPostsCoverage.test.ts:256#it("V1 a Bearer token whose identi` (the throw), V2 (`AuthRetryableFetchError` status 0 and a 503, places kept as `partial`) and `artifacts/api-server/src/test/discoveryFeedEventPostsCoverage.test.ts:278#it("V4 the auth server rate-limiti` (429). A definitive 401 is still the anonymous case (V3), and so is no header (C2). D-W11X2-10.
+2. **A pull did not refetch the rail.** `handleRefresh` now bumps the rail's `refreshKey` (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:323#setRailRefreshKey(`). On the real ForYouTab with the real rail: refused, then a pull, then a second `getDiscoveryFeed` call and the posts it answered (`travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.railRefresh.component.test.tsx:135#it('R1 refused → pull → the ra`); without a pull it asks once (R2). D-W11X2-13.
+3. **A hung request never resolved.** `getDiscoveryFeed` aborts at `DISCOVERY_FEED_TIMEOUT_MS` = 15 s (`travel-buddy-standalone/src/services/discovery.ts:1378#export const DISCOVERY_FEED_TIMEOUT_MS = 15_000;`, the Compass section budget) and answers `{ ok: false, error: 'timeout' }` (`travel-buddy-standalone/src/services/__tests__/discovery.feedTimeout.test.ts:58#it('T1 a request still pending at the budget`, fake timers; T2 an answer inside the budget is served). D-W11X2-12.
+4. **A transport failure rendered nothing**, which is what a quiet city renders. Under D-W10-S1-2 it now renders the rail's own "couldn't check" sentence under its own testID (`travel-buddy-standalone/src/components/discovery/DiscoveryEventPostsRail.tsx:121#if (unavailable) {`), for a 5xx, the network and the timeout (`travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryEventPostsRail.coverage.component.test.tsx:130#it(\`U1. ${name}`) and a rejected call (U2), and it clears once a later load answers (U3). The old control is restated by decision, not deleted: a transport failure is still not the refused state, and is no longer silence (`travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryEventPostsRail.refusal.component.test.tsx:208#it('CONTROL (restated §`). D-W11X2-11.
+5. **Overpass returned `[]` silently.** In DV-83's scope, by §80.1's own reasoning (D-W11X2-14). `queryOverpass` now marks a thrown fetch, a non-OK status and an unparseable body (`artifacts/api-server/src/routes/discovery.ts:683#if (!res.ok) return overpassFailed();`). The cold serve paths name it (`artifacts/api-server/src/routes/discovery.ts:2071#if (overpassReadFailed(osmPlaces)) dbFailedSources.push`): `partial`, `["overpass"]`, `overpass_unavailable`, `upstream_unavailable`, DB rows kept and logged (`artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:114#it(\`O1–O3 Overpass ${mode}`). All three retrievals failing is `nothing` with no exposure (`artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:129#it("O4 all three retrievals failed`); the feed names it (O5); a failure is never cached (O6); the counts refuse such a category (`artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:162#it("O7 counts: every category whose`); an empty answer is not a failure (`artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:174#it("C1 CONTROL: Overpass answering e`).
+
+**Fixtures, stated.** Ten suites and `helpers/discoveryLegacyScenarios.ts` stubbed Overpass with a throw where they meant "Overpass answered nothing". Each now answers an empty 200 on the same line. No assertion changed, and every golden passes unre-captured (§79 Z0/L0, §47's legacy suite, `discoveryCandidatePipelineGolden`), which is the evidence that nothing else moved. `discoveryClientRouteE2E` gets the same line and cannot load on this runner's Node 22.
+
+**Tests seen red first.** Against `3fd11f858`'s `routes/discovery.ts` (file swap, sha256-restored): V1, V2, V4 and O1–O7 red; V3, C1 and the feed's controls green. Against the base client: `ForYouTab.railRefresh` R1 red (one feed call); `discovery.feedTimeout` red (no budget); U1 and U2 red (nothing rendered). U3 is killed by R13 below.
+
+**Mutations (round 2).** 22 of 22 killed, each restored and sha256-checked. R4 and R13 survived their first run, and each was killed by a new case (V4, U3). R4's first form tested a redundant name check, which was removed: every retryable error carries a failure status.
+
+| # | mutation | red |
+|---|---|---|
+| R1 | a transient `getUser` error ignored | V2 |
+| R2 | a thrown lookup not counted | V1 |
+| R3 | every auth error treated as transient | V3 |
+| R4 | 408/429 not transient | V4 |
+| R5 | the read status not seeded from the lookup | V1, V2 |
+| R6 | the pull does not bump the key | R1 |
+| R7 | the rail ignores the key | R1 |
+| R8 | the budget never aborts | T1 |
+| R9 | a timeout reported as a network error | T1 |
+| R10 | a 60 s budget | T3 |
+| R11 | `ok: false` not marked unavailable | U1, the restated control |
+| R12 | a rejected call not marked | U2 |
+| R13 | a healthy answer does not clear it | U3 |
+| R14 | a non-OK Overpass status unmarked | O1–O4 |
+| R15 | a thrown Overpass fetch unmarked | O2, O5 |
+| R16 | an unparseable body throws the route | O3 |
+| R17 | the cold path does not name it | O1–O3 |
+| R18 | the feed does not name it | O5 |
+| R19 | the counts do not refuse | O7 |
+| R20 | always `partial` | O4 |
+| R21 | always `transient_db` | O1–O3 |
+| R22 | an empty answer marked failed | C1, O7 |
+
+**DV-83, restated.**
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | C | **C** | **Every clause, on every path the verifier named and every path this lane found.** The criterion: every consumer of a Discovery envelope that can carry `refusal` branches on `coverage`, not on `ok` alone; no refused body is written to a client cache; no refused body is rendered as an empty result. **Consumers.** The eleven files the guard derives still branch on coverage (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts:311#it('G2. every file that consumes a carrier`), and every list-rendering consumer names a partial answer (G7). The rail, the one consumer §94 changed, also names a transport failure (U1, U2) and refetches on a pull (R1). **Caches.** The client's three caches write no `nothing` body (§60.2, unchanged); the rail and the feed call cache nothing. **Producers, so a consumer is SENT the failure.** The feed's event-post read (E1–E5), the viewer lookup that gates it (V1–V4), and Overpass on GET /discovery's cold paths, the feed and the counts (O1–O7) all reach the envelope instead of reading as an empty result, and a hung feed call is bounded (T1). The other server absorptions this lane searched for are either named already (suggest's per-type failures, §80) or are not lists (the new-to-me annotation and saved-count enrichment, which add fields and never remove rows). **Not flag-gated.** Each change alters output only when a read fails. **Stated limits.** Branch only: no client build carrying the rail's changes has shipped. `discoveryClientRouteE2E` cannot load on Node 22 here; its Overpass stub is changed to answer empty and is unrun. |
+
+**Checks** are in 94.12.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/lib/capability/prerequisitesCore.ts — §93.8 names its function-granular gate boundary as why the Compass KNOWN entry was struck; it is the prerequisite checker's own machinery, and no Discovery verdict rests on it.
