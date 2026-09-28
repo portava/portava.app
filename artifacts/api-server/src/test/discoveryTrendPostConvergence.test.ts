@@ -19,6 +19,9 @@
  *   P8  the loader reads `memories` only with state = published AND visibility = public
  *   P9  no author id leaves the computation: the reading carries counts only
  *   P10 the circles/crews/visits legs (AR-W11A-2) are not read by this leg
+ *   P11 3497 (the stored twin) names the same constants, and its rollback restores 3477 verbatim
+ *   P12 a row served before the window is not a visit (the loader's and 3497's read)
+ *   P13 the leg is its own feature version: ok ⇒ the post version; unread or absent ⇒ §84's
  *
  * Controlled data only. Nothing here claims real-world effectiveness.
  */
@@ -35,6 +38,8 @@ import {
   postAfterVisitAuthors, loadPublicMemoriesAtPlaces, POST_CONVERGENCE_MIN_AUTHORS, type PublicMemoryRow,
 } from "../lib/discoveryTrendPostConvergence.js";
 import { loadLocalMomentum, readLocalTrendStates } from "../lib/discoveryLocalMomentum.js";
+import { computeTrendStates, TREND_FEATURE_VERSION_V2, TREND_FEATURE_VERSION_V2_POST } from "../lib/discoveryTrendState.js";
+import { TREND_V2_SYNC_MS } from "../lib/discoveryTrendNormalised.js";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const NOW = Date.parse("2026-09-28T12:00:00.000Z");
@@ -183,6 +188,50 @@ describe("P — visitors post afterward", () => {
     for (const t of ["circle", "crew", "trip_members", "checkin", "passport_stamps", "plan_checkins"]) assert.ok(!src.includes(t), t);
     const froms = [...src.matchAll(/\.from\("([a-z_]+)"\)/g)].map((m) => m[1]);
     assert.deepEqual(froms, ["memories"]);
+  });
+});
+
+describe("S — the stored twin (3497) and the versions", () => {
+  const M3497 = readFileSync(resolve(__dir, "../migrations/3497_discovery_trend_post_convergence_stored.sql"), "utf8");
+  const R3497 = readFileSync(resolve(__dir, "../../../../db/rollback/2026-09-28-3497-discovery-trend-post-convergence-stored-rollback.sql"), "utf8");
+  const M3477 = readFileSync(resolve(__dir, "../migrations/3477_discovery_trend_v2_rebuild.sql"), "utf8");
+
+  it("P11 3497 names the TypeScript's constants; its rollback carries 3477's rebuild verbatim", () => {
+    assert.match(M3497, new RegExp(`c_min_authors CONSTANT integer := ${POST_CONVERGENCE_MIN_AUTHORS};\\s+-- POST_CONVERGENCE_MIN_AUTHORS`));
+    assert.match(M3497, new RegExp(`c_post_min_authors CONSTANT integer := ${POST_CONVERGENCE_MIN_AUTHORS};`));
+    assert.match(M3497, new RegExp(`c_sync_ms\\s+CONSTANT bigint := ${TREND_V2_SYNC_MS};`));
+    assert.match(M3497, new RegExp(`c_recent_ms\\s+CONSTANT bigint := ${TREND_V2_RECENT_MS / 3_600_000}::bigint\\s+\\* 3600000;`));
+    assert.match(M3497, new RegExp(`c_mid_ms\\s+CONSTANT bigint := ${TREND_V2_MID_MS / 3_600_000}::bigint \\* 3600000;`));
+    assert.match(M3497, new RegExp(`c_prior_ms\\s+CONSTANT bigint := ${TREND_V2_PRIOR_MS / 3_600_000}::bigint \\* 3600000;`));
+    assert.ok(M3497.includes(`c_feature_post  CONSTANT text := '${TREND_FEATURE_VERSION_V2_POST}';`));
+    assert.ok(M3497.includes("m.state = 'published' AND m.visibility = 'public'"), "the Memory rule, restated");
+    const a = M3477.indexOf("CREATE OR REPLACE FUNCTION public.rebuild_place_momentum_v2(");
+    const fn3477 = M3477.slice(a, M3477.indexOf("$fn$;", a) + 5);
+    assert.ok(fn3477.length > 1000 && R3497.includes(fn3477), "the rollback restores 3477's rebuild byte for byte");
+    // 3497's rebuild is 3477's plus the three named changes: every 3477 line survives but the replaced ones.
+    const b = M3497.indexOf("CREATE OR REPLACE FUNCTION public.rebuild_place_momentum_v2(");
+    const fn3497 = M3497.slice(b, M3497.indexOf("$fn$;", b) + 5);
+    const lost = fn3477.split("\n").filter((l) => !fn3497.split("\n").includes(l));
+    // (The place INSERT's `'growth_factor', …, 6),` line is also changed, but its twin survives in the Local Pulse INSERT.)
+    assert.deepEqual(lost, [
+      "  WITH w AS (SELECT * FROM public.discovery_trend_windows_v2(p_now, 'place')),",
+      "         f.o_recent_travelers, f.o_window_travelers, c_surface, c_feature,",
+    ]);
+  });
+
+  it("P12 a row served before the window is not a visit", () => {
+    const rows = world().map((r) => (r.user_id === "b1" ? { ...r, served_at: iso(NOW - TREND_V2_PRIOR_MS - H) } : r));
+    const got = postAfterVisitAuthors(rows, [mem("b1", NOW - 10 * H), mem("b2", NOW - 5 * H)], NOW, WINDOWS);
+    assert.equal(got.status === "ok" ? got.byKey.size : -1, 0, "b1's only visit was served before the window: b2 alone is below the floor");
+  });
+
+  it("P13 the leg is its own feature version; unread or absent is §84's", () => {
+    const rows = world();
+    const ok = postAfterVisitAuthors(rows, [mem("b1", NOW - 10 * H), mem("b2", NOW - 5 * H)], NOW, WINDOWS);
+    assert.equal(computeTrendStates(rows, NOW, { model: "v2", postAfterVisit: ok })[ITEM]!.provenance.featureVersion, TREND_FEATURE_VERSION_V2_POST);
+    assert.equal(computeTrendStates(rows, NOW, { model: "v2", postAfterVisit: { status: "unread" } })[ITEM]!.provenance.featureVersion, TREND_FEATURE_VERSION_V2);
+    assert.equal(computeTrendStates(rows, NOW, { model: "v2" })[ITEM]!.provenance.featureVersion, TREND_FEATURE_VERSION_V2);
+    assert.notEqual(TREND_FEATURE_VERSION_V2_POST, TREND_FEATURE_VERSION_V2);
   });
 });
 
