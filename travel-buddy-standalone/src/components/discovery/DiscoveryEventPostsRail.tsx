@@ -46,15 +46,15 @@ interface Props {
   destination: string | null;
   lat?: number | null;
   lng?: number | null;
-  radiusKm?: number;
+  radiusKm?: number; /** census-discovery §94.10: bumped by the tab's pull-to-refresh; a change asks the feed again. */ refreshKey?: number;
 }
 
-export function DiscoveryEventPostsRail({ destination, lat, lng, radiusKm = 25 }: Props) {
+export function DiscoveryEventPostsRail({ destination, lat, lng, radiusKm = 25, refreshKey = 0 }: Props) {
   const [posts, setPosts] = useState<DiscoveryEventPost[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   // True only for `coverage: "nothing"` — the server did not read the feed, so
   // the empty `posts` above is padding, not an answer.
-  const [refused, setRefused] = useState(false); const [postsIncomplete, setPostsIncomplete] = useState(false);  // §94 (DV-83, hunk §80.7): PARTIAL, and the failed source is the event posts themselves
+  const [refused, setRefused] = useState(false); const [postsIncomplete, setPostsIncomplete] = useState(false); const [unavailable, setUnavailable] = useState(false);  // §94 (DV-83, hunk §80.7): PARTIAL, and the failed source is the event posts themselves
 
   // Feed posts are served under rank_events surface 'discovery' (serve point 7),
   // keyed to the returned sessionId — that pair is the served rank context.
@@ -68,7 +68,7 @@ export function DiscoveryEventPostsRail({ destination, lat, lng, radiusKm = 25 }
     if (!destination && (lat == null || lng == null)) {
       setPosts([]);
       setSessionId(null);
-      setRefused(false); setPostsIncomplete(false);
+      setRefused(false); setPostsIncomplete(false); setUnavailable(false);
       return;
     }
     const myId = ++loadIdRef.current;
@@ -79,24 +79,24 @@ export function DiscoveryEventPostsRail({ destination, lat, lng, radiusKm = 25 }
         if (res.ok) {
           // `res.ok` is true for a refusal too — the difference is only in the
           // envelope, which is exactly why it has to be read here.
-          setRefused(res.data.refusal?.coverage === 'nothing'); setPostsIncomplete(res.data.refusal?.coverage === 'partial' && (res.data.refusal.failedSources ?? []).includes('event_posts'));
+          setUnavailable(false); setRefused(res.data.refusal?.coverage === 'nothing'); setPostsIncomplete(res.data.refusal?.coverage === 'partial' && (res.data.refusal.failedSources ?? []).includes('event_posts'));
           setPosts(res.data.posts);
           setSessionId(res.data.sessionId);
         } else {
-          // Transport died. That is not the server declining to look, and the
-          // rail has never claimed anything about it.
+          // Transport died (5xx, network, the request budget). Not the server declining
+          // to look, but not an answer either: §94.10 (D-W11X2-11) says so, never silence.
           setPosts([]);
           setSessionId(null);
-          setRefused(false); setPostsIncomplete(false);
+          setRefused(false); setPostsIncomplete(false); setUnavailable(true);
         }
       })
       .catch(() => {
         if (!cancelled && loadIdRef.current === myId) {
-          setPosts([]); setSessionId(null); setRefused(false); setPostsIncomplete(false);
+          setPosts([]); setSessionId(null); setRefused(false); setPostsIncomplete(false); setUnavailable(true);
         }
       });
     return () => { cancelled = true; };
-  }, [destination, lat, lng, radiusKm]);
+  }, [destination, lat, lng, radiusKm, refreshKey]);
 
   // Checked BEFORE the empty check below, which is the whole fix: a refused load
   // arrives with zero posts and would otherwise be silently swallowed by it.
@@ -109,10 +109,23 @@ export function DiscoveryEventPostsRail({ destination, lat, lng, radiusKm = 25 }
           <Radio size={14} color={color.faint} />
           <Text style={styles.title}>Live from events</Text>
         </View>
-        <Text style={styles.refusedText}>
-          We couldn't check what's live nearby just now — this isn't a sign that nothing is
-          happening. Pull to refresh.
-        </Text>
+        <Text style={styles.refusedText}>{LIVE_UNCHECKED_COPY}</Text>
+      </View>
+    );
+  }
+
+  // census-discovery §94.10 (D-W11X2-11): a transport failure (a 5xx, the network,
+  // the request budget) is not "nothing live" either. Same honest sentence as the
+  // refused state; its own testID, because the two failures differ for attribution
+  // (neither keeps a session id) and for the tests that tell them apart.
+  if (unavailable) {
+    return (
+      <View style={styles.section} testID="discovery-event-posts-rail-unavailable">
+        <View style={styles.header}>
+          <Radio size={14} color={color.faint} />
+          <Text style={styles.title}>Live from events</Text>
+        </View>
+        <Text style={styles.refusedText}>{LIVE_UNCHECKED_COPY}</Text>
       </View>
     );
   }
@@ -200,5 +213,8 @@ const styles = StyleSheet.create({
     lineHeight: 19,
   },
 });
+
+/** The rail's one "we could not look" sentence (refused, or a transport failure). Pull-to-refresh reaches the rail (§94.10). */
+const LIVE_UNCHECKED_COPY = "We couldn't check what's live nearby just now — this isn't a sign that nothing is happening. Pull to refresh.";
 
 export default DiscoveryEventPostsRail;

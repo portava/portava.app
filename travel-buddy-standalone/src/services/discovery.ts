@@ -947,9 +947,9 @@ export async function getDiscoveryFeed(
   // impression only exist when a viewer resolves — so send it whenever signed in.
   const token = await freshToken();
 
-  try {
+  const feedBudget = new AbortController(); const feedTimer = setTimeout(() => feedBudget.abort(), DISCOVERY_FEED_TIMEOUT_MS); try {  // census-discovery §94.10 (D-W11X2-12): a hung request is bounded, and answers the transport-failure shape
     const res = await fetch(`${base}/api/discovery/feed?${params}`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined, signal: feedBudget.signal,
     });
     if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
     const body = (await res.json()) as Partial<DiscoveryFeedResult>;
@@ -970,9 +970,9 @@ export async function getDiscoveryFeed(
         ...(refusal ? { refusal } : {}),
       },
     };
-  } catch {
-    return { ok: false, error: 'Network error — check your connection' };
-  }
+  } catch (err) {
+    return { ok: false, error: (err as { name?: unknown } | null)?.name === 'AbortError' ? 'timeout' : 'Network error — check your connection' };
+  } finally { clearTimeout(feedTimer); }
 }
 
 // ── "Already know it" discovery feedback ────────────────────────────────────────
@@ -1366,3 +1366,13 @@ let _tokenSourceForTests: (() => Promise<string | null>) | null = null;
 export function _setDiscoveryTokenSourceForTests(source: (() => Promise<string | null>) | null): void {
   _tokenSourceForTests = source;
 }
+
+/**
+ * census-discovery §94.10 (register D-W11X2-12): how long `getDiscoveryFeed`
+ * waits before answering the transport-failure shape. The Compass section
+ * budget (services/compass.ts COMPASS_SECTION_TIMEOUT_MS): the feed's only
+ * caller is the For You tab's supplementary "Live from events" strip, which
+ * sits in the same place a Compass section does and should give up on the same
+ * clock. Declared at the foot so no cited line above moves; read only at call time.
+ */
+export const DISCOVERY_FEED_TIMEOUT_MS = 15_000;

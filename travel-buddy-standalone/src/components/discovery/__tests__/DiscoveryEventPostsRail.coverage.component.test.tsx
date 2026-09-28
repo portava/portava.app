@@ -14,6 +14,10 @@
  * A partial that names only PLACE categories does not describe this rail: it
  * renders event posts only, and those were read in full.
  *
+ * Round 2 (§94.10, register D-W11X2-11): a transport failure (U1: a 5xx, a
+ * network failure, the request budget; U2: a rejected call) is not "nothing
+ * live" either — it gets the rail's "couldn't check" line under its own testID.
+ *
  * Run with: pnpm test:component
  */
 import React from 'react';
@@ -100,17 +104,50 @@ describe('DiscoveryEventPostsRail — a failed event-post read is not a complete
     expect(queryByTestId('discovery-event-posts-rail-partial-empty')).toBeNull();
   });
 
-  it('P5. CONTROL: a healthy feed carries no notice, and an empty healthy feed still renders nothing', async () => {
+  it('P5. CONTROL: a healthy feed carries no notice', async () => {
     mockGetDiscoveryFeed.mockResolvedValue(feed([post('p1')]));
-    const first = await render(<DiscoveryEventPostsRail destination="Miami" />);
-    expect(await first.findByTestId('post-stub-p1')).toBeTruthy();
-    expect(first.queryByTestId('discovery-event-posts-rail-partial')).toBeNull();
-    first.unmount();
+    const { findByTestId, queryByTestId } = await render(<DiscoveryEventPostsRail destination="Miami" />);
+    expect(await findByTestId('post-stub-p1')).toBeTruthy();
+    expect(queryByTestId('discovery-event-posts-rail-partial')).toBeNull();
+  });
 
+  it('P5b. CONTROL: an empty healthy feed still renders nothing', async () => {
     mockGetDiscoveryFeed.mockResolvedValue(feed([]));
-    const second = await render(<DiscoveryEventPostsRail destination="Lisbon" />);
-    await waitFor(() => expect(mockGetDiscoveryFeed).toHaveBeenCalledTimes(2));
-    expect(second.queryByTestId('discovery-event-posts-rail')).toBeNull();
-    expect(second.queryByTestId('discovery-event-posts-rail-partial-empty')).toBeNull();
+    const { queryByTestId } = await render(<DiscoveryEventPostsRail destination="Lisbon" />);
+    await waitFor(() => expect(mockGetDiscoveryFeed).toHaveBeenCalledTimes(1));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(queryByTestId('discovery-event-posts-rail')).toBeNull();
+    expect(queryByTestId('discovery-event-posts-rail-partial-empty')).toBeNull();
+    expect(queryByTestId('discovery-event-posts-rail-unavailable')).toBeNull();
+  });
+
+  // ── Round 2 (§94.10, register D-W11X2-11): a transport failure is not "nothing live" ──
+  for (const [name, answer] of [
+    ['a 5xx', { ok: false as const, error: 'HTTP 503' }],
+    ['a network failure', { ok: false as const, error: 'Network error — check your connection' }],
+    ['the request budget (timeout)', { ok: false as const, error: 'timeout' }],
+  ] as const) {
+    it(`U1. ${name} is the "couldn\u2019t check" line, not silence and not the refused state`, async () => {
+      mockGetDiscoveryFeed.mockResolvedValue(answer);
+      const { findByTestId, queryByTestId, queryByText } = await render(<DiscoveryEventPostsRail destination="Miami" />);
+      expect(await findByTestId('discovery-event-posts-rail-unavailable')).toBeTruthy();
+      expect(queryByText(/couldn't check what's live/i)).not.toBeNull();
+      expect(queryByTestId('discovery-event-posts-rail-refused')).toBeNull();
+    });
+  }
+
+  it('U2. a rejected call is the same "couldn\u2019t check" line', async () => {
+    mockGetDiscoveryFeed.mockRejectedValue(new Error('boom'));
+    const { findByTestId } = await render(<DiscoveryEventPostsRail destination="Miami" />);
+    expect(await findByTestId('discovery-event-posts-rail-unavailable')).toBeTruthy();
+  });
+
+  it('U3. the "couldn\u2019t check" line clears once a later load answers', async () => {
+    mockGetDiscoveryFeed.mockResolvedValueOnce({ ok: false as const, error: 'timeout' }).mockResolvedValueOnce(feed([post('p9')]));
+    const view = await render(<DiscoveryEventPostsRail destination="Miami" refreshKey={0} />);
+    expect(await view.findByTestId('discovery-event-posts-rail-unavailable')).toBeTruthy();
+    await view.rerender(<DiscoveryEventPostsRail destination="Miami" refreshKey={1} />);
+    expect(await view.findByTestId('post-stub-p9')).toBeTruthy();
+    expect(view.queryByTestId('discovery-event-posts-rail-unavailable')).toBeNull();
   });
 });

@@ -75,7 +75,7 @@ globalThis.fetch = (async (url: any, init?: any) => {
       });
     }
   }
-  if (s.includes("overpass-api.de") || s.includes("nominatim.openstreetmap.org")) {
+  if (s.includes("overpass-api.de")) return new Response(JSON.stringify({ elements: [] }), { status: 200, headers: { "content-type": "application/json" } }); if (s.includes("overpass-api.de") || s.includes("nominatim.openstreetmap.org")) {
     throw new Error("Network blocked in test environment");
   }
   return _originalFetch(url, init);
