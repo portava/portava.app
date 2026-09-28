@@ -162,7 +162,7 @@ Package under test: **`com.passporttravelbuddy.app`**.
    settled fling measures mostly idle frames.
 6. Stop the trace.
 
-Item 60 is reached across **three server pages** (`artifacts/api-server/src/routes/wall.ts:122#const DEFAULT_LIMIT = 20;`),
+Item 60 is reached across **three server pages** (`artifacts/api-server/src/routes/wall.ts:124#const DEFAULT_LIMIT = 20;`),
 so the scroll includes **two mid-scroll `onEndReached` fetches and two list-data
 replacements while the thumb is still moving**. Those are the moments a feed
 drops frames and they are deliberately inside the measured window.
