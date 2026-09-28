@@ -192,7 +192,7 @@ Two entries need their caveat stated in place rather than as a footnote:
 - **`intel_presence_verifications` is written and never read** in server code. The write is
   `services/intel/IntelCaptureService.ts:303`. This is the mirror image of the defect the analyzer
   exists for, and the analyzer does not look for it — `findWriterless` only walks the reads map
-  (`scripts/checkWriterlessReads.ts:283-296`). Whether that is intended could not be established
+  (`scripts/checkWriterlessReads.ts:285-298`). Whether that is intended could not be established
   from the tree.
 
 The sixteenth intel table, **`intel_claim_reviews`**, was applied by hand to the `portava-ci`

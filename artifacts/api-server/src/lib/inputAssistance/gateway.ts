@@ -4,7 +4,7 @@
  * This is the unification-layer spine (§3/§4/§42). It WRAPS existing systems and
  * reimplements nothing:
  *
- *   - Candidate generation delegates to `dispatchSearch` (routes/discoverySearch)
+ *   - Candidate generation delegates to `dispatchSearch` (./searchCandidates)
  *     — the same per-type query + match-tier ranking + fail-closed privacy code
  *     paths /discovery/search and /discovery/suggest use.
  *   - Canonical city rows come from `suggestCanonicalLocations`
@@ -32,7 +32,7 @@ import {
   canonicalToCityResult,
   mergeCitySuggestions,
   type SearchResult,
-} from '../../routes/discoverySearch';
+} from './searchCandidates';
 import {
   resolveGeoCandidates,
   zeroCharGeoDefaults,

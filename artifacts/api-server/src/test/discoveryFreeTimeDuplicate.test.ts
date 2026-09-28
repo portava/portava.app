@@ -148,6 +148,7 @@ describe("§57 A11 — Discovery never reaches the ranker's own free-time arithm
     ];
     const files = dirs.flatMap(([dir, re]) => readdirSync(dir).filter((f) => re.test(f)).map((f) => path.join(dir, f)));
     files.push(path.join(SRC, "services", "location", "DiscoveryLocationContext.ts"));
+    files.push(path.join(SRC, "lib", "inputAssistance", "searchCandidates.ts")); // Discovery search's searchers (census-discovery §70)
     assert.ok(files.length > 20, "the Discovery file set must actually be scanned");
     const builders: string[] = [];
     for (const f of files) {

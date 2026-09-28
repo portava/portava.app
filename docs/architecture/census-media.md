@@ -5032,7 +5032,7 @@ the one the Map's own pipeline would publish for it:
   It is not called. Search reads `places` BY ID, and only the places a result
   already names. That is the narrower read Discovery's search takes, for the
   reason Discovery gives
-  (`artifacts/api-server/src/routes/discoverySearch.ts:1275#WHY IT DOES NOT CALL`):
+  (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:1237#WHY IT DOES NOT CALL`):
   search is not a projection, has no viewport, and serves no MapObject. The
   guard suite still passes with no approval added.
 - **The zone model.** It is the gateway's alone
@@ -8971,7 +8971,7 @@ pass owns them. No verdict moves on any of them.
 
 **Two citations were repointed, not moved in meaning.** census-trust and
 census-wall each cite
-`artifacts/api-server/src/scripts/checkCensusFreshness.ts:1520#ADDED 2026-09-20 by census-wall §13`.
+`artifacts/api-server/src/scripts/checkCensusFreshness.ts:1522#ADDED 2026-09-20 by census-wall §13`.
 The widened scope arrays above it moved it from line 1406.
 
 ## 38. Lane E — six stale census statements and one lagging sentence, corrected in place — 2026-09-27

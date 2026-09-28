@@ -416,6 +416,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/routes/rentABuddy.ts",
     "artifacts/api-server/src/test/rentABuddy.test.ts",
     "artifacts/api-server/src/routes/discoverySearch.ts",
+    "artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts", // census-discovery §70: routes/discoverySearch.ts's searchers moved here
     "artifacts/api-server/src/test/discoverySearch.test.ts",
     "artifacts/api-server/src/test/tripDepartureAssumptions.test.ts",
     "artifacts/api-server/src/lib/projections/registry.ts",
@@ -1362,6 +1363,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/routes/telegraph.ts",
     "artifacts/api-server/src/routes/safeReturn.ts",
     "artifacts/api-server/src/routes/discoverySearch.ts",
+    "artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts", // census-discovery §70: routes/discoverySearch.ts's searchers moved here
     "artifacts/api-server/src/routes/adminPortavaPosts.ts",
     "artifacts/api-server/src/services/interactionPermissions.ts",
     "artifacts/api-server/src/services/passport/PassportConsumerProjections.ts",
@@ -1704,6 +1706,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/2089_media_assets_ready_requires_dimensions.sql",
     "travel-buddy-standalone/src/components/ui/SharedVideoPlayer.tsx",
     "artifacts/api-server/src/routes/discoverySearch.ts",
+    "artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts", // census-discovery §70: routes/discoverySearch.ts's searchers moved here
     "artifacts/api-server/src/routes/mapSearch.ts",
     "travel-buddy-standalone/src/components/CachedImage.tsx",
     "artifacts/api-server/src/migrations/2041_media_ranking_snapshots.sql",
@@ -2426,6 +2429,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   "census-map.md": [
     // ── ADDED 2026-09-14 by the scope-coverage finding ──────────────────────
     "artifacts/api-server/src/routes/discoverySearch.ts",
+    "artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts", // census-discovery §70: routes/discoverySearch.ts's searchers moved here
     // ADDED 2026-09-14 on the Map lane's request. `geoZoneSeed.test.ts` now
     // carries M256's evidence — the first assertions in this repository that a
     // cache HIT avoids the read, where eleven map suites had only ever used the
@@ -2593,6 +2597,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/scripts/backfill-canonical-places.ts",
     "artifacts/api-server/src/compass/CompassSafetyFilter.ts",
     "artifacts/api-server/src/routes/discoverySearch.ts",
+    "artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts", // census-discovery §70: routes/discoverySearch.ts's searchers moved here
     "artifacts/api-server/src/services/hiddenGems/HiddenGemContributionService.ts",
     "artifacts/api-server/src/compass/CompassIntentModeEngine.ts",
     "artifacts/api-server/src/services/wall/WallRankingService.ts",
@@ -4123,6 +4128,12 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // suite (combining diacritics outside U+0300–U+036F; listTrails compares strings). The code it grades
     // is already watched (§46, §51, §61, §73).
     "artifacts/api-server/src/test/discoveryVerifyAudit3.test.ts",
+    // census-discovery §70 (search platform boundary, P30): A08 and the drift-footer fix cite these.
+    "artifacts/api-server/src/test/searchPlatformBoundary.test.ts",
+    "artifacts/api-server/src/test/searchPlatformGolden.test.ts",
+    "artifacts/api-server/src/test/fixtures/searchPlatformGolden.json",
+    // §70 names it as A08's remaining platform-direction work, and searchPlatformBoundary B5 pins its lib/ importers.
+    "artifacts/api-server/src/routes/discoverySearchHelpers.ts",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //
@@ -4204,6 +4215,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/routes/compass.ts",
     "artifacts/api-server/src/routes/discovery.ts",
     "artifacts/api-server/src/routes/discoverySearch.ts",
+    "artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts", // census-discovery §70: routes/discoverySearch.ts's searchers moved here
     "artifacts/api-server/src/routes/follows.ts",
     "artifacts/api-server/src/routes/geofence.ts",
     "artifacts/api-server/src/routes/hiddenGems.ts",
