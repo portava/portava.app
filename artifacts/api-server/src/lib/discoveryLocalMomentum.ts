@@ -63,7 +63,7 @@ import { computeTrendStates, type TrendReading } from "./discoveryTrendState.js"
 // census-discovery DC-17's four facts, and the version constants `06` §5's rank
 // provenance already uses. Imported rather than redeclared: a momentum reading
 // and a ranked page must never claim different versions of the same pipeline.
-import { derivedStoreProvenance, type DerivedStoreProvenance } from "./discoveryRankProvenance.js";
+import { derivedStoreProvenance, type DerivedStoreProvenance, type DerivedStoreVersions } from "./discoveryRankProvenance.js";
 
 const logger = rootLogger.child({ mod: "localMomentum" });
 
@@ -189,7 +189,7 @@ export function computeLocalMomentum(rows: readonly MomentumRow[], nowMs: number
   // arithmetic they describe because they are the same two numbers. Stamped
   // even when `out` is empty: "this window was read and nothing surged" is a
   // measurement, and the bare `{}` it used to return could not say it.
-  return { values: out, provenance: derivedStoreProvenance({ kind: "bounded", startMs: baselineSince, endMs: nowMs }, nowMs) };
+  return { values: out, provenance: derivedStoreProvenance({ kind: "bounded", startMs: baselineSince, endMs: nowMs }, nowMs, LOCAL_MOMENTUM_VERSIONS) };  // §68: this kernel's own versions, not the ranker's
 }
 
 // ── Loader, with a bounded per-key cache ──────────────────────────────────────
@@ -318,3 +318,39 @@ export function readLocalTrendStates(
   if (!hit || nowMs - hit.at >= MOMENTUM_CACHE_TTL_MS) return {};
   return hit.trends;
 }
+
+// ── census-discovery §68 (DC-17, lane P21): this kernel's own versions ────────
+//
+// Stamped on every `MomentumMap.provenance` in place of the Compass ranker's
+// pair, which versioned a pipeline this arithmetic is not part of. Declared at
+// the foot so no line above that a census cites moves.
+
+/**
+ * The momentum ARITHMETIC: the 48 h / 30 d split, the baseline divisor, the
+ * smoothing, the saturation, the recent-weight floor and the 3-decimal rounding.
+ * Bump when any of them changes. The string says "velocity", which is what this
+ * module measures (see the header), and NOT the other word on purpose: this
+ * record is served by routes/trails.ts as `readingProvenance`, and that route's
+ * suite forbids the word anywhere in a body (`11` §4's tripwire).
+ */
+export const LOCAL_MOMENTUM_MODEL_VERSION = "discovery-place-velocity-v1";
+
+/**
+ * What ONE `rank_events` row contributes: analytics rows excluded, an impression
+ * at `served_at` weighing 1, and an outcome at `outcome_at` weighing save 3,
+ * dismiss 0 (§61, DV-25) and any other outcome 2. `v2` because §61's dismiss
+ * exclusion changed it; the pre-§61 weighting (a dismiss at 2) is `v1`. Which
+ * surface's rows are read is the CALLER's read, not part of this definition.
+ *
+ * MUST equal lib/discoveryTrendState's `TREND_FEATURE_VERSION` and the literal
+ * 3435's `rebuild_place_momentum` writes to `place_momentum.feature_version`,
+ * because all three weigh the same rows the same way. Pinned by
+ * src/test/discoveryDerivedProvenance.test.ts rather than shared by an import,
+ * for the cycle reason lib/discoveryTrendState states at its own imports.
+ */
+export const LOCAL_MOMENTUM_FEATURE_VERSION = "discovery-weighted-activity-v2";
+
+const LOCAL_MOMENTUM_VERSIONS: DerivedStoreVersions = {
+  modelVersion:   LOCAL_MOMENTUM_MODEL_VERSION,
+  featureVersion: LOCAL_MOMENTUM_FEATURE_VERSION,
+};

@@ -73,7 +73,7 @@
 import type { MomentumRow } from "./discoveryLocalMomentum.js";
 // NOT type-only, and safe: lib/discoveryRankProvenance imports nothing, so it
 // cannot close a cycle back through either of the two modules that use it.
-import { derivedStoreProvenance, type DerivedStoreProvenance } from "./discoveryRankProvenance.js";
+import { derivedStoreProvenance, type DerivedStoreProvenance, type DerivedStoreVersions } from "./discoveryRankProvenance.js";
 
 /** `03` §9's stages, in the specification's own order. */
 export const TREND_STATES = [
@@ -223,7 +223,7 @@ export function computeTrendStates(
   // reading the clock per place would let one corpus carry several computation
   // times. `priorSince` is the oldest row that can survive the bucket filter,
   // so it IS the window start rather than a restatement of it.
-  const provenance = derivedStoreProvenance({ kind: "bounded", startMs: priorSince, endMs: nowMs }, nowMs);
+  const provenance = derivedStoreProvenance({ kind: "bounded", startMs: priorSince, endMs: nowMs }, nowMs, TREND_STATE_VERSIONS);  // §68: the trend kernel's own versions
 
   const out: Record<string, TrendReading> = {};
   for (const [id, w] of acc) {
@@ -306,3 +306,29 @@ export function trendReasonFor(state: DiscoveryTrendState): { code: TrendReasonC
 export function isTrendState(v: unknown): v is DiscoveryTrendState {
   return typeof v === "string" && (TREND_STATES as readonly string[]).includes(v);
 }
+
+// ── census-discovery §68 (DC-17, lane P21): this kernel's own versions ────────
+//
+// Stamped on every `TrendReading.provenance` in place of the Compass ranker's
+// pair. Before §68 the same computation said `discovery-trend-state-v1` when the
+// SQL store ran it and `compass-discovery-2026-09` when this module did (§54.2).
+
+/**
+ * The trend ARITHMETIC: the three windows, the 48 h normalisation, the floor,
+ * the growth and decline factors and the evaluation order of the six stages.
+ * MUST equal `c_model` in `rebuild_place_momentum` (2892, 3410, 3417, 3435),
+ * which is what `place_momentum.model_version` stores. Pinned by a test.
+ */
+export const TREND_STATE_MODEL_VERSION = "discovery-trend-state-v1";
+
+/**
+ * What one row contributes — the SAME definition as lib/discoveryLocalMomentum's
+ * `LOCAL_MOMENTUM_FEATURE_VERSION` and 3435's `place_momentum.feature_version`
+ * (dismiss 0 since §61.17 H1). Pinned equal to both by a test, not imported.
+ */
+export const TREND_FEATURE_VERSION = "discovery-weighted-activity-v2";
+
+const TREND_STATE_VERSIONS: DerivedStoreVersions = {
+  modelVersion:   TREND_STATE_MODEL_VERSION,
+  featureVersion: TREND_FEATURE_VERSION,
+};

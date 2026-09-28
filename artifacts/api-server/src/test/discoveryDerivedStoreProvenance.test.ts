@@ -24,13 +24,14 @@
  *   modelVersion                    which model shape computed it
  *   computedAt                      when the computation ran
  *
- * NO NEW VERSION VOCABULARY
- * =========================
- * The two version strings are `lib/discoveryRankProvenance`'s existing
- * `DISCOVERY_MODEL_VERSION` / `DISCOVERY_FEATURE_VERSION` — the constants `06`
- * §5's cache-metadata record already uses. A second pair minted here would let
- * a momentum reading and a ranked page claim different versions of the same
- * pipeline, which is worse than neither claiming one.
+ * EACH STORE'S OWN VERSIONS (census-discovery §68, superseding this file's
+ * earlier "no new version vocabulary" ruling)
+ * =========================================
+ * The stores used to stamp the Compass ranker's pair. Neither kernel is that
+ * pipeline, so a threshold or weight change moved neither string, and the SQL
+ * twin of the trend store already said `discovery-trend-state-v1` (§54.2 (b)).
+ * Each store now stamps its own model version; both stamp one feature version,
+ * because they weigh the same rows the same way.
  *
  * AND NO NUMBER MOVES
  * ===================
@@ -47,9 +48,10 @@ import {
   computeLocalMomentum, loadLocalMomentum, readLocalTrendStates,
   _resetLocalMomentumCacheForTest,
   MOMENTUM_BASELINE_WINDOW_MS, MOMENTUM_CACHE_TTL_MS,
+  LOCAL_MOMENTUM_MODEL_VERSION, LOCAL_MOMENTUM_FEATURE_VERSION,
   type MomentumRow,
 } from "../lib/discoveryLocalMomentum.js";
-import { computeTrendStates, TREND_PRIOR_MS } from "../lib/discoveryTrendState.js";
+import { computeTrendStates, TREND_PRIOR_MS, TREND_STATE_MODEL_VERSION, TREND_FEATURE_VERSION } from "../lib/discoveryTrendState.js";
 import {
   DISCOVERY_MODEL_VERSION, DISCOVERY_FEATURE_VERSION,
   type DerivedStoreProvenance,
@@ -119,8 +121,9 @@ function assertFourFacts(
 ): void {
   assert.equal(p.window.startMs, expected.startMs, `${what}: window start`);
   assert.equal(p.window.endMs,   expected.endMs,   `${what}: window end`);
-  assert.equal(p.featureVersion, DISCOVERY_FEATURE_VERSION, `${what}: feature version`);
-  assert.equal(p.modelVersion,   DISCOVERY_MODEL_VERSION,   `${what}: model version`);
+  assert.equal(p.featureVersion, LOCAL_MOMENTUM_FEATURE_VERSION, `${what}: feature version`);
+  assert.ok([LOCAL_MOMENTUM_MODEL_VERSION, TREND_STATE_MODEL_VERSION].includes(p.modelVersion), `${what}: model version is a store's own (§68)`);
+  assert.notEqual(p.modelVersion, DISCOVERY_MODEL_VERSION, `${what}: never the ranker's model (§68)`);
   assert.equal(p.computedAt,     expected.computedAt, `${what}: computed-at`);
 }
 
@@ -239,14 +242,15 @@ describe("DC-17 — every trend reading says what computed it, over which window
 
 // ── One vocabulary, not two ──────────────────────────────────────────────────
 
-describe("DC-17 — both stores version themselves with the ranker's own constants", () => {
-  it("momentum and trend quote the SAME model and feature versions as discoveryRankProvenance", () => {
+describe("DC-17 — each store versions itself, and the two share one feature version (§68)", () => {
+  it("momentum and trend each name their own model, share one feature version, and claim nothing of the ranker's", () => {
     const mom = computeLocalMomentum(CORPUS, NOW).provenance;
     const trd = computeTrendStates(CORPUS, NOW).p_surge!.provenance;
-    assert.equal(mom.modelVersion,   trd.modelVersion);
+    assert.equal(mom.modelVersion,   LOCAL_MOMENTUM_MODEL_VERSION);
+    assert.equal(trd.modelVersion,   TREND_STATE_MODEL_VERSION);
     assert.equal(mom.featureVersion, trd.featureVersion);
-    assert.equal(mom.modelVersion,   DISCOVERY_MODEL_VERSION);
-    assert.equal(mom.featureVersion, DISCOVERY_FEATURE_VERSION);
+    assert.equal(mom.featureVersion, TREND_FEATURE_VERSION);
+    assert.ok(![DISCOVERY_MODEL_VERSION, DISCOVERY_FEATURE_VERSION].includes(mom.modelVersion) && ![DISCOVERY_MODEL_VERSION, DISCOVERY_FEATURE_VERSION].includes(trd.featureVersion));
     assert.ok(mom.modelVersion.length > 0 && mom.featureVersion.length > 0);
   });
 

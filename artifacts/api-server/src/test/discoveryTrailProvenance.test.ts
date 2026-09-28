@@ -56,7 +56,7 @@ import {
 import { toPublicProvenance } from "../routes/trails.js";
 import { orPredicate } from "./helpers/postgrestOrFilter.js";
 import {
-  _resetLocalMomentumCacheForTest, MOMENTUM_BASELINE_WINDOW_MS,
+  _resetLocalMomentumCacheForTest, MOMENTUM_BASELINE_WINDOW_MS, LOCAL_MOMENTUM_MODEL_VERSION, LOCAL_MOMENTUM_FEATURE_VERSION,
 } from "../lib/discoveryLocalMomentum.js";
 import {
   DISCOVERY_MODEL_VERSION, DISCOVERY_FEATURE_VERSION,
@@ -247,9 +247,9 @@ describe("DC-17 — `trending_now`'s derived input retains its window (§38.6 it
       p.window.startMs, NOW - MOMENTUM_BASELINE_WINDOW_MS,
       "the stated start must be the baseline cut-off the bucketing actually applied",
     );
-    // Facts 2 and 3 — versions, and NOT a second vocabulary minted here.
-    assert.equal(p.modelVersion, DISCOVERY_MODEL_VERSION);
-    assert.equal(p.featureVersion, DISCOVERY_FEATURE_VERSION);
+    // Facts 2 and 3 — the kernel's OWN versions (§68), never the Compass ranker's.
+    assert.equal(p.modelVersion, LOCAL_MOMENTUM_MODEL_VERSION); assert.notEqual(p.modelVersion, DISCOVERY_MODEL_VERSION);
+    assert.equal(p.featureVersion, LOCAL_MOMENTUM_FEATURE_VERSION);
     // Fact 4 — the COMPUTATION clock, not the read-back clock.
     assert.equal(p.computedAt, NOW);
   });
@@ -434,8 +434,8 @@ describe("DC-17 — `readingProvenance` reaches the wire at both Trail URLs", ()
     assert.equal(r.status, 200);
     const p = r.body.readingProvenance;
     assert.ok(p, "the window behind `trending_now`'s order must not stop at the service");
-    assert.equal(p.modelVersion, DISCOVERY_MODEL_VERSION);
-    assert.equal(p.featureVersion, DISCOVERY_FEATURE_VERSION);
+    assert.equal(p.modelVersion, LOCAL_MOMENTUM_MODEL_VERSION);   // §68: the kernel's own, not the ranker's
+    assert.equal(p.featureVersion, LOCAL_MOMENTUM_FEATURE_VERSION);
     assert.equal(typeof p.computedAt, "number");
     assert.equal(p.window.kind, "bounded");
     assert.equal(p.spanMs, MOMENTUM_BASELINE_WINDOW_MS);

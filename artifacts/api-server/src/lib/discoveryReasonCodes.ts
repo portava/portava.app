@@ -240,7 +240,7 @@ const PLAIN_LANGUAGE: Readonly<Partial<Record<DiscoveryReasonCode, string>>> = {
   // shared screen rendering "Because you follow Bangkok After Dark" discloses
   // it. The bounded fact — that a followed Trail is why — is said without it.
   trail_affinity:   "From a trail you follow.",
-  nearby_now:       "Close to you and open around now.",
+  nearby_now:       "Close to you.",  // §68 (A03): the claim every LOCATION signal supports; the served text is nearbyNowText(signals)
   trending_local:   "Picking up locally this week.",
   creator_affinity: "From travelers whose posts you follow.",
   exploration:      "Newer here, and worth a look.",
@@ -267,7 +267,7 @@ export interface DiscoveryReason {
 export function explainReasons(signalKeys: readonly string[]): DiscoveryReason[] {
   const out: DiscoveryReason[] = [];
   for (const code of reasonCodesFromSignals(signalKeys)) {
-    const text = explainReasonCode(code);
+    const text = code === "nearby_now" ? nearbyNowText(signalKeys) : explainReasonCode(code);  // §68 (A03): what FIRED decides the claim
     if (text) out.push({ code, text });
   }
   return out;
@@ -306,4 +306,70 @@ export function reasonCodesByIdFromProvenance(
     out[id] = reasonCodesFromSignals(p?.reasons ?? []);
   });
   return out;
+}
+
+// ── census-discovery §68 (A03, lane P21): nearby_now says only what fired ─────
+//
+// `nearby_now` is grounded by three different kinds of evidence, and the fixed
+// sentence it used to carry — "Close to you and open around now." — claimed two
+// of them whichever had fired. PDE's `distance`, `cityMatch` and
+// `neighborhoodMatch` read no opening hours, so a place was told "open around
+// now" because it was in the right city (census §57, A03). The CODE is unchanged
+// for every signal (the exposure record, the served `code` and every reader of
+// codes see what they saw before); only the served SENTENCE is chosen from the
+// signals that fired. Declared at the foot so the cited lines above do not move.
+//
+// THE WORDING IS OWNER-OVERRULABLE COPY, NOT A POLICY. "Close to you." and
+// "Open around now." are the two halves of the sentence this module already
+// served. The one new sentence is the timing/capacity one, kept literal: each of
+// those signals fires only for something that has not ended and can still be
+// joined or attended.
+
+/** Which kind of evidence a `nearby_now` signal is. Exhaustive over the keys mapped to the code (pinned by a test). */
+export const NEARBY_NOW_SIGNAL_FAMILY: Readonly<Record<string, "location" | "open" | "timing">> = {
+  distance:          "location",  // Compass + PDE: distance from the search reference point
+  city_match:        "location",  // Compass: the viewer's current or preferred city
+  cityMatch:         "location",  // PDE: the viewer's city
+  neighborhoodMatch: "location",  // PDE: stacked on cityMatch
+  open_now:          "open",      // Compass: fires ONLY on an explicit isOpenNow === true
+  availability:      "timing",    // Compass: an event with spots left, or an active buddy
+  time_relevance:    "timing",    // Compass: an event starting within 48 h
+  actionability:     "timing",    // PDE: a start time that has not passed by more than 2 h
+  availabilityFit:   "timing",    // PDE: starts inside the viewer's stated free window
+  capacityOpen:      "timing",    // PDE: the item reports capacity
+};
+
+const NEARBY_NOW_TEXT = {
+  locationAndOpen: "Close to you and open around now.",
+  location:        "Close to you.",
+  open:            "Open around now.",
+  timing:          "You can still make it or join in.",
+} as const;
+
+/**
+ * The sentence for a `nearby_now` code, from the signals that grounded it.
+ * "open" only when `open_now` fired; "close to you" only when a location signal
+ * fired. A signal with no family (a key mapped later without one) contributes
+ * NO claim; if nothing with a family fired, the code carries no sentence and
+ * `explainReasons` drops it rather than serve an unbacked one.
+ */
+export function nearbyNowText(signalKeys: readonly string[]): string | null {
+  let location = false, open = false, timing = false;
+  for (const k of signalKeys) {
+    if (reasonCodeForSignal(k) !== "nearby_now") continue;
+    const family = NEARBY_NOW_SIGNAL_FAMILY[k];
+    if (family === "location") location = true;
+    else if (family === "open") open = true;
+    else if (family === "timing") timing = true;
+  }
+  if (location && open) return NEARBY_NOW_TEXT.locationAndOpen;
+  if (location) return NEARBY_NOW_TEXT.location;
+  if (open) return NEARBY_NOW_TEXT.open;
+  if (timing) return NEARBY_NOW_TEXT.timing;
+  return null;
+}
+
+/** Test hook: every signal key this module maps to `nearby_now`. */
+export function _nearbyNowKeysForTest(): string[] {
+  return Object.keys(SIGNAL_TO_CODE).filter((k) => SIGNAL_TO_CODE[k] === "nearby_now");
 }

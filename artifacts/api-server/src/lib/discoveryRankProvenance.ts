@@ -107,14 +107,14 @@ export type DerivedStoreWindow =
  * one. The same four facts `DiscoveryRankProvenance` carries about a RANK, said
  * about a COMPUTATION.
  *
- * The version pair is deliberately NOT a second vocabulary: both fields are the
- * constants above. A momentum reading and a ranked page that claimed different
- * versions of the same pipeline would be worse than neither claiming one.
+ * §68 (DC-17): the version pair is the STORE'S OWN, never the ranker's. Each
+ * store names the kernel that computed it (see `DerivedStoreVersions` at the
+ * foot), because a reading stamped with the Compass pair moved with nothing.
  */
 export interface DerivedStoreProvenance {
-  /** `06` §5 model_version — DISCOVERY_MODEL_VERSION. */
+  /** `06` §5 model_version — the computing store's own model version (§68). */
   modelVersion: string;
-  /** `06` §5 feature_version — DISCOVERY_FEATURE_VERSION. */
+  /** `06` §5 feature_version — the computing store's own feature version (§68). */
   featureVersion: string;
   /** The event window the numbers were computed over. */
   window: DerivedStoreWindow;
@@ -127,17 +127,17 @@ export interface DerivedStoreProvenance {
 }
 
 /**
- * Stamp one computation. The versions are filled from the constants above so a
- * caller cannot mint its own pair, and the window is copied rather than held by
- * reference so a later mutation of the caller's bounds cannot rewrite history.
+ * Stamp one computation. The versions are REQUIRED, so no store can fall back to
+ * the ranker's pair by omission (§68), and the window is copied rather than held
+ * by reference so a later mutation of the caller's bounds cannot rewrite history.
  */
 export function derivedStoreProvenance(
   window: DerivedStoreWindow,
-  computedAt: number,
+  computedAt: number, versions: DerivedStoreVersions,
 ): DerivedStoreProvenance {
   return {
-    modelVersion:   DISCOVERY_MODEL_VERSION,
-    featureVersion: DISCOVERY_FEATURE_VERSION,
+    modelVersion:   versions.modelVersion,
+    featureVersion: versions.featureVersion,
     window: { ...window },
     computedAt,
   };
@@ -381,3 +381,21 @@ export function buildRankProvenance(
  * ranker.
  */
 export const DISCOVERY_PDE_MODEL_VERSION = "portava-rank-pde-2026-09";
+
+// ── census-discovery §68 (DC-17, lane P21): a derived store's OWN versions ────
+//
+// Before §68, `derivedStoreProvenance` stamped every momentum and trend reading
+// with `DISCOVERY_MODEL_VERSION` / `DISCOVERY_FEATURE_VERSION` — the COMPASS
+// ranker's pair. Neither kernel is the Compass pipeline, so a change to the
+// momentum saturation, a trend threshold or an event weight moved neither
+// string: the record named a model that did not compute the number (§54.2 (b),
+// routed there as H3). Each store now passes its own pair, declared beside the
+// arithmetic it versions. Declared at the foot so no cited line above moves.
+
+/** The version pair one derived store stamps on its own output. */
+export interface DerivedStoreVersions {
+  /** Bump when the store's arithmetic (windows, rates, thresholds, clamps) changes. */
+  modelVersion: string;
+  /** Bump when what one event contributes (which rows, what weight) changes. */
+  featureVersion: string;
+}
