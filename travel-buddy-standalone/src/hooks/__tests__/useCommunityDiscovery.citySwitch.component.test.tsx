@@ -19,6 +19,8 @@
  *   CS6  the no-service-client refusal (upstream_unavailable, `nothing`) is refused and not cached
  *   C1   CONTROL: the same city, a sort change whose read fails, keeps the city's rows (§100's F3)
  *   C2   CONTROL: a switch whose read succeeds shows B's gems only
+ *   C3   CONTROL: a city replayed from the cache is held — a sort change whose read fails keeps its rows
+ *   C4   CONTROL: the same, when the cached city is switched back to within one mount
  *
  * Run with: npx jest src/hooks/__tests__/useCommunityDiscovery.citySwitch.component.test.tsx
  */
@@ -151,5 +153,36 @@ describe('useCommunityDiscovery — held rows belong to the city they were read 
     await act(async () => { rerender({ c: 'SwCityB6' }); });
     await waitFor(() => expect(result.current.gems.map((g) => g.id)).toEqual(['b6']));
     expect(result.current.unavailable).toBeFalsy();
+  });
+
+  it('C3 CONTROL a city replayed from the cache is held — a sort change whose read fails keeps its rows', async () => {
+    mockGetCommunityPlaces.mockResolvedValueOnce(page('SwCityC3', 'c3'));
+    const first = await renderHook(() => useCommunityDiscovery('SwCityC3', null));
+    await waitFor(() => expect(first.result.current.gems).toHaveLength(1));
+    await act(async () => { first.unmount(); });
+    const { result, rerender } = await renderHook(({ s }: { s: string | null }) => useCommunityDiscovery('SwCityC3', s), { initialProps: { s: null as string | null } });
+    expect(result.current.gems.map((g) => g.id)).toEqual(['c3']);
+    expect(mockGetCommunityPlaces).toHaveBeenCalledTimes(1);
+    mockGetCommunityPlaces.mockResolvedValueOnce(NET_FAIL);
+    await act(async () => { rerender({ s: 'top' }); });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.gems.map((g) => g.id)).toEqual(['c3']);
+    expect(result.current.unavailable).toBe(true);
+  });
+
+  it('C4 CONTROL the same, when the cached city is switched back to within one mount', async () => {
+    mockGetCommunityPlaces.mockResolvedValueOnce(page('SwCityC4', 'c4'));
+    const { result, rerender } = await renderHook(({ c, s }: { c: string; s: string | null }) => useCommunityDiscovery(c, s), { initialProps: { c: 'SwCityC4', s: null as string | null } });
+    await waitFor(() => expect(result.current.gems).toHaveLength(1));
+    mockGetCommunityPlaces.mockResolvedValueOnce(NET_FAIL);
+    await act(async () => { rerender({ c: 'SwCityD4', s: null }); });
+    await waitFor(() => expect(result.current.unavailable).toBe(true));
+    await act(async () => { rerender({ c: 'SwCityC4', s: null }); });
+    expect(result.current.gems.map((g) => g.id)).toEqual(['c4']);
+    mockGetCommunityPlaces.mockResolvedValueOnce(NET_FAIL);
+    await act(async () => { rerender({ c: 'SwCityC4', s: 'top' }); });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.gems.map((g) => g.id)).toEqual(['c4']);
+    expect(result.current.unavailable).toBe(true);
   });
 });

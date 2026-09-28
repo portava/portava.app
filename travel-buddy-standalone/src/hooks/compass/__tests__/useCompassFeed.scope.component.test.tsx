@@ -20,6 +20,7 @@
  *   H3  B's read fails: no data, and B's error — never A's feed
  *   H4  the same scope, a failed refresh: the feed is kept, and the error is said
  *   H5  another section's feed (same viewer, same city) is not returned
+ *   H6  A's read failed, switch to B (in flight): A's error is not returned for B
  *   C1  CONTROL: a good read for B returns B's feed, no error
  *
  * Run with: npx jest src/hooks/compass/__tests__/useCompassFeed.scope.component.test.tsx
@@ -105,6 +106,14 @@ describe('useCompassFeed — a feed is shown only for the scope it was read for 
     mockFetchCompassSection.mockResolvedValueOnce({ ok: true, data: feed('b') });
     await act(async () => { rerender({ c: 'Porto' }); });
     await waitFor(() => expect(firstId(result.current.data)).toBe('b'));
+    expect(result.current.error).toBeNull();
+  });
+
+  it('H6 A\'s read failed, switch to B (in flight): A\'s error is not returned for B', async () => {
+    mockFetchCompassSection.mockResolvedValueOnce({ ok: false, error: 'a_failed' });
+    const { result, rerender } = await renderHook(({ c }: { c: string }) => useCompassFeed({ section: 'for_you', city: c }), { initialProps: { c: 'Lisbon' } });
+    await waitFor(() => expect(result.current.error).toBe('a_failed'));
+    await act(async () => { rerender({ c: 'Porto' }); });
     expect(result.current.error).toBeNull();
   });
 });
