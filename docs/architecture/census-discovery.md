@@ -16951,6 +16951,32 @@ Run after the last edit.
   - a status-less auth error read as a rejection (V10);
   - any path §99.6 lists.
 
+### 100.11 Integrator: DV-83 held at W after the independent re-verification at `03dfafe2b`
+
+*Integrator, 2026-09-28. §99 and §100 were merged onto `main` at `0d7dedb57`, which is `03dfafe2b`. An independent verifier then checked that tree. It ran every probe below and restored every mutated file byte-identical, checked by sha256.*
+
+- **Confirmed.**
+  - All three §99.8 findings are closed at this tree: ForYouTab's `ok: false` state, the category counts' partial totals, and map mode on both tabs. The round-3 probes P1–P6 pass, and so do new probes.
+  - D-W11X2-21's status-less rule is pinned by V10.
+  - 39 of 39 mutations are killed across ForYouTab, DiscoveryCategoryTab, the services, the hooks, the output-kinds rail and the server. Two survive the lane's own suites but are killed by the verifier's probes: the stale line over a cached partial page, and hydration dropping the partial flag.
+- **Found: four paths that break the criterion's wording, each shown by a probe that fails against this tree.**
+  1. **The search screen appends a `partial` page 2 as if complete.** On a cursor page, `travel-buddy-standalone/app/search.tsx:310#} else {` appends the rows and never reads `refusal`. The incomplete notice is set only on page 1. A page-2 `nothing` refusal and a page-2 transport failure are silent too.
+  2. **DiscoveryCategoryTab prints "N places found", the list's claim that the set has ended, on two kinds of read:**
+     - a failed read: after a failed refresh over a cached page, `total` stays at its initial 0 (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:412#const [total, setTotal]           = useState(0);`), so the footer claims the cached page is the whole set;
+     - a partial page, whenever `places.length >= total`, beside the partial notice (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:716#places.length >= total && places.length > 0 ?`).
+  3. **The output-kinds producer answers a failed read as empty.** `rankEmergingForViewer` refuses only a failed `discovery_places` read (`artifacts/api-server/src/lib/discoveryCandidates/outputKinds.ts:165#if (mat.failedReads.includes("discovery_places"))`). A failed blocks, standing or canonical-places read makes the route answer 200 with `items: []` and no error. It sits behind `discovery_output_kinds_enabled`, which is seeded FALSE.
+  4. **GET /discovery/community with no service client answers a quiet city.** `artifacts/api-server/src/routes/discovery.ts:2868#res.json({ items: [], city, total: 0 });` sends no refusal, and `useCommunityDiscovery` caches that answer for 5 minutes. §98 fixed the same class for the feed.
+- **Also found, not a literal break.**
+  - A failed load-more (page 2 and later) is silent on DiscoveryCategoryTab and search (§100.10).
+  - After a city switch, a failed community read keeps the previous city's gems under the new city's stale line. The failure is stated, but the places shown are the wrong city's.
+- **Next.** A round-5 lane closes the four paths and the two further findings, with failing-first tests and mutations. The row moves only after another independent verification.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | C | **W** | §100 closes §99.8's three paths, confirmed under mutation at `03dfafe2b` (§100.11). Four paths still present a failed or partial read as complete or empty: search's partial page 2 (`travel-buddy-standalone/app/search.tsx:310#} else {`); DiscoveryCategoryTab's "places found" footer after a failed refresh or beside a partial page (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:716#places.length >= total && places.length > 0 ?`); the output-kinds producer's ignored failed reads (`artifacts/api-server/src/lib/discoveryCandidates/outputKinds.ts:165#if (mat.failedReads.includes("discovery_places"))`); and the community route with no service client (`artifacts/api-server/src/routes/discovery.ts:2868#res.json({ items: [], city, total: 0 });`). |
+
+Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/lib/capability/prerequisitesCore.ts — §93.8 names its function-granular gate boundary as why the Compass KNOWN entry was struck; it is the prerequisite checker's own machinery, and no Discovery verdict rests on it.
