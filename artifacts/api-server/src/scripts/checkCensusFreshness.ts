@@ -4134,6 +4134,38 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/fixtures/searchPlatformGolden.json",
     // §70 names it as A08's remaining platform-direction work, and searchPlatformBoundary B5 pins its lib/ importers.
     "artifacts/api-server/src/routes/discoverySearchHelpers.ts",
+    // census-discovery §78 (lane W10-R2, scoring designs): A18, DV-09, DV-12, DV-18, DC-13 and DV-54 are
+    // graded on these modules, migrations, rollbacks and suites. portavaRank, DRS, the reason-code map and
+    // three of the four restated suites were already watched. DV-18's producer rests on the Map's trip reader.
+    "artifacts/api-server/src/lib/discoveryRankFlags.ts",
+    "artifacts/api-server/src/lib/discoveryRankDesigns.ts",
+    "artifacts/api-server/src/lib/discoveryRankObjectives.ts",
+    "artifacts/api-server/src/lib/discoveryRankIntegrity.ts",
+    "artifacts/api-server/src/lib/discoveryRankIntent.ts",
+    "artifacts/api-server/src/lib/discoveryRankTrip.ts",
+    "artifacts/api-server/src/lib/discoveryRankDiversity.ts",
+    "artifacts/api-server/src/lib/mapProjectionTripRead.ts",
+    "artifacts/api-server/src/migrations/3450_discovery_surface_objectives_flag.sql",
+    "artifacts/api-server/src/migrations/3451_discovery_engagement_integrity_flag.sql",
+    "artifacts/api-server/src/migrations/3452_discovery_feature_families_flag.sql",
+    "artifacts/api-server/src/migrations/3453_discovery_intent_trip_terms_flags.sql",
+    "artifacts/api-server/src/migrations/3454_discovery_diversity_axes_flag.sql",
+    "db/rollback/2026-09-28-3450-discovery-surface-objectives-flag-rollback.sql",
+    "db/rollback/2026-09-28-3451-discovery-engagement-integrity-flag-rollback.sql",
+    "db/rollback/2026-09-28-3452-discovery-feature-families-flag-rollback.sql",
+    "db/rollback/2026-09-28-3453-discovery-intent-trip-terms-flags-rollback.sql",
+    "db/rollback/2026-09-28-3454-discovery-diversity-axes-flag-rollback.sql",
+    "artifacts/api-server/src/test/portavaRankDesignGolden.test.ts",
+    "artifacts/api-server/src/test/fixtures/portavaRankGolden.json",
+    "artifacts/api-server/src/test/helpers/portavaRankGoldenScenarios.ts",
+    "artifacts/api-server/src/test/discoveryRankObjectives.test.ts",
+    "artifacts/api-server/src/test/discoveryRankIntent.test.ts",
+    "artifacts/api-server/src/test/discoveryRankTrip.test.ts",
+    "artifacts/api-server/src/test/discoveryRankIntegrity.test.ts",
+    "artifacts/api-server/src/test/discoveryRankDiversity.test.ts",
+    "artifacts/api-server/src/test/discoveryRankDesigns.test.ts",
+    "artifacts/api-server/src/test/db/discoveryRankDesignFlags.db.test.ts",
+    "artifacts/api-server/src/test/discoveryTrailModifier.test.ts",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //
