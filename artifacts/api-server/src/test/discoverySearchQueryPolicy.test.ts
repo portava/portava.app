@@ -56,6 +56,9 @@ describe("Q1 — sanitizeQuery strips only the PostgREST metacharacters", () => 
 
 const SKY_BAR = "p-sky-bar";
 const FIRE_BAR = "p-fire-bar";
+const RED_LION = "p-red-lion";
+const CAFE_LUNA = "p-cafe-luna";
+const CAFE_SOL = "p-cafe-sol";
 
 function world(): Partial<KitState> {
   const place = (id: string, name: string) => ({
@@ -69,7 +72,8 @@ function world(): Partial<KitState> {
       blocks: [], user_privacy_settings: [], profile_privacy_settings: [], user_follows: [], friend_requests: [],
       user_friendships: [], event_rsvps: [], events: [], trips: [], trip_plan_items: [], hidden_gems: [], posts: [],
       circles: [], hashtags: [], stamp_definitions: [], canonical_locations: [],
-      discovery_places: [place(SKY_BAR, "Sky Bar"), place(FIRE_BAR, "🔥 bar Lisboa")],
+      discovery_places: [place(SKY_BAR, "Sky Bar"), place(FIRE_BAR, "🔥 bar Lisboa"),
+        place(RED_LION, "Red Lion Pub"), place(CAFE_LUNA, "Café Luna"), place(CAFE_SOL, "Cafe Sol")],
     },
   };
 }
@@ -155,3 +159,98 @@ describe("Q6 — one emoji policy for the route and the gateway", () => {
     assert.ok(!/queryNormalizer/.test(platform));
   });
 });
+
+// ── census-discovery §80 follow-up (independent verification at bc0ba4a94) ──
+// Three emoji shapes the first strip missed, and one rule the first strip had
+// not decided. Register D-W10-S1-1, "The follow-up".
+const ENGLAND = "\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}"; // 🏴 + tag sequence
+const KEY_ONE = "1\u{FE0F}\u{20E3}";
+const KEY_STAR = "*\u{FE0F}\u{20E3}";
+const HIDDEN = /[\u{FE0F}\u{FE0E}\u{20E3}\u{200D}\u{E0000}-\u{E007F}]/u;
+
+describe("Q7 — the whole emoji sequence leaves the key, not just its base", () => {
+  it("Q7a — a subdivision flag (tag sequence) leaves no invisible tag in the key", async () => {
+    const { stripEmoji } = await import("../lib/inputAssistance/queryNormalizer.js");
+    assert.equal(stripEmoji(`${ENGLAND} pub`), "pub");
+    installKit(world());
+    const { status, body } = await kitGet(base, `/discovery/search?q=${encodeURIComponent(`${ENGLAND} pub`)}&type=places`);
+    assert.equal(status, 200);
+    assert.deepEqual(ids(body), [RED_LION]);
+  });
+
+  it("Q7b — a subdivision flag alone has nothing to search: 400 on search, query_too_short on suggest", async () => {
+    installKit(world());
+    const s = await kitGet(base, `/discovery/search?q=${encodeURIComponent(ENGLAND)}&type=places`);
+    assert.equal(s.status, 400);
+    installKit(world());
+    const g = await kitGet(base, `/discovery/suggest?q=${encodeURIComponent(ENGLAND)}`);
+    assert.equal(g.body.refusal?.code, "query_too_short");
+  });
+
+  it("Q7c — a keycap is removed WITH its base character: '1️⃣ bar' searches 'bar'", async () => {
+    const { stripEmoji } = await import("../lib/inputAssistance/queryNormalizer.js");
+    assert.equal(stripEmoji(`${KEY_ONE} bar`), "bar");
+    installKit(world());
+    const { body } = await kitGet(base, `/discovery/search?q=${encodeURIComponent(`${KEY_ONE} bar`)}&type=places`);
+    assert.ok(ids(body).includes(SKY_BAR), "'1️⃣ bar' must find Sky Bar");
+  });
+
+  it("Q7d — keycaps alone ('*️⃣*️⃣') are refused, never searched as a PostgREST '*' wildcard", async () => {
+    const { stripEmoji } = await import("../lib/inputAssistance/queryNormalizer.js");
+    assert.equal(stripEmoji(`${KEY_STAR}${KEY_STAR}`), "");
+    installKit(world());
+    const { status } = await kitGet(base, `/discovery/search?q=${encodeURIComponent(`${KEY_STAR}${KEY_STAR}`)}&type=places`);
+    assert.equal(status, 400);
+  });
+
+  it("Q7e — no variation selector, keycap mark, joiner or tag survives in any key (each class pinned)", async () => {
+    const { stripEmoji } = await import("../lib/inputAssistance/queryNormalizer.js");
+    for (const input of [
+      "a\u{FE0F} bar",       // VS16 after a letter
+      "a\u{FE0E} bar",       // VS15 after a letter
+      "x\u{20E3} bar",       // a keycap mark on a non-keycap base
+      "\u{200D}bar",         // a stray joiner
+      `bar ${ENGLAND}`,       // tags
+      "\u{2764}\u{FE0E} bar", // text-presentation heart
+    ]) {
+      const out = stripEmoji(input);
+      assert.ok(!HIDDEN.test(out), `${JSON.stringify(input)} -> ${JSON.stringify(out)} kept a hidden mark`);
+      assert.match(out, /bar$/);
+    }
+  });
+});
+
+describe("Q8 — an emoji inside a word (the in-word rule, decided)", () => {
+  // Rule: an emoji BETWEEN TWO LOWERCASE LETTERS is inside one word and is
+  // removed without a gap ("caf☕e" -> "cafe"). Anywhere else — between words,
+  // at an edge, or before an UPPERCASE letter that starts a new word
+  // ("Sky🔥Bar") — it separates, as a space.
+  it("Q8a — 'caf☕e' is one word, 'Sky🔥Bar' is two", async () => {
+    const { stripEmoji } = await import("../lib/inputAssistance/queryNormalizer.js");
+    assert.equal(stripEmoji("caf\u{2615}e"), "cafe");
+    assert.equal(stripEmoji("caf\u{2615}\u{FE0F}e"), "cafe", "the emoji's own selector goes with it");
+    assert.equal(stripEmoji("caf\u{2615}\u{00E9}"), "caf\u{00E9}");
+    assert.equal(stripEmoji("Sky\u{1F525}Bar"), "Sky Bar");
+    assert.equal(stripEmoji("bar\u{1F525} 2"), "bar 2");
+  });
+
+  it("Q8b — on the route: 'caf☕é luna' finds 'Café Luna', 'caf☕e' finds 'Cafe Sol', 'Sky🔥Bar' finds 'Sky Bar'", async () => {
+    installKit(world());
+    const a = await kitGet(base, `/discovery/search?q=${encodeURIComponent("caf\u{2615}\u{00E9} luna")}&type=places`);
+    assert.deepEqual(ids(a.body), [CAFE_LUNA]);
+    installKit(world());
+    const b = await kitGet(base, `/discovery/search?q=${encodeURIComponent("caf\u{2615}e")}&type=places`);
+    assert.deepEqual(ids(b.body), [CAFE_SOL]);
+    installKit(world());
+    const c = await kitGet(base, `/discovery/search?q=${encodeURIComponent("Sky\u{1F525}Bar")}&type=places`);
+    assert.deepEqual(ids(c.body), [SKY_BAR]);
+  });
+
+  it("Q8c — the gateway normaliser produces the same key (one rule, two callers)", async () => {
+    const { normalizeQuery } = await import("../lib/inputAssistance/queryNormalizer.js");
+    for (const [input, key] of [[`${ENGLAND} pub`, "pub"], [`${KEY_ONE} bar`, "bar"], ["caf\u{2615}e", "cafe"], ["Sky\u{1F525}Bar", "Sky Bar"]] as const) {
+      assert.equal(normalizeQuery(input, { context: "global_search", allowTypoCorrection: false }).query, key, input);
+    }
+  });
+});
+
