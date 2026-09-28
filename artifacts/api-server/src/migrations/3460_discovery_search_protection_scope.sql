@@ -30,8 +30,8 @@
 -- No dependency beyond 3366: where the row is absent (3366 unapplied) this is a
 -- no-op and says so, because seeding the flag is 3366's job, not this file's.
 --
--- Rollback: not shipped. Re-running 3366's description text in an UPDATE
--- restores the previous wording; nothing else changes here.
+-- Rollback: db/rollback/2026-09-28-3460-discovery-search-protection-scope-rollback.sql (census-discovery §90); it
+-- restores 3366's wording and must run BEFORE 3366's rollback; nothing else changes here.
 
 BEGIN;
 

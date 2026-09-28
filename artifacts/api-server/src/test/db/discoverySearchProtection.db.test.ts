@@ -19,7 +19,8 @@
  *       reaches the store, which answers null — and the pass withholds every
  *       position and keeps every row. The table is renamed back after.
  *   Z4  3366's rollback refuses while the flag is ON, deletes the row and its
- *       ledger row while it is OFF, and 3366 re-applies to the same state.
+ *       ledger row while it is OFF, and 3366 re-applies to the same state. With
+ *       3460 applied it keeps the row until 3460's rollback restores 3366's text.
  */
 import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
@@ -37,6 +38,11 @@ const __dir = dirname(fileURLToPath(import.meta.url));
 const MIGRATION = resolve(__dir, "../../migrations/3366_discovery_search_protected_zones_flag.sql");
 const ROLLBACK = resolve(__dir, "../../../../../db/rollback/2026-09-27-3366-discovery-search-protected-zones-flag-rollback.sql");
 const LEDGER_NAME = "3366_discovery_search_protected_zones_flag.sql";
+// 3460 rewrites the flag's description; its rollback restores 3366's seed text and must run first (census-discovery §90).
+const MIGRATION_3460 = resolve(__dir, "../../migrations/3460_discovery_search_protection_scope.sql");
+const ROLLBACK_3460 = resolve(__dir, "../../../../../db/rollback/2026-09-28-3460-discovery-search-protection-scope-rollback.sql");
+const has3460Wording = (): boolean =>
+  scalar(`SELECT count(*)::text FROM public.feature_flags WHERE flag = '${DISCOVERY_SEARCH_PROTECTION_FLAG}' AND description LIKE '%input gateway%'`) === "1";
 
 const SHELTER = { lat: 38.7200, lng: -9.1300 };
 const CLINIC = { lat: 38.7400, lng: -9.1500 };
@@ -66,6 +72,7 @@ describe("B04 — the search pass over the real protected_zones, and 3366", { sk
     // whatever Z4 (or a mutated rollback under P24) did to it. 3366 is idempotent.
     exec(`UPDATE public.feature_flags SET enabled = false WHERE flag = '${DISCOVERY_SEARCH_PROTECTION_FLAG}';`);
     exec(readFileSync(MIGRATION, "utf8"));
+    exec(readFileSync(MIGRATION_3460, "utf8")); // and 3460's wording, as the chain replay left it
   });
 
   it("Z0 — 3366 is in force: the flag exists, FALSE, and the shared reader reads it as off", async () => {
@@ -130,6 +137,18 @@ describe("B04 — the search pass over the real protected_zones, and 3366", { sk
     assert.equal(scalar(`SELECT enabled::text FROM public.feature_flags WHERE flag = '${DISCOVERY_SEARCH_PROTECTION_FLAG}'`), "true");
 
     exec(`UPDATE public.feature_flags SET enabled = false WHERE flag = '${DISCOVERY_SEARCH_PROTECTION_FLAG}';`);
+    // With 3460 applied, the row no longer carries 3366's seed text: 3366's rollback alone KEEPS it (§87's rule)...
+    exec(readFileSync(MIGRATION_3460, "utf8"));
+    assert.ok(has3460Wording(), "3460 applied: the flag carries 3460's description");
+    exec(readFileSync(ROLLBACK, "utf8"));
+    assert.equal(scalar(`SELECT count(*)::text FROM public.feature_flags WHERE flag = '${DISCOVERY_SEARCH_PROTECTION_FLAG}'`), "1", "3366's rollback deleted a row whose description 3460 had rewritten");
+    // ...so the recovery order is 3460's rollback first (restoring 3366's text), then 3366's.
+    exec(`INSERT INTO public.schema_migration_ledger (filename, checksum, applied_by, notes)
+          VALUES ('${LEDGER_NAME}', 'test', 'manual', 'discoverySearchProtection.db.test.ts') ON CONFLICT (filename) DO NOTHING;`);
+    exec(readFileSync(ROLLBACK_3460, "utf8"));
+    assert.equal(has3460Wording(), false, "3460's rollback left 3460's description in place");
+    assert.equal(scalar(`SELECT md5(description) FROM public.feature_flags WHERE flag = '${DISCOVERY_SEARCH_PROTECTION_FLAG}'`), "5f2db1c757a31a601ac7b11174352ef5", "3460's rollback restores 3366's seed text byte for byte");
+    assert.equal(scalar(`SELECT enabled::text FROM public.feature_flags WHERE flag = '${DISCOVERY_SEARCH_PROTECTION_FLAG}'`), "false", "3460's rollback touched the flag's value");
     exec(readFileSync(ROLLBACK, "utf8"));
     assert.equal(scalar(`SELECT count(*)::text FROM public.feature_flags WHERE flag = '${DISCOVERY_SEARCH_PROTECTION_FLAG}'`), "0");
     assert.equal(scalar(`SELECT count(*)::text FROM public.schema_migration_ledger WHERE filename = '${LEDGER_NAME}'`), "0");
