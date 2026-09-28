@@ -4106,6 +4106,10 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // suite (every edge family revoked then rebuilt, against a scratch build; the fail-visible guards).
     // compass/CompassGraphEngine.ts, the code it grades, is already watched above (§56).
     "artifacts/api-server/src/test/compassGraphRevocation.test.ts",
+    // census-discovery §74 (lane P32, independent verification of §73): DV-20 and B01 go C -> W on this
+    // suite (combining diacritics outside U+0300–U+036F; listTrails compares strings). The code it grades
+    // is already watched (§46, §51, §61, §73).
+    "artifacts/api-server/src/test/discoveryVerifyAudit3.test.ts",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //
