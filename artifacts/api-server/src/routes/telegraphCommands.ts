@@ -24,7 +24,7 @@ import { dispatchTable, lookup } from "../domain/telegraph/contracts/dispatchTab
 import { getNearbyVenues, formatDistance, type NearbyVenue } from "../lib/venuesService.js";
 import {
   compensateFor,
-  registrationFor, TELEGRAPH_DISCOVERY_ACTIONS_FLAG,
+  registrationFor,
   type ActionContext,
 } from "../services/telegraph/actionRegistry.js";
 
@@ -604,7 +604,7 @@ router.post("/telegraph/commands/discovery-card", async (req, res) => {
   if (!auth) return;
   const { client, user } = auth;
 
-  if (!(await isFlagEnabled(client, TELEGRAPH_DISCOVERY_ACTIONS_FLAG))) {
+  if (!(await isFlagEnabled(client, "telegraph_discovery_actions_enabled"))) {
     sendError(res, "feature_disabled", "Saving places from a conversation is not enabled.");
     return;
   }
