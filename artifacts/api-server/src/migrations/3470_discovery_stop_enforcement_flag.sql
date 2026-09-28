@@ -33,6 +33,10 @@
 --        unratified thresholds (5 % / 10 %) enforced, the other five measured
 --        and reported `unruled`, never tripped.
 --
+-- ARMING NAMES ITS VALUES: the code arms only when this row is TRUE AND its
+-- metadata.values_version equals STOP_ENFORCEMENT_VALUES_VERSION
+-- ('stop-values-2026-09-28.1'), so an approval arms exactly the values it saw.
+--
 -- ARMING IN PRODUCTION IS PRODUCTION ACTIVATION, so this file only creates the
 -- row, OFF. The approval request (exact values, consequences, recovery) is
 -- register entry D-W10-O-3.

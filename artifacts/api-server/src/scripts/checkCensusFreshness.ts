@@ -4134,6 +4134,21 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/fixtures/searchPlatformGolden.json",
     // §70 names it as A08's remaining platform-direction work, and searchPlatformBoundary B5 pins its lib/ importers.
     "artifacts/api-server/src/routes/discoverySearchHelpers.ts",
+    // census-discovery §82 (lane W10-O, outcomes and stop conditions): DV-82/DC-32 (the armed halt values,
+    // 3470), DV-37 (the keyless retry), DV-19 (the judgement and enrichment), DV-78 (immediate_skip, the
+    // separation pins) and DC-22/DC-32/DV-41 (the ruled values) are graded on these.
+    "artifacts/api-server/src/lib/discoveryDwellSkip.ts",
+    "artifacts/api-server/src/migrations/3470_discovery_stop_enforcement_flag.sql",
+    "db/rollback/2026-09-28-3470-discovery-stop-enforcement-flag-rollback.sql",
+    "artifacts/api-server/src/test/discoveryStopEnforcement.test.ts",
+    "artifacts/api-server/src/test/discoveryKeylessOutcome.test.ts",
+    "artifacts/api-server/src/test/discoveryOutcomeJudgement.test.ts",
+    "artifacts/api-server/src/test/discoveryDwellSkip.test.ts",
+    "artifacts/api-server/src/test/discoveryNegativeFeedbackSeparation.test.ts",
+    "artifacts/api-server/src/test/discoveryRulingsPinned.test.ts",
+    "artifacts/api-server/src/test/db/discoveryOutcomeEnrichment.db.test.ts",
+    // §82.2 DV-78 grades D-W10-O-6 on its dismiss → ITEM_HIDDEN mapping (hide ≡ not_interested).
+    "artifacts/api-server/src/services/ranking/rankingAnalytics.ts",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

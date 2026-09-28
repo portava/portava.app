@@ -29,7 +29,7 @@ An entry that needs owner approval is marked **APPROVAL REQUIRED**. It gives the
 
 ### D-W10-O-1 — the seven stop-condition halt values (DV-82, DC-32; A-5)
 
-- **The question.** `docs/specs/discovery-v1/12_Claude_Code_Implementation.md:206` "Stop rollout if: event rejection rises, recommendation logging gaps appear, creator concentration spikes, reports/hides increase materially, cache bypass reappears, RLS leaks occur, attribution double-counts." Census §54.13 Q1: *"For each, what value halts the rollout, over what window, and on how much evidence?"*; Q2: *"Do you ratify the enforced values — a 5 % event-rejection rate, a 10 % logging gap, a 20-attempt floor and a 10-minute window — or replace them?"*
+- **The question.** `docs/specs/discovery-v1/12_Claude_Code_Implementation.md:206#Stop conditions`: "Stop rollout if: event rejection rises, recommendation logging gaps appear, creator concentration spikes, reports/hides increase materially, cache bypass reappears, RLS leaks occur, attribution double-counts." Census §54.13 Q1: *"For each, what value halts the rollout, over what window, and on how much evidence?"*; Q2: *"Do you ratify the enforced values — a 5 % event-rejection rate, a 10 % logging gap, a 20-attempt floor and a 10-minute window — or replace them?"*
 - **Options considered.**
   - (a) Leave five unruled: they are measured and can never halt, so `12`'s stop is 2 of 7 in effect.
   - (b) Relative thresholds (×N a trailing baseline): no baseline exists, because production has never run the ranked path (§48.1). A relative rule over no baseline cannot fire, or fires on noise.
@@ -47,7 +47,7 @@ An entry that needs owner approval is marked **APPROVAL REQUIRED**. It gives the
   | `attribution_double_count` | any live double count | 1 attribution | `ATTRIBUTION_DOUBLE_COUNT_THRESHOLD`, `ATTRIBUTION_DOUBLE_COUNT_MIN_SAMPLE` |
 
   One window for all seven: `STOP_WINDOW_MS`, 10 minutes (kept). HHI 0.25 is "more concentrated than four creators sharing the page equally", the classic "highly concentrated" line on the 0–1 scale. "Reappears", "occur" and "double-counts" name events, so any one halts. The two §12.5 values are kept because their healthy value is 0 and nothing measured argues for another.
-- **Reversibility.** Every value is a named constant in one file. Disarming is `UPDATE feature_flags SET enabled = false WHERE flag = 'discovery_stop_enforcement_enabled'`; the next non-legacy resolution reads it. Nothing is lost: a trip is evidence in memory that ages out in 10 minutes.
+- **Reversibility.** Every value is a named constant in one file, and the set carries a version (`STOP_ENFORCEMENT_VALUES_VERSION` = `stop-values-2026-09-28.1`) that a test pins to the values. Disarming is `UPDATE feature_flags SET enabled = false WHERE flag = 'discovery_stop_enforcement_enabled'`; the next non-legacy resolution reads it. Nothing is lost: a trip is evidence in memory that ages out in 10 minutes.
 - **Where it is implemented.** `artifacts/api-server/src/lib/discoveryStopConditions.ts` (`ARMED_STOP_CONDITION_RULINGS`, `refreshStopEnforcement`, the §82 block at the foot), the caller `artifacts/api-server/src/lib/discoveryStopMeasurements.ts` (`refreshDiscoveryStopMeasurements` reads the arming flag), migration `3470_discovery_stop_enforcement_flag.sql` (flag `discovery_stop_enforcement_enabled`, seeded FALSE) and its rollback. Tests: `src/test/discoveryStopEnforcement.test.ts` G1–G7; `src/test/discoveryStopSevenConditions.test.ts` (unchanged, flag off).
 
 ### D-W10-O-2 — an unreadable stop measurement halts, when armed (DV-82; §54.13 Q3)
@@ -64,7 +64,7 @@ An entry that needs owner approval is marked **APPROVAL REQUIRED**. It gives the
   1. Apply `3390_discovery_rls_explicit_policies.sql` and `3391_discovery_stop_condition_measurements.sql` (3391 depends on 3390's posture for `rls_leak`).
   2. Apply `3470_discovery_stop_enforcement_flag.sql` (seeds `discovery_stop_enforcement_enabled` FALSE; refuses to commit it ON).
   3. Read the baselines once, read-only, before arming (census §82.8 has the SQL): the HHI of Discovery exposures and the (dismiss + report) share over the last 7 days. If either is already above its value (0.25, 0.05), arming would keep PDE on legacy from the first minute; decide whether that is wanted before step 4.
-  4. `UPDATE public.feature_flags SET enabled = true WHERE flag = 'discovery_stop_enforcement_enabled';`
+  4. `UPDATE public.feature_flags SET enabled = true, metadata = jsonb_build_object('values_version', 'stop-values-2026-09-28.1') WHERE flag = 'discovery_stop_enforcement_enabled';`. The row must name the values version: arming reads DISARMED unless `metadata.values_version` equals `STOP_ENFORCEMENT_VALUES_VERSION`, so an approval arms exactly the values it approved, and a later change to any value (which must bump the version) needs a new approval.
   5. The values armed are exactly D-W10-O-1's table, with D-W10-O-2.
 - **If approved.** In shadow or PDE mode, any of the seven over its value, or an unreadable measurement, resolves Discovery to legacy (`reason: stop_condition`) for the 10-minute window, and the reading says which. In legacy mode (production today) nothing changes, because the resolver never evaluates stop conditions on legacy.
 - **If declined.** Flag-off behaviour stays exactly as now: two unratified thresholds enforced, five measured and reported `unruled`. `12`'s stop stays 2 of 7 in effect, and DV-82 stays `W`.
@@ -72,7 +72,7 @@ An entry that needs owner approval is marked **APPROVAL REQUIRED**. It gives the
 
 ### D-W10-O-4 — §47.8's silent production defaults (DC-32; E-3)
 
-- **The question.** `docs/specs/upgrades-v2/02-DISCOVERY-v2.md:42`: *"reuse approved weights, exploration budgets, sensitive-location policy, freshness and thresholds; ask rather than choose silent production defaults."* §47.8: *"rule each value, or mark it PROVISIONAL with a review date."*
+- **The question.** `docs/specs/upgrades-v2/02-DISCOVERY-v2.md:42#Existing Ranker and Event Truth holds are`: *"reuse approved weights, exploration budgets, sensitive-location policy, freshness and thresholds; ask rather than choose silent production defaults."* §47.8: *"rule each value, or mark it PROVISIONAL with a review date."*
 - **Options considered.** (a) Leave them unruled (the finding stands). (b) Change them now: nothing measured says any is wrong, and changing a served value without evidence is the thing the clause forbids. (c) Rule each as PROVISIONAL at its current value, with a review date and the evidence that would move it, and pin the code to this table. **Chosen.**
 - **Decision and rationale.** Every value below is ruled **PROVISIONAL, review by 2027-03-31 or at the first production outcome judgement (D-W10-O-10), whichever is first.** None is changed.
 
@@ -186,7 +186,7 @@ This is consent, which is not delegated. Nothing here turns collection on.
 
 - **Recommended action, exactly.** Apply `artifacts/api-server/src/migrations/2893_rank_events_retire_writerless_surfaces.sql` to production as written, in its own transaction (the file carries `BEGIN`/`COMMIT`), and record its ledger row. It narrows `rank_events_surface_check` from fifteen labels to eight: it retires `search`, `nearby`, `story`, `event`, `trip`, `profile` and `explore`, and keeps `pulse`, `discovery`, `events`, `compass`, `live_pulse`, `living_page`, `watch_feed` and `wall`.
 - **Dependencies.**
-  - 2298 must be in force (production admits the fifteen labels: census row DV-44, §44). The file refuses otherwise.
+  - 2298 must be in force (production admits the fifteen labels: census row DV-44, §48). The file refuses otherwise.
   - Zero rows may carry a retired label. The file counts them and aborts with the counts otherwise.
   - The code already writes only the eight (`src/test/discoverySurfaceWriterProof.test.ts`).
   - Pre-flight, read-only: `SELECT surface, count(*) FROM public.rank_events GROUP BY 1 ORDER BY 1;` and `SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'rank_events_surface_check';`.
