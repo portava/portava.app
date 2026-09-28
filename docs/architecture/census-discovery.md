@@ -13332,7 +13332,11 @@ One mutation survived on its first form: v1's `TREND_GROWTH_FACTOR` 1.5 → 1.6 
 
 ### 84.6 The harness (controlled, not production)
 
-@@HARNESS@@
+- **The cluster.** Lanes P21/P33's PG16 cluster was reused: `LOCAL_DB_DIR=/var/tmp/p21-localdb`, port 55444, `LOCAL_DB_WORK=/var/tmp/p33-localdb-work`. `scripts/local-db/up.sh` dropped and re-replayed the database from this tree: baseline 388 tables, **359 migrations applied in order** (3435 as amended, 3475, 3476, 3477 among them), 12 known-unreplayable, 2 of those applied on retry.
+- **`scripts/local-db/run-tests.sh` on the full chain: 386 tests, 385 pass, 0 skipped.** All six §84 harness tests pass (N0–N5), and `discoveryEcosystemReport` E1 now reads the two defined monitors. The one failure is `trailsService` H2's first case, `fetch failed` — the suite's HTTP call to its own in-process express server — and it is not §84's: across four full or partial runs this lane made, the same `fetch failed` moved between TV6, TV7, H4 and H2 of the two Trails HTTP suites (each passes alone, TV6 twice), and **on a chain replayed without 3475–3477 (`LOCAL_DB_TO=3475`) the full suite also failed TV6** (379/386; the other six failures are §84's own N0–N5, red without their migrations, which is the harness suite's seen-RED). No Trails code path reads a §84 object. The load average on the machine reached 160 from other lanes during these runs.
+- **What N0 shows on a real server.** With the flag OFF, the 3477 dispatcher and 3435's own function (restored by 3477's rollback inside a rolled-back transaction) write the same rows at the same instant, column for column, with every v2 column NULL. With the flag ON, 3477's rebuild equals the TypeScript on every stored place and Local Pulse row (N2, N3), over a corpus in which every designed case holds (N4).
+- **3477 rolled back and re-applied twice** inside a transaction: the rollback restores 3435's body; the re-apply is idempotent (N5).
+- Controlled rows on a local harness; nothing here is production evidence.
 
 ### 84.7 Checks run at this tree, and what was not run
 
@@ -13341,7 +13345,7 @@ All in `artifacts/api-server`, after the last code edit unless stated.
 - **Pass:** `typecheck` (exit 0); `check:test-registration`, `check:migration-prefixes`, `check:schema-references`, `check:writerless-reads`, `check:enum-literals`, `check:production-drift` (`area_momentum` recorded `unapplied`, on the line after `trail_relations`), `check:flag-polarity` (the five flags are CAPABILITY by name and each has a literal `isFlagEnabled` reader), `check:route-auth-gate`, `check:guard-coverage`, `check:discovery-query-paths` (no index added), `check:api-prefix`, `check:route-shadowing`, `check:async-handlers`, `check:unissued-supabase-writes`, `check:silent-supabase-writes`, `check:not-null-writes`.
 - **Census:** `check:census-integrity`, `check:doc-citations` (0 broken anchors), `check:citation-targets` (at its ceiling, 164/164), `check:citation-symbols`, `check:census-freshness`, `check:census-scope-coverage` (census-discovery 413 cited · 413 watched), `check:census-row-move-labels` — all exit 0.
 - **Unit suites:** every suite that imports or reads a changed file — 142 files (`grep` for every changed module, migration, script, the census and the register): 2,635 tests, 2,633 pass, 0 skipped. The two failures are the ones §68.7 and §75.6 record: `discoveryClientRouteE2E.test.ts` (a client module-link error, `truncateDisplayName` not exported by `travel-buddy-standalone/src/utils/identity.ts`) and `wallSessionIntentLiveDb.test.ts` (refused by the CI Supabase guard: `SUPABASE_URL` is the loopback stub). Neither imports anything this lane changed.
-- **`typecheck:tests`:** @@TCT@@
+- **`typecheck:tests`:** 863 diagnostics across 115 files, the baseline; no file above it, no `any`, no `@ts-expect-error`. (A first run was killed by memory pressure from other lanes' load, a second found one new cast error in `discoveryTrendOps.test.ts`, fixed by narrowing on `state` instead of casting.)
 - **Not run:** `check:write-path-columns`, `check:write-path-hazard` and `check:migration-ledger` need a live Supabase target. Reasoned instead: the only application writes this lane adds are the scheduler's two `DELETE … WHERE computed_at < …` on `place_momentum` / `area_momentum` (columns that exist in 2892 and 3476) and an RPC; neither names a column the extractor could find missing. The full `npm test` and `check:all` were not run; no client file changed, so no client check ran.
 
 ### 84.8 Other censuses and freshness
@@ -13349,7 +13353,7 @@ All in `artifacts/api-server`, after the last code edit unless stated.
 - **census-discovery:** CENSUS_SCOPE gains §84's four new modules, 3475–3477, their three rollbacks and the four new suites (`artifacts/api-server/src/scripts/checkCensusFreshness.ts`, the census-discovery block's foot). Its acknowledgement names those fifteen files and argues that no verdict outside §84 moved (every behaviour is flag-held and the golden holds flag-off values).
 - **census-trips** watches `src/test/db/`: its acknowledgement names the new harness suite, which touches no `trip_*` object.
 - **`src/index.ts`** changed on two existing lines (the scheduler's import and start, appended), and `src/scripts/checkProductionDrift.ts` on one (the `area_momentum` entry appended to the closing line of `trail_relations`'s): line-neutral, so no citation into either moved; `check:census-freshness` reports every other census acknowledged.
-- The citation `discoveryLocalMomentum.ts:351#…` in §68.1 was re-anchored to the renamed constant (the line did not move; its text did).
+- §68.1's anchored citation of `LOCAL_MOMENTUM_FEATURE_VERSION` in lib/discoveryLocalMomentum.ts was re-anchored to the renamed constant (the line did not move; its text did).
 
 ### 84.9 What would turn this red
 
@@ -13417,3 +13421,4 @@ CONSTRUCTED 183 / 188 = **97.3 %**, up from 96.8 %. CORRECT 94 / 188 = **50.0 %*
 
 - NOT-GRADED: artifacts/api-server/src/test/memoryKernelTransactionLive.test.ts — §75.6 names it only as one of three suites that fail identically with and without §75's changes (the CI Supabase guard refuses it without live credentials); no Discovery verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/wallSessionIntentLiveDb.test.ts — §75.6 names it only as one of three suites that fail identically with and without §75's changes (the CI Supabase guard refuses it without live credentials); census-wall grades it, and no Discovery verdict rests on it.
+- NOT-GRADED: travel-buddy-standalone/src/utils/identity.ts — §84.7 names it only to identify the pre-existing module-link failure of `discoveryClientRouteE2E.test.ts` (§68.7); no §84 verdict rests on it.
