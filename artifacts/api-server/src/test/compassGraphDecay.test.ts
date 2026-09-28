@@ -215,7 +215,7 @@ describe("D0 — flag OFF / absent / unreadable are byte-identical, and carry no
   it("the same graph, world model and report", async () => {
     at("2026-09-28T00:00:00Z");
     const absent = sources();
-    const off = { ...sources(), feature_flags: [{ flag: engine.GRAPH_DECAY_FLAG, enabled: false }] };
+    const off: Store = { ...sources(), feature_flags: [{ flag: engine.GRAPH_DECAY_FLAG, enabled: false }] };
     const unreadable = sources();
     const ra = await rebuild(absent);
     const ro = await rebuild(off);
@@ -267,7 +267,7 @@ describe("D1 — the rule", () => {
 describe("D2 — flag ON, months after the world", () => {
   it("intent edges retired, confirmed edges decayed, structural edges at their base", async () => {
     at("2026-03-01T00:00:00Z");
-    const store = { ...sources(), feature_flags: [FLAG] };
+    const store: Store = { ...sources(), feature_flags: [FLAG] };
     await rebuild(store);
     assert.ok(edge(store, (e) => String(e.edge_type).startsWith("behavior:")), "fixture: in March the February clicks are fresh and stored");
     mock.timers.reset();
@@ -288,7 +288,7 @@ describe("D2 — flag ON, months after the world", () => {
 describe("D3 — revocation still holds under decay", () => {
   it("A's revoked stamp: its visited edge is gone", async () => {
     at("2026-09-28T00:00:00Z");
-    const store = { ...sources(), feature_flags: [FLAG] };
+    const store: Store = { ...sources(), feature_flags: [FLAG] };
     await rebuild(store);
     for (const s of store.user_stamps!) if (s.user_id === A) s.is_revoked = true;
     await rebuild(store);
@@ -300,7 +300,7 @@ describe("D3 — revocation still holds under decay", () => {
 describe("D4 — fresh support keeps a stale edge", () => {
   it("a click yesterday keeps A→place-1, at its new strength", async () => {
     at("2026-09-28T00:00:00Z");
-    const store = { ...sources(), feature_flags: [FLAG] };
+    const store: Store = { ...sources(), feature_flags: [FLAG] };
     store.rank_events!.push({ id: "re-9", user_id: A, item_id: "place-1", item_kind: "place", outcome: "click", served_at: "2026-09-27T00:00:00Z" });
     await rebuild(store);
     const e = edge(store, (x) => x.edge_type === "behavior:click" && x.src_key === A);
@@ -314,7 +314,7 @@ describe("D4 — fresh support keeps a stale edge", () => {
 describe("D5 — never from a source it did not read", () => {
   it("rank_events unreadable: the stale behavior edges are undecided and keep their stored weight", async () => {
     at("2026-03-01T00:00:00Z");
-    const store = { ...sources(), feature_flags: [FLAG] };
+    const store: Store = { ...sources(), feature_flags: [FLAG] };
     await rebuild(store);
     const before = edge(store, (e) => e.edge_type === "behavior:click" && e.src_key === A);
     assert.ok(before, "fixture: the click is fresh in March");
@@ -332,7 +332,7 @@ describe("D5 — never from a source it did not read", () => {
 describe("D6 — idempotent", () => {
   it("a second rebuild at the same instant retires and rewrites nothing", async () => {
     at("2026-09-28T00:00:00Z");
-    const store = { ...sources(), feature_flags: [FLAG] };
+    const store: Store = { ...sources(), feature_flags: [FLAG] };
     await rebuild(store);
     const first = snapshot(store);
     const r = await rebuild(store);
@@ -345,7 +345,7 @@ describe("D6 — idempotent", () => {
 describe("D7 — monotone in time", () => {
   it("later, no surviving edge is stronger", async () => {
     at("2026-09-28T00:00:00Z");
-    const store = { ...sources(), feature_flags: [FLAG] };
+    const store: Store = { ...sources(), feature_flags: [FLAG] };
     await rebuild(store);
     const w0 = new Map((store.compass_graph_edges ?? []).map((e) => [`${e.src_type}|${e.src_key}|${e.dst_type}|${e.dst_key}|${e.edge_type}`, Number(e.weight)]));
     mock.timers.reset();

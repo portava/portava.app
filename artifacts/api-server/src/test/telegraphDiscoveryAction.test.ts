@@ -179,14 +179,15 @@ describe("T2 — flag ON: tap → command → owning-domain write", () => {
 });
 
 describe("T3 — a place the person may not save is not offered", () => {
-  for (const [name, opts, card] of [
+  const cases: Array<[string, Parameters<typeof stage>[0], Record<string, unknown>]> = [
     ["an unknown place", { flag: true, place: null }, CARD],
     ["an inactive place", { flag: true, place: { status: "removed" } }, CARD],
     ["a submitter the person blocked", { flag: true, blocks: [{ blocker_id: ALICE, blocked_id: SUBMITTER }] }, CARD],
     ["a submitter who blocked the person", { flag: true, blocks: [{ blocker_id: SUBMITTER, blocked_id: ALICE }] }, CARD],
     ["an id Discovery does not serve", { flag: true }, { placeId: "db/not-a-uuid" }],
     ["an unreadable discovery_places", { flag: true, failures: { "discovery_places:select": { message: "down" } } }, CARD],
-  ] as const) {
+  ];
+  for (const [name, opts, card] of cases) {
     it(name, async () => {
       stage(opts);
       const r = await propose(ALICE, card);

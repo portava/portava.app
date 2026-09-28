@@ -702,6 +702,7 @@
         "profiles",
         "blocks",
         "user_privacy_settings",
+        "feature_flags",
         "trip_plan_items",
         "feature_flags",
         "trips",
@@ -2807,7 +2808,7 @@
         "feature_flags",
         "events",
         "feature_flags",
-        "trip_plan_items",
+        "feature_flags",
         "discovery_places",
         "hidden_gems",
         "hashtags",
@@ -2822,20 +2823,21 @@
         "profile_privacy_settings",
         "profiles",
         "trips",
+        "trip_plan_items",
         "profiles",
         "profiles",
         "profiles",
         "profiles",
-        "trips",
         "location_preferences",
         "profiles",
         "profile_privacy_settings",
         "event_rsvps",
-        "profiles",
+        "trips",
         "post_media",
         "location_preferences",
         "rent_buddy_profiles",
         "rent_buddy_user_limits",
+        "profiles",
         "profile_privacy_settings",
         "user_follows",
         "friend_requests",
@@ -2868,10 +2870,6 @@
         {
           "table": "events",
           "cols": "id, title, host_id, cover_url, city, country, starts_at, visibility, state, created_at, location_lat, location_lng, show_exact_location"
-        },
-        {
-          "table": "trip_plan_items",
-          "cols": "id, title, trip_id, creator_id, created_at"
         },
         {
           "table": "discovery_places",
@@ -2930,6 +2928,10 @@
           "cols": "id, title, destination_city, destination_country, owner_id, cover_url, start_date, status, visibility, created_at"
         },
         {
+          "table": "trip_plan_items",
+          "cols": "id, title, trip_id, creator_id, created_at"
+        },
+        {
           "table": "profiles",
           "cols": "id"
         },
@@ -2944,10 +2946,6 @@
         {
           "table": "profiles",
           "cols": "id, handle, username, name, display_name, avatar_url, is_private, home_city, home_country, account_status, verified, is_official, show_profile_picture_publicly"
-        },
-        {
-          "table": "trips",
-          "cols": "id, visibility, show_in_discovery, owner_id, status, start_date"
         },
         {
           "table": "location_preferences",
@@ -2966,8 +2964,8 @@
           "cols": "event_id"
         },
         {
-          "table": "profiles",
-          "cols": "id"
+          "table": "trips",
+          "cols": "id, visibility, show_in_discovery, owner_id, status, start_date"
         },
         {
           "table": "post_media",
@@ -2984,6 +2982,10 @@
         {
           "table": "rent_buddy_user_limits",
           "cols": "user_id, rent_buddy_disabled, buddy_disabled, nightlife_disabled"
+        },
+        {
+          "table": "profiles",
+          "cols": "id"
         },
         {
           "table": "profile_privacy_settings",
@@ -3074,11 +3076,6 @@
       ],
       "ilikes": [
         {
-          "table": "trip_plan_items",
-          "col": "title",
-          "pat": "%zork%"
-        },
-        {
           "table": "posts",
           "col": "content",
           "pat": "%zork%"
@@ -3091,6 +3088,11 @@
         {
           "table": "profiles",
           "col": "home_country",
+          "pat": "%zork%"
+        },
+        {
+          "table": "trip_plan_items",
+          "col": "title",
           "pat": "%zork%"
         }
       ]
@@ -3245,7 +3247,7 @@
         "feature_flags",
         "events",
         "feature_flags",
-        "trip_plan_items",
+        "feature_flags",
         "discovery_places",
         "hidden_gems",
         "hashtags",
@@ -3260,20 +3262,21 @@
         "profile_privacy_settings",
         "profiles",
         "trips",
+        "trip_plan_items",
         "profiles",
         "profiles",
         "profiles",
         "profiles",
-        "trips",
         "location_preferences",
         "profiles",
         "profile_privacy_settings",
         "event_rsvps",
-        "profiles",
+        "trips",
         "post_media",
         "location_preferences",
         "rent_buddy_profiles",
         "rent_buddy_user_limits",
+        "profiles",
         "profile_privacy_settings",
         "user_follows",
         "friend_requests",
@@ -3306,10 +3309,6 @@
         {
           "table": "events",
           "cols": "id, title, host_id, cover_url, city, country, starts_at, visibility, state, created_at, location_lat, location_lng, show_exact_location"
-        },
-        {
-          "table": "trip_plan_items",
-          "cols": "id, title, trip_id, creator_id, created_at"
         },
         {
           "table": "discovery_places",
@@ -3368,6 +3367,10 @@
           "cols": "id, title, destination_city, destination_country, owner_id, cover_url, start_date, status, visibility, created_at"
         },
         {
+          "table": "trip_plan_items",
+          "cols": "id, title, trip_id, creator_id, created_at"
+        },
+        {
           "table": "profiles",
           "cols": "id"
         },
@@ -3382,10 +3385,6 @@
         {
           "table": "profiles",
           "cols": "id, handle, username, name, display_name, avatar_url, is_private, home_city, home_country, account_status, verified, is_official, show_profile_picture_publicly"
-        },
-        {
-          "table": "trips",
-          "cols": "id, visibility, show_in_discovery, owner_id, status, start_date"
         },
         {
           "table": "location_preferences",
@@ -3404,8 +3403,8 @@
           "cols": "event_id"
         },
         {
-          "table": "profiles",
-          "cols": "id"
+          "table": "trips",
+          "cols": "id, visibility, show_in_discovery, owner_id, status, start_date"
         },
         {
           "table": "post_media",
@@ -3422,6 +3421,10 @@
         {
           "table": "rent_buddy_user_limits",
           "cols": "user_id, rent_buddy_disabled, buddy_disabled, nightlife_disabled"
+        },
+        {
+          "table": "profiles",
+          "cols": "id"
         },
         {
           "table": "profile_privacy_settings",
@@ -3512,11 +3515,6 @@
       ],
       "ilikes": [
         {
-          "table": "trip_plan_items",
-          "col": "title",
-          "pat": "%zork%"
-        },
-        {
           "table": "posts",
           "col": "content",
           "pat": "%zork%"
@@ -3529,6 +3527,11 @@
         {
           "table": "profiles",
           "col": "home_country",
+          "pat": "%zork%"
+        },
+        {
+          "table": "trip_plan_items",
+          "col": "title",
           "pat": "%zork%"
         }
       ]
@@ -3606,7 +3609,7 @@
         "feature_flags",
         "events",
         "feature_flags",
-        "trip_plan_items",
+        "feature_flags",
         "discovery_places",
         "hidden_gems",
         "hashtags",
@@ -3620,6 +3623,7 @@
         "profile_privacy_settings",
         "profile_privacy_settings",
         "trips",
+        "trip_plan_items",
         "profiles",
         "location_preferences",
         "profile_privacy_settings",
@@ -3658,10 +3662,6 @@
         {
           "table": "events",
           "cols": "id, title, host_id, cover_url, city, country, starts_at, visibility, state, created_at, location_lat, location_lng, show_exact_location"
-        },
-        {
-          "table": "trip_plan_items",
-          "cols": "id, title, trip_id, creator_id, created_at"
         },
         {
           "table": "discovery_places",
@@ -3714,6 +3714,10 @@
         {
           "table": "trips",
           "cols": "id, title, destination_city, destination_country, owner_id, cover_url, start_date, status, visibility, created_at"
+        },
+        {
+          "table": "trip_plan_items",
+          "cols": "id, title, trip_id, creator_id, created_at"
         },
         {
           "table": "profiles",
@@ -3828,11 +3832,6 @@
       ],
       "ilikes": [
         {
-          "table": "trip_plan_items",
-          "col": "title",
-          "pat": "%zork\\_alice%"
-        },
-        {
           "table": "posts",
           "col": "content",
           "pat": "%zork\\_alice%"
@@ -3845,6 +3844,11 @@
         {
           "table": "profiles",
           "col": "home_country",
+          "pat": "%zork\\_alice%"
+        },
+        {
+          "table": "trip_plan_items",
+          "col": "title",
           "pat": "%zork\\_alice%"
         }
       ]
@@ -4378,7 +4382,7 @@
         "feature_flags",
         "events",
         "feature_flags",
-        "trip_plan_items",
+        "feature_flags",
         "discovery_places",
         "hidden_gems",
         "hashtags",
@@ -4393,20 +4397,21 @@
         "profile_privacy_settings",
         "profiles",
         "trips",
+        "trip_plan_items",
         "profiles",
         "profiles",
         "profiles",
         "profiles",
-        "trips",
         "location_preferences",
         "profiles",
         "profile_privacy_settings",
         "event_rsvps",
-        "profiles",
+        "trips",
         "post_media",
         "location_preferences",
         "rent_buddy_profiles",
         "rent_buddy_user_limits",
+        "profiles",
         "profile_privacy_settings",
         "user_follows",
         "friend_requests",
@@ -4434,10 +4439,6 @@
         {
           "table": "events",
           "cols": "id, title, host_id, cover_url, city, country, starts_at, visibility, state, created_at, location_lat, location_lng, show_exact_location"
-        },
-        {
-          "table": "trip_plan_items",
-          "cols": "id, title, trip_id, creator_id, created_at"
         },
         {
           "table": "discovery_places",
@@ -4496,6 +4497,10 @@
           "cols": "id, title, destination_city, destination_country, owner_id, cover_url, start_date, status, visibility, created_at"
         },
         {
+          "table": "trip_plan_items",
+          "cols": "id, title, trip_id, creator_id, created_at"
+        },
+        {
           "table": "profiles",
           "cols": "id"
         },
@@ -4510,10 +4515,6 @@
         {
           "table": "profiles",
           "cols": "id, handle, username, name, display_name, avatar_url, is_private, home_city, home_country, account_status, verified, is_official, show_profile_picture_publicly"
-        },
-        {
-          "table": "trips",
-          "cols": "id, visibility, show_in_discovery, owner_id, status, start_date"
         },
         {
           "table": "location_preferences",
@@ -4532,8 +4533,8 @@
           "cols": "event_id"
         },
         {
-          "table": "profiles",
-          "cols": "id"
+          "table": "trips",
+          "cols": "id, visibility, show_in_discovery, owner_id, status, start_date"
         },
         {
           "table": "post_media",
@@ -4550,6 +4551,10 @@
         {
           "table": "rent_buddy_user_limits",
           "cols": "user_id, rent_buddy_disabled, buddy_disabled, nightlife_disabled"
+        },
+        {
+          "table": "profiles",
+          "cols": "id"
         },
         {
           "table": "profile_privacy_settings",
@@ -4620,11 +4625,6 @@
       ],
       "ilikes": [
         {
-          "table": "trip_plan_items",
-          "col": "title",
-          "pat": "%zork%"
-        },
-        {
           "table": "posts",
           "col": "content",
           "pat": "%zork%"
@@ -4637,6 +4637,11 @@
         {
           "table": "profiles",
           "col": "home_country",
+          "pat": "%zork%"
+        },
+        {
+          "table": "trip_plan_items",
+          "col": "title",
           "pat": "%zork%"
         }
       ]
@@ -5168,7 +5173,7 @@
         "feature_flags",
         "events",
         "feature_flags",
-        "trip_plan_items",
+        "feature_flags",
         "discovery_places",
         "hidden_gems",
         "hashtags",
@@ -5183,20 +5188,21 @@
         "profile_privacy_settings",
         "profiles",
         "trips",
+        "trip_plan_items",
         "profiles",
         "profiles",
         "profiles",
         "profiles",
-        "trips",
         "location_preferences",
         "profiles",
         "profile_privacy_settings",
         "event_rsvps",
-        "profiles",
+        "trips",
         "post_media",
         "location_preferences",
         "rent_buddy_profiles",
         "rent_buddy_user_limits",
+        "profiles",
         "profile_privacy_settings",
         "user_follows",
         "friend_requests",
@@ -5229,10 +5235,6 @@
         {
           "table": "events",
           "cols": "id, title, host_id, cover_url, city, country, starts_at, visibility, state, created_at, location_lat, location_lng, show_exact_location"
-        },
-        {
-          "table": "trip_plan_items",
-          "cols": "id, title, trip_id, creator_id, created_at"
         },
         {
           "table": "discovery_places",
@@ -5291,6 +5293,10 @@
           "cols": "id, title, destination_city, destination_country, owner_id, cover_url, start_date, status, visibility, created_at"
         },
         {
+          "table": "trip_plan_items",
+          "cols": "id, title, trip_id, creator_id, created_at"
+        },
+        {
           "table": "profiles",
           "cols": "id"
         },
@@ -5305,10 +5311,6 @@
         {
           "table": "profiles",
           "cols": "id, handle, username, name, display_name, avatar_url, is_private, home_city, home_country, account_status, verified, is_official, show_profile_picture_publicly"
-        },
-        {
-          "table": "trips",
-          "cols": "id, visibility, show_in_discovery, owner_id, status, start_date"
         },
         {
           "table": "location_preferences",
@@ -5327,8 +5329,8 @@
           "cols": "event_id"
         },
         {
-          "table": "profiles",
-          "cols": "id"
+          "table": "trips",
+          "cols": "id, visibility, show_in_discovery, owner_id, status, start_date"
         },
         {
           "table": "post_media",
@@ -5345,6 +5347,10 @@
         {
           "table": "rent_buddy_user_limits",
           "cols": "user_id, rent_buddy_disabled, buddy_disabled, nightlife_disabled"
+        },
+        {
+          "table": "profiles",
+          "cols": "id"
         },
         {
           "table": "profile_privacy_settings",
@@ -5435,11 +5441,6 @@
       ],
       "ilikes": [
         {
-          "table": "trip_plan_items",
-          "col": "title",
-          "pat": "%zork%"
-        },
-        {
           "table": "posts",
           "col": "content",
           "pat": "%zork%"
@@ -5452,6 +5453,11 @@
         {
           "table": "profiles",
           "col": "home_country",
+          "pat": "%zork%"
+        },
+        {
+          "table": "trip_plan_items",
+          "col": "title",
           "pat": "%zork%"
         }
       ]
@@ -6039,7 +6045,7 @@
         "feature_flags",
         "events",
         "feature_flags",
-        "trip_plan_items",
+        "feature_flags",
         "discovery_places",
         "hidden_gems",
         "hashtags",
@@ -6054,20 +6060,21 @@
         "profile_privacy_settings",
         "profiles",
         "trips",
+        "trip_plan_items",
         "profiles",
         "profiles",
         "profiles",
         "profiles",
-        "trips",
         "location_preferences",
         "profiles",
         "profile_privacy_settings",
         "event_rsvps",
-        "profiles",
+        "trips",
         "post_media",
         "location_preferences",
         "rent_buddy_profiles",
         "rent_buddy_user_limits",
+        "profiles",
         "profile_privacy_settings",
         "user_follows",
         "friend_requests",
@@ -6100,10 +6107,6 @@
         {
           "table": "events",
           "cols": "id, title, host_id, cover_url, city, country, starts_at, visibility, state, created_at, location_lat, location_lng, show_exact_location"
-        },
-        {
-          "table": "trip_plan_items",
-          "cols": "id, title, trip_id, creator_id, created_at"
         },
         {
           "table": "discovery_places",
@@ -6162,6 +6165,10 @@
           "cols": "id, title, destination_city, destination_country, owner_id, cover_url, start_date, status, visibility, created_at"
         },
         {
+          "table": "trip_plan_items",
+          "cols": "id, title, trip_id, creator_id, created_at"
+        },
+        {
           "table": "profiles",
           "cols": "id"
         },
@@ -6176,10 +6183,6 @@
         {
           "table": "profiles",
           "cols": "id, handle, username, name, display_name, avatar_url, is_private, home_city, home_country, account_status, verified, is_official, show_profile_picture_publicly"
-        },
-        {
-          "table": "trips",
-          "cols": "id, visibility, show_in_discovery, owner_id, status, start_date"
         },
         {
           "table": "location_preferences",
@@ -6198,8 +6201,8 @@
           "cols": "event_id"
         },
         {
-          "table": "profiles",
-          "cols": "id"
+          "table": "trips",
+          "cols": "id, visibility, show_in_discovery, owner_id, status, start_date"
         },
         {
           "table": "post_media",
@@ -6216,6 +6219,10 @@
         {
           "table": "rent_buddy_user_limits",
           "cols": "user_id, rent_buddy_disabled, buddy_disabled, nightlife_disabled"
+        },
+        {
+          "table": "profiles",
+          "cols": "id"
         },
         {
           "table": "profile_privacy_settings",
@@ -6306,11 +6313,6 @@
       ],
       "ilikes": [
         {
-          "table": "trip_plan_items",
-          "col": "title",
-          "pat": "%zork%"
-        },
-        {
           "table": "posts",
           "col": "content",
           "pat": "%zork%"
@@ -6323,6 +6325,11 @@
         {
           "table": "profiles",
           "col": "home_country",
+          "pat": "%zork%"
+        },
+        {
+          "table": "trip_plan_items",
+          "col": "title",
           "pat": "%zork%"
         }
       ]
@@ -6871,7 +6878,7 @@
         "feature_flags",
         "events",
         "feature_flags",
-        "trip_plan_items",
+        "feature_flags",
         "discovery_places",
         "hidden_gems",
         "hashtags",
@@ -6886,20 +6893,21 @@
         "profile_privacy_settings",
         "profiles",
         "trips",
+        "trip_plan_items",
         "profiles",
         "profiles",
         "profiles",
         "profiles",
-        "trips",
         "location_preferences",
         "profiles",
         "profile_privacy_settings",
         "event_rsvps",
-        "profiles",
+        "trips",
         "post_media",
         "location_preferences",
         "rent_buddy_profiles",
         "rent_buddy_user_limits",
+        "profiles",
         "profile_privacy_settings",
         "user_follows",
         "friend_requests",
@@ -6932,10 +6940,6 @@
         {
           "table": "events",
           "cols": "id, title, host_id, cover_url, city, country, starts_at, visibility, state, created_at, location_lat, location_lng, show_exact_location"
-        },
-        {
-          "table": "trip_plan_items",
-          "cols": "id, title, trip_id, creator_id, created_at"
         },
         {
           "table": "discovery_places",
@@ -6994,6 +6998,10 @@
           "cols": "id, title, destination_city, destination_country, owner_id, cover_url, start_date, status, visibility, created_at"
         },
         {
+          "table": "trip_plan_items",
+          "cols": "id, title, trip_id, creator_id, created_at"
+        },
+        {
           "table": "profiles",
           "cols": "id"
         },
@@ -7008,10 +7016,6 @@
         {
           "table": "profiles",
           "cols": "id, handle, username, name, display_name, avatar_url, is_private, home_city, home_country, account_status, verified, is_official, show_profile_picture_publicly"
-        },
-        {
-          "table": "trips",
-          "cols": "id, visibility, show_in_discovery, owner_id, status, start_date"
         },
         {
           "table": "location_preferences",
@@ -7030,8 +7034,8 @@
           "cols": "event_id"
         },
         {
-          "table": "profiles",
-          "cols": "id"
+          "table": "trips",
+          "cols": "id, visibility, show_in_discovery, owner_id, status, start_date"
         },
         {
           "table": "post_media",
@@ -7048,6 +7052,10 @@
         {
           "table": "rent_buddy_user_limits",
           "cols": "user_id, rent_buddy_disabled, buddy_disabled, nightlife_disabled"
+        },
+        {
+          "table": "profiles",
+          "cols": "id"
         },
         {
           "table": "profile_privacy_settings",
@@ -7138,11 +7146,6 @@
       ],
       "ilikes": [
         {
-          "table": "trip_plan_items",
-          "col": "title",
-          "pat": "%zork%"
-        },
-        {
           "table": "posts",
           "col": "content",
           "pat": "%zork%"
@@ -7155,6 +7158,11 @@
         {
           "table": "profiles",
           "col": "home_country",
+          "pat": "%zork%"
+        },
+        {
+          "table": "trip_plan_items",
+          "col": "title",
           "pat": "%zork%"
         }
       ]
@@ -7803,7 +7811,7 @@
         "posts",
         "stamp_definitions",
         "circles",
-        "trip_plan_items",
+        "feature_flags",
         "discovery_places",
         "profiles",
         "profile_privacy_settings",
@@ -7815,17 +7823,18 @@
         "trips",
         "profiles",
         "profiles",
+        "trip_plan_items",
         "profiles",
-        "trips",
         "location_preferences",
         "profiles",
         "event_rsvps",
         "profile_privacy_settings",
         "post_media",
-        "profiles",
+        "trips",
         "location_preferences",
         "rent_buddy_profiles",
         "rent_buddy_user_limits",
+        "profiles",
         "profile_privacy_settings",
         "user_follows",
         "friend_requests",
@@ -7892,10 +7901,6 @@
           "cols": "id, name, description, owner_id, cover_image_url, city, visibility, created_at"
         },
         {
-          "table": "trip_plan_items",
-          "cols": "id, title, trip_id, creator_id, created_at"
-        },
-        {
           "table": "discovery_places",
           "cols": "id, name, city, blurb, image_url, header_image_source, image_source_type, image_accuracy_status, category, lat, lng, created_at, submitted_by"
         },
@@ -7940,12 +7945,12 @@
           "cols": "id"
         },
         {
-          "table": "profiles",
-          "cols": "id, handle, username, name, display_name, avatar_url, is_private, home_city, home_country, account_status, verified, is_official, show_profile_picture_publicly"
+          "table": "trip_plan_items",
+          "cols": "id, title, trip_id, creator_id, created_at"
         },
         {
-          "table": "trips",
-          "cols": "id, visibility, show_in_discovery, owner_id, status, start_date"
+          "table": "profiles",
+          "cols": "id, handle, username, name, display_name, avatar_url, is_private, home_city, home_country, account_status, verified, is_official, show_profile_picture_publicly"
         },
         {
           "table": "location_preferences",
@@ -7968,8 +7973,8 @@
           "cols": "post_id, public_url, sort_order, processing_status, moderation_status"
         },
         {
-          "table": "profiles",
-          "cols": "id"
+          "table": "trips",
+          "cols": "id, visibility, show_in_discovery, owner_id, status, start_date"
         },
         {
           "table": "location_preferences",
@@ -7982,6 +7987,10 @@
         {
           "table": "rent_buddy_user_limits",
           "cols": "user_id, rent_buddy_disabled, buddy_disabled, nightlife_disabled"
+        },
+        {
+          "table": "profiles",
+          "cols": "id"
         },
         {
           "table": "profile_privacy_settings",
@@ -8082,11 +8091,6 @@
           "pat": "%zork%"
         },
         {
-          "table": "trip_plan_items",
-          "col": "title",
-          "pat": "%zork%"
-        },
-        {
           "table": "profiles",
           "col": "home_country",
           "pat": "%zork%"
@@ -8099,6 +8103,11 @@
         {
           "table": "canonical_locations",
           "col": "search_key",
+          "pat": "%zork%"
+        },
+        {
+          "table": "trip_plan_items",
+          "col": "title",
           "pat": "%zork%"
         }
       ]
@@ -8621,7 +8630,7 @@
         "posts",
         "stamp_definitions",
         "circles",
-        "trip_plan_items",
+        "feature_flags",
         "discovery_places",
         "profiles",
         "profile_privacy_settings",
@@ -8631,6 +8640,7 @@
         "profiles",
         "trips",
         "profiles",
+        "trip_plan_items",
         "canonical_locations",
         "profiles",
         "profiles",
@@ -8691,10 +8701,6 @@
           "cols": "id, name, description, owner_id, cover_image_url, city, visibility, created_at"
         },
         {
-          "table": "trip_plan_items",
-          "cols": "id, title, trip_id, creator_id, created_at"
-        },
-        {
           "table": "discovery_places",
           "cols": "id, name, city, blurb, image_url, header_image_source, image_source_type, image_accuracy_status, category, lat, lng, created_at, submitted_by"
         },
@@ -8729,6 +8735,10 @@
         {
           "table": "profiles",
           "cols": "id"
+        },
+        {
+          "table": "trip_plan_items",
+          "cols": "id, title, trip_id, creator_id, created_at"
         },
         {
           "table": "canonical_locations",
@@ -8805,11 +8815,6 @@
           "pat": "%lis%"
         },
         {
-          "table": "trip_plan_items",
-          "col": "title",
-          "pat": "%lis%"
-        },
-        {
           "table": "profiles",
           "col": "home_country",
           "pat": "%lis%"
@@ -8822,6 +8827,11 @@
         {
           "table": "canonical_locations",
           "col": "search_key",
+          "pat": "%lis%"
+        },
+        {
+          "table": "trip_plan_items",
+          "col": "title",
           "pat": "%lis%"
         }
       ]
@@ -9367,7 +9377,7 @@
         "posts",
         "stamp_definitions",
         "circles",
-        "trip_plan_items",
+        "feature_flags",
         "discovery_places",
         "profiles",
         "profile_privacy_settings",
@@ -9378,17 +9388,18 @@
         "profiles",
         "trips",
         "profiles",
+        "trip_plan_items",
         "profiles",
-        "trips",
         "location_preferences",
         "profiles",
         "event_rsvps",
         "profile_privacy_settings",
         "post_media",
-        "profiles",
+        "trips",
         "location_preferences",
         "rent_buddy_profiles",
         "rent_buddy_user_limits",
+        "profiles",
         "profile_privacy_settings",
         "user_follows",
         "friend_requests",
@@ -9455,10 +9466,6 @@
           "cols": "id, name, description, owner_id, cover_image_url, city, visibility, created_at"
         },
         {
-          "table": "trip_plan_items",
-          "cols": "id, title, trip_id, creator_id, created_at"
-        },
-        {
           "table": "discovery_places",
           "cols": "id, name, city, blurb, image_url, header_image_source, image_source_type, image_accuracy_status, category, lat, lng, created_at, submitted_by"
         },
@@ -9499,12 +9506,12 @@
           "cols": "id"
         },
         {
-          "table": "profiles",
-          "cols": "id, handle, username, name, display_name, avatar_url, is_private, home_city, home_country, account_status, verified, is_official, show_profile_picture_publicly"
+          "table": "trip_plan_items",
+          "cols": "id, title, trip_id, creator_id, created_at"
         },
         {
-          "table": "trips",
-          "cols": "id, visibility, show_in_discovery, owner_id, status, start_date"
+          "table": "profiles",
+          "cols": "id, handle, username, name, display_name, avatar_url, is_private, home_city, home_country, account_status, verified, is_official, show_profile_picture_publicly"
         },
         {
           "table": "location_preferences",
@@ -9527,8 +9534,8 @@
           "cols": "post_id, public_url, sort_order, processing_status, moderation_status"
         },
         {
-          "table": "profiles",
-          "cols": "id"
+          "table": "trips",
+          "cols": "id, visibility, show_in_discovery, owner_id, status, start_date"
         },
         {
           "table": "location_preferences",
@@ -9541,6 +9548,10 @@
         {
           "table": "rent_buddy_user_limits",
           "cols": "user_id, rent_buddy_disabled, buddy_disabled, nightlife_disabled"
+        },
+        {
+          "table": "profiles",
+          "cols": "id"
         },
         {
           "table": "profile_privacy_settings",
@@ -9641,11 +9652,6 @@
           "pat": "%zork%"
         },
         {
-          "table": "trip_plan_items",
-          "col": "title",
-          "pat": "%zork%"
-        },
-        {
           "table": "profiles",
           "col": "home_country",
           "pat": "%zork%"
@@ -9658,6 +9664,11 @@
         {
           "table": "canonical_locations",
           "col": "search_key",
+          "pat": "%zork%"
+        },
+        {
+          "table": "trip_plan_items",
+          "col": "title",
           "pat": "%zork%"
         }
       ]
@@ -10186,7 +10197,7 @@
         "posts",
         "stamp_definitions",
         "circles",
-        "trip_plan_items",
+        "feature_flags",
         "discovery_places",
         "profiles",
         "profile_privacy_settings",
@@ -10197,17 +10208,18 @@
         "profiles",
         "trips",
         "profiles",
+        "trip_plan_items",
         "profiles",
-        "trips",
         "location_preferences",
         "profiles",
         "event_rsvps",
         "profile_privacy_settings",
         "post_media",
-        "profiles",
+        "trips",
         "location_preferences",
         "rent_buddy_profiles",
         "rent_buddy_user_limits",
+        "profiles",
         "profile_privacy_settings",
         "user_follows",
         "friend_requests",
@@ -10274,10 +10286,6 @@
           "cols": "id, name, description, owner_id, cover_image_url, city, visibility, created_at"
         },
         {
-          "table": "trip_plan_items",
-          "cols": "id, title, trip_id, creator_id, created_at"
-        },
-        {
           "table": "discovery_places",
           "cols": "id, name, city, blurb, image_url, header_image_source, image_source_type, image_accuracy_status, category, lat, lng, created_at, submitted_by"
         },
@@ -10318,12 +10326,12 @@
           "cols": "id"
         },
         {
-          "table": "profiles",
-          "cols": "id, handle, username, name, display_name, avatar_url, is_private, home_city, home_country, account_status, verified, is_official, show_profile_picture_publicly"
+          "table": "trip_plan_items",
+          "cols": "id, title, trip_id, creator_id, created_at"
         },
         {
-          "table": "trips",
-          "cols": "id, visibility, show_in_discovery, owner_id, status, start_date"
+          "table": "profiles",
+          "cols": "id, handle, username, name, display_name, avatar_url, is_private, home_city, home_country, account_status, verified, is_official, show_profile_picture_publicly"
         },
         {
           "table": "location_preferences",
@@ -10346,8 +10354,8 @@
           "cols": "post_id, public_url, sort_order, processing_status, moderation_status"
         },
         {
-          "table": "profiles",
-          "cols": "id"
+          "table": "trips",
+          "cols": "id, visibility, show_in_discovery, owner_id, status, start_date"
         },
         {
           "table": "location_preferences",
@@ -10360,6 +10368,10 @@
         {
           "table": "rent_buddy_user_limits",
           "cols": "user_id, rent_buddy_disabled, buddy_disabled, nightlife_disabled"
+        },
+        {
+          "table": "profiles",
+          "cols": "id"
         },
         {
           "table": "profile_privacy_settings",
@@ -10460,11 +10472,6 @@
           "pat": "%zork%"
         },
         {
-          "table": "trip_plan_items",
-          "col": "title",
-          "pat": "%zork%"
-        },
-        {
           "table": "profiles",
           "col": "home_country",
           "pat": "%zork%"
@@ -10477,6 +10484,11 @@
         {
           "table": "canonical_locations",
           "col": "search_key",
+          "pat": "%zork%"
+        },
+        {
+          "table": "trip_plan_items",
+          "col": "title",
           "pat": "%zork%"
         }
       ]
@@ -10679,7 +10691,7 @@
         "feature_flags",
         "feature_flags",
         "events",
-        "trip_plan_items",
+        "feature_flags",
         "circles",
         "posts",
         "hashtags",
@@ -10689,19 +10701,20 @@
         "profile_privacy_settings",
         "trips",
         "profiles",
+        "trip_plan_items",
         "profiles",
         "profiles",
         "profiles",
-        "trips",
         "location_preferences",
         "profiles",
         "profile_privacy_settings",
         "event_rsvps",
-        "profiles",
+        "trips",
         "post_media",
         "location_preferences",
         "rent_buddy_profiles",
         "rent_buddy_user_limits",
+        "profiles",
         "profile_privacy_settings",
         "user_follows",
         "friend_requests",
@@ -10776,10 +10789,6 @@
           "cols": "id, title, host_id, cover_url, city, country, starts_at, visibility, state, created_at, location_lat, location_lng, show_exact_location"
         },
         {
-          "table": "trip_plan_items",
-          "cols": "id, title, trip_id, creator_id, created_at"
-        },
-        {
           "table": "circles",
           "cols": "id, name, description, owner_id, cover_image_url, city, visibility, created_at"
         },
@@ -10816,6 +10825,10 @@
           "cols": "id"
         },
         {
+          "table": "trip_plan_items",
+          "cols": "id, title, trip_id, creator_id, created_at"
+        },
+        {
           "table": "profiles",
           "cols": "id"
         },
@@ -10826,10 +10839,6 @@
         {
           "table": "profiles",
           "cols": "id, handle, username, name, display_name, avatar_url, is_private, home_city, home_country, account_status, verified, is_official, show_profile_picture_publicly"
-        },
-        {
-          "table": "trips",
-          "cols": "id, visibility, show_in_discovery, owner_id, status, start_date"
         },
         {
           "table": "location_preferences",
@@ -10848,8 +10857,8 @@
           "cols": "event_id"
         },
         {
-          "table": "profiles",
-          "cols": "id"
+          "table": "trips",
+          "cols": "id, visibility, show_in_discovery, owner_id, status, start_date"
         },
         {
           "table": "post_media",
@@ -10866,6 +10875,10 @@
         {
           "table": "rent_buddy_user_limits",
           "cols": "user_id, rent_buddy_disabled, buddy_disabled, nightlife_disabled"
+        },
+        {
+          "table": "profiles",
+          "cols": "id"
         },
         {
           "table": "profile_privacy_settings",
@@ -10986,13 +10999,13 @@
           "pat": "%zork%"
         },
         {
-          "table": "trip_plan_items",
-          "col": "title",
+          "table": "posts",
+          "col": "content",
           "pat": "%zork%"
         },
         {
-          "table": "posts",
-          "col": "content",
+          "table": "trip_plan_items",
+          "col": "title",
           "pat": "%zork%"
         }
       ]
