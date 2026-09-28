@@ -304,15 +304,15 @@ function decomposableLetters(): Array<{ ch: string; base: string }> {
 }
 
 describe("§66 B01 — G57 'Diacritic-insensitive matching while preserving display spelling', the stored fold", () => {
-  it("B1. DEFECT (B01): Ǿ/ǿ (ø with an acute) fold to nothing while Ø folds to 'o' — the acute changes the key", () => {
+  it("B1. FIXED (B01, §73; pinned as a DEFECT in §66): Ǿ/ǿ (ø with an acute) fold to 'o' as Ø does — the acute no longer changes the key", () => {
     assert.equal(searchKey("Øresund"), "oresund");
-    assert.equal(searchKey("Ǿresund"), "resund", "the stroke fold runs BEFORE NFD, so Ø surfaces only after it and is deleted");
-    assert.notEqual(searchKey("Ǿresund"), searchKey("Oresund"));
-    assert.equal(strokeFold("Ǿ"), "Ǿ", "the cause: Ǿ is not in the stroke table, and the table runs before NFD exposes its Ø");
+    assert.equal(searchKey("Ǿresund"), "oresund", "§66 found 'resund': the stroke table ran BEFORE NFD, so the Ø inside Ǿ was deleted");
+    assert.equal(searchKey("Ǿresund"), searchKey("Oresund"));
+    assert.equal(strokeFold("Ǿ"), "ó", "the cause, closed: strokeFold also looks inside a decomposition; the acute stays for NFD to strip");
     const failing = decomposableLetters()
       .filter(({ ch, base }) => searchKey(`x${ch}x`) !== searchKey(`x${base}x`))
       .map(({ ch }) => ch);
-    assert.deepEqual(failing, ["Ǿ", "ǿ"], "the only letters with a diacritic whose fold differs from their undecorated letter's");
+    assert.deepEqual(failing, [], "every letter with a diacritic folds as its undecorated letter");
   });
 
   it("B2. CONTROL (B01): every other letter-plus-diacritics folds to its undecorated letter, and the stroke table folds", () => {

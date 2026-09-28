@@ -70,21 +70,24 @@ describe("census-discovery §59 — adversarial negative inputs for §46–§55'
     const m = computeLocalMomentum(rows as any, nowMs).values;
     assert.ok((m["db/saved"] ?? 0) > 0, `two saves must cross the floor: ${m["db/saved"]}`);
   });
-  it("A1d. DEFECT, pinned (DV-20, §66.11): 'Ǿresund' and 'Øresund' canonicalise to two Trails; the fold deletes 114 of 398 Latin letters", () => {
-    // §61.7 claims the slug "folds every Latin letter NFKD cannot decompose". The stroke table runs
-    // BEFORE NFD, so Ǿ (Ø + acute) is never looked up, and hooked/barred letters (Ƀ, Ƙ, …) have no entry.
+  it("A1d. FIXED (DV-20, §73; pinned as a DEFECT in §66.11): 'Ǿresund' and 'Øresund' canonicalise to ONE Trail; no 'X WITH …' letter is deleted", () => {
+    // §66.11 pinned this with the stroke table running BEFORE NFD: "Ǿresund cycling" slugged `resund-cycling`
+    // and 114 of 398 letters were deleted. §73 decomposes first and completes the table (discoveryLetterFoldCompleteness).
     assert.equal(canonicalTrailSlug("Øresund cycling"), "oresund-cycling");
-    assert.equal(canonicalTrailSlug("Ǿresund cycling"), "resund-cycling", "Ǿ is deleted, not folded to o");
-    assert.equal(canonicalTrailSlug("Ƀerlin street art"), "erlin-street-art", "Ƀ (B with stroke) is deleted");
-    let deleted = 0, letters = 0;
+    assert.equal(canonicalTrailSlug("Ǿresund cycling"), "oresund-cycling", "Ǿ is Ø + acute, and folds to o");
+    assert.equal(canonicalTrailSlug("Ƀerlin street art"), "berlin-street-art", "Ƀ (B with stroke) folds to b");
+    let deleted = "", letters = 0;
     for (let c = 0xc0; c <= 0x24f; c++) {
       const ch = String.fromCodePoint(c);
       if (!/\p{L}/u.test(ch)) continue;
       letters++;
       const k = canonicalTrailSlug(ch + "x");
-      if (!k || k === "x") deleted++;
+      if (!k || k === "x") deleted += ch;
     }
     assert.equal(letters, 398);
-    assert.equal(deleted, 114, "Latin-1 Supplement … Latin Extended-B letters the fold deletes outright");
+    // What is still deleted is no "LATIN … LETTER X WITH …" whose X is a-z: letters of their own (ĸ Ə Ɛ Ʃ …), clicks,
+    // tone letters (ƻ is "TWO WITH STROKE"), and ƛ ƺ ƾ Ǯ ǯ, whose X (ꟛ, ʒ, ʖ) the slug deletes too.
+    assert.equal(deleted, "ĸƄƅƆƍƎƏƐƔƕƖƛƜƢƣƦƧƨƩƪƱƷƸƹƺƻƼƽƾƿǀǁǂǃǝǮǯǶǷȜȝȢȣȷȸȹɁɂɅ");
+    assert.equal(deleted.length, 49);
   });
 });

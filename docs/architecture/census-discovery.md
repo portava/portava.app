@@ -11303,7 +11303,7 @@ Files this branch changed, by the censuses that count them. Each has a one-line 
 | DV-30 | C | **W** | **Graded on a computation the criterion does not name.** `03` §14 is Trending's list: *"Trending is complete when: … it normalizes for exposure"* (`docs/specs/discovery-v1/03_Trending.md:189#- it normalizes for exposure,`). §7 says what is normalised: *"Trend velocity must be normalized by: exposure"* (`docs/specs/discovery-v1/03_Trending.md:106#Trend velocity must be normalized by:`). The `C` rests on the ranker's underexposure denominator (`artifacts/api-server/src/services/ranking/DiscoveryRankingService.ts:1292#the underexposure classification divides by`), which no trend computation reads. Trend velocity does the reverse of normalising. Every served row adds its impression as one unit of ACTIVITY, and nothing divides by exposure: `artifacts/api-server/src/lib/discoveryTrendState.ts:217#bucket(r.item_id, r.served_at, TREND_EVENT_WEIGHTS.impression);`, the kernel at `artifacts/api-server/src/lib/discoveryLocalMomentum.ts:174#bucket(r.item_id, r.served_at, MOMENTUM_EVENT_WEIGHTS.impression);`, and the stored twin at `artifacts/api-server/src/migrations/3417_place_momentum_dismiss_excluded.sql:107#SELECT item_id AS place_id, user_id, served_at AS at, c_w_impression AS w FROM base`. §5's positive signals include *"qualified impression conversion"* (`docs/specs/discovery-v1/03_Trending.md:67#- qualified impression conversion,`), not the impression itself. **Probe.** Three impressions and no engagement read `emerging`, carry a public reason, and score momentum 0.5, both in the place kernel and in the Trail fold (`artifacts/api-server/src/test/discoveryVerifyAudit2.test.ts:68#it("T1. DEFECT (DV-30): three impressions and no engagement`). With one save each, the place served ten times as often has 5.5× the velocity (T2). §11.5's re-verification of the #365 denominator still holds; it is a different criterion. |
 | C32 | C | **W** | **The row's sentence is its criterion, and its first clause is false at this tree.** The row reads *"One ranking pipeline in the tree — the route no longer imports the ranker directly"*. The route states the same rule as its own contract: *"there must be exactly one ranking pipeline in the tree"* (`artifacts/api-server/src/routes/discovery.ts:2261#there must be exactly one ranking`). §11.2 rule 1 applies: a parent is `C` only if every criterion inside it passes. The second clause passes (R2). The first does not. The route value-imports Compass's ranker (`artifacts/api-server/src/routes/discovery.ts:36#import { rankItemsForDiscovery } from "../compass/CompassFeedBuilder";`) and orders signed-in `for_you` pages with it (`artifacts/api-server/src/routes/discovery.ts:2175#const scored = await rankItemsForDiscovery(`). Every other signed-in cold fetch is ordered by `rankForViewer` (`artifacts/api-server/src/routes/discovery.ts:2280#const outcome   = await rankForViewer(places, pdeViewer, { sc: rankSc, served: true });`). The served projection names both rankers (`artifacts/api-server/src/lib/discoveryCandidate.ts:148#export type DiscoveryRankedBy = "pde" | "compass" | "none";`). **Probe, through the real route.** One viewer, one deployment: `for_you` is served `rankedBy: "compass"` and `food` is served `rankedBy: "pde"` (`artifacts/api-server/src/test/discoveryVerifyAudit2.test.ts:216#it("R1. DEFECT (C32): one viewer, one route, two rankers`). The gate is `COMPASS_V1_RULE_BASED_ENABLED`, TRUE in production (§47.1), so this is not a flag-held path. §14.2 kept `C` because *"a row is graded on its evidence, and its evidence is true"*. That grades the evidence in place of the criterion. The same defect is DC-24's (`W`); the two rows reach it from the contract and from `10` §1. |
 | DC-26 | C | **W** | **15 of 16. The CI rehearsal class is credited to a proxy, and the rehearsal has not passed at this tree.** `12` names the class (`docs/specs/discovery-v1/12_Claude_Code_Implementation.md:189#- CI rehearsal`). The package says what a CI rehearsal is: `10` §7's *"rehearse on `portava-ci`"*, then *"production rollout only after CI rehearsal"* (`docs/specs/discovery-v1/10_Database_Architecture.md:98#- production rollout only after CI rehearsal.`). §59.1's own bar is *"a suite that passes at this tree"*. The credited suite is, in its own words, *"mostly a YAML contract test"* of the live-DB workflow's concurrency and verdict wiring (`artifacts/api-server/src/test/ciWorkflowArchitecture.test.ts:42#This is mostly a YAML contract test`). Neither `db:apply-migrations` nor `certify:migrations` occurs in it. The rehearsal itself is the `schema-drift` job, which applies and certifies only on `refs/heads/main` (`.github/workflows/live-db.yml:764#THE APPLY. Default branch only`; D1). The credited suite also says what that job does on a branch that creates objects: *"schema-drift legitimately FAILS whenever a PR creates an object"* (`artifacts/api-server/src/test/ciWorkflowArchitecture.test.ts:234#own migration is never applied to the CI project, so schema-drift legitimately`). This tree creates Discovery objects (3375 through 3422). So no CI rehearsal has passed here, and none can before merge. §59.3's own cell says the `portava-ci` runs are *"still owed"*. §54.2 says the harness rehearsal *"is not the `portava-ci` rehearsal `12` names"*. The other fifteen classes hold as §59.3 lists them. |
-| B01 | C | **W** | **The fold is diacritic-insensitive for 495 of 497 letters, and the criterion states no exception.** G57 reads *"Diacritic-insensitive matching while preserving display spelling"* (`docs/specs/Portava_Global_Input_Intelligence_Architecture_Developer_Spec.txt:106#Diacritic-insensitive matching while preserving display spelling.`). The probe takes every precomposed Latin letter whose canonical decomposition is a letter plus combining marks. That is the definition the fold itself applies: NFD, then strip U+0300–U+036F. Each letter is compared with its undecorated letter. All 488 built on an ASCII letter fold to it (B2), seven more fold exactly as their undecorated letter does, and the stroke table folds its fourteen. **Ǿ and ǿ (ø with an acute) do not.** The stroke table runs BEFORE NFD (`artifacts/api-server/src/lib/canonicalLocations.ts:151#return normalizeLocationName(strokeFold(name));`), so the Ø inside Ǿ appears only after the table has run, and it is deleted. "Øresund" keys `oresund` and "Ǿresund" keys `resund` (`artifacts/api-server/src/test/discoveryVerifyAudit2.test.ts:307#it("B1. DEFECT (B01): Ǿ/ǿ`). 2220 uses the same order (`artifacts/api-server/src/migrations/2220_canonical_locations_search_key.sql:82#v := translate(p_name,`), so the stored key agrees with the query key, and both lose the letter. **Materiality, stated.** This lane knows no place name spelled with Ǿ. The `W` is on the criterion's words, and 66.9 asks the owner which population G57 is graded over. |
+| B01 | C | **W** | **The fold is diacritic-insensitive for 495 of 497 letters, and the criterion states no exception.** G57 reads *"Diacritic-insensitive matching while preserving display spelling"* (`docs/specs/Portava_Global_Input_Intelligence_Architecture_Developer_Spec.txt:106#Diacritic-insensitive matching while preserving display spelling.`). The probe takes every precomposed Latin letter whose canonical decomposition is a letter plus combining marks. That is the definition the fold itself applies: NFD, then strip U+0300–U+036F. Each letter is compared with its undecorated letter. All 488 built on an ASCII letter fold to it (B2), seven more fold exactly as their undecorated letter does, and the stroke table folds its fourteen. **Ǿ and ǿ (ø with an acute) do not.** The stroke table runs BEFORE NFD (`artifacts/api-server/src/lib/canonicalLocations.ts:151#return normalizeLocationName(strokeFold(name));`), so the Ø inside Ǿ appears only after the table has run, and it is deleted. "Øresund" keys `oresund` and "Ǿresund" keys `resund` (`artifacts/api-server/src/test/discoveryVerifyAudit2.test.ts` B1, as pinned at `f34994de7` (line 307; flipped to FIXED in §73)). 2220 uses the same order (`artifacts/api-server/src/migrations/2220_canonical_locations_search_key.sql:82#v := translate(p_name,`), so the stored key agrees with the query key, and both lose the letter. **Materiality, stated.** This lane knows no place name spelled with Ǿ. The `W` is on the criterion's words, and 66.9 asks the owner which population G57 is graded over. |
 
 ### 66.2 DV-30 — which list `03` §14 is, and what trend velocity counts
 
@@ -11543,7 +11543,7 @@ It changed no code file, no migration and no other census's verdict table. The r
 - **P20 reported a fifth row without grading it (§66.6), and the integrator re-measured it.** DV-20 rests on §61.7's claim that "the slug folds every Latin letter NFKD cannot decompose". That claim does not hold.
   - The stroke table runs before NFD. So `Ǿ` (Ø plus a combining acute) never reaches the table, and hooked or barred letters have no entry at all.
   - The probe: "Ǿresund cycling" slugs to `resund-cycling` while "Øresund cycling" slugs to `oresund-cycling`; "Ƀerlin street art" slugs to `erlin-street-art`.
-  - Of the 398 letters in U+00C0–U+024F, 114 are deleted outright: `artifacts/api-server/src/test/discoveryVerifyAudit.test.ts:73#it("A1d. DEFECT, pinned (DV-20, §66.11): 'Ǿresund' and 'Øresund' canonicalise to two Trails`.
+  - Of the 398 letters in U+00C0–U+024F, 114 are deleted outright: `artifacts/api-server/src/test/discoveryVerifyAudit.test.ts` A1d, as pinned at `f34994de7` (line 73; flipped to FIXED in §73).
   - That is the defect class §59 used to send DV-20 to W: two spellings of one theme become two canonical Trails. §61 closed it for Đ, Ł and Ø but not for the letter class. It is graded W below, and the fix goes to lane P27 (letter-fold completeness, §73). The same fold ordering is B01's `Ǿ`/`ǿ` gap, so P27 carries both.
 - **Headline, restated from the rows**, after §66's four moves and DV-20:
 
@@ -11559,7 +11559,7 @@ It changed no code file, no migration and no other census's verdict table. The r
 
 | ID | was | now | evidence |
 |---|---|---|---|
-| DV-20 | C | **W** | §61.7's closure does not hold for the whole letter class. `Ǿ` is folded after NFD would have exposed it, and 114 of 398 Latin letters in U+00C0–U+024F are deleted, so "Ǿresund" and "Øresund" are two canonical Trails (`artifacts/api-server/src/test/discoveryVerifyAudit.test.ts:73#it("A1d. DEFECT, pinned (DV-20, §66.11): 'Ǿresund' and 'Øresund' canonicalise to two Trails`). What turns it C: the fold runs NFD first, then a stroke/hook/bar table covers every letter whose Unicode name is "LATIN … LETTER X WITH …", in both the TS fold and 3415's SQL twin, pinned by an exhaustive enumeration (lane P27, §73). |
+| DV-20 | C | **W** | §61.7's closure does not hold for the whole letter class. `Ǿ` is folded after NFD would have exposed it, and 114 of 398 Latin letters in U+00C0–U+024F are deleted, so "Ǿresund" and "Øresund" are two canonical Trails (`artifacts/api-server/src/test/discoveryVerifyAudit.test.ts` A1d, as pinned at `f34994de7` (line 73; flipped to FIXED in §73)). What turns it C: the fold runs NFD first, then a stroke/hook/bar table covers every letter whose Unicode name is "LATIN … LETTER X WITH …", in both the TS fold and 3415's SQL twin, pinned by an exhaustive enumeration (lane P27, §73). |
 
 ## §64 — Trail member visibility (lane P17): a Trail serves an event or a route plan only as the product already would, and no number it shows counts a member it withholds
 
@@ -12390,6 +12390,145 @@ api-server:
 - **2850 hidden from `/feature-flags`.** C1 goes red.
 - **A05 or DV-42 moving to C** needs evidence rather than a test: 2850 on in a deployment, plus Q71-2 resolved for A05.
 
+## §73 — Letter-fold completeness (lane P27): DV-20 and B01 move W → C on one fold that decomposes first and covers every Latin letter named "X WITH …"
+
+*Written 2026-09-28 by lane P27 on `disc-p27-letter-fold`, branched from `f34994de7`. This lane owns two rows, DV-20 and B01, which §66.5 and §66.11 sent to W on one cause. Nothing here is merged to `main`, applied to `portava-ci` or production, deployed or flag-enabled. Migrations 3440 and 3441 are applied to the local PostgreSQL 16 harness only. **Applying 3440 to production REWRITES every row's stored `search_key`: that is owner approval item A (73.8).** `head_commit` is not re-declared.*
+
+### 73.1 Row moves
+
+| ID | was | now | evidence |
+|---|---|---|---|
+| DV-20 | W | **C** | **Every clause of §66.11's "what turns it C" passes, measured over all 1453 Latin letters Unicode 17 has, not only U+00C0–U+024F.** *NFD first:* the table is applied to the decomposition (`artifacts/api-server/src/lib/canonicalLocations.ts:137#const direct = foldTable(s), nfd = direct.normalize("NFD");`), and the Trail's own letter fold is too (`artifacts/api-server/src/lib/discoveryTrailFold.ts:48#const folded = strokeFold(s), nfd = folded.normalize("NFD");`). The extra pass over the raw text changes nothing: a table letter has no decomposition, so it is in the NFD form as well. *A stroke/hook/bar table that covers every "LATIN … LETTER X WITH …":* `artifacts/api-server/src/lib/latinLetterFold.ts:37#export const LATIN_LETTER_FOLD`, 257 entries generated by the rule in 73.3. *Exhaustive enumeration:* every \p{Script=Latin} letter is either NFD-reducible to an ASCII letter, which all three folds keep, or listed with its UnicodeData 17.0 name (`artifacts/api-server/src/test/discoveryLetterFoldCompleteness.test.ts:979#it("L1. exhaustive`). Every "X WITH" letter whose X is A–Z folds to X in `canonicalTrailSlug`, `trailDestinationKey` and `searchKey`, alone, inside a word and before "resund" (L2). A letter whose X is itself a letter folds exactly as X does (L3). Every folded letter's other case folds the same (L4). *The defect's own case:* "Ǿresund cycling" and "Øresund cycling" are one slug, and the canonicaliser refuses the second as a duplicate of the first (`artifacts/api-server/src/test/discoveryLetterFoldCompleteness.test.ts:1032#it("L5.`). §66.11's pin is flipped: 114 deleted letters in U+00C0–U+024F become 49, none of them an "X WITH" letter whose X is A–Z (`artifacts/api-server/src/test/discoveryVerifyAudit.test.ts:73#it("A1d. FIXED (DV-20, §73`). *3415's SQL twin:* 3441 replaces `trail_letter_fold` with the same table applied to `normalize(p_text, NFD)` (`artifacts/api-server/src/migrations/3441_trail_letter_fold_decompose_first.sql:51#translate(normalize(p_text, NFD)`). The table is pinned to the TypeScript as text (L7). Slug and destination key are EXECUTED against `canonicalTrailSlug` and `trailDestinationKey` for all 1453 letters, in three positions each (`artifacts/api-server/src/test/db/trailsProposalRace.db.test.ts:452#test("S8.`). One divergence is recorded and is outside the criterion (73.7 #2). **The criterion's reading, stated so it can be overruled (73.3):** four letters named "X WITH" have an X that is no encoded letter (ƻ TWO, ɿ REVERSED R, ʢ REVERSED GLOTTAL STOP, ʨ TC DIGRAPH). They are deleted, and L1 pins them by name. Implementation-C: 3415 and 3441 are applied to the harness only, as §61.7 graded it. |
+| B01 | W | **C** | **§66.5's "change that would restore C", all three parts, built and run.** *Part 1:* the stroke table meets the Ø inside Ǿ (`artifacts/api-server/src/lib/canonicalLocations.ts:137#const direct = foldTable(s), nfd = direct.normalize("NFD");`). The probe §66 wrote now finds no letter with a diacritic whose key differs from its undecorated letter's: `failing` is `[]` where it was `["Ǿ", "ǿ"]` (`artifacts/api-server/src/test/discoveryVerifyAudit2.test.ts:307#it("B1. FIXED (B01, §73`). B2, the control over the other 495, still passes. *Part 2:* a NEW migration, because 2220 is applied to production. 3440 replaces `input_normalize_city_key` so that it decomposes before the table (`artifacts/api-server/src/migrations/3440_canonical_search_key_letter_fold.sql:81#v := translate(normalize(p_name, NFD),`). It drops the generated column with its trigram index (`artifacts/api-server/src/migrations/3440_canonical_search_key_letter_fold.sql:61#ALTER TABLE public.canonical_locations DROP COLUMN search_key;`) and re-adds both (`artifacts/api-server/src/migrations/3440_canonical_search_key_letter_fold.sql:105#ADD COLUMN search_key text`). On the harness, a row stored under 2220's fold keeps `resund` after the function alone is replaced, and reads `oresund` after 3440 (`artifacts/api-server/src/test/db/discoverySearchCanonicalFold.db.test.ts:155#it("K6`). *Part 3:* parity is extended from §66's two letters to every Latin letter. `input_normalize_city_key` equals `searchKey` on all 1453, alone, inside a word and before "resund", with no exception (`artifacts/api-server/src/test/db/discoverySearchCanonicalFold.db.test.ts:143#it("K5`). *G57's second clause* holds as before: only the generated key changes, never `name` or `display_name`. **Q4 stays open (73.8).** ß, æ and œ are still deleted by `searchKey` and by 3440, exactly as by 2220. L8 pins that, and so does 3440's own postcondition (`artifacts/api-server/src/migrations/3440_canonical_search_key_letter_fold.sql:135#IF public.input_normalize_city_key('Straße') <> 'stra e' THEN`). If the owner answers that G57 covers them, B01 returns to W. Implementation-C: production still stores 2220's keys until approval item A. |
+
+### 73.2 What was changed
+
+- **`lib/latinLetterFold.ts` (new).** The table, with the rule in its header. `lib/canonicalLocations.STROKE_FOLD` now names it (`artifacts/api-server/src/lib/canonicalLocations.ts:127#export const STROKE_FOLD: Readonly<Record<string, string>> = LATIN_LETTER_FOLD;`).
+- **`lib/canonicalLocations.ts`, line-neutral.** Lines 103–149 were rewritten in 47 lines, and the import joined line 16, so every citation below line 102 still holds. `strokeFold` applies the table as typed and, when the decomposition carries a table letter, to the decomposition, then recomposes. `strokeFold("Đà Nẵng")` is still `"dà Nẵng"`, as `inputAssistanceGeoCore` pins. `searchKey` is unchanged (`artifacts/api-server/src/lib/canonicalLocations.ts:151#return normalizeLocationName(strokeFold(name));`).
+- **`lib/discoveryTrailFold.ts`.** `trailLetterFold` also letter-folds the decomposition, so ǽ Ǽ ǣ Ǣ (æ plus a mark) and Ꝥ (THORN WITH STROKE, which the table maps to þ) reach ß/æ/œ/þ/ŋ's spelling in a Trail. Line 47's cited signature has not moved.
+- **3440** (production-relevant) and **3441** (harness only, as 3415 is), described in 73.1. The two translate strings are codepoint-aligned, 253 letters each. Ŀ ŀ ẚ ᵺ go through `replace()`.
+- **Tests.** One new suite, `discoveryLetterFoldCompleteness.test.ts` (L1–L8), registered on the `test` line after `discoveryVerifyAudit2.test.ts`. §59/§66's A1d and B1 are flipped from DEFECT to FIXED, with their intent kept: each now asserts that the two spellings share one Trail or one key. K5 and K6 join `db/discoverySearchCanonicalFold.db.test.ts`. The K4 restore and `after()` now re-run 2220 and then 3440, because re-running 2220 alone would put the old function back. S8 joins `db/trailsProposalRace.db.test.ts` at the file's foot, so P1 (line 99) and S5 (line 410) have not moved.
+- **Citations retargeted, not re-graded.** Two tests were renamed, so three anchors in §66.1 and §66.11 would have pointed at text that no longer exists. They now cite the tests as pinned at `f34994de7`, by line, and say that §73 flipped them. The verdict text around them is unchanged.
+
+### 73.3 The criterion's reading — the rule, applied mechanically to UnicodeData.txt 17.0
+
+- **The population.** Node 22 in this repo matches regular expressions with Unicode 17.0 (`process.versions.unicode`), and it has 1453 letters with `Script=Latin`. 542 of them NFD-reduce to an ASCII letter plus combining marks, and L1 checks each of those by computation in all three folds. The other 911 are listed with their names: 247 fold, 95 as, 569 outside.
+- **Names.** The names come from UnicodeData.txt 17.0, fetched from `unicode-org/unicodetools` on GitHub. Python's `unicodedata` here is only 14.0. L1 fails if Node's Unicode version changes, so the list must then be regenerated. The generator is not committed. The test enforces the rule, not the generator.
+- **fold, X one letter A–Z.** A letter named "LATIN … LETTER X WITH …", "… BARRED X" or "… X BAR", where X is one letter A–Z, folds to x. Ɋ, "CAPITAL LETTER SMALL Q WITH HOOK TAIL", is the capital of ɋ and folds to q. Where the letter has a compatibility decomposition, it folds to that spelling instead: Ŀ ŀ → l·, ẚ → aʾ. That is the spelling the Trail slug's NFKD already gave them, and a typed Catalan "l·l" still agrees.
+- **fold, X is TH.** ᵺ (TH WITH STRIKETHROUGH) → th, because no letter is named TH.
+- **as.** X is itself a Latin letter: AE, THORN, ENG, EZH, LONG S, U BAR, a DZ digraph, or SMALL CAPITAL L, among others. The letter folds exactly as X does. The table carries it only where X survives some fold: Ǆ ǆ → Ǳ ǳ, ẜ ẝ → s, Ꝥ ꝥ Ꝧ ꝧ → þ, ꬼ 𝼔 → ŋ, ꭏ → u. Where every fold deletes X, the letter is deleted too, and needs no entry.
+- **Small capitals.** Unicode spells "SMALL CAPITAL" in two places in these names. Both are read as "X is the small-capital letter": ᴌ → ʟ, ᵾ → ᴜ. Both are deleted, as the small capitals are.
+- **Titlecase digraphs.** ǅ ǈ ǋ ǲ ("X WITH SMALL LETTER Y") fold as their uppercase digraph does, by Unicode's case mapping.
+- **Additions on other grounds.** Each of these is stated separately:
+  - the other case of every folded letter (Ɖ, the capital of ɖ D WITH TAIL; L4);
+  - ſ and ı, whose uppercase is ASCII. Unicode case-folds ſ to s, so ẛ ẜ ẝ, long s WITH …, reach s;
+  - 2220's eth (ð Ð → d) and İ, which are kept.
+- **outside (569).** These are not in the criterion. They are letters of their own (ĸ Ə Ɛ Ʃ …), ligatures and digraphs, MODIFIER LETTER forms (their names do not begin "LATIN"), and the four names whose X is no letter. `searchKey` deletes every one of them. The slug spells 146 of them, through NFKD or the Trail letter fold. A destination keeps exactly the letter fold's ten (L8).
+- **Not decided here:** ß, æ, œ (owner question 4). ß's key is unchanged from 2220, and a 3440 postcondition pins it. þ and ŋ are also unchanged (§61.11 H2).
+
+### 73.4 Tests, and every one seen RED (P24)
+
+| test | red on | how |
+|---|---|---|
+| L2–L7 (6 of 8) | `f34994de7`'s `canonicalLocations.ts` and `discoveryTrailFold.ts` | Both files were checked out from HEAD. The only edit was `export` on `STROKE_FOLD`, so that the suite could import it. Result: 2 pass, 6 fail. L1 (the classification) and L8 (the record) pass by design. The files were restored, with the sha256 checked equal. |
+| A1d, B1 | this lane's fix | Both were DEFECT pins. With the fix and before the flip, they were the only 2 failures among the 428 tests in the 18 non-DB suites that import the folds. They pass flipped. |
+| K5, S8 | 2220's function and 3415's `trail_letter_fold`, re-applied on the harness | Each fails, while `input_normalize_city_key('Ǿresund')` reads `resund` and the slug reads `resund-cycling`. The pre-existing G1 slug parity (320 titles) PASSED against the same old SQL. Its corpus never reaches these letters, and that gap is why S8 exists. |
+| K6 | — | K6 carries its own control: after the function alone is replaced, the stored key is still `resund`. |
+| M1: one line of hook/bar letters deleted from the table | `lib/latinLetterFold.ts` | L2, L6, L7 and A1d fail. |
+| M2: `strokeFold` stops decomposing | `lib/canonicalLocations.ts` | L2, L3, L5, A1d and B1 fail. |
+| M3: `trailLetterFold` stops decomposing | `lib/discoveryTrailFold.ts` | L3 (ǽ) and A1d fail. |
+
+Each of M1–M3 was one edit, run, and then a copy back with the sha256 checked equal to the original.
+
+### 73.5 The harness (controlled evidence, not production evidence)
+
+- **The cluster.** It was booted with `scripts/local-db/up.sh`: `LOCAL_DB_DIR=/var/tmp/p27-localdb`, `LOCAL_DB_PORT=55441` and `LOCAL_DB_WORK=/var/tmp/p27-work`, as `portava_localdb`. The disk was nearly full, so the data directory was initialised beforehand with 1 MB WAL segments and `max_wal_size=32MB`. It holds 103 MB.
+- **A fresh replay with the final migrations.** The baseline has 388 tables. 354 migrations were applied in order, 3440 and 3441 among them. 12 are known-unreplayable, and 2 of those applied on retry.
+- **`scripts/local-db/run-tests.sh`.** 375 of 375 pass across the 53 `db/*.db.test.ts` suites, with 0 skipped.
+- **Nothing else.** No SQL was run against `portava-ci` or production.
+
+### 73.6 Checks run at this tree
+
+- **Types.** `typecheck` passes. `typecheck:tests` is at its baseline: 863 diagnostics across 115 files, and none of them is in a file this lane touched.
+- **Suites.** The 18 non-DB suites that import the folds pass 428 of 428. `discoveryVerifyAudit.test.ts`, `discoveryVerifyAudit2.test.ts` and the new suite pass 24 of 24.
+- **`check:test-registration` passes.** The 14 `src/test/*ensus*.test.ts` suites, which read the census, pass 221 of 221, `censusIdGrammar` and `censusIntegrityQualifiedVerdicts` among them.
+- **Checks that pass, run after this section's last edit:**
+  - `check:census-integrity`: census-discovery counts C 96, W 86, N 5, X 1, which matches 73.12;
+  - `check:census-freshness`;
+  - `check:census-scope-coverage`: census-discovery has 357 cited and 357 watched;
+  - `check:doc-citations`: RESULT clean, with 6434 unanchored citations at the 6434 ceiling;
+  - `check:citation-targets`: 164/164, at the ceiling;
+  - `check:citation-symbols`: 0 missing symbols and 34 far, both at their ceilings;
+  - `check:census-row-move-labels`, `check:census-policy-citations`, `check:migration-prefixes` and `check:test-registration`.
+- **The full api-server `pnpm test` did NOT complete.** It was killed by this lane's 50-minute timeout after about 3,860 top-level results, and this lane claims no total. Two failures were seen before the kill, and neither is in a file this lane touched:
+  - `discoveryClientRouteE2E.test.ts` fails alone as well, on a module-link error: `../utils/identity.ts` has no export `truncateDisplayName`.
+  - `guard reachability ratchet` is the 180-second control that §66.8 records timing out under concurrent load.
+
+### 73.7 Recorded, not graded
+
+1. **census-input-intelligence G57 (C).** §66.6 #2 said it was W on B01's ground. That ground is closed here, so nothing moves. G55 is unchanged. The fold still uses NFD, not NFKD, so fullwidth `Ｔｏｋｙｏ` and `ﬁnland` still fold as §66.6 #3 says (B3, still a LIMIT).
+2. **A TS/SQL skew older than this lane, outside the criterion.** U+A7F1 MODIFIER LETTER CAPITAL S (Unicode 17) decomposes under Node's NFKD to `s`, while the harness's PostgreSQL 16 does not decompose it. So the TypeScript slug keeps an `s` that the SQL slug deletes. S8 pins it as the only divergence among the 1453 letters. It can only merge or refuse; it never makes two Trails for one theme.
+3. **The client's own fold, a separate implementation.** `travel-buddy-standalone/src/lib/cityCentroids.ts` has a six-letter stroke table (Ł ł Ø ø Đ đ). It is the client's centroid lookup, not the stored key, and it is routed to its owner, not changed here.
+4. **`normalizeLocationName` and the legacy `normalized_name` column are unchanged.** They still delete Đ, as K1 and K3 pin. Only `search_key` readers fold.
+
+### 73.8 Owner questions and approvals
+
+- **B01, question 4 (§66.9), still open.** Its first half is moot now that Ǿ/ǿ fold. What remains, verbatim: *"And does it cover ß, æ and œ, which the collation standard treats as accent-level differences?"* Today's behaviour, measured:
+  - `searchKey` and 3440 delete all three: "Straße" → `stra e`, "Æbeltoft" → `beltoft`, "Œuf" → `uf`.
+  - A Trail spells them: `ss`, `ae`, `oe`, through `TRAIL_LETTER_FOLD`, which is unchanged.
+  - This lane folds none of them in the search key.
+- **Approval item A: applying 3440 to production.** 2220 is live, so this is the first production-relevant step. 3440 runs in one transaction:
+  - it drops `canonical_locations_search_key_trgm_idx` and `search_key`, replaces the function, re-adds the column and rebuilds the index;
+  - the ADD rewrites the table under ACCESS EXCLUSIVE, and every row's stored key is recomputed under the new fold;
+  - while that runs, readers of `search_key` wait behind the lock. If it fails, the transaction rolls back to 2220's state.
+- **What the owner should see before approving:** the row count and the rows whose key changes (73.9).
+
+### 73.9 Read-only production SQL that would turn harness evidence into production evidence (not run)
+
+```sql
+-- Size of the rewrite 3440 performs.
+SELECT count(*) AS rows, pg_size_pretty(pg_total_relation_size('public.canonical_locations')) AS size FROM public.canonical_locations;
+-- Rows whose stored key can change under 3440: a non-ASCII letter that is not a combining mark after NFD (a superset).
+SELECT count(*) FROM public.canonical_locations WHERE normalize(name, NFD) ~ '[^\x01-\x7F̀-ͯ]';
+-- The defect itself, in production (expected 'resund' until 3440).
+SELECT public.input_normalize_city_key('Ǿresund') AS acute, public.input_normalize_city_key('Øresund') AS plain;
+```
+
+### 73.10 Freshness and scope
+
+- **census-discovery's CENSUS_SCOPE** gains the four files this section cites that it did not watch: `lib/latinLetterFold.ts`, 3440, 3441 and the new suite.
+- **The acknowledgement ledger.** Its census-discovery entry lists the same four. Verdicts DO move on them: DV-20 and B01 go from W to C, graded here.
+- **census-input-intelligence** watches `lib/canonicalLocations.ts`. Its entry says why no verdict there moves (73.7 #1).
+- **census-trips** watches the two DB suites. K5, K6 and S8 touch `canonical_locations` and the Trail fold functions, and no `trip_*` object.
+- **Nothing else.** No other census's verdict table is edited.
+
+### 73.11 What would turn this red
+
+- **DV-20.** Any of these turns it red:
+  - a Latin "X WITH" letter that some fold deletes while X survives (L2, L3);
+  - a table edit that leaves SQL and TypeScript apart (L7, S8);
+  - `strokeFold` or `trailLetterFold` no longer decomposing (M2, M3);
+  - a Node upgrade to a newer Unicode, until LETTERS is regenerated (L1);
+  - a second spelling of one theme admitted as a second Trail.
+- **B01.** Any of these turns it red:
+  - B1's `failing` list non-empty;
+  - K5 or K6 failing on the harness;
+  - `input_normalize_city_key` or `search_key` changing without a migration that recomputes the stored column;
+  - the owner answering Q4 "yes" for ß, æ and œ.
+
+### 73.12 Headline, restated from the rows
+
+With DV-20 and B01 moving W → C, `check:census-integrity` counts the rows as follows:
+
+| bucket | count |
+|---|---|
+| BUILT-AND-CORRECT | **96** |
+| BUILT-BUT-WRONG | **86** |
+| NOT-BUILT | **5** |
+| CANNOT-VERIFY | **1** |
+
+CONSTRUCTED 182 / 188 = **96.8 %**, unchanged. CORRECT 96 / 188 = **51.1 %**, up from 50.0 %. The denominator is unchanged.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/compass/CompassExplanationEngine.ts — §13.7 item 3 names Compass's HMAC recommendation-token signer as a refactor this lane declined to make in another lane's file. Discovery's recommendation id is minted by lib/discoveryRecommendationId.ts, and no Discovery verdict rests on the signer.
@@ -12418,3 +12557,5 @@ api-server:
 - NOT-GRADED: artifacts/api-server/src/test/productionDriftExtraction.test.ts — §64.14 cites it only as the drift check's own suite, run to show the ratchet entry for `trail_relations` leaves the check's extraction and staleness rules passing; no Discovery verdict rests on it.
 - NOT-GRADED: travel-buddy-standalone/src/lib/displayIdentity.ts — §68.7 names it only as the cause of `discoveryClientRouteE2E.test.ts`'s import failure, identical at `f34994de7` with this lane's code stashed; no verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/wallPerformance.test.ts — §68.7 names it only as a timing case that failed under a parallel run and passes 6/6 alone; it imports nothing §68 changed, census-wall grades it, and no Discovery verdict rests on it.
+
+- NOT-GRADED: travel-buddy-standalone/src/lib/cityCentroids.ts — §73.7 #3 names its six-letter stroke table as the client's own fold, which is separate from the stored key; it serves the client's centroid lookup, and no DV-20 or B01 verdict rests on it.

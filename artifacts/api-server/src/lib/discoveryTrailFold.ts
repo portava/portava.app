@@ -11,9 +11,9 @@
  *
  * Two folds, applied before the decomposition:
  *
- *   the STROKE fold   lib/canonicalLocations.strokeFold — B01's and 2220's own
- *                     table, reused rather than restated: đ Đ ø Ø ł Ł ħ Ħ ŧ Ŧ ð Ð
- *                     ı İ, one letter each.
+ *   the STROKE fold   lib/canonicalLocations.strokeFold — B01's table, reused
+ *                     rather than restated: every "LATIN … LETTER X WITH …" (§73),
+ *                     applied as typed and after decomposition (Ǿ = Ø + acute).
  *   the LETTER fold   the Latin letters that have neither a decomposition nor a
  *                     stroke, each to its conventional ASCII spelling (the
  *                     Unicode CLDR Latin-ASCII transliteration): ß ẞ → ss,
@@ -22,8 +22,8 @@
  *                     `strasse-food` — §59's defect for another letter.
  *
  * Migration 3415 applies the same two folds in SQL (trail_canonical_slug and
- * trail_normalised_destination), and src/test/discoveryTrailIntegrity.test.ts
- * pins the SQL tables to these.
+ * trail_normalised_destination; 3441 decomposes first), and
+ * src/test/discoveryLetterFoldCompleteness.test.ts pins the SQL tables to these.
  *
  * A DESTINATION is compared by `trailDestinationKey`: the letter fold, then
  * lib/canonicalLocations.searchKey — the geographic key B01 and 2220 already use
@@ -41,11 +41,12 @@ export const TRAIL_LETTER_FOLD: Readonly<Record<string, string>> = Object.freeze
   "þ": "th", "Þ": "th",
   "ŋ": "ng", "Ŋ": "ng",
 });
-const LETTER_FOLD_RE = new RegExp(`[${Object.keys(TRAIL_LETTER_FOLD).join("")}]`, "gu");
+const LETTER_FOLD_RE = new RegExp(`[${Object.keys(TRAIL_LETTER_FOLD).join("")}]`, "gu"), LETTER_FOLD_ANY = new RegExp(LETTER_FOLD_RE.source, "u");
 
-/** Stroke fold, then letter fold. Pure, deterministic, idempotent. */
+/** Stroke fold, then letter fold, each also inside a decomposition. Pure, idempotent. */
 export function trailLetterFold(s: string): string {
-  return strokeFold(s).replace(LETTER_FOLD_RE, (ch) => TRAIL_LETTER_FOLD[ch] ?? ch);
+  const folded = strokeFold(s), nfd = folded.normalize("NFD"); // §73: decomposed too, so ǽ (æ + acute) meets the letter fold
+  return LETTER_FOLD_ANY.test(nfd) ? nfd.replace(LETTER_FOLD_RE, (ch) => TRAIL_LETTER_FOLD[ch] ?? ch).normalize("NFC") : folded;
 }
 
 /** One destination whatever its spelling: the letter fold, then B01's geographic search key. */
