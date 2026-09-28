@@ -210,8 +210,8 @@ async function readTrail(
 async function readMembers(sc: any, trailId: string): Promise<{ refusal: TrailRefusal; members: MemberRow[] }> {
   const { data, error } = await sc.from("content_trails").select(MEMBER_COLUMNS)
     .eq("trail_id", trailId)
-    .order("created_at", { ascending: false })
-    .limit(500);
+    .order("created_at", { ascending: false }).order("id", { ascending: false }) // §86.14: a total order, so the member window has an exact edge a cursor can continue from
+    .limit(TRAIL_MEMBER_WINDOW);
   if (error) return { refusal: refusalFor(error, "readMembers"), members: [] };
   return { refusal: null, members: (data ?? []) as MemberRow[] };
 }
@@ -2107,51 +2107,135 @@ export async function settleTrailModulesServe(sc: any, trailId: string, r: Trail
 
 // ── DV-23: "preserve access through more from this place" ─────────────────────
 
-export type HeldBackListKey = TrailModule["key"] | "trending";
+export type HeldBackListKey = TrailModule["key"] | "trending" | "beyond_window";
+
+/**
+ * The newest members a Trail's lists are computed over (readMembers). §86.14
+ * (D-W10T-17): every member older than this window stays reachable through the
+ * "more" routes' cursor, a bounded page of TRAIL_MORE_PAGE_SIZE at a time.
+ */
+export const TRAIL_MEMBER_WINDOW = 500;
+/** Members one cursor page of GET …/more reads (before the viewer's visibility filter). */
+export const TRAIL_MORE_PAGE_SIZE = 200;
 
 export interface MoreFromPlaceResult {
   refusal: TrailRefusal;
   placeId: string;
-  /** Per module (and the trending list), exactly the members it counted in `moreFromThisPlace[placeId]`. */
+  /** Per module (and the trending list), exactly the members it counted in `moreFromThisPlace[placeId]`; on a cursor page, the window's older members at this place. */
   modules: Array<{ key: HeldBackListKey; items: TrailModule["items"] }>;
+  /** Opaque cursor to the next bounded page of members older than the window, or null when there are none. */
+  next: string | null;
 }
 
-/** Every list this viewer is served for a Trail, with what each held back: the modules, then GET …/trending's list. */
+interface MemberCursor { c: string; i: string }
+
+export function encodeMemberCursor(row: { created_at: string; id: string }): string {
+  return Buffer.from(JSON.stringify({ c: row.created_at, i: row.id }), "utf8").toString("base64url");
+}
+
+/** A cursor this server minted, or null (a malformed cursor is refused, never guessed). */
+export function decodeMemberCursor(cursor: string): MemberCursor | null {
+  try {
+    const v = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+    if (typeof v?.c !== "string" || !Number.isFinite(Date.parse(v.c)) || typeof v?.i !== "string" || !/^[0-9a-f-]{36}$/i.test(v.i)) return null;
+    return { c: v.c, i: v.i };
+  } catch { return null; }
+}
+
+type HeldList = { key: HeldBackListKey; byPlace: Record<string, TrailModule["items"]>; unplaced: TrailModule["items"] };
+
+/** Every list this viewer is served for a Trail, with what each held back: the modules, then GET …/trending's list; and the cursor past the window. */
 async function heldBackLists(
   sc: any, trailId: string, opts: { viewerId?: string | null; nowMs?: number },
-): Promise<{ refusal: TrailRefusal; lists: Array<{ key: HeldBackListKey; byPlace: Record<string, TrailModule["items"]>; unplaced: TrailModule["items"] }> }> {
+): Promise<{ refusal: TrailRefusal; lists: HeldList[]; next: string | null }> {
   const r = await getTrailModules(sc, trailId, { viewerId: opts.viewerId ?? null, nowMs: opts.nowMs });
-  if (r.refusal) return { refusal: r.refusal, lists: [] };
+  if (r.refusal) return { refusal: r.refusal, lists: [], next: null };
   const t = await trailTrending(sc, trailId, opts.nowMs ?? Date.now(), { viewerId: opts.viewerId ?? null });
-  const lists = r.modules.map((m) => ({ key: m.key as HeldBackListKey, byPlace: m.heldBackByPlace ?? {}, unplaced: m.heldBackUnplaced ?? [] }));
+  const lists: HeldList[] = r.modules.map((m) => ({ key: m.key as HeldBackListKey, byPlace: m.heldBackByPlace ?? {}, unplaced: m.heldBackUnplaced ?? [] }));
   if (!t.refusal) lists.push({ key: "trending", byPlace: t.heldBackByPlace ?? {}, unplaced: t.heldBackUnplaced ?? [] });
-  return { refusal: null, lists };
+  const m = await readMembers(sc, trailId);
+  if (m.refusal) return { refusal: m.refusal, lists: [], next: null };
+  const edge = m.members.length >= TRAIL_MEMBER_WINDOW ? m.members[m.members.length - 1] : undefined;
+  return { refusal: null, lists, next: edge ? encodeMemberCursor(edge) : null };
+}
+
+/**
+ * One bounded page of the members OLDER than a cursor (§86.14, D-W10T-17), keyset
+ * on (created_at, id) — the order readMembers reads in — so a page neither
+ * repeats nor skips a member. Only what this viewer may be served
+ * (`servableMembers`), one row per content, clustered as every list clusters.
+ */
+async function olderMembersPage(
+  sc: any, trailId: string, cursor: MemberCursor, viewerId: string | null, nowMs: number,
+): Promise<{ refusal: TrailRefusal; list: HeldList | null; next: string | null }> {
+  const t = await readTrail(sc, trailId);
+  if (t.refusal || !t.trail) return { refusal: t.refusal ?? "unknown_trail", list: null, next: null };
+  const tie = await sc.from("content_trails").select(MEMBER_COLUMNS)
+    .eq("trail_id", trailId).eq("created_at", cursor.c).lt("id", cursor.i)
+    .order("id", { ascending: false }).limit(TRAIL_MORE_PAGE_SIZE);
+  if (tie.error) return { refusal: refusalFor(tie.error, "olderMembersPage.tie"), list: null, next: null };
+  const older = await sc.from("content_trails").select(MEMBER_COLUMNS)
+    .eq("trail_id", trailId).lt("created_at", cursor.c)
+    .order("created_at", { ascending: false }).order("id", { ascending: false }).limit(TRAIL_MORE_PAGE_SIZE);
+  if (older.error) return { refusal: refusalFor(older.error, "olderMembersPage.older"), list: null, next: null };
+  const rows = [...((tie.data ?? []) as MemberRow[]), ...((older.data ?? []) as MemberRow[])].slice(0, TRAIL_MORE_PAGE_SIZE);
+  const edge = rows.length >= TRAIL_MORE_PAGE_SIZE ? rows[rows.length - 1] : undefined;
+  const served = linkVenueClusters(await servableMembers(sc, rows, viewerId, nowMs), await readMemberGeography(sc, rows));
+  const seen = new Set<string>();
+  const byPlace: Record<string, TrailModule["items"]> = {};
+  const unplaced: TrailModule["items"] = [];
+  for (const r of served) {
+    const k = `${r.source_type}:${r.source_id}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    const it = { id: r.id, sourceType: r.source_type, sourceId: r.source_id, contentState: r.content_state };
+    if (r.clusterPlaceId) (byPlace[r.clusterPlaceId] ??= []).push(it); else unplaced.push(it);
+  }
+  return { refusal: null, list: { key: "beyond_window", byPlace, unplaced }, next: edge ? encodeMemberCursor(edge) : null };
 }
 
 export async function moreFromThisPlace(
-  sc: any, trailId: string, placeId: string, opts: { viewerId?: string | null; nowMs?: number } = {},
+  sc: any, trailId: string, placeId: string, opts: { viewerId?: string | null; nowMs?: number; cursor?: string | null } = {},
 ): Promise<MoreFromPlaceResult> {
+  if (opts.cursor) {
+    const c = decodeMemberCursor(opts.cursor);
+    if (!c) return { refusal: "invalid_request", placeId, modules: [], next: null };
+    const p = await olderMembersPage(sc, trailId, c, opts.viewerId ?? null, opts.nowMs ?? Date.now());
+    if (p.refusal || !p.list) return { refusal: p.refusal, placeId, modules: [], next: null };
+    const items = p.list.byPlace[placeId] ?? [];
+    return { refusal: null, placeId, modules: items.length > 0 ? [{ key: "beyond_window", items }] : [], next: p.next };
+  }
   const h = await heldBackLists(sc, trailId, opts);
-  if (h.refusal) return { refusal: h.refusal, placeId, modules: [] };
+  if (h.refusal) return { refusal: h.refusal, placeId, modules: [], next: null };
   return {
     refusal: null, placeId,
     modules: h.lists.map((l) => ({ key: l.key, items: l.byPlace[placeId] ?? [] })).filter((m) => m.items.length > 0),
+    next: h.next,
   };
 }
 
 export interface MoreFromTrailResult {
   refusal: TrailRefusal;
-  /** Per list, EVERY member it held back: by place, and those with no place (D-W10T-15). */
-  lists: Array<{ key: HeldBackListKey; byPlace: Record<string, TrailModule["items"]>; unplaced: TrailModule["items"] }>;
+  /** Per list, EVERY member it held back: by place, and those with no place (D-W10T-15); on a cursor page, the window's older members. */
+  lists: HeldList[];
+  /** Opaque cursor to the next bounded page of members older than the window, or null when there are none (D-W10T-17). */
+  next: string | null;
 }
 
-/** D-W10T-15: nothing a Trail page holds back is unreachable — including an item with no place to be "more from". */
+/** D-W10T-15/-17: nothing a Trail page holds back, and no member past the window, is unreachable. */
 export async function moreFromThisTrail(
-  sc: any, trailId: string, opts: { viewerId?: string | null; nowMs?: number } = {},
+  sc: any, trailId: string, opts: { viewerId?: string | null; nowMs?: number; cursor?: string | null } = {},
 ): Promise<MoreFromTrailResult> {
+  if (opts.cursor) {
+    const c = decodeMemberCursor(opts.cursor);
+    if (!c) return { refusal: "invalid_request", lists: [], next: null };
+    const p = await olderMembersPage(sc, trailId, c, opts.viewerId ?? null, opts.nowMs ?? Date.now());
+    if (p.refusal || !p.list) return { refusal: p.refusal, lists: [], next: null };
+    return { refusal: null, lists: Object.keys(p.list.byPlace).length > 0 || p.list.unplaced.length > 0 ? [p.list] : [], next: p.next };
+  }
   const h = await heldBackLists(sc, trailId, opts);
-  if (h.refusal) return { refusal: h.refusal, lists: [] };
-  return { refusal: null, lists: h.lists.filter((l) => Object.keys(l.byPlace).length > 0 || l.unplaced.length > 0) };
+  if (h.refusal) return { refusal: h.refusal, lists: [], next: null };
+  return { refusal: null, lists: h.lists.filter((l) => Object.keys(l.byPlace).length > 0 || l.unplaced.length > 0), next: h.next };
 }
 
 // ── DV-74: a trend integrity review in force ──────────────────────────────────

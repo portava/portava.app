@@ -32,7 +32,7 @@ Lane W10-T (census-discovery §86), branch `disc-w10-t-trails`, cut from `a65817
 - **The question.** The lane brief: "This is ranking machinery: the hold is lifted, so put it behind a flag seeded FALSE" (DV-22), and "Health orders the Trail's own modules, behind a flag" (DC-05).
 - **Options considered.** (a) Flag everything this lane builds: the §10 caps and the attach rule would stay off, and DV-13/DV-23/DC-20 would stay unenforced. (b) Flag nothing: the owner's condition for lifting the hold is broken. (c) Flag what re-selects or reorders a page from behavioural readings; ship the §10/§4/§15 rules and the admin door unflagged.
 - **Decision and rationale.** (c). Two flags, seeded FALSE by 3485: `discovery_trail_exploration_enabled` (§7 content moves, §8 horizon and the `hidden_gems` module, §9 rotation, the Trail's own serve count) and `discovery_trail_health_order_enabled` (§11 order). The §10 diversity rules (DV-13, DV-23) are the same kind of rule the earlier lanes shipped unflagged (the creator and place caps); the attach rule (DC-20) is authorisation (`11` §10); the admin actions change nothing until an admin acts.
-- **Reversibility.** Both flags are rows; OFF restores the prior output byte for byte (pinned). The unflagged rules revert with the commit.
+- **Reversibility.** Both flags are rows. OFF stops every flagged behaviour: absent and FALSE serve the same bytes and nothing is counted or written (pinned, G0). OFF is NOT the pre-§86 output, because the unflagged §10 rules (D-W10T-2, -4, -5, -15, -16) apply either way; those revert only with the commit.
 - **Where it is implemented.** `artifacts/api-server/src/migrations/3485_discovery_trail_exploration_flags.sql`; `services/trails/trailExploration.ts` (`readTrailRankingFlags`); pinned by `src/test/discoveryTrailExploration.test.ts` G0 and `src/test/db/trailsModeration.db.test.ts` W1, W8.
 
 ### D-W10T-2 — DV-13: the one-creator bound (D-1 Q3)
@@ -130,7 +130,7 @@ Lane W10-T (census-discovery §86), branch `disc-w10-t-trails`, cut from `a65817
 - **Recommended action.** Apply 3485, 3486, 3487 and 3488 (in that order, after 3381 and 3415) to `portava-ci`, then production. Keep both 3485 flags FALSE in production until a Trail exists there; then turn on `discovery_trail_exploration_enabled` first, and `discovery_trail_health_order_enabled` only after a week of `trail_member_exposures` rows shows the rotation reaching the backlog.
 - **Consequence of approving.** Admin moderation, merge, curation, edge review and trend review become available; stranger suggestions stop failing closed; with the flags, Trail pages are served from §7 states.
 - **Consequence of declining.** Admin Trail actions and relation declarations answer 503; a stranger's suggestion answers 503 (it never spends the owner's budget); the §10 rules and the attach rule still apply.
-- **Recovery path.** The four rollbacks under `db/rollback/2026-09-28-348[5-8]-*`; the flags OFF restore the prior output byte for byte.
+- **Recovery path.** The four rollbacks under `db/rollback/2026-09-28-348[5-8]-*`; the flags OFF stop every flagged behaviour (absent = FALSE, pinned); they do not restore pre-§86 output, because the unflagged §10 rules apply either way.
 
 ### D-W10T-14 — Retention of the three new stores — **APPROVAL REQUIRED** (retention)
 
@@ -158,3 +158,31 @@ Lane W10-T (census-discovery §86), branch `disc-w10-t-trails`, cut from `a65817
   - `services/trails/TrailService.ts`: `trailTrending`, `boundCreatorsAcrossPage`, `moduleSaturationItem`, `heldBackLists`, `moreFromThisPlace`, `moreFromThisTrail`.
   - `routes/trails.ts`.
   - Tests: `discoveryTrailProductRules.test.ts` F1–F6, with G1–G3 and H pinning DV-13 and the wiring.
+
+### D-W10T-16 — DV-23 round 2: past the page is held, not "pagination"
+
+- **The question.** The verifier re-ran at `8dcbb5acc` and found that `diversifyTrailModule` stopped classifying once a page was full: "beyond the page is pagination, not suppression". No route paginates a module (/modules is fixed at 8 items, trending at 20), so items after the page filled were neither counted nor listed. Four posts about a place that arrived after the page filled vanished from "more from this place".
+- **Options considered.**
+  - (a) Real pagination: a cursor per module and per list. That is new client surface for every spotlight, and each page would need its own §10 pass.
+  - (b) Keep classifying past the page: every candidate the page had no room for is held (`beyond_page`), counted under its place, or listed as unplaced.
+- **Decision and rationale.** (b). A spotlight is a bounded page by design (`02` §8: "without creating a million-item chronological feed"). Access to the rest is §10's "more from this place", which the "more" routes already provide (D-W10T-15). It holds on /modules and on trending alike.
+- **Reversibility.** Code only.
+- **Where it is implemented.** `lib/discoveryTrailHealth.ts` `diversifyTrailModule`. Tests: `discoveryTrailProductRules.test.ts` J1 and J2.
+
+### D-W10T-17 — DV-23 round 2: the 500-member window and clause 5
+
+- **The question.** `readMembers` reads a Trail's newest 500 members. Members past 500 were never served or listed anywhere. How does "preserve access" hold for a larger Trail?
+- **Options considered.**
+  - (a) Raise the window: it moves the problem and makes every read heavier.
+  - (b) An unbounded /more.
+  - (c) A bounded page with a cursor.
+- **Decision and rationale.** (c).
+  - Every list, and the page it serves, is computed over the newest `TRAIL_MEMBER_WINDOW` (500) members, now in a total order: created_at, then id.
+  - When the window is full, both "more" routes return `next`, an opaque cursor at the window's edge.
+  - `?cursor=` returns one bounded page of up to `TRAIL_MORE_PAGE_SIZE` (200) older members, as the list `beyond_window`, by place and unplaced, with the cursor to the page after. It is keyset on (created_at, id), so a tie at the edge is neither repeated nor skipped.
+  - A cursor page is the viewer's view (`servableMembers`), like every other read. A malformed cursor is 400.
+- **Reversibility.** Code only; the cursor is opaque, so its format may change.
+- **Where it is implemented.**
+  - `services/trails/TrailService.ts`: `TRAIL_MEMBER_WINDOW`, `olderMembersPage`, `moreFromThisPlace` and `moreFromThisTrail`.
+  - `routes/trails.ts`.
+  - Tests: J4, and J3 for the viewer's view.

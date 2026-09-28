@@ -497,23 +497,28 @@ router.get("/v1/discovery/trails/:id/places/:placeId/more", asyncHandler(async (
   const id = uuid.safeParse(req.params.id);
   const placeId = uuid.safeParse(req.params.placeId);
   if (!id.success || !placeId.success) return sendError(res, "invalid_payload", "ids must be uuids");
-  const r = await moreFromThisPlace(getServiceClient(), id.data, placeId.data, { viewerId: auth.user.id });
+  const cursor = typeof req.query.cursor === "string" && req.query.cursor.length > 0 ? req.query.cursor : null; // §86.14 (D-W10T-17): members older than the window
+  const r = await moreFromThisPlace(getServiceClient(), id.data, placeId.data, { viewerId: auth.user.id, cursor });
   if (r.refusal) return sendTrailRefusal(res, r.refusal);
-  res.json({ placeId: r.placeId, modules: r.modules });
+  res.json({ placeId: r.placeId, modules: r.modules, next: r.next });
 }));
 
 /**
  * DV-23 / D-W10T-15 — EVERYTHING a Trail page holds back, per list (every module and GET …/trending's list):
  * by place, and the members that have no place to be "more from". No held item is unreachable.
+ * §86.14 (D-W10T-17): the lists are computed over the newest TRAIL_MEMBER_WINDOW members; `next`
+ * is a cursor to the members older than that, `?cursor=` returns one bounded page of them (key
+ * `beyond_window`) with the cursor to the page after. A malformed cursor is 400.
  */
 router.get("/v1/discovery/trails/:id/more", asyncHandler(async (req: Request, res: Response) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const id = uuid.safeParse(req.params.id);
   if (!id.success) return sendError(res, "invalid_payload", "trail id must be a uuid");
-  const r = await moreFromThisTrail(getServiceClient(), id.data, { viewerId: auth.user.id });
+  const cursor = typeof req.query.cursor === "string" && req.query.cursor.length > 0 ? req.query.cursor : null; // §86.14 (D-W10T-17)
+  const r = await moreFromThisTrail(getServiceClient(), id.data, { viewerId: auth.user.id, cursor });
   if (r.refusal) return sendTrailRefusal(res, r.refusal);
-  res.json({ lists: r.lists });
+  res.json({ lists: r.lists, next: r.next });
 }));
 
 /**

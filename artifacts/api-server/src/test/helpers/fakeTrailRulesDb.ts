@@ -56,7 +56,7 @@ export interface FakeRulesDb {
 
 const refuse = (what: string) => () => { throw new Error(`fakeTrailRulesDb does not model ${what}`); };
 /** Builder verbs the §86 code never calls: each refuses rather than matching everything. */
-const UNMODELLED_VERBS = ["not", "lt", "lte", "like", "contains", "containedBy", "overlaps", "textSearch", "match", "filter", "upsert", "csv", "returns", "abortSignal", "single"] as const;
+const UNMODELLED_VERBS = ["not", "lte", "like", "contains", "containedBy", "overlaps", "textSearch", "match", "filter", "upsert", "csv", "returns", "abortSignal", "single"] as const;
 
 let seq = 0;
 function uuidFor(table: string, n: number): string {
@@ -111,6 +111,7 @@ export function makeRulesDb(seed: Record<string, Row[]>, opts: FakeRulesDbOption
       is(c: string, v: any) { filters.push((r) => (r[c] ?? null) === v); return b; },
       gt(c: string, v: any) { filters.push((r) => String(r[c] ?? "") > String(v)); return b; },
       gte(c: string, v: any) { filters.push((r) => String(r[c] ?? "") >= String(v)); return b; },
+      lt(c: string, v: any) { filters.push((r) => String(r[c] ?? "") < String(v)); return b; },
       ilike(c: string, p: string) { const n = p.replace(/%/g, "").toLowerCase(); filters.push((r) => String(r[c] ?? "").toLowerCase().includes(n)); return b; },
       or() { return b; },
       order(col: string, o?: { ascending?: boolean }) { if (!orderBy) orderBy = { col, asc: o?.ascending !== false }; return b; },

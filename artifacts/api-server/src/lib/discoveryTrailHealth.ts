@@ -327,7 +327,7 @@ export interface SaturationItem {
   mediaType?: string | null;
 }
 
-export type SuppressionReason = "contributor_cap" | "place_cap" | "media_cap" | "viewpoint_cap" | "near_duplicate"; // §86 (DV-23): the last two
+export type SuppressionReason = "contributor_cap" | "place_cap" | "media_cap" | "viewpoint_cap" | "near_duplicate" | "beyond_page"; // §86 (DV-23): the last three
 
 export interface SaturationResult<T extends SaturationItem> {
   page: T[];
@@ -713,7 +713,9 @@ export const TRAIL_MEDIA_SHARE_PER_PAGE = 1 / 2;
  *                                        creator cap, media) is counted AND listed
  *                                        under its place when it has one, and listed
  *                                        in `heldBackUnplaced` when it has none
- *                                        (D-W10T-15), so nothing held is unreachable
+ *                                        (D-W10T-15), so nothing held is unreachable;
+ *                                        that includes every candidate the page
+ *                                        had no room for (`beyond_page`, D-W10T-16)
  *
  * Nothing is deleted: every held item is returned with its reason.
  */
@@ -772,7 +774,7 @@ export function diversifyTrailModule<T extends ModuleSaturationItem>(
 
   for (const item of items ?? []) {
     if (!item || typeof item.id !== "string") continue;
-    if (page.length >= pageSize) continue; // beyond the page is pagination, not suppression
+    if (page.length >= pageSize) { holdForPlace(item, "beyond_page"); continue; } // §86.14 (D-W10T-16): no route pages a module, so past the page is HELD — counted and listed, never dropped
     const why = blocked(item);
     if (why) { holdForPlace(item, why); continue; }
     const md = item.mediaType;

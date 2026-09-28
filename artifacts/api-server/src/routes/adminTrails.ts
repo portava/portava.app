@@ -43,6 +43,7 @@ const CONFLICTS: ReadonlySet<string> = new Set([
 function send(res: any, r: TrailAdminOutcome): void {
   if (r.ok) { res.status(r.replayed ? 200 : 201).json({ ...r.value, replayed: r.replayed }); return; }
   if (r.reason === "unavailable") return sendError(res, "degraded_unavailable", "Trail moderation is not available on this deployment (3486 not applied).");
+  if (r.reason === "degraded") return sendError(res, "degraded_unavailable", "Trail moderation could not be completed; nothing was changed. Retry with the same idempotency key.");
   if (r.reason === "unknown_trail" || r.reason === "unknown_target" || r.reason === "unknown_content") return sendError(res, "not_found", r.reason);
   if (r.reason === "source_unreadable") return sendError(res, "degraded_unavailable", "the content could not be verified; nothing was curated");
   if (r.reason === "unverifiable_source_type") return sendError(res, "invalid_payload", r.reason);
