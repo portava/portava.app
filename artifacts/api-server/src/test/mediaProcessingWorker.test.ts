@@ -656,10 +656,10 @@ describe("census-media §30 (MD338) — the worker is started at boot", () => {
     } finally {
       mock.timers.reset();
     }
-    // Wait for the pass, not for a clock: load makes this slower, never different. It is
-    // over when the row leaves the pass's hands or the loop re-arms (a pass that never
-    // touched the row). The spy calls straight through to the real setTimeout, so nothing
-    // is parked. The timeout above aborts t.signal, which ends the wait; it is a backstop.
+    // Wait for the pass, not a clock: over when the row leaves the pass's hands or the loop
+    // re-arms (a pass that never touched it). The spy calls through to the real setTimeout.
+    // The 30 s timeout aborts THIS TEST (t.signal ends the wait), not the pass: a stalled pass
+    // keeps running, and the exit watchdog at the end of this file bounds the process.
     const realSetTimeout = mock.method(globalThis, "setTimeout");
     try {
       const rearmed = () => realSetTimeout.mock.calls.some((c) => c.arguments[1] === MEDIA_PROCESSING_INTERVAL_MS);
@@ -1291,4 +1291,30 @@ describe("census-media §32.13 — recordMeasuredMediaSize: conditional, read ba
     assert.doesNotMatch(src, /\.(update|insert|upsert|delete)\s*\(/, "no direct write in the worker");
     assert.match(src, /await recordMeasuredMediaSize\(db, claim, outcome\.sizeBytes\)/);
   });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// The file ends, whatever a stalled pass left behind
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// At the tail so no cited line above moves. The boot-wiring case runs the REAL
+// pass on real timers, and its timeout aborts the test, not the pass. A
+// dependency that never settles and holds nothing lets the process exit when
+// the file is done. One that holds a live handle (a socket that never answers,
+// a wedged native job, a timer that re-arms itself) cannot be released from
+// here, and the file would wait on it forever, as it once did for 25+ minutes.
+// So a process still alive FILE_EXIT_GRACE_MS after the last test is held by
+// something this file leaked: this names the handles and exits non-zero. The
+// timer is unref'd, so it never delays a process that was going to exit, and it
+// is armed only after every test has reported, so unlike --test-force-exit
+// (checkTestRunnerFlags.ts) it cannot cut a run short.
+const FILE_EXIT_GRACE_MS = 10_000;
+after(() => {
+  setTimeout(() => {
+    process.stderr.write(
+      `mediaProcessingWorker.test.ts: still running ${FILE_EXIT_GRACE_MS} ms after its last test, ` +
+        `held by [${process.getActiveResourcesInfo().join(", ")}]; exiting 1 instead of hanging.\n`,
+    );
+    process.exit(1);
+  }, FILE_EXIT_GRACE_MS).unref();
 });
