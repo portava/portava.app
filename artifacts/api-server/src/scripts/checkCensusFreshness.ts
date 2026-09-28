@@ -4102,6 +4102,10 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/3440_canonical_search_key_letter_fold.sql",
     "artifacts/api-server/src/migrations/3441_trail_letter_fold_decompose_first.sql",
     "artifacts/api-server/src/test/discoveryLetterFoldCompleteness.test.ts",
+    // census-discovery §67 (lane P19b, graph revocation): DV-51's revocation leg is graded on this
+    // suite (every edge family revoked then rebuilt, against a scratch build; the fail-visible guards).
+    // compass/CompassGraphEngine.ts, the code it grades, is already watched above (§56).
+    "artifacts/api-server/src/test/compassGraphRevocation.test.ts",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

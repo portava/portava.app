@@ -11837,6 +11837,158 @@ The merged assertion is therefore `false` again (`artifacts/api-server/src/test/
 
 **For every lane that adds a table:** run `check:production-drift` and give the table its `unapplied` entry. That applies to P21 (3435–3439), P27 (3440–3444) and P28 (3445–3447).
 
+## §67 — Revocation reaches the graph (lane P19b): an edge whose source was revoked or deleted no longer survives a rebuild; decay stays the owner's
+
+*Written 2026-09-28 by lane P19b on `disc-p19b-graph-revocation`, branched from `f34994de7`. This lane changes one code file, `artifacts/api-server/src/compass/CompassGraphEngine.ts`, and adds one suite, `artifacts/api-server/src/test/compassGraphRevocation.test.ts` (20 cases), registered on the `test` line and added to CENSUS_SCOPE. The code change is line-neutral for every line any census cites. One line is edited in place, and two calls are added after the last cited line of `rebuildIntelligenceGraph`. Inside `buildGraphFromSources`, only the `circles` read changed: its four uncited lines now call a shared read, four for four (67.3). Everything else is appended at the end of the file. The build writes exactly what it wrote before. There is no migration and no SQL function change, so nothing was rehearsed on the local harness. Nothing is merged to `main`, applied to `portava-ci` or production, deployed or flag-enabled, and no SQL was run against any database. The headline is unchanged, because no row changes bucket. `head_commit` is not re-declared.*
+
+### 67.1 Row moves
+
+| ID | was | now | evidence |
+|---|---|---|---|
+| DV-51 | W | **W** | **The revocation leg is built. Decay is not.** Before this lane the rebuild only upserted (`artifacts/api-server/src/compass/CompassGraphEngine.ts:991#.upsert(chunk, { onConflict: "src_type,src_key,dst_type,dst_key,edge_type" });`), and apart from the non-canonical city-key cleanup, the one thing that removed anything was the Memory sweep. So a revoked stamp's `visited` edge survived at its old weight (§56.6). The rebuild now runs a support reconciliation before the world-model fold (`artifacts/api-server/src/compass/CompassGraphEngine.ts:2152#const edgeSupport = await reconcileEdgeSupport(db);`). It judges every stored edge of every family the build writes (`artifacts/api-server/src/compass/CompassGraphEngine.ts:2191#export const GRAPH_EDGE_FAMILIES = [`) against the source rows that could support it, re-read by the edge's own anchor, by replaying the build itself over those rows (`artifacts/api-server/src/compass/CompassGraphEngine.ts:2393#async function replayBuild(`). An edge the replay does not produce is deleted, and its weight is never written. It also retires the trip, event and circle nodes of deleted rows, and the world-model and confidence rows of a city left with no rhythm edge (`artifacts/api-server/src/compass/CompassGraphEngine.ts:2156#const cityRowRetirements = await retireUnsupportedCityRows(db);`). For every revocable source kind, a revoke or delete followed by a rebuild now leaves the stored graph equal to a from-scratch build over the remaining sources (`artifacts/api-server/src/test/compassGraphRevocation.test.ts:244#it("A1 —` through `artifacts/api-server/src/test/compassGraphRevocation.test.ts:317#it("G —`). All nine cases were red before the change. **Why still W:** §6 asks for strength derived from recency, frequency, diversity and confirmed experiences, not *"a single permanent score"* (`docs/specs/discovery-architecture-v1/discovery-v1-05-graph-engine.md:92#as a single permanent score.`). A supported edge still keeps its count as a permanent weight, and nothing lowers it with age. That rule is the owner's (§56.9 question 6; PR #528 owner item D), and this lane invents no decay constant. |
+
+### 67.2 Every edge the rebuild writes, its source, and whether that source can be revoked
+
+"Before" is the tree at `f34994de7`, and "now" is this lane's tree. Each line cited in the writer column is unchanged. "Retired now" means that a revoke or delete, followed by a rebuild, leaves no such edge, as the named case shows.
+
+| family | edge (src → dst) | writer | source fact | how the source is revoked or deleted | before | now |
+|---|---|---|---|---|---|---|
+| stamp_visit | person —`visited`→ city | `artifacts/api-server/src/compass/CompassGraphEngine.ts:709#edge_type: "visited"` | a presence stamp, not revoked | `is_revoked` (and restore); hard delete by the account-deletion cascade | **survived** (§56.6) | retired (A1, A2) |
+| person_activity | person —`active_in`→ time_slice | `artifacts/api-server/src/compass/CompassGraphEngine.ts:719#edge_type: "active_in"` (stamps) and `artifacts/api-server/src/compass/CompassGraphEngine.ts:937#edge_type: "active_in"` (Memories) | a presence stamp, or a published public Memory | as stamp_visit, plus the Memory's state, audience or deletion | **survived both** (the Memory sweep did not reach it) | retired (A1, B) |
+| trip_owner | person —`took_trip`→ trip | `artifacts/api-server/src/compass/CompassGraphEngine.ts:739#edge_type: "took_trip"` | the trip row | hard delete by the owner's account-deletion cascade (the user's "delete" archives the trip, see 67.6) | **survived** | retired (C1) |
+| trip_destination | trip —`destination`→ city | `artifacts/api-server/src/compass/CompassGraphEngine.ts:740#edge_type: "destination"` | the trip row | as trip_owner | **survived** | retired (C1) |
+| trip_return | person —`returned_to`→ city | `artifacts/api-server/src/compass/CompassGraphEngine.ts:745#edge_type: "returned_to"` | two or more of the person's trips to that city | as trip_owner | **survived** | retired (C2) |
+| event_link | event —`in_city` / `hosted_by` / `has_vibe`→ city, circle, vibe | `artifacts/api-server/src/compass/CompassGraphEngine.ts:764#dst_type: "city", dst_key: city, edge_type: "in_city"`, `artifacts/api-server/src/compass/CompassGraphEngine.ts:769#edge_type: "hosted_by"` and `artifacts/api-server/src/compass/CompassGraphEngine.ts:772#edge_type: "has_vibe"` | the event row | hard delete by the host's account-deletion cascade (the host's "delete" cancels the event, see 67.6) | **survived** | retired (D) |
+| outcome | person —`outcome:<stage>`→ event or place | `artifacts/api-server/src/compass/CompassGraphEngine.ts:801#outcome:${r.stage}` | a `compass_outcome_events` row | `revokeServedRecommendation` deletes them (`artifacts/api-server/src/compass/CompassOutcomeEngine.ts:186#export async function revokeServedRecommendation(`); the account-deletion cascade | **survived** | retired (E) |
+| behavior | person —`behavior:<outcome>`→ place | `artifacts/api-server/src/compass/CompassGraphEngine.ts:821#behavior:${r.outcome}` | a non-impression `rank_events` row | the account-deletion cascade only (see 67.6 on un-saves) | **survived** | retired (F) |
+| circle_owner | person —`owns_circle`→ circle | `artifacts/api-server/src/compass/CompassGraphEngine.ts:846#edge_type: "owns_circle"` | the circle row | the owner's account-deletion cascade; nothing in the tree writes `circles` at all (67.6) | **survived** | retired (G) |
+| circle_city | circle —`in_city`→ city | `artifacts/api-server/src/compass/CompassGraphEngine.ts:849#edge_type: "in_city"` | the circle row | as circle_owner | **survived** | retired (G) |
+| experience | person —`experienced`→ experience; experience —`at_place` / `during_trip` / `at_event` / `in_city`→ … | `artifacts/api-server/src/compass/CompassGraphEngine.ts:919#edge_type: "experienced"` | a published public Memory | draft, archive, delete or removal; narrowing below `public`; hard delete with the account | retired by `reconcileExperienceNodes` (§28.8), unchanged | retired (B; also judged by §67) |
+| city_rhythm | city —`active_during:<cat>` / `active_during_month:<cat>` / `active_during_event:<cat>`→ slice | `artifacts/api-server/src/compass/CompassGraphEngine.ts:713#edge_type: "active_during:exploring"`, `artifacts/api-server/src/compass/CompassGraphEngine.ts:776#active_during:${category.toLowerCase()}`, `artifacts/api-server/src/compass/CompassGraphEngine.ts:935#edge_type: "active_during:experience"`, and the month and event-window edges they each write beside it | any stamp, event or Memory observed in that slice | any of the above | **survived at zero support**. A rebuild re-counts a slice that still has support within its read. | retired when no source supports it (A1, B, D) |
+
+**Nodes.** Trip, event and circle nodes are now retired when their row is gone (C1, D, G). This matters to readers: the confidence index counts event NODES per city, and D pins that count. Person, city, time-slice, vibe, behavior and outcome nodes are shared vocabulary and are not retired (67.6). Experience nodes stay with `reconcileExperienceNodes`.
+
+**Kinds the rebuild does not read.** Saves, follows and circle membership write no edge of their own. `circle_memberships` is not read, by design (`artifacts/api-server/src/compass/CompassGraphEngine.ts:832#is a person↔person pairing with no circle_id and is not read here`). A save reaches the graph only as a `rank_events` row, which is the `behavior` family. So there is no edge for these to leave behind.
+
+**What readers serve.** The world model and the confidence index are the graph's readers. A1 pins Cebu's confidence `visitors` at 1 after A's stamp is revoked (A and B were both counted before), and D pins Iloilo's `events` at 1 after one of its two events is deleted. B pins that Siargao, whose only support was one Memory, loses its world-model and confidence rows. Before, the fold rewrote only cities it still had edges for (`artifacts/api-server/src/compass/CompassGraphEngine.ts:2692#export async function retireUnsupportedCityRows(`).
+
+### 67.3 How support is decided, and what the reconcile may not do
+
+- **One definition: the build.** The reconcile writes no support predicate of its own. It re-reads the rows that could support an edge, through the build's own tables, select lists and filters (`artifacts/api-server/src/compass/CompassGraphEngine.ts:2327#const supportReads = {`; P pins them equal to the build's). It then runs `buildGraphFromSources` over those rows, against a stand-in client that captures what the build would persist. A hand-written second predicate is how the Memory sweep once kept four private audiences (§28.10). The stand-in ignores `.limit()`, because the cap is exactly what a revocation must not inherit (`artifacts/api-server/src/compass/CompassGraphEngine.ts:2426#limit: () => q,`). `circles` is the one read the two share by call rather than by copy: it has no writer and is a dead lane on the `check:writerless-reads` ratchet, whose exact reader count a second literal read would raise. So the build's four lines now call the shared read (`artifacts/api-server/src/compass/CompassGraphEngine.ts:839#const { data } = await circleSourceRows(db).limit(BUILD_LIMIT);`), and P pins that there is one site.
+- **Positive, not "absent from this build".** The build reads each source capped (`artifacts/api-server/src/compass/CompassGraphEngine.ts:665#const BUILD_LIMIT = 5000;`), and in production PostgREST caps a read at 1000 rows (`artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:278#1000 on this deployment`). So an edge missing from one build is not evidence. Each edge is judged by its anchor: its person, trip, event, circle, Memory, or user–item pair. Anchor reads are paged at 500, under the server cap, and a short page is what ends them (`artifacts/api-server/src/compass/CompassGraphEngine.ts:2261#const SUPPORT_PAGE = 500;`). city_rhythm has no anchor, so it is judged only from a complete read of all three of its sources (`artifacts/api-server/src/compass/CompassGraphEngine.ts:2650#judge(rhythm, await replayIf(`). H pins an edge whose stamp lies beyond the build's read: it is kept.
+- **Fails visibly.** An unreadable edge table decides nothing (`artifacts/api-server/src/compass/CompassGraphEngine.ts:2493#if (stored.failed) {`, J). A failed or unfinished source read leaves its edges `undecided`, by family, and every other anchor is still judged (`artifacts/api-server/src/compass/CompassGraphEngine.ts:2524#if (!support?.sound) { report.undecided++;`, I and N). The build is fail-soft per source, so a row it chokes on would silently end that source's loop. The replay therefore checks that the build iterated every source to the end, and refuses to judge if it did not (`artifacts/api-server/src/compass/CompassGraphEngine.ts:2444#for (const t of GRAPH_SOURCE_TABLES) if (!read.has(t)`, O). A refused delete is counted, and the next run converges (K). The report rides on the rebuild's (`artifacts/api-server/src/compass/CompassGraphEngine.ts:554#edgeSupport?: EdgeSupportReport;`), which the scheduler already logs, and a partial pass logs a warning.
+- **Weight-neutral and idempotent.** The reconcile only deletes; L pins that a surviving edge's weight, count and dates are byte-identical after it. A second rebuild over the same sources retires nothing and changes nothing (M).
+- **Bounded.** 400 pages of stored edges (200,000), 20 pages per anchor chunk of 100, and 200 pages per source table for city_rhythm. When a bound is reached, the pass is reported partial and nothing is guessed.
+
+### 67.4 Tests, and every one seen RED
+
+`artifacts/api-server/src/test/compassGraphRevocation.test.ts` has 20 cases, and 20 pass at this tree. The fake is store-backed and honours `order`, `range` and `limit`. It fails reads or deletes on demand.
+
+- **Behavioural RED at `f34994de7`** (the original engine, restored and sha256-checked afterwards). A1, A2, B, C1, C2, D, E, F and G each failed on their leak assertion: "A's visited edge survived the revocation", "the Memory's active_in edge survived", "the deleted trip's edges survived", and so on. The exhaustiveness case failed because the family table did not exist.
+- **Guards.** H–P and "first build" also failed at `f34994de7`, but only because the report field or export did not exist. They are guards, not reproductions, and the mutations below are what show they bite.
+
+Seventeen mutations of the engine were run. Each was one exact-string edit, run against the suite, and then the file was copied back and checked sha256-identical (`4b3c9e83…`):
+
+| # | mutation | killed by |
+|---|---|---|
+| M1 | stamp_visit not judged (one kind's reconciliation disabled) | cases A1, A2, I, N, O |
+| M2 | city_rhythm not judged | cases A1, A2, B, D, I, O |
+| M3 | trip anchors not judged | cases C1, C2, I, K, L |
+| M4 | event nodes not judged | case D |
+| M5 | world-model rows never retired | case B |
+| M6 | a failed page read as complete and empty | cases I, J |
+| M7 | reaching the page bound read as complete | case N |
+| M8 | outcome not judged | case E |
+| M9 | behavior not judged | case F |
+| M10 | circle anchors not judged | case G |
+| M11 | a refused delete counted as done | case K |
+| M12 | the replay's iterate-to-the-end check removed | case O |
+| M13 | the replay inherits a row cap | cases C2, H, I, K, L, M, O, exhaustiveness, first build |
+| M14 | the person anchor judged against a capped, build-style read ("retire what the build did not read") | cases H, I, N |
+| M15 | person_activity judged without Memories | cases M, first build |
+| M16 | the reconcile's stamp read drops the build's `is_revoked` predicate | case P |
+| M17 | orphaned confidence rows never retired | case B |
+
+**Pre-existing suites.** Every suite that imports `CompassGraphEngine` passes: 214 tests across 13 files (`compass-intelligence-graph`, `compassCensusCorrectness`, `compassCoverageSeam`, `compassEventDimension`, `compassSeasonDimension`, `discoveryModifiers`, `discoverySeasonReason`, `intelligenceGraphScheduler`, `memoryCompassLaneRepairs`, `passportExperienceGraphReader`, `privacyGate`, `stampCriteriaPresenceEvidence`, and the new suite). `deletionGraph.test.ts` passes 20/20.
+
+**Controlled, not production.** Every result above is from an in-memory PostgREST fake. The paged `.order().range()` reads were not run against a real PostgREST, and no production row was read.
+
+### 67.5 Checks run at this tree
+
+Listed in 67.10, after the last edit.
+
+### 67.6 Findings recorded, not graded
+
+- **The user's "delete" of a trip archives it, and the host's "delete" of an event cancels it** (`artifacts/api-server/src/routes/trips-expansion.ts:857#Trip Kernel path (ARCHIVE_TRIP, contract v2).`, `artifacts/api-server/src/routes/events.ts:2739#const delWrite = await writeEventState(sc, id, priorState, "cancelled");`). The build reads trips and events with no status filter (`artifacts/api-server/src/compass/CompassGraphEngine.ts:728#.select("id, owner_id, destination_city, start_date, end_date, destination_lat, destination_lng")`), so an archived trip or a cancelled event still supports its edges, and §67 keeps them. Whether those states are revocations is an eligibility rule for the Trips and Events owners. It is not decided here.
+- **An un-save deletes no `rank_events` row.** A `behavior:save` edge records that a save happened, and it stays while the log row does. Whether the graph should follow current save state is not specified anywhere this lane read.
+- **The reads that build the graph are capped at 1000 in production**, by db-max-rows, below `BUILD_LIMIT`. The same is true of the world-model fold's `limit(20000)` reads and `reconcileExperienceNodes`' node read. So the stored weights count a truncated subset. This lane changes no weight, and the reconcile's own reads are paged under the cap.
+- **Before §67, a deleted or narrowed Memory still counted** in the rhythm gate's distinct-actor count and in its city's rhythm sample, because `active_in` and the rhythm edges do not touch the experience node. census-compass CH-03 and census-highlights-memories H237 are C on the sweep. Both criteria now hold on more of the substrate. They are not re-graded here, and the freshness ledger carries the argument to both.
+- **`circles` has no writer in the tree.** It is a dead lane on the `check:writerless-reads` ratchet. So the circle families' only revocation is the owner's account-deletion cascade, and the §67 reconcile adds no reader of it.
+- **Not retired:** person nodes (after account deletion, a person node with no edges remains), and the shared city, time-slice, vibe, behavior and outcome nodes. Also out of scope: `memory_events`/`memory_projections`, which `memoryProjectionScheduler` derives from experience edges.
+
+### 67.7 Owner question, carried forward (not re-asked)
+
+§56.9 question 6 stands, and it is PR #528 owner item D, "Graph decay (DV-51 remainder)". It asks for the decay function, its per-type constants and the retirement threshold. Its last clause asks whether a rebuild may *"retire an edge whose source rows it did not read"*. §67 does not need that answer, because it never does so: every edge it retires was judged against a complete, anchored read of its own sources.
+
+### 67.8 Read-only production SQL that would turn this into production evidence
+
+Not run. This lane ran no SQL against production or `portava-ci`.
+
+```sql
+-- Edges the §67 pass would retire today, for the stamp family: a visited edge with no live presence stamp behind it.
+SELECT count(*) FROM public.compass_graph_edges e
+ WHERE e.edge_type = 'visited'
+   AND NOT EXISTS (SELECT 1 FROM public.user_stamps s JOIN public.stamp_definitions d ON d.id = s.stamp_definition_id
+                    WHERE s.user_id::text = e.src_key AND s.is_revoked = false AND d.evidences_presence = true);
+-- Trip and event edges whose row is gone.
+SELECT count(*) FROM public.compass_graph_edges e WHERE e.edge_type IN ('took_trip') AND NOT EXISTS (SELECT 1 FROM public.trips t WHERE t.id::text = e.dst_key);
+SELECT count(*) FROM public.compass_graph_edges e WHERE e.src_type = 'event' AND NOT EXISTS (SELECT 1 FROM public.events v WHERE v.id::text = e.src_key);
+-- The size the reconcile's bounds are measured against.
+SELECT edge_type, count(*) FROM public.compass_graph_edges GROUP BY edge_type ORDER BY 2 DESC;
+```
+
+The `visited` query matches on the user id only, because stamps store raw city names and edges store canonical keys. A user with a live presence stamp in any city therefore counts as supported, so the number is a lower bound on leaked `visited` edges.
+
+### 67.9 What would turn this red
+
+- **Any A–G case leaking again:** a new edge family the build writes and `classifyGraphEdge` does not know (the exhaustiveness case), or a source the reconcile stops reading.
+- **The reconcile retiring an edge whose source exists:** H, I, N and O. The shapes are "delete what this build did not write", a failed or truncated read taken as empty, and a swallowed throw.
+- **The reconcile's reads drifting from the build's** (P), or the reconcile writing a weight (L).
+- **A decay rule landing.** That is the owner's item D, and it would move DV-51 itself.
+
+### 67.10 Freshness, scope and checks
+
+This section changed:
+- `CompassGraphEngine.ts` (line-neutral);
+- the new suite and the `test` line;
+- census-discovery's CENSUS_SCOPE, with the new suite (the engine was already watched, from §56);
+- the freshness ledger;
+- this census.
+
+The ledger now names `CompassGraphEngine.ts` for census-highlights-memories, and appends to the census-compass and census-passport entries, which already named it. Each argument names the rows the file bears on (CH-03, CPH-15, CC-15, CPV2-12, CX-04; H237; P159) and why none moves. It names the new suite for census-discovery.
+
+Checks run at this tree:
+- `typecheck` passes.
+- `typecheck:tests` is at its baseline: 863 diagnostics across 115 files, none in the new suite.
+- `check:test-registration` passes.
+- `check:schema-references`, `check:silent-supabase-writes`, `check:unissued-supabase-writes`, `check:writerless-reads`, `check:discovery-query-paths`, `check:deletion-coverage`, `check:not-null-writes` and `check:test-runner-flags` pass.
+- `check:doc-citations` passes: no anchor off its line, and unanchored citations at the ceiling (6434). Before the change was made line-neutral, the first version of it moved 58 anchored citations in four documents; that version was discarded, not the citations edited.
+- `check:citation-targets` is at the ceiling (164 / 164). `check:citation-symbols` is at both ceilings (0 and 34).
+- `check:census-freshness`: 0 STALE. `check:census-scope-coverage`: census-discovery 357 cited, 357 watched.
+- `check:census-integrity` passes. No row changes bucket, so the headline stands as §66.11 restated it.
+
+No migration was added, so `check:production-drift` has no new table to record.
+
+**The full api-server `npm test` did not finish.** It was started once, on the tree before the `circles` read was shared, under a 50-minute timeout on a box at load average above 20, and the timeout killed it. So there is no full-suite result for this lane. Two suites had reported failures before it was killed:
+- the Discovery client route E2E suite fails at `f34994de7` too, with this lane's changes stashed: a client import (`truncateDisplayName` from `utils/identity`) does not resolve;
+- the suggestion-seen-cache and guard-reachability suites each pass alone (7/7 and 25/25), so their failures under load are not attributed to this lane.
+
+Every suite that imports the engine was re-run on the final tree (67.4).
+
+- NOT-GRADED: artifacts/api-server/src/test/deletionGraph.test.ts — §67.4 names it only as a pre-existing suite re-run (20/20) because the reconcile adds deletes to graph tables; no §67 verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/routes/trips-expansion.ts — §67.6 cites its DELETE-archives rule as a recorded finding for the Trips owner; no §67 verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts — §67.3 cites it only for the recorded db-max-rows figure (1000) that sets the reconcile's page size; no verdict rests on the deletion service.
+
 ## §68 — Derived features keep their provenance, and a reason claims only what fired (lane P21): the two windowed stores name their own versions, `place_momentum` records its feature version, and `nearby_now` says "open" only when `open_now` fired
 
 *Written 2026-09-28 by lane P21 on `disc-p21-derived-provenance`, branched from `f34994de7`. It owns DC-17 and A03. It changes provenance fields and one served sentence, and nothing else. The 2026-08-15 ranker hold (§58.12 question 2, §66.9 question 1) forbids moving any computed value, score, state or order, and none moved. A golden captured at `f34994de7` holds this (68.4). Migration 3435 is applied to the local harness only, not to `portava-ci` and not to production. Nothing is deployed or flag-enabled. `head_commit` is not re-declared. The headline does not move, because neither row moves.*
