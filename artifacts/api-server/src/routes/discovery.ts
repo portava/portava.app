@@ -1013,7 +1013,7 @@ async function queryDbPlaces(
   if (_testDbOverride) return _testDbOverride(destination, category, centerLat, centerLng);
 
   const sc = getServiceClient();
-  if (!sc) return [];
+  if (!sc) return null;  // census-discovery §101 (DV-83, D-W11X2-35): no client is an UNREAD half (null), never "read, and empty" — the route names it in failedSources
 
   // Normalise: "Miami, FL" → "Miami"; strip trailing country/state qualifiers
   const cityBase = sanitizeCityFilter(destination.split(",")[0]?.trim() ?? destination);
@@ -1191,7 +1191,7 @@ async function queryCanonicalPlaces(
   centerLng: number | null,
 ): Promise<DiscoveryPlace[] | null> {
   const sc = getServiceClient();
-  if (!sc) return [];
+  if (!sc) return null;  // §101 (D-W11X2-35): the canonical half, the same
 
   const cityBase = sanitizeCityFilter(destination.split(",")[0]?.trim() ?? destination);
   if (!cityBase) return [];
@@ -3434,7 +3434,7 @@ router.get("/discovery/community/saved-ids", async (req, res) => {
   if (!auth) return;
   const { user } = auth;
   const sc = getServiceClient();
-  if (!sc) { res.json({ ids: [] }); return; }
+  if (!sc) { sendDiscoveryRefusal(res, { ids: [] }, discoveryRefusal("upstream_unavailable", "saved_ids_service_unavailable", "GET /discovery/community/saved-ids")); return; }  // §101 (D-W11X2-35): an unread save table is not "you saved nothing"
   try {
     const { data, error } = await sc
       .from("discovery_place_saves")

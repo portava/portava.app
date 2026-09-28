@@ -1677,7 +1677,7 @@ export async function checkCompassTelegraphAvailable(threadId: string): Promise<
 
 const FEED_CACHE_PREFIX = 'compass_feed_cache:';
 
-export async function getCachedFeed(userId: string): Promise<CompassFeedResponse | null> {
+export async function getCachedFeed(userId: string, scope?: string): Promise<CompassFeedResponse | null> {
   const store = getStorage();
   if (!store) return null;
   try {
@@ -1685,18 +1685,18 @@ export async function getCachedFeed(userId: string): Promise<CompassFeedResponse
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     // Expire cache after 30 minutes
-    if (Date.now() - (parsed._cachedAt ?? 0) > 30 * 60 * 1000) return null;
+    if (Date.now() - (parsed._cachedAt ?? 0) > 30 * 60 * 1000) return null; if (scope !== undefined && parsed._scope !== scope) return null;  // census-discovery §101 (D-W11X2-34): a feed is replayed only into the section:city it was read for
     return parsed.feed ?? null;
   } catch {
     return null;
   }
 }
 
-export async function setCachedFeed(userId: string, feed: CompassFeedResponse): Promise<void> {
+export async function setCachedFeed(userId: string, feed: CompassFeedResponse, scope?: string): Promise<void> {
   const store = getStorage();
   if (!store) return;
   try {
-    await store.setItem(`${FEED_CACHE_PREFIX}${userId}`, JSON.stringify({ feed, _cachedAt: Date.now() }));
+    await store.setItem(`${FEED_CACHE_PREFIX}${userId}`, JSON.stringify({ feed, _cachedAt: Date.now(), ...(scope !== undefined ? { _scope: scope } : {}) }));
   } catch {
     // ignore storage errors
   }

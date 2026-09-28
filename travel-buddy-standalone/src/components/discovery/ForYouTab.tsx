@@ -324,7 +324,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
     load(true);
     onRefresh?.();
   };
-  const loadErrorShown = source === 'none' && !osmPartial && loadFailed !== null; const staleShown = loadFailed !== null && source !== 'compass' && !items.some((i) => i.kind === 'compass') && (items.length > 0 || osmPartial);  // census-discovery §100 (DV-83, D-W11X2-22): a failed read with nothing to keep is the error state; a failed REFRESH over a kept page is a "couldn't refresh" line over it
+  const loadErrorShown = source === 'none' && !osmPartial && loadFailed !== null; const staleShown = (loadFailed !== null && source !== 'compass' && !items.some((i) => i.kind === 'compass') && (items.length > 0 || osmPartial)) || (compass.error != null && items.some((i) => i.kind === 'compass'));  // census-discovery §100 (DV-83, D-W11X2-22): a failed read with nothing to keep is the error state; a failed REFRESH over a kept page is a "couldn't refresh" line over it; §101 (D-W11X2-34): a Compass feed kept after its own refresh failed is said the same way
   if (!destination) return null;
 
   if (loading && items.length === 0) {

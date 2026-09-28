@@ -118,11 +118,11 @@ const CONSUMERS: Record<string, Consumer> = {
     uses: ['getCachedDiscoveryPlaces', 'getDiscoveryPlaces'],
     branches: [
       "if (nextPage === 1 && res.data.refusal?.coverage === 'nothing') {",
-      "if (res.data.refusal?.coverage === 'nothing') {\n      setMoreRefused(true);", "<CategoryMapCoverage kind={error && places.length === 0 ? 'error'",  // §100 (D-W11X2-24): the map branch draws the error state too
+      "if (res.data.refusal?.coverage === 'nothing') {\n      setMoreRefused(true);", "<CategoryMapCoverage kind={error && places.length === 0 ? 'error'", 'setMoreFailed(nextPage > 1);', '!error && !partial && total > 0 && places.length >= total && places.length > 0 ?', 'setTotal(cachedResult.total);',  // §100 (D-W11X2-24): the map branch draws the error state too; §101 (D-W11X2-29/30): a failed load-more is said, and the end claim needs a read that did not fail, no partial page and a known total
     ],
     proofs: [
       { file: 'src/components/discovery/__tests__/DiscoveryCategoryTab.refusal.component.test.tsx', mentions: 'does NOT tell the user to adjust their filters' },
-      { file: 'src/components/discovery/__tests__/DiscoveryCategoryTab.loadMoreRefusal.component.test.tsx', mentions: 'a refused page 2 is not the last page' }, { file: 'src/components/discovery/__tests__/DiscoveryCategoryTab.failedRead.component.test.tsx', mentions: 'D1 map, refused' },  // §100
+      { file: 'src/components/discovery/__tests__/DiscoveryCategoryTab.loadMoreRefusal.component.test.tsx', mentions: 'a refused page 2 is not the last page' }, { file: 'src/components/discovery/__tests__/DiscoveryCategoryTab.failedRead.component.test.tsx', mentions: 'D1 map, refused' }, { file: 'src/components/discovery/__tests__/DiscoveryCategoryTab.endClaim.component.test.tsx', mentions: 'E4 a failed load-more' },  // §100; §101
     ],
     partial: 'rows kept under a "may be incomplete" line; no rows is the partial-empty state with a retry, never "No places found"',
     partialBranches: ['ListHeaderComponent={partial ?', ') : places.length === 0 && partial ? (', "places.length === 0 && partial ? 'partial-empty' : partial ? 'partial' : null"],  // §100: and over the map
@@ -136,8 +136,8 @@ const CONSUMERS: Record<string, Consumer> = {
   },
   'src/hooks/useCommunityDiscovery.ts': {
     uses: ['getCommunityPlaces'],
-    branches: ["const refused = result.data.refusal?.coverage === 'nothing';", 'if (cKey && !refused && isCurrentDiscoveryScope(scope)) {', 'setState((prev) => ({ ...prev, loading: false, unavailable: true }));'],  // §100 (D-W11X2-26): a transport failure is said, never a quiet city
-    proofs: [{ file: 'src/hooks/__tests__/useCommunityDiscovery.refusal.component.test.tsx', mentions: 'refused' }, { file: 'src/hooks/__tests__/useCommunityDiscovery.failedRead.component.test.tsx', mentions: 'F1 first read fails in transport' }],
+    branches: ["const refused = result.data.refusal?.coverage === 'nothing';", 'if (cKey && !refused && isCurrentDiscoveryScope(scope)) {', 'setState((prev) => ({ ...prev, loading: false, unavailable: true }));', 'const sameCity = heldCityRef.current === commCityOf(c);'],  // §100 (D-W11X2-26): a transport failure is said, never a quiet city; §101 (D-W11X2-32): nor another city's rows
+    proofs: [{ file: 'src/hooks/__tests__/useCommunityDiscovery.refusal.component.test.tsx', mentions: 'refused' }, { file: 'src/hooks/__tests__/useCommunityDiscovery.failedRead.component.test.tsx', mentions: 'F1 first read fails in transport' }, { file: 'src/hooks/__tests__/useCommunityDiscovery.citySwitch.component.test.tsx', mentions: 'CS1 city A answered' }],
     partial: 'rows kept and cached WITH `incomplete`, so a cached replay still says so',
     partialBranches: ["incomplete: result.data.refusal?.coverage === 'partial'"],
   },
@@ -157,10 +157,10 @@ const CONSUMERS: Record<string, Consumer> = {
   },
   'app/search.tsx': {
     uses: ['searchUnified', 'useGlobalSearchSuggestions'],
-    branches: ["if (res.data.refusal?.coverage === 'nothing') {", 'refused: suggestRefused,', 'refused={suggestRefused}'],
-    proofs: [{ file: 'app/__tests__/search.refusal.component.test.tsx', mentions: 'refus' }],
+    branches: ["if (res.data.refusal?.coverage === 'nothing') {", 'refused: suggestRefused,', 'refused={suggestRefused}', '} else setMoreFailed(true);', 'testID="search-more-failed"'],  // §101 (D-W11X2-30): a refused or failed cursor page is said
+    proofs: [{ file: 'app/__tests__/search.refusal.component.test.tsx', mentions: 'refus' }, { file: 'app/__tests__/search.loadMore.component.test.tsx', mentions: 'SP2 page 2 REFUSED' }],
     partial: 'rows rendered with the "incomplete" notice; the suggestions panel says it too',
-    partialBranches: ['{SEARCH_PARTIAL_NOTICE}', 'incomplete={suggestIncomplete}'],
+    partialBranches: ['{SEARCH_PARTIAL_NOTICE}', 'incomplete={suggestIncomplete}', "} else { if (res.data.refusal?.coverage === 'partial') {"],  // §101 (D-W11X2-28): a partial cursor page too
   },
   'src/components/map/MapSearchSheet.tsx': {
     uses: ['requestMapSearchPage'],
@@ -367,7 +367,7 @@ describe('DV-83 — every refusal-carrying Discovery read has an accounted consu
     assert.equal(n.SEARCH_PARTIAL_EMPTY_TITLE, 'Some of this search could not run.');
     assert.equal(n.listPartialNotice('places'), 'Some places couldn’t be loaded just now, so this list may be incomplete.');
     assert.equal(n.listPartialEmptyTitle('places'), 'Some places couldn’t be loaded just now');
-    assert.equal(n.LIST_PARTIAL_EMPTY_BODY, 'This is on our side, not your filters. Try again in a moment.');
+    assert.equal(n.LIST_PARTIAL_EMPTY_BODY, 'This is on our side, not your filters. Try again in a moment.'); assert.equal(n.listMoreFailedNotice('places'), 'Couldn’t load more places just now.');  // §101 (D-W11X2-30)
     // Every rendering consumer takes its sentence from that module, not from a
     // literal of its own.
     for (const file of [
