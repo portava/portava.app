@@ -85,7 +85,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../../lib/logger.js";
 import { airportRowToProfile, lookupByIata } from "./AirportProfileService.js";
 import type { AirportProfile } from "./AirportProfileService.js";
-import type { FeasibilityAirport } from "./LayoverFeasibility.js";
+import type { FeasibilityAirport } from "./LayoverFeasibility.js"; import { resolveLayoverEntry, layoverAirportCountry, type EntryEligibility } from "./layoverEntryGate.js";
 import {
   handleEvent,
   type HandleEventResult,
@@ -217,7 +217,7 @@ const refuse = (reason: string): Refusal => ({ ok: false, reason });
  */
 interface AirportGroup {
   airportRef: string;
-  airport: FeasibilityAirport;
+  airport: FeasibilityAirport; /** census-discovery §65: the airport's country and each session's owner, so each certification takes its owner's corridor. */ entryCountry: string | null; owners: Record<string, string>;
   sessions: ReplanSession[];
 }
 
@@ -278,12 +278,12 @@ async function readGroups(
     const read = await readActiveSessionsAt(db, identities, ref, limit);
     if (!read.ok) return read;
     if (read.limitReached) limitReached = true;
-    const group: AirportGroup = { airportRef: ref, airport: resolved.airport, sessions: [] };
+    const group: AirportGroup = { airportRef: ref, airport: resolved.airport, entryCountry: resolved.entryCountry, owners: {}, sessions: [] };
     for (const row of read.rows) {
       const id = String(row.id);
       if (claimed.has(id)) continue;
       claimed.add(id);
-      group.sessions.push(toReplanSession(row, ref));
+      group.sessions.push(toReplanSession(row, ref)); group.owners[id] = String(row.user_id ?? "");
     }
     groups.set(ref, group);
   }
@@ -314,11 +314,11 @@ async function readGroups(
       if (!group) {
         const resolved = await resolveAirport(db, own);
         if (!resolved.ok) return resolved;
-        group = { airportRef: own, airport: resolved.airport, sessions: [] };
+        group = { airportRef: own, airport: resolved.airport, entryCountry: resolved.entryCountry, owners: {}, sessions: [] };
         groups.set(own, group);
       }
       claimed.add(id);
-      group.sessions.push(toReplanSession(row, group.airportRef));
+      group.sessions.push(toReplanSession(row, group.airportRef)); group.owners[id] = String(row.user_id ?? "");
     }
   }
 
@@ -383,7 +383,7 @@ async function readCandidates(
 async function resolveAirport(
   db: SupabaseClient,
   airportRef: string,
-): Promise<{ ok: true; airport: FeasibilityAirport } | Refusal> {
+): Promise<{ ok: true; airport: FeasibilityAirport; entryCountry: string | null } | Refusal> {
   if (!/^[A-Za-z]{3}$/.test(airportRef)) {
     const { data, error } = await db
       .from("airport_profiles")
@@ -392,7 +392,8 @@ async function resolveAirport(
       .maybeSingle();
     if (error) return refuse(`airport_profiles unreadable for ${airportRef}: ${String(error.message ?? "unknown")}`);
     if (!data) return refuse(`no airport known for ${airportRef}`);
-    return { ok: true, airport: feasibilityAirport(airportRowToProfile(data)) };
+    const profile = airportRowToProfile(data);
+    return { ok: true, airport: feasibilityAirport(profile), entryCountry: layoverAirportCountry(profile) };
   }
 
   const lookup = await lookupByIata(db, airportRef);
@@ -403,7 +404,7 @@ async function resolveAirport(
     );
   }
   if (!lookup.airport) return refuse(`no airport known for ${airportRef}`);
-  return { ok: true, airport: feasibilityAirport(lookup.airport) };
+  return { ok: true, airport: feasibilityAirport(lookup.airport), entryCountry: layoverAirportCountry(lookup.airport) };
 }
 
 /**
@@ -453,10 +454,19 @@ export async function replanExternalEvent(
   let notifications = 0;
   for (const group of read.groups) {
     if (group.sessions.length === 0) continue;
+    // census-discovery §65 — each session certifies with ITS OWNER's corridor,
+    // through the same resolver the snapshot and the airport routes use. It
+    // never answers `permitted` on a failed read, so a read that fails here can
+    // only leave a session `entry_unverified`, never open a refused border.
+    const entries: Record<string, EntryEligibility | null> = {};
+    for (const { session } of group.sessions) {
+      const owner = group.owners[session.id];
+      entries[session.id] = owner ? await resolveLayoverEntry(db, owner, group.entryCountry) : null;
+    }
     const result: HandleEventResult = handleEvent(event, {
       airport: group.airport,
       sessions: group.sessions,
-      candidates: stops.candidates,
+      candidates: stops.candidates, entries,
       // heldRecommendations / liveConditions / disruptionStates deliberately
       // omitted — see the header. An empty shape, never an invented one.
       nowMs: opts.nowMs,

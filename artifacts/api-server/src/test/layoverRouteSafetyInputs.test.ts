@@ -156,11 +156,11 @@ describe("census L256 — no merchant input can reach a layover safety constrain
   });
 
   it("the safety gate is decided from the airport and the session, and from nothing else", () => {
-    const call = ROUTE_SRC.match(/layoverBuddyDecision\(([^)]*)\)/);
+    const call = ROUTE_SRC.match(/layoverBuddyDecision\(((?:[^()]|\((?:[^()]|\([^()]*\))*\))*)\)/); // balanced to two levels: an argument may itself be a call
     assert.ok(call, "the buddy route must still consult the layover safety gate");
-    const args = call![1].split(",").map((a) => a.trim()).filter(Boolean);
-    assert.deepEqual(
-      args, ["airport", "session"],
+    const args = call![1].split(/,(?![^(]*\))/).map((a) => a.trim()).filter(Boolean);
+    assert.deepEqual( // census-discovery §65 adds the clock and the TRAVELLER'S OWN border corridor (§6.1's named entry input) — neither is a marketplace value
+      args, ["airport", "session", "Date.now()", "await sessionEntry(sc, airport, session)"],
       "the safety gate took an argument that is not the airport or the traveller's own session — " +
         "a marketplace value reaching this call is exactly what L256 forbids",
     );

@@ -10,7 +10,7 @@ import { logger as rootLogger } from "../../lib/logger.js";
 const logger = rootLogger.child({ service: "LayoverNotificationService" });
 import type { LayoverSession } from "./LayoverSessionService.js";
 import type { AirportProfile } from "./AirportProfileService.js";
-import { certifySessionFeasibility, certificationHeader } from "./LayoverFeasibility.js";
+import { certifySessionFeasibility, certificationHeader } from "./LayoverFeasibility.js"; import { resolveLayoverEntry, layoverAirportCountry } from "./layoverEntryGate.js";
 import { formatLocalTime } from "./AirportTime.js";
 
 export interface RiskyLayoverContext {
@@ -96,7 +96,7 @@ export async function sendReturnDeadlineReminder(
   minutesBefore: number,
   nowMs: number = Date.now(),
 ): Promise<ReturnReminderResult> {
-  const record = certifySessionFeasibility(airport, session, { nowMs });
+  const record = certifySessionFeasibility(airport, session, { nowMs, entry: await resolveLayoverEntry(db, session.userId, layoverAirportCountry(airport)) });
   const hardReturn = record.deadline.hardReturnTime;
   const returnStr = formatLocalTime(airport.timezone ?? "UTC", hardReturn);
 

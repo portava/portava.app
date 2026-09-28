@@ -57,7 +57,7 @@ import {
   type FeasibilityAirport,
   type FeasibilitySession,
   type LayoverFeasibilityRecord,
-} from "./LayoverFeasibility.js";
+} from "./LayoverFeasibility.js"; import type { EntryEligibility } from "./layoverEntryGate.js";
 
 const logger = rootLogger.child({ service: "LayoverSafeReturnService" });
 
@@ -504,16 +504,16 @@ export function recomputeForDisruption(
     state: DisruptionState;
     newDepartureTime: string;
     newBoardingTime?: string | null;
-    nowMs: number;
+    nowMs: number; /** The traveller's corridor, as the route certified with it (census-discovery §65). Omitted = unresolved. */ entry?: EntryEligibility | null;
   },
 ): DisruptionRecompute {
-  const before = certifySessionFeasibility(airport, session, { nowMs: input.nowMs });
+  const before = certifySessionFeasibility(airport, session, { nowMs: input.nowMs, entry: input.entry });
   const newSession: FeasibilitySession = {
     ...session,
     departureTime: input.newDepartureTime,
     boardingTime: input.newBoardingTime === undefined ? session.boardingTime : input.newBoardingTime,
   };
-  const after = certifySessionFeasibility(airport, newSession, { nowMs: input.nowMs });
+  const after = certifySessionFeasibility(airport, newSession, { nowMs: input.nowMs, entry: input.entry });
 
   const scheduleDeltaMinutes = Math.round(
     (new Date(input.newDepartureTime).getTime() - new Date(session.departureTime).getTime()) / 60_000,

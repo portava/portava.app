@@ -5787,7 +5787,7 @@ on a store, a provider or a feed that no amount of work in
    **Two of the three clauses are false at HEAD.** The master flag is consulted
    at `artifacts/api-server/src/routes/airport.ts:3426#if (!await isFlagEnabled(sc, "rent_buddy_enabled")) {`,
    and the safety gate runs BEFORE the profiles are read at
-   `artifacts/api-server/src/routes/airport.ts:3445#const { safetyGate, trustRequirement } = layoverBuddyDecision(airport, session);`.
+   `artifacts/api-server/src/routes/airport.ts:3445#const { safetyGate, trustRequirement } = layoverBuddyDecision(airport, session`.
    A compatibility filter also runs
    (`artifacts/api-server/src/routes/airport.ts:3557#rows = filterLayoverCompatible(rows);`).
    The third clause — a *specialist* category filter — is still true, which is

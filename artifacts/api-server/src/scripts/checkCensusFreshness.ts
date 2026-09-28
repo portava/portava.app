@@ -4067,6 +4067,19 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // cites the two suites that were seen red on the event and route rules and on the counts.
     "artifacts/api-server/src/test/discoveryTrailMemberVisibility.test.ts",
     "artifacts/api-server/src/test/db/trailsMemberVisibility.db.test.ts",
+    // WIDENED 2026-09-28 by census-discovery §65 (P19, Layover consumers take the border-entry
+    // input): A13 is re-graded on every inline certification site, so the consumers that
+    // certify, the resolver they now share with the snapshot, and the suites seen red are watched.
+    "artifacts/api-server/src/services/airport/LayoverBuddyGate.ts",
+    "artifacts/api-server/src/services/airport/LayoverEventReplanner.ts",
+    "artifacts/api-server/src/services/airport/LayoverReplanService.ts",
+    "artifacts/api-server/src/services/airport/LayoverExternalReplanPort.ts",
+    "artifacts/api-server/src/services/airport/LayoverNotificationService.ts",
+    "artifacts/api-server/src/services/airport/layoverEntryGate.ts",
+    "artifacts/api-server/src/test/layoverConsumerEntry.test.ts",
+    "artifacts/api-server/src/test/layoverEntryGate.test.ts",
+    "artifacts/api-server/src/test/layoverRouteSafetyInputs.test.ts",
+    "artifacts/api-server/src/test/layoverSafeReturnAbort.test.ts",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

@@ -32,7 +32,7 @@ import type { GeoPoint } from "../../domain/trips/contracts/TravelTimeProvider.j
 import {
   certifySessionFeasibility,
   certificationHeader,
-} from "./LayoverFeasibility.js";
+} from "./LayoverFeasibility.js"; import { resolveLayoverEntry, layoverAirportCountry } from "./layoverEntryGate.js";
 import { sanitizeRecommendation, type SafeRecommendation } from "./LayoverPrivacyGuard.js";
 // §13 L117/L122 — the feasibility state a candidate PIN carries. Attached after
 // the privacy sanitiser and deliberately coordinate-free; see that module.
@@ -470,7 +470,7 @@ export async function generateRecommendations(
   // below is rated against THIS record's deadline — previously each candidate
   // re-derived it, and the audit event derived it a third time. One record,
   // one deadline, one audit trail.
-  const certified = certifySessionFeasibility(airport, session, { nowMs });
+  const certified = certifySessionFeasibility(airport, session, { nowMs, entry: await resolveLayoverEntry(db, session.userId, layoverAirportCountry(airport)) });
 
   // ── §9.1 THE HARD GATE — MEASURED IN USABLE TIME, NOT SCHEDULED TIME ──────
   //
@@ -482,9 +482,9 @@ export async function generateRecommendations(
   // with a 95-minute scheduled window and a 150-minute certified buffer has
   // NEGATIVE usable time and was still being offered a city.
   //
-  // WHAT THIS DOES NOT CLOSE: §9.1 asks for eligibility + ENTRY + time +
-  // safety. Entry permission is unread anywhere on this tree (L34, L48, L230)
-  // and is an open owner decision, so the entry term is still missing.
+  // AND ENTRY (census-discovery §65): the record above certifies with the same
+  // corridor the snapshot and the airport routes resolve, so a REFUSED border is
+  // verdict `no` and both landside gates below close on it. A data gap is not.
   //
   // ── §22 L249 — AND THE AIRPORT'S OWN DATA MATURITY ───────────────────────
   // `landsideMaturityDecision` is the first consumer `featureAllowedAt` has
@@ -499,7 +499,7 @@ export async function generateRecommendations(
   //    of day the traveler will actually be out there, and gated on the
   //    airport's data maturity as well as on the traveller's usable minutes.
   const tod = timeOfDayContext(airport, session, nowMs);
-  let discoveryCandidates = session.wantsToLeave && usableMinutes >= 90 && landside.allowed
+  let discoveryCandidates = session.wantsToLeave && usableMinutes >= 90 && landside.allowed && certified.verdict !== "no"
     ? await fetchDiscoveryPlaces(db, city, session.vibeChips, airportPoint(airport), new Date(nowMs), opts.travelTimeProvider)
     : [];
   if (!tod.coversEvening) {
@@ -517,7 +517,7 @@ export async function generateRecommendations(
   // 3. Quick city escape for long layovers — same gate, same reason. The
   //    "half-day" wording and the 120-minute tour are claims about time the
   //    traveller actually has, so they are measured in the same units.
-  const cityEscapeCandidates = session.wantsToLeave && usableMinutes >= 180 && landside.allowed
+  const cityEscapeCandidates = session.wantsToLeave && usableMinutes >= 180 && landside.allowed && certified.verdict !== "no"
     ? [{
         recType: "quick_city_escape",
         title: `Quick City Tour — ${city}`,

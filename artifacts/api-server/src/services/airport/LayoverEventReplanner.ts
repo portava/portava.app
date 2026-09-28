@@ -41,7 +41,7 @@ import {
   type FeasibilitySession,
   type LayoverFeasibilityRecord,
 } from "./LayoverFeasibility.js";
-import type { LayoverReasonCode, LiveConditions } from "./LayoverSafetyEngine.js";
+import type { LayoverReasonCode, LiveConditions } from "./LayoverSafetyEngine.js"; import type { EntryEligibility } from "./layoverEntryGate.js";
 import {
   nextDisruptionState,
   type DisruptionEvent,
@@ -589,7 +589,7 @@ export interface ActionUniverse {
  * bound can refuse a plan but can never certify one (census L47).
  */
 export function candidateFits(record: LayoverFeasibilityRecord, c: ReplanCandidate): boolean {
-  if (candidateIsUnmeasured(c)) return false;
+  if (candidateIsUnmeasured(c)) return false; if (!c.insideAirport && record.verdict === "no") return false; // §65: a certified `no` (a refused border, or no time) fits no LANDSIDE candidate
   const round = c.insideAirport ? 0 : c.travelTimeMin! + returnLegMin(c);
   return round + c.activityTimeMin! <= record.envelope.usableMinutes;
 }
@@ -905,7 +905,7 @@ export function handleEvent(
     candidates: Record<string, ReplanCandidate[]>;
     heldRecommendations?: Record<string, Array<{ id: string; inputHash: string }>>;
     liveConditions?: Record<string, LiveConditions | null>;
-    disruptionStates?: Record<string, DisruptionState>;
+    disruptionStates?: Record<string, DisruptionState>; /** Each session owner's corridor (`resolveLayoverEntry`), keyed by session id — census-discovery §65. Absent = unresolved. */ entries?: Record<string, EntryEligibility | null>;
     nowMs: number;
   },
 ): HandleEventResult {
@@ -929,12 +929,12 @@ export function handleEvent(
 
     const before = certifySessionFeasibility(ctx.airport, session.session, {
       nowMs: ctx.nowMs,
-      liveConditions: priorLive,
+      liveConditions: priorLive, entry: ctx.entries?.[id] ?? null,
     });
     const applied = applyEventToInputs(event, session.session, priorLive);
     const after = certifySessionFeasibility(ctx.airport, applied.session, {
       nowMs: ctx.nowMs,
-      liveConditions: applied.live,
+      liveConditions: applied.live, entry: ctx.entries?.[id] ?? null,
     });
 
     const candidates = ctx.candidates[id] ?? [];

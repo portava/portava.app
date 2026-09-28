@@ -53,7 +53,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // through this function to prove it.
 import { getOpenAI } from "../../lib/openai.js";
 import type { AirportProfile } from "./AirportProfileService.js";
-import type { LayoverSession } from "./LayoverSessionService.js";
+import type { LayoverSession } from "./LayoverSessionService.js"; import type { EntryEligibility } from "./layoverEntryGate.js";
 import {
   safetyLabel,
   type LayoverReturnState,
@@ -91,7 +91,7 @@ export interface CompassLayoverInput {
   recommendations?: Array<Record<string, unknown>>;
   recommendationsUnavailableReason?: string | null;
   stops?: LayoverToolContext["stops"];
-  stopsUnavailableReason?: string | null;
+  stopsUnavailableReason?: string | null; /** The session owner's corridor, resolved by the route (`resolveLayoverEntry`) as the snapshot resolves it — census-discovery §65. Omitted = unresolved. */ entry?: EntryEligibility | null;
 }
 
 export interface CompassLayoverAnswer {
@@ -139,7 +139,7 @@ export async function answerLayoverQuestion(
   // the deadline, the buffer breakdown and the envelope all come out of the
   // same record every other layover surface consumes, so Compass cannot be
   // answering from a different derivation than the screen behind it.
-  const record = certifySessionFeasibility(airport, session, { nowMs: now.getTime() });
+  const record = certifySessionFeasibility(airport, session, { nowMs: now.getTime(), entry: input.entry ?? null });
   const { cutoffMs, breakdown, hardReturnTime } = record.deadline;
   const availMin  = Math.max(0, Math.round((cutoffMs - now.getTime()) / 60000));
   const bufferMin = breakdown.totalBuffer;
@@ -161,7 +161,7 @@ export async function answerLayoverQuestion(
     `Immigration required: ${session.immigrationRequired ? "Yes" : "No"}`,
     `Checked bags: ${session.checkedBags ? "Yes" : "No"}`,
     `Comfort level: ${session.comfortLevel}`,
-    `Wants to leave airport: ${session.wantsToLeave ? "Yes" : "No"}`,
+    `Wants to leave airport: ${session.wantsToLeave ? "Yes" : "No"}`, `Certified landside verdict: ${record.verdict}${record.verdict === "no" ? " (do NOT suggest leaving the airport)" : ""}`,
   ];
 
   const systemPrompt = `You are Compass, the safety-aware layover advisor inside Portava.
@@ -218,7 +218,7 @@ Answer (max ${maxLength} characters):`;
     // An empty completion is a model failure that does not throw, and it used
     // to be published as an empty `answer` string. A model that spends every
     // round calling tools and never writes a sentence lands here too.
-    answer = deterministicAnswer({ involvesLeaving, usableMin, availMin, bufferMin, hardReturnLocal });
+    answer = deterministicAnswer({ involvesLeaving, usableMin, availMin, bufferMin, hardReturnLocal, refused: record.verdict === "no" });
   }
 
   // §12 boundary, enforced on the text the model actually produced. A model
@@ -237,14 +237,14 @@ Answer (max ${maxLength} characters):`;
   const boundaryViolations = bounded.violations;
   const boundedText = bounded.ok
     ? bounded.text
-    : deterministicAnswer({ involvesLeaving, usableMin, availMin, bufferMin, hardReturnLocal });
+    : deterministicAnswer({ involvesLeaving, usableMin, availMin, bufferMin, hardReturnLocal, refused: record.verdict === "no" });
 
   // Strip any coordinates that might have slipped through
   const safeAnswer = sanitizeCompassAnswer(boundedText);
 
   let safetyNote: string | null = null;
   if (involvesLeaving) {
-    if (usableMin < 30) {
+    if (usableMin < 30 || record.verdict === "no") {
       safetyNote = safetyLabel("not_recommended");
     } else if (usableMin < 60) {
       safetyNote = safetyLabel("possible_but_risky");
@@ -261,7 +261,7 @@ Answer (max ${maxLength} characters):`;
     involvesLeaving,
     // §12.1: at most ONE question, asked only when the answer could move the
     // verdict, the risk band or the usable window. Null when nothing would.
-    clarifyingQuestion: nextClarifyingQuestion(airport, session, now.getTime()),
+    clarifyingQuestion: nextClarifyingQuestion(airport, session, now.getTime(), record.inputs.entry),
     boundaryViolations,
     certification: certificationHeader(record),
     toolsConsulted,
@@ -406,9 +406,9 @@ function deterministicAnswer(input: {
   availMin: number;
   bufferMin: number;
   /** Pre-formatted in the AIRPORT's timezone. Never a server-locale string. */
-  hardReturnLocal: string;
+  hardReturnLocal: string; /** The CERTIFIED verdict is `no` — a refused border or no time (census-discovery §65). */ refused?: boolean;
 }): string {
-  const { involvesLeaving, usableMin, availMin, bufferMin, hardReturnLocal } = input;
+  const { involvesLeaving, usableMin, availMin, bufferMin, hardReturnLocal, refused } = input; if (involvesLeaving && refused) return "Leaving the airport is not recommended on this layover — the certified check for it says no. I'd recommend staying inside the airport: grab a meal, relax in a lounge, or browse the shops.";
   if (involvesLeaving && usableMin < 30) {
     return `With only ${usableMin} minutes of usable time after your ${bufferMin}-minute return buffer, I'd recommend staying inside the airport for this one. Grab a meal, relax in a lounge, or browse the shops.`;
   }
@@ -729,12 +729,12 @@ function riskBand(record: LayoverFeasibilityRecord): SafetyRating {
 export function valueOfInformation(
   airport: FeasibilityAirport,
   session: FeasibilitySession,
-  nowMs: number,
+  nowMs: number, /** The corridor the base record was certified with; each flip is certified with the SAME one (census-discovery §65). */ entry?: EntryEligibility | null,
 ): ClarifyingQuestion[] {
-  const base = certifySessionFeasibility(airport, session, { nowMs });
+  const base = certifySessionFeasibility(airport, session, { nowMs, entry });
   const out: ClarifyingQuestion[] = [];
   for (const field of CLARIFIABLE_FIELDS) {
-    const alt = certifySessionFeasibility(airport, flip(session, field), { nowMs });
+    const alt = certifySessionFeasibility(airport, flip(session, field), { nowMs, entry });
     const verdictChanges = alt.verdict !== base.verdict;
     const riskBandChanges = riskBand(alt) !== riskBand(base);
     const returnStateChanges = alt.envelope.returnState !== base.envelope.returnState;
@@ -762,9 +762,9 @@ export function valueOfInformation(
 export function nextClarifyingQuestion(
   airport: FeasibilityAirport,
   session: FeasibilitySession,
-  nowMs: number,
+  nowMs: number, entry?: EntryEligibility | null,
 ): ClarifyingQuestion | null {
-  return valueOfInformation(airport, session, nowMs)[0] ?? null;
+  return valueOfInformation(airport, session, nowMs, entry)[0] ?? null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -988,7 +988,7 @@ export function runLayoverTool(
 
     case "requestConstraintClarification": {
       const field = String(args.field ?? "");
-      const all = valueOfInformation(ctx.airport, ctx.session, r.inputs.nowMs);
+      const all = valueOfInformation(ctx.airport, ctx.session, r.inputs.nowMs, r.inputs.entry);
       if (!field) {
         return ok({ questions: all, asked: all[0] ?? null });
       }
