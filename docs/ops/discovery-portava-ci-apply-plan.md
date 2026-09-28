@@ -578,8 +578,8 @@ Rows 1–38 and 40–41 are §1.2's 40. Row 39 (`3436`) and rows 42–73 are the
 | 37 | `3422_tags_client_write_boundary.sql` | unwrapped +post | `27ee9f6a4093` | `2026-09-27-3422-tags-client-write-boundary-rollback.sql` |
 | 38 | `3435_place_momentum_feature_version.sql` | unwrapped +post | `ea4620ab120b` | `2026-09-28-3435-place-momentum-feature-version-rollback.sql` |
 | 39 | `3436_trail_health_snapshot_provenance.sql` | unwrapped +post | `e9e8f6bb89de` | `2026-09-28-3436-trail-health-snapshot-provenance-rollback.sql` |
-| 40 | `3440_canonical_search_key_letter_fold.sql` | unwrapped | `4307723dfde5` | none — footer reversal (§3) |
-| 41 | `3441_trail_letter_fold_decompose_first.sql` | unwrapped | `8f26a6919e70` | none — footer reversal (§3) |
+| 40 | `3440_canonical_search_key_letter_fold.sql` | unwrapped | `4307723dfde5` | `2026-09-28-3440-canonical-search-key-letter-fold-rollback.sql` (§97: the footer as a file, 8.5) |
+| 41 | `3441_trail_letter_fold_decompose_first.sql` | unwrapped | `8f26a6919e70` | `2026-09-28-3441-trail-letter-fold-decompose-first-rollback.sql` (§97: the footer as a file, 8.5) |
 | 42 | `3450_discovery_surface_objectives_flag.sql` | unwrapped +post | `4044d84afa01` | `2026-09-28-3450-discovery-surface-objectives-flag-rollback.sql` |
 | 43 | `3451_discovery_engagement_integrity_flag.sql` | unwrapped +post | `1a73b4653ac1` | `2026-09-28-3451-discovery-engagement-integrity-flag-rollback.sql` |
 | 44 | `3452_discovery_feature_families_flag.sql` | unwrapped +post | `b1bac69233a3` | `2026-09-28-3452-discovery-feature-families-flag-rollback.sql` |
@@ -587,7 +587,7 @@ Rows 1–38 and 40–41 are §1.2's 40. Row 39 (`3436`) and rows 42–73 are the
 | 46 | `3454_discovery_diversity_axes_flag.sql` | unwrapped +post | `09b7bc707f78` | `2026-09-28-3454-discovery-diversity-axes-flag-rollback.sql` |
 | 47 | `3455_discovery_for_you_pde_flag.sql` | unwrapped +post | `03d64e036183` | `2026-09-28-3455-discovery-for-you-pde-enabled-rollback.sql` |
 | 48 | `3456_discovery_cache_a_ranked_flag.sql` | unwrapped +post | `1ab75ecc4a50` | `2026-09-28-3456-discovery-cache-a-ranked-enabled-rollback.sql` |
-| 49 | `3460_discovery_search_protection_scope.sql` | unwrapped | `4cc721434321` | `2026-09-28-3460-discovery-search-protection-scope-rollback.sql` |
+| 49 | `3460_discovery_search_protection_scope.sql` | unwrapped | `7900067214cd` (§97, 8.5; was `4cc721434321`) | `2026-09-28-3460-discovery-search-protection-scope-rollback.sql` |
 | 50 | `3465_layover_consumer_flags.sql` | unwrapped +post | `d15caae1efb7` | `2026-09-28-3465-layover-consumer-flags-rollback.sql` |
 | 51 | `3466_layover_place_dwell.sql` | unwrapped +post | `6b36b7723c8d` | `2026-09-28-3466-layover-place-dwell-rollback.sql` |
 | 52 | `3467_cross_architecture_flags.sql` | unwrapped +post | `97fecf9092fe` | `2026-09-28-3467-cross-architecture-flags-rollback.sql` |
@@ -614,7 +614,7 @@ Rows 1–38 and 40–41 are §1.2's 40. Row 39 (`3436`) and rows 42–73 are the
 | 73 | `3500_discovery_surface_objective_rank_flags.sql` | unwrapped +post | `8fee881cf87b` | `2026-09-28-3500-discovery-surface-objective-rank-flags-rollback.sql` |
 
 - **51 of the 73 carry a post-`COMMIT` postcondition tail.**
-- **Every file has a rollback file except 3440 and 3441.** For those two, the reversal is the file's footer (§3). 3441's footer must run before 3415's rollback (§7.4).
+- **Every file has a rollback file** (3440's and 3441's since §97, their footers as files; 8.5). 3441's must run before 3415's rollback (§7.4).
 - **Rollback order for the new files.** 3476's rollback refuses while 3477's v2 rebuild exists, so roll back 3477 first. 3497's comes before 3477's. 3491's refuses while any serve-point-13 row exists. 3468's refuses while a profile holds `approval_required`. 3486's refuses while audit or review rows exist, and 3488's while suggestions are pending.
 
 ### 8.2 Pre-flight additions to §2.1
@@ -693,7 +693,61 @@ This is controlled evidence, not `portava-ci` evidence. It is recommended, not a
 
 **The 2481 ledger entry is not touched.** It is outside the set. The applier writes only the row of the file it applies (§3), steps 1 and 8 read the row before and after, and `--apply-unproven` is not used.
 
-### 8.5 Pre-flight read against the real `portava-ci`, 2026-09-28 (integrator, read-only)
+### 8.5 W11-S: the 73 rehearsed end to end (census-discovery §97)
+
+*Lane W11-S, 2026-09-28, branch `disc-w11-safety` at `532227796` plus this lane's commits. Harness: PostgreSQL 16 at `127.0.0.1:55465`, data dir `/var/tmp/w11s-localdb` (1 MB WAL segments), work dir `/var/tmp/w11s-work`, both deleted afterwards. The fetch preload for the Management-API tools answered one fake ref, `w11sharness55465`, from the harness and threw on every other URL (scratch file, not in the tree). Controlled evidence. **Nothing was applied to `portava-ci` or to production.** The numbers below are the final run, at the final bytes of every file.*
+
+**The driver.** `rehearse-pending-apply.ts` now carries `PENDING_AT_3FD11F858`, 8.1's list with 8.1's `+post` column; `plan`, `postconditions`, `rollback` and `emit-rollback-rehearsal` use it (`REHEARSE_SET=84318d1b2` selects the historical 40). Register D-W11S-6.
+
+| stage | result |
+|---|---|
+| baseline | `LOCAL_DB_TO=3338 up.sh`: 314 applied in order, 12 known-unreplayable, 2 on retry; 3350 by psql; `model-ledger` 225 rows; the seed; snapshot `w11s_base`, catalogue 12,320 lines |
+| plan | `Proven applied, skipped: 225`, 382 backfill, **`Would apply 73`**, `IDENTICAL to apply plan §8.1 (73 files, same order)`, every shape as 8.1 |
+| apply | **73 applied + recorded, 51 post-`COMMIT` tails verified**, `apply: PASSED` |
+| certify stage 4 (driver) | `115 block(s) re-run after commit, 32 $pre$ block(s) held back … every re-run block passed` (3386, 3387 preconditions-only, as §7) |
+| objects | 57 of CI's 58 present, 1 absent by design (3360's function) |
+| data | every pre-existing row identical except `search_key` for Ǿresund (3440, documented). The 92 pre-existing flag rows are identical including `updated_at` (md5 over flag, enabled, description, metadata, updated_at); **52 flag rows added, every one FALSE** (53 seeded, `media_find_busier_enabled` pre-existed in the seed and kept its description) |
+| idempotence | `NOTHING TO DO — 298 proven row(s), 0 pending`; `Would apply: NOTHING` |
+| stop measurement | `rls_leak`: `{"state": "measured", "deviations": 0}` |
+| rollback, all 73, newest first | **73 rollback files ran, every one removed its own ledger row.** 3440 and 3441 now through their files (8.6), not the driver's footer fallback |
+| data after rollback | identical to the baseline (0 of 19 lines) |
+| catalogue after rollback | **7 lines differ**, all tighter: EXECUTE on `place_momentum_classify` and `rebuild_place_momentum` not re-granted to anon/authenticated (3410's rollback) and TRUNCATE/REFERENCES/TRIGGER not re-granted on five tables (3390's). The eighth line of §4.4, 3385's comment on the restored view, is gone: 3385's rollback now restores 2930's comment (D-W11S-5). Measured before that fix: 8 lines |
+| re-apply | the same 73; catalogue equal to the first apply's (0 of 12,777 lines); stage 4 passes again |
+| `emit-rollback-rehearsal` | 492,354 bytes, all 73 files; on a fresh baseline copy: `NOTICE: W10-D rollback rehearsal: all 73 bodies and postconditions held; rolling back.`, psql exit 0, catalogue unchanged (0 of 12,320) |
+| `certify:migrations --files <the 73>` (the tool itself, via the preload) | stage 1 `check:migration-ledger PASSED` (680 files); stage 2 `59 declared object(s) present.`; stage 3 pass; stage 4 `115 assertion block(s) re-run`, `32 $pre$ … held back`; stage 5 stops on `audit:schema` |
+| `audit:schema` | after the apply: 37 findings in 11 files; the pre-apply baseline: 156 in 35. **0 findings after the apply that the baseline lacks**; the 37 are the harness artefacts §7.3 names (0067, 0068, 0103, 2276–2279, 2970, 3002, 3003, 3310) |
+| `check:missing-live-columns` | 4 columns, all from 2276, 2279 and 2970, as §7.3 |
+
+**Refusals and postcondition failures found, and what was done:**
+1. **3460's postcondition failed certify stage 4** on the first run: `relation "_3460_before" does not exist`. Its `$post$` reads a `TEMP … ON COMMIT DROP` table, W10-F's F4 defect in a file that landed after F4. Fixed line-neutrally: after COMMIT the block re-checks the description only; in the applying transaction it still checks the flag's state (register D-W11S-3). 3460 is applied nowhere. Controls: after COMMIT a description without the gateway fails; inside a transaction a changed state fails (`the flag's state changed (f -> t)`); mutation: 3460 at its previous bytes fails the re-run again, restored by sha256 (`7900067214cd…`).
+2. **Negative control, and a correction to §3.** With `discovery_for_you_pde_enabled` TRUE before the apply, the apply stopped at 3455 (`POSTCONDITION FAILED (3455): … is ON`) after 46 files; the flag still reads TRUE. **But 3455's ledger row exists**: its "ships OFF" check is its post-`COMMIT` tail, which runs after the body and the ledger row commit. §3's "a file that would claim otherwise is never recorded" holds for in-transaction checks (3351, §4.2) and not for the 26 flag files whose only TRUE check is after COMMIT (3366, 3395, 3400, 3410, 3450–3456, 3465, 3467–3470, 3475, 3480–3485, 3490, 3496, 3500). No value is ever overwritten and certify stage 4 re-runs the same block, so it cannot pass silently; **§2.1 (b) and 8.2 (b') are the gate** (every seeded flag ABSENT or FALSE before step 4). If it happens anyway: the file stays recorded, its rollback refuses while the flag is TRUE, and turning the flag off is the owner's call (register D-W11S-4).
+3. No other refusal, postcondition failure or drift occurred.
+
+### 8.6 Rollback files for the files that had none (W11-S, census-discovery §97)
+
+Eleven files, `db/rollback/2026-09-28-<n>-…-rollback.sql`, each guarded, each deleting its forward file's ledger row, each with postconditions (register D-W11S-2).
+
+| file | what it reverses | refuses when |
+|---|---|---|
+| 2289 | the flag row it wrote (md5 of its seed description), ledger row | the flag is TRUE; keeps a row 2289 did not write |
+| 2297 | outcome CHECK back to 0197's seven; drops `record_distribution_negative_signal` | any `dismiss` row (**never deletes it**, unlike the file's note); 2894 or 2995 applied |
+| 2892 | drops `place_momentum` and both functions | any row; a column a later file added (3410, 3435, 3476); `area_momentum` (3476); `rebuild_place_momentum_v` (3477) |
+| 2893 | surface CHECK back to the post-2298 fifteen; its column comment removed | the CHECK is not exactly 2893's eight |
+| 2894 | outcome CHECK back to 2297's eight | any `trip_add` row (never deletes it) |
+| 2995 | drops `rank_events_discovery_dismissed` | — |
+| 2901 | drops `rent_buddy_earnings_entries` | **any row (a true rollback would destroy financial records: C-11)**; 2930's view or 3387 present |
+| 2921 | drops `creator_earning_entries` and its trigger function | **any row (C-11)**; `creator_attribution_enabled` TRUE; 3385 or 3387 applied |
+| 2930 | drops `creator_share_ledger` | `creator_attribution_enabled` TRUE; 3385 applied |
+| 3440 | the footer as a file: 2220's function (copied byte for byte), the column dropped and re-added, the index rebuilt | — (it rewrites `search_key` under ACCESS EXCLUSIVE, as 3440 did) |
+| 3441 | the footer as a file: index and column first, then 3415's three functions (copied byte for byte) | — (stored slugs are not rewritten back; a NOTICE counts them) |
+
+**Rehearsal (final bytes).**
+- **The nine older files.** A no-apply baseline was built with up.sh's own loop minus the nine (`w11s_noapply`: 305 applied in order, the same 12 known-unreplayable, 2 on retry; skipping the nine broke nothing else). On a copy of the modelled head, the seed's one `dismiss` row was removed on that copy only (so that 2297 can proceed), and the nine rollbacks ran newest first (2995, 2930, 2921, 2901, 2894, 2893, 2892, 2297, 2289): **every one exit 0, every ledger row gone. Catalogue vs the no-apply baseline: 0 of 12,190 lines differ.** Re-applying the nine in byte order: every one exit 0, **catalogue vs the head: 0 of 12,320 lines differ.**
+- **3440 and 3441** ran inside the 73's rollback (8.5): the catalogue after all 73 rolled back differs from the baseline only in the 7 tighter lines, none theirs; after re-apply, 0 differ. On the 73-applied head they also ran directly (3441 first), `Ǿresund` keying `resund` again, and a second run of each is a no-op.
+- **Refusal controls, each seen on a fresh copy:** 2289 with its flag TRUE (the flag still TRUE, the ledger row kept); 2289 over a row it did not write (kept, NOTICE); 2297 under 2894, under 2995's index, and over a `dismiss` row; 2894 over a `trip_add` row; 2892 over a row, and on the 73-applied head (a later column); 2893 run twice; 2901 under 2930's view, over a row, and on the 73-applied head; 2921 with `creator_attribution_enabled` TRUE, over a row, and under 3387; 2930 with the flag TRUE and under 3385. Every refusal exited 3 and changed nothing.
+- **Not rehearsed:** a production-sized `canonical_locations` for 3440's file (31 rows on 2026-09-27), and anything on `portava-ci` or production.
+
+### 8.7 Pre-flight read against the real `portava-ci`, 2026-09-28 (integrator, read-only)
 
 Run through the Supabase connector (`execute_sql`, project `hwokxgbmezheskbzskfr`) after it became available to this session. Only SELECTs were sent: nothing was written, applied or flipped.
 

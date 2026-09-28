@@ -80,7 +80,7 @@ export function invalidatePipelineFlagCache(sc?: object | null): void {
 export async function loadPipelineFlags(sc: any, nowMs: number = Date.now()): Promise<PipelineFlags> {
   if (!sc || typeof sc !== "object") return { ...PIPELINE_FLAGS_OFF };
   const hit = cache.get(sc);
-  if (hit && nowMs - hit.at < FLAG_TTL_MS && nowMs >= hit.at) return { ...hit.flags };
+  if (hit && nowMs - hit.at < FLAG_TTL_MS && nowMs >= hit.at) return stopped(sc, { ...hit.flags });
   let on = new Set<string>();
   try {
     const { data, error } = await sc
@@ -104,5 +104,12 @@ export async function loadPipelineFlags(sc: any, nowMs: number = Date.now()): Pr
     graphReadingProvenance: on.has(COMPASS_CITY_CONFIDENCE_WINDOWED_READS_FLAG),
   };
   cache.set(sc, { flags, at: nowMs });
-  return { ...flags };
+  return stopped(sc, { ...flags });
+}
+
+// census-discovery §97 (D-W11S-1): while the Discovery stop is engaged every §85 stage reads OFF — the flag-off
+// pipeline. Consulted only when a flag is ON, so an all-off read is unchanged. Appended: line 89 is cited.
+import { discoveryStopHalt } from "../discoveryStopGate.js";
+async function stopped(sc: unknown, flags: PipelineFlags): Promise<PipelineFlags> {
+  return Object.values(flags).some(Boolean) && (await discoveryStopHalt(sc)) !== null ? { ...PIPELINE_FLAGS_OFF } : flags;
 }

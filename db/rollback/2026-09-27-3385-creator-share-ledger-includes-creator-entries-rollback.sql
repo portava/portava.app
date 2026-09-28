@@ -61,6 +61,11 @@ SELECT
   e.attribution_id, e.reverses_entry_id, e.cash_settled_minor::numeric, e.occurred_at
 FROM public.rent_buddy_earnings_entries e;
 
+-- census-discovery §97 (W11-S): 2930's comment, verbatim. Until §97 this file left 3385's comment
+-- on the restored view (apply plan §4.4, the ninth catalogue line).
+COMMENT ON VIEW public.creator_share_ledger IS
+  'THE ledger the creator share is computed from (08 §7). A projection (09 §5, "rebuildable from ledger") over public.intel_reward_ledger and public.rent_buddy_earnings_entries; it stores nothing and writes nothing. ONE ROW PER (source_entry_id, unit_kind): an intel_reward_ledger row yields its qiu and its earned_units as SEPARATE rows. AMOUNTS ARE ONLY EVER SUMMED WITHIN ONE (unit_kind, unit_code) — qiu, credits and currency minor units are not commensurable and no rate between them exists (09 arch §8, "never fabricate"). party_role distinguishes the creator leg from the platform leg; intel_reward_ledger is single-sided, so a share RATIO is undefined there rather than 100%. Not auto-updatable (UNION ALL): the canonical surface has no write path. security_invoker=true. No client grant.';
+
 REVOKE ALL ON public.creator_share_ledger FROM PUBLIC;
 REVOKE ALL ON public.creator_share_ledger FROM anon;
 REVOKE ALL ON public.creator_share_ledger FROM authenticated;

@@ -38,7 +38,7 @@ import { Router, type Request, type Response } from "express";
 import { requireUser, sendError } from "../lib/http.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { getServiceClient } from "../lib/supabase.js"; import { exposureForResponse, serveClockOf, servedRecommendationId } from "../lib/discoveryRecommendationRecord.js"; import { logServeUnlessRefused } from "../lib/discoveryRefusal.js"; import { DiscoveryServePoint, type ServedItem } from "../lib/discoveryServeLog.js";  // §94: the serve log
-import { isFlagEnabled } from "../lib/featureFlags.js";
+import { isFlagEnabled } from "../lib/featureFlags.js"; import { unlessDiscoveryStopped } from "../lib/discoveryStopGate.js";
 import { loadPdeViewer } from "../lib/discoveryPde.js";
 import {
   rankTrailsForViewer, rankSharedMomentsForViewer, rankEmergingForViewer, type RankedKind,
@@ -61,7 +61,7 @@ router.get("/v1/discovery/recommendations/:kind", asyncHandler(async (req: Reque
   // Literal at the read site (check:flag-polarity reads call sites).
   if (!(await isFlagEnabled(sc, "discovery_output_kinds_enabled"))) {
     return sendError(res, "feature_disabled", "these recommendations are not enabled");
-  }
+  } if (!(await unlessDiscoveryStopped(sc, true))) return sendError(res, "feature_disabled", "these recommendations are not enabled");  // census-discovery §97: flag ON but the Discovery stop engaged ⇒ exactly the flag-off 404
 
   const kind = String(req.params["kind"] ?? "");
   if (!isServedKind(kind)) return sendError(res, "feature_disabled", `no recommendations of kind "${kind}"`);

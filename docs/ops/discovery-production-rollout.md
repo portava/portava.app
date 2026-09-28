@@ -274,12 +274,12 @@ Whatever values that lane lands are the ones in force. Read them by name from th
 
 | step | recovery | loses |
 |---|---|---|
-| P0 flag seeds (2289, 2360, 2850) | delete the FALSE row + its ledger row | nothing |
-| P0.5 2892 | `DROP TABLE place_momentum` + function + ledger row | nothing (empty) |
-| P0.2/P0.6/P0.7 | each file's REVERSAL block | nothing while no `dismiss`/`trip_add` row was written by them |
+| P0 flag seeds (2289, 2360, 2850) | each file's rollback in `db/rollback/` (2289's added by §97, W11-S): deletes its own FALSE row + its ledger row, refuses while TRUE | nothing |
+| P0.5 2892 | `db/rollback/2026-09-28-2892-place-momentum-rollback.sql` (§97): drops the table and both functions + the ledger row; refuses while a row exists or a later file builds on it | nothing (empty) |
+| P0.2/P0.6/P0.7 | the `db/rollback/` files for 2995, 2894, 2297, newest first (§97): each refuses instead of deleting a `dismiss`/`trip_add` row | nothing; with such a row the rollback refuses (retention question) |
 | P1 each | its rollback file in `db/rollback/` (apply plan §3 gives each one's behaviour and the measured gaps); for 3440, its footer reversal via 2220 (rehearsed); for 3441, re-run 3415's `trail_letter_fold` block | 3376: the rows (its rollback refuses once they exist); 3421: debug samples without `content_id`; 3390/3410 rollbacks leave privileges tighter than before (measured) |
-| P2 | rollback files, newest first. 3387's refuses while its audit table holds rows; 3386's while 3387 is applied | nothing while 2922 is FALSE (0 rows) |
-| P3 2893 | its REVERSAL block, which is not free: writes refused in between are lost | refused events |
+| P2 | rollback files, newest first (2901's, 2921's and 2930's added by §97). 3387's refuses while its audit table holds rows; 3386's while 3387 is applied; 2901's and 2921's while their ledgers hold any row | nothing while 2922 is FALSE (0 rows); a ledger row makes the rollback refuse (C-11) |
+| P3 2893 | `db/rollback/2026-09-28-2893-rank-events-retire-writerless-surfaces-rollback.sql` (§97): re-widens to the fifteen, which is not free: writes refused in between are lost | refused events |
 | any migration mid-batch | the failed file's transaction rolled back by itself; the files before it stay applied and recorded; stop the batch | nothing |
 | worst case | restore to the §0 point-in-time restore point | everything after it |
 | D2 API | redeploy the previous API build | nothing; D1's objects are inert to the old API |
