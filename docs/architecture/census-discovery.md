@@ -16433,6 +16433,121 @@ Neither touches a migration. Both go to a follow-up lane.
 |---|---|---|---|
 | DV-83 | C | **W** | §94.11 closes §94.10's five findings under mutation. Two paths still present a failed or partial read as complete: an Overpass 200 carrying a `runtime error` remark, which is also cached, and ForYouTab's cached replay of a `partial` page (§98.1). |
 
+## §99 — DV-83 round 3 (lane W11-X2): Overpass's in-body failure is a failed read, ForYouTab replays a cached partial page as partial, and DV-83 moves W → C
+
+*Written 2026-09-28 by lane W11-X2 (round 3) on `disc-w11-x2-r3`, from `a9ce69090`. It closes the two paths §98.1's verifier found, and the verifier's residual on the counts' class. Decisions are in `docs/architecture/discovery-decision-register.md`, section "W11-X2 round 3", D-W11X2-18 to D-W11X2-20. No migration and no flag: each change alters output only when Overpass did not finish a query, when the counts refuse, or when the For You tab replays a cached partial page. Every edit in a cited file is line-neutral. All evidence is controlled (in-process routes over the fake Discovery world, jest over the real ForYouTab); none of it is production evidence, and no client build carrying the change has shipped.*
+
+### 99.1 Overpass's in-body failure (§98.1 finding 1; D-W11X2-18)
+
+- **Before.** `queryOverpass` read `elements` and nothing else. Overpass answers a query that passes its `[timeout:20]`, or its memory limit, with HTTP 200, a `runtime error: …` remark, and the elements written so far: none, or a truncated set. GET /discovery served that as the city with no refusal, wrote it to Cache A and to L2 for 2 hours, and the counts answered with `Cache-Control: public, max-age=300`.
+- **Now.** The body is read before its elements (`artifacts/api-server/src/routes/discovery.ts:686#if (overpassAnswerFailed(data)) return overpassFailed();`). A remark naming an error, a remark in no Overpass form, a non-string remark, or a JSON body with no `elements` array is a failed read (`artifacts/api-server/src/routes/discovery.ts:4603#function overpassAnswerFailed(data: unknown): boolean {`). An informational `<kind> remark:` passes, and so does an empty remark. A truncated set is discarded, not served: it is quadtile-ordered and says nothing about how much is missing. The answer is §94.11's marked empty array, so the paths §94.11 wired handle it unchanged:
+  - the cold serve paths name `"overpass"` (`artifacts/api-server/src/routes/discovery.ts:2071#if (overpassReadFailed(osmPlaces)) dbFailedSources.push`);
+  - Cache A and L2 write only OSM rows that exist (`artifacts/api-server/src/routes/discovery.ts:2098#if (enrichedOsm.length > 0) {`), and the stale-L2 revalidation follows the same rule;
+  - the feed names it, and the counts refuse the category, so the public header (`artifacts/api-server/src/routes/discovery.ts:2543#res.set("Cache-Control", "public, max-age=300");`) is never reached.
+- **Which remarks count.** This is reasoned from Overpass's error-output kinds; no live Overpass answer could be fetched here. Every remark carries its kind: `runtime|static|parse|encoding error:` (the query failed, or stopped part-way) or `… remark:` (informational). Anything else fails closed. The register gives the options.
+
+### 99.2 ForYouTab's cached replay (§98.1 finding 2; D-W11X2-20)
+
+- **Before.** The SWR hydration painted a cached page with `source 'none'` and `osmPartial false`, and the incomplete notice requires `source === 'osm'` (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:396#{source === 'osm' && osmPartial && (`). The service caches a `partial` body on purpose, refusal intact (`travel-buddy-standalone/src/services/discovery.ts:765#if (!refusedEverything(refusal) && isCurrentDiscoveryScope(lease.scope)) {`). So while the refetch loaded, a cached `partial` / `["overpass"]` page showed its cards with no notice.
+- **Now.** The hydration restates the cached page's source and coverage (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:315#setSource(cachedResult && cachedResult.places.length > 0 ? 'osm' : 'none'); setOsmPartial(cachedResult?.refusal?.coverage === 'partial');`), as `DiscoveryCategoryTab`'s hydration does (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:558#setPartial(cachedResult.refusal?.coverage === 'partial');`). The first frame does too, because the tab seeds its cards from the cache in a `useState` initialiser, and the frame painted before the effect runs showed the cards with no notice (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:112#const [osmPartial, setOsmPartial] = useState(() =>`). A cached partial page with no places is the partial-empty state. The refetch then restates both values, as before.
+
+### 99.3 The counts name an Overpass-only failure as the upstream's (verifier's residual; D-W11X2-19)
+
+When every category that failed failed on its Overpass read alone, the counts now refuse with `upstream_unavailable` / `overpass_unavailable`, as GET /discovery does (D-W11X2-14). The fan-out throws a typed error (`artifacts/api-server/src/routes/discovery.ts:2500#throw new UpstreamUnavailableError(DISCOVERY_OVERPASS_SOURCE, "overpass_unavailable");`), and the class and code come from the rejections (`artifacts/api-server/src/routes/discovery.ts:4623#function countsRefusalCause(`). Any DB failure among them keeps `transient_db` and `category_counts_failed` or `category_counts_partial`. `coverage` and `failedSources` (the categories) are unchanged. §94.11's O7 is restated by this decision (`artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:168#assert.equal(body.refusal?.code, "overpass_unavailable");`). It still requires `counts: {}` and `coverage: "nothing"`.
+
+### 99.4 Tests, seen red, and mutations
+
+- **Server** (`artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts`, 27 cases; appended, and the Overpass stub is extended on its own lines):
+  - X1–X2: GET /discovery, with an empty + timeout answer and a truncated + out-of-memory answer. Each is `partial`, `["overpass"]`, `upstream_unavailable`, with no truncated row served, no Cache A entry and no L2 write, and the next healthy request reads Overpass again (`artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:222#GET /discovery, ${c.name}: partial`).
+  - X3: the feed, both forms (`artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:244#X3 the feed, ${c.name}`).
+  - X4: the counts, both forms, refused with no public header (`artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:255#X4 counts, ${c.name}`).
+  - X5: the fail-closed forms. These are a remark in no Overpass form, a JSON body with no `elements`, an informational remark followed by an error, a non-string remark, and a JSON `null` (`artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:272#X5 fail-closed, ${name}`).
+  - X6: a stale L2 hit revalidated against a truncated, remarked answer writes nothing (`artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:320#X6 a stale L2 hit revalidated`).
+  - X7: one category's Overpass read failed, so the counts are `partial`, name that category, and are `upstream_unavailable` (`artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:339#X7 one category's Overpass read failed`).
+  - Controls: C2/C3, a 200 with elements and no remark, an informational `runtime remark:` or an empty remark, is served, cached in A and L2, and counted with the public header (`artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:287#C2/C3 CONTROL: a 200 with elements and`). C4: the same stale hit against a whole answer is rewritten. C5 and C6: a DB failure among the failed categories keeps `transient_db` (`artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:360#C6 CONTROL: food failed on Overpass and nightlife`).
+  - **Red first**, against `a9ce69090`'s route (file swap, sha256-restored): 13 red, which is X1–X7 (both forms of each, all five X5 forms) and restated O7. C1–C6 and O1–O6 were green.
+- **Client** (`travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.cachedPartial.component.test.tsx`, 8 cases, the real ForYouTab):
+  - H1: a cached partial page shows `for-you-partial` while the refetch is pending (`travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.cachedPartial.component.test.tsx:165#H1 a cached partial page with places`).
+  - H2: a cached partial page with no places is `for-you-partial-empty`, never "No recommendations yet".
+  - H3: the notice follows the refetch.
+  - H0: the first frame, with effects held off for one render, already shows it (`travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.cachedPartial.component.test.tsx:194#H0 the FIRST frame`).
+  - Controls: C1, the fresh-from-network partial page shows it; C2, a cached COMPLETE page shows no notice while the refetch is pending (`travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.cachedPartial.component.test.tsx:226#C2 CONTROL: a cached COMPLETE page`); C3, no cache, no notice; C4, the first frame of a cached complete page shows no notice.
+  - **Red first**, against `a9ce69090`'s ForYouTab: H0–H3 red, C1–C4 green. H0 was also red with the hydration fix alone, which is why the first frame is seeded too.
+- **Mutations.** 21 of 21 killed. Each was applied alone, the suite run, and the file restored byte-identical (sha256 checked).
+
+| # | mutation | red |
+|---|---|---|
+| S1 | the body check not called | X1–X7 (13 cases) |
+| S2 | the remark ignored | X1–X4, X5 (unrecognised, remark-then-error, non-string), X6, X7 |
+| S3 | a body with no `elements` accepted | X5 (no elements) |
+| S4 | every remark is a failure | C3 (informational) |
+| S5 | only the prefix read | X5 (remark-then-error) |
+| S6 | a non-string remark accepted | X5 (non-string) |
+| S7 | an unrecognised remark form accepted | X5 (unrecognised) |
+| S8 | a non-object body not guarded | X5 (JSON null) |
+| S9 | an empty remark is a failure | C3 (empty remark) |
+| S10 | truncated rows kept and served | X2, X3, X4 and X6 (truncated forms), X5 (remark-then-error) |
+| K1 | counts always `transient_db` | O7, X7 |
+| K2 | counts upstream when any failure is upstream | C6 |
+| K3 | the Overpass count failure untyped | O7, X7 |
+| K4 | the upstream code not carried | O7, X7 |
+| F1 | the hydration does not restate `osmPartial` | H1, H2, H3 |
+| F2 | the hydration does not restate `source` | H1, H3 |
+| F3 | `source 'osm'` for an empty cached page | H2 |
+| F4 | every cached page marked partial | C2 |
+| F5 | the first frame's `osmPartial` not seeded | H0 |
+| F6 | the first frame's `source` not seeded | H0 |
+| F7 | the first frame marks every cached page partial | C4 |
+
+- **Existing tests.** One assertion is restated by recorded decision (O7's code, D-W11X2-19); none is weakened or removed. The other suites were run at the final tree:
+  - every server suite importing `routes/discovery.ts` (69 files, 1,200 tests): 1,199 pass. The one failure is `discoveryClientRouteE2E`'s Node 22 load failure (§76.5);
+  - the five suites that read its text: 100/100;
+  - `discoveryRefusalD11`: 74/74;
+  - the client Discovery and ForYouTab jest suites: 532/532 in 87 files;
+  - `discoveryRefusalConsumers.guard` and `discovery.feedTimeout` (node:test, `--import tsx` on Node 22 as `scripts/run-node-tests.mjs` does): 12/12.
+
+### 99.5 Checks
+
+Run after the last edit.
+
+- **`artifacts/api-server`, all clean:**
+  - `typecheck` (the whole script, both halves);
+  - `typecheck:tests`: 863 against a baseline of 863;
+  - `check:test-registration`;
+  - `check:doc-citations`, `check:citation-targets` and `check:citation-symbols`;
+  - `check:census-scope-coverage`, `check:census-freshness` and `check:census-integrity`;
+  - `check:census-row-move-labels`.
+  - Acknowledgements were appended: census-discovery, plus census-passport, -sensing, -trust and -layover for `routes/discovery.ts`, and census-telegraph for the scope script's one new path.
+- **`travel-buddy-standalone`, clean:** `typecheck`, `typecheck:tests` (173 against 173) and `node scripts/check-test-mocks.mjs`.
+- **Not run:**
+  - the full api-server `pnpm test`; the suites importing the changed route were run instead;
+  - the client `check:all`;
+  - the harness, since no migration was added;
+  - `check:write-path-columns`, which needs live credentials. No write payload changed, and the L2 writer is only called less often.
+
+### 99.6 DV-83, restated
+
+§98.1's two paths are closed, and so is the residual. Every clause of DV-83's criterion holds on every path found so far:
+
+1. Every consumer of a Discovery envelope that can carry `refusal` branches on `coverage`, not on `ok` alone.
+2. No refused body is written to a client cache.
+3. No refused body is rendered as an empty result.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§98.1's two paths are closed under mutation, so every clause holds on every path §94, §94.11, §98 and §99 found.** **Consumers branch on coverage.** The guard's eleven files still branch on it (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts:311#it('G2. every file that consumes a carrier`), and every list-rendering consumer names a partial answer (G7). ForYouTab now does so on its cached replay as well as on the network answer, including the first frame (`travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.cachedPartial.component.test.tsx:165#H1 a cached partial page with places`; H0, H2, H3), as `DiscoveryCategoryTab` already did. The rail names a transport failure and refetches on a pull (§94.11 U1–U3, R1). **No refused body in a client cache.** The client's three caches write no `nothing` body (§60.2, unchanged). A `partial` body is cached with its refusal and is now replayed with it. **No refused body rendered as an empty result.** A cached partial page with no places is the partial-empty state, not "No recommendations yet" (H2). **Producers, so a consumer is SENT the failure.** The feed's event-post read (E1–E5), the viewer lookup (V1–V6) and Overpass on the wire (O1–O7) are covered, and now so is Overpass's in-body failure. A timed-out or out-of-memory 200, empty or truncated, is `overpass` on GET /discovery, the feed and the counts, and is cached nowhere: Cache A, L2, the stale-L2 revalidation and the counts' public header (`artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:222#GET /discovery, ${c.name}: partial`; X3–X6). An unrecognised body fails closed (X5), and an informational remark does not (C3). The counts name an Overpass-only failure `upstream_unavailable` (X7, O7). **Not flag-gated.** Each change alters output only when a read fails or a cached page is partial. **Stated limits.** Branch only: no client build carrying ForYouTab's change has shipped. The remark forms are reasoned from Overpass's error-output kinds; no live Overpass answer was fetched. `discoveryClientRouteE2E` cannot load on Node 22 here. |
+
+**Headline.** DV-83 moves W → C. `check:census-integrity` counts **C 101 / W 85 / N 2 / X 0** over 188: CONSTRUCTED 186 / 188 = **98.9 %**, CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged.
+
+### 99.7 Left open, and what would turn this red
+
+- **Seen and not built** (A07, not DV-83). The same hydration does not restate `liveUnchecked`. A cached page whose Live claims were withheld shows its cards without the "live info couldn't be checked" line until the refetch answers. The claims themselves stay withheld, so nothing false is shown, but the line is missing for that moment. The fix is the same shape as 99.2, and it belongs to A07's row.
+- **What would turn DV-83 red again:**
+  - an Overpass 200 whose body says the query did not finish being served, cached or counted (X1–X7, S1–S10);
+  - a cached partial page replayed without its notice, on the first frame or after it (H0–H3, F1–F7);
+  - any path §94.11 lists (E1–E5, V1–V6, O1–O7, U1–U3, R1, T1, G2 and G7).
+  - An Overpass remark form this lane has not seen would fail closed, and would show as a `partial` page, not a silent one.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/lib/capability/prerequisitesCore.ts — §93.8 names its function-granular gate boundary as why the Compass KNOWN entry was struck; it is the prerequisite checker's own machinery, and no Discovery verdict rests on it.
