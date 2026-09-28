@@ -56,7 +56,7 @@ const COMPASS_PAIR = ["compass-discovery-2026-09", "compass-factors-v1"];
 /** Literals, not imports: at the tree before §68 these constants did not exist, and V1/V2 must fail on VALUES there. */
 const MOMENTUM_MODEL = "discovery-place-velocity-v1";
 const TREND_MODEL    = "discovery-trend-state-v1";
-const ACTIVITY_FEATURE = "discovery-weighted-activity-v2";
+const ACTIVITY_FEATURE = "discovery-row-activity-v2";  // §84 (D-W10-R1-16): renamed from "discovery-weighted-activity-v2"; same definition
 
 const rows: momentumMod.MomentumRow[] = [
   { item_id: "a", outcome: "save",       served_at: new Date(NOW - 2 * HOUR).toISOString(), outcome_at: new Date(NOW - HOUR).toISOString() },
@@ -77,7 +77,7 @@ function latestRebuild(): { file: string; body: string } {
   return last!;
 }
 function rebuildBody(sql: string): string | null {
-  const a = sql.indexOf("CREATE OR REPLACE FUNCTION public.rebuild_place_momentum");
+  const a = sql.indexOf("CREATE OR REPLACE FUNCTION public.rebuild_place_momentum(");  // §84: `(` so 3477's rebuild_place_momentum_v2 is not mistaken for it
   if (a < 0) return null;
   const b = sql.indexOf("$fn$;", a);
   return b < 0 ? null : sql.slice(a, b + "$fn$;".length);
@@ -98,7 +98,7 @@ describe("§68 DC-17 — each derived store names the model and feature that com
   it("V2. trend: the model version the SQL store stores, and the feature version 3435 stores", () => {
     const readings = trendMod.computeTrendStates(rows, NOW);
     const { file, body } = latestRebuild();
-    assert.match(file, /^3435_/, `the newest rebuild_place_momentum should be 3435's, found ${file}`);
+    assert.match(file, /^3477_/, `the newest rebuild_place_momentum should be 3477's dispatcher, whose flag-off branch is 3435's body (discoveryTrendNormalised Q5), found ${file}`);
     for (const [id, r] of Object.entries(readings)) {
       assert.equal(r.provenance.modelVersion, TREND_MODEL, `${id}: model version`);
       assert.equal(r.provenance.modelVersion, sqlConst(body, "c_model"), `${id}: the TypeScript and SQL trend stores must name one model`);

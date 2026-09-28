@@ -24,7 +24,7 @@ import { HAVE_DB, LOCAL_DB_URL, exec, seedUser, deleteUser } from "./localDb.js"
 import { runReadOnly, readTraceCorpus } from "../../lib/discoveryTraceRead.js";
 import {
   buildEcosystemReport, ECOSYSTEM_STOP_SQL, ECOSYSTEM_REPEATS_SQL, ECOSYSTEM_SPAM_SQL,
-  ECOSYSTEM_TRAILS_SQL, ECOSYSTEM_PAGES_SQL, type ReadOutcome,
+  ECOSYSTEM_TRAILS_SQL, ECOSYSTEM_PAGES_SQL, type ReadOutcome, ECOSYSTEM_NEW_CREATORS_SQL, ECOSYSTEM_STALE_SQL,  // §84: the two defined monitors
 } from "../../lib/discoveryEcosystemGovernor.js";
 import { DiscoveryServePoint } from "../../lib/discoveryServeLog.js";
 
@@ -53,7 +53,7 @@ function report() {
     repeats: read(ECOSYSTEM_REPEATS_SQL),
     spam: read(ECOSYSTEM_SPAM_SQL),
     trails: read(ECOSYSTEM_TRAILS_SQL),
-    pages: read(ECOSYSTEM_PAGES_SQL),
+    pages: read(ECOSYSTEM_PAGES_SQL), newCreators: read(ECOSYSTEM_NEW_CREATORS_SQL), stale: read(ECOSYSTEM_STALE_SQL),
   });
 }
 const m = (r: ReturnType<typeof report>, id: string) => r.monitors.find((x) => x.id === id)!.reading as any;
@@ -117,7 +117,7 @@ describe("census-discovery DV-80 — the monitor reads, executed read-only", { s
     assert.equal(m(r, "hidden_gem_exposure").value, 1 / 5);
     // One page of three items, one of them the same place under its other id.
     assert.equal(m(r, "duplicate_saturation").value, 1 / 3);
-    assert.equal(m(r, "new_creator_success").state, "unmeasured");
+    assert.equal(m(r, "new_creator_success").state, "insufficient_sample"); assert.equal(m(r, "new_creator_success").detail.newCreators, 0); assert.equal(m(r, "stale_content").value, 0); assert.equal(m(r, "stale_content").sample, 5);  // §84 (D-W10-R1-15): measured now; C1/C2's places are dated after `until`, so no creator is new in this window, and every item was first served inside it, so none is stale
   });
 
   it("E2. the reads run inside a READ ONLY transaction: the same runner refuses a write", () => {

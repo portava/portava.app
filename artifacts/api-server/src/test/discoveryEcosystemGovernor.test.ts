@@ -79,12 +79,12 @@ describe("DV-80 — the monitors are the specification's, in its order", () => {
     ].sort());
   });
 
-  it("2. exactly two have no input in the tree; they are UNMEASURED with the missing input named, and carry no number", () => {
+  it("2. the two that had no input are DEFINED now (§84, D-W10-R1-15); unread by this caller, they read input_absent and carry no number", () => {
     const r = buildEcosystemReport(INPUT());
-    const unmeasured = r.monitors.filter((m) => m.reading.state === "unmeasured");
-    assert.deepEqual(unmeasured.map((m) => m.id), ["new_creator_success", "stale_content"]);
-    for (const m of unmeasured) {
-      assert.ok((m.reading as any).missingInput.length > 40);
+    const absent = r.monitors.filter((m) => ["new_creator_success", "stale_content"].includes(m.id));
+    assert.deepEqual(absent.map((m) => m.reading.state), ["input_absent", "input_absent"]);
+    for (const m of absent) {
+      assert.ok((ECOSYSTEM_MONITORS.find((d) => d.id === m.id)!.definition ?? "").length > 40, "the rule is written down");
       assert.equal((m.reading as any).value, undefined);
     }
   });

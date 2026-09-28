@@ -56,7 +56,7 @@ import { RECOMMENDATION_ID_SHAPE } from "./rankEventsProvenance.js";
 import {
   isTrendState, trendReasonFor,
   type DiscoveryTrendState, type TrendReasonCode,
-} from "./discoveryTrendState.js";
+} from "./discoveryTrendState.js"; import { explainTrendReading, trendDriverCode, TREND_STATE_MODEL_VERSION_V2, type TrendDriverCode } from "./discoveryTrendState.js"; import type { TrendDriver, TrendLifecycle } from "./discoveryTrendNormalised.js";  // §84 (W10-R1)
 
 /** The route's gate, seeded FALSE by 3410. Read with isFlagEnabled: fail-closed. */
 export const TREND_API_FLAG = "discovery_trending_api_enabled";
@@ -110,14 +110,14 @@ export interface TrendSnapshotRow {
   place_id: string;
   trend_state: string;
   recent_unique_travelers: number | null;
-  window_unique_travelers: number | null;
+  window_unique_travelers: number | null; /** §84: present on a v2 run only (3476). */ driver?: string | null; lifecycle_state?: string | null; cell_key?: string | null;
 }
 
 export interface TrendExplanation {
   recommendationId: string;
   /** The served item this exposure named; null when the id bound nothing. */
   itemId: string | null;
-  trend: { state: DiscoveryTrendState; reason: { code: TrendReasonCode; text: string } } | null;
+  trend: { state: DiscoveryTrendState; reason: { code: TrendReasonCode; text: string; driver?: TrendDriverCode }; lifecycle?: TrendLifecycle } | null;  // §84: `driver` and `lifecycle` only from a v2 run
   unavailable: TrendUnavailableReason | null;
 }
 
@@ -173,7 +173,7 @@ export function explainExposures(
   bindings: readonly ExposureBinding[],
   run: TrendRun | null,
   rows: readonly TrendSnapshotRow[],
-  nowMs: number,
+  nowMs: number, areas: readonly TrendAreaRow[] = [],  // §84: the run's Local Pulse rows, for the neighbourhood k-floor
 ): TrendExplanationResponse {
   const itemByRid = new Map<string, string>();
   for (const b of bindings) if (!itemByRid.has(b.recommendationId)) itemByRid.set(b.recommendationId, b.itemId);
@@ -193,7 +193,7 @@ export function explainExposures(
     const state = row.trend_state as DiscoveryTrendState;
     const reason = trendReasonFor(state);
     if (!reason) return none("insufficient_evidence");
-    return { recommendationId: rid, itemId, trend: { state, reason }, unavailable: null };
+    return { recommendationId: rid, itemId, trend: run.modelVersion === TREND_STATE_MODEL_VERSION_V2 ? v2Trend(row, state, reason, areas) : { state, reason }, unavailable: null };
   });
 
   return { explanations, readingProvenance: run ? { ...provenanceOf(run), featureVersion: run.featureVersion } : null };  // §75 H-P21-1: the feature version rides after the three §58 fields
@@ -257,7 +257,7 @@ export async function readViewerExposures(sc: any, viewerId: string, ids: readon
 }
 
 export type SnapshotRead =
-  | { ok: true; run: TrendRun | null; rows: TrendSnapshotRow[] }
+  | { ok: true; run: TrendRun | null; rows: TrendSnapshotRow[]; areas?: TrendAreaRow[] }  // §84: `areas` on a v2 run only
   | { ok: false; reason: "trend_store_absent" | "trend_read_failed" };
 
 function failureOf(error: unknown): { ok: false; reason: "trend_store_absent" | "trend_read_failed" } {
@@ -304,14 +304,380 @@ export async function readTrendSnapshot(sc: any, itemIds: readonly string[]): Pr
     if (itemIds.length === 0) return { ok: true, run, rows: [] };
 
     const body = await sc.from("place_momentum")
-      .select("place_id, trend_state, recent_unique_travelers, window_unique_travelers")
+      .select(run.modelVersion === TREND_STATE_MODEL_VERSION_V2 ? `${SNAPSHOT_COLUMNS}, driver, lifecycle_state, cell_key` : SNAPSHOT_COLUMNS)
       .eq("source_surface", "discovery")
       .eq("computed_at", top["computed_at"])
       .in("place_id", [...new Set(itemIds)]);
     if (body?.error) return failureOf(body.error);
-    return { ok: true, run, rows: Array.isArray(body?.data) ? (body.data as TrendSnapshotRow[]) : [] };
+    const snapRows = Array.isArray(body?.data) ? (body.data as TrendSnapshotRow[]) : []; if (run.modelVersion === TREND_STATE_MODEL_VERSION_V2) return { ok: true, run, rows: snapRows, areas: await readAreaRows(sc, top["computed_at"] as string, snapRows) }; return { ok: true, run, rows: snapRows };
   } catch {
     // resolves-not-throws-ok: a throw is an unknown answer, stated as one.
     return { ok: false, reason: "trend_read_failed" };
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// census-discovery §84 (lane W10-R1): v2 reasons, the neighbourhood floor, and
+// `11` §4's three list actions plus Local Pulse (DC-21, DV-29, DV-33)
+// ═════════════════════════════════════════════════════════════════════════════
+import { fetchBlockedSet, submitterIsVisible } from "./blocks.js";
+import { inactiveSubmitterIds, submitterInGoodStanding } from "./discoveryCacheEligibility.js";
+import { loadActiveProtectedZones } from "./protectedZoneStore.js";
+import { applyProtection } from "./protectedLocations.js";
+import { toCanonicalCategory } from "./placeCategories.js";
+import { normaliseCategoryAffinities } from "./discoveryPde.js";
+import { trailTrendStatesFromRankEvents } from "./discoveryTrailAffinity.js";
+import { MOMENTUM_BASELINE_WINDOW_MS, MOMENTUM_PAGE_SIZE, MOMENTUM_ROW_LIMIT } from "./discoveryLocalMomentum.js";
+import type { TrendRowV2 } from "./discoveryTrendNormalised.js";
+import type { MapObject } from "./mapObjects.js";
+
+/** The §58 columns every run has. */
+const SNAPSHOT_COLUMNS = "place_id, trend_state, recent_unique_travelers, window_unique_travelers";
+
+/** A Local Pulse row as the explanation reads it. Travellers are READ, never served. */
+export interface TrendAreaRow {
+  cell_key: string;
+  cell_label: string | null;
+  trend_state: string;
+  driver: string | null;
+  recent_unique_travelers: number | null;
+  window_unique_travelers: number | null;
+  velocity?: number | null;
+}
+
+/**
+ * B-3, decided (D-W10-R1-10): a public reason names a neighbourhood only when
+ * the neighbourhood is a NAMED one (never a grid square, whose key is a
+ * coordinate) and its own Local Pulse reading carries at least
+ * TREND_DISCLOSURE_MIN_TRAVELERS distinct travellers in BOTH windows — the
+ * k-floor §58.2 already applies to a place's state, applied to the area the
+ * sentence names. Below it the sentence is the place's own, with no location.
+ */
+export function mayNameNeighbourhood(area: TrendAreaRow | undefined): area is TrendAreaRow & { cell_label: string } {
+  return !!area && typeof area.cell_label === "string" && area.cell_label !== "" && area.cell_key.startsWith("n:")
+    && travelersOk(area.recent_unique_travelers) && travelersOk(area.window_unique_travelers);
+}
+
+const DRIVERS = new Set(["trip_adds", "saves", "independent_groups"]);
+const LIFECYCLES = new Set(["unknown", "emerging", "growing", "peak", "cooling", "evergreen", "rediscovered", "inactive"]);
+
+/** A v2 row's served trend: the driver-led sentence, its driver code, the lifecycle. Still no number. */
+function v2Trend(
+  row: TrendSnapshotRow, state: DiscoveryTrendState, reason: { code: TrendReasonCode; text: string }, areas: readonly TrendAreaRow[],
+): NonNullable<TrendExplanation["trend"]> {
+  const driver = typeof row.driver === "string" && DRIVERS.has(row.driver) ? (row.driver as TrendDriver) : null;
+  const area = typeof row.cell_key === "string" ? areas.find((a) => a.cell_key === row.cell_key) : undefined;
+  const text = explainTrendReading(state, driver, mayNameNeighbourhood(area) ? area.cell_label : null) ?? reason.text;
+  const code = trendDriverCode(driver);
+  const lifecycle = typeof row.lifecycle_state === "string" && LIFECYCLES.has(row.lifecycle_state) ? (row.lifecycle_state as TrendLifecycle) : undefined;
+  return { state, reason: code ? { code: reason.code, text, driver: code } : { code: reason.code, text }, ...(lifecycle ? { lifecycle } : {}) };
+}
+
+/** The run's Local Pulse rows for these places' cells. A failed read names no neighbourhood (the safe direction). */
+async function readAreaRows(sc: any, computedAt: string, rows: readonly TrendSnapshotRow[]): Promise<TrendAreaRow[]> {
+  const cells = [...new Set(rows.map((r) => r.cell_key).filter((c): c is string => typeof c === "string" && c.startsWith("n:")))];
+  if (cells.length === 0) return [];
+  try {
+    const { data, error } = await sc.from("area_momentum")
+      .select("cell_key, cell_label, trend_state, driver, recent_unique_travelers, window_unique_travelers")
+      .eq("source_surface", "discovery").eq("computed_at", computedAt).in("cell_key", cells);
+    return error || !Array.isArray(data) ? [] : (data as TrendAreaRow[]);
+  } catch {
+    // resolves-not-throws-ok: no neighbourhood is named, which is the safe direction.
+    return [];
+  }
+}
+
+// ── The lists ────────────────────────────────────────────────────────────────
+
+/** The lists' gate, seeded FALSE by 3475; the route also requires TREND_API_FLAG. */
+export const TREND_LISTS_FLAG = "discovery_trend_lists_enabled";
+/** One Discovery page, the explanation bound's own number. */
+export const TREND_LIST_MAX = TREND_EXPLANATIONS_MAX_IDS;
+/**
+ * `03` §1: "What is gaining meaningful travel relevance now?" The states that
+ * claim a gain, in the order a list shows them (D-W10-R1-13). `established`
+ * and `cooling` are not gains; `unknown` is not a claim.
+ */
+export const TREND_LIST_STATES: readonly DiscoveryTrendState[] = ["trending", "emerging", "rediscovered"];
+
+export type TrendListUnavailable = "no_snapshot" | "stale_snapshot" | "not_located";
+
+export interface TrendListItem {
+  placeId: string;
+  state: DiscoveryTrendState;
+  reason: { code: TrendReasonCode; text: string; driver?: TrendDriverCode };
+  lifecycle?: TrendLifecycle;
+}
+export interface TrendAreaItem {
+  area: string;
+  state: DiscoveryTrendState;
+  reason: { code: TrendReasonCode; text: string; driver?: TrendDriverCode };
+}
+export interface TrendTrailItem {
+  trailId: string;
+  state: "emerging";
+  reason: { code: TrendReasonCode; text: string; driver?: TrendDriverCode };
+}
+export interface TrendListResponse {
+  destination: string;
+  items: TrendListItem[];
+  unavailable: TrendListUnavailable | null;
+  readingProvenance: TrendReadingProvenance | null;
+}
+
+/** A destination: the city string as discovery_places stores it, lower-cased and trimmed. Null when absent or malformed. */
+export function parseDestination(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const d = raw.replace(/^ +| +$/g, "").toLowerCase();
+  return d.length >= 1 && d.length <= 80 && /^[\p{L}\p{N} .'-]+$/u.test(d) ? d : null;
+}
+
+interface LocatedRow extends TrendSnapshotRow { velocity: number | null }
+
+export type LocatedRead =
+  | { ok: true; run: TrendRun | null; unavailable: TrendListUnavailable | null; rows: LocatedRow[] }
+  | { ok: false; reason: "trend_store_absent" | "trend_read_failed" };
+
+/**
+ * The newest run's rows for one destination's places, in the claim states.
+ * Only a v2 run knows where a place is (3476's `city`); a v1 run reads
+ * `not_located`, stated, never an empty list that looks like a quiet city.
+ */
+export async function readLocatedRun(sc: any, destination: string, states: readonly string[], nowMs: number): Promise<LocatedRead> {
+  const head = await readTrendSnapshot(sc, []);
+  if (!head.ok) return head;
+  if (head.run === null) return { ok: true, run: null, unavailable: "no_snapshot", rows: [] };
+  if (!isCurrentRun(head.run, nowMs)) return { ok: true, run: head.run, unavailable: "stale_snapshot", rows: [] };
+  if (head.run.modelVersion !== TREND_STATE_MODEL_VERSION_V2) return { ok: true, run: head.run, unavailable: "not_located", rows: [] };
+  try {
+    const { data, error } = await sc.from("place_momentum")
+      .select(`${SNAPSHOT_COLUMNS}, driver, lifecycle_state, cell_key, velocity`)
+      .eq("source_surface", "discovery").eq("computed_at", head.run.computedAt).eq("city", destination).in("trend_state", [...states]);
+    if (error) return failureOf(error);
+    return { ok: true, run: head.run, unavailable: null, rows: Array.isArray(data) ? (data as LocatedRow[]) : [] };
+  } catch {
+    // resolves-not-throws-ok: a throw is an unknown answer, stated as one.
+    return { ok: false, reason: "trend_read_failed" };
+  }
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const placeKey = (placeId: string) => placeId.replace(/^db\//, "").toLowerCase();
+
+interface EligiblePlace { id: string; category: string | null; place_type: string | null }
+
+/**
+ * What a list may name, for THIS viewer: an active community place whose
+ * submitter the viewer has not blocked (either way) and is in good standing
+ * (lib/blocks, lib/discoveryCacheEligibility — the rules GET /discovery applies),
+ * and which no protected zone suppresses or coarsens (lib/protectedLocations;
+ * an unreadable zone policy withholds every positioned place). Null when a
+ * read failed: a list is never served with a rule it could not apply.
+ */
+export async function eligibleListPlaces(sc: any, viewerId: string, placeIds: readonly string[]): Promise<Map<string, EligiblePlace> | null> {
+  const ids = [...new Set(placeIds.map(placeKey).filter((k) => UUID.test(k)))];
+  const out = new Map<string, EligiblePlace>();
+  if (ids.length === 0) return out;
+  try {
+    const { data, error } = await sc.from("discovery_places")
+      .select("id, name, status, submitted_by, lat, lng, category, place_type").in("id", ids).eq("status", "active");
+    if (error || !Array.isArray(data)) return null;
+    const blocked = await fetchBlockedSet(sc, viewerId);
+    const inactive = await inactiveSubmitterIds(sc, (data as Array<{ submitted_by?: unknown }>).map((r) => r.submitted_by));
+    if (blocked === null || inactive === null) return null;
+    const zones = await loadActiveProtectedZones(sc);
+    for (const r of data as Array<Record<string, unknown>>) {
+      if (!submitterIsVisible(r["submitted_by"], blocked) || !submitterInGoodStanding(r["submitted_by"], inactive)) continue;
+      const lat = r["lat"], lng = r["lng"];
+      if (typeof lat === "number" && typeof lng === "number") {
+        if (zones === null) continue;
+        if (zones.length > 0) {
+          const probe: MapObject = { id: String(r["id"]), kind: "place", geometry: { type: "Point", coordinates: [lng, lat] },
+            title: String(r["name"] ?? r["id"]), privacyClass: "place_level", renderingPriority: 0 };
+          const decided = applyProtection([probe], zones).objects[0];
+          if (decided !== probe) continue;   // suppressed or coarsened: not named in a list
+        }
+      }
+      out.set(String(r["id"]).toLowerCase(), { id: String(r["id"]), category: (r["category"] as string | null) ?? null, place_type: (r["place_type"] as string | null) ?? null });
+    }
+    return out;
+  } catch {
+    // resolves-not-throws-ok: an unapplied rule is reported as a failure.
+    return null;
+  }
+}
+
+const statePriority = (s: string) => TREND_LIST_STATES.indexOf(s as DiscoveryTrendState);
+const byTrend = (a: LocatedRow, b: LocatedRow) =>
+  (statePriority(a.trend_state) - statePriority(b.trend_state))
+  || ((b.velocity ?? -1) - (a.velocity ?? -1))
+  || (a.place_id < b.place_id ? -1 : a.place_id > b.place_id ? 1 : 0);
+
+function listItem(row: LocatedRow): TrendListItem | null {
+  const state = row.trend_state as DiscoveryTrendState;
+  const reason = trendReasonFor(state);
+  if (!reason) return null;
+  const t = v2Trend(row, state, reason, []);
+  return { placeId: row.place_id, state, reason: t.reason, ...(t.lifecycle ? { lifecycle: t.lifecycle } : {}) };
+}
+
+/**
+ * The ORDER (D-W10-R1-13): the gain the state claims (trending, then emerging,
+ * then rediscovered), then v2's normalised velocity — the number the state was
+ * decided on, never served — then the id, so equal readings order the same on
+ * every request.
+ */
+export function orderLocated(rows: readonly LocatedRow[], eligible: ReadonlyMap<string, unknown>, states: readonly string[] = TREND_LIST_STATES): LocatedRow[] {
+  return rows.filter((r) => states.includes(r.trend_state) && mayDiscloseTrend(r) && eligible.has(placeKey(r.place_id))).sort(byTrend);
+}
+
+export type ListResult = { ok: true; body: TrendListResponse } | { ok: false; reason: "trend_store_absent" | "trend_read_failed" | "eligibility_read_failed" };
+
+/** `11` §4 "trending by location". */
+export async function trendingByLocation(sc: any, viewerId: string, destination: string, nowMs: number): Promise<ListResult> {
+  const read = await readLocatedRun(sc, destination, TREND_LIST_STATES, nowMs);
+  if (!read.ok) return read;
+  const prov = read.run ? { ...provenanceOf(read.run), featureVersion: read.run.featureVersion } : null;
+  if (read.unavailable) return { ok: true, body: { destination, items: [], unavailable: read.unavailable, readingProvenance: prov } };
+  const eligible = await eligibleListPlaces(sc, viewerId, read.rows.map((r) => r.place_id));
+  if (eligible === null) return { ok: false, reason: "eligibility_read_failed" };
+  const items = orderLocated(read.rows, eligible).map(listItem).filter((x): x is TrendListItem => x !== null).slice(0, TREND_LIST_MAX);
+  return { ok: true, body: { destination, items, unavailable: null, readingProvenance: prov } };
+}
+
+/**
+ * `11` §4 "personalized trending" (D-W10-R1-13): the same disclosed claims,
+ * ordered first by the viewer's own category affinity (compass
+ * category_weights, normalised exactly as the PDE ranker normalises them),
+ * then as trending by location. `basis: "none"` says the viewer has no
+ * affinities yet — the order is then the location order, and says so.
+ */
+export async function personalizedTrending(sc: any, viewerId: string, destination: string, nowMs: number): Promise<ListResult & { basis?: "affinity" | "none" }> {
+  const read = await readLocatedRun(sc, destination, TREND_LIST_STATES, nowMs);
+  if (!read.ok) return read;
+  const prov = read.run ? { ...provenanceOf(read.run), featureVersion: read.run.featureVersion } : null;
+  if (read.unavailable) return { ok: true, basis: "none", body: { destination, items: [], unavailable: read.unavailable, readingProvenance: prov } };
+  const eligible = await eligibleListPlaces(sc, viewerId, read.rows.map((r) => r.place_id));
+  if (eligible === null) return { ok: false, reason: "eligibility_read_failed" };
+  let affinities: Record<string, number> | undefined;
+  try {
+    const { data, error } = await sc.from("compass_user_preferences").select("category_weights").eq("user_id", viewerId).maybeSingle();
+    if (error) return { ok: false, reason: "trend_read_failed" };
+    affinities = normaliseCategoryAffinities((data as Record<string, unknown> | null)?.["category_weights"]);
+  } catch {
+    // resolves-not-throws-ok: an unread preference is an unknown answer, stated as one.
+    return { ok: false, reason: "trend_read_failed" };
+  }
+  const affinityOf = (r: LocatedRow): number => {
+    const p = eligible.get(placeKey(r.place_id));
+    if (!p || !affinities) return 0;
+    const canon = toCanonicalCategory(p.category, p.place_type);
+    return affinities[canon] ?? affinities[(p.category ?? "").toLowerCase()] ?? 0;
+  };
+  const ordered = orderLocated(read.rows, eligible).sort((a, b) => (affinityOf(b) - affinityOf(a)) || byTrend(a, b));
+  const items = ordered.map(listItem).filter((x): x is TrendListItem => x !== null).slice(0, TREND_LIST_MAX);
+  return { ok: true, basis: affinities ? "affinity" : "none", body: { destination, items, unavailable: null, readingProvenance: prov } };
+}
+
+/**
+ * DV-29 Local Pulse, served: the destination's NAMED neighbourhoods whose
+ * area reading is a gain and carries ≥ k travellers in both windows. A grid
+ * square is never listed — its key is a coordinate and it has no public name.
+ */
+export async function localPulse(sc: any, destination: string, nowMs: number): Promise<
+  { ok: true; body: { destination: string; areas: TrendAreaItem[]; unavailable: TrendListUnavailable | null } } | { ok: false; reason: "trend_store_absent" | "trend_read_failed" }> {
+  const head = await readTrendSnapshot(sc, []);
+  if (!head.ok) return head;
+  const none = (u: TrendListUnavailable) => ({ ok: true as const, body: { destination, areas: [], unavailable: u } });
+  if (head.run === null) return none("no_snapshot");
+  if (!isCurrentRun(head.run, nowMs)) return none("stale_snapshot");
+  if (head.run.modelVersion !== TREND_STATE_MODEL_VERSION_V2) return none("not_located");
+  try {
+    const { data, error } = await sc.from("area_momentum")
+      .select("cell_key, cell_label, trend_state, driver, recent_unique_travelers, window_unique_travelers, velocity")
+      .eq("source_surface", "discovery").eq("computed_at", head.run.computedAt).eq("city", destination).in("trend_state", [...TREND_LIST_STATES]);
+    if (error) return failureOf(error);
+    const areas = ((Array.isArray(data) ? data : []) as TrendAreaRow[])
+      .filter((a) => mayNameNeighbourhood(a))
+      .sort((a, b) => (statePriority(a.trend_state) - statePriority(b.trend_state)) || ((b.velocity ?? -1) - (a.velocity ?? -1)) || (a.cell_key < b.cell_key ? -1 : 1))
+      .slice(0, TREND_LIST_MAX)
+      .flatMap((a): TrendAreaItem[] => {
+        const state = a.trend_state as DiscoveryTrendState;
+        const reason = trendReasonFor(state);
+        const driver = typeof a.driver === "string" && DRIVERS.has(a.driver) ? (a.driver as TrendDriver) : null;
+        const text = explainTrendReading(state, driver, a.cell_label);
+        const code = trendDriverCode(driver);
+        return reason && text ? [{ area: a.cell_label as string, state, reason: code ? { code: reason.code, text, driver: code } : { code: reason.code, text } }] : [];
+      });
+    return { ok: true, body: { destination, areas, unavailable: null } };
+  } catch {
+    // resolves-not-throws-ok: a throw is an unknown answer, stated as one.
+    return { ok: false, reason: "trend_read_failed" };
+  }
+}
+
+/**
+ * `11` §4 "emerging places/Trails". Places: the disclosed `emerging` rows of
+ * the destination. Trails: the destination's ACTIVE Trails, each classified by
+ * the v2 model over its PLACE members' Discovery rows (lib/discoveryTrailAffinity
+ * trailTrendStatesFromRankEvents), listed when `emerging` over ≥ k travellers in
+ * both windows. Only place members are folded: a post, event or route plan
+ * member may be one this viewer is not served (census §64), and a number must
+ * not count what it withholds. A database without 2910 lists no Trails and says so.
+ */
+export async function emergingPlacesAndTrails(sc: any, viewerId: string, destination: string, nowMs: number): Promise<
+  { ok: true; body: TrendListResponse & { trails: TrendTrailItem[]; trailsUnavailable: "trails_unavailable" | "trail_read_failed" | null } }
+  | { ok: false; reason: "trend_store_absent" | "trend_read_failed" | "eligibility_read_failed" }> {
+  const read = await readLocatedRun(sc, destination, ["emerging"], nowMs);
+  if (!read.ok) return read;
+  const prov = read.run ? { ...provenanceOf(read.run), featureVersion: read.run.featureVersion } : null;
+  let items: TrendListItem[] = [];
+  if (!read.unavailable) {
+    const eligible = await eligibleListPlaces(sc, viewerId, read.rows.map((r) => r.place_id));
+    if (eligible === null) return { ok: false, reason: "eligibility_read_failed" };
+    items = orderLocated(read.rows, eligible, ["emerging"]).map(listItem).filter((x): x is TrendListItem => x !== null).slice(0, TREND_LIST_MAX);
+  }
+  const t = await emergingTrails(sc, destination, nowMs);
+  return { ok: true, body: { destination, items, unavailable: read.unavailable, readingProvenance: prov, trails: t.trails, trailsUnavailable: t.unavailable } };
+}
+
+async function emergingTrails(sc: any, destination: string, nowMs: number): Promise<{ trails: TrendTrailItem[]; unavailable: "trails_unavailable" | "trail_read_failed" | null }> {
+  try {
+    const tr = await sc.from("trails").select("id").eq("destination", destination).eq("lifecycle_status", "active");
+    if (tr?.error) return { trails: [], unavailable: isMissingSchemaError(tr.error) ? "trails_unavailable" : "trail_read_failed" };
+    const trailIds = ((tr?.data ?? []) as Array<{ id: string }>).map((t) => t.id);
+    if (trailIds.length === 0) return { trails: [], unavailable: null };
+    const ct = await sc.from("content_trails").select("trail_id, source_id").eq("source_type", "place").in("trail_id", trailIds);
+    if (ct?.error || !Array.isArray(ct?.data)) return { trails: [], unavailable: "trail_read_failed" };
+    const members = ct.data as Array<{ trail_id: string; source_id: string }>;
+    const served = [...new Set(members.flatMap((m) => [m.source_id, `db/${m.source_id}`]))];
+    if (served.length === 0) return { trails: [], unavailable: null };
+    const since = new Date(nowMs - MOMENTUM_BASELINE_WINDOW_MS).toISOString();
+    const rows: TrendRowV2[] = [];
+    for (let offset = 0; offset < MOMENTUM_ROW_LIMIT; offset += MOMENTUM_PAGE_SIZE) {
+      const { data, error } = await sc.from("rank_events").select("item_id, outcome, served_at, outcome_at, user_id")
+        .eq("surface", "discovery").neq("outcome", "analytics").in("item_id", served).gte("served_at", since)
+        .order("served_at", { ascending: false }).order("id", { ascending: false })
+        .range(offset, Math.min(offset + MOMENTUM_PAGE_SIZE, MOMENTUM_ROW_LIMIT) - 1);
+      if (error || !Array.isArray(data)) return { trails: [], unavailable: "trail_read_failed" };
+      rows.push(...(data as TrendRowV2[]).map((r) => ({ ...r, item_id: r.item_id.replace(/^db\//, "") })));
+      if (data.length < MOMENTUM_PAGE_SIZE) break;
+    }
+    const readings = trailTrendStatesFromRankEvents(rows, members, nowMs);
+    const trails = Object.entries(readings)
+      .filter(([, r]) => r.state === "emerging" && travelersOk(r.evidence.recentTravelers) && travelersOk(r.evidence.windowTravelers))
+      .sort(([a], [b]) => (a < b ? -1 : 1))
+      .slice(0, TREND_LIST_MAX)
+      .flatMap(([trailId, r]): TrendTrailItem[] => {
+        const reason = trendReasonFor("emerging");
+        const text = explainTrendReading("emerging", r.driver);
+        const code = trendDriverCode(r.driver);
+        return reason && text ? [{ trailId, state: "emerging", reason: code ? { code: reason.code, text, driver: code } : { code: reason.code, text } }] : [];
+      });
+    return { trails, unavailable: null };
+  } catch {
+    // resolves-not-throws-ok: a throw is a failed read, stated as one.
+    return { trails: [], unavailable: "trail_read_failed" };
   }
 }

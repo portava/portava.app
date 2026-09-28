@@ -318,3 +318,44 @@ export function trailMomentumFromRankEvents(
   // it here would attach a window label to a different unit of analysis.
   return computeLocalMomentum(folded, nowMs).values;
 }
+
+// ── census-discovery §84 (lane W10-R1, DC-21): emerging Trails ───────────────
+//
+// `03` §2 lists Trails among what may trend, and `11` §4 asks for "emerging
+// places/Trails". A Trail's trend STATE is the v2 model (lib/discoveryTrendNormalised)
+// over the Discovery rows of its members, folded onto the Trail exactly as
+// `trailMomentumFromRankEvents` folds them for the scalar: an event on an item
+// in two Trails counts for both. The value key keeps the MEMBER's id, so two
+// people acting on two different members at the same instant are not read as
+// one coordinated burst. No peer baseline (a Trail is not a place) and the
+// standard content class. Read-only: nothing here orders a Trail module;
+// lib/discoveryTrendExplanation lists the emerging ones above the k-floor.
+// A hook in this module, not in services/trails/TrailService.ts (another lane's file).
+import { computeTrendStatesV2, type TrendReadingV2, type TrendRowV2 } from "./discoveryTrendNormalised.js";
+
+export function trailTrendStatesFromRankEvents(
+  events: readonly TrendRowV2[],
+  memberships: ReadonlyArray<Pick<TrailMembershipRow, "trail_id" | "source_id">>,
+  nowMs: number,
+): Record<string, TrendReadingV2> {
+  if (!Array.isArray(events) || !Array.isArray(memberships)) return {};
+  const trailsByItem = new Map<string, string[]>();
+  for (const m of memberships) {
+    if (!m || typeof m.trail_id !== "string" || typeof m.source_id !== "string") continue;
+    const list = trailsByItem.get(m.source_id);
+    if (list) { if (!list.includes(m.trail_id)) list.push(m.trail_id); }
+    else trailsByItem.set(m.source_id, [m.trail_id]);
+  }
+  if (trailsByItem.size === 0) return {};
+  const trailOf = new WeakMap<TrendRowV2, string>();
+  const folded: TrendRowV2[] = [];
+  for (const e of events) {
+    if (!e || typeof e.item_id !== "string") continue;
+    for (const trailId of trailsByItem.get(e.item_id) ?? []) {
+      const copy = { ...e };
+      trailOf.set(copy, trailId);
+      folded.push(copy);
+    }
+  }
+  return computeTrendStatesV2(folded, nowMs, { keyOf: (r) => trailOf.get(r) ?? null, peers: false, classOfKey: () => "standard" });
+}
