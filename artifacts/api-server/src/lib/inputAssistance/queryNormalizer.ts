@@ -555,14 +555,14 @@ export function normalizeQuery(text: string, opts: NormalizeOptions): Normalized
   const sigil: '@' | '#' | null = raw.startsWith('@') ? '@' : raw.startsWith('#') ? '#' : null;
   const body = sigil ? raw.slice(1) : raw;
 
-  const romanized = transliterate(body);
-  const transliteratedFrom = romanized !== body ? body : null;
+  const wantsStrip = stripsEmoji(opts.context); // round 4 (D-W10-S1-1): strip BEFORE transliterating,
+  const hadEmoji = containsEmoji(body); // so an in-word emoji cannot split the word the dictionary looks up
+  const deEmoji = wantsStrip && hadEmoji ? stripEmoji(body) : body;
 
-  const wantsStrip = stripsEmoji(opts.context);
-  const hadEmoji = containsEmoji(romanized);
-  const deEmoji = wantsStrip && hadEmoji ? stripEmoji(romanized) : romanized;
+  const romanized = transliterate(deEmoji);
+  const transliteratedFrom = romanized !== deEmoji ? deEmoji : null;
 
-  const aliased = applyAliases(deEmoji);
+  const aliased = applyAliases(romanized);
 
   // Typo correction never runs on a handle: `@jon` and `@jos` are two people,
   // and "correcting" one into the other is the worst possible outcome for a
@@ -645,5 +645,5 @@ export function buildTypoCorrectionRow(
 // ("cafe"). Everywhere else it separates: between words, at an edge, and before
 // an UPPERCASE letter, which starts a new word ("Sky🔥Bar" searches "Sky Bar").
 // ─────────────────────────────────────────────────────────────────────────────
-const KEYCAP_RE = /[0-9#*]\u{FE0F}?\u{20E3}/gu;
-const IN_WORD_EMOJI_RE = new RegExp(`(?<=\\p{Ll})(?:${EMOJI_RE.source})+(?=\\p{Ll})`, 'gu');
+const KEYCAP_RE = /[0-9#*]\u{FE0F}?\u{20E3}/gu; const SPACELESS = '[\\p{Script=Thai}\\p{Script=Lao}\\p{Script=Khmer}\\p{Script=Myanmar}\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}\\u{30FC}]';
+const IN_WORD_EMOJI_RE = new RegExp(`(?<=\\p{Ll})(?:${EMOJI_RE.source})+(?=\\p{Ll})|(?<=${SPACELESS})(?:${EMOJI_RE.source})+(?=${SPACELESS})`, 'gu'); // round 4 (D-W10-S1-1): cased scripts join on lowercase both sides; scripts written without spaces join between their own letters; everything else separates

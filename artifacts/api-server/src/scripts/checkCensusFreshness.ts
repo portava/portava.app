@@ -4339,6 +4339,18 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/components/discovery/liveUnchecked.ts",
     "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryCategoryTab.liveSafety.component.test.tsx",
     "travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.liveSafety.component.test.tsx",
+    // §80.13 (round 3): the missing-policy fallback and the refresh on use.
+    "travel-buddy-standalone/src/hooks/__tests__/useGlobalSearchSuggestions.missingPolicy.component.test.tsx",
+    "travel-buddy-standalone/src/platform/input-assistance/services/policyRefreshOnUse.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/services/__tests__/policyRefreshOnUse.component.test.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/services/installInputPolicySync.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/services/policyStore.ts",
+    // §80.15 (round 4): the served-answer signal the handoff reads.
+    "travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.answeredText.component.test.tsx",
+    // §80.13 (round 3): the routed helper, cited then; fixed in §80.14.
+    "artifacts/api-server/src/lib/postgrestFilter.ts",
+    // §80.14: the helper's suite, which drives both route callers over HTTP.
+    "artifacts/api-server/src/test/postgrestFilterLikeEscape.test.ts",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

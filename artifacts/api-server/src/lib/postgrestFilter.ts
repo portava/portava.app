@@ -16,7 +16,7 @@
  *    including in `.ilike()` calls, which are structurally safe and still
  *    accept wildcards from the caller. `escapeLikePattern` handles that.
  *
- * A value going into an ilike pattern inside `.or()` needs BOTH, pattern first.
+ * A value going into an ilike pattern inside `.or()` needs BOTH, structure first.
  */
 
 /**
@@ -49,12 +49,12 @@ export function escapeOrValue(value: string): string {
 
 /**
  * The combination for a value spliced into an ilike pattern inside `.or()`:
- * wildcards escaped, then structural characters removed.
+ * structural characters removed, then wildcards escaped (census-discovery §80.14).
  *
- * Order matters. escapeLikePattern introduces backslashes, and those are
- * themselves structural inside an .or() expression, so the structural pass has
- * to run second or it would leave them behind.
+ * Order matters. Stripping second removed the very `\` escapes escapeLikePattern
+ * had added, so `%`/`_` reached SQL as wildcards. PostgREST passes an UNQUOTED
+ * value verbatim, so the escapes added last reach ILIKE; no user `\` survives.
  */
 export function safeOrIlikeValue(value: string): string {
-  return escapeOrValue(escapeLikePattern(value));
+  return escapeLikePattern(escapeOrValue(value));
 }

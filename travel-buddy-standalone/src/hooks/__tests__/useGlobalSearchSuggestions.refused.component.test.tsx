@@ -31,8 +31,8 @@ jest.mock('../../services/discovery.ts', () => ({
   getSearchSuggestions: jest.fn(async () => mockSuggest),
 }));
 
-let mockGatewayState: { suggestions: Array<Record<string, unknown>>; loading: boolean; unavailable: boolean; policy: unknown; refusal?: unknown } =
-  { suggestions: [], loading: false, unavailable: true, policy: null };
+let mockGatewayState: { suggestions: Array<Record<string, unknown>>; loading: boolean; unavailable: boolean; policy: unknown; policyAuthoritative: boolean; refusal?: unknown } =
+  { suggestions: [], loading: false, unavailable: true, policy: null, policyAuthoritative: true };
 
 // NOTE: intentionally exhaustive — the real gateway hook performs its own
 // network calls; its observable state is driven directly.
@@ -50,7 +50,7 @@ async function pastDebounce() {
 
 beforeEach(() => {
   mockSuggest = { ok: true, groups: [] };
-  mockGatewayState = { suggestions: [], loading: false, unavailable: true, policy: null };
+  mockGatewayState = { suggestions: [], loading: false, unavailable: true, policy: null, policyAuthoritative: true };
 });
 
 describe('DV-83 — the suggest refusal survives the global-search hook', () => {
@@ -102,7 +102,7 @@ describe('DV-83 — the suggest refusal survives the global-search hook', () => 
 
   it('§80: a gateway serve that refused is reported refused — not an empty typeahead', async () => {
     mockGatewayState = {
-      suggestions: [], loading: false, unavailable: false, policy: null,
+      suggestions: [], loading: false, unavailable: false, policy: null, policyAuthoritative: true,
       refusal: { class: 'transient_db', code: 'visibility_state_unreadable', route: 'POST /input-assistance/suggest', coverage: 'nothing' },
     } as typeof mockGatewayState;
     const { result } = await renderHook(() => useGlobalSearchSuggestions('tokyo'));
@@ -116,7 +116,7 @@ describe('DV-83 — the suggest refusal survives the global-search hook', () => 
     mockGatewayState = {
       suggestions: [{ id: 'g1', type: 'entity', context: 'global_search', label: 'gateway g1', entityType: 'city', entityId: 'g1',
         destination: { route: '/city/g1', entityType: 'city', entityId: 'g1' } }],
-      loading: false, unavailable: false, policy: null,
+      loading: false, unavailable: false, policy: null, policyAuthoritative: true,
       refusal: { class: 'transient_db', code: 'suggest_sources_unreadable', route: 'POST /input-assistance/suggest', coverage: 'partial', failedSources: ['circles'] },
     } as typeof mockGatewayState;
     const { result } = await renderHook(() => useGlobalSearchSuggestions('tokyo'));
@@ -127,7 +127,7 @@ describe('DV-83 — the suggest refusal survives the global-search hook', () => 
   });
 
   it('§80 CONTROL: a complete gateway serve is neither refused nor incomplete', async () => {
-    mockGatewayState = { suggestions: [], loading: false, unavailable: false, policy: null };
+    mockGatewayState = { suggestions: [], loading: false, unavailable: false, policy: null, policyAuthoritative: true };
     const { result } = await renderHook(() => useGlobalSearchSuggestions('tokyo'));
     await pastDebounce();
     expect(result.current.refused).toBe(false);

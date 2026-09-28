@@ -63,6 +63,11 @@ const FIRE_BAR = "p-fire-bar";
 const RED_LION = "p-red-lion";
 const CAFE_LUNA = "p-cafe-luna";
 const CAFE_SOL = "p-cafe-sol";
+const BS_NORTH = "p-backslash-north";
+const BS_CAFE = "p-backslash-cafe";
+const KIOSK = "p-kiosk-row";
+const HUNDRED = "p-hundred-percent";
+const THOUSAND = "p-thousand";
 
 function world(): Partial<KitState> {
   const place = (id: string, name: string) => ({
@@ -77,7 +82,8 @@ function world(): Partial<KitState> {
       user_friendships: [], event_rsvps: [], events: [], trips: [], trip_plan_items: [], hidden_gems: [], posts: [],
       circles: [], hashtags: [], stamp_definitions: [], canonical_locations: [],
       discovery_places: [place(SKY_BAR, "Sky Bar"), place(FIRE_BAR, "🔥 bar Lisboa"),
-        place(RED_LION, "Red Lion Pub"), place(CAFE_LUNA, "Café Luna"), place(CAFE_SOL, "Cafe Sol")],
+        place(RED_LION, "Red Lion Pub"), place(CAFE_LUNA, "Café Luna"), place(CAFE_SOL, "Cafe Sol"),
+        place(BS_NORTH, "Kiosk\\ North"), place(BS_CAFE, "K\\iosk Stand"), place(KIOSK, "Kiosk Row"), place(HUNDRED, "100% Burger"), place(THOUSAND, "1000 Lakes")],
     },
   };
 }
@@ -269,6 +275,109 @@ describe("Q9 — a literal '*' is never a wildcard (§80 follow-up)", () => {
     await kitGet(base, `/discovery/search?q=${encodeURIComponent("sky*bar")}&type=places`);
     const or = calls.ors.find((o) => o.table === "discovery_places");
     assert.ok(or && !or.expr.includes("*"), `a '*' reached the pattern: ${or?.expr}`);
+  });
+});
+
+describe("Q10 — LIKE's own metacharacters are literal in the key (round-3 verification)", () => {
+  // `\` is LIKE's escape character; `%` and `_` its wildcards. A user's
+  // backslash that reached the pattern unescaped either escaped the closing
+  // wildcard ("bar\" -> `%bar\%`, which matches nothing) or swallowed the
+  // next letter ("b\ar" -> `%b\ar%`, which matches "bar").
+  it("Q10a — 'kiosk\\' finds the row that literally holds it, and only that row", async () => {
+    installKit(world());
+    const { status, body } = await kitGet(base, `/discovery/search?q=${encodeURIComponent("kiosk\\")}&type=places`);
+    assert.equal(status, 200);
+    assert.deepEqual(ids(body), [BS_NORTH]);
+  });
+
+  it("Q10b — 'k\\iosk' is not 'kiosk': Kiosk Row is not found, the literal row is", async () => {
+    installKit(world());
+    const { body } = await kitGet(base, `/discovery/search?q=${encodeURIComponent("k\\iosk")}&type=places`);
+    assert.deepEqual(ids(body), [BS_CAFE]);
+  });
+
+  it("Q10c — '100%' is a literal percent sign, not a wildcard", async () => {
+    installKit(world());
+    const { body } = await kitGet(base, `/discovery/search?q=${encodeURIComponent("100%")}&type=places`);
+    assert.deepEqual(ids(body), [HUNDRED]);
+  });
+
+  it("Q10d — the pattern the database receives escapes the backslash itself", async () => {
+    const { calls } = installKit(world());
+    await kitGet(base, `/discovery/search?q=${encodeURIComponent("k\\iosk")}&type=places`);
+    const or = calls.ors.find((o) => o.table === "discovery_places");
+    assert.ok(or!.expr.includes("%k\\\\iosk%"), `the backslash was not escaped: ${or!.expr}`);
+  });
+});
+
+describe("Q11 — the gateway's duplicate scan keeps LIKE's escapes (round 3)", () => {
+  // Until §80.14, `lib/postgrestFilter.safeOrIlikeValue` LIKE-escaped FIRST and then stripped
+  // the `.or()` structural characters, backslash included — so the escape it
+  // had just added was removed again and "100%" reached the pattern as a
+  // wildcard. The creation-assistance duplicate scan (a gateway path) now
+  // strips the structure first and escapes second.
+  it("Q11a — a place named '100%' is scanned as a literal percent, and a backslash cannot re-open a wildcard", async () => {
+    const { scanDuplicatePlaces, scanDuplicateEvents } = await import("../lib/inputAssistance/duplicateDetection.js");
+    const { makeKitClient, emptyState, emptyCalls } = await import("./discoverySearchTestKit.js");
+    const calls = emptyCalls();
+    const sc = makeKitClient(emptyState({ rows: { places: [], events: [] } }), calls) as any;
+    await scanDuplicatePlaces(sc, { name: "100%", city: "a\\_b" });
+    await scanDuplicateEvents(sc, { name: "50% off", city: null });
+    const exprs = calls.ors.map((o) => o.expr).join(" | ");
+    assert.ok(exprs.includes("name.ilike.%100\\%%"), `the percent reached the pattern unescaped: ${exprs}`);
+    assert.ok(exprs.includes("city.ilike.%a\\_b%"), `the underscore reached the pattern unescaped: ${exprs}`);
+    assert.ok(exprs.includes("title.ilike.%50\\% off%"), exprs);
+  });
+});
+
+describe("Q8d — the in-word rule in CASED scripts: lowercase on both sides joins (round 3; not script-neutral, see Q8e)", () => {
+  it("Greek and Cyrillic lowercase words join across an emoji; a capital still starts a new word", async () => {
+    const { stripEmoji } = await import("../lib/inputAssistance/queryNormalizer.js");
+    assert.equal(stripEmoji("αθ\u{1F525}ήνα"), "αθήνα");
+    assert.equal(stripEmoji("моск\u{1F525}ва"), "москва");
+    assert.equal(stripEmoji("Москва\u{1F525}Питер"), "Москва Питер");
+  });
+});
+
+// Round 4 (register D-W10-S1-1, "Uncased scripts"). Q8d's rule reads CASE, so an
+// uncased script never met it and every emoji there separated: "กรุง🔥เทพ"
+// searched "กรุง เทพ", which cannot find "กรุงเทพ". Thai, Lao, Khmer, Myanmar,
+// Han and kana are written WITHOUT spaces between words, so a gap there is
+// never a word boundary the person typed: an emoji between two letters of those
+// scripts is removed without one. Uncased scripts that DO space their words
+// (Arabic, Hebrew) keep the separating default, because nothing in the text
+// says the emoji is inside a word.
+describe("Q8e — uncased scripts: spaceless scripts join, spaced ones separate (round 4)", () => {
+  it("Thai, Han and kana join across an emoji", async () => {
+    const { stripEmoji } = await import("../lib/inputAssistance/queryNormalizer.js");
+    assert.equal(stripEmoji("กรุง\u{1F525}เทพ"), "กรุงเทพ");
+    assert.equal(stripEmoji("東京\u{1F525}タワー"), "東京タワー");
+    assert.equal(stripEmoji("すし\u{1F363}や"), "すしや");
+  });
+
+  it("Arabic and Hebrew keep the separating default", async () => {
+    const { stripEmoji } = await import("../lib/inputAssistance/queryNormalizer.js");
+    assert.equal(stripEmoji("مرحبا\u{1F525}بك"), "مرحبا بك");
+    assert.equal(stripEmoji("שלום\u{1F525}עולם"), "שלום עולם");
+  });
+
+  it("a script change is a boundary, and an edge emoji still separates", async () => {
+    const { stripEmoji } = await import("../lib/inputAssistance/queryNormalizer.js");
+    assert.equal(stripEmoji("tokyo\u{1F525}東京"), "tokyo 東京");
+    assert.equal(stripEmoji("\u{1F525}東京"), "東京");
+  });
+
+  // The gateway transliterates as well as stripping. Until round 4 it
+  // transliterated FIRST, so an emoji inside a word split the word the
+  // dictionary looks up: "моск🔥ва" searched "moskva" where "москва" searches
+  // "moscow", and "กรุง🔥เทพ" searched "krungethph" instead of "bangkok".
+  it("the gateway's key is the same as for the word typed without the emoji, in every script", async () => {
+    const { normalizeQuery } = await import("../lib/inputAssistance/queryNormalizer.js");
+    const opts = { context: "global_search", allowTypoCorrection: false } as const;
+    assert.equal(normalizeQuery("กรุง\u{1F525}เทพ", opts).query, normalizeQuery("กรุงเทพ", opts).query);
+    assert.equal(normalizeQuery("東京\u{1F525}タワー", opts).query, normalizeQuery("東京タワー", opts).query);
+    assert.equal(normalizeQuery("моск\u{1F525}ва", opts).query, normalizeQuery("москва", opts).query);
+    assert.equal(normalizeQuery("αθ\u{1F525}ήνα", opts).query, normalizeQuery("αθήνα", opts).query);
   });
 });
 
