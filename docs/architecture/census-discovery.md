@@ -13474,7 +13474,7 @@ CONSTRUCTED 182 / 188 = **96.8 %**, unchanged. CORRECT 96 / 188 = **51.1 %**, up
 - **What the fold is used for.** `normaliseCityKey` in `travel-buddy-standalone/src/lib/cityCentroids.ts` is used only by `getCityCentroid`. That function's one caller in the app places a Passport memory on the Memories map (`travel-buddy-standalone/src/components/passport/memoryViews.ts:236#getCityCentroid(m.city)`). A memory's city is the free text the traveller types into the memory modal's "City" field (`travel-buddy-standalone/src/components/MemoriesTab.tsx:635#onChangeText={setCity} placeholder="City"`). So the fold matches user text against place names, and the result is user-visible: a pin, or the memory is listed as unplotted. The offline city index (`platform/input-assistance/data/cities.ts`) reads the name tables, not the fold.
 - **The fold was divergent.** It decomposed and stripped marks first, then folded six letters (Ł ł Ø ø Đ đ). A letter with a stroke, bar, hook or tail and no decomposition survived whole. So "ıstanbul", typed on a Turkish keyboard, left the memory unplotted, while the server's search key folds ı.
 - **Now it uses the server's table.** The table is copied verbatim into `travel-buddy-standalone/src/lib/latinLetterFold.ts` (`travel-buddy-standalone/src/lib/latinLetterFold.ts:21#export const LATIN_LETTER_FOLD`). The lookup still decomposes first and then applies the table (`travel-buddy-standalone/src/lib/cityCentroids.ts:619#.replace(LETTER_FOLD_RE, (c) => LATIN_LETTER_FOLD[c] ?? c)`). This matches the server's letters: the only table letter NFD decomposes is İ, to an ASCII I.
-- **The two tables cannot drift.** `artifacts/api-server/src/test/clientLetterFoldParity.test.ts:44#it("P1. the client table is the server table` asserts the same keys, values and order. P2 asserts that the lookup imports the copy and applies it after NFD. The app bundle cannot import from `artifacts/api-server`, so the arrangement is a copy plus this test.
+- **The two tables cannot drift.** `artifacts/api-server/src/test/clientLetterFoldParity.test.ts:45#it("P1. the client table is the server table` asserts the same keys, values and order. P2 asserts that the lookup imports the copy and applies it after NFD. The app bundle cannot import from `artifacts/api-server`, so the arrangement is a copy plus this test.
 - **Client tests** (`travel-buddy-standalone/src/lib/__tests__/cityCentroidsLetterFold.test.ts:36#it('C1. letters outside the old six`):
   - C1: ı, Ħ, Ƀ and ſ reach real city names.
   - C2: every table entry that folds to a single ASCII letter, 245 of 245, reaches a real key spelled with that letter.
@@ -13485,7 +13485,7 @@ CONSTRUCTED 182 / 188 = **96.8 %**, unchanged. CORRECT 96 / 188 = **51.1 %**, up
   - The lookup used to strip every `\p{M}` mark. It now strips exactly U+0300–U+036F plus every mark carrying the Unicode `Diacritic` property in U+1AB0–U+1AFF, U+1DC0–U+1DFF and U+FE20–U+FE2F (`travel-buddy-standalone/src/lib/latinLetterFold.ts:61#export const COMBINING_MARK_RE =`). Both `normaliseCityKey` and the diacritic-strip tier apply it to the NFD form.
   - C5 pins the rule exactly, over every mark and `Diacritic` code point (`travel-buddy-standalone/src/lib/__tests__/cityCentroidsLetterFold.test.ts:87#it('C5. the mark strip`). It also checks that a mark from each widened block still reaches Bogotá.
   - Those three blocks hold **92** such marks under Unicode 17.0 (53, 23 and 16), as counted here with Node's `\p{Diacritic}`. The integrator's note quotes §74's "91". This lane did not find the one-mark difference, and it is recorded here, not resolved.
-  - **P3 compares the two rules by behaviour, importing both** (`artifacts/api-server/src/test/clientLetterFoldParity.test.ts:59#it("P3. the client's mark strip`). The server's strip is inline in `normalizeLocationName` and is not exported. So for every mark or `Diacritic` code point, "a<mark>b" through the server's `searchKey` and through the client's strip must agree on whether the mark goes.
+  - **P3 compares the two rules by behaviour, importing both** (`artifacts/api-server/src/test/clientLetterFoldParity.test.ts:60#it("P3. the client's mark strip`). The server's strip is inline in `normalizeLocationName` and is not exported. So for every mark or `Diacritic` code point, "a<mark>b" through the server's `searchKey` and through the client's strip must agree on whether the mark goes.
   - **P3 is RED at this tree, on exactly those 92 marks** ("server keeps, client strips"). Nothing else differs, as checked in the lane's scratch run. It turns green when lane P35's server change strips exactly this set. It turns red on any other set, including every `\p{M}` (2,431 differences). This lane may not edit the server fold, and P3 was not weakened.
 
 ### 76.4 Tests seen red, mutations, and the golden (P24)
@@ -13582,6 +13582,21 @@ After restoring: 9/9, 2/2 and 4/4. The mark-rule additions came later, on the in
 - The client mark strip differing from its stated rule: C5. Differing from the server's by behaviour: P3, which is red now on the 92 marks, pending P35.
 - **What would turn A03 C:** 2361 and 2850 on with a green rollout record (§31.2).
 
+### 76.9 Integrator addendum: the client takes §77's mark rule, and P3 goes green
+
+§76 built the client strip on §74's class: U+0300–U+036F plus the `Diacritic` marks of the three other Latin combining blocks. §77 settled the server rule differently. It strips the four blocks whole, by code-point range (`artifacts/api-server/src/lib/latinLetterFold.ts:100#export const LATIN_MARKS_RE`). §77 also explained the 91-vs-92 difference: U+1ABE is `Diacritic` but `Me`. On the merged tree, P3 was red on exactly the 46 assigned marks in those blocks that lack `Diacritic`. The server strips them and the client kept them.
+
+The client now uses the same pattern (`travel-buddy-standalone/src/lib/latinLetterFold.ts:61#export const COMBINING_MARK_RE =`). The edit is line-neutral: the comment block keeps its 13 lines, and the constant stays at line 61.
+
+C5 is restated to the whole-block rule. It still walks every mark and every `Diacritic` code point, and the three widened-block lookups are unchanged.
+
+P4 is new. It compares the two patterns by value (`artifacts/api-server/src/test/clientLetterFoldParity.test.ts:72#it("P4. the client's mark pattern is the server's LATIN_MARKS_RE, by value"`). P3 still compares them by behaviour.
+
+Results:
+- **Seen red.** P3 failed with "46 code points fold differently" at the P34 merge commit, before the edit.
+- **After the edit.** `clientLetterFoldParity` passes 4/4.
+- **Controls.** The restored §74-class pattern fails both P3 and P4.
+- **Verdicts.** No verdict moves. A03 stays W on flags 2361 and 2850. B01 is graded on the server key (§77), and this lookup does not read `canonical_locations`.
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/compass/CompassExplanationEngine.ts — §13.7 item 3 names Compass's HMAC recommendation-token signer as a refactor this lane declined to make in another lane's file. Discovery's recommendation id is minted by lib/discoveryRecommendationId.ts, and no Discovery verdict rests on the signer.

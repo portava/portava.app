@@ -47,19 +47,19 @@ export const LATIN_LETTER_FOLD: Readonly<Record<string, string>> = Object.freeze
 
 /**
  * The combining-mark strip, applied to an NFD string (census-discovery §76,
- * after §74). It removes U+0300–U+036F (Combining Diacritical Marks, the
- * server's range until then) PLUS every mark carrying the Unicode `Diacritic`
- * property in U+1AB0–U+1AFF (Combining Diacritical Marks Extended),
- * U+1DC0–U+1DFF (… Supplement) and U+FE20–U+FE2F (Combining Half Marks):
- * §74 found those split the server's key while U+0300–U+036F did not.
+ * aligned with §77). It removes the four Latin combining blocks WHOLE, by
+ * code-point range: U+0300–U+036F, U+1AB0–U+1AFF, U+1DC0–U+1DFF and
+ * U+FE20–U+FE2F. That is the server's `LATIN_MARKS_RE`
+ * (artifacts/api-server/src/lib/latinLetterFold.ts). §77 chose whole blocks
+ * over the `Diacritic` property: U+0300–U+036F was always stripped whole, and
+ * ranges need no Unicode tables, so PostgreSQL's twin strips the same set.
  *
- * This rule is written here, not copied: the server's rule lives inside
- * lib/canonicalLocations.normalizeLocationName and is not exported. api-server's
- * clientLetterFoldParity P3 compares the two BY BEHAVIOUR over every mark and
- * Diacritic code point, so a server change the client does not follow fails.
+ * The app bundle cannot import from artifacts/api-server, so the pattern is
+ * repeated here. api-server's clientLetterFoldParity pins it by behaviour over
+ * every mark and Diacritic code point (P3) and by value (P4).
  */
 export const COMBINING_MARK_RE =
-  /[̀-ͯ]|(?=\p{Diacritic})[᪰-᫿᷀-᷿︠-︯]/gu;
+  /[\u0300-\u036f\u1ab0-\u1aff\u1dc0-\u1dff\ufe20-\ufe2f]/g;
 
 /** Remove the combining marks `COMBINING_MARK_RE` names from an NFD string. */
 export function stripCombiningMarks(nfd: string): string {

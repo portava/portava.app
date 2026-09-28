@@ -18,15 +18,16 @@
  * BEHAVIOUR, importing both: for every code point that is a mark or carries
  * the `Diacritic` property, "a<mark>b" through the server's `searchKey` and
  * through the client's `stripCombiningMarks` (on the NFD form, as the lookup
- * applies it) must agree on whether the mark is removed. The client strips
- * U+0300–U+036F plus the Diacritic marks of U+1AB0–1AFF, U+1DC0–1DFF and
- * U+FE20–FE2F. At `ed9ab3ca0` the server strips only U+0300–U+036F, so P3 is
- * RED until lane P35's widening lands (census-discovery §76.3). It is NOT
- * weakened to pass before then.
+ * applies it) must agree on whether the mark is removed. Both now strip the
+ * four Latin combining blocks whole (census §77). P3 was RED on 46 marks (the
+ * blocks' non-Diacritic marks) while the client followed §74's Diacritic-only
+ * class, and went green when the client took §77's rule; P4 also compares the
+ * two patterns by value, since the server now exports LATIN_MARKS_RE.
  *
  *   P1  the two tables are identical: same keys, same values, same order
  *   P2  the client's lookup folds with that table and strip, after NFD
  *   P3  the client's mark strip removes exactly the marks the server's key removes
+ *   P4  the client's mark pattern is the server's LATIN_MARKS_RE, by value
  *
  * Runtime: node:test + node:assert/strict.
  * Run: node --import tsx/esm --test src/test/clientLetterFoldParity.test.ts
@@ -34,9 +35,9 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { LATIN_LETTER_FOLD as SERVER } from "../lib/latinLetterFold.js";
+import { LATIN_LETTER_FOLD as SERVER, LATIN_MARKS_RE } from "../lib/latinLetterFold.js";
 import { searchKey } from "../lib/canonicalLocations.js";
-import { LATIN_LETTER_FOLD as CLIENT, stripCombiningMarks } from "../../../../travel-buddy-standalone/src/lib/latinLetterFold.ts";
+import { LATIN_LETTER_FOLD as CLIENT, stripCombiningMarks, COMBINING_MARK_RE } from "../../../../travel-buddy-standalone/src/lib/latinLetterFold.ts";
 
 const CLIENT_LOOKUP = new URL("../../../../travel-buddy-standalone/src/lib/cityCentroids.ts", import.meta.url);
 
@@ -67,5 +68,9 @@ describe("§76 — the client folds letters with the server's table", () => {
       if (server !== client) differ.push(`U+${c.toString(16).toUpperCase()} server ${server ? "strips" : "keeps"}, client ${client ? "strips" : "keeps"}`);
     }
     assert.deepEqual(differ.slice(0, 12), [], `${differ.length} code points fold differently`);
+  });
+  it("P4. the client's mark pattern is the server's LATIN_MARKS_RE, by value", () => {
+    assert.equal(COMBINING_MARK_RE.source, LATIN_MARKS_RE.source);
+    assert.equal(COMBINING_MARK_RE.flags, LATIN_MARKS_RE.flags);
   });
 });
