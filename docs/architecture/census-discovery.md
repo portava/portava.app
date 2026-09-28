@@ -13152,7 +13152,25 @@ This is controlled evidence: PostgreSQL 16 at `127.0.0.1:55455`, data dir `/var/
 
 ### 83.6 Checks
 
-CHECKS_PLACEHOLDER
+Run at this tree, after the last edit to each file:
+
+- **Pass:**
+  - `check:census-integrity`: discovery 94 C / 89 W / 5 N / 0 X, matching 83.7;
+  - `check:census-freshness` (the five new files are acknowledged, with the argument, in census-discovery's entry);
+  - `check:census-scope-coverage`: census-discovery 400 cited, 400 watched;
+  - `check:doc-citations`: RESULT clean, unanchored 6434 at the 6434 ceiling;
+  - `check:citation-targets`: 164/164, at the ceiling;
+  - `check:citation-symbols`: 0 missing, 34 far, both at their ceilings;
+  - `check:census-row-move-labels`, `check:census-policy-citations`, `check:test-registration`, `check:migration-prefixes`, `check:schema-references`, `check:writerless-reads`, `check:enum-literals`, `check:production-drift`, `check:guard-coverage`;
+  - `typecheck`.
+- **Suites:** the 14 `*ensus*` suites, together with every suite that reads a file this lane changed and with `discoveryRowAudit29`, `ciWorkflowArchitecture`, `migrationApplyOrder` and `productionDriftExtraction`: 514/514.
+- **The rehearsal driver** type-checks clean against the repository's base TypeScript configuration.
+- **`typecheck:tests`:** 863 diagnostics across 115 files, at the baseline (863 across 115).
+- **Not run:**
+  - anything against `portava-ci` or production, since this session has no credentials;
+  - `db:apply-migrations`, `certify:migrations`, `audit:schema`, `check:write-path-columns` and `check:missing-live-columns` against a live project;
+  - the full api-server `pnpm test`.
+- **Offline reasoning for the live checks:** after the apply, every object `check:write-path-columns` and `check:missing-live-columns` named on `84318d1b2` exists on the harness (apply plan §4.3). They are inferred to pass; they were not run.
 
 ### 83.7 Headline, restated from the rows
 
