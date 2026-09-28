@@ -100,7 +100,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
     if (!destination) return false;
     return getCachedDiscoveryPlaces(destination, 'for_you', 25, 1, intentMode) === null;
   });
-  const [refreshing, setRefreshing] = useState(false);
+  const [refreshing, setRefreshing] = useState(false); const [railRefreshKey, setRailRefreshKey] = useState(0);  // census-discovery §97 (DV-83, §94.10): the rails' own reads follow the pull too
   // 'refused' is a FOURTH state and not a flavour of 'none'.
   //
   // Owner ruling, 2026-09-14: "A distinguishable response body alone is
@@ -321,7 +321,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
 
   const handleRefresh = () => {
     setRefreshing(true);
-    load(true);
+    load(true); setRailRefreshKey((k) => k + 1);
     onRefresh?.();
   };
 
@@ -502,7 +502,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
         {isAuthed && <CompassOnboardingCard />}
 
         {/* ── Live from events — serve point 7 (GET /discovery/feed) ── */}
-        <DiscoveryEventPostsRail destination={destination} lat={lat} lng={lng} />{(['trails', 'shared_moments', 'emerging_discoveries'] as const).map((k) => <DiscoveryOutputKindsRail key={k} kind={k} destination={destination} enabled={isAuthed} />)}
+        <DiscoveryEventPostsRail destination={destination} lat={lat} lng={lng} refreshKey={railRefreshKey} />{(['trails', 'shared_moments', 'emerging_discoveries'] as const).map((k) => <DiscoveryOutputKindsRail key={k} kind={k} destination={destination} enabled={isAuthed} refreshKey={railRefreshKey} />)}
 
         {/* ── Compass Picks section — horizontal card strip ── */}
         <CompassPicksSection

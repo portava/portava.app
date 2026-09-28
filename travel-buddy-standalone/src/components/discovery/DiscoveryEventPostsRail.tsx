@@ -46,10 +46,10 @@ interface Props {
   destination: string | null;
   lat?: number | null;
   lng?: number | null;
-  radiusKm?: number;
+  radiusKm?: number; /** census-discovery §97 (DV-83, §94.10): bumped by the tab's pull-to-refresh. The refused copy below asks the user to pull, so a pull must refetch this rail. */ refreshKey?: number;
 }
 
-export function DiscoveryEventPostsRail({ destination, lat, lng, radiusKm = 25 }: Props) {
+export function DiscoveryEventPostsRail({ destination, lat, lng, radiusKm = 25, refreshKey = 0 }: Props) {
   const [posts, setPosts] = useState<DiscoveryEventPost[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   // True only for `coverage: "nothing"` — the server did not read the feed, so
@@ -96,7 +96,7 @@ export function DiscoveryEventPostsRail({ destination, lat, lng, radiusKm = 25 }
         }
       });
     return () => { cancelled = true; };
-  }, [destination, lat, lng, radiusKm]);
+  }, [destination, lat, lng, radiusKm, refreshKey]);
 
   // Checked BEFORE the empty check below, which is the whole fix: a refused load
   // arrives with zero posts and would otherwise be silently swallowed by it.
