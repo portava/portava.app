@@ -589,10 +589,19 @@ function stripComments(src: string): string {
 }
 
 describe("census-media §30 (MD338) — the worker is started at boot", () => {
+  // setTimeout is mocked for the whole PROCESS, not for the worker alone. A macrotask
+  // that runs while it is mocked (the pino transport's ready handshake, a supabase-js
+  // retry sleep) parks its timer on the mock, and reset() drops it unfired. The
+  // transport holds its worker thread ref'd until that handshake completes, so the file
+  // then never exits: it sat idle for 25+ minutes under a loaded `pnpm test`. The rule
+  // here: mock only across synchronous code and microtasks, and reset before any wait.
   afterEach(() => {
-    stopMediaProcessingWorker();
-    mock.timers.reset();
-    _setTestServiceClient(null);
+    try {
+      stopMediaProcessingWorker();
+    } finally {
+      mock.timers.reset();
+      _setTestServiceClient(null);
+    }
   });
 
   it("src/index.ts imports startMediaProcessingWorker from the worker module and calls it", () => {
@@ -607,38 +616,58 @@ describe("census-media §30 (MD338) — the worker is started at boot", () => {
 
   it("arms once, runs the pass after the startup delay, re-arms after each pass, and stops", async () => {
     mock.timers.enable({ apis: ["setTimeout"] });
-    let passes = 0;
-    const settle = () => new Promise<void>((r) => setImmediate(r));
-    assert.equal(_mediaProcessingWorkerArmed(), false);
-    startMediaProcessingWorker({ runPass: async () => { passes += 1; } });
-    startMediaProcessingWorker({ runPass: async () => { passes += 100; } });
-    assert.equal(_mediaProcessingWorkerArmed(), true);
-    mock.timers.tick(MEDIA_PROCESSING_STARTUP_DELAY_MS - 1);
-    await settle();
-    assert.equal(passes, 0, "nothing before the startup delay");
-    mock.timers.tick(1);
-    await settle(); await settle();
-    assert.equal(passes, 1, "one pass at the startup delay, from the FIRST start only");
-    mock.timers.tick(MEDIA_PROCESSING_INTERVAL_MS);
-    await settle(); await settle();
-    assert.equal(passes, 2, "re-armed after the pass");
-    stopMediaProcessingWorker();
-    assert.equal(_mediaProcessingWorkerArmed(), false);
-    mock.timers.tick(MEDIA_PROCESSING_INTERVAL_MS * 5);
-    await settle();
-    assert.equal(passes, 2, "stopped means stopped");
+    try {
+      let passes = 0;
+      // Microtasks only, never a macrotask (the rule above). The stub pass runs and the
+      // loop re-arms within about five turns; twenty is margin, not a clock.
+      const settle = async () => { for (let i = 0; i < 20; i++) await null; };
+      assert.equal(_mediaProcessingWorkerArmed(), false);
+      startMediaProcessingWorker({ runPass: async () => { passes += 1; } });
+      startMediaProcessingWorker({ runPass: async () => { passes += 100; } });
+      assert.equal(_mediaProcessingWorkerArmed(), true);
+      mock.timers.tick(MEDIA_PROCESSING_STARTUP_DELAY_MS - 1);
+      await settle();
+      assert.equal(passes, 0, "nothing before the startup delay");
+      mock.timers.tick(1);
+      await settle(); await settle();
+      assert.equal(passes, 1, "one pass at the startup delay, from the FIRST start only");
+      mock.timers.tick(MEDIA_PROCESSING_INTERVAL_MS);
+      await settle(); await settle();
+      assert.equal(passes, 2, "re-armed after the pass");
+      stopMediaProcessingWorker();
+      assert.equal(_mediaProcessingWorkerArmed(), false);
+      mock.timers.tick(MEDIA_PROCESSING_INTERVAL_MS * 5);
+      await settle();
+      assert.equal(passes, 2, "stopped means stopped");
+    } finally {
+      mock.timers.reset();
+    }
   });
 
-  it("with no arguments — exactly as src/index.ts calls it — runs the REAL pass against the service client", async () => {
+  it("with no arguments — exactly as src/index.ts calls it — runs the REAL pass against the service client", { timeout: 30_000 }, async (t) => {
     const w = makeWorld({ flag: true, assets: [asset(20)], objects: { [obj(20)]: await jpeg(24, 16) } });
     _setTestServiceClient(w.sc);
+    // Mocked for the synchronous arm-and-fire only: the fired tick queues the pass as a
+    // microtask, so all of it (sharp, the storage read, the logger) runs on real timers.
     mock.timers.enable({ apis: ["setTimeout"] });
-    startMediaProcessingWorker();
-    mock.timers.tick(MEDIA_PROCESSING_STARTUP_DELAY_MS);
-    // Date is not mocked (only setTimeout is), so this bound is real time.
-    const deadline = Date.now() + 10_000;
-    while (w.row(20).processing_status !== "ready" && Date.now() < deadline) {
-      await new Promise<void>((r) => setImmediate(r));
+    try {
+      startMediaProcessingWorker();
+      mock.timers.tick(MEDIA_PROCESSING_STARTUP_DELAY_MS);
+    } finally {
+      mock.timers.reset();
+    }
+    // Wait for the pass, not for a clock: load makes this slower, never different. It is
+    // over when the row leaves the pass's hands or the loop re-arms (a pass that never
+    // touched the row). The spy calls straight through to the real setTimeout, so nothing
+    // is parked. The timeout above aborts t.signal, which ends the wait; it is a backstop.
+    const realSetTimeout = mock.method(globalThis, "setTimeout");
+    try {
+      const rearmed = () => realSetTimeout.mock.calls.some((c) => c.arguments[1] === MEDIA_PROCESSING_INTERVAL_MS);
+      while (["queued", "processing"].includes(w.row(20).processing_status) && !rearmed() && !t.signal.aborted) {
+        await new Promise<void>((r) => setImmediate(r));
+      }
+    } finally {
+      realSetTimeout.mock.restore();
     }
     assert.equal(w.row(20).processing_status, "ready", "the boot-started loop claimed and completed the queued asset");
     assert.equal(w.row(20).width, 24);
