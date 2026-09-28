@@ -16186,6 +16186,14 @@ The verifier confirmed B02 and A08 `C` at `de6d2bfbc` and reported four remainin
 
 **What would turn this red:** anything §80.11–§80.14 list, plus an empty or mixed list during the handoff (the handoff case), an in-word emoji in a spaceless script leaving a gap (Q8e), or the gateway's key diverging from the emoji-free word (Q8e parity).
 
+### §94.10 Integrator: DV-83 is held at W after independent verification
+
+An independent verifier checked §94.1's C claim at `3fd11f858` and confirmed every clause the lane built, with each mutation killed. It found one path the lane did not cover. A signed-in viewer whose identity cannot be resolved has the event-post read skipped silently: `routes/discovery.ts` resolves the viewer, and when that throws or errors `viewerId` stays null and the read is replaced by an empty list without `readFailed`. Reproduced: an `auth.getUser` throw, or an `AuthRetryableFetchError`, answers 200 with no posts and no refusal, the same screen as "nothing live". Pull-to-refresh also does not refetch the rail its refused copy asks the user to pull. The row stays W until lane W11-X2's second round closes these paths and a verifier confirms it.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | C | **W** | §94.1's claim is not yet supported. A failed viewer resolution still hides the event-post read (verifier, §94.10), and the refused rail cannot be refreshed. Everything else §94.1 lists holds under mutation. |
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/lib/capability/prerequisitesCore.ts — §93.8 names its function-granular gate boundary as why the Compass KNOWN entry was struck; it is the prerequisite checker's own machinery, and no Discovery verdict rests on it.
