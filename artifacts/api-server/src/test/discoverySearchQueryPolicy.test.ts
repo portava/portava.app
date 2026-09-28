@@ -330,12 +330,54 @@ describe("Q11 — the gateway's duplicate scan keeps LIKE's escapes (round 3)", 
   });
 });
 
-describe("Q8d — the in-word rule is script-neutral (round 3)", () => {
+describe("Q8d — the in-word rule in CASED scripts: lowercase on both sides joins (round 3; not script-neutral, see Q8e)", () => {
   it("Greek and Cyrillic lowercase words join across an emoji; a capital still starts a new word", async () => {
     const { stripEmoji } = await import("../lib/inputAssistance/queryNormalizer.js");
     assert.equal(stripEmoji("αθ\u{1F525}ήνα"), "αθήνα");
     assert.equal(stripEmoji("моск\u{1F525}ва"), "москва");
     assert.equal(stripEmoji("Москва\u{1F525}Питер"), "Москва Питер");
+  });
+});
+
+// Round 4 (register D-W10-S1-1, "Uncased scripts"). Q8d's rule reads CASE, so an
+// uncased script never met it and every emoji there separated: "กรุง🔥เทพ"
+// searched "กรุง เทพ", which cannot find "กรุงเทพ". Thai, Lao, Khmer, Myanmar,
+// Han and kana are written WITHOUT spaces between words, so a gap there is
+// never a word boundary the person typed: an emoji between two letters of those
+// scripts is removed without one. Uncased scripts that DO space their words
+// (Arabic, Hebrew) keep the separating default, because nothing in the text
+// says the emoji is inside a word.
+describe("Q8e — uncased scripts: spaceless scripts join, spaced ones separate (round 4)", () => {
+  it("Thai, Han and kana join across an emoji", async () => {
+    const { stripEmoji } = await import("../lib/inputAssistance/queryNormalizer.js");
+    assert.equal(stripEmoji("กรุง\u{1F525}เทพ"), "กรุงเทพ");
+    assert.equal(stripEmoji("東京\u{1F525}タワー"), "東京タワー");
+    assert.equal(stripEmoji("すし\u{1F363}や"), "すしや");
+  });
+
+  it("Arabic and Hebrew keep the separating default", async () => {
+    const { stripEmoji } = await import("../lib/inputAssistance/queryNormalizer.js");
+    assert.equal(stripEmoji("مرحبا\u{1F525}بك"), "مرحبا بك");
+    assert.equal(stripEmoji("שלום\u{1F525}עולם"), "שלום עולם");
+  });
+
+  it("a script change is a boundary, and an edge emoji still separates", async () => {
+    const { stripEmoji } = await import("../lib/inputAssistance/queryNormalizer.js");
+    assert.equal(stripEmoji("tokyo\u{1F525}東京"), "tokyo 東京");
+    assert.equal(stripEmoji("\u{1F525}東京"), "東京");
+  });
+
+  // The gateway transliterates as well as stripping. Until round 4 it
+  // transliterated FIRST, so an emoji inside a word split the word the
+  // dictionary looks up: "моск🔥ва" searched "moskva" where "москва" searches
+  // "moscow", and "กรุง🔥เทพ" searched "krungethph" instead of "bangkok".
+  it("the gateway's key is the same as for the word typed without the emoji, in every script", async () => {
+    const { normalizeQuery } = await import("../lib/inputAssistance/queryNormalizer.js");
+    const opts = { context: "global_search", allowTypoCorrection: false } as const;
+    assert.equal(normalizeQuery("กรุง\u{1F525}เทพ", opts).query, normalizeQuery("กรุงเทพ", opts).query);
+    assert.equal(normalizeQuery("東京\u{1F525}タワー", opts).query, normalizeQuery("東京タワー", opts).query);
+    assert.equal(normalizeQuery("моск\u{1F525}ва", opts).query, normalizeQuery("москва", opts).query);
+    assert.equal(normalizeQuery("αθ\u{1F525}ήνα", opts).query, normalizeQuery("αθήνα", opts).query);
   });
 });
 
