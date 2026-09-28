@@ -92,6 +92,6 @@ describe('DiscoveryOutputKindsRail (§94)', () => {
   it('O6 ForYouTab renders the rail for all three kinds, gated on the viewer being signed in', () => {
     const src = readFileSync(join(__dirname, '..', 'ForYouTab.tsx'), 'utf8');
     expect(src).toContain("import { DiscoveryOutputKindsRail } from './DiscoveryOutputKindsRail.tsx';");
-    expect(src).toContain("{(['trails', 'shared_moments', 'emerging_discoveries'] as const).map((k) => <DiscoveryOutputKindsRail key={k} kind={k} destination={destination} enabled={isAuthed} />)}");
+    expect(src).toContain("{(['trails', 'shared_moments', 'emerging_discoveries'] as const).map((k) => <DiscoveryOutputKindsRail key={k} kind={k} destination={destination} enabled={isAuthed} refreshKey={railRefreshKey} />)}");
   });
 });

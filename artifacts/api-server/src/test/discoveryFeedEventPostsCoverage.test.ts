@@ -258,7 +258,7 @@ describe("GET /discovery/feed — a failed event-post read is on the envelope (D
     const r = await get(FEED_POSTS_ONLY);
     assert.equal(r.status, 200);
     assert.deepEqual(r.body.posts, []);
-    assert.equal(r.body.refusal?.code, "feed_event_posts_read_failed", JSON.stringify(r.body));
+    assert.equal(r.body.refusal?.code, "feed_viewer_unresolved", JSON.stringify(r.body));
     assert.equal(r.body.refusal?.coverage, "nothing");
     assert.deepEqual(r.body.refusal?.failedSources, ["event_posts"]);
   });
@@ -278,7 +278,7 @@ describe("GET /discovery/feed — a failed event-post read is on the envelope (D
   it("V4 the auth server rate-limiting the lookup (429) is a failure, not an anonymous viewer", async () => {
     setClient({ auth: "rate_limited", rows: { posts: [venuePost("p-1")] } });
     const r = await get(FEED_POSTS_ONLY);
-    assert.equal(r.body.refusal?.code, "feed_event_posts_read_failed", JSON.stringify(r.body));
+    assert.equal(r.body.refusal?.code, "feed_viewer_unresolved", JSON.stringify(r.body));
     assert.deepEqual(r.body.refusal?.failedSources, ["event_posts"]);
   });
 
@@ -288,5 +288,116 @@ describe("GET /discovery/feed — a failed event-post read is on the envelope (D
     assert.equal(r.status, 200);
     assert.deepEqual(r.body.posts, []);
     assert.equal(r.body.refusal, undefined);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// census-discovery §98 (DV-83, §94.10): an UNRESOLVED viewer is a failed read.
+// Appended at the tail so the anchored cases above (E1 :152, E5 :199) keep
+// their lines.
+//
+// §94.10's verifier found one path §94 did not cover: a signed-in request
+// whose identity could not be resolved had its event-post read replaced by
+// `[]` with no `readFailed`, answering 200 with no posts and no refusal, the
+// same screen as "nothing live". A token the auth service REJECTED (4xx) is
+// still an anonymous request, which owes no event-post read (C2's posture).
+//
+//   V1  getUser THROWS → refused: upstream_unavailable / feed_viewer_unresolved, "nothing", ["event_posts"], no exposure
+//   V2  getUser answers AuthRetryableFetchError (status 0) → the same refusal
+//   V3  getUser answers a 5xx → the same refusal
+//   V6  getUser answers AuthUnknownError (no status) → the same refusal
+//   V4  places served beside it → "partial", places kept, the same code
+//   V5  a place category failed too → both named, under the places code and class
+//   C4  CONTROL: a rejected token (401) is an anonymous request: no refusal
+//   C5  CONTROL: AuthInvalidJwtError (400) is a rejection too: no refusal
+//   C6  CONTROL: the refusal is not cached — a resolved viewer's next request serves the post
+// ═════════════════════════════════════════════════════════════════════════════
+
+function setClientWithGetUser(getUser: (token: string) => Promise<unknown>, opts: Parameters<typeof fakeClient>[0] = {}) {
+  const c = { ...fakeClient(opts), auth: { getUser } };
+  _setTestClient(c as never, true);
+  _setTestServiceClient(c as never);
+}
+const noUser = (error: unknown) => async () => ({ data: { user: null }, error });
+
+describe("GET /discovery/feed — an unresolved viewer's event-post read is a failed read (DV-83, §94.10)", () => {
+  it("V1 getUser THROWS: refused upstream_unavailable / feed_viewer_unresolved, coverage 'nothing', no exposure", async () => {
+    setClientWithGetUser(async () => { throw new Error("socket hang up"); }, { rows: { posts: [venuePost("p-1")] } });
+    const r = await get(FEED_POSTS_ONLY);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.posts, []);
+    assert.ok(r.body.refusal, `an unresolved viewer must not read as a quiet city: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.refusal.class, "upstream_unavailable");
+    assert.equal(r.body.refusal.code, "feed_viewer_unresolved");
+    assert.equal(r.body.refusal.coverage, "nothing");
+    assert.deepEqual(r.body.refusal.failedSources, ["event_posts"]);
+    await settle();
+    assert.equal(rankRows().length, 0, "a refused feed enters no exposure denominator");
+  });
+
+  it("V2 getUser answers AuthRetryableFetchError (network, status 0): the same refusal", async () => {
+    setClientWithGetUser(noUser({ name: "AuthRetryableFetchError", status: 0, message: "fetch failed" }), { rows: { posts: [venuePost("p-1")] } });
+    const r = await get(FEED_POSTS_ONLY);
+    assert.equal(r.body.refusal?.class, "upstream_unavailable", JSON.stringify(r.body));
+    assert.equal(r.body.refusal?.code, "feed_viewer_unresolved");
+    assert.equal(r.body.refusal?.coverage, "nothing");
+    assert.deepEqual(r.body.refusal?.failedSources, ["event_posts"]);
+  });
+
+  it("V3 getUser answers a 5xx: the same refusal", async () => {
+    setClientWithGetUser(noUser({ name: "AuthApiError", status: 500, message: "internal error" }), { rows: { posts: [venuePost("p-1")] } });
+    const r = await get(FEED_POSTS_ONLY);
+    assert.equal(r.body.refusal?.code, "feed_viewer_unresolved", JSON.stringify(r.body));
+    assert.deepEqual(r.body.refusal?.failedSources, ["event_posts"]);
+  });
+
+  it("V6 getUser answers AuthUnknownError (a response it could not read; no status): the same refusal", async () => {
+    setClientWithGetUser(noUser({ name: "AuthUnknownError", message: "Unexpected token < in JSON" }), { rows: { posts: [venuePost("p-1")] } });
+    const r = await get(FEED_POSTS_ONLY);
+    assert.equal(r.body.refusal?.code, "feed_viewer_unresolved", JSON.stringify(r.body));
+    assert.deepEqual(r.body.refusal?.failedSources, ["event_posts"]);
+  });
+
+  it("V4 places served beside an unresolved viewer: 'partial', the places kept, the viewer code", async () => {
+    setClientWithGetUser(async () => { throw new Error("socket hang up"); });
+    _setTestDbPlacesOverride(async () => [DB_PLACE as never]);
+    const r = await get(FEED_WITH_PLACES);
+    assert.equal(r.status, 200);
+    assert.ok(r.body.places.length >= 1, `the places are real and kept: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.refusal?.coverage, "partial");
+    assert.equal(r.body.refusal?.code, "feed_viewer_unresolved");
+    assert.deepEqual(r.body.refusal?.failedSources, ["event_posts"]);
+  });
+
+  it("V5 a place category failed as well: both named, under the places code and class", async () => {
+    setClientWithGetUser(async () => { throw new Error("socket hang up"); }, { errorTables: ["discovery_places"] });
+    const r = await get(FEED_WITH_PLACES);
+    assert.equal(r.body.refusal?.class, "transient_db", JSON.stringify(r.body));
+    assert.equal(r.body.refusal?.code, "feed_places_read_failed");
+    assert.deepEqual(r.body.refusal?.failedSources, ["for_you", "event_posts"]);
+  });
+
+  it("C4 CONTROL: a token the auth service REJECTED (401) is an anonymous request, and carries no refusal", async () => {
+    setClientWithGetUser(noUser({ name: "AuthApiError", status: 401, message: "invalid JWT" }), { rows: { posts: [venuePost("p-1")] } });
+    const r = await get(FEED_POSTS_ONLY);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.posts, []);
+    assert.equal(r.body.refusal, undefined, "a rejection is an answer: no read was owed");
+  });
+
+  it("C5 CONTROL: AuthInvalidJwtError (400) is a rejection too, and carries no refusal", async () => {
+    setClientWithGetUser(noUser({ name: "AuthInvalidJwtError", status: 400, message: "invalid JWT" }));
+    const r = await get(FEED_POSTS_ONLY);
+    assert.equal(r.body.refusal, undefined);
+  });
+
+  it("C6 CONTROL: the refusal is not cached — once the viewer resolves, the next request serves the post", async () => {
+    setClientWithGetUser(async () => { throw new Error("socket hang up"); }, { rows: { posts: [venuePost("p-3")] } });
+    const bad = await get(FEED_POSTS_ONLY);
+    assert.equal(bad.body.refusal?.code, "feed_viewer_unresolved");
+    setClient({ rows: { posts: [venuePost("p-3")] } });
+    const good = await get(FEED_POSTS_ONLY);
+    assert.deepEqual(good.body.posts.map((p: { id: string }) => p.id), ["p-3"]);
+    assert.equal(good.body.refusal, undefined);
   });
 });

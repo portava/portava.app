@@ -2616,7 +2616,7 @@ router.get("/discovery/feed", async (req, res) => {
   // ── Viewer identity for event-post pipeline ───────────────────────────────
   // Auth header is optional on the feed; block-checking requires a viewer id.
   // When unauthenticated, pass null → fetchEventPostsForDiscovery returns [].
-  let viewerId: string | null = null; let viewerResolutionFailed = false;  // census-discovery §94.10 (DV-83): a Bearer token whose identity could not be RESOLVED means the owed event-post read was not performed
+  let viewerId: string | null = null; let viewerUnresolved = false;  // census-discovery §98 (DV-83, §94.10): a Bearer token was presented and no viewer came back. The event-post read is then owed and cannot happen, which is a failed read, never an anonymous request's empty one
   let blockedIds = new Set<string>();
   // Same block relationship, kept separately for places because the two
   // consumers want opposite behaviour when the read FAILS: event posts have
@@ -2630,7 +2630,7 @@ router.get("/discovery/feed", async (req, res) => {
       const authHeader = req.headers.authorization;
       if (authHeader?.startsWith("Bearer ")) {
         const token = authHeader.slice(7);
-        const { data: userData, error: userErr } = await sc.auth.getUser(token); if (userErr && isTransientAuthError(userErr)) viewerResolutionFailed = true;  // §94.10: a retryable or 5xx lookup is a failure; a definitive 4xx is no viewer
+        const { data: userData, error: userErr } = await sc.auth.getUser(token); if (!userData?.user?.id && userErr && isTransientAuthError(userErr)) viewerUnresolved = true;  // §98: a REJECTED token (definitive 4xx) is an anonymous caller; a lookup that did not happen (throw, network, 408, 429, 5xx, no status) leaves the viewer unresolved
         if (userData?.user?.id) {
           viewerId = userData.user.id;
           // Both directions of the block relationship, through the one helper
@@ -2661,14 +2661,14 @@ router.get("/discovery/feed", async (req, res) => {
     // Reached for an unresolved viewer (the documented case) AND for a rejected
     // blocks read that threw rather than resolving. Both leave `blockedIds`
     // empty, so both are worth a line.
-    if (viewerId === null && req.headers.authorization?.startsWith("Bearer ")) viewerResolutionFailed = true; req.log.warn(  // §94.10: the lookup itself threw, so the viewer's event-post read was owed and not performed
+    req.log.warn(
       { err, userId: viewerId },
       "discovery/feed: viewer/block-state resolution rejected — blocked users are NOT being filtered from event posts",
-    );
+    ); if (viewerId === null && req.headers.authorization?.startsWith("Bearer ")) viewerUnresolved = true;  // §98: a thrown resolution is an unresolved viewer, not an anonymous one
   }
 
   // ── Fetch places across all requested categories ───────────────────────────
-  try { const eventPostsReadStatus = { readFailed: viewerResolutionFailed };  // census-discovery §94 (DV-83, hunk §80.7): whether the event-post read FAILED — carried onto the envelope below, never served as a quiet city
+  try { const eventPostsReadStatus = { readFailed: viewerUnresolved };  // census-discovery §94 (DV-83, hunk §80.7): whether the event-post read FAILED (§98: or was owed to a viewer who could not be resolved) — carried onto the envelope below, never served as a quiet city
     // TODO: denormalize is_event_post flag at write time to avoid per-request join
     const [categoryResults, eventPosts] = await Promise.all([
       Promise.all(
@@ -2756,7 +2756,7 @@ router.get("/discovery/feed", async (req, res) => {
       const coverage = feedAnnotated.length === 0 && eventPosts.length === 0 ? "nothing" : "partial";
       sendDiscoveryRefusal(
         res, feedEnvelope,
-        discoveryRefusal("transient_db", failedCats.some((c) => c !== "event_posts") ? "feed_places_read_failed" : "feed_event_posts_read_failed", "GET /discovery/feed", coverage, failedCats),  // §94 (D-W11X2-1): an event-post-only failure has its own code, so an alert on the places code is not raised by the posts
+        discoveryRefusal(failedCats.some((c) => c !== "event_posts") ? "transient_db" : viewerUnresolved ? "upstream_unavailable" : "transient_db", failedCats.some((c) => c !== "event_posts") ? "feed_places_read_failed" : viewerUnresolved ? "feed_viewer_unresolved" : "feed_event_posts_read_failed", "GET /discovery/feed", coverage, failedCats),  // §94 (D-W11X2-1): an event-post-only failure has its own code, so an alert on the places code is not raised by the posts
       );
     } else {
       res.json(feedEnvelope);

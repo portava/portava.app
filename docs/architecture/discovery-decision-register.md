@@ -1935,3 +1935,34 @@ W10D-C5 (the three personal projections) and AR-W11A-2 (circles, crews, visits) 
 - **Where.** `artifacts/api-server/scripts/local-db/rehearse-pending-apply.ts`.
 
 No APPROVAL REQUIRED entry is added. Arming the stop (D-W10-O-3) and gate 2 (D-W10R4-2) remain the owner's; D-W11S-1 changes only what happens after either trips.
+
+## DV-83's two remaining paths, from a parallel session (§98)
+
+*2026-09-28, on `claude/sensing-completion-20260925` after `532227796` and the integration of the media test fix. Census section §98 (written as §97 on the branch, renumbered at integration: §97 is W11-S). Row: DV-83 (held at W by §94.10). No migration and no flag. Both changes are line-neutral in every cited file.*
+
+### D-W11X2-15 — a signed-in request whose viewer cannot be resolved is a failed event-post read (DV-83, §94.10)
+
+- **The question.** §94.10: *"A signed-in viewer whose identity cannot be resolved has the event-post read skipped silently … an `auth.getUser` throw, or an `AuthRetryableFetchError`, answers 200 with no posts and no refusal, the same screen as 'nothing live'."* Which failures make a viewer unresolved rather than anonymous, and what does the envelope say?
+- **Options considered.**
+  - (a) Any `getUser` error is unresolved. Consequence: a revoked or expired token, which Supabase Auth answers with a 4xx, would refuse the feed on every request until the client re-authenticates. A rejection is an answer about the caller, not a failure to look.
+  - (b) Only a failure to answer is unresolved: a throw, `AuthRetryableFetchError` (auth-js's network and 5xx/52x class), `AuthUnknownError` (a response it could not read), or any error with status 0 or ≥ 500. A 4xx and `AuthInvalidJwtError` (400) stay anonymous, which owes no event-post read (C2's posture). An error of neither kind is read as a rejection, the feed's documented posture for a token it cannot use.
+  - Class: (i) `transient_db`, as the other event-post failures; (ii) `upstream_unavailable`, the owner's 2026-09-14 class for a dependency this deployment calls and does not operate.
+- **Decision.** (b) and (ii). The unresolved state starts the event-post read as failed (`readFailed: viewerUnresolved`), so the existing path names `"event_posts"` in `failedSources` and the existing coverage rule decides `nothing` or `partial`. Code `feed_viewer_unresolved`. When a place category also failed, the places code and `transient_db` stand, as in D-W11X2-1, with both sources named. No exposure is logged for a refused answer, and nothing is cached.
+- **Not decided here, routed.** An unresolved viewer is served community places as an anonymous request is: their own blocks and mutes cannot be applied because they cannot be known. Failing those rows closed would silently withhold places, which is a product choice. §98 records it as a finding. A server with no service client is a deployment misconfiguration, not a runtime failure, and is left as it was.
+- **Reversibility.** Revert the five in-place lines in `routes/discovery.ts` and the helper at its foot. Nothing is stored.
+- **Where.** `artifacts/api-server/src/routes/discovery.ts` (the feed; the classifier at its foot, see the reconciliation below). Tests: `src/test/discoveryFeedEventPostsCoverage.test.ts` V1–V6, C4–C6, appended below the anchored cases.
+
+### D-W11X2-16 — a pull refetches the rails whose copy asks for one (DV-83, §94.10)
+
+- **The question.** §94.10: *"Pull-to-refresh also does not refetch the rail its refused copy asks the user to pull."* `DiscoveryEventPostsRail` fetched only when its destination or coordinates changed.
+- **Decision.** `ForYouTab` bumps a `refreshKey` on every pull and passes it to `DiscoveryEventPostsRail` and to each `DiscoveryOutputKindsRail`, whose failure copy says "Try again in a moment." Each rail adds the key to its fetch effect's dependencies, so a pull refetches it and nothing else does.
+- **Reversibility.** Drop the prop; the rails return to fetching on place changes only.
+- **Where.** `travel-buddy-standalone/src/components/discovery/ForYouTab.tsx`, `DiscoveryEventPostsRail.tsx`, `DiscoveryOutputKindsRail.tsx` (line-neutral). Tests: `DiscoveryEventPostsRail.refresh.component.test.tsx` R1, R2; `ForYouTab.pullToRefresh.component.test.tsx`'s third case.
+
+### D-W11X2-17 — reconciling the two implementations of the same two paths
+
+- **What happened.** Lane W11-X2's round 2 (D-W11X2-10, -13) and a parallel session (D-W11X2-15, -16) fixed the same two §94.10 paths on separate branches. Both were merged at integration. The server had to end with one classifier and one flag. The client had to end with one refresh key.
+- **Classifier.** X2's `isTransientAuthError` is kept, and `authServiceUnreachable` is dropped. X2's rule covers every case the other rule covers: a network failure (status 0), a 5xx, `AuthRetryableFetchError`, and `AuthUnknownError` (no status). It also covers a 408, a 429 and any error without a status, which the other rule read as a rejection. The narrower rule would serve a rate-limited lookup as an anonymous quiet city, which X2's V4 test forbids. A definitive 4xx, including `AuthInvalidJwtError` (400), stays anonymous under both rules. That is C2's posture, and the other session's C4 and C5 controls pass unchanged.
+- **Code and class.** The other session's `feed_viewer_unresolved` / `upstream_unavailable` is kept. The auth service is a dependency this deployment calls, and a distinct code keeps an alert on `feed_event_posts_read_failed` from firing for an auth outage. X2's V1 and V4 assertions now expect it. They are no weaker: each still requires a refusal, the same `failedSources`, and the same coverage.
+- **Flag and wiring.** One variable (`viewerUnresolved`) and one set on the thrown path. X2's duplicate line was restored to its original text, so the route diff stays line-neutral (6 lines changed in place). The client keeps one `railRefreshKey`: the other session's duplicate declaration was restored. It keeps the other session's wider wiring, which passes the key to the output-kinds rails too.
+- **Where.** `routes/discovery.ts`; `ForYouTab.tsx`; `src/test/discoveryFeedEventPostsCoverage.test.ts` (21/21).

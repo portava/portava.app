@@ -502,7 +502,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
         {isAuthed && <CompassOnboardingCard />}
 
         {/* ── Live from events — serve point 7 (GET /discovery/feed) ── */}
-        <DiscoveryEventPostsRail destination={destination} lat={lat} lng={lng} refreshKey={railRefreshKey} />{(['trails', 'shared_moments', 'emerging_discoveries'] as const).map((k) => <DiscoveryOutputKindsRail key={k} kind={k} destination={destination} enabled={isAuthed} />)}
+        <DiscoveryEventPostsRail destination={destination} lat={lat} lng={lng} refreshKey={railRefreshKey} />{(['trails', 'shared_moments', 'emerging_discoveries'] as const).map((k) => <DiscoveryOutputKindsRail key={k} kind={k} destination={destination} enabled={isAuthed} refreshKey={railRefreshKey} />)}
 
         {/* ── Compass Picks section — horizontal card strip ── */}
         <CompassPicksSection

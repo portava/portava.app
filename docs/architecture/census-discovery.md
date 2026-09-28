@@ -16408,6 +16408,31 @@ All at the final tree: `disc-integration` at `532227796` merged in, with the rou
 
 **What would turn DV-83 red again:** a server path that answers a failed read with an empty collection and no refusal (E1–E5, V1–V4, O1–O7 cover the ones found); a consumer rendering a transport failure, a refusal or a partial as an empty result (U1–U3, P1–P5b, the refused suite, G7); a pull that does not reach the rail (R1); an unbounded feed call (T1).
 
+## §98 — DV-83's two remaining paths, from a parallel session, reconciled with §94.11 at integration
+
+*Integrator, 2026-09-28. A second session, working on `claude/sensing-completion-20260925` after `532227796`, fixed the same two §94.10 findings as lane W11-X2's round 2 (§94.11). Its register entries are D-W11X2-15 and -16. On that branch it named its census section "§97"; that number is W11-S's here, so its comments and register references read §98. The independent verifier's round-2 result on §94.11 is recorded in §98.1, and it holds DV-83 at W.*
+
+- **Server, unresolved viewer.** One classifier (X2's `isTransientAuthError`) and one flag (`viewerUnresolved`). The refusal is the other session's `upstream_unavailable` / `feed_viewer_unresolved`. When a place category also failed, D-W11X2-1's places code and class stand. The route diff against §94.11 is 6 lines changed in place, and no cited line moves. Register D-W11X2-17 gives the reasons for each choice.
+- **Client, pull-to-refresh.** One `railRefreshKey` in `ForYouTab`. A pull passes it to `DiscoveryEventPostsRail` and to each `DiscoveryOutputKindsRail`, whose failure copy asks the user to try again. The other session's rail test (`DiscoveryEventPostsRail.refresh.component.test.tsx` R1, R2) and its third `ForYouTab.pullToRefresh` case are kept.
+- **Tests.** `discoveryFeedEventPostsCoverage.test.ts`: 21/21, which is §94.11's E1–E5, C1–C3 and V1–V4 plus the other session's V1–V6 and C4–C6. X2's V1 and V4 now expect `feed_viewer_unresolved`. The narrower classifier fails X2's V4 (429), so the kept rule is the one a test pins.
+- **Also merged from that branch, and not Discovery rows.**
+  - The media worker test's second hang fix (census-media).
+  - The Node-major pin check `nodeRuntimePin.test.ts` with its session hook.
+  - `communityByline.test.ts`, which pins the byline's privacy rule through the identity chain on any Node.
+
+### 98.1 Integrator: DV-83 held at W again after the round-2 verification
+
+The verifier checked §94.11 at `49b8a28e8` and confirmed that all five round-1 findings are closed: identity failure, pull-to-refresh, the 15 s feed bound, transport failure, and Overpass on the wire. Each probe was re-run and each fix mutated, and every mutation turned its test red. The verifier then found two new places where a failed or partial read is shown as complete:
+
+1. **Overpass's in-body failure is not read.** `routes/discovery.ts` `queryOverpass` returns the elements of an HTTP 200 without reading `remark`. The query sets `[timeout:20]`. When Overpass exceeds that, or runs out of memory, it answers 200 with a `runtime error: …` remark and empty or truncated elements. Probed with a faked response: GET /discovery serves the smaller city with no refusal and writes it to Cache A and to L2 for 2 hours. The category counts answer 200 with `Cache-Control: public, max-age=300`.
+2. **ForYouTab replays a cached partial page as complete.** The cache hydration sets `source 'none'` and `osmPartial false`, and the partial notice requires `source === 'osm'`. A cached `partial` / `["overpass"]` page therefore renders its card with no partial notice while the refetch loads. The same page fresh from the network shows the notice.
+
+Neither touches a migration. Both go to a follow-up lane.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | C | **W** | §94.11 closes §94.10's five findings under mutation. Two paths still present a failed or partial read as complete: an Overpass 200 carrying a `runtime error` remark, which is also cached, and ForYouTab's cached replay of a `partial` page (§98.1). |
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/lib/capability/prerequisitesCore.ts — §93.8 names its function-granular gate boundary as why the Compass KNOWN entry was struck; it is the prerequisite checker's own machinery, and no Discovery verdict rests on it.
