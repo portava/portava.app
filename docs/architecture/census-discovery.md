@@ -11837,6 +11837,293 @@ The merged assertion is therefore `false` again (`artifacts/api-server/src/test/
 
 **For every lane that adds a table:** run `check:production-drift` and give the table its `unapplied` entry. That applies to P21 (3435–3439), P27 (3440–3444) and P28 (3445–3447).
 
+## §69 — Every non-C row classified, restated where stale (lane P29): 94 rows, 51 wait on an owner, 20 on the ranker hold, 11 on an apply or a flag, 3 on code, 2 on evidence nobody here can read, 7 in other lanes
+
+*Written 2026-09-28 by the row-audit lane on `disc-p29-row-audit`, branched from `f34994de7`. It replaces P18's audit of the non-C rows, which PR #528's body summarises and which was never committed. This lane changed no application code, no migration and no workflow. It adds:*
+- *`artifacts/api-server/src/test/discoveryRowAudit29.test.ts` (10 cases), registered on the `test` line and in CENSUS_SCOPE;*
+- *three cases appended to `artifacts/api-server/src/test/ciWorkflowArchitecture.test.ts` (the DC-26 pin §66.4 describes).*
+
+*Nothing here is merged to `main`, applied to `portava-ci` or production, deployed or flag-enabled. No verdict moves. The headline is unchanged, so it is not restated.*
+
+**Method.**
+1. The population is the dump: `CENSUS_INTEGRITY_DUMP=ALL pnpm run check:census-integrity` at `f34994de7` prints 188 Discovery rows, 94 C / 88 W / 5 N / 1 X.
+2. For each of the 94 non-C rows, the latest statement (the dump's line) was read, then the earlier statements it depends on and the later prose re-gradings that the parser does not read (§47.6, §54.2, §54.14 and others).
+3. The code each statement cites was checked at this tree. A statement is **restated** (69.3) only where a fact it gives is false here. The criterion was not narrowed or widened, and no verdict moved on reasoning.
+4. A row is **classified** by everything that stands between it and `C`. The **first blocker** is the one that must be cleared before any other can be.
+
+The seven rows other lanes are building now are marked IN LANE and not graded: DV-20 and B01 (P27, letter fold), A13 and A14 (P19, Layover border entry), DV-51 (P19b, graph revocation), DC-17 and A03 (P21, provenance and `nearby_now` wording).
+
+### 69.1 Owner-item key
+
+P18's mapping to PR #528's decision list was not committed. The pointers below are this lane's reading of that list. Each item is named in the PR's own words.
+
+- **A — approvals.**
+  - A-1: apply 3352–3422 to `portava-ci`.
+  - A-2: an explicit yes for 3376 before production.
+  - A-3: a ruling on 3366's protected-zone pass (B04).
+  - A-4: the three verdict jobs as required checks (DV-75).
+  - A-5: halt values for the seven stop conditions (DV-82).
+  - A-6: the ranker hold (§58.5's designs).
+- **B — consent and data use.**
+  - B-1: dwell collection (DV-41, §55.10 Q1–Q4).
+  - B-2: invisible mode and name search.
+  - B-3: trend privacy and neighbourhood names (§58.12 Q1, Q3).
+  - B-4: per-person projections (DV-72, §61.12 Q1–Q3).
+  - B-5: non-public events and route plans in Trails (DC-20, §61.12 Q4, §64.9).
+- **C — creator economy.** C-1 … C-12 are §52.8's questions 1–12. C-11 is erasure retention, which also gates the production deploy of every ledger row.
+- **D — product rules.**
+  - D-1: Trails, §51.10 Q1–Q7.
+  - D-2: trending cadence and governor bounds (§58.12 Q4–Q5).
+  - D-3: outcome "success" (DV-19, §55.10 Q6–Q7).
+  - D-4: Layover consumers and the snapshot (§56.9 Q1–Q3).
+  - D-5: Telegraph actions and the media sweep (§56.9 Q4–Q5).
+  - D-6: graph decay (§56.9 Q6).
+  - D-7: the Live-claim gate on the Compass path (A07, §57.10 Q1).
+  - D-8: emoji in search (B02) and the `partial` wording (DV-83, §60.8 Q1).
+  - D-9: keyless outcomes (DV-37, §62.7 Q1).
+  - D-10: tagging Phase 0 #5–#7 and `approval_required` (DV-76, §62.7 Q2–Q3, §63.7 Q5–Q6).
+  - D-11: primary-key rows (DC-15, §62.7 Q4).
+- **E — rollout gates and values.**
+  - E-1: the DiscoveryCandidate defaults and flag 2361.
+  - E-2: Phase F gates 1 and 2.
+  - E-3: silent production defaults (DC-32, §47.8).
+  - E-4: 2893 in production.
+  - E-5: Trail merge.
+  - E-6: the routed corridor provider and activity durations.
+  - E-7: a Trips plan-item projection (and §57.10 Q3's viewer-trip projection).
+  - E-8: `hide` vs `not_interested`.
+  - E-9: the legacy typeahead.
+  - E-10: four more production flags.
+  - E-11: stale content and media diversity.
+- **Section questions.**
+  - Q66-1 … Q66-4 are §66.9's questions: DV-30, C32/DC-24, DC-26 and B01.
+  - §63.7 and §64.9 are cited by number.
+  - Four questions named here are in no lettered item: §57.10 Q2, Q4 and Q5, and §60.8 Q2.
+
+### 69.2 The classification — every non-C row
+
+The verdict column repeats the row's current verdict in backticks. This table is a classification, not a statement of any row, and the backticks keep `check:census-integrity` from reading it as one.
+
+| row | verdict | class | first blocker | all blockers | what turns it C | owner item |
+|---|---|---|---|---|---|---|
+| A01 | `W` | DEPLOY | `discovery_live_rank_enabled` (2850) is FALSE, and 2850 is unapplied outside the harness | 2850 applied and turned on in production; the owner may read turning it on as a ranking change under the hold | 2850 on in a deployment, with the eight inputs as restated (69.3) | E-10, A-6 |
+| A03 | `W` | IN LANE | P21 (`nearby_now` wording) | — | — | — |
+| A05 | `W` | CODE | no Discovery client sends `intentMode` | a client sender; 2850 FALSE | a Discovery screen sends `intentMode`, and 2850 is on | E-10 |
+| A07 | `W` | OWNER | which gate owns Sensing `:129` on the Compass serve points | D-7; 2850 and 2361 FALSE; no producer has written `unsafe_density` (§57.11, CANNOT-VERIFY: the Sensing producer's operator) | D-7 answered, both flags on, and one `unsafe_density` reading served | D-7, E-1, E-10 |
+| A08 | `W` | CODE | the shared layer imports Discovery's route module (`dispatchSearch`) | dependency inversion; the legacy typeahead still fires per keystroke in the proving window; the Map search sheet is off the gateway | `dispatchSearch` in a platform module both consume; the legacy typeahead retired; the Map sheet on the gateway | E-9 |
+| A10 | `W` | OWNER | Trips publishes no plan-item or viewer-trip projection | E-7 (§57.10 Q3); 2420/2550 hold the projection arms back | the four direct Trip reads replaced by Trips' projections, with the arms enabled | E-7 |
+| A11 | `W` | DEPLOY | `trip_operational_projections_enabled` (2778) FALSE; schema 2760–2785 unapplied | 2778 flag; schema apply; §57.10 Q4 on the dead free-time branch | the windows read on a deployment where 2778 is on | E-10, §57.10 Q4 |
+| A13 | `W` | IN LANE | P19 | — | — | D-4 |
+| A14 | `W` | IN LANE | P19 | — | — | D-4 |
+| A18 | `N` | HOLD | no ranker reads explicit intent above generic interest (restated, 69.3) | ranker hold; a Passport-intent term does not exist | a ranking term that weights explicit current intent above generic interest, on a served path | A-6 |
+| A21 | `N` | OWNER | whether a Telegraph action may act on a Discovery object | D-5 (§56.9 Q4) | a registered `discovery` action with authorize, preview, execute | D-5 |
+| A25 | `W` | DEPLOY | 2361 is FALSE-seeded and absent in production | 2361 applied and on; D9 unratified | 2361 on in production | E-1 |
+| B01 | `W` | IN LANE | P27 | — | — | Q66-4 |
+| B02 | `W` | OWNER | the emoji policy | D-8 | the ruled policy, pinned by `discoverySearchQueryPolicy` | D-8 |
+| B03 | `W` | OWNER | no payment processor exists to be eligible with | payment leg (commercial); launch leg behind 2360 FALSE | a payment-eligibility rule applied, and 2360 on | nearest §52.8 Q4/Q6; E-10 |
+| B04 | `W` | OWNER | the 3366 ruling | A-3; 3366 unapplied | 3366 on in production, or ruled unnecessary and retired | A-3 |
+| C19 | `W` | DEPLOY | no shipped build carries `communityByline.ts` | build ship; oldest-supported-build ruling | the legacy `name` retired once the floor build carries the byline | §60.8 Q2 |
+| C32 | `W` | OWNER | Compass orders `for_you` on a TRUE production flag | Q66-2; E-2 gate 2 | one ordering pipeline for every category (R1 red) | Q66-2, E-2 |
+| DC-01 | `W` | HOLD | Trails are listed, not ranked; no emerging or Shared-Moments output | ranker hold (design 7 for emerging lists) | ten output kinds each ranked by PDE | A-6 |
+| DC-04 | `W` | OWNER | nothing moves in-Trail content, and no moderation move exists | D-1 Q4 | every §7 transition has its writer | D-1 |
+| DC-05 | `W` | OWNER | the geographic cell and `new_creator_exposure`'s meaning | D-1 Q6; health orders nothing inside the Trail (the 2289 term is held) | nine metrics computed as defined, one ordering a module | D-1, A-6 |
+| DC-06 | `W` | HOLD | design 5 (normalisers) | hold; §66.9 Q1 for the exposure half | 6 of 6 normalisers | A-6, Q66-1 |
+| DC-07 | `W` | OWNER | rebuild cadence and retention | D-2 (§58.12 Q4); nothing schedules the rebuild; 3410/3417 unapplied | a scheduled rebuild storing the five stores in a deployment | D-2, A-1 |
+| DC-11 | `W` | HOLD | exploration, integrity and learning are held or absent (restated) | hold (the governor is inside 2289); no integrity stage; nothing learns | ten stages reachable | A-6 |
+| DC-12 | `W` | HOLD | 2 of 11 candidate sources | hold (ROADMAP step 6 not started) | eleven sources | A-6 |
+| DC-13 | `W` | HOLD | families not modelled as families (restated) | hold | eleven families, each with its term | A-6 |
+| DC-14 | `W` | OWNER | Phase F gate 1 (shadow) | E-2; zero production shadow rows | shadow rows over a window in production | E-2 |
+| DC-17 | `W` | IN LANE | P21 | — | — | — |
+| DC-18 | `W` | DEPLOY | no `portava-ci` rehearsal record for the Discovery migrations (restated) | A-1; applied-body checksums against the repository need an operator | rehearsal records, and checksums equal | A-1 |
+| DC-20 | `W` | OWNER | who may attach, and whether a suggestion spends §4's budget | D-1 Q5; B-5 (§64.9 Q1–Q3) | every Trail mutation authorised by a ruled rule | D-1, B-5 |
+| DC-21 | `W` | HOLD | three of five actions are ordered lists (design 7) | hold; B-3; `discovery_trending_api_enabled` FALSE | five actions served | A-6, B-3 |
+| DC-22 | `W` | OWNER | the confidence priors and 2361's defaults | E-1; deploy, flip and runtime check (§35.4) | reason labels observed at runtime | E-1 |
+| DC-23 | `W` | OWNER | the erasure-retention answer gates the ledger's deploy | C-11; C-5 (payout eligibility); ledger migrations unapplied | four reads served in production | C-11, C-5 |
+| DC-24 | `W` | OWNER | the `for_you` consolidation (restated: two orderings, not three) | Q66-2; E-2 | no parallel ordering | Q66-2, E-2 |
+| DC-26 | `W` | DEPLOY | no `portava-ci` rehearsal event over 3375–3422 (69.4) | A-1 and merge to `main`; Q66-3 | a green `schema-drift` apply and certify over these migrations | A-1, Q66-3 |
+| DC-27 | `X` | CANNOT-VERIFY | no rollout record exists | E-2; who: the integration owner and the operator | a record: rehearse, verdicts, shadow, cohort, observe, expand | E-2 |
+| DC-32 | `W` | OWNER | §47.8's values are unruled (restated) | E-3; A-5 for the two stop values | each value ruled or marked PROVISIONAL with a date | E-3, A-5 |
+| DV-02 | `W` | DEPLOY | no shipped build sends the viewer's token (restated) | client build; server deploy; then production rows (CANNOT-VERIFY here) | `surface='discovery'` rows from `GET /discovery` in production | — |
+| DV-03 | `W` | OWNER | Phase F gate 2 | E-2 | Cache A never served unranked in the shipping default | E-2 |
+| DV-06 | `W` | DEPLOY | 3376 unapplied | A-1, A-2 | anonymous and empty-serve denominators recorded in a deployment | A-1, A-2 |
+| DV-09 | `W` | HOLD | per-surface objectives for Pulse, Trip Planning and Trending are held (restated) | hold | five surfaces, each ranked on its own objective | A-6 |
+| DV-12 | `W` | HOLD | no abusive-engagement detection; the trust factor is a constant (restated) | hold (design 4) | an engagement-abuse term on the served path | A-6 |
+| DV-13 | `W` | OWNER | the one-creator bound and share | D-1 Q3 | a ruled bound enforced | D-1 |
+| DV-18 | `W` | HOLD | `trip_match` has no producer (restated, 8 of 9) | hold; 2361 FALSE for the labels | nine codes grounded and served | A-6, E-1 |
+| DV-19 | `W` | OWNER | what "improves" means | D-3; production rows | a ruled threshold met on production arms | D-3 |
+| DV-20 | `W` | IN LANE | P27 | — | — | — |
+| DV-21 | `W` | OWNER | the content-lifecycle writer | D-1 Q4 | four modules each filling on its own objective and horizon | D-1 |
+| DV-22 | `W` | OWNER | whether Trail serves may be logged | D-1 Q2, Q4; rotation is held | every eligible new item gets exposure | D-1, A-6 |
+| DV-23 | `W` | OWNER | media diversity and viewpoint are undefined | E-11; D-1 Q7 | five of §10's clauses | E-11, D-1 |
+| DV-24 | `W` | OWNER | who may declare the five other edge kinds | D-1 Q1 | six edge kinds with writers | D-1 |
+| DV-26 | `W` | OWNER | C-11 gates the ledger deploy | C-11; no Trail value-event producer; ledger unapplied | five facts recorded in production | C-11 |
+| DV-28 | `W` | HOLD | design 1 | hold | independent confirmation and a content lifecycle | A-6 |
+| DV-29 | `W` | HOLD | design 2 | hold | Local Pulse and time-of-day | A-6 |
+| DV-30 | `W` | OWNER | whether an impression is activity, and the minimum exposure | Q66-1; hold for the kernel half | exposure-normalised velocity (T1, T2 red) | Q66-1, A-6 |
+| DV-31 | `W` | HOLD | design 3 | hold | a retest of cooled places | A-6 |
+| DV-32 | `W` | HOLD | design 4 | hold | a per-account cap and a distinct-traveller floor | A-6 |
+| DV-33 | `W` | OWNER | neighbourhood names in public reasons | B-3; design 6 held | signal-led reasons | B-3, A-6 |
+| DV-34 | `N` | HOLD | a convergence term is held | hold (§55.10 Q5) | convergence computed and read | A-6 |
+| DV-37 | `W` | OWNER | keyless outcomes from shipped builds | D-9; 3420 unapplied; the H1 build not shipped | Q1 answered, 3420 applied, the keyed build the floor | D-9, A-1 |
+| DV-40 | `W` | DEPLOY | 3376 unapplied (restated: search and suggest ARE stamped) | A-1, A-2 | every served item's record in a deployment | A-1, A-2 |
+| DV-41 | `W` | OWNER | dwell collection | B-1; 3395 FALSE | collection on, window ratified | B-1 |
+| DV-42 | `W` | CODE | no Discovery client sends `intentMode` | client sender; 2850 FALSE | both representations reachable on a deployment | E-10 |
+| DV-44 | `W` | OWNER | 2893 in production | E-4 | 2893 applied | E-4 |
+| DV-47 | `W` | DEPLOY | no shipped build sends the token (restated) | client build; server deploy; then production rows | ranked-path events observed in production | — |
+| DV-49 | `W` | HOLD | the graph re-weights and generates nothing | hold; 2289 FALSE | graph-generated candidates | A-6 |
+| DV-51 | `W` | IN LANE | P19b | — | — | D-6 |
+| DV-52 | `W` | DEPLOY | 3421 unapplied | 3421; 2289 (held) or `RANKING_EXPERIMENT_ENABLED` (production value unread, §57.10 Q5, CANNOT-VERIFY) | 3421 applied and one flag on | A-1, A-6 |
+| DV-53 | `W` | HOLD | design 1 (restated: `allocateFeedSlots` has a caller) | hold; `DISCOVERY_DIVERSITY_ENABLED` FALSE; 2289 FALSE | explicit reserved inventory on the served path | A-6 |
+| DV-54 | `W` | HOLD | design 2 (restated) | hold; E-11 | six axes enforced | A-6, E-11 |
+| DV-55 | `W` | HOLD | design 3 (restated) | hold | three cold-start paths | A-6 |
+| DV-56 | `W` | OWNER | C-11 | C-11; C-10 (Local Expert); 2920 unapplied; flag FALSE | a production attribution | C-11, C-10 |
+| DV-57 | `W` | OWNER | C-11 | C-11; C-7 (no producer of `creator_earning_entries`) | an earning recorded in production | C-11, C-7 |
+| DV-58 | `W` | OWNER | C-11 | C-11; C-1 (no percentage published) | a published version in force | C-11, C-1 |
+| DV-59 | `W` | OWNER | C-11 | C-11; ledger unapplied | a hold recorded in production | C-11 |
+| DV-60 | `W` | OWNER | C-11 | C-11; ledger unapplied | a recalculation in production | C-11 |
+| DV-61 | `N` | OWNER | which revenue streams, tied to which outcome | C-9 | a stream tied to an outcome | C-9 |
+| DV-62 | `N` | OWNER | whether sponsored placements exist | C-8 | a sponsored system kept distinct | C-8 |
+| DV-63 | `W` | OWNER | C-11 | C-11; C-10 | audited attribution in production | C-11, C-10 |
+| DV-64 | `W` | OWNER | C-11 | C-11; 2920/2921/2930/3385 unapplied | one real row, share computed | C-11 |
+| DV-65 | `W` | OWNER | C-11 | C-11; ledger unapplied | one earning reconstructed in production | C-11 |
+| DV-66 | `W` | OWNER | C-11 | C-11; ledger unapplied | the folds over production rows | C-11 |
+| DV-67 | `W` | OWNER | C-11 | C-11; C-3 (credit window); no production caller passes a recommendation | a linked attribution in production | C-11, C-3 |
+| DV-68 | `W` | OWNER | C-11 | C-11; ledger unapplied | a reversal in production | C-11 |
+| DV-69 | `W` | OWNER | C-11 | C-11; C-6 (provider); no payout path | the interface called by a payout path | C-11, C-6 |
+| DV-70 | `W` | CANNOT-VERIFY | drift beyond tables needs a live read (restated) | operator live read; 39 unapplied tables (A-1 and production applies) | zero unexplained drift, read live | A-1 |
+| DV-72 | `W` | OWNER | three projections need consent | B-4 | five projections, rebuildable | B-4 |
+| DV-74 | `W` | OWNER | Trail merge and archive | E-5; D-1 Q4; trend-integrity review held; 1 of 6 in production | six audited actions in production | E-5, D-1, A-6 |
+| DV-75 | `W` | OWNER | the three jobs are not required on `main` (restated: 3 of 3 exist) | A-4; the setting is unreadable from the tree | three contexts required on `main`'s ruleset | A-4 |
+| DV-76 | `W` | OWNER | Phase 0 #5–#7 | D-10; 3422 unapplied | Q2 answered, 3422 applied | D-10, A-1 |
+| DV-77 | `W` | OWNER | the unattended sweep and its numbers | D-5 (§56.9 Q5); 3400 FALSE | the sweep on | D-5 |
+| DV-78 | `W` | OWNER | `hide` vs `not_interested`, and `immediate_skip` | E-8; B-1 (dwell); D-1 Q2 (Trail open) | eight behaviours recorded | E-8, B-1, D-1 |
+| DV-80 | `W` | HOLD | the adjust half (design 8) | hold; D-2; E-11; two monitors lack input | monitors plus adjust under ruled bounds | A-6, D-2, E-11 |
+| DV-82 | `W` | OWNER | five conditions have no halt value (restated: 7 of 7 produced) | A-5; 3391 unapplied | seven ruled thresholds enforced | A-5 |
+| DV-83 | `W` | OWNER | may `partial` render as complete | D-8; a client build | Q1 answered and the consumers conform | D-8 |
+
+### 69.3 Row statements restated where the evidence changed
+
+Every move below is W → W, or N → N for A18. Only the evidence changes. Where the last parsed statement already said something a later section corrected in prose (§47.6, §54.2), the prose is carried into a statement here, because the parser reads only tables.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| A01 | W | **W** | **§9.4's "forecast, travel time, compatibility and safety are still absent" is false.** Every input `:133` names is an axis of the live layer: compatibility, forecast, travel, friction, freshness, the live state, opportunity value (`artifacts/api-server/src/lib/discoveryLiveRank.ts:342#export function opportunityValueOf(`) and safety, which demotes behind every row (`artifacts/api-server/src/lib/discoveryLiveRank.ts:464#if (a.grade.safety.demoted !== b.grade.safety.demoted)`; `artifacts/api-server/src/test/discoveryLiveRank.test.ts:101#it("no mode and no weight can promote an unsafe row above a safe one"`, which passes here). **Why still W:** all of it sits behind `discovery_live_rank_enabled`, seeded FALSE (`artifacts/api-server/src/migrations/2850_discovery_live_rank_flag.sql:39#('discovery_live_rank_enabled', false,`) and applied to no shared database. |
+| A18 | N | **N** | **"No intent term in the ranker" is no longer literally true, and the row stays N.** A request-scoped intent-mode layer exists (A05, DV-42). It moves a row at most `LIVE_RANK_MAX_POSITIONS` over the taste order (`artifacts/api-server/src/lib/discoveryLiveRank.ts:112#export const LIVE_RANK_MAX_POSITIONS = 15;`), so by construction it cannot weight explicit intent MORE heavily than the generic-interest order it bounds. It is also behind 2850, and no Discovery client sends a mode. Passport's explicit intent, the supply the row names, is still read by no ranker. |
+| DV-09 | W | **W** | **"Trail FAIL · Trending FAIL — no such surface" is false.** Both surfaces exist: Trail modules with their own objectives (§51), and the trend classifier with its API (§58). **Still 1 of 5 fully.** Trail's "freshness appropriate to content type" is absent (DV-28 (b)). Trending's "independent convergence" and "anti-manipulation" fail (DV-34 `N`, DV-32). Pulse and Trip Planning are unchanged. §47.6: the Discovery leg rests on the Compass `for_you` branch. |
+| DV-12 | W | **W** | **"One direction only" overstates: on Discovery the one direction defends nothing.** No Discovery candidate carries `authorTrustScore`, so the trust factor is the constant 0.6 on every row (`artifacts/api-server/src/lib/portavaRank.ts:314#const trustFactor = c.authorTrustScore != null`). A known zero-trust author would score LOWER than the unknown one Discovery always sends (`artifacts/api-server/src/test/discoveryRowAudit29.test.ts:104#it("no Discovery candidate carries authorTrustScore`). Abusive engagement is not detected (§58.5 design 4). |
+| DV-18 | W | **W** | **"Trails … absent from the repository and from production" is false.** 2910 is in the tree and applied to production (§47.1). **8 of 9 grounded**, as §47.6 recorded. `trail_affinity` has its PDE producer (`artifacts/api-server/src/lib/discoveryReasonCodes.ts:145#trailAffinity:     "trail_affinity"`), and `season_match` has Compass's (`artifacts/api-server/src/lib/discoveryReasonCodes.ts:64#season_match     LEFT this list`). `trip_match` has none (`artifacts/api-server/src/lib/discoveryReasonCodes.ts:57#trip_match       The trip projection Discovery consumes`); a trip-fit term is held. The labels reach a client only behind 2361 (FALSE). |
+| DV-53 | W | **W** | **"`allocateFeedSlots` has no production caller" is false.** Compass's `rankItemsForDiscovery` calls it with surface `discovery` (`artifacts/api-server/src/compass/CompassFeedBuilder.ts:642#finalPool = allocateFeedSlots(finalPool, shares, { surface: "discovery", underexposedItemIds });`) behind `DISCOVERY_DIVERSITY_ENABLED` (`artifacts/api-server/src/compass/CompassFeedBuilder.ts:631#isFlagEnabled(db, "DISCOVERY_DIVERSITY_ENABLED"),`), which is false in production (§47.1). The route value-imports that function for `for_you` (Q1, `artifacts/api-server/src/test/discoveryRowAudit29.test.ts:62#it("rankItemsForDiscovery calls allocateFeedSlots`). The PDE governor is still inside 2289. With 2289 off, portavaRank's slot draws at random from the tail (`artifacts/api-server/src/lib/portavaRank.ts:497#export function injectExploration`), where `06` §7 asks for "relevant, not random". |
+| DV-54 | W | **W** | **Two grounds are stale, and the count stands at 3 of 6.** (1) "Trail FAIL (no object)": the object exists. The FAIL stands because `diversify()` compares no Trail key. (2) "repeated-recommendation history … nothing looks across serves": a cross-serve demotion exists. The signed-in PDE path reads the viewer's discovery impressions over 24 h into `seenIds`, and each seen place takes −0.6 (`artifacts/api-server/src/lib/portavaRank.ts:368#f.seenPenalty = ctx.seenIds?.has(c.id) ? w.seenPenalty : 0;`; `artifacts/api-server/src/test/discoveryCategoryAffinity.test.ts:128#it("a seen place ranks BELOW an unseen one, all else equal"`). It is a demotion, not enforced diversity, and it is absent from the Compass `for_you` path, from anonymous serves and from legacy-mode Cache A hits (served unranked, DV-03), so the axis is PARTIAL, not PASS. Geography and place are unchanged: `geoPenalty` is undefaulted (`artifacts/api-server/src/lib/portavaRank.ts:592#geoPenalty?: number;`). |
+| DV-55 | W | **W** | **Two of three FAIL reasons are stale; 0 of 3 fully still holds.** New creator: the bucket is not "uncalled". It is `allocateFeedSlots`' `newUser` share, on the `for_you` path behind `DISCOVERY_DIVERSITY_ENABLED` (FALSE, DV-53 above). New user: PDE reads the viewer's stated Compass interests (`artifacts/api-server/src/lib/discoveryPde.ts:435#.select("interests, category_weights")`), not the profile's onboarding answers or trip context (§47.6). New Trail: the object exists; a new Trail is listed first only because `listTrails` sorts by creation time (`artifacts/api-server/src/services/trails/TrailService.ts:158#.order("created_at", { ascending: false })`), which is not a cold-start rule. |
+| DV-70 | W | **W** | **Both named instances are false** (2220 and 2217 applied in production, §46.1), **and so is §54.2's "production still has no `schema_migration_ledger`".** The production snapshot the drift check reads lists it (`artifacts/api-server/baseline/20260922_production_tables.txt:471#schema_migration_ledger`), and §46.1 quotes its rows. `check:production-drift` exits 0 at this tree, with 39 tables on its ratchet, all UNAPPLIED. Its footer still says the ledger is missing (`artifacts/api-server/src/scripts/checkProductionDrift.ts:1287#schema_migration_ledger is the one to fix first`), a stale sentence pinned by Q5. **Why still W:** 39 unapplied tables is not zero drift, and the check compares a table list only. Columns, functions and policies need a live read by an operator. |
+| DV-75 | W | **W** | **"0 of 3 by name" is false: 3 of 3 exist** (`.github/workflows/ci.yml:1438#ci-verdict:`, `.github/workflows/live-db.yml:1440#live-db-verdict:`, `.github/workflows/unwired-checks.yml:414#unwired-verdict:`), pinned by name and check-run context (`artifacts/api-server/src/test/ciWorkflowArchitecture.test.ts:780#it("exists under exactly that name"`). `12` Phase 0.2 says "Require", and the only ruleset recorded requiring those three contexts targets `bughunt-20260805`, not `main` (`artifacts/api-server/src/test/ciWorkflowArchitecture.test.ts:703#single ruleset — id 20680634`). On 2026-09-28 the GitHub API still reports `bughunt-20260805` as protected; `main`'s own setting was not read here. What remains is an admin setting (A-4). |
+| DV-82 | W | **W** | **"2 of 7 enforced … the other five need …" is stale: all seven now have a producer and a hooked caller** (`artifacts/api-server/src/test/discoveryStopSevenConditions.test.ts:86#it("A1. every condition has a producer`; hooks H1/H2, §54.14). Two carry thresholds labelled unratified, and five carry no ruling (`artifacts/api-server/src/lib/discoveryStopConditions.ts:276#creator_concentration: null,`; `artifacts/api-server/src/test/discoveryStopSevenConditions.test.ts:126#it("A5. the two existing thresholds keep their values and are labelled UNRATIFIED`). Both suites pass here. 3391 is unapplied outside the harness. |
+| DC-01 | W | **W** | **"Trails FAIL (DV-20)" names the wrong reason.** Trails exist and are served, but they are LISTED newest-first (`artifacts/api-server/src/services/trails/TrailService.ts:158#.order("created_at", { ascending: false })`), and no ranker has a Trail kind (Q4, `artifacts/api-server/src/test/discoveryRowAudit29.test.ts:133#it("listTrails orders by created_at descending`). So PDE still neither ranks nor recommends a Trail. 7 of 10 stands: Shared Moments and emerging discoveries are unchanged. |
+| DC-11 | W | **W** | 7 of 10 stands. The integrity stage's one term is weaker than stated: the author-trust down-weight is the constant 0.6 on every Discovery row (DV-12 above). DRS's negative-feedback penalty runs inside the pipeline on constant-false inputs (`artifacts/api-server/src/lib/discoveryPde.ts:685#viewerHasReportedItem: false, viewerHasHiddenItem: false,`). Exploration and learning are unchanged. |
+| DC-13 | W | **W** | **"No Discovery route imports it" is true, and misleading.** The named-family configuration runs on the signed-in path through DRS, which `rankForViewer` calls (`artifacts/api-server/src/lib/discoveryPde.ts:705#const drsResults = await drsRankItems(`; DRS's negative-feedback family at `artifacts/api-server/src/services/ranking/DiscoveryRankingService.ts:1175#const negativeFeedbackPenalty = calcNegativeFeedbackPenalty(`). On Discovery its inputs are constant false, so the family computes 0 (Q2). A Trail term now exists: `trailAffinity`, capped at 0.10, behind 2289. The families still fail as families. |
+| DC-18 | W | **W** | **The `2420, 2220 and 2760–2785 unapplied` sentence is partly false**: 2220 (§46.1) and 2910 (§47.1) are applied in production, by hand. §54.2's harness rehearsal holds: nine rollbacks and nine re-applies, with the catalogue hash unchanged. Sixteen of 25 Discovery migrations ship no rollback. **Still W:** no `portava-ci` rehearsal record exists for 3375–3422 (DC-26). Applied-body checksums against the repository need an operator. |
+| DC-24 | W | **W** | **"Three ranking implementations … the shared ranking service … has no Discovery caller (X3)" is false for the third.** DRS is a stage INSIDE the PDE pipeline: value-imported and called by `rankForViewer` (`artifacts/api-server/src/lib/discoveryPde.ts:105#import { rankItems as drsRankItems }`; Q2, `artifacts/api-server/src/test/discoveryRowAudit29.test.ts:84#it("rankForViewer value-imports and calls DRS`). So there are **two** parallel orderings: PDE and Compass's `for_you` (C32, R1). The parallel half still fails. |
+| DC-32 | W | **W** | **"`protectedLocations.ts` is consulted by nothing in Discovery" is false.** Two consumers exist, and neither runs in the shipping default. The search pass is `artifacts/api-server/src/lib/discoverySearchProtection.ts:74#export const DISCOVERY_SEARCH_PROTECTION_FLAG`, behind 3366 (FALSE, A-3). The projection's coverage bucket is `artifacts/api-server/src/lib/discoveryCandidate.ts:393#const decision = classifyAgainstProtected(`, behind 2361 (FALSE). So the sensitive-location leg now reuses the approved module and asks. It is not silent. It is not counted as PASS here, because it is unapplied (the §31.2 rule). **Still 2 of 5:** §47.8's eight values are unruled, and the two stop thresholds are enforced while labelled unratified. |
+| DV-40 | W | **W** | **Ground (2), "serve points 8, 9 … are the search lane's to stamp", is false.** §46.7 stamped both. One exposure per request stamps every served item on search (`artifacts/api-server/src/routes/discoverySearch.ts:2700#const exposure = mintServeExposure(user.id), logSearchServe`) and on suggest (`artifacts/api-server/src/routes/discoverySearch.ts:3016#const exposure = mintServeExposure(user.id), body =`). The logged row carries the same id (`artifacts/api-server/src/test/discoverySearchExposure.test.ts:78#every item carries an id, and the log row at its position carries the SAME id`), and the suite passes here. §46's "served ids are stamped" holds. **Still W on ground (1) alone:** the anonymous record is 3376, applied nowhere but the harness. |
+| DV-02 | W | **W** | **"The shipping client is unauthenticated on this route" is false on the branch.** The client fetches the page as the viewer (`travel-buddy-standalone/src/services/discovery.ts:695#const lease = openDiscoveryLease(await freshToken());`, §50). What remains: a build carrying it has not shipped, the server is not deployed, and then production must show the rows. |
+| DV-47 | W | **W** | Same correction as DV-02. Of "the same two reasons", the unauthenticated client is closed on the branch. The ranked path's events still need a shipped client, a deployed server and a production read. |
+| DV-78 | W | **W** | **"Dwell: … no client emits a dwell measurement" is false.** The client classifies and emits the three kinds (`travel-buddy-standalone/src/services/discoveryDwell.ts:89#export function classifyInterval(`), behind `discovery_dwell_telemetry_enabled` (3395, FALSE; DV-41, B-1). 5 of 8 stands, with dwell built and gated off. `hide` vs `not_interested` (E-8) and Trail open (D-1 Q2) are unchanged. |
+
+### 69.4 DC-26 — the pin, and why it does not move the row
+
+§66.4 offered an optional change: pin in `ciWorkflowArchitecture.test.ts` that the rehearsal steps exist. It is built.
+- `artifacts/api-server/src/test/ciWorkflowArchitecture.test.ts:912#it("has a step that applies migrations (not only the dry run)"` fails when the `schema-drift` job stops running `db:apply-migrations`. The dry run does not count.
+- `artifacts/api-server/src/test/ciWorkflowArchitecture.test.ts:921#it("certifies the apply, after it, in the same job"` fails when `certify:migrations` is missing, or runs before the apply.
+- A control case rejects both deletions in memory.
+
+**This does not move DC-26.** The class `12` names is shown by a rehearsal EVENT on `portava-ci` over the migrations the tree creates (3375–3422). The workflow applies only on `refs/heads/main`. A pin that the steps exist says nothing about whether they have run green over these files. What moves DC-26:
+- A-1, or the merge to `main` followed by a green `schema-drift` run;
+- Q66-3, if the owner requires the rehearsal before merge.
+
+### 69.5 DV-40 re-verified against §46
+
+§46's claim is *"served ids are stamped"*. It holds at this tree on serve points 8 and 9:
+- one exposure per request (`routes/discoverySearch.ts` :2700, :3016, anchored above);
+- the list stamped by the contract's `stampServedRecommendations`;
+- suggest stamped at flattened positions by `lib/discoverySearchExposure.ts`.
+
+`discoverySearchExposure.test.ts` passes here. DV-40's own ground (2) contradicted §46, and it is restated in 69.3. DV-40 does not move: ground (1), 3376, is a deploy blocker.
+
+### 69.6 Counts
+
+| class | rows |
+|---|---|
+| OWNER | 51 |
+| HOLD | 20 |
+| DEPLOY | 11 |
+| CODE | 3 |
+| CANNOT-VERIFY | 2 |
+| IN LANE | 7 |
+| **total** | **94** |
+
+**Against P18's summary** (40 / 25 / 9 / 14 / 1, over 89 rows):
+- The population differs. §66 added four rows and §66.11 added DV-20; seven rows are now IN LANE.
+- OWNER is larger because every ledger row's first blocker is C-11: the PR itself says the erasure answer gates the production deploy of every ledger row.
+- CODE is smaller, for two reasons. P18's CODE named DV-37, DV-52 and DV-76, and P16 has since built their code halves (§63). It also named A13 and DV-51, which are IN LANE here.
+
+**First blocker, grouped by owner item** (OWNER rows only):
+- C-11: 14 rows.
+- D-1: 7 rows.
+- Two rows each: E-2, Q66-2, D-5 and D-8.
+- B03's payment leg names no lettered item.
+- Every other item: one row each.
+
+### 69.7 CODE — ready to dispatch
+
+| row | build | files (ownership) | turns red / green |
+|---|---|---|---|
+| A05, DV-42 | A Discovery client sender for `intentMode`: an intent-mode selector on the Discovery screen, passed as `?intentMode=` on `GET /discovery`. Inert until 2850 is on, which is the point: the served path stays byte-identical with the flag off. The server already parses the mode (`lib/intentModes.ts`) and applies it on both paths. | `travel-buddy-standalone/src/services/discovery.ts` and one Discovery screen component (client lane, P4/P13 files) | A05 and DV-42 move only once 2850 is on (DEPLOY). The builder adds a client test that the parameter is sent, plus a route test that flag-off serves the golden. |
+| A08 | Move `dispatchSearch` (and the per-type searchers it dispatches) out of `routes/discoverySearch.ts` into a platform module under `lib/inputAssistance/`, so that the gateway stops importing a Discovery route, and re-export it from the route. Then put the Map search sheet's per-keystroke search on the gateway. | `artifacts/api-server/src/routes/discoverySearch.ts`, `artifacts/api-server/src/lib/inputAssistance/gateway.ts` (P1 search lane); `travel-buddy-standalone` Map search sheet (Map lane) | The legacy-typeahead half stays E-9's. |
+| — (finding) | `check:production-drift` prints *"schema_migration_ledger is the one to fix first: without it, nothing can establish which migrations production has"* whenever anything is unapplied. Production has the table (69.3 DV-70). Make the footer conditional on the ledger's absence from the snapshot. | `artifacts/api-server/src/scripts/checkProductionDrift.ts` (CI/database owner) | Q5 turns red when it lands. Flip it then. |
+
+No other non-C row has a first blocker that code can clear today. Several have code behind their first blocker, and each is named in its row above: the DV-30 velocity change, the §58.5 designs and the ledger producers.
+
+### 69.8 Tests, and every one seen red (P24)
+
+No application file, migration or workflow was edited to see red.
+- **The workflow mutations** ran against real edited copies in the scratchpad, through `P29_LIVE_DB_YML`.
+- **Every static probe** carries its own in-memory mutation control.
+- `.github/workflows/live-db.yml` was left byte-identical (sha256 `3216b334…`).
+
+| mutation | where | red |
+|---|---|---|
+| W1 both `db:apply-migrations` apply lines deleted | copy of `live-db.yml` | "has a step that applies", "certifies the apply" |
+| W2 `certify:migrations` line deleted | copy of `live-db.yml` | "certifies the apply" |
+| W3 the `schema-drift` job renamed | copy of `live-db.yml` | "has a step that applies", "certifies the apply" |
+| Q1c the `allocateFeedSlots(… "discovery"` call replaced | in-memory `CompassFeedBuilder.ts` | the Q1 reading rejects it |
+| Q2c the `drsRankItems(` call replaced | in-memory `discoveryPde.ts` | the Q2 reading rejects it |
+| Q3c `authorTrustScore` added to the candidate map | in-memory `discoveryPde.ts` | the Q3 reading sees it |
+| Q4c `'trail'` added to `CandidateKind` | in-memory `portavaRank.ts` | the Q4 reading sees it |
+| Q5c `schema_migration_ledger` dropped from the snapshot | in-memory snapshot | the Q5 reading sees it |
+
+Suites run at this tree, each passing:
+- `discoveryRowAudit29` 10/10;
+- `ciWorkflowArchitecture` 48/48;
+- `discoveryLiveRank`, `discoverySearchExposure`, `discoveryStopSevenConditions`, `discoverySurfaceWriterProof` and `discoveryLiveSafetyPrecedence`, run together with the pre-pin `ciWorkflowArchitecture`, 147/147;
+- `discoveryCategoryAffinity` 11/11;
+- the eight `census*` suites with `productionDriftExtraction`, `discoveryTrailIntegrity`, `discoveryVerifyAudit2`, `discoveryCategoryAffinity`, `discoveryRowAudit29` and `ciWorkflowArchitecture`, 200/200.
+
+### 69.9 Checks run at this tree, after the last edit
+
+- `check:census-integrity` passes. Discovery counts 94 C / 88 W / 5 N / 1 X, unchanged, so the headline (§66.11) is not restated.
+- `check:doc-citations`, `check:citation-targets`, `check:citation-symbols`, `check:census-freshness` and `check:census-scope-coverage` are clean. Their exact outputs are in the lane report.
+- `check:production-drift` exits 0.
+- `typecheck:tests` is at its baseline: 863 diagnostics across 115 files.
+- `check:test-registration`, `check:guard-coverage`, `check:census-row-move-labels` and `check:census-policy-citations` pass.
+
+**Not run:** the full api-server suite, the harness database suites (none is touched), and any read of production or `portava-ci`.
+
+### 69.10 What would turn this red
+
+- **A restated fact changing back.** Each of Q1–Q5 goes red: `allocateFeedSlots` losing its Discovery caller, DRS leaving `rankForViewer`, a trust score reaching Discovery candidates, a ranked Trail kind, or the drift footer being fixed. Each red means the statement in 69.3 should be re-read.
+- **The rehearsal steps.** Deleting either from `schema-drift` turns the DC-26 pin red.
+- **A mis-classification.** A row whose first blocker is found to be code that can be built today. That row moves to 69.7.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/compass/CompassExplanationEngine.ts — §13.7 item 3 names Compass's HMAC recommendation-token signer as a refactor this lane declined to make in another lane's file. Discovery's recommendation id is minted by lib/discoveryRecommendationId.ts, and no Discovery verdict rests on the signer.
