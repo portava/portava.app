@@ -26,7 +26,7 @@ import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import {
   portavaRankGoldenDigest, drsGoldenDigest, goldenCandidates, goldenViewers, goldenRankOptions,
-  GOLDEN_NOW_MS,
+  GOLDEN_NOW_MS, goldenRow,
 } from "./helpers/portavaRankGoldenScenarios.js";
 import { rankCandidates, type RankCandidate, type ViewerContext, type RankOptions } from "../lib/portavaRank.js";
 import { applyRankDesigns, loadRankDesigns, INERT_RANK_DESIGNS } from "../lib/discoveryRankDesigns.js";
@@ -39,7 +39,7 @@ const GOLDEN = JSON.parse(readFileSync(new URL("./fixtures/portavaRankGolden.jso
 };
 
 const hashRows = (rows: Array<{ candidate: RankCandidate; score: number; features: Record<string, number> }>): string =>
-  createHash("sha256").update(JSON.stringify(rows.map((x) => ({ id: x.candidate.id, score: x.score, features: x.features })))).digest("hex");
+  createHash("sha256").update(JSON.stringify(rows.map((x) => goldenRow(x.candidate.id, x.score, x.features)))).digest("hex");  // the helper's canonical row (§90), so both hash the same bytes
 
 beforeEach(() => invalidateRankDesignFlagCache());
 

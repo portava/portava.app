@@ -99,9 +99,9 @@ export function goldenViewers(): Record<string, ViewerContext> {
   };
 }
 
-type Row = { id: string; score: number; features: Record<string, number> };
+type Row = { id: string; score: number; features: Record<string, number> }; /* census-discovery §90: every number is hashed at 10 significant digits, because V8 changed Math.pow/Math.exp between Node 22 and 24 in the last bit (recency 0.044194173824159216 vs …22); the order and every value above 1e-10 relative are what the golden pins */ const canon = (n: number): number => Number(n.toPrecision(10)); export const goldenRow = (id: string, score: number, features: Record<string, number>): Row => ({ id, score: canon(score), features: Object.fromEntries(Object.entries(features).map(([k, v]) => [k, canon(v)])) });
 const rows = <T extends RankCandidate>(s: ScoredCandidate<T>[]): Row[] =>
-  s.map((x) => ({ id: x.candidate.id, score: x.score, features: x.features }));
+  s.map((x) => goldenRow(x.candidate.id, x.score, x.features));
 
 /** The rank-option variants every viewer is ranked under. */
 export function goldenRankOptions(): Record<string, RankOptions> {
@@ -131,7 +131,7 @@ export function runPortavaRankGoldenScenarios(): Record<string, Row[]> {
     }
     out[`score:${vName}`] = cands.map((c) => {
       const s = scoreCandidate(c, ctx, DEFAULT_WEIGHTS, true);
-      return { id: c.id, score: s.score, features: s.features };
+      return goldenRow(c.id, s.score, s.features);
     });
     const scored = cands.map((c) => scoreCandidate(c, ctx));
     out[`diversify:${vName}`] = rows(diversify(scored, { placePenalty: 0.25, geoPenalty: 0.1 }));
