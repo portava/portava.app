@@ -27,11 +27,11 @@
  *
  * WHAT THIS IS NOT
  * ================
- * The ADJUST half. `06` §8's governor "adjusts policy bounds". That is new
- * ranking machinery under the 2026-08-15 hold (docs/discovery/ROADMAP.md item
- * 4) and is not built: nothing here reads a flag, writes a row, or returns a
- * bound. No threshold, no "healthy"/"unhealthy" verdict: `06` names what to
- * monitor and no number to monitor it against, and the owner has ruled none.
+ * The ADJUST half. `06` §8's governor "adjusts policy bounds". Since §84 (the
+ * hold lifted 2026-09-28) that half is lib/discoveryEcosystemBounds: PROPOSALS
+ * over this report, applied by an admin. THIS module still reads no flag,
+ * writes no row and returns no bound, and gives no "healthy"/"unhealthy"
+ * verdict; the bands a proposal uses are that module's (D-W10-R1-15).
  *
  * REUSED, NOT RE-MEASURED
  * =======================
@@ -59,25 +59,25 @@ export interface MonitorDef {
   /** `12` Phase 13's word for it, or null when only `06` §8 names it. */
   phase13: string | null;
   /** When nothing in the tree can supply it: what is missing. */
-  missingInput?: string;
+  missingInput?: string; /** §84 (W10-R1, D-W10-R1-15): the rule a monitor that had no input is now measured by. */ definition?: string;
 }
 
 export const ECOSYSTEM_MONITORS: readonly MonitorDef[] = [
   { id: "concentration", spec06: "concentration", phase13: "creator concentration" },
   {
     id: "new_creator_success", spec06: "new-creator success", phase13: "new creator opportunity",
-    missingInput:
-      "neither `06` nor `12` defines 'new' (new to the platform, to the viewer, to the place) or 'success' " +
-      "(which outcome); only a `db/` community place resolves to a creator (discovery_places.submitted_by, " +
-      "the join 3391 does), an OSM place has none; and lib/discoveryTrailHealth's new_creator_exposure is a " +
-      "Trail MEMBERSHIP share, not an outcome of anything served (census §51)",
+    definition:   // D-W10-R1-15, decided: `06`/`12` name the monitor and define neither word
+      "NEW = a submitter whose first discovery_places row was created in the 30 days before the window's end " +
+      "(the trend model's longest window, TREND_V2_PRIOR_MS); SUCCESS = a positive outcome (save, trip add, tap, join, " +
+      "rsvp, attended — never an impression or a dismiss) by someone OTHER than the creator on a served place of " +
+      "theirs; value = successful / served new creators, and the opportunity (served / new) beside it",
   },
   {
     id: "stale_content", spec06: "stale content", phase13: null,
-    missingInput:
-      "no staleness rule exists for a served Discovery item: the only one in the tree is Trail health's " +
-      "TRAIL_STALE_WINDOW_MS over Trail MEMBERS (reported under trail_freshness), and a place carries no content " +
-      "age a rule could read — discovery_places.created_at is when it was submitted, not when it stopped being true",
+    definition:   // D-W10-R1-15, decided: an item is STALE when it was first served on Discovery ≥ 30 days before the
+      "window's end and no one took a positive action on it in the 30 days before the window's end (`03` §4's inactive, " +
+      "over the model's longest window); value = exposures of stale items / Discovery exposures in the window. A new item " +
+      "is never stale: it has not had 30 days to be acted on",
   },
   { id: "repeated_recommendations", spec06: "repeated recommendations", phase13: "repeat recommendations" },
   { id: "spam_rate", spec06: "spam rate", phase13: "spam" },
@@ -108,13 +108,13 @@ export interface EcosystemInputs {
   repeats: ReadOutcome;
   spam: ReadOutcome;
   trails: ReadOutcome;
-  pages: ReadOutcome;
+  pages: ReadOutcome; /** §84: the two monitors D-W10-R1-15 defined; absent ⇒ that monitor reads input_absent. */ newCreators?: ReadOutcome; stale?: ReadOutcome;
 }
 
 export interface EcosystemReport {
   window: { since: string; until: string };
   monitors: Array<{ id: string; spec06: string | null; phase13: string | null; reading: MonitorReading }>;
-  adjust: "not built — the governor's policy-bound half is held (census-discovery §58); this report changes nothing";
+  adjust: "not built into this report — bound proposals are lib/discoveryEcosystemBounds.proposePolicyBounds (census-discovery §84), applied by an admin; this report changes nothing";
   verdict: "none — values and samples only; no threshold is ruled";
 }
 
@@ -384,7 +384,7 @@ export function buildEcosystemReport(input: EcosystemInputs): EcosystemReport {
     spam_rate: readSpam(input.spam),
     trail_freshness: readTrailFreshness(input.trails, untilMs),
     hidden_gem_exposure: readHiddenGemExposure(input.corpus),
-    duplicate_saturation: readDuplicateSaturation(input.pages, input.trails),
+    duplicate_saturation: readDuplicateSaturation(input.pages, input.trails), new_creator_success: readNewCreatorSuccess(input.newCreators), stale_content: readStaleContent(input.stale),
   };
   return {
     window: input.window,
@@ -394,7 +394,7 @@ export function buildEcosystemReport(input: EcosystemInputs): EcosystemReport {
         ? { state: "unmeasured", missingInput: m.missingInput }
         : readings[m.id] ?? { state: "unreadable", reason: "no reader for this monitor" },
     })),
-    adjust: "not built — the governor's policy-bound half is held (census-discovery §58); this report changes nothing",
+    adjust: "not built into this report — bound proposals are lib/discoveryEcosystemBounds.proposePolicyBounds (census-discovery §84), applied by an admin; this report changes nothing",
     verdict: "none — values and samples only; no threshold is ruled",
   };
 }
@@ -420,4 +420,95 @@ export function renderEcosystemReport(r: EcosystemReport): string {
     if ((x.state === "measured" || x.state === "insufficient_sample") && x.detail) lines.push(`  ${JSON.stringify(x.detail)}`);
   }
   return lines.join("\n");
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// census-discovery §84 (lane W10-R1, D-W10-R1-15): the two monitors that had no input
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** New-creator success: `definition` on ECOSYSTEM_MONITORS. Counts only; no user id leaves the database. */
+export const ECOSYSTEM_NEW_CREATORS_SQL = `
+WITH win AS (SELECT :'since'::timestamptz AS since, :'until'::timestamptz AS until),
+firsts AS (
+  SELECT dp.submitted_by AS creator, min(dp.created_at) AS first_at
+    FROM public.discovery_places dp WHERE dp.submitted_by IS NOT NULL GROUP BY dp.submitted_by
+), new_c AS (
+  SELECT f.creator FROM firsts f CROSS JOIN win WHERE f.first_at <= win.until AND f.first_at > win.until - interval '30 days'
+), served AS (
+  SELECT dp.submitted_by AS creator, r.user_id, r.outcome, r.outcome_at
+    FROM public.rank_events r CROSS JOIN win
+    JOIN public.discovery_places dp ON dp.id::text = lower(regexp_replace(r.item_id, '^db/', ''))
+    JOIN new_c n ON n.creator = dp.submitted_by
+   WHERE r.surface = 'discovery' AND r.event_type IS NULL AND r.outcome <> 'analytics'
+     AND r.served_at >= win.since AND r.served_at <= win.until
+)
+SELECT json_build_object(
+  'new_creators',            (SELECT count(*) FROM new_c),
+  'served_new_creators',     (SELECT count(DISTINCT creator) FROM served),
+  'successful_new_creators', (SELECT count(DISTINCT s.creator) FROM served s CROSS JOIN win
+                               WHERE s.outcome NOT IN ('impression', 'dismiss') AND s.outcome_at IS NOT NULL
+                                 AND s.outcome_at <= win.until AND s.user_id <> s.creator)
+)::text;
+`;
+
+/** Stale content: `definition` on ECOSYSTEM_MONITORS. `db/<uuid>` and the bare uuid are one place. */
+export const ECOSYSTEM_STALE_SQL = `
+WITH win AS (SELECT :'since'::timestamptz AS since, :'until'::timestamptz AS until),
+ex AS (
+  SELECT regexp_replace(r.item_id, '^db/', '') AS item
+    FROM public.rank_events r CROSS JOIN win
+   WHERE r.surface = 'discovery' AND r.event_type IS NULL AND r.outcome <> 'analytics'
+     AND r.served_at >= win.since AND r.served_at <= win.until
+), items AS (SELECT DISTINCT item FROM ex),
+facts AS (
+  SELECT i.item,
+         (SELECT min(r.served_at) FROM public.rank_events r
+           WHERE r.surface = 'discovery' AND r.outcome <> 'analytics' AND regexp_replace(r.item_id, '^db/', '') = i.item) AS first_served,
+         EXISTS (SELECT 1 FROM public.rank_events r CROSS JOIN win
+                  WHERE r.surface = 'discovery' AND regexp_replace(r.item_id, '^db/', '') = i.item
+                    AND r.outcome NOT IN ('impression', 'analytics', 'dismiss')
+                    AND r.outcome_at > win.until - interval '30 days' AND r.outcome_at <= win.until) AS acted
+    FROM items i
+), stale AS (
+  SELECT f.item FROM facts f CROSS JOIN win WHERE f.first_served <= win.until - interval '30 days' AND NOT f.acted
+)
+SELECT json_build_object(
+  'exposures',       (SELECT count(*) FROM ex),
+  'stale_exposures', (SELECT count(*) FROM ex WHERE item IN (SELECT item FROM stale)),
+  'served_items',    (SELECT count(*) FROM items),
+  'stale_items',     (SELECT count(*) FROM stale)
+)::text;
+`;
+
+/** The two reads above, for the suite's no-write assertion (ECOSYSTEM_READS is §58's list). */
+export const ECOSYSTEM_READS_84: readonly string[] = [ECOSYSTEM_NEW_CREATORS_SQL, ECOSYSTEM_STALE_SQL];
+
+const ABSENT_84: MonitorReading = { state: "input_absent", reason: "not read by this caller" };
+
+export function readNewCreatorSuccess(o: ReadOutcome | undefined): MonitorReading {
+  if (!o) return ABSENT_84;
+  const f = failed(o);
+  if (f) return f;
+  const b = body(o);
+  const all = count(b?.["new_creators"]), served = count(b?.["served_new_creators"]), ok = count(b?.["successful_new_creators"]);
+  if (all === null || served === null || ok === null || served > all || ok > served) return MALFORMED;
+  return share(ok, served, {
+    measure: "new creators (first submission in the 30 days before the window's end) with a positive outcome by someone else on a served place, per served new creator",
+    newCreators: all, servedNewCreators: served, successfulNewCreators: ok,
+    opportunity: all === 0 ? null : served / all,
+    limit: "only a db/ community place resolves to a creator; an OSM place has none",
+  });
+}
+
+export function readStaleContent(o: ReadOutcome | undefined): MonitorReading {
+  if (!o) return ABSENT_84;
+  const f = failed(o);
+  if (f) return f;
+  const b = body(o);
+  const ex = count(b?.["exposures"]), staleEx = count(b?.["stale_exposures"]), items = count(b?.["served_items"]), staleItems = count(b?.["stale_items"]);
+  if (ex === null || staleEx === null || items === null || staleItems === null || staleEx > ex || staleItems > items) return MALFORMED;
+  return share(staleEx, ex, {
+    measure: "Discovery exposures of items first served ≥ 30 days before the window's end with no positive outcome in those 30 days, per exposure",
+    exposures: ex, staleExposures: staleEx, servedItems: items, staleItems,
+  });
 }

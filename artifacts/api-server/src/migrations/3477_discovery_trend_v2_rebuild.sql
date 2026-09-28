@@ -130,13 +130,13 @@ SET search_path = public, pg_catalog
 AS $fn$
   SELECT CASE p_state
     WHEN 'emerging' THEN CASE p_driver
-      WHEN 'trip_adds' THEN 'New around here, and being added to trips by several independent travellers.'
-      WHEN 'saves'     THEN 'New around here, and being saved by several independent travellers.'
-      ELSE 'Emerging across several independent traveller groups.' END
+      WHEN 'trip_adds' THEN 'New around here, and being added to trips by several unrelated people.'
+      WHEN 'saves'     THEN 'New around here, and being saved by several unrelated people.'
+      ELSE 'Emerging across several independent groups of people.' END
     WHEN 'trending' THEN CASE p_driver
       WHEN 'trip_adds' THEN 'Frequently added to trips in the last couple of days.'
       WHEN 'saves'     THEN 'Saved more than usual in the last couple of days.'
-      ELSE 'Picking up across independent traveller groups in the last couple of days.' END
+      ELSE 'Picking up across independent groups in the last couple of days.' END
     WHEN 'established' THEN CASE p_driver
       WHEN 'trip_adds' THEN 'Consistently added to trips, not just this week.'
       WHEN 'saves'     THEN 'Consistently saved, not just this week.'

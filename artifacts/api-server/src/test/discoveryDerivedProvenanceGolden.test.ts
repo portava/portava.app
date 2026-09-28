@@ -354,3 +354,76 @@ describe("§75 DC-17 (lane P33) — provenance-only: every value its hunks touch
     const h = sha(v); if (show) console.log("trending", h); assert.equal(h, GOLDEN_P33.trending);
   });
 });
+
+// ════════════════════════════════════════════════════════════════════════════
+// census-discovery §84 (lane W10-R1): the v2 trend model is behind
+// `discovery_trend_normalised_enabled` (3475, seeded FALSE). With it OFF — absent,
+// FALSE or unreadable — every NEW entry point must return the values captured at
+// `f34994de7` (GOLDEN above), byte for byte:
+//
+//   G10  computeTrendStates / computeLocalMomentum with an options argument
+//        that does not ask for v2 ({} and { model: "v1" })
+//   G11  loadLocalMomentum through a client whose flag row is absent, FALSE or
+//        unreadable, and the trend states it caches for readLocalTrendStates
+//   G12  the trend API (G6's corpus) through explainExposures with a Local Pulse
+//        argument: a v1 run ignores it
+// ════════════════════════════════════════════════════════════════════════════
+import { loadLocalMomentum, readLocalTrendStates } from "../lib/discoveryLocalMomentum.js";
+
+/** A client serving the corpus through the loader's paged read, with the v2 flag row as given. */
+function corpusClient(flag: "absent" | "false" | "error") {
+  const rows = corpus();
+  return {
+    from(table: string) {
+      let range: [number, number] = [0, rows.length - 1];
+      const b: any = {
+        select() { return b; }, eq() { return b; }, neq() { return b; }, in() { return b; }, gte() { return b; }, order() { return b; },
+        range(a: number, z: number) { range = [a, z]; return b; },
+        maybeSingle() {
+          if (table !== "feature_flags") throw new Error(`corpusClient: ${table}.maybeSingle`);
+          if (flag === "error") return Promise.resolve({ data: null, error: { code: "57014", message: "timeout" } });
+          return Promise.resolve({ data: flag === "false" ? { enabled: false } : null, error: null });
+        },
+        then(res: (v: unknown) => unknown, rej: (e: unknown) => unknown) {
+          if (table !== "rank_events") throw new Error(`corpusClient: ${table}`);
+          return Promise.resolve({ data: rows.filter((r) => r.outcome !== "analytics").slice(range[0], range[1] + 1), error: null }).then(res, rej);
+        },
+      };
+      return b;
+    },
+  };
+}
+const stripTrend = (m: Record<string, { state: unknown; evidence: unknown }>) =>
+  Object.fromEntries(Object.entries(m).map(([id, r]) => [id, { state: r.state, evidence: r.evidence }]));
+
+describe("§84 (lane W10-R1) — the v2 trend model OFF: every new entry point is byte-identical to f34994de7", () => {
+  it("G10. an options argument that does not ask for v2 changes nothing", () => {
+    for (const opts of [{}, { model: "v1" as const }]) {
+      assert.equal(sha(computeLocalMomentum(corpus(), NOW, opts).values), GOLDEN.momentum, JSON.stringify(opts));
+      assert.equal(sha(stripTrend(computeTrendStates(corpus(), NOW, opts))), GOLDEN.trend, JSON.stringify(opts));
+    }
+  });
+
+  it("G11. the loader with the flag absent, FALSE or unreadable: the momentum and the cached trend states", async () => {
+    for (const flag of ["absent", "false", "error"] as const) {
+      _resetLocalMomentumCacheForTest();
+      const m = await loadLocalMomentum(corpusClient(flag), Array.from({ length: 40 }, (_, i) => `place-${i}`), { cacheKey: `g11:${flag}`, nowMs: NOW });
+      // The loader never reads analytics rows (it filters them in the query), and the kernel ignores them: same values.
+      assert.equal(sha(m.values), GOLDEN.momentum, flag);
+      assert.equal(sha(stripTrend(readLocalTrendStates(`g11:${flag}`, NOW))), GOLDEN.trend, flag);
+    }
+  });
+
+  it("G12. the trend API over a v1 run ignores a Local Pulse argument", async () => {
+    const v = await trendApiValues();
+    const read = await readTrendSnapshot(trendDb([]), []);
+    assert.ok(read.ok);
+    const rids = ["rid-00".padEnd(22, "x")];
+    const run = { computedAt: new Date(NOW - 60_000).toISOString(), modelVersion: "discovery-trend-state-v1", featureVersion: null, priorMs: 2_592_000_000 };
+    const rows = [{ place_id: "place-1", trend_state: "trending", recent_unique_travelers: K, window_unique_travelers: K, cell_key: "n:x:y" }];
+    const areas = [{ cell_key: "n:x:y", cell_label: "Y", trend_state: "trending", driver: "saves", recent_unique_travelers: K, window_unique_travelers: K }];
+    const binding = [{ recommendationId: rids[0]!, itemId: "place-1" }];
+    assert.equal(JSON.stringify(explainExposures(rids, binding, run, rows, NOW, areas)), JSON.stringify(explainExposures(rids, binding, run, rows, NOW)));
+    assert.equal(sha(v), GOLDEN_P33.trendApi, "G6's corpus, unchanged");
+  });
+});

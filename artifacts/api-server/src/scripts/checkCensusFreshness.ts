@@ -4142,6 +4142,23 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/discoveryDerivedProvenanceHunks.test.ts",
     "artifacts/api-server/src/test/helpers/fakeTrailsDb.ts",
     "artifacts/api-server/src/test/db/trailHealthSnapshotProvenance.db.test.ts",
+    // census-discovery §84 (lane W10-R1, trending: the held designs built): the v2 trend model and its SQL twin
+    // (3475 flags, 3476 store, 3477 rebuild, their rollbacks), the scheduler, the retest, the governor's proposal
+    // half, and the four suites that grade DV-28..DV-34, DV-80, DC-06, DC-07 and DC-21.
+    "artifacts/api-server/src/lib/discoveryTrendNormalised.ts",
+    "artifacts/api-server/src/lib/discoveryTrendRebuildScheduler.ts",
+    "artifacts/api-server/src/lib/discoveryTrendRediscovery.ts",
+    "artifacts/api-server/src/lib/discoveryEcosystemBounds.ts",
+    "artifacts/api-server/src/migrations/3475_discovery_trend_v2_flags.sql",
+    "artifacts/api-server/src/migrations/3476_discovery_trend_v2_store.sql",
+    "artifacts/api-server/src/migrations/3477_discovery_trend_v2_rebuild.sql",
+    "db/rollback/2026-09-28-3475-discovery-trend-v2-flags-rollback.sql",
+    "db/rollback/2026-09-28-3476-discovery-trend-v2-store-rollback.sql",
+    "db/rollback/2026-09-28-3477-discovery-trend-v2-rebuild-rollback.sql",
+    "artifacts/api-server/src/test/discoveryTrendNormalised.test.ts",
+    "artifacts/api-server/src/test/discoveryTrendingLists.test.ts",
+    "artifacts/api-server/src/test/discoveryTrendOps.test.ts",
+    "artifacts/api-server/src/test/db/discoveryTrendNormalisedParity.db.test.ts",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

@@ -297,7 +297,7 @@ describe("B — `11` §4: a state and a reason, never a raw score", () => {
     };
     walk(r.body);
     for (const leak of ["momentum", "score", "travel", "weight", "_rate", "Rate", "total"]) {
-      assert.ok(!r.text.split(JSON.stringify(TREND_FEATURE_VERSION)).join('""').includes(leak), `the body carries "${leak}"`);  // §75: the ONE exempt string is the closed feature-version label ("…-weighted-activity-v2"), a name and not a weight; B3 pins it to that exact constant
+      assert.ok(!r.text.includes(leak), `the body carries "${leak}"`);  // §84 (W10-R1): full strictness restored — the feature version was renamed so no exemption is needed; B3 still pins it
     }
   });
 
@@ -456,7 +456,9 @@ describe("H — nothing that serves or ranks reads the store or imports this API
   const scan = [...files("lib"), ...files("routes"), ...files("services/trails"), ...files("services/ranking")];
   it("H1. place_momentum is read only by the trend-explanation module", () => {
     const readers = scan.filter((f) => /\.from\(\s*["']place_momentum["']\s*\)|rebuild_place_momentum["']\s*[,)]/.test(readFileSync(join(SRC, f), "utf8")));
-    assert.deepEqual(readers, ["lib/discoveryTrendExplanation.ts"]);
+    // §84 (D-W10-R1-11): the rebuild scheduler CALLS the rebuild and prunes old runs; it is a writer, started once by src/index.ts, and no serve path imports it.
+    assert.deepEqual(readers, ["lib/discoveryTrendExplanation.ts", "lib/discoveryTrendRebuildScheduler.ts"]);
+    assert.deepEqual(scan.filter((f) => /discoveryTrendRebuildScheduler\.js/.test(readFileSync(join(SRC, f), "utf8"))), [], "no lib, route, Trails or ranking module imports the scheduler");
   });
   it("H2. the explanation module is imported only by its route, and the route only by the router index", () => {
     const importers = (name: string) => scan.filter((f) => new RegExp(`from "\\.\\.?/(lib/|routes/)?${name}\\.js"`).test(readFileSync(join(SRC, f), "utf8")));

@@ -25,7 +25,7 @@
 --          (src/test/discoveryDerivedProvenanceGolden.test.ts G1–G10).
 --   discovery_trend_rebuild_scheduler_enabled
 --     ON:  lib/discoveryTrendRebuildScheduler calls rebuild_place_momentum every
---          five minutes (DC-07, D-W10R1-11). OFF: a tick reads this row and
+--          five minutes (DC-07, D-W10-R1-11). OFF: a tick reads this row and
 --          writes nothing.
 --   discovery_trend_snapshot_retention_enabled
 --     ON:  the same scheduler deletes place_momentum / area_momentum runs older

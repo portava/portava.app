@@ -9,7 +9,7 @@
 --   place_momentum (2892, 3410, 3435), NEW NULLABLE COLUMNS, written only by
 --   3477's v2 rebuild (a v1 row leaves every one NULL):
 --     recent/mid/prior_exposures   served impressions per window — the `03` §7
---                                  denominator (D-W10R1-1)
+--                                  denominator (D-W10-R1-1)
 --     recent/mid/prior_groups      independence clusters per window (DV-34)
 --     velocity                     ṽ: recent conversion over mid, after the
 --                                  time-of-day and peer normalisers
@@ -89,7 +89,7 @@ CREATE TABLE IF NOT EXISTS public.area_momentum (
   id                      uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   cell_key                text NOT NULL,
   -- A named neighbourhood's display text, NULL for a grid cell. Stored so a
-  -- reader can name it; SERVED only above the k-floor (D-W10R1-10).
+  -- reader can name it; SERVED only above the k-floor (D-W10-R1-10).
   cell_label              text,
   city                    text,
   computed_at             timestamptz NOT NULL,

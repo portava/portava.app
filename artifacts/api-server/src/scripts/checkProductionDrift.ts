@@ -905,7 +905,7 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
       "migration and its tests calls rebuild_trail_relations or selects from the table, " +
       "so it stays empty after the merge. Strike it off in the change that applies 3416 " +
       "to PRODUCTION.",
-  },
+  }, area_momentum: { classification: "unapplied", note: "Migration 3476 (census-discovery §84, DV-29 Local Pulse): one v2 trend reading per Local Pulse cell per rebuild run, written only by rebuild_place_momentum_v2 (3477) and read only by lib/discoveryTrendExplanation. Rehearsed on the local PostgreSQL harness only; applied to no Supabase project. Nothing writes it until discovery_trend_normalised_enabled and the rebuild scheduler are ON (both seeded FALSE by 3475). Strike it off in the change that applies 3476 to PRODUCTION." },  // ── Added 2026-09-28 for census-discovery §84 (lane W10-R1) ──
 };
 
 /**

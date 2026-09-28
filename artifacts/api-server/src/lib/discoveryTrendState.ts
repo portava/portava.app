@@ -376,7 +376,7 @@ function computeTrendStatesNormalised(
 }
 
 /**
- * DV-33 (D-W10R1-9, D-W10R1-10): the v2 sentence — what drove the claim, and
+ * DV-33 (D-W10-R1-9, D-W10-R1-10): the v2 sentence — what drove the claim, and
  * the neighbourhood only when the caller has established that naming it is
  * allowed (lib/discoveryTrendExplanation's k-floor). Without a driver it is
  * v1's sentence. Mirrored, without the neighbourhood, by 3477's stored
@@ -386,13 +386,13 @@ export function explainTrendReading(state: DiscoveryTrendState, driver: TrendDri
   const at = neighbourhood ? ` in ${neighbourhood}` : "";
   switch (state) {
     case "emerging":
-      return driver === "trip_adds" ? `New${at || " around here"}, and being added to trips by several independent travellers.`
-        : driver === "saves" ? `New${at || " around here"}, and being saved by several independent travellers.`
-        : `Emerging${at} across several independent traveller groups.`;
+      return driver === "trip_adds" ? `New${at || " around here"}, and being added to trips by several unrelated people.`
+        : driver === "saves" ? `New${at || " around here"}, and being saved by several unrelated people.`
+        : `Emerging${at} across several independent groups of people.`;
     case "trending":
       return driver === "trip_adds" ? `Frequently added to trips${at} in the last couple of days.`
         : driver === "saves" ? `Saved more than usual${at} in the last couple of days.`
-        : `Picking up${at} across independent traveller groups in the last couple of days.`;
+        : `Picking up${at} across independent groups in the last couple of days.`;
     case "established":
       return driver === "trip_adds" ? `Consistently added to trips${at}, not just this week.`
         : driver === "saves" ? `Consistently saved${at}, not just this week.`

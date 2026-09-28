@@ -29,7 +29,7 @@ import {
   ECOSYSTEM_STOP_SQL, ECOSYSTEM_REPEATS_SQL, ECOSYSTEM_SPAM_SQL,
   ECOSYSTEM_TRAILS_PRESENT_SQL, ECOSYSTEM_TRAILS_SQL, ECOSYSTEM_PAGES_PRESENT_SQL, ECOSYSTEM_PAGES_SQL,
   type ReadOutcome,
-} from "../lib/discoveryEcosystemGovernor.js";
+} from "../lib/discoveryEcosystemGovernor.js"; import { ECOSYSTEM_NEW_CREATORS_SQL, ECOSYSTEM_STALE_SQL } from "../lib/discoveryEcosystemGovernor.js"; import { proposePolicyBounds } from "../lib/discoveryEcosystemBounds.js";  // §84 (W10-R1)
 
 const argv = process.argv.slice(2);
 const dbUrl = dbUrlFrom(argv, process.env);
@@ -69,16 +69,20 @@ const input = {
   spam: read(ECOSYSTEM_SPAM_SQL),
   trails: readIfPresent(ECOSYSTEM_TRAILS_PRESENT_SQL, ECOSYSTEM_TRAILS_SQL, "2910 unapplied: no trails / trail_health_snapshots"),
   pages: readIfPresent(ECOSYSTEM_PAGES_PRESENT_SQL, ECOSYSTEM_PAGES_SQL, "3376 unapplied: no recommendations"),
+  newCreators: read(ECOSYSTEM_NEW_CREATORS_SQL), stale: read(ECOSYSTEM_STALE_SQL),  // §84 (D-W10-R1-15)
 };
 const report = buildEcosystemReport(input);
 
+const proposals = proposePolicyBounds(report);  // §84: PROPOSALS for an admin; nothing is applied
 if (argv.includes("--json")) {
-  console.log(JSON.stringify(report, null, 2));
+  console.log(JSON.stringify({ ...report, proposals }, null, 2));
 } else {
   console.log(`Discovery ecosystem monitors — ${resolved.description} — read-only`);
   console.log(renderEcosystemReport(report));
+  console.log("", `bound proposals (an admin applies them; nothing here does): ${proposals.length === 0 ? "none" : ""}`);
+  for (const p of proposals) console.log(`  ${p.bound} (${p.source}): ${p.current} → ${p.proposed} in [${p.range.join(", ")}] — ${p.monitor} ${p.value.toFixed(4)} over ${p.sample}, band ${p.band}`);
 }
-const anyRead = [input.stop, input.repeats, input.spam, input.trails, input.pages].some((o) => o.ok) || input.corpus.ok;
+const anyRead = [input.stop, input.repeats, input.spam, input.trails, input.pages, input.newCreators, input.stale].some((o) => o.ok) || input.corpus.ok;
 if (!anyRead) {
   console.error("report:discovery-ecosystem: every read failed — nothing above is a measurement.");
   process.exit(1);

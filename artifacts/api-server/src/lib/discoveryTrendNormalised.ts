@@ -18,19 +18,19 @@
  *
  * THE DECISIONS THIS FILE IMPLEMENTS (docs/architecture/discovery-decision-register.md, § W10-R1)
  * ====================================================================================
- *   D-W10R1-1  a served impression is EXPOSURE, the denominator, not activity
+ *   D-W10-R1-1  a served impression is EXPOSURE, the denominator, not activity
  *              (census §66.9 Q66-1, the recommended reading of `03` §5 and §7).
- *   D-W10R1-2  a window's rate is a reading only at ≥ TREND_V2_MIN_EXPOSURES.
- *   D-W10R1-3  diversity of evidence: activity is counted per INDEPENDENCE
+ *   D-W10-R1-2  a window's rate is a reading only at ≥ TREND_V2_MIN_EXPOSURES.
+ *   D-W10-R1-3  diversity of evidence: activity is counted per INDEPENDENCE
  *              CLUSTER, each capped at one save's weight, and a claim needs
  *              ≥ TREND_V2_MIN_GROUPS clusters (DV-32, DV-28's "broad
  *              independent confirmation").
- *   D-W10R1-4  independence = Sensing's clustering (lib/intelIndependence),
+ *   D-W10-R1-4  independence = Sensing's clustering (lib/intelIndependence),
  *              reused, over the positive outcomes (DV-34).
- *   D-W10R1-5  the six `03` §7 normalisers, each defined below.
- *   D-W10R1-6  the Local Pulse cell.
- *   D-W10R1-7  `03` §4's content-type lifecycle.
- *   D-W10R1-9  signal-led reasons: the driver of a claim.
+ *   D-W10-R1-5  the six `03` §7 normalisers, each defined below.
+ *   D-W10-R1-6  the Local Pulse cell.
+ *   D-W10-R1-7  `03` §4's content-type lifecycle.
+ *   D-W10-R1-9  signal-led reasons: the driver of a claim.
  *
  * THE ARITHMETIC, PER KEY (a place, a Local Pulse cell, or a folded Trail)
  * =======================================================================
@@ -106,11 +106,11 @@ export const TREND_V2_RECENT_MS = 48 * HOUR;
 export const TREND_V2_MID_MS    = 7 * 24 * HOUR;
 export const TREND_V2_PRIOR_MS  = 30 * 24 * HOUR;
 
-/** [c_w_save], [c_w_outcome]. v1's weights for the outcome arm; the impression arm is gone (D-W10R1-1). */
+/** [c_w_save], [c_w_outcome]. v1's weights for the outcome arm; the impression arm is gone (D-W10-R1-1). */
 export const TREND_V2_WEIGHTS = { save: 3, outcome: 2 } as const;
 
 /**
- * [c_min_exposures] D-W10R1-2. Below this many served impressions a window's
+ * [c_min_exposures] D-W10-R1-2. Below this many served impressions a window's
  * conversion is not a reading. At n = 30 the worst-case 95 % half-width of a
  * sample proportion is 1.96 × 0.5 / √30 ≈ ±0.18, the conventional floor for
  * the normal approximation; below it one extra exposure moves the rate by
@@ -119,14 +119,14 @@ export const TREND_V2_WEIGHTS = { save: 3, outcome: 2 } as const;
 export const TREND_V2_MIN_EXPOSURES = 30;
 
 /**
- * [c_group_cap] D-W10R1-3. One independence cluster contributes at most one
+ * [c_group_cap] D-W10-R1-3. One independence cluster contributes at most one
  * save's weight per key per window — Sensing's "one cluster contributes at
  * most one full source weight" in Discovery's units.
  */
 export const TREND_V2_GROUP_CAP = TREND_V2_WEIGHTS.save;
 
 /**
- * [c_min_groups] D-W10R1-3. The smallest number of independent clusters at
+ * [c_min_groups] D-W10-R1-3. The smallest number of independent clusters at
  * which no single cluster can supply a MAJORITY of the capped activity: with
  * the cap 3 and the smallest positive weight 2, one cluster's share is at
  * most 3 / (3 + 2(n − 1)) — 60 % at n = 2, 43 % at n = 3.
@@ -154,7 +154,7 @@ export const TREND_V2_DECLINE_FACTOR = 0.6;
 export const TREND_V2_SATURATION = 3;
 
 /**
- * `03` §4 content types (D-W10R1-7). A nightclub EVENT "decays in hours"; a
+ * `03` §4 content types (D-W10-R1-7). A nightclub EVENT "decays in hours"; a
  * temple guide "may remain valuable for years". Matched on the place's own
  * `category`, then `place_type`, lower-cased and trimmed, exactly.
  */
@@ -181,7 +181,7 @@ export const TREND_LIFECYCLE_STATES = [
 ] as const;
 export type TrendLifecycle = (typeof TREND_LIFECYCLE_STATES)[number];
 
-/** What drove a claim (D-W10R1-9): a majority of its independent clusters did it. */
+/** What drove a claim (D-W10-R1-9): a majority of its independent clusters did it. */
 export const TREND_DRIVERS = ["trip_adds", "saves", "independent_groups"] as const;
 export type TrendDriver = (typeof TREND_DRIVERS)[number];
 
@@ -204,7 +204,7 @@ export interface TrendRowV2 {
 export interface PlaceTrendContext {
   /** `discovery_places.submitted_by` — the creator peer group. */
   creatorId: string | null;
-  /** The Local Pulse cell (D-W10R1-6) — the location peer group. */
+  /** The Local Pulse cell (D-W10-R1-6) — the location peer group. */
   cellKey: string | null;
   /** A named neighbourhood's display text; null for a grid cell. Never used to compute. */
   cellLabel: string | null;
@@ -394,7 +394,7 @@ function clusterWindow(acc: WindowAcc): WindowEvidence {
 const had = (e: WindowEvidence): boolean => e.rate !== null && e.groups >= TREND_V2_MIN_GROUPS;
 
 /**
- * Time of day (D-W10R1-5): the baseline's conversion re-weighted to the
+ * Time of day (D-W10-R1-5): the baseline's conversion re-weighted to the
  * recent window's band mix, over the baseline's pooled conversion. Uncapped
  * weights, so the factor is a property of when people were exposed, not of
  * who they were. 1 when either side carries no information.
@@ -575,7 +575,7 @@ export function classifyTrendStateV2(i: {
   return "established";
 }
 
-/** `03` §4 lifecycle (D-W10R1-7). Mirrored by 3477's `place_momentum_lifecycle_v2`. */
+/** `03` §4 lifecycle (D-W10-R1-7). Mirrored by 3477's `place_momentum_lifecycle_v2`. */
 export function lifecycleOf(
   state: TrendStateV2, cls: ContentClass, hadPrior: boolean, lastActivityMs: number | null, nowMs: number,
 ): TrendLifecycle {
@@ -591,7 +591,7 @@ export function lifecycleOf(
 }
 
 /**
- * The driver (D-W10R1-9): trip adds when a strict majority of the recent
+ * The driver (D-W10-R1-9): trip adds when a strict majority of the recent
  * window's clusters added the place to a trip, else saves on the same rule,
  * else the breadth itself. Null for `unknown` and `cooling` — a decline has
  * no driver to name.
