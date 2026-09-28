@@ -504,10 +504,10 @@ export function recomputeForDisruption(
     state: DisruptionState;
     newDepartureTime: string;
     newBoardingTime?: string | null;
-    nowMs: number; /** The traveller's corridor, as the route certified with it (census-discovery §65). Omitted = unresolved. */ entry?: EntryEligibility | null;
+    nowMs: number; /** The traveller's corridor, as the route certified with it (census-discovery §65). Omitted = unresolved. */ entry?: EntryEligibility | null; /** census-discovery §81: the snapshot's record for THIS session at `nowMs`, when the route read one. */ before?: LayoverFeasibilityRecord;
   },
 ): DisruptionRecompute {
-  const before = certifySessionFeasibility(airport, session, { nowMs: input.nowMs, entry: input.entry });
+  const before = input.before ?? certifySessionFeasibility(airport, session, { nowMs: input.nowMs, entry: input.entry });
   const newSession: FeasibilitySession = {
     ...session,
     departureTime: input.newDepartureTime,

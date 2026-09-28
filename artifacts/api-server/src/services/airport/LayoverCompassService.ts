@@ -53,7 +53,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // through this function to prove it.
 import { getOpenAI } from "../../lib/openai.js";
 import type { AirportProfile } from "./AirportProfileService.js";
-import type { LayoverSession } from "./LayoverSessionService.js"; import type { EntryEligibility } from "./layoverEntryGate.js";
+import type { LayoverSession } from "./LayoverSessionService.js"; import type { EntryEligibility } from "./layoverEntryGate.js"; import type { LayoverSnapshot } from "./LayoverSnapshot.js";
 import {
   safetyLabel,
   type LayoverReturnState,
@@ -91,7 +91,7 @@ export interface CompassLayoverInput {
   recommendations?: Array<Record<string, unknown>>;
   recommendationsUnavailableReason?: string | null;
   stops?: LayoverToolContext["stops"];
-  stopsUnavailableReason?: string | null; /** The session owner's corridor, resolved by the route (`resolveLayoverEntry`) as the snapshot resolves it — census-discovery §65. Omitted = unresolved. */ entry?: EntryEligibility | null;
+  stopsUnavailableReason?: string | null; /** The session owner's corridor, resolved by the route (`resolveLayoverEntry`) as the snapshot resolves it — census-discovery §65. Omitted = unresolved. */ entry?: EntryEligibility | null; /** census-discovery §81: the certified snapshot, when the route read one — its record and its usable minutes are then the answer's, and nothing is re-derived here. */ snapshot?: LayoverSnapshot | null;
 }
 
 export interface CompassLayoverAnswer {
@@ -134,16 +134,16 @@ export async function answerLayoverQuestion(
 ): Promise<CompassLayoverAnswer> {
   const { question, session, airport, maxLength = 400 } = input;
 
-  const now = new Date();
+  const now = new Date(input.snapshot ? input.snapshot.certifiedRecord.inputs.nowMs : Date.now()); // §81: the snapshot's instant, not a second clock
   // ONE certified record. `computeReturnDeadline` is no longer called here:
   // the deadline, the buffer breakdown and the envelope all come out of the
   // same record every other layover surface consumes, so Compass cannot be
   // answering from a different derivation than the screen behind it.
-  const record = certifySessionFeasibility(airport, session, { nowMs: now.getTime(), entry: input.entry ?? null });
+  const record = input.snapshot?.certifiedRecord ?? certifySessionFeasibility(airport, session, { nowMs: now.getTime(), entry: input.entry ?? null });
   const { cutoffMs, breakdown, hardReturnTime } = record.deadline;
-  const availMin  = Math.max(0, Math.round((cutoffMs - now.getTime()) / 60000));
+  const availMin  = input.snapshot ? Math.max(0, input.snapshot.minutesToHardReturn + breakdown.totalBuffer) : Math.max(0, Math.round((cutoffMs - now.getTime()) / 60000)); // §81: ON, the clock too is read off the snapshot
   const bufferMin = breakdown.totalBuffer;
-  const usableMin = Math.max(0, availMin - bufferMin);
+  const usableMin = input.snapshot ? input.snapshot.usableMinutes : Math.max(0, availMin - bufferMin);
 
   const involvesLeaving = detectLeavingIntent(question);
   // ONE airport-local rendering of the deadline, used by both fallback paths

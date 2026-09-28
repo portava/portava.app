@@ -966,8 +966,8 @@ async function searchPlans(
 ): Promise<SearchResult[]> {
   if (blockedSet === null || ageRestrictedSet === null) return [];
   try {
-    const pat = sqlPattern(q);
-    const { data, error } = await sc
+    const pat = sqlPattern(q); const { discoveryTripViewerProjectionsOn, planItemRowsFromProjection } = await import("../discoveryTripViewerConsumer.js"); // census-discovery §81 (A10)
+    const { data, error } = (await discoveryTripViewerProjectionsOn(sc)) ? await planItemRowsFromProjection(sc, { pattern: pat, offset, limit: fetchLimit }) : await sc
       .from("trip_plan_items")
       .select("id, title, trip_id, creator_id, created_at")
       .ilike("title", pat)

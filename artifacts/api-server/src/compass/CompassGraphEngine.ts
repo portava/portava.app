@@ -584,7 +584,7 @@ interface EdgeObs {
 
 class GraphBatch {
   nodes = new Map<string, NodeRec>();
-  edges = new Map<string, { rec: EdgeObs; count: number; first: string | null; last: string | null }>();
+  edges = new Map<string, { rec: EdgeObs; count: number; first: string | null; last: string | null; days: Set<string> }>(); // `days`: §81 (DV-51) diversity — distinct UTC observation days
 
   /**
    * Register a node. Order-independent: a builder that only knows a node by
@@ -609,11 +609,11 @@ class GraphBatch {
     const at = obs.at ?? null;
     const cur = this.edges.get(k);
     if (cur) {
-      cur.count++;
+      cur.count++; if (at) cur.days.add(at.slice(0, 10));
       if (at && (!cur.first || at < cur.first)) cur.first = at;
       if (at && (!cur.last || at > cur.last)) cur.last = at;
     } else {
-      this.edges.set(k, { rec: obs, count: 1, first: at, last: at });
+      this.edges.set(k, { rec: obs, count: 1, first: at, last: at, days: new Set(at ? [at.slice(0, 10)] : []) });
     }
   }
 }
@@ -670,7 +670,7 @@ const BUILD_LIMIT = 5000;
  * Returns the numbers of nodes/edges upserted.
  */
 export async function buildGraphFromSources(
-  db: SupabaseClient,
+  db: SupabaseClient, opts: { strength?: (e: GraphEdgeObservation) => number; retireBelow?: number } = {}, // §81 (DV-51): the decay rule, when the rebuild runs under it
 ): Promise<{ nodesUpserted: number; edgesUpserted: number; nodesFailed: number; edgesFailed: number }> {
   const batch = new GraphBatch();
 
@@ -971,7 +971,7 @@ export async function buildGraphFromSources(
     }
   }
 
-  const edgeRows = [...batch.edges.values()].map((e) => ({
+  const edgeRows = [...batch.edges.values()].filter((e) => !(opts.strength && opts.retireBelow !== undefined && opts.strength(graphEdgeObservationOf(e)) < opts.retireBelow)).map((e) => ({ // §81: under decay the rebuild does not re-create what the reconcile retires
     src_type:       e.rec.src_type,
     src_key:        e.rec.src_key,
     dst_type:       e.rec.dst_type,
@@ -982,7 +982,7 @@ export async function buildGraphFromSources(
     first_seen:     e.first,
     last_seen:      e.last,
     attrs:          e.rec.attrs ?? {},
-    updated_at:     nowIso,
+    updated_at:     nowIso, ...(opts.strength ? { weight: opts.strength(graphEdgeObservationOf(e)) } : {}), // §81: absent → byte-identical
   }));
   for (let i = 0; i < edgeRows.length; i += 500) {
     const chunk = edgeRows.slice(i, i + 500);
@@ -2140,7 +2140,7 @@ export async function reconcileExperienceNodes(db: SupabaseClient): Promise<Expe
 }
 
 export async function rebuildIntelligenceGraph(db: SupabaseClient): Promise<GraphRebuildReport> {
-  const { nodesUpserted, edgesUpserted, nodesFailed, edgesFailed } = await buildGraphFromSources(db);
+  const decayPolicy = await readGraphDecayPolicy(db); const { nodesUpserted, edgesUpserted, nodesFailed, edgesFailed } = await buildGraphFromSources(db, decayPolicy ? { strength: decayPolicy.strength, retireBelow: GRAPH_DECAY_RETIRE_BELOW } : {});
   // §28.8 / §21 — BEFORE the aggregates are folded, not after. buildCityWorldModels
   // and computeCityConfidenceIndex both read compass_graph_edges, so a revoked
   // experience swept afterwards would still have been counted into this run's
@@ -2230,7 +2230,7 @@ export interface EdgeSupportReport {
   /** Stored edges no builder writes — left alone. */
   unclassified: number;
   /** Edges whose source is gone, revoked or no longer eligible, and were deleted. */
-  retired: number;
+  retired: number; /** §81 (DV-51), present only under the decay rule: of `retired`, the edges retired because their derived strength fell below GRAPH_DECAY_RETIRE_BELOW; and the survivors whose stored weight was rewritten. */ decayRetired?: number; reweighed?: number; reweighFailed?: number;
   retiredByFamily: Partial<Record<GraphEdgeFamily, number>>;
   /** Source-anchored nodes (trip, event, circle) read. */
   nodesExamined: number;
@@ -2371,7 +2371,7 @@ interface Replay {
    * the end (its fail-soft `catch` swallowed a throw). Any of those would make
    * support look smaller than it is, so an unsound replay decides nothing.
    */
-  sound: boolean;
+  sound: boolean; /** §81 (DV-51): each replayed edge's written weight — its derived strength when the replay ran under the decay rule. */ weights: Map<string, number>;
 }
 
 /**
@@ -2390,8 +2390,8 @@ interface Replay {
  * revocation must not inherit — and applies `.eq()` / `.neq()`, so the build's
  * own predicates narrow what the reconcile read.
  */
-async function replayBuild(rows: Partial<Record<GraphSourceTable, SupportRow[]>>): Promise<Replay> {
-  const replay: Replay = { edges: new Set(), nodes: new Set(), sound: true };
+async function replayBuild(rows: Partial<Record<GraphSourceTable, SupportRow[]>>, strength?: (e: GraphEdgeObservation) => number): Promise<Replay> {
+  const replay: Replay = { edges: new Set(), nodes: new Set(), sound: true, weights: new Map() };
   const read = new Set<string>();
   const finished = new Set<string>();
   const sources = new Set<string>(GRAPH_SOURCE_TABLES);
@@ -2402,7 +2402,7 @@ async function replayBuild(rows: Partial<Record<GraphSourceTable, SupportRow[]>>
     const run = (): { data: unknown; error: null } => {
       if (written) {
         if (table === "compass_graph_edges") {
-          for (const e of written) replay.edges.add(`${e.src_type}|${e.src_key}|${e.dst_type}|${e.dst_key}|${e.edge_type}`);
+          for (const e of written) { replay.edges.add(`${e.src_type}|${e.src_key}|${e.dst_type}|${e.dst_key}|${e.edge_type}`); replay.weights.set(`${e.src_type}|${e.src_key}|${e.dst_type}|${e.dst_key}|${e.edge_type}`, Number(e.weight)); }
         } else if (table === "compass_graph_nodes") {
           for (const n of written) replay.nodes.add(`${n.node_type}|${n.node_key}`);
         } else {
@@ -2437,7 +2437,7 @@ async function replayBuild(rows: Partial<Record<GraphSourceTable, SupportRow[]>>
   };
 
   try {
-    await buildGraphFromSources({ from } as unknown as SupabaseClient);
+    await buildGraphFromSources({ from } as unknown as SupabaseClient, strength ? { strength } : {});
   } catch {
     replay.sound = false;
   }
@@ -2445,7 +2445,7 @@ async function replayBuild(rows: Partial<Record<GraphSourceTable, SupportRow[]>>
   return replay;
 }
 
-interface StoredEdge { id: string; key: string; family: GraphEdgeFamily; src_type: string; src_key: string; dst_key: string }
+interface StoredEdge { id: string; key: string; family: GraphEdgeFamily; src_type: string; src_key: string; dst_key: string; weight?: number }
 
 /**
  * Retire every stored edge — and every trip, event and circle node — whose
@@ -2479,7 +2479,7 @@ interface StoredEdge { id: string; key: string; family: GraphEdgeFamily; src_typ
  * `deleteFailed`. Idempotent: a second pass over the same sources retires
  * nothing.
  */
-export async function reconcileEdgeSupport(db: SupabaseClient): Promise<EdgeSupportReport> {
+export async function reconcileEdgeSupport(db: SupabaseClient, opts: { decay?: GraphDecayPolicy | null } = {}): Promise<EdgeSupportReport> { const decay = opts.decay !== undefined ? opts.decay : await readGraphDecayPolicy(db); const reweigh = new Map<string, number>(); let decayRetired = 0;
   const report: EdgeSupportReport = {
     examined: 0, unclassified: 0, retired: 0, retiredByFamily: {}, nodesExamined: 0, nodesRetired: 0,
     undecided: 0, undecidedFamilies: [], deleteFailed: 0, truncated: false, unresolved: false,
@@ -2487,7 +2487,7 @@ export async function reconcileEdgeSupport(db: SupabaseClient): Promise<EdgeSupp
   const undecided = new Set<GraphEdgeFamily>();
 
   const stored = await readAllPages(
-    () => db.from("compass_graph_edges").select("id, src_type, src_key, dst_type, dst_key, edge_type"),
+    () => db.from("compass_graph_edges").select(decay ? "id, src_type, src_key, dst_type, dst_key, edge_type, weight" : "id, src_type, src_key, dst_type, dst_key, edge_type"),
     SUPPORT_EDGE_PAGES,
   );
   if (stored.failed) {
@@ -2512,7 +2512,7 @@ export async function reconcileEdgeSupport(db: SupabaseClient): Promise<EdgeSupp
     if (!family) { report.unclassified++; continue; }
     const key = `${e.src_type}|${e.src_key}|${e.dst_type}|${e.dst_key}|${e.edge_type}`;
     const list = byFamily.get(family) ?? [];
-    list.push({ id, key, family, src_type: e.src_type, src_key: e.src_key, dst_key: e.dst_key });
+    list.push({ id, key, family, src_type: e.src_type, src_key: e.src_key, dst_key: e.dst_key, ...(decay ? { weight: Number(r.weight) } : {}) });
     byFamily.set(family, list);
   }
   const edgesOf = (f: GraphEdgeFamily) => byFamily.get(f) ?? [];
@@ -2522,7 +2522,7 @@ export async function reconcileEdgeSupport(db: SupabaseClient): Promise<EdgeSupp
   const judge = (edges: readonly StoredEdge[], support: Replay | null) => {
     for (const e of edges) {
       if (!support?.sound) { report.undecided++; undecided.add(e.family); continue; }
-      if (!support.edges.has(e.key)) doomedEdges.push(e);
+      if (!support.edges.has(e.key)) doomedEdges.push(e); else if (decay) { const w = support.weights.get(e.key) ?? 0; if (w < GRAPH_DECAY_RETIRE_BELOW) { doomedEdges.push(e); decayRetired++; } else if (!(Math.abs((e.weight ?? NaN) - w) < 1e-9)) reweigh.set(e.id, w); } // §81 (DV-51)
     }
   };
   const within = (chunk: readonly string[]) => { const set = new Set(chunk); return (k: string) => set.has(k); };
@@ -2533,7 +2533,7 @@ export async function reconcileEdgeSupport(db: SupabaseClient): Promise<EdgeSupp
       if (!r?.complete) return null;
       rows[t] = r.rows;
     }
-    return replayBuild(rows);
+    return replayBuild(rows, decay?.strength);
   };
 
   // ── Source-anchored nodes (trip, event, circle) ────────────────────────────
@@ -2657,7 +2657,7 @@ export async function reconcileEdgeSupport(db: SupabaseClient): Promise<EdgeSupp
     for (const e of doomedEdges) report.retiredByFamily[e.family] = (report.retiredByFamily[e.family] ?? 0) + 1;
   }
   const retiredNodes = await retireRows(db, "compass_graph_nodes", "id", doomedNodes);
-  report.nodesRetired = retiredNodes.deleted;
+  report.nodesRetired = retiredNodes.deleted; if (decay) { const rw = await rewriteDecayedWeights(db, reweigh); report.decayRetired = decayRetired; report.reweighed = rw.written; report.reweighFailed = rw.failed; if (rw.failed > 0) report.unresolved = true; } // §81 (DV-51)
   report.deleteFailed = edges.failed + retiredNodes.failed;
 
   report.undecidedFamilies = GRAPH_EDGE_FAMILIES.filter((f) => undecided.has(f));
@@ -2728,4 +2728,143 @@ export async function retireUnsupportedCityRows(db: SupabaseClient): Promise<Cit
   if (report.deleteFailed > 0) report.unresolved = true;
   if (report.unresolved) logger.warn({ report }, "compass graph: city-row retirement was PARTIAL");
   return report;
+}
+
+// ── §81 (DV-51; register D-W10S2-10) — graded decay ──────────────────────────
+//
+// `05` §6: *"Use derived strength from: recency, frequency, diversity,
+// confirmed experiences. Do not store 'relationship truth' as a single
+// permanent score."* §9: *"it can decay stale relationships"*. Before this the
+// rebuild wrote `weight = observed_count` — a count, never lowered with age:
+// the permanent score §6 forbids. §67 retired edges whose SOURCE is gone; this
+// lowers and eventually retires edges whose source still exists but is STALE.
+//
+// THE RULE, from the four named inputs and nothing else:
+//
+//   strength = base(frequency, diversity) × 2^(−age / halfLife(confirmed))
+//
+//   frequency  f = observed_count — how many source rows support the edge
+//   diversity  d = distinct UTC days among them — how many separate occasions
+//   base       = log2(1 + d) + ½·log2(f / d): each separate occasion counts
+//                fully, a repeat on the same occasion counts half, both with
+//                diminishing returns, so no single burst dominates. One
+//                observation is exactly 1.
+//   recency    age = days since the edge's latest support (`last_seen`); an
+//              edge with no dated support is not stale by any evidence and is
+//              not decayed.
+//   confirmed  sets the half-life. An edge supported by a CONFIRMED experience
+//              — a presence-evidencing stamp, a published public Memory, a
+//              trip taken, or an outcome where the person went, stayed,
+//              returned or made a memory — keeps CONFIRMED_HALF_LIFE_DAYS = 365:
+//              one full seasonal cycle, the period the world model itself
+//              buckets by (`compass_city_models.monthly`), so a relationship
+//              observed in one season is still more than half-strength when the
+//              season recurs. An edge supported only by INTENT — a tap, a save,
+//              a view, an invite (`behavior:*`, the unconfirmed outcome stages)
+//              — keeps INTENT_HALF_LIFE_DAYS = 14, the repository's existing
+//              activity half-life (`ranking.activity.decayHalfLifeDays`
+//              default, services/ranking/rankingConfig.ts).
+//   structural edges — a trip's owner and destination, an event's city, host
+//              and vibe, a circle's owner and city, an experience's own edges —
+//              state an object's attributes, not a relationship's currency;
+//              they are not decayed, and leave the graph only when their source
+//              does (§67, §28.8).
+//
+// RETIREMENT: below GRAPH_DECAY_RETIRE_BELOW = 1/8 — one fresh observation
+// after three half-lives, where its contribution is under an eighth. A single
+// tap is retired after 42 days; a single presence stamp after three years.
+//
+// §56.9 Q6's last clause — may a rebuild retire an edge whose source rows it did
+// not read? — is answered NO by construction: decay is judged inside §67's
+// reconcile, on the edge's COMPLETE, anchored support replayed through the
+// build under this rule. An undecided edge keeps its stored weight.
+//
+// FLAG: `compass_graph_decay_enabled` (migration 3469, seeded FALSE). Off or
+// unreadable: the build writes `weight = observed_count`, the reconcile reads
+// and writes exactly what it did, and the report carries no decay field —
+// byte-identical (compassGraphDecay.test.ts pins it against the §67 world).
+
+export const GRAPH_DECAY_FLAG = "compass_graph_decay_enabled";
+export const CONFIRMED_HALF_LIFE_DAYS = 365;
+export const INTENT_HALF_LIFE_DAYS = 14;
+export const GRAPH_DECAY_RETIRE_BELOW = 1 / 8;
+/** `compass_outcome_events` stages that record the person DID it (CompassOutcomeEngine.OUTCOME_STAGES). */
+export const CONFIRMED_OUTCOME_STAGES = ["went", "stayed", "made_memory", "returned"] as const;
+
+const DAY_MS = 86_400_000;
+
+/** What the rule reads off one edge. */
+export interface GraphEdgeObservation {
+  src_type: string;
+  dst_type: string;
+  edge_type: string;
+  count: number;
+  distinctDays: number;
+  last: string | null;
+}
+
+function graphEdgeObservationOf(e: { rec: EdgeObs; count: number; last: string | null; days: Set<string> }): GraphEdgeObservation {
+  return {
+    src_type: e.rec.src_type, dst_type: e.rec.dst_type, edge_type: e.rec.edge_type,
+    count: e.count, distinctDays: e.days.size, last: e.last,
+  };
+}
+
+/** Half-life in days, or null for a structural edge the rule does not decay. */
+export function graphEdgeHalfLifeDays(e: { src_type: string; dst_type: string; edge_type: string }): number | null {
+  const family = classifyGraphEdge(e);
+  switch (family) {
+    case "stamp_visit":
+    case "person_activity":
+    case "trip_return":
+    case "city_rhythm":
+      return CONFIRMED_HALF_LIFE_DAYS;
+    case "outcome": {
+      const stage = e.edge_type.slice("outcome:".length);
+      return (CONFIRMED_OUTCOME_STAGES as readonly string[]).includes(stage) ? CONFIRMED_HALF_LIFE_DAYS : INTENT_HALF_LIFE_DAYS;
+    }
+    case "behavior":
+      return INTENT_HALF_LIFE_DAYS;
+    default:
+      return null;   // structural, or an edge no builder writes
+  }
+}
+
+/** The derived strength of one edge at `nowMs`. Rounded to 1e-6 so a stored numeric round-trips. */
+export function graphEdgeStrength(o: GraphEdgeObservation, nowMs: number): number {
+  const d = Math.max(1, Math.floor(o.distinctDays));
+  const f = Math.max(d, Math.floor(o.count));
+  const base = Math.log2(1 + d) + 0.5 * Math.log2(f / d);
+  const halfLife = graphEdgeHalfLifeDays(o);
+  const lastMs = o.last ? Date.parse(o.last) : NaN;
+  const recency = halfLife === null || !Number.isFinite(lastMs)
+    ? 1
+    : Math.pow(2, -Math.max(0, (nowMs - lastMs) / DAY_MS) / halfLife);
+  return Math.round(base * recency * 1e6) / 1e6;
+}
+
+export interface GraphDecayPolicy {
+  nowMs: number;
+  strength: (o: GraphEdgeObservation) => number;
+}
+
+/** The policy for one rebuild, or null when the flag is off or unreadable (fail-closed: no decay). */
+export async function readGraphDecayPolicy(db: SupabaseClient, nowMs: number = Date.now()): Promise<GraphDecayPolicy | null> {
+  if (!(await isFlagEnabled(db, GRAPH_DECAY_FLAG))) return null;
+  return { nowMs, strength: (o) => graphEdgeStrength(o, nowMs) };
+}
+
+/** Write each surviving edge's derived strength. A refused write is counted, never assumed. */
+async function rewriteDecayedWeights(db: SupabaseClient, weights: ReadonlyMap<string, number>): Promise<{ written: number; failed: number }> {
+  let written = 0;
+  let failed = 0;
+  for (const [id, weight] of weights) {
+    try {
+      const { error } = await db.from("compass_graph_edges").update({ weight }).eq("id", id);
+      if (error) failed++; else written++;
+    } catch {
+      failed++;
+    }
+  }
+  return { written, failed };
 }

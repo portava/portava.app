@@ -4134,6 +4134,26 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/fixtures/searchPlatformGolden.json",
     // §70 names it as A08's remaining platform-direction work, and searchPlatformBoundary B5 pins its lib/ importers.
     "artifacts/api-server/src/routes/discoverySearchHelpers.ts",
+    // census-discovery §81 (lane W10-S2, cross-architecture adapters and product rules): A10, A11, A13, A14,
+    // A21, DV-51, DV-76 and DV-77 are graded on these files, migrations and suites.
+    "artifacts/api-server/src/services/airport/LayoverPlaceDwell.ts",
+    "artifacts/api-server/src/domain/trips/contracts/tripViewerProjections.ts",
+    "artifacts/api-server/src/lib/discoveryTripViewerConsumer.ts",
+    "artifacts/api-server/src/services/discovery/DiscoveryWishlistSave.ts",
+    "artifacts/api-server/src/routes/postcardMediaTransport.ts",
+    "artifacts/api-server/src/migrations/3465_layover_consumer_flags.sql",
+    "artifacts/api-server/src/migrations/3466_layover_place_dwell.sql",
+    "artifacts/api-server/src/migrations/3467_cross_architecture_flags.sql",
+    "artifacts/api-server/src/migrations/3468_tag_permission_approval_required.sql",
+    "artifacts/api-server/src/migrations/3469_compass_graph_decay_flag.sql",
+    "artifacts/api-server/src/test/layoverSnapshotConsumers.test.ts",
+    "artifacts/api-server/src/test/layoverPlaceDwell.test.ts",
+    "artifacts/api-server/src/test/discoveryTripViewerProjections.test.ts",
+    "artifacts/api-server/src/test/telegraphDiscoveryAction.test.ts",
+    "artifacts/api-server/src/test/mediaPendingUploadRule.test.ts",
+    "artifacts/api-server/src/test/tagPermissionApprovalRequired.test.ts",
+    "artifacts/api-server/src/test/compassGraphDecay.test.ts",
+    "artifacts/api-server/src/test/discoveryFreeTimeRetirement.test.ts",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

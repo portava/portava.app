@@ -16,7 +16,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { UserLocationPreferences } from "./LocationPermissionService";
-import { getVerifiedPlaces } from "./GeoZoneService";
+import { getVerifiedPlaces } from "./GeoZoneService"; import { discoveryTripViewerProjectionsOn, nextTripCityFromProjection } from "../../lib/discoveryTripViewerConsumer.js";
 
 export type DiscoveryContextMode =
   | "near_me"
@@ -164,7 +164,7 @@ async function buildCityContext(
 }
 
 async function getNextTripCity(db: SupabaseClient, userId: string): Promise<string | null> {
-  try {
+  try { if (await discoveryTripViewerProjectionsOn(db)) return nextTripCityFromProjection(db, userId); // census-discovery §81 (A10): Trips' own "next trip"; the read below is the flag-off arm
     const { data } = await db
       .from("trips")
       .select("destination_city")

@@ -112,9 +112,9 @@ export interface LayoverBuddyDecision {
 export function layoverBuddyDecision(
   airport: AirportProfile,
   session: LayoverSession,
-  nowMs: number = Date.now(), /** The session owner's corridor (`resolveLayoverEntry`), as every certification takes it — census-discovery §65. Omitted = unresolved. */ entry?: EntryEligibility | null,
+  nowMs: number = Date.now(), /** The session owner's corridor (`resolveLayoverEntry`), as every certification takes it — census-discovery §65. Omitted = unresolved. */ entry?: EntryEligibility | null, /** census-discovery §81: the certified snapshot's record, when the caller read one; the gate then certifies nothing itself. */ certified?: LayoverFeasibilityRecord | null,
 ): LayoverBuddyDecision {
-  const record = certifySessionFeasibility(airport, session, { nowMs, entry });
+  const record = certified ?? certifySessionFeasibility(airport, session, { nowMs, entry });
   const safetyGate: BuddySafetyGate = {
     passed:
       // A DENY-LIST, and `entry_unverified` is deliberately not on it: it means

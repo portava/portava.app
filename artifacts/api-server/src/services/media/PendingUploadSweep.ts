@@ -63,7 +63,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { ALLOWED_MEDIA_MIME } from "../../lib/mediaPipeline.js";
-import { removeTransportArtifacts } from "../../lib/postcardMediaTransport.js";
+import { removeTransportArtifacts, partsFolderFor, MAX_RESUMABLE_PARTS } from "../../lib/postcardMediaTransport.js";
 import { logger as rootLogger } from "../../lib/logger.js";
 
 const moduleLogger = rootLogger.child({ service: "PendingUploadSweep" });
@@ -72,16 +72,16 @@ const moduleLogger = rootLogger.child({ service: "PendingUploadSweep" });
 export const PENDING_UPLOAD_BUCKET = "post-media";
 
 /**
- * How old a `pending` row must be before it is an orphan. ONE HOUR — the value
- * `routes/postcards.ts` shipped as `ORPHAN_CUTOFF_MS` ("long enough for any
- * real upload to complete"). UNRATIFIED: nobody has measured how long a
- * resumable 100 MB video takes on a slow link, and a slot older than this is
- * swept even if its owner is still uploading. That is the owner question §56
- * states; this file does not re-decide it.
+ * THE RULE (census-discovery §81, D-W10S2-6; replaces the route's one hour): a pending slot is abandoned only
+ * when no upload can still land in it under an authority the server issued. Measured from its LATEST ACTIVITY —
+ * reservation, a resumable session renewing it (`renewPendingSlot`, stamped before part URLs are minted), or its
+ * newest part's write — it is swept once that is older than a signed upload URL's lifetime (storage-js: "They
+ * are valid for 2 hours") plus the time a PUT authorized at that URL's last valid instant can still be in
+ * flight: the largest single object the transport admits (100 MiB video) at 0.5 Mbit/s is ~28 min, so 30 min.
  */
-export const PENDING_UPLOAD_ORPHAN_CUTOFF_MS = 60 * 60 * 1000;
+export const SIGNED_UPLOAD_URL_TTL_MS = 2 * 60 * 60 * 1000; export const PENDING_UPLOAD_PUT_GRACE_MS = 30 * 60 * 1000; export const PENDING_UPLOAD_ORPHAN_CUTOFF_MS = SIGNED_UPLOAD_URL_TTL_MS + PENDING_UPLOAD_PUT_GRACE_MS;
 
-/** Rows per pass — the route's "cap at 200 per sweep to bound latency". UNRATIFIED, as shipped. */
+/** Rows per pass — the route's "cap at 200 per sweep to bound latency". Kept by D-W10S2-6: it bounds a pass's latency, not what is deleted. */
 export const PENDING_UPLOAD_SWEEP_BATCH = 200;
 
 interface LogLike {
@@ -99,7 +99,7 @@ export type PendingUploadSweepResult =
       /** Rows the pass read. */
       examined: number;
       /** Rows skipped because they were no longer `pending` when re-read. */
-      completedMeanwhile: number;
+      completedMeanwhile: number; /** Rows skipped because their owner is still sending (a renewal or a part newer than the cutoff) — §81. */ stillSending: number;
       /** TRUE when the batch was full: more orphans may be waiting. */
       more: boolean;
     }
@@ -112,7 +112,7 @@ interface PendingRow {
   post_id: string | null;
   storage_path: string | null;
   storage_bucket: string | null;
-  mime_type: string | null;
+  mime_type: string | null; created_at?: string | null; updated_at?: string | null;
 }
 
 /**
@@ -137,13 +137,13 @@ export async function sweepAbandonedPendingUploads(
 ): Promise<PendingUploadSweepResult> {
   const log = opts.log ?? moduleLogger;
   const limit = opts.limit ?? PENDING_UPLOAD_SWEEP_BATCH;
-  const cutoff = new Date((opts.nowMs ?? Date.now()) - (opts.cutoffMs ?? PENDING_UPLOAD_ORPHAN_CUTOFF_MS)).toISOString();
+  const cutoff = new Date((opts.nowMs ?? Date.now()) - (opts.cutoffMs ?? PENDING_UPLOAD_ORPHAN_CUTOFF_MS)).toISOString(); const cutoffAt = Date.parse(cutoff);
 
   let rows: PendingRow[];
   try {
     const { data, error } = await sc
       .from("post_media")
-      .select("id, user_id, post_id, storage_path, storage_bucket, mime_type")
+      .select("id, user_id, post_id, storage_path, storage_bucket, mime_type, created_at, updated_at")
       .eq("processing_status", "pending")
       .lt("created_at", cutoff)
       .order("created_at", { ascending: true })
@@ -160,7 +160,7 @@ export async function sweepAbandonedPendingUploads(
 
   let swept = 0;
   let errors = 0;
-  let completedMeanwhile = 0;
+  let completedMeanwhile = 0; let stillSending = 0;
 
   for (const row of rows) {
     try {
@@ -178,7 +178,7 @@ export async function sweepAbandonedPendingUploads(
       // `ready` row pointing at nothing.
       const { data: still, error: stillErr } = await sc
         .from("post_media")
-        .select("id")
+        .select("id, updated_at")
         .eq("id", row.id)
         .eq("processing_status", "pending")
         .maybeSingle();
@@ -189,7 +189,7 @@ export async function sweepAbandonedPendingUploads(
       }
       if (!still) { completedMeanwhile++; continue; }
 
-      const bucket = sc.storage.from(row.storage_bucket || PENDING_UPLOAD_BUCKET);
+      const bucket = sc.storage.from(row.storage_bucket || PENDING_UPLOAD_BUCKET); const activity = await latestSlotActivityMs(bucket, path, [row.created_at, row.updated_at, (still as { updated_at?: string | null }).updated_at]); if (activity === "unreadable") { log.warn?.({ mediaId: row.id }, "pending-upload sweep: parts listing unreadable — row kept"); errors++; continue; } if (activity >= cutoffAt) { stillSending++; continue; } // §81: an owner still sending is never swept
       // `remove` REPORTS failure in `{ error }`; a missing object is not one.
       const { error: rmErr } = await bucket.remove([path, `${path}.feed.jpg`]);
       if (rmErr) {
@@ -219,5 +219,61 @@ export async function sweepAbandonedPendingUploads(
     }
   }
 
-  return { ok: true, swept, errors, examined: rows.length, completedMeanwhile, more: rows.length >= limit };
+  return { ok: true, swept, errors, examined: rows.length, completedMeanwhile, stillSending, more: rows.length >= limit };
+}
+
+// ── census-discovery §81 (DV-77; register D-W10S2-6) — latest activity ──────
+
+/** A listing entry, as Supabase Storage returns one (timestamps are ISO strings). */
+interface ListedObject { name?: string; updated_at?: string | null; created_at?: string | null }
+
+/**
+ * The latest instant anything happened to a slot: the row's reservation and
+ * renewal times, and the newest write in its resumable parts folder. An
+ * unreadable listing is "unreadable" — never "no parts" — and the caller keeps
+ * the row: a deletion must not run on a guess about whether its owner is still
+ * sending.
+ */
+export async function latestSlotActivityMs(
+  bucket: { list: (folder: string, opts?: Record<string, unknown>) => Promise<{ data: ListedObject[] | null; error: { message?: string } | null }> },
+  storagePath: string,
+  rowInstants: ReadonlyArray<string | null | undefined>,
+): Promise<number | "unreadable"> {
+  let latest = Number.NEGATIVE_INFINITY;
+  for (const t of rowInstants) {
+    const ms = typeof t === "string" ? Date.parse(t) : NaN;
+    if (Number.isFinite(ms) && ms > latest) latest = ms;
+  }
+  let listed: Awaited<ReturnType<typeof bucket.list>>;
+  try {
+    listed = await bucket.list(partsFolderFor(storagePath), { limit: MAX_RESUMABLE_PARTS + 50 });
+  } catch {
+    return "unreadable";
+  }
+  if (listed.error || !Array.isArray(listed.data)) return "unreadable";
+  for (const o of listed.data) {
+    const ms = Date.parse(String(o.updated_at ?? o.created_at ?? ""));
+    if (Number.isFinite(ms) && ms > latest) latest = ms;
+  }
+  return latest;
+}
+
+/**
+ * Stamp a pending slot as renewed, BEFORE a resumable session mints part URLs
+ * for it, so the sweep measures from the moment a live upload authority was
+ * last issued. Only a still-`pending` row is touched. A failed stamp is
+ * reported, and the session refuses rather than mint URLs the sweep cannot see.
+ */
+export async function renewPendingSlot(
+  sc: SupabaseClient,
+  mediaId: string,
+  nowMs: number = Date.now(),
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const { error } = await sc
+    .from("post_media")
+    .update({ updated_at: new Date(nowMs).toISOString() })
+    .eq("id", mediaId)
+    .eq("processing_status", "pending");
+  if (error) return { ok: false, message: String(error.message ?? "post_media renewal failed") };
+  return { ok: true };
 }
