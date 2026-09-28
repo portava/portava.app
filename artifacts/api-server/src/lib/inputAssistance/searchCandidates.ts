@@ -37,7 +37,7 @@ import {
   rankCombined,
   haversineKm,
   type SearchQueryContext,
-} from "../../routes/discoverySearchHelpers.js";
+} from "./searchQueryHelpers.js";
 import { readTripWindows, fitInstantToWindows } from "../../domain/trips/services/TripFreedomConsumers.js";
 import {
   normalizeLocationName,

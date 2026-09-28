@@ -44,7 +44,7 @@
  * number, and two equally-close candidates are exactly the case §19 says must
  * not be guessed.
  */
-import { applyAliases } from '../../routes/discoverySearchHelpers';
+import { applyAliases } from './searchQueryHelpers';
 import { sanitizeQuery } from './searchCandidates';
 import { searchKey } from '../canonicalLocations';
 import type { InputContext, InputSuggestion } from './types';

@@ -25,7 +25,7 @@
 import { fetchBlockedSet } from '../blocks';
 import { normalizeLocationName, type CanonicalRow } from '../canonicalLocations';
 import { logger } from '../logger';
-import type { SearchQueryContext } from '../../routes/discoverySearchHelpers';
+import type { SearchQueryContext } from './searchQueryHelpers';
 import {
   dispatchSearch,
   fetchAgeRestrictedSet,

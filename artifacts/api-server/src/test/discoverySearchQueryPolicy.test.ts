@@ -1,23 +1,29 @@
 /**
- * discoverySearchQueryPolicy — census-discovery B02 (GII G62, owner decision D5)
- * PINNED AS IT IS, not changed.
+ * discoverySearchQueryPolicy — census-discovery B02 (GII G62).
  *
- * B02 is held on a recorded owner decision (§6 D5, §10.5, §43.7): whether an
- * emoji in a Discovery query may be stripped. Stripping changes which results
- * a live route returns, so this lane does not choose. What this file does is
- * make today's behaviour a measured fact rather than a sentence, so that the
- * decision, whichever way it goes, lands as a visible diff to these tests:
+ * B02 was held on owner decision D5 (§6), re-keyed D-8 in §69.1, until
+ * census-discovery §80 decided it (register D-W10-S1-1): Discovery's search
+ * routes take the SHARED PLATFORM's field-context emoji policy — option (b) of
+ * §46.5. `global_search` is a lookup field, and the platform's QueryNormalizer
+ * (lib/inputAssistance/queryNormalizer.ts, census-input-intelligence G62 `C`)
+ * strips emoji from the SEARCH KEY of every lookup field and never from the
+ * user's text. Before §80 the tests below pinned the opposite (the emoji rode
+ * into the `ilike` pattern); they are restated here as the visible diff of
+ * that decision, as §46.5 said they would be:
  *
- *   Q1  `sanitizeQuery` strips ONLY `(`, `)` and `,` (the PostgREST filter
- *       metacharacters), collapses whitespace and trims — nothing else;
- *   Q2  an emoji survives into the `ilike` pattern the database receives;
- *   Q3  so "🔥 bar" does not find "Sky Bar" — and DOES find a row whose stored
- *       text literally carries the emoji;
- *   Q4  an emoji-only query is long enough to be searched (UTF-16 length),
- *       answers 200 with whatever literally matches, and is not a 400;
- *   Q5  suggest behaves the same;
- *   Q6  the input gateway is NOT Discovery's route: its field-context emoji
- *       strip (lib/inputAssistance/queryNormalizer) is not reached from here.
+ *   Q1  `sanitizeQuery` is UNCHANGED: it strips only `(`, `)` and `,`,
+ *       collapses whitespace and trims. The emoji rule is applied BEFORE it,
+ *       by the platform's `stripEmoji`, exactly as the gateway applies it;
+ *   Q2  no emoji reaches the `ilike` pattern the database receives;
+ *   Q3  so "🔥 bar" finds "Sky Bar" — and still finds the row whose stored name
+ *       carries the emoji, because its text matches "bar";
+ *   Q4  an emoji-only query has no searchable characters: `400 invalid_payload`
+ *       on /discovery/search, the same answer "((" has always had;
+ *   Q5  suggest follows the same rule, and refuses an emoji-only query as
+ *       `query_too_short` (a 200 refusal, typeahead-safe);
+ *   Q6  ONE policy, not two: the route calls the platform's own `stripEmoji`
+ *       and `stripsEmoji("global_search")` is true, so the route and the
+ *       gateway cannot drift apart.
  *
  * Run: node --import tsx/esm --test src/test/discoverySearchQueryPolicy.test.ts
  */
@@ -80,53 +86,72 @@ beforeEach(() => {
 
 const ids = (body: any) => ((body.results ?? []) as any[]).map((r) => r.id);
 
-describe("Q2–Q4 — /discovery/search carries the emoji into the database pattern", () => {
-  it("Q2 — the ilike pattern the places read sends contains the emoji verbatim", async () => {
+describe("Q2–Q4 — /discovery/search searches the key without its emoji (D-W10-S1-1)", () => {
+  it("Q2 — the ilike pattern the places read sends carries no emoji", async () => {
     const { calls } = installKit(world());
     await kitGet(base, `/discovery/search?q=${encodeURIComponent("🔥 bar")}&type=places`);
     const or = calls.ors.find((o) => o.table === "discovery_places");
     assert.ok(or, "control: the places read ran");
-    assert.ok(or!.expr.includes("%🔥 bar%"), `the emoji did not reach the pattern: ${or!.expr}`);
+    assert.ok(or!.expr.includes("%bar%"), `the stripped key did not reach the pattern: ${or!.expr}`);
+    assert.ok(!or!.expr.includes("🔥"), `an emoji reached the pattern: ${or!.expr}`);
   });
 
-  it("Q3 — '🔥 bar' does NOT find 'Sky Bar', and DOES find the row whose name carries the emoji", async () => {
+  it("Q3 — '🔥 bar' finds 'Sky Bar' AND the row whose name carries the emoji", async () => {
     installKit(world());
     const { status, body } = await kitGet(base, `/discovery/search?q=${encodeURIComponent("🔥 bar")}&type=places`);
     assert.equal(status, 200);
-    assert.deepEqual(ids(body), [FIRE_BAR]);
+    assert.deepEqual(ids(body).sort(), [FIRE_BAR, SKY_BAR].sort());
     installKit(world());
     const plain = await kitGet(base, `/discovery/search?q=bar&type=places`);
-    assert.deepEqual(ids(plain.body).sort(), [FIRE_BAR, SKY_BAR].sort(), "control: without the emoji both bars match");
+    assert.deepEqual(ids(plain.body), ids(body), "the emoji query answers exactly what its text answers");
   });
 
-  it("Q4 — an emoji-only query is searched (200, not 400) and matches only what literally carries it", async () => {
+  it("Q4 — an emoji-only query has nothing to search: 400 invalid_payload, like '((' always did", async () => {
     installKit(world());
     const { status, body } = await kitGet(base, `/discovery/search?q=${encodeURIComponent("🔥")}&type=places`);
-    assert.equal(status, 200, "a single emoji is two UTF-16 units, which passes the 2-character floor");
-    assert.deepEqual(ids(body), [FIRE_BAR]);
+    assert.equal(status, 400);
+    assert.equal(body.code ?? body.error, "invalid_payload");
+    installKit(world());
+    const parens = await kitGet(base, `/discovery/search?q=${encodeURIComponent("((")}&type=places`);
+    assert.equal(parens.status, 400, "control: the pre-existing no-searchable-characters answer");
+    installKit(world());
+    const zwj = await kitGet(base, `/discovery/search?q=${encodeURIComponent("👨‍👩‍👧 🔥")}&type=places`);
+    assert.equal(zwj.status, 400, "a ZWJ family sequence leaves no orphan joiner to search");
   });
 });
 
 describe("Q5 — /discovery/suggest follows the same rule", () => {
-  it("'🔥 bar' suggests the emoji-named place and not Sky Bar", async () => {
+  it("'🔥 bar' suggests Sky Bar and the emoji-named place", async () => {
     installKit(world());
     const { status, body } = await kitGet(base, `/discovery/suggest?q=${encodeURIComponent("🔥 bar")}`);
     assert.equal(status, 200);
     const all = (body.groups as any[]).flatMap((g) => g.items.map((i: any) => i.id));
     assert.ok(all.includes(FIRE_BAR));
-    assert.ok(!all.includes(SKY_BAR));
+    assert.ok(all.includes(SKY_BAR));
+    assert.equal(body.query, "bar", "the key suggest searched is the stripped one");
+  });
+
+  it("an emoji-only suggest is refused as query_too_short, never a silent empty", async () => {
+    installKit(world());
+    const { status, body } = await kitGet(base, `/discovery/suggest?q=${encodeURIComponent("🔥🔥")}`);
+    assert.equal(status, 200);
+    assert.deepEqual(body.groups, []);
+    assert.equal(body.refusal?.code, "query_too_short");
   });
 });
 
-describe("Q6 — the gateway's emoji strip is a different surface", () => {
-  it("routes/discoverySearch.ts does not import the input gateway's query normaliser", async () => {
+describe("Q6 — one emoji policy for the route and the gateway", () => {
+  it("routes/discoverySearch.ts strips with the platform's stripEmoji, and global_search is a stripping context", async () => {
     const { readFile } = await import("node:fs/promises");
-    // census-discovery §70: the searchers the route dispatches to live in the
-    // platform module now, so the same rule is held there too.
-    for (const rel of ["../routes/discoverySearch.ts", "../lib/inputAssistance/searchCandidates.ts"]) {
-      const src = await readFile(new URL(rel, import.meta.url), "utf8");
-      assert.ok(!/queryNormalizer/.test(src), `${rel}: Discovery search started using the gateway's emoji policy without an owner decision (D5)`);
-      assert.ok(!/stripEmoji|stripsEmoji/.test(src));
-    }
+    const route = await readFile(new URL("../routes/discoverySearch.ts", import.meta.url), "utf8");
+    assert.match(route, /import \{[^}]*\bstripEmoji\b[^}]*\} from "\.\.\/lib\/inputAssistance\/queryNormalizer\.js"/);
+    assert.equal((route.match(/stripEmoji\(/g) ?? []).length, 2, "both /discovery/search and /discovery/suggest strip the key");
+    const { stripsEmoji } = await import("../lib/inputAssistance/queryNormalizer.js");
+    assert.equal(stripsEmoji("global_search"), true);
+    // The searchers themselves still do not import the normaliser: that module
+    // imports sanitizeQuery FROM searchCandidates, and the rule is applied once,
+    // at the edge, not per searcher.
+    const platform = await readFile(new URL("../lib/inputAssistance/searchCandidates.ts", import.meta.url), "utf8");
+    assert.ok(!/queryNormalizer/.test(platform));
   });
 });

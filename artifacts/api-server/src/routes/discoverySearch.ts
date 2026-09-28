@@ -136,8 +136,8 @@ router.get("/discovery/search", async (req, res) => {
   const isHandleQuery = rawQ.startsWith("@");
   const qAfterHandle = isHandleQuery ? rawQ.slice(1) : rawQ;
 
-  // Apply alias expansion (typo tolerance) before sanitization
-  let q = applyAliases(qAfterHandle);
+  // D-W10-S1-1 (§80, B02): the platform's emoji strip, then aliases, then sanitization
+  let q = applyAliases(stripEmoji(qAfterHandle));
   // Apply PostgREST injection sanitization on top of Zod validation
   q = sanitizeQuery(q);
   if (q.length < 2) {
@@ -411,7 +411,7 @@ router.get("/discovery/suggest", async (req, res) => {
   const rawInput = typeof req.query.q === "string" ? req.query.q : "";
   // @handle queries suggest people only, mirroring /discovery/search behavior
   const isHandleQuery = rawInput.startsWith("@");
-  const q = sanitizeQuery(applyAliases(isHandleQuery ? rawInput.slice(1) : rawInput)).slice(0, 80);
+  const q = sanitizeQuery(applyAliases(stripEmoji(isHandleQuery ? rawInput.slice(1) : rawInput))).slice(0, 80);
   if (q.length < 2) {
     // `11` §9 class 1, VALIDATION — and the one place in this lane where a
     // validation refusal is NOT a 4xx. This fires on every keystroke of a
@@ -668,3 +668,11 @@ import { stampSuggestGroupsServed } from "../lib/discoverySearchExposure.js";
 // lib/inputAssistance/searchCandidates.ts in §70, and their imports with them.
 // ─────────────────────────────────────────────────────────────────────────────
 import { withDiscoveryInvisibleGate } from "../lib/discoveryPeoplePrivacy.js";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// census-discovery §80 — B02 (register D-W10-S1-1). Discovery's search key takes
+// the shared platform's field-context emoji rule: `global_search` is a lookup
+// field, so an emoji is stripped from the KEY (never from what the user sees),
+// by the same function the input gateway uses. Applied at the two edits above.
+// ─────────────────────────────────────────────────────────────────────────────
+import { stripEmoji } from "../lib/inputAssistance/queryNormalizer.js";

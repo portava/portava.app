@@ -30,7 +30,7 @@ import {
   fetchAgeRestrictedSet,
   type SearchResult,
 } from './searchCandidates';
-import type { SearchQueryContext } from '../../routes/discoverySearchHelpers';
+import type { SearchQueryContext } from './searchQueryHelpers';
 import { canMessage } from '../messagingPermissions';
 import { validateUsername } from '../usernameRules';
 import type { InputContext, InputSuggestion } from './types';

@@ -152,19 +152,32 @@ describe("search platform boundary (census-discovery §70, A08 reason 1)", () =>
 
   it("B5 (residual, shrink-only): lib/ importers of routes/discoverySearchHelpers", () => {
     // Pure helpers (alias table, match tiers, time and nearby intent, the
-    // query-context type) with no router in them. Still a routes/ path, so
-    // still named in §70 as remaining. A new importer fails here; removing
-    // one means deleting it from this list.
-    const KNOWN = [
-      "lib/inputAssistance/gateway.ts",
-      "lib/inputAssistance/projection.ts",
-      "lib/inputAssistance/queryNormalizer.ts",
-      "lib/inputAssistance/searchCandidates.ts",
-      "lib/inputAssistance/semanticParser.ts",
-      "lib/inputAssistance/socialIdentity.ts",
-    ];
+    // query-context type) with no router in them. §70 left them on a routes/
+    // path and pinned the six lib/ importers here as shrink-only. census-
+    // discovery §80 (lane W10-S1) moved the helpers into the platform module
+    // `lib/inputAssistance/searchQueryHelpers.ts`, so the list is now EMPTY:
+    // no lib/ module reaches into routes/ for them any more.
+    const KNOWN: string[] = [];
     const importers = importersOf(libSources(), HELPERS);
     const added = importers.filter((f) => !KNOWN.includes(f));
     assert.deepEqual(added, [], `new lib/ importer(s) of routes/discoverySearchHelpers: ${added.join(", ")}`);
+  });
+
+  it("B6: the helpers live in the platform module; routes/discoverySearchHelpers.ts is a re-export and nothing else", async () => {
+    // census-discovery §80. The route path survives only so no Discovery caller
+    // or test has to change an import; it must not grow code of its own again.
+    const shim = readFileSync(`${HELPERS}.ts`, "utf8");
+    const code = shim.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "").trim();
+    assert.equal(
+      code, `export * from "../lib/inputAssistance/searchQueryHelpers.js";`,
+      "routes/discoverySearchHelpers.ts defines something again; it must only re-export the platform module",
+    );
+    const platform = await import("../lib/inputAssistance/searchQueryHelpers.js");
+    const route = await import("../routes/discoverySearchHelpers.js");
+    for (const name of ["applyAliases", "matchTier", "rankByMatchTier", "rankCombined", "haversineKm", "parseNearbyIntent", "parseTimeIntent"] as const) {
+      assert.equal(typeof (platform as Record<string, unknown>)[name], "function", `searchQueryHelpers does not export ${name}`);
+      assert.equal((route as Record<string, unknown>)[name], (platform as Record<string, unknown>)[name], `${name} has a second copy`);
+    }
+    assert.equal(route.SEARCH_ALIASES, platform.SEARCH_ALIASES);
   });
 });
