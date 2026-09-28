@@ -63,6 +63,11 @@ const FIRE_BAR = "p-fire-bar";
 const RED_LION = "p-red-lion";
 const CAFE_LUNA = "p-cafe-luna";
 const CAFE_SOL = "p-cafe-sol";
+const BS_NORTH = "p-backslash-north";
+const BS_CAFE = "p-backslash-cafe";
+const KIOSK = "p-kiosk-row";
+const HUNDRED = "p-hundred-percent";
+const THOUSAND = "p-thousand";
 
 function world(): Partial<KitState> {
   const place = (id: string, name: string) => ({
@@ -77,7 +82,8 @@ function world(): Partial<KitState> {
       user_friendships: [], event_rsvps: [], events: [], trips: [], trip_plan_items: [], hidden_gems: [], posts: [],
       circles: [], hashtags: [], stamp_definitions: [], canonical_locations: [],
       discovery_places: [place(SKY_BAR, "Sky Bar"), place(FIRE_BAR, "🔥 bar Lisboa"),
-        place(RED_LION, "Red Lion Pub"), place(CAFE_LUNA, "Café Luna"), place(CAFE_SOL, "Cafe Sol")],
+        place(RED_LION, "Red Lion Pub"), place(CAFE_LUNA, "Café Luna"), place(CAFE_SOL, "Cafe Sol"),
+        place(BS_NORTH, "Kiosk\\ North"), place(BS_CAFE, "K\\iosk Stand"), place(KIOSK, "Kiosk Row"), place(HUNDRED, "100% Burger"), place(THOUSAND, "1000 Lakes")],
     },
   };
 }
@@ -269,6 +275,67 @@ describe("Q9 — a literal '*' is never a wildcard (§80 follow-up)", () => {
     await kitGet(base, `/discovery/search?q=${encodeURIComponent("sky*bar")}&type=places`);
     const or = calls.ors.find((o) => o.table === "discovery_places");
     assert.ok(or && !or.expr.includes("*"), `a '*' reached the pattern: ${or?.expr}`);
+  });
+});
+
+describe("Q10 — LIKE's own metacharacters are literal in the key (round-3 verification)", () => {
+  // `\` is LIKE's escape character; `%` and `_` its wildcards. A user's
+  // backslash that reached the pattern unescaped either escaped the closing
+  // wildcard ("bar\" -> `%bar\%`, which matches nothing) or swallowed the
+  // next letter ("b\ar" -> `%b\ar%`, which matches "bar").
+  it("Q10a — 'kiosk\\' finds the row that literally holds it, and only that row", async () => {
+    installKit(world());
+    const { status, body } = await kitGet(base, `/discovery/search?q=${encodeURIComponent("kiosk\\")}&type=places`);
+    assert.equal(status, 200);
+    assert.deepEqual(ids(body), [BS_NORTH]);
+  });
+
+  it("Q10b — 'k\\iosk' is not 'kiosk': Kiosk Row is not found, the literal row is", async () => {
+    installKit(world());
+    const { body } = await kitGet(base, `/discovery/search?q=${encodeURIComponent("k\\iosk")}&type=places`);
+    assert.deepEqual(ids(body), [BS_CAFE]);
+  });
+
+  it("Q10c — '100%' is a literal percent sign, not a wildcard", async () => {
+    installKit(world());
+    const { body } = await kitGet(base, `/discovery/search?q=${encodeURIComponent("100%")}&type=places`);
+    assert.deepEqual(ids(body), [HUNDRED]);
+  });
+
+  it("Q10d — the pattern the database receives escapes the backslash itself", async () => {
+    const { calls } = installKit(world());
+    await kitGet(base, `/discovery/search?q=${encodeURIComponent("k\\iosk")}&type=places`);
+    const or = calls.ors.find((o) => o.table === "discovery_places");
+    assert.ok(or!.expr.includes("%k\\\\iosk%"), `the backslash was not escaped: ${or!.expr}`);
+  });
+});
+
+describe("Q11 — the gateway's duplicate scan keeps LIKE's escapes (round 3)", () => {
+  // `lib/postgrestFilter.safeOrIlikeValue` LIKE-escapes FIRST and then strips
+  // the `.or()` structural characters, backslash included — so the escape it
+  // had just added was removed again and "100%" reached the pattern as a
+  // wildcard. The creation-assistance duplicate scan (a gateway path) now
+  // strips the structure first and escapes second.
+  it("Q11a — a place named '100%' is scanned as a literal percent, and a backslash cannot re-open a wildcard", async () => {
+    const { scanDuplicatePlaces, scanDuplicateEvents } = await import("../lib/inputAssistance/duplicateDetection.js");
+    const { makeKitClient, emptyState, emptyCalls } = await import("./discoverySearchTestKit.js");
+    const calls = emptyCalls();
+    const sc = makeKitClient(emptyState({ rows: { places: [], events: [] } }), calls) as any;
+    await scanDuplicatePlaces(sc, { name: "100%", city: "a\\_b" });
+    await scanDuplicateEvents(sc, { name: "50% off", city: null });
+    const exprs = calls.ors.map((o) => o.expr).join(" | ");
+    assert.ok(exprs.includes("name.ilike.%100\\%%"), `the percent reached the pattern unescaped: ${exprs}`);
+    assert.ok(exprs.includes("city.ilike.%a\\_b%"), `the underscore reached the pattern unescaped: ${exprs}`);
+    assert.ok(exprs.includes("title.ilike.%50\\% off%"), exprs);
+  });
+});
+
+describe("Q8d — the in-word rule is script-neutral (round 3)", () => {
+  it("Greek and Cyrillic lowercase words join across an emoji; a capital still starts a new word", async () => {
+    const { stripEmoji } = await import("../lib/inputAssistance/queryNormalizer.js");
+    assert.equal(stripEmoji("αθ\u{1F525}ήνα"), "αθήνα");
+    assert.equal(stripEmoji("моск\u{1F525}ва"), "москва");
+    assert.equal(stripEmoji("Москва\u{1F525}Питер"), "Москва Питер");
   });
 });
 

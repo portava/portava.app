@@ -355,7 +355,7 @@ function sqlPattern(q: string): string {
   // containing them could terminate the ilike value and inject additional
   // filter clauses. They carry no search meaning here, so strip them outright;
   // then escape the LIKE wildcards `%` and `_`.
-  return `%${q.replace(/[,()]/g, "").replace(/[%_]/g, "\\$&")}%`;
+  return `%${q.replace(/[,()]/g, "").replace(/[\\%_]/g, "\\$&")}%`; // §80 round 3: `\` is LIKE's escape character, so it is escaped too
 }
 
 /**
