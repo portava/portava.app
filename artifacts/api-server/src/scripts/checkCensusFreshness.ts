@@ -4425,6 +4425,8 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.railRefresh.component.test.tsx",
     "travel-buddy-standalone/src/services/__tests__/discovery.feedTimeout.test.ts",
     "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryEventPostsRail.refusal.component.test.tsx",  // §94.11 cites its restated transport-failure control
+    // census-discovery §99 (lane W11-X2, round 3): DV-83 re-graded on ForYouTab's cached replay of a partial page.
+    "travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.cachedPartial.component.test.tsx",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //
