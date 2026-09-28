@@ -53,8 +53,8 @@
       ]
     },
     "posts": {
-      "note": "2148 — location-verification forgery. SELECT-only for clients; all writes service-role.",
-      "tableGrants": { "anon": ["SELECT"], "authenticated": ["SELECT"] },
+      "note": "2148 — location-verification forgery. SELECT-only for clients; all writes service-role. 3362 (census-media §44): the table-level client SELECT is REVOKED; anon and authenticated read 40 named columns by column grant, never the location columns.",
+      "tableGrants": {},
       "insertCols": {},
       "updateCols": {},
       "policies": [
@@ -95,8 +95,8 @@
       ]
     },
     "passport_postcards": {
-      "note": "2151+2152 — location-verification forgery + moderation-status bypass. content editable; location_verified/verification_method/verified_*/stamp_*/status server-owned. post_id+user_id INSERT-only.",
-      "tableGrants": { "anon": ["SELECT"], "authenticated": ["SELECT"] },
+      "note": "2151+2152 — location-verification forgery + moderation-status bypass. content editable; location_verified/verification_method/verified_*/stamp_*/status server-owned. post_id+user_id INSERT-only. 3363 (census-media §44): the table-level client SELECT is REVOKED; clients read 20 named columns by column grant, never the location/verification columns.",
+      "tableGrants": {},
       "insertCols": { "authenticated": ["caption","location_city","location_country","location_name","media_url","note","pinned_at","post_id","user_id","visibility"] },
       "updateCols": { "authenticated": ["caption","location_city","location_country","location_name","media_url","note","pinned_at","visibility"] },
       "policies": [
@@ -107,11 +107,14 @@
       ]
     },
     "discovery_places": {
-      "note": "2153 — INSERT forge + submitter impersonation. SELECT-only for clients; all writes service-role.",
+      "note": "2153 — INSERT forge + submitter impersonation. SELECT-only for clients; all writes service-role. 3390 (census-discovery, explicit RLS): three RESTRICTIVE client-deny policies (INSERT, UPDATE, DELETE for anon+authenticated), so no later permissive policy or re-GRANT can reopen a client write.",
       "tableGrants": { "anon": ["SELECT"], "authenticated": ["SELECT"] },
       "insertCols": {},
       "updateCols": {},
       "policies": [
+        { "name": "discovery_places_deny_delete_clients", "cmd": "DELETE", "permissive": false, "roles": ["anon","authenticated"] },
+        { "name": "discovery_places_deny_insert_clients", "cmd": "INSERT", "permissive": false, "roles": ["anon","authenticated"] },
+        { "name": "discovery_places_deny_update_clients", "cmd": "UPDATE", "permissive": false, "roles": ["anon","authenticated"] },
         { "name": "discovery_places_auth_insert", "cmd": "INSERT", "permissive": true, "roles": ["public"] },
         { "name": "discovery_places_own_delete", "cmd": "DELETE", "permissive": true, "roles": ["public"] },
         { "name": "discovery_places_own_update", "cmd": "UPDATE", "permissive": true, "roles": ["public"] },
@@ -166,8 +169,8 @@
       ]
     },
     "post_media": {
-      "note": "2158 — media self-moderation. descriptor cols (urls/dimensions/sort) editable; moderation_status/processing_status/phash/dedup_processed/canonical_place_id/feed_*/stamp_overlay server-owned. post_id+user_id INSERT-only.",
-      "tableGrants": { "anon": ["SELECT"], "authenticated": ["SELECT"] },
+      "note": "2158 — media self-moderation. descriptor cols (urls/dimensions/sort) editable; moderation_status/processing_status/phash/dedup_processed/canonical_place_id/feed_*/stamp_overlay server-owned. post_id+user_id INSERT-only. 3363 (census-media §44): the table-level client SELECT is REVOKED; clients read 23 named columns by column grant, never the place copies.",
+      "tableGrants": {},
       "insertCols": { "authenticated": ["duration_seconds","file_size_bytes","height","media_type","mime_type","post_id","public_url","sort_order","storage_bucket","storage_path","thumbnail_storage_path","thumbnail_url","user_id","width"] },
       "updateCols": { "authenticated": ["duration_seconds","file_size_bytes","height","media_type","mime_type","public_url","sort_order","storage_bucket","storage_path","thumbnail_storage_path","thumbnail_url","width"] },
       "policies": [

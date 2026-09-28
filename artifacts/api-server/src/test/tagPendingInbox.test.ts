@@ -29,7 +29,7 @@ const B = "bbbbbbbb-0000-4000-8000-0000000000b2";   // the person tagged, the ca
 const C = "cccccccc-0000-4000-8000-0000000000c3";   // a second tagger
 const tag = (id: string, over: Record<string, unknown> = {}) => ({
   id, source_type: "post", source_id: "eeeeeeee-0000-4000-8000-0000000000e5", tagger_id: A, tagged_user_id: B,
-  status: "pending", suppressed: false, tagged_at: "2026-09-27T10:00:00.000Z", ...over,
+  status: "pending", suppressed: false, created_at: "2026-09-27T10:00:00.000Z", ...over,
 });
 const T1 = "d1d1d1d1-0000-4000-8000-000000000001";
 const T2 = "d2d2d2d2-0000-4000-8000-000000000002";
@@ -86,7 +86,7 @@ describe("I — GET /me/tags/pending", () => {
   it("I2 flag ON: only the caller's pending, unremoved tags, newest first, tagger by @handle", async () => {
     stage(true, [
       tag(T1),
-      tag(T2, { tagger_id: C, tagged_at: "2026-09-28T09:00:00.000Z" }),
+      tag(T2, { tagger_id: C, created_at: "2026-09-28T09:00:00.000Z" }),
       tag(T3, { status: "approved" }),
       tag(T4, { suppressed: true }),
       tag(T5, { tagged_user_id: A, tagger_id: C }),
