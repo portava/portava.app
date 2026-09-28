@@ -4072,6 +4072,18 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // §69 also cites these two: DV-54's restated repeated-history leg rests on the seen-penalty case, and DV-75's on the third verdict job.
     "artifacts/api-server/src/test/discoveryCategoryAffinity.test.ts",
     ".github/workflows/unwired-checks.yml",
+    // census-discovery §71 (lane P31, the intent-mode sender): A05 and DV-42 are restated on the
+    // selector, its suites and the parity suite; the selector rests on the app's flag read and the
+    // route that reports 2850; A05's For You gap rests on the Compass feed hook taking no mode.
+    "travel-buddy-standalone/src/components/discovery/DiscoveryIntentModeSelector.tsx",
+    "travel-buddy-standalone/src/services/__tests__/discovery.intentMode.test.ts",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryIntentModeSelector.component.test.tsx",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryScreen.intentMode.component.test.tsx",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryTabs.intentMode.component.test.tsx",
+    "artifacts/api-server/src/test/discoveryIntentModeSender.test.ts",
+    "travel-buddy-standalone/src/context/FeatureFlagsContext.tsx",
+    "artifacts/api-server/src/routes/featureFlags.ts",
+    "travel-buddy-standalone/src/hooks/compass/useCompassFeed.ts",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //
