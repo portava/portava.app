@@ -344,6 +344,12 @@ interface DiscoveryCategoryTabProps {
   onAddToRoute?: (draft: import('../RouteBuilderSheet.tsx').RouteStopDraft) => void;
   onPickDestination?: (place: Place) => void;
   contextMode?: DiscoveryContextMode | null;
+  /**
+   * Sensing §8 intent mode the user chose (census-discovery §71), sent as
+   * `?intentMode=` on GET /discovery. Null / absent ⇒ not sent. The screen
+   * remounts this tab when it changes (its `key`), so it is fixed per instance.
+   */
+  intentMode?: import('../../../src/services/discovery.ts').DiscoveryIntentMode | null;
   viewMode?: 'list' | 'map';
   ageFilter?: import('../../../src/services/discovery.ts').DiscoveryAgeFilter | null;
   customMinAge?: number | null;
@@ -376,6 +382,7 @@ export function DiscoveryCategoryTab({
   onAddToRoute,
   onPickDestination,
   contextMode,
+  intentMode,
   viewMode = 'list',
   ageFilter,
   customMinAge,
@@ -393,11 +400,11 @@ export function DiscoveryCategoryTab({
   // SWR: seed from in-memory client cache so second opens paint instantly.
   const [places, setPlaces]         = useState<DiscoveryPlace[]>(() => {
     if (!destination) return [];
-    return getCachedDiscoveryPlaces(destination, category, 10, 1)?.places ?? [];
+    return getCachedDiscoveryPlaces(destination, category, 10, 1, intentMode)?.places ?? [];
   });
   const [loading, setLoading]       = useState<boolean>(() => {
     if (!destination) return false;
-    return getCachedDiscoveryPlaces(destination, category, 10, 1) === null;
+    return getCachedDiscoveryPlaces(destination, category, 10, 1, intentMode) === null;
   });
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError]           = useState<string | null>(null);
@@ -480,7 +487,8 @@ export function DiscoveryCategoryTab({
       nearestFetchPendingWithCoords.current = true;
     }
 
-    const res = await getDiscoveryPlaces(destination, category, currentFilters, nextPage, contextMode, ageFilter, customMinAge, customMaxAge, lat, lng, nearestUserLat, nearestUserLng);
+    const requestFilters = intentMode ? { ...currentFilters, intentMode } : currentFilters;  // no mode ⇒ the filters object passed before §71
+    const res = await getDiscoveryPlaces(destination, category, requestFilters, nextPage, contextMode, ageFilter, customMinAge, customMaxAge, lat, lng, nearestUserLat, nearestUserLng);
 
     // Always clear — bootstrap guard is only needed during the async window.
     nearestFetchPendingWithCoords.current = false;
@@ -544,7 +552,7 @@ export function DiscoveryCategoryTab({
     // SWR: immediately hydrate with the cache for the active destination/category
     // so city or tab switches never show stale content from the previous query.
     const cachedResult = destination
-      ? getCachedDiscoveryPlaces(destination, category, filters.radiusKm, 1)
+      ? getCachedDiscoveryPlaces(destination, category, filters.radiusKm, 1, intentMode)
       : null;
     if (cachedResult) {
       setPlaces(cachedResult.places);

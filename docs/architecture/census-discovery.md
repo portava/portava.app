@@ -2562,7 +2562,7 @@ The 111 non-correct rows split **19 / 66 / 26** across the three.
 
 | **ID** | **was** | **now** | why |
 |---|---|---|---|
-| **C14** | **C** | **W** | **The consumer half was graded on the parser, and the parser is not the consumer.** §17.1 moved this row to `C` on the ground *"the consumer half. `getSearchSuggestions` parses the refusal"*. That parse is real (`travel-buddy-standalone/src/services/discovery.ts:1131#const refusal = parseRefusal(body);`) and nothing here disputes it. But `getSearchSuggestions` has exactly ONE caller in the tree — `travel-buddy-standalone/src/hooks/useSearchSuggestions.ts:94#if (res.ok) {` — and that caller branches on `ok` alone. It never reads `coverage`. It renders a refused `groups: []` as an empty typeahead, and then it **writes the refusal into a keyed client cache** (`travel-buddy-standalone/src/hooks/useSearchSuggestions.ts:120#cache.set(key, { groups: res.groups, ts: Date.now() });`), so a single `transient_db` refusal goes on being served from the device for the cache TTL with no network call left to notice the recovery. The owner's own ruling, quoted verbatim in `artifacts/api-server/src/lib/discoveryRefusal.ts:71#"Add upstream_unavailable for upstream dependency failures. Do not cache`, forbids both halves of that in one sentence — *"Do not cache rate limits or outages as 'this location does not exist'"* and *"A distinguishable response body alone is insufficient if consumers still treat it as successful empty data."* **W and not C**, on this census's own §17.2 standard: that section refused `C` for DV-58/DV-59 because their only importer was the file's own test, and capped DV-64 at `W` for the identical pattern. A field whose only consumer ignores it is the same shape of unreachability. **W and not N**: the route emits the refusal correctly, the service parses it correctly, and the three-way split §17.1 pinned is genuinely pinned — it is the last hop that is missing, and it is one `if` in a file this lane may not write. |
+| **C14** | **C** | **W** | **The consumer half was graded on the parser, and the parser is not the consumer.** §17.1 moved this row to `C` on the ground *"the consumer half. `getSearchSuggestions` parses the refusal"*. That parse is real (`travel-buddy-standalone/src/services/discovery.ts:1187#const refusal = parseRefusal(body);`) and nothing here disputes it. But `getSearchSuggestions` has exactly ONE caller in the tree — `travel-buddy-standalone/src/hooks/useSearchSuggestions.ts:94#if (res.ok) {` — and that caller branches on `ok` alone. It never reads `coverage`. It renders a refused `groups: []` as an empty typeahead, and then it **writes the refusal into a keyed client cache** (`travel-buddy-standalone/src/hooks/useSearchSuggestions.ts:120#cache.set(key, { groups: res.groups, ts: Date.now() });`), so a single `transient_db` refusal goes on being served from the device for the cache TTL with no network call left to notice the recovery. The owner's own ruling, quoted verbatim in `artifacts/api-server/src/lib/discoveryRefusal.ts:71#"Add upstream_unavailable for upstream dependency failures. Do not cache`, forbids both halves of that in one sentence — *"Do not cache rate limits or outages as 'this location does not exist'"* and *"A distinguishable response body alone is insufficient if consumers still treat it as successful empty data."* **W and not C**, on this census's own §17.2 standard: that section refused `C` for DV-58/DV-59 because their only importer was the file's own test, and capped DV-64 at `W` for the identical pattern. A field whose only consumer ignores it is the same shape of unreachability. **W and not N**: the route emits the refusal correctly, the service parses it correctly, and the three-way split §17.1 pinned is genuinely pinned — it is the last hop that is missing, and it is one `if` in a file this lane may not write. |
 
 That is **one** move, and it is a move BACKWARD over a verdict the integration
 owner set eight commits ago. It is recorded that way rather than softened:
@@ -2677,8 +2677,8 @@ Every consumer in the tree, by whether it branches on `coverage`:
 
 | consumer | branches on `coverage`? | verdict |
 |---|---|---|
-| `travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:273#setSource(osm.ok && osm.data.refusal?.coverage === 'nothing' ? 'refused' : 'none');` | **yes** | Correct. Distinguishes `refused` from `none` and holds bookmarks across a saved-ids refusal. |
-| `travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:511#if (nextPage === 1 && res.data.refusal?.coverage === 'nothing') {` | **yes** | Correct, and page-1-scoped so a refused page 2 does not erase page 1. |
+| `travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:279#setSource(osm.ok && osm.data.refusal?.coverage === 'nothing' ? 'refused' : 'none');` | **yes** | Correct. Distinguishes `refused` from `none` and holds bookmarks across a saved-ids refusal. |
+| `travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:519#if (nextPage === 1 && res.data.refusal?.coverage === 'nothing') {` | **yes** | Correct, and page-1-scoped so a refused page 2 does not erase page 1. |
 | `travel-buddy-standalone/src/hooks/useCommunityDiscovery.ts:197#const refused = result.data.refusal?.coverage === 'nothing';` | **yes** | Correct, and it is the reference implementation: the refusal is surfaced AND kept out of the module cache. |
 | `travel-buddy-standalone/src/components/map/MapSearchSheet.tsx:211#!savedRes || !savedRes.ok || savedRes.data.refusal?.coverage === 'nothing';` | **yes** | Correct. This is the one that was already found and fixed. |
 | `travel-buddy-standalone/app/search.tsx:232#if (!res.ok) {` | **NO** | **Defect.** The main search screen. A `coverage: "nothing"` refusal is `ok: true, results: []`, so it renders the empty state AND fires the Compass "no results" fallback — offering alternatives to a search that never ran. The one screen `GET /discovery/search`'s envelope was built for is the one that cannot read it. |
@@ -6570,7 +6570,7 @@ that `B01` covers free-text matching (§46.3).
 - `profiles.account_status` exists on production, with the single value `active`.
 - `user_mutes(muter_id, muted_id)` exists on production and on `portava-ci`.
 
-**Found in code, and it explains the serve-log silence without any serve-log defect.** The shipping client calls `GET /discovery` with **no bearer token** (`travel-buddy-standalone/src/services/discovery.ts:697#const res = await fetch(`; the integrator confirms the same for `/community` and `/counts`). The route sets `callerUserId` only from a token (`artifacts/api-server/src/routes/discovery.ts:1597#callerUserId = authData.user.id;`), and every Stage-0 serve-log write is conditional on a viewer. So on production every `GET /discovery` is anonymous. Two consequences follow:
+**Found in code, and it explains the serve-log silence without any serve-log defect.** The shipping client calls `GET /discovery` with **no bearer token** (`travel-buddy-standalone/src/services/discovery.ts:753#const res = await fetch(`; the integrator confirms the same for `/community` and `/counts`). The route sets `callerUserId` only from a token (`artifacts/api-server/src/routes/discovery.ts:1597#callerUserId = authData.user.id;`), and every Stage-0 serve-log write is conditional on a viewer. So on production every `GET /discovery` is anonymous. Two consequences follow:
 
 - The serve log has no row to write.
 - The Compass / cache-B branch (`artifacts/api-server/src/routes/discovery.ts:2106#if (category === "for_you" && callerUserId) {`) is unreachable from the shipping client, despite its flag being TRUE.
@@ -6839,7 +6839,7 @@ different reason (§48.5).
 ### §48.2 Why `GET /discovery` has never written a row — found in code, not a write failure
 
 The shipping client calls `GET /api/discovery` **with no Authorization header**
-(`travel-buddy-standalone/src/services/discovery.ts:697#const res = await fetch(`),
+(`travel-buddy-standalone/src/services/discovery.ts:753#const res = await fetch(`),
 and `/community` and `/counts` the same way. The route sets `callerUserId` only
 from a Bearer token, and every serve-log branch on it is gated on
 `callerUserId`, so every production request is anonymous and writes nothing — by
@@ -7246,14 +7246,14 @@ Branch `disc-p4-client`: `74ae5cead` plus P2 (`1a13e01ea`) and P3 (`ef7fa4435`),
 
 ### 50.2 Defects found this session and fixed (integrator-verified before the lane started)
 
-**1. The three reads went out anonymous.** `GET /api/discovery`, `/community` and `/counts` were fetched with no Authorization header. Search, suggest and feed in the same file each sent one. Every production serve was therefore anonymous, and the viewer's blocks (both directions), mutes, dismissals, age bounds and Layover gating never applied, and no serve telemetry was written (§47.1 found the same thing from the server side). **Now** each read resolves the token through the same `freshToken()` refresh-first helper and builds the same `Authorization: Bearer` header, via one lease: `travel-buddy-standalone/src/services/discovery.ts:697#const res = await fetch(`, `:423`, `:806`. The header is omitted, not blanked, when signed out: `travel-buddy-standalone/src/services/discoveryViewerScope.ts:172#init: token ? { headers: { Authorization:`. The edit to `services/discovery.ts` is line-neutral through `:1131` (the hunks are `-N +N`, and the new code sits at the foot of the file), so the census's anchors at `:697` and `:1131` still hold.
+**1. The three reads went out anonymous.** `GET /api/discovery`, `/community` and `/counts` were fetched with no Authorization header. Search, suggest and feed in the same file each sent one. Every production serve was therefore anonymous, and the viewer's blocks (both directions), mutes, dismissals, age bounds and Layover gating never applied, and no serve telemetry was written (§47.1 found the same thing from the server side). **Now** each read resolves the token through the same `freshToken()` refresh-first helper and builds the same `Authorization: Bearer` header, via one lease: `travel-buddy-standalone/src/services/discovery.ts:753#const res = await fetch(`, `:423`, `:806`. The header is omitted, not blanked, when signed out: `travel-buddy-standalone/src/services/discoveryViewerScope.ts:172#init: token ? { headers: { Authorization:`. The edit to `services/discovery.ts` is line-neutral through `:1131` (the hunks are `-N +N`, and the new code sits at the foot of the file), so the census's anchors at `:697` and `:1131` still hold.
 
 **2. The device caches were not per viewer.** Once the token is sent, the answer is per viewer in CONTENT (P2, `40249b0ba`), and each item carries a `recommendationId` minted for that viewer's exposure. The 4-minute page cache was keyed `(dest, cat, radius, page)`, and the community hook's module cache `(city, sort)`. Neither had a viewer term, and nothing invalidated them. **Now** both are governed by one scope, (viewer, epoch), in `travel-buddy-standalone/src/services/discoveryViewerScope.ts`:
 
-- **Tagged and cleared.** Every entry carries the scope it was written in. Every scope change clears both caches (`travel-buddy-standalone/src/services/discovery.ts:1267#onDiscoveryScopeChange(() => _CLIENT_CACHE.clear());`).
+- **Tagged and cleared.** Every entry carries the scope it was written in. Every scope change clears both caches (`travel-buddy-standalone/src/services/discovery.ts:1323#onDiscoveryScopeChange(() => _CLIENT_CACHE.clear());`).
 - **What moves the scope.** The auth event, inside SessionContext's callback and before any screen re-renders, which is what protects a synchronous read at mount. Every request's own token. A successful block, unblock, mute, unmute or "Not interested".
-- **A response fetched for another viewer is discarded**, not returned: `travel-buddy-standalone/src/services/discovery.ts:703#if (!isLeaseViewerCurrent(lease)) return { ok: false, error: VIEWER_CHANGED_ERROR };`.
-- **A response whose epoch moved mid-flight** is shown but never written: `travel-buddy-standalone/src/services/discovery.ts:709#if (!refusedEverything(refusal) && isCurrentDiscoveryScope(lease.scope)) {`.
+- **A response fetched for another viewer is discarded**, not returned: `travel-buddy-standalone/src/services/discovery.ts:759#if (!isLeaseViewerCurrent(lease)) return { ok: false, error: VIEWER_CHANGED_ERROR };`.
+- **A response whose epoch moved mid-flight** is shown but never written: `travel-buddy-standalone/src/services/discovery.ts:765#if (!refusedEverything(refusal) && isCurrentDiscoveryScope(lease.scope)) {`.
 - **Refused and failed bodies are still never cached**, now also per viewer. This is DV-83's cache criterion, re-verified.
 - **A mounted community hook** drops the previous viewer's gems on an account switch and re-fetches.
 
@@ -9850,7 +9850,7 @@ This section changed `docs/discovery/cache-architecture-design-note.md` (one sen
 The lane brief restated §28.1: the rail branches on `res.ok` alone, and `ForYouTab` never reads `refused`. **That has been false since §29**, and §50.1 already said so. The tree agrees:
 
 - The rail returns its refused state before the empty check: `travel-buddy-standalone/src/components/discovery/DiscoveryEventPostsRail.tsx:105#if (refused) {`.
-- `ForYouTab` renders both lanes' refusals. The OSM lane is at `travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:273#setSource(osm.ok && osm.data.refusal?.coverage === 'nothing' ? 'refused' : 'none');`. The community lane is at `travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:527#{community.refused && (`.
+- `ForYouTab` renders both lanes' refusals. The OSM lane is at `travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:279#setSource(osm.ok && osm.data.refusal?.coverage === 'nothing' ? 'refused' : 'none');`. The community lane is at `travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:533#{community.refused && (`.
 
 Both were seen red again in this pass (M28–M30, §60.7). Nothing was rebuilt.
 
@@ -9883,10 +9883,10 @@ The census has twice miscounted this population (§28.5 item 1). So it was deriv
 - With 5 rows on screen and `total` 0, the footer printed **"5 places found"**. That is the list's own claim that the set had ended, made about a page nobody read.
 - Every later load-more was refused locally (`places.length >= total`).
 
-**Now** a refused load-more keeps the page, `total` and `page` that the last real answer set (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:526#setMoreRefused(true);`):
+**Now** a refused load-more keeps the page, `total` and `page` that the last real answer set (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:534#setMoreRefused(true);`):
 
 - The footer says what happened. It uses the page-1 refusal's own sentence and the failure state's own "Try again", and the retry asks for page 2 again. No copy is new.
-- Scrolling does not re-send the request during the outage (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:698#onEndReached={moreRefused ? undefined : handleLoadMore}`).
+- Scrolling does not re-send the request during the outage (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:706#onEndReached={moreRefused ? undefined : handleLoadMore}`).
 - The edit is line-neutral above the page-1 branch, which is the line this census anchors.
 - `DiscoveryCategoryTab.loadMoreRefusal.component.test.tsx` has 6 tests. Its three refusal cases were red on the unfixed file, the defect reproduced as "5 places found". Three controls pin the other answers: a real page 2, a genuinely empty page 2 (which still ends the list) and a `partial` page 2 (which still renders its rows).
 
@@ -9921,7 +9921,7 @@ The spec clause is *"Test real route→service→projection→client wiring; inc
 
 - The unused static `lib/supabase` import is gone.
 - The token helper is `require()`d at call time (`travel-buddy-standalone/src/services/discovery.ts:13#require('./apiToken.ts')`). This is the deferred-require pattern the Sentry wrapper already uses to keep services loadable under Node.
-- One JSON body is typed, and one test seam is appended at the foot (`travel-buddy-standalone/src/services/discovery.ts:1310#export function _setDiscoveryTokenSourceForTests(`).
+- One JSON body is typed, and one test seam is appended at the foot (`travel-buddy-standalone/src/services/discovery.ts:1366#export function _setDiscoveryTokenSourceForTests(`).
 - A deferred `require` is also invisible to the api-server's test typecheck. That matters because a static edge pulled React Native's global DOM types into the server program and broke server files, which was measured. `typecheck:tests` passes at its baseline in both packages.
 
 **The test.** `artifacts/api-server/src/test/discoveryClientRouteE2E.test.ts` runs the real Discovery and rank-events routers in-process over a loopback socket. It drives them through the shipping client module, its viewer lease, its `withParsedRefusal` boundary, its receipt stamp and its per-viewer cache, and through the client projection and byline resolver a card renders with. The database is the contract-checked PostgREST double every route suite uses. Nominatim and Overpass are doubled. The token SOURCE is doubled (`_setDiscoveryTokenSourceForTests`) and nothing downstream of it: apiToken's refresh logic stays pinned by §50's `discovery.viewerScope` suite. Nothing mocks the service, and no response body is hand-written. It has 13 tests, registered in the api-server `test` line.
@@ -9955,7 +9955,7 @@ The brief's extra cases:
 
 | ID | was | now | evidence |
 |---|---|---|---|
-| DV-83 | W | **W** | Two of §29.2's three grounds are now closed on this branch. **Ground 3, "nothing enforces the invariant statically": closed.** `travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts:270#it('G2. every file that consumes a carrier` fails on any unregistered consumer, G1–G6 were each seen red, and it runs in `check:all`. All eleven re-derived consumers branch on coverage, not on `ok` alone. The one found not to, a refused load-more rendered as the end of the list, is fixed at `travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:526#setMoreRefused(true);`. No `coverage: "nothing"` body enters any of the three client caches, which is proved through the route by `artifacts/api-server/src/test/discoveryClientRouteE2E.test.ts:313#it("R1. dependency failure (Nominatim 429)`. **Why still W: ground 2.** Whether a consumer may render `partial` as a complete answer is the owner's (§60.8 Q1). Today 8 of 11 consumers do so, 2 surface it and 1 renders nothing, as recorded per file in §60.2. **Production:** nothing here ships until a client build carrying it does. |
+| DV-83 | W | **W** | Two of §29.2's three grounds are now closed on this branch. **Ground 3, "nothing enforces the invariant statically": closed.** `travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts:270#it('G2. every file that consumes a carrier` fails on any unregistered consumer, G1–G6 were each seen red, and it runs in `check:all`. All eleven re-derived consumers branch on coverage, not on `ok` alone. The one found not to, a refused load-more rendered as the end of the list, is fixed at `travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:534#setMoreRefused(true);`. No `coverage: "nothing"` body enters any of the three client caches, which is proved through the route by `artifacts/api-server/src/test/discoveryClientRouteE2E.test.ts:313#it("R1. dependency failure (Nominatim 429)`. **Why still W: ground 2.** Whether a consumer may render `partial` as a complete answer is the owner's (§60.8 Q1). Today 8 of 11 consumers do so, 2 surface it and 1 renders nothing, as recorded per file in §60.2. **Production:** nothing here ships until a client build carrying it does. |
 | DC-33 | W | **C** | Every criterion passes in code and tests. The five classes §14.5 passed server-side still pass, and retry is built (§54.9). **The client leg, the one FAIL, now exists:** `artifacts/api-server/src/test/discoveryClientRouteE2E.test.ts:213#it("E1. signed in: the client holds the route's page` and 12 more cases run the real route into the real client module, with each of the spec's seven classes exercised through the client (table in §60.4). All 13 were seen red under 14 targeted mutations, and the files were restored byte-identical. **Not flag-gated:** this row obliges a test of the wiring, and 12 of 13 cases leave every flag that shapes the page at its production state. The serve-log flag is on in the double; it changes writes, not the page, and E1 needs the rows it writes to compare ids. The one case that switches flags on (W1, why-now, behind 2850/2361) does so in the test double, which is where a test must. The flag-gated FEATURES it touches keep their own `W`s (A03, A07) under §31.2's rule, *"A requirement whose feature is disabled is not satisfied"*. **What "client" means here:** the client's module boundary, meaning the parse, the lease, the caches and the projection a card renders. No React Native screen renders under Node. The screens are pinned to the same service contract by their component suites and `typecheck:tests`. **What turns it back:** the client module regaining a static edge to React Native, or a case replaced by a mock of the service or of `fetch`'s body. |
 | C19 | W | **W** | The client half is done and now proved end to end: `artifacts/api-server/src/test/discoveryClientRouteE2E.test.ts:510#it("X3. the community byline`. No client reads the legacy `name` (§60.5). **Why W:** `artifacts/api-server/src/routes/discovery.ts:3095#: (profile.username ?` still emits `@username` in `name` to every caller. Retiring it waits on the oldest supported app build carrying `features/discovery/communityByline.ts`, and no build carrying it has shipped (§60.8 Q2). |
 
@@ -11365,7 +11365,7 @@ The last verdict is `C`.
 | cold signed-in fetch, every other category | `rankForViewer` (portavaRank, DRS order-neutral, governor held) | signed in |
 | Cache A hit | `rankForViewer` only in `pde` + cohort; otherwise unranked | — |
 
-R1 drives the first and third rows through the real route. R1c shows the flag chooses between them for one request. The shipping client on this branch sends the viewer's token (`travel-buddy-standalone/src/services/discovery.ts:695#const lease = openDiscoveryLease(await freshToken());`). So on merge, the Compass path is on a real user's path, where §47.1 found it never engaged.
+R1 drives the first and third rows through the real route. R1c shows the flag chooses between them for one request. The shipping client on this branch sends the viewer's token (`travel-buddy-standalone/src/services/discovery.ts:751#const lease = openDiscoveryLease(await freshToken());`). So on merge, the Compass path is on a real user's path, where §47.1 found it never engaged.
 
 **The change that would restore `C` (not built here).** Remove the second ordering from `routes/discovery.ts`:
 1. Take the `for_you` branch that opens at `artifacts/api-server/src/routes/discovery.ts:2106#if (category === "for_you" && callerUserId) {`, which covers serve points 4 and 5. Either retire it, so `for_you` is ordered by `rankForViewer` like every other category, or make Compass's scoring a stage inside `rankForViewer`.
@@ -12178,7 +12178,7 @@ Every move below is W → W, or N → N for A18. Only the evidence changes. Wher
 | DC-24 | W | **W** | **"Three ranking implementations … the shared ranking service … has no Discovery caller (X3)" is false for the third.** DRS is a stage INSIDE the PDE pipeline: value-imported and called by `rankForViewer` (`artifacts/api-server/src/lib/discoveryPde.ts:105#import { rankItems as drsRankItems }`; Q2, `artifacts/api-server/src/test/discoveryRowAudit29.test.ts:84#it("rankForViewer value-imports and calls DRS`). So there are **two** parallel orderings: PDE and Compass's `for_you` (C32, R1). The parallel half still fails. |
 | DC-32 | W | **W** | **"`protectedLocations.ts` is consulted by nothing in Discovery" is false.** Two consumers exist, and neither runs in the shipping default. The search pass is `artifacts/api-server/src/lib/discoverySearchProtection.ts:74#export const DISCOVERY_SEARCH_PROTECTION_FLAG`, behind 3366 (FALSE, A-3). The projection's coverage bucket is `artifacts/api-server/src/lib/discoveryCandidate.ts:393#const decision = classifyAgainstProtected(`, behind 2361 (FALSE). So the sensitive-location leg now reuses the approved module and asks. It is not silent. It is not counted as PASS here, because it is unapplied (the §31.2 rule). **Still 2 of 5:** §47.8's eight values are unruled, and the two stop thresholds are enforced while labelled unratified. |
 | DV-40 | W | **W** | **Ground (2), "serve points 8, 9 … are the search lane's to stamp", is false.** §46.7 stamped both. One exposure per request stamps every served item on search (`artifacts/api-server/src/routes/discoverySearch.ts:2700#const exposure = mintServeExposure(user.id), logSearchServe`) and on suggest (`artifacts/api-server/src/routes/discoverySearch.ts:3016#const exposure = mintServeExposure(user.id), body =`). The logged row carries the same id (`artifacts/api-server/src/test/discoverySearchExposure.test.ts:78#every item carries an id, and the log row at its position carries the SAME id`), and the suite passes here. §46's "served ids are stamped" holds. **Still W on ground (1) alone:** the anonymous record is 3376, applied nowhere but the harness. |
-| DV-02 | W | **W** | **"The shipping client is unauthenticated on this route" is false on the branch.** The client fetches the page as the viewer (`travel-buddy-standalone/src/services/discovery.ts:695#const lease = openDiscoveryLease(await freshToken());`, §50). What remains: a build carrying it has not shipped, the server is not deployed, and then production must show the rows. |
+| DV-02 | W | **W** | **"The shipping client is unauthenticated on this route" is false on the branch.** The client fetches the page as the viewer (`travel-buddy-standalone/src/services/discovery.ts:751#const lease = openDiscoveryLease(await freshToken());`, §50). What remains: a build carrying it has not shipped, the server is not deployed, and then production must show the rows. |
 | DV-47 | W | **W** | Same correction as DV-02. Of "the same two reasons", the unauthenticated client is closed on the branch. The ranked path's events still need a shipped client, a deployed server and a production read. |
 | DV-78 | W | **W** | **"Dwell: … no client emits a dwell measurement" is false.** The client classifies and emits the three kinds (`travel-buddy-standalone/src/services/discoveryDwell.ts:89#export function classifyInterval(`), behind `discovery_dwell_telemetry_enabled` (3395, FALSE; DV-41, B-1). 5 of 8 stands, with dwell built and gated off. `hide` vs `not_interested` (E-8) and Trail open (D-1 Q2) are unchanged. |
 
@@ -12276,6 +12276,119 @@ Suites run at this tree, each passing:
 - **A restated fact changing back.** Each of Q1–Q5 goes red: `allocateFeedSlots` losing its Discovery caller, DRS leaving `rankForViewer`, a trust score reaching Discovery candidates, a ranked Trail kind, or the drift footer being fixed. Each red means the statement in 69.3 should be re-read.
 - **The rehearsal steps.** Deleting either from `schema-drift` turns the DC-26 pin red.
 - **A mis-classification.** A row whose first blocker is found to be code that can be built today. That row moves to 69.7.
+
+## §71 — Discovery sends the intent mode the user chose (lane P31): a sender and a selector, gated on the server's own capability; A05 and DV-42 stay W on 2850, and For You under Compass is a second gap
+
+*Written 2026-09-28 by the client intent-sender lane on `disc-p31-intent-sender`, branched from `fd1b1fbb1`. The code is commit `e7719f34d`. This lane built §69.7's first CODE item and nothing else. It edited no server ranking code, no migration and no flag. Nothing here is merged to `main`, applied to `portava-ci` or production, deployed or flag-enabled. No verdict moves, so the headline (§66.11: 94 C / 88 W / 5 N / 1 X) is unchanged and is not restated.*
+
+### 71.1 What was built
+
+- **The sender.** `DiscoveryFilters` gains `intentMode`. `getDiscoveryPlaces` appends it last, and only when the value is one of the eight (`travel-buddy-standalone/src/services/discovery.ts:749#...(isDiscoveryIntentMode(filters.intentMode) ? { intentMode: filters.intentMode } : {}),`). The eight are restated on the client in Sensing §8's order and words (`travel-buddy-standalone/src/services/discovery.ts:249#export const DISCOVERY_INTENT_MODES = [`), because the client cannot import `artifacts/api-server/src/lib/intentModes.ts:35#export const INTENT_MODES = [`. With no selection the URL is byte-identical to the one sent before this lane. The device cache keeps a mode's page under its own key, and the no-mode key is unchanged (`travel-buddy-standalone/src/services/discovery.ts:667#return isDiscoveryIntentMode(intentMode) ?`).
+- **The selector.** Eight chips in the Discovery screen's filter panel, labelled with the spec's mode names verbatim. It renders nothing unless the server reports the capability (`travel-buddy-standalone/src/components/discovery/DiscoveryIntentModeSelector.tsx:53#if (!capable) return null;`). There is no default. Pressing the chosen mode again clears it (`travel-buddy-standalone/src/components/discovery/DiscoveryIntentModeSelector.tsx:70#onPress={() => onChange(active ? null : mode)}`).
+- **The capability read** is the one the app already uses for Discovery (`useDiscoveryDwell` reads its flag the same way). `FeatureFlagsContext` fetches `GET /api/feature-flags` and is fail-soft: an unknown, unreadable or FALSE flag is off (`travel-buddy-standalone/src/context/FeatureFlagsContext.tsx:97#return flags[key] === true`). The server reports `discovery_live_rank_enabled` as stored, because it is not in the route's inert set (`artifacts/api-server/src/routes/featureFlags.ts:38#const INERT_FLAGS = new Set([`). So the selector is hidden today and appears the moment an owner turns 2850 on.
+- **The screen** holds the choice in memory for the session (`travel-buddy-standalone/app/(tabs)/discovery.tsx:184#useState<DiscoveryIntentMode | null>(null)`). It never writes it to `discoveryFilterStorage`. It hands the tabs a mode only while the capability is reported (`travel-buddy-standalone/app/(tabs)/discovery.tsx:186#const effectiveIntentMode = intentModeCapable ? intentMode : null;`). The filter badge counts it.
+- **The tabs.** `DiscoveryCategoryTab` passes the screen's filters object itself when there is no mode (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:490#const requestFilters = intentMode ? { ...currentFilters, intentMode } : currentFilters;`). `ForYouTab` adds the mode to its `GET /discovery` baseline (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:259#sortBy: sortBy ?? null, ...(intentMode ? { intentMode } : {}) },`).
+- **The server is unchanged.** It already parses the mode on both serve paths (`artifacts/api-server/src/routes/discovery.ts:1881#mode: parseIntentMode(req.query.intentMode` and `artifacts/api-server/src/routes/discovery.ts:2292#mode: parseIntentMode(req.query.intentMode`), and the live rank that reads it is gated by `artifacts/api-server/src/lib/discoveryLiveRankRead.ts:45#export const DISCOVERY_LIVE_RANK_FLAG = "discovery_live_rank_enabled";`, seeded FALSE at `artifacts/api-server/src/migrations/2850_discovery_live_rank_flag.sql:39#('discovery_live_rank_enabled', false,`.
+- **DV-83's guard is unaffected.** The new selector value-imports only constants from the service. The two tabs' carrier imports are unchanged, so `travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts` passes without an edit.
+
+### 71.2 Row statements
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| A05 | W | **W** | **The CODE blocker is cleared; the row stays W on 2850, and For You under Compass is a second gap.** A Discovery client now sends `intentMode`, and the value the user picks is the mode the route ranks in. The proof drives the shipping client module through the real router with 2850 ON, for each of the eight (`artifacts/api-server/src/test/discoveryIntentModeSender.test.ts:206#R1. 2850 ON, the client sends ${mode}: the route ranks in ${mode}`. The two vocabularies are pinned equal in members, order and labels, and the labels to Sensing §8's sentence (`artifacts/api-server/src/test/discoveryIntentModeSender.test.ts:182#it("V1. the client's DISCOVERY_INTENT_MODES is the server's INTENT_MODES`). The screen hands the choice to the tab that fetches (`travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryScreen.intentMode.component.test.tsx:275#it('choose Quiet → For You is handed quiet`). **Two criteria still fail.** (1) DSV2-03's *"Each intent reaches the actual ranking path"* holds in code and in no deployment. `discovery_live_rank_enabled` (2850) is FALSE, and 2850 is unapplied outside the harness (§69.2 A01). With it off the route ignores the mode (`artifacts/api-server/src/test/discoveryIntentModeSender.test.ts:220#it("R3. 2850 FALSE (production's state)`) and the selector is hidden. No user can choose an intent today. (2) *"UI selection is not merely decorative"* fails on the For You tab whenever Compass has items, even with 2850 on. For You's `GET /discovery` page is only a baseline: when Compass is enabled and answers, the tab replaces it with Compass's feed (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:233#setItems(all.map((ci) => ({ kind: 'compass' as const, item: ci, place: compassItemToPlace(ci) })));`). That feed is requested without a mode (`travel-buddy-standalone/src/hooks/compass/useCompassFeed.ts:34#export function useCompassFeed({`). There, choosing a mode changes the baseline request and not what is shown. The category tabs have no such override. *"Preserves user constraints"* is not re-graded here. |
+| DV-42 | W | **W** | **The "no client sender" half of the W is gone; the gated-OFF half remains, so the failing criterion is unchanged: both representations reachable on a deployment.** The current-intent representation now has a client. It is session state held on the screen and never persisted (`travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryScreen.intentMode.component.test.tsx:300#it('a fresh mount of the screen starts with no mode'`). It is sent per request, and the server never writes it back. That is `04` §9's *"session intent"*, kept apart from the long-term profile `loadPdeViewer` builds. But the server reads it only behind 2850 (`artifacts/api-server/src/lib/discoveryLiveRankRead.ts:75#export async function liveRankEnabled(sc: any): Promise<boolean> {`), which is FALSE. With 2850 FALSE the client offers no selector and sends nothing (`travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryScreen.intentMode.component.test.tsx:256#describe('W1 — capability not reported`). So, as before, in every deployment only the long-term half exists: §9's warned failure mode. |
+
+### 71.3 Classification (§69.2 and §69.6, restated for these two rows)
+
+| row | verdict | class | first blocker | all blockers | what turns it C | owner item |
+|---|---|---|---|---|---|---|
+| A05 | `W` | DEPLOY | `discovery_live_rank_enabled` (2850) is FALSE, and 2850 is unapplied outside the harness | 2850 applied and on; For You under Compass carries no mode (71.6 Q2) | 2850 on in a deployment, and For You either carries the mode into the Compass feed or does not offer the selector where Compass supersedes | E-10, A-6; Q71-2 |
+| DV-42 | `W` | DEPLOY | 2850 FALSE, unapplied outside the harness | 2850 applied and on | both representations reachable on a deployment, which is 2850 on | E-10 |
+
+§69.6 moves by two rows: CODE 3 → 1 (A08 remains) and DEPLOY 11 → 13. The total (94) and the C/W/N/X counts are unchanged. §69.7's first CODE row is done. A05's For You gap is new CODE, but it cannot be built until Q71-2 is answered, and the file belongs to the Compass lane.
+
+### 71.4 Tests, and every one seen red (P24)
+
+**Failing-first.**
+- `travel-buddy-standalone/src/services/__tests__/discovery.intentMode.test.ts` (25 cases, node) was run against the unchanged service: 13 red, 12 green. The 12 green are the no-selection byte-identity and out-of-vocabulary cases, which pin today's URL and must pass before and after.
+- `travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryIntentModeSelector.component.test.tsx` (10) was red: the module did not exist.
+- `travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryTabs.intentMode.component.test.tsx` (4) and `travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryScreen.intentMode.component.test.tsx` (5) were run against the pre-change screen and tabs: 7 of 9 red. T1 and T3, the no-mode baselines, were green. W1's three cases were red only because the filter toggle had no `testID`; W2–W4 were red on the missing wiring.
+- `artifacts/api-server/src/test/discoveryIntentModeSender.test.ts` (15) was run against the unchanged client: the whole file was red, because the client exports did not exist.
+- C1 (the flag reported by `/feature-flags`) pins existing server behaviour, so it was green before this lane. It was seen red only under M12.
+
+**Mutations.** Each was applied alone and the suites run. The file was restored and its sha256 checked byte-identical.
+
+| mutation | where | red |
+|---|---|---|
+| M1 `trip` dropped from the client's eight | services/discovery.ts | service 3 cases; parity V1, V2 |
+| M2 `high_energy` spelled `high-energy` on the client | services/discovery.ts | parity V1, V2, V3, R1 (high-energy is ranked as the default) |
+| M3 the param sent whenever the field is present | services/discovery.ts | service: `null` sent as a mode, every out-of-vocabulary case (9) |
+| M4 the vocabulary guard removed | services/discovery.ts | service: all 6 non-empty out-of-vocabulary cases |
+| M5 the cache key ignores the mode | services/discovery.ts | service: the cache case |
+| M6 the selector ignores the capability | DiscoveryIntentModeSelector.tsx | selector: 4 hidden cases; screen: W1 ×3 |
+| M7 ForYouTab drops the mode | ForYouTab.tsx | tabs: T4 (the parity suite stays green: it drives the service, not the tab) |
+| M8 DiscoveryCategoryTab always copies its filters | DiscoveryCategoryTab.tsx | tabs: T1 (not the same object) |
+| M9 the screen stops handing the mode to For You | app/(tabs)/discovery.tsx | screen: W2/W3, W4 |
+| M10 pressing the chosen mode no longer clears it | DiscoveryIntentModeSelector.tsx | selector: clear case; screen: W2/W3 |
+| M11 the server's `trip` renamed | lib/intentModes.ts | parity V1, V3, R1 (trip) |
+| M12 `discovery_live_rank_enabled` added to the route's inert set | routes/featureFlags.ts | parity C1 ×2 |
+
+**Not pinned.** Suppose 2850 turns off while a mode is chosen. The screen then stops handing the mode on, because `effectiveIntentMode` reads the live flag. It keeps the choice in memory and re-applies it if the flag returns. No test exercises the flag changing mid-session.
+
+### 71.5 Checks run
+
+travel-buddy-standalone:
+- `pnpm run typecheck` passes.
+- `pnpm run typecheck:tests` is 173 across 60 files, at its baseline.
+- The new node suite passes 25/25, together with discoveryRefusalConsumers.guard.test.ts (31/31 combined).
+- The jest run over every suite in `src/components/discovery/__tests__`, the `src/services/__tests__/discovery*` component suites, `deepLinkPaths.navigation` and `SessionContext.discoveryViewer` is 342/342 across the 46 jest suites. The 17 node:test files that the path pattern also matched are not jest suites; they run under the node runner.
+- `check:all` is reported in the lane report, not here.
+
+api-server:
+- `pnpm run typecheck` passes.
+- `typecheck:tests` is 863 across 115 files, at its baseline.
+- The parity suite passes 15/15 with `SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy`. It is registered on the `test` line.
+- `check:test-registration` and `check:test-runner-flags` pass.
+- The census checks run after the last edit are in the lane report.
+
+**Not run:** the full api-server suite, any harness database suite, and any read of production or `portava-ci`.
+
+### 71.6 Owner questions
+
+2850 itself is E-10 (and A-6 for reading it as a ranking change under the hold). It is carried forward and not re-asked.
+- **Q71-1 (copy, owner-overrulable).**
+  - The chip labels are Sensing §8's mode names verbatim.
+  - The selector sits in the filter panel, under the context modes, and counts in the filter badge.
+  - "Reset filters" does not clear it.
+  - No spec gives wording or placement.
+- **Q71-2 (For You under Compass).** When Compass answers, For You shows Compass's feed, which takes no mode. So the selection is decorative on that tab. Two options, neither built:
+  - carry the mode into the Compass feed request (lib/intentModes.ts already maps four modes to Compass sections);
+  - do not offer the selector on For You while Compass supersedes.
+  This is a product call, and the Compass lane owns the feed hook.
+- **Q71-3 (persistence and default).** No spec states a persistence rule or a default. `04` §9 names *"session intent"*. So the choice is in memory for the session only, with no default. Should it survive an app restart, or reset per city or trip?
+- **Not a question: visibility while 2850 is off.** A flag-read pattern exists, so the brief's rule applied: show the selector only when the server reports the capability. It is hidden while 2850 is off or unreadable. The owner may overrule this, and it follows 2850 automatically.
+
+### 71.7 Freshness and scope
+
+- **CENSUS_SCOPE** watches these, all cited above:
+  - the new selector and the five new suites;
+  - FeatureFlagsContext.tsx and routes/featureFlags.ts (the capability path the selector rests on);
+  - hooks/compass/useCompassFeed.ts (A05's second gap).
+- **census-discovery's acknowledgement** names the changed counted files:
+  - ForYouTab.tsx, which was not yet named;
+  - the six new files (the selector and the five suites);
+  - routes/featureFlags.ts, which changed after `head_commit`, in 2962's inert-flag retirement, and is newly watched.
+  The argument is in the ledger entry. No verdict moves, and the evidence changed only as 71.2 states.
+- **Other censuses:** none needed a new acknowledgement. Every other census that watches a file this lane changed already names it, and `check:census-freshness` reports all thirteen fresh.
+
+### 71.8 What would turn this red
+
+- **A vocabulary drift** on either side (a rename, a ninth mode, a label change). V1–V3 go red, and R1 goes red for the drifted mode.
+- **A request change with no selection.** Any byte of the no-selection URL changing turns the service's byte-identity cases red.
+- **The selector showing without the capability.** Selector cases 1–4 and screen W1 go red.
+- **The route ignoring the mode with 2850 ON,** or honouring it with 2850 OFF. R1 or R3 goes red.
+- **2850 hidden from `/feature-flags`.** C1 goes red.
+- **A05 or DV-42 moving to C** needs evidence rather than a test: 2850 on in a deployment, plus Q71-2 resolved for A05.
 
 ## Cited, not graded (check:census-scope-coverage)
 

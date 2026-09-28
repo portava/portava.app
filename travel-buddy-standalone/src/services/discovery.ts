@@ -220,6 +220,55 @@ export interface DiscoveryFilters {
   openNow: boolean;
   minRating: number | null;
   sortBy?: string | null;
+  /**
+   * The intent mode the user chose on the Discovery screen, sent as
+   * `?intentMode=` on GET /discovery. Absent / null ⇒ NOT sent, so a request
+   * with no selection is byte-identical to one sent before the selector existed.
+   * See INTENT MODES below.
+   */
+  intentMode?: DiscoveryIntentMode | null;
+}
+
+// ── INTENT MODES (census-discovery §71, rows A05 / DV-42) ─────────────────────
+//
+// Sensing §8 (docs/specs/Portava_Sensing_World_Experience_Intelligence_Upgrade_Architecture_v1.txt:137):
+// "Support intent modes using the same shared intelligence: Right Now, Tonight,
+// Explore, Quiet, Social, High Energy, Nearby, Trip." The server declares the
+// same eight ONCE (artifacts/api-server/src/lib/intentModes.ts INTENT_MODES) and
+// parses `?intentMode=` on GET /discovery with `parseIntentMode`; the live rank
+// that reads it is gated by `discovery_live_rank_enabled` (migration 2850,
+// seeded FALSE). The client cannot import a server module, so the list is
+// restated here, and artifacts/api-server/src/test/discoveryIntentModeSender.test.ts
+// fails if the two ever differ in members, order or labels.
+//
+// The selection is per-session UI state held by the screen, never persisted:
+// `04` §9 names "session intent" as a representation distinct from long-term
+// preference, and no spec states a default or a persistence rule.
+
+/** The eight, in the spec's own order. The server's `INTENT_MODES`, byte for byte. */
+export const DISCOVERY_INTENT_MODES = [
+  'right_now', 'tonight', 'explore', 'quiet', 'social', 'high_energy', 'nearby', 'trip',
+] as const;
+export type DiscoveryIntentMode = (typeof DISCOVERY_INTENT_MODES)[number];
+
+/** The spec's mode names, verbatim (the server's `INTENT_MODE_LABELS`). Owner-overrulable copy. */
+export const DISCOVERY_INTENT_MODE_LABELS: Readonly<Record<DiscoveryIntentMode, string>> = Object.freeze({
+  right_now: 'Right Now',
+  tonight: 'Tonight',
+  explore: 'Explore',
+  quiet: 'Quiet',
+  social: 'Social',
+  high_energy: 'High Energy',
+  nearby: 'Nearby',
+  trip: 'Trip',
+});
+
+/** The server capability the selector waits for. Unknown / unreadable ⇒ off (FeatureFlagsContext is fail-soft). */
+export const DISCOVERY_LIVE_RANK_FLAG = 'discovery_live_rank_enabled';
+
+/** One of the eight. Anything else — another surface's intent kind, a near-miss spelling — is never sent. */
+export function isDiscoveryIntentMode(v: unknown): v is DiscoveryIntentMode {
+  return typeof v === 'string' && (DISCOVERY_INTENT_MODES as readonly string[]).includes(v);
 }
 
 export interface DiscoveryResult {
@@ -605,14 +654,17 @@ export type DiscoveryAgeFilter =
   | 'custom';
 
 // ── Client-side stale-while-revalidate cache for discovery results ─────────────
-// Keyed by destination:category:radiusKm:page; each entry carries the VIEWER + epoch it was written in
+// Keyed by destination:category:radiusKm:page (plus :intent=<mode> only when one is chosen); each entry carries the VIEWER + epoch it was written in
 // and is readable only in that scope (VIEWER SCOPE, foot of file). Serves previously-fetched data instantly
 // when the user returns to the Explore tab, then lets the caller decide whether to refresh in the background.
 const _CLIENT_CACHE = new Map<string, { data: DiscoveryResult; at: number; scope: DiscoveryScope }>();
 const CLIENT_CACHE_TTL = 4 * 60 * 1_000; // 4 minutes
 
-function _discoveryCacheKey(dest: string, cat: string, radiusKm: number, page: number): string {
-  return `${dest.toLowerCase().trim()}:${cat}:${radiusKm}:${page}`;
+function _discoveryCacheKey(dest: string, cat: string, radiusKm: number, page: number, intentMode?: DiscoveryIntentMode | null): string {
+  const key = `${dest.toLowerCase().trim()}:${cat}:${radiusKm}:${page}`;
+  // A mode's page is a different order of the same query, so it gets its own
+  // entry; the no-mode key stays exactly what it was before modes existed.
+  return isDiscoveryIntentMode(intentMode) ? `${key}:intent=${intentMode}` : key;
 }
 
 /** Test seam: drop every client-cached result. Carries no production caller. */
@@ -630,8 +682,9 @@ export function getCachedDiscoveryPlaces(
   category: DiscoveryCategory,
   radiusKm: number,
   page = 1,
+  intentMode?: DiscoveryIntentMode | null,
 ): DiscoveryResult | null {
-  return _liveCacheEntry(_discoveryCacheKey(destination, category, radiusKm, page))?.data ?? null;
+  return _liveCacheEntry(_discoveryCacheKey(destination, category, radiusKm, page, intentMode))?.data ?? null;
 }
 
 /**
@@ -642,8 +695,9 @@ export function isDiscoveryCacheFresh(
   category: DiscoveryCategory,
   radiusKm: number,
   page = 1,
+  intentMode?: DiscoveryIntentMode | null,
 ): boolean {
-  const e = _liveCacheEntry(_discoveryCacheKey(destination, category, radiusKm, page));
+  const e = _liveCacheEntry(_discoveryCacheKey(destination, category, radiusKm, page, intentMode));
   return !!e && Date.now() - e.at < CLIENT_CACHE_TTL;
 }
 
@@ -691,6 +745,8 @@ export async function getDiscoveryPlaces(
     ...(lng != null ? { lng: String(lng) } : {}),
     ...(userLat != null ? { userLat: String(userLat) } : {}),
     ...(userLng != null ? { userLng: String(userLng) } : {}),
+    // Last, and only when chosen: with no selection the URL is the one sent before modes existed.
+    ...(isDiscoveryIntentMode(filters.intentMode) ? { intentMode: filters.intentMode } : {}),
   });
   const lease = openDiscoveryLease(await freshToken());  // the viewer this page is fetched AS — VIEWER SCOPE, foot of file
   try {
@@ -707,7 +763,7 @@ export async function getDiscoveryPlaces(
     // recovery; a `coverage: "partial"` body IS cached, its items are real) or the scope moved
     // while this was in flight (a block or dismissal the page may predate).
     if (!refusedEverything(refusal) && isCurrentDiscoveryScope(lease.scope)) {
-      _CLIENT_CACHE.set(_discoveryCacheKey(destination, category, filters.radiusKm, page), { data, at: Date.now(), scope: lease.scope });
+      _CLIENT_CACHE.set(_discoveryCacheKey(destination, category, filters.radiusKm, page, filters.intentMode), { data, at: Date.now(), scope: lease.scope });
     }
     // Signal search intent to Compass so category_weights reflect browsing.
     // Only fires when the caller opts in (emitSignal=true) AND this is page 1

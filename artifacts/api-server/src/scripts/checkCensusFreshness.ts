@@ -4084,6 +4084,18 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/discoveryRankProvenance.test.ts",
     // A03's "open" is backed only by Compass's open_now factor, which fires on isOpenNow === true; §68.1 cites it.
     "artifacts/api-server/src/compass/CompassRecommendationEngine.ts",
+    // census-discovery §71 (lane P31, the intent-mode sender): A05 and DV-42 are restated on the
+    // selector, its suites and the parity suite; the selector rests on the app's flag read and the
+    // route that reports 2850; A05's For You gap rests on the Compass feed hook taking no mode.
+    "travel-buddy-standalone/src/components/discovery/DiscoveryIntentModeSelector.tsx",
+    "travel-buddy-standalone/src/services/__tests__/discovery.intentMode.test.ts",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryIntentModeSelector.component.test.tsx",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryScreen.intentMode.component.test.tsx",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryTabs.intentMode.component.test.tsx",
+    "artifacts/api-server/src/test/discoveryIntentModeSender.test.ts",
+    "travel-buddy-standalone/src/context/FeatureFlagsContext.tsx",
+    "artifacts/api-server/src/routes/featureFlags.ts",
+    "travel-buddy-standalone/src/hooks/compass/useCompassFeed.ts",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //
