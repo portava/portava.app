@@ -2616,7 +2616,7 @@ router.get("/discovery/feed", async (req, res) => {
   // ── Viewer identity for event-post pipeline ───────────────────────────────
   // Auth header is optional on the feed; block-checking requires a viewer id.
   // When unauthenticated, pass null → fetchEventPostsForDiscovery returns [].
-  let viewerId: string | null = null;
+  let viewerId: string | null = null; let viewerUnresolved = false;  // census-discovery §97 (DV-83, §94.10): a Bearer token was presented and no viewer came back. The event-post read is then owed and cannot happen, which is a failed read, never an anonymous request's empty one
   let blockedIds = new Set<string>();
   // Same block relationship, kept separately for places because the two
   // consumers want opposite behaviour when the read FAILS: event posts have
@@ -2630,7 +2630,7 @@ router.get("/discovery/feed", async (req, res) => {
       const authHeader = req.headers.authorization;
       if (authHeader?.startsWith("Bearer ")) {
         const token = authHeader.slice(7);
-        const { data: userData } = await sc.auth.getUser(token);
+        const { data: userData, error: userError } = await sc.auth.getUser(token); if (!userData?.user?.id && authServiceUnreachable(userError)) viewerUnresolved = true;  // §97: a REJECTED token (4xx) is an anonymous caller; an auth service that did not answer leaves the viewer unresolved
         if (userData?.user?.id) {
           viewerId = userData.user.id;
           // Both directions of the block relationship, through the one helper
@@ -2664,11 +2664,11 @@ router.get("/discovery/feed", async (req, res) => {
     req.log.warn(
       { err, userId: viewerId },
       "discovery/feed: viewer/block-state resolution rejected — blocked users are NOT being filtered from event posts",
-    );
+    ); if (viewerId === null && req.headers.authorization?.startsWith("Bearer ")) viewerUnresolved = true;  // §97: a thrown resolution is an unresolved viewer, not an anonymous one
   }
 
   // ── Fetch places across all requested categories ───────────────────────────
-  try { const eventPostsReadStatus = { readFailed: false };  // census-discovery §94 (DV-83, hunk §80.7): whether the event-post read FAILED — carried onto the envelope below, never served as a quiet city
+  try { const eventPostsReadStatus = { readFailed: viewerUnresolved };  // census-discovery §94 (DV-83, hunk §80.7): whether the event-post read FAILED (§97: or was owed to a viewer who could not be resolved) — carried onto the envelope below, never served as a quiet city
     // TODO: denormalize is_event_post flag at write time to avoid per-request join
     const [categoryResults, eventPosts] = await Promise.all([
       Promise.all(
@@ -2756,7 +2756,7 @@ router.get("/discovery/feed", async (req, res) => {
       const coverage = feedAnnotated.length === 0 && eventPosts.length === 0 ? "nothing" : "partial";
       sendDiscoveryRefusal(
         res, feedEnvelope,
-        discoveryRefusal("transient_db", failedCats.some((c) => c !== "event_posts") ? "feed_places_read_failed" : "feed_event_posts_read_failed", "GET /discovery/feed", coverage, failedCats),  // §94 (D-W11X2-1): an event-post-only failure has its own code, so an alert on the places code is not raised by the posts
+        discoveryRefusal(failedCats.some((c) => c !== "event_posts") ? "transient_db" : viewerUnresolved ? "upstream_unavailable" : "transient_db", failedCats.some((c) => c !== "event_posts") ? "feed_places_read_failed" : viewerUnresolved ? "feed_viewer_unresolved" : "feed_event_posts_read_failed", "GET /discovery/feed", coverage, failedCats),  // §94 (D-W11X2-1): an event-post-only failure has its own code, so an alert on the places code is not raised by the posts
       );
     } else {
       res.json(feedEnvelope);
@@ -4509,3 +4509,23 @@ import { isFlagEnabled } from "../lib/featureFlags.js";
 
 // census-discovery §94 (routed hunk R-X3-2): the two per-row aggregate helpers, ONE implementation shared with generated rows (lib/discoveryCandidates/materialize.ts). At the foot so no cited line moves.
 import { haversineKm, batchFetchVoteAndRatingAggregates } from "../lib/discoveryPlaceAggregates.js";
+
+/**
+ * census-discovery §97 (DV-83, §94.10): did Supabase Auth fail to ANSWER
+ * `getUser(token)`, as opposed to rejecting the token?
+ *
+ * auth-js reports an unreachable or failing auth service as
+ * `AuthRetryableFetchError` (status 0 for a network failure, or 5xx/52x) or
+ * `AuthUnknownError` (a response it could not read), and a server failure it
+ * did read as an error with a 5xx status. It reports a rejected credential
+ * (expired, malformed, revoked) as a 4xx, or `AuthInvalidJwtError` (400). Only
+ * the first kind leaves the viewer UNRESOLVED; a rejection is an answer, and
+ * the caller is anonymous. An error of neither kind is treated as a rejection,
+ * which is the feed's documented posture for a token it cannot use.
+ */
+function authServiceUnreachable(error: unknown): boolean {
+  const e = error as { name?: unknown; status?: unknown } | null | undefined;
+  if (!e) return false;
+  if (e.name === "AuthRetryableFetchError" || e.name === "AuthUnknownError") return true;
+  return typeof e.status === "number" && (e.status === 0 || e.status >= 500);
+}

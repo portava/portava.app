@@ -1839,3 +1839,26 @@ W10D-C5 (the three personal projections) and AR-W11A-2 (circles, crews, visits) 
 - So with gate 2 on, a trip does not return `for_you` or Cache A to their pre-§79 order.
 - The document states the manual recovery: action 8's SQL, also added to rollout plan §9.3.
 - Making those reads honour a trip is a routine engineering change for the serve-path owner. This lane does not build it.
+
+## W11-X2, second round — DV-83's two remaining paths (§97)
+
+*2026-09-28, on `claude/sensing-completion-20260925` after `532227796` and the integration of the media test fix. Census section §97. Row: DV-83 (held at W by §94.10). No migration and no flag. Both changes are line-neutral in every cited file.*
+
+### D-W11X2-10 — a signed-in request whose viewer cannot be resolved is a failed event-post read (DV-83, §94.10)
+
+- **The question.** §94.10: *"A signed-in viewer whose identity cannot be resolved has the event-post read skipped silently … an `auth.getUser` throw, or an `AuthRetryableFetchError`, answers 200 with no posts and no refusal, the same screen as 'nothing live'."* Which failures make a viewer unresolved rather than anonymous, and what does the envelope say?
+- **Options considered.**
+  - (a) Any `getUser` error is unresolved. Consequence: a revoked or expired token, which Supabase Auth answers with a 4xx, would refuse the feed on every request until the client re-authenticates. A rejection is an answer about the caller, not a failure to look.
+  - (b) Only a failure to answer is unresolved: a throw, `AuthRetryableFetchError` (auth-js's network and 5xx/52x class), `AuthUnknownError` (a response it could not read), or any error with status 0 or ≥ 500. A 4xx and `AuthInvalidJwtError` (400) stay anonymous, which owes no event-post read (C2's posture). An error of neither kind is read as a rejection, the feed's documented posture for a token it cannot use.
+  - Class: (i) `transient_db`, as the other event-post failures; (ii) `upstream_unavailable`, the owner's 2026-09-14 class for a dependency this deployment calls and does not operate.
+- **Decision.** (b) and (ii). The unresolved state starts the event-post read as failed (`readFailed: viewerUnresolved`), so the existing path names `"event_posts"` in `failedSources` and the existing coverage rule decides `nothing` or `partial`. Code `feed_viewer_unresolved`. When a place category also failed, the places code and `transient_db` stand, as in D-W11X2-1, with both sources named. No exposure is logged for a refused answer, and nothing is cached.
+- **Not decided here, routed.** An unresolved viewer is served community places as an anonymous request is: their own blocks and mutes cannot be applied because they cannot be known. Failing those rows closed would silently withhold places, which is a product choice. §97 records it as a finding. A server with no service client is a deployment misconfiguration, not a runtime failure, and is left as it was.
+- **Reversibility.** Revert the five in-place lines in `routes/discovery.ts` and the helper at its foot. Nothing is stored.
+- **Where.** `artifacts/api-server/src/routes/discovery.ts` (the feed; `authServiceUnreachable` at the foot). Tests: `src/test/discoveryFeedEventPostsCoverage.test.ts` V1–V6, C4–C6, appended below the anchored cases.
+
+### D-W11X2-11 — a pull refetches the rails whose copy asks for one (DV-83, §94.10)
+
+- **The question.** §94.10: *"Pull-to-refresh also does not refetch the rail its refused copy asks the user to pull."* `DiscoveryEventPostsRail` fetched only when its destination or coordinates changed.
+- **Decision.** `ForYouTab` bumps a `refreshKey` on every pull and passes it to `DiscoveryEventPostsRail` and to each `DiscoveryOutputKindsRail`, whose failure copy says "Try again in a moment." Each rail adds the key to its fetch effect's dependencies, so a pull refetches it and nothing else does.
+- **Reversibility.** Drop the prop; the rails return to fetching on place changes only.
+- **Where.** `travel-buddy-standalone/src/components/discovery/ForYouTab.tsx`, `DiscoveryEventPostsRail.tsx`, `DiscoveryOutputKindsRail.tsx` (line-neutral). Tests: `DiscoveryEventPostsRail.refresh.component.test.tsx` R1, R2; `ForYouTab.pullToRefresh.component.test.tsx`'s third case.
