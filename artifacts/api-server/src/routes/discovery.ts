@@ -2630,7 +2630,7 @@ router.get("/discovery/feed", async (req, res) => {
       const authHeader = req.headers.authorization;
       if (authHeader?.startsWith("Bearer ")) {
         const token = authHeader.slice(7);
-        const { data: userData, error: userErr } = await sc.auth.getUser(token); if (!userData?.user?.id && userErr && isTransientAuthError(userErr)) viewerUnresolved = true;  // §98: a REJECTED token (definitive 4xx) is an anonymous caller; a lookup that did not happen (throw, network, 408, 429, 5xx, no status) leaves the viewer unresolved
+        const { data: userData, error: userErr } = await sc.auth.getUser(token); if (!userData?.user?.id && userErr && authServiceUnreachable(userErr)) viewerUnresolved = true;  // §98 (D-W11X2-21): a REJECTED token (Auth's coded 4xx verdict, or auth-js's named rejection) is an anonymous caller; a lookup that did not happen (throw, network, 408, 429, 5xx, a code-less 4xx, no status) leaves the viewer unresolved
         if (userData?.user?.id) {
           viewerId = userData.user.id;
           // Both directions of the block relationship, through the one helper
@@ -2656,7 +2656,7 @@ router.get("/discovery/feed", async (req, res) => {
           }
         }
       }
-    }
+    } else if (req.headers.authorization?.startsWith("Bearer ")) viewerUnresolved = true;  // §98: a presented token and no service client to resolve it with
   } catch (err) {
     // Reached for an unresolved viewer (the documented case) AND for a rejected
     // blocks read that threw rather than resolving. Both leave `blockedIds`
@@ -4521,10 +4521,10 @@ import { haversineKm, batchFetchVoteAndRatingAggregates } from "../lib/discovery
 // alone: every retryable error carries one of the failure statuses. A
 // declaration, so it hoists above its use.
 function isTransientAuthError(err: unknown): boolean {
-  const e = err as { status?: unknown } | null;
-  if (!e || typeof e !== "object") return false;
-  const status = typeof e.status === "number" ? e.status : null;
-  return status === null || status === 0 || status === 408 || status === 429 || status >= 500;
+  // census-discovery §98 (D-W11X2-21): superseded. The feed and every caller use
+  // ONE rule, authServiceUnreachable at the foot, which keeps this rule's
+  // fail-closed reading of a status-less error and adds Auth's own verdict codes.
+  return authServiceUnreachable(err);
 }
 
 // ── census-discovery §94.10 (lane W11-X2, round 2; DV-83): Overpass reports a failed read ──
@@ -4576,4 +4576,40 @@ function everyRetrievalFailed(failedSources: readonly string[]): boolean {
 function overpassSourcesCode(failedSources: readonly string[]): string | null {
   if (!failedSources.includes(DISCOVERY_OVERPASS_SOURCE)) return null;
   return onlyOverpassFailed(failedSources) ? "overpass_unavailable" : "discovery_place_sources_read_failed";
+}
+
+/**
+ * census-discovery §98 (DV-83, §94.10): did Supabase Auth fail to ANSWER
+ * `getUser(token)`, as opposed to rejecting the token?
+ *
+ * auth-js reports an unreachable or failing auth service as
+ * `AuthRetryableFetchError` (status 0 for a network failure, or 5xx/52x) or
+ * `AuthUnknownError` (a response it could not read), and a server failure it
+ * did read as an error with a 5xx status. A 429 (rate limited) or 408 (timed
+ * out) is the service declining to evaluate the token, which says nothing
+ * about the token; `lib/discoveryRefusal.ts` rules a rate limit an outage for
+ * the same reason.
+ *
+ * A rejected credential is Supabase Auth's VERDICT on the token, and a verdict
+ * names itself: auth-js sends `X-Supabase-Api-Version` and reads the error
+ * code Auth answers with (`bad_jwt`, `session_not_found`, `user_not_found`,
+ * ...), so a real rejection is a 4xx whose error carries a `code`. A 4xx with
+ * no code came from in front of Auth, e.g. the API gateway refusing this
+ * server's own key ("Invalid API key"), and the token was never evaluated.
+ * auth-js's own client-side rejections are known by name:
+ * `AuthSessionMissingError` (a revoked session) and `AuthInvalidJwtError`.
+ *
+ * Only a failure to answer leaves the viewer UNRESOLVED; a rejection is an
+ * answer, and the caller is anonymous. An error with no status and no known
+ * name is NOT a verdict: nothing says the token was evaluated, so it leaves the
+ * viewer unresolved (D-W11X2-21, keeping §94.10's fail-closed reading).
+ */
+function authServiceUnreachable(error: unknown): boolean {
+  const e = error as { name?: unknown; status?: unknown; code?: unknown } | null | undefined;
+  if (!e) return false;
+  if (e.name === "AuthRetryableFetchError" || e.name === "AuthUnknownError") return true;
+  if (e.name === "AuthSessionMissingError" || e.name === "AuthInvalidJwtError") return false;
+  if (typeof e.status !== "number") return true;  // no status, no known name: not a verdict (D-W11X2-21)
+  if (e.status === 0 || e.status === 408 || e.status === 429 || e.status >= 500) return true;
+  return e.status >= 400 && !(typeof e.code === "string" && e.code !== "");
 }
