@@ -14246,16 +14246,20 @@ The other changed files were already watched. The census checks' results after t
   - `up.sh` replayed the chain: 368 files applied in order, 12 known-unreplayable of 380, and 2 of those applied on retry.
   - All 16 wave-10 flags (3450–3456, 3480–3484) read FALSE.
   - `scripts/local-db/run-tests.sh`: 390 of 390 pass, 0 fail, 0 cancelled, 0 skipped. That includes §78's and §85's DB suites and the five DB suites that import a changed file.
+- **The full api-server `pnpm test`, run once at the end:** 27,987 tests, 27,985 pass. There are two failures, neither in a file this section changed:
+  - `discoveryClientRouteE2E.test.ts`: the pre-existing Node 22 load failure above.
+  - `guardReachability.test.ts` CONTROL: its checker was killed by the suite's own 180 s spawn timeout under load (status null, SIGTERM). Rerun alone, it passes 25/25, and `check:guard-reachability` passes (§64.8 records the same case).
 - **Client (`travel-buddy-standalone`):**
   - `typecheck` is clean;
   - `typecheck:tests` is at 173 against a baseline of 173;
   - the two new component suites pass 6/6;
-  - `check:all` and the discovery component suites are reported in the lane report.
+  - the 43 discovery component suites pass 265/265;
+  - the discovery node suites pass 121 with 0 failures, run with the runner's Node 22 loader. The six cancelled cases are `discovery.searchSignal`, which is on the runner's KNOWN_BROKEN list and cancels identically with the base `services/discovery.ts`;
+  - `check:all` passes ("ALL CHECKS PASSED").
 - **One generated file outside this section's subject.** `docs/architecture/telegraph-phase0-inventory.md` had its migration count regenerated from 644 to 660. The merged lanes' migrations had moved it, `check:telegraph-inventory` failed at `6594dd495`, and that check prescribes regenerating the file in the same commit. It passes now.
 - **Not run:**
   - `check:write-path-columns`, `check:authorization-contract` and `check:rank-events-surfaces` need live Supabase credentials and refuse here. No write path was added: the new route reads only.
   - No SQL was run against `portava-ci` or production.
-  - The full api-server `pnpm test` is reported in the lane report.
 
 ### 91.7 Left open, with the exact files
 
