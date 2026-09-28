@@ -214,7 +214,8 @@ describe("G — DV-80: the two monitors defined and measured; bounds only propos
   it("G1. new-creator success and stale content are measured with their denominators; no monitor is 'unmeasured' now", () => {
     const r = report({ newCreators: ok({ new_creators: 10, served_new_creators: 4, successful_new_creators: 1 }), stale: ok({ exposures: 200, stale_exposures: 50, served_items: 40, stale_items: 5 }) });
     assert.deepEqual(reading84(r, "new_creator_success"), { state: "measured", value: 0.25, sample: 4, detail: (reading84(r, "new_creator_success") as { detail: Record<string, unknown> }).detail });
-    assert.equal((reading84(r, "new_creator_success") as { detail: { opportunity: number } }).detail.opportunity, 0.4);
+    const nc = reading84(r, "new_creator_success");
+    assert.equal(nc.state === "measured" ? nc.detail["opportunity"] : null, 0.4);
     assert.equal((reading84(r, "stale_content") as { value: number }).value, 0.25);
     assert.ok(r.monitors.every((m) => m.reading.state !== "unmeasured"));
     assert.ok(ECOSYSTEM_MONITORS.every((m) => m.missingInput === undefined));

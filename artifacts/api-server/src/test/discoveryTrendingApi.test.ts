@@ -456,9 +456,7 @@ describe("H — nothing that serves or ranks reads the store or imports this API
   const scan = [...files("lib"), ...files("routes"), ...files("services/trails"), ...files("services/ranking")];
   it("H1. place_momentum is read only by the trend-explanation module", () => {
     const readers = scan.filter((f) => /\.from\(\s*["']place_momentum["']\s*\)|rebuild_place_momentum["']\s*[,)]/.test(readFileSync(join(SRC, f), "utf8")));
-    // §84 (D-W10-R1-11): the rebuild scheduler CALLS the rebuild and prunes old runs; it is a writer, started once by src/index.ts, and no serve path imports it.
-    assert.deepEqual(readers, ["lib/discoveryTrendExplanation.ts", "lib/discoveryTrendRebuildScheduler.ts"]);
-    assert.deepEqual(scan.filter((f) => /discoveryTrendRebuildScheduler\.js/.test(readFileSync(join(SRC, f), "utf8"))), [], "no lib, route, Trails or ranking module imports the scheduler");
+    assert.deepEqual(readers, ["lib/discoveryTrendExplanation.ts", "lib/discoveryTrendRebuildScheduler.ts"]); assert.deepEqual(scan.filter((f) => /discoveryTrendRebuildScheduler\.js/.test(readFileSync(join(SRC, f), "utf8"))), [], "no lib, route, Trails or ranking module imports the scheduler");  // §84 (D-W10-R1-11): the rebuild scheduler CALLS the rebuild and prunes old runs; it is a writer, started once by src/index.ts, and no serve path imports it
   });
   it("H2. the explanation module is imported only by its route, and the route only by the router index", () => {
     const importers = (name: string) => scan.filter((f) => new RegExp(`from "\\.\\.?/(lib/|routes/)?${name}\\.js"`).test(readFileSync(join(SRC, f), "utf8")));
