@@ -1559,7 +1559,7 @@ Lane W10-S1, 2026-09-28, branch `disc-w10-s1-search`. Census section: census-dis
   - *Independence:* the new authors are clustered by Sensing's clustering (`clusterByIndependence`), so two accounts posting in lockstep are one group.
   - *Only adds:* G never falls. Activity, exposure and rate are unchanged. The evidence carries counts only (`postConvergence`), never an author id; an unreadable or truncated Memory read is `unread` and adds nothing.
   - The flag `discovery_trend_post_convergence_enabled` (3496, FALSE) is read only inside the v2 branch of `loadLocalMomentum`, so with it off no Memory is read and the reading is §84's, byte for byte.
-- **What it does not reach:** the stored twin `rebuild_place_momentum_v2` (3477), which the trend API serves, is not extended. That is code still owed (census §95 open item O-1), so DV-34 does not carry `IMPLEMENTATION-COMPLETE`.
+- **What it does not reach:** ~~the stored twin `rebuild_place_momentum_v2` (3477), which the trend API serves, is not extended.~~ **Superseded by D-W11X3-5 (census §95.9):** 3497 gives the stored twin the same leg, and a harness suite holds the two equal row for row.
 - **Reversibility:** flag off. Nothing is stored.
 - **Where it is implemented:** `src/lib/discoveryTrendPostConvergence.ts`, the appended block of `src/lib/discoveryTrendNormalised.ts`, the pass-through in `src/lib/discoveryTrendState.ts`, and `src/lib/discoveryLocalMomentum.ts`. Tests: `src/test/discoveryTrendPostConvergence.test.ts` P0–P10, L1–L3.
 
@@ -1583,12 +1583,27 @@ Lane W10-S1, 2026-09-28, branch `disc-w10-s1-search`. Census section: census-dis
 - **Reversibility:** a client release; with either server flag off, the client is inert.
 - **Where it is implemented:** client `src/services/discoveryCardSave.ts`, `src/components/DiscoveryCardMessage.tsx` (line-neutral), `src/services/tagging.ts`, `src/components/PendingTagInbox.tsx`, `app/profile/edit/connected.tsx`; server `src/routes/tags.ts` (appended route). Tests: the two client service suites, the two client component suites, and the server's `src/test/tagPendingInbox.test.ts`.
 
-### D-W11X3-A1 — **APPROVAL REQUIRED**: production activation of 3495–3496 and the two new flags
+### D-W11X3-5 — the stored twin gets the post leg through a new migration (3497), not an edit of 3477
+
+- **The question:** census §95.4 O-1, and the coordinator's follow-up: extend `rebuild_place_momentum_v2` so the stored trend rows carry "visitors post afterward", with exactly the TS leg's semantics. Do it in a new file if 3477 is in §87's certified set; if 3477 is unapplied everywhere, choose, and say why.
+- **Options considered:**
+  - (a) Amend 3477. It is allowed: 3477 is not in §87's `portava-ci` set (`docs/ops/discovery-portava-ci-apply-plan.md` §1: `3338` … `3441` plus `3436`), and it is applied to no shared database. But it is lane W10-R1's file. Its harness proof N0–N5 and its rollback describe its current text, and amending it would couple this leg's rollback to the whole v2 model's.
+  - (b) A forward file, 3497, that re-creates `rebuild_place_momentum_v2` as 3477's body plus three named changes and adds one helper, `discovery_trend_post_groups_v2`. Its own rollback restores 3477's text verbatim. **Chosen.**
+- **Decision and rationale:** (b).
+  - **Semantics** are the TS leg's, rule for rule: published and public Memories; strictly after the author's own earliest positive outcome at the place; at least 2 distinct authors, and again at least 2 among authors who are not the window's activity actors; Sensing's 30-second clustering; counts only.
+  - **Gating:** only under `discovery_trend_post_convergence_enabled`, gated by a pseudo-constant qual so that with the flag off the helper never runs.
+  - **Feature version:** the leg writes its own, `discovery-exposure-activity-v3+post-after-visit-v1`, and the in-process reading now carries the same one when the leg answered. The per-row contribution to convergence differs, and `10` §9 requires that to be named.
+  - **One TS tightening:** a row served before the window is not a visit. That is the loader's read and 3477's `base`, so production input is unchanged.
+  - **Local Pulse is not given the leg:** the TS leg is place-level.
+- **Reversibility:** turn the flag off, which takes effect on the next rebuild. `db/rollback/2026-09-28-3497-…` restores 3477's function; it refuses while the flag is TRUE. Stored rows keep their feature version, which names the arithmetic that wrote them.
+- **Where it is implemented:** `src/migrations/3497_discovery_trend_post_convergence_stored.sql` and its rollback; `src/lib/discoveryTrendPostConvergence.ts` (one line); `src/lib/discoveryTrendState.ts` (the version). Tests: `src/test/db/discoveryTrendPostConvergenceStored.db.test.ts` S0–S5, and `src/test/discoveryTrendPostConvergence.test.ts` P11–P13.
+
+### D-W11X3-A1 — **APPROVAL REQUIRED**: production activation of 3495–3497 and the two new flags
 
 - **Recommended action (exact), after W10D-A1's batches are applied and the API is deployed:**
-  1. Apply `3495_place_cooccurrence_trail_projection.sql`, then `3496_discovery_w11x3_flags.sql`, with the repository's applier.
+  1. Apply `3495_place_cooccurrence_trail_projection.sql`, then `3496_discovery_w11x3_flags.sql`, then (after 3475–3477) `3497_discovery_trend_post_convergence_stored.sql`, with the repository's applier.
   2. `UPDATE public.feature_flags SET enabled = true WHERE flag = 'discovery_place_cooccurrence_enabled';` The hourly tick then rebuilds from Trail membership only. Verify with `SELECT count(*), max(computed_at) FROM public.place_cooccurrence;` after the next hour boundary.
-  3. `discovery_trend_post_convergence_enabled`: only after `discovery_trend_normalised_enabled` is TRUE (W10-R1's activation, D-W10-R1-17). Then `UPDATE public.feature_flags SET enabled = true WHERE flag = 'discovery_trend_post_convergence_enabled';`
+  3. `discovery_trend_post_convergence_enabled`: only after `discovery_trend_normalised_enabled` is TRUE (W10-R1's activation, D-W10-R1-17). Then `UPDATE public.feature_flags SET enabled = true WHERE flag = 'discovery_trend_post_convergence_enabled';`. It covers both the in-process reading and the stored rebuild (3497). Verify with `SELECT feature_version, count(*) FROM public.place_momentum WHERE computed_at = (SELECT max(computed_at) FROM public.place_momentum) GROUP BY 1;`, which must show `discovery-exposure-activity-v3+post-after-visit-v1`.
   4. The client legs follow the server's own requests: `telegraph_discovery_actions_enabled` (D-W10S2-15) and `tag_permission_approval_required_enabled` (D-W10S2-17's family), once the oldest supported client build carries this change.
 - **If approved:** the co-occurrence projection exists and is readable by a future surface; the trend classifier counts public post-after-visit convergence. Neither changes a served order at this tree: no ranker reads the projection, and the post leg only raises a group count.
 - **If declined:** nothing is read or rebuilt. DV-72 and DV-34 stay `W`.

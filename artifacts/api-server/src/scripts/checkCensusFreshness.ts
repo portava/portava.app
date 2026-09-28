@@ -4358,6 +4358,9 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/3496_discovery_w11x3_flags.sql",
     "db/rollback/2026-09-28-3495-place-cooccurrence-trail-projection-rollback.sql",
     "db/rollback/2026-09-28-3496-discovery-w11x3-flags-rollback.sql",
+    "artifacts/api-server/src/migrations/3497_discovery_trend_post_convergence_stored.sql", // §95.9 (O-1)
+    "db/rollback/2026-09-28-3497-discovery-trend-post-convergence-stored-rollback.sql",
+    "artifacts/api-server/src/test/db/discoveryTrendPostConvergenceStored.db.test.ts",
     "artifacts/api-server/src/lib/discoveryPlaceCooccurrence.ts",
     "artifacts/api-server/src/lib/discoveryTrendPostConvergence.ts",
     "artifacts/api-server/src/lib/discoveryPlaceAggregates.ts",
