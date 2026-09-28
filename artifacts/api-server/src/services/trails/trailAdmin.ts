@@ -38,18 +38,21 @@ function isMissingFunction(error: any): boolean {
 
 async function callAdmin(sc: any, fn: string, args: Record<string, unknown>): Promise<TrailAdminOutcome> {
   if (!sc) return { ok: false, reason: "unavailable" };
-  let res: { data: any; error: any };
+  let data: any, error: any;
   try {
-    res = await sc.rpc(fn, args);
+    ({ data, error } = await sc.rpc(fn, args));
   } catch (err) {
     logger.warn({ fn, err: (err as Error)?.message }, "trail admin call threw");
-    return { ok: false, reason: "db_error" };
+    return { ok: false, reason: "degraded" };
   }
-  if (res.error) {
-    if (isMissingFunction(res.error)) return { ok: false, reason: "unavailable" };
-    logger.warn({ fn, code: res.error?.code, message: res.error?.message }, "trail admin call failed");
-    return { ok: false, reason: "db_error" };
+  // A resolved error is a FAILED admin action, never a success: supabase-js resolves every
+  // failure, and the audited function either committed the change and its audit row or neither.
+  if (error) {
+    if (isMissingFunction(error)) return { ok: false, reason: "unavailable" };
+    logger.warn({ fn, code: error?.code, message: error?.message }, "trail admin call failed — nothing was changed");
+    return { ok: false, reason: "degraded" };
   }
+  const res = { data };
   const out = (res.data ?? {}) as Record<string, any>;
   const outcome = String(out.outcome ?? "");
   if (outcome === "refused") return { ok: false, reason: String(out.reason ?? "refused"), detail: out };

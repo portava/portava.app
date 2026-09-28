@@ -395,3 +395,313 @@ describe("S8 — DV-74: a trend integrity review in force reaches GET …/trendi
     assert.deepEqual(unread.body.items, []);
   });
 });
+
+// ── §86 follow-up (the independent verifier's findings at de2ae1ca0) ──────────
+//
+// F1–F6: `02` §10's five clauses on GET …/trending's OWN path, and D-W10T-15 —
+// every item any list holds back (any clause, the per-module creator cap, the
+// page-wide bound) is counted under its place and reachable from a "more" route.
+// G1–G3: DV-13's claims the verifier found unpinned. H1–H3: DV-23's service
+// wiring (post text, media kind, place) on both modules paths. Each was run RED
+// against de2ae1ca0 first (§86.13).
+
+const saves = (itemId: string, n = 8): Row[] => Array.from({ length: n }, (_, i) => ({
+  id: `sv-${itemId}-${i}`, surface: "discovery", item_id: itemId, outcome: "save", served_at: rel(H + i), outcome_at: rel(H),
+}));
+const EXPLORATION = { flag: "discovery_trail_exploration_enabled", enabled: true };
+
+describe("F — §86 follow-up: all five §10 clauses on GET …/trending, and nothing held back is unreachable", () => {
+  it("F1 clause 1 (content similarity): two near-identical posts both surging — trending serves one; the other is held and listed", async () => {
+    const t = "rooftop bar sunset view over the river tonight";
+    const posts = [postRow(P(1), U(2), { content: t }), postRow(P(2), U(3), { content: `${t}!` }), postRow(P(3), U(4), { content: "night market street food stalls" })];
+    const db = makeRulesDb({
+      profiles: profiles(6), trails: [trailRow(T)], posts,
+      content_trails: posts.map((p, i) => memberRow({ source_id: p.id, contributor_id: U(i + 2), created_at: rel((i + 1) * H) })),
+      rank_events: posts.flatMap((p) => saves(p.id)),
+    });
+    const r = await trailTrending(db, T, Date.now(), { viewerId: U(6) });
+    assert.deepEqual(r.items.map((i) => i.sourceId).sort(), [P(1), P(3)].sort());
+    assert.deepEqual((r.heldBackUnplaced ?? []).map((i) => i.sourceId), [P(2)]);
+  });
+
+  it("F2 clause 1 (place): a venue post and the place member of that venue are ONE cluster on trending; the count is served", async () => {
+    const posts = [2, 3, 4].map((n) => postRow(P(n), U(n), { canonical_place_id: CP(1) }));
+    const db = makeRulesDb({
+      profiles: profiles(8), trails: [trailRow(T)], posts,
+      content_trails: [
+        memberRow({ source_type: "place", source_id: PL(1), contributor_id: U(1), created_at: rel(H) }),
+        ...posts.map((p, i) => memberRow({ source_id: p.id, contributor_id: U(i + 2), created_at: rel((i + 2) * H) })),
+      ],
+      places: [{ id: CP(1), name: "Sky Bar", latitude: 13.7215, longitude: 100.5165 }],
+      discovery_places: [{ id: PL(1), submitted_by: U(1), name: "Sky Bar", lat: 13.7220, lng: 100.5168 }],
+      rank_events: [...saves(`db/${PL(1)}`), ...posts.flatMap((p) => saves(p.id))],
+    });
+    _setTestClient(db as any, true);
+    const r = await call("GET", `/v1/discovery/trails/${T}/trending`, U(8));
+    assert.equal(r.status, 200);
+    assert.equal(r.body.items.length, 2, "four items about one venue: two served");
+    assert.deepEqual(r.body.moreFromThisPlace, { [PL(1)]: 2 }, "counted under the place MEMBER, and serialised");
+  });
+
+  it("F3 clause 3 (media): 22 photos and 2 videos surging equally — the trending list of 20 carries the videos", async () => {
+    const photos = Array.from({ length: 22 }, (_, i) => postRow(P(10 + i), U(10 + i), { content: `photo number ${i} words w${i} x${i}` }));
+    const videos = [postRow(P(40), U(40), { primary_media_type: "video", content: "video alpha beta gamma" }), postRow(P(41), U(41), { primary_media_type: "video", content: "video delta epsilon zeta" })];
+    const all = [...photos, ...videos];
+    const db = makeRulesDb({
+      profiles: profiles(45), trails: [trailRow(T)], posts: all,
+      content_trails: all.map((p, i) => memberRow({ source_id: p.id, contributor_id: p.author_id, created_at: rel((i + 1) * H) })),
+      rank_events: all.flatMap((p) => saves(p.id)),
+    });
+    const r = await trailTrending(db, T, Date.now(), { viewerId: U(1) });
+    assert.equal(r.items.length, 20);
+    assert.ok(r.items.some((i) => i.sourceId === P(40)) && r.items.some((i) => i.sourceId === P(41)), "the waiting videos take slots");
+  });
+
+  it("F4 clause 4 (viewpoints): one author's two surging posts about one place — one on trending, one counted under the place", async () => {
+    const posts = [postRow(P(1), U(2), { canonical_place_id: CP(1), content: "first take on the bar" }), postRow(P(2), U(2), { canonical_place_id: CP(1), content: "second visit different words" })];
+    const db = makeRulesDb({
+      profiles: profiles(4), trails: [trailRow(T)], posts, places: [{ id: CP(1), name: "Bar", latitude: null, longitude: null }],
+      content_trails: posts.map((p, i) => memberRow({ source_id: p.id, contributor_id: U(2), created_at: rel((i + 1) * H) })),
+      rank_events: posts.flatMap((p) => saves(p.id)),
+    });
+    const r = await trailTrending(db, T, Date.now(), { viewerId: U(4) });
+    assert.equal(r.items.length, 1);
+    assert.deepEqual(r.moreFromThisPlace, { [CP(1)]: 1 });
+  });
+
+  it("F5 clause 5: trending's held items are listed by GET …/places/:placeId/more (key `trending`) and GET …/more, count = list", async () => {
+    const posts = [2, 3, 4, 5].map((n) => postRow(P(n), U(n), { canonical_place_id: CP(1) }));
+    const db = makeRulesDb({
+      profiles: profiles(8), trails: [trailRow(T)], posts, places: [{ id: CP(1), name: "Venue", latitude: null, longitude: null }],
+      content_trails: posts.map((p, i) => memberRow({ source_id: p.id, contributor_id: U(i + 2), content_state: "growing", created_at: rel((i + 1) * H) })),
+      rank_events: posts.flatMap((p) => saves(p.id)),
+    });
+    _setTestClient(db as any, true);
+    const tr = await call("GET", `/v1/discovery/trails/${T}/trending`, U(8));
+    const n = tr.body.moreFromThisPlace[CP(1)];
+    assert.equal(n, 2);
+    const byPlace = await call("GET", `/v1/discovery/trails/${T}/places/${CP(1)}/more`, U(8));
+    const listed = byPlace.body.modules.find((m: any) => m.key === "trending").items;
+    assert.equal(listed.length, n);
+    for (const it of listed) assert.ok(!tr.body.items.some((s: any) => s.id === it.id));
+    const all = await call("GET", `/v1/discovery/trails/${T}/more`, U(8));
+    assert.equal(all.status, 200);
+    assert.equal(all.body.lists.find((l: any) => l.key === "trending").byPlace[CP(1)].length, n);
+  });
+
+  it("F6 modules: an item held by the per-module CREATOR cap, and every item the PAGE BOUND removes, is counted and listed", async () => {
+    // One author, eight posts, one venue for three of them; two others with one post each. The page bound
+    // empties the author's later modules (the verifier's evergreen case); nothing it removes may vanish.
+    const mine = Array.from({ length: 8 }, (_, i) => postRow(P(10 + i), U(2), { canonical_place_id: i < 3 ? CP(1) : null, content: `author post ${i} words a${i} b${i}` }));
+    const others = [postRow(P(30), U(3)), postRow(P(31), U(4))];
+    const db = makeRulesDb({
+      profiles: profiles(6), trails: [trailRow(T)], posts: [...mine, ...others], places: [{ id: CP(1), name: "Venue", latitude: null, longitude: null }],
+      content_trails: [
+        ...mine.map((p, i) => memberRow({ source_id: p.id, contributor_id: U(2), content_state: i < 4 ? "just_arrived" : "evergreen", created_at: rel((i + 1) * H) })),
+        ...others.map((p, i) => memberRow({ source_id: p.id, contributor_id: U(3 + i), created_at: rel((i + 20) * H) })),
+      ],
+    });
+    _setTestClient(db as any, true);
+    const mods = await call("GET", `/v1/discovery/trails/${T}/modules`, U(6));
+    const more = await call("GET", `/v1/discovery/trails/${T}/more`, U(6));
+    const served = new Set<string>(mods.body.modules.flatMap((m: any) => m.items.map((i: any) => i.sourceId)));
+    const held = new Set<string>(more.body.lists.flatMap((l: any) => [...Object.values(l.byPlace).flat(), ...l.unplaced].map((i: any) => i.sourceId)));
+    for (const p of [...mine, ...others]) assert.ok(served.has(p.id) || held.has(p.id), `${p.id.slice(-2)} is neither served nor listed`);
+    const ja = mods.body.modules.find((m: any) => m.key === "just_arrived");
+    const heldAtVenue = more.body.lists.find((l: any) => l.key === "just_arrived")?.byPlace[CP(1)] ?? [];
+    assert.equal(ja.moreFromThisPlace[CP(1)] ?? 0, heldAtVenue.length, "a creator-capped item with a place is counted, and the count is the list");
+    assert.ok(heldAtVenue.length >= 1, "the author's third venue post is held by the creator cap and counted under the venue");
+  });
+});
+
+describe("G — DV-13's claims, pinned (the verifier found them unpinned)", () => {
+  it("G1 the per-module cap of 2 holds where the page-wide bound alone would allow more", async () => {
+    const mine = [0, 1, 2].map((i) => postRow(P(10 + i), U(2), { content: `mine ${i} words m${i} n${i}` }));
+    const others = Array.from({ length: 12 }, (_, i) => postRow(P(30 + i), U(10 + i), { content: `other ${i} words o${i} q${i}` }));
+    const all = [...mine, ...others];
+    const db = makeRulesDb({
+      profiles: profiles(25), trails: [trailRow(T)], posts: all,
+      content_trails: all.map((p, i) => memberRow({ source_id: p.id, contributor_id: p.author_id, content_state: i < 3 || i % 2 ? "just_arrived" : "evergreen", created_at: rel((i + 1) * H) })),
+    });
+    const r = await getTrailModules(db, T, { viewerId: U(1), pageSize: 8 });
+    for (const m of r.modules) {
+      const n = m.items.filter((i) => mine.some((p) => p.id === i.sourceId)).length;
+      assert.ok(n <= MAX_PER_CONTRIBUTOR_PER_PAGE, `${m.key}: ${n} of one creator's items`);
+    }
+    const ja = r.modules.find((m) => m.key === "just_arrived")!;
+    assert.equal(ja.items.filter((i) => mine.some((p) => p.id === i.sourceId)).length, 2, "exactly the cap: the third is held back");
+    assert.equal((ja.heldBackUnplaced ?? []).filter((i) => mine.some((p) => p.id === i.sourceId)).length, 1);
+  });
+
+  it("G2 the page-wide bound holds on the flag-ON path too", async () => {
+    const mine = Array.from({ length: 8 }, (_, i) => postRow(P(10 + i), U(2), { content: `author flag on ${i} words f${i} g${i}` }));
+    const others = [postRow(P(30), U(3)), postRow(P(31), U(4))];
+    const states = ["just_arrived", "just_arrived", "evergreen", "evergreen", "growing", "growing", "featured", "featured"];
+    const db = makeRulesDb({
+      profiles: profiles(6), trails: [trailRow(T)], feature_flags: [EXPLORATION], posts: [...mine, ...others],
+      content_trails: [
+        ...mine.map((p, i) => memberRow({ source_id: p.id, contributor_id: U(2), content_state: states[i], created_at: rel((i + 1) * H), content_state_changed_at: rel(H) })),
+        ...others.map((p, i) => memberRow({ source_id: p.id, contributor_id: U(3 + i), created_at: rel((i + 20) * H) })),
+      ],
+      trail_member_exposures: [],
+    });
+    const r = await getTrailModules(db, T, { viewerId: U(6), pageSize: 8 });
+    assert.ok(r.modules.some((m) => m.key === "hidden_gems"), "the flag-on path ran");
+    const distinct = new Set(r.modules.flatMap((m) => m.items.map((i) => i.sourceId)));
+    const n = [...distinct].filter((id) => mine.some((p) => p.id === id)).length;
+    assert.ok(n <= Math.max(MAX_PER_CONTRIBUTOR_PER_PAGE, Math.floor(distinct.size * TRAIL_PAGE_CREATOR_SHARE)), `${n} of ${distinct.size}`);
+  });
+
+  it("G3 creator-less items are never trimmed by the page bound, however many there are", () => {
+    const items = Array.from({ length: 6 }, (_, i) => ({ id: `n${i}`, sourceType: "place", sourceId: `pl${i}` }));
+    const modules = [{ key: "a", items: [...items.slice(0, 3), { id: "c1", sourceType: "post", sourceId: "p1" }] }, { key: "b", items: [...items.slice(3), { id: "c2", sourceType: "post", sourceId: "p2" }] }];
+    const removed = creatorPageBoundRemovals(modules, (id) => (id.startsWith("c") ? `creator-${id}` : null));
+    assert.equal(removed.size, 0);
+  });
+});
+
+describe("H — DV-23's service wiring on both modules paths (text, media kind, place)", () => {
+  const photosAndVideos = () => {
+    const photos = Array.from({ length: 8 }, (_, i) => postRow(P(10 + i), U(10 + i), { content: `distinct photo ${i} words q${i} z${i}` }));
+    const vids = [postRow(P(30), U(30), { primary_media_type: "video", content: "video one alpha beta" }), postRow(P(31), U(31), { primary_media_type: "video", content: "video two gamma delta" })];
+    return [...photos, ...vids];
+  };
+  const nearDup = () => {
+    const t = "rooftop bar sunset view over the river";
+    return [postRow(P(40), U(20), { content: t }), postRow(P(41), U(21), { content: `${t}!` }), postRow(P(42), U(22), { content: "street food night market" })];
+  };
+  const venue = () => [2, 3, 4, 5].map((n) => postRow(P(50 + n), U(n), { canonical_place_id: CP(1), content: `venue take ${n} words v${n} y${n}` }));
+  for (const [label, flags] of [["flag OFF", []], ["flag ON", [EXPLORATION]]] as const) {
+    it(`H ${label}: the post's media kind, text and place reach §10's pass through getTrailModules`, async () => {
+      const run = async (posts: Row[], extra: Row = {}) => {
+        const db = makeRulesDb({
+          profiles: profiles(35), trails: [trailRow(T)], feature_flags: [...flags], posts, trail_member_exposures: [],
+          content_trails: posts.map((p, i) => memberRow({ source_id: p.id, contributor_id: p.author_id, created_at: rel((i + 1) * H) })),
+          ...extra,
+        });
+        return (await getTrailModules(db, T, { viewerId: U(1), pageSize: 8 })).modules.find((m) => m.key === "just_arrived")!;
+      };
+      const media = await run(photosAndVideos());
+      assert.ok(media.items.some((i) => i.sourceId === P(30)) && media.items.some((i) => i.sourceId === P(31)), "H1 media kind wired");
+      const text = await run(nearDup());
+      assert.deepEqual(text.items.map((i) => i.sourceId).sort(), [P(40), P(42)].sort(), "H2 post text wired");
+      const place = await run(venue(), { places: [{ id: CP(1), name: "Venue", latitude: null, longitude: null }] });
+      assert.equal(place.items.length, 2, "H3 place wired");
+      assert.deepEqual(place.moreFromThisPlace, { [CP(1)]: 2 });
+    });
+  }
+});
+
+// ── §86.14 round 2 (the verifier's re-run at 8dcbb5acc) ────────────────────────
+//
+// J1–J2: the page-full cutoff — a candidate the page had no room for is held,
+// counted under its place and listed (D-W10T-16), on /modules and on trending.
+// J3: the "more" routes are the VIEWER's view — a block, a private post, an
+// archived Trail. J4: a Trail past the 500-member window stays reachable
+// through a bounded cursor (D-W10T-17). Each was run RED at 8dcbb5acc.
+
+const everyListed = (body: any): Set<string> =>
+  new Set<string>((body.lists ?? []).flatMap((l: any) => [...(Object.values(l.byPlace) as any[]).flat(), ...l.unplaced]).map((x: any) => x.sourceId));
+
+describe("J — §86.14: past the page, the viewer's view, and past the member window", () => {
+  it("J1 /modules: posts about a place that arrive after the page is full are counted under it and listed (the verifier's P5)", async () => {
+    const posts = [
+      ...[0, 1].map((i) => postRow(P(10 + i), U(10 + i), { canonical_place_id: PL(1) })),
+      ...[2, 3, 4, 5, 6, 7].map((i) => postRow(P(10 + i), U(10 + i), { canonical_place_id: PL(10 + i) })),
+      ...[8, 9, 10, 11].map((i) => postRow(P(10 + i), U(10 + i), { canonical_place_id: PL(1) })),
+    ];
+    const db = makeRulesDb({ profiles: profiles(40), trails: [trailRow(T)], posts, content_trails: posts.map((p, i) => memberRow({ source_id: p.id, contributor_id: U(10 + i), created_at: rel((i + 1) * H) })) });
+    _setTestClient(db as any, true);
+    const mods = await call("GET", `/v1/discovery/trails/${T}/modules`, U(2));
+    const ja = mods.body.modules.find((m: any) => m.key === "just_arrived");
+    assert.equal(ja.items.length, 8);
+    assert.equal(ja.moreFromThisPlace[PL(1)], 4, "the four later posts about PL1 are counted");
+    const byPlace = await call("GET", `/v1/discovery/trails/${T}/places/${PL(1)}/more`, U(2));
+    assert.equal(byPlace.body.modules.find((m: any) => m.key === "just_arrived").items.length, 4);
+    const all = await call("GET", `/v1/discovery/trails/${T}/more`, U(2));
+    const served = new Set<string>(mods.body.modules.flatMap((m: any) => m.items.map((i: any) => i.sourceId)));
+    const listed = everyListed(all.body);
+    assert.deepEqual(posts.filter((p) => !served.has(p.id) && !listed.has(p.id)).map((p) => p.id), [], "nothing is unreachable");
+  });
+
+  it("J2 trending: of 24 equally surging posts the list of 20 serves 20; the four past it are counted and listed", async () => {
+    const posts = Array.from({ length: 24 }, (_, i) => postRow(P(10 + i), U(10 + i), { canonical_place_id: i >= 22 ? CP(1) : null, content: `trend post ${i} words t${i} u${i}` }));
+    const db = makeRulesDb({
+      profiles: profiles(40), trails: [trailRow(T)], posts, places: [{ id: CP(1), name: "Venue", latitude: null, longitude: null }],
+      content_trails: posts.map((p, i) => memberRow({ source_id: p.id, contributor_id: p.author_id, content_state: "growing", created_at: rel((i + 1) * H) })),
+      rank_events: posts.flatMap((p) => saves(p.id)),
+    });
+    _setTestClient(db as any, true);
+    const tr = await call("GET", `/v1/discovery/trails/${T}/trending`, U(1));
+    assert.equal(tr.body.items.length, 20);
+    assert.deepEqual(tr.body.moreFromThisPlace, { [CP(1)]: 2 }, "the two venue posts past the list are counted and served as a count");
+    const all = await call("GET", `/v1/discovery/trails/${T}/more`, U(1));
+    const t = all.body.lists.find((l: any) => l.key === "trending");
+    assert.equal(t.byPlace[CP(1)].length, 2);
+    assert.equal(t.unplaced.length, 2);
+  });
+
+  it("J3 both \"more\" routes are the viewer's view: a blocked author and a private post are never listed; an archived Trail is 404", async () => {
+    const VIEWER = U(2), BLOCKED = U(20), PRIV = U(21);
+    const posts = [
+      postRow(P(50), U(30), { canonical_place_id: CP(1) }), postRow(P(51), U(31), { canonical_place_id: CP(1) }),
+      postRow(P(52), BLOCKED, { canonical_place_id: CP(1) }), postRow(P(53), PRIV, { canonical_place_id: CP(1), visibility: "private" }),
+      postRow(P(54), U(32), { canonical_place_id: CP(1) }),
+    ];
+    const mk = () => makeRulesDb({
+      profiles: profiles(40), trails: [trailRow(T)], posts, places: [{ id: CP(1), name: "Venue", latitude: null, longitude: null }],
+      content_trails: posts.map((p, i) => memberRow({ source_id: p.id, contributor_id: p.author_id, created_at: rel((i + 1) * H) })),
+      blocks: [{ blocker_id: VIEWER, blocked_id: BLOCKED }], rank_events: posts.flatMap((p) => saves(p.id)),
+    });
+    _setTestClient(mk() as any, true);
+    const other = await call("GET", `/v1/discovery/trails/${T}/more`, U(3));
+    assert.ok(everyListed(other.body).has(P(52)), "control: to someone else, the blocked author's post is held and listed");
+    for (const l of ["just_arrived", "trending"]) assert.ok(other.body.lists.find((x: any) => x.key === l)?.byPlace[CP(1)]?.some((i: any) => i.sourceId === P(52)), `control: ${l} holds it`);
+    const mine = await call("GET", `/v1/discovery/trails/${T}/more`, VIEWER);
+    const minePlace = await call("GET", `/v1/discovery/trails/${T}/places/${CP(1)}/more`, VIEWER);
+    const placeListed = new Set<string>(minePlace.body.modules.flatMap((m: any) => m.items.map((i: any) => i.sourceId)));
+    for (const [label, set] of [["/more", everyListed(mine.body)], ["/places/:placeId/more", placeListed], ["/more (other)", everyListed(other.body)]] as const) {
+      assert.ok(!set.has(P(53)), `${label}: a private post is never listed`);
+      if (label !== "/more (other)") assert.ok(!set.has(P(52)), `${label}: the author the viewer blocked is never listed`);
+    }
+    assert.ok(everyListed(mine.body).has(P(54)), "the viewer still sees the rest");
+    _setTestClient(makeRulesDb({ profiles: profiles(40), trails: [trailRow(T, { lifecycle_status: "archived" })], content_trails: [], posts: [] }) as any, true);
+    assert.equal((await call("GET", `/v1/discovery/trails/${T}/more`, VIEWER)).status, 404);
+    assert.equal((await call("GET", `/v1/discovery/trails/${T}/places/${CP(1)}/more`, VIEWER)).status, 404);
+  });
+
+  it("J4 past the 500-member window: /more returns a cursor, and the cursor page lists the older members — the viewer's view, a tie at the edge included", async () => {
+    const VIEWER = U(2), BLOCKED = U(20);
+    const hex = (n: number) => n.toString(16).padStart(12, "0");
+    const pl = (n: number) => `77777777-7777-4777-8777-${hex(n)}`;
+    // 505 members, newest first. Rows 499 and 500 share one created_at (the window's edge is a tie);
+    // row 499 carries the larger id, so the continuation must take row 500 from the tie.
+    const rows = Array.from({ length: 505 }, (_, i) => memberRow({
+      id: i === 499 ? "66666666-6666-4666-8666-ffffffffffff" : i === 500 ? "66666666-6666-4666-8666-000000000001" : `66666666-6666-4666-8666-${hex(100000 + i)}`,
+      source_type: "place", source_id: pl(i), contributor_id: null,
+      created_at: new Date(Date.parse("2026-09-01T00:00:00Z") - (i >= 500 ? i - 1 : i) * 60_000).toISOString(),
+    }));
+    const blockedPost = postRow(P(90), BLOCKED, { canonical_place_id: CP(1) });
+    rows[503] = memberRow({ id: `66666666-6666-4666-8666-${hex(100503)}`, source_type: "post", source_id: blockedPost.id, contributor_id: BLOCKED, created_at: rows[503]!.created_at });
+    const db = makeRulesDb({ profiles: profiles(40), trails: [trailRow(T)], content_trails: rows, posts: [blockedPost], places: [{ id: CP(1), name: "V", latitude: null, longitude: null }], blocks: [{ blocker_id: VIEWER, blocked_id: BLOCKED }] });
+    _setTestClient(db as any, true);
+    const first = await call("GET", `/v1/discovery/trails/${T}/more`, U(3));
+    assert.equal(typeof first.body.next, "string", "the window is full: a cursor to the older members");
+    const page = await call("GET", `/v1/discovery/trails/${T}/more?cursor=${encodeURIComponent(first.body.next)}`, U(3));
+    assert.equal(page.status, 200);
+    assert.equal(page.body.next, null, "five older members fit one page");
+    const older = everyListed(page.body);
+    assert.deepEqual([500, 501, 502, 504].map((i) => older.has(pl(i))), [true, true, true, true], "every member past the window, the edge tie included");
+    assert.ok(older.has(P(90)), "control: someone else is listed the blocked author's post");
+    const mods = await call("GET", `/v1/discovery/trails/${T}/modules`, U(3));
+    const served = new Set<string>(mods.body.modules.flatMap((m: any) => m.items.map((i: any) => i.sourceId)));
+    const firstListed = everyListed(first.body);
+    const missing = rows.map((r) => r.source_id as string).filter((s) => !served.has(s) && !firstListed.has(s) && !older.has(s));
+    assert.deepEqual(missing, [], "all 505 members are served or reachable");
+    const mine = await call("GET", `/v1/discovery/trails/${T}/more?cursor=${encodeURIComponent(first.body.next)}`, VIEWER);
+    assert.ok(!everyListed(mine.body).has(P(90)), "the cursor page is the viewer's view too");
+    const placePage = await call("GET", `/v1/discovery/trails/${T}/places/${CP(1)}/more?cursor=${encodeURIComponent(first.body.next)}`, U(3));
+    assert.deepEqual(placePage.body.modules.map((m: any) => [m.key, m.items.map((i: any) => i.sourceId)]), [["beyond_window", [P(90)]]]);
+    assert.equal((await call("GET", `/v1/discovery/trails/${T}/more?cursor=not-a-cursor`, U(3))).status, 400);
+  });
+});

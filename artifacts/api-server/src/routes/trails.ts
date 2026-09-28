@@ -338,7 +338,7 @@ router.get("/v1/discovery/trails/:id/trending", asyncHandler(async (req: Request
   // modules route above — the `11` §4 tripwire forbids the WORD here.
   res.json({
     trending: r.momentumUnread ? null : (r.momentum ?? 0) > 0, // H-P8-1 (§58.4, §61, §61.17): a FAILED read is unknown (null), never a measured "not trending"; an empty Trail is a measured false (DC-17)
-    items: r.items,
+    items: r.items, ...(r.moreFromThisPlace ? { moreFromThisPlace: r.moreFromThisPlace } : {}), // §86 follow-up (DV-23): §10 clause 5 on this list — present only when something was held back; GET …/more lists them
     readingProvenance: toPublicProvenance(r.momentumProvenance),
   });
 }));
@@ -485,10 +485,11 @@ router.post("/v1/discovery/trails/:id/reports", asyncHandler(async (req: Request
 
 /**
  * DV-23 — `02` §10 "preserve access through 'more from this place'". Returns,
- * per module, exactly the members that module held back for this place and
- * counted in its `moreFromThisPlace[placeId]` — the count and the list come
- * from one computation, so they cannot disagree (D-W10T-4). Only members this
- * viewer may be served, as every other read here.
+ * per module AND for GET …/trending's list, exactly the members that list held
+ * back for this place — for any reason (D-W10T-15) — and counted in its
+ * `moreFromThisPlace[placeId]`; the count and the list come from one
+ * computation, so they cannot disagree (D-W10T-4). Only members this viewer
+ * may be served, as every other read here.
  */
 router.get("/v1/discovery/trails/:id/places/:placeId/more", asyncHandler(async (req: Request, res: Response) => {
   const auth = await requireUser(req, res);
@@ -496,9 +497,28 @@ router.get("/v1/discovery/trails/:id/places/:placeId/more", asyncHandler(async (
   const id = uuid.safeParse(req.params.id);
   const placeId = uuid.safeParse(req.params.placeId);
   if (!id.success || !placeId.success) return sendError(res, "invalid_payload", "ids must be uuids");
-  const r = await moreFromThisPlace(getServiceClient(), id.data, placeId.data, { viewerId: auth.user.id });
+  const cursor = typeof req.query.cursor === "string" && req.query.cursor.length > 0 ? req.query.cursor : null; // §86.14 (D-W10T-17): members older than the window
+  const r = await moreFromThisPlace(getServiceClient(), id.data, placeId.data, { viewerId: auth.user.id, cursor });
   if (r.refusal) return sendTrailRefusal(res, r.refusal);
-  res.json({ placeId: r.placeId, modules: r.modules });
+  res.json({ placeId: r.placeId, modules: r.modules, next: r.next });
+}));
+
+/**
+ * DV-23 / D-W10T-15 — EVERYTHING a Trail page holds back, per list (every module and GET …/trending's list):
+ * by place, and the members that have no place to be "more from". No held item is unreachable.
+ * §86.14 (D-W10T-17): the lists are computed over the newest TRAIL_MEMBER_WINDOW members; `next`
+ * is a cursor to the members older than that, `?cursor=` returns one bounded page of them (key
+ * `beyond_window`) with the cursor to the page after. A malformed cursor is 400.
+ */
+router.get("/v1/discovery/trails/:id/more", asyncHandler(async (req: Request, res: Response) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const id = uuid.safeParse(req.params.id);
+  if (!id.success) return sendError(res, "invalid_payload", "trail id must be a uuid");
+  const cursor = typeof req.query.cursor === "string" && req.query.cursor.length > 0 ? req.query.cursor : null; // §86.14 (D-W10T-17)
+  const r = await moreFromThisTrail(getServiceClient(), id.data, { viewerId: auth.user.id, cursor });
+  if (r.refusal) return sendTrailRefusal(res, r.refusal);
+  res.json({ lists: r.lists, next: r.next });
 }));
 
 /**
@@ -552,7 +572,7 @@ for (const decision of ["accept", "decline"] as const) {
 }
 
 import {
-  moreFromThisPlace, declareTrailRelation, DECLARABLE_TRAIL_EDGE_TYPES, listPendingSuggestions, decideSuggestion,
+  moreFromThisPlace, moreFromThisTrail, declareTrailRelation, DECLARABLE_TRAIL_EDGE_TYPES, listPendingSuggestions, decideSuggestion,
   settleTrailModulesServe,
 } from "../services/trails/TrailService.js";
 

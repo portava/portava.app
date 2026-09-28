@@ -167,3 +167,25 @@ describe("DV-21 — Local Picks' curated source: an audited admin curate over PU
     assert.equal((await call("POST", `/admin/discovery/trails/${T}/curate`, USER, { sourceType: "post", sourceId: POST_PUBLIC, relationship: "supporting", reason: "x" })).status, 403);
   });
 });
+
+describe("§86.14 — a resolved rpc error is a failed admin action, never a success (check:unchecked-supabase-reads)", () => {
+  it("each action whose function resolves { error } answers 503 and reports nothing as done", async () => {
+    const failing = () => ({ data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } });
+    const db = makeRulesDb({
+      profiles: [{ id: ADMIN, role: "admin", account_status: "active" }],
+      trails: [{ id: T, slug: "t", title: "T", description: null, destination: null, place_scope: null, parent_trail_id: null, lifecycle_status: "active", created_by: USER, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }],
+    }, { rpc: { trail_admin_move_lifecycle: failing, trail_admin_merge: failing, trail_admin_review_edge: failing, trend_integrity_review_record: failing } });
+    _setTestClient(db as any, true);
+    for (const [path, body] of [
+      [`/admin/discovery/trails/${T}/archive`, { reason: "r" }],
+      [`/admin/discovery/trails/${T}/lifecycle`, { to: "stale", reason: "r" }],
+      [`/admin/discovery/trails/${T}/merge`, { intoTrailId: T2, reason: "r" }],
+      [`/admin/discovery/trails/${T}/edges/review`, { toTrailId: T2, edgeType: "related", verdict: "accepted", reason: "r" }],
+      ["/admin/discovery/trend-integrity/reviews", { subjectKind: "trail", subjectId: T, verdict: "suppressed", reason: "r" }],
+    ] as const) {
+      const r = await call("POST", path, ADMIN, body);
+      assert.equal(r.status, 503, `${path}: ${JSON.stringify(r.body)}`);
+      assert.equal(r.body.replayed, undefined, "nothing is reported as done");
+    }
+  });
+});

@@ -6,8 +6,8 @@
  * EVERYTHING HERE IS BEHIND `discovery_trail_exploration_enabled` (3485, seeded
  * FALSE). The owner lifted the 2026-08-15 ranker hold for designs built behind
  * new FALSE flags; this is one. With the flag off, `getTrailModules` never
- * calls into this file and serves byte for byte what it served before
- * (discoveryTrailExploration.test.ts G0).
+ * calls into this file: absent and FALSE serve the same bytes and nothing is
+ * counted or written (G0). That output is NOT pre-§86's: the unflagged §10 rules apply to it.
  *
  * WHAT MOVES A MEMBER BETWEEN §7'S SIX STATES (register D-W10T-3)
  * =============================================================

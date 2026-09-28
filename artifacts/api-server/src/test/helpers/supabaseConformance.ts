@@ -55,6 +55,7 @@ import { makeSchemaStrictClient } from "./schemaStrictSupabase.js";
 import { makeEnumAwareClient } from "./enumAwareSupabase.js";
 import { makeTelemetryDb } from "./fakeDiscoveryTelemetryDb.js";
 import { makeFakeTrailsDb } from "./fakeTrailsDb.js";
+import { makeRulesDb } from "./fakeTrailRulesDb.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -515,6 +516,39 @@ export function trailsSubject(): Subject {
   };
 }
 
+/**
+ * census-discovery §86's Trails double (lane W10-T). It models the builder
+ * surface the §86 services call, lazily and at most once as the real client
+ * does; everything else throws an honest refusal.
+ */
+export function trailRulesSubject(): Subject {
+  return {
+    name: "fakeTrailRulesDb",
+    sourceFile: join(HERE, "fakeTrailRulesDb.ts"),
+    gaps: {
+      "single/zero-rows": { mode: "refused", why: "the §86 code never calls .single(); the fake refuses it rather than guess" },
+      "single/one-row": { mode: "refused", why: "the §86 code never calls .single(); the fake refuses it rather than guess" },
+      "single/many-rows": { mode: "refused", why: "the §86 code never calls .single(); the fake refuses it rather than guess" },
+      "insert/with-select-single": { mode: "refused", why: "insert().select().single() is not modelled" },
+      "insert/unique-violation-23505": { mode: "divergent", why: "no unique constraints are modelled; a duplicate insert appends" },
+      "error/unknown-column-42703": { mode: "divergent", why: "no schema; an unknown column reads as undefined" },
+      "rls/denied-read-yields-zero-rows": { mode: "divergent", why: "no service-vs-user distinction; one seed and no policies" },
+      "rls/denied-write-yields-42501": { mode: "divergent", why: "no service-vs-user distinction; one seed and no policies" },
+    },
+    build(w) {
+      const world = forFake(w);
+      const sizes = seedSizes(world.tables);
+      const pg = (m: Record<string, any> | undefined) =>
+        Object.fromEntries(Object.entries(m ?? {}).map(([t, e]) => [t, { code: String(e?.code ?? ""), message: String(e?.message ?? "") }]));
+      const db = makeRulesDb(world.tables, {
+        readFailure: pg(world.failReads), writeFailure: pg(world.failWrites),
+        rpc: world.rpc ? Object.fromEntries(Object.entries(world.rpc).map(([k, h]) => [k, (a: any) => h(a) as any])) : undefined,
+      });
+      return { client: db, writes: (t) => (db.tables[t]?.length ?? 0) - (sizes[t] ?? 0) };
+    },
+  };
+}
+
 export function allFakeSubjects(): Subject[] {
   return [
     layoverSubject(),
@@ -525,6 +559,7 @@ export function allFakeSubjects(): Subject[] {
     enumAwareSubject(),
     telemetrySubject(),
     trailsSubject(),
+    trailRulesSubject(),
   ];
 }
 

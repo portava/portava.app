@@ -6,7 +6,7 @@
  * count and steps 3–5 driving what is served (DV-22), and §11's health order
  * (DC-05).
  *
- *   G0  flags OFF (absent, or FALSE rows): output byte-identical, nothing written
+ *   G0  flags OFF: absent and FALSE rows serve the same bytes, and nothing is read or written
  *   L1  every §7 move the machinery can make is in 3381's relation, and the table of when
  *   L2  rotation: successive pages walk the backlog, least-exposed first
  *   L3  the horizon is applied and NO member is left in no module
@@ -64,7 +64,7 @@ const rpc = {
   },
 };
 
-describe("G0 — flags OFF: byte-identical output, nothing written", () => {
+describe("G0 — flags OFF: absent and FALSE serve the same bytes, nothing written (NOT a claim of pre-§86 bytes: the unflagged §10 rules apply)", () => {
   const seed = (flags: Row[]) => makeRulesDb({
     profiles: profiles(9), trails: [{ ...trailRow }], feature_flags: flags,
     content_trails: [place(1), place(2, { created_at: rel(10 * D) }), place(3, { content_state: "evergreen" }), place(4, { content_state: "archived_from_active_rotation", created_at: rel(40 * D) })],

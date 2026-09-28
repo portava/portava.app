@@ -26,8 +26,8 @@
 --          own module serves are counted (3487, no viewer id) so its grant
 --          moves its own denominator; the decided states are persisted by a
 --          compare-and-set under 3381's transition trigger.
---     OFF / absent / unreadable (the seed): every Trail response is byte for
---          byte what it was before this file, nothing is counted, nothing is
+--     OFF / absent / unreadable (the seed): none of the above runs; absent and
+--          FALSE serve the same bytes (the unflagged §10 rules still apply), nothing is counted, nothing is
 --          written (pinned by discoveryTrailExploration.test.ts G0).
 --
 --   discovery_trail_health_order_enabled  (DC-05 — `02` §11)
@@ -57,7 +57,7 @@ INSERT INTO public.feature_flags (flag, enabled, description) VALUES
   (
     'discovery_trail_exploration_enabled',
     false,
-    'Trails exploration and content lifecycle (census-discovery DV-22, DV-21, DC-04; 02 §7-§9). ON: Trail modules are served from content states decided from §9 steps 3-5 (just_arrived keeps its 7-day horizon, expand graduates, taper leaves rotation, a cooled member is retested), exploration slots rotate least-exposed first, and the Trail''s own module serves are counted per member per day with no viewer id. OFF / absent / unreadable (the seed): every Trail response is byte-identical to before and nothing is counted or written. Ranking machinery: turning it on in production is an owner decision.'
+    'Trails exploration and content lifecycle (census-discovery DV-22, DV-21, DC-04; 02 §7-§9). ON: Trail modules are served from content states decided from §9 steps 3-5 (just_arrived keeps its 7-day horizon, expand graduates, taper leaves rotation, a cooled member is retested), exploration slots rotate least-exposed first, and the Trail''s own module serves are counted per member per day with no viewer id. OFF / absent / unreadable (the seed): none of this runs, absent and FALSE serve the same bytes, and nothing is counted or written. Ranking machinery: turning it on in production is an owner decision.'
   ),
   (
     'discovery_trail_health_order_enabled',
