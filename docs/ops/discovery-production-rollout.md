@@ -1,6 +1,6 @@
 # Discovery — production rollout
 
-*Prepared 2026-09-28 by lane W10-D on `disc-w10-d-rollout` (base `debd5ad4f`). Census section: census-discovery §83. The owner decisions this plan needs are in `docs/ops/discovery-owner-approval-request.md` (request ids `W10D-…`). The `portava-ci` rehearsal that precedes all of it is `docs/ops/discovery-portava-ci-apply-plan.md`.*
+*Prepared 2026-09-28 by lane W10-D on `disc-w10-d-rollout` (base `debd5ad4f`). Census section: census-discovery §83. The owner decisions this plan needs are in `docs/ops/discovery-owner-approval-request.md` (request ids `W10D-…`). The `portava-ci` rehearsal that precedes all of it is `docs/ops/discovery-portava-ci-apply-plan.md`. **Amended by lane W11-P at `3fd11f858` (census-discovery §96): §9 extends P1 to this tree and lists the new flags, and the approval request is now one numbered list of actions (its §2 maps each `W10D-…` id to an action).***
 
 **Nothing here has been done.** Production (`ajrurzioarfkagpuxfnb`) has only been read, by earlier lanes, on the dates given. Every step below is a production activation, which the owner has not delegated. Each step names the approval it needs.
 
@@ -91,7 +91,7 @@ Applied in this order. It is the canonical byte order of the files; skipping 338
 | P1.17 | `3435_place_momentum_feature_version.sql` | P1.13 | nullable column |
 | P1.18 | `3440_canonical_search_key_letter_fold.sql` | 2220 (applied), `pg_trgm` | **rewrites `search_key` on every row under ACCESS EXCLUSIVE.** Sized by census §73.9's read-only SQL: run it immediately before, and record both numbers. The last committed count is 31 rows (§49.4, 2026-09-27), so the lock is held for milliseconds at that size. Readers of `search_key` wait behind the lock. On failure the transaction restores 2220's state. |
 | P1.19 | `3441_trail_letter_fold_decompose_first.sql` | P1.11 | function only |
-| + | whatever lands after `debd5ad4f` | — | each new Discovery flag is seeded FALSE and joins P1 in byte order, with its own row in this table |
+| + | whatever lands after `debd5ad4f` | — | each new Discovery flag is seeded FALSE and joins P1 in byte order. **At `3fd11f858` these are the 33 files of §9.1** (P1.17a and P1.20–P1.51) |
 
 **Approval: W10D-A1 (the batch), W10D-A2 (3376 specifically).**
 
@@ -173,7 +173,7 @@ Every table in P2 ships empty, and `creator_attribution_enabled` (2922) stays FA
 | `media_pending_upload_sweep_enabled` | 3400 | absent | FALSE | D-5; its activation deletes user uploads |
 | `creator_attribution_enabled` | 2922 | absent (§47.1) | FALSE | W10D-B0 and W10D-B1–B11 (C-1 … C-12) |
 | `wall_discovery_insertions_enabled` | Wall | FALSE (snapshot) | FALSE | Wall's |
-| flags added after `debd5ad4f` (ranker designs) | wave-10 migrations | absent | FALSE | each one is an A-6 production activation |
+| flags added after `debd5ad4f` (ranker designs and the other wave-10/11 lanes) | 3450–3500 | absent (the files postdate the snapshot) | FALSE | **listed one by one in §9.2**, each with its activation action |
 
 ### 3.1 Activation order (D4)
 
@@ -313,3 +313,87 @@ Whatever values that lane lands are the ones in force. Read them by name from th
 ```
 
 A row is complete only with its evidence cell. "Observe" needs at least one full window per `STOP_WINDOW_MS` with a sample at or above `STOP_MIN_SAMPLE`. A later row may not start before the earlier row's verdict is recorded.
+
+---
+
+## 9. At `3fd11f858` (lane W11-P, census-discovery §96)
+
+*Docs only. **Nothing here has been done.** Production state for every file below is "unapplied": each file postdates the 2026-09-22 snapshot, and nothing has been applied to production since 2910 and 2220 (the table at the top). The numbered actions named below are those of `docs/ops/discovery-owner-approval-request.md`.*
+
+### 9.1 Batch P1, continued — the 33 files after 3435
+
+They go in byte order after P1.17 (3435). P1.18 (3440) and P1.19 (3441) keep their place: 3436 sorts before 3440. P1.20–P1.51 follow 3441. Every flag lands FALSE, because each seed's postcondition refuses TRUE.
+
+| step | file | prerequisite in production | what it does in production | activation |
+|---|---|---|---|---|
+| P1.17a | `3436_trail_health_snapshot_provenance.sql` | 2910's `trail_health_snapshots` (present, snapshot) | two nullable columns | — |
+| P1.20 | `3450_discovery_surface_objectives_flag.sql` | — | flag FALSE | action 10.11 |
+| P1.21 | `3451_discovery_engagement_integrity_flag.sql` | — | flag FALSE | 10.8, only after question 9 |
+| P1.22 | `3452_discovery_feature_families_flag.sql` | — | flag FALSE | 10.5 |
+| P1.23 | `3453_discovery_intent_trip_terms_flags.sql` | — | two flags FALSE | 10.6, 10.10 |
+| P1.24 | `3454_discovery_diversity_axes_flag.sql` | — | flag FALSE, with its metadata | 10.7 |
+| P1.25 | `3455_discovery_for_you_pde_flag.sql` | — | flag FALSE | 8 |
+| P1.26 | `3456_discovery_cache_a_ranked_flag.sql` | — | flag FALSE | 8 |
+| P1.27 | `3460_discovery_search_protection_scope.sql` | P1.1 (3366) | rewrites that flag's description only | 5a |
+| P1.28 | `3465_layover_consumer_flags.sql` | — | two flags FALSE | 5e, 23 |
+| P1.29 | `3466_layover_place_dwell.sql` | `discovery_places` | empty table | 23 |
+| P1.30 | `3467_cross_architecture_flags.sql` | P1.9 (3400) | two flags FALSE; corrects 3400's flag description | 5f, 5g, 5k |
+| P1.31 | `3468_tag_permission_approval_required.sql` | `tag_permission_level` enum | enum value `approval_required` (nothing written with it); two flags FALSE | 5h, question 18(a) |
+| P1.32 | `3469_compass_graph_decay_flag.sql` | — | flag FALSE | 5i |
+| P1.33 | `3470_discovery_stop_enforcement_flag.sql` | — | flag FALSE | 6 |
+| P1.34 | `3475_discovery_trend_v2_flags.sql` | — | five flags FALSE (`keep_days: null`) | 13, question 11(b) |
+| P1.35 | `3476_discovery_trend_v2_store.sql` | P0.5 (2892), P1.10, P1.17 | nullable columns on `place_momentum`; empty `area_momentum` | 13 |
+| P1.36 | `3477_discovery_trend_v2_rebuild.sql` | P1.35 | `rebuild_place_momentum` dispatches to v2 only when its flag is on; off, it runs 3435's body | 13 |
+| P1.37 | `3480_discovery_candidate_sources_flag.sql` | — | two flags FALSE | 10.1; question 16(a) |
+| P1.38 | `3481_discovery_exploration_inventory_flag.sql` | — | flag FALSE | 10.2 |
+| P1.39 | `3482_discovery_cold_start_flag.sql` | — | flag FALSE | 10.3 |
+| P1.40 | `3483_discovery_pipeline_stages_flags.sql` | — | three flags FALSE | 10.4, 10.9, 10.13 |
+| P1.41 | `3484_compass_city_confidence_provenance.sql` | `compass_city_confidence` (present) | three nullable columns; flag FALSE | 5j |
+| P1.42 | `3485_discovery_trail_exploration_flags.sql` | — | two flags FALSE | 14 |
+| P1.43 | `3486_trail_moderation_audit.sql` | P1.5 (3381) | the admin audit and trend-review tables, and the merge and moderation paths | 14 |
+| P1.44 | `3487_trail_member_exposures.sql` | 2910 | empty table | 14 |
+| P1.45 | `3488_trail_content_suggestions.sql` | 2910, `profiles` | empty table | — |
+| P1.46 | `3490_discovery_serve_path_flags.sql` | — | two flags FALSE | 5d, 10.14 |
+| P1.47 | `3491_discovery_recommendations_output_kinds_serve_point.sql` | P1.3 (3376) | widens the serve-point CHECK from 1–12 to 1–13 | action 2 (only with 3376) |
+| P1.48 | `3495_place_cooccurrence_trail_projection.sql` | 2910 | empty projection and its rebuild | 13 |
+| P1.49 | `3496_discovery_w11x3_flags.sql` | — | two flags FALSE | 13 |
+| P1.50 | `3497_discovery_trend_post_convergence_stored.sql` | P1.36; `memories` | re-creates the v2 rebuild with the post-after-visit leg | 13 |
+| P1.51 | `3500_discovery_surface_objective_rank_flags.sql` | — | three flags FALSE | 10.12 |
+
+**Approval: action 3 (the batch), and action 2 for 3376 and 3491.** Each file's rollback is listed in `docs/ops/discovery-portava-ci-apply-plan.md` §8.1.
+
+### 9.2 The flags these files seed
+
+All are absent in production today, because the files are unapplied. The recommended production value, until the named action, is FALSE.
+
+| flag | seeded by | activation (approval request) |
+|---|---|---|
+| `discovery_surface_objectives_enabled` | 3450 | 10.11 |
+| `discovery_engagement_integrity_enabled` | 3451 | 10.8 (question 9) |
+| `discovery_feature_families_enabled` | 3452 | 10.5 |
+| `discovery_intent_term_enabled`, `discovery_trip_match_enabled` | 3453 | 10.10, 10.6 |
+| `discovery_diversity_axes_enabled` | 3454 | 10.7 |
+| `discovery_for_you_pde_enabled`, `discovery_cache_a_ranked_enabled` | 3455, 3456 | 8 |
+| `layover_snapshot_consumers_enabled`, `layover_place_dwell_enabled` | 3465 | 5e; 23 |
+| `discovery_trip_viewer_projections_enabled`, `telegraph_discovery_actions_enabled` | 3467 | 5f; 5g |
+| `tag_permission_approval_required_enabled`, `tag_permission_consent_copy_enabled` | 3468 | 5h; question 18(a) |
+| `compass_graph_decay_enabled` | 3469 | 5i |
+| `discovery_stop_enforcement_enabled` | 3470 | 6 (metadata `values_version`) |
+| `discovery_trend_normalised_enabled`, `discovery_trend_rebuild_scheduler_enabled`, `discovery_trend_snapshot_retention_enabled`, `discovery_trend_lists_enabled`, `discovery_trend_rediscovery_retest_enabled` | 3475 | 13 (question 11(b); question 12 for the lists) |
+| `discovery_candidate_sources_enabled`; `discovery_circle_candidates_enabled` | 3480 | 10.1; question 16(a) |
+| `discovery_exploration_inventory_enabled` | 3481 | 10.2 |
+| `discovery_cold_start_enabled` | 3482 | 10.3 |
+| `discovery_outcome_learning_enabled`, `discovery_integrity_stage_enabled`, `discovery_output_kinds_enabled` | 3483 | 10.4, 10.9, 10.13 |
+| `compass_city_confidence_windowed_reads_enabled` | 3484 | 5j |
+| `discovery_trail_exploration_enabled`, `discovery_trail_health_order_enabled` | 3485 | 14 |
+| `discovery_community_byline_canonical_enabled`, `discovery_platform_graph_provenance_enabled` | 3490 | 5d; 10.14 |
+| `discovery_place_cooccurrence_enabled`, `discovery_trend_post_convergence_enabled` | 3496 | 13 |
+| `discovery_trail_objective_rank_enabled`, `discovery_trending_objective_rank_enabled`, `discovery_trip_planning_objective_rank_enabled` | 3500 | 10.12 |
+
+### 9.3 What changed in §3.1, §6 and §7 since `debd5ad4f`
+
+- **§6's halt values are decided.** The five `null` rulings are now D-W10-O-1's values, versioned `stop-values-2026-09-28.1`. They are armed by `discovery_stop_enforcement_enabled` (3470; approval action 6), and an unreadable measurement halts when armed (D-W10-O-2). Copy the version and the values into the rollout record's row 7.
+- **§3.1's M1 starts with a named-users cohort** (D-W10R4-2): `{"mode":"shadow","cohort":{"kind":"users","userIds":[…]}}` for 7 days, then 5 %.
+- **Gate 2 is also two capability flags**, 3455 and 3456, alongside the staged mode (approval action 8).
+- **A gap in §6's "what a trip does".** A tripped stop resolves the engine MODE to legacy. It does not turn off 3455, 3456, or any action-10 flag: `lib/discoveryOnePipeline.ts` and the §78 flag reader do not read the stop state. So step 1 of §6's operator response also sets those flags FALSE (approval action 8's SQL).
+- **§7, for the new files.** Each file's rollback is in apply plan §8.1. The ones that refuse are 3468, 3476, 3484, 3486, 3487, 3488, 3491, 3497 and each flag seed while its flag is TRUE, each for the reason its header gives.

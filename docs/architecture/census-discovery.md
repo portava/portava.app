@@ -16186,9 +16186,55 @@ The verifier confirmed B02 and A08 `C` at `de6d2bfbc` and reported four remainin
 
 **What would turn this red:** anything §80.11–§80.14 list, plus an empty or mixed list during the handoff (the handoff case), an in-word emoji in a spaceless script leaving a gap (Q8e), or the gateway's key diverging from the emoji-free word (Q8e parity).
 
+## §96 — Owner approval request consolidated (lane W11-P)
+
+*Written 2026-09-28 by lane W11-P on `disc-w11-approvals`, at integration head `3fd11f858`. Docs only. No code, migration, test or flag changed. Nothing was applied to `portava-ci` or to production. **No row moves**, and the headline is unchanged at 101 C / 85 W / 2 N / 0 X.*
+
+**What `docs/ops/discovery-owner-approval-request.md` now contains.** It is rewritten in full, and it replaces W10-D's pack (§83).
+1. **A one-screen summary.** 101 C and 87 open at `3fd11f858`; at the integration head §94.10 holds DV-83 at W, so 100 C and 88 open, with DV-83 still needing code. The 87 split two ways:
+   - 51 wait only on production. 14 of them are `C`-gradable on a production read-back, 2 need one code commit after 14 days, and 35 need production rows;
+   - 36 wait on an owner policy answer. 24 are named by their `AWAITS OWNER APPROVAL:` marker, and 12 are reached only through an activation that is gated on such an answer.
+   - By marker: 55 rows carry only `IMPLEMENTATION-COMPLETE; awaits:`, 19 carry both markers, 11 W and 2 N carry only `AWAITS OWNER APPROVAL:`.
+2. **Step 0 and 25 numbered actions**, in the order they must happen. Each gives the exact SQL, file list or setting, its category, prerequisites, the rows it unblocks, monitoring and stop conditions, recovery (the rollback file or flag flip), the consequence either way, and a recommendation.
+3. **Step 0, the `portava-ci` apply, which is not a decision.** It says what the owner does, and what the next session runs. The owner either sets `SUPABASE_URL` and `SUPABASE_PROJECT_TOKEN` for the environment, or connects the Supabase connector at https://claude.ai/customize/connectors, then starts a new session. The next session runs the applier's dry run and apply, certify with `--files`, `audit:schema`, and the `CI (live DB)` workflow. The 2481 ledger entry is not touched.
+4. **The questions this lane may not answer**, each with a recommended answer: consent (9, 12, 15, 16, 17, 18), retention (11), money (22) and one product definition (25, B01's ß/æ/œ).
+5. **A map** from every `W10D-…` id and every later register entry to its action, and **an index** of all 87 open rows with the actions each needs.
+
+**Verified against the tree, not copied.**
+- Every migration number and flag name in the document was checked to exist in `artifacts/api-server/src/migrations`, by script. `LAYOVER_ROUTED_CORRIDOR_ENABLED` is named as the environment variable it is, not a flag.
+- Every rollback file named exists in `db/rollback/`.
+- The pending set was recomputed with the applier's own `planApply` and `classifyMigration`: 73 files, 51 with a post-`COMMIT` tail, and no refusal.
+
+**The other two ops documents.**
+- `docs/ops/discovery-portava-ci-apply-plan.md` gains §8: the 73 files with their sha256 and rollback files, and the pre-flight additions (38 more seeded flags, 53 in all). §8.3 says what is rehearsed. 3435's amended bytes (§84) and the 32 files 3450–3500 have not been through the applier from the modelled baseline; W10-F's §7 covered 41.
+- `docs/ops/discovery-production-rollout.md` gains §9: P1 extended to this tree, every new flag with its activation action, and the stop-condition changes since `debd5ad4f`.
+- The earlier sections of both documents are unchanged except for three line-neutral pointers each. The anchored lines this census cites in them (rollout plan 39, 106 and 291; apply plan 30, 344, 352, 393, 431, 449 and 490) did not move. The approval request's anchored citation in DC-27's §83 statement (line 92, anchor "A5 — Phase F gates") still holds: line 92 is the map's row for W10D-A5.
+
+**Gaps found, stated in the document, not fixed.**
+- A tripped stop resolves the engine mode to legacy but does not turn off `discovery_for_you_pde_enabled`, `discovery_cache_a_ranked_enabled` or any §78/§85 design flag, because `artifacts/api-server/src/lib/discoveryOnePipeline.ts` reads no stop state. Gate 2's recovery is therefore a manual flag flip.
+- No `db/rollback/` file exists for 3440, 3441, the P0 files or 2893; each has an in-file reversal. 2901, 2921 and 2930 have neither.
+- The C-11 fix migration does not exist until the owner answers C-11.
+
+**Decisions:** D-W11P-1 (one ordered list), D-W11P-2 (the counting rule) and D-W11P-3 (question 25 is carried with its recorded reading), in `docs/architecture/discovery-decision-register.md`, section W11-P. No APPROVAL REQUIRED entry is added or answered.
+
+**Checks run** (in `artifacts/api-server`, after the last edit): `check:census-integrity`, `check:doc-citations`, `check:citation-targets`, `check:citation-symbols`, `check:census-freshness`, `check:census-scope-coverage` and `check:census-row-move-labels`, all passing. **Not run:** the harness, and any test suite, because no code or migration changed; anything against `portava-ci` or production, for which there are no credentials.
+
+**What would turn this red:**
+- a migration landing or changing bytes before the apply, which changes §8.1's list;
+- a row statement changing its marker, which changes §1's counts;
+- line 92 of the approval request moving.
+
+### §94.10 Integrator: DV-83 is held at W after independent verification
+
+An independent verifier checked §94.1's C claim at `3fd11f858` and confirmed every clause the lane built, with each mutation killed. It found one path the lane did not cover. A signed-in viewer whose identity cannot be resolved has the event-post read skipped silently: `routes/discovery.ts` resolves the viewer, and when that throws or errors `viewerId` stays null and the read is replaced by an empty list without `readFailed`. Reproduced: an `auth.getUser` throw, or an `AuthRetryableFetchError`, answers 200 with no posts and no refusal, the same screen as "nothing live". Pull-to-refresh also does not refetch the rail its refused copy asks the user to pull. The row stays W until lane W11-X2's second round closes these paths and a verifier confirms it.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | C | **W** | §94.1's claim is not yet supported. A failed viewer resolution still hides the event-post read (verifier, §94.10), and the refused rail cannot be refreshed. Everything else §94.1 lists holds under mutation. |
+
 ### 94.11 Round 2: the independent verifier's five findings on DV-83, closed; DV-83 restated W → C
 
-*Written 2026-09-28 by lane W11-X2 on `disc-w11-x2-serve`, after merging `disc-integration` at `3fd11f858`. An independent verifier confirmed every clause §94 built, each mutation killed, and found five places where a failure still read as an absence. Each is closed below, failing-first. Decisions D-W11X2-10 to D-W11X2-14. All evidence is controlled; no client build carrying the client changes has shipped.*
+*Written 2026-09-28 by lane W11-X2 on `disc-w11-x2-serve`, after merging `disc-integration` at `3fd11f858` and then `532227796` (which holds DV-83 at W in the integrator's §94.10). An independent verifier confirmed every clause §94 built, each mutation killed, and found five places where a failure still read as an absence. Each is closed below, failing-first. Decisions D-W11X2-10 to D-W11X2-14. All evidence is controlled; no client build carrying the client changes has shipped.*
 
 **The five findings, and what each is now.**
 
@@ -16233,7 +16279,7 @@ The verifier confirmed B02 and A08 `C` at `de6d2bfbc` and reported four remainin
 
 | ID | from | **to** | evidence |
 |---|---|---|---|
-| DV-83 | C | **C** | **Every clause, on every path the verifier named and every path this lane found.** The criterion: every consumer of a Discovery envelope that can carry `refusal` branches on `coverage`, not on `ok` alone; no refused body is written to a client cache; no refused body is rendered as an empty result. **Consumers.** The eleven files the guard derives still branch on coverage (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts:311#it('G2. every file that consumes a carrier`), and every list-rendering consumer names a partial answer (G7). The rail, the one consumer §94 changed, also names a transport failure (U1, U2) and refetches on a pull (R1). **Caches.** The client's three caches write no `nothing` body (§60.2, unchanged); the rail and the feed call cache nothing. **Producers, so a consumer is SENT the failure.** The feed's event-post read (E1–E5), the viewer lookup that gates it (V1–V4), and Overpass on GET /discovery's cold paths, the feed and the counts (O1–O7) all reach the envelope instead of reading as an empty result, and a hung feed call is bounded (T1). The other server absorptions this lane searched for are either named already (suggest's per-type failures, §80) or are not lists (the new-to-me annotation and saved-count enrichment, which add fields and never remove rows). **Not flag-gated.** Each change alters output only when a read fails. **Stated limits.** Branch only: no client build carrying the rail's changes has shipped. `discoveryClientRouteE2E` cannot load on Node 22 here; its Overpass stub is changed to answer empty and is unrun. |
+| DV-83 | W | **C** | **§94.10's hold is answered: every clause, on every path the verifier named and every path this lane found.** The criterion: every consumer of a Discovery envelope that can carry `refusal` branches on `coverage`, not on `ok` alone; no refused body is written to a client cache; no refused body is rendered as an empty result. **Consumers.** The eleven files the guard derives still branch on coverage (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts:311#it('G2. every file that consumes a carrier`), and every list-rendering consumer names a partial answer (G7). The rail, the one consumer §94 changed, also names a transport failure (U1, U2) and refetches on a pull (R1). **Caches.** The client's three caches write no `nothing` body (§60.2, unchanged); the rail and the feed call cache nothing. **Producers, so a consumer is SENT the failure.** The feed's event-post read (E1–E5), the viewer lookup that gates it (V1–V4), and Overpass on GET /discovery's cold paths, the feed and the counts (O1–O7) all reach the envelope instead of reading as an empty result, and a hung feed call is bounded (T1). The other server absorptions this lane searched for are either named already (suggest's per-type failures, §80) or are not lists (the new-to-me annotation and saved-count enrichment, which add fields and never remove rows). **Not flag-gated.** Each change alters output only when a read fails. **Stated limits.** Branch only: no client build carrying the rail's changes has shipped. `discoveryClientRouteE2E` cannot load on Node 22 here; its Overpass stub is changed to answer empty and is unrun. |
 
 **Checks** are in 94.12.
 
