@@ -2134,10 +2134,26 @@ export function encodeMemberCursor(row: { created_at: string; id: string }): str
 }
 
 /** A cursor this server minted, or null (a malformed cursor is refused, never guessed). */
-export function decodeMemberCursor(cursor: string): MemberCursor | null {
+/**
+ * A timestamptz exactly as PostgREST writes one (and as the fakes write one):
+ * date, `T`, time, optional fraction, and an explicit zone. `Date.parse` alone
+ * admits "1", "2026" and "2026-09-28 junk", which PostgreSQL refuses (22007) —
+ * a malformed cursor must be a 400, never a 500 (§86.15).
+ */
+const CURSOR_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}:\d{2})$/;
+
+/**
+ * A cursor this server minted, or null (a malformed cursor is refused, never guessed).
+ * A cursor dated after `nowMs` is refused too (§86.15, D-W10T-18): a window edge is a
+ * member's created_at, which is never in the future, and a future cursor would
+ * relabel members inside the window as `beyond_window`.
+ */
+export function decodeMemberCursor(cursor: string, nowMs: number = Date.now()): MemberCursor | null {
   try {
     const v = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
-    if (typeof v?.c !== "string" || !Number.isFinite(Date.parse(v.c)) || typeof v?.i !== "string" || !/^[0-9a-f-]{36}$/i.test(v.i)) return null;
+    if (typeof v?.c !== "string" || !CURSOR_TIMESTAMP.test(v.c) || typeof v?.i !== "string" || !/^[0-9a-f-]{36}$/i.test(v.i)) return null;
+    const at = Date.parse(v.c);
+    if (!Number.isFinite(at) || at > nowMs) return null;
     return { c: v.c, i: v.i };
   } catch { return null; }
 }
@@ -2198,7 +2214,7 @@ export async function moreFromThisPlace(
   sc: any, trailId: string, placeId: string, opts: { viewerId?: string | null; nowMs?: number; cursor?: string | null } = {},
 ): Promise<MoreFromPlaceResult> {
   if (opts.cursor) {
-    const c = decodeMemberCursor(opts.cursor);
+    const c = decodeMemberCursor(opts.cursor, opts.nowMs ?? Date.now());
     if (!c) return { refusal: "invalid_request", placeId, modules: [], next: null };
     const p = await olderMembersPage(sc, trailId, c, opts.viewerId ?? null, opts.nowMs ?? Date.now());
     if (p.refusal || !p.list) return { refusal: p.refusal, placeId, modules: [], next: null };
@@ -2227,7 +2243,7 @@ export async function moreFromThisTrail(
   sc: any, trailId: string, opts: { viewerId?: string | null; nowMs?: number; cursor?: string | null } = {},
 ): Promise<MoreFromTrailResult> {
   if (opts.cursor) {
-    const c = decodeMemberCursor(opts.cursor);
+    const c = decodeMemberCursor(opts.cursor, opts.nowMs ?? Date.now());
     if (!c) return { refusal: "invalid_request", lists: [], next: null };
     const p = await olderMembersPage(sc, trailId, c, opts.viewerId ?? null, opts.nowMs ?? Date.now());
     if (p.refusal || !p.list) return { refusal: p.refusal, lists: [], next: null };
