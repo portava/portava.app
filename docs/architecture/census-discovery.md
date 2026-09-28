@@ -16569,7 +16569,7 @@ DV-83 moves W → C, and no other row changes bucket. `check:census-integrity` a
 
 Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %; both equal §98.1's.
 
-## §99 — Final-head live CI (integration): the three failures this branch owned, and the live-schema test the inbox lacked; no row changes
+### 98.10 Final-head live CI (integration; written on the branch as §99, renumbered at the follow-up integration because §99 is round 3's): the three failures this branch owned, and the live-schema test the inbox lacked; no row changes
 
 *Added 2026-09-28 on `claude/sensing-completion-20260925`, over `895cd4426`. This section is based on the `CI (live DB)` run on `7943a31ba`. Nothing was applied to `portava-ci` or production by this section's session. No row changes bucket.*
 
@@ -16593,6 +16593,363 @@ Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. COR
 - `check:census-integrity`, `check:census-freshness`, `check:census-scope-coverage` and `check:census-row-move-labels`.
 
 **Not run:** anything against `portava-ci` or production.
+
+## §99 — DV-83 round 3 (lane W11-X2): Overpass's in-body failure is a failed read, ForYouTab replays a cached partial page as partial, and DV-83 moves W → C
+
+*Written 2026-09-28 by lane W11-X2 (round 3) on `disc-w11-x2-r3`, from `a9ce69090`. It closes the two paths §98.1's verifier found, and the verifier's residual on the counts' class. Decisions are in `docs/architecture/discovery-decision-register.md`, section "W11-X2 round 3", D-W11X2-18 to D-W11X2-20. No migration and no flag: each change alters output only when Overpass did not finish a query, when the counts refuse, or when the For You tab replays a cached partial page. Every edit in a cited file is line-neutral. All evidence is controlled (in-process routes over the fake Discovery world, jest over the real ForYouTab); none of it is production evidence, and no client build carrying the change has shipped.*
+
+### 99.1 Overpass's in-body failure (§98.1 finding 1; D-W11X2-18)
+
+- **Before.** `queryOverpass` read `elements` and nothing else. Overpass answers a query that passes its `[timeout:20]`, or its memory limit, with HTTP 200, a `runtime error: …` remark, and the elements written so far: none, or a truncated set. GET /discovery served that as the city with no refusal, wrote it to Cache A and to L2 for 2 hours, and the counts answered with `Cache-Control: public, max-age=300`.
+- **Now.** The body is read before its elements (`artifacts/api-server/src/routes/discovery.ts:686#if (overpassAnswerFailed(data)) return overpassFailed();`). A remark naming an error, a remark in no Overpass form, a non-string remark, or a JSON body with no `elements` array is a failed read (`artifacts/api-server/src/routes/discovery.ts:4639#function overpassAnswerFailed(data: unknown): boolean {`). An informational `<kind> remark:` passes, and so does an empty remark. A truncated set is discarded, not served: it is quadtile-ordered and says nothing about how much is missing. The answer is §94.11's marked empty array, so the paths §94.11 wired handle it unchanged:
+  - the cold serve paths name `"overpass"` (`artifacts/api-server/src/routes/discovery.ts:2071#if (overpassReadFailed(osmPlaces)) dbFailedSources.push`);
+  - Cache A and L2 write only OSM rows that exist (`artifacts/api-server/src/routes/discovery.ts:2098#if (enrichedOsm.length > 0) {`), and the stale-L2 revalidation follows the same rule;
+  - the feed names it, and the counts refuse the category, so the public header (`artifacts/api-server/src/routes/discovery.ts:2543#res.set("Cache-Control", "public, max-age=300");`) is never reached.
+- **Which remarks count.** This is reasoned from Overpass's error-output kinds; no live Overpass answer could be fetched here. Every remark carries its kind: `runtime|static|parse|encoding error:` (the query failed, or stopped part-way) or `… remark:` (informational). Anything else fails closed. The register gives the options.
+
+### 99.2 ForYouTab's cached replay (§98.1 finding 2; D-W11X2-20)
+
+- **Before.** The SWR hydration painted a cached page with `source 'none'` and `osmPartial false`, and the incomplete notice requires `source === 'osm'` (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:396#{source === 'osm' && osmPartial && (`). The service caches a `partial` body on purpose, refusal intact (`travel-buddy-standalone/src/services/discovery.ts:765#if (!refusedEverything(refusal) && isCurrentDiscoveryScope(lease.scope)) {`). So while the refetch loaded, a cached `partial` / `["overpass"]` page showed its cards with no notice.
+- **Now.** The hydration restates the cached page's source and coverage (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:315#setSource(cachedResult && cachedResult.places.length > 0 ? 'osm' : 'none'); setOsmPartial(cachedResult?.refusal?.coverage === 'partial');`), as `DiscoveryCategoryTab`'s hydration does (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:558#setPartial(cachedResult.refusal?.coverage === 'partial');`). The first frame does too, because the tab seeds its cards from the cache in a `useState` initialiser, and the frame painted before the effect runs showed the cards with no notice (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:112#const [osmPartial, setOsmPartial] = useState(() =>`). A cached partial page with no places is the partial-empty state. The refetch then restates both values, as before.
+
+### 99.3 The counts name an Overpass-only failure as the upstream's (verifier's residual; D-W11X2-19)
+
+When every category that failed failed on its Overpass read alone, the counts now refuse with `upstream_unavailable` / `overpass_unavailable`, as GET /discovery does (D-W11X2-14). The fan-out throws a typed error (`artifacts/api-server/src/routes/discovery.ts:2500#throw new UpstreamUnavailableError(DISCOVERY_OVERPASS_SOURCE, "overpass_unavailable");`), and the class and code come from the rejections (`artifacts/api-server/src/routes/discovery.ts:4659#function countsRefusalCause(`). Any DB failure among them keeps `transient_db` and `category_counts_failed` or `category_counts_partial`. `coverage` and `failedSources` (the categories) are unchanged. §94.11's O7 is restated by this decision (`artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:168#assert.equal(body.refusal?.code, "overpass_unavailable");`). It still requires `counts: {}` and `coverage: "nothing"`.
+
+### 99.4 Tests, seen red, and mutations
+
+- **Server** (`artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts`, 27 cases; appended, and the Overpass stub is extended on its own lines):
+  - X1–X2: GET /discovery, with an empty + timeout answer and a truncated + out-of-memory answer. Each is `partial`, `["overpass"]`, `upstream_unavailable`, with no truncated row served, no Cache A entry and no L2 write, and the next healthy request reads Overpass again (`artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:222#GET /discovery, ${c.name}: partial`).
+  - X3: the feed, both forms (`artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:244#X3 the feed, ${c.name}`).
+  - X4: the counts, both forms, refused with no public header (`artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:255#X4 counts, ${c.name}`).
+  - X5: the fail-closed forms. These are a remark in no Overpass form, a JSON body with no `elements`, an informational remark followed by an error, a non-string remark, and a JSON `null` (`artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:272#X5 fail-closed, ${name}`).
+  - X6: a stale L2 hit revalidated against a truncated, remarked answer writes nothing (`artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:320#X6 a stale L2 hit revalidated`).
+  - X7: one category's Overpass read failed, so the counts are `partial`, name that category, and are `upstream_unavailable` (`artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:339#X7 one category's Overpass read failed`).
+  - Controls: C2/C3, a 200 with elements and no remark, an informational `runtime remark:` or an empty remark, is served, cached in A and L2, and counted with the public header (`artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:287#C2/C3 CONTROL: a 200 with elements and`). C4: the same stale hit against a whole answer is rewritten. C5 and C6: a DB failure among the failed categories keeps `transient_db` (`artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:360#C6 CONTROL: food failed on Overpass and nightlife`).
+  - **Red first**, against `a9ce69090`'s route (file swap, sha256-restored): 13 red, which is X1–X7 (both forms of each, all five X5 forms) and restated O7. C1–C6 and O1–O6 were green.
+- **Client** (`travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.cachedPartial.component.test.tsx`, 8 cases, the real ForYouTab):
+  - H1: a cached partial page shows `for-you-partial` while the refetch is pending (`travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.cachedPartial.component.test.tsx:165#H1 a cached partial page with places`).
+  - H2: a cached partial page with no places is `for-you-partial-empty`, never "No recommendations yet".
+  - H3: the notice follows the refetch.
+  - H0: the first frame, with effects held off for one render, already shows it (`travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.cachedPartial.component.test.tsx:194#H0 the FIRST frame`).
+  - Controls: C1, the fresh-from-network partial page shows it; C2, a cached COMPLETE page shows no notice while the refetch is pending (`travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.cachedPartial.component.test.tsx:226#C2 CONTROL: a cached COMPLETE page`); C3, no cache, no notice; C4, the first frame of a cached complete page shows no notice.
+  - **Red first**, against `a9ce69090`'s ForYouTab: H0–H3 red, C1–C4 green. H0 was also red with the hydration fix alone, which is why the first frame is seeded too.
+- **Mutations.** 21 of 21 killed. Each was applied alone, the suite run, and the file restored byte-identical (sha256 checked).
+
+| # | mutation | red |
+|---|---|---|
+| S1 | the body check not called | X1–X7 (13 cases) |
+| S2 | the remark ignored | X1–X4, X5 (unrecognised, remark-then-error, non-string), X6, X7 |
+| S3 | a body with no `elements` accepted | X5 (no elements) |
+| S4 | every remark is a failure | C3 (informational) |
+| S5 | only the prefix read | X5 (remark-then-error) |
+| S6 | a non-string remark accepted | X5 (non-string) |
+| S7 | an unrecognised remark form accepted | X5 (unrecognised) |
+| S8 | a non-object body not guarded | X5 (JSON null) |
+| S9 | an empty remark is a failure | C3 (empty remark) |
+| S10 | truncated rows kept and served | X2, X3, X4 and X6 (truncated forms), X5 (remark-then-error) |
+| K1 | counts always `transient_db` | O7, X7 |
+| K2 | counts upstream when any failure is upstream | C6 |
+| K3 | the Overpass count failure untyped | O7, X7 |
+| K4 | the upstream code not carried | O7, X7 |
+| F1 | the hydration does not restate `osmPartial` | H1, H2, H3 |
+| F2 | the hydration does not restate `source` | H1, H3 |
+| F3 | `source 'osm'` for an empty cached page | H2 |
+| F4 | every cached page marked partial | C2 |
+| F5 | the first frame's `osmPartial` not seeded | H0 |
+| F6 | the first frame's `source` not seeded | H0 |
+| F7 | the first frame marks every cached page partial | C4 |
+
+- **Existing tests.** One assertion is restated by recorded decision (O7's code, D-W11X2-19); none is weakened or removed. The other suites were run at the final tree:
+  - every server suite importing `routes/discovery.ts` (69 files, 1,200 tests): 1,199 pass. The one failure is `discoveryClientRouteE2E`'s Node 22 load failure (§76.5);
+  - the five suites that read its text: 100/100;
+  - `discoveryRefusalD11`: 74/74;
+  - the client Discovery and ForYouTab jest suites: 532/532 in 87 files;
+  - `discoveryRefusalConsumers.guard` and `discovery.feedTimeout` (node:test, `--import tsx` on Node 22 as `scripts/run-node-tests.mjs` does): 12/12.
+
+### 99.5 Checks
+
+Run after the last edit.
+
+- **`artifacts/api-server`, all clean:**
+  - `typecheck` (the whole script, both halves);
+  - `typecheck:tests`: 863 against a baseline of 863;
+  - `check:test-registration`;
+  - `check:doc-citations`, `check:citation-targets` and `check:citation-symbols`;
+  - `check:census-scope-coverage`, `check:census-freshness` and `check:census-integrity`;
+  - `check:census-row-move-labels`.
+  - Acknowledgements were appended: census-discovery, plus census-passport, -sensing, -trust and -layover for `routes/discovery.ts`, and census-telegraph for the scope script's one new path.
+- **`travel-buddy-standalone`, clean:** `typecheck`, `typecheck:tests` (173 against 173) and `node scripts/check-test-mocks.mjs`.
+- **Not run:**
+  - the full api-server `pnpm test`; the suites importing the changed route were run instead;
+  - (the client `check:all` WAS run, at `dedb540c9`: "ALL CHECKS PASSED", including `test`, `test:component`, both typechecks and `lint:orphan-tests`);
+  - the harness, since no migration was added;
+  - `check:write-path-columns`, which needs live credentials. No write payload changed, and the L2 writer is only called less often.
+
+### 99.6 DV-83, restated
+
+§98.1's two paths are closed, and so is the residual. Every clause of DV-83's criterion holds on every path found so far:
+
+1. Every consumer of a Discovery envelope that can carry `refusal` branches on `coverage`, not on `ok` alone.
+2. No refused body is written to a client cache.
+3. No refused body is rendered as an empty result.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§98.1's two paths are closed under mutation, so every clause holds on every path §94, §94.11, §98 and §99 found.** **Consumers branch on coverage.** The guard's eleven files still branch on it (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts:311#it('G2. every file that consumes a carrier`), and every list-rendering consumer names a partial answer (G7). ForYouTab now does so on its cached replay as well as on the network answer, including the first frame (`travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.cachedPartial.component.test.tsx:165#H1 a cached partial page with places`; H0, H2, H3), as `DiscoveryCategoryTab` already did. The rail names a transport failure and refetches on a pull (§94.11 U1–U3, R1). **No refused body in a client cache.** The client's three caches write no `nothing` body (§60.2, unchanged). A `partial` body is cached with its refusal and is now replayed with it. **No refused body rendered as an empty result.** A cached partial page with no places is the partial-empty state, not "No recommendations yet" (H2). **Producers, so a consumer is SENT the failure.** The feed's event-post read (E1–E5), the viewer lookup (V1–V6) and Overpass on the wire (O1–O7) are covered, and now so is Overpass's in-body failure. A timed-out or out-of-memory 200, empty or truncated, is `overpass` on GET /discovery, the feed and the counts, and is cached nowhere: Cache A, L2, the stale-L2 revalidation and the counts' public header (`artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:222#GET /discovery, ${c.name}: partial`; X3–X6). An unrecognised body fails closed (X5), and an informational remark does not (C3). The counts name an Overpass-only failure `upstream_unavailable` (X7, O7). **Not flag-gated.** Each change alters output only when a read fails or a cached page is partial. **Stated limits.** Branch only: no client build carrying ForYouTab's change has shipped. The remark forms are reasoned from Overpass's error-output kinds; no live Overpass answer was fetched. `discoveryClientRouteE2E` cannot load on Node 22 here. |
+
+**Headline.** DV-83 moves W → C. `check:census-integrity` counts **C 101 / W 85 / N 2 / X 0** over 188: CONSTRUCTED 186 / 188 = **98.9 %**, CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged.
+
+### 99.7 Left open, and what would turn this red
+
+- **Seen and not built** (A07, not DV-83). The same hydration does not restate `liveUnchecked`. A cached page whose Live claims were withheld shows its cards without the "live info couldn't be checked" line until the refetch answers. The claims themselves stay withheld, so nothing false is shown, but the line is missing for that moment. The fix is the same shape as 99.2, and it belongs to A07's row.
+- **What would turn DV-83 red again:**
+  - an Overpass 200 whose body says the query did not finish being served, cached or counted (X1–X7, S1–S10);
+  - a cached partial page replayed without its notice, on the first frame or after it (H0–H3, F1–F7);
+  - any path §94.11 lists (E1–E5, V1–V6, O1–O7, U1–U3, R1, T1, G2 and G7).
+  - An Overpass remark form this lane has not seen would fail closed, and would show as a `partial` page, not a silent one.
+
+### 99.8 Integrator: DV-83 held at W after the independent re-verification at the merged head
+
+*Integrator, 2026-09-28. §99 was merged onto the PR #528 head `895cd4426`, which carries §98.9's single auth classifier. An independent verifier then checked the merged tree, which §99 itself did not measure. It ran every probe below against that tree and restored every mutated file byte-identical (sha256).*
+
+- **Confirmed.**
+  - §98.1 finding 1: Overpass's in-body failure is a failed read on the cold path, Cache A, L2, the stale-L2 revalidation, the counts and the feed. The verifier killed 18 of 19 mutations. The survivor is an unconditional Cache A write in the counts, which the throw before it makes unreachable.
+  - §98.1 finding 2: ForYouTab's cached replay of a `partial` page. 7 of 7 mutations killed.
+  - The feed's viewer paths under D-W11X2-21. 6 of 7 mutations killed.
+- **Found: three more paths where a failed or partial read is shown as empty or complete.** Each is shown by a probe that fails against this tree.
+  1. **ForYouTab renders a transport failure as the empty state.** `travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:279#setSource(osm.ok && osm.data.refusal?.coverage === 'nothing' ? 'refused' : 'none');` handles an `ok: false` answer (network or non-2xx) by setting `source 'none'` and returning `[]`. The tab then shows "No recommendations yet", and the refetch replaces cards already hydrated from the cache, including a cached partial page and its notice. `DiscoveryCategoryTab` gives the same answer its own error state.
+  2. **The per-category counts treat a partial total as complete.** `travel-buddy-standalone/src/services/discovery.ts:824#if (refusedEverything(result.value.data.refusal)) return;` drops only `nothing` refusals. A `partial` total is counted as definitive: an Overpass-only failure over an empty DB half reads 0 and dims the tab (`travel-buddy-standalone/app/(tabs)/discovery.tsx:885#const isEmpty = !countsLoading && count !== undefined && count === 0;`), and a DB-only N is shown as the whole count.
+  3. **Map mode shows neither a refused nor a partial state.** ForYouTab's map branch (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:334#if (viewMode === 'map') {`) renders the map with no branch on the page's coverage. `DiscoveryCategoryTab`'s map branch comes before its error and partial branches.
+- **Also recorded.**
+  - D-W11X2-21's status-less-error rule has no test: a mutation reading it as a rejection survives.
+  - The feed classes an Overpass-only failure as `transient_db` / `feed_places_read_failed`, where GET /discovery and the counts say `upstream_unavailable`.
+- **Next.** A round-4 lane closes the three paths and pins the rule, with failing-first tests and mutations. The row moves only after another independent verification at that head.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | C | **W** | §99 closes §98.1's two findings; an independent verifier confirmed both under mutation at the merged head. Three consumer paths still present a failed or partial read as empty or complete (§99.8): ForYouTab's `ok: false` answer (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:279#setSource(osm.ok && osm.data.refusal?.coverage === 'nothing' ? 'refused' : 'none');`), the category counts' partial totals (`travel-buddy-standalone/src/services/discovery.ts:824#if (refusedEverything(result.value.data.refusal)) return;`), and map mode on both tabs (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:334#if (viewMode === 'map') {`). |
+
+Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
+
+## §100 — DV-83 round 4 (lane W11-X2): a failed read is its own state, a partial count is not the count, map mode states coverage, and DV-83 moves W → C
+
+*Written 2026-09-28 by lane W11-X2 (round 4) on `disc-w11-x2-r4`, from `64cd7a014`. It closes the three paths §99.8's verifier found, pins D-W11X2-21's status-less auth rule, and aligns the feed's Overpass-only class. It also closes three more consumer paths, which this round's own sweep found. Decisions are in `docs/architecture/discovery-decision-register.md`, section "W11-X2 round 4", D-W11X2-22 to D-W11X2-27.*
+
+*No migration and no new flag. Each change alters output only when a Discovery read failed in transport, answered `partial`, or is shown in map mode. The output-kinds rail sits behind its existing FALSE flag. Every edit in a cited file is line-neutral: lines are changed in place, and new code is appended at the file foot.*
+
+*All evidence is controlled: jest over the real tabs and hooks, and in-process routes over the fake Discovery world. None of it is production evidence, and no client build carrying the change has shipped.*
+
+### 100.1 A transport failure is its own state (§99.8 finding 1; D-W11X2-22)
+
+- **Before.**
+  - ForYouTab answered an `ok: false` read (network or non-2xx) with `source 'none'` and `[]`. The tab said "No recommendations yet" about a city nobody read.
+  - A failed refetch replaced cards already hydrated from the cache. A cached partial page lost its notice along with its cards.
+- **Now: the failed read changes nothing on screen.**
+  - The failed read writes nothing to `items`, `source` or `osmPartial` (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:279#if (!osm.ok) return prev;`). It records the failure instead (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:267#setLoadFailed(osm.ok ? null : osm.error);`).
+  - It keeps the live-unchecked line that the last good answer set.
+  - A rejected read is the same failure (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:283#setLoadFailed('Network error — check your connection');`).
+  - A new query starts clean (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:315#setLoadFailed(null);`).
+- **What the tab shows.**
+  - With nothing to keep: `for-you-error`. It uses `DiscoveryCategoryTab`'s words: "Couldn't load places", then the failure, then "Pull to refresh".
+  - With a page kept: that page, with its partial notice if it had one, under `for-you-stale` (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:327#const loadErrorShown = source === 'none' && !osmPartial && loadFailed !== null;`). The line reads "Couldn’t refresh just now, so these places may be out of date. Pull to refresh."
+  - The wording has one home (`travel-buddy-standalone/src/services/discoveryCoverageNotice.ts:78#export function listStaleNotice(noun: string): string {`).
+  - "No recommendations yet" is left for a complete, empty answer only.
+- **DiscoveryCategoryTab** takes the same rule.
+  - A failed page-1 refresh over places on screen used to set `error` and render nothing, because the error state requires `places.length === 0`. So a refresh that never happened looked like a fresh, complete answer.
+  - It now records the failed refresh (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:501#setRefreshFailed(nextPage === 1);`) and says so in the list header, as `discovery-category-stale`.
+  - A failed load-more draws no stale line. The list does not call itself ended either, since `places.length < total`.
+
+### 100.2 A partial per-category count is not the count (§99.8 finding 2; D-W11X2-23)
+
+- **The rule.** `getDiscoveryCategoryCounts` now drops a `partial` answer on the same line that drops a refusal (`travel-buddy-standalone/src/services/discovery.ts:824#if (result.value.data.refusal?.coverage === 'partial') return;`).
+- **Why.** A partial total counts only the sources that answered. An Overpass-only failure over an empty DB half is 0.
+- **What the badge row shows.** It already renders an absent key as no count and never dims it (`travel-buddy-standalone/app/(tabs)/discovery.tsx:885#const isEmpty = !countsLoading && count !== undefined && count === 0;`). So a partial 0 is no longer dimmed, and a DB-only N is no longer printed as the whole count.
+- **Lower bound ("N+") considered and not chosen.** The register gives the reasons.
+- **What is not affected.** A complete category, zero included, is still counted. The partial category still opens to its rows under the partial notice.
+
+### 100.3 Map mode states coverage, on both tabs (§99.8 finding 3; D-W11X2-24)
+
+The map branch on each tab used to draw a plain map for a refused, partial or failed read. The list's states now sit in a banner over the map, with the same testIDs and words and a "Try again". A map has no pull-to-refresh.
+
+- **ForYouTab** (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:334#const mapCoverage: ForYouMapCoverageKind = source === 'refused' ? 'refused'`) draws:
+  - `for-you-refused`, `for-you-error`, `for-you-partial`, `for-you-partial-empty` and `for-you-stale`;
+  - the community lane's refused, unavailable, stale or partial line, because those pins are on the same map.
+- **DiscoveryCategoryTab** (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:644#<CategoryMapCoverage kind={error && places.length === 0 ? 'error'`) draws:
+  - `discovery-category-error`, for a refusal or a transport failure. The list's error state carries the same testID (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:646#testID="discovery-category-error"`);
+  - `-partial`, `-partial-empty` and `-stale`.
+- **A complete page draws no banner.**
+
+### 100.4 D-W11X2-21's status-less rule, pinned (§99.8 "also recorded")
+
+- **The gap.** V6 covered a status-less error only under a known name (`AuthUnknownError`), which the classifier answers before it reaches the status test. So the verifier's mutation, which reads `artifacts/api-server/src/routes/discovery.ts:4612#if (typeof e.status !== "number") return true;` as `return false`, survived.
+- **The pin.** V10 was appended at the suite's tail (`artifacts/api-server/src/test/discoveryFeedEventPostsCoverage.test.ts:475#V10 no status and no known name is not a verdict`). It sends four shapes: bare, a generic name, `TypeError`, and a non-numeric status. Each must leave the viewer unresolved, with `upstream_unavailable` / `feed_viewer_unresolved`, `nothing`, `["event_posts"]` and no exposure row.
+- **The control.** C9 checks that the same kinds of error, carrying Auth's numeric 401 and its verdict code, are rejections.
+
+### 100.5 The feed's Overpass-only class (§99.8 "also recorded"; D-W11X2-25)
+
+- **The change.** When the only PLACE source that failed is Overpass, whatever the event posts did, the feed's refusal is `upstream_unavailable` / `overpass_unavailable`, as on GET /discovery and the counts (`artifacts/api-server/src/routes/discovery.ts:2759#viewerUnresolved ? "feed_viewer_unresolved"`, the same line, edited in place).
+- **Unchanged cases.**
+  - Any DB category failure keeps `transient_db` / `feed_places_read_failed`.
+  - An event-post-only failure keeps its own codes.
+- **Why it is safe.** No consumer branches on the feed's class or code: the rail reads `failedSources`.
+- **O5 restated.** §94.11's O5 is restated by this decision (`artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:148#assert.equal(body.refusal?.code, "overpass_unavailable");`), and is no weaker. O8, a mixed failure, and O9, Overpass-only, were appended at the tail.
+
+### 100.6 The sweep: three more consumer paths, closed (D-W11X2-26, D-W11X2-27)
+
+This round read every client consumer of GET /discovery, /discovery/feed, /discovery/counts, /discovery/search, /discovery/suggest, /discovery/community (and saved-ids) and the output-kinds route, looking for any `ok: false` branch that renders as empty or complete.
+
+- **Found and closed.**
+  1. `useCommunityDiscovery`.
+     - A transport failure kept the state and said nothing. With nothing held, that is a city with no traveler places. ForYouTab's own comment calls that silence the defect for a refusal.
+     - The hook now sets `unavailable` (`travel-buddy-standalone/src/hooks/useCommunityDiscovery.ts:178#setState((prev) => ({ ...prev, loading: false, unavailable: true }));`).
+     - ForYouTab renders it in the list as `for-you-community-unavailable`, or as `for-you-community-stale` over gems still held, and on the map.
+  2. `useSearchSuggestions`' transport arm.
+     - With nothing on screen the panel said "No quick matches yet". With the previous query's groups on screen, it showed them as this query's answer.
+     - The arm now raises the hook's `refused` flag, as the refusal arm already did (`travel-buddy-standalone/src/hooks/useSearchSuggestions.ts:130#setLoading(false); setRefused(true); setIncomplete(false);`). The panel renders it as "Suggestions are unavailable right now — the full search above still works."
+     - An aborted read raises nothing.
+  3. `DiscoveryOutputKindsRail`.
+     - It rendered a `network` failure and a thrown read as nothing, the same as an empty page.
+     - Both now reach its failed-read state (`travel-buddy-standalone/src/components/discovery/DiscoveryOutputKindsRail.tsx:72#setFailed(r.reason === 'unavailable'`).
+     - The rail is behind `discovery_output_kinds_enabled`, seeded FALSE. With the flag off it sends no request (O1), so the flag-off output is unchanged.
+- **Read and found sound.**
+  - `DiscoveryEventPostsRail`: a transport failure has its own state (§94.10).
+  - `app/map/index.tsx`: a transport failure is the error card.
+  - `MapSearchSheet` and `app/search.tsx`: each sets its error state on page 1. A failed load-more there keeps the cursor, so no end-of-list is claimed.
+  - `getSavedPlaceIds`: a transport failure is `unavailable` and writes no bookmark state.
+  - The `_layout.tsx` prefetch: its answers are discarded, and the service caches no `nothing` body.
+  - `getDiscoveryCategoryCountsBatch`: `{ counts: {} }` on a transport failure means every key is absent, which is "unknown" and never a zero. Its one caller is the prefetch.
+- **Out of scope.**
+  - The trending-hashtag strip reads `/api/hashtags/trending`, which is not a Discovery endpoint. It draws no empty state either way.
+  - The wikidata enrichment and the live-status read are per-place details, not result lists.
+
+### 100.7 Tests, seen red, and mutations
+
+- **Client, new suites.**
+  - `travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.failedRead.component.test.tsx` (25 cases, the real ForYouTab).
+    - T1–T9 and the controls C1, C2 and C4 (`travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.failedRead.component.test.tsx:217#T3 cached PARTIAL page, failed refetch`).
+    - Map mode: M1–M6 and C3 (`travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.failedRead.component.test.tsx:321#M1 map, refused`).
+    - The community lane: K1–K5 and C5.
+  - `travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryCategoryTab.failedRead.component.test.tsx` (12 cases): D1–D9 and C1–C3 (`travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryCategoryTab.failedRead.component.test.tsx:107#D1 map, refused`).
+  - `travel-buddy-standalone/src/hooks/__tests__/useCommunityDiscovery.failedRead.component.test.tsx` (7 cases): F1–F5, C1 and C2.
+  - `travel-buddy-standalone/src/hooks/__tests__/useSearchSuggestions.failedRead.component.test.tsx` (6 cases): S1–S4, C1 and C2.
+- **Client, existing suites extended or restated.**
+  - `travel-buddy-standalone/src/services/__tests__/discovery.refusal.component.test.tsx`: the partial-count CONTROL is restated by D-W11X2-23, and "OMITS a PARTIAL zero" is new (`travel-buddy-standalone/src/services/__tests__/discovery.refusal.component.test.tsx:270#OMITS a PARTIAL zero`).
+  - `DiscoveryOutputKindsRail.component.test.tsx`: O5's transport-failure entry is removed by D-W11X2-27, and O8–O10 are appended.
+  - The consumer guard registers the new branches and proof suites.
+- **Server.**
+  - `discoveryFeedEventPostsCoverage` V10 and C9 are appended at the tail.
+  - `discoveryOverpassFailedSource`: O5 is restated by D-W11X2-25, and O8 and O9 are appended.
+- **Red first.** Each was run at the unfixed tree, and the output is kept in the lane's scratch.
+  - ForYouTab's first 17 cases: 13 red. The 4 green were the controls C1–C4.
+  - The community-lane cases: K1–K5 red, C5 green.
+  - DiscoveryCategoryTab: 8 red, and the 3 controls green.
+  - Counts: the two partial cases red, and 29 green.
+  - Hooks: 7 red (F1–F4, S1–S3), with F5, S4 and the controls green.
+  - Output-kinds rail: O8 and O9 red.
+  - Feed class: O5 (restated) and O9 red, O8 green.
+  - V10 pins a rule already in the code, so it was green when written. Its red is SV-M1 below, the mutation §99.8 saw survive.
+  - T8, T9 and D9 were written after their fixes. Their red is C-M9, C-M10 and D-M3 below.
+  - §99.8's own six probes (P1–P6), copied in unchanged, all pass at this tree.
+- **Mutations.** 31 of 31 valid mutations killed. Each was applied alone, the suite run, and the file restored byte-identical (sha256 checked). One further mutation was discarded because it was a syntax error, and it was re-run as C-M7'. C-M6, C-M12 and D-M2 were each re-run in a stronger prop-level form (C-M6', C-M12', D-M2'); both forms were killed.
+
+| # | mutation | red |
+|---|---|---|
+| C-M1 | a failed read wipes what is on screen (no `return prev`) | T2–T5, T7, T9, M5 |
+| C-M2 | no error state | T1, T6, T8, M4, M6 |
+| C-M3 | no stale line | T2–T5, T9, M5 |
+| C-M4 | the failure not recorded | T1–T6, T9, M4–M6 |
+| C-M5 | a failure clears the live-unchecked line | T7 |
+| C-M6 / C-M6' | the map's coverage kind null (expression form / prop form) | M1 / M1–M6 |
+| C-M7' | the map banner removed | M1–M6, K3–K5 |
+| C-M8 | "No recommendations yet" beside the error state | T1, T8 |
+| C-M9 | a rejected read silent | T8 |
+| C-M10 | a new query inherits the old failure | T9 |
+| C-M11 | the community failure silent (list) | K1, K2 |
+| C-M12 / C-M12' | the community lane absent from the map (expression form / prop form) | K3 / K3–K5 |
+| D-M1 | the refresh failure not recorded | D5, D6, D9 |
+| D-M2 / D-M2' | the map's coverage kind null (expression form / prop form) | D1, D2, D7 / D1–D4, D7 |
+| D-M3 | the stale line never cleared | D9 |
+| D-M4 | a load-more failure called a refresh failure | C3 |
+| D-M5 | the map's stale line dropped | D6 |
+| D-M6 | the map banner removed | D1–D4, D6, D7 |
+| S-M1 | a partial count reported | both OMITS-PARTIAL cases |
+| H-M1 | the community `!ok` arm silent | F1, F3, F4 |
+| H-M2 | the community throw silent | F2 |
+| H-M3 | the suggest transport arm silent | S1–S3 |
+| R-M1 | the rail's network failure silent | O8 |
+| R-M2 | the rail's thrown read silent | O9 |
+| SV-M1 | a status-less error is a rejection (§99.8's survivor) | V10 |
+| SV-M2 | the feed's Overpass-only code back to `feed_places_read_failed` | O5, O9 |
+| SV-M3 | the feed's Overpass-only class back to `transient_db` | O5, O9 |
+| SV-M4 | a mixed failure called upstream | O8 |
+
+- **Existing tests.** Four assertions are restated by recorded decision:
+  - the counts CONTROL (D-W11X2-23);
+  - the Overpass suite's O5 (D-W11X2-25);
+  - the rail's O5 transport entry (D-W11X2-27);
+  - the guard's registry, which gains branches and proofs on existing lines and loses nothing.
+
+  None is weakened or removed otherwise. The other suites were run at the final tree:
+  - every server suite that imports `routes/discovery.ts`: 68 files, 1,211 tests, 1,210 pass. The one failure is `discoveryClientRouteE2E`'s known Node 22 load failure (`truncateDisplayName`, §76.5), and it is unchanged;
+  - `discoveryOverpassFailedSource` 29/29, `discoveryFeedEventPostsCoverage` 28/28, `discoveryRefusalD11` 74/74 and `discoveryRefusalExposure` 8/8;
+  - the client Discovery, service, map, search and hook jest suites: 102 files, all green;
+  - `discoveryRefusalConsumers.guard` (node:test, `--import tsx` on Node 22, as `scripts/run-node-tests.mjs` does): 8 of 8;
+  - `sharedSheetContrast.consumers`: 9 of 9. The first draft of the map banner used the §33 token `signalStrong`, and this suite caught it. The banner now reuses each tab's existing retry style.
+
+### 100.8 Checks
+
+Run after the last edit.
+
+- **`artifacts/api-server`, all clean:**
+  - `typecheck`;
+  - `typecheck:tests`: 863 against a baseline of 863;
+  - `check:test-registration`;
+  - `check:doc-citations`: 0 broken anchors, with unanchored citations at their ceiling of 6,434;
+  - `check:citation-targets`: 163. The ceiling was lowered 164 → 163, as the guard asked. Which citation's dead target retired was not isolated;
+  - `check:citation-symbols`;
+  - `check:census-integrity`, `check:census-freshness`, `check:census-scope-coverage` and `check:census-row-move-labels`;
+  - `check:enum-literals`, `check:async-handlers`, `check:discovery-query-paths` and `check:route-auth-gate`.
+- **Acknowledgements.** They were appended, with argued reasons, for:
+  - census-discovery (its files, plus the five counted files that were new to it);
+  - census-passport, -sensing, -trust and -layover, for `routes/discovery.ts`;
+  - census-map, for `services/discovery.ts`;
+  - census-input-intelligence, for `useSearchSuggestions.ts`.
+- **`travel-buddy-standalone`:** `tsc --noEmit -p .` (clean), `typecheck:tests` (173 against 173) and `check:all` (result in the lane report).
+- **Not run:**
+  - the harness, since no migration was added;
+  - `check:write-path-columns`, which needs live credentials. No write payload changed;
+  - the full api-server `pnpm test`. The 68 suites that import the changed route were run instead.
+
+### 100.9 DV-83, restated
+
+§99.8's three paths are closed, its survivor is pinned, and the sweep's three further paths are closed. Every clause of DV-83's criterion holds on every path this lane examined:
+
+1. Producers send the failure.
+2. No refused body is cached as complete.
+3. No refused body is rendered as an empty result.
+4. Consumers branch on coverage.
+
+§99.8 asks for an independent verification at the merged head before the integrator accepts the move.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§99.8's three paths are closed under mutation, its surviving mutation is pinned, and this round's sweep closed three more.** **A transport failure is never an empty result.** ForYouTab's failed read changes nothing on screen (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:279#if (!osm.ok) return prev;`). With nothing to keep it is the error state; over a cached or earlier page it keeps that page, and its partial notice, under a "couldn't refresh" line (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:327#const loadErrorShown = source === 'none' && !osmPartial && loadFailed !== null;`; T1–T9, C-M1–C-M10). `DiscoveryCategoryTab` says the same of a failed refresh (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:501#setRefreshFailed(nextPage === 1);`; D5, D9). The community hook, the suggestion hook and the output-kinds rail say a transport failure too, instead of showing the empty answer (`travel-buddy-standalone/src/hooks/useCommunityDiscovery.ts:178#setState((prev) => ({ ...prev, loading: false, unavailable: true }));`, `travel-buddy-standalone/src/hooks/useSearchSuggestions.ts:130#setLoading(false); setRefused(true); setIncomplete(false);`; F1–F5, S1–S4, O8–O9). **A partial read is never complete.** A partial count is omitted as unknown, never dimmed as 0 or printed as the whole (`travel-buddy-standalone/src/services/discovery.ts:824#if (result.value.data.refusal?.coverage === 'partial') return;`; S-M1). Map mode on both tabs states refused, failed, partial, partial-empty and stale, for both lanes (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:334#const mapCoverage: ForYouMapCoverageKind = source === 'refused' ? 'refused'`, `travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:644#<CategoryMapCoverage kind={error && places.length === 0 ? 'error'`; M1–M6, K3–K5, D1–D7). **Producers send the failure.** A status-less auth error leaves the feed's viewer unresolved (`artifacts/api-server/src/test/discoveryFeedEventPostsCoverage.test.ts:475#V10 no status and no known name is not a verdict`; SV-M1, which survived at §99.8, is now killed). The feed names an Overpass-only failure as the upstream's, as GET /discovery and the counts do (`artifacts/api-server/src/routes/discovery.ts:2759#viewerUnresolved ? "feed_viewer_unresolved"`; O5, O8, O9). Every path §94, §94.11, §98 and §99 closed still holds: their suites pass unchanged, apart from the four restatements recorded in 100.7. **Stated limits.** Controlled evidence only. No client build carrying these changes has shipped. The map banner's placement is reasoned from the map's own overlay coordinates and was not seen on a device. §99.8 asks for an independent re-verification at this head. |
+
+**Headline.** DV-83 moves W → C. `check:census-integrity` counts **C 101 / W 85 / N 2 / X 0** over 188: CONSTRUCTED 186 / 188 = **98.9 %**, CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged.
+
+### 100.10 Left open, and what would turn this red
+
+- **Seen and not built.**
+  - A failed load-more (page ≥ 2) on `DiscoveryCategoryTab` and on the search screen is still silent. Neither claims the list is complete: the footer needs `places.length >= total`, and the search cursor is kept. The next scroll asks again. It is recorded here, not graded as a DV-83 failure.
+  - §99.7's A07 note (the hydration does not restate `liveUnchecked`) is unchanged.
+- **What would turn DV-83 red again:**
+  - a failed read rendered as "No recommendations yet", or wiping a kept page (T1–T9);
+  - a partial count shown as the count (the OMITS-PARTIAL cases);
+  - a map that draws a refused, failed or partial read as a plain map (M1–M6, K3–K5, D1–D7);
+  - a hook or rail that renders a transport failure as its empty answer (F1–F5, S1–S4, O8–O9);
+  - a status-less auth error read as a rejection (V10);
+  - any path §99.6 lists.
 
 ## Cited, not graded (check:census-scope-coverage)
 
@@ -16646,4 +17003,4 @@ Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. COR
 - NOT-GRADED: artifacts/api-server/src/test/nodeRuntimePin.test.ts — §98 names it only as merged from the parallel session. It checks the suite's Node major against .replit and is CI machinery, so no Discovery verdict rests on it.
 - NOT-GRADED: travel-buddy-standalone/src/features/discovery/communityByline.test.ts — §98 names it only as merged from the parallel session. It unit-tests the byline's privacy rule through the identity chain on any Node, and no verdict in this census rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/authSignupStatusNoClient.test.ts — §98.6 names it only as the precedent for discoveryFeedNoServiceClient.test.ts's guard-coverage exemption (clear the Supabase env, then import); it tests the auth signup-status route, and no Discovery verdict rests on it.
-- NOT-GRADED: artifacts/api-server/src/test/authorizationContractGuard.test.ts — §99 names it only as the contract evaluator's self-test, run after the contract's four entries were brought to the applied migrations; it guards shared authorization machinery, and no Discovery verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/authorizationContractGuard.test.ts — §98.10 names it only as the contract evaluator's self-test, run after the contract's four entries were brought to the applied migrations; it guards shared authorization machinery, and no Discovery verdict rests on it.

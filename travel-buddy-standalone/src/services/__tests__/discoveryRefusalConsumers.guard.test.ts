@@ -101,31 +101,31 @@ const CONSUMERS: Record<string, Consumer> = {
     branches: [
       "setSource(osm.ok && osm.data.refusal?.coverage === 'nothing' ? 'refused' : 'none');",
       '{community.refused && (',
-      "setSavedIdsUnavailable(res.reason !== 'signed_out');",
+      "setSavedIdsUnavailable(res.reason !== 'signed_out');", 'if (!osm.ok) return prev;', "const loadErrorShown = source === 'none' && !osmPartial && loadFailed !== null;", '{community.unavailable && !community.refused && (',  // census-discovery §100 (D-W11X2-22/26): a transport failure keeps what is on screen and is its own state, in both lanes
     ],
     proofs: [
       { file: 'src/components/discovery/__tests__/ForYouTab.refusal.component.test.tsx', mentions: 'for-you-community-refused' },
-      { file: 'src/components/discovery/__tests__/ForYouTab.refusal.component.test.tsx', mentions: 'for-you-partial' },
+      { file: 'src/components/discovery/__tests__/ForYouTab.refusal.component.test.tsx', mentions: 'for-you-partial' }, { file: 'src/components/discovery/__tests__/ForYouTab.failedRead.component.test.tsx', mentions: 'T3 cached PARTIAL page, failed refetch' }, { file: 'src/components/discovery/__tests__/ForYouTab.failedRead.component.test.tsx', mentions: 'M1 map, refused' },  // §100
     ],
     partial: 'rows kept, one "may be incomplete" line per lane; no rows is never "No recommendations yet"',
     partialBranches: [
       "{source === 'osm' && osmPartial && (",
       "{source === 'none' && osmPartial && (",
-      '{community.incomplete && !community.refused && (',
+      '{community.incomplete && !community.refused && (', "source === 'osm' && osmPartial ? 'partial' : source === 'none' && osmPartial ? 'partial-empty' : null;",  // §100 (D-W11X2-24): map mode states the same coverage over the map
     ],
   },
   'src/components/discovery/DiscoveryCategoryTab.tsx': {
     uses: ['getCachedDiscoveryPlaces', 'getDiscoveryPlaces'],
     branches: [
       "if (nextPage === 1 && res.data.refusal?.coverage === 'nothing') {",
-      "if (res.data.refusal?.coverage === 'nothing') {\n      setMoreRefused(true);",
+      "if (res.data.refusal?.coverage === 'nothing') {\n      setMoreRefused(true);", "<CategoryMapCoverage kind={error && places.length === 0 ? 'error'",  // §100 (D-W11X2-24): the map branch draws the error state too
     ],
     proofs: [
       { file: 'src/components/discovery/__tests__/DiscoveryCategoryTab.refusal.component.test.tsx', mentions: 'does NOT tell the user to adjust their filters' },
-      { file: 'src/components/discovery/__tests__/DiscoveryCategoryTab.loadMoreRefusal.component.test.tsx', mentions: 'a refused page 2 is not the last page' },
+      { file: 'src/components/discovery/__tests__/DiscoveryCategoryTab.loadMoreRefusal.component.test.tsx', mentions: 'a refused page 2 is not the last page' }, { file: 'src/components/discovery/__tests__/DiscoveryCategoryTab.failedRead.component.test.tsx', mentions: 'D1 map, refused' },  // §100
     ],
     partial: 'rows kept under a "may be incomplete" line; no rows is the partial-empty state with a retry, never "No places found"',
-    partialBranches: ['ListHeaderComponent={partial ?', ') : places.length === 0 && partial ? ('],
+    partialBranches: ['ListHeaderComponent={partial ?', ') : places.length === 0 && partial ? (', "places.length === 0 && partial ? 'partial-empty' : partial ? 'partial' : null"],  // §100: and over the map
   },
   'src/components/discovery/DiscoveryEventPostsRail.tsx': {
     uses: ['getDiscoveryFeed'],
@@ -136,15 +136,15 @@ const CONSUMERS: Record<string, Consumer> = {
   },
   'src/hooks/useCommunityDiscovery.ts': {
     uses: ['getCommunityPlaces'],
-    branches: ["const refused = result.data.refusal?.coverage === 'nothing';", 'if (cKey && !refused && isCurrentDiscoveryScope(scope)) {'],
-    proofs: [{ file: 'src/hooks/__tests__/useCommunityDiscovery.refusal.component.test.tsx', mentions: 'refused' }],
+    branches: ["const refused = result.data.refusal?.coverage === 'nothing';", 'if (cKey && !refused && isCurrentDiscoveryScope(scope)) {', 'setState((prev) => ({ ...prev, loading: false, unavailable: true }));'],  // §100 (D-W11X2-26): a transport failure is said, never a quiet city
+    proofs: [{ file: 'src/hooks/__tests__/useCommunityDiscovery.refusal.component.test.tsx', mentions: 'refused' }, { file: 'src/hooks/__tests__/useCommunityDiscovery.failedRead.component.test.tsx', mentions: 'F1 first read fails in transport' }],
     partial: 'rows kept and cached WITH `incomplete`, so a cached replay still says so',
     partialBranches: ["incomplete: result.data.refusal?.coverage === 'partial'"],
   },
   'src/hooks/useSearchSuggestions.ts': {
     uses: ['getSearchSuggestions'],
-    branches: ["const refusedNow = res.refusal?.coverage === 'nothing';"],
-    proofs: [{ file: 'src/hooks/__tests__/useSearchSuggestions.refusal.component.test.tsx', mentions: 'refused' }],
+    branches: ["const refusedNow = res.refusal?.coverage === 'nothing';", 'setLoading(false); setRefused(true); setIncomplete(false);'],  // §100 (D-W11X2-26): the transport arm says so too
+    proofs: [{ file: 'src/hooks/__tests__/useSearchSuggestions.refusal.component.test.tsx', mentions: 'refused' }, { file: 'src/hooks/__tests__/useSearchSuggestions.failedRead.component.test.tsx', mentions: 'S1 transport failure with nothing on screen' }],
     partial: 'groups kept and cached WITH `incomplete`, so a cached replay still says so',
     partialBranches: ["setIncomplete(!refusedNow && res.refusal?.coverage === 'partial');", "incomplete: res.refusal?.coverage === 'partial' });"],
   },
@@ -190,8 +190,8 @@ const CONSUMERS: Record<string, Consumer> = {
   'app/(tabs)/discovery.tsx': {
     uses: ['getDiscoveryCategoryCounts'],
     branches: ['const isEmpty = !countsLoading && count !== undefined && count === 0;'],
-    proofs: [{ file: 'src/services/__tests__/discovery.refusal.component.test.tsx', mentions: 'OMITS a refused category rather than reporting it as a real zero' }],
-    partial: 'n/a — a count badge, not a list: the service omits a failed category and the badge renders an absent key as no count',
+    proofs: [{ file: 'src/services/__tests__/discovery.refusal.component.test.tsx', mentions: 'OMITS a refused category rather than reporting it as a real zero' }, { file: 'src/services/__tests__/discovery.refusal.component.test.tsx', mentions: 'OMITS a PARTIAL zero' }],
+    partial: 'n/a — a count badge, not a list: census-discovery §100 (D-W11X2-23) — the service omits a failed, refused OR partial category (a partial total counts only the sources that answered), and the badge renders an absent key as no count, never dimmed',
     partialBranches: [],
   },
 };

@@ -577,7 +577,7 @@ import {
  * guard printed "164 < 165 — LOWER THE CEILING"; the merge brought census
  * §48's re-anchored citations, and which one retired the dead target was not
  * isolated. Same rule as above. */
-export const MAX_DEAD_TARGETS = 164;
+export const MAX_DEAD_TARGETS = 163;  // RATCHETED 2026-09-28 164 -> 163 at census-discovery §100 (lane W11-X2, round 4): the guard printed "163 < 164 — LOWER THE CEILING" after this lane's edits; which citation retired its dead target was not isolated. Same rule as above.
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);

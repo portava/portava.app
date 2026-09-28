@@ -4429,6 +4429,14 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/discoveryFeedNoServiceClient.test.ts",
     "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryEventPostsRail.refresh.component.test.tsx",
     "travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.pullToRefresh.component.test.tsx",
+    // census-discovery §99 (lane W11-X2, round 3): DV-83 re-graded on ForYouTab's cached replay of a partial page.
+    "travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.cachedPartial.component.test.tsx",
+    // census-discovery §100 (lane W11-X2, round 4): DV-83 re-graded on a failed read and on map mode, both tabs,
+    // and on the community and suggestion hooks' transport failures.
+    "travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.failedRead.component.test.tsx",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryCategoryTab.failedRead.component.test.tsx",
+    "travel-buddy-standalone/src/hooks/__tests__/useCommunityDiscovery.failedRead.component.test.tsx",
+    "travel-buddy-standalone/src/hooks/__tests__/useSearchSuggestions.failedRead.component.test.tsx",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

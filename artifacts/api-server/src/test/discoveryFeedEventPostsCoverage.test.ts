@@ -453,3 +453,54 @@ describe("GET /discovery/feed — an unresolved viewer's event-post read is a fa
 
 // §98: the per-request serve row's RPC name, imported at the foot so no line above moves.
 import { SERVE_REQUEST_RPC } from "../lib/discoveryServeLog.js";
+
+// ═════════════════════════════════════════════════════════════════════════════
+// census-discovery §100 (lane W11-X2 round 4; DV-83, §99.8 "also recorded"):
+// D-W11X2-21's status-less rule, pinned. Appended at the tail so every anchored
+// line above keeps its place.
+//
+// `authServiceUnreachable` (routes/discovery.ts) reads an error with NO numeric
+// status and NO known auth-js name as "not a verdict": nothing says Auth
+// evaluated the token, so the viewer stays UNRESOLVED and the event-post read is
+// a failed read. V6 covers a status-less error only under a KNOWN name
+// (AuthUnknownError), which the rule answers before it reaches the status test,
+// so §99.8's verifier could read that line as a rejection (`return false`) and
+// every case stayed green. V10 is the case that line alone decides.
+//
+//   V10  an error with no status and no known name (bare, a generic name, a non-numeric status) → the unresolved-viewer refusal
+//   C9   CONTROL: the same shapes WITH Auth's numeric 401 and its verdict code are a rejection → no refusal
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe("GET /discovery/feed — an auth error with no status and no known name leaves the viewer unresolved (DV-83, D-W11X2-21, §100)", () => {
+  it("V10 no status and no known name is not a verdict: the unresolved-viewer refusal, no exposure", async () => {
+    for (const err of [
+      { message: "fetch failed" },
+      { name: "AuthError", message: "something went wrong" },
+      { name: "TypeError", message: "Cannot read properties of undefined" },
+      { name: "AuthApiError", status: "401", code: "bad_jwt", message: "a status that is not a number" },
+    ]) {
+      setClientWithGetUser(noUser(err), { rows: { posts: [venuePost("p-1")] } });
+      const r = await get(FEED_POSTS_ONLY);
+      assert.equal(r.status, 200);
+      assert.deepEqual(r.body.posts, [], `${JSON.stringify(err)}: no posts were read for this viewer`);
+      assert.equal(r.body.refusal?.class, "upstream_unavailable", `${JSON.stringify(err)} must leave the viewer unresolved: ${JSON.stringify(r.body)}`);
+      assert.equal(r.body.refusal?.code, "feed_viewer_unresolved");
+      assert.equal(r.body.refusal?.coverage, "nothing");
+      assert.deepEqual(r.body.refusal?.failedSources, ["event_posts"]);
+      await settle();
+      assert.equal(rankRows().length, 0, "a refused feed enters no exposure denominator");
+    }
+  });
+
+  it("C9 CONTROL: with Auth's numeric status and verdict code the same kind of error is a rejection, and carries no refusal", async () => {
+    for (const err of [
+      { name: "AuthError", status: 401, code: "bad_jwt", message: "invalid JWT" },
+      { name: "AuthApiError", status: 401, code: "bad_jwt", message: "a numeric status this time" },
+    ]) {
+      setClientWithGetUser(noUser(err), { rows: { posts: [venuePost("p-1")] } });
+      const r = await get(FEED_POSTS_ONLY);
+      assert.equal(r.status, 200);
+      assert.equal(r.body.refusal, undefined, `${JSON.stringify(err)} is Auth's verdict: ${JSON.stringify(r.body)}`);
+    }
+  });
+});
