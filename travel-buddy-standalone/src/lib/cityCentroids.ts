@@ -9,6 +9,8 @@
  * Keys are English display names as stored in the `city` field of CityEvent.
  * Common alternate spellings are included for robustness.
  */
+import { LATIN_LETTER_FOLD } from './latinLetterFold.ts';
+
 export const CITY_CENTROIDS: Record<string, [number, number]> = {
   // ── Southeast Asia ───────────────────────────────────────────────────────────
   'Bangkok':          [13.7563,  100.5018],
@@ -589,19 +591,16 @@ export const CITY_ALIASES: Record<string, string> = {
 };
 
 /**
- * Stroked / slashed letters that NFD decomposition does NOT remove — these are
- * base-letter modifications, not combining marks.  Map both the uppercase and
- * lowercase forms so the replacement is safe regardless of input case.
+ * Stroked / barred / hooked letters that NFD decomposition does NOT remove —
+ * base-letter modifications, not combining marks (Ł ł Ø ø Đ đ ı Ħ ƀ ȥ …).
  *
- * Ł / ł  (Polish, Croatian …)  → L / l
- * Ø / ø  (Danish, Norwegian …) → O / o
- * Đ / đ  (Vietnamese, Serbian) → D / d
+ * census-discovery §76: this was a six-letter table of its own (Ł ł Ø ø Đ đ),
+ * so "ıstanbul" typed on a Turkish keyboard never reached Istanbul while the
+ * server's search key folded it. It is now the server's 257-entry table,
+ * copied into ./latinLetterFold.ts and held identical by api-server's
+ * clientLetterFoldParity test.
  */
-const STROKED_TRANSLIT: Record<string, string> = {
-  'Ł': 'L', 'ł': 'l',
-  'Ø': 'O', 'ø': 'o',
-  'Đ': 'D', 'đ': 'd',
-};
+const LETTER_FOLD_RE = new RegExp(`[${Object.keys(LATIN_LETTER_FOLD).join('')}]`, 'gu');
 
 /**
  * Normalise a raw city string to the form used as the index key:
@@ -609,8 +608,8 @@ const STROKED_TRANSLIT: Record<string, string> = {
  *   2. Collapse internal runs of whitespace to a single space
  *   3. NFD-decompose and strip combining diacritical marks so that
  *      "Bogotá" → "bogota", "Côte" → "cote", "São Paulo" → "sao paulo".
- *   4. Replace stroked/slashed letters that NFD does not decompose
- *      (Ł→l, Ø→o, Đ→d and their lowercase equivalents).
+ *   4. Fold stroked/barred/hooked letters that NFD does not decompose
+ *      (Ł→l, Ø→o, Đ→d, ı→i, Ħ→h, …): the server's table (§76).
  *   5. Lowercase (Unicode-safe — avoids apostrophe/diacritic corruption)
  */
 function normaliseCityKey(raw: string): string {
@@ -619,7 +618,7 @@ function normaliseCityKey(raw: string): string {
     .replace(/\s+/g, ' ')
     .normalize('NFD')
     .replace(/\p{M}/gu, '')
-    .replace(/[ŁłØøĐđ]/g, (c) => STROKED_TRANSLIT[c] ?? c)
+    .replace(LETTER_FOLD_RE, (c) => LATIN_LETTER_FOLD[c] ?? c)
     .toLowerCase();
 }
 

@@ -4106,6 +4106,13 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // suite (every edge family revoked then rebuilt, against a scratch build; the fail-visible guards).
     // compass/CompassGraphEngine.ts, the code it grades, is already watched above (§56).
     "artifacts/api-server/src/test/compassGraphRevocation.test.ts",
+    // census-discovery §76 (lane P34): A03's sentence is restated on files already watched above
+    // (discoveryReasonCodes, discoveryReasonTruth, discoveryCandidate, the golden). §76.3's claim
+    // that the client folds with the server's letter table rests on the client copy of that table
+    // and the two suites that pin it (the parity suite fails on any drift in key, value or order).
+    "travel-buddy-standalone/src/lib/latinLetterFold.ts",
+    "artifacts/api-server/src/test/clientLetterFoldParity.test.ts",
+    "travel-buddy-standalone/src/lib/__tests__/cityCentroidsLetterFold.test.ts",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

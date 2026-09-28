@@ -240,7 +240,7 @@ const PLAIN_LANGUAGE: Readonly<Partial<Record<DiscoveryReasonCode, string>>> = {
   // shared screen rendering "Because you follow Bangkok After Dark" discloses
   // it. The bounded fact — that a followed Trail is why — is said without it.
   trail_affinity:   "From a trail you follow.",
-  nearby_now:       "Close to you.",  // §68 (A03): the claim every LOCATION signal supports; the served text is nearbyNowText(signals)
+  nearby_now:       "In this area.",  // §76 (A03): the claim every LOCATION signal supports (none measures the viewer); the served text is nearbyNowText(signals)
   trending_local:   "Picking up locally this week.",
   creator_affinity: "From travelers whose posts you follow.",
   exploration:      "Newer here, and worth a look.",
@@ -319,17 +319,17 @@ export function reasonCodesByIdFromProvenance(
 // codes see what they saw before); only the served SENTENCE is chosen from the
 // signals that fired. Declared at the foot so the cited lines above do not move.
 //
-// THE WORDING IS OWNER-OVERRULABLE COPY, NOT A POLICY. "Close to you." and
-// "Open around now." are the two halves of the sentence this module already
-// served. The one new sentence is the timing/capacity one, kept literal: each of
-// those signals fires only for something that has not ended and can still be
-// joined or attended.
+// THE WORDING IS OWNER-OVERRULABLE COPY, NOT A POLICY. §76: no location signal
+// measures the VIEWER (PDE cityMatch fires for every candidate; distance is from
+// the search centre; city_match includes a preferred city), so a location says
+// "In this area." (the app's own words for a searched area) and never "close to
+// you". Timing/capacity: fires only for what has not ended and can still be joined.
 
 /** Which kind of evidence a `nearby_now` signal is. Exhaustive over the keys mapped to the code (pinned by a test). */
 export const NEARBY_NOW_SIGNAL_FAMILY: Readonly<Record<string, "location" | "open" | "timing">> = {
-  distance:          "location",  // Compass + PDE: distance from the search reference point
-  city_match:        "location",  // Compass: the viewer's current or preferred city
-  cityMatch:         "location",  // PDE: the viewer's city
+  distance:          "location",  // Compass + PDE: from the search centre (the viewer only on some rows: census §76)
+  city_match:        "location",  // Compass: the viewer's current OR a preferred city (not where the viewer is)
+  cityMatch:         "location",  // PDE: the viewer's city, set on EVERY candidate (lib/discoveryPde)
   neighborhoodMatch: "location",  // PDE: stacked on cityMatch
   open_now:          "open",      // Compass: fires ONLY on an explicit isOpenNow === true
   availability:      "timing",    // Compass: an event with spots left, or an active buddy
@@ -340,16 +340,16 @@ export const NEARBY_NOW_SIGNAL_FAMILY: Readonly<Record<string, "location" | "ope
 };
 
 const NEARBY_NOW_TEXT = {
-  locationAndOpen: "Close to you and open around now.",
-  location:        "Close to you.",
+  locationAndOpen: "In this area, and open around now.",
+  location:        "In this area.",
   open:            "Open around now.",
   timing:          "You can still make it or join in.",
 } as const;
 
 /**
  * The sentence for a `nearby_now` code, from the signals that grounded it.
- * "open" only when `open_now` fired; "close to you" only when a location signal
- * fired. A signal with no family (a key mapped later without one) contributes
+ * "open" only when `open_now` fired; "in this area" only when a location signal
+ * fired, and never "close to you" (§76). A key with no family contributes
  * NO claim; if nothing with a family fired, the code carries no sentence and
  * `explainReasons` drops it rather than serve an unbacked one.
  */
