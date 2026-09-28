@@ -55,6 +55,7 @@ import { makeSchemaStrictClient } from "./schemaStrictSupabase.js";
 import { makeEnumAwareClient } from "./enumAwareSupabase.js";
 import { makeTelemetryDb } from "./fakeDiscoveryTelemetryDb.js";
 import { makeFakeTrailsDb } from "./fakeTrailsDb.js";
+import { makeFakeCandidateDb } from "./fakeCandidateDb.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -515,6 +516,43 @@ export function trailsSubject(): Subject {
   };
 }
 
+/**
+ * census-discovery §85's candidate-generation double (lane W10-R3). Registered
+ * by lane W10-I (§91) when fakeConformanceRegistry found it unregistered.
+ */
+export function candidateSubject(): Subject {
+  return {
+    name: "fakeCandidateDb",
+    sourceFile: join(HERE, "fakeCandidateDb.ts"),
+    gaps: {
+      "single/zero-rows": { mode: "refused", why: "no §85 path calls .single(); the fake refuses it rather than guess" },
+      "single/one-row": { mode: "refused", why: "no §85 path calls .single(); the fake refuses it rather than guess" },
+      "single/many-rows": { mode: "refused", why: "no §85 path calls .single(); the fake refuses it rather than guess" },
+      "update/zero-rows-with-select": { mode: "refused", why: "writes are recorded, never applied, so RETURNING is refused" },
+      "update/many-rows-with-select": { mode: "refused", why: "writes are recorded, never applied, so RETURNING is refused" },
+      "delete/many-rows-with-select": { mode: "refused", why: "writes are recorded, never applied, so RETURNING is refused" },
+      "insert/with-select-returns-rows": { mode: "refused", why: "writes are recorded, never applied, so RETURNING is refused" },
+      "insert/with-select-single": { mode: "refused", why: "writes are recorded, never applied, so RETURNING is refused" },
+      "write/read-after-write-visible": { mode: "divergent", why: "writes are recorded in `writes`, never applied to the seed" },
+      "insert/unique-violation-23505": { mode: "divergent", why: "no unique constraints are modelled; a duplicate insert is recorded" },
+      "error/unknown-column-42703": { mode: "divergent", why: "only columns named in `missingColumns` fail; there is no schema" },
+      "rpc/success": { mode: "divergent", why: "an rpc is recorded and resolves empty; no function is modelled" },
+      "rpc/error-resolves": { mode: "divergent", why: "an rpc is recorded and resolves empty; no function is modelled" },
+      "rpc/unknown-function": { mode: "divergent", why: "an rpc is recorded and resolves empty; no function is modelled" },
+      "rls/denied-read-yields-zero-rows": { mode: "divergent", why: "no service-vs-user distinction; there is one seed and no policies" },
+      "rls/denied-write-yields-42501": { mode: "divergent", why: "no service-vs-user distinction; there is one seed and no policies" },
+    },
+    build(w) {
+      const world = forFake(w);
+      const err = (m?: Record<string, { code?: string; message: string }>) =>
+        Object.fromEntries(Object.entries(m ?? {}).map(([t, e]) => [t, { code: String(e.code ?? ""), message: e.message }]));
+      const db = makeFakeCandidateDb(world.tables, { readFailure: err(world.failReads), writeFailure: err(world.failWrites) });
+      const rowsOf = (p: unknown) => (Array.isArray(p) ? p.length : 1);
+      return { client: db, writes: (t) => db.writes.filter((x) => x.table === t && x.op !== "delete").reduce((n, x) => n + rowsOf(x.payload), 0) };
+    },
+  };
+}
+
 export function allFakeSubjects(): Subject[] {
   return [
     layoverSubject(),
@@ -525,6 +563,7 @@ export function allFakeSubjects(): Subject[] {
     enumAwareSubject(),
     telemetrySubject(),
     trailsSubject(),
+    candidateSubject(),
   ];
 }
 

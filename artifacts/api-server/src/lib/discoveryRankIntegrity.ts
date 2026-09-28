@@ -236,7 +236,7 @@ export interface IntegrityRead {
   decorations: Map<string, IntegrityDecoration> | null;
   degraded: boolean;
   /** Per-pattern save counts across the set — observability, never per person. */
-  patterns: Partial<Record<AbusePattern, number>>;
+  patterns: Partial<Record<AbusePattern, number>>; /** §91: the detector's per-place result, for the integrity STAGE's verdicts (never serialised). Absent when unmeasured. */ byPlace?: ReadonlyMap<string, PlaceIntegrity>;
 }
 
 const DB_PREFIX = "db/";
@@ -325,9 +325,63 @@ export async function loadEngagementIntegrity(
     return {
       decorations: integrityDecorations(places, result, submitterByPlace, trustBySubmitter),
       degraded: false,
-      patterns,
+      patterns, byPlace: result,
     };
   } catch {
     return { ...none, degraded: true };
   }
 }
+
+// ── census-discovery §91 (lane W10-I): DV-12's detector as §85's integrity STAGE calls it (DC-11) ──
+//
+// `06` §1 stage 7. §85 built the stage (lib/discoveryCandidates/integrity.ts)
+// and left the detector to be registered; lib/discoveryPde.ts registers THIS
+// one at module load (D-W10-I-3). What it may do, and why so little:
+//
+//   discount  only when MORE THAN HALF of a place's read saves carry a pattern
+//             the SUBMITTER'S OWN SIDE produced — `self_network` (the saver is
+//             the submitter, or they follow each other) or `reciprocal` (the
+//             submitter saved the saver's place). A third party can farm,
+//             automate, pod-save or new-account-save a COMPETITOR's place; if
+//             those sank a place, anyone could bury a rival by abusing it.
+//             Those patterns are neutralised where they belong: inside the
+//             score, by the evidence discount this module already feeds
+//             portavaRank under 3451.
+//   keep      everything else, including an unauthored place.
+//   withhold  never. A manipulated count does not make a place unsafe, and a
+//             withheld place would be a penalty on its submitter (`01` §10).
+//
+// The count is a LOWER bound: a save carrying both self-serving patterns is
+// counted once (the larger of the two per-pattern counts), so the stage errs
+// toward keeping.
+//
+// DATA USE. The detector reads other accounts' save times, account ages,
+// follow edges and open gaming reviews — exactly what D-W10-R2-A1 step 4 asks
+// the owner to confirm before `discovery_engagement_integrity_enabled` (3451)
+// is turned on. So it runs ONLY with 3451 on as well as the stage's own 3483
+// flag; with 3451 off it answers "off" and the stage records `detector_off`,
+// reading nothing. A failed or truncated read answers null (`detector_failed`)
+// and changes nothing.
+import type { EngagementIntegrityDetector, IntegrityAction } from "./discoveryCandidates/integrity.js";
+import { loadRankDesignFlags } from "./discoveryRankFlags.js";
+
+/** The patterns only the submitter's own side can produce. */
+export const SELF_SERVING_PATTERNS = ["self_network", "reciprocal"] as const satisfies readonly AbusePattern[];
+/** A place is discounted when MORE than this share of its read saves is self-serving. */
+export const INTEGRITY_STAGE_SELF_SERVING_SHARE = 0.5;
+
+/** Pure: the stage verdict for one place's detector result. */
+export function integrityStageVerdict(r: PlaceIntegrity | undefined): IntegrityAction {
+  if (!r || r.raw <= 0) return "keep";
+  const selfServing = Math.max(...SELF_SERVING_PATTERNS.map((p) => r.patterns[p] ?? 0));
+  return selfServing / r.raw > INTEGRITY_STAGE_SELF_SERVING_SHARE ? "discount" : "keep";
+}
+
+export const engagementIntegrityStageDetector: EngagementIntegrityDetector = async (sc, items, ctx) => {
+  const flags = await loadRankDesignFlags(sc, ctx.nowMs);
+  if (!flags.integrity.enabled) return "off";
+  const read = await loadEngagementIntegrity(sc, items);
+  if (read.degraded || !read.decorations || !read.byPlace) return null;
+  const byPlace = read.byPlace;
+  return new Map(items.map((it) => [it.id, integrityStageVerdict(byPlace.get(it.id))] as const));
+};

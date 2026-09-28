@@ -39,7 +39,7 @@ export interface IntegrityItem { id: string; savedCount: number | null; category
 /** DV-12's detector, as this stage calls it. */
 export type EngagementIntegrityDetector = (
   sc: any, items: readonly IntegrityItem[], ctx: { viewerId: string; nowMs: number },
-) => Promise<ReadonlyMap<string, IntegrityAction> | null>;
+) => Promise<ReadonlyMap<string, IntegrityAction> | null | "off">;  // §91: "off" — the detector's own data-use gate is closed (DV-12's 3451), so it read nothing
 
 let registered: EngagementIntegrityDetector | null = null;
 
@@ -53,7 +53,7 @@ export function registeredEngagementIntegrityDetector(): EngagementIntegrityDete
 }
 
 export interface IntegrityReport {
-  status: "applied" | "clean" | "detector_absent" | "detector_failed";
+  status: "applied" | "clean" | "detector_absent" | "detector_failed" | "detector_off";  // §91: detector_off — registered, and its own flag is off
   discounted: number;
   withheld: number;
 }
@@ -75,7 +75,7 @@ export async function runIntegrityStage(
 ): Promise<{ verdicts: ReadonlyMap<string, IntegrityAction> | null; report: IntegrityReport }> {
   if (!detector) return { verdicts: null, report: { status: "detector_absent", discounted: 0, withheld: 0 } };
   try {
-    const v = await detector(sc, items, ctx);
+    const v = await detector(sc, items, ctx); if (v === "off") return { verdicts: null, report: { status: "detector_off", discounted: 0, withheld: 0 } };  // §91
     if (!v) return { verdicts: null, report: { status: "detector_failed", discounted: 0, withheld: 0 } };
     return { verdicts: v, report: { status: "clean", discounted: 0, withheld: 0 } };
   } catch {

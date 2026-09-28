@@ -410,6 +410,24 @@ export const KNOWN: Record<string, Known> = {
     note:
       "Same object, same call site: the trail surface shares writeObservation. " + "3002_intel_contribution_identity.sql is IN THE TREE, NOT APPLIED. It drops intel_observations.actor_id's foreign key to profiles and replaces the stored account id with a rotating contributor token (Sensing §3/§24, census S19/S118). The only code that has to know about the swap is writeObservation's idempotent-replay lookup, which reads a row back by contributor identity, and it is written for BOTH schemas: it filters on actor_id directly FIRST — the whole answer while 3002 is unapplied, because the stored actor_id IS the account id — and reaches intel_contributor_token() only when that finds nothing, which cannot happen before the apply. So the absent function is named on a branch production never executes; and were it ever reached, the call is wrapped so an unavailable RPC yields a retryable db_error, never a crash and never a dedup that was not verified. STRIKE THIS ENTRY when 3002 is applied and recorded in the migration ledger — the ratchet will report it STALE first.",
   },
+  // census-discovery §91 (lane W10-I). The Compass-gated GET /discovery handler reaches rankForViewer, whose §85
+  // post-rank stages name two unapplied objects. Neither read runs in production: see the note. At the END, as above.
+  COMPASS_V1_RULE_BASED_ENABLED: {
+    classification: "unguarded",
+    objects: [
+      "compass_city_confidence.feature_version",
+      "compass_city_confidence.model_version",
+      "compass_city_confidence.source_window",
+      "place_momentum",
+      "place_momentum.computed_at",
+      "place_momentum.place_id",
+      "place_momentum.trend_state",
+    ],
+    note:
+      "Both reads sit in lib/discoveryCandidates/stages.ts pdePostRankStages (census-discovery §85), which returns before any read when every §85 flag is FALSE (`if (pipe === INERT) return;` — pdePreRankStages hands back INERT when anyPipelineFlag is false), and each read has its own inner FALSE flag besides. " +
+      "(1) compass_city_confidence.{model_version,feature_version,source_window}: lib/discoveryCandidates/graphReadingProvenance.ts loadGraphReadingProvenance runs only when compass_city_confidence_windowed_reads_enabled (seeded FALSE by 3484_compass_city_confidence_provenance.sql, the SAME file that adds the three columns, so the flag cannot be TRUE where they are absent) AND discovery_ranking_modifiers_enabled (2289, FALSE) are on. Absent columns degrade to provenance status `columns_absent` (42703/PGRST204) and any other failure to `read_failed`; no order, score or served byte changes. STRIKE these three when 3484 is applied to production. " +
+      "(2) place_momentum{,.computed_at,.place_id,.trend_state}: lib/discoveryCandidates/explorationInventory.ts loadInventoryBuckets runs only when discovery_exploration_inventory_enabled (3481, seeded FALSE) is on. An absent table degrades to failedReads `place_momentum.head` and no emerging_place bucket; the other buckets and the page are served. STRIKE these four when 2892_place_momentum.sql is applied to production.",
+  },
 };
 
 // ── Declared-by-a-migration ──────────────────────────────────────────────────

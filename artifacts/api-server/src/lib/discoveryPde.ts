@@ -602,14 +602,14 @@ export async function rankForViewer<T extends PdePlace>(
     __place:    p,
   }));
 
-  const prT0 = Date.now();
+  const designs = await loadRankDesigns(sc, { viewerId: viewer.userId, city: viewer.city, places, nowMs, intentMode: opts.intentMode }); if (designs.active) stages.rankDesigns = { degraded: designs.degraded }; const prT0 = Date.now();  // census-discovery §78 H1, integrated in §91: flags off ⇒ six cached flag reads, no stage key, and the same three objects below
   // With the modifiers ON the governor owns exploration for this surface, so
   // portavaRank's fixed every-7th slot is switched off here — otherwise the
   // page would carry two exploration passes and exceed the budget. With the
   // modifiers OFF the call is exactly what it was.
   const scored = modifiers.enabled || pipe.explorationOwnedByInventory  // §85 (DV-53): the reserved inventory owns exploration when it is on, as the governor does with the modifiers on
-    ? rankCandidates(candidates, viewerContext, { exploration: false })
-    : rankCandidates(candidates, viewerContext);
+    ? rankWithDesigns(candidates, viewerContext, { exploration: false }, designs)
+    : rankWithDesigns(candidates, viewerContext, {}, designs);  // §78 H1 (§91): `{}` is rankCandidates' own default, and inactive designs hand back the same three objects
   const portavaRankMs = Date.now() - prT0;
   stages.portavaRank = true; stampPdeFeatureProvenance(scored, pdeFeatureProvenance(prT0, modifiers.enabled ? (modifiers.momentumProvenance ?? null) : undefined));  // census-discovery §75 (DC-17, H-P21-2): provenance only — the feature version, the rank clock (read above, before the ranker ran), its window and the momentum input's own record ride with these scored objects to rank_events; nothing reads them to rank
 
@@ -1177,3 +1177,34 @@ export interface PdeRankOutcome<T extends PdePlace> {
   /** §85 (DC-12): place id → every source that named it (`caller_pool` for the route's reads). Present only when generation ran. */
   candidateSources?: Map<string, PdeCandidateSource[]>;
 }
+
+// ── census-discovery §78 (lane W10-R2) hunk H1, integrated by lane W10-I (§91) ──
+// The scoring designs' one hook (lib/discoveryRankDesigns.ts). The two in-place
+// lines are in rankForViewer; this block is appended so no cited line moves.
+import { loadRankDesigns, applyRankDesigns, type RankDesigns } from "./discoveryRankDesigns.js";
+import type { RankOptions } from "./portavaRank.js";
+
+/** rankCandidates over the designs. Inactive designs ⇒ rankCandidates(candidates, ctx, opts) exactly. */
+function rankWithDesigns<C extends RankCandidate>(candidates: C[], ctx: ViewerContext, opts: RankOptions, designs: RankDesigns): ScoredCandidate<C>[] {
+  const d = applyRankDesigns(candidates, ctx, opts, designs);
+  return rankCandidates(d.candidates, d.ctx, d.opts);
+}
+
+export interface PdeRankOptions {
+  /** §78 (A18): the request's `?intentMode=`, raw. Parsed by lib/discoveryRankIntent; unknown ⇒ ignored. Read only with discovery_intent_term_enabled on. */
+  intentMode?: unknown;
+}
+
+export interface PdeStages {
+  /** §78: present ONLY when a design flag is on; the design loaders that could not read. */
+  rankDesigns?: { degraded: string[] };
+}
+
+// ── census-discovery §85 R3 / D-W10-R3-8, integrated by lane W10-I (§91): DC-11's integrity stage calls DV-12's detector ──
+// Registered at module load, so every rankForViewer caller has it; the stage
+// runs only under discovery_integrity_stage_enabled (3483) and the detector
+// reads only under discovery_engagement_integrity_enabled (3451). Tests still
+// inject their own (opts.integrityDetector) or register null.
+import { registerEngagementIntegrityDetector } from "./discoveryCandidates/integrity.js";
+import { engagementIntegrityStageDetector } from "./discoveryRankIntegrity.js";
+registerEngagementIntegrityDetector(engagementIntegrityStageDetector);

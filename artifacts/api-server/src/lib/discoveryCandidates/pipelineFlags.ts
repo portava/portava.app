@@ -86,7 +86,7 @@ export async function loadPipelineFlags(sc: any, nowMs: number = Date.now()): Pr
     const { data, error } = await sc
       .from("feature_flags")
       .select("flag, enabled")
-      .in("flag", [...PIPELINE_FLAG_NAMES]);
+      .in("flag", ["discovery_candidate_sources_enabled", "discovery_circle_candidates_enabled", "discovery_exploration_inventory_enabled", "discovery_cold_start_enabled", "discovery_integrity_stage_enabled", "discovery_outcome_learning_enabled", "discovery_output_kinds_enabled", "compass_city_confidence_windowed_reads_enabled"]); // §91: literal, so check:flag-polarity sees each read; ≡ PIPELINE_FLAG_NAMES (pinned by discoveryIntegrationHooks X0)
     if (!error && Array.isArray(data)) {
       on = new Set((data as Array<{ flag?: unknown; enabled?: unknown }>)
         .filter((r) => typeof r?.flag === "string" && r.enabled === true)

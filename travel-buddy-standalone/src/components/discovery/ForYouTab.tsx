@@ -16,7 +16,7 @@ import { TelegraphSendIcon } from '../icons/TelegraphSendIcon.tsx';
 import { DiscoveryShareSheet } from '../DiscoveryShareSheet.tsx';
 import type { DiscoverySharePayload } from '../DiscoveryShareSheet.tsx';
 import type { DiscoveryPlace } from '../../services/discovery.ts';
-import { getDiscoveryPlaces, getSavedPlaceIds, getCachedDiscoveryPlaces } from '../../services/discovery.ts';
+import { getDiscoveryPlaces, getSavedPlaceIds, getCachedDiscoveryPlaces } from '../../services/discovery.ts'; import { liveClaimsUnchecked, LIVE_UNCHECKED_NOTICE } from './liveUnchecked.ts';  // census-discovery §91 (A07)
 import { PlaceSkeletonList } from './PlaceSkeleton.tsx';
 import PlaceCard from './PlaceCard.tsx';
 import { PlaceDetailSheet } from './PlaceDetailSheet.tsx';
@@ -112,7 +112,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
   const [source, setSource]     = useState<'compass' | 'osm' | 'none' | 'refused'>('none');
   // The saved-places read is a separate surface with a separate failure: your
   // bookmarks are not the place list, and one can fail while the other works.
-  const [savedIdsUnavailable, setSavedIdsUnavailable] = useState(false);
+  const [savedIdsUnavailable, setSavedIdsUnavailable] = useState(false); const [liveUnchecked, setLiveUnchecked] = useState(false);  // census-discovery §91 (A07): the GET /discovery page's "now" claims were withheld (meta.liveSafety)
   const [detail, setDetail]     = useState<DiscoveryPlace | null>(null);
   const [shareItem, setShareItem] = useState<ForYouItem | null>(null);
 
@@ -264,7 +264,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
     osmPromise.then((osm) => {
       if (stale()) return;
       setLoading(false);
-      setRefreshing(false);
+      setRefreshing(false); setLiveUnchecked(osm.ok && liveClaimsUnchecked(osm.data));  // §91 (A07)
       setItems((prev) => {
         // Don't overwrite if Compass has already upgraded the feed.
         if (prev.some((i) => i.kind === 'compass')) return prev;
@@ -400,7 +400,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
             </Text>
           </View>
         )}
-
+        {liveUnchecked && items.length > 0 && !items.some((i) => i.kind === 'compass') ? <View style={styles.notice} testID="for-you-live-unchecked"><Text style={styles.noticeText}>{LIVE_UNCHECKED_NOTICE}</Text></View> : null}{/* §91 (A07): only over the GET /discovery page it describes, never over the Compass feed */}
         {items.filter((item) => !dismissed.has(item.place.id)).map((item) => {
           const isShowMore = showMoreIds.has(item.place.id);
           return (

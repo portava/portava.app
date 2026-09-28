@@ -1860,7 +1860,7 @@ router.get("/discovery", async (req, res) => {
         const pdeViewer = await loadPdeViewer(
           rankSc, callerUserId, destination!.split(",")[0]?.trim().toLowerCase() ?? null,
         );
-        const outcome = await rankForViewer(merged, pdeViewer, { sc: rankSc, served: true });
+        const outcome = await rankForViewer(merged, pdeViewer, { sc: rankSc, served: true, intentMode: req.query.intentMode, category });  // census-discovery §91: §78 H2 (the mode, read only under 3453) and §85 R1 (the tab bounds a generated row, only under 3480)
         // Same filters as the legacy path — comparing/serving a ranked full list
         // against a differently-filtered one would attribute to ranking what
         // filtering did.
@@ -1968,7 +1968,7 @@ router.get("/discovery", async (req, res) => {
             const pdeViewer = await loadPdeViewer(
               shadowSc, callerUserId, destination!.split(",")[0]?.trim().toLowerCase() ?? null,
             );
-            const shadowCands = category === "for_you" && forYouA.source === null ? await consolidatedForYouCandidates(callerUserId, merged, req.log, suppressWrites(shadowSc, () => {})) : forYouA; const outcome = await rankForViewer(shadowCands.places, pdeViewer, { sc: shadowSc, served: false });  // §79 (DC-14): for for_you the PDE side is the CONSOLIDATED pipeline — Compass's gates, then PDE — measured before 3455 is on
+            const shadowCands = category === "for_you" && forYouA.source === null ? await consolidatedForYouCandidates(callerUserId, merged, req.log, suppressWrites(shadowSc, () => {})) : forYouA; const outcome = await rankForViewer(shadowCands.places, pdeViewer, { sc: shadowSc, served: false, intentMode: req.query.intentMode });  // §79 (DC-14): for for_you the PDE side is the CONSOLIDATED pipeline — Compass's gates, then PDE — measured before 3455 is on
             // Same filters, same page window. Comparing a ranked full list
             // against a filtered page would report divergence that filtering
             // caused and ranking did not.
@@ -2277,7 +2277,7 @@ router.get("/discovery", async (req, res) => {
       const rankSc   = getServiceClient();
       const rankCity = destination.split(",")[0]?.trim().toLowerCase() ?? null;
       const pdeViewer = await loadPdeViewer(rankSc, callerUserId, rankCity);
-      const outcome   = await rankForViewer(places, pdeViewer, { sc: rankSc, served: true });
+      const outcome   = await rankForViewer(places, pdeViewer, { sc: rankSc, served: true, intentMode: req.query.intentMode, category });  // census-discovery §91: §78 H2 and §85 R1, as serve points 1/2/3
       ranked          = outcome.ranked;
       scoredByPlaceId = outcome.scoredById; coldServedStages = outcome.stages;
     } else {
@@ -4326,15 +4326,15 @@ export function servedGraphReadingFeatures(
 ): Record<string, string | number | boolean> {
   const g = stages?.graphReading;
   if (!g) return {};
-  const reading: Record<string, string | number | boolean | null> = {
+  const reading: Record<string, string | number | boolean | null | object> = {  // §91: `object` for graphProvenance only — a jsonb record, as its row-level twin graphReadingProvenance is
     graphDepth:           g.depthScore,
     graphTier:            g.tier,
     graphSource:          g.source,
     graphComputedAt:      g.computedAt,
     momentumScale:        g.momentumScale,
-    explorationBudgetPct: g.explorationBudgetPct,
+    explorationBudgetPct: g.explorationBudgetPct, ...(g.provenance ? { graphProvenance: g.provenance } : {}),  // §85 R1 (DC-17), integrated §91: the reading's own record, only under 3484 — absent, not null, with it off
   };
-  return reading as Record<string, string | number | boolean>;
+  return reading as unknown as Record<string, string | number | boolean>;
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -4470,7 +4470,7 @@ async function observeForYouShadow(a: ForYouShadowArgs): Promise<void> {
     const t0 = Date.now();
     const cands   = await consolidatedForYouCandidates(a.viewerId, a.candidates, a.log, suppressWrites(sc, () => {}));
     const viewer  = await loadPdeViewer(sc, a.viewerId, a.destination.split(",")[0]?.trim().toLowerCase() ?? null);
-    const outcome = await rankForViewer(cands.places, viewer, { sc, served: false });
+    const outcome = await rankForViewer(cands.places, viewer, { sc, served: false, intentMode: a.intentMode });  // §91: §78 H2 — the mode the served Compass page was live-ranked in
     const live    = await withDiscoveryLiveRank(sc, a.applyFilters(outcome.ranked), { mode: a.intentMode });
     const gate    = await layoverGatedPlaces(a.viewerId, (await dismissGatedPlaces(a.viewerId, live.places, [])).places, "GET /discovery");
     const pdeFiltered = gate.ok ? gate.places : [];

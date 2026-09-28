@@ -132,8 +132,8 @@ describe("§85 (lane W10-R3) — with every §85 flag OFF, rankForViewer is byte
     // adds one `feature_flags` read (its own flags, fail-closed) and nothing else.
     const tables = db.reads.map((r) => r.table);
     const isOurs = (r: { table: string; ops: string[] }) => r.table === "feature_flags" && r.ops.some((o) => o.startsWith("in(flag=") && o.includes("discovery_candidate_sources_enabled"));
-    const flagReads = db.reads.filter(isOurs);
-    const base = db.reads.filter((r) => !isOurs(r)).map((r) => r.table);
+    const flagReads = db.reads.filter(isOurs), isR2Gate = (r: { table: string; ops: string[] }) => r.table === "feature_flags" && RANK_DESIGN_FLAGS.some((f) => r.ops.includes(`eq(flag=${f})`)); // §91: §78's six gating-flag reads (cached), its output unchanged
+    const base = db.reads.filter((r) => !isOurs(r) && !isR2Gate(r)).map((r) => r.table), r2Gate = db.reads.filter(isR2Gate).map((r) => r.ops.find((o) => o.startsWith("eq(flag="))); assert.equal(new Set(r2Gate).size, r2Gate.length, `each §78 flag read at most once (${r2Gate.join(",")})`);
     const hr = sha(base); if (show) console.log("p2Reads", hr, JSON.stringify(tables));
     assert.equal(hr, GOLDEN_W10_R3.p2Reads);
     assert.ok(flagReads.length <= 1, `at most one §85 flag read (${flagReads.length})`);
@@ -150,3 +150,4 @@ describe("§85 (lane W10-R3) — with every §85 flag OFF, rankForViewer is byte
     assert.equal(h, GOLDEN_W10_R3.p3);
   });
 });
+import { RANK_DESIGN_FLAGS } from "../lib/discoveryRankFlags.js"; // §91 (W10-I): at the file end so no cited line moves

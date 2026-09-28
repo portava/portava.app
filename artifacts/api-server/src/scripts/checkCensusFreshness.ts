@@ -4236,6 +4236,13 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "db/rollback/2026-09-28-3455-discovery-for-you-pde-enabled-rollback.sql",
     "db/rollback/2026-09-28-3456-discovery-cache-a-ranked-enabled-rollback.sql",
     "travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.onePipeline.component.test.tsx",
+    // census-discovery §91 (lane W10-I, integration): DC-11, DC-17, DV-09, DC-01, A18 and A07 are graded on the
+    // integration suite, the output-kinds route and the client's Live-safety notice with its two suites.
+    "artifacts/api-server/src/routes/discoveryOutputKinds.ts",
+    "artifacts/api-server/src/test/discoveryIntegrationHooks.test.ts",
+    "travel-buddy-standalone/src/components/discovery/liveUnchecked.ts",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryCategoryTab.liveSafety.component.test.tsx",
+    "travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.liveSafety.component.test.tsx",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //
