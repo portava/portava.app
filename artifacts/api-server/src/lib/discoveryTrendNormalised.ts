@@ -92,7 +92,7 @@
  * clustering (pure) and nothing from the two modules that delegate here, so
  * it cannot close an import cycle with them.
  */
-import { clusterByIndependence, SYNC_WINDOW_SECONDS, type IndependenceObservation } from "./intelIndependence.js";
+import { clusterByIndependence, SYNC_WINDOW_SECONDS, type IndependenceObservation } from "./intelIndependence.js"; import { POST_CONVERGENCE_MIN_AUTHORS, type PostAfterVisitInput, type PostWindow } from "./discoveryTrendPostConvergence.js";  // §95 (DV-34): "visitors post afterward", only when the caller passes it
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants. Each is mirrored in migration 3477 under the name in brackets and
@@ -510,7 +510,7 @@ export interface TrendEvidenceV2 {
   velocity: number | null;
   recentTravelers: number;
   windowTravelers: number;
-  lastActivityAt: string | null;
+  lastActivityAt: string | null; /** §95 (DV-34): present only when the post-after-visit leg was passed. */ postConvergence?: { status: "ok"; recentGroups: number; midGroups: number; priorGroups: number } | { status: "unread" };
 }
 
 export interface TrendReadingV2 {
@@ -613,7 +613,7 @@ export interface ComputeV2Options {
   /** Peer groups on or off (off for cells and Trails, which have no peers of their own). */
   peers?: boolean;
   /** The content class of a non-place key. */
-  classOfKey?: (key: string) => ContentClass;
+  classOfKey?: (key: string) => ContentClass; /** §95 (DV-34, D-W11X3-2): the post-after-visit leg; absent ⇒ §84 byte for byte. */ postAfterVisit?: PostAfterVisitInput;
 }
 
 /** Rows → key → v2 reading. The in-process twin of 3477's rebuild. */
@@ -628,7 +628,7 @@ export function computeTrendStatesV2(
   const ev = new Map<string, { recent: WindowEvidence; mid: WindowEvidence; prior: WindowEvidence; tod: number; k: KeyAcc }>();
   const own = new Map<string, number>();
   for (const [key, k] of acc) {
-    const recent = clusterWindow(k.w.recent), mid = clusterWindow(k.w.mid), prior = clusterWindow(k.w.prior);
+    const recent = withPostConvergence(clusterWindow(k.w.recent), k.w.recent, key, "recent", opts.postAfterVisit), mid = withPostConvergence(clusterWindow(k.w.mid), k.w.mid, key, "mid", opts.postAfterVisit), prior = withPostConvergence(clusterWindow(k.w.prior), k.w.prior, key, "prior", opts.postAfterVisit);
     const tod = timeOfDayFactor(k.w.recent, k.w.mid);
     ev.set(key, { recent, mid, prior, tod, k });
     if (had(recent) && had(mid)) own.set(key, recent.rate! / (mid.rate! * tod));
@@ -653,7 +653,7 @@ export function computeTrendStatesV2(
         recentGroups: e.recent.groups, midGroups: e.mid.groups, priorGroups: e.prior.groups,
         timeOfDayFactor: e.tod, peerFactor: m, velocity: v,
         recentTravelers: e.k.recentTravelers.size, windowTravelers: e.k.windowTravelers.size,
-        lastActivityAt: iso(e.k.lastActivityMs),
+        lastActivityAt: iso(e.k.lastActivityMs), ...postConvergenceEvidence(opts.postAfterVisit, e.recent, e.mid, e.prior),
       },
     };
   }
@@ -701,4 +701,49 @@ export function computeAreaTrendStates(
 export function cellLabelOf(context: TrendContext, cellKey: string): string | null {
   for (const c of Object.values(context)) if (c.cellKey === cellKey && c.cellLabel !== null) return c.cellLabel;
   return null;
+}
+
+// ── census-discovery §95 (lane W11-X3): `03` §6 "visitors post afterward" ────
+//
+// DV-34, register D-W11X3-2, work item W11A-B9. Appended so no cited line above
+// moves. lib/discoveryTrendPostConvergence builds the input (published, public
+// Memories only; k-floored); this is where it meets the classifier's
+// convergence input, the window's independent-group count.
+
+/** Post-after-visit groups added to this window's G. Only the classifier's input; never activity. */
+const POST_GROUPS = new WeakMap<WindowEvidence, number>();
+
+/**
+ * G + the independence clusters of the window's NEW post authors — travellers
+ * who posted publicly after their own positive outcome and are not already one
+ * of the window's activity actors (the same traveller is not independent
+ * evidence twice). Below the k-floor of new authors it adds 0. Never negative:
+ * the leg only adds convergence. Absent or `unread` input: the evidence as is.
+ */
+function withPostConvergence(e: WindowEvidence, acc: WindowAcc, key: string, win: PostWindow, input: PostAfterVisitInput | undefined): WindowEvidence {
+  if (!input || input.status !== "ok") return e;
+  const authors = input.byKey.get(key)?.[win] ?? [];
+  const actors = new Set(acc.activity.map((a) => a.actor));
+  const fresh = authors.filter((a) => !actors.has(a));
+  let added = 0;
+  if (fresh.length >= POST_CONVERGENCE_MIN_AUTHORS) {
+    const times = input.posts.get(key);
+    const obs: IndependenceObservation[] = fresh.map((a) => ({
+      actorId: a, groupKey: null, valueKey: `${key}|post`, observedAtMs: times?.get(`${win}|${a}`) ?? 0, mediaRefs: [], sourceRefs: [],
+    }));
+    const clustering = clusterByIndependence(obs);
+    added = new Set(fresh.map((a) => clustering.clusterForUnit(null, a))).size;
+  }
+  const out: WindowEvidence = { ...e, groups: e.groups + added };
+  POST_GROUPS.set(out, added);
+  return out;
+}
+
+/** The evidence's post breakdown — present only when the caller passed the leg. */
+function postConvergenceEvidence(
+  input: PostAfterVisitInput | undefined, recent: WindowEvidence, mid: WindowEvidence, prior: WindowEvidence,
+): { postConvergence?: { status: "ok"; recentGroups: number; midGroups: number; priorGroups: number } | { status: "unread" } } {
+  if (!input) return {};
+  if (input.status !== "ok") return { postConvergence: { status: "unread" } };
+  return { postConvergence: { status: "ok", recentGroups: POST_GROUPS.get(recent) ?? 0, midGroups: POST_GROUPS.get(mid) ?? 0, priorGroups: POST_GROUPS.get(prior) ?? 0 } };
 }

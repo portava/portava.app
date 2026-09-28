@@ -1530,3 +1530,68 @@ Lane W10-S1, 2026-09-28, branch `disc-w10-s1-search`. Census section: census-dis
 - **Consequence of approving.** The integrity stage cannot run on data whose use the owner has not confirmed, and no output kind is served unmeasured.
 - **Consequence of declining.** Both flags can be switched on in D-W10-R3-13's original order. The integrity stage would still record `detector_off` until 3451 is on, and the kinds would be served without impressions.
 - **Recovery path.** Any flag off takes effect on the next read (30-second caches). Nothing here writes.
+
+## W11-X3 — projections and client
+
+*Lane W11-X3, 2026-09-28, branch `disc-w11-x3-data` from `3cc027a06`. Census section §95. Every new behaviour is behind a flag seeded FALSE: two new ones in 3496, and the client legs behind the server's existing 3467 and 3468 flags. Migrations 3495–3496 are applied to the local PostgreSQL 16 harness only. Controlled data only; nothing here claims real-world effectiveness.*
+
+### D-W11X3-1 — `place_cooccurrence` is built from places that share a Trail, and only from that
+
+- **The question:** census-discovery W11A-B10 (§92.3), W10D-C5 and §61.12 Q2: *"Is place co-occurrence computed from people's itineraries, trip sequences and transitions … or only from places sharing a Trail, which needs no personal data?"* W10D-C5 recommends the Trail form and names it as the form built either way.
+- **Options considered:**
+  - (a) Itinerary / trip-sequence co-occurrence. A behavioural inference over people; it needs the owner's consent answer (W10D-C5). Not built.
+  - (b) Trail membership: two places co-occur when a non-archived Trail holds both. `content_trails` records an editorial act, as 3416's common-content relation already treats it. **Chosen.**
+  - (c) (b) plus archived Trails. Rejected: an archived Trail no longer vouches for its members, and the Trail read path withholds it.
+- **Decision and rationale:** (b). Pairs are stored once (`place_a < place_b`), counted as the number of distinct non-archived Trails that hold both; several labels on one place are one membership. A Trail holding more than 100 places contributes no pair: its n² pairs would swamp every curated Trail and say nothing about which two places belong together. No strength is computed, because `05` §6 gives no formula (§61.6); the count and its source window are the ingredients. The table's CHECK admits only basis `shared_trail`, so a people-derived basis needs a new migration and the owner's answer. One flag, `discovery_place_cooccurrence_enabled` (3496, FALSE), gates both the hourly rebuild tick and the reader. The reader answers ids with lineage, never rows; a serving surface still applies its own eligibility.
+- **Reversibility:** turn the flag off; 3495's rollback drops the table and function. The projection is derived, so a rebuild restores every row.
+- **Where it is implemented:** `src/migrations/3495_place_cooccurrence_trail_projection.sql`, `src/migrations/3496_discovery_w11x3_flags.sql`, `src/lib/discoveryPlaceCooccurrence.ts`, `src/index.ts` (one call on an existing line). Tests: `src/test/db/placeCooccurrenceRebuild.db.test.ts` R1–R6, `src/test/discoveryPlaceCooccurrence.test.ts` C1–C6, T1, M1–M3.
+
+### D-W11X3-2 — "visitors post afterward" joins the v2 classifier's convergence input
+
+- **The question:** W11A-B9 (§92.3) and AR-W11A-2: build the one `03` §6 signal that needs no new data use — posts after a visit, from PUBLISHED, PUBLIC Memories, aggregated, with at least two distinct travellers, behind a new FALSE flag — without touching the circles, crews and visits legs.
+- **Options considered:**
+  - (a) Count every public post at the place. Rejected: `03` §6 says *afterward*; a post with no visit behind it is not convergence.
+  - (b) Count authors who posted after their own positive Discovery outcome at the place, and add their independence clusters to the window's group count G. **Chosen.**
+  - (c) Add them as activity. Rejected: activity is per exposure (D-W10-R1-1); a post is not a served impression's conversion, and it would move the rate.
+- **Decision and rationale:** (b), with four rules.
+  - *Who counts:* `memories.state = 'published' AND visibility = 'public'` only, the Compass builder's rule (`isPublicWorldMemory`), restated because this module may not import the engine.
+  - *K-floor, twice:* at least 2 distinct qualifying authors per key and window, and again at least 2 among the authors NEW to the window (not already one of its activity actors). No count this leg adds rests on one person.
+  - *Independence:* the new authors are clustered by Sensing's clustering (`clusterByIndependence`), so two accounts posting in lockstep are one group.
+  - *Only adds:* G never falls. Activity, exposure and rate are unchanged. The evidence carries counts only (`postConvergence`), never an author id; an unreadable or truncated Memory read is `unread` and adds nothing.
+  - The flag `discovery_trend_post_convergence_enabled` (3496, FALSE) is read only inside the v2 branch of `loadLocalMomentum`, so with it off no Memory is read and the reading is §84's, byte for byte.
+- **What it does not reach:** the stored twin `rebuild_place_momentum_v2` (3477), which the trend API serves, is not extended. That is code still owed (census §95 open item O-1), so DV-34 does not carry `IMPLEMENTATION-COMPLETE`.
+- **Reversibility:** flag off. Nothing is stored.
+- **Where it is implemented:** `src/lib/discoveryTrendPostConvergence.ts`, the appended block of `src/lib/discoveryTrendNormalised.ts`, the pass-through in `src/lib/discoveryTrendState.ts`, and `src/lib/discoveryLocalMomentum.ts`. Tests: `src/test/discoveryTrendPostConvergence.test.ts` P0–P10, L1–L3.
+
+### D-W11X3-3 — a generated Discovery row carries the route's distance and aggregates
+
+- **The question:** D-W10-R3-1's *"two stated differences from a route-read row: `distanceKm` is null (PDE is not given the centre), and the vote/review aggregates (a route-private helper) are absent."*
+- **Options considered:**
+  - (a) Import the route's helpers. Not possible: they are private to `routes/discovery.ts`, which lanes W11-X1/X2 own.
+  - (b) Restate both helpers in a lib, pinned token for token against the route's source, and hand the reference point to generation through `rankForViewer`'s options. **Chosen.**
+- **Decision and rationale:** (b). `materialiseCandidates` measures `distanceKm` from `ctx.center` with the route's rounding, and merges `worthItCount`, `avgRating` and `reviewCount` onto curated rows exactly as `queryDbPlaces` does (canonical rows get none, as in the route; a failed read merges nothing, as in the route). `PdeRankOptions.center` is declared by module augmentation in `lib/discoveryCandidates/stages.ts`, because `lib/discoveryPde.ts` is another lane's file. The two PDE serve points in `routes/discovery.ts` must pass `center: distRef`: routed hunk R-X3-1 (census §95). Until it lands, a production generated row still has `distanceKm` null; its aggregates are already merged. Everything here runs only with 3480's flag on.
+- **Reversibility:** a code change; nothing is stored.
+- **Where it is implemented:** `src/lib/discoveryPlaceAggregates.ts`, `src/lib/discoveryCandidates/materialize.ts`, `generate.ts`, `stages.ts`. Tests: `src/test/discoveryCandidateRowParity.test.ts` R1–R5.
+
+### D-W11X3-4 — the client's Save is a Telegraph command, and "Ask me first" is offered only when the server offers it
+
+- **The question:** §81.4 routed hunks R1 (A21) and R3 (DV-76), behind the server's existing flags.
+- **Decision and rationale:**
+  - **R1:** the card's Save posts the command, then confirms its one proposed action. Only `404 feature_disabled` falls back to today's `toggleSave`, so with the flag off the person sees exactly today's behaviour. A `403` (the server's authorize said no) is shown with the server's reason, and nothing is saved by the old path: a second write path around the server's refusal would defeat `§30A.10`. A network failure is `failed`, never `fallback`, because a flag we could not read is not a flag that is off.
+  - **R3:** the server had no list of a person's pending tags, so one route is added: `GET /api/me/tags/pending`, behind the same 3468 flag, naming the tagger by @handle only. Its `feature_disabled` is the client's single capability probe. The settings list stays the four options unless the probe answers 200, or the stored choice is already `approval_required`. The inbox's Approve calls `POST /api/tags/:id/approve`; Decline calls the existing `DELETE /api/tags/:id`. A tag leaves the list only when the server accepted the answer.
+  - **Not decided here:** what `interacted` or `friends_only` mean (D-W10S2-9). `tag_permission_consent_copy_enabled` stays FALSE and owner-held; nothing here reads it.
+- **Reversibility:** a client release; with either server flag off, the client is inert.
+- **Where it is implemented:** client `src/services/discoveryCardSave.ts`, `src/components/DiscoveryCardMessage.tsx` (line-neutral), `src/services/tagging.ts`, `src/components/PendingTagInbox.tsx`, `app/profile/edit/connected.tsx`; server `src/routes/tags.ts` (appended route). Tests: the two client service suites, the two client component suites, and the server's `src/test/tagPendingInbox.test.ts`.
+
+### D-W11X3-A1 — **APPROVAL REQUIRED**: production activation of 3495–3496 and the two new flags
+
+- **Recommended action (exact), after W10D-A1's batches are applied and the API is deployed:**
+  1. Apply `3495_place_cooccurrence_trail_projection.sql`, then `3496_discovery_w11x3_flags.sql`, with the repository's applier.
+  2. `UPDATE public.feature_flags SET enabled = true WHERE flag = 'discovery_place_cooccurrence_enabled';` The hourly tick then rebuilds from Trail membership only. Verify with `SELECT count(*), max(computed_at) FROM public.place_cooccurrence;` after the next hour boundary.
+  3. `discovery_trend_post_convergence_enabled`: only after `discovery_trend_normalised_enabled` is TRUE (W10-R1's activation, D-W10-R1-17). Then `UPDATE public.feature_flags SET enabled = true WHERE flag = 'discovery_trend_post_convergence_enabled';`
+  4. The client legs follow the server's own requests: `telegraph_discovery_actions_enabled` (D-W10S2-15) and `tag_permission_approval_required_enabled` (D-W10S2-17's family), once the oldest supported client build carries this change.
+- **If approved:** the co-occurrence projection exists and is readable by a future surface; the trend classifier counts public post-after-visit convergence. Neither changes a served order at this tree: no ranker reads the projection, and the post leg only raises a group count.
+- **If declined:** nothing is read or rebuilt. DV-72 and DV-34 stay `W`.
+- **Recovery:** `UPDATE public.feature_flags SET enabled = false WHERE flag IN ('discovery_place_cooccurrence_enabled', 'discovery_trend_post_convergence_enabled');` takes effect on the next read. `db/rollback/2026-09-28-3495-…` and `…-3496-…` remove the objects; the projection is derived, so nothing is lost.
+
+W10D-C5 (the three personal projections) and AR-W11A-2 (circles, crews, visits) are unchanged and still need the owner's answer. No new consent request is written: this lane built only what those two entries already name as buildable without one.

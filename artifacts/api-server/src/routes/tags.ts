@@ -10,7 +10,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { requireUser, sendError } from '../lib/http.js';
 import { getServiceClient } from '../lib/supabase.js';
-import { nameVisibilitySet } from '../lib/publicIdentity.js';
+import { nameVisibilitySet, resolveHandle } from '../lib/publicIdentity.js';
 import { isUuid } from '../lib/followDecisions.js';
 import { resolveInteractionPermissions } from '../services/interactionPermissions.js';
 import { isKillSwitchEngaged, isFlagEnabled } from '../lib/featureFlags.js';
@@ -628,6 +628,59 @@ router.post('/tags/:id/approve', async (req, res) => {
   if (error) { req.log.error({ err: error }, 'tag approve failed'); sendError(res, 'db_error', 'Could not approve the tag'); return; }
   if (!Array.isArray(updated) || updated.length !== 1) { sendError(res, 'conflict', 'The tag changed while it was being approved'); return; }
   res.status(200).json({ ok: true, tagId, status: 'approved' });
+});
+
+// ─── GET /api/me/tags/pending — the tagged user's "Ask me first" inbox ────────
+// census-discovery §95 (lane W11-X3; DV-76's client hunk §81.4 R3, D-W11X3-4).
+// The list the client's pending-tag inbox approves (POST …/approve above) or
+// declines (DELETE /tags/:id). Behind the same flag as the approval: OFF it
+// answers `feature_disabled`, which is also how the client learns whether to
+// offer "Ask me first" at all — the one capability probe, answered by the
+// server. Only the caller's own pending, unremoved tags; the tagger is named by
+// @handle (publicIdentity's default rule), never by real name. An unreadable
+// tags table is a 5xx, never an empty inbox.
+
+export const PENDING_TAG_INBOX_LIMIT = 50;
+
+router.get('/me/tags/pending', async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
+  if (!(await isFlagEnabled(sc, TAG_PERMISSION_APPROVAL_REQUIRED_FLAG))) {
+    sendError(res, 'feature_disabled', 'Approving tags is not enabled');
+    return;
+  }
+
+  const { data, error } = await sc
+    .from('tags')
+    .select('id, source_type, source_id, tagger_id, tagged_user_id, status, suppressed, tagged_at')
+    .eq('tagged_user_id', user.id)
+    .eq('status', 'pending')
+    .order('tagged_at', { ascending: false })
+    .limit(PENDING_TAG_INBOX_LIMIT);
+  if (error || !Array.isArray(data)) { sendError(res, 'db_error', 'Could not read your pending tags'); return; }
+  const rows = (data as any[]).filter((t) => t.tagged_user_id === user.id && t.status === 'pending' && t.suppressed !== true);
+
+  const taggerIds = [...new Set(rows.map((t) => t.tagger_id).filter((x): x is string => typeof x === 'string'))];
+  const handles = new Map<string, string | null>();
+  if (taggerIds.length > 0) {
+    const { data: profiles, error: pErr } = await sc.from('profiles').select('id, handle, username').in('id', taggerIds);
+    if (!pErr && Array.isArray(profiles)) for (const p of profiles as any[]) handles.set(p.id, resolveHandle(p));
+  }
+
+  res.status(200).json({
+    tags: rows.map((t) => ({
+      id: t.id,
+      sourceType: t.source_type,
+      sourceId: t.source_id,
+      taggedAt: t.tagged_at ?? null,
+      taggerId: t.tagger_id,
+      taggerHandle: handles.get(t.tagger_id) ?? null,
+    })),
+  });
 });
 
 export default router;

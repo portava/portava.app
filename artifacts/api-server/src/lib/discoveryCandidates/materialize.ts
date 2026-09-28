@@ -20,12 +20,12 @@
  * The row SHAPE is `queryDbPlaces`' / `queryCanonicalPlaces`' mapping, field
  * for field, so a generated row is indistinguishable on the wire from one the
  * route read (src/test/discoveryCandidateSources.test.ts M-series pins the
- * select lists against the route's source). Two things differ, and both are
- * stated rather than hidden:
- *   - `distanceKm` is null: PDE is not handed the request's centre point, and
- *     `queryDbPlaces` itself returns null when it has none;
- *   - the vote/review aggregates `queryDbPlaces` merges in afterwards
- *     (`batchFetchVoteAndRatingAggregates`, private to the route) are absent.
+ * select lists against the route's source). §95 (W11-X3, D-W11X3-3) closed the
+ * two differences §85 stated:
+ *   - `distanceKm` is measured from `ctx.center` exactly as the route measures
+ *     it, and is null only when no centre was handed in (as `queryDbPlaces`);
+ *   - the vote/review aggregates are merged onto curated rows as the route
+ *     merges them (lib/discoveryPlaceAggregates, pinned equal to the route's).
  *
  * After PDE ranks, the route's own post-rank gates — `applyFilters`, the
  * "Not interested" gate and the Layover gate — run over generated rows exactly
@@ -34,7 +34,7 @@
 import { toCanonicalCategory } from "../placeCategories.js";
 import { fetchBlockedSet, submitterIsVisible } from "../blocks.js";
 import { inactiveSubmitterIds, submitterInGoodStanding } from "../discoveryCacheEligibility.js";
-import { IN_LIST_CAP } from "./retrievals.js";
+import { IN_LIST_CAP } from "./retrievals.js"; import { servedDistanceKm, batchFetchVoteAndRatingAggregates } from "../discoveryPlaceAggregates.js";
 
 /** Mirrors routes/discovery.ts DEMO_DISCOVERY_SOURCES (pinned equal by test). */
 export const DEMO_SOURCES: ReadonlySet<string> = new Set(["seed_script", "demo", "qa_fixture"]);
@@ -70,7 +70,7 @@ export interface MaterialisedPlace {
   imageSourceType?: string | null;
   accuracyStatus?: string | null;
   disclaimerRequired?: boolean | null;
-  disclaimerText?: string | null;
+  disclaimerText?: string | null; /** §95: the route's aggregates, on curated rows only. */ worthItCount?: number; avgRating?: number | null; reviewCount?: number;
 }
 
 export interface MaterialiseOutcome {
@@ -93,7 +93,7 @@ function placeDisclaimerText(accuracyStatus: string | null | undefined): string 
 }
 
 /** `queryDbPlaces`' row mapping (center unknown ⇒ distance null). */
-export function mapDiscoveryPlacesRow(row: any): MaterialisedPlace {
+export function mapDiscoveryPlacesRow(row: any, center: { lat: number; lng: number } | null = null): MaterialisedPlace {
   const lat = row.lat != null ? parseFloat(String(row.lat)) : null;
   const lng = row.lng != null ? parseFloat(String(row.lng)) : null;
   const effectiveCategory: string = (row.primary_category as string | null)
@@ -104,7 +104,7 @@ export function mapDiscoveryPlacesRow(row: any): MaterialisedPlace {
     category: effectiveCategory,
     type: (row.place_type ?? null) as string | null,
     description: (row.blurb ?? null) as string | null,
-    distanceKm: null,
+    distanceKm: servedDistanceKm(center, lat, lng),
     lat,
     lng,
     tags: [row.category, row.tag].filter(Boolean) as string[],
@@ -126,7 +126,7 @@ export function mapDiscoveryPlacesRow(row: any): MaterialisedPlace {
 }
 
 /** `queryCanonicalPlaces`' row mapping (center unknown ⇒ distance null). */
-export function mapCanonicalPlacesRow(row: any): MaterialisedPlace {
+export function mapCanonicalPlacesRow(row: any, center: { lat: number; lng: number } | null = null): MaterialisedPlace {
   const lat = row.latitude != null ? parseFloat(String(row.latitude)) : null;
   const lng = row.longitude != null ? parseFloat(String(row.longitude)) : null;
   return {
@@ -136,7 +136,7 @@ export function mapCanonicalPlacesRow(row: any): MaterialisedPlace {
     category: toCanonicalCategory(row.primary_category as string, null),
     type: (row.primary_category ?? null) as string | null,
     description: null,
-    distanceKm: null,
+    distanceKm: servedDistanceKm(center, lat, lng),
     lat,
     lng,
     tags: [row.primary_category].filter(Boolean) as string[],
@@ -175,7 +175,7 @@ function admitsDiscoveryRow(row: any, admitted: ReadonlySet<string> | null): boo
 export async function materialiseCandidates(
   sc: any,
   ids: readonly string[],
-  ctx: { viewerId: string; cityPrefix: string; admitted: ReadonlySet<string> | null },
+  ctx: { viewerId: string; cityPrefix: string; admitted: ReadonlySet<string> | null; /** §95: the request's reference point, as the route passes it to queryDbPlaces. */ center?: { lat: number; lng: number } | null },
 ): Promise<MaterialiseOutcome> {
   const out: MaterialiseOutcome = { rows: new Map(), submitterById: new Map(), failedReads: [], refused: { blocked: 0, standing: 0, demo: 0, category: 0 } };
   const uuids = [...new Set(ids.filter((i) => i.startsWith("db/")).map((i) => i.slice(3)))].slice(0, IN_LIST_CAP);
@@ -209,11 +209,12 @@ export async function materialiseCandidates(
     if (!submitterIsVisible(row.submitted_by, blocked)) { out.refused.blocked++; continue; }
     if (!submitterInGoodStanding(row.submitted_by, inactive)) { out.refused.standing++; continue; }
     if (!admitsDiscoveryRow(row, ctx.admitted)) { out.refused.category++; continue; }
-    const mapped = mapDiscoveryPlacesRow(row);
+    const mapped = mapDiscoveryPlacesRow(row, ctx.center ?? null);
     out.rows.set(mapped.id, mapped);
     if (typeof row.submitted_by === "string" && row.submitted_by) out.submitterById.set(mapped.id, row.submitted_by);
   }
 
+  await mergeRouteAggregates(sc, out);
   const rest = uuids.filter((u) => !found.has(u));
   if (rest.length === 0 || out.failedReads.includes("discovery_places")) return out;
   try {
@@ -227,10 +228,27 @@ export async function materialiseCandidates(
       .order("id", { ascending: true });
     if (error) { out.failedReads.push("places"); return out; }
     for (const row of (Array.isArray(data) ? data : [])) {
-      const mapped = mapCanonicalPlacesRow(row);
+      const mapped = mapCanonicalPlacesRow(row, ctx.center ?? null);
       if (ctx.admitted && !ctx.admitted.has(mapped.category)) { out.refused.category++; continue; }
       out.rows.set(mapped.id, mapped);
     }
   } catch { out.failedReads.push("places"); }
   return out;
+}
+
+/**
+ * §95 (D-W11X3-3): `queryDbPlaces`' aggregate step, over the curated rows
+ * admitted so far — the same helper, the same merge (`{ ...p, worthItCount,
+ * avgRating, reviewCount }` only where the helper has an entry). Canonical
+ * rows get none, as in the route. A failed read merges nothing, as in the route.
+ */
+async function mergeRouteAggregates(sc: any, out: MaterialiseOutcome): Promise<void> {
+  const ids = [...out.rows.keys()].map((id) => id.slice(3));
+  if (ids.length === 0) return;
+  const agg = await batchFetchVoteAndRatingAggregates(sc, ids, "place");
+  if (agg.size === 0) return;
+  for (const [id, p] of out.rows) {
+    const a = agg.get(id.slice(3));
+    if (a) out.rows.set(id, { ...p, worthItCount: a.worthItCount, avgRating: a.avgRating, reviewCount: a.reviewCount });
+  }
 }

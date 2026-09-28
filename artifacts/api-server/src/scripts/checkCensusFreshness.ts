@@ -4351,6 +4351,29 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/lib/postgrestFilter.ts",
     // §80.14: the helper's suite, which drives both route callers over HTTP.
     "artifacts/api-server/src/test/postgrestFilterLikeEscape.test.ts",
+    // census-discovery §95 (lane W11-X3, projections and client): DV-72, DV-34, DC-12, A21 and DV-76 are graded on
+    // the Trail-derived co-occurrence (3495/3496, its reader and tick, the harness suite), the post-after-visit
+    // leg, the generated-row parity, the pending-tag route, and the client's Save and "Ask me first" legs.
+    "artifacts/api-server/src/migrations/3495_place_cooccurrence_trail_projection.sql",
+    "artifacts/api-server/src/migrations/3496_discovery_w11x3_flags.sql",
+    "db/rollback/2026-09-28-3495-place-cooccurrence-trail-projection-rollback.sql",
+    "db/rollback/2026-09-28-3496-discovery-w11x3-flags-rollback.sql",
+    "artifacts/api-server/src/lib/discoveryPlaceCooccurrence.ts",
+    "artifacts/api-server/src/lib/discoveryTrendPostConvergence.ts",
+    "artifacts/api-server/src/lib/discoveryPlaceAggregates.ts",
+    "artifacts/api-server/src/test/db/placeCooccurrenceRebuild.db.test.ts",
+    "artifacts/api-server/src/test/discoveryPlaceCooccurrence.test.ts",
+    "artifacts/api-server/src/test/discoveryTrendPostConvergence.test.ts",
+    "artifacts/api-server/src/test/discoveryCandidateRowParity.test.ts",
+    "artifacts/api-server/src/test/tagPendingInbox.test.ts",
+    "travel-buddy-standalone/src/services/discoveryCardSave.ts",
+    "travel-buddy-standalone/src/services/tagging.ts",
+    "travel-buddy-standalone/src/components/PendingTagInbox.tsx",
+    "travel-buddy-standalone/app/profile/edit/connected.tsx",
+    "travel-buddy-standalone/src/services/__tests__/discoveryCardSave.telegraph.component.test.ts",
+    "travel-buddy-standalone/src/services/__tests__/tagging.askMeFirst.component.test.ts",
+    "travel-buddy-standalone/src/components/__tests__/DiscoveryCardMessage.telegraphSave.component.test.tsx",
+    "travel-buddy-standalone/src/components/__tests__/PendingTagInbox.component.test.tsx",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //
