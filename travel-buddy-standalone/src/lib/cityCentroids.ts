@@ -9,7 +9,7 @@
  * Keys are English display names as stored in the `city` field of CityEvent.
  * Common alternate spellings are included for robustness.
  */
-import { LATIN_LETTER_FOLD } from './latinLetterFold.ts';
+import { LATIN_LETTER_FOLD, stripCombiningMarks } from './latinLetterFold.ts';
 
 export const CITY_CENTROIDS: Record<string, [number, number]> = {
   // ── Southeast Asia ───────────────────────────────────────────────────────────
@@ -607,17 +607,15 @@ const LETTER_FOLD_RE = new RegExp(`[${Object.keys(LATIN_LETTER_FOLD).join('')}]`
  *   1. Trim leading/trailing whitespace
  *   2. Collapse internal runs of whitespace to a single space
  *   3. NFD-decompose and strip combining diacritical marks so that
- *      "Bogotá" → "bogota", "Côte" → "cote", "São Paulo" → "sao paulo".
+ *      "Bogotá" → "bogota", "Côte" → "cote", "São Paulo" → "sao paulo"
+ *      (./latinLetterFold's stripCombiningMarks: U+0300–U+036F plus the
+ *      Diacritic marks of U+1AB0–1AFF, U+1DC0–1DFF and U+FE20–FE2F, §76).
  *   4. Fold stroked/barred/hooked letters that NFD does not decompose
  *      (Ł→l, Ø→o, Đ→d, ı→i, Ħ→h, …): the server's table (§76).
  *   5. Lowercase (Unicode-safe — avoids apostrophe/diacritic corruption)
  */
 function normaliseCityKey(raw: string): string {
-  return raw
-    .trim()
-    .replace(/\s+/g, ' ')
-    .normalize('NFD')
-    .replace(/\p{M}/gu, '')
+  return stripCombiningMarks(raw.trim().replace(/\s+/g, ' ').normalize('NFD'))
     .replace(LETTER_FOLD_RE, (c) => LATIN_LETTER_FOLD[c] ?? c)
     .toLowerCase();
 }
@@ -678,11 +676,11 @@ function splitCityTokens(raw: string): string[] {
  * canonical key uses diacritics (e.g. "Köln") without needing a hand-
  * maintained alias entry.
  *
- * The regex covers the full Unicode "Combining Diacritical Marks" block
- * (U+0300–U+036F).
+ * The strip is ./latinLetterFold's stripCombiningMarks, the same rule
+ * normaliseCityKey uses (census-discovery §76).
  */
 function stripDiacritics(s: string): string {
-  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  return stripCombiningMarks(s.normalize('NFD'));
 }
 
 /**

@@ -12683,7 +12683,7 @@ CONSTRUCTED 182 / 188 = **96.8 %**, unchanged. CORRECT 96 / 188 = **51.1 %**, up
 
 ## §76 — A reason says "close to you" only when it measured you, and the client folds as the server does (lane P34): A03 stays W on its flags, the client's centroid lookup takes the server's letter table, and the E2E suite's local load failure is Node 22, not the tree
 
-*Written 2026-09-28 by lane P34 on `disc-p34-reason-fold`, branched from `ed9ab3ca0`. It closes §68.5's "Recorded, not fixed" on A03's served sentence, answers §73.7 item 3 (the client's own letter fold), and explains §68.7's `discoveryClientRouteE2E` load failure. Codes, scores, ranks and order are unchanged; the 2026-08-15 ranker hold (§58.12 question 2, §66.9 question 1) is respected, and P21's golden is byte-identical (76.4). Nothing is merged, deployed or flag-enabled, and no migration is written. `head_commit` is not re-declared. The headline does not move, because no row moves.*
+*Written 2026-09-28 by lane P34 on `disc-p34-reason-fold`, branched from `ed9ab3ca0`. It closes §68.5's "Recorded, not fixed" on A03's served sentence, answers §73.7 item 3 (the client's own letter fold), and explains §68.7's `discoveryClientRouteE2E` load failure. Codes, scores, ranks and order are unchanged; the 2026-08-15 ranker hold (§58.12 question 2, §66.9 question 1) is respected, and P21's golden is byte-identical (76.4). Nothing is merged, deployed or flag-enabled, and no migration is written. `head_commit` is not re-declared. The headline does not move, because no row moves. **One registered test is red on this branch by design:** `clientLetterFoldParity` P3 compares the client's combining-mark strip with the server's. The integrator told this lane to widen the client strip to census §74's marks ahead of lane P35's server change. P3 is red on those 92 marks until P35 lands, and it was not weakened to pass (76.3).*
 
 ### 76.1 Row statements
 
@@ -12710,13 +12710,20 @@ CONSTRUCTED 182 / 188 = **96.8 %**, unchanged. CORRECT 96 / 188 = **51.1 %**, up
 
 - **What the fold is used for.** `normaliseCityKey` in `travel-buddy-standalone/src/lib/cityCentroids.ts` is used only by `getCityCentroid`. That function's one caller in the app places a Passport memory on the Memories map (`travel-buddy-standalone/src/components/passport/memoryViews.ts:236#getCityCentroid(m.city)`). A memory's city is the free text the traveller types into the memory modal's "City" field (`travel-buddy-standalone/src/components/MemoriesTab.tsx:635#onChangeText={setCity} placeholder="City"`). So the fold matches user text against place names, and the result is user-visible: a pin, or the memory is listed as unplotted. The offline city index (`platform/input-assistance/data/cities.ts`) reads the name tables, not the fold.
 - **The fold was divergent.** It decomposed and stripped marks first, then folded six letters (Ł ł Ø ø Đ đ). A letter with a stroke, bar, hook or tail and no decomposition survived whole. So "ıstanbul", typed on a Turkish keyboard, left the memory unplotted, while the server's search key folds ı.
-- **Now it uses the server's table.** The table is copied verbatim into `travel-buddy-standalone/src/lib/latinLetterFold.ts` (`travel-buddy-standalone/src/lib/latinLetterFold.ts:21#export const LATIN_LETTER_FOLD`). The lookup still decomposes first and then applies the table (`travel-buddy-standalone/src/lib/cityCentroids.ts:621#.replace(LETTER_FOLD_RE, (c) => LATIN_LETTER_FOLD[c] ?? c)`). This matches the server's letters: the only table letter NFD decomposes is İ, to an ASCII I. The mark strip (`\p{M}` here, U+0300–U+036F on the server) is not changed.
-- **The two tables cannot drift.** `artifacts/api-server/src/test/clientLetterFoldParity.test.ts:30#it("P1. the client table is the server table` asserts the same keys, values and order. P2 asserts that the lookup imports the copy and applies it after NFD. The app bundle cannot import from `artifacts/api-server`, so the arrangement is a copy plus this test.
-- **Client tests** (`travel-buddy-standalone/src/lib/__tests__/cityCentroidsLetterFold.test.ts:34#it('C1. letters outside the old six`):
+- **Now it uses the server's table.** The table is copied verbatim into `travel-buddy-standalone/src/lib/latinLetterFold.ts` (`travel-buddy-standalone/src/lib/latinLetterFold.ts:21#export const LATIN_LETTER_FOLD`). The lookup still decomposes first and then applies the table (`travel-buddy-standalone/src/lib/cityCentroids.ts:619#.replace(LETTER_FOLD_RE, (c) => LATIN_LETTER_FOLD[c] ?? c)`). This matches the server's letters: the only table letter NFD decomposes is İ, to an ASCII I.
+- **The two tables cannot drift.** `artifacts/api-server/src/test/clientLetterFoldParity.test.ts:44#it("P1. the client table is the server table` asserts the same keys, values and order. P2 asserts that the lookup imports the copy and applies it after NFD. The app bundle cannot import from `artifacts/api-server`, so the arrangement is a copy plus this test.
+- **Client tests** (`travel-buddy-standalone/src/lib/__tests__/cityCentroidsLetterFold.test.ts:36#it('C1. letters outside the old six`):
   - C1: ı, Ħ, Ƀ and ſ reach real city names.
   - C2: every table entry that folds to a single ASCII letter, 245 of 245, reaches a real key spelled with that letter.
   - C3: the Memories map plots a memory typed "ıstanbul".
   - C4: controls. The six old letters and the accents still fold, and an unknown name still resolves to nothing.
+  - C5: the mark rule, below.
+- **The combining-mark strip, on the integrator's instruction (after census §74).**
+  - The lookup used to strip every `\p{M}` mark. It now strips exactly U+0300–U+036F plus every mark carrying the Unicode `Diacritic` property in U+1AB0–U+1AFF, U+1DC0–U+1DFF and U+FE20–U+FE2F (`travel-buddy-standalone/src/lib/latinLetterFold.ts:61#export const COMBINING_MARK_RE =`). Both `normaliseCityKey` and the diacritic-strip tier apply it to the NFD form.
+  - C5 pins the rule exactly, over every mark and `Diacritic` code point (`travel-buddy-standalone/src/lib/__tests__/cityCentroidsLetterFold.test.ts:87#it('C5. the mark strip`). It also checks that a mark from each widened block still reaches Bogotá.
+  - Those three blocks hold **92** such marks under Unicode 17.0 (53, 23 and 16), as counted here with Node's `\p{Diacritic}`. The integrator's note quotes §74's "91". This lane did not find the one-mark difference, and it is recorded here, not resolved.
+  - **P3 compares the two rules by behaviour, importing both** (`artifacts/api-server/src/test/clientLetterFoldParity.test.ts:59#it("P3. the client's mark strip`). The server's strip is inline in `normalizeLocationName` and is not exported. So for every mark or `Diacritic` code point, "a<mark>b" through the server's `searchKey` and through the client's strip must agree on whether the mark goes.
+  - **P3 is RED at this tree, on exactly those 92 marks** ("server keeps, client strips"). Nothing else differs, as checked in the lane's scratch run. It turns green when lane P35's server change strips exactly this set. It turns red on any other set, including every `\p{M}` (2,431 differences). This lane may not edit the server fold, and P3 was not weakened.
 
 ### 76.4 Tests seen red, mutations, and the golden (P24)
 
@@ -12725,7 +12732,7 @@ CONSTRUCTED 182 / 188 = **96.8 %**, unchanged. CORRECT 96 / 188 = **51.1 %**, up
 - `clientLetterFoldParity`: red, because the client table does not exist.
 - `cityCentroidsLetterFold`: C1–C3 red, C4 green (the controls).
 
-After restoring: 9/9, 2/2 and 4/4.
+After restoring: 9/9, 2/2 and 4/4. The mark-rule additions came later, on the integrator's instruction. C5 was red at `dc11314fc` because the client exported no strip, and mutation R2 below shows it red by assertion. P3 has been red since it was written, on the 92 marks, pending P35.
 
 **Mutations, each restored sha256-identical:**
 - **Reason sentence.**
@@ -12740,6 +12747,11 @@ After restoring: 9/9, 2/2 and 4/4.
   - Re-valuing Ħ turns P1 and C1 red.
   - The lookup set back to the six-letter fold turns P2 and C1–C3 red.
   - Moving the fold before NFD turns P2 red, and only P2. No table letter but İ decomposes, so no lookup outcome changes. P2 is what pins the order.
+- **Client mark rule.**
+  - R1: the old strip, every `\p{M}`, turns C5 red and makes P3 differ on 2,431 code points.
+  - R2: U+0300–U+036F only, which is the server's rule today, turns C5 red and makes P3 green. That shows P3 tracks the server's behaviour rather than a copy.
+  - R3: dropping the U+FE20 block turns C5 red, and P3 differs on 76.
+  - R4: dropping the `Diacritic` filter turns C5 red, and P3 differs on 138.
 
 **Golden.** `artifacts/api-server/src/test/discoveryDerivedProvenanceGolden.test.ts` is byte-identical to `ed9ab3ca0`: sha256 `ad96178b…71c11ba` both before and after, and `git diff` is empty. It passes 6/6 after the last edit, so G5 (the reason code of 33 signal keys) did not move.
 
@@ -12776,7 +12788,12 @@ After restoring: 9/9, 2/2 and 4/4.
   - `typecheck` exit 0, including `lint:imports`. `typecheck:tests` is 173 across 60, the baseline.
   - The node suites over the lookup and the offline city index: 248/248 (`cityCentroids`, `cityCentroidsLetterFold`, `localDictionary`).
   - Jest suites over the memory map, the local-tier and offline input tiers, and the map entry camera: 30/30 across 4.
-- `check:all`: see the commit report.
+- **`clientLetterFoldParity`: P1 and P2 pass; P3 fails on the 92 marks (76.3).** The registered `test` line therefore has one failing case on this branch until P35 lands.
+- **Client, after the mark rule.**
+  - `typecheck` exit 0. `typecheck:tests` is 173 across 60.
+  - `cityCentroids` and `cityCentroidsLetterFold` pass 216/216.
+  - `check:all` passes every step (ALL CHECKS PASSED), before and after the mark rule. That covers `test`, `test:component`, `typecheck`, `typecheck:tests` and the lints.
+- **api-server, after the mark rule.** `typecheck` exit 0, and `typecheck:tests` is 863 across 115.
 - **Not run:** the full api-server suite, the harness db suites (no migration here), and the live-target checks.
 
 ### 76.8 Owner questions (carried forward, not re-asked)
@@ -12799,6 +12816,7 @@ After restoring: 9/9, 2/2 and 4/4.
 - The served codes drifting from the codes: T9. Any code change: G5.
 - The client table drifting from the server's in any key, value or order: P1.
 - The lookup not folding with the table, or folding before NFD: P2, and C1–C3.
+- The client mark strip differing from its stated rule: C5. Differing from the server's by behaviour: P3, which is red now on the 92 marks, pending P35.
 - **What would turn A03 C:** 2361 and 2850 on with a green rollout record (§31.2).
 
 ## Cited, not graded (check:census-scope-coverage)

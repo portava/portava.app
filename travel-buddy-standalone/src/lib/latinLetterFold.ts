@@ -44,3 +44,24 @@ export const LATIN_LETTER_FOLD: Readonly<Record<string, string>> = Object.freeze
   "ⱬ": "z", "Ɀ": "z", "Ᶎ": "z", "ẚ": "aʾ", "Ŀ": "l·", "ŀ": "l·", "ᵺ": "th", "Ꝥ": "Þ", "Ꝧ": "Þ", "ꝥ": "þ", "ꝧ": "þ",
   "ꬼ": "ŋ", "𝼔": "ŋ", "Ǆ": "Ǳ", "ǆ": "ǳ",
 });
+
+/**
+ * The combining-mark strip, applied to an NFD string (census-discovery §76,
+ * after §74). It removes U+0300–U+036F (Combining Diacritical Marks, the
+ * server's range until then) PLUS every mark carrying the Unicode `Diacritic`
+ * property in U+1AB0–U+1AFF (Combining Diacritical Marks Extended),
+ * U+1DC0–U+1DFF (… Supplement) and U+FE20–U+FE2F (Combining Half Marks):
+ * §74 found those split the server's key while U+0300–U+036F did not.
+ *
+ * This rule is written here, not copied: the server's rule lives inside
+ * lib/canonicalLocations.normalizeLocationName and is not exported. api-server's
+ * clientLetterFoldParity P3 compares the two BY BEHAVIOUR over every mark and
+ * Diacritic code point, so a server change the client does not follow fails.
+ */
+export const COMBINING_MARK_RE =
+  /[̀-ͯ]|(?=\p{Diacritic})[᪰-᫿᷀-᷿︠-︯]/gu;
+
+/** Remove the combining marks `COMBINING_MARK_RE` names from an NFD string. */
+export function stripCombiningMarks(nfd: string): string {
+  return nfd.replace(COMBINING_MARK_RE, '');
+}

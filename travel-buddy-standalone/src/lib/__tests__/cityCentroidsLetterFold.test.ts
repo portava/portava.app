@@ -20,6 +20,8 @@
  *   C2  every single-letter entry of the table folds, on a real key   (seen RED before §76)
  *   C3  the Memories map plots a memory typed with such a letter      (seen RED before §76)
  *   C4  controls: the six letters and accents that already folded still do
+ *   C5  the mark strip is exactly U+0300–U+036F plus the Diacritic marks of
+ *       U+1AB0–1AFF, U+1DC0–1DFF and U+FE20–FE2F (census §74's class)  (seen RED before §76's C5 edit)
  *
  * The client table is a copy of the server's, and api-server's
  * `clientLetterFoldParity.test.ts` fails the moment the two differ.
@@ -80,5 +82,26 @@ describe('§76 — getCityCentroid folds every stroke/hook/bar letter the server
     assert.deepEqual(getCityCentroid('bogota'), CITY_CENTROIDS['Bogotá']);
     assert.deepEqual(getCityCentroid('KÖLN'), CITY_CENTROIDS['Köln']);
     assert.equal(getCityCentroid('Atlantis'), undefined, 'an unknown name still resolves to nothing');
+  });
+
+  it('C5. the mark strip is U+0300–U+036F plus the three blocks\' Diacritic marks, and nothing else', async () => {
+    const { stripCombiningMarks } = await import('../latinLetterFold.ts');
+    const inRule = (c: number) =>
+      (c >= 0x0300 && c <= 0x036f) ||
+      (/\p{Diacritic}/u.test(String.fromCodePoint(c)) &&
+        ((c >= 0x1ab0 && c <= 0x1aff) || (c >= 0x1dc0 && c <= 0x1dff) || (c >= 0xfe20 && c <= 0xfe2f)));
+    const wrong: string[] = [];
+    for (let c = 0; c <= 0x10ffff; c++) {
+      if (c >= 0xd800 && c <= 0xdfff) continue;
+      const m = String.fromCodePoint(c);
+      if (!/\p{M}|\p{Diacritic}/u.test(m)) continue;
+      const stripped = stripCombiningMarks(('a' + m + 'b').normalize('NFD')) === 'ab';
+      if (stripped !== inRule(c)) wrong.push(`U+${c.toString(16).toUpperCase()} ${stripped ? 'stripped' : 'kept'}`);
+    }
+    assert.deepEqual(wrong.slice(0, 20), [], `${wrong.length} code points outside the rule`);
+    // Through the lookup: a mark from each widened block still reaches the city.
+    assert.deepEqual(getCityCentroid('Bogo᪰ta'), CITY_CENTROIDS['Bogotá']);
+    assert.deepEqual(getCityCentroid('Bogo᷄ta'), CITY_CENTROIDS['Bogotá']);
+    assert.deepEqual(getCityCentroid('Bogo︠ta'), CITY_CENTROIDS['Bogotá']);
   });
 });
