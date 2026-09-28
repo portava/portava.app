@@ -103,3 +103,22 @@ it('a failed fetch relaxes nothing: the store stays conservative', async () => {
   await refreshPolicyOnUse({ store, fetchPolicies: jest.fn(async () => FAIL) });
   expect(store.readActive('global_search').authoritative).toBe(false);
 });
+
+// Round 4 (census-discovery §80.15). Two fields mounted at once both ask while
+// the first attempt is still in flight. Without the shared in-flight attempt the
+// second call meets the throttle, resolves 'skipped', and its screen does not
+// re-render when the table lands — it waits for a keystroke.
+it('a call made while an attempt is IN FLIGHT shares it: one fetch, and both callers see it land', async () => {
+  const store = new PolicyStore();
+  store.setActiveAccount('acct-1');
+  let land!: (v: typeof OK) => void;
+  const fetchPolicies = jest.fn(() => new Promise<typeof OK>((r) => { land = r; }));
+
+  const first = refreshPolicyOnUse({ store, fetchPolicies });
+  const second = refreshPolicyOnUse({ store, fetchPolicies });
+  land(OK);
+
+  expect(await first).toBe('installed');
+  expect(await second).toBe('installed');
+  expect(fetchPolicies).toHaveBeenCalledTimes(1);
+});

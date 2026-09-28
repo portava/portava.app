@@ -92,7 +92,7 @@ export interface UseInputAssistanceResult {
    * back, so an impression still cannot be joined to the selection that
    * followed it." Returning it is the hook's half of closing that.
    */
-  requestId: string | null; /** census-discovery §80 — the serve's coverage (DV-83); null when it read everything. */ refusal: SuggestRefusal | null; /** §80 round 3 (D-W10-S1-4) — `policy` came from the authority; false while it is the conservative stand-in (never fetched, failed, expired, superseded, another account). */ policyAuthoritative: boolean;
+  requestId: string | null; /** census-discovery §80 — the serve's coverage (DV-83); null when it read everything. */ refusal: SuggestRefusal | null; /** §80 round 3 (D-W10-S1-4) — `policy` came from the authority; false while it is the conservative stand-in (never fetched, failed, expired, superseded, another account). */ policyAuthoritative: boolean; /** §80 round 4 (D-W10-S1-4) — the trimmed text whose SERVED answer (network or exact cache) is on screen; null when none is. A local-tier or zero-state list is not an answer. */ answeredText: string | null;
 }
 
 export function useInputAssistance(
@@ -113,7 +113,7 @@ export function useInputAssistance(
   // impression could never be joined to the selection that followed it. It is
   // now state: SmartInput puts it on the field's TelemetryField and every event
   // the field emits names the serve it belongs to.
-  const [requestId, setRequestId] = useState<string | null>(null); const [refusal, setRefusal] = useState<SuggestRefusal | null>(null); // §80
+  const [requestId, setRequestId] = useState<string | null>(null); const [refusal, setRefusal] = useState<SuggestRefusal | null>(null); const [answeredText, setAnsweredText] = useState<string | null>(null); // §80; round 4: whose answer is shown
 
   // §48 — the capability signature is part of the cache identity. Two surfaces
   // sharing a fieldId but declaring different capabilities receive DIFFERENT
@@ -159,7 +159,7 @@ export function useInputAssistance(
       abortRef.current?.abort();
       abortRef.current = null;
       guardRef.current.invalidate();
-      setSuggestions([]); setRefusal(null);
+      setSuggestions([]); setRefusal(null); setAnsweredText(null);
       setLoading(false);
       return;
     }
@@ -191,7 +191,7 @@ export function useInputAssistance(
       abortRef.current?.abort();
       abortRef.current = null;
       guardRef.current.invalidate();
-      setSuggestions([]); setRefusal(null);
+      setSuggestions([]); setRefusal(null); setAnsweredText(null);
       setLoading(false);
       setUnavailable(false);
       return;
@@ -212,7 +212,7 @@ export function useInputAssistance(
     const cached = cacheable ? sharedSuggestionCache.get(cacheKey) : null;
     if (cached) {
       guardRef.current.invalidate();
-      setSuggestions(cached); setRefusal(null);
+      setSuggestions(cached); setRefusal(null); setAnsweredText(trimmed);
       setLoading(false);
       setUnavailable(false);
       return;
@@ -272,7 +272,7 @@ export function useInputAssistance(
           })()
         : null);
     if (local) {
-      setSuggestions(local); setRefusal(null);
+      setSuggestions(local); setRefusal(null); setAnsweredText(null);
       setUnavailable(false);
     }
 
@@ -311,7 +311,7 @@ export function useInputAssistance(
         if (res.ok) {
           const finalized = finalizeSuggestions(res.suggestions, policy.maxSuggestions);
           if (res.refusal) { /* §80: an outage (refused or partial) is never cached */ } else if (cacheable) sharedSuggestionCache.set(cacheKey, finalized);
-          setSuggestions(finalized); setRefusal(res.refusal ?? null);
+          setSuggestions(finalized); setRefusal(res.refusal ?? null); setAnsweredText(trimmed);
           setUnavailable(false);
           setLoading(false);
           setRequestId(res.requestId || null);
@@ -396,7 +396,7 @@ export function useInputAssistance(
           const mayRetain = offlineSurfaceAllowed(policy.offlinePolicy);
           const degradedRows = mayRetain ? offlineLocalRows(policy, trimmed, local ?? []) : [];
           setUnavailable(true);
-          setSuggestions(degradedRows); setRefusal(null);
+          setSuggestions(degradedRows); setRefusal(null); setAnsweredText(null);
           setLoading(false);
 
           // ── §44 / §57 — THE DEGRADED SERVE, RECORDED (census G373) ───────
@@ -477,5 +477,5 @@ export function useInputAssistance(
   // Abort any in-flight request on unmount.
   useEffect(() => () => { abortRef.current?.abort(); }, []);
 
-  return { suggestions, loading, unavailable, policy, requestId, refusal, policyAuthoritative: policy != null && getContextDescriptor(policy.context).authoritative };
+  return { suggestions, loading, unavailable, policy, requestId, refusal, policyAuthoritative: policy != null && getContextDescriptor(policy.context).authoritative, answeredText };
 }

@@ -51,7 +51,7 @@
  * This hook is the reversible seam: to disable the gateway wiring, the search
  * screen imports `useSearchSuggestions` again — nothing else changes.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchSuggestions, type UseSearchSuggestionsOpts } from './useSearchSuggestions.ts';
 import type { SuggestGroup } from '../services/discovery.ts';
 import { useInputAssistance } from '../platform/input-assistance/hooks/useInputAssistance.ts';
@@ -155,10 +155,10 @@ export function useGlobalSearchSuggestions(
 
   // The fallback runs exactly while it is the fallback for something.
   const legacyEnabled = enabled && (gateway.unavailable || !gateway.policyAuthoritative); usePolicyRefreshOnUse(enabled && !gateway.policyAuthoritative && query.trim().length > 0, query.trim()); // §80 round 3 (D-W10-S1-4): no authoritative policy = the gateway cannot serve, so the fallback runs and the table is asked for again
-
+  const shownRef = useRef<'gateway' | 'legacy'>('gateway'); const handoff = enabled && !gateway.unavailable && gateway.policyAuthoritative && shownRef.current === 'legacy' && gateway.answeredText !== query.trim(); // §80 round 4 (D-W10-S1-4): the screen showed legacy rows and the gateway has not yet ANSWERED this query, so the legacy rows, and the hook that keeps them current, stay until it has
   // Proven path — the fallback. `enabled: false` stops its fetching entirely
   // (useSearchSuggestions.ts:49), which is the whole of the A08 consolidation.
-  const legacy = useSearchSuggestions(query, { lat, lng, city, enabled: legacyEnabled });
+  const legacy = useSearchSuggestions(query, { lat, lng, city, enabled: legacyEnabled || handoff });
 
   const gatewayGroups = useMemo(
     () => mapSuggestionsToGroups(gateway.suggestions, query),
@@ -175,11 +175,11 @@ export function useGlobalSearchSuggestions(
   // Prefer the gateway when it is enabled, available, and either
   //   - it actually has content — grouped rows OR a smart-action chip (an "add
   //     to trip" parse can yield an action with no search rows; it must still
-  //     surface) — so it never replaces a live legacy list with an empty one; or
+  //     surface) — so it never replaces a live legacy list with an empty one (nor, since round 4, before it has ANSWERED the current query: `handoff`); or
   //   - the legacy hook is not running (A08), in which case the gateway is the
   //     only source and falling back would mean falling back to nothing.
   const preferGateway =
-    enabled && !gateway.unavailable && gateway.policyAuthoritative && (!legacyEnabled || gatewayHasRows || gatewayActions.length > 0);
+    enabled && !gateway.unavailable && gateway.policyAuthoritative && !handoff && (!legacyEnabled || gatewayHasRows || gatewayActions.length > 0);
 
   // §35 — the write half of Phase 8 personalization for this surface. Before
   // this existed, `global_search` selection memory had exactly one writer in the
@@ -196,7 +196,7 @@ export function useGlobalSearchSuggestions(
     },
     [preferGateway, gateway.suggestions, gateway.policy, query],
   );
-
+  const shown = preferGateway ? 'gateway' : 'legacy'; useEffect(() => { if (enabled) shownRef.current = shown; }, [enabled, shown]); // round 4: what the screen last showed, read by the next render's handoff
   return {
     groups: preferGateway ? gatewayGroups : legacy.groups,
     actionSuggestions: preferGateway ? gatewayActions : [],

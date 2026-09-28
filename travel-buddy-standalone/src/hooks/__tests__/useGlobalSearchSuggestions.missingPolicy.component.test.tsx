@@ -183,3 +183,103 @@ describe('A08 clause 2 — a missing policy does not leave the search bar dead',
     expect(result.current.source).toBe('legacy');
   });
 });
+
+// ── Round 4 (census-discovery §80.15) ───────────────────────────────────────
+//
+// THE JEST/ACT CAVEAT these cases are written around. The policy table lands on
+// a PROMISE, and a state update a promise makes lands at the next `act`
+// boundary. So each case resolves the deferred fetch INSIDE `act`, and then
+// makes no further keystroke: anything that moves the screen afterwards was
+// caused by the table landing, not by a rerender the harness happened to do.
+// The earlier "retried on use" case could not tell the two apart, because the
+// legacy request was still settling when the table landed and its own state
+// update re-rendered the hook — which is why removing the re-render survived it.
+
+function deferred<T>() {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => { resolve = r; });
+  return { promise, resolve };
+}
+
+const TABLE = {
+  ok: true as const,
+  policyVersion: SEEDED_VERSION,
+  contexts: { global_search: { context: 'global_search', ..._PERMISSIVE_TEST_POLICY } },
+};
+
+describe('A08 round 4 — the table landing moves a mounted screen, once, without a gap', () => {
+  it('a table that lands AFTER the legacy rows settled moves the screen to the gateway with no keystroke', async () => {
+    sharedPolicyStore.setActiveAccount(_TEST_ACCOUNT);
+    const table = deferred<typeof TABLE>();
+    mockFetchPolicies.mockReturnValue(table.promise);
+
+    const { result } = await renderHook(() => useGlobalSearchSuggestions('tokyo'));
+    await pastDebounce();
+    // Settled: legacy rows on screen, nothing pending that would re-render.
+    expect(result.current.groups[0]?.items[0]?.id).toBe('legacy-tokyo');
+    expect(mockRequest).not.toHaveBeenCalled();
+
+    await act(async () => { table.resolve(TABLE); await table.promise; });
+    await pastDebounce();
+
+    expect(mockRequest).toHaveBeenCalled();
+    await waitFor(() => expect(result.current.source).toBe('gateway'));
+  });
+
+  it('TWO mounted fields share the one refresh, and BOTH move when it lands', async () => {
+    sharedPolicyStore.setActiveAccount(_TEST_ACCOUNT);
+    const table = deferred<typeof TABLE>();
+    mockFetchPolicies.mockReturnValue(table.promise);
+
+    const a = await renderHook(() => useGlobalSearchSuggestions('tokyo'));
+    const b = await renderHook(() => useGlobalSearchSuggestions('kyoto'));
+    await pastDebounce();
+    expect(mockFetchPolicies).toHaveBeenCalledTimes(1);
+
+    await act(async () => { table.resolve(TABLE); await table.promise; });
+    await pastDebounce();
+
+    await waitFor(() => expect(a.result.current.source).toBe('gateway'));
+    await waitFor(() => expect(b.result.current.source).toBe('gateway'));
+  });
+
+  it('the handoff never shows an EMPTY gateway list: legacy rows stay until the gateway answers the current query', async () => {
+    sharedPolicyStore.setActiveAccount(_TEST_ACCOUNT);
+    const table = deferred<typeof TABLE>();
+    mockFetchPolicies.mockReturnValue(table.promise);
+    const serve = deferred<Awaited<ReturnType<typeof requestSuggestions>>>();
+    mockRequest.mockReset();
+    mockRequest.mockReturnValue(serve.promise);
+
+    const shown: string[] = [];
+    const { result } = await renderHook(() => {
+      const r = useGlobalSearchSuggestions('tokyo');
+      shown.push(`${r.source}:${r.groups.reduce((n, g) => n + g.items.length, 0)}`);
+      return r;
+    });
+    await pastDebounce();
+    expect(result.current.groups[0]?.items[0]?.id).toBe('legacy-tokyo');
+    const legacySettledAt = shown.length;
+
+    await act(async () => { table.resolve(TABLE); await table.promise; });
+    await pastDebounce();
+    // The gateway has been asked and has not answered: the legacy rows hold.
+    expect(mockRequest).toHaveBeenCalled();
+    expect(result.current.source).toBe('legacy');
+    expect(result.current.groups[0]?.items[0]?.id).toBe('legacy-tokyo');
+
+    await act(async () => {
+      serve.resolve({ ok: true, requestId: 'req-2', policyVersion: SEEDED_VERSION, suggestions: [gatewayRow('tokyo')] } as never);
+      await serve.promise;
+    });
+    await waitFor(() => expect(result.current.source).toBe('gateway'));
+    expect(result.current.groups.some((g) => g.items.length > 0)).toBe(true);
+
+    // Never an empty list from either source once rows were on screen, and never
+    // back to legacy once the gateway took over (no mixing).
+    const after = shown.slice(legacySettledAt);
+    expect(after.filter((s) => s.endsWith(':0'))).toEqual([]);
+    const firstGateway = after.findIndex((s) => s.startsWith('gateway'));
+    expect(after.slice(firstGateway).every((s) => s.startsWith('gateway'))).toBe(true);
+  });
+});
