@@ -3,8 +3,9 @@
  * (discoveryTrailProductRules, discoveryTrailExploration, adminTrailsRoutes).
  *
  * Modelled on the fake in discoveryTrailRoutes.test.ts, plus what §86's code
- * calls and that fake does not model: a REAL `order(column, { ascending })`
- * (the trend-review read takes the newest row), `update().eq().eq().select()`
+ * calls and that fake does not model: a REAL `order(column, { ascending })`,
+ * every call applied in sequence as PostgREST does (the trend-review read takes
+ * the newest row; readMembers breaks created_at ties by id), `update().eq().eq().select()`
  * returning the matched rows (the §7 compare-and-set counts them), and `rpc`
  * through a caller-supplied table of functions. Every write is recorded.
  * A table named in `missing` answers 42P01; one in `erroring` a timeout;
@@ -87,7 +88,7 @@ export function makeRulesDb(seed: Record<string, Row[]>, opts: FakeRulesDbOption
   function from(table: string) {
     reads.push(table);
     const filters: Array<(r: Row) => boolean> = [];
-    let orderBy: { col: string; asc: boolean } | null = null;
+    const orderBy: Array<{ col: string; asc: boolean }> = [];
     let limitN: number | null = null;
     let range: [number, number] | null = null;
     let wantCount = false;
@@ -95,9 +96,15 @@ export function makeRulesDb(seed: Record<string, Row[]>, opts: FakeRulesDbOption
     const matched = () => store().filter((r) => filters.every((f) => f(r)));
     const rows = () => {
       let out = matched();
-      if (orderBy) {
-        const { col, asc } = orderBy;
-        out = [...out].sort((a, b) => (String(a[col] ?? "") < String(b[col] ?? "") ? -1 : String(a[col] ?? "") > String(b[col] ?? "") ? 1 : 0) * (asc ? 1 : -1));
+      if (orderBy.length > 0) {
+        // Every .order(), in sequence, as PostgREST's `order=a.desc,b.desc`: the first decides, each later one breaks its ties.
+        out = [...out].sort((a, b) => {
+          for (const { col, asc } of orderBy) {
+            const x = String(a[col] ?? ""), y = String(b[col] ?? "");
+            if (x !== y) return (x < y ? -1 : 1) * (asc ? 1 : -1);
+          }
+          return 0;
+        });
       }
       if (range) out = out.slice(range[0], range[1] + 1);
       if (limitN !== null) out = out.slice(0, limitN);
@@ -114,7 +121,7 @@ export function makeRulesDb(seed: Record<string, Row[]>, opts: FakeRulesDbOption
       lt(c: string, v: any) { filters.push((r) => String(r[c] ?? "") < String(v)); return b; },
       ilike(c: string, p: string) { const n = p.replace(/%/g, "").toLowerCase(); filters.push((r) => String(r[c] ?? "").toLowerCase().includes(n)); return b; },
       or() { return b; },
-      order(col: string, o?: { ascending?: boolean }) { if (!orderBy) orderBy = { col, asc: o?.ascending !== false }; return b; },
+      order(col: string, o?: { ascending?: boolean }) { orderBy.push({ col, asc: o?.ascending !== false }); return b; },
       limit(n: number) { limitN = n; return b; },
       range(a: number, z: number) { range = [a, z]; return b; },
       maybeSingle() {

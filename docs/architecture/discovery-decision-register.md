@@ -186,3 +186,14 @@ Lane W10-T (census-discovery §86), branch `disc-w10-t-trails`, cut from `a65817
   - `services/trails/TrailService.ts`: `TRAIL_MEMBER_WINDOW`, `olderMembersPage`, `moreFromThisPlace` and `moreFromThisTrail`.
   - `routes/trails.ts`.
   - Tests: J4, and J3 for the viewer's view.
+
+### D-W10T-18 — The "more" cursor: strict, and never in the future
+
+- **The question.** The verifier re-ran at `879333996`. It found that `decodeMemberCursor` accepted any `c` that `Date.parse` accepts. "1", "2026" and "2026-09-28 junk" all passed, and then PostgreSQL refused them with 22007, so the route answered 500. A cursor dated in the future would relabel members inside the window as `beyond_window`.
+- **Options considered.** For the timestamp: round-trip through `toISOString`, or match PostgREST's own timestamptz shape. `toISOString` truncates microseconds, so it would break the keyset on real rows. For a future cursor: clamp it to now, or refuse it.
+- **Decision and rationale.**
+  - The cursor's timestamp must match `YYYY-MM-DDTHH:MM:SS[.ffffff](Z|±HH:MM)`, which is what PostgREST and the fakes write, and it must parse.
+  - A cursor after the request's clock is refused with 400. A window edge is a member's `created_at`, never in the future, so such a cursor was not minted by this server. Refusing it is honest; clamping would guess.
+  - An archived or unknown Trail refuses a cursor page (404), as it refuses every Trail read.
+- **Reversibility.** Code only.
+- **Where it is implemented.** `services/trails/TrailService.ts`: `decodeMemberCursor` and `olderMembersPage`. Tests: `discoveryTrailProductRules.test.ts` K1 and K2, and J4 for the id tiebreak.

@@ -27,7 +27,7 @@ import {
   computeTrailHealth, isTrailStaleObject, newCreatorExposureShare, trailGeoCell, creatorPageBoundRemovals,
   diversifyTrailModule, MAX_PER_CONTRIBUTOR_PER_PAGE, TRAIL_PAGE_CREATOR_SHARE,
 } from "../lib/discoveryTrailHealth.js";
-import { getTrailModules, trailTrending } from "../services/trails/TrailService.js";
+import { getTrailModules, trailTrending, encodeMemberCursor } from "../services/trails/TrailService.js";
 import { makeRulesDb, type Row } from "./helpers/fakeTrailRulesDb.js";
 
 const NOW = Date.parse("2026-09-28T12:00:00Z");
@@ -683,7 +683,10 @@ describe("J — §86.14: past the page, the viewer's view, and past the member w
     }));
     const blockedPost = postRow(P(90), BLOCKED, { canonical_place_id: CP(1) });
     rows[503] = memberRow({ id: `66666666-6666-4666-8666-${hex(100503)}`, source_type: "post", source_id: blockedPost.id, contributor_id: BLOCKED, created_at: rows[503]!.created_at });
-    const db = makeRulesDb({ profiles: profiles(40), trails: [trailRow(T)], content_trails: rows, posts: [blockedPost], places: [{ id: CP(1), name: "V", latitude: null, longitude: null }], blocks: [{ blocker_id: VIEWER, blocked_id: BLOCKED }] });
+    // §86.15: the tied pair is SEEDED smaller-id first, so only readMembers' `.order("id")` puts row 499 (larger id)
+    // inside the window; without that tiebreak the window would end on row 500 and row 499 would be skipped.
+    const seeded = [...rows.slice(0, 499), rows[500]!, rows[499]!, ...rows.slice(501)];
+    const db = makeRulesDb({ profiles: profiles(40), trails: [trailRow(T)], content_trails: seeded, posts: [blockedPost], places: [{ id: CP(1), name: "V", latitude: null, longitude: null }], blocks: [{ blocker_id: VIEWER, blocked_id: BLOCKED }] });
     _setTestClient(db as any, true);
     const first = await call("GET", `/v1/discovery/trails/${T}/more`, U(3));
     assert.equal(typeof first.body.next, "string", "the window is full: a cursor to the older members");
@@ -703,5 +706,35 @@ describe("J — §86.14: past the page, the viewer's view, and past the member w
     const placePage = await call("GET", `/v1/discovery/trails/${T}/places/${CP(1)}/more?cursor=${encodeURIComponent(first.body.next)}`, U(3));
     assert.deepEqual(placePage.body.modules.map((m: any) => [m.key, m.items.map((i: any) => i.sourceId)]), [["beyond_window", [P(90)]]]);
     assert.equal((await call("GET", `/v1/discovery/trails/${T}/more?cursor=not-a-cursor`, U(3))).status, 400);
+  });
+});
+
+// ── §86.15 round 3 ─────────────────────────────────────────────────────────────
+
+describe("K — §86.15: a cursor is strict, bounded in time, and never opens an archived or unknown Trail", () => {
+  const raw = (c: string, i = "66666666-6666-4666-8666-000000000001") => Buffer.from(JSON.stringify({ c, i }), "utf8").toString("base64url");
+  const seed = (state = "active") => makeRulesDb({
+    profiles: profiles(4), trails: [trailRow(T, { lifecycle_status: state })],
+    content_trails: [memberRow({ source_type: "place", source_id: PL(1), contributor_id: null, created_at: rel(D) })],
+  });
+  it("K1 a lenient timestamp (\"1\", \"2026\", \"2026-09-28 junk\") and a future one are 400 on both routes, never a database error", async () => {
+    _setTestClient(seed() as any, true);
+    for (const c of ["1", "2026", "2026-09-28 junk", new Date(Date.now() + 86_400_000).toISOString()]) {
+      for (const path of [`/v1/discovery/trails/${T}/more`, `/v1/discovery/trails/${T}/places/${PL(1)}/more`]) {
+        const r = await call("GET", `${path}?cursor=${encodeURIComponent(raw(c))}`, U(2));
+        assert.equal(r.status, 400, `${c} on ${path}: ${JSON.stringify(r.body)}`);
+      }
+    }
+    const ok = await call("GET", `/v1/discovery/trails/${T}/more?cursor=${encodeURIComponent(encodeMemberCursor({ created_at: rel(0), id: "66666666-6666-4666-8666-ffffffffffff" }))}`, U(2));
+    assert.equal(ok.status, 200, "control: a cursor the server minted is accepted");
+  });
+  it("K2 a valid cursor on an archived Trail, or an unknown one, is 404 — never its members", async () => {
+    const cursor = encodeURIComponent(encodeMemberCursor({ created_at: rel(0), id: "66666666-6666-4666-8666-ffffffffffff" }));
+    _setTestClient(seed("archived") as any, true);
+    for (const path of [`/v1/discovery/trails/${T}/more`, `/v1/discovery/trails/${T}/places/${PL(1)}/more`]) {
+      assert.equal((await call("GET", `${path}?cursor=${cursor}`, U(2))).status, 404, `archived: ${path}`);
+    }
+    _setTestClient(seed() as any, true);
+    assert.equal((await call("GET", `/v1/discovery/trails/${T2}/more?cursor=${cursor}`, U(2))).status, 404, "unknown Trail");
   });
 });
