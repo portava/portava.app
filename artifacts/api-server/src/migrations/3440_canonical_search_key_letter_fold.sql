@@ -1,5 +1,5 @@
 -- 3440_canonical_search_key_letter_fold.sql
--- census-discovery §73 (lane P27): B01 and DV-20, the letter fold completed on
+-- census-discovery §73 (lane P27), widened by §77 (lane P35): B01 and DV-20, the letter fold completed on
 -- the STORED side. Replaces 2220's input_normalize_city_key and RECOMPUTES
 -- canonical_locations.search_key.
 --
@@ -60,8 +60,8 @@ $pre$;
 DROP INDEX IF EXISTS public.canonical_locations_search_key_trgm_idx;
 ALTER TABLE public.canonical_locations DROP COLUMN search_key;
 
--- lib/canonicalLocations.searchKey: NFD → stroke/hook/bar table → strip
--- U+0300–U+036F → lowercase → punctuation→space → collapse → strip generic city
+-- lib/canonicalLocations.searchKey: NFD → stroke/hook/bar table → strip the
+-- four Latin mark blocks (§77) → lowercase → punctuation→space → collapse → strip generic city
 -- prefixes/suffixes, never reducing to the empty string. Everything after the
 -- table is 2220's, unchanged.
 CREATE OR REPLACE FUNCTION public.input_normalize_city_key(p_name text)
@@ -80,8 +80,8 @@ BEGIN
 
   v := translate(normalize(p_name, NFD), 'ÐØðøĐđĦħıŁłŦŧſƀƁƂƃƇƈƉƊƋƌƑƒƓƗƘƙƚƝƞƟƤƥƫƬƭƮƲƳƴƵƶǄǆǤǥȠȡȤȥȴȵȶȺȻȼȽȾȿɀɃɄɆɇɈɉɊɋɌɍɎɏɓɕɖɗɠɦɨɫɬɭɱɲɳɵɼɽɾʂʈʉʋʐʑʝʠᵬᵭᵮᵯᵰᵱᵲᵳᵴᵵᵶᵽᶀᶁᶂᶃᶄᶅᶆᶇᶈᶉᶊᶌᶍᶎᶏᶑᶒᶖᶙẜẝỾỿⱠⱡⱢⱣⱤⱥⱦⱧⱨⱩⱪⱫⱬⱮⱱⱲⱳⱴⱸⱺⱾⱿꝀꝁꝂꝃꝄꝅꝈꝉꝊꝋꝌꝍꝐꝑꝒꝓꝔꝕꝖꝗꝘꝙꝞꝟꝤꝥꝦꝧꞎꞐꞑꞒꞓꞔꞕꞖꞗꞘꞙꞠꞡꞢꞣꞤꞥꞦꞧꞨꞩꞪꞭꞲꞸꞹꟄꟅꟆꟇꟈꟉꟊꟌꟍꬳꬴꬷꬸꬹꬺꬻꬼꭉꭎꭏꭒꭖꭗꭘꭙꭚ𝼉𝼑𝼓𝼔𝼖𝼚𝼛𝼝𝼞𝼥𝼦𝼧𝼨𝼩𝼪İ', 'dododdhhillttsbbbbccddddffgikklnnoppttttvyyzzǱǳggndzzlntaccltszbueejjqqrryybcddghilllmnnorrrstuvzzjqbdfmnprrstzpbdfgklmnprsvxzadeiussyylllprathhkkzzmvwwveoszkkkkkkllooooppppppqqqqvvÞþÞþlnnccchbbffggkknnrrsshljuucszddsssseelllmnŋruuuxxxxytllŋriocsdlnrsti');
   v := replace(replace(replace(replace(v, 'Ŀ', 'l·'), 'ŀ', 'l·'), 'ẚ', 'aʾ'), 'ᵺ', 'th');
-  v := regexp_replace(v, '[' || chr(768) || '-' || chr(879) || ']', '', 'g');
-
+  v := regexp_replace(v, '[' || chr(768) || '-' || chr(879) || chr(6832) || '-' || chr(6911) || chr(7616) || '-' || chr(7679) || chr(65056) || '-' || chr(65071) || ']', '', 'g');
+  -- §77: U+0300–U+036F, U+1AB0–U+1AFF, U+1DC0–U+1DFF, U+FE20–U+FE2F, each whole (lib/latinLetterFold.LATIN_MARK_BLOCKS).
   v := lower(v);
   v := regexp_replace(v, '[^a-z0-9\s]', ' ', 'g'); -- punctuation → space
   v := regexp_replace(v, '\s+', ' ', 'g');         -- collapse whitespace
@@ -135,6 +135,14 @@ BEGIN
   IF public.input_normalize_city_key('Straße') <> 'stra e' THEN
     RAISE EXCEPTION 'POSTCONDITION FAILED (3440): ß changed its fold; census-discovery §66.9 Q4 is open.';
   END IF;
+  -- §77 (lane P35): a combining diacritic from the three Latin blocks beyond U+036F folds away,
+  -- as one from U+0300–U+036F always did: ALA-LC's half-mark tie, and macron-acute (U+1DC4).
+  IF public.input_normalize_city_key('I' || chr(65056) || 'A' || chr(65057) || 'roslavl') <> 'iaroslavl'
+     OR public.input_normalize_city_key('Zu' || chr(7620) || 'rich') <> 'zurich'
+     OR public.input_normalize_city_key('Zu' || chr(6832) || 'rich') <> 'zurich' THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3440): I︠A︡roslavl folds to "%" (expected "iaroslavl").',
+      public.input_normalize_city_key('I' || chr(65056) || 'A' || chr(65057) || 'roslavl');
+  END IF;
 END
 $post$;
 
@@ -144,3 +152,11 @@ COMMIT;
 -- fourteen letters), then DROP INDEX canonical_locations_search_key_trgm_idx,
 -- DROP COLUMN search_key and re-run 2220's ADD COLUMN and CREATE INDEX, so the
 -- stored keys are recomputed under the old fold. Reversing REOPENS §66.5's gap.
+--
+-- §77 (lane P35) AMENDED THIS FILE IN PLACE, before it reached any database but
+-- the local harness: line 83's mark strip now covers the four Latin combining
+-- blocks, not only U+0300–U+036F, and the postcondition above pins it. A row whose
+-- name carries one of those marks ("I︠A︡roslavl") is stored as its letters
+-- ('iaroslavl'), not as a word break ('i a roslavl'). Approval item A is
+-- unchanged in kind: applying this file to production still REWRITES every
+-- row's stored search_key (census-discovery §73.8, §77).

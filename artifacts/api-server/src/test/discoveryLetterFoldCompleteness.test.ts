@@ -1081,3 +1081,61 @@ describe("§73 — the Latin letter fold, enumerated over every Latin letter (DV
     assert.equal(searchKey("Œuf"), "uf", "Q4: and œ");
   });
 });
+
+// ── §77 (lane P35): every combining diacritic a Latin word can carry, not only U+0300–U+036F ──
+//
+// §74 (lane P32) found the three folds stripping one block of combining marks, U+0300–U+036F, while
+// Unicode encodes Latin's combining diacritics in FOUR: Combining Diacritical Marks, … Extended
+// (U+1AB0–U+1AFF), … Supplement (U+1DC0–U+1DFF) and Combining Half Marks (U+FE20–U+FE2F). 91 marks of
+// the other three carry Unicode's Diacritic property, and each one split the word it sat in:
+// "I︠A︡roslavl" (ALA-LC's tie as the half marks U+FE20/U+FE21) keyed `i a roslavl` and slugged
+// `i-a-roslavl`. THE RULE (lib/latinLetterFold.LATIN_MARK_BLOCKS): each of the four blocks is stripped
+// WHOLE, as U+0300–U+036F always was — including the 19 marks of U+0300–U+036F and the 47 of the other
+// three that lack the Diacritic property (the combining small letters above, U+1DC0's Greek accents), and
+// the block's unassigned code points, which Unicode reserves for more combining marks. L9 checks the
+// rule against this runtime's Unicode data over every code point; L10 pins the SQL twins to it.
+// NOT stripped, and stated so the owner can overrule it: U+20D0–U+20FF (Combining Diacritical Marks
+// for Symbols — none has the Diacritic property), the variation selectors, and marks of other scripts,
+// U+0485 U+0486 U+0951 U+0952 among them though their Script_Extensions name Latin.
+const MARK_BLOCKS: ReadonlyArray<readonly [number, number]> = [[0x0300, 0x036f], [0x1ab0, 0x1aff], [0x1dc0, 0x1dff], [0xfe20, 0xfe2f]];
+const inMarkBlock = (cp: number) => MARK_BLOCKS.some(([lo, hi]) => cp >= lo && cp <= hi);
+const U = (cp: number) => `U+${cp.toString(16).toUpperCase().padStart(4, "0")}`;
+
+describe("§77 — every Latin combining diacritic folds (DV-20, B01)", () => {
+  it("L9. exhaustive: a code point vanishes inside a word, in all three folds, exactly when it is in one of the four Latin combining blocks", () => {
+    assert.equal(process.versions.unicode, "17.0", "the counts below are Unicode 17.0's");
+    let assigned = 0, diacritic = 0;
+    const notMark: string[] = [];
+    for (const [lo, hi] of MARK_BLOCKS) for (let cp = lo; cp <= hi; cp++) {
+      const ch = String.fromCodePoint(cp);
+      if (/\p{Cn}/u.test(ch)) continue;
+      if (lo !== 0x0300) { assigned++; if (/\p{Mn}/u.test(ch) && /\p{Diacritic}/u.test(ch)) diacritic++; }
+      if (!/\p{M}/u.test(ch)) notMark.push(U(cp));
+    }
+    assert.deepEqual(notMark, [], "every assigned code point of the four blocks is a combining mark, so stripping one never deletes a letter");
+    assert.deepEqual([assigned, diacritic], [138, 91], "the three blocks beyond U+036F: 138 assigned marks, 91 of them Diacritic (§74's population)");
+    const wrong: string[] = [];
+    let vanished = 0;
+    for (const [name, f] of FOLDS) {
+      const plain = f("zurich");
+      for (let cp = 0; cp <= 0x10ffff; cp++) {
+        if (cp === 0xd800) cp = 0xe000;
+        const gone = f(`zu${String.fromCodePoint(cp)}rich`) === plain;
+        if (gone) vanished++;
+        if (gone !== inMarkBlock(cp) && wrong.length < 40) wrong.push(`${name}: ${U(cp)} ${gone ? "vanishes outside the blocks" : "splits the word inside a block"}`);
+      }
+    }
+    assert.deepEqual(wrong, []);
+    assert.equal(vanished, 3 * 272, "112 + 80 + 64 + 16 code points, in each of the three folds");
+  });
+
+  it("L10. the SQL twins strip the same four blocks: 3440's input_normalize_city_key, 3441's trail_canonical_slug and trail_normalised_destination; 3441 recomputes stored slugs and keys destinations", () => {
+    const ranges = (body: string) => [...body.matchAll(/chr\((\d+)\) \|\| '-' \|\| chr\((\d+)\)/g)].map((m) => [Number(m[1]), Number(m[2])]);
+    const m3441 = sqlOf("3441_trail_letter_fold_decompose_first.sql");
+    for (const [file, fn] of [["3440_canonical_search_key_letter_fold.sql", "input_normalize_city_key"], ["3441_trail_letter_fold_decompose_first.sql", "trail_canonical_slug"], ["3441_trail_letter_fold_decompose_first.sql", "trail_normalised_destination"]] as const) {
+      assert.deepEqual(ranges(fnBody(sqlOf(file), fn)), MARK_BLOCKS.map((b) => [...b]), `${file}: ${fn} does not strip the four blocks`);
+    }
+    assert.match(m3441, /UPDATE public\.trails\s+SET slug = public\.trail_canonical_slug\(title\)/, "3441 must recompute the stored slug (§74.4 #2)");
+    assert.match(m3441, /ADD COLUMN destination_key text\s+GENERATED ALWAYS AS \(public\.trail_normalised_destination\(destination\)\) STORED/, "listTrails filters on the stored destination key");
+  });
+});
