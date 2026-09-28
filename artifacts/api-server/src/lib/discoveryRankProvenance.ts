@@ -155,7 +155,7 @@ export type DiscoveryCandidateSource =
   /** queryOverpassDeduped — the OSM directory read around the destination (`06` §2 "nearby places"). */
   | "osm_directory"
   /** The row reached the ranker without either retrieval claiming it. Recorded, not guessed. */
-  | "unknown";
+  | "unknown" | PdeCandidateSource;  // census-discovery §85 (DC-12): the PDE path's attributions — the caller's pool and the per-viewer retrievals (lib/discoveryCandidates/candidateSources.ts)
 
 export interface DiscoveryRankProvenance {
   /** `06` §5 model_version. */
@@ -486,7 +486,7 @@ export function pdeFeatureProvenanceFeatures(scored: object): Record<string, unk
   return {
     featureVersion: p.featureVersion,
     rankedAt:       p.rankedAt,
-    sourceWindow:   { kind: p.sourceWindow.kind, startMs: p.sourceWindow.startMs, endMs: p.sourceWindow.endMs },
+    sourceWindow:   { kind: p.sourceWindow.kind, startMs: p.sourceWindow.startMs, endMs: p.sourceWindow.endMs }, ...pdeItemPipelineFeatures(scored),  // §85: candidate sources, the exploration reserve, the graph reading's provenance — no key at all with every §85 flag off
     ...(p.momentum === undefined ? {} : {
       momentumProvenance: p.momentum === null ? null : {
         modelVersion:   p.momentum.modelVersion,
@@ -495,5 +495,49 @@ export function pdeFeatureProvenanceFeatures(scored: object): Record<string, unk
         window:         { kind: p.momentum.window.kind, startMs: p.momentum.window.startMs, endMs: p.momentum.window.endMs },
       },
     }),
+  };
+}
+
+// ── census-discovery §85 (lane W10-R3): what the §85 stages record per scored row ──
+//
+// Beside `PDE_FEATURE_PROVENANCE`, for the same reason: the record rides with
+// the scored object `rankForViewer` returned, so the served projection and the
+// feature vector stay byte-for-byte what they were. It is written only by a §85
+// stage that is ON, so with every §85 flag off no row carries a key from it.
+// Declared at the foot so no cited line above moves.
+
+import type { PdeCandidateSource } from "./discoveryCandidates/candidateSources.js";
+
+/** Per-row facts the §85 stages recorded. Every field is absent unless its stage ran. */
+export interface PdeItemPipelineRecord {
+  /** `06` §5 candidate source — every retrieval that named this row, `caller_pool` for the route's reads. */
+  candidateSources?: PdeCandidateSource[];
+  /** DV-53: the reserved-inventory bucket this row was placed for, when it was. */
+  explorationReserve?: string;
+  /** H-P21-4: the graph reading's own record (lib/discoveryCandidates/graphReadingProvenance.ts). */
+  graphReadingProvenance?: Record<string, unknown>;
+}
+
+const PDE_ITEM_PIPELINE = new WeakMap<object, PdeItemPipelineRecord>();
+
+/** Merge `r` into the record this scored row carries. */
+export function stampPdeItemPipeline(scored: object, r: PdeItemPipelineRecord): void {
+  PDE_ITEM_PIPELINE.set(scored, { ...(PDE_ITEM_PIPELINE.get(scored) ?? {}), ...r });
+}
+
+export function pdeItemPipelineOf(scored: object): PdeItemPipelineRecord | undefined {
+  return PDE_ITEM_PIPELINE.get(scored);
+}
+
+/** The `rank_events.features` keys a §85 stage may add, each classified `record_metadata`. */
+export const PDE_ITEM_PIPELINE_KEYS = ["candidateSources", "explorationReserve", "graphReadingProvenance"] as const;
+
+export function pdeItemPipelineFeatures(scored: object): Record<string, unknown> {
+  const r = PDE_ITEM_PIPELINE.get(scored);
+  if (!r) return {};
+  return {
+    ...(r.candidateSources ? { candidateSources: [...r.candidateSources] } : {}),
+    ...(r.explorationReserve ? { explorationReserve: r.explorationReserve } : {}),
+    ...(r.graphReadingProvenance ? { graphReadingProvenance: { ...r.graphReadingProvenance } } : {}),
   };
 }

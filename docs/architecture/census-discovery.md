@@ -13250,6 +13250,129 @@ The four hashes were captured at `ed9ab3ca0` with the code unchanged. G6 was rec
 
 3436 is applied to the local harness only. Nothing is flag-enabled. DC-17 stays W, so no row moves. `check:census-integrity` counts census-discovery at C 96, W 86, N 5 and X 1 over 188, as §73.12 states. CONSTRUCTED 182 / 188 = 96.8 % and CORRECT 96 / 188 = 51.1 % are unchanged.
 
+## §85 — Candidate generation, pipeline stages, exploration, cold start and the graph reading (lane W10-R3): the eleven sources are built behind 3480, exploration leaves 2289, a new viewer is ranked with what they said, and the city graph states its window; no row moves to C, because every leg waits on a flag, an owner, or another lane's file
+
+*Written 2026-09-28 by lane W10-R3 on `disc-w10-r3-candidates`, branched from `6d1e7090b`. The ranker hold is lifted (owner authorisation, 2026-09-28; `docs/architecture/discovery-decision-register.md`, section W10-R3). Every behaviour below sits behind a NEW flag seeded FALSE by migrations 3480–3484. With all eight flags off, `rankForViewer` and the city-confidence producer are byte-identical to `6d1e7090b` (85.4). Migrations 3480–3484 are applied to the local PostgreSQL 16 harness only, not to `portava-ci` and not to production. Nothing is deployed or flag-enabled. All tests use controlled data, and nothing here claims real-world effectiveness. `head_commit` is not re-declared. The headline does not move, because no row moves.*
+
+**Method.** Each row was re-read in its own criterion's words, together with §69's restatement, §75.3, `06`, `01` §4, `05` and `docs/discovery/ranker-hold-designs.md`. Where a leg needed a decision, it was made and recorded (D-W10-R3-1 to 13). A decision the lane may not make is built up to that decision behind a FALSE flag and marked APPROVAL REQUIRED. Files owned by other lanes were not edited, with one exception, which is line-neutral and named in 85.5.
+
+### 85.1 Row statements
+
+| ID | was | now | evidence |
+|---|---|---|---|
+| DC-12 | W | **W** | **All eleven `06` §2 sources exist on the PDE serve path. Two are the route's reads; eight are §85 retrievals behind 3480; social/circle context is built behind its own consent flag.** The registry names each source, its table and its status (`artifacts/api-server/src/lib/discoveryCandidates/candidateSources.ts:59#export const DISCOVERY_CANDIDATE_SOURCES`). The route's two reads reach PDE as the pool, attributed `caller_pool` (`artifacts/api-server/src/lib/discoveryRankProvenance.ts:158#| "unknown" | PdeCandidateSource;`). The §85 retrievals are: followed creators (`artifacts/api-server/src/lib/discoveryCandidates/retrievals.ts:101#export function retrieveFollowedCreators`); current Trail and related Trails (`artifacts/api-server/src/lib/discoveryCandidates/retrievals.ts:156#export function retrieveCurrentTrail`, `artifacts/api-server/src/lib/discoveryCandidates/retrievals.ts:165#export function retrieveRelatedTrails`); trip destination (`artifacts/api-server/src/lib/discoveryCandidates/retrievals.ts:188#export function retrieveTripDestination`); saved-similar (`artifacts/api-server/src/lib/discoveryCandidates/retrievals.ts:217#export function retrieveSavedSimilar`); trending local and emerging discoveries (`artifacts/api-server/src/lib/discoveryCandidates/retrievals.ts:283#export function retrieveTrendingLocal`, `artifacts/api-server/src/lib/discoveryCandidates/retrievals.ts:288#export function retrieveEmergingDiscoveries`); the exploration pool (`artifacts/api-server/src/lib/discoveryCandidates/retrievals.ts:295#export function retrieveExplorationPool`); and social/circle (`artifacts/api-server/src/lib/discoveryCandidates/retrievals.ts:392#export function retrieveCircleContext`). They run on served runs only (`artifacts/api-server/src/lib/discoveryCandidates/stages.ts:79#if (opts.generateCandidates ?? opts.served)`), from `rankForViewer`'s first §85 line (`artifacts/api-server/src/lib/discoveryPde.ts:533#const pre = await pdePreRankStages`). A named row is materialised under `queryDbPlaces`' own eligibility (`artifacts/api-server/src/lib/discoveryCandidates/materialize.ts:175#export async function materialiseCandidates`), with the route's select verbatim (`artifacts/api-server/src/lib/discoveryCandidates/materialize.ts:43#export const DISCOVERY_PLACES_SELECT`). Every scored row carries its sources to `rank_events` as `record_metadata` (`artifacts/api-server/src/lib/discoveryRankProvenance.ts:489#...pdeItemPipelineFeatures(scored)`). Tests: S1–S9 and M1–M3 (`artifacts/api-server/src/test/discoveryCandidateSources.test.ts:98#it("S2.`). S2, S3, S3b, S4, S8 and S9 were red with `6d1e7090b`'s `rankForViewer`. **Why W.** (1) Nothing is on in production. (2) Social/circle context is a consent question (D-W10-R3-4). (3) The two sources that read `place_momentum` read a table nothing in production populates (DC-07). IMPLEMENTATION-COMPLETE; awaits: 3480 applied to production + flag discovery_candidate_sources_enabled TRUE in production + one production `rank_events` row whose `features.candidateSources` names a §85 source. AWAITS OWNER APPROVAL: D-W10-R3-4 (the eleventh source's flag, discovery_circle_candidates_enabled). |
+| DC-11 | W | **W** | **Nine of ten stages are reachable in code. The tenth, integrity checks, exists as a stage and waits on DV-12's detector, which is another lane's.** Exploration is now explicit and outside 2289 (DV-53 below). Learn from outcomes is a bounded, per-item outcome-rate nudge after DRS (`artifacts/api-server/src/lib/discoveryPde.ts:737#await pdeLearningStage(pipe`; `artifacts/api-server/src/lib/discoveryCandidates/outcomeLearning.ts:52#export function learnedShifts`), behind 3483. It moves an item at most 3 places and only with 20+ served rows (L1–L3, `artifacts/api-server/src/test/discoveryPipelineStages.test.ts:46#it("L2.`). The integrity stage runs after exploration, as `06` §1 orders it (`artifacts/api-server/src/lib/discoveryPde.ts:792#await pdePostRankStages(pipe`). It calls whatever detector is registered (`artifacts/api-server/src/lib/discoveryCandidates/integrity.ts:47#export function registerEngagementIntegrityDetector`). At `6d1e7090b` none exists, so with the flag on it records `detector_absent` and changes nothing (I1–I4, `artifacts/api-server/src/test/discoveryPipelineStages.test.ts:80#it("I2.`). **Why W, and not IMPLEMENTATION-COMPLETE.** Integrity checks need lane W10-R2's detector registered through the one-line hook D-W10-R3-8. That is code, not activation. The learning stage also waits on 3483 and its flag. |
+| DC-01 | W | **W** | **Ten of ten output kinds are ranked by PDE in code. The three §69 named are ranked behind 3483 and served by no route yet.** Trails are ranked by `rankForViewer`, not listed newest-first (`artifacts/api-server/src/lib/discoveryCandidates/outputKinds.ts:98#export async function rankTrailsForViewer`). K2 reverses `listTrails`' order on relevance (`artifacts/api-server/src/test/discoveryOutputKinds.test.ts:73#it("K2.`). Shared Moments are ranked over the viewer's ACCEPTED memberships only, reusing the Wall's consent boundary and the Shared Moments capability flag (`artifacts/api-server/src/lib/discoveryCandidates/outputKinds.ts:123#export async function rankSharedMomentsForViewer`; K3). Emerging discoveries are the latest run's `emerging`/`rediscovered` places, under the route's eligibility (`artifacts/api-server/src/lib/discoveryCandidates/outputKinds.ts:151#export async function rankEmergingForViewer`; K4). The limit is recorded, not disguised: portavaRank has no `trail` or `shared_moment` kind (that file is lane R2's), so both rank as kind `place`, with a neutral prior (D-W10-R3-11). **Why W.** "Rank or recommend" is met in code, but no route serves the three kinds (routed hunk 85.5 R2), and 3483 is off. |
+| DV-49 | W | **W** | **The graph now GENERATES candidates.** From the places the viewer viewed or saved, the retrieval walks `at_place → experienced → experienced → at_place` over `compass_graph_edges`. It returns a place only when two distinct travellers reached it (`artifacts/api-server/src/lib/discoveryCandidates/retrievals.ts:362#export function retrieveGraphRelated`; `artifacts/api-server/src/lib/discoveryCandidates/retrievals.ts:27#export const GRAPH_MIN_CO_TRAVELLERS = 2;`; D-W10-R3-5). S5 shows it (`artifacts/api-server/src/test/discoveryCandidateSources.test.ts:161#it("S5.`), and mutation M17 (k = 1) turns it red. Every edge it reads was written from a PUBLISHED, PUBLIC Memory by the graph builder. The re-weighting path (2289) is unchanged. IMPLEMENTATION-COMPLETE; awaits: 3480 applied to production + flag discovery_candidate_sources_enabled TRUE in production + `at_place` edges present in production `compass_graph_edges` + one production `rank_events` row whose `features.candidateSources` includes `graph_related`. |
+| DV-53 | W | **W** | **Exploration is explicit, reserved and outside 2289.** Four buckets — new creator, low exposure, emerging place, new Trail — get a round-robin share of a 15–25% budget. A member is placed only at or above the list's median score, and nothing is drawn at random (`artifacts/api-server/src/lib/discoveryCandidates/explorationInventory.ts:96#export function allocateReservedInventory`; the reads at `artifacts/api-server/src/lib/discoveryCandidates/explorationInventory.ts:179#export async function loadInventoryBuckets`). It runs with the modifiers OFF (E8, `artifacts/api-server/src/test/discoveryExplorationInventory.test.ts:107#it("E8.`). With it on, portavaRank's random slot and the governor stand down (`artifacts/api-server/src/lib/discoveryPde.ts:610#const scored = modifiers.enabled || pipe.explorationOwnedByInventory`, `artifacts/api-server/src/lib/discoveryPde.ts:756#if (modifiers.enabled) { if (pipe.explorationOwnedByInventory)`). Every reserved row carries its bucket to `rank_events` (E8b). `allocateFeedSlots` and `services/ranking/FeedSlotAllocator.ts` are not edited; only its exported band constants are imported (D-W10-R3-6). IMPLEMENTATION-COMPLETE; awaits: 3481 applied to production + flag discovery_exploration_inventory_enabled TRUE in production + one production `rank_events` row carrying `features.explorationReserve`. |
+| DV-55 | W | **W** | **All three `06` §9 cases are built behind flags.** **New user:** onboarding interests (`profiles.interests`, `travel_style`, `travel_styles`) and the place types of the viewer's own trip ideas become STATED interest tags for a viewer below the observation floor. Nothing is written back (`artifacts/api-server/src/lib/discoveryCandidates/viewerColdStart.ts:57#export async function applyColdStart`; C1–C5, `artifacts/api-server/src/test/discoveryColdStart.test.ts:36#it("C1.`). Local context is the destination, plus the trending, emerging and new-place retrievals when 3480 is on (C6). **New creator:** DV-53's new-creator bucket, which is an exploration window, gated by a relevance floor on portavaRank's score, which is where content semantics and place fit live. Its Trail fit (`trailAffinity`) contributes only with 2289 on. **New Trail/place:** DV-53's new-Trail and emerging-place buckets and the exploration-pool source, under the floor and the budget (the "confidence controls"). IMPLEMENTATION-COMPLETE; awaits: 3480, 3481 and 3482 applied to production + flags discovery_cold_start_enabled, discovery_exploration_inventory_enabled and discovery_candidate_sources_enabled TRUE in production (+ 2289 TRUE for a new creator's Trail fit) + one production PDE `pde_stages` record with `coldStart.applied = true`. |
+| DC-17 | W | **W** | **H-P21-4 is built, so the served graph reading carries all four facts on the Compass path, in `pde_stages` and on every scored row. Two legs remain outside this lane.** The producer's reads are ordered, paged and windowed, and a failed read scores no city (`artifacts/api-server/src/compass/CompassGraphEngine.ts:1451#const windowed = await cityConfidenceWindowedCorpus(db)`, `artifacts/api-server/src/compass/CompassGraphEngine.ts:1461#if (windowed && windowed.readErrors.length > 0)`; `artifacts/api-server/src/compass/cityConfidenceWindowedReads.ts:110#export async function cityConfidenceWindowedCorpus`). Each reading records `model_version`, `feature_version` and `source_window` beside `computed_at` (`artifacts/api-server/src/compass/CompassGraphEngine.ts:1515#...(windowed ? windowed.provenance : {})`; 3484). W0–W5 cover this (`artifacts/api-server/src/test/compassCityConfidenceWindow.test.ts:93#it("W2.`); W1–W5 were red at `6d1e7090b`. PDE reads the record back for the SAME reading (`artifacts/api-server/src/lib/discoveryCandidates/graphReadingProvenance.ts:40#export async function loadGraphReadingProvenance`; G1–G6). Changing `depth_score` is decided behind a new flag (D-W10-R3-9). **Why still W.** (1) The route's request-context keys (`servedGraphReadingFeatures`, the six keys) are copied by `routes/discovery.ts`, another lane's file: hunk 85.5 R1. (2) On the platform path the reading is the platform producer's. It is recorded as `platform_producer` and never stamped with Compass's versions, and the platform's own record is CPV2-12's owner's (§75.3 blocker 3, unchanged). (3) 3435, 3436 and 3484 are applied to the harness only. |
+
+### 85.2 Decisions
+
+The register's W10-R3 section holds D-W10-R3-1 to D-W10-R3-13.
+
+- **Two entries are APPROVAL REQUIRED:**
+  - **D-W10-R3-4:** real user consent for circle-context candidates.
+  - **D-W10-R3-13:** production activation of 3480–3484, with the flags in order.
+- **The rest were decided here:**
+  - **D-W10-R3-1:** generation inside PDE, on served runs only, under the route's eligibility.
+  - **D-W10-R3-2:** current and related Trails.
+  - **D-W10-R3-3:** trip ideas, not `trips`.
+  - **D-W10-R3-5:** the graph walk, with k = 2 distinct travellers.
+  - **D-W10-R3-6:** the reserved inventory.
+  - **D-W10-R3-7:** cold start.
+  - **D-W10-R3-8:** the integrity stage and its hook.
+  - **D-W10-R3-9:** the producer's windowed reads, where `depth_score` moves behind 3484.
+  - **D-W10-R3-10:** learning.
+  - **D-W10-R3-11:** output kinds.
+  - **D-W10-R3-12:** the graph reading's provenance, and the platform path.
+
+### 85.3 DC-17, the one feature that moved
+
+This updates 75.2's `served graph reading` row. Every other row there is unchanged.
+
+| derived feature | served / stored | window | feature v. | model v. | computed at | §75 | now |
+|---|---|---|---|---|---|---|---|
+| served graph reading (§62.5, §63.4) | `pde_stages`, request context, the six row keys, and (new) `rank_events.features.graphReadingProvenance` | FAIL → PASS on the Compass path (3484 flag on); `platform_producer` on the platform path | FAIL → PASS (Compass path) | FAIL → PASS (Compass path) | PASS | 1/4 | **4/4** in `pde_stages` and on every scored row, on the Compass path; the route's request-context keys are still 1/4 (hunk R1); the platform path is the platform's own |
+
+### 85.4 Byte identity, tests seen red, and mutations
+
+- **Goldens.** Each was captured at `6d1e7090b` with the code unchanged:
+  - `artifacts/api-server/src/test/discoveryCandidatePipelineGolden.test.ts:124#it("P2.` hashes `rankForViewer`'s order, every score, every feature, the whole `stages` object and the governor outcome for three runs: no client (P1), the served path with 2289 off (P2), and the governor path (P3).
+  - The same file asserts that no §85 key is present, not even as `undefined`, and that the only new read is one `feature_flags` read.
+  - `artifacts/api-server/src/test/compassCityConfidenceWindow.test.ts:73#it("W0.` hashes the producer's upsert payloads and result with the flag off.
+  - §75's own golden (`discoveryDerivedProvenanceGolden`, G1–G9) passes 10/10 unchanged.
+- **Seen red.**
+  - With `6d1e7090b`'s `discoveryPde.ts` copied back, these failed: S2, S3, S3b, S4, S8, S9, E8, E8b, C1, C6, L2, L3, I1, I2, I3 and G4. The file was restored, sha256-checked.
+  - With `6d1e7090b`'s `CompassGraphEngine.ts`, W1–W5 failed.
+  - The new modules' own unit cases (S1, S5–S7, E2–E7, C2–C5, L1, G1–G3, K1–K5, M1–M3) were red at `6d1e7090b` only in the sense that the modules did not exist. That is stated here rather than claimed as a behavioural red.
+- **Mutations.** Each was applied alone, turned its test red, and was reverted byte-identically (sha256 checked).
+
+| mutation | red |
+|---|---|
+| M1 the author policy dropped from materialisation | S3 |
+| M2 generation on served:false | S4 |
+| M3 the relevance floor removed | E2 |
+| M4 the governor not standing down | E8 |
+| M5 every viewer cold | C2 |
+| M6 the learning shift unbounded | L1 |
+| M7 the learning evidence floor removed | L1 |
+| M8 an integrity verdict ignored | I2 |
+| M9 a producer read error dropped | W2 |
+| M10 the producer's order removed | W1 |
+| M11 provenance written with the flag off | W0 |
+| M12 a §85 stage key present with every flag off | P2 |
+| M13 a reading accepted for another computation | G3 |
+| M14 a truthy non-boolean flag accepted | S9 |
+| M15 a platform reading stamped with Compass's versions | G2 |
+| M16 a blocked owner's Shared Moment kept | K3 |
+| M17 the graph's k lowered to 1 | S5 |
+
+- **An incident, recorded.** Another lane ran this lane's mutation script from the shared scratch directory while this lane's own run was in progress. The overlap left `outcomeLearning.ts` without its evidence floor, the line M7 removes. L1 and L2 went red on it, and a string check of all 17 mutation targets found it. The line was restored, and every other target was confirmed intact with no mutated string left anywhere. The full list was then re-run from a lane-prefixed script that snapshots every target before starting and checks each one byte-for-byte afterwards: 17 of 17 red and restored.
+- **Two mutations survived the first run.**
+  - **M12** assigned `undefined`, which JSON drops. The golden now asserts key absence.
+  - **M14** was a redundant guard: `on.has(NAME)` already required the name. It was replaced with a truthy non-boolean case, which goes red.
+
+### 85.5 Checks, the harness, and what was not run
+
+- **The harness.** `scripts/local-db/up.sh` ran on port 55456 with its data under `/var/tmp`. The full chain replayed: 361 files applied in order and 12 were known-unreplayable, as before, including 3480–3484. `db/discoveryCandidatePipelineMigrations.db.test.ts` H1–H6 passes 6/6:
+  - the eight flags exist and are FALSE;
+  - 3484's columns are nullable and have no default;
+  - both of the producer's payloads land on real PostgreSQL;
+  - 3484's rollback and re-apply round-trip inside a transaction that is rolled back;
+  - every flag file's postcondition refuses a flag that is ON;
+  - every flag rollback round-trips and refuses while its flag is ON.
+  - **The full `scripts/local-db/run-tests.sh`, run under a machine load average of about 150:** 380 of 386 pass, with 0 skipped. The six failures are `fetch failed`, `psql exited -1` and XX000 timeouts, in suites that touch no §85 file.
+    - Re-run alone at lower load, four of the six suites pass in full, as do the two that timed out in an earlier run.
+    - The two Trails suites (`trailsService`, `trailsMemberVisibility`) still fail on `fetch failed` from their PostgREST bridge. They fail the same way with `6d1e7090b`'s four changed files copied back (sha256-restored afterwards).
+- **Checks run (in `artifacts/api-server`).**
+  - `typecheck`: clean.
+  - `typecheck:tests`: 863, equal to the baseline.
+  - `check:test-registration`: clean. The eight new files are on the `test` line.
+  - `check:migration-prefixes`, `check:schema-references`, `check:writerless-reads`, `check:enum-literals`: all clean.
+  - `check:production-drift`: clean. No new table was added, and 3484 adds only nullable columns to an existing one, as 3435 did.
+  - The census checks after the last edit are listed in the lane report.
+  - Every existing test file that imports a changed file, 109 files, was run: 1,653 of 1,654 pass. The one failure is `discoveryClientRouteE2E.test.ts`, the import failure in `travel-buddy-standalone/src/lib/displayIdentity.ts` that §68.7 records as pre-existing, and it fails identically alone.
+- **Not run.** `check:write-path-columns` needs live credentials and cannot run here. From its extractor's reading, the two new write shapes are the producer's upsert keys `model_version`, `feature_version` and `source_window`. They are declared by 3484, and 3484 is absent from production, so that check would report them there until 3484 is applied. This matches how 3435 and 3436 stand.
+- **The one edit in a file outside this lane's list.** `artifacts/api-server/src/lib/discoveryRecommendationRecord.ts` line 584 gains three `record_metadata` classifications at the end of the line (`candidateSources`, `explorationReserve`, `graphReadingProvenance`). The edit is line-neutral, following §75's placement of its four keys, so DV-39's classifier names what §85 writes.
+- **Routed hunks.**
+  - **R1 (routes/discovery.ts).** `servedGraphReadingFeatures` should copy `g.provenance` as a seventh key, `graphProvenance`. Both PDE serve points should also pass `category` to `rankForViewer`. Without it, a generated row's category is bounded by the pool's categories rather than the tab (D-W10-R3-1).
+  - **R2 (routes/discovery.ts, the Trails routes, a Shared Moments surface).** Serve `rankTrailsForViewer`, `rankSharedMomentsForViewer` and `rankEmergingForViewer` when 3483's flag is on, and log each as the other serve points do.
+  - **R3 (lane W10-R2).** `registerEngagementIntegrityDetector(<DV-12's exported detector>)`.
+
+### 85.6 What would turn this red
+
+- A §85 key present in `stages`, the outcome or a `rank_events` row with every §85 flag off (P1–P3, S4b, G5).
+- A generated row that `queryDbPlaces` would have refused: a blocked or inactive submitter, a demo source, another city, or another tab (S3, S3b, K4).
+- The Map reader or a shadow run adding a row (S4).
+- A reserved slot filled below the median score, or the governor and the inventory both exploring one page (E2, E8).
+- A cold-start value written anywhere (C4).
+- An integrity verdict applied with the flag off (I4).
+- The producer scoring a city over a failed read, or writing provenance with its flag off (W2, W0).
+- A graph reading stamped with Compass's versions when the platform answered (G2).
+- `social_circle` or `discovery_circle_candidates_enabled` switched on without D-W10-R3-4.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/compass/CompassExplanationEngine.ts — §13.7 item 3 names Compass's HMAC recommendation-token signer as a refactor this lane declined to make in another lane's file. Discovery's recommendation id is minted by lib/discoveryRecommendationId.ts, and no Discovery verdict rests on the signer.

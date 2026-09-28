@@ -530,7 +530,7 @@ export async function rankForViewer<T extends PdePlace>(
   // write. Reads are untouched, so the ranking stays representative.
   const sc = opts.served
     ? opts.sc
-    : suppressWrites(opts.sc, () => { stages.suppressedWrites += 1; });
+    : suppressWrites(opts.sc, () => { stages.suppressedWrites += 1; }); const pre = await pdePreRankStages(opts.sc, sc, places, viewer, opts, nowMs, stages); places = pre.places; viewer = pre.viewer; const pipe = pre.pipe;  // census-discovery §85: cold start + candidate generation — with every §85 flag off this returns the caller's own objects
 
   // ── ROADMAP step 7/8 modifiers — behind discovery_ranking_modifiers_enabled ─
   // With the flag off this is one cached flag read and an inert record; the
@@ -607,7 +607,7 @@ export async function rankForViewer<T extends PdePlace>(
   // portavaRank's fixed every-7th slot is switched off here — otherwise the
   // page would carry two exploration passes and exceed the budget. With the
   // modifiers OFF the call is exactly what it was.
-  const scored = modifiers.enabled
+  const scored = modifiers.enabled || pipe.explorationOwnedByInventory  // §85 (DV-53): the reserved inventory owns exploration when it is on, as the governor does with the modifiers on
     ? rankCandidates(candidates, viewerContext, { exploration: false })
     : rankCandidates(candidates, viewerContext);
   const portavaRankMs = Date.now() - prT0;
@@ -734,7 +734,7 @@ export async function rankForViewer<T extends PdePlace>(
       } catch { /* non-fatal — assembly analytics must never affect the feed response */ }
     }
   } catch { /* non-fatal — portavaRank order preserved on DRS error */ }
-  drsMs = Date.now() - drsT0;
+  drsMs = Date.now() - drsT0; await pdeLearningStage(pipe, sc, ranked, stages, nowMs);  // §85 (DC-11): learn from outcomes — a bounded nudge on DRS's order, only with its flag on
 
   // ── Exploration GOVERNOR (ROADMAP step 8) ──────────────────────────────────
   // Runs over the FINAL order (after DRS) so its slots are positions on the
@@ -753,7 +753,7 @@ export async function rankForViewer<T extends PdePlace>(
   // no trace: the OFF feature vector has to be byte-identical to what the
   // pre-governor pipeline produced. Observation is a thing you turn ON.
   let governor: GovernorOutcome | null = null;
-  if (modifiers.enabled) {
+  if (modifiers.enabled) { if (pipe.explorationOwnedByInventory) stages.governor = "skipped"; else  // §85 (DV-53): one exploration pass per page — the reserved inventory below
     try {
       const gc: GovernorCandidate[] = ranked.map((p) => ({
         id: p.id,
@@ -789,14 +789,14 @@ export async function rankForViewer<T extends PdePlace>(
       stages.governor = "skipped";
     }
   }
-
+  await pdePostRankStages(pipe, sc, ranked, scoredById, viewer, modifiers, stages, nowMs, opts);  // §85: the reserved inventory (DV-53), the integrity stage (DC-11), and each row's record — nothing with every §85 flag off
   return {
     ranked,
     scoredById,
     stages,
     timings: { portavaRankMs, drsMs, totalMs: Date.now() - t0 },
     modifiers,
-    governor,
+    governor, ...(pipe.sourcesById ? { candidateSources: pipe.sourcesById } : {}),  // §85 (DC-12): every candidate's attribution, only when generation ran
   };
 }
 
@@ -1119,3 +1119,61 @@ export function graphReadingOf(m: DiscoveryModifiers): PdeGraphReading {
 // census-discovery §75 (DC-17, lane P33): the PDE feature vector's provenance (see the
 // stamp after `rankCandidates` above). Imported at the foot so no cited line moves.
 import { pdeFeatureProvenance, stampPdeFeatureProvenance } from "./discoveryRankProvenance.js";
+
+// ── census-discovery §85 (lane W10-R3): candidate generation, exploration, cold start, learning, integrity ──
+//
+// The stages live in lib/discoveryCandidates/stages.ts and are called from the
+// four lines of `rankForViewer` marked §85 above, each edited in place so no
+// cited line moved. Everything below is declaration merging, at the foot for
+// the reason the other merges in this file give. With every §85 flag off none
+// of these fields is assigned — not assigned `undefined` — so the OFF `stages`
+// object and the OFF outcome serialise exactly as before §85
+// (src/test/discoveryCandidatePipelineGolden.test.ts).
+
+import { pdePreRankStages, pdeLearningStage, pdePostRankStages } from "./discoveryCandidates/stages.js";
+import type { PipelineFlags } from "./discoveryCandidates/pipelineFlags.js";
+import type { GenerationReport } from "./discoveryCandidates/generate.js";
+import type { ColdStartReport } from "./discoveryCandidates/viewerColdStart.js";
+import type { LearningReport } from "./discoveryCandidates/outcomeLearning.js";
+import type { IntegrityReport, EngagementIntegrityDetector } from "./discoveryCandidates/integrity.js";
+import type { InventoryBucket } from "./discoveryCandidates/explorationInventory.js";
+import type { PdeCandidateSource } from "./discoveryCandidates/candidateSources.js";
+import type { GraphReadingProvenance } from "./discoveryCandidates/graphReadingProvenance.js";
+
+export interface PdeRankOptions {
+  /** §85: the eight flags, pre-read. Omit and they are read once (one query, cached 30 s per client). */
+  pipelineFlags?: PipelineFlags;
+  /** §85: the requested tab, which bounds the categories a generated row may carry. */
+  category?: string | null;
+  /** §85: whether candidate generation may ADD rows. Defaults to `served`: the Map reader and shadow runs never add. */
+  generateCandidates?: boolean;
+  /** §85: DV-12's detector for the integrity stage. Omit ⇒ the registered one (integrity.ts); null ⇒ none. */
+  integrityDetector?: EngagementIntegrityDetector | null;
+}
+
+export interface PdeStages {
+  /** §85 (DC-12): what each retrieval returned, claimed and added. Present only with 3480 on. */
+  candidateGeneration?: GenerationReport;
+  /** §85 (DV-55): whether the viewer was cold and what was seeded. Present only with 3482 on. */
+  coldStart?: ColdStartReport;
+  /** §85 (DC-11): the outcome-learning nudge. Present only with its flag on. */
+  outcomeLearning?: LearningReport;
+  /** §85 (DV-53): the reserved inventory. Present only with 3481 on. */
+  explorationInventory?: {
+    status: "applied" | "observed" | "skipped";
+    budgetPct: number; slotCount: number; floor: number | null; placed: number; moved: number;
+    bucketMembers: Record<InventoryBucket, number>; eligible: Record<InventoryBucket, number>; failedReads: string[];
+  };
+  /** §85 (DC-11): the integrity stage. Present only with its flag on. */
+  integrity?: IntegrityReport;
+}
+
+export interface PdeGraphReading {
+  /** §85 (H-P21-4): the reading's own model version, feature version and window, or why there is none. Present only with 3484 on. */
+  provenance?: GraphReadingProvenance;
+}
+
+export interface PdeRankOutcome<T extends PdePlace> {
+  /** §85 (DC-12): place id → every source that named it (`caller_pool` for the route's reads). Present only when generation ran. */
+  candidateSources?: Map<string, PdeCandidateSource[]>;
+}

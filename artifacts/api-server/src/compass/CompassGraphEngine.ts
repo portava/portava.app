@@ -40,7 +40,7 @@ import type { RankingFactor } from "./CompassRecommendationEngine.js";
 import { canonicalCityKey } from "../lib/canonicalLocations.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { mayPublishRhythm } from "../lib/compassRhythmGate.js";
-import { logger as rootLogger } from "../lib/logger.js";
+import { logger as rootLogger } from "../lib/logger.js"; import { cityConfidenceWindowedCorpus } from "./cityConfidenceWindowedReads.js";  // census-discovery §85 H-P21-4
 
 const logger = rootLogger.child({ service: "CompassGraphEngine" });
 
@@ -1447,8 +1447,8 @@ export function scoreCityDepth(signals: {
  */
 export async function computeCityConfidenceIndex(
   db: SupabaseClient,
-): Promise<{ scored: number; strongestCity: string | null }> {
-  const [{ data: models }, { data: visitEdges }, { data: cityEvents }] = await Promise.all([
+): Promise<{ scored: number; strongestCity: string | null; readErrors?: string[] }> {  // §85 H-P21-4: `readErrors` only under compass_city_confidence_windowed_reads_enabled
+  const windowed = await cityConfidenceWindowedCorpus(db); const [{ data: models }, { data: visitEdges }, { data: cityEvents }] = windowed ? windowed.base : await Promise.all([  // §85 H-P21-4 (3484, seeded FALSE): ordered, paged, windowed reads; OFF ⇒ the three reads below, unchanged
     db.from("compass_city_models").select("city, time_slices, sample_size").limit(1000),
     db.from("compass_graph_edges")
       .select("src_key, dst_key, edge_type, observed_count")
@@ -1458,7 +1458,7 @@ export async function computeCityConfidenceIndex(
       .select("node_type, node_key, city")
       .eq("node_type", "event")
       .limit(20000),
-  ]);
+  ]); if (windowed && windowed.readErrors.length > 0) { logger.warn({ readErrors: windowed.readErrors }, "city confidence: a corpus read failed — no city scored this run"); return { scored: 0, strongestCity: null, readErrors: windowed.readErrors }; }  // §85: a failed read is unknowable, never an empty city
 
   const visitorsByCity = new Map<string, number>();
   const returnersByCity = new Map<string, number>();
@@ -1477,7 +1477,7 @@ export async function computeCityConfidenceIndex(
   // Outcome depth per city: outcome edges whose target item lives in the city.
   const outcomesByCity = new Map<string, number>();
   try {
-    const { data: outcomeEdges } = await db
+    const { data: outcomeEdges } = windowed ? { data: windowed.outcomes } : await db  // §85: under the flag, the ordered, paged outcome read
       .from("compass_graph_edges")
       .select("dst_key, edge_type")
       .like("edge_type", "outcome:%")
@@ -1496,7 +1496,7 @@ export async function computeCityConfidenceIndex(
   let scored = 0;
   let strongestCity: string | null = null;
   let strongestScore = -1;
-  const computedAt = new Date().toISOString();
+  const computedAt = windowed?.computedAtIso ?? new Date().toISOString();  // §85: under the flag, the clock the window ends at
 
   for (const m of (models as any[]) ?? []) {
     const city = String(m.city);
@@ -1512,7 +1512,7 @@ export async function computeCityConfidenceIndex(
     };
     const depthScore = scoreCityDepth(signals);
     const { error } = await db.from("compass_city_confidence").upsert(
-      { city, depth_score: depthScore, tier: tierForScore(depthScore), signals, computed_at: computedAt },
+      { city, depth_score: depthScore, tier: tierForScore(depthScore), signals, computed_at: computedAt, ...(windowed ? windowed.provenance : {}) },  // §85: model_version, feature_version, source_window (3484) — absent with the flag off
       { onConflict: "city" },
     );
     if (!error) {
