@@ -15,7 +15,7 @@
  * support:
  *   - "open" only when `open_now` fired — Compass's factor, which fires only on
  *     an explicit `isOpenNow === true` (compass/CompassRecommendationEngine.ts);
- *   - "close to you" only when a location signal fired;
+ *   - "close to you" never from these signals (§76: none measured the viewer);
  *   - neither, when only a timing or capacity signal fired.
  * The CODE is unchanged in every case (the golden's G5), so the exposure record
  * and every reason-code reader see exactly what they saw before.
@@ -63,13 +63,13 @@ describe("§68 A03 — a nearby_now reason claims only what fired", () => {
     }
   });
 
-  it("T3. every combination: 'open' iff open_now fired; 'close to you' iff a location signal fired", () => {
+  it("T3. every combination: 'open' iff open_now fired; the area iff a location signal fired; never the viewer (§76)", () => {
     for (let mask = 1; mask < 1 << ALL.length; mask++) {
       const fired = ALL.filter((_, i) => mask & (1 << i));
       const t = nearbyText(fired);
       assert.ok(t, `${fired.join("+")}: a grounded code keeps a sentence`);
       assert.equal(OPEN_WORD.test(t!), fired.some((k) => OPEN.includes(k)), `open claim for ${fired.join("+")}: ${t}`);
-      assert.equal(/close to you/i.test(t!), fired.some((k) => LOCATION.includes(k)), `proximity claim for ${fired.join("+")}: ${t}`);
+      assert.ok(!/\b(?:close to|near|around) you\b|\byour\b/i.test(t!) && /\barea\b/i.test(t!) === fired.some((k) => LOCATION.includes(k)), `location claim for ${fired.join("+")}: ${t}`);
     }
   });
 
@@ -95,5 +95,82 @@ describe("§68 A03 — a nearby_now reason claims only what fired", () => {
     for (const k of LOCATION) assert.equal(mod.NEARBY_NOW_SIGNAL_FAMILY![k], "location", k);
     for (const k of OPEN)     assert.equal(mod.NEARBY_NOW_SIGNAL_FAMILY![k], "open", k);
     for (const k of TIMING)   assert.equal(mod.NEARBY_NOW_SIGNAL_FAMILY![k], "timing", k);
+  });
+});
+
+// ── census-discovery §76 (A03 residual, lane P34): "close to you" needs the viewer ──
+//
+// §68 left "Close to you." on every LOCATION signal, and §68.5 recorded that it
+// still over-claims: none of the four measures the viewer's own position.
+//   - PDE `cityMatch` fires for EVERY candidate once the viewer's city is known:
+//     the candidate's city is set to the viewer's (lib/discoveryPde.ts, the
+//     `city: viewer.city` line of the candidate map).
+//   - `distance` (both rankers) is measured from the SEARCH CENTRE, except on
+//     `sortBy=nearest` with `userLat`/`userLng`, and on curated DB rows whenever
+//     `userLat`/`userLng` are sent (routes/discovery.ts, `distRef`).
+//   - Compass `city_match` also fires for a city the viewer merely PREFERS.
+//   - PDE `neighborhoodMatch` compares with the neighbourhood of places the viewer
+//     has VIEWED (lib/discoveryPde.ts loadViewerNeighborhood), not where they are.
+// The reason module receives signal KEYS only, and no key records where a
+// distance was measured from. So no signal it can see backs a claim about the
+// viewer's position, and the served sentence makes none. It says what every
+// location signal does support: the row is in the area being looked at. The
+// CODE is unchanged in every case (T9 here, G5 in the golden).
+//
+//   T6  no location signal, alone or with others, claims the viewer's position   (seen RED before §76)
+//   T7  every location signal says the same thing, and it names the area         (seen RED before §76)
+//   T8  through the served projection, on a PDE row and on a Compass row         (seen RED before §76)
+//   T9  the served codes are exactly the codes, for every combination           (green before and after: the guard)
+
+const VIEWER_POSITION = /\b(?:close to|near|nearby|around) you\b|\byour\b/i;
+const AREA = /\barea\b/i;
+
+describe("§76 A03 — a nearby_now reason claims no proximity to the viewer that nothing measured", () => {
+  it("T6. no location signal claims the viewer's position, alone or in any combination", () => {
+    for (let mask = 1; mask < 1 << ALL.length; mask++) {
+      const fired = ALL.filter((_, i) => mask & (1 << i));
+      const t = nearbyText(fired);
+      assert.ok(t, `${fired.join("+")}: the code keeps a sentence`);
+      assert.doesNotMatch(t!, VIEWER_POSITION, `${fired.join("+")} measured no viewer position, but the reason says: ${t}`);
+    }
+  });
+
+  it("T7. every location signal makes one claim, and that claim is the area", () => {
+    const texts = LOCATION.map((k) => nearbyText([k]));
+    for (const [i, t] of texts.entries()) assert.match(t ?? "", AREA, `${LOCATION[i]}: ${t}`);
+    assert.equal(new Set(texts).size, 1, `one location claim, not four: ${JSON.stringify(texts)}`);
+    for (const k of LOCATION) assert.match(nearbyText([k, "open_now"]) ?? "", AREA, `${k}+open_now keeps the area`);
+  });
+
+  it("T8. the served projection says the area, not 'close to you', on both rankers", () => {
+    const pde: ScoredCandidate<RankCandidate> = {
+      candidate: { id: "way/2", kind: "place" } as RankCandidate, score: 1,
+      features: { cityMatch: 0.45, neighborhoodMatch: 0.2, distance: 0.2 },
+    };
+    const byPde = projectDiscoveryCandidate({ id: "way/2" }, {
+      cacheLevel: "miss", cachedAt: null, rankedBy: "pde", nowMs: 1_800_000_000_000,
+      scoredById: new Map([["way/2", pde]]),
+    });
+    const byCompass = projectDiscoveryCandidate({ id: "db/2" }, {
+      cacheLevel: "compass_fresh_rank", cachedAt: null, rankedBy: "compass", nowMs: 1_800_000_000_000, scoredById: null,
+      provenanceById: new Map([["db/2", {
+        modelVersion: "m", featureVersion: "f", candidateSource: "curated_db" as const,
+        reasons: ["city_match", "distance"], features: { factor_distance: 1 }, scores: { finalScore: 1 }, rankedAt: 1_800_000_000_000,
+      }]]),
+    });
+    for (const [label, c] of [["pde", byPde], ["compass", byCompass]] as const) {
+      const nearby = c.reasons.find((r) => r.code === "nearby_now");
+      assert.ok(nearby, `${label}: the code is still served`);
+      assert.doesNotMatch(nearby!.text, VIEWER_POSITION, `${label} served: ${nearby!.text}`);
+      assert.match(nearby!.text, AREA, `${label} served: ${nearby!.text}`);
+    }
+  });
+
+  it("T9. the served codes are exactly the codes, for every combination of nearby_now signals and others", () => {
+    const OTHERS = ["followedAuthor", "trust", "governor_novelty", "interestTag"];
+    for (let mask = 1; mask < 1 << ALL.length; mask++) {
+      const fired = [...ALL.filter((_, i) => mask & (1 << i)), ...OTHERS.filter((_, i) => mask & (1 << (i % 3)))];
+      assert.deepEqual(explainReasons(fired).map((r) => r.code), reasons.reasonCodesFromSignals(fired), fired.join("+"));
+    }
   });
 });

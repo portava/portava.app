@@ -13444,6 +13444,144 @@ CONSTRUCTED 182 / 188 = **96.8 %**, unchanged. CORRECT 96 / 188 = **51.1 %**, up
 - **census-input-intelligence** watches `lib/canonicalLocations.ts`. Its entry gains a paragraph saying why no verdict there moves. G57 was C and stays C, and the marks now fold on its ground too. G55 is unchanged, because the fold is still NFD, not NFKD.
 - **Nothing else.** No other census's verdict table is edited.
 
+## §76 — A reason says "close to you" only when it measured you, and the client folds as the server does (lane P34): A03 stays W on its flags, the client's centroid lookup takes the server's letter table, and the E2E suite's local load failure is Node 22, not the tree
+
+*Written 2026-09-28 by lane P34 on `disc-p34-reason-fold`, branched from `ed9ab3ca0`. It closes §68.5's "Recorded, not fixed" on A03's served sentence, answers §73.7 item 3 (the client's own letter fold), and explains §68.7's `discoveryClientRouteE2E` load failure. Codes, scores, ranks and order are unchanged; the 2026-08-15 ranker hold (§58.12 question 2, §66.9 question 1) is respected, and P21's golden is byte-identical (76.4). Nothing is merged, deployed or flag-enabled, and no migration is written. `head_commit` is not re-declared. The headline does not move, because no row moves. **One registered test is red on this branch by design:** `clientLetterFoldParity` P3 compares the client's combining-mark strip with the server's. The integrator told this lane to widen the client strip to census §74's marks ahead of lane P35's server change. P3 is red on those 92 marks until P35 lands, and it was not weakened to pass (76.3).*
+
+### 76.1 Row statements
+
+| ID | was | now | evidence |
+|---|---|---|---|
+| A03 | W | **W** | **The served `nearby_now` sentence no longer claims proximity to the viewer, because no signal the reason module sees measured the viewer.** §68 left "Close to you." on every location signal, and §68.5 recorded why that over-claims. PDE's `cityMatch` fires for every candidate, because each candidate's city is set to the viewer's (`artifacts/api-server/src/lib/discoveryPde.ts:593#city:       viewer.city, neighborhood: p.neighborhood ?? null,`). `distance` is measured from the search centre, except for OSM rows on `sortBy=nearest` with `userLat`/`userLng` (`artifacts/api-server/src/routes/discovery.ts:2086#const osmForMerge = sortBy === "nearest" && userCoords`) and for curated rows whenever those are sent (`artifacts/api-server/src/routes/discovery.ts:2065#const distRef = userCoords ?? coords;`). Compass `city_match` also fires for a city the viewer only prefers (`artifacts/api-server/src/compass/CompassRecommendationEngine.ts:181#label: "In a city you prefer"`). PDE's `neighborhoodMatch` compares the neighbourhood of places the viewer has viewed (`artifacts/api-server/src/lib/discoveryPde.ts:503#neighborhood: await loadViewerNeighborhood(sc, placeAffinities, degraded)`). `explainReasons` receives signal keys only, and no key records where a distance was measured from. So a location signal now says "In this area." (`artifacts/api-server/src/lib/discoveryReasonCodes.ts:344#location:        "In this area.",`), and "In this area, and open around now." when `open_now` also fired (`artifacts/api-server/src/lib/discoveryReasonCodes.ts:343#locationAndOpen: "In this area, and open around now.",`). "open" still needs `open_now` (§68). The code is unchanged for every combination (T9, and the golden's G5). T3 and T6–T8 were red at `ed9ab3ca0` (`artifacts/api-server/src/test/discoveryReasonTruth.test.ts:129#it("T6. no location signal claims the viewer's position`). T8 goes through the served projection on a PDE row and a Compass row. **Why still W:** the §31.2 rule, unchanged. The projection is behind `discovery_candidate_projection_enabled` (2361, FALSE) and why-now is behind `discovery_live_rank_enabled` (2850, FALSE), so no deployment serves a `reasons` sentence. **What turns it C:** 2361 and 2850 on with a green rollout record, not code. |
+
+**B01 is not restated.** Its criterion is G57 on the canonical registry's stored `search_key` and the query key that reads it (§73.1). The client fold changed in 76.3 serves `getCityCentroid`, a map-pin lookup that never reads `canonical_locations`. No B01 or DV-20 verdict rests on it, and both stay C as §73 left them.
+
+### 76.2 A03: what each sentence claims now
+
+- **The four sentences** (`nearbyNowText`):
+  - a location signal and `open_now`: "In this area, and open around now.";
+  - a location signal only: "In this area.";
+  - `open_now` only: "Open around now." (unchanged);
+  - timing or capacity only: "You can still make it or join in." (unchanged).
+- **Why "In this area".** Every location signal supports it. The row is in the result set of the area searched or shown, whether the signal measured distance from the search centre, a city equal to the viewer's, a preferred city, or a viewed neighbourhood. It is the app's own wording for a searched area: "We couldn't find any places in this area." (`travel-buddy-standalone/src/components/map/MapCarousel.tsx:815#any places in this area`), and the Map's activity-zone title (`artifacts/api-server/src/lib/mapAggregation.ts:851#in this area`). It interpolates no place name, so the module's fixed-text rule holds. Naming the city (the brief's example) would need a place value this module does not receive, and its header rules interpolation out.
+- **This is owner-overrulable copy, not policy.** §57.10 question 2 is carried forward, not re-asked. The one new phrase is "In this area". §68's "Close to you." and "Close to you and open around now." are no longer served by any path.
+- **What it gives up, stated.** When `distance` really was measured from the viewer, the sentence under-claims: curated rows with `userLat`/`userLng`, or OSM rows on `sortBy=nearest`. An under-claim is not a false claim. Recovering "close to you" there is H-P34-1 (76.6).
+- **The stale comment is fixed.** The safety-precedence comment in `lib/discoveryCandidate.ts` no longer quotes §68's sentence. The change is line-neutral. The logic it describes is unchanged: a demoted row loses `nearby_now`.
+- `explainReasonCode("nearby_now")`, which nothing served calls, now also says "In this area." (`artifacts/api-server/src/lib/discoveryReasonCodes.ts:243#nearby_now:       "In this area.",`), so no path returns the old claim.
+
+### 76.3 The client's fold (§73.7 item 3)
+
+- **What the fold is used for.** `normaliseCityKey` in `travel-buddy-standalone/src/lib/cityCentroids.ts` is used only by `getCityCentroid`. That function's one caller in the app places a Passport memory on the Memories map (`travel-buddy-standalone/src/components/passport/memoryViews.ts:236#getCityCentroid(m.city)`). A memory's city is the free text the traveller types into the memory modal's "City" field (`travel-buddy-standalone/src/components/MemoriesTab.tsx:635#onChangeText={setCity} placeholder="City"`). So the fold matches user text against place names, and the result is user-visible: a pin, or the memory is listed as unplotted. The offline city index (`platform/input-assistance/data/cities.ts`) reads the name tables, not the fold.
+- **The fold was divergent.** It decomposed and stripped marks first, then folded six letters (Ł ł Ø ø Đ đ). A letter with a stroke, bar, hook or tail and no decomposition survived whole. So "ıstanbul", typed on a Turkish keyboard, left the memory unplotted, while the server's search key folds ı.
+- **Now it uses the server's table.** The table is copied verbatim into `travel-buddy-standalone/src/lib/latinLetterFold.ts` (`travel-buddy-standalone/src/lib/latinLetterFold.ts:21#export const LATIN_LETTER_FOLD`). The lookup still decomposes first and then applies the table (`travel-buddy-standalone/src/lib/cityCentroids.ts:619#.replace(LETTER_FOLD_RE, (c) => LATIN_LETTER_FOLD[c] ?? c)`). This matches the server's letters: the only table letter NFD decomposes is İ, to an ASCII I.
+- **The two tables cannot drift.** `artifacts/api-server/src/test/clientLetterFoldParity.test.ts:44#it("P1. the client table is the server table` asserts the same keys, values and order. P2 asserts that the lookup imports the copy and applies it after NFD. The app bundle cannot import from `artifacts/api-server`, so the arrangement is a copy plus this test.
+- **Client tests** (`travel-buddy-standalone/src/lib/__tests__/cityCentroidsLetterFold.test.ts:36#it('C1. letters outside the old six`):
+  - C1: ı, Ħ, Ƀ and ſ reach real city names.
+  - C2: every table entry that folds to a single ASCII letter, 245 of 245, reaches a real key spelled with that letter.
+  - C3: the Memories map plots a memory typed "ıstanbul".
+  - C4: controls. The six old letters and the accents still fold, and an unknown name still resolves to nothing.
+  - C5: the mark rule, below.
+- **The combining-mark strip, on the integrator's instruction (after census §74).**
+  - The lookup used to strip every `\p{M}` mark. It now strips exactly U+0300–U+036F plus every mark carrying the Unicode `Diacritic` property in U+1AB0–U+1AFF, U+1DC0–U+1DFF and U+FE20–U+FE2F (`travel-buddy-standalone/src/lib/latinLetterFold.ts:61#export const COMBINING_MARK_RE =`). Both `normaliseCityKey` and the diacritic-strip tier apply it to the NFD form.
+  - C5 pins the rule exactly, over every mark and `Diacritic` code point (`travel-buddy-standalone/src/lib/__tests__/cityCentroidsLetterFold.test.ts:87#it('C5. the mark strip`). It also checks that a mark from each widened block still reaches Bogotá.
+  - Those three blocks hold **92** such marks under Unicode 17.0 (53, 23 and 16), as counted here with Node's `\p{Diacritic}`. The integrator's note quotes §74's "91". This lane did not find the one-mark difference, and it is recorded here, not resolved.
+  - **P3 compares the two rules by behaviour, importing both** (`artifacts/api-server/src/test/clientLetterFoldParity.test.ts:59#it("P3. the client's mark strip`). The server's strip is inline in `normalizeLocationName` and is not exported. So for every mark or `Diacritic` code point, "a<mark>b" through the server's `searchKey` and through the client's strip must agree on whether the mark goes.
+  - **P3 is RED at this tree, on exactly those 92 marks** ("server keeps, client strips"). Nothing else differs, as checked in the lane's scratch run. It turns green when lane P35's server change strips exactly this set. It turns red on any other set, including every `\p{M}` (2,431 differences). This lane may not edit the server fold, and P3 was not weakened.
+
+### 76.4 Tests seen red, mutations, and the golden (P24)
+
+**Seen red at `ed9ab3ca0`.** The two lib files and `cityCentroids.ts` were stashed, and the client table was moved aside:
+- `discoveryReasonTruth`: T3, T6, T7 and T8 red. T1, T2, T4, T5 and T9 green (T9 is the guard).
+- `clientLetterFoldParity`: red, because the client table does not exist.
+- `cityCentroidsLetterFold`: C1–C3 red, C4 green (the controls).
+
+After restoring: 9/9, 2/2 and 4/4. The mark-rule additions came later, on the integrator's instruction. C5 was red at `dc11314fc` because the client exported no strip, and mutation R2 below shows it red by assertion. P3 has been red since it was written, on the 92 marks, pending P35.
+
+**Mutations, each restored sha256-identical:**
+- **Reason sentence.**
+  - The location sentence set back to "Close to you." turns T3, T6, T7 and T8 red.
+  - The location-only branch returning null turns T1–T4 and T6–T9 red (8 of 9).
+  - `cityMatch` moved to the timing family turns T3, T5 and T7 red.
+  - The combined sentence dropping the area turns T3 and T7 red.
+  - The combined sentence set back to §68's turns T3, T6 and T7 red.
+- **Client fold.**
+  - Dropping ı from the client table turns P1, C1 and C3 red.
+  - Swapping two entries turns P1 red.
+  - Re-valuing Ħ turns P1 and C1 red.
+  - The lookup set back to the six-letter fold turns P2 and C1–C3 red.
+  - Moving the fold before NFD turns P2 red, and only P2. No table letter but İ decomposes, so no lookup outcome changes. P2 is what pins the order.
+- **Client mark rule.**
+  - R1: the old strip, every `\p{M}`, turns C5 red and makes P3 differ on 2,431 code points.
+  - R2: U+0300–U+036F only, which is the server's rule today, turns C5 red and makes P3 green. That shows P3 tracks the server's behaviour rather than a copy.
+  - R3: dropping the U+FE20 block turns C5 red, and P3 differs on 76.
+  - R4: dropping the `Diacritic` filter turns C5 red, and P3 differs on 138.
+
+**Golden.** `artifacts/api-server/src/test/discoveryDerivedProvenanceGolden.test.ts` is byte-identical to `ed9ab3ca0`: sha256 `ad96178b…71c11ba` both before and after, and `git diff` is empty. It passes 6/6 after the last edit, so G5 (the reason code of 33 signal keys) did not move.
+
+### 76.5 `discoveryClientRouteE2E` — environmental, not a defect in the tree
+
+- **The finding.** §68.7 recorded that the suite "fails identically" because `displayIdentity.ts` imports an export `../utils/identity.ts` does not provide. The export exists (`travel-buddy-standalone/src/utils/identity.ts:41#export function truncateDisplayName(`), and the import names it correctly (`travel-buddy-standalone/src/lib/displayIdentity.ts:15#import { truncateDisplayName } from '../utils/identity.ts';`). Nothing in the tree is wrong, and nothing was changed.
+- **The cause is the Node major.** CI pins Node 24 (`.github/workflows/ci.yml:61#NODE_VERSION: '24'`), and this container runs v22.22.2.
+  - `travel-buddy-standalone/package.json` declares no `"type"`, so under the registered `--import tsx/esm` its `.ts` files take the CommonJS path.
+  - On Node 22, that path loads them through `require(esm)` with native type stripping. The chain fails: `ERR_REQUIRE_CYCLE_MODULE` on a direct import, and "does not provide an export named" inside the E2E graph.
+  - The client runner already records the same class and picks its loader by Node major for this reason (`travel-buddy-standalone/scripts/run-node-tests.mjs:191#const loader = nodeMajor >= 24 ? 'tsx/esm' : 'tsx';`).
+- **Measured here:**
+  - The registered command under Node 24.21.0 (the official linux-x64 build, sha256-verified, in the lane's scratch directory): 13/13 pass.
+  - The same command under Node 22.22.2: the file fails to load.
+  - Under Node 22 with `--import tsx` (both hooks): it loads, but X1 and X2 fail, 11/13. That is consistent with the client modules being instantiated twice, once per hook. It is not the registered command, and it is not evidence against the suite.
+- **What §68.7 should have said:** "does not load on Node 22; passes on Node 24, CI's pin".
+
+### 76.6 Hunk for the integrator (NOT applied; outside this lane's files)
+
+- **H-P34-1: "close to you" where it is true** (`routes/discovery.ts`, `lib/discoveryCandidate.ts`, then `lib/discoveryReasonCodes.ts`).
+  - Record per row whether `distanceKm` was measured from `userCoords`. That is curated rows whenever `distRef` is `userCoords`, and OSM rows on the `sortBy=nearest` branch.
+  - Carry that bit on `CandidateServeContext` into `explainReasons`.
+  - Let `nearbyNowText` say "Close to you." only when `distance` fired AND the bit is set. `cityMatch`, `city_match` and `neighborhoodMatch` must never set it.
+  - It needs an owner answer to §57.10 question 2 first, because it is copy.
+
+### 76.7 Checks and runs at this tree
+
+- **api-server.**
+  - `typecheck` exit 0. `typecheck:tests` 863 across 115, the baseline.
+  - `check:test-registration` PASS: 1577 registered, and `clientLetterFoldParity` is appended to the `test` line.
+  - Every non-db unit suite that imports a changed module, directly or transitively (209 files), plus the golden: 4073 tests, 4070 pass, 3 fail.
+    - `discoveryClientRouteE2E` fails for the 76.5 reason, and passes 13/13 on Node 24 after the last code edit.
+    - `mapProjectionLiveDb` and `wallFirstPageLiveDb` are unregistered live-DB suites. They treat the registered line's dummy `SUPABASE_URL` as a target. Run without it, they pass 13/13.
+- **travel-buddy-standalone.**
+  - `typecheck` exit 0, including `lint:imports`. `typecheck:tests` is 173 across 60, the baseline.
+  - The node suites over the lookup and the offline city index: 248/248 (`cityCentroids`, `cityCentroidsLetterFold`, `localDictionary`).
+  - Jest suites over the memory map, the local-tier and offline input tiers, and the map entry camera: 30/30 across 4.
+- **`clientLetterFoldParity`: P1 and P2 pass; P3 fails on the 92 marks (76.3).** The registered `test` line therefore has one failing case on this branch until P35 lands.
+- **Client, after the mark rule.**
+  - `typecheck` exit 0. `typecheck:tests` is 173 across 60.
+  - `cityCentroids` and `cityCentroidsLetterFold` pass 216/216.
+  - `check:all` passes every step (ALL CHECKS PASSED), before and after the mark rule. That covers `test`, `test:component`, `typecheck`, `typecheck:tests` and the lints.
+- **api-server, after the mark rule.** `typecheck` exit 0, and `typecheck:tests` is 863 across 115.
+- **Not run:** the full api-server suite, the harness db suites (no migration here), and the live-target checks.
+
+### 76.8 Owner questions (carried forward, not re-asked)
+
+- §57.10 question 2: `nearby_now`'s copy. This lane chose the literal "In this area". The owner can overrule it, and H-P34-1 is the path back to "close to you" where it is true.
+- §66.9 question 4 (ß æ œ þ ŋ): the client copy inherits the server table's answer, whichever it is. Parity (P1) keeps it that way.
+- §58.12 question 2 and §66.9 question 1: the ranker hold. Nothing here needed an answer, because nothing moved.
+
+### 76.9 Freshness and scope
+
+- **CENSUS_SCOPE for census-discovery gains** the client table, the parity suite and the client fold suite. These are the files 76.3's claims rest on. `discoveryReasonCodes.ts`, `discoveryReasonTruth.test.ts`, `discoveryCandidate.ts` and the golden were already watched.
+- `travel-buddy-standalone/src/lib/cityCentroids.ts` stays declared NOT-GRADED, with its reason restated at the foot. No row grades it. Its fold is pinned by P2 and C1–C4, and those suites are watched.
+- Six other files are cited for a fact, not graded, and are declared NOT-GRADED at the foot: the two sources of the "in this area" wording, the memory map and its modal, `utils/identity.ts` and the offline city index. `displayIdentity.ts`, the client runner and `ci.yml` were already watched or are machinery.
+- Acknowledgements for other censuses that watch a changed file are recorded in the ledger, each argued.
+
+### 76.10 What would turn this red
+
+- A `nearby_now` sentence claiming the viewer's position on any location signal: T3, T6, T8.
+- The four location signals making different claims, or losing the area: T7.
+- The served codes drifting from the codes: T9. Any code change: G5.
+- The client table drifting from the server's in any key, value or order: P1.
+- The lookup not folding with the table, or folding before NFD: P2, and C1–C3.
+- The client mark strip differing from its stated rule: C5. Differing from the server's by behaviour: P3, which is red now on the 92 marks, pending P35.
+- **What would turn A03 C:** 2361 and 2850 on with a green rollout record (§31.2).
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/compass/CompassExplanationEngine.ts — §13.7 item 3 names Compass's HMAC recommendation-token signer as a refactor this lane declined to make in another lane's file. Discovery's recommendation id is minted by lib/discoveryRecommendationId.ts, and no Discovery verdict rests on the signer.
@@ -13474,7 +13612,6 @@ CONSTRUCTED 182 / 188 = **96.8 %**, unchanged. CORRECT 96 / 188 = **51.1 %**, up
 - NOT-GRADED: artifacts/api-server/src/test/wallPerformance.test.ts — §68.7 names it only as a timing case that failed under a parallel run and passes 6/6 alone; it imports nothing §68 changed, census-wall grades it, and no Discovery verdict rests on it.
 
 - NOT-GRADED: artifacts/api-server/src/services/media/MediaActionResolver.ts — §74.4 #2 cites its schema-probe comment only for the fact that migration 2910's `trails` table is on `portava-ci` and not in production; no DV-20 or B01 verdict rests on it, and census-media grades the resolver.
-- NOT-GRADED: travel-buddy-standalone/src/lib/cityCentroids.ts — §73.7 #3 names its six-letter stroke table as the client's own fold, which is separate from the stored key; it serves the client's centroid lookup, and no DV-20 or B01 verdict rests on it.
 
 - NOT-GRADED: artifacts/api-server/src/services/airport/LayoverFeasibility.ts — §65.2 cites the `entry` option's documented default ("Omitted = unresolved") as the fact that made an omitted input a silent `entry_unverified`; §65 changed nothing in the engine, census-layover grades it, and no §65 verdict rests on it beyond that sentence.
 - NOT-GRADED: artifacts/api-server/src/services/airport/__tests__/layoverCompassEntryBoundary.test.ts — §65.5 cites its positive control as the case that went red when this lane first overrode every model answer under a certified `no`, which is why that override was withdrawn; census-layover grades the Compass boundary, and no §65 verdict rests on it.
@@ -13482,3 +13619,11 @@ CONSTRUCTED 182 / 188 = **96.8 %**, unchanged. CORRECT 96 / 188 = **51.1 %**, up
 
 - NOT-GRADED: artifacts/api-server/src/test/memoryKernelTransactionLive.test.ts — §75.6 names it only as one of three suites that fail identically with and without §75's changes (the CI Supabase guard refuses it without live credentials); no Discovery verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/wallSessionIntentLiveDb.test.ts — §75.6 names it only as one of three suites that fail identically with and without §75's changes (the CI Supabase guard refuses it without live credentials); census-wall grades it, and no Discovery verdict rests on it.
+
+- NOT-GRADED: travel-buddy-standalone/src/lib/cityCentroids.ts — §73.7 #3 named its six-letter stroke table as the client's own fold; §76.3 replaced that table with the server's copy. It serves the client's centroid lookup for the Memories map, not the stored key, so no DV-20 or B01 verdict rests on it; its fold is pinned by clientLetterFoldParity P2 and cityCentroidsLetterFold C1–C4, which are watched.
+- NOT-GRADED: travel-buddy-standalone/src/components/map/MapCarousel.tsx — §76.2 quotes its empty state ("places in this area") as the app's existing wording for a searched area; no verdict rests on the carousel.
+- NOT-GRADED: artifacts/api-server/src/lib/mapAggregation.ts — §76.2 quotes its activity-zone title ("in this area") as existing wording for the new nearby_now sentence; census-map grades the aggregation, and no Discovery verdict rests on it.
+- NOT-GRADED: travel-buddy-standalone/src/components/passport/memoryViews.ts — §76.3 names it as getCityCentroid's one app caller, to show the client fold is on a user-visible path; no Discovery row grades the Memories map.
+- NOT-GRADED: travel-buddy-standalone/src/components/MemoriesTab.tsx — §76.3 cites the memory modal's free-text City field, to show the fold matches user-typed text; no Discovery row grades the modal.
+- NOT-GRADED: travel-buddy-standalone/src/utils/identity.ts — §76.5 cites the export §68.7 said was missing, to show the E2E suite's local load failure is Node 22's and not the tree's; no Discovery verdict rests on the identity helpers.
+- NOT-GRADED: travel-buddy-standalone/src/platform/input-assistance/data/cities.ts — §76.3 names it only to say it reads the centroid name tables and not the fold; census-input-intelligence grades it.
