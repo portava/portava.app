@@ -122,8 +122,8 @@ describe("season_match — reported, never re-scored", () => {
     assert.equal(keys.indexOf("city_season"), keys.indexOf("city_rhythm") + 1);
   });
 
-  it("S5 the code is emittable, has fixed plain language, and trip_match is the one code left without a producer", () => {
-    assert.deepEqual([...REASON_CODES_WITHOUT_PRODUCER], ["trip_match"]);
+  it("S5 the code is emittable, has fixed plain language, and no code is left without a producer (trip_match left in census-discovery §78)", () => {
+    assert.deepEqual([...REASON_CODES_WITHOUT_PRODUCER], []);  // restated by census-discovery §78 (D-W10-R2-6): portavaRank `tripMatch` grounds trip_match — pinned in discoveryRankTrip.test.ts T5
     const text = explainReasonCode("season_match")!;
     assert.match(text, /^[A-Z].*[.!]$/);
     assert.ok(!/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|beach|month \d)/i.test(text), "fixed text — names no month or category");

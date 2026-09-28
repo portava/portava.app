@@ -13692,6 +13692,146 @@ Run at this tree, after the last edit to each file:
 
 With DC-27 moving X → W, `check:census-integrity` counts the rows as follows:
 
+## §78 — Scoring designs (lane W10-R2): six held designs built behind six flags seeded FALSE, A18 moves N → W, and the flag-off ranker is pinned bit-identical
+
+*Written 2026-09-28 by lane W10-R2 (ranking: scoring designs) on `disc-w10-r2-scoring`, branched from `debd5ad4f`, under the owner's 2026-09-28 authorisation (ranker hold lifted for building behind FALSE flags; docs/architecture/discovery-decision-register.md, section "W10-R2 — scoring"). The code is commit `3c5cd5c1c`. Nothing here is merged to `main`, applied to `portava-ci` or production, deployed or flag-enabled. All evidence below is CONTROLLED (unit fixtures and the local PostgreSQL 16 harness); none of it is production evidence and none of it claims real-world effectiveness.*
+
+### 78.1 What was built
+
+Every design is an OPTIONAL input to `lib/portavaRank.ts`. Absent, the function it feeds returns its input untouched, so a caller that sets none of them gets the pre-§78 bytes. The inputs are assembled only by `lib/discoveryRankDesigns.ts`, behind six flags read fail-closed through the shared `getFlagRow` (`artifacts/api-server/src/lib/discoveryRankFlags.ts:78#export async function loadRankDesignFlags(`).
+
+- **Eight in-place lines in portavaRank, none moved.** Each keeps its original text as a prefix: the design terms join the score before it is summed (`artifacts/api-server/src/lib/portavaRank.ts:392#); applyDesignTerms(f, c, ctx, nowMs);`), the objective re-weights the scored rows (`artifacts/api-server/src/lib/portavaRank.ts:539#const scored = rescoreForObjective(`), the history axis enters the greedy value (`artifacts/api-server/src/lib/portavaRank.ts:456#const val = c.score - penalty - historyRepetitionPenalty(`), and the Trail axis enters the repetition penalty (`artifacts/api-server/src/lib/portavaRank.ts:629#penalty += trailRepetitionPenalty(`). Everything else is appended after the old last line.
+- **DV-09 / DC-13 — families and surface objectives.** `06` §3's eleven families as a map from every scored key (`artifacts/api-server/src/lib/discoveryRankObjectives.ts:98#export const FEATURE_FAMILY`) and `01` §9's five surfaces as family multipliers (`artifacts/api-server/src/lib/discoveryRankObjectives.ts:179#export const SURFACE_OBJECTIVES`), applied in delta form so a multiplier of 1 changes no bit and the owner caps are re-applied (`artifacts/api-server/src/lib/portavaRank.ts:1035#export function rescoreForObjective`). Flag 3450; per-surface owner overrides in its metadata.
+- **DC-13 — the two termless families.** `negative_feedback`: the viewer's own "Not interested" dismissals counted per category over the candidate set, −0.4 at three; `exploration_value`: +0.1 × unseen × outside learned taste × low exposure (`artifacts/api-server/src/lib/portavaRank.ts:975#function applyDesignTerms(`). DRS's discovery-surface input `viewerHasHiddenItem` is read from the same dismissals instead of the constant false (`artifacts/api-server/src/services/ranking/DiscoveryRankingService.ts:1079#for (const input of await withDiscoveryNegativeFeedback(`, body at `artifacts/api-server/src/services/ranking/DiscoveryRankingService.ts:1567#export async function withDiscoveryNegativeFeedback(`). Flag 3452.
+- **DV-12 — the `03` §12 detector.** Farm (open `gaming_suspected` review), automation, pod, reciprocal, self-network and new-account saves are found per save (`artifacts/api-server/src/lib/discoveryRankIntegrity.ts:110#export function detectEngagementAbuse(`); the count excludes the discounted weight, the remainder is scaled by the clean share, and an unauthored row stops paying the 0.6 unknown-author proxy (`artifacts/api-server/src/lib/portavaRank.ts:1008#function unknownAuthorTrustFactor(`). Authored rows carry the submitter's trust through the Trust seam. Flag 3451.
+- **A18 — explicit intent.** The request's mode, else the viewer's own active EXPLICIT §8 window (`artifacts/api-server/src/lib/discoveryRankIntent.ts:121#export async function loadViewerIntent(`), each mode resolved from its own `INTENT_MODE_PROFILES` weights (`artifacts/api-server/src/lib/discoveryRankIntent.ts:66#export function resolveIntentMode(`), scored at `artifacts/api-server/src/lib/portavaRank.ts:879#export const INTENT_TERM_WEIGHT = 0.75;` — above interestTag 0.3 + categoryAffinity 0.4 stacked. Flag 3453 (`discovery_intent_term_enabled`).
+- **DV-18 — `trip_match`.** The viewer's accepted trips through the Map's trip reader, fit = timing × city-scale proximity (`artifacts/api-server/src/lib/discoveryRankTrip.ts:82#export function tripFitMap(`), scored at `artifacts/api-server/src/lib/portavaRank.ts:888#export const TRIP_MATCH_WEIGHT = 0.3;`, mapped to the code with fixed text (`artifacts/api-server/src/lib/discoveryReasonCodes.ts:114#producer since census-discovery §78`). Flag 3453 (`discovery_trip_match_enabled`).
+- **DV-54 — the remaining axes.** Magnitudes read from the flag row, never a code constant (`artifacts/api-server/src/lib/discoveryRankDiversity.ts:55#export function parseDiversityMagnitudes(`), seeded at `artifacts/api-server/src/migrations/3454_discovery_diversity_axes_flag.sql:46#placePenalty`; the Trail key from non-archived `primary`/`supporting` membership (`artifacts/api-server/src/lib/discoveryRankDiversity.ts:88#export async function loadTrailKeys(`); the history key from this viewer's own discovery serves over seven days (`artifacts/api-server/src/lib/discoveryRankDiversity.ts:127#export async function loadServeHistory(`). Flag 3454.
+- **The hook.** `artifacts/api-server/src/lib/discoveryRankDesigns.ts:116#export async function loadRankDesigns(` and `artifacts/api-server/src/lib/discoveryRankDesigns.ts:180#export function applyRankDesigns<`. With every flag off it performs the six cached flag reads and returns the same three objects. It is NOT yet called by `lib/discoveryPde.ts`: that file is another lane's, so the call is hunk H1 (78.9).
+
+### 78.2 Row statements
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| A18 | N | **W** | **Built, and not on any served path.** An explicit-intent term now sits INSIDE the ranker's score rather than in a layer bounded over it: `artifacts/api-server/src/lib/portavaRank.ts:879#export const INTENT_TERM_WEIGHT = 0.75;`, above the 0.7 that interestTag and categoryAffinity can stack to. A full intent fit outranks a full generic-interest match, and without the intent the generic match wins (`artifacts/api-server/src/test/discoveryRankIntent.test.ts:52#I2 a full intent fit outranks a full generic-interest match`). The supply the row names is read: the viewer's own active explicit §8 window, when the request names no mode (`artifacts/api-server/src/test/discoveryRankIntent.test.ts:77#I3 the request's mode wins`); plan-derived and expired windows are not intent (`artifacts/api-server/src/test/discoveryRankIntent.test.ts:95#I4 plan-derived and expired windows`). The eight profiles are consumed weight for weight (`artifacts/api-server/src/test/discoveryRankIntent.test.ts:42#I1 all eight modes resolve from INTENT_MODE_PROFILES`). IMPLEMENTATION-COMPLETE; awaits: hunks 78.9 H1 (lib/discoveryPde.ts) and H2 (routes/discovery.ts) applied by their owning lanes + 3453 applied + flag `discovery_intent_term_enabled` TRUE in production (register D-W10-R2-A1) + one production served row whose features carry `intentMatch`. Compass's half of the sentence is `explicitIntentBoost`, unchanged. |
+| DV-09 | W | **W** | **Five objectives exist and order one set five ways; two surfaces can consume them, three cannot yet.** Each of `01` §9's surfaces is a family weighting (`artifacts/api-server/src/lib/discoveryRankObjectives.ts:179#export const SURFACE_OBJECTIVES`), and one candidate set is ordered five different ways, each order the hand-worked arithmetic of its surface's weights (`artifacts/api-server/src/test/discoveryRankObjectives.test.ts:134#O1 one candidate set, five orders`); Trail's freshness is per content type (`artifacts/api-server/src/test/discoveryRankObjectives.test.ts:161#O3 Trail weighs freshness by content type`) and the owner caps hold under every objective (`artifacts/api-server/src/test/discoveryRankObjectives.test.ts:152#O2 the owner-ruled caps hold`). **Why not IMPLEMENTATION-COMPLETE:** Discovery (hunk H1) and Pulse (hunk H3, routes/pulse.ts already ranks with portavaRank) can adopt their objective with one call each, but Trail modules sort on single signals, Trending is the trend classifier, and Trip Planning has no ranked surface — none of the three calls portavaRank, so there is nothing to spread an objective into (78.4). Behind flag 3450, FALSE. |
+| DV-12 | W | **W** | **Abusive engagement is detected and no longer rewarded; the trust factor is no longer a constant.** The `03` §12 patterns a save row can show are each detected on controlled data (`artifacts/api-server/src/test/discoveryRankIntegrity.test.ts:45#E1 each pattern`); a place whose 60 saves are farmed ranks below a clean place with 12, where without the detector the farm wins (`artifacts/api-server/src/test/discoveryRankIntegrity.test.ts:101#E3 a farmed save does not raise a row`). The 0.6 is replaced by the measurement on unauthored rows and kept for authored rows whose submitter's trust is unknown, so engagement integrity and author trust stay separate factors (`artifacts/api-server/src/test/discoveryRankIntegrity.test.ts:116#E4 the trust factor discriminates`); unmeasured rows are bit-identical (`artifacts/api-server/src/test/discoveryRankIntegrity.test.ts:130#E5 unmeasured`). IMPLEMENTATION-COMPLETE; awaits: hunk 78.9 H1 applied + 3451 applied + flag `discovery_engagement_integrity_enabled` TRUE in production after the data-use confirmation in D-W10-R2-A1 step 4 + one production ranked request whose decorations were measured (not degraded). |
+| DV-18 | W | **W** | **Nine of nine codes now have a producer; the ninth is the viewer's own trip.** `tripMatch` → `trip_match` with fixed text naming no destination or date, and `REASON_CODES_WITHOUT_PRODUCER` is empty (`artifacts/api-server/src/test/discoveryRankTrip.test.ts:99#every one of the nine codes now has a producer`). The producer reads only trips the viewer is an accepted member of (`artifacts/api-server/src/test/discoveryRankTrip.test.ts:66#T3 the loader reads only the viewer's accepted trips`) and moves a row (`artifacts/api-server/src/test/discoveryRankTrip.test.ts:109#T6 the term moves a row`). `trail_affinity` and `season_match` were already grounded (§69.3). IMPLEMENTATION-COMPLETE; awaits: hunk 78.9 H1 applied + 3453 applied + flag `discovery_trip_match_enabled` TRUE in production + flag 2361 TRUE for the labels (E-1) + one production served row whose reasons include `trip_match`. |
+| DC-13 | W | **W** | **Eleven families, each with its term; negative feedback is real.** Every key portavaRank writes has exactly one family and every family has a term (`artifacts/api-server/src/test/discoveryRankObjectives.test.ts:53#F1 every key portavaRank writes has exactly one family`, `artifacts/api-server/src/test/discoveryRankObjectives.test.ts:61#F2 every one of the eleven families`); `trail_relevance` and `negative_feedback` are scored terms (`artifacts/api-server/src/test/discoveryRankObjectives.test.ts:69#F3 trail_relevance and negative_feedback are scored terms`). DRS's hidden-item input on the discovery surface is the viewer's own dismissals, not a constant (`artifacts/api-server/src/test/discoveryRankDesigns.test.ts:174#N1 flag on: a dismissed item is hidden`). No Discovery module imports rankingConfig (`artifacts/api-server/src/test/discoveryRankObjectives.test.ts:208#S1 no lib/discovery*.ts`). `viewerHasReportedItem` stays false: no store records a viewer's report of a Discovery place under the id DRS ranks (78.4). IMPLEMENTATION-COMPLETE; awaits: hunk 78.9 H1 applied + 3452 applied + flag `discovery_feature_families_enabled` TRUE in production + one production ranked request whose features carry `negativeFeedback`. |
+| DV-54 | W | **W** | **Six of six axes enforced in code; none on a served path.** creator and content type as before; place, geography, Trail and repeated-recommendation history each bite only when their magnitude is set and each flips a controlled order (`artifacts/api-server/src/test/discoveryRankDiversity.test.ts:57#D2 each axis bites only when set`); history never touches an unserved place and stops at its cap (`artifacts/api-server/src/test/discoveryRankDiversity.test.ts:74#D3 history never touches an unserved place`); the Trail key is membership of a non-archived Trail (`artifacts/api-server/src/test/discoveryRankDiversity.test.ts:84#D4 Trail keys`). The magnitudes live in the flag row (`artifacts/api-server/src/migrations/3454_discovery_diversity_axes_flag.sql:46#placePenalty`). §69.3's two remaining gaps outside the PDE path are unchanged: the Compass `for_you` path, anonymous serves and legacy-mode Cache A hits are not ranked by portavaRank. IMPLEMENTATION-COMPLETE; awaits: hunk 78.9 H1 applied + 3454 applied + flag `discovery_diversity_axes_enabled` TRUE in production + DC-24's consolidation of `for_you` onto `rankForViewer` (design 6) for the Compass path + one production ranked request carrying `trailIds` or `servedCount`. |
+
+### 78.3 Classification (§69.2, restated for these six rows)
+
+| row | verdict | class | first blocker | all blockers | what turns it C | owner item |
+|---|---|---|---|---|---|---|
+| A18 | `W` | DEPLOY | hunk H1/H2 unapplied (other lanes' files) | H1, H2; 3453; the flag | a served row scored with `intentMatch` | D-W10-R2-A1 |
+| DV-09 | `W` | CODE | Trail, Trip Planning, Trending have no portavaRank call | those three consumers; H1, H3; 3450; the flag | five surfaces ranked on their objectives in a deployment | D-W10-R2-A1 |
+| DV-12 | `W` | DEPLOY | H1 unapplied | H1; 3451; the flag; A1 step 4 | measured decorations on a served request | D-W10-R2-A1 |
+| DV-18 | `W` | DEPLOY | H1 unapplied | H1; 3453; the flag; 2361 | `trip_match` on a served row | D-W10-R2-A1, E-1 |
+| DC-13 | `W` | DEPLOY | H1 unapplied | H1; 3452; the flag | `negativeFeedback` on a served request | D-W10-R2-A1 |
+| DV-54 | `W` | DEPLOY | H1 unapplied | H1; 3454; the flag; DC-24 for the Compass path | six axes on every ranked serve path | D-W10-R2-A1, A-6 (design 6) |
+
+### 78.4 What is not built, stated rather than implied
+
+- **DV-09's other three consumers.** Trail modules (services/trails) order by newest, confidence or momentum alone; Trending (lib/discoveryTrendState, routes/discoveryTrending) classifies and lists; Trip Planning has no ranked Discovery surface. `surfaceObjectiveOptions(sc, surface)` (`artifacts/api-server/src/lib/discoveryRankDesigns.ts:202#export async function surfaceObjectiveOptions(`) is ready for each the day it ranks with portavaRank. Those lanes own the change.
+- **`viewerHasReportedItem`** stays constant false on the discovery surface (D-W10-R2-3).
+- **Itinerary fit.** `trip_match` sees trips, not plan items: Trips publishes no plan-item projection (E-7).
+- **Creator-level negative feedback.** Discovery candidates carry no author, so dismissals cannot be attributed to a creator here.
+
+### 78.5 Decisions (register section "W10-R2 — scoring")
+
+D-W10-R2-1 surface objectives as family multipliers · D-W10-R2-2 the save-evidence detector and the end of the 0.6 proxy · D-W10-R2-3 category-level negative feedback and the exploration term · D-W10-R2-4 the feature → family map · D-W10-R2-5 intent sources, precedence and weight · D-W10-R2-6 `trip_match` from the viewer's own trips · D-W10-R2-7 the four diversity magnitudes · D-W10-R2-8 the hook shape · D-W10-R2-9 six flags in five files · **D-W10-R2-A1 APPROVAL REQUIRED**: production activation (hunks, 3450–3454, the six flags in a stated order, and a data-use confirmation before the integrity flag).
+
+### 78.6 Tests, and every one seen red
+
+New suites, all on the `test` line: `portavaRankDesignGolden` (4), `discoveryRankObjectives` (11), `discoveryRankIntent` (8), `discoveryRankTrip` (6), `discoveryRankIntegrity` (8), `discoveryRankDiversity` (6), `discoveryRankDesigns` (9); DB suite `db/discoveryRankDesignFlags.db.test.ts` (4), registered beside the other DB suites.
+
+**Byte-identity.** The golden `artifacts/api-server/src/test/fixtures/portavaRankGolden.json` was captured at `debd5ad4f` BEFORE any edit: forty portavaRank scenarios (four viewers × seven option sets, plus direct scoring, diversify and exploration; every kernel fires somewhere) hashed by sha256 over order, score and full feature record, and DRS on the discovery surface in both modes. `artifacts/api-server/src/test/portavaRankDesignGolden.test.ts:47#G1 every portavaRank scenario hashes exactly as captured` and `artifacts/api-server/src/test/portavaRankDesignGolden.test.ts:55#G2 DRS on` (flag absent and FALSE) and `artifacts/api-server/src/test/portavaRankDesignGolden.test.ts:61#G3 the pipeline hook with every flag off` (same objects, same bytes, six flag reads and nothing else) pass; `artifacts/api-server/src/test/portavaRankDesignGolden.test.ts:88#G4 not vacuous` proves each of the eight inputs moves the hash, so the golden is not vacuous. G4 caught a real defect before commit: the Trail clause had been appended inside the geography line's `//` comment.
+
+**Failing-first.** Every new suite was run against the three pre-§78 source files restored from `debd5ad4f` (file copies, not the stash), then the current files restored and sha256-verified: G4 red (1); objectives, intent, trip and designs red on their missing exports; integrity E4 red (the 0.6 constant); diversity D2 and D3 red (no Trail or history axis). T5 and I7 were separately seen red against the unedited reason-code map before its edit. G1–G3 are green at `debd5ad4f` by construction: they pin the old behaviour.
+
+**Mutations** (each applied alone, suites run, file restored and sha256-verified):
+
+| # | mutation | red |
+|---|---|---|
+| M1 | the design-terms hook removed | intent 1, trip 1, objectives 3, golden 1 |
+| M2 | evidence factor removed from social proof | integrity 1 |
+| M3 | unknown-author factor back to 0.6 | integrity 1 |
+| M4 | history penalty removed from the greedy value | diversity 2 |
+| M5 | Trail clause removed | diversity 1 |
+| M6 | objective re-weighting removed | objectives 2 |
+| M7 | objective diversity ignored | objectives 1 (after O4 was tightened; first run survived) |
+| M8 | design penalties not resolved | diversity 2 |
+| M9 | DRS negative-feedback hook removed | designs 1 |
+| M10 | `tripMatch` unmapped | trip 1 |
+| M11 | farm detection removed | integrity 3 |
+| M12 | closed trips counted | trip 1 |
+| M13 | inert hook copies its inputs | golden 1 |
+| M14 | any flag row read as ON | designs 1, golden 2 (the first form, `!== false`, was an equivalent mutant through getFlagRow's Boolean coercion) |
+| M15 | plan-derived windows counted as explicit | intent 1 |
+| M16 | objective caps removed | objectives 1 |
+
+**Existing tests restated, by recorded decision.** `discoverySeasonReason.test.ts` S5, `discoveryCandidate.test.ts` I4 and `discoveryTrailModifier.test.ts` WIRING 1 pinned `REASON_CODES_WITHOUT_PRODUCER` = `["trip_match"]`; they now pin `[]` (D-W10-R2-6). `discoveryFreeTimeDuplicate.test.ts` G1 pinned `lib/discoveryPde.ts` as the only module that touches a `ViewerContext`; it now names `lib/discoveryRankDesigns.ts` too and ADDS an assertion that the hook carries no free-time field. No assertion was removed.
+
+### 78.7 Checks run at this tree
+
+- `typecheck` passes. `typecheck:tests`: 863 across 115 files after fixing one new error in this lane's own suite (at baseline; never raised).
+- `check:test-registration`, `check:migration-prefixes`, `check:schema-references`, `check:writerless-reads`, `check:enum-literals`, `check:production-drift`, `check:flag-polarity`, `check:trust-table-ownership` pass. No new table, so no KNOWN_PRODUCTION_GAPS entry.
+- Every existing test file that imports a changed file (93 files, 1,462 tests): all pass except `discoveryClientRouteE2E.test.ts`, which fails at import on `travel-buddy-standalone/src/lib/displayIdentity.ts` exactly as §68.7 recorded; unrelated.
+- **Hunk rehearsal.** H1–H3 (78.9) were applied to this tree, `typecheck` passed, a scratch suite drove `rankForViewer` with every flag off (no design key, no `rankDesigns` stage) and every flag on (all four terms in the scored features, `stages.rankDesigns` present), and the 64 suites that import `discoveryPde`, `routes/discovery` or `routes/pulse` ran 1,069/1,070 (the same E2E import failure). The three files were then restored from copies and sha256-verified identical; they are not in this lane's commit.
+- **Harness.** `up.sh` on port 55450 (data under /var/tmp) replayed the chain: 360 applied in order, 12 known-unreplayable, 3450–3454 applied with their postconditions. `run-tests.sh`: see 78.10.
+- `check:write-path-columns` needs live credentials and was not run; this lane adds no write path (every §78 read is a SELECT; the migrations insert flag rows only).
+- The census checks were run after the last edit; results in the lane report.
+
+**Not run:** the full api-server suite, any read of production or `portava-ci`, and the client (no client file changed).
+
+### 78.8 What would turn this red
+
+- **Any flag-off byte moving.** G1–G3 go red on the first changed score, feature or order.
+- **A design term that stops biting.** Each M-row above names the test that goes red.
+- **The hook applied without its flag gate,** or a flag read failing open: G3 or N3.
+- **A reason leaking.** `intentMatch`, `negativeFeedback`, `trust` or an abuse pattern mapped to a code: I7, E8.
+- **A18, DV-12, DV-18, DC-13 or DV-54 moving to C** needs production evidence, not a test: the hunks applied, 3450–3454 applied, the flag on, and the served rows named in each statement.
+
+### 78.9 Hunks for the integrator (other lanes' files; line-neutral)
+
+**H1 — `artifacts/api-server/src/lib/discoveryPde.ts`** (four lines replaced in place in `rankForViewer`, one block appended):
+
+```
+-  const prT0 = Date.now();
++  const designs = await loadRankDesigns(sc, { viewerId: viewer.userId, city: viewer.city, places, nowMs, intentMode: opts.intentMode }); const prT0 = Date.now();   // census-discovery §78 H1: flags off ⇒ six cached flag reads, nothing else
+-  const scored = modifiers.enabled
+-    ? rankCandidates(candidates, viewerContext, { exploration: false })
+-    : rankCandidates(candidates, viewerContext);
++  const d = applyRankDesigns(candidates, viewerContext, modifiers.enabled ? { exploration: false } : {}, designs);   // §78: inactive ⇒ the same three objects
++  const scored = rankCandidates(d.candidates, d.ctx, d.opts);   // ≡ the two calls this replaced: {} is rankCandidates' own default
++  if (designs.active) stages.rankDesigns = { degraded: designs.degraded };   // §78: provenance only, absent with every flag off
+ // appended at the end of the file:
++import { loadRankDesigns, applyRankDesigns } from "./discoveryRankDesigns.js";
++export interface PdeRankOptions { intentMode?: unknown; }
++export interface PdeStages { rankDesigns?: { degraded: string[] }; }
+```
+
+**H2 — `artifacts/api-server/src/routes/discovery.ts`**: add `intentMode: req.query.intentMode` to the options of the three `rankForViewer(` calls (served cache-hit, shadow, served cold). No cache key changes: PDE ranks per request and Cache A holds user-independent candidates.
+
+**H3 — `artifacts/api-server/src/routes/pulse.ts`**: in Pulse's `rankCandidates(` options, `{ publisherBoost: publisherBoostEnabled, ...(await surfaceObjectiveOptions(sc, "pulse")) }`, and `import { surfaceObjectiveOptions } from "../lib/discoveryRankDesigns.js";` appended at the file end. Flag off ⇒ the options are key for key what they were.
+
+### 78.10 Harness results
+
+`up.sh` (port 55450, data under /var/tmp) replayed the chain from 2093: 360 files applied in order, 12 known-unreplayable skipped, 2 applied on retry; 3450–3454 applied with their postconditions, and the six flags read back FALSE with the seeded metadata.
+
+`scripts/local-db/run-tests.sh` (all 55 DB suites, `--test-concurrency=1`): **374 pass, 5 fail, 3 cancelled, 0 skipped of 382.** This lane's suite passes 4/4 (`artifacts/api-server/src/test/db/discoveryRankDesignFlags.db.test.ts:52#R1 the six flags exist`, R2 idempotent, R3 refuses a flag that reads TRUE, R4 rollback deletes while FALSE, refuses while TRUE, and re-apply restores the seed exactly). The failures are in `discoveryVerifyPhase03`, `trailsMemberVisibility`, `trailsProposalRace`, `trailsService` and `tripCloseoutOutcomes`, and every one reports `canceling statement due to statement timeout` or `fetch failed`: the machine's load average was 60–107 on 4 cores while other lanes type-checked. None of those suites reads a `feature_flags` row or imports a §78 module. Rerun alone, `discoveryVerifyPhase03` and `tripCloseoutOutcomes` pass; rerun a second time, `trailsProposalRace` passes and two cases still fail, `trailsMemberVisibility` TV6 and `trailsService` H4, each on `fetch failed` from the suite's local PostgREST bridge after statement timeouts. This lane does NOT claim they pass here; it claims only that their failures are timeouts under load in suites that touch nothing §78 changed. The integrator's harness run is the evidence that settles it.
+
+### 78.11 Freshness and scope
+
+- **CENSUS_SCOPE** (census-discovery) gains the seven `lib/discoveryRank*.ts` modules, 3450–3454 and their rollbacks, the eight new suites, the golden and its helper, and `discoveryTrailModifier.test.ts` (restated, not yet watched). `lib/mapProjectionTripRead.ts`, on which DV-18's producer rests, and the other three restated suites were already watched.
+- **census-discovery's acknowledgement** names every counted file this lane changed. Six were already watched (portavaRank, DRS, the reason-code map, and the candidate, season and free-time suites); the argument is in the ledger entry: the flag-off bytes are pinned by a golden captured before the edit, and the verdicts that move are the ones 78.2 states.
+- **Other censuses** watching a changed file get a per-file acknowledgement where `check:census-freshness` asked for one (lane report).
+
+### 78.12 Headline, restated from the rows
+
+One row changes bucket: A18, NOT-BUILT → BUILT-BUT-WRONG (built behind a FALSE flag and not on any served path, the bucket the header already uses for A03 and A25). The five W → W rows stay in their bucket. `CENSUS_INTEGRITY_DUMP=ALL pnpm run check:census-integrity` at this tree counts:
+
 | bucket | count |
 |---|---|
 | BUILT-AND-CORRECT | **94** |
@@ -13707,6 +13847,26 @@ CONSTRUCTED 183 / 188 = **97.3 %**, up from 96.8 %. CORRECT 94 / 188 = **50.0 %*
 - **A new migration landing after `debd5ad4f`.** It joins the set as "whatever lands after", with its own §3 row and a re-run.
 - **`portava-ci`'s dry run printing anything but the 40** (or the 40 plus the new files), a `REFUSED` line, or a `Ledger rows with no file on disk` line.
 - **The PR's `schema drift` run staying red after the apply** on anything other than F1's finding. DC-26 would then stay W on a real gap.
+
+| NOT-BUILT | **4** |
+| CANNOT-VERIFY | **1** |
+
+- CONSTRUCTED 183 / 188 = **97.3 %**. CORRECT 94 / 188 = **50.0 %**. The four buckets sum to 188; the denominator is unchanged.
+- CONSTRUCTED rises by one row and CORRECT does not move: building behind a FALSE flag is construction, not correctness.
+
+## §90 — Integration log, wave 10 (integrator): the headline as the merged rows count it
+
+Several lanes restated the headline against their own base commits: §78.12 said 94 / 89 / 4 / 1, and §83.7 said 94 / 89 / 5 / 0. Those bases predate the merge of §77, which moved DV-20 and B01 to C. The merged tree's rows are the only headline that counts. This section restates it after each integration step, measured with `CENSUS_INTEGRITY_DUMP=ALL pnpm run check:census-integrity`.
+
+| after merging | C | W | N | X | CORRECT | CONSTRUCTED |
+|---|---:|---:|---:|---:|---:|---:|
+| §77 + §76 (`a658174a4`) | 96 | 86 | 5 | 1 | 51.1 % | 96.8 % |
+| §83, where DC-27 moves X → W (`37c0bc9c7`) | 96 | 87 | 5 | 0 | 51.1 % | 97.3 % |
+| §78, where A18 moves N → W (this merge) | **96** | **88** | **4** | **0** | **51.1 %** | **97.9 %** |
+
+**What the headline does not say.** Every C above is implementation-level evidence on this branch: controlled tests and the local PostgreSQL 16 harness. Nothing is merged to `main`, applied to `portava-ci` or production, deployed or flag-enabled. At this merge, 8 row statements carry `IMPLEMENTATION-COMPLETE; awaits:`. Those rows need only production activation or production evidence. They are counted W, as §31.2 requires.
+
+**§78's hooks H1–H3 are not yet integrated.** `lib/discoveryPde.ts` (H1), `routes/discovery.ts` (H2) and `routes/pulse.ts` (H3) belong to lanes W10-R3 and W10-R4, which are still running. The integrator applies H1–H3 after those lanes land. Until then, §78's designs are reachable only through `applyRankDesigns` in tests, as §78.9 says.
 
 ## Cited, not graded (check:census-scope-coverage)
 
@@ -13753,3 +13913,5 @@ CONSTRUCTED 183 / 188 = **97.3 %**, up from 96.8 %. CORRECT 94 / 188 = **50.0 %*
 - NOT-GRADED: travel-buddy-standalone/src/components/MemoriesTab.tsx — §76.3 cites the memory modal's free-text City field, to show the fold matches user-typed text; no Discovery row grades the modal.
 - NOT-GRADED: travel-buddy-standalone/src/utils/identity.ts — §76.5 cites the export §68.7 said was missing, to show the E2E suite's local load failure is Node 22's and not the tree's; no Discovery verdict rests on the identity helpers.
 - NOT-GRADED: travel-buddy-standalone/src/platform/input-assistance/data/cities.ts — §76.3 names it only to say it reads the centroid name tables and not the fold; census-input-intelligence grades it.
+
+- NOT-GRADED: artifacts/api-server/src/routes/pulse.ts — §78.9 H3 gives the one-line spread that lets Pulse rank on its own `01` §9 objective; the hunk is for the integrator, and no §78 verdict rests on the route as it stands.

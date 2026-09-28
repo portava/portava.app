@@ -111,7 +111,7 @@ export type DiscoveryReasonCode = (typeof DISCOVERY_REASON_CODES)[number];
  * can tell "not built" from "forgotten".
  */
 export const REASON_CODES_WITHOUT_PRODUCER: readonly DiscoveryReasonCode[] = [
-  "trip_match",
+  // "trip_match" — producer since census-discovery §78: portavaRank `tripMatch` (lib/discoveryRankTrip.ts, the viewer's own current or upcoming trip), mapped below
   // "season_match" — producer since census-discovery §47: Compass `city_season` (CPH-15), mapped below
 ];
 
@@ -165,7 +165,7 @@ const SIGNAL_TO_CODE: Readonly<Record<string, DiscoveryReasonCode>> = {
   mutualAuthor:              "social_context", // PDE
 
   // ── exploration — reserved inventory, not earned rank ──────────────────────
-  governorSlot:      "exploration",  // PDE exploration governor
+  governorSlot:      "exploration",  tripMatch: "trip_match", explorationValue: "exploration", // PDE exploration governor; §78: trip fit (DV-18) and the exploration_value family term (DC-13), declared on this line so no cited line moves
 };
 
 /** `governor_<reason>` keys are all one reason: the exploration governor placed this row. */
@@ -185,7 +185,7 @@ export const UNMAPPED_SIGNALS: Readonly<Record<string, string>> = {
   safety_fit:   "GUARDRAIL 01 §10 — safety/private-control state must not become a public signal",
   trust:        "GUARDRAIL 01 §10 — author trust is a moderation input, not a public reason",
   verifiedBonus:"GUARDRAIL 01 §10 — verification state is moderation-adjacent; not a travel reason",
-  seenPenalty:  "GUARDRAIL — a repetition penalty is a negative, and a negative is not a reason FOR",
+  seenPenalty:  "GUARDRAIL — a repetition penalty is a negative, and a negative is not a reason FOR", negativeFeedback: "GUARDRAIL — §78 (DC-13): the viewer's own dismissals are private-control events (01 §10), and a negative is not a reason FOR",
   risk:         "GUARDRAIL — moderation signal",
   reports:      "GUARDRAIL — moderation signal",
   spam:         "GUARDRAIL — moderation signal",
@@ -195,7 +195,7 @@ export const UNMAPPED_SIGNALS: Readonly<Record<string, string>> = {
   language_match:   "NO CODE — accessibility fit; none of 01 §11's nine codes covers language",
   budget_fit:       "NO CODE — budget tendency; none of the nine covers it",
   community_popular:"NO CODE — all-time popularity is not a TREND; calling it trending_local would over-claim `rising`",
-  recency:          "NO CODE — item age is freshness, which the projection already reports separately",
+  recency:          "NO CODE — item age is freshness, which the projection already reports separately", intentMatch: "NO CODE — §78 (A18): the viewer's own declared intent or §8 window; none of the nine describes it, and a window's intents are private context",
 };
 
 /**
@@ -244,7 +244,7 @@ const PLAIN_LANGUAGE: Readonly<Partial<Record<DiscoveryReasonCode, string>>> = {
   trending_local:   "Picking up locally this week.",
   creator_affinity: "From travelers whose posts you follow.",
   exploration:      "Newer here, and worth a look.",
-  saved_similar:    "Because you saved similar places.",
+  saved_similar:    "Because you saved similar places.", trip_match: "Fits your trip.", // §78: fixed text — names no destination, date or companion; true under way and upcoming alike
   social_context:   "Fits how you like to travel with others.", season_match: "What people here do at this time of year.", // season_match: fixed text, names no month or category (§47)
 };
 
