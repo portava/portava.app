@@ -1076,7 +1076,7 @@ export async function rankItems(
   // ── Step 4: score each item ───────────────────────────────────────────────
   const outputs: RankingOutput[] = [];
 
-  for (const input of inputs) {
+  for (const input of await withDiscoveryNegativeFeedback(inputs, surface, viewer, db)) {   // census-discovery §78 (DC-13): the SAME array unless discovery_feature_families_enabled — see the file end
     // Eligibility gate (always runs regardless of shadow mode)
     // Build a minimal RankingViewerContext for the checker
     const eligibility = checkItemEligibility(input, viewer);
@@ -1523,5 +1523,58 @@ function reportSampleRefused(err: unknown, ctx: { surface: string; itemId: strin
     );
   } catch {
     /* an instrument must never break the thing it instruments */
+  }
+}
+
+// ── census-discovery §78 (lane W10-R2, DC-13): the negative-feedback inputs, made real ─
+//
+// Appended rather than inserted — anchored citations point into this file by
+// line (census-discovery, docs/discovery). The one in-place change is the
+// `for (const input of …)` line of `rankItems` Step 4, which keeps its text as
+// a prefix; nothing moved. The imports below sit at the file end for the same
+// reason; ES module imports are hoisted wherever they are written.
+//
+// §69.3 DC-13: "The named-family configuration runs on the signed-in path
+// through DRS … On Discovery its inputs are constant false, so the family
+// computes 0." lib/discoveryPde.ts builds those inputs and says why it keeps
+// them constant; this lane does not own it. So the one input DRS can make real
+// on its own is made real HERE, from the viewer's own record:
+//
+//   viewerHasHiddenItem  TRUE for an item this viewer dismissed ("Not
+//                        interested", `rank_events.outcome = 'dismiss'` on the
+//                        discovery surface — lib/discoveryDismissed.ts, the
+//                        reader every Discovery serve path already applies).
+//
+// What that does, stated exactly: the eligibility gate already treats a hidden
+// item as ineligible (EligibilityChecker `viewer_hidden_item`), so a dismissed
+// item is sorted to the end of DRS's output in BOTH DRS modes and records an
+// ITEM_INELIGIBLE row on a served run — and routes/discovery.ts removes it after
+// ranking anyway, so no served page changes because of this line alone. It is
+// the item-level half of `06` §3's negative_feedback family; the category-level
+// half, which DOES move a page, is portavaRank's `negativeFeedback` term.
+//
+// `viewerHasReportedItem` stays false: no store records a viewer's report OF a
+// Discovery place under the id DRS ranks (place_mismatch_reports and
+// hidden_gem_reports are data corrections about the place, not the viewer's
+// feedback on being shown it). Named in census-discovery §78.4, not guessed.
+//
+// Gated on `discovery_feature_families_enabled` (3452, seeded FALSE) AND the
+// `discovery` surface: every other DRS consumer (Compass, the Wall) and every
+// run with the flag off gets the same `inputs` array back, unread.
+import { loadRankDesignFlags } from "../../lib/discoveryRankFlags.js";
+import { loadDismissedPlaceIds } from "../../lib/discoveryDismissed.js";
+
+export async function withDiscoveryNegativeFeedback(
+  inputs: RankingInput[], surface: SurfaceName, viewer: RankingViewerContext, db: SupabaseClient | null,
+): Promise<RankingInput[]> {
+  if (surface !== "discovery" || !db || !viewer.viewerId) return inputs;
+  try {
+    const flags = await loadRankDesignFlags(db);
+    if (!flags.families.enabled) return inputs;
+    const dismissed = await loadDismissedPlaceIds(db, viewer.viewerId);
+    if (dismissed.ids.size === 0) return inputs;
+    return inputs.map((i) => (dismissed.ids.has(i.itemId) && !i.viewerHasHiddenItem ? { ...i, viewerHasHiddenItem: true } : i));
+  } catch {
+    return inputs;
   }
 }

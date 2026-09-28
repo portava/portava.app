@@ -390,7 +390,7 @@ describe("I. 01 §11 reason vocabulary", () => {
     }
     assert.deepEqual(
       [...REASON_CODES_WITHOUT_PRODUCER].sort(),
-      ["trip_match"],  // `season_match` LEFT on purpose in census-discovery §47: Compass's CPH-15 `city_season` factor ranks for_you and is now reported (discoveryCacheRevocation.test.ts S-series pins it)
+      [],  // `trip_match` LEFT in census-discovery §78 (D-W10-R2-6): portavaRank `tripMatch` from the viewer's own trip (discoveryRankTrip.test.ts T5). `season_match` LEFT on purpose in census-discovery §47: Compass's CPH-15 `city_season` factor ranks for_you and is now reported (discoveryCacheRevocation.test.ts S-series pins it)
       // `trail_affinity` LEFT this list on 2026-09-14 and must not return to it
       // silently: migration 2910 defines the Trail object,
       // TrailService.loadViewerTrailModifier reads it, and portavaRank scores

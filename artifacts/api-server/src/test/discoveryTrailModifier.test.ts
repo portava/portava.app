@@ -471,7 +471,7 @@ describe("WIRING 1 — DV-18: `trail_affinity` has a producer, so the code is em
   it("`trail_affinity` is no longer listed as unproducible — the stated reason is now false", () => {
     assert.ok(!REASON_CODES_WITHOUT_PRODUCER.includes("trail_affinity"),
       "the listed reason was 'There is no Trail object in this repository'; migration 2910 and TrailService make that false");
-    assert.deepEqual([...REASON_CODES_WITHOUT_PRODUCER].sort(), ["trip_match"],  // season_match left in census-discovery §47 (Compass city_season)
+    assert.deepEqual([...REASON_CODES_WITHOUT_PRODUCER].sort(), [],  // season_match left in census-discovery §47 (Compass city_season); trip_match left in §78 (portavaRank tripMatch)
       "only the code with no signal at all may remain listed");
   });
 

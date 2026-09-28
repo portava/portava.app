@@ -157,7 +157,13 @@ describe("§57 A11 — Discovery never reaches the ranker's own free-time arithm
         .join("\n");
       if (/\brankCandidates\(|:\s*ViewerContext\b/.test(code)) builders.push(path.relative(SRC, f));
     }
-    assert.deepEqual(builders, [path.join("lib", "discoveryPde.ts")], `another Discovery module builds a ranker context: ${builders.join(", ")}`);
+    // Restated by census-discovery §78 (lane W10-R2): lib/discoveryRankDesigns.ts
+    // MERGES the §78 design inputs onto the context discoveryPde builds, so it is
+    // a second module that touches a ViewerContext. It is pinned here by name,
+    // and below it is held to the same rule — it must never add a free-time field.
+    assert.deepEqual(builders, [path.join("lib", "discoveryPde.ts"), path.join("lib", "discoveryRankDesigns.ts")], `another Discovery module builds a ranker context: ${builders.join(", ")}`);
+    const designs = readFileSync(path.join(SRC, "lib", "discoveryRankDesigns.ts"), "utf8").split("\n").map((l) => l.replace(/\/\/.*$/, "").replace(/^\s*\*.*$/, "")).join("\n");
+    assert.equal(/\bavailable(Minutes|Now)\b/.test(designs), false, "the §78 design hook hands the ranker a free-time input");
 
     const pde = readFileSync(path.join(SRC, "lib", "discoveryPde.ts"), "utf8");
     const at = pde.indexOf("const viewerContext: ViewerContext = {");
