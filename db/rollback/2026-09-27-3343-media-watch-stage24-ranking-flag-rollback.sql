@@ -30,16 +30,40 @@ BEGIN
   END IF;
 END $$;
 
-DELETE FROM public.feature_flags
-  WHERE flag = 'MEDIA_WATCH_STAGE24_RANKING_ENABLED' AND enabled = FALSE;
+-- Only the row 3343 wrote (W10-F, census-discovery §87). 3343 inserts ON
+-- CONFLICT (flag) DO NOTHING, so a row that existed before it kept its own
+-- description. A row whose description is not 3343's seed text byte for
+-- byte (the md5 below) was not written by 3343, and is kept.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM public.feature_flags
+              WHERE flag = 'MEDIA_WATCH_STAGE24_RANKING_ENABLED' AND md5(coalesce(description, '')) <> '7a7e4b0c88daa3dd1eb0c6a6650af1d0') THEN
+    RAISE NOTICE '3343 rollback: MEDIA_WATCH_STAGE24_RANKING_ENABLED was not written by 3343 (its description is not 3343''s seed), so it is kept.';
+  ELSE
+    DELETE FROM public.feature_flags
+      WHERE flag = 'MEDIA_WATCH_STAGE24_RANKING_ENABLED' AND enabled = FALSE;
+  END IF;
+END $$;
 
 DO $$
 DECLARE present int;
 BEGIN
   SELECT count(*) INTO present FROM public.feature_flags
-    WHERE flag = 'MEDIA_WATCH_STAGE24_RANKING_ENABLED';
+    WHERE flag = 'MEDIA_WATCH_STAGE24_RANKING_ENABLED' AND md5(coalesce(description, '')) = '7a7e4b0c88daa3dd1eb0c6a6650af1d0';
   IF present <> 0 THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED: MEDIA_WATCH_STAGE24_RANKING_ENABLED still present after rollback (% row(s))', present;
+    RAISE EXCEPTION 'POSTCONDITION FAILED: MEDIA_WATCH_STAGE24_RANKING_ENABLED (the row 3343 wrote) still present after rollback (% row(s))', present;
+  END IF;
+END $$;
+
+-- The applier wrote 3343's ledger row in 3343's own transaction; without
+-- this delete it would take 3343 as still applied and never re-apply it.
+DELETE FROM public.schema_migration_ledger
+ WHERE filename = '3343_media_watch_stage24_ranking_flag.sql';
+
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM public.schema_migration_ledger WHERE filename = '3343_media_watch_stage24_ranking_flag.sql') THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED: the ledger still records 3343 as applied after rollback.';
   END IF;
 END $$;
 

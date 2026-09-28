@@ -45,7 +45,7 @@
 
 BEGIN;
 
-DO $$
+DO $pre$
 DECLARE
   rel      regclass := to_regclass('public.ranking_debug_samples');
   id_type  text;
@@ -74,7 +74,7 @@ BEGIN
          AND column_name IN ('item_id', 'session_id', 'components', 'explanation_key')) <> 4 THEN
     RAISE EXCEPTION 'PRECONDITION FAILED (3421): 2060''s sampler columns are not all present. Apply 2060_ranking_debug_samples.sql first.';
   END IF;
-END $$;
+END $pre$;
 
 ALTER TABLE public.ranking_debug_samples ALTER COLUMN content_id DROP NOT NULL;
 

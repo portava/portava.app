@@ -3700,3 +3700,38 @@ Lane W10-D (census-discovery §83) prepared the owner-authorised `portava-ci` ap
 - **Found, and recorded for the operator:**
   - The eleven media rollbacks 3338–3359 do not delete their ledger row. **Neither does 3350's.** The 2026-09-27 entry above says 3350's rollback removes the ledger row; it does not. Add `DELETE FROM public.schema_migration_ledger WHERE filename = '3350_media_neighborhood_only_location_mode.sql';` to that recovery.
   - After the apply, `certify:migrations` stage 4 fails on 3360, 3362, 3363, 3364, 3365, 3390, 3421 and 3422, and `audit:schema` still reports 3360's function, which 3361 drops by design. None of these is a defect in what is applied. The fixes (F1–F4) are in the apply plan §5.3.
+
+## 2026-09-28 — certification blockers F1–F5 fixed in the pending set; rollbacks now recover correctly; NOT applied anywhere
+
+Lane W10-F (census-discovery §87) fixed what W10-D's rehearsal found. **Nothing was applied to `portava-ci` or to production.** Before any byte changed, the applied state was re-read:
+- this file's 2026-09-27 entry: 3350 is applied to `portava-ci`, and 3352 and 3360 are not;
+- this file's 2026-09-28 entry: the 40 are applied nowhere;
+- production's latest snapshot watermark is `20260922155706`, and nothing of 3338 … 3441 is applied there.
+
+So every migration changed here is unapplied everywhere.
+
+**Changed before the apply, so the ledger will record the new bytes:**
+- **F2**, line-neutral: the first guard block of 3362, 3363, 3364, 3365, 3421 and 3422 is tagged `$pre$`.
+- **F3**: 3360's `$post$` accepts the rekey function's absence only once 3361 has validated the constraint.
+- **F4**: 3390's `$post$` reads the catalogue only. It checks its literal lists and service_role's BEFORE snapshot in the applying transaction.
+
+**`audit:schema` ALLOWLIST:**
+- **F1**: `function:intel_evidence_rekey_reference`, which 3361 drops by design.
+- **F5**, new: `grant:{posts,passport_postcards,post_media}.{anon,authenticated}.select`. 3362 and 3363 take back 2148/2151/2158's table-level SELECT by design, and the auditor sees only table grants. W10-F found this by running `audit:schema` itself on the harness after the apply.
+
+**Rollbacks** (the corrections this file's 2026-09-28 entry asked for):
+- Each of 3338, 3340–3343, 3350, 3351, 3352 and 3355–3359 now deletes its forward file's ledger row. That is twelve files, not eleven, plus 3350, so the 2026-09-27 statement that 3350's rollback "removes the ledger row" is now true.
+- The sixteen flag-seed rollbacks (the twelve media ones less 3359, plus 3350, 3366, 3395, 3400 and 3410) delete the flag row only if it carries their forward file's own seed description, compared by md5. A row that existed before the apply is kept. At `debd5ad4f`, 3351's rollback deleted one.
+
+**Rehearsed on the local harness, controlled evidence, with the repository's own tools run unchanged against it** (`docs/ops/discovery-portava-ci-apply-plan.md` §7):
+- **At this tree the set is 41:** `3436` landed.
+- **`certify:migrations --files <the 40>`:** stage 4 went from **8 failures** to **59 blocks re-run, all passing**.
+- **`audit:schema` after the apply:** went from 44 findings to 37. All 37 are in 11 files the pre-apply baseline already reports, because the harness cannot replay those files; none of them is in the set.
+- **Every rollback removed its own ledger row.** Data after all rollbacks is identical to the baseline.
+- **3415's rollback needs 3441's footer reversal first** (`trails.destination_key`, since §77).
+
+### Re-establish independently
+
+    cd artifacts/api-server
+    grep -c 'DO \$pre\$' src/migrations/336[2-5]_*.sql src/migrations/342[12]_*.sql   # 1 each
+    grep -c 'schema_migration_ledger' ../../db/rollback/2026-09-2?-33[3-5][0-9]-*-rollback.sql   # >= 2 each

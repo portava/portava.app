@@ -55,7 +55,7 @@
 
 BEGIN;
 
-DO $$
+DO $pre$
 DECLARE
   rel     regclass := to_regclass('public.post_media');
   me      oid := (SELECT oid FROM pg_roles WHERE rolname = current_user);
@@ -138,7 +138,7 @@ BEGIN
        UNION ALL
        SELECT a.attname || '|' || x.grantee || '|' || x.is_grantable FROM pg_attribute a, LATERAL aclexplode(a.attacl) x
         WHERE a.attrelid = rel AND a.attnum > 0 AND x.privilege_type = 'SELECT') s), true);
-END $$;
+END $pre$;
 
 REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
   ON TABLE public.post_media

@@ -251,6 +251,10 @@ BEGIN
 END $apply$;
 
 -- ── Postconditions (inside the transaction, so a failure rolls all of it back) ─
+-- This block reads the real catalogue only, so certify:migrations can re-run it
+-- after COMMIT, when the ON COMMIT DROP tables above are gone. The declared
+-- posture is restated as literals; in the applying transaction they are checked
+-- against those tables, and service_role against its BEFORE snapshot.
 DO $post$
 DECLARE
   t record;
@@ -261,8 +265,35 @@ DECLARE
   deny_for_role boolean;
   n int;
   bad text[] := ARRAY[]::text[];
+  tbls text[] := ARRAY['discovery_places', 'discovery_place_saves', 'discovery_place_reports',
+    'discovery_cache', 'discovery_geocode_cache', 'discovery_shadow_serves', 'discovery_place_photos',
+    'place_momentum', 'trails', 'content_trails', 'trail_edges', 'trail_follows', 'trail_reports',
+    'trail_health_snapshots', 'recommendations', 'rank_events'];
+  keep text[] := ARRAY['discovery_places|SELECT|anon', 'discovery_places|SELECT|authenticated',
+    'discovery_place_saves|SELECT|authenticated', 'discovery_place_saves|INSERT|authenticated',
+    'discovery_place_reports|SELECT|authenticated', 'discovery_place_reports|INSERT|authenticated',
+    'trails|SELECT|authenticated', 'content_trails|SELECT|authenticated',
+    'trail_edges|SELECT|authenticated', 'trail_follows|SELECT|authenticated',
+    'rank_events|SELECT|authenticated'];
 BEGIN
-  FOR t IN SELECT tbl FROM _p3390_tables WHERE to_regclass('public.' || tbl) IS NOT NULL ORDER BY tbl LOOP
+  IF to_regclass('pg_temp._p3390_tables') IS NOT NULL THEN
+    -- The applying transaction: the literals must be the declared posture.
+    IF (SELECT array_agg(x ORDER BY x) FROM unnest(tbls) x)
+         IS DISTINCT FROM (SELECT array_agg(d.tbl ORDER BY d.tbl) FROM _p3390_tables d)
+       OR (SELECT array_agg(x ORDER BY x) FROM unnest(keep) x)
+         IS DISTINCT FROM (SELECT array_agg(k.s ORDER BY k.s)
+                             FROM (SELECT format('%s|%s|%s', tbl, op, role) AS s FROM _p3390_keep) k) THEN
+      bad := bad || 'the postcondition''s table or kept-path literals differ from _p3390_tables / _p3390_keep'::text;
+    END IF;
+    -- service_role privileges unchanged, table by table (its BEFORE snapshot exists only here).
+    SELECT count(*) INTO n FROM _p3390_svc_before b
+     WHERE b.privs IS DISTINCT FROM (SELECT string_agg(g.privilege_type, ',' ORDER BY g.privilege_type)
+                                       FROM information_schema.role_table_grants g
+                                      WHERE g.table_schema = 'public' AND g.table_name = b.tbl AND g.grantee = 'service_role');
+    IF n > 0 THEN bad := bad || format('%s table(s) changed service_role privileges', n); END IF;
+  END IF;
+
+  FOR t IN SELECT u.tbl FROM unnest(tbls) AS u(tbl) WHERE to_regclass('public.' || u.tbl) IS NOT NULL ORDER BY u.tbl LOOP
     IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = to_regclass('public.' || t.tbl)) THEN
       bad := bad || format('%s: RLS disabled', t.tbl);
     END IF;
@@ -288,7 +319,7 @@ BEGIN
                           AND p.polcmd = CASE v_op WHEN 'SELECT' THEN 'r' WHEN 'INSERT' THEN 'a' WHEN 'UPDATE' THEN 'w' ELSE 'd' END
                           AND (SELECT oid FROM pg_roles WHERE rolname = v_role) = ANY (p.polroles))
           INTO deny_for_role;
-        IF EXISTS (SELECT 1 FROM _p3390_keep k WHERE k.tbl = t.tbl AND k.op = v_op AND k.role = v_role) THEN
+        IF format('%s|%s|%s', t.tbl, v_op, v_role) = ANY (keep) THEN
           IF deny_for_role THEN bad := bad || format('%s %s %s: a kept client path is denied', t.tbl, v_op, v_role); END IF;
           IF NOT permissive_for_role THEN bad := bad || format('%s %s %s: the kept permissive policy is gone', t.tbl, v_op, v_role); END IF;
         ELSE
@@ -309,13 +340,6 @@ BEGIN
       bad := bad || format('%s: a 3390 deny policy names service_role', t.tbl);
     END IF;
   END LOOP;
-
-  -- service_role privileges unchanged, table by table.
-  SELECT count(*) INTO n FROM _p3390_svc_before b
-   WHERE b.privs IS DISTINCT FROM (SELECT string_agg(g.privilege_type, ',' ORDER BY g.privilege_type)
-                                     FROM information_schema.role_table_grants g
-                                    WHERE g.table_schema = 'public' AND g.table_name = b.tbl AND g.grantee = 'service_role');
-  IF n > 0 THEN bad := bad || format('%s table(s) changed service_role privileges', n); END IF;
 
   IF to_regprocedure('public.rebuild_place_momentum(timestamptz)') IS NOT NULL
      AND (has_function_privilege('anon', 'public.rebuild_place_momentum(timestamptz)', 'EXECUTE')

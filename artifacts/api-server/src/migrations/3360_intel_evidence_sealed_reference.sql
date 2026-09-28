@@ -196,11 +196,20 @@ BEGIN
     RAISE EXCEPTION 'POSTCONDITION FAILED: intel_evidence_media_reference_sealed is missing — a writer could still store a plaintext key.';
   END IF;
 
+  -- The function is 3360's until 3361 closes the remediation: 3361 validates the
+  -- CHECK and drops the function in one transaction (the pair 3360's rollback
+  -- reads as "3361 is applied"). certify:migrations re-runs this block after
+  -- 3361 has committed, so the function's absence is correct exactly then.
   IF to_regprocedure('public.intel_evidence_rekey_reference(uuid, text, text)') IS NULL THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED: intel_evidence_rekey_reference(uuid, text, text) was not created.';
-  END IF;
-
-  IF has_function_privilege('anon', 'public.intel_evidence_rekey_reference(uuid, text, text)', 'EXECUTE')
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint
+       WHERE conrelid = 'public.intel_evidence'::regclass
+         AND conname = 'intel_evidence_media_reference_sealed'
+         AND convalidated
+    ) THEN
+      RAISE EXCEPTION 'POSTCONDITION FAILED: intel_evidence_rekey_reference(uuid, text, text) was not created.';
+    END IF;
+  ELSIF has_function_privilege('anon', 'public.intel_evidence_rekey_reference(uuid, text, text)', 'EXECUTE')
      OR has_function_privilege('authenticated', 'public.intel_evidence_rekey_reference(uuid, text, text)', 'EXECUTE') THEN
     RAISE EXCEPTION 'POSTCONDITION FAILED: an end-user role can execute intel_evidence_rekey_reference.';
   END IF;

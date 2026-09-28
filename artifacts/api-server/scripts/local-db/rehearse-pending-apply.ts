@@ -29,7 +29,8 @@
  *   objects        every object CI's audit:schema named missing on 84318d1b2
  *   catalog <label> / data <label>   fingerprints, written to LOCAL_DB_WORK
  *   diff <a> <b> [catalog|data]      compare two fingerprints
- *   rollback       every rollback file, newest first, each checked
+ *   rollback       every rollback file, newest first, each checked; 3441's
+ *                  and 3440's REVERSAL footers in their place (W10-F, §87)
  *   emit-rollback-rehearsal [file]   the pending set as ONE transaction that
  *                  ends in ROLLBACK, for an operator's zero-persistence
  *                  pre-flight (the plan's step 3); written, never sent
@@ -347,9 +348,23 @@ function postconditions(files: readonly string[]): void {
   }
 }
 
+/**
+ * Objects CI named that a LATER file in the set removes by design, so the
+ * correct answer after the apply is ABSENT. audit:schema carries the same fact
+ * in its ALLOWLIST (W10-F, census-discovery §87, F1).
+ */
+const DROPPED_BY_DESIGN = new Set(["3360 function intel_evidence_rekey_reference"]);
+
 function objects(): void {
   const missing: string[] = [];
+  let absentByDesign = 0;
   for (const [file, kind, name] of CI_MISSING) {
+    if (DROPPED_BY_DESIGN.has(`${file} ${kind} ${name}`)) {
+      const r = psql(`select exists(select 1 from pg_proc where pronamespace='public'::regnamespace and proname='${name}');`);
+      if (!r.ok || r.out.trim() !== "f") missing.push(`${file} ${kind} ${name} (must be ABSENT: 3361 drops it)`);
+      else absentByDesign++;
+      continue;
+    }
     const [a, b] = name.includes(".") ? name.split(".") : [name, ""];
     const probe =
       kind === "table" ? `select to_regclass('public.${a}') is not null`
@@ -361,7 +376,10 @@ function objects(): void {
     const r = psql(`${probe};`);
     if (!r.ok || r.out.trim() !== "t") missing.push(`${file} ${kind} ${name}`);
   }
-  console.log(`objects: ${CI_MISSING.length - missing.length} of ${CI_MISSING.length} objects CI named missing are present.`);
+  console.log(
+    `objects: ${CI_MISSING.length - missing.length - absentByDesign} of ${CI_MISSING.length} objects CI named missing are present;` +
+      ` ${absentByDesign} absent by design (dropped by a later file in the set).`,
+  );
   for (const m of missing) console.log(`  ✖ ${m}`);
   if (missing.length) process.exitCode = 1;
 }
@@ -449,11 +467,42 @@ function diff(a: string, b: string, kind: string): void {
   for (const l of onlyB) console.log(`  + ${l.slice(0, 220)}`);
 }
 
+/**
+ * The two files with no rollback file carry their reversal in a `-- REVERSAL:`
+ * footer. W10-F (census-discovery §87) runs them here, in the files' own words,
+ * because at this tree 3415's rollback cannot drop trail_normalised_destination
+ * while 3441's stored trails.destination_key depends on it.
+ */
+const FOOTER_REVERSALS: Record<string, () => string> = {
+  // 3441's footer: drop the index and the column FIRST. Re-running 3415's three
+  // function bodies is left to 3415's own rollback, which drops them next.
+  "3441": () =>
+    "BEGIN;\nDROP INDEX IF EXISTS public.idx_trails_destination_key;\n" +
+    "ALTER TABLE public.trails DROP COLUMN IF EXISTS destination_key;\nCOMMIT;\n",
+  // 3440's footer: drop the index and the column, then re-run 2220 (function
+  // body, ADD COLUMN, CREATE INDEX) so the stored keys are recomputed.
+  "3440": () =>
+    "BEGIN;\nDROP INDEX IF EXISTS public.canonical_locations_search_key_trgm_idx;\n" +
+    "ALTER TABLE public.canonical_locations DROP COLUMN IF EXISTS search_key;\nCOMMIT;\n" +
+    read(listMigrationFiles().find((m) => m.startsWith("2220_")) ?? die("2220 is not on disk")),
+};
+
 function rollback(files: readonly string[]): void {
   const available = readdirSync(ROLLBACK_DIR);
   for (const f of [...files].reverse()) {
     const prefix = f.slice(0, 4);
     const rb = available.filter((r) => r.includes(`-${prefix}-`) && r.endsWith("-rollback.sql"));
+    if (rb.length !== 1 && FOOTER_REVERSALS[prefix]) {
+      const r = psql(FOOTER_REVERSALS[prefix]());
+      if (!r.ok) {
+        console.log(`  ✖ ${f}: footer reversal FAILED: ${r.err.trim().split("\n").filter((l) => /ERROR/.test(l)).join(" | ")}`);
+        process.exitCode = 1;
+        return;
+      }
+      must(`delete from public.schema_migration_ledger where filename=${q(f)};`);
+      console.log(`  ✔ ${f}: no rollback file; its REVERSAL footer ran, and its ledger row was deleted.`);
+      continue;
+    }
     if (rb.length !== 1) {
       console.log(`  · ${f}: no rollback file (${rb.length}); forward fix only — not run here.`);
       continue;

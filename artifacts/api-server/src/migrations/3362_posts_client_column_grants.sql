@@ -85,7 +85,7 @@
 
 BEGIN;
 
-DO $$
+DO $pre$
 DECLARE
   granted  text[] := ARRAY[
     'id','author_id','trip_id','content','media_urls','visibility','status',
@@ -165,7 +165,7 @@ BEGIN
               WHERE attrelid = 'public.posts'::regclass AND attnum > 0 AND attacl IS NOT NULL) THEN
     RAISE EXCEPTION 'PRECONDITION FAILED (3362): posts already carries column-level privileges; the rollback could not restore them. Inspect pg_attribute.attacl first.';
   END IF;
-END $$;
+END $pre$;
 
 -- The table-level SELECT goes; with it, PostgreSQL removes any column-level
 -- SELECT the two roles held (there is none, by the precondition).

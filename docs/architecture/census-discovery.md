@@ -13613,8 +13613,8 @@ This lane adds:
 
 | ID | from | **to** | evidence |
 |---|---|---|---|
-| DC-26 | W | **W** | **IMPLEMENTATION-COMPLETE; awaits: the 40 pending migrations (3338–3441) applied to `portava-ci` + one green `schema drift` run on `portava-ci` for the applied tree (with apply-plan F1 landed, or 3360's allowlisted function the only finding).** Q66-3 is decided (D-W10D-1): that run is the rehearsal `12` names (`docs/specs/discovery-v1/12_Claude_Code_Implementation.md:189#- CI rehearsal`). What this lane adds is everything short of the event. The pending set is recomputed with the applier's own `planApply` and matches CI's dry run on `84318d1b2` file for file and shape for shape (`docs/ops/discovery-portava-ci-apply-plan.md:30#**Result: identical`). The rehearsal on a restored baseline covers apply, idempotence, every rollback and a re-apply whose catalogue equals the first apply's (`docs/ops/discovery-portava-ci-apply-plan.md:346#- **Re-apply after rollback:**`). The workflow still applies only on `main` (`.github/workflows/live-db.yml:764#THE APPLY. Default branch only`), and the pin that the step exists holds (`artifacts/api-server/src/test/ciWorkflowArchitecture.test.ts:912#it("has a step that applies migrations (not only the dry run)"`). Harness evidence is controlled evidence: no rehearsal event exists on `portava-ci`. |
-| DC-18 | W | **W** | **IMPLEMENTATION-COMPLETE; awaits: the `portava-ci` apply and its green `schema drift` run (the rehearsal record) + an operator read of production's applied-body checksums against the repository.** *New migration per behaviour* passes as before. *Rollout order* now exists as a document: migrations → API → client → flags, with the creator ledger behind C-11 and 2893 last or never (`docs/ops/discovery-production-rollout.md:106#1.5 Batch P2`). *Rollbacks:* 38 of the 40 pending files ship one, and all 38 ran on the harness. 3440's reversal (its footer, via 2220) ran too. The eleven media rollbacks leave their ledger row, and that is recorded for the operator (`docs/ops/discovery-portava-ci-apply-plan.md:338#- **Rollbacks:**`). *Never edit an applied migration* still needs a live checksum comparison. The applier refuses drift by construction, but only an operator can read production's bodies. |
+| DC-26 | W | **W** | **IMPLEMENTATION-COMPLETE; awaits: the 40 pending migrations (3338–3441) applied to `portava-ci` + one green `schema drift` run on `portava-ci` for the applied tree (with apply-plan F1 landed, or 3360's allowlisted function the only finding).** Q66-3 is decided (D-W10D-1): that run is the rehearsal `12` names (`docs/specs/discovery-v1/12_Claude_Code_Implementation.md:189#- CI rehearsal`). What this lane adds is everything short of the event. The pending set is recomputed with the applier's own `planApply` and matches CI's dry run on `84318d1b2` file for file and shape for shape (`docs/ops/discovery-portava-ci-apply-plan.md:30#**Result: identical`). The rehearsal on a restored baseline covers apply, idempotence, every rollback and a re-apply whose catalogue equals the first apply's (`docs/ops/discovery-portava-ci-apply-plan.md:352#- **Re-apply after rollback:**`). The workflow still applies only on `main` (`.github/workflows/live-db.yml:764#THE APPLY. Default branch only`), and the pin that the step exists holds (`artifacts/api-server/src/test/ciWorkflowArchitecture.test.ts:912#it("has a step that applies migrations (not only the dry run)"`). Harness evidence is controlled evidence: no rehearsal event exists on `portava-ci`. |
+| DC-18 | W | **W** | **IMPLEMENTATION-COMPLETE; awaits: the `portava-ci` apply and its green `schema drift` run (the rehearsal record) + an operator read of production's applied-body checksums against the repository.** *New migration per behaviour* passes as before. *Rollout order* now exists as a document: migrations → API → client → flags, with the creator ledger behind C-11 and 2893 last or never (`docs/ops/discovery-production-rollout.md:106#1.5 Batch P2`). *Rollbacks:* 38 of the 40 pending files ship one, and all 38 ran on the harness. 3440's reversal (its footer, via 2220) ran too. The eleven media rollbacks leave their ledger row, and that is recorded for the operator (`docs/ops/discovery-portava-ci-apply-plan.md:344#- **Rollbacks:**`). *Never edit an applied migration* still needs a live checksum comparison. The applier refuses drift by construction, but only an operator can read production's bodies. |
 | DV-70 | W | **W** | **IMPLEMENTATION-COMPLETE; awaits: the 40 applied to `portava-ci` + batches P0–P1 (and P2 after C-11) applied to production + an operator's live read of columns, functions and policies. AWAITS OWNER APPROVAL: W10D-A1.** The drift is now explained file by file for both databases. `portava-ci`'s 40, each with dependencies, rows touched, postconditions and recovery, are in the apply plan §3. Production's state per Discovery file comes with its source and date, from the 2026-09-22 snapshot and the 2026-09-27 reads (`docs/ops/discovery-production-rollout.md:39#1.2 Production`). "Zero unexplained drift" also needs every Discovery table applied or retired in production and a live read beyond tables, so it is not met. |
 | DC-27 | X | **W** | **AWAITS OWNER APPROVAL: W10D-A5 (Phase F gates 1 and 2, E-2); awaits: a filled rollout record showing rehearse, verdict checks, shadow, cohort, observe, expand, in that order.** The X rested on *"no rollout record exists"* (§69.2). The record now exists as a template that `12`'s sequence is graded against, with one row per phase and an evidence cell each row cannot close without (`docs/ops/discovery-production-rollout.md:291#8. DC-27`). The steps it records are specified with their gates, cohort values and stop rules, in the mode sequence M1–M5 and in the approval request (`docs/ops/discovery-owner-approval-request.md:92#A5 — Phase F gates`). **The row is therefore now verifiable, and the answer is that the sequence has not begun:** W, not C. Five of the seven stop halt values are still `null` at this tree (A-5, another lane), so the "observe" gate cannot yet trip on them. |
 
@@ -13635,7 +13635,7 @@ These are exact failures, with the fix each needs. None is a defect in what the 
 - **F3.** 3360's `$post$` block asserts a function 3361 drops.
 - **F4.** 3390's `$post$` block reads a temp table that no longer exists after commit.
 
-F2–F4 must land before the apply. The detail is in the apply plan §5.3 (`docs/ops/discovery-portava-ci-apply-plan.md:387#5.3 Four fixes`).
+F2–F4 must land before the apply. The detail is in the apply plan §5.3 (`docs/ops/discovery-portava-ci-apply-plan.md:393#5.3 Five fixes`).
 
 Two more findings:
 - The eleven media rollbacks 3338–3359, and 3350's, do not delete their ledger row, which contradicts `docs/migrations.md`'s 2026-09-27 entry.
@@ -13707,6 +13707,73 @@ CONSTRUCTED 183 / 188 = **97.3 %**, up from 96.8 %. CORRECT 94 / 188 = **50.0 %*
 - **A new migration landing after `debd5ad4f`.** It joins the set as "whatever lands after", with its own §3 row and a re-run.
 - **`portava-ci`'s dry run printing anything but the 40** (or the 40 plus the new files), a `REFUSED` line, or a `Ledger rows with no file on disk` line.
 - **The PR's `schema drift` run staying red after the apply** on anything other than F1's finding. DC-26 would then stay W on a real gap.
+
+## §87 — The `portava-ci` apply certifies cleanly (lane W10-F): F1–F4 landed, a fifth blocker (F5) found and landed, the rollbacks recover correctly, and the rehearsal re-run with the tools themselves; no row moves
+
+*Written 2026-09-28 by lane W10-F on `disc-w10-f-certify`, branched from `f3047e54d`. **Nothing was applied to `portava-ci` or to production, nothing was deployed, and no flag was turned on.** `head_commit` is not re-declared.*
+
+This lane changes:
+- the migrations 3360, 3362, 3363, 3364, 3365, 3390, 3421 and 3422;
+- 17 files in `db/rollback/`;
+- `auditMigrationsVsLive.ts`, in its `ALLOWLIST` only;
+- the rehearsal driver;
+- the apply plan (new §7);
+- `docs/migrations.md`.
+
+Before any byte changed, every changed migration was confirmed unapplied everywhere (apply plan §7.1). On `portava-ci`, `docs/migrations.md` records 3350 as applied and 3352/3360 as not applied, and CI's dry run on `84318d1b2` lists all 40 as pending. In production the snapshot watermark is `20260922155706`, and nothing after 2910/2220 is applied.
+
+### 87.1 Row statements
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DC-26 | W | **W** | **IMPLEMENTATION-COMPLETE; awaits: the pending set (the 40 of §83, plus `3436` at this tree) applied to `portava-ci` with W10-F's bytes + one green `schema drift` run on `portava-ci` for the applied tree.** §83's qualifier "(with apply-plan F1 landed, or 3360's allowlisted function the only finding)" is discharged, and F1 was not the only finding. W10-F's changes: **F1** is landed (`artifacts/api-server/src/scripts/auditMigrationsVsLive.ts:483#"function:intel_evidence_rekey_reference",`). A fifth blocker is found and landed (F5): 3362/3363 take back 2148/2151/2158's table SELECT by design, which the auditor would report as six missing grants (`artifacts/api-server/src/scripts/auditMigrationsVsLive.ts:501#"grant:posts.anon.select",`). F2–F4 are landed in the unapplied files (`artifacts/api-server/src/migrations/3364_pulse_geo_tags_write_boundary.sql:55#DO $pre$`, `artifacts/api-server/src/migrations/3360_intel_evidence_sealed_reference.sql:208#AND convalidated`, `artifacts/api-server/src/migrations/3390_discovery_rls_explicit_policies.sql:279#IF to_regclass('pg_temp._p3390_tables') IS NOT NULL THEN`). This was measured with `certify:migrations` and `audit:schema` themselves on the harness, not a reproduction. Stage 4 went from 8 failures to 59 blocks re-run, all passing. `audit:schema`'s findings after the apply are a subset of the pre-apply baseline's, none in the set (`docs/ops/discovery-portava-ci-apply-plan.md:449#7.3`). Certification can therefore pass on `portava-ci`, but that is inferred: the harness lacks 11 unreplayable files' objects, so stage 5 cannot print PASSED here, and no rehearsal event exists on `portava-ci`. |
+| DC-18 | W | **W** | **IMPLEMENTATION-COMPLETE; awaits: the `portava-ci` apply and its green `schema drift` run (the rehearsal record) + an operator read of production's applied-body checksums against the repository.** *Rollbacks* now recover correctly: Every rollback in the set deletes its forward file's ledger row. At `f3047e54d`, twelve did not (3338, 3340–3343, 3351, 3352, 3355–3359), and 3350's did not either. No flag-seed rollback deletes a flag row its forward file did not write (`db/rollback/2026-09-27-3351-media-find-busier-flag-rollback.sql:38#md5(coalesce(description, '')) <>`). The harness proves both: after every rollback, the data equals the baseline, where before, 3351's rollback deleted the pre-existing row (`docs/ops/discovery-portava-ci-apply-plan.md:490#data after all rollbacks`). 3415's rollback now needs 3441's footer reversal first (§77's `trails.destination_key`). The driver runs it, and the plan's §3 says so. *Never edit an applied migration* still needs a live checksum comparison. The eight migrations changed here were unapplied everywhere, so no applied body moved. |
+
+### 87.2 Decisions
+
+The decision register is outside this lane's file ownership, so these are recorded here only. None needs owner approval: each is a routine database decision, and none activates anything.
+- **D-W10F-1 (F3).** 3360's `$post$` accepts the rekey function's absence exactly when the constraint is VALIDATED. That is 3361's end state, and the same pair 3360's rollback reads as "3361 is applied". While the function exists, the end-user EXECUTE check is unchanged.
+- **D-W10F-2 (F4).** 3390's `$post$` restates the 16 tables and 11 kept paths as literals and reads only the catalogue, so certify can re-run it. In the applying transaction it also checks the literals against `_p3390_tables`/`_p3390_keep`, and service_role against its BEFORE snapshot. Nothing the file asserted in-transaction was dropped.
+- **D-W10F-3 (F5).** The six table-level SELECT claims of 2148/2151/2158 are allowlisted as superseded by 3362/3363. This follows the `portava_featured` precedent (2160 → 2332). The entries are to be deleted if 3362 or 3363 is reversed.
+- **D-W10F-4 (flag-seed recovery).** A flag-seed rollback deletes its flag row only while it is FALSE **and** carries the forward file's own seed description (an md5 PostgreSQL computed from the file's literal). A row that pre-existed kept its description, because the seeds are `ON CONFLICT DO NOTHING`, so it is never deleted. Each flag is seeded by exactly one migration (grep), so another file's text cannot match. A description the owner edited after the apply also keeps the row. That outcome is the conservative one, and harmless, because an absent row and a FALSE row read the same. The existing rollback tests (3340–3343's statement pins; 3366 Z4 and 3395 B1 on the database) pass unchanged.
+
+### 87.3 Tests seen red, and mutations
+
+- **No test file was added.** This lane's ownership excludes test files, so the failing-first evidence is the tools' own output on the harness, before and after (apply plan §7.3, §7.4):
+  - certify stage 4: 8 ✖, then all pass;
+  - `audit:schema`: 44 findings, then 37 (7 fewer, all of them the set's);
+  - rollbacks: 12 ledger rows left and one pre-existing flag deleted, then neither.
+- **Mutations, each red, then restored with an identical sha256:**
+  - each of the eight migrations reverted, one at a time: stage 4 red with that file's original error;
+  - `auditMigrationsVsLive.ts` reverted: the seven F1/F5 findings return.
+- **Controls:**
+  - 3360: function absent with the constraint NOT VALID raises; anon EXECUTE raises; 3360 alone passes.
+  - 3390, in-transaction: an altered literal raises; a service_role revoke raises. After commit, a re-granted TRUNCATE raises.
+
+### 87.4 Harness
+
+This is controlled evidence: PostgreSQL 16 at `127.0.0.1:55458`, data dir `/var/tmp/w10f-localdb`.
+- **Baseline:** as §83.5, and the set at this tree is **41** (`3436`).
+- **How the live tools were run:** `certify:migrations`, `check:migration-ledger`, `audit:schema` and `check:missing-live-columns` ran unchanged. A fetch preload (a scratch file, not in the tree) answered the Management API query endpoint for one fake project ref from the harness, and refused every other URL.
+- **Round trip:** apply 41, with 20 tails; catalogue identical to the pre-fix apply's; idempotent re-run; 39 rollback files plus two footer reversals; data identical to the baseline; re-apply with the catalogue equal to the first apply's; step 3's rehearsal file passes.
+- **`run-tests.sh` on a fresh chain:** 377/380, 0 skipped. Every suite that runs a changed file passes. The 3 failures are in `trailsMemberVisibility` and `trailsService`: `fetch failed` with statement timeouts under a load average of about 17 on 4 cores. The failing cases changed from run to run (3, then 4, then 2). Neither suite reads a changed file, and the fixes change no DDL.
+- The cluster is stopped and its data dir deleted at the end.
+
+### 87.5 Checks
+
+Listed in the lane report, with their results. Not run:
+- anything against `portava-ci` or production;
+- `check:write-path-columns`, which needs live credentials.
+
+The set adds no table and no write path, so its extractor has nothing new to find.
+
+### 87.6 What would turn this red
+
+- **A byte change to any file of the set after the `portava-ci` apply.** That is drift.
+- **A new file landing before the apply without a re-run of apply plan §7.**
+- **`portava-ci`'s `audit:schema` reporting anything in the set after the apply.** The expectation is none.
+- **3362 or 3363 reversed without deleting D-W10F-3's six entries.** Those entries would then hide a real missing grant.
+- **A flag-seed forward file's description edited before the apply without its rollback's md5.** The rollback would then keep the row it wrote, which is harmless but leaves the row behind.
 
 ## Cited, not graded (check:census-scope-coverage)
 
