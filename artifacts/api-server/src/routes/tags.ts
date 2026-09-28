@@ -656,7 +656,7 @@ router.get('/me/tags/pending', async (req, res) => {
 
   const { data, error } = await sc
     .from('tags')
-    .select('id, source_type, source_id, tagger_id, tagged_user_id, status, suppressed, created_at')
+    .select('id, source_type, source_id, tagger_id, tagged_user_id, status, suppressed, created_at')  // the live column; 0044's tagged_at was never applied (TaggingService.ts:246)
     .eq('tagged_user_id', user.id)
     .eq('status', 'pending')
     .order('created_at', { ascending: false })
@@ -676,7 +676,7 @@ router.get('/me/tags/pending', async (req, res) => {
       id: t.id,
       sourceType: t.source_type,
       sourceId: t.source_id,
-      taggedAt: t.created_at ?? null, // live tags has created_at, not tagged_at (census-discovery §99)
+      taggedAt: t.created_at ?? null,
       taggerId: t.tagger_id,
       taggerHandle: handles.get(t.tagger_id) ?? null,
     })),

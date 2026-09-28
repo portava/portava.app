@@ -177,7 +177,7 @@ export async function deleteCuratedDwell(
   db: SupabaseClient,
   placeId: string,
 ): Promise<{ ok: true } | { ok: false; message: string }> {
-  const { error } = await db.from(LAYOVER_PLACE_DWELL_TABLE).delete().eq("place_id", placeId);
+  const { error } = await db.from("layover_place_dwell").delete().eq("place_id", placeId);
   if (error) return { ok: false, message: String(error.message ?? "layover_place_dwell delete failed") };
   return { ok: true };
 }
