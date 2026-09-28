@@ -35,7 +35,7 @@ import { postCompassFrontloadEvent, postCompassContext } from '../../services/co
 import { CompassPicksSection } from '../compass/CompassPicksSection.tsx';
 import { CompassTravelerRow } from '../compass/CompassTravelerRow.tsx';
 import { CompassOnboardingCard } from '../compass/CompassOnboardingCard.tsx';
-import { DiscoveryEventPostsRail } from './DiscoveryEventPostsRail.tsx';
+import { DiscoveryEventPostsRail } from './DiscoveryEventPostsRail.tsx'; import { useFeatureFlags } from '../../context/FeatureFlagsContext.tsx';  // census-discovery §79 — the 3455 capability read, declared on this line so the cited lines below do not move
 
 // ── Main component ────────────────────────────────────────────────────────────
 
@@ -89,7 +89,7 @@ function compassItemToPlace(item: import('../../services/compass.ts').CompassFee
 }
 
 export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode, intentMode, lat, lng, userLat, userLng, fallbackZoom, viewMode = 'list', sortBy, listTopInset, bottomInset, onRefresh }: ForYouTabProps) {
-  const { isAuthed }            = useSession();
+  const { isAuthed }            = useSession(); const forYouPde = useFeatureFlags().isEnabled('discovery_for_you_pde_enabled') && isAuthed;  // census-discovery §79 (C32/A05), migration 3455 seeded FALSE: ON ⇒ GET /discovery's for_you page IS the one-pipeline page (Compass's gates, PDE's order, the chosen intent mode), so the Compass feed must not replace it with a second ordering that carries no mode. Unknown ⇒ off (fail-soft) = today's tab.
   // SWR: seed from in-memory client cache so second opens paint instantly.
   const [items, setItems]       = useState<ForYouItem[]>(() => {
     if (!destination) return [];
@@ -151,7 +151,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
   }, [citySwitcherInput]);
 
   // Compass feed — runs in background alongside OSM/Telegraph
-  const compass = useCompassFeed({ section: 'for_you', city: destination, enabled: isAuthed });
+  const compass = useCompassFeed({ section: 'for_you', city: destination, enabled: isAuthed && !forYouPde });
 
   // Pre-populate the module-level savedPlaceIds set so returning users see
   // filled bookmarks for places they saved in previous sessions.
@@ -225,7 +225,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
   // to Compass source — runs independently of load() so it never wipes existing
   // OSM/Telegraph content; only upgrades when Compass data is present and enabled.
   useEffect(() => {
-    if (!compass.data || !compass.compassEnabled) return;
+    if (forYouPde || !compass.data || !compass.compassEnabled) return;  // §79: a cached Compass feed (useCompassFeed seeds one on mount) must not supersede the one-pipeline page either
     const compassItems = (compass.data.sections ?? []).flatMap((s) => s.items ?? []);
     const safeItems = compass.data.safeItems ?? [];
     const all = compassItems.length > 0 ? compassItems : safeItems;
@@ -235,7 +235,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
       setLoading(false);
       setRefreshing(false);
     }
-  }, [compass.data, compass.compassEnabled]);
+  }, [compass.data, compass.compassEnabled, forYouPde]);
 
   // load() always fetches OSM + Telegraph as the reliable baseline.
   // The Compass useEffect above upgrades items asynchronously when Compass
@@ -298,7 +298,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
     // active we keep the current items and just refresh the OSM baseline in the
     // background (load() won't overwrite Compass items — see the guard in load()).
     const compassActive = Boolean(
-      compass?.compassEnabled && compass?.data &&
+      !forYouPde && compass?.compassEnabled && compass?.data &&
       (((compass.data.sections ?? []).some((s: any) => (s.items ?? []).length > 0)) ||
         (compass.data.safeItems ?? []).length > 0),
     );
@@ -381,7 +381,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
             {source === 'compass'
               ? 'Compass picks · personalised for you'
               : source === 'osm'
-              ? (isAuthed ? 'Popular spots' : 'Popular spots · sign in for personalised picks')
+              ? (forYouPde ? 'Picked for you' : isAuthed ? 'Popular spots' : 'Popular spots · sign in for personalised picks')
               : 'Curated picks'}
           </Text>
         </View>

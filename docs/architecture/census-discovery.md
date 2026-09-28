@@ -13991,6 +13991,145 @@ This updates 75.2's `served graph reading` row. Every other row there is unchang
 - A graph reading stamped with Compass's versions when the platform answered (G2).
 - `social_circle` or `discovery_circle_candidates_enabled` switched on without D-W10-R3-4.
 
+## §79 — One ranking pipeline for GET /discovery (lane W10-R4): `for_you` joins the PDE pipeline and Cache A is ranked for every signed-in viewer, each behind a flag seeded FALSE; a failed Live read fails closed; the Compass serve points enter the shadow
+
+*Written 2026-09-28 by lane W10-R4 on `disc-w10-r4-pipeline`, branched from `debd5ad4f`. The code is commits `2fcef79ba` and `8af9ac652` (the second keeps every cited anchor whole and makes the flag reads literal). The owner's authorisation of 2026-09-28 lifts the ranker hold for builds behind flags seeded FALSE; every decision is in `docs/architecture/discovery-decision-register.md` under "W10-R4". Nothing here is merged to `main`, applied to `portava-ci` or production, deployed or flag-enabled. All evidence is controlled: in-process routes over in-memory databases, plus the local PostgreSQL 16 harness. None of it is production evidence. No verdict moves, so the headline is not restated.*
+
+### 79.1 What was built
+
+- **3455, `discovery_for_you_pde_enabled` (C32, DC-24, A05).**
+  - ON: a signed-in `for_you` request is ranked by `rankForViewer` and by nothing else. The route computes its candidate set once (`artifacts/api-server/src/routes/discovery.ts:2106#const forYouM = await forYouCandidatesForServe(`) and hands it to the one ranker (`artifacts/api-server/src/routes/discovery.ts:2276#if (callerUserId) { const places = forYouM.places;`). The Compass-order branch, which holds serve points 4 and 5 and Cache B, is not entered.
+  - Compass stays as the candidate GATE. Its pipeline's safety filter, eligibility, safe-return attention and Live exclusions decide membership, and no order or score survives (`artifacts/api-server/src/compass/CompassFeedBuilder.ts:866#export async function compassEligibleForDiscovery(`).
+  - A signed-in `for_you` Cache A hit takes the same candidate set (`artifacts/api-server/src/routes/discovery.ts:1838#const forYouA = await forYouCandidatesForServe(`).
+  - The client's For You tab stops replacing that page with the Compass feed, and stops requesting the feed (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:228#if (forYouPde || !compass.data`).
+  - OFF, absent or unreadable: serve points 4 and 5 are unchanged.
+- **3456, `discovery_cache_a_ranked_enabled` (DV-03).** ON: every signed-in Cache A hit is ranked for its viewer, in every engine mode (`artifacts/api-server/src/routes/discovery.ts:1854#const cacheARanked = await cacheARankedEnabled(`). OFF: ranked only in `pde` mode for an in-cohort viewer, as before.
+- **A07, D-7.** With 2850 on, a row whose Live read was owed and failed keeps its place but loses its "now" claim.
+  - Owed-and-failed means the row has a canonical subject, and either the layer did not run or the row's grade is `unreadable` (`artifacts/api-server/src/lib/discoveryLiveRank.ts:519#export function liveClaimReadFailures(`).
+  - What is withheld is the `nearby_now` reason and the why-now (`artifacts/api-server/src/lib/discoveryLiveRank.ts:552#export function withLiveClaimsWithheld<`).
+  - The envelope says so with `meta.liveSafety` (`artifacts/api-server/src/lib/discoveryLiveRank.ts:573#export function liveSafetyDegradation(`).
+  - The rule holds on all four serve paths. The Compass path needed the grades of every row, not only the demoted ones: `artifacts/api-server/src/lib/discoveryLiveRankRead.ts:237#gradedById: graded.byId` is a line-neutral edit outside this lane's list, stated in 79.8.
+- **DC-14.** In `shadow` mode for a cohort, serve points 4 and 5 are compared with the consolidated pipeline (`artifacts/api-server/src/routes/discovery.ts:4464#async function observeForYouShadow(`). The Cache A shadow's `for_you` side is the consolidated pipeline too (`artifacts/api-server/src/routes/discovery.ts:1971#const shadowCands =`).
+- **Line neutrality.** Every edit above line 3477 of `routes/discovery.ts`, and every edit in `ForYouTab.tsx`, is line-neutral. The helpers sit at the foot of the route.
+
+### 79.2 Row statements
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| C32 | W | **W** | **Built behind 3455. The criterion is not met while the old path is in the tree.** With `discovery_for_you_pde_enabled` ON, the signed-in `for_you` page is ranked by the PDE pipeline and Cache B is neither written nor replayed (`artifacts/api-server/src/test/discoveryOnePipeline.test.ts:260#it("P1. 3455 ON: the signed-in for_you page is ordered by the PDE pipeline`). Compass's gates still decide which candidates enter (`artifacts/api-server/src/test/discoveryOnePipeline.test.ts:270#it("P2. 3455 ON: Compass's gates decide`). The page is the PDE page over those candidates (P3). **The criterion reads "One ranking pipeline in the tree", and it is not met.** With the flag OFF, which is the seeded state, the route still value-imports Compass's ranker (`artifacts/api-server/src/routes/discovery.ts:36#import { rankItemsForDiscovery } from "../compass/CompassFeedBuilder";`) and orders `for_you` with it (`artifacts/api-server/src/routes/discovery.ts:2175#const scored = await rankItemsForDiscovery(`). §66's R1 still pins that, and P4 pins that OFF is unchanged. Retiring the old path is designed (register D-W10R4-7): delete the flag-off branch and the value import after 3455 has run in production. It is not built, because until 3455 is on in production it is the only rollback. **AWAITS OWNER APPROVAL: D-W10R4-2** (3455 applied and TRUE in production), then **D-W10R4-7** (the retirement commit). |
+| DC-24 | W | **W** | **The parallel ordering is built out behind 3455 and still in the tree.** `10` §1's *"Avoid parallel systems"* fails for the reason C32's statement gives: with 3455 OFF, Compass's `rankItemsForDiscovery` still orders signed-in `for_you` pages beside `rankForViewer`. With 3455 ON, no second ordering serves a Discovery page (P1–P3). Compass is a candidate gate (`artifacts/api-server/src/compass/CompassFeedBuilder.ts:866#export async function compassEligibleForDiscovery(`), which *"reuse[s] the current repository architecture"* (`12` §0) rather than removing Compass's safety gates. **AWAITS OWNER APPROVAL: D-W10R4-2**, then **D-W10R4-7**. |
+| DV-03 | W | **W** | **Built behind 3456.** With `discovery_cache_a_ranked_enabled` ON, a signed-in Cache A hit in legacy mode is ranked by `rankForViewer` over the same candidates (`artifacts/api-server/src/test/discoveryOnePipeline.test.ts:299#it("V1. 3456 ON, legacy mode: a signed-in Cache A hit is ranked`). That is `01` §7's allowed pattern: cache candidates, rank per user, log, serve. An anonymous Cache A hit is exactly the flag-off response (V2). With the flag FALSE, the eleven legacy scenarios replay the `709b7b800` golden (Z0). A ranker failure still serves the cached order, recorded as a `cache_bypass` obligation and marked `rankedBy: "none"` (D-W10R4-4). **IMPLEMENTATION-COMPLETE; awaits: 3456 applied to production + flag discovery_cache_a_ranked_enabled TRUE in production (D-W10R4-2) + one production rank_events row with surface 'discovery', a serve point of 1, 2 or 3, and rankedInRequest true.** |
+| A05 | W | **W** | **§71.6's second gap is closed behind 3455.** With 3455 and 2850 ON, `?intentMode=quiet` is the mode the `for_you` page is live-ranked in (`artifacts/api-server/src/test/discoveryOnePipeline.test.ts:323#it("M1. 3455 ON + 2850 ON: the intent mode`). With 3455 OFF the Compass path still carries none (M1c). The client keeps that page and does not supersede it with the modeless Compass feed, even when the feed arrives after the page (`travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.onePipeline.component.test.tsx:144#it('O1b. flag ON: a Compass feed that arrives AFTER the page`). O1c is the flag-off control. **IMPLEMENTATION-COMPLETE; awaits: 2850 applied + flag discovery_live_rank_enabled TRUE in production (E-10) + 3455 applied + flag discovery_for_you_pde_enabled TRUE in production (D-W10R4-2) + one production for_you serve whose meta.liveRank.mode is the mode the client sent.** |
+| A07 | W | **W** | **D-7 decided (D-W10R4-3), and a failed read now fails closed.** Discovery's 2850 owns Sensing `:129` on every GET /discovery serve path, Compass's two included, through the §57.9 pass. When the Live gates refuse on the Compass path, every row is still served in Compass's order, none says *"Close to you and open around now."*, and the envelope says `meta.liveSafety: { readable: false, … }` (`artifacts/api-server/src/test/discoveryOnePipeline.test.ts:343#it("F1. Compass path, 2850 ON, the live gates refuse`). The cold PDE path follows the same rule (F4). Healthy reads keep the claim (F3), and 2850 OFF adds nothing (F5). **Limit, routed:** `lib/liveClaimRead.readLiveClaims` resolves `[]` on a snapshot read error, so an ERRORED claim read reaches Discovery as "no claim" and nothing is withheld (F2, pinned). **IMPLEMENTATION-COMPLETE; awaits: 2850 applied + flag discovery_live_rank_enabled TRUE and 2361 discovery_candidate_projection_enabled TRUE in production + one production serve of a Live unsafe_density reading from a Sensing producer (census-sensing S66), demoted.** |
+| DC-14 | W | **W** | **The consolidated pipeline is inside the shadow comparison, and a controlled run writes the row.** In `shadow` mode with the cohort open, the Compass fresh-rank page is served unchanged. One `discovery_shadow_serves` row, serve point 5, compares it with the page the consolidated pipeline would serve, `pde_stages.candidateSource` naming the source, and the run adds exactly that one write (`artifacts/api-server/src/test/discoveryOnePipeline.test.ts:393#it("S1. shadow mode, Compass fresh rank`). Serve point 4 is covered (S2). The Cache A shadow's `for_you` side is the consolidated pipeline's, so a place Compass refuses is not on it (S3). All six `06` §10 mechanisms were already in code (the earlier statement). None has run in production. **IMPLEMENTATION-COMPLETE; awaits: flag DISCOVERY_ENGINE_MODE enabled=true with metadata.mode='shadow' and an open cohort in production (Phase F gate 1, D-W10R4-2) + discovery_shadow_serves rows over a window, serve points 1, 4 and 5.** |
+
+### 79.3 Decisions
+
+Register section "W10-R4". The decisions this lane made:
+- D-W10R4-1 (Q66-2): a new flag, with Compass as a candidate gate.
+- D-W10R4-3 (D-7): 2850 owns `:129` on every path, and a failed read fails closed.
+- D-W10R4-4: DV-03's mechanism.
+- D-W10R4-5 (Q71-2): the one-pipeline page carries the mode, and the tab keeps it.
+- D-W10R4-6: the shadow's coverage.
+
+**APPROVAL REQUIRED** entries:
+- D-W10R4-2 (E-2, Phase F gates 1 and 2): the exact flag values and sequence.
+- D-W10R4-7: retiring the flag-off path, which C32 and DC-24 need for `C`.
+
+### 79.4 Tests, and every one seen red (P24)
+
+**Red first.** `discoveryOnePipeline.test.ts` was run against the tree before the fix, with only the flag module present. These went red:
+- P1, P3, V1, M1;
+- F1, F2 (as first written, see below), F4;
+- S1, S2, S3.
+
+These were green at that point, as controls or preservation pins:
+- P2 (Compass already excluded the closed place on its own path);
+- P4 (absent and FALSE);
+- V2, M1c, F3, F5.
+
+F2 was first written to expect the fail-closed answer for an ERRORED claim read. It stayed red after the fix. The cause is the read path swallowing the error, and it was restated as the F2 limit (79.2 A07). On the client, `ForYouTab.onePipeline.component.test.tsx` O1 and O1b were red against the base `ForYouTab.tsx`, while O1c, O2 and O3 were green.
+
+**Mutations.** Each was applied, run, and restored byte-identically (sha256 checked):
+
+| # | mutation | went red |
+|---|---|---|
+| M1 | `forYouCandidatesForServe` always off | P1, P3, M1 |
+| M2 | Compass gate ignored (every candidate passes) | P2, S3 |
+| M3 | `withCacheARankedAdmission` returns the cohort decision unchanged | V1 |
+| M4 | `withLiveClaimsWithheld` returns its input | F1, F4, U4 |
+| M5 | `unreadable` grades not counted as failures | F1, F4, U3 |
+| M6 | serve point 5's shadow call removed | S1 |
+| M7 | the shadow's Compass gate given the real (writing) client | S1 (write count) |
+| M9 | the Cache A shadow's `for_you` side not consolidated | S3 |
+| M10 | `gradedById` carrying demoted rows only (read-module edit) | F1 |
+| M11 | the client upgrade effect's `forYouPde` guard removed | O1b |
+| M12 | the Compass-order branch given a client with 3455 on | P1, P3, M1 |
+
+**Byte-identity.** Z0 replays the eleven legacy scenarios, every serve path and Compass's two included, against the `709b7b800` golden, with 3455, 3456 and 2850 present and FALSE. L0 (`discoveryServePathIsolation.test.ts`) replays the same golden with the rows absent. Both pass.
+
+**No existing assertion was restated.**
+- `discoveryVerifyAudit2.test.ts` R1 and R2 still pass and still pin the flag-off defect.
+- `discoveryCandidate.test.ts` H's source guard passes. The withholding is chained onto `await withDiscoveryCandidates(`, not wrapped around it.
+- The one existing helper change is additive: `runLegacyScenarios(extraFlags = [])`.
+
+### 79.5 Checks run at this tree, and what was not run
+
+- **In `artifacts/api-server`, all clean:**
+  - `typecheck`;
+  - `typecheck:tests`, at 863 against a baseline of 863;
+  - `check:test-registration`, `check:migration-prefixes`, `check:schema-references`, `check:writerless-reads`, `check:enum-literals`, `check:production-drift`, `check:flag-polarity`;
+  - the census checks in 79.9.
+- **Every api-server suite that imports or reads a changed file:** 66 files. With `discoveryOnePipeline.test.ts` there are 1239 tests, 0 failing, run as the `test` script runs them.
+- **`discoveryClientRouteE2E.test.ts` fails to load, and the failure is pre-existing.** It fails identically at `debd5ad4f` with this lane's changes removed: a client module import (`displayIdentity.ts` → `truncateDisplayName`) is rejected by the ESM/CJS loader.
+- **Harness, port 55451.**
+  - The chain replayed with 3455 and 3456 in it: 357 applied, 12 known-unreplayable.
+  - Both flags read FALSE, and a re-run of each file is idempotent.
+  - With the row set TRUE, 3455's postcondition refuses, and its rollback refuses.
+  - Both rollbacks delete their rows while FALSE, and both files re-apply.
+  - `scripts/local-db/run-tests.sh`: 377 of 377 pass, 0 skipped.
+  - The cluster was stopped and its data directory deleted.
+- **Client (`travel-buddy-standalone`):** `ForYouTab.onePipeline`, `.refusal` and `.pullToRefresh` pass. `typecheck`, the test-typecheck baseline and `check:all` are reported in 79.9.
+- **Not run.** `check:write-path-columns` needs live credentials. Neither flag adds a write path, so its extractor has nothing new to read. No SQL was run against `portava-ci` or production.
+
+### 79.6 Findings, recorded and not graded
+
+1. **`lib/liveClaimRead.readLiveClaims` collapses a failed read into an absence.** A snapshot read error, an unreadable promoted-scope allowlist, or a throw all resolve `[]`. Sensing §20 says *"Schema/permission/infrastructure failure ≠ no activity"*. Every consumer of the one read path therefore grades an errored read as `none`. This is pinned by F2. The fix is for that file's owner: return a failure the caller can see, and F2 then goes red.
+2. **The stash is shared across worktrees.** During this lane, `git stash` swapped work between two lanes' worktrees. It was recovered, and the lane rules now forbid `git stash`.
+
+### 79.7 Owner items
+
+- D-W10R4-2 (APPROVAL REQUIRED) covers E-2.
+- D-W10R4-7 (APPROVAL REQUIRED) covers C32's and DC-24's retirement.
+- 2850's activation is E-10, carried forward and not re-asked.
+- Q66-2, D-7 and Q71-2 are decided (D-W10R4-1, -3 and -5).
+
+### 79.8 Files outside this lane's list, changed minimally
+
+- `artifacts/api-server/src/lib/discoveryLiveRankRead.ts`: three lines, line-neutral. The safety pass also returns `gradedById`, every graded row, so the Compass path can tell a failed read from one never owed. Nothing reaches the wire from it. M10 pins it.
+- `artifacts/api-server/src/lib/discoveryOnePipeline.ts`: new. It holds the two cached flag reads.
+- `artifacts/api-server/src/test/helpers/discoveryLegacyScenarios.ts`: an optional `extraFlags` parameter, plus the new flag cache in its reset.
+- `db/rollback/2026-09-28-3455-…` and `-3456-…`: new.
+
+### 79.9 Freshness, scope and census checks
+
+This section adds CENSUS_SCOPE entries for:
+- the new suite and the client test;
+- `lib/discoveryOnePipeline.ts`;
+- 3455 and 3456, and their rollbacks.
+
+The other changed files were already watched. The census checks' results after the last edit are in the lane report.
+
+### 79.10 What would turn this red
+
+- **3455 ON and a signed-in `for_you` page ranked by anything but `rankForViewer`:** P1 and P3 go red. The same holds for a Compass gate dropped (P2) or a Cache B write (P1).
+- **3456 ON and a signed-in Cache A hit served unranked:** V1 goes red.
+- **2850 ON, a failed Live read, and a served row still claiming "open around now":** F1 and F4 go red.
+- **A fix to `liveClaimRead` that surfaces errors:** F2 goes red, and it should then be restated to the fail-closed answer.
+- **Either flag FALSE and any byte of a legacy scenario moving:** Z0 goes red, and so does L0 for the rows absent.
+- **The shadow writing anything but its own row, or missing serve point 4 or 5:** S1 and S2 go red.
+- **The retirement commit (D-W10R4-7):** R1 and R2 in `discoveryVerifyAudit2.test.ts` and P4 go red by design, and are restated then.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/compass/CompassExplanationEngine.ts — §13.7 item 3 names Compass's HMAC recommendation-token signer as a refactor this lane declined to make in another lane's file. Discovery's recommendation id is minted by lib/discoveryRecommendationId.ts, and no Discovery verdict rests on the signer.

@@ -4227,6 +4227,15 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/helpers/fakeCandidateDb.ts",
     "artifacts/api-server/src/test/helpers/candidateWorld.ts",
     "artifacts/api-server/src/test/db/discoveryCandidatePipelineMigrations.db.test.ts",
+    // census-discovery §79 (lane W10-R4, one ranking pipeline): C32, DC-24, DV-03, A05, A07 and DC-14 are
+    // graded on this suite and the client test, the 3455/3456 flag gates, their migrations and rollbacks.
+    "artifacts/api-server/src/lib/discoveryOnePipeline.ts",
+    "artifacts/api-server/src/test/discoveryOnePipeline.test.ts",
+    "artifacts/api-server/src/migrations/3455_discovery_for_you_pde_flag.sql",
+    "artifacts/api-server/src/migrations/3456_discovery_cache_a_ranked_flag.sql",
+    "db/rollback/2026-09-28-3455-discovery-for-you-pde-enabled-rollback.sql",
+    "db/rollback/2026-09-28-3456-discovery-cache-a-ranked-enabled-rollback.sql",
+    "travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.onePipeline.component.test.tsx",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //
