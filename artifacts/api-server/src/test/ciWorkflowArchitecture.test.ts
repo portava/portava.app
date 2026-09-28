@@ -873,3 +873,62 @@ describe("CI architecture — each workflow's verdict covers every job in it", (
     });
   }
 });
+
+/**
+ * census-discovery DC-26 (§66.4, §69) — the rehearsal the "CI rehearsal" class
+ * names is the `schema-drift` job's APPLY and CERTIFY steps. Until this block,
+ * no assertion in this file named either step, so deleting both left the suite
+ * green (§66.4: "it would not notice if they stopped being rehearsed").
+ *
+ * What this pins, and only this: the live-DB workflow's `schema-drift` job has a
+ * step that runs `db:apply-migrations` (the real apply, not `:dry-run`) and,
+ * AFTER it, a step that runs `certify:migrations`. It does NOT prove a rehearsal
+ * has passed on `portava-ci` for any migration — that is an EVENT, and DC-26
+ * does not move on this block.
+ *
+ * `P29_LIVE_DB_YML` exists so the mutation can be run against a real edited
+ * copy of the workflow without touching `.github/` (census-discovery §69.8).
+ */
+describe("CI architecture — the schema-drift job rehearses migrations (census-discovery DC-26)", () => {
+  const src = readFileSync(process.env.P29_LIVE_DB_YML ?? resolve(WF, "live-db.yml"), "utf8");
+
+  /** The `schema-drift` job, from its id line to the next top-level job id. */
+  function schemaDriftJob(text: string): string {
+    const i = text.indexOf("\n  schema-drift:\n");
+    if (i < 0) return "";
+    const rest = text.slice(i + 1);
+    const end = rest.slice(1).search(/\n {2}[A-Za-z0-9_-]+:\n/);
+    return end === -1 ? rest : rest.slice(0, end + 1);
+  }
+
+  /** Offsets of the apply and certify `run:` invocations inside the job, or -1. */
+  function rehearsalSteps(text: string): { apply: number; certify: number } {
+    const job = schemaDriftJob(text);
+    const apply = job.search(/scripts db:apply-migrations(?!:dry-run)\b/);
+    const certify = job.search(/@workspace\/api-server certify:migrations\b/);
+    return { apply, certify };
+  }
+
+  it("has a step that applies migrations (not only the dry run)", () => {
+    assert.ok(schemaDriftJob(src).length > 0, "live-db.yml has no `schema-drift` job — nothing rehearses a migration");
+    assert.ok(
+      rehearsalSteps(src).apply >= 0,
+      "the schema-drift job no longer runs `db:apply-migrations`. That step IS the CI rehearsal `12` names " +
+        "(\"rehearse on portava-ci\"); without it no migration is ever applied to the CI project.",
+    );
+  });
+
+  it("certifies the apply, after it, in the same job", () => {
+    const { apply, certify } = rehearsalSteps(src);
+    assert.ok(certify >= 0, "the schema-drift job no longer runs `certify:migrations`: an apply nobody reads back is a claim, not a rehearsal");
+    assert.ok(apply >= 0 && certify > apply, "`certify:migrations` must run AFTER `db:apply-migrations` in the schema-drift job");
+  });
+
+  it("control: the same reading rejects the workflow with either step removed", () => {
+    const noApply = src.replace(/^.*scripts db:apply-migrations(?!:dry-run)\b.*$/gm, "");
+    const noCertify = src.replace(/^.*certify:migrations\b.*$/gm, "");
+    assert.ok(rehearsalSteps(src).apply >= 0 && rehearsalSteps(src).certify >= 0, "precondition: both steps present");
+    assert.equal(rehearsalSteps(noApply).apply, -1, "removing the apply lines must be seen");
+    assert.equal(rehearsalSteps(noCertify).certify, -1, "removing the certify line must be seen");
+  });
+});

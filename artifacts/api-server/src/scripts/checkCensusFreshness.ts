@@ -4067,6 +4067,11 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // cites the two suites that were seen red on the event and route rules and on the counts.
     "artifacts/api-server/src/test/discoveryTrailMemberVisibility.test.ts",
     "artifacts/api-server/src/test/db/trailsMemberVisibility.db.test.ts",
+    // census-discovery §69 (row audit P29): the restated DV-53, DV-55, DC-24, DC-13, DV-12, DC-01 and DV-70 statements cite this suite.
+    "artifacts/api-server/src/test/discoveryRowAudit29.test.ts",
+    // §69 also cites these two: DV-54's restated repeated-history leg rests on the seen-penalty case, and DV-75's on the third verdict job.
+    "artifacts/api-server/src/test/discoveryCategoryAffinity.test.ts",
+    ".github/workflows/unwired-checks.yml",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //
