@@ -84,6 +84,8 @@ The serve paths are the ones §47.2 of the census maps. "Rows examined" is the h
 
 `services/trails/TrailService.ts`: `destination = x AND lifecycle_status = 'active'`. **Index:** `idx_trails_destination_lifecycle`. Harness: Bitmap Index Scan, 6 rows. Production: 0 Trails.
 
+*census-discovery §77.* Since 3441, `listTrails` sends `destination_key = <canonical key> AND lifecycle_status = 'active'` whenever the destination has a key, so that two spellings of one destination list the same Trails. **Index:** `idx_trails_destination_key` (3441, on `(destination_key, lifecycle_status)`). The raw `destination = x` leg above remains only for destinations with no key. The harness plan for the keyed read is not yet measured.
+
 ### QP-14 A Trail's members, newest 500
 
 `TrailService.readMembers`. **Index:** `idx_content_trails_trail` (trail_id, created_at DESC). Harness: Bitmap Index Scan, 10 rows, then Sort. Well under 500 per Trail at this cardinality.
@@ -210,6 +212,7 @@ One row per table or index that a migration in `artifacts/api-server/src/migrati
 | table | `trail_follows` | `trail_follows` | 2910 | QP-18 | a viewer's follows |
 | table | `trail_reports` | `trail_reports` | 2910 | QP-16 | moderation input to Trail health |
 | index | `idx_trails_destination_lifecycle` | `trails` | 2910 | QP-13 | Trails for a destination, by lifecycle |
+| index | `idx_trails_destination_key` | `trails` | 3441 | QP-13 (the §77 path) | Trails for a destination by its canonical key, then by lifecycle. `listTrails` filters `destination_key = trail_normalised_destination(x) AND lifecycle_status = 'active'` (census-discovery §77). This replaces the raw-spelling equality for every destination that has a key; a destination with no key (e.g. 東京) still uses `idx_trails_destination_lifecycle`. Cardinality: production holds 0 Trails and 3441 is unapplied everywhere but the harness. The harness plan for this read is NOT yet measured: that is owed at the next harness replay |
 | index | `idx_trails_parent` | `trails` | 2910 | not a hot path: parent walk on a merge or split | partial on `parent_trail_id IS NOT NULL` |
 | index | `trails_slug_unique` | `trails` | 2910 | not a hot path: the uniqueness arbiter probed once per Trail proposal insert (a 23505 is a concurrent duplicate); no read filters `slug` by equality, and the proposal's peer read is `slug ILIKE %token%`, which a btree cannot serve | `CONSTRAINT … UNIQUE (slug)`: `02` §18's canonical handle: one slug is one Trail. Whether two spellings of a theme reach the same slug is the canonicaliser's job (DV-20), not this index's; harness: an equality probe is an Index Scan on it, the peer read a Seq Scan (§4 note, §62) |
 | index | `uq_content_trails_label` | `content_trails` | 2910 | not a hot path: a uniqueness constraint (one label per member), probed on insert | enforces `02` §4's one label per (trail, source, relationship, signal) |
