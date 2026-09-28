@@ -393,4 +393,40 @@ describe('MapSearchSheet — refusals', () => {
     });
     expect(screen.queryByText(/Nothing matched/i)).toBeNull();
   });
+
+  /**
+   * (11) §80 follow-up (verifier, at bc0ba4a94). A query with nothing
+   * searchable once the key is prepared — "🔥", "((", or "@a", the second
+   * keystroke of every handle search — is answered by the gateway page with a
+   * VALIDATION refusal on both lanes. That is "not enough to search yet", the
+   * state the sheet already has for a one-character query: nothing is shown,
+   * and above all no OUTAGE sentence ("Search couldn’t be run just now …",
+   * "Your saved items couldn’t be read …") and no "Nothing matched".
+   */
+  it('(11) a VALIDATION refusal is not-enough-to-search: no outage notice, no error, no "Nothing matched"', async () => {
+    const tooShort = { class: 'validation', code: 'query_too_short', route: 'POST /input-assistance/suggest', coverage: 'nothing' };
+    mockRequestMapSearchPage.mockResolvedValue({ ok: true, results: [], refusal: tooShort, savedRefusal: tooShort });
+
+    await search();
+
+    await waitFor(() => {
+      expect(mockRequestMapSearchPage).toHaveBeenCalled();
+    });
+    await act(async () => {});
+    expect(screen.queryByText(/couldn’t be run|could not be run/i)).toBeNull();
+    expect(screen.queryByText(/saved items/i)).toBeNull();
+    expect(screen.queryByText(/Nothing matched/i)).toBeNull();
+    expect(screen.queryByText(/Search failed/i)).toBeNull();
+  });
+
+  it('(11b) CONTROL: an outage refusal (transient_db, nothing) still says the search could not run', async () => {
+    mockRequestMapSearchPage.mockResolvedValue(
+      page({ results: [], refusal: refusal('nothing') }, { results: [], refusal: refusal('nothing') }),
+    );
+    await search();
+    await waitFor(() => {
+      expect(screen.getByText(/couldn’t be run|could not be run/i)).toBeTruthy();
+    });
+  });
 });
+

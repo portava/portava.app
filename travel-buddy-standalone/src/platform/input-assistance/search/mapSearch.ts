@@ -36,6 +36,12 @@ export interface MapSearchPage {
   refusal?: MapSearchRefusal;
   /** §27 "Saved items" coverage. Absent = complete. */
   savedRefusal?: MapSearchRefusal;
+  /**
+   * census-discovery §80 follow-up: the query had nothing searchable once the
+   * key was prepared (a `validation` refusal — "🔥", "((", "@a"). That is "not
+   * enough to search yet", never an outage, and the sheet must not word it as one.
+   */
+  tooShort?: boolean;
 }
 
 export type MapSearchPageResult = ({ ok: true } & MapSearchPage) | { ok: false; error: string };
@@ -113,7 +119,8 @@ export function parseMapSearchEnvelope(body: unknown): MapSearchPage {
   const lanes = (b.laneRefusals ?? {}) as Record<string, unknown>;
   const savedRefusal = parseMapSearchRefusal(lanes.saved);
   return {
-    results,
+    results: refusal?.class === 'validation' ? [] : results,
+    ...(refusal?.class === 'validation' ? { tooShort: true } : {}),
     ...(refusal ? { refusal } : {}),
     ...(savedRefusal ? { savedRefusal } : {}),
   };

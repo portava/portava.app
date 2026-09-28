@@ -254,7 +254,7 @@ describe("E — the gateway's map page serves the route's rows and the route's c
   });
 
   it("E: nothing searchable — the route's 400 is the gateway's validation refusal on both lanes", async () => {
-    for (const q of ["🔥", "(("]) {
+    for (const q of ["🔥", "((", "@a", "\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}"]) { // §80 follow-up: a handle's second keystroke, a subdivision flag
       fresh(world());
       const all = await kitGet(base, `/discovery/search?q=${encodeURIComponent(q)}&type=all`);
       assert.equal(all.status, 400);

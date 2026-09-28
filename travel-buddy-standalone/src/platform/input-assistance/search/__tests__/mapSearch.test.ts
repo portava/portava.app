@@ -97,3 +97,13 @@ test('A1: the parsed rows reach the Map adapter as the same §27 results the rou
   }]);
   assert.deepEqual(viaGateway, viaRoute);
 });
+
+test('V1 (§80 follow-up): a validation refusal is not-enough-to-search — tooShort, no rows — and an outage is not', () => {
+  const tooShort = { class: 'validation', code: 'query_too_short', route: 'POST /input-assistance/suggest', coverage: 'nothing' };
+  const page = parseMapSearchEnvelope({ suggestions: [], refusal: tooShort, laneRefusals: { saved: tooShort } });
+  assert.equal(page.tooShort, true);
+  assert.deepEqual(page.results, []);
+  const outage = parseMapSearchEnvelope({ suggestions: [], refusal: { ...tooShort, class: 'transient_db', code: 'search_failed' } });
+  assert.equal(outage.tooShort, undefined);
+  assert.equal(outage.refusal?.coverage, 'nothing');
+});

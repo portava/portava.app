@@ -152,7 +152,7 @@ export function MapSearchSheet({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /** Set when the server REFUSED rather than failed. See `SearchNotice`. */
-  const [notice, setNotice] = useState<SearchNotice | null>(null);
+  const [notice, setNotice] = useState<SearchNotice | null>(null); const [tooShort, setTooShort] = useState(false); // §80: nothing searchable yet
 
   // Guards against a slow early query overwriting a fast later one.
   const seqRef = useRef(0);
@@ -194,7 +194,7 @@ export function MapSearchSheet({
         setNotice(null);
         return;
       }
-      setError(null);
+      setError(null); const tooShortNow = !!res.tooShort || res.refusal?.class === 'validation'; setTooShort(tooShortNow); if (tooShortNow) { setNotice(null); setResults([]); return; } // §80: a validation refusal is not-enough-to-search, not an outage
       // The person searched, whatever the server could read — the same Compass
       // intent signal `searchUnified` sent, once per answered query now that the
       // query is one request rather than two.
@@ -299,7 +299,7 @@ export function MapSearchSheet({
             result set the server never produced. */}
         {!error &&
         !loading &&
-        !notice?.nothingServed &&
+        !notice?.nothingServed && !tooShort &&
         query.trim().length >= MIN_QUERY_LENGTH &&
         groups.length === 0 ? (
           <Text style={styles.note}>Nothing matched “{query.trim()}”.</Text>
