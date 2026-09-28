@@ -7,7 +7,8 @@
  * pin the route's own branches, each of which the database cannot show:
  *
  *   K1  the key is validated exactly as POST /rank-events validates it
- *   K2  a keyless outcome reads no receipt and writes no key — unchanged
+ *   K2  a keyless outcome reads no receipt and writes no key (its retry
+ *       inside the window is a duplicate since §82, D-W10-O-5)
  *   K3  a keyed outcome writes its key on the compare-and-set UPDATE
  *   K4  a key that already landed: 200 duplicate, NO row moves, no negative
  *       signal, no Compass link — even when another upgradable exposure exists
@@ -126,7 +127,7 @@ describe("POST /rank-events/outcome — client_event_id (census-discovery §62, 
     assert.deepEqual(outcomes(), [["1", "impression"], ["2", "impression"]], "a refused body moves nothing");
   });
 
-  it("K2. a KEYLESS outcome reads no receipt and writes no key — its behaviour is unchanged", async () => {
+  it("K2. a KEYLESS outcome reads no receipt and writes no key (its retry: §82)", async () => {
     install();
     countReceiptSelects();
     seedTwoExposures();
@@ -136,10 +137,13 @@ describe("POST /rank-events/outcome — client_event_id (census-discovery §62, 
     const upd = db.captured.filter((c) => c.table === "rank_events" && c.op === "update");
     assert.ok(upd.length >= 1 && upd.every((c) => !("outcome_client_event_id" in (c.payload as any))), "no key on a keyless UPDATE");
     assert.deepEqual(outcomes(), [["1", "impression"], ["2", "dismiss"]]);
-    // A genuine second dismissal is still counted (the keyless path is not made lossy).
+    // Restated (census-discovery §82, D-W10-O-5): a second keyless dismissal of the
+    // same item INSIDE the retry window is a retry — answered duplicate, nothing
+    // moves. A genuine later action (outside the window) still counts:
+    // discoveryKeylessOutcome.test.ts L3.
     const again = await post({ item_id: ITEM, surface: "discovery", outcome: "dismiss" });
-    assert.deepEqual(again.body, { ok: true });
-    assert.deepEqual(outcomes(), [["1", "dismiss"], ["2", "dismiss"]]);
+    assert.deepEqual(again.body, { ok: true, duplicate: true });
+    assert.deepEqual(outcomes(), [["1", "impression"], ["2", "dismiss"]]);
   });
 
   it("K3. a keyed outcome carries its key on the compare-and-set UPDATE of the exposure it moves", async () => {

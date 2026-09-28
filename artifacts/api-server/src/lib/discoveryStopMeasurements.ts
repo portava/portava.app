@@ -38,7 +38,7 @@
  * facts, exactly as in lib/discoveryShadow's creator axis.
  */
 import {
-  recordStopMeasurement,
+  recordStopMeasurement, refreshStopEnforcement,  // §82: the arming read rides this refresh
   DATABASE_MEASURED,
   STOP_WINDOW_MS,
   type DatabaseMeasuredCondition,
@@ -179,7 +179,7 @@ export function refreshDiscoveryStopMeasurements(sc: any, nowMs: number = Date.n
   if (_inFlight) return _inFlight;
   _inFlight = (async () => {
     try {
-      const set = await measureDiscoveryStopInputs(sc, nowMs - STOP_WINDOW_MS, nowMs, nowMs);
+      const [set] = await Promise.all([measureDiscoveryStopInputs(sc, nowMs - STOP_WINDOW_MS, nowMs, nowMs), refreshStopEnforcement(sc)]);  // §82 (W10-O): read the arming flag (3470) beside the measurement
       for (const c of DATABASE_MEASURED) recordStopMeasurement(c, set[c]);
     } catch (err) {
       logger.warn({ err }, "discoveryStopMeasurements: refresh threw");

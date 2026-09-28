@@ -43,7 +43,7 @@
  *       header says so) — a writer that bypasses the service CAN link another
  *       viewer's id; only the service's binding stops it
  *   V7  FLIPPED at §62 (3420): a KEYED outcome's retry lands once (V7–V7c);
- *       the KEYLESS path still moves a second exposure, pinned as V7d
+ *       the KEYLESS retry inside the window lands once since §82, V7d
  *   V0  the flag rows were never touched
  *
  * The rule version is a clearly named TEST FIXTURE, published in before() and
@@ -405,11 +405,11 @@ describe("DC-26 — recommendation → behaviour → attribution, across lanes, 
     assert.equal(ofItem(carol, item).find((x) => x.id === still.id)!.outcome, "impression", "and the refused UPDATE moved nothing");
   });
 
-  test("V7d. STILL PINNED (§62, owner decision): a KEYLESS outcome retried after a second serve still moves a SECOND exposure", async () => {
+  test("V7d. STILL PINNED (§62, owner decision): a KEYLESS outcome retried after a second serve still moves a SECOND exposure — no longer: FLIPPED at §82 (D-W10-O-5), it lands ONCE", async () => {
     // Every client build shipped before §62's client half sends outcomes with no
-    // key. The server cannot tell their retry from a second action, and refusing
-    // keyless outcomes would drop every one of their signals — a rollout decision
-    // (census-discovery §62.7). Until it is taken, this is the behaviour.
+    // key. §82 decided §62.7 Q1 (register D-W10-O-5): accepted, marked unkeyed
+    // (no key, no receipt), and a retry inside KEYLESS_OUTCOME_RETRY_WINDOW_MS
+    // on another exposure of the same (viewer, item, surface) is a duplicate.
     const item = servedA.items[1]!;
     const again = await serve("alice-token");
     assert.equal(again.status, 200);
@@ -421,10 +421,10 @@ describe("DC-26 — recommendation → behaviour → attribution, across lanes, 
     assert.equal(first.status, 200, JSON.stringify(first.body));
     const retry = await outcome("alice-token", body);
     assert.equal(retry.status, 200, JSON.stringify(retry.body));
-    assert.deepEqual(retry.body, { ok: true }, "the keyless retry is answered as a NEW outcome, not a duplicate");
-    assert.deepEqual(exposuresOfItem().map((x) => x.outcome).sort(), ["dismiss", "dismiss"],
-      "two exposures moved for one user action — the keyless path is not idempotent where retried");
-    assert.equal(receiptsOf(alice).length, 0, "and it wrote no receipt: no key, no memory");
+    assert.deepEqual(retry.body, { ok: true, duplicate: true }, "the keyless retry is answered as the duplicate it is");
+    assert.deepEqual(exposuresOfItem().map((x) => x.outcome).sort(), ["dismiss", "impression"],
+      "ONE exposure moved for one user action — the keyless path is idempotent where retried");
+    assert.equal(receiptsOf(alice).length, 0, "and it wrote no receipt: unkeyed, and marked so by the NULL key");
   });
 
   test("V0. the flag rows were never written, every request was modelled, and the only refusals were the provoked ones", () => {

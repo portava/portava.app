@@ -233,11 +233,11 @@ describe("rank-events outcome — the negative signal", () => {
   before(async () => { ({ url, close } = await startServer(await makeApp())); });
   after(async () => { await close(); _setTestClient(null as any, false); });
 
-  async function report(itemId: string, outcome: string): Promise<number> {
+  async function report(itemId: string, outcome: string, clientEventId?: string): Promise<number> {
     const r = await fetch(`${url}/api/rank-events/outcome`, {
       method:  "POST",
       headers: { Authorization: "Bearer alice-token", "Content-Type": "application/json" },
-      body:    JSON.stringify({ item_id: itemId, surface: "discovery", outcome }),
+      body:    JSON.stringify({ item_id: itemId, surface: "discovery", outcome, ...(clientEventId ? { client_event_id: clientEventId } : {}) }),
     });
     await r.arrayBuffer();
     return r.status;
@@ -368,9 +368,12 @@ describe("rank-events outcome — the negative signal", () => {
     );
 
     // 30 dismisses through the real route. Each needs its own impression row —
-    // one dismiss consumes one, exactly as production does.
+    // one dismiss consumes one, exactly as production does. Restated (census-
+    // discovery §82, D-W10-O-5): each is a DISTINCT user action, so each carries
+    // its own client_event_id. Thirty identical KEYLESS dismisses of one item
+    // inside ten minutes are one action and its retries, and now count once.
     for (let i = 0; i < 30; i++) {
-      assert.equal(await report(ITEM, "dismiss"), 200, `dismiss ${i + 1} must land`);
+      assert.equal(await report(ITEM, "dismiss", `c1c1c1c1-0000-4000-8000-${String(i).padStart(12, "0")}`), 200, `dismiss ${i + 1} must land`);
     }
     await settle();
 
@@ -411,7 +414,8 @@ describe("rank-events outcome — the negative signal", () => {
     const ITEM = "node/boundary";
 
     for (let i = 0; i < 100; i++) await f.serve(ITEM);
-    for (let i = 0; i < 29; i++) assert.equal(await report(ITEM, "dismiss"), 200);
+    // Restated (§82, D-W10-O-5): 29 distinct actions, each keyed, as C1.
+    for (let i = 0; i < 29; i++) assert.equal(await report(ITEM, "dismiss", `c3c3c3c3-0000-4000-8000-${String(i).padStart(12, "0")}`), 200);
     await settle();
 
     const row = f.stats.get(ITEM)!;
