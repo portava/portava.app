@@ -13084,7 +13084,7 @@ CONSTRUCTED 182 / 188 = **96.8 %**, unchanged. CORRECT 94 / 188 = **50.0 %**, do
 
 ## §79 — One ranking pipeline for GET /discovery (lane W10-R4): `for_you` joins the PDE pipeline and Cache A is ranked for every signed-in viewer, each behind a flag seeded FALSE; a failed Live read fails closed; the Compass serve points enter the shadow
 
-*Written 2026-09-28 by lane W10-R4 on `disc-w10-r4-pipeline`, branched from `debd5ad4f`. The code is commit `2fcef79ba`. The owner's authorisation of 2026-09-28 lifts the ranker hold for builds behind flags seeded FALSE; every decision is in `docs/architecture/discovery-decision-register.md` under "W10-R4". Nothing here is merged to `main`, applied to `portava-ci` or production, deployed or flag-enabled. All evidence is controlled: in-process routes over in-memory databases, plus the local PostgreSQL 16 harness. None of it is production evidence. No verdict moves, so the headline is not restated.*
+*Written 2026-09-28 by lane W10-R4 on `disc-w10-r4-pipeline`, branched from `debd5ad4f`. The code is commits `2fcef79ba` and `8af9ac652` (the second keeps every cited anchor whole and makes the flag reads literal). The owner's authorisation of 2026-09-28 lifts the ranker hold for builds behind flags seeded FALSE; every decision is in `docs/architecture/discovery-decision-register.md` under "W10-R4". Nothing here is merged to `main`, applied to `portava-ci` or production, deployed or flag-enabled. All evidence is controlled: in-process routes over in-memory databases, plus the local PostgreSQL 16 harness. None of it is production evidence. No verdict moves, so the headline is not restated.*
 
 ### 79.1 What was built
 
