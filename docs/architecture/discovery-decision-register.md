@@ -1801,3 +1801,41 @@ W10D-C5 (the three personal projections) and AR-W11A-2 (circles, crews, visits) 
   - **R-X3-2.** The route's private `haversineKm`, `VoteRatingAgg` and `batchFetchVoteAndRatingAggregates` are deleted and imported from the one module generated rows use. Their lines are left blank with a two-line note, so every cited line of the route keeps its number. `discoveryCandidateRowParity` R1 is restated from "the copies match token for token" to "there is one implementation, and both the route and `materialize.ts` import it": it asserts both imports and the absence of any private copy, so re-introducing a copy is red (M32). What R1 proved (the route and generated rows compute the same values) holds by construction, and R2–R5 still pin the values.
 - **Reversibility.** Revert the two in-place edits and restore the copies from git.
 - **Where.** `routes/discovery.ts` (two lines in place, the padded deletions, one foot import); `test/discoveryIntegrationHooks.test.ts` R1c (appended); `test/discoveryCandidateRowParity.test.ts` R1 (restated). §95's DC-12 citation of R1 is repointed to the restated case, and its sentence "The route does not pass the centre yet (routed hunk R-X3-1)" is superseded by §94.
+
+## W11-P — the owner approval request, consolidated
+
+*Lane W11-P, 2026-09-28, branch `disc-w11-approvals` at integration head `3fd11f858`. Census section §96. Docs only. The document is `docs/ops/discovery-owner-approval-request.md`. The apply plan gains §8 and the rollout plan gains §9. No approval entry is added and none is answered: every action in the document is an existing APPROVAL REQUIRED entry, deduplicated.*
+
+### D-W11P-1 — one numbered list of owner actions, in the order they must happen
+
+- **The question.** The owner, 2026-09-28: *"Bring me a concrete approval request instead of a list of unexplained decision codes."* The requests were spread over W10-D's pack (A1–A7, B0–B11, C1–C8, D1) and some thirty later register entries.
+- **Options considered.**
+  - (a) Keep one request per register entry. Consequence: over sixty items, most of them repeating "apply X" or "turn Y on" steps that can only happen together.
+  - (b) Group by the four reserved categories, as W10-D did. Consequence: the order in which things must happen is lost.
+  - (c) One list, in dependency order: step 0, then 25 actions. Each "apply X to production" part of every entry collapses into one batch (action 3). Each flag flip joins the activation step it belongs to (5, 6, 7, 8, 10, 13, 14). Each consent, money or retention question becomes a question with a recommended answer, placed just before the first action it gates.
+- **Decision.** (c). The document's §2 maps every earlier id to its action, so no entry is lost.
+- **Reversibility.** Documentation only.
+- **Where.** `docs/ops/discovery-owner-approval-request.md` §1–§5.
+
+### D-W11P-2 — which rows "wait only on production"
+
+- **The question.** How to count, from the census markers, which open rows wait only on production and which wait on an owner policy answer.
+- **Decision.** A row waits on a policy answer when any action it needs is a consent, money or retention question. That includes a row reached only through an activation that this document gates on such an answer, for example the trend scheduler, which D-W10-R1-17 forbids without D-W10-R1-12's retention answer.
+- **Result at `3fd11f858`.** 101 C. Of the 87 open rows, 51 wait only on production and 36 on a policy answer. The 36 are the 24 whose `AWAITS OWNER APPROVAL:` names a policy entry, plus 12 through a gated activation.
+- **Reversibility.** A counting rule. It moves no verdict.
+- **Where.** Approval request §1 and §7.
+
+### D-W11P-3 — census §66.9 Q4 (ß, æ, œ) is carried as a question, with the recorded reading as its default
+
+- **The question.** Is B01's owner question 4 one of the reserved decisions?
+- **Decision.** No. It is a product definition, so it is delegable. §66.9 put it to the owner, and this docs-only lane does not answer it. The document carries it as question 25, recommending "no". "No" is §77's recorded reading, under which B01 stays C.
+- **Reversibility.** The owner's answer replaces the default.
+- **Where.** Approval request question 25.
+
+### Finding, routed and not decided: a tripped stop does not turn off the gate-2 flags
+
+- `lib/discoveryEngineMode.ts` resolves the engine mode to legacy on a tripped stop.
+- `lib/discoveryOnePipeline.ts` reads only `discovery_for_you_pde_enabled` and `discovery_cache_a_ranked_enabled`, and not the stop state. Neither does the §78 flag reader.
+- So with gate 2 on, a trip does not return `for_you` or Cache A to their pre-§79 order.
+- The document states the manual recovery: action 8's SQL, also added to rollout plan §9.3.
+- Making those reads honour a trip is a routine engineering change for the serve-path owner. This lane does not build it.
