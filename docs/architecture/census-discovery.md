@@ -16521,7 +16521,7 @@ Run after the last edit.
 - **`travel-buddy-standalone`, clean:** `typecheck`, `typecheck:tests` (173 against 173) and `node scripts/check-test-mocks.mjs`.
 - **Not run:**
   - the full api-server `pnpm test`; the suites importing the changed route were run instead;
-  - the client `check:all`;
+  - (the client `check:all` WAS run, at `dedb540c9`: "ALL CHECKS PASSED", including `test`, `test:component`, both typechecks and `lint:orphan-tests`);
   - the harness, since no migration was added;
   - `check:write-path-columns`, which needs live credentials. No write payload changed, and the L2 writer is only called less often.
 
