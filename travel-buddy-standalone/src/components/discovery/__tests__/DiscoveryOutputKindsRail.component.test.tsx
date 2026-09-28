@@ -113,5 +113,12 @@ describe('DiscoveryOutputKindsRail (§94)', () => {
     expect(await r.findByTestId('discovery-output-kind-trails')).toBeTruthy();
     expect(mockGet.mock.calls.length).toBeGreaterThan(before);
     expect(r.queryByTestId('discovery-output-kind-trails-unavailable')).toBeNull();
+
+    // Every pull, not only the first: the next key refetches again.
+    const afterFirst = mockGet.mock.calls.length;
+    mockGet.mockResolvedValue({ ok: false, reason: 'unavailable' });
+    await r.rerender(<DiscoveryOutputKindsRail kind="trails" destination="Miami" enabled refreshKey={2} />);
+    expect(await r.findByTestId('discovery-output-kind-trails-unavailable')).toBeTruthy();
+    expect(mockGet.mock.calls.length).toBeGreaterThan(afterFirst);
   });
 });

@@ -4520,15 +4520,28 @@ import { haversineKm, batchFetchVoteAndRatingAggregates } from "../lib/discovery
  * did read as an error with a 5xx status. A 429 (rate limited) or 408 (timed
  * out) is the service declining to evaluate the token, which says nothing
  * about the token; `lib/discoveryRefusal.ts` rules a rate limit an outage for
- * the same reason. It reports a rejected credential (expired, malformed,
- * revoked, no session) as another 4xx, or `AuthInvalidJwtError` (400). Only the
- * first kind leaves the viewer UNRESOLVED; a rejection is an answer, and the
- * caller is anonymous. An error of neither kind is treated as a rejection,
- * which is the feed's documented posture for a token it cannot use.
+ * the same reason.
+ *
+ * A rejected credential is Supabase Auth's VERDICT on the token, and a verdict
+ * names itself: auth-js sends `X-Supabase-Api-Version` and reads the error
+ * code Auth answers with (`bad_jwt`, `session_not_found`, `user_not_found`,
+ * ...), so a real rejection is a 4xx whose error carries a `code`. A 4xx with
+ * no code came from in front of Auth, e.g. the API gateway refusing this
+ * server's own key ("Invalid API key"), and the token was never evaluated.
+ * auth-js's own client-side rejections are known by name:
+ * `AuthSessionMissingError` (a revoked session) and `AuthInvalidJwtError`.
+ *
+ * Only a failure to answer leaves the viewer UNRESOLVED; a rejection is an
+ * answer, and the caller is anonymous. An error with no status and no known
+ * name is treated as a rejection, the feed's documented posture for a token it
+ * cannot use.
  */
 function authServiceUnreachable(error: unknown): boolean {
-  const e = error as { name?: unknown; status?: unknown } | null | undefined;
+  const e = error as { name?: unknown; status?: unknown; code?: unknown } | null | undefined;
   if (!e) return false;
   if (e.name === "AuthRetryableFetchError" || e.name === "AuthUnknownError") return true;
-  return typeof e.status === "number" && (e.status === 0 || e.status === 408 || e.status === 429 || e.status >= 500);
+  if (e.name === "AuthSessionMissingError" || e.name === "AuthInvalidJwtError") return false;
+  if (typeof e.status !== "number") return false;
+  if (e.status === 0 || e.status === 408 || e.status === 429 || e.status >= 500) return true;
+  return e.status >= 400 && !(typeof e.code === "string" && e.code !== "");
 }
