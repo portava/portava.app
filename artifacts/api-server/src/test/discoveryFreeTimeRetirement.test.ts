@@ -11,9 +11,9 @@
  *       feed the duplicate while it waits for deletion. A Temporal Freedom
  *       consumer reads the Trips windows (`TripFreedomConsumers.fitInstantToWindows`),
  *       never a scalar handed to the ranker.
- *   F2  the arms still exist in `portavaRank.ts` — this case goes RED the day
- *       the routed hunk lands, so A11 is re-graded rather than left describing
- *       a duplicate that is gone (the §57 inventory's two-direction pattern).
+ *   F2  RESTATED by census-discovery §93 (lane W11-X1, D-W11X1-1): the routed
+ *       hunk has landed, so F2 now asserts the two fields and both arms are GONE
+ *       from `portavaRank.ts` (it was red against 3cc027a06, where they stood).
  *
  * Run: node --import tsx/esm --test src/test/discoveryFreeTimeRetirement.test.ts
  */
@@ -41,7 +41,7 @@ function tsFiles(dir: string): string[] {
 
 const strip = (src: string) => src.split("\n").map((l) => l.replace(/\/\/.*$/, "").replace(/^\s*\*.*$/, "")).join("\n");
 
-describe("A11 — the dead free-time arms stay dead until the routed deletion lands", () => {
+describe("A11 — the dead free-time arms are deleted, and nothing feeds them back", () => {
   it("F1 no importer of the ranker names availableMinutes or availableNow", () => {
     const offenders: string[] = [];
     let importers = 0;
@@ -57,10 +57,9 @@ describe("A11 — the dead free-time arms stay dead until the routed deletion la
     assert.deepEqual(offenders, [], `a ranker consumer feeds the dead free-time arms: ${offenders.join(", ")}`);
   });
 
-  it("F2 the arms are still in portavaRank.ts — RED when the routed deletion lands (re-grade A11 then)", () => {
+  it("F2 the arms are gone from portavaRank.ts — §81.4 R2 landed in §93 (A11 re-graded there)", () => {
     const rank = strip(readFileSync(path.join(SRC, "lib", "portavaRank.ts"), "utf8"));
-    assert.match(rank, /availableMinutes\?: number \| null;/);
-    assert.match(rank, /if \(ctx\.availableMinutes != null\) \{/);
-    assert.match(rank, /if \(ctx\.availableNow\) \{/);
+    assert.doesNotMatch(rank, /\bavailableMinutes\b|\bavailableNow\b/, "a free-time field or arm is back in the ranker");
+    assert.match(rank, /export function availabilityFitScore\(/, "the guard must be reading the ranker itself");
   });
 });
