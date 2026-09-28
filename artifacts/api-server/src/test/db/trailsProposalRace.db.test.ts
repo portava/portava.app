@@ -448,4 +448,23 @@ describe("S — DV-20: stroke letters fold and one destination is one destinatio
                                    FROM jsonb_array_elements(${jsonLiteral(inputs.map((s) => [s]))}) WITH ORDINALITY AS x(v, ord);`).join("\n"));
     assert.deepEqual(sql, inputs.map((s) => trailDestinationKey(s) || null));
   });
+
+  test("S8. parity over the whole letter enumeration (§73, DV-20): the SQL slug and destination key are the TypeScript's for every one of the 1453 Latin letters in Unicode 17", () => {
+    const letters: string[] = [];
+    for (let cp = 0; cp <= 0x10ffff; cp++) { if (cp === 0xd800) cp = 0xe000; const ch = String.fromCodePoint(cp); if (/^(?=\p{Script=Latin})\p{L}$/u.test(ch)) letters.push(ch); }
+    const inputs = letters.flatMap((ch) => [ch, `x${ch}x`, `${ch}resund cycling`]);
+    const sql = JSON.parse(exec(`SELECT json_agg(json_build_array(public.trail_canonical_slug(v ->> 0), public.trail_normalised_destination(v ->> 0)) ORDER BY ord)::text
+                                   FROM jsonb_array_elements(${jsonLiteral(inputs.map((s) => [s]))}) WITH ORDINALITY AS x(v, ord);`).join("\n")) as Array<[string | null, string | null]>;
+    const diff = inputs.flatMap((s, i) => {
+      const want: [string | null, string | null] = [canonicalTrailSlug(s), trailDestinationKey(s) || null];
+      return sql[i]![0] === want[0] && sql[i]![1] === want[1] ? [] : [`${s}: sql ${JSON.stringify(sql[i])} ts ${JSON.stringify(want)}`];
+    });
+    assert.equal(letters.length, 1453, "every Latin letter in Unicode 17");
+    // One divergence, outside the criterion and older than §73: U+A7F1 MODIFIER LETTER CAPITAL S (added in Unicode 17)
+    // has the compatibility decomposition <super> S. Node's NFKD knows it; this PostgreSQL's does not, so the slug
+    // keeps an 's' in TypeScript and deletes it in SQL. Every other Latin letter agrees.
+    assert.deepEqual(diff.filter((d) => !d.includes("\ua7f1")), []);
+    assert.equal(diff.length, 3, diff.join("\n"));
+    assert.deepEqual(sql[inputs.indexOf("Ǿresund cycling")], ["oresund-cycling", "oresund cycling"], "the defect's own case, in SQL");
+  });
 });

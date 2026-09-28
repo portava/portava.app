@@ -13,7 +13,7 @@
  * unit-tested without a database.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { logger as rootLogger } from "./logger";
+import { logger as rootLogger } from "./logger"; import { LATIN_LETTER_FOLD } from "./latinLetterFold"; // §73: the stroke/hook/bar table
 
 const logger = rootLogger.child({ lib: "canonicalLocations" });
 
@@ -100,51 +100,51 @@ export function normalizeLocationName(name: string): string {
   return stripped.length > 0 ? stripped : n;
 }
 
-// ── Stroke-letter fold (§10) ──────────────────────────────────────────────────
+// ── Stroke / hook / bar letter fold (§10; census-discovery §73, DV-20 and B01) ──
 //
 // Unicode NFD (used by normalizeLocationName) decomposes a *precomposed base +
-// combining mark* — but a Latin letter whose diacritic is a STROKE or BAR
-// THROUGH the glyph (đ, Đ, ø, ł, …) has NO canonical decomposition: the stroke
-// is part of the base codepoint, so NFD leaves it intact and the subsequent
-// `[^a-z0-9\s]` strip then deletes it entirely. For Đà Nẵng (a launch city) that
-// silently turns "Đà Nẵng" into "a nang", which never matches a typed "da nang".
-// The client Phase-1 SDK hit and fixed this exact bug; this mirrors it
-// server-side so the stored search key and the typed query fold identically.
+// combining mark*, but a Latin letter whose mark is a STROKE, BAR, HOOK, CURL,
+// TAIL or LOOP through or on the glyph (đ, ø, ł, ƀ, ƙ, ȥ, …) has NO canonical
+// decomposition: NFD leaves it whole and the `[^a-z0-9\s]` strip then DELETES it.
+// For Đà Nẵng (a launch city) that turned "Đà Nẵng" into "a nang", which never
+// matches a typed "da nang". The client Phase-1 SDK hit and fixed this exact bug.
 //
-// This is an EXPLICIT, additive fold applied BEFORE normalization so the base
-// letter survives the punctuation strip. It never touches stored *display*
-// spelling (`name`/`display_name`) — only the derived comparison key.
-const STROKE_FOLD: Record<string, string> = {
-  "đ": "d", "Đ": "d", // Latin small/capital d with stroke (Vietnamese, Croatian)
-  "ø": "o", "Ø": "o", // o with stroke (Danish, Norwegian)
-  "ł": "l", "Ł": "l", // l with stroke (Polish)
-  "ħ": "h", "Ħ": "h", // h with stroke (Maltese)
-  "ŧ": "t", "Ŧ": "t", // t with stroke (Sámi)
-  "ð": "d", "Ð": "d", // eth (Icelandic) — folds to d for search
-  "ı": "i", "İ": "i", // dotless i / dotted capital I (Turkish)
-};
-const STROKE_FOLD_RE = new RegExp(`[${Object.keys(STROKE_FOLD).join("")}]`, "g");
+// THE TABLE is lib/latinLetterFold's LATIN_LETTER_FOLD (§73): every Latin letter
+// named "LATIN … LETTER X WITH …" (or BARRED X / X BAR) folds as X does, the
+// other case of each wherever Unicode puts it, ſ and ı, and 2220's eth and İ.
+// Until §73 this was fourteen letters (đ Đ ø Ø ł Ł ħ Ħ ŧ Ŧ ð Ð ı İ), applied to
+// the raw text only, so Ǿ ǿ (Ø/ø + acute) never met it and Ƀ Ƙ ȥ … had no entry:
+// "Ǿresund" keyed `resund` (B01) and 114 of the 398 letters in U+00C0–U+024F
+// were deleted from a Trail slug (DV-20). strokeFold now applies the table as
+// typed AND to the decomposition. ß æ œ þ ŋ are NOT in it: census-discovery
+// §66.9 owner question 4 is open.
+//
+// discoveryLetterFoldCompleteness.test.ts enumerates every Latin letter Node
+// knows; 3440 and 3441 carry the same table to SQL, and the db suites run both.
+// Only the derived key is folded, never `name`/`display_name`.
+// It still runs BEFORE normalizeLocationName, on the text and on its NFD form.
+// STROKE_FOLD keeps its name: the census, 2220 and the tests all call the table that.
+export const STROKE_FOLD: Readonly<Record<string, string>> = LATIN_LETTER_FOLD;
+const STROKE_FOLD_RE = new RegExp(`[${Object.keys(STROKE_FOLD).join("")}]`, "gu"), STROKE_FOLD_ANY = new RegExp(STROKE_FOLD_RE.source, "u");
+const foldTable = (s: string) => s.replace(STROKE_FOLD_RE, (ch) => STROKE_FOLD[ch] ?? ch);
 
 /**
- * Fold stroke/bar Latin letters (đ→d, Đ→d, ø→o, ł→l, …) to their base ASCII
- * letter. Pure, deterministic, and idempotent. Applied before NFD so the base
- * letter is preserved through diacritic stripping. Non-stroke input is returned
- * unchanged.
+ * Fold stroke/hook/bar Latin letters (đ→d, ø→o, ƀ→b, …) to their base letter, as typed AND
+ * inside a decomposition (Ǿ is Ø + acute: → ó). Pure, idempotent; other text is unchanged.
  */
 export function strokeFold(s: string): string {
   if (!s) return s;
-  return s.replace(STROKE_FOLD_RE, (ch) => STROKE_FOLD[ch] ?? ch);
+  const direct = foldTable(s), nfd = direct.normalize("NFD"); // §73: the table ran before NFD, so Ǿ ǿ ẛ never met it
+  return STROKE_FOLD_ANY.test(nfd) ? foldTable(nfd).normalize("NFC") : direct;
 }
 
 /**
  * The canonical geographic SEARCH KEY for a name: stroke-fold then the existing
- * diacritic/case/punctuation normalization. Diacritic-insensitive and
- * case-insensitive while never mutating the stored display spelling.
- *
+ * diacritic/case/punctuation normalization. Diacritic- and case-insensitive,
+ * never mutating the stored display spelling.
  *   searchKey("Đà Nẵng") === searchKey("da nang") === "da nang"
  *   searchKey("Ho Chi Minh City")                  === "ho chi minh"
- *
- * The `search_key` generated column (migration 2220) computes the identical
+ * The `search_key` generated column (2220, recomputed by 3440) holds the same
  * value in SQL, so the query side and the stored side always fold the same way.
  */
 export function searchKey(name: string): string {

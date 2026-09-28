@@ -4067,6 +4067,12 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // cites the two suites that were seen red on the event and route rules and on the counts.
     "artifacts/api-server/src/test/discoveryTrailMemberVisibility.test.ts",
     "artifacts/api-server/src/test/db/trailsMemberVisibility.db.test.ts",
+    // census-discovery §73 (lane P27, letter-fold completeness): DV-20 and B01 move W -> C on the table, its two
+    // SQL twins and the enumeration suite. The other files §73 cites were already watched.
+    "artifacts/api-server/src/lib/latinLetterFold.ts",
+    "artifacts/api-server/src/migrations/3440_canonical_search_key_letter_fold.sql",
+    "artifacts/api-server/src/migrations/3441_trail_letter_fold_decompose_first.sql",
+    "artifacts/api-server/src/test/discoveryLetterFoldCompleteness.test.ts",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //
