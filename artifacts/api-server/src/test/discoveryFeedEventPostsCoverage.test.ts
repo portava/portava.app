@@ -376,11 +376,13 @@ describe("GET /discovery/feed — an unresolved viewer's event-post read is a fa
   });
 
   it("V9 a 4xx with no Auth error code (the gateway refusing the server's own key) never evaluated the token: the same refusal", async () => {
-    setClientWithGetUser(noUser({ name: "AuthApiError", status: 401, message: "Invalid API key" }), { rows: { posts: [venuePost("p-1")] } });
-    const r = await get(FEED_POSTS_ONLY);
-    assert.equal(r.body.refusal?.class, "upstream_unavailable", JSON.stringify(r.body));
-    assert.equal(r.body.refusal?.code, "feed_viewer_unresolved");
-    assert.deepEqual(r.body.refusal?.failedSources, ["event_posts"]);
+    for (const status of [401, 400]) {
+      setClientWithGetUser(noUser({ name: "AuthApiError", status, message: "Invalid API key" }), { rows: { posts: [venuePost("p-1")] } });
+      const r = await get(FEED_POSTS_ONLY);
+      assert.equal(r.body.refusal?.class, "upstream_unavailable", `${status}: ${JSON.stringify(r.body)}`);
+      assert.equal(r.body.refusal?.code, "feed_viewer_unresolved");
+      assert.deepEqual(r.body.refusal?.failedSources, ["event_posts"]);
+    }
   });
 
   it("C6 CONTROL: the refusal is not cached — once the viewer resolves, the next request serves the post", async () => {
