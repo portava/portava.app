@@ -74,11 +74,11 @@ import { invalidateDiscoveryEngineModeCache } from "../lib/discoveryEngineMode.j
 
 // ── No network. Overpass and Nominatim throw immediately rather than hanging.
 // Every case supplies lat/lng, so the route never needs to geocode; Overpass
-// failing is what makes the OSM half empty except where a case seeds cache A.
+// answering empty (§94.10: a throw is now a named outage) is what makes the OSM half empty except where a case seeds cache A.
 const _originalFetch = globalThis.fetch;
 globalThis.fetch = (async (url: any, init?: any) => {
   const s = String(typeof url === "string" ? url : (url as URL).href ?? "");
-  if (s.includes("overpass-api.de") || s.includes("nominatim.openstreetmap.org")) {
+  if (s.includes("overpass-api.de")) return new Response(JSON.stringify({ elements: [] }), { status: 200, headers: { "content-type": "application/json" } }); if (s.includes("overpass-api.de") || s.includes("nominatim.openstreetmap.org")) {
     throw new Error("Network blocked in test environment");
   }
   return _originalFetch(url, init);

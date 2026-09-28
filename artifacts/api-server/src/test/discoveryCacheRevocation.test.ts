@@ -62,7 +62,7 @@ import {
 const _originalFetch = globalThis.fetch;
 globalThis.fetch = (async (url: any, init?: any) => {
   const s = String(typeof url === "string" ? url : (url as URL).href ?? "");
-  if (s.includes("overpass-api.de") || s.includes("nominatim.openstreetmap.org")) {
+  if (s.includes("overpass-api.de")) return new Response(JSON.stringify({ elements: [] }), { status: 200, headers: { "content-type": "application/json" } }); if (s.includes("overpass-api.de") || s.includes("nominatim.openstreetmap.org")) {
     throw new Error("Network blocked in test environment");
   }
   return _originalFetch(url, init);

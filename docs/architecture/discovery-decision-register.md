@@ -1802,6 +1802,42 @@ W10D-C5 (the three personal projections) and AR-W11A-2 (circles, crews, visits) 
 - **Reversibility.** Revert the two in-place edits and restore the copies from git.
 - **Where.** `routes/discovery.ts` (two lines in place, the padded deletions, one foot import); `test/discoveryIntegrationHooks.test.ts` R1c (appended); `test/discoveryCandidateRowParity.test.ts` R1 (restated). §95's DC-12 citation of R1 is repointed to the restated case, and its sentence "The route does not pass the centre yet (routed hunk R-X3-1)" is superseded by §94.
 
+### D-W11X2-10 — a failed identity lookup on the feed is a failed event-post read (DV-83, round 2)
+
+- **The question.** The independent verifier (census §94.11): with a valid Bearer token, `auth.getUser` throwing or answering `AuthRetryableFetchError` left `viewerId` null, the feed sent `Promise.resolve([])`, and the answer was 200, `posts: []`, no refusal — the rail's "nothing live" screen for a read nobody performed.
+- **Options considered.** (a) Refuse the whole feed. The places half really was read, and discarding it is the opposite defect. (b) Treat the owed event-post read as failed: `failedSources: ["event_posts"]` under the feed's existing coverage rule. (c) Treat every `getUser` error as a failure. A definitive 4xx (invalid or expired token) then reads as an outage, and every signed-out client with a stale token sees "couldn't check".
+- **Decision.** (b), classified on the error's status. A missing status, 0, 408, 429 or any 5xx is a lookup that did not happen (supabase-js's `AuthRetryableFetchError` carries 0 or 502–504; the auth server's rate limit is an `AuthApiError` 429). Any other 4xx means the token names nobody: the anonymous case, exactly as a request with no header (C2, V3). A thrown lookup with a Bearer header is a failure (V1). The block read throwing after the viewer resolved keeps its documented fail-open posture; it is not an identity failure.
+- **Where.** `routes/discovery.ts` (the feed's viewer block, in place; `isTransientAuthError` at the foot). Tests: `discoveryFeedEventPostsCoverage` V1–V4.
+
+### D-W11X2-11 — the rail says "couldn't check" on a transport failure (DV-83 under D-W10-S1-2)
+
+- **The question.** The rail rendered nothing for `ok: false` (a 5xx, the network, now the request budget), pinned by "CONTROL: a transport failure is not a refusal and still renders nothing". Nothing is what a quiet city renders.
+- **Options considered.** (a) Keep silence: a transport failure reads as an absence, the masquerade D-W10-S1-2 forbids for a partial answer. (b) The refused state itself: indistinguishable in tests from a server refusal, which differ for attribution. (c) The same honest sentence under its own testID.
+- **Decision.** (c). "We couldn't check what's live nearby just now — this isn't a sign that nothing is happening. Pull to refresh." — the rail's existing refused copy, now one constant — under `discovery-event-posts-rail-unavailable`. Neither state keeps a session id. A later load that answers clears it. The existing control is restated, not deleted: it still asserts a transport failure is NOT the refused state, and now asserts it is not silence.
+- **Where.** `travel-buddy-standalone/src/components/discovery/DiscoveryEventPostsRail.tsx`. Tests: `DiscoveryEventPostsRail.coverage` U1–U3; `DiscoveryEventPostsRail.refusal` CONTROL (restated).
+
+### D-W11X2-12 — `getDiscoveryFeed` is bounded at 15 s
+
+- **The question.** A hung request never resolved, so the rail never appeared in any state.
+- **Decision.** 15 000 ms, `DISCOVERY_FEED_TIMEOUT_MS`, the Compass section budget (`services/compass.ts` `COMPASS_SECTION_TIMEOUT_MS`): the feed's only caller is a supplementary strip in the For You tab, beside the Compass sections, and should give up on the same clock. Longer than the server's own upstream budgets for the event-post path, which reads only the database (the rail asks `includePlaces=0`). A timeout answers `{ ok: false, error: 'timeout' }`, the transport-failure shape, which D-W11X2-11 renders.
+- **Where.** `travel-buddy-standalone/src/services/discovery.ts` (in place; the constant at the foot). Tests: `discovery.feedTimeout` T1–T4, with node:test's fake timers.
+
+### D-W11X2-13 — a pull refetches the rail
+
+- **Decision.** `ForYouTab.handleRefresh` bumps a `refreshKey` that the rail takes as an effect input, so the "Pull to refresh" the refused and unavailable copy promises is true. Nothing else is refetched by it.
+- **Where.** `ForYouTab.tsx` (in place), `DiscoveryEventPostsRail.tsx`. Tests: `ForYouTab.railRefresh` R1, R2 on the real ForYouTab and the real rail.
+
+### D-W11X2-14 — Overpass reports a failed read, and DV-83 covers it
+
+- **The question.** Is `queryOverpass`'s silent `[]` (routes/discovery.ts, the OSM half of GET /discovery, the feed and the counts) inside DV-83?
+- **Finding.** Yes. DV-83's criterion is the consumer leg, but §80.1 already held that a server path which absorbs a failure blocks it — *"the rail cannot branch on a failure it is never sent"* — and the event posts were graded on exactly that. The places list is a carrier of the same envelope, and `sendDiscoveryPlacesEnvelope` recorded the gap in its own words ("Overpass cannot [report]"). So DV-83 cannot be `C` while it stands.
+- **Decision.** `queryOverpass` returns the same empty array, MARKED as failed (a WeakSet, the idiom of `lib/discoveryRefusal.ts`), for a thrown fetch, a non-OK status and an unparseable body; an answered empty list is unmarked.
+  - GET /discovery's cold serve paths (4, 5, 6) add `"overpass"` to `failedSources`. Overpass alone is `overpass_unavailable`, class `upstream_unavailable` (the owner's seventh class); with a DB half it is the combined `discovery_place_sources_read_failed`. Coverage stays `partial` while any retrieval answered; with all three failed and nothing served it is `nothing`, so no exposure is logged.
+  - The feed names `"overpass"` beside its categories. The counts treat such a category as failed, D11's own rule there ("a count taken over the OSM half alone is not a smaller number, it is a DIFFERENT number").
+  - A failed read is never cached (Cache A writes only OSM rows that exist).
+  - **Fixtures.** Ten suites and the legacy-scenario helper stubbed Overpass with a throw where they meant "Overpass answered nothing". A throw is now an outage the route names, so each answers an empty 200 instead, on the same line. No assertion changed, and every golden (§79 Z0/L0, §47's legacy suite) passes unre-captured, which is the evidence that nothing else moved. `discoveryClientRouteE2E` gets the same one-line change and cannot load on this runner's Node 22 (§76.5).
+- **Where.** `routes/discovery.ts` (in place, and the helpers at the foot). Tests: `discoveryOverpassFailedSource` O1–O7, C1.
+
 ## W11-P — the owner approval request, consolidated
 
 *Lane W11-P, 2026-09-28, branch `disc-w11-approvals` at integration head `3fd11f858`. Census section §96. Docs only. The document is `docs/ops/discovery-owner-approval-request.md`. The apply plan gains §8 and the rollout plan gains §9. No approval entry is added and none is answered: every action in the document is an existing APPROVAL REQUIRED entry, deduplicated.*

@@ -82,7 +82,7 @@ globalThis.fetch = (async (url: any, init?: any) => {
     const { status, body } = nominatim();
     return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
   }
-  if (s.includes("overpass-api.de") || s.includes("nominatim.openstreetmap.org")) throw new Error("network blocked");
+  if (s.includes("overpass-api.de")) return new Response(JSON.stringify({ elements: [] }), { status: 200, headers: { "content-type": "application/json" } }); if (s.includes("overpass-api.de") || s.includes("nominatim.openstreetmap.org")) throw new Error("network blocked");
   return _originalFetch(url, init);
 }) as typeof globalThis.fetch;
 

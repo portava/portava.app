@@ -4419,6 +4419,12 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "db/rollback/2026-09-28-2995-rank-events-discovery-dismissed-index-rollback.sql",
     "db/rollback/2026-09-28-3440-canonical-search-key-letter-fold-rollback.sql",
     "db/rollback/2026-09-28-3441-trail-letter-fold-decompose-first-rollback.sql",
+    // census-discovery §94.11 (lane W11-X2, round 2): DV-83 re-graded on the Overpass suite, the rail refresh on the
+    // real ForYouTab, and the bounded feed call.
+    "artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts",
+    "travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.railRefresh.component.test.tsx",
+    "travel-buddy-standalone/src/services/__tests__/discovery.feedTimeout.test.ts",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryEventPostsRail.refusal.component.test.tsx",  // §94.11 cites its restated transport-failure control
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //
