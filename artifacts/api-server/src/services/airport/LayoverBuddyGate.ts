@@ -45,7 +45,7 @@
  * flake. L254 therefore stays `W` with the tight-window arm closed.
  */
 import type { AirportProfile } from "./AirportProfileService.js";
-import type { LayoverSession } from "./LayoverSessionService.js";
+import type { LayoverSession } from "./LayoverSessionService.js"; import type { EntryEligibility } from "./layoverEntryGate.js";
 import {
   certifySessionFeasibility,
   type LayoverFeasibilityRecord,
@@ -112,9 +112,9 @@ export interface LayoverBuddyDecision {
 export function layoverBuddyDecision(
   airport: AirportProfile,
   session: LayoverSession,
-  nowMs: number = Date.now(),
+  nowMs: number = Date.now(), /** The session owner's corridor (`resolveLayoverEntry`), as every certification takes it — census-discovery §65. Omitted = unresolved. */ entry?: EntryEligibility | null,
 ): LayoverBuddyDecision {
-  const record = certifySessionFeasibility(airport, session, { nowMs });
+  const record = certifySessionFeasibility(airport, session, { nowMs, entry });
   const safetyGate: BuddySafetyGate = {
     passed:
       // A DENY-LIST, and `entry_unverified` is deliberately not on it: it means

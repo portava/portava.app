@@ -917,7 +917,7 @@ async function replanAfterSessionEdit(args: {
     after: args.after,
     status: args.after.status,
     candidates: candidatesFromStops(stopsRead.stops),
-    nowMs: Date.now(),
+    nowMs: Date.now(), entry: await sessionEntry(args.sc, args.airport, args.after), // census-discovery §65: before/after certify with the owner's corridor
   });
   if (!result.ran) return { ran: false, reason: result.reason, detail: result.detail };
 
@@ -1201,7 +1201,7 @@ router.post("/airport/sessions/:id/compass", async (req, res) => {
   const answer = await answerLayoverQuestion(sc, {
     question: parsed.data.question,
     session,
-    airport,
+    airport, entry: await sessionEntry(sc, airport, session), // census-discovery §65: the answer certifies with the snapshot's entry input
     recommendations: recsRead.ok ? (recsRead.recommendations as unknown as Array<Record<string, unknown>>) : undefined,
     recommendationsUnavailableReason: recsRead.ok ? null : "layover_recommendations_unreadable",
     stops: stopsRead.ok ? stopsRead.stops : undefined,
@@ -1542,7 +1542,7 @@ router.post("/airport/sessions/:id/disruption", async (req, res) => {
       state,
       newDepartureTime: newDepartureIso,
       newBoardingTime: newBoardingIso === undefined ? undefined : newBoardingIso,
-      nowMs,
+      nowMs, entry: record.inputs.entry, // census-discovery §65: the SAME entry fact this request certified with, not a second read
     });
     record = recompute.after;
 
@@ -3442,7 +3442,7 @@ router.get("/airport/sessions/:id/buddies", async (req, res) => {
   // layover domain (services/airport/LayoverBuddyGate.ts) and certifies the
   // session exactly once, so this list and the countdown on the same screen
   // cannot disagree about whether leaving is possible.
-  const { safetyGate, trustRequirement } = layoverBuddyDecision(airport, session);
+  const { safetyGate, trustRequirement } = layoverBuddyDecision(airport, session, Date.now(), await sessionEntry(sc, airport, session));
   if (!safetyGate.passed) {
     res.json({ ok: true, city, buddies: [], reason: "safety_gate_not_passed", safetyGate });
     return;

@@ -564,7 +564,7 @@ describe("routes/airport.ts — every own-session certification carries the entr
     // see the overview say one thing and the safety card another.
     const calls = (src.match(/certifySessionFeasibility\s*\(/g) ?? []).length;
     assert.ok(calls > 0, "no certification site found — this test is reading the wrong file");
-    const wired = (src.match(/entry:\s*await sessionEntry\(/g) ?? []).length;
+    const wired = (src.match(/certifySessionFeasibility\s*\([^;]*?entry:\s*await sessionEntry\(/g) ?? []).length; // census-discovery §65: counted INSIDE certification calls — a consumer handoff (the Compass answer, the replan) is not a certification site
     assert.equal(
       wired, calls - 1,
       `${calls} certification site(s), ${wired} of them supplying entry — every site but the crew wrapper must`,

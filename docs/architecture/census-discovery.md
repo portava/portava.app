@@ -9090,8 +9090,8 @@ Retries return the same served set.
 | Compass — tools and `routes/compass.ts` | yes: `artifacts/api-server/src/compass/CompassTools.ts:1804#const r = await certifiedLayoverSnapshot(sc as any, userId);`, `artifacts/api-server/src/routes/compass.ts:1728#const snap = await certifiedLayoverSnapshot(sc, user.id);` | none |
 | Compass — the in-layover question (`POST` via `routes/airport.ts` → `answerLayoverQuestion`) | no | a DUPLICATE budget: it re-derives usable minutes as cutoff − now − buffer (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:144#Math.round((cutoffMs - now.getTime()) / 60000)`, `artifacts/api-server/src/services/airport/LayoverCompassService.ts:146#const usableMin = Math.max(0, availMin - bufferMin);`) instead of reading `record.envelope.usableMinutes` |
 | Trips card / Map envelope / dashboard (`routes/airport.ts`) | no | certifies inline, WITH the entry input: `artifacts/api-server/src/routes/airport.ts:1375#certifySessionFeasibility(airport, session, { nowMs, entry: await sessionEntry(sc, airport, session) })` |
-| Safe Return | no | the canonical derivation, called directly: `artifacts/api-server/src/services/airport/LayoverSafeReturnService.ts:510#const before = certifySessionFeasibility(airport, session, { nowMs: input.nowMs });`; the reminder instant is arithmetic on the certified deadline (`artifacts/api-server/src/services/airport/LayoverReturnEscalation.ts:306#const correctMs = deadlineMs - RETURN_SOON_LEAD_MIN * 60_000;`) |
-| Layover recommendations | no | inline, unchanged since §33: `artifacts/api-server/src/services/airport/LayoverRecommendationService.ts:473#const certified = certifySessionFeasibility(airport, session, { nowMs });` |
+| Safe Return | no | the canonical derivation, called directly (as found at §56's tree; §65 gave it the route's entry fact, so the line now reads `artifacts/api-server/src/services/airport/LayoverSafeReturnService.ts:510#const before = certifySessionFeasibility(airport, session, { nowMs: input.nowMs, entry: input.entry });`); the reminder instant is arithmetic on the certified deadline (`artifacts/api-server/src/services/airport/LayoverReturnEscalation.ts:306#const correctMs = deadlineMs - RETURN_SOON_LEAD_MIN * 60_000;`) |
+| Layover recommendations | no | inline, unchanged since §33 (as found at §56's tree; §65 gave it the snapshot's entry resolver, so the line now reads `artifacts/api-server/src/services/airport/LayoverRecommendationService.ts:473#const certified = certifySessionFeasibility(airport, session, { nowMs, entry: await resolveLayoverEntry(db, session.userId, layoverAirportCountry(airport)) });`) |
 
 **A defect found, and the reason the Discovery half cannot be C yet.** The
 snapshot certifies WITHOUT the entry input
@@ -11837,6 +11837,144 @@ The merged assertion is therefore `false` again (`artifacts/api-server/src/test/
 
 **For every lane that adds a table:** run `check:production-drift` and give the table its `unapplied` entry. That applies to P21 (3435–3439), P27 (3440–3444) and P28 (3445–3447).
 
+## §65 — Layover consumers take the border-entry input (lane P19): five consumers certified a refused border as not refused, every certification site now carries the snapshot's entry input, and A13/A14 stay W on the owner question
+
+*Written 2026-09-28 by lane P19 on branch `disc-p19-layover-entry`, off `f34994de7`. The OLD verdicts below were read from `CENSUS_INTEGRITY_DUMP=ALL` at that tree: A13 **W** (§56.14), A14 **W** (§56.14). This section does not restate the headline, because no row moves. `head_commit` is not re-declared.*
+
+### 65.1 The ceiling, stated first
+
+Nothing here is merged to `main`, deployed, applied to any database or flag-enabled. No migration was written and no SQL was run against production or `portava-ci`. Every result below is from controlled tests on a fake table-backed client. None of it is production evidence.
+
+The change is live on deploy, with no flag in front of it. It can only close landside for a REFUSED corridor, and it can never open one. The resolver never answers `permitted` on a failed read (`artifacts/api-server/src/services/airport/layoverEntryGate.ts:111#export async function resolveLayoverEntry(`), as §56.14 and §57 verified. The cost is three more reads per request (the flag, `traveler_passports` and `entry_requirements`). That applies on the Compass answer, the buddy list, the recommendations generator and a session edit's replan, and once per impacted session in the external-event port.
+
+### 65.2 Every certification site, enumerated from code
+
+The certification entry point is `certifySessionFeasibility`. Its `entry` option reads *"Omitted = unresolved"* (`artifacts/api-server/src/services/airport/LayoverFeasibility.ts:754#Omitted = unresolved. Resolve it with`). `certifyFeasibility`, `computeWindow`, `assess` and `adviseLeaving` have no production caller outside the engine. At `f34994de7` there are 18 production call sites:
+
+| site | surface | entry at `f34994de7` |
+|---|---|---|
+| `routes/airport.ts` — `/safety`, `/return-now`, `/disruption` (its own record), `/return-deadline`, `/overview` (the Trips card, the Map envelope and the dashboard), and `respondWithStops` (the plan and its Map pins) | 6 sites | **yes**, `sessionEntry`, since before §56 |
+| `certifiedLayoverSnapshot` | Discovery Layover mode, Compass tools | **yes**, since §56.14 |
+| `routes/airport.ts` — `certifyCrewMemberRecord` | crew | **no, deliberate**: other travellers' sessions, and the crew payload reads only clock facts. `layoverEntryGate.test.ts` pins this. |
+| `LayoverNotificationService` — `sendReturnDeadlineReminder` | return reminder | **no**. It has no caller, publishes only the deadline, and records the certification header. |
+| `LayoverCompassService` — `answerLayoverQuestion`, and the base and flipped records of `valueOfInformation` (3 sites) | **1. the in-layover Compass answer** | **no** |
+| `LayoverRecommendationService` — `generateRecommendations` | **2. recommendations** | **no** |
+| `LayoverBuddyGate` — `layoverBuddyDecision` | **3. the buddy gate** (`GET …/buddies`) | **no** |
+| `LayoverSafeReturnService` — `recomputeForDisruption` (before and after, 2 sites) | **4. Safe Return: a reported disruption** | **no**, and its `after` REPLACED the route's entry-bearing record |
+| `LayoverEventReplanner` — `handleEvent` (before and after, 2 sites), reached by `replanForWindowChange` (PATCH session) and `replanExternalEvent` | **5. the replanner** | **no** |
+
+**"Five" is confirmed, and its membership is corrected.** Five consumers treated a refused border as not refused. A13's list named Trips and Map, but both go through `routes/airport.ts` and have passed the entry input since before §56. The two consumers that list missed are the buddy gate and the replanner. Two further sites lacked the input and were not landside consumers: the reminder, which has no caller, and the crew wrapper, which is deliberate.
+
+**What each consumer did for a refused (`visa_required`) corridor.** Each one certified `entry_unverified` where the dashboard and the snapshot certify `no`:
+
+1. **Compass.** The answer said *"You can leave the airport"* with a `safe` note. It published a certification header that disagreed with the snapshot, and it weighed the clarifying question against the wrong verdict.
+2. **Recommendations.** The generator served city cards, because its landside gates read minutes and never the verdict.
+3. **Buddy gate.** The gate passed and listed people to meet in the city.
+4. **Disruption.** A moved departure re-certified without entry. The route then published and recorded that `entry_unverified` verdict in place of its own `no`.
+5. **Replanner.** It certified before and after without entry. A small delay could "change the landside verdict" (`no`→`tight`) and notify, and a landside plan stop could "fit".
+
+### 65.3 The fix: the same input, through the same resolver, with no new policy
+
+Every site now passes `entry`. Where the service holds a client, it uses the snapshot's own call: `resolveLayoverEntry(db, session.userId, layoverAirportCountry(airport))`. That covers recommendations, the reminder and the external port, which resolves the corridor per session owner. Where the service is pure, the route hands over its `sessionEntry`, the same resolver. That covers the Compass answer, the buddy gate and the replan. `/disruption` passes `record.inputs.entry`: the entry fact this request already certified with, not a second read. Nothing is restructured onto the snapshot (§56.9 question 2 stands).
+
+Where a consumer turned the record into a landside action without reading the verdict, it now reads the certified verdict `no`:
+- the recommendation gates;
+- `candidateFits` for a landside candidate;
+- the Compass note and its deterministic fallback.
+
+`adviseLeaving` produces `no` for a refused corridor. The snapshot's own switch forbids `no`. No new rule about entry was written.
+
+| # | consumer | fix (path:line#anchor) | red → green | mutations (each restored sha256-identical) |
+|---|---|---|---|---|
+| 1 | Compass answer | `artifacts/api-server/src/services/airport/LayoverCompassService.ts:142#const record = certifySessionFeasibility(airport, session, { nowMs: now.getTime(), entry: input.entry ?? null });`, fed by `artifacts/api-server/src/routes/airport.ts:1204#airport, entry: await sessionEntry(sc, airport, session),`; note `artifacts/api-server/src/services/airport/LayoverCompassService.ts:247#if (usableMin < 30 || record.verdict === "no") {`; clarifying question `artifacts/api-server/src/services/airport/LayoverCompassService.ts:264#clarifyingQuestion: nextClarifyingQuestion(airport, session, now.getTime(), record.inputs.entry),` | `artifacts/api-server/src/test/layoverConsumerEntry.test.ts:217#it("a REFUSED corridor: the certified verdict is`, `artifacts/api-server/src/test/layoverConsumerEntry.test.ts:248#it("the clarifying question is weighed against the ENTRY-BEARING verdict` | C1 service drops entry → 3 red; C2 route does not hand it over → 2; C3 the flips drop it → 2; C4 the refusal fallback removed → 1; C5 the note ignores the verdict → 1; C6 the clarifying handoff dropped → 1 |
+| 2 | recommendations | `artifacts/api-server/src/services/airport/LayoverRecommendationService.ts:473#const certified = certifySessionFeasibility(airport, session, { nowMs, entry: await resolveLayoverEntry(db, session.userId, layoverAirportCountry(airport)) });`, gate `artifacts/api-server/src/services/airport/LayoverRecommendationService.ts:502#let discoveryCandidates = session.wantsToLeave && usableMinutes >= 90 && landside.allowed && certified.verdict !== "no"` | `artifacts/api-server/src/test/layoverConsumerEntry.test.ts:294#it("a REFUSED corridor gets no landside card at all`, `artifacts/api-server/src/test/layoverConsumerEntry.test.ts:302#it("PARITY with the snapshot's` | R1 no entry → 3; R2 both gates ignore the verdict → 2 |
+| 3 | buddy gate | `artifacts/api-server/src/services/airport/LayoverBuddyGate.ts:117#const record = certifySessionFeasibility(airport, session, { nowMs, entry });`, fed by `artifacts/api-server/src/routes/airport.ts:3445#layoverBuddyDecision(airport, session, Date.now(), await sessionEntry(sc, airport, session));` | `artifacts/api-server/src/test/layoverConsumerEntry.test.ts:315#it("a REFUSED corridor does not pass the gate` | B1 the gate ignores entry → 4; B2 the route does not hand it over → 2 |
+| 4 | Safe Return disruption | `artifacts/api-server/src/services/airport/LayoverSafeReturnService.ts:516#const after = certifySessionFeasibility(airport, newSession, { nowMs: input.nowMs, entry: input.entry });`, fed by `artifacts/api-server/src/routes/airport.ts:1545#nowMs, entry: record.inputs.entry,` | `artifacts/api-server/src/test/layoverConsumerEntry.test.ts:355#it("a REFUSED corridor stays` (the response and the ledger row) | S1 recompute drops entry → 3; S2 the route does not hand it over → 2 |
+| 5 | replanner | `artifacts/api-server/src/services/airport/LayoverEventReplanner.ts:937#liveConditions: applied.live, entry: ctx.entries?.[id] ?? null,`; `artifacts/api-server/src/services/airport/LayoverEventReplanner.ts:592#if (!c.insideAirport && record.verdict === "no") return false;`; `artifacts/api-server/src/services/airport/LayoverReplanService.ts:398#entries: { [args.before.id]: args.entry ?? null },` fed by `artifacts/api-server/src/routes/airport.ts:920#nowMs: Date.now(), entry: await sessionEntry(args.sc, args.airport, args.after),`; the port: `artifacts/api-server/src/services/airport/LayoverExternalReplanPort.ts:464#entries[session.id] = owner ? await resolveLayoverEntry(db, owner, group.entryCountry) : null;` | `artifacts/api-server/src/test/layoverConsumerEntry.test.ts:395#it("a REFUSED corridor:`, `artifacts/api-server/src/test/layoverConsumerEntry.test.ts:408#it("handleEvent with an entry map`, `artifacts/api-server/src/test/layoverConsumerEntry.test.ts:477#it("a REFUSED corridor:` | E1 `after` drops entry → 5; E2 `candidateFits` ignores `no` → 2; E3 `replanForWindowChange` drops it → 2; E4 the route does not hand it over → 2; E5 the port drops it → 1 |
+| — | reminder (no caller) | `artifacts/api-server/src/services/airport/LayoverNotificationService.ts:99#const record = certifySessionFeasibility(airport, session, { nowMs, entry: await resolveLayoverEntry(db, session.userId, layoverAirportCountry(airport)) });` | the ratchet below | N1 no entry → 2 (the ratchet, and `layoverSafeReturnAbort`'s hash case) |
+
+**The ratchet.** `artifacts/api-server/src/test/layoverConsumerEntry.test.ts:523#it("no call site outside the crew wrapper omits` scans every production `certifySessionFeasibility(` call. It fails on any call that does not name `entry`, except the crew wrapper (`artifacts/api-server/src/routes/airport.ts:2978#return certifySessionFeasibility(airport, session, { nowMs });`). At `f34994de7` it lists the ten sites in 65.2's table and nothing else, which is how the enumeration above was checked.
+
+**Seen red.** The suite has 20 cases.
+- Run against `f34994de7`'s production code: 16 fail and 4 pass. The four that pass are the data-gap and control cases, whose answer does not change.
+- After the fix: 20 of 20 pass.
+- The first draft was also red at `f34994de7`, with 14 of 19 failing. Every one of the 18 mutations above was killed.
+
+### 65.4 "Fail closed", and what this lane did NOT decide
+
+- **A refused corridor is closed in every consumer.** It certifies `no`, and it gets no landside card, no buddy, no "you can leave", no landside fit and no landside-verdict notification.
+- **A data gap is not a refusal.** An unreadable passports or corridor table, the flag off, no passport or no curated corridor each certifies `entry_unverified` (never `yes`, and never `permitted`) in every consumer. That is exactly the snapshot's answer. The parity case compares each consumer's landside answer with `landsideOpen` (`artifacts/api-server/src/services/airport/LayoverSnapshot.ts:387#const landsideOpen = !forbidden && !posture.explorationCollapsed;`) in all four worlds.
+- **Whether a data gap should also close landside was not decided here.** The snapshot's exhaustive switch rules that it does not, and census-layover L48 and L230 hold the rule that it should. Closing it here would have been new policy in five places. The lane carries that question forward, not re-asks it (65.8).
+- **An entry read that throws** does not open anything. `resolveLayoverEntry` catches its reads. If it threw anyway, the request would fail, and a failed request serves no landside action.
+
+### 65.5 Side effects, stated. Every one takes an affirmation away and none adds one.
+
+1. **Compass.** A certified `no` for lack of time (30–44 usable minutes) now gets the `not_recommended` note, and the deterministic fallback states the refusal. Before, the note said `possible_but_risky`, beside a certified `no`. The model's own in-bounds answer is still published. This lane first tried to replace every model answer under a `no`. `layoverCompassEntryBoundary`'s positive control went red (`artifacts/api-server/src/services/airport/__tests__/layoverCompassEntryBoundary.test.ts:208#it("positive control: an answer inside the envelope is published unchanged"`), and that override was withdrawn. The certified verdict is now also in the model's context.
+2. **Replanner.** Under a certified `no` for lack of time, a landside candidate no longer "fits" even where the raw arithmetic fit. The engine had already said "not enough to leave and return safely".
+3. **Recommendations.** No change except for a refused corridor. A time-`no` window is already below the 90-minute gate, and `stay_airside` is already excluded by `wantsToLeave`.
+4. **`inputHash`.** The Compass, recommendation, buddy, replan and reminder records now hash the entry input, so they differ from their pre-§65 hashes for the same instant. For the Compass, recommendation, buddy and replan records, the hash now equals the dashboard's for the same instant.
+5. **`stay_airside` is not reinterpreted.** No consumer that ignored it before reads it now.
+
+**Existing tests edited, each argued.** None of the three edits weakens a guard.
+- `artifacts/api-server/src/test/layoverEntryGate.test.ts:567#const wired = (src.match(/certifySessionFeasibility` now counts `entry: await sessionEntry(` only INSIDE a certification call. The old count would have passed if a certification site lost its entry while a handoff gained one. The new count cannot, so it is strictly stronger.
+- `artifacts/api-server/src/test/layoverRouteSafetyInputs.test.ts:163#args, ["airport", "session", "Date.now()", "await sessionEntry(sc, airport, session)"],` (census-layover L256's guard) now admits the clock and the traveller's own corridor, and it still refuses any marketplace value. Its parser balances nested calls. Its old parser stopped at the first `)`.
+- `artifacts/api-server/src/test/layoverSafeReturnAbort.test.ts:551#assert.equal(ev.metadata.inputHash, certifySessionFeasibility(AIRPORT, s,` expects the hash of the record certified with the entry that fixture resolves (`unresolved`, with no flag row). It still asserts the event carries that record's certification.
+
+### 65.6 Row moves
+
+Neither row moves. Both are restated with the entry half closed.
+
+| ID | was | now | evidence |
+|---|---|---|---|
+| A13 | W | **W** | **The input half holds; the consumption half is §56.9 question 2.** Every production certification site but the crew wrapper now certifies with the snapshot's entry input (`artifacts/api-server/src/test/layoverConsumerEntry.test.ts:523#it("no call site outside the crew wrapper omits`). For one world, the Compass answer, the recommendations, the buddy gate, a disruption and a replan all certify the snapshot's verdict, and a refused border closes landside in each (`artifacts/api-server/src/test/layoverConsumerEntry.test.ts:302#it("PARITY with the snapshot's`). Two things keep the row W, and neither is this lane's to decide. First, *"All surfaces consume the same certified LayoverSnapshot"*: these five consumers still certify inline rather than consuming `certifiedLayoverSnapshot`. Second, *"no duplicate time-budget logic"*: the Compass answer still re-derives usable minutes (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:146#const usableMin = Math.max(0, availMin - bufferMin);`). Both are §56.9 question 2 (PR #528 owner item D). What turns it C: the owner rules, and every consumer reads the snapshot, or the owner rules that inline certification over the same inputs satisfies the Layover spec's "all surfaces consume" and "one canonical snapshot" sentences (A13's own quotations), which the ratchet and the parity case then pin; and the Compass figure is read off the record. |
+| A14 | W | **W** | **Unchanged by this section, which touched no Discovery surface.** The Layover-mode universe for a refused border was closed by §56.14 (`artifacts/api-server/src/test/layoverSnapshotEntry.test.ts:67#it("a REFUSED corridor (visa_required) certifies`). What keeps it W is carried forward from §56.14 unchanged. `layover_discovery_mode_enabled` is FALSE in production, as read by §56.14 on 2026-09-27; this lane read no production row. And only places the traveller already planned can be admitted: there is no dwell source (§38). |
+
+### 65.7 Checks run at this tree (all in `artifacts/api-server`)
+
+- **The new suite:** `layoverConsumerEntry.test.ts`, 20 of 20 pass, registered on the `test` line.
+- **Every existing test file that imports or reads a changed file:** 75 files, found by grep. That is 1,342 tests, 1,342 pass, 0 fail, 0 cancelled. Before the three edits in 65.5, the same run had 3 failures, and each one is argued there.
+- **Typechecks:** `typecheck` passes. `typecheck:tests` is at its baseline: 863 diagnostics across 115 files, none in a file this section touched. The new suite has no `any` and no `@ts-expect-error`.
+- **Other checks:** `check:test-registration` passes.
+- **Checks run after the last edit:** `check:doc-citations`, `check:citation-targets`, `check:citation-symbols`, `check:census-freshness`, `check:census-scope-coverage` and `check:census-integrity` all pass. The lane's report gives each result.
+- **The full api-server `npm test`:** 27,649 tests, 27,647 pass, 2 fail and 0 are cancelled. Neither failure is in a file this section touched:
+  - `guardReachability`'s checker was killed by its 180-second spawn timeout under load. Run alone, the file passes 25 of 25.
+  - `discoveryClientRouteE2E` fails to load, alone as well. Its client import `displayIdentity` throws a `SyntaxError` resolving `truncateDisplayName` from the client's `utils/identity` under the CommonJS loader. This lane changed no client file and no loader. It did not re-run that file at `f34994de7`.
+- **Not run:** any live-DB or harness suite. No SQL was run anywhere.
+
+### 65.8 Owner questions (carried forward, not re-asked)
+
+- **§56.9 question 2** (A13, Layover owner; PR #528 owner item D, *"Layover consumers and the snapshot (A13 remainder, A14)"*). The question: should `answerLayoverQuestion` read `usableMinutes` off the certified record, and should Trips, Map, Safe Return and `LayoverRecommendationService` consume `certifiedLayoverSnapshot`? It should now also name the buddy gate and the replanner (65.2).
+- **census-layover L48 and L230** (Layover owner). Should an UNRESOLVED corridor also close landside? 65.4 holds the current answer, "no", and it is identical everywhere now.
+
+### 65.9 Other censuses this touches
+
+- **census-layover.** Seven counted files changed: `LayoverEventReplanner.ts`, `LayoverExternalReplanPort.ts`, `LayoverNotificationService.ts`, `LayoverRecommendationService.ts`, `LayoverReplanService.ts`, `LayoverSafeReturnService.ts` and `layoverSafeReturnAbort.test.ts`. They are acknowledged with the argument that no verdict moves:
+  - **L48 and L230** ask that an entry that is not `CONFIRMED_ALLOWED` forbid landside. An unresolved corridor still does not, so L48 stays W and L230 stays N.
+  - **L77** is the hard gate. Its entry term, as L48 defines it, is still not met for an unresolved corridor. The gate gains the refused half only, and *"three terms of four is not four"* holds.
+  - **L273** stays W on its category ground.
+  - **L6** stays W: no surface consumes a shared snapshot.
+  - **L101** stays W on the prose boundary.
+  - **L114** stays C: the question is still computed and rendered.
+  - **L256** stays N ∅: its guard still refuses marketplace values.
+
+  One anchor in census-layover §23 was shortened to the prefix that still holds. That is the buddy route's gate call, with the same claim: the gate runs before the marketplace read.
+- **census-trips.** `LayoverNotificationService.ts` is cited by TR144 and TR425 only as an artifact of the Layover programme. No verdict moves.
+- **census-discovery.** §56.3's two anchors into `recomputeForDisruption`'s and `generateRecommendations`' certification lines are annotated in §56's own "as found at" form.
+
+### 65.10 What would turn this red
+
+- A new `certifySessionFeasibility` call without `entry` that is not the crew wrapper. The ratchet catches it.
+- Any of the five consumers serving a landside action for a refused corridor (65.3's cases).
+- A consumer disagreeing with the snapshot on the same world (the parity cases).
+- The disruption route re-reading entry instead of passing its own record's entry.
+- `resolveLayoverEntry` answering `permitted` on a failed read. `layoverEntryGate.test.ts` pins this.
+
+### 65.11 Read-only production SQL that would turn this into production evidence (not run)
+
+- `SELECT flag, enabled FROM public.feature_flags WHERE flag IN ('passport_entry_intelligence_enabled','layover_discovery_mode_enabled','rent_buddy_enabled','layover_compass_enabled');`
+- `SELECT count(*) FROM public.traveler_passports;` The count was 0 on 2026-09-27 (§56.14), so no traveller could reach this defect in production that day.
+- `SELECT e.status, count(*) FROM public.layover_sessions s JOIN public.traveler_passports p ON p.user_id = s.user_id JOIN public.airport_profiles a ON a.id = s.airport_id JOIN public.entry_requirements e ON e.passport_country = p.issuing_country AND e.destination_country = a.country_code WHERE s.status IN ('active','returning') GROUP BY e.status;` This counts the live sessions whose corridor is refused.
+
 ## §67 — Revocation reaches the graph (lane P19b): an edge whose source was revoked or deleted no longer survives a rebuild; decay stays the owner's
 
 *Written 2026-09-28 by lane P19b on `disc-p19b-graph-revocation`, branched from `f34994de7`. This lane changes one code file, `artifacts/api-server/src/compass/CompassGraphEngine.ts`, and adds one suite, `artifacts/api-server/src/test/compassGraphRevocation.test.ts` (20 cases), registered on the `test` line and added to CENSUS_SCOPE. The code change is line-neutral for every line any census cites. One line is edited in place, and two calls are added after the last cited line of `rebuildIntelligenceGraph`. Inside `buildGraphFromSources`, only the `circles` read changed: its four uncited lines now call a shared read, four for four (67.3). Everything else is appended at the end of the file. The build writes exactly what it wrote before. There is no migration and no SQL function change, so nothing was rehearsed on the local harness. Nothing is merged to `main`, applied to `portava-ci` or production, deployed or flag-enabled, and no SQL was run against any database. The headline is unchanged, because no row changes bucket. `head_commit` is not re-declared.*
@@ -12711,3 +12849,6 @@ CONSTRUCTED 182 / 188 = **96.8 %**, unchanged. CORRECT 96 / 188 = **51.1 %**, up
 - NOT-GRADED: artifacts/api-server/src/test/wallPerformance.test.ts — §68.7 names it only as a timing case that failed under a parallel run and passes 6/6 alone; it imports nothing §68 changed, census-wall grades it, and no Discovery verdict rests on it.
 
 - NOT-GRADED: travel-buddy-standalone/src/lib/cityCentroids.ts — §73.7 #3 names its six-letter stroke table as the client's own fold, which is separate from the stored key; it serves the client's centroid lookup, and no DV-20 or B01 verdict rests on it.
+
+- NOT-GRADED: artifacts/api-server/src/services/airport/LayoverFeasibility.ts — §65.2 cites the `entry` option's documented default ("Omitted = unresolved") as the fact that made an omitted input a silent `entry_unverified`; §65 changed nothing in the engine, census-layover grades it, and no §65 verdict rests on it beyond that sentence.
+- NOT-GRADED: artifacts/api-server/src/services/airport/__tests__/layoverCompassEntryBoundary.test.ts — §65.5 cites its positive control as the case that went red when this lane first overrode every model answer under a certified `no`, which is why that override was withdrawn; census-layover grades the Compass boundary, and no §65 verdict rests on it.

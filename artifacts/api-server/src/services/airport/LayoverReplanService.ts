@@ -63,7 +63,7 @@ import {
   type FeasibilityAirport,
   type FeasibilitySession,
 } from "./LayoverFeasibility.js";
-import type { LayoverReasonCode } from "./LayoverSafetyEngine.js";
+import type { LayoverReasonCode } from "./LayoverSafetyEngine.js"; import type { EntryEligibility } from "./layoverEntryGate.js";
 import {
   applyEventToInputs,
   handleEvent,
@@ -351,7 +351,7 @@ export function replanForWindowChange(args: {
   status: string;
   candidates: ReplanCandidate[];
   heldRecommendations?: Array<{ id: string; inputHash: string }>;
-  nowMs: number;
+  nowMs: number; /** The session owner's corridor, resolved by the route (census-discovery §65). Omitted = unresolved. */ entry?: EntryEligibility | null;
 }): ReplanResult {
   if (args.status !== "active") {
     return { ran: false, reason: "session_not_replannable", detail: `session status is ${args.status}` };
@@ -395,7 +395,7 @@ export function replanForWindowChange(args: {
     airport: args.airport,
     sessions: [{ session: args.before, airportRef: args.airportRef, status: args.status }],
     candidates: { [args.before.id]: args.candidates },
-    heldRecommendations: { [args.before.id]: args.heldRecommendations ?? [] },
+    heldRecommendations: { [args.before.id]: args.heldRecommendations ?? [] }, entries: { [args.before.id]: args.entry ?? null },
     nowMs: args.nowMs,
   });
 
