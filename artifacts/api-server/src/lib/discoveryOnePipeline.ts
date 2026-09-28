@@ -41,23 +41,23 @@ export function invalidateOnePipelineFlagCache(): void {
   _flagCache.clear();
 }
 
-async function cachedFlag(sc: any, flag: string): Promise<boolean> {
-  const hit = _flagCache.get(flag);
+async function cachedFlag(key: string, read: () => Promise<boolean>): Promise<boolean> {
+  const hit = _flagCache.get(key);
   if (hit && Date.now() - hit.at < FLAG_TTL_MS) return hit.value;
   let value = false;
-  try { value = sc ? await isFlagEnabled(sc, flag) : false; } catch { value = false; }
-  _flagCache.set(flag, { value, at: Date.now() });
+  try { value = await read(); } catch { value = false; }
+  _flagCache.set(key, { value, at: Date.now() });
   return value;
 }
 
 /** 3455. Only a signed-in `for_you` request can be governed by it; everything else answers false without a read. */
 export async function forYouPdeEnabled(sc: any, category: string, viewerId: string | null): Promise<boolean> {
-  if (category !== "for_you" || !viewerId) return false;
-  return cachedFlag(sc, DISCOVERY_FOR_YOU_PDE_FLAG);
+  if (category !== "for_you" || !viewerId || !sc) return false;
+  return cachedFlag(DISCOVERY_FOR_YOU_PDE_FLAG, () => isFlagEnabled(sc, DISCOVERY_FOR_YOU_PDE_FLAG));
 }
 
 /** 3456. An anonymous request has no viewer to rank for, so it answers false without a read. */
 export async function cacheARankedEnabled(sc: any, viewerId: string | null): Promise<boolean> {
-  if (!viewerId) return false;
-  return cachedFlag(sc, DISCOVERY_CACHE_A_RANKED_FLAG);
+  if (!viewerId || !sc) return false;
+  return cachedFlag(DISCOVERY_CACHE_A_RANKED_FLAG, () => isFlagEnabled(sc, DISCOVERY_CACHE_A_RANKED_FLAG));
 }

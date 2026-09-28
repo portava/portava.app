@@ -9,6 +9,8 @@
  *
  *   O1  flag ON: the Compass feed does not supersede the page, and the feed is
  *       not even requested (enabled: false).
+ *   O1b flag ON: a Compass feed that arrives after the page does not supersede
+ *       it either (O1c is its flag-off control).
  *   O2  flag ON: the intentMode the screen hands the tab is on the request.
  *   O3  CONTROL, flag OFF: the Compass feed supersedes the page, exactly as
  *       before — so O1 is the flag, not a broken upgrade effect.
@@ -137,6 +139,31 @@ describe('ForYouTab — one ranking pipeline (3455)', () => {
     expect(screen.queryByText('card:Compass Cafe')).toBeNull();
     expect(mockUseCompassFeed).toHaveBeenCalledWith(expect.objectContaining({ enabled: false }));
     expect(screen.getByText('Picked for you')).toBeTruthy();
+  });
+
+  it('O1b. flag ON: a Compass feed that arrives AFTER the page (a cached feed, or a late answer) still does not supersede it', async () => {
+    mockFlags.on = new Set(['discovery_for_you_pde_enabled']);
+    const feed = { data: null as unknown, compassEnabled: false, refresh: jest.fn() };
+    mockUseCompassFeed.mockImplementation(() => feed);
+    const view = await render(<ForYouTab destination="Lisbon" onAddToPlan={jest.fn()} intentMode="quiet" />);
+    await screen.findByText('card:Ranked First');
+    feed.data = { sections: [{ name: 'for_you', items: [COMPASS_ITEM] }], safeItems: [] };
+    feed.compassEnabled = true;
+    await view.rerender(<ForYouTab destination="Lisbon" onAddToPlan={jest.fn()} intentMode="quiet" />);
+    await act(async () => {});
+    expect(screen.queryByText('card:Compass Cafe')).toBeNull();
+    expect(screen.getByText('card:Ranked First')).toBeTruthy();
+  });
+
+  it('O1c. CONTROL, flag OFF: the same late Compass feed DOES supersede the page (so O1b is the flag)', async () => {
+    const feed = { data: null as unknown, compassEnabled: false, refresh: jest.fn() };
+    mockUseCompassFeed.mockImplementation(() => feed);
+    const view = await render(<ForYouTab destination="Lisbon" onAddToPlan={jest.fn()} intentMode="quiet" />);
+    await screen.findByText('card:Ranked First');
+    feed.data = { sections: [{ name: 'for_you', items: [COMPASS_ITEM] }], safeItems: [] };
+    feed.compassEnabled = true;
+    await view.rerender(<ForYouTab destination="Lisbon" onAddToPlan={jest.fn()} intentMode="quiet" />);
+    await screen.findByText('card:Compass Cafe');
   });
 
   it('O2. flag ON: the chosen intent mode is on the GET /discovery request the list shows', async () => {

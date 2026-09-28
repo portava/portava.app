@@ -1851,10 +1851,10 @@ router.get("/discovery", async (req, res) => {
     // ranking error fall back to the legacy cached order, unchanged.
     let servedFiltered = filtered;
     let pdeScoredById: Map<string, ScoredCandidate<RankCandidate>> | null = null; let pdeServedStages: PdeStages | null = null;  // census-discovery §63 (DV-52 b): the SERVED call's stages, for the graph reading its rows record
-    const pdeCohort = (callerUserId && engineMode.mode === "pde")
-      ? isInDiscoveryCohort(engineMode.cohort, callerUserId)
-      : null; const cacheARanked = await cacheARankedEnabled(getServiceClient(), callerUserId);  // census-discovery §79 (DV-03): 3456 ranks EVERY signed-in cache-A hit, in every mode, as the cold fetch already is. Off ⇒ false with no change below.
-    if (pdeCohort?.included && callerUserId || cacheARanked && callerUserId) {
+    const cacheARanked = await cacheARankedEnabled(getServiceClient(), callerUserId); const pdeCohort = (callerUserId && engineMode.mode === "pde")  // census-discovery §79 (DV-03): 3456 ranks EVERY signed-in cache-A hit, in every mode, as the cold fetch already is. Off ⇒ false, and the admission below is the cohort decision itself.
+      ? withCacheARankedAdmission(isInDiscoveryCohort(engineMode.cohort, callerUserId), cacheARanked)
+      : withCacheARankedAdmission(null, cacheARanked);
+    if (pdeCohort?.included && callerUserId) {
       try {
         const rankSc    = getServiceClient();
         const pdeViewer = await loadPdeViewer(
@@ -1871,7 +1871,7 @@ router.get("/discovery", async (req, res) => {
         servedFiltered = filtered;
         pdeScoredById  = null; pdeServedStages = null;
       }
-    } recordRankObligation({ owed: pdeCohort?.included === true || cacheARanked, ranked: pdeScoredById !== null }); // census-discovery §54 H2: cache_bypass producer, in-process only
+    } recordRankObligation({ owed: pdeCohort?.included === true, ranked: pdeScoredById !== null }); // census-discovery §54 H2: cache_bypass producer, in-process only
 
     // Sensing §8 — the live ranking layer, over the FULL filtered list's head
     // window and BEFORE the page slice, so it decides what page 1 contains
@@ -2103,8 +2103,8 @@ router.get("/discovery", async (req, res) => {
 
     // COMPASS_V1_RULE_BASED_ENABLED: for for_you tab, use Compass pipeline scoring
     // instead of the rule-based scoreWithContext to rank OSM places.
-    const forYouM = await forYouCandidatesForServe(category, callerUserId, places, req.log); if (category === "for_you" && callerUserId && forYouM.source === null) {  // §79 (C32): 3455 on ⇒ this whole Compass-ORDER branch (serve points 4 and 5) is not entered; the cold path below ranks forYouM.places
-      const compassSc = getServiceClient();
+    const forYouM = await forYouCandidatesForServe(category, callerUserId, places, req.log); if (category === "for_you" && callerUserId) {  // §79 (C32): 3455 on ⇒ the Compass-ORDER branch below (serve points 4 and 5) gets no client, so it is not entered; the cold path below ranks forYouM.places
+      const compassSc = forYouM.source === null ? getServiceClient() : null;  // §79 (C32): null ⇔ 3455 on — no Compass ordering, no Cache B
       if (compassSc) {
         try {
           const compassFlagOn = await isEnabled(compassSc, "COMPASS_V1_RULE_BASED_ENABLED");
@@ -4489,4 +4489,17 @@ async function observeForYouShadow(a: ForYouShadowArgs): Promise<void> {
   } catch (err) {
     a.log.warn({ err }, "discovery: for_you shadow observation failed — the response was unaffected");
   }
+}
+
+
+/**
+ * §79 (DV-03) — 3456 admits a signed-in viewer to the cache-A rank the same way
+ * the `pde` cohort does, in every engine mode. Off ⇒ the cohort decision itself
+ * (same object, or null), so the branch below is exactly what it was.
+ */
+function withCacheARankedAdmission<D extends { included: boolean }>(
+  decision: D | null, cacheARanked: boolean,
+): D | { included: true; reason: "cache_a_ranked_enabled" } | null {
+  if (!cacheARanked || decision?.included) return decision;
+  return { included: true, reason: "cache_a_ranked_enabled" };
 }
