@@ -298,12 +298,19 @@ describe('§27 Saved items', () => {
     // always-matching bucket into "All" everywhere is an owner's call), so the
     // map's own sheet has to ask for it. Read as source: the sheet pulls
     // MapLibre-adjacent chrome this runner cannot render.
+    //
+    // RESTATED by census-discovery §80 (A08 reason 3, register D-W10-S1-5): the
+    // sheet no longer calls `searchUnified` twice. It asks the input gateway
+    // once, as the `map.search` field, and the gateway's search page asks for
+    // the saved lane on its behalf. The chain has the same last link, one hop
+    // further in, and both hops are read as source here.
     const sheet = readFileSync(locateRepoFile('travel-buddy-standalone/src/components/map/MapSearchSheet.tsx'), 'utf8');
-    assert.match(sheet, /searchUnified\(/, 'the sheet no longer calls searchUnified — update this guard');
+    assert.match(sheet, /requestMapSearchPage\(q, opts\)/, 'the sheet no longer asks the gateway page — update this guard');
+    const page = readFileSync(locateRepoFile('artifacts/api-server/src/lib/inputAssistance/searchPage.ts'), 'utf8');
     assert.match(
-      sheet,
-      /searchUnified\(q, 'saved'/,
-      'the map search sheet never requests the saved type, so §27 Saved items cannot appear on the map',
+      page,
+      /dispatchSearchWithCoverage\(\s*sc, effectiveQ, p\.userId, blockedSet, ageRestrictedSet, "saved"/,
+      'the map search page never requests the saved type, so §27 Saved items cannot appear on the map',
     );
   });
 

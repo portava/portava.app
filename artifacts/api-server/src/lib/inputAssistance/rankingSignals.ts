@@ -4,7 +4,7 @@
  * §15 names the signals a suggestion's confidence is supposed to combine:
  * ExactMatch, PrefixMatch, GeographicFit, TemporalFit, RecencyOfUse,
  * TrustConfidence, PrivacyRisk, SpamRisk. Three of those were already computed
- * elsewhere — ExactMatch/PrefixMatch by `matchTier` (`routes/discoverySearchHelpers.ts`),
+ * elsewhere — ExactMatch/PrefixMatch by `matchTier` (`lib/inputAssistance/searchQueryHelpers.ts`),
  * GeographicFit by the city boost in `rankCombined`, RecencyOfUse by
  * `applyPriorSelectionBoost` (`personalization.ts`). Two of the remaining five
  * had NO producer anywhere in the layer:

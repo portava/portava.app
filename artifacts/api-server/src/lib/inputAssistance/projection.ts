@@ -14,7 +14,7 @@
  * never silently inserted, §22).
  */
 import type { SearchResult } from './searchCandidates';
-import { matchTier } from '../../routes/discoverySearchHelpers';
+import { matchTier } from './searchQueryHelpers';
 import type { CanonicalRow } from '../canonicalLocations';
 import type { CanonicalCityBinding, GeoDefault } from './geoResolver';
 import { cityBinding, airportCityBinding } from './geoResolver';

@@ -33,7 +33,7 @@ import {
   KNOWN_CONTEXTS,
   POLICY_VERSION,
 } from '../lib/inputAssistance/policyRegistry';
-import { generateSuggestions } from '../lib/inputAssistance/gateway';
+import { generateSuggestionsWithCoverage, gatewayFailureRefusal } from '../lib/inputAssistance/gateway'; // census-discovery §80: coverage on the envelope
 import {
   SUGGESTION_SCHEMA_VERSION,
   parseClientCapabilities,
@@ -260,7 +260,7 @@ router.post(
     const startedAt = Date.now();
 
     try {
-      const generated = await generateSuggestions(sc, {
+      const { suggestions: generated, refusal, laneRefusals } = await generateSuggestionsWithCoverage(sc, {
         context,
         policy: servePolicy,
         text,
@@ -294,7 +294,7 @@ router.post(
         },
         context,
         fieldId,
-        suggestions,
+        suggestions, ...(refusal ? { refusal } : {}), ...(laneRefusals?.saved ? { laneRefusals: { saved: laneRefusals.saved } } : {}),
         serverMs,
       };
       // Instrumented on the server's own side too, so the quantile is
@@ -317,7 +317,7 @@ router.post(
         schemaVersion: SUGGESTION_SCHEMA_VERSION,
         context,
         fieldId,
-        suggestions: [],
+        suggestions: [], refusal: gatewayFailureRefusal(), // §80: a failed serve is not an empty one
         serverMs: Date.now() - startedAt,
       };
       res.status(200).json(payload);

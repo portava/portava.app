@@ -31,7 +31,7 @@ jest.mock('../../services/discovery.ts', () => ({
   getSearchSuggestions: jest.fn(async () => mockSuggest),
 }));
 
-let mockGatewayState: { suggestions: Array<Record<string, unknown>>; loading: boolean; unavailable: boolean; policy: unknown } =
+let mockGatewayState: { suggestions: Array<Record<string, unknown>>; loading: boolean; unavailable: boolean; policy: unknown; refusal?: unknown } =
   { suggestions: [], loading: false, unavailable: true, policy: null };
 
 // NOTE: intentionally exhaustive — the real gateway hook performs its own
@@ -80,5 +80,57 @@ describe('DV-83 — the suggest refusal survives the global-search hook', () => 
     await pastDebounce();
     await waitFor(() => expect(result.current.groups.length).toBe(1));
     expect(result.current.refused).toBe(false);
+  });
+
+  // ── census-discovery §80 (DV-83, D-W10-S1-2; E-9, D-W10-S1-4) ──────────────
+  // After E-9 the gateway is the typeahead whenever it is available, so its
+  // coverage has to reach the panel too — before §80 `refused` was hard-wired
+  // `false` on the gateway path and a partial answer was simply "the answer".
+
+  it('§80: a PARTIAL legacy read is reported incomplete (and still not refused)', async () => {
+    mockSuggest = {
+      ok: true,
+      groups: [{ type: 'places', label: 'Places', items: [{ id: 'p1', type: 'place', title: 'Senso-ji' }] }],
+      refusal: { ...REFUSED, coverage: 'partial', failedSources: ['travelers'] },
+    };
+    const { result } = await renderHook(() => useGlobalSearchSuggestions('tokyo'));
+    await pastDebounce();
+    await waitFor(() => expect(result.current.groups.length).toBe(1));
+    expect(result.current.incomplete).toBe(true);
+    expect(result.current.refused).toBe(false);
+  });
+
+  it('§80: a gateway serve that refused is reported refused — not an empty typeahead', async () => {
+    mockGatewayState = {
+      suggestions: [], loading: false, unavailable: false, policy: null,
+      refusal: { class: 'transient_db', code: 'visibility_state_unreadable', route: 'POST /input-assistance/suggest', coverage: 'nothing' },
+    } as typeof mockGatewayState;
+    const { result } = await renderHook(() => useGlobalSearchSuggestions('tokyo'));
+    await pastDebounce();
+    expect(result.current.source).toBe('gateway');
+    expect(result.current.refused).toBe(true);
+    expect(result.current.incomplete).toBe(false);
+  });
+
+  it('§80: a PARTIAL gateway serve is reported incomplete, its rows kept', async () => {
+    mockGatewayState = {
+      suggestions: [{ id: 'g1', type: 'entity', context: 'global_search', label: 'gateway g1', entityType: 'city', entityId: 'g1',
+        destination: { route: '/city/g1', entityType: 'city', entityId: 'g1' } }],
+      loading: false, unavailable: false, policy: null,
+      refusal: { class: 'transient_db', code: 'suggest_sources_unreadable', route: 'POST /input-assistance/suggest', coverage: 'partial', failedSources: ['circles'] },
+    } as typeof mockGatewayState;
+    const { result } = await renderHook(() => useGlobalSearchSuggestions('tokyo'));
+    await waitFor(() => expect(result.current.source).toBe('gateway'));
+    expect(result.current.groups.some((g) => g.items.length > 0)).toBe(true);
+    expect(result.current.incomplete).toBe(true);
+    expect(result.current.refused).toBe(false);
+  });
+
+  it('§80 CONTROL: a complete gateway serve is neither refused nor incomplete', async () => {
+    mockGatewayState = { suggestions: [], loading: false, unavailable: false, policy: null };
+    const { result } = await renderHook(() => useGlobalSearchSuggestions('tokyo'));
+    await pastDebounce();
+    expect(result.current.refused).toBe(false);
+    expect(result.current.incomplete).toBe(false);
   });
 });

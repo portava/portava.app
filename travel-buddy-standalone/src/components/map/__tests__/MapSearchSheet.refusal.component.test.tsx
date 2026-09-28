@@ -39,19 +39,35 @@
  *      this, a fix that shows the refusal notice unconditionally passes (1)-(3)
  *      while destroying the empty state.
  *
+ * census-discovery §80 (A08 reason 3, register D-W10-S1-5): the sheet no longer
+ * calls `GET /discovery/search` twice per keystroke. It asks the input gateway
+ * once, as the `map.search` field, and the gateway page carries the same rows
+ * and each lane's coverage (`refusal` for the fan-out, `savedRefusal` for §27's
+ * ninth heading). Every case below is RESTATED onto that transport and asserts
+ * the same screen it asserted before: the notices did not change, only the
+ * wire they arrive on. Case (7) moved with the transport — a saved lane that
+ * fails server-side arrives as its own refusal — and case (8)'s "threw" is now
+ * the one request throwing. Case (9) is new: one request per keystroke.
+ *
  * Run with: pnpm test:component
  */
 
 import React from 'react';
 import { render, screen, waitFor, act } from '@testing-library/react-native';
 
-const mockSearchUnified = jest.fn();
+const mockRequestMapSearchPage = jest.fn();
+const mockPostSearchSignal = jest.fn();
 
-// NOTE: intentionally exhaustive — the real module imports the Supabase client,
-// and spreading requireActual loads it and OOMs the Jest runner. `searchUnified`
-// is the only export this component uses.
+// NOTE: intentionally exhaustive — the real module imports the token helper and
+// the Supabase client. `requestMapSearchPage` is the only export the sheet uses.
+jest.mock('../../../platform/input-assistance/services/inputAssistance.ts', () => ({
+  requestMapSearchPage: (...args: unknown[]) => mockRequestMapSearchPage(...args),
+}));
+
+// NOTE: intentionally exhaustive — the real module imports the Supabase client.
+// The sheet still records that the person searched, once per answered query.
 jest.mock('../../../services/discovery', () => ({
-  searchUnified: (...args: unknown[]) => mockSearchUnified(...args),
+  postSearchSignal: (...args: unknown[]) => mockPostSearchSignal(...args),
 }));
 
 // NOTE: intentionally exhaustive — the real hook reads native safe-area insets,
@@ -101,10 +117,22 @@ function savedHit(id: string, title: string) {
   };
 }
 
-function envelope(results: unknown[], extra: Record<string, unknown> = {}) {
+/**
+ * The gateway page as `requestMapSearchPage` returns it: the rows of both lanes,
+ * and each lane's refusal. `lanes` lets a case give the saved lane its own rows
+ * and its own refusal, exactly as the two route answers used to.
+ */
+function page(
+  all: { results: unknown[]; refusal?: unknown },
+  saved: { results: unknown[]; refusal?: unknown } = { results: [] },
+) {
   return {
     ok: true,
-    data: { results, total: results.length, query: 'kopitiam', type: 'all', timeLabel: null, ...extra },
+    // Raw, on purpose: cases (5) and (6) hand the sheet rows inside a refused
+    // lane and assert the SHEET drops them, whatever the server sent.
+    results: [...all.results, ...saved.results],
+    ...(all.refusal ? { refusal: all.refusal } : {}),
+    ...(saved.refusal ? { savedRefusal: saved.refusal } : {}),
   };
 }
 
@@ -124,7 +152,8 @@ async function search(): Promise<void> {
 
 beforeEach(() => {
   jest.useFakeTimers();
-  mockSearchUnified.mockReset();
+  mockRequestMapSearchPage.mockReset();
+  mockPostSearchSignal.mockReset();
 });
 
 afterEach(() => {
@@ -134,7 +163,9 @@ afterEach(() => {
 describe('MapSearchSheet — refusals', () => {
   it('(1) a REFUSED search is never reported as "Nothing matched"', async () => {
     // Both lanes refuse outright: the server did not search.
-    mockSearchUnified.mockResolvedValue(envelope([], { refusal: refusal('nothing') }));
+    mockRequestMapSearchPage.mockResolvedValue(
+      page({ results: [], refusal: refusal('nothing') }, { results: [], refusal: refusal('nothing') }),
+    );
 
     await search();
 
@@ -147,8 +178,8 @@ describe('MapSearchSheet — refusals', () => {
   });
 
   it('(2) a PARTIAL refusal keeps the results it did serve and still says so', async () => {
-    mockSearchUnified.mockResolvedValue(
-      envelope([placeHit('p1', 'Kopitiam Ang Mo Kio')], { refusal: refusal('partial') }),
+    mockRequestMapSearchPage.mockResolvedValue(
+      page({ results: [placeHit('p1', 'Kopitiam Ang Mo Kio')], refusal: refusal('partial') }),
     );
 
     await search();
@@ -161,12 +192,8 @@ describe('MapSearchSheet — refusals', () => {
   });
 
   it('(3) the SAVED lane refusing is said out loud, not swallowed', async () => {
-    mockSearchUnified.mockImplementation((_q: string, type: string) =>
-      Promise.resolve(
-        type === 'saved'
-          ? envelope([], { refusal: refusal('nothing') })
-          : envelope([placeHit('p2', 'Kopitiam Tiong Bahru')]),
-      ),
+    mockRequestMapSearchPage.mockResolvedValue(
+      page({ results: [placeHit('p2', 'Kopitiam Tiong Bahru')] }, { results: [], refusal: refusal('nothing') }),
     );
 
     await search();
@@ -195,13 +222,10 @@ describe('MapSearchSheet — refusals', () => {
    * `partial` passed (1)-(6) with the defect intact.
    */
   it('(3b) a PARTIAL saved shelf keeps its rows AND says the list may be short', async () => {
-    mockSearchUnified.mockImplementation((_q: string, type: string) =>
-      Promise.resolve(
-        type === 'saved'
-          ? envelope([savedHit('s1', 'Kopitiam Katong')], {
-              refusal: { ...refusal('partial'), failedSources: ['wishlist_places'] },
-            })
-          : envelope([placeHit('p7', 'Kopitiam Clementi')]),
+    mockRequestMapSearchPage.mockResolvedValue(
+      page(
+        { results: [placeHit('p7', 'Kopitiam Clementi')] },
+        { results: [savedHit('s1', 'Kopitiam Katong')], refusal: { ...refusal('partial'), failedSources: ['wishlist_places'] } },
       ),
     );
 
@@ -223,12 +247,8 @@ describe('MapSearchSheet — refusals', () => {
     // Without this, "(3b) shows the partial notice" is satisfied by a sheet
     // that shows it on every search, which would make the notice noise and
     // train the person to ignore the one that matters.
-    mockSearchUnified.mockImplementation((_q: string, type: string) =>
-      Promise.resolve(
-        type === 'saved'
-          ? envelope([savedHit('s2', 'Kopitiam Bugis')])
-          : envelope([placeHit('p8', 'Kopitiam Novena')]),
-      ),
+    mockRequestMapSearchPage.mockResolvedValue(
+      page({ results: [placeHit('p8', 'Kopitiam Novena')] }, { results: [savedHit('s2', 'Kopitiam Bugis')] }),
     );
 
     await search();
@@ -242,7 +262,7 @@ describe('MapSearchSheet — refusals', () => {
   });
 
   it('(4) a genuinely empty answer STILL says "Nothing matched"', async () => {
-    mockSearchUnified.mockResolvedValue(envelope([]));
+    mockRequestMapSearchPage.mockResolvedValue(page({ results: [] }));
 
     await search();
 
@@ -272,8 +292,8 @@ describe('MapSearchSheet — refusals', () => {
    * So `coverage` wins over the payload, and these two cases pin that.
    */
   it('(5) items inside a coverage:"nothing" body are NOT rendered', async () => {
-    mockSearchUnified.mockResolvedValue(
-      envelope([placeHit('p3', 'Kopitiam Bedok')], { refusal: refusal('nothing') }),
+    mockRequestMapSearchPage.mockResolvedValue(
+      page({ results: [placeHit('p3', 'Kopitiam Bedok')], refusal: refusal('nothing') }),
     );
 
     await search();
@@ -285,12 +305,8 @@ describe('MapSearchSheet — refusals', () => {
   });
 
   it('(6) items inside a REFUSED SAVED body are NOT rendered beside real results', async () => {
-    mockSearchUnified.mockImplementation((_q: string, type: string) =>
-      Promise.resolve(
-        type === 'saved'
-          ? envelope([placeHit('s1', 'Saved Kopitiam Bugis')], { refusal: refusal('nothing') })
-          : envelope([placeHit('p4', 'Kopitiam Novena')]),
-      ),
+    mockRequestMapSearchPage.mockResolvedValue(
+      page({ results: [placeHit('p4', 'Kopitiam Novena')] }, { results: [savedHit('s1', 'Saved Kopitiam Bugis')], refusal: refusal('nothing') }),
     );
 
     await search();
@@ -324,10 +340,10 @@ describe('MapSearchSheet — refusals', () => {
    * by the other door.
    */
   it('(7) a saved lane that THREW is reported, not silently dropped', async () => {
-    mockSearchUnified.mockImplementation((_q: string, type: string) =>
-      type === 'saved'
-        ? Promise.reject(new Error('network'))
-        : Promise.resolve(envelope([placeHit('p5', 'Kopitiam Clementi')])),
+    // §80: the saved lane is read server-side now; a saved read that THREW
+    // there arrives as that lane's own `coverage: "nothing"` refusal.
+    mockRequestMapSearchPage.mockResolvedValue(
+      page({ results: [placeHit('p5', 'Kopitiam Clementi')] }, { results: [], refusal: { ...refusal('nothing'), code: 'search_failed' } }),
     );
 
     await search();
@@ -342,12 +358,8 @@ describe('MapSearchSheet — refusals', () => {
     expect(screen.queryByText(/Nothing matched/i)).toBeNull();
   });
 
-  it('(8) an `all` lane that THREW is an error, not "Nothing matched"', async () => {
-    mockSearchUnified.mockImplementation((_q: string, type: string) =>
-      type === 'saved'
-        ? Promise.resolve(envelope([]))
-        : Promise.reject(new Error('network')),
-    );
+  it('(8) a request that THREW is an error, not "Nothing matched"', async () => {
+    mockRequestMapSearchPage.mockRejectedValue(new Error('network'));
 
     await search();
 
@@ -359,4 +371,62 @@ describe('MapSearchSheet — refusals', () => {
     });
     expect(screen.getByText(/Search failed/i)).toBeTruthy();
   });
+
+  it('(9) §80: ONE gateway request per settled query, as the map.search field, and one search signal', async () => {
+    mockRequestMapSearchPage.mockResolvedValue(page({ results: [placeHit('p9', 'Kopitiam Yishun')] }));
+    await search();
+    await waitFor(() => {
+      expect(screen.getByText('Kopitiam Yishun')).toBeTruthy();
+    });
+    expect(mockRequestMapSearchPage).toHaveBeenCalledTimes(1);
+    const [q, opts] = mockRequestMapSearchPage.mock.calls[0]!;
+    expect(q).toBe('kopitiam');
+    expect(opts).toEqual({ lat: 1.3, lng: 103.8, city: 'Singapore' });
+    expect(mockPostSearchSignal).toHaveBeenCalledTimes(1);
+  });
+
+  it('(10) §80: a transport failure shows the service\'s own error line', async () => {
+    mockRequestMapSearchPage.mockResolvedValue({ ok: false, error: 'Network error — check your connection' });
+    await search();
+    await waitFor(() => {
+      expect(screen.getByText('Network error — check your connection')).toBeTruthy();
+    });
+    expect(screen.queryByText(/Nothing matched/i)).toBeNull();
+  });
+
+  /**
+   * (11) §80 follow-up (verifier, at bc0ba4a94). A query with nothing
+   * searchable once the key is prepared — "🔥", "((", or "@a", the second
+   * keystroke of every handle search — is answered by the gateway page with a
+   * VALIDATION refusal on both lanes. That is "not enough to search yet", the
+   * state the sheet already has for a one-character query: nothing is shown,
+   * and above all no OUTAGE sentence ("Search couldn’t be run just now …",
+   * "Your saved items couldn’t be read …") and no "Nothing matched".
+   */
+  it('(11) a VALIDATION refusal is not-enough-to-search: no outage notice, no error, no "Nothing matched"', async () => {
+    const tooShort = { class: 'validation', code: 'query_too_short', route: 'POST /input-assistance/suggest', coverage: 'nothing' };
+    mockRequestMapSearchPage.mockResolvedValue({ ok: true, results: [], refusal: tooShort, savedRefusal: tooShort });
+
+    await search();
+
+    await waitFor(() => {
+      expect(mockRequestMapSearchPage).toHaveBeenCalled();
+    });
+    await act(async () => {});
+    expect(screen.queryByText(/couldn’t be run|could not be run/i)).toBeNull();
+    expect(screen.queryByText(/saved items/i)).toBeNull();
+    expect(screen.queryByText(/Nothing matched/i)).toBeNull();
+    expect(screen.queryByText(/Search failed/i)).toBeNull();
+  });
+
+  it('(11b) CONTROL: an outage refusal (transient_db, nothing) still says the search could not run', async () => {
+    mockRequestMapSearchPage.mockResolvedValue(
+      page({ results: [], refusal: refusal('nothing') }, { results: [], refusal: refusal('nothing') }),
+    );
+    await search();
+    await waitFor(() => {
+      expect(screen.getByText(/couldn’t be run|could not be run/i)).toBeTruthy();
+    });
+  });
 });
+

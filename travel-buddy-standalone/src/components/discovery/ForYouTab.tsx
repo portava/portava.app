@@ -16,7 +16,7 @@ import { TelegraphSendIcon } from '../icons/TelegraphSendIcon.tsx';
 import { DiscoveryShareSheet } from '../DiscoveryShareSheet.tsx';
 import type { DiscoverySharePayload } from '../DiscoveryShareSheet.tsx';
 import type { DiscoveryPlace } from '../../services/discovery.ts';
-import { getDiscoveryPlaces, getSavedPlaceIds, getCachedDiscoveryPlaces } from '../../services/discovery.ts';
+import { getDiscoveryPlaces, getSavedPlaceIds, getCachedDiscoveryPlaces } from '../../services/discovery.ts'; import { listPartialNotice, listPartialEmptyTitle, LIST_PARTIAL_EMPTY_BODY } from '../../services/discoveryCoverageNotice.ts';
 import { PlaceSkeletonList } from './PlaceSkeleton.tsx';
 import PlaceCard from './PlaceCard.tsx';
 import { PlaceDetailSheet } from './PlaceDetailSheet.tsx';
@@ -109,7 +109,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
   // 'none' here is exactly the consumer-side collapse the sentence forbids —
   // the user is told "there is nothing in Lisbon" when the truth is "we never
   // managed to look".
-  const [source, setSource]     = useState<'compass' | 'osm' | 'none' | 'refused'>('none');
+  const [source, setSource]     = useState<'compass' | 'osm' | 'none' | 'refused'>('none'); const [osmPartial, setOsmPartial] = useState(false); // §80 (DV-83): the OSM lane answered PARTIAL
   // The saved-places read is a separate surface with a separate failure: your
   // bookmarks are not the place list, and one can fail while the other works.
   const [savedIdsUnavailable, setSavedIdsUnavailable] = useState(false);
@@ -269,14 +269,14 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
         // Don't overwrite if Compass has already upgraded the feed.
         if (prev.some((i) => i.kind === 'compass')) return prev;
         if (osm.ok && osm.data.places.length > 0) {
-          setSource('osm');
+          setSource('osm'); setOsmPartial(osm.data.refusal?.coverage === 'partial');
           return osm.data.places.slice(0, 15).map((p) => ({ kind: 'osm' as const, place: p }));
         }
         // An empty list with a `coverage: "nothing"` refusal beside it is not an
         // empty city — see the `source` declaration above. A `partial` refusal
         // is NOT routed here: some of what it carries is real, and the branch
         // above has already rendered it.
-        setSource(osm.ok && osm.data.refusal?.coverage === 'nothing' ? 'refused' : 'none');
+        setSource(osm.ok && osm.data.refusal?.coverage === 'nothing' ? 'refused' : 'none'); setOsmPartial(osm.ok && osm.data.refusal?.coverage === 'partial');
         return [];
       });
     }).catch(() => {
@@ -312,7 +312,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
       } else {
         setItems([]);
       }
-      setSource('none');
+      setSource('none'); setOsmPartial(false);
       load(cachedResult !== null); // isRefresh=true when cache hit → no skeleton
     } else {
       load(true); // keep personalized items; refresh OSM baseline without a skeleton
@@ -393,7 +393,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
             bookmark icons it explains are ON those cards. Small and quiet on
             purpose: nothing was lost, one read did not come back, and whatever
             the last good read wrote is still what the cards show. */}
-        {savedIdsUnavailable && (
+        {source === 'osm' && osmPartial && (<View style={styles.notice} testID="for-you-partial"><Text style={styles.noticeText}>{listPartialNotice('places')}</Text></View>)}{savedIdsUnavailable && (
           <View style={styles.notice} testID="for-you-saved-unavailable">
             <Text style={styles.noticeText}>
               Couldn't check your saved places just now. Your saves are safe — pull to refresh.
@@ -469,7 +469,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
           );
         })}
 
-        {source === 'none' && (
+        {source === 'none' && osmPartial && (<View style={styles.empty} testID="for-you-partial-empty"><Sparkles size={28} color={color.faint} /><Text style={styles.emptyTitle}>{listPartialEmptyTitle('places')}</Text><Text style={styles.emptyDesc}>{LIST_PARTIAL_EMPTY_BODY}</Text></View>)}{source === 'none' && !osmPartial && (
           <View style={styles.empty}>
             <Sparkles size={28} color={color.faint} />
             <Text style={styles.emptyTitle}>No recommendations yet</Text>
@@ -542,7 +542,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
           </View>
         )}
 
-        {community.gems.length > 0 && (
+        {community.incomplete && !community.refused && (<View style={styles.notice} testID="for-you-community-partial"><Text style={styles.noticeText}>{listPartialNotice('traveler places')}</Text></View>)}{community.gems.length > 0 && (
           <View style={styles.communitySection}>
             <HiddenGemsSection gems={community.gems} onAddToRoute={onAddToRoute} />
           </View>

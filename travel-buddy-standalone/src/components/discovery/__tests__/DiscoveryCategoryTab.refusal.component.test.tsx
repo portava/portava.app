@@ -139,3 +139,42 @@ describe('DiscoveryCategoryTab — refusal vs. empty category', () => {
     expect(screen.queryByText('No places found')).toBeNull();
   });
 });
+
+// census-discovery §80 (DV-83, register D-W10-S1-2). §60.2 recorded this tab's
+// partial answer as "rows rendered as a complete answer (a partial page with no
+// rows reads 'No places found')". Both halves are now decided: the rows stay and
+// ONE line says the list may be incomplete; with no rows the tab says what
+// happened — in its own "on our side, not your filters" words — and never blames
+// the filters.
+const PARTIAL_LINE = 'Some places couldn’t be loaded just now, so this list may be incomplete.';
+const PARTIAL_REFUSAL = { ...UPSTREAM_REFUSAL, class: 'transient_db', code: 'discovery_place_sources_unreadable', coverage: 'partial' as const, failedSources: ['discovery_places'] };
+
+describe('DiscoveryCategoryTab — a partial answer is not a complete one (§80)', () => {
+  it('PARTIAL with places: the notice is stated above the list', async () => {
+    mockGetDiscoveryPlaces.mockResolvedValue({
+      ok: true, data: { places: [MOCK_PLACE], total: 1, destination: 'Paris', cached: false, refusal: PARTIAL_REFUSAL },
+    });
+    await renderTab();
+    expect(await screen.findByTestId('discovery-category-partial')).toBeTruthy();
+    expect(screen.getByText(PARTIAL_LINE)).toBeTruthy();
+  });
+
+  it('PARTIAL with NO places: not "No places found", not the filters, and a retry', async () => {
+    mockGetDiscoveryPlaces.mockResolvedValue({
+      ok: true, data: { places: [], total: 0, destination: 'Paris', cached: false, refusal: PARTIAL_REFUSAL },
+    });
+    await renderTab();
+    expect(await screen.findByTestId('discovery-category-partial-empty')).toBeTruthy();
+    expect(screen.queryByText('No places found')).toBeNull();
+    expect(screen.queryByText(/adjust the filters/i)).toBeNull();
+    expect(screen.getByText('Try again')).toBeTruthy();
+  });
+
+  it('CONTROL: a complete answer states no incomplete line', async () => {
+    await renderTab();
+    await waitFor(() => expect(mockGetDiscoveryPlaces).toHaveBeenCalled());
+    await act(async () => {});
+    expect(screen.queryByTestId('discovery-category-partial')).toBeNull();
+    expect(screen.queryByText(PARTIAL_LINE)).toBeNull();
+  });
+});

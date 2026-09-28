@@ -1576,7 +1576,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/wallFailureVsEmpty.test.ts",
     // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): W71 — the typo half's end-to-end proof and the two normalizers its row names, and the voice intake §14.2 moves the row on.
     "artifacts/api-server/src/test/wallSessionIntent.test.ts",
-    "artifacts/api-server/src/routes/discoverySearchHelpers.ts",
+    "artifacts/api-server/src/routes/discoverySearchHelpers.ts", "artifacts/api-server/src/lib/inputAssistance/searchQueryHelpers.ts", // census-discovery §80: the helpers moved here verbatim; the Wall cites applyAliases at this path
     "artifacts/api-server/src/lib/inputAssistance/queryNormalizer.ts",
     "travel-buddy-standalone/src/platform/input-assistance/voice/voiceIntake.ts",
     // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): W146 — the Wall's own live-DB suite §13.1 names as the fixture shape the benchmark follows.
@@ -4310,6 +4310,28 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/discoveryTrendingLists.test.ts",
     "artifacts/api-server/src/test/discoveryTrendOps.test.ts",
     "artifacts/api-server/src/test/db/discoveryTrendNormalisedParity.db.test.ts",
+    // census-discovery §80 (lane W10-S1): B02, A08, DV-83 and B04 are graded on the gateway's Map
+    // page and coverage envelope, the partial wording's home, the Map sheet's platform transport, and
+    // the suites seen red. lib/inputAssistance/ (searchPage.ts, searchQueryHelpers.ts) is watched above.
+    "artifacts/api-server/src/routes/inputAssistance.ts",
+    "artifacts/api-server/src/lib/eventPostsDiscovery.ts", // §80: DV-83's remaining ground (the feed's event-post read)
+    "artifacts/api-server/src/migrations/3460_discovery_search_protection_scope.sql",
+    "artifacts/api-server/src/test/inputAssistanceMapSearchPage.test.ts",
+    "artifacts/api-server/src/test/db/discoverySearchProtectionGateway.db.test.ts",
+    "travel-buddy-standalone/src/services/discoveryCoverageNotice.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/search/mapSearch.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/search/__tests__/mapSearch.test.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/services/inputAssistance.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/services/suggestResponse.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/hooks/useInputAssistance.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.coverage.component.test.tsx",
+    "travel-buddy-standalone/src/components/map/__tests__/MapSearchSheet.refusal.component.test.tsx",
+    "travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.refusal.component.test.tsx",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryCategoryTab.refusal.component.test.tsx",
+    "travel-buddy-standalone/src/hooks/__tests__/useCommunityDiscovery.refusal.component.test.tsx",
+    "travel-buddy-standalone/app/map/__tests__/projectedPlaces.component.test.tsx",
+    // §80.12 (follow-up): the request budget's suite.
+    "travel-buddy-standalone/src/platform/input-assistance/services/__tests__/requestTimeout.component.test.ts",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

@@ -2562,7 +2562,7 @@ The 111 non-correct rows split **19 / 66 / 26** across the three.
 
 | **ID** | **was** | **now** | why |
 |---|---|---|---|
-| **C14** | **C** | **W** | **The consumer half was graded on the parser, and the parser is not the consumer.** §17.1 moved this row to `C` on the ground *"the consumer half. `getSearchSuggestions` parses the refusal"*. That parse is real (`travel-buddy-standalone/src/services/discovery.ts:1187#const refusal = parseRefusal(body);`) and nothing here disputes it. But `getSearchSuggestions` has exactly ONE caller in the tree — `travel-buddy-standalone/src/hooks/useSearchSuggestions.ts:94#if (res.ok) {` — and that caller branches on `ok` alone. It never reads `coverage`. It renders a refused `groups: []` as an empty typeahead, and then it **writes the refusal into a keyed client cache** (`travel-buddy-standalone/src/hooks/useSearchSuggestions.ts:120#cache.set(key, { groups: res.groups, ts: Date.now() });`), so a single `transient_db` refusal goes on being served from the device for the cache TTL with no network call left to notice the recovery. The owner's own ruling, quoted verbatim in `artifacts/api-server/src/lib/discoveryRefusal.ts:71#"Add upstream_unavailable for upstream dependency failures. Do not cache`, forbids both halves of that in one sentence — *"Do not cache rate limits or outages as 'this location does not exist'"* and *"A distinguishable response body alone is insufficient if consumers still treat it as successful empty data."* **W and not C**, on this census's own §17.2 standard: that section refused `C` for DV-58/DV-59 because their only importer was the file's own test, and capped DV-64 at `W` for the identical pattern. A field whose only consumer ignores it is the same shape of unreachability. **W and not N**: the route emits the refusal correctly, the service parses it correctly, and the three-way split §17.1 pinned is genuinely pinned — it is the last hop that is missing, and it is one `if` in a file this lane may not write. |
+| **C14** | **C** | **W** | **The consumer half was graded on the parser, and the parser is not the consumer.** §17.1 moved this row to `C` on the ground *"the consumer half. `getSearchSuggestions` parses the refusal"*. That parse is real (`travel-buddy-standalone/src/services/discovery.ts:1187#const refusal = parseRefusal(body);`) and nothing here disputes it. But `getSearchSuggestions` has exactly ONE caller in the tree — `travel-buddy-standalone/src/hooks/useSearchSuggestions.ts:94#if (res.ok) {` — and that caller branches on `ok` alone. It never reads `coverage`. It renders a refused `groups: []` as an empty typeahead, and then it **writes the refusal into a keyed client cache** (`travel-buddy-standalone/src/hooks/useSearchSuggestions.ts:120#cache.set(key, { groups: res.groups, ts: Date.now(),`), so a single `transient_db` refusal goes on being served from the device for the cache TTL with no network call left to notice the recovery. The owner's own ruling, quoted verbatim in `artifacts/api-server/src/lib/discoveryRefusal.ts:71#"Add upstream_unavailable for upstream dependency failures. Do not cache`, forbids both halves of that in one sentence — *"Do not cache rate limits or outages as 'this location does not exist'"* and *"A distinguishable response body alone is insufficient if consumers still treat it as successful empty data."* **W and not C**, on this census's own §17.2 standard: that section refused `C` for DV-58/DV-59 because their only importer was the file's own test, and capped DV-64 at `W` for the identical pattern. A field whose only consumer ignores it is the same shape of unreachability. **W and not N**: the route emits the refusal correctly, the service parses it correctly, and the three-way split §17.1 pinned is genuinely pinned — it is the last hop that is missing, and it is one `if` in a file this lane may not write. |
 
 That is **one** move, and it is a move BACKWARD over a verdict the integration
 owner set eight commits ago. It is recorded that way rather than softened:
@@ -2680,7 +2680,7 @@ Every consumer in the tree, by whether it branches on `coverage`:
 | `travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:279#setSource(osm.ok && osm.data.refusal?.coverage === 'nothing' ? 'refused' : 'none');` | **yes** | Correct. Distinguishes `refused` from `none` and holds bookmarks across a saved-ids refusal. |
 | `travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:519#if (nextPage === 1 && res.data.refusal?.coverage === 'nothing') {` | **yes** | Correct, and page-1-scoped so a refused page 2 does not erase page 1. |
 | `travel-buddy-standalone/src/hooks/useCommunityDiscovery.ts:197#const refused = result.data.refusal?.coverage === 'nothing';` | **yes** | Correct, and it is the reference implementation: the refusal is surfaced AND kept out of the module cache. |
-| `travel-buddy-standalone/src/components/map/MapSearchSheet.tsx:211#!savedRes || !savedRes.ok || savedRes.data.refusal?.coverage === 'nothing';` | **yes** | Correct. This is the one that was already found and fixed. |
+| `travel-buddy-standalone/src/components/map/MapSearchSheet.tsx:217#const savedFailed = res.savedRefusal?.coverage === 'nothing';` (repointed in §80.8) | **yes** | Correct. This is the one that was already found and fixed. |
 | `travel-buddy-standalone/app/search.tsx:232#if (!res.ok) {` | **NO** | **Defect.** The main search screen. A `coverage: "nothing"` refusal is `ok: true, results: []`, so it renders the empty state AND fires the Compass "no results" fallback — offering alternatives to a search that never ran. The one screen `GET /discovery/search`'s envelope was built for is the one that cannot read it. |
 | `travel-buddy-standalone/src/hooks/useSearchSuggestions.ts:94#if (res.ok) {` | **NO** | **Defect, and it caches.** See §18.2. This is the consumer C14's `C` rested on. |
 | `travel-buddy-standalone/app/map/index.tsx:1143#if (res.ok && Array.isArray(res.data?.places)) {` | **NO** | **Defect.** A refusal takes the `ok` branch with `places: []`, clears the pins, and the screen's own `placesEmpty` then renders "no places here" for an outage. |
@@ -3231,7 +3231,7 @@ The Compass fallback is deliberately LEFT firing: it offers alternatives, it
 does not assert an absence, and suppressing it would delete a feature rather
 than fix a claim.
 
-Failing first, both: `SearchSuggestionsPanel.refusal.component.test.tsx:97#it('OUTAGE, first query: does not print "No quick matches yet" when the server did not look',`
+Failing first, both: `SearchSuggestionsPanel.refusal.component.test.tsx:100#it('OUTAGE, first query: does not print "No quick matches yet" when the server did not look',`
 (5 cases, 2 red before the change, 3 controls green throughout) and
 `search.refusal.component.test.tsx:279#it('OUTAGE with no rows: a PARTIAL refusal does not claim that nothing matched',`
 (with a control asserting a genuinely empty result must STILL say nothing
@@ -8138,7 +8138,7 @@ These are privacy and correctness repairs. None of them adds ranking machinery: 
 |---|---|---|---|
 | A24 | N | **C** | **Built and tested on this branch only; not merged, not deployed.** The Invisible state this row said did not exist does exist: `lib/invisibleMode.ts` (Telegraph's, consumed and not edited) is the one definition — location off, sharing paused, or discovery visibility `nobody`, and an unreadable row engages it. Discovery now consumes it on every surface that projects a person to someone else. The people search, which feeds `type=travelers`, `type=buddies`, both people buckets of `type=all`, the suggest Travelers and Buddies groups, and the input-assistance gateway's user and buddy entities (they all reach `searchTravelers` through `dispatchSearch`), withholds an invisible candidate at `artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:576#const visible = rows.filter((p: any) => !noDiscSet.has(p.id as string) && !peopleGate.withheld.has(p.id as string));`, from the read at `artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:574#const peopleGate = await readDiscoveryPeopleGate(sc, ids, userId, isBuddy ? buddyAskFrom(ctx) : null);`. The reader uses the same table and select list as Telegraph's reachable-people query and hands each row to the resolver: `artifacts/api-server/src/lib/discoveryPeoplePrivacy.ts:121#const state = resolveInvisibleMode({ prefs: byId.get(id) ?? null, prefsError: null });`. The Discovery person card the rows open applies the same gate on top of the shared Passport gate, with the viewer exempt: `artifacts/api-server/src/routes/discoverySearch.ts:596#const gate = await withDiscoveryInvisibleGate(sc, userId, user.id, await allowDiscoveryPersonCard(sc, userId));`. **Promptly:** nothing is cached, so a change reaches the very next request in both directions. **Fail-closed and not silent:** an unreadable state withholds everyone it covered and is reported. A single-type search refuses (`coverage: "nothing"`); `type=all` and suggest answer `partial`, naming `travelers` and `buddies`; the card answers a retryable 503 and never a 404. **Tests:** `artifacts/api-server/src/test/discoveryPeopleInvisible.test.ts`, 23 tests covering both viewers, each of the three reasons, revocation both ways, retries, a resolved and a rejected read failure, recovery, the self-exemption and the card. Every test was seen red (§53.8). |
 | B03 | W | W | **Four of the five legs are built; payment is absent, so W stands.** The buddy arm now reads the marketplace row (`artifacts/api-server/src/lib/discoveryPeopleBuddy.ts:290#export async function readBuddyEligibility(`) and applies the owning domain's rules (`artifacts/api-server/src/lib/discoveryPeopleBuddy.ts:237#export function buddyEligibility(`). **Safety:** `status` and `admin_status` both `active`, no `risk_hold`, `risk_review_status` not `suspended` or `under_review`, and no `rent_buddy_disabled` or `buddy_disabled` limit. **Category:** only APPROVED categories count (`artifacts/api-server/src/lib/discoveryPeopleBuddy.ts:206#export function approvedBuddyCategories(`). That means the booking gate's per-category approvals for nightlife and group, the nightlife admin sign-off, high-risk verification, and `nightlife_disabled`. A buddy approved for nothing is not a Buddy suggestion, and an ASKED category (`intentCategory`, when it names a buddy service) must be approved. **Availability:** applied against the ASKED window (the time intent the search already parses) using the windows the buddy SET, meaning explicit `is_available = false` rows and `buddy_availability_exceptions` ranges. An unset date counts as bookable, because that is how the booking path reads it (§53.3). **Launch:** unchanged, still behind 2360 (FALSE). **Payment:** NOT BUILT; there is no processor to be eligible with (§53.3). All four reads fail closed and are reported. **Tests:** `artifacts/api-server/src/test/discoveryPeopleBuddy.test.ts`, 18 tests, including a drift guard on the domain source lines the rule mirrors. Every test was seen red. |
-| A08 | W | W | **Re-graded from code. The row's measured sentence is false at this tree, and W stands on a different ground.** *"The client runs it on every keystroke in parallel with the gateway"* is stale. The legacy typeahead now runs only until the gateway has answered once on a mount, and again while the gateway reports itself unavailable: `travel-buddy-standalone/src/hooks/useGlobalSearchSuggestions.ts:150#const legacyEnabled = enabled && (!gatewayProven`. Seven client tests pin this, in `travel-buddy-standalone/src/hooks/__tests__/useGlobalSearchSuggestions.singleSystem.component.test.tsx`. W stands for three reasons (§53.4). (1) The shared layer's candidate generation IS Discovery's route module: the gateway imports `dispatchSearch` from `routes/discoverySearch.ts` (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:30#dispatchSearch,`), so the platform layer depends on Discovery, and GII `:8` says the opposite ("This is not owned by Discovery"). This lane's own B03 work, a GII BuddyResolver leg built in a Discovery route file, is the proof. (2) Both requests still fire per keystroke in the proving window, and for as long as the gateway returns no rows on a mount. (3) The Map's search sheet runs its own debounced per-keystroke search against `/discovery/search`, off the gateway. That is a fifth engine the G6 list does not name, and it is the Map's (§53.4). |
+| A08 | W | W | **Re-graded from code. The row's measured sentence is false at this tree, and W stands on a different ground.** *"The client runs it on every keystroke in parallel with the gateway"* is stale. The legacy typeahead now runs only until the gateway has answered once on a mount, and again while the gateway reports itself unavailable: `travel-buddy-standalone/src/hooks/useGlobalSearchSuggestions.ts:157#const legacyEnabled = enabled && gateway.unavailable;` (repointed in §80.8). Seven client tests pin this, in `travel-buddy-standalone/src/hooks/__tests__/useGlobalSearchSuggestions.singleSystem.component.test.tsx`. W stands for three reasons (§53.4). (1) The shared layer's candidate generation IS Discovery's route module: the gateway imports `dispatchSearch` from `routes/discoverySearch.ts` (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:30#dispatchSearch,`), so the platform layer depends on Discovery, and GII `:8` says the opposite ("This is not owned by Discovery"). This lane's own B03 work, a GII BuddyResolver leg built in a Discovery route file, is the proof. (2) Both requests still fire per keystroke in the proving window, and for as long as the gateway returns no rows on a mount. (3) The Map's search sheet runs its own debounced per-keystroke search against `/discovery/search`, off the gateway. That is a fifth engine the G6 list does not name, and it is the Map's (§53.4). |
 
 ### 53.2 `A24`: what was built, and the negative paths
 
@@ -9870,7 +9870,7 @@ The census has twice miscounted this population (§28.5 item 1). So it was deriv
 | `DiscoveryEventPostsRail.tsx` | feed | refused state before the empty check (§60.1) | `…Rail.refusal` | posts shown |
 | `hooks/useCommunityDiscovery.ts` | community | refused flag, never cached | `useCommunityDiscovery.refusal` | kept and cached |
 | `hooks/useSearchSuggestions.ts` | suggest | refused flag, never cached | `useSearchSuggestions.refusal` | kept and cached |
-| `hooks/useGlobalSearchSuggestions.ts` | forwards the above | `travel-buddy-standalone/src/hooks/useGlobalSearchSuggestions.ts:198#refused: preferGateway ? false : legacy.refused,` | **none — added** | passed through |
+| `hooks/useGlobalSearchSuggestions.ts` | forwards the above | `travel-buddy-standalone/src/hooks/useGlobalSearchSuggestions.ts:205#refused: preferGateway ? gateway.refusal?.coverage === 'nothing' : legacy.refused,` (repointed in §80.8) | **none — added** | passed through |
 | `travel-buddy-standalone/app/search.tsx` | search, suggest | error state; suggest `refused` to the panel | `search.refusal` | notice naming `failedSources` |
 | `components/map/MapSearchSheet.tsx` | search | refused-everything branch | `MapSearchSheet.refusal` | "incomplete" notice |
 | `travel-buddy-standalone/app/map/index.tsx` | page | error card, not zero results | `projectedPlaces` | pins drawn |
@@ -9904,8 +9904,8 @@ None writes a `coverage: "nothing"` body, and each has a suite. The rail, the fe
 
 `travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts` runs under `npm test`'s node runner, so it is part of `check:all`. It has six tests:
 
-- **G1.** The carriers derived from the service equal the pinned nine: `travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts:265#it('G1. the carriers derived from services/discovery.ts are exactly the pinned set'`. A new carrier fails until it is pinned.
-- **G2.** Every file that consumes a carrier, directly or through a forwarding hook, is registered: `travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts:270#it('G2. every file that consumes a carrier`. **This is the check that was missing.** The eleventh consumer §29.2 called unconstrained now fails CI until it names its branch and its proof.
+- **G1.** The carriers derived from the service equal the pinned nine: `travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts:306#it('G1. the carriers derived from services/discovery.ts are exactly the pinned set'`. A new carrier fails until it is pinned.
+- **G2.** Every file that consumes a carrier, directly or through a forwarding hook, is registered: `travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts:311#it('G2. every file that consumes a carrier`. **This is the check that was missing.** The eleventh consumer §29.2 called unconstrained now fails CI until it names its branch and its proof.
 - **G3.** No registry entry is stale.
 - **G4.** Each consumer's branch fragment is still present.
 - **G5.** Each proof suite exists and is a refusal suite.
@@ -9955,7 +9955,7 @@ The brief's extra cases:
 
 | ID | was | now | evidence |
 |---|---|---|---|
-| DV-83 | W | **W** | Two of §29.2's three grounds are now closed on this branch. **Ground 3, "nothing enforces the invariant statically": closed.** `travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts:270#it('G2. every file that consumes a carrier` fails on any unregistered consumer, G1–G6 were each seen red, and it runs in `check:all`. All eleven re-derived consumers branch on coverage, not on `ok` alone. The one found not to, a refused load-more rendered as the end of the list, is fixed at `travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:534#setMoreRefused(true);`. No `coverage: "nothing"` body enters any of the three client caches, which is proved through the route by `artifacts/api-server/src/test/discoveryClientRouteE2E.test.ts:313#it("R1. dependency failure (Nominatim 429)`. **Why still W: ground 2.** Whether a consumer may render `partial` as a complete answer is the owner's (§60.8 Q1). Today 8 of 11 consumers do so, 2 surface it and 1 renders nothing, as recorded per file in §60.2. **Production:** nothing here ships until a client build carrying it does. |
+| DV-83 | W | **W** | Two of §29.2's three grounds are now closed on this branch. **Ground 3, "nothing enforces the invariant statically": closed.** `travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts:311#it('G2. every file that consumes a carrier` fails on any unregistered consumer, G1–G6 were each seen red, and it runs in `check:all`. All eleven re-derived consumers branch on coverage, not on `ok` alone. The one found not to, a refused load-more rendered as the end of the list, is fixed at `travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:534#setMoreRefused(true);`. No `coverage: "nothing"` body enters any of the three client caches, which is proved through the route by `artifacts/api-server/src/test/discoveryClientRouteE2E.test.ts:313#it("R1. dependency failure (Nominatim 429)`. **Why still W: ground 2.** Whether a consumer may render `partial` as a complete answer is the owner's (§60.8 Q1). Today 8 of 11 consumers do so, 2 surface it and 1 renders nothing, as recorded per file in §60.2. **Production:** nothing here ships until a client build carrying it does. |
 | DC-33 | W | **C** | Every criterion passes in code and tests. The five classes §14.5 passed server-side still pass, and retry is built (§54.9). **The client leg, the one FAIL, now exists:** `artifacts/api-server/src/test/discoveryClientRouteE2E.test.ts:213#it("E1. signed in: the client holds the route's page` and 12 more cases run the real route into the real client module, with each of the spec's seven classes exercised through the client (table in §60.4). All 13 were seen red under 14 targeted mutations, and the files were restored byte-identical. **Not flag-gated:** this row obliges a test of the wiring, and 12 of 13 cases leave every flag that shapes the page at its production state. The serve-log flag is on in the double; it changes writes, not the page, and E1 needs the rows it writes to compare ids. The one case that switches flags on (W1, why-now, behind 2850/2361) does so in the test double, which is where a test must. The flag-gated FEATURES it touches keep their own `W`s (A03, A07) under §31.2's rule, *"A requirement whose feature is disabled is not satisfied"*. **What "client" means here:** the client's module boundary, meaning the parse, the lease, the caches and the projection a card renders. No React Native screen renders under Node. The screens are pinned to the same service contract by their component suites and `typecheck:tests`. **What turns it back:** the client module regaining a static edge to React Native, or a case replaced by a mock of the service or of `fetch`'s body. |
 | C19 | W | **W** | The client half is done and now proved end to end: `artifacts/api-server/src/test/discoveryClientRouteE2E.test.ts:510#it("X3. the community byline`. No client reads the legacy `name` (§60.5). **Why W:** `artifacts/api-server/src/routes/discovery.ts:3095#: (profile.username ?` still emits `@username` in `name` to every caller. Retiring it waits on the oldest supported app build carrying `features/discovery/communityByline.ts`, and no build carrying it has shipped (§60.8 Q2). |
 
@@ -12632,7 +12632,7 @@ Date is frozen, so recency terms cannot drift the golden. As a vacuity control, 
 
 | ID | was | now | evidence |
 |---|---|---|---|
-| A08 | W | **W** | **Reason 1 of §53.4 is closed. Reasons 2 and 3 are not, so W stands.** (1) **Closed: the dependency inversion.** No module under `src/lib/` imports `routes/discoverySearch` any more, in any form: static, type-only, re-export or dynamic (`artifacts/api-server/src/test/searchPlatformBoundary.test.ts:95#it("B1: no module under src/lib/ imports routes/discoverySearch", () => {`). B1 was seen red before the move, naming the five importers. The route and the gateway both import `lib/inputAssistance/searchCandidates.ts`. The route's `dispatchSearch` is the platform module's function object, not a copy (`artifacts/api-server/src/test/searchPlatformBoundary.test.ts:122#it("B3: the route re-exports the platform module's functions and defines no searcher of its own"`). The move is behaviour-identical over 42 golden cases (70.2). (2) **Open: the proving window.** The legacy typeahead still fires per keystroke until the gateway answers on a mount, and again while the gateway reports itself unavailable (`travel-buddy-standalone/src/hooks/useGlobalSearchSuggestions.ts:150#const legacyEnabled = enabled && (!gatewayProven || gateway.unavailable);`). Retiring it is owner item E-9, which this lane was told not to take. (3) **Open: the Map search sheet is off the gateway.** It runs its own 300 ms debounced `GET /discovery/search` (`travel-buddy-standalone/src/components/map/MapSearchSheet.tsx:45#const DEBOUNCE_MS = 300;`, `travel-buddy-standalone/src/components/map/MapSearchSheet.tsx:182#searchUnified(q, 'all', null, opts)`). Its candidates now come from the platform module, but through Discovery's route. It does not use the gateway's policy, ranking or projection. Moving it would change what a person sees: the gateway returns `InputSuggestion` projections in its own order and not `SearchResult` rows, and it carries none of the `refusal.coverage` notices the sheet renders. The brief allowed a Map change only if it changed nothing visible beyond the routing, so it was not made. **What restores C:** E-9 taken (the legacy typeahead retired), and the Map sheet on the gateway (Map lane, with an owner ruling on the visible change). |
+| A08 | W | **W** | **Reason 1 of §53.4 is closed. Reasons 2 and 3 are not, so W stands.** (1) **Closed: the dependency inversion.** No module under `src/lib/` imports `routes/discoverySearch` any more, in any form: static, type-only, re-export or dynamic (`artifacts/api-server/src/test/searchPlatformBoundary.test.ts:95#it("B1: no module under src/lib/ imports routes/discoverySearch", () => {`). B1 was seen red before the move, naming the five importers. The route and the gateway both import `lib/inputAssistance/searchCandidates.ts`. The route's `dispatchSearch` is the platform module's function object, not a copy (`artifacts/api-server/src/test/searchPlatformBoundary.test.ts:122#it("B3: the route re-exports the platform module's functions and defines no searcher of its own"`). The move is behaviour-identical over 42 golden cases (70.2). (2) **Open: the proving window.** The legacy typeahead still fires per keystroke until the gateway answers on a mount, and again while the gateway reports itself unavailable (`travel-buddy-standalone/src/hooks/useGlobalSearchSuggestions.ts:157#const legacyEnabled = enabled && gateway.unavailable;` (repointed in §80.8; the proving window it cited was retired there)). Retiring it is owner item E-9, which this lane was told not to take. (3) **Open: the Map search sheet is off the gateway.** It runs its own 300 ms debounced `GET /discovery/search` (`travel-buddy-standalone/src/components/map/MapSearchSheet.tsx:47#const DEBOUNCE_MS = 300;`, `travel-buddy-standalone/src/components/map/MapSearchSheet.tsx:187#const res = await requestMapSearchPage(q, opts)` (repointed in §80.8; the cited `searchUnified(q, 'all', null, opts)` call was removed there)). Its candidates now come from the platform module, but through Discovery's route. It does not use the gateway's policy, ranking or projection. Moving it would change what a person sees: the gateway returns `InputSuggestion` projections in its own order and not `SearchResult` rows, and it carries none of the `refusal.coverage` notices the sheet renders. The brief allowed a Map change only if it changed nothing visible beyond the routing, so it was not made. **What restores C:** E-9 taken (the legacy typeahead retired), and the Map sheet on the gateway (Map lane, with an owner ruling on the visible change). |
 
 ### 70.4 The drift footer (defect, no row; §69.7's third item)
 
@@ -13413,6 +13413,171 @@ Run in `artifacts/api-server`, after the final code edit. The census checks were
 ### 77.10 Headline, restated from the rows
 
 With DV-20 and B01 moving W → C, `check:census-integrity` counts the rows as follows:
+
+## §80 — Search safety and search product decisions (lane W10-S1): B02 and A08 move W → C, DV-83's partial question is decided and built, and B04's pass reaches the gateway behind 3366 and waits on an approval
+
+*Lane W10-S1, 2026-09-28, branch `disc-w10-s1-search` from `debd5ad4f`, under the owner's authorisation of 2026-09-28 (`docs/architecture/discovery-decision-register.md`, section "W10-S1").*
+
+*Nothing here is merged, deployed, applied to `portava-ci` or production, or flag-enabled. Every harness result below is controlled evidence, not production evidence.*
+
+**Rows:** B02, DV-83, B04, A08. B09 is restated because §80 made one of its sentences false. **Owner items taken:** D-8 (both halves), E-9, and A-3's semantics. **Owner item NOT taken:** A-3's production activation. That is APPROVAL REQUIRED `AR-W10-S1-1`.
+
+### 80.1 Row statements
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| B02 | W | **C** | **Owner decision D5/D-8 is decided (register `D-W10-S1-1`), and the decided policy is built and pinned on both of Discovery's search routes.** Criterion G62: *"punctuation/emoji handling appropriate to field"*. A Discovery search box is a lookup field, so it takes the shared platform's field-context rule, which census-input-intelligence G62 grades `C`: emoji are stripped from the SEARCH KEY and never from anything shown. • Search route: `artifacts/api-server/src/routes/discoverySearch.ts:140#let q = applyAliases(stripEmoji(qAfterHandle));`. • Suggest route: `artifacts/api-server/src/routes/discoverySearch.ts:414#const q = sanitizeQuery(applyAliases(stripEmoji(`. • Both use the gateway's own `stripEmoji`, and `stripsEmoji("global_search")` is true (`artifacts/api-server/src/test/discoverySearchQueryPolicy.test.ts:152#it("routes/discoverySearch.ts strips with the platform's stripEmoji`). **The result:** "🔥 bar" finds "Sky Bar" and the emoji-named row both (`artifacts/api-server/src/test/discoverySearchQueryPolicy.test.ts:107#it("Q3 — '🔥 bar' finds 'Sky Bar' AND the row`). An emoji-only query has nothing searchable, so it gets the route's existing `400 invalid_payload` and suggest's `query_too_short` refusal (`artifacts/api-server/src/test/discoverySearchQueryPolicy.test.ts:117#it("Q4 — an emoji-only query has nothing to search`). The Map sheet's gateway page prepares the key the same way, and `inputAssistanceMapSearchPage` "E: an emoji in the query" compares the two. `sanitizeQuery` is unchanged (Q1). **Branch only; no deploy.** |
+| A08 | W | **C** | **All three of §53.4's reasons are closed, and §70's named residual is gone.** (1) Closed by §70 and extended here: no `lib/` module imports a Discovery route, and the search helpers are now platform code. B5's list is EMPTY, and `routes/discoverySearchHelpers.ts` is a one-line re-export (`artifacts/api-server/src/test/searchPlatformBoundary.test.ts:166#it("B6: the helpers live in the platform module`). (2) **The proving window is retired** (E-9, register `D-W10-S1-4`). The legacy typeahead runs ONLY while the gateway reports `unavailable` (GII §38's failure signal): `travel-buddy-standalone/src/hooks/useGlobalSearchSuggestions.ts:157#const legacyEnabled = enabled && gateway.unavailable;`. A first keystroke, and a mount whose queries never match, issue no legacy request (`travel-buddy-standalone/src/hooks/__tests__/useGlobalSearchSuggestions.singleSystem.component.test.tsx:139#it('a mount whose queries NEVER match`). The fallback still fires on `unavailable` (the control case and the "DEGRADE GRACEFULLY" case). (3) **The Map search sheet is on the gateway** (register `D-W10-S1-5`). It asks `POST /input-assistance/suggest` once, as the `map.search` field of `global_search` (`travel-buddy-standalone/src/components/map/MapSearchSheet.tsx:187#const res = await requestMapSearchPage(q, opts)`). The gateway serves that field as a search page from the platform's own searchers (`artifacts/api-server/src/lib/inputAssistance/searchPage.ts:218#export async function generateMapSearchPage(`). **Visible behaviour is equivalent:** • the route and the gateway serve the same rows and the same per-lane coverage over eleven query shapes, healthy and degraded (`artifacts/api-server/src/test/inputAssistanceMapSearchPage.test.ts:217#describe("E — the gateway's map page serves the route's rows`); • the sheet's twelve refusal cases pass on the new transport. **What is not claimed:** GII's other three engines (Places, place search, mentions) are not Discovery's (§2b A08, census-input-intelligence G6). `GET /discovery/suggest` remains as the §38 fallback's transport; its candidates are the platform module's. **Branch only; no client build carrying it has shipped.** |
+| DV-83 | W | **W** | **Ground 2 is decided and built. The row stays `W` on a new server-side ground outside this lane.** §60.8 Q1 is answered (register `D-W10-S1-2`): a consumer may not render `partial` as complete. Rows are kept, one notice says the list may be incomplete, and a partial with no rows is never "nothing found". The wording's one home is `travel-buddy-standalone/src/services/discoveryCoverageNotice.ts:39#export const SEARCH_PARTIAL_NOTICE`. Every list-rendering consumer now says it, and the static guard holds each branch (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts:350#it('G7. §80: every consumer that renders a list`) and the text (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts:364#it('G8. §80: the ratified wording has one home`). The gateway, which E-9 makes the typeahead, carries coverage on its envelope instead of answering a failed read with an empty body ({{artifacts/api-server/src/routes/inputAssistance.ts#suggestions, ...(refusal ? { refusal } : {})}}). **Why still W:** `GET /discovery/feed` absorbs a failed event-post read. `lib/eventPostsDiscovery.ts` serves the surviving path with no signal (`artifacts/api-server/src/lib/eventPostsDiscovery.ts:487#const readFailed = pathA === null || pathB === null;`), and the route turns a thrown fetch into `[]` (`artifacts/api-server/src/routes/discovery.ts:2705#event-post fetch failed (non-fatal)`). So the "Live from events" rail cannot branch on a failure it is never sent. That is §29.2 ground 1's shape on another route. `routes/discovery.ts` is outside this lane; the hunk is routed in §80.7. |
+| B04 | W | **W** | **A-3's semantics are decided (register `D-W10-S1-3`), and the pass now reaches every search serve, on controlled data, with the flag ON.** The pass decides each CANDIDATE by its stored position before projection, on: • `GET /discovery/search`; • `GET /discovery/suggest`; • the input gateway's candidates (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:1031#export async function protectGatewayCandidates(`), so a place inside a suppress zone is no longer suggested BY NAME (§46.4's gap; `artifacts/api-server/src/test/inputAssistanceMapSearchPage.test.ts:347#it("Z3: typeahead — a place inside a suppress zone`); • the Map page, whose positions it coarsens or withholds (`artifacts/api-server/src/lib/inputAssistance/searchPage.ts:250#const page = await protectSearchPage(`). **On the PostgreSQL 16 harness, through the real flag row and real zone rows:** a shelter is suppressed and a clinic is coarsened, on the route's entry point and on the gateway's per-type splitter (`artifacts/api-server/src/test/db/discoverySearchProtectionGateway.db.test.ts:115#it("W2 — flag ON, zones registered`). With the flag OFF it is the identity (W1, and `inputAssistanceMapSearchPage` I2 and Z4). Migration `3460` makes the flag's description name every serve point it governs and cannot change its state (W0). **IMPLEMENTATION-COMPLETE; awaits:** migrations 3366 and 3460 applied in production + flag `discovery_search_protected_zones_enabled` TRUE in production + the §80 server build deployed. **AWAITS OWNER APPROVAL: AR-W10-S1-1.** |
+| B09 | C | **C** | **Restated because §80 made one sentence false; the verdict holds.** *"`InputSuggestion` has no coordinate field"* stopped being literally true. Rows served to the Map field carry `mapResult.metadata`, which holds ONLY the geometry keys the Map's adapter reads (`artifacts/api-server/src/lib/inputAssistance/searchPage.ts:107#const MAP_METADATA_KEYS`). The criterion, G129 *"protected locations whose exact position cannot be surfaced (gems)"*, still passes: • the gem searcher still never selects the exact pair; • a gem row on the Map page carries its approximate pair with `coordsPrecision: "approximate"` (`artifacts/api-server/src/test/inputAssistanceMapSearchPage.test.ts:283#it("P1: mapResult.metadata holds geometry keys only`); • the §24 pass runs over every one of those positions before projection when 3366 is on. |
+
+### 80.2 Decisions, by register id
+
+| id | question | decided |
+|---|---|---|
+| D-W10-S1-1 | D5/D-8: emoji in search (§46.5) | (b), the platform's field-context strip on the key |
+| D-W10-S1-2 | §60.8 Q1: may `partial` render as complete, and in what words | No. One notice per list, taken from the app's existing sentences; the gateway carries coverage |
+| D-W10-S1-3 | A-3: what the protected-zone pass does | decides every search candidate before projection, on every search serve including the gateway |
+| **AR-W10-S1-1** | A-3 activation | **APPROVAL REQUIRED:** apply 3366 and 3460 to production, then `UPDATE public.feature_flags SET enabled = true WHERE flag = 'discovery_search_protected_zones_enabled';` Prerequisites, monitoring and rollback are in the register |
+| D-W10-S1-4 | E-9: the legacy typeahead | only while the gateway reports `unavailable` |
+| D-W10-S1-5 | the Map search sheet on the gateway | the `map.search` field, served as a search page with per-lane coverage |
+| D-W10-S1-6 | §70.8: `routes/discoverySearchHelpers.ts` | moved verbatim to `lib/inputAssistance/searchQueryHelpers.ts`; the route path re-exports it |
+
+### 80.3 What was built
+
+**Server:**
+- `lib/inputAssistance/searchQueryHelpers.ts` (moved verbatim) and its route re-export.
+- `lib/inputAssistance/searchPage.ts` (the `map.search` page).
+- `lib/inputAssistance/gateway.ts`:
+  - an optional coverage sink, which leaves `generateSuggestions`' output unchanged (I2);
+  - `generateSuggestionsWithCoverage`, `gatewayFailureRefusal` and `protectGatewayCandidates`.
+  - Every edit above line 862 is one line changed in place.
+- `routes/inputAssistance.ts`: four lines edited in place. It is outside this lane's list; the edit is routed here because the envelope is DV-83's.
+- `lib/inputAssistance/types.ts`: `mapResult`, `refusal`, `laneRefusals`.
+- `lib/discoverySearchProtection.ts`: an optional `route` for the log line.
+- `routes/discoverySearch.ts`: two lines edited in place, plus an import at the foot.
+- Migration `3460`, which changes the description only.
+
+**Client:**
+- `services/discoveryCoverageNotice.ts`: the wording.
+- `platform/input-assistance/search/mapSearch.ts` (pure) and `services/inputAssistance.ts` `requestMapSearchPage`.
+- `suggestResponse.ts` and `useInputAssistance.ts` expose `refusal` and never cache a refused or partial serve. Their edits are line-neutral, because census-input-intelligence cites those lines.
+- `useSearchSuggestions.ts`, `useGlobalSearchSuggestions.ts` (E-9, `refused`/`incomplete` from both sources) and `useCommunityDiscovery.ts`.
+- `SearchSuggestionsPanel.tsx`, `app/search.tsx`, `ForYouTab.tsx`, `DiscoveryCategoryTab.tsx`, `MapSearchSheet.tsx` and `app/map/index.tsx`. Each consumer edit is line-neutral where this census or census-map cites the file.
+
+**Per consumer, what `partial` does now** (the guard's registry):
+
+| consumer | partial |
+|---|---|
+| `ForYouTab` | rows kept, one "may be incomplete" line per lane; no rows is not "No recommendations yet" |
+| `DiscoveryCategoryTab` | rows kept under the line; no rows is the partial-empty state with a retry |
+| `app/search.tsx`, the suggestions panel | the search sentence, results and typeahead |
+| `MapSearchSheet` | per-lane notices, unchanged in wording |
+| `app/map/index.tsx` | the places layer draws its pins under a banner; no places is the retryable error card, not the zero-results state |
+| `useSearchSuggestions`, `useCommunityDiscovery` | cache the partial WITH `incomplete`, so a replay still says so |
+| rail, prefetch, badge row | n/a, with the reason stated |
+
+### 80.4 Tests, every one seen red (P24)
+
+**Seen red before the fix, recorded in the lane's run log:**
+- `searchPlatformBoundary` B5/B6: 2 of 6, before the helpers moved.
+- `discoverySearchQueryPolicy`, restated: 6 of 16, before the route stripped.
+- `inputAssistanceMapSearchPage` (new, 26 tests): the whole file, against the pre-change gateway (no `searchPage.ts`).
+- The client hook suites (`useSearchSuggestions.refusal` +2, `useGlobalSearchSuggestions.refused` +4, `…singleSystem` 2 restated): 8 of 22.
+- `SearchSuggestionsPanel.refusal`: 2 of 8.
+- `MapSearchSheet.refusal`: 12 of 12, restated onto the gateway transport, plus 2 new cases.
+- `ForYouTab.refusal`: 3 of 20.
+- `DiscoveryCategoryTab.refusal`: 2 of 8.
+- `projectedPlaces`: 2 of 15.
+
+**Mutations.** Each was applied to the tree, run against the suites it targets, watched red, and restored byte-identical by sha256.
+
+| id | mutation | red |
+|---|---|---|
+| H1 | the helpers re-export grows a function | boundary B6 |
+| B02-1, B02-2 | the search key / the suggest key not stripped | QueryPolicy Q2–Q4, Q6 / Q5, Q6 |
+| G1 | the map field falls through to the typeahead | 16 of 26 (every E) |
+| G2 | the saved lane's refusal dropped | E: one / both saved tables unreadable |
+| G3 | the gateway splitter is the identity | Z3, Z5 |
+| G4 | the map page skips the §24 pass | Z1, Z2 |
+| G5, G6 | the coverage sink ignores a failed type / unknown eligibility | C2 / C1, C3 |
+| G7 | the route drops `refusal` from the envelope | 6 (E and C) |
+| G8 | the projection copies all of `metadata` | 10 (E, P1) |
+| G9 | the page does not strip emoji | E emoji, E nothing-searchable |
+| C1–C4 | `mapSearch.ts` body, row, refusal and `suggestResponse` parse | one each in `mapSearch.test.ts` |
+| C5–C8 | the sheet ignores the saved refusal / the partial / keeps saved rows of a refused lane / sends no signal | (3), (6), (7) / (2) / (6) / (9) |
+| C9 | the community hook's `incomplete` hard-wired false | the new partial case |
+| D1–D11 | ForYouTab ×3, CategoryTab, map ×2, panel, cached replay, E-9 latch, gateway `refused`, gateway `incomplete` | each the matching new case |
+| D12, D13 | `useInputAssistance` caches a partial / drops `refusal` | the new coverage suite |
+| G7, G8, G8b, G3 (guard) | a partial branch removed, the wording changed, a literal instead of the module, a stale import | guard G7, G8, G8, G3 |
+| W1–W3 | 3460 flips the flag / drops the gateway from the description; the splitter is the identity | db W0 / W0 / W2 |
+| D12b | the cache gate rewritten without the refusal check, after it was restored to the text `inputAssistanceFieldInventory` pins | the new coverage suite |
+| M1, M2 | the Map page asks for `places` instead of `saved` / the sheet's request changes | `serverSearchTypes` "ASKS for it" |
+
+**Existing assertions restated, each named:**
+- `discoverySearchQueryPolicy` Q2–Q6. §46.5 said these would change as the visible diff of D5.
+- `useGlobalSearchSuggestions.singleSystem`'s first case. It pinned the proving window that E-9 retired.
+- `MapSearchSheet.refusal` (1)–(8). Same screens, new transport. Case (7)'s "saved lane THREW" became the server-side refusal it now arrives as.
+- `searchPlatformBoundary` B5. Its list shrank to empty, which is what the shrink-only list was for.
+- The Map client's `serverSearchTypes` "the map search sheet actually ASKS for it". It read the sheet's `searchUnified(q, 'saved'` call. It now reads both hops: the sheet's gateway request, and the gateway page's `saved` dispatch. It was seen green only after it went red under two mutations (MUT-M1, the page asking for `places`; MUT-M2, the sheet's request changed).
+
+**Not weakened:** no assertion was deleted or skipped.
+
+### 80.5 Harness (controlled evidence only)
+
+- `scripts/local-db/up.sh` on port 55452, data under `/var/tmp`, replayed the whole chain including 3460: 356 applied in order, 12 known-unreplayable.
+- `discoverySearchProtectionGateway.db.test.ts` 4/4 and `discoverySearchProtection.db.test.ts` 5/5 passed, with the §46 suite run first so W0 does not assume the chain's state.
+- The full `scripts/local-db/run-tests.sh` result is in the lane report.
+- The harness was stopped and its data dir removed afterwards.
+
+### 80.6 Checks
+
+The commands and their results are in the lane report, and are the ones listed in this lane's rules.
+
+**Not run, and why:**
+- `check:write-path-columns` needs live credentials. §80 adds no write. The one new read shape is the gateway page, which reads through the same searchers the check already scans in `lib/inputAssistance/searchCandidates.ts`. `searchPage.ts` names no table.
+- No read of production or `portava-ci` was made.
+
+### 80.7 Routed hunk (NOT applied): the feed's event-post read
+
+A DV-83 blocker in files this lane may not edit:
+- `lib/eventPostsDiscovery.ts` computes `readFailed` and drops it.
+- `routes/discovery.ts`'s feed `.catch`es the whole fetch to `[]`.
+
+**The hunk, for the owner of `routes/discovery.ts`:**
+- Return `{ posts, readFailed }` from `fetchEventPostsForDiscovery`, and set `readFailed` in the route's catch.
+- Push `"event_posts"` onto `failedCats` when it is true. The feed's existing `discoveryRefusal(…, coverage, failedCats)` then carries it with no new vocabulary.
+- `DiscoveryEventPostsRail` then reads `refusal.failedSources.includes("event_posts")` as its partial. Its guard entry moves from n/a to a branch.
+
+**What turns DV-83 C:** that hunk, with a rail case seen red.
+
+### 80.8 Pointer repairs (line-neutral, other documents)
+
+The move and the two retirements displaced citations. Each was repointed; the anchors were rewritten only where the cited code no longer exists.
+
+- **Removed code, repointed to the current line:**
+  - the Map sheet's `searchUnified(q, 'all', null, opts)` call → its `requestMapSearchPage(q, opts)` call (§70.3 here, and census-map M201);
+  - the sheet's `!savedRes || …` guard → `const savedFailed = res.savedRefusal…` (§18);
+  - `useGlobalSearchSuggestions`' `const legacyEnabled = enabled && (!gatewayProven …` → `… && gateway.unavailable;` (§53.1, §70.3, and census-input-intelligence G6);
+  - its `refused: preferGateway ? false : legacy.refused,` → the §80 line (§60.2).
+- **Shifted lines, same anchor text:**
+  - every census-input-intelligence (7) and census-wall (2) citation of the helpers now names `lib/inputAssistance/searchQueryHelpers.ts` at the same line;
+  - the gateway's `fetchBlockedSet` in `dispatchAndProject`, two lines down (census-input-intelligence);
+  - the DV-83 guard's G1 and G2 cases (§60.3, §60.6), 41 lines down;
+  - the first case of the suggestions panel's refusal suite (§21), 3 lines down;
+  - the Map sheet's `DEBOUNCE_MS`, 2 lines down;
+  - the legacy hook's cache write (§18), whose line now also carries `incomplete`.
+
+### 80.9 Other censuses, and freshness
+
+Acknowledgements are appended in `CENSUS_STALENESS_ACKNOWLEDGED.json` for census-input-intelligence, census-map, census-trips and census-wall, each arguing its files. Two sentences in census-input-intelligence are now stale, and that census's owner should restate them:
+- **G6:** *"keeps it alive until the gateway has answered once on this mount"*. The proving window is retired (E-9). G6 stays `W` on the three non-Discovery engines.
+- **G190:** *"never consulted by this path"*. The gateway now consults the §24 pass behind 3366. It is FALSE, so G190's verdict does not move under §31.2's rule.
+
+### 80.10 Headline, restated from the rows
+
+With B02 and A08 moving W → C, `check:census-integrity` counts the rows as follows:
 
 | bucket | count |
 |---|---|
@@ -14967,6 +15132,73 @@ Declared gaps, each listed in the double's header: refused, for `single/*` and `
 - a list that stops classifying at its page again;
 - a "more" route computed without the viewer;
 - a members read without a total order, or a window edge with no cursor.
+
+CONSTRUCTED 182 / 188 = **96.8 %**, unchanged. CORRECT 96 / 188 = **51.1 %**, up from 50.0 %. The denominator is unchanged.
+
+### 80.11 What would turn this red
+
+- **B02:**
+  - either route searching a key with an emoji in it (Q2–Q4 go red);
+  - `stripsEmoji("global_search")` turning false;
+  - the Map page preparing its key differently from the route (E).
+- **A08:**
+  - the legacy typeahead firing while the gateway is available (singleSystem);
+  - the sheet calling `GET /discovery/search` again (guard G3, sheet (9));
+  - a `lib/` importer of `routes/discoverySearch*` (B1, B5);
+  - the gateway page's rows or coverage diverging from the route's (E).
+- **DV-83:**
+  - a list consumer losing its partial branch (G7) or its wording's home (G8);
+  - the gateway envelope losing `refusal` (C1–C3);
+  - a partial serve entering the gateway's cache (D12).
+- **B04:**
+  - a gateway candidate projected without the pass (Z3, Z5, W2);
+  - 3460 changing the flag's state (W0);
+  - counts on the wire.
+- **B09:** `mapResult.metadata` carrying any key but the five (P1).
+
+### 80.12 Follow-up: an independent verifier broke B02 and A08 at `bc0ba4a94`; both are restated after the fixes
+
+An independent verifier reproduced six defects on the production paths of this section's two `C` rows. §80.1's `C`s were premature at `bc0ba4a94`. Each defect is fixed here test-first, and both rows are re-graded from the new evidence.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| B02 | C | **C** | **Every clause re-proved, including the four the verifier broke.** (1) A subdivision flag is stripped whole: the emoji class now includes the TAG block (`artifacts/api-server/src/lib/inputAssistance/queryNormalizer.ts:209#\u{E0020}-\u{E007F}]/gu;`). "🏴 pub" finds "Red Lion Pub", and the flag alone is refused (`artifacts/api-server/src/test/discoverySearchQueryPolicy.test.ts:185#it("Q7b — a subdivision flag alone has nothing to search`). (2) A keycap goes with its base (`artifacts/api-server/src/lib/inputAssistance/queryNormalizer.ts:648#const KEYCAP_RE`). "1️⃣ bar" finds "Sky Bar", and "*️⃣*️⃣" is refused. A literal `*` is PostgREST's like-wildcard, so `sanitizeQuery` drops it (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:117#return s.replace(/[(),*]/g`), and "**" is refused instead of matching every row (Q9). (3) An emoji inside a word follows a decided rule (register `D-W10-S1-1`, "The follow-up"): it joins between two lowercase letters and separates everywhere else (`artifacts/api-server/src/lib/inputAssistance/queryNormalizer.ts:649#const IN_WORD_EMOJI_RE`). "caf☕e" → "cafe" and "Sky🔥Bar" → "Sky Bar" are both pinned (`artifacts/api-server/src/test/discoverySearchQueryPolicy.test.ts:232#it("Q8a — 'caf☕e' is one word, 'Sky🔥Bar' is two"`). "caf☕e" does not find "Café Luna": that is the accent-sensitive free-text match §46.3 names as outside G62, not emoji handling. (4) Each hidden-mark class is pinned on its own (VS16, VS15, U+20E3, ZWJ, tags; Q7e). Removing any one of them from the class turns Q7e red (E1–E4). The gateway's `normalizeQuery` produces the same keys (Q8c). **Branch only; no deploy.** |
+| A08 | C | **C** | **Every clause re-proved, including the two the verifier broke.** (5) A query with nothing searchable ("🔥", "((", "@a", a subdivision flag) gets a `validation` refusal from the gateway page (`artifacts/api-server/src/test/inputAssistanceMapSearchPage.test.ts:257#for (const q of ["🔥", "((", "@a",`). The sheet reads that as not-enough-to-search, never as an outage (`travel-buddy-standalone/src/components/map/MapSearchSheet.tsx:197#const tooShortNow = !!res.tooShort`; `travel-buddy-standalone/src/components/map/__tests__/MapSearchSheet.refusal.component.test.tsx:406#it('(11) a VALIDATION refusal is not-enough-to-search`), and a real outage still says so (11b). (6) A hung gateway is an unavailable one. Every suggest request has a 5 s budget (`travel-buddy-standalone/src/platform/input-assistance/services/inputAssistance.ts:203#export const SUGGEST_TIMEOUT_MS = 5000;`; register `D-W10-S1-4`, "The timeout"), after which it reports `unavailable` and the legacy fallback starts (`travel-buddy-standalone/src/platform/input-assistance/services/__tests__/requestTimeout.component.test.ts:51#test('a hung suggest request becomes UNAVAILABLE after the budget`). The Map page gets the same budget and ends on its error line. The caller's own abort stays `aborted`. §80.1's clauses (1)–(3) are otherwise unchanged and re-run green. **Branch only; no client build carrying it has shipped.** |
+
+**Seen red first** (lane run log):
+- `discoverySearchQueryPolicy` Q7a–e and Q8a–c: 8 of 24 at `bc0ba4a94`. The `*` cases and Q9: 4 of 28.
+- `MapSearchSheet.refusal` (11): 1 of 14.
+- `requestTimeout`: 3 of 5. The two green were its controls.
+
+**Mutations,** each restored byte-identical by sha256:
+
+| id | mutation | red |
+|---|---|---|
+| E1 | VS16 dropped from the emoji class | Q7e, Q8a |
+| E2 | VS15 dropped | Q7e |
+| E3 | U+20E3 dropped | Q7e |
+| E4 | the TAG range dropped | Q7a, Q7b, Q7e, Q8c |
+| E5 | no whole-keycap strip | Q7c, Q7d, Q8c |
+| E6 | no in-word join | Q8a, Q8b, Q8c |
+| E7 | the join accepts an uppercase letter after it | Q8a, Q8b, Q8c |
+| S1 | `sanitizeQuery` keeps `*` | Q1 ×2, Q9 ×2 |
+| V1 | the sheet ignores a validation refusal | (11) |
+| V2 | "Nothing matched" is not suppressed for it | (11) |
+| V3 | the parse drops `tooShort` | V1 |
+| T1 | a timeout reported as `aborted` | the hung-suggest case |
+| T2 | no budget on `requestSuggestions` | the hung-suggest case |
+| T3 | the timer never aborts | both hung cases |
+| T4 | the timer is not cleared | the no-timer-left control |
+| T5 | no budget on the Map page | the hung-Map case |
+
+**Headline:** unchanged from §80.10 (B02 and A08 stay `C`): 96 C / 86 W / 5 N / 1 X, CORRECT 96 / 188 = **51.1 %**.
+
+**What would turn this red:** anything §80.11 lists, plus:
+- a new emoji sequence whose marks survive the strip (Q7e);
+- an in-word rule change (Q8a);
+- a `*` reaching an `ilike` pattern (Q9);
+- the sheet wording a `validation` refusal as an outage ((11));
+- a suggest request with no budget (`requestTimeout`).
 
 ## Cited, not graded (check:census-scope-coverage)
 

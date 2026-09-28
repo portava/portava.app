@@ -417,6 +417,47 @@ describe('legacy places — a refusal is not a zero-results map', () => {
     expect(screen.getByTestId('places-error').props.children).toBe('');
   });
 
+  // census-discovery §80 (DV-83, register D-W10-S1-2). A PARTIAL answer with NO
+  // places is not a zero-results map either: its emptiness is not evidence of
+  // absence. And one WITH places draws them AND says the layer may be missing
+  // some, in the browse-list wording (services/discoveryCoverageNotice.ts).
+  it('§80 PARTIAL with no places: never the zero-results state — the retryable error card', async () => {
+    mockGetDiscoveryPlaces.mockResolvedValue({
+      ok: true, data: { places: [], refusal: { ...REFUSAL_NOTHING, coverage: 'partial', failedSources: ['discovery_places'] } },
+    });
+    hookAnswers({ source: 'legacy', stage: 'canonical' });
+    await mount();
+    await waitFor(() => expect(mockGetDiscoveryPlaces).toHaveBeenCalled());
+    await waitFor(() => {
+      expect(screen.getByTestId('places-error').props.children).not.toBe('');
+    });
+    expect(screen.getByTestId('places-empty').props.children).toBe('false');
+  });
+
+  it('§80 PARTIAL with places: they are drawn AND the layer says it may be incomplete', async () => {
+    mockGetDiscoveryPlaces.mockResolvedValue({
+      ok: true,
+      data: { places: [LEGACY_PLACE], refusal: { ...REFUSAL_NOTHING, coverage: 'partial', failedSources: ['discovery_places'] } },
+    });
+    hookAnswers({ source: 'legacy', stage: 'canonical' });
+    await mount();
+    await waitFor(() => {
+      expect(screen.getByTestId('map-legacy-place-ids').props.children).toBe('db/legacy-1');
+    });
+    expect(await screen.findByTestId('map-places-partial')).toBeTruthy();
+    expect(screen.getByText('Some places couldn’t be loaded just now, so this list may be incomplete.')).toBeTruthy();
+  });
+
+  it('§80 CONTROL: a complete answer states no incomplete line', async () => {
+    mockGetDiscoveryPlaces.mockResolvedValue({ ok: true, data: { places: [LEGACY_PLACE] } });
+    hookAnswers({ source: 'legacy', stage: 'canonical' });
+    await mount();
+    await waitFor(() => {
+      expect(screen.getByTestId('map-legacy-place-ids').props.children).toBe('db/legacy-1');
+    });
+    expect(screen.queryByTestId('map-places-partial')).toBeNull();
+  });
+
   it('CONTROL: a PARTIAL refusal draws the real places it carries', async () => {
     mockGetDiscoveryPlaces.mockResolvedValue({
       ok: true,

@@ -204,5 +204,21 @@ export type SuggestResult =
       serverMs?: number;
       /** §48 — the serve's response-shape version (census G341). */
       schemaVersion?: number;
+      /**
+       * census-discovery §80 (DV-83) — the serve's coverage in the Discovery
+       * refusal vocabulary. `nothing`: the entity candidates are absent BECAUSE
+       * a read failed; `partial`: some sources failed, the rows present are
+       * real. Absent when the serve read everything (and from older servers).
+       */
+      refusal?: SuggestRefusal;
     }
   | { ok: false; aborted: boolean; unavailable: boolean; error: string };
+
+/** census-discovery §80 — the gateway envelope's coverage (lib/discoveryRefusal.ts's shape). */
+export interface SuggestRefusal {
+  class: string;
+  code: string;
+  route: string;
+  coverage: 'nothing' | 'partial';
+  failedSources?: string[];
+}
