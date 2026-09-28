@@ -382,7 +382,7 @@ Full per-route detail, including the resolved chain for each wired route, is in
 | GET | `/api/me/reports` | `artifacts/api-server/src/routes/reports.ts:239` |
 | GET | `/api/me/safe-return/contacts/:userId/passport` | `artifacts/api-server/src/routes/safeReturn.ts:1124` |
 | POST | `/api/me/safe-return/sessions/:id/trigger-missed` | `artifacts/api-server/src/routes/safeReturn.ts:638` |
-| GET | `/api/me/saved-messages` | `artifacts/api-server/src/routes/messaging.ts:2798` |
+| GET | `/api/me/saved-messages` | `artifacts/api-server/src/routes/messaging.ts:2805` |
 | GET | `/api/me/saves` | `artifacts/api-server/src/routes/saves.ts:124` |
 | GET | `/api/me/stamps` | `artifacts/api-server/src/routes/passport.ts:1393` |
 | GET | `/api/media/:id/comments` | `artifacts/api-server/src/routes/mediaFeed.ts:2305` |
@@ -435,7 +435,7 @@ Full per-route detail, including the resolved chain for each wired route, is in
 | POST | `/api/tags` | `artifacts/api-server/src/routes/tags.ts:46` |
 | GET | `/api/telegraph/commands/:commandId` | `artifacts/api-server/src/routes/telegraphCommands.ts:371` |
 | GET | `/api/telegraph/threads/:threadId/header/:userId` | `artifacts/api-server/src/routes/telegraph.ts:370` |
-| PATCH | `/api/threads/:threadId/messages/:messageId` | `artifacts/api-server/src/routes/messaging.ts:2444` |
+| PATCH | `/api/threads/:threadId/messages/:messageId` | `artifacts/api-server/src/routes/messaging.ts:2451` |
 | GET | `/api/trips/:tripId/activity` | `artifacts/api-server/src/routes/trips-expansion.ts:2766` |
 | POST | `/api/trips/:tripId/archive` | `artifacts/api-server/src/routes/trips-expansion.ts:614` |
 | POST | `/api/trips/:tripId/cancel` | `artifacts/api-server/src/routes/trips-expansion.ts:491` |

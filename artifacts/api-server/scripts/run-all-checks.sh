@@ -110,10 +110,27 @@ run_check "check:guard-coverage" pnpm run check:guard-coverage
 # decorative architecture: the same defect check:projection-consumers catches for
 # data pipes (a producer, a table, no consumer), one level up. It was not
 # hypothetical — check:unchecked-supabase-reads, the fail-open ledger and the
-# largest guard here, is reached by NOTHING: its mutation suite spawns it only
-# with UNCHECKED_READS_SRC_ROOT / UNCHECKED_READS_ALLOWLIST pointed at scratch
-# trees, so a new unchecked .error added to the real tree fails no check anywhere
-# and the 306 -> 0 burn-down it records is protected by nothing.
+# largest guard here, WAS reached by nothing: every spawn in its mutation suite
+# pointed at a scratch tree through UNCHECKED_READS_SRC_ROOT /
+# UNCHECKED_READS_ALLOWLIST, so a new unchecked .error added to the real tree
+# failed no check anywhere and the 306 -> 0 burn-down it records was protected by
+# nothing.
+#
+# PAST TENSE SINCE 2026-09-22, AND IT WAS PRESENT TENSE FOR TOO LONG. That guard
+# now carries a real-tree control — uncheckedSupabaseReads.test.ts, "CLI against
+# the REAL tree and the REAL allowlist" — which spawns the checker with NO seam
+# override, asserts exit 0, and then asserts NON-VACUITY: hundreds of files
+# scanned, thousands of read sites judged, enforced scope non-empty. That test is
+# in package.json's npm test manifest, so it runs in CI. src/scripts/guardRegistry.ts
+# records the move out of MANUAL and why it could only happen once the
+# write-precondition tier's 91 findings were FIXED rather than ledgered.
+#
+# Neither check:unchecked-supabase-reads nor check:projection-consumers has a
+# package.json script, and that is the design rather than a gap: both declare
+# reach: { kind: "test-control" } and are spawned from their own suites against
+# the real tree. Do not "fix" their absence from this file by adding run_check
+# lines — a second invocation path would have to be kept reachable too, which is
+# the problem this comment is about.
 #
 # Every check*.ts / check*.mjs on disk must DECLARE how it is reached
 # (src/scripts/guardRegistry.ts) and this verifies the declaration: check:all

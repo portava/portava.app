@@ -54,7 +54,7 @@ intended.
 
 ## 2. Six level thresholds — *overridable*
 
-`TrustScoreService.ts:85#PUBLIC_TRUST_LEVELS`, thresholds at `:136#level_building_trust`, banded at `:338#level_city_trusted`
+`TrustScoreService.ts:85#PUBLIC_TRUST_LEVELS`, thresholds at `:136#level_building_trust`, banded at `:360#level_city_trusted`
 
 | Level | Score at or above |
 |---|---|
@@ -65,11 +65,25 @@ intended.
 | `highly_trusted` | 78 |
 | `city_trusted` | 90 |
 
-A new user starts at **50** (`TrustScoreService.ts:334#movement`), which is already
+A new user starts at **50** (`TrustScoreService.ts:356#movement`), which is already
 `reliable_traveler`. So the first label a user ever wears is the third of six,
 and the bottom two bands are only reachable by *losing* trust. If that is
 intended, it is worth saying so, because it means `new_traveler` does not mean
 new.
+
+> **SUPERSEDED IN PART, 2026-09-22 — owner decision Q1 (nullable trust scores).**
+> The paragraph above is kept as the argument that was put to the owner, and it
+> is what prompted the ruling. It no longer describes the engine. A user with no
+> events is now **NOT SCORED** (`overall_score` is `NULL`, every category is
+> `NULL`) rather than scored 50, and `public_level` is `new_traveler` — so the
+> first label a user wears is the first of six, not the third, and nobody is
+> promoted to `reliable_traveler` on no evidence. The centring on 50 that the
+> citation names still applies to a category that HAS events; what is gone is
+> the substituted 50 for one that has none
+> (`TrustScoreService.ts:337#if (relevant.length === 0) return null;`).
+> **The six thresholds in the table above are NOT re-proposed and NOT ratified
+> by this note** — they are unchanged values, and §2 still awaits the same
+> ruling it always did. The only thing that changed is which users reach them.
 
 ## 3. Decay half-life: 90 days — *overridable*
 

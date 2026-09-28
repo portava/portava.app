@@ -50,7 +50,7 @@ import { localHour } from "./AirportTime.js";
 // `layover_live_intersection_enabled` (2851, seeded FALSE) and, behind THAT,
 // the Live gates in lib/liveClaimRead: with either closed this reads nothing
 // and every card is generated exactly as it was before.
-import { isFlagEnabled } from "../../lib/featureFlags.js";
+import { isFlagEnabled } from "../../lib/featureFlags.js"; import { landsideMaturityDecision } from "./layoverMaturityGate.js"; // §22 L249 — one line, because every anchored citation below is line-pinned
 import { liveLabelsServable, readLiveClaimEnvelopes, type LiveClaimEnvelope } from "../../lib/liveClaimRead.js";
 import {
   compareByLive,
@@ -482,24 +482,24 @@ export async function generateRecommendations(
   // with a 95-minute scheduled window and a 150-minute certified buffer has
   // NEGATIVE usable time and was still being offered a city.
   //
-  // `certified.envelope.usableMinutes` is the engine's own answer to the same
-  // question — free landside minutes between the earliest realistic exit and
-  // the certified hard return, from `nowMs` — and it is the number every card
-  // is then rated against. Gating on it makes the gate and the rating agree.
-  //
   // WHAT THIS DOES NOT CLOSE: §9.1 asks for eligibility + ENTRY + time +
   // safety. Entry permission is unread anywhere on this tree (L34, L48, L230)
-  // and is an open owner decision, so the entry term of this gate is still
-  // missing. Three of four terms is not four.
+  // and is an open owner decision, so the entry term is still missing.
+  //
+  // ── §22 L249 — AND THE AIRPORT'S OWN DATA MATURITY ───────────────────────
+  // `landsideMaturityDecision` is the first consumer `featureAllowedAt` has
+  // ever had. Behind `layover_maturity_gate_enabled` (2977, seeded FALSE): OFF
+  // it allows, reads nothing, and both gates below are the gates they were. ON
+  // it refuses an L0_GENERIC airport a landside card — L243, an OWNER decision.
   const usableMinutes = certified.envelope.usableMinutes;
-
+  const landside = await landsideMaturityDecision(db, airport, nowMs);
   // 1. Inside-airport suggestions (always generated)
   const insideCandidates = insideAirportCandidates(session);
-
-  // 2. Discovery places near airport city — filtered and ranked for the
-  //    time of day the traveler will actually be out there.
+  // 2. Discovery places near airport city — filtered and ranked for the time
+  //    of day the traveler will actually be out there, and gated on the
+  //    airport's data maturity as well as on the traveller's usable minutes.
   const tod = timeOfDayContext(airport, session, nowMs);
-  let discoveryCandidates = session.wantsToLeave && usableMinutes >= 90
+  let discoveryCandidates = session.wantsToLeave && usableMinutes >= 90 && landside.allowed
     ? await fetchDiscoveryPlaces(db, city, session.vibeChips, airportPoint(airport), new Date(nowMs), opts.travelTimeProvider)
     : [];
   if (!tod.coversEvening) {
@@ -517,7 +517,7 @@ export async function generateRecommendations(
   // 3. Quick city escape for long layovers — same gate, same reason. The
   //    "half-day" wording and the 120-minute tour are claims about time the
   //    traveller actually has, so they are measured in the same units.
-  const cityEscapeCandidates = session.wantsToLeave && usableMinutes >= 180
+  const cityEscapeCandidates = session.wantsToLeave && usableMinutes >= 180 && landside.allowed
     ? [{
         recType: "quick_city_escape",
         title: `Quick City Tour — ${city}`,
@@ -839,6 +839,19 @@ export async function generateRecommendations(
         breakdown,
         hardReturnTime: hardReturnTime.toISOString(),
         ratings,
+        // §22 L249 / L250 — the rung this airport was on when these cards were
+        // written, and whether the gate was ENFORCING it. `flagOn: false` is the
+        // whole product today, so the audit trail says which of the two worlds a
+        // stored card came from rather than leaving a reader to infer it from the
+        // flag's value at the time they read the event.
+        maturity: {
+          level: landside.level,
+          gateEnforced: landside.flagOn,
+          landsideAllowed: landside.allowed,
+          cappedBy: landside.cappedBy,
+          observationCount: landside.observationCount,
+          observationsReadable: landside.signalsReadable,
+        },
       },
     });
     if (evtError) logger.warn({ err: evtError, sessionId: session.id }, "recommendation_generated event failed (non-fatal)");

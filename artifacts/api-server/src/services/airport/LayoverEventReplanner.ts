@@ -11,14 +11,14 @@
  *   §24    "Duplicate events — unique dedup key / source event id"
  *   App A  FLIGHT_MOVED_EARLIER, FLIGHT_DELAY_CREATED_OPPORTUNITY
  *
- * ── THE HONEST HEADER ────────────────────────────────────────────────────────
- * NOTHING PRODUCES A LAYOVER EVENT. There is no flight feed, no airport feed,
- * no webhook, no ingest route, and `layover_external_events`
- * (`src/migrations/2860_layover_airport_truth_and_events.sql`) is written and
- * NOT applied. This module is called by nothing outside
- * `src/test/layoverEventReplanner.test.ts`. Every claim below is about what the
- * pipeline does when an event is handed to it, and the census records that
- * separately from whether one ever is.
+ * ── THE HONEST HEADER, CORRECTED 2026-09-22 ─────────────────────────────────
+ * NO FEED PRODUCES A LAYOVER EVENT YET: no flight feed, no airport feed, no
+ * webhook. What HAS changed is the two claims this header used to make. The
+ * store `layover_external_events` (2860) IS APPLIED to production — it is in
+ * production-applied-migrations.json and all twelve of its columns are in the
+ * capture named by lib/capability/snapshots/current.ts — and an ingest route
+ * exists (`routes/layoverEvents.ts`, behind a flag 2981 seeds FALSE) whose
+ * consumer reaches `handleEvent` through a port. The census records both.
  *
  * That is also why the whole pipeline is PURE. `handleEvent` takes the sessions
  * and the airport it is to consider, returns a decision, and writes nothing:
@@ -870,10 +870,10 @@ export interface ReplanOutcome {
   disruptionState: DisruptionState;
   /**
    * ALWAYS FALSE ON THIS TREE. §11.1 step 4 asks for a new immutable snapshot;
-   * `after` IS an immutable certified record, and there is nowhere to put it —
-   * `layover_certified_computations` (2700) and `layover_external_events`
-   * (2860) are both written and unapplied. Reported rather than assumed so a
-   * caller cannot mistake a returned record for a persisted one.
+   * `after` IS an immutable certified record and there is nowhere to put it:
+   * `layover_certified_computations` (2700) is written and unapplied. NOT
+   * `layover_external_events` (2860), which this comment used to name and which
+   * IS applied — but that table stores events, not snapshots. Reported, never assumed.
    */
   snapshotPersisted: false;
   snapshotUnavailableReason: "no_snapshot_storage";

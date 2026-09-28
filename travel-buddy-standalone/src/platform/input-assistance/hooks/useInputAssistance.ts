@@ -37,6 +37,7 @@ import { sharedSuggestionCache, SuggestionCache, isCacheablePrivacyClass } from 
 import { createSequenceGuard } from '../services/raceGuard.ts';
 import { finalizeSuggestions, narrowToQuery } from '../services/suggestionRanking.ts';
 import { localZeroState } from '../services/localZeroState.ts';
+import { offlineLocalRows } from '../services/localDictionary.ts';
 import { emitInputEvent } from '../services/inputTelemetry.ts';
 
 export interface UseInputAssistanceOptions {
@@ -367,10 +368,93 @@ export function useInputAssistance(
           // `offlineSurfaceAllowed` fails CLOSED on a value this build cannot
           // name, so a newer server's offline vocabulary retains nothing rather
           // than everything.
+          //
+          // ── AND WHAT THE GATE HAD NOTHING TO OPEN ONTO (§32, G197/G198) ───
+          //
+          // The paragraph above is about RETAINING. For nine contexts the
+          // answer is "retain nothing", and the branch is exact. For the other
+          // twenty it was "retain whatever is left" — which, on a COLD start,
+          // is nothing: the SWR cache is empty, no row has been accepted yet,
+          // and `local` is `null`. So the licensed surfaces still produced an
+          // empty panel, and `static_dictionary` in particular licensed a
+          // SHIPPED LIST THAT DID NOT EXIST. `contexts/fieldInventory.ts` said
+          // so in as many words about the country picker.
+          //
+          // `offlineLocalRows` is the substrate that gate now opens onto: the
+          // retained rows FIRST (they are rows the server projected, and they
+          // outrank anything shipped), then the field's licensed dictionaries
+          // — countries / languages / interests for `static_dictionary`, plus
+          // the compact city index for `cached_local` — then the raw query for
+          // a field licensed to show one. It re-applies this same
+          // `offlineSurfaceAllowed` check and the §29 privacy predicate
+          // internally, so the licence cannot be lost by a second caller.
+          //
+          // It is reached ONLY from this arm. A transient error keeps what is
+          // on screen; an online serve is served alone. A shipped row appears
+          // when, and only when, the authority is unreachable and the
+          // authority said this field may answer without it.
           const mayRetain = offlineSurfaceAllowed(policy.offlinePolicy);
+          const degradedRows = mayRetain ? offlineLocalRows(policy, trimmed, local ?? []) : [];
           setUnavailable(true);
-          setSuggestions(mayRetain ? (local ?? []) : []);
+          setSuggestions(degradedRows);
           setLoading(false);
+
+          // ── §44 / §57 — THE DEGRADED SERVE, RECORDED (census G373) ───────
+          //
+          // G373 ("offline completion rate") is refused in
+          // `lib/inputAssistance/metrics.ts` with a precise reason: "nothing
+          // marks a serve as degraded — useInputAssistance sets `unavailable`
+          // state and emits no event for it, so there is no offline
+          // denominator". This arm IS that detection, and until now it was the
+          // only arm of the request that emitted nothing at all.
+          //
+          // INFERRING IT FROM WHAT IS ALREADY LOGGED DOES NOT WORK, which is
+          // why a flag is needed rather than a query. A degraded serve today
+          // looks exactly like an ABORTED one and like an ABANDONED one — a
+          // `suggestion_request_started` with no `suggestion_request_completed`
+          // after it — and those three have nothing to do with each other.
+          //
+          // WHAT IT CARRIES, AND WHAT IT MAY NOT.
+          //   - `degraded: true` — one boolean. G373's own criterion asks for
+          //     exactly this, "inside the existing name, so no migration to
+          //     2950's event-name CHECK is needed": `suggestion_request_completed`
+          //     is one of that CHECK's fourteen names already.
+          //   - `count` — how many rows the field ended up showing, which for a
+          //     `server_required` field is 0 by the gate above. The numerator
+          //     and denominator of "offline completion rate" are both in those
+          //     two values, and neither is about the user.
+          //   - NO QUERY, NO LABEL, NO TITLE, NO LENGTH, NO IDENTIFIER. 2950's
+          //     `iate_props_no_raw_text` refuses thirteen key names and the
+          //     ingest rebuilds every event from a per-name allow-list; nothing
+          //     here goes near either. The table carries no account id BY
+          //     DESIGN (G371) and this adds none — a rate over degraded serves
+          //     never needs to know whose they were.
+          //
+          // AND DELIBERATELY NO `clientMs`/`serverMs`, WHICH IS NOT AN
+          // OVERSIGHT. `metrics.ts` builds G372's P95 latency from EVERY
+          // `suggestion_request_completed` carrying those keys, and the ingest
+          // does not yet name `degraded` in its allow-list — so a degraded row
+          // carrying a round trip would arrive INDISTINGUISHABLE from a
+          // successful serve and pull the quantile toward the fast local
+          // failures ("API not configured", "Not signed in") that never touched
+          // a network. A latency this event cannot be told apart from is worse
+          // than no latency. `count` is inert by comparison: no §57 metric
+          // reads it on this event name.
+          //
+          // WHAT THIS DOES NOT YET BUY, stated here rather than only in the
+          // census: until `TELEMETRY_EVENT_PROPS.suggestion_request_completed`
+          // in `artifacts/api-server/src/lib/inputAssistance/telemetry.ts`
+          // names `degraded: 'bool'`, the ingest DROPS the flag and the stored
+          // row cannot be told from an online one. The producer exists; the
+          // metric stays refused until that one line lands. G373 is NOT moved
+          // on this alone.
+          emitInputEvent(
+            'suggestion_request_completed',
+            fieldId,
+            policy.context,
+            { count: degradedRows.length, degraded: true },
+            policy.telemetryPolicy,
+          );
         } else {
           // Transient error: keep whatever is on screen, just stop the spinner.
           setLoading(false);

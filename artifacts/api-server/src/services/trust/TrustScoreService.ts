@@ -305,14 +305,36 @@ const EARN_CONFIDENCE_WEIGHT = 5;
  * TrustCapService.applyEventCaps), which clamps the category from above no
  * matter how much positive history surrounds it. The ceiling — not the delta —
  * is what makes a severe finding survive an otherwise glowing record.
+ *
+ * ── Q1, OWNER DECISION 2026-09-22: NO EVENTS IS `null`, NOT 50 ──────────────
+ *
+ * This used to `return 50` for a category with no events, under the comment
+ * "neutral default". That 50 was a FABRICATED MEASUREMENT: it is the same value
+ * a genuinely measured neutral category holds, so once written it could never
+ * again be told apart from one. Because `recalculateTrustScore` weighted all
+ * nine categories with weights summing to 1.000, the consequences were not
+ * subtle — a user with ZERO events scored exactly 50.00 and was promoted to
+ * `reliable_traveler`, and a user with ONE negative event was dragged back
+ * toward 50 by the eight fabricated neutrals around it.
+ *
+ * `null` now means NOT SCORED and is the only honest answer when there is no
+ * evidence. It is NOT zero: a caller that coerces it (`Number(null)` is 0, and
+ * `Number.isFinite(0)` is true) turns "we have not measured you" into the worst
+ * measurement available. Every consumer in this repo was swept for that exact
+ * coercion; see the null-handling notes on `shapeProfile`,
+ * `PassportProjectionService.buildDomainTrust` and `lib/trustScore`.
+ *
+ * Migration 2999 makes the ten columns nullable so this value can be persisted.
+ * The engine must not write NULL against a database without it — see that
+ * file's "ENABLEMENT PRECONDITION".
  */
 function computeCategoryScore(
   events: any[],
   category: string,
   halfLifeDays: number,
-): number {
+): number | null {
   const relevant = events.filter((e) => e.category === category);
-  if (relevant.length === 0) return 50; // neutral default
+  if (relevant.length === 0) return null; // NOT SCORED — see the docblock above
 
   let weightedSum = 0;
   let totalWeight = 0;
@@ -343,11 +365,115 @@ function scoreToLevel(score: number, s: Settings): PublicTrustLevel {
   return "new_traveler";
 }
 
+/**
+ * THE AGGREGATION RULE (Q1, owner decision 2026-09-22).
+ *
+ * "Unmeasured categories must not contribute an invented 50." So the weighted
+ * mean is RENORMALISED over the categories actually present: each present
+ * category keeps its configured weight, and the sum is divided by the total
+ * weight of the present categories rather than by the 1.000 that all nine
+ * would contribute. A user measured on two categories is scored on those two.
+ *
+ * WHY RENORMALISE RATHER THAN DIVIDE BY 1.000
+ * -------------------------------------------
+ * Dividing by the full 1.000 while omitting the absent categories is the same
+ * fabrication wearing a different hat: it silently treats every unmeasured
+ * category as a ZERO, which is strictly worse than the 50 this decision
+ * removes. Renormalising is the only option that lets the measured evidence
+ * speak at its own scale.
+ *
+ * WHAT RENORMALISATION COSTS, STATED RATHER THAN DISCOVERED
+ * ---------------------------------------------------------
+ * A single measured category now DETERMINES the overall score, where before it
+ * contributed only its weight. That is the point in the direction the decision
+ * cares about — one negative event is no longer diluted by eight
+ * non-measurements — but it is symmetric, so a single POSITIVE category also
+ * moves the overall further than it used to. Two existing mechanisms bound
+ * that, and neither is weakened here:
+ *
+ *   * `EARN_CONFIDENCE_WEIGHT` already ramps positive movement per category,
+ *     so one positive event yields 56 rather than 80, while negative movement
+ *     applies at full strength immediately. The asymmetry survives
+ *     renormalisation untouched because it lives inside `computeCategoryScore`.
+ *   * `evidence_weight`/`evidence_count` (migration 2371) already travel with
+ *     the profile and already band into `passportTrustConfidence`. "How much is
+ *     behind this number" is therefore ALREADY a first-class, separately
+ *     presented signal, which is why no new evidence gate is invented here.
+ *
+ * NO NEW PROMOTION THRESHOLD IS INTRODUCED. The decision authorises removing
+ * fabricated neutrals; inventing a minimum-evidence bar for promotion would be
+ * a different product rule and an owner decision of its own. What DOES change
+ * is that promotion can no longer happen on no evidence at all, because a user
+ * with nothing measured now has no score to be promoted from.
+ *
+ * `null` in, `null` out: with NO category present there is nothing to average
+ * and the overall score is NOT SCORED.
+ */
+export function aggregateOverall(
+  categories: Readonly<Record<string, number | null>>,
+  weights: Readonly<Record<string, number>>,
+): number | null {
+  let weightedSum = 0;
+  let presentWeight = 0;
+
+  for (const cat of ALL_CATEGORIES) {
+    const v = categories[cat];
+    // Explicitly reject null/undefined BEFORE any numeric coercion. `Number(null)`
+    // is 0 and `Number.isFinite(0)` is true, so the obvious one-liner would fold
+    // every unscored category in as a hard ZERO — the fabricated measurement
+    // this decision exists to remove, in its worst form.
+    if (v === null || v === undefined) continue;
+    const n = Number(v);
+    if (!Number.isFinite(n)) continue;
+    const w = Number(weights[cat]);
+    if (!Number.isFinite(w) || w <= 0) continue;
+    weightedSum += n * w;
+    presentWeight += w;
+  }
+
+  // Not one measured category: NOT SCORED. Note this is reached both when the
+  // user has no events and when every configured weight is zero — in either
+  // case there is no measurement to report, which is the same answer.
+  if (presentWeight <= 0) return null;
+  return Math.round((weightedSum / presentWeight) * 100) / 100;
+}
+
+/**
+ * The public level for an overall score that may be NOT SCORED.
+ *
+ * A NULL overall must NOT be run through `scoreToLevel`: numeric comparison
+ * would coerce it to 0 and answer `new_traveler` by accident — the right label
+ * reached by a wrong route, which is the kind of correctness that stops being
+ * correct the moment a threshold moves.
+ *
+ * `new_traveler` is returned DELIBERATELY and for a different reason: it is
+ * already the vocabulary this codebase uses for a person nobody has measured
+ * (`TrustPrivacyGuard.publicTrustLabel` renders it "New Traveler", which is
+ * what an ABSENT profile has always displayed), and it is the column's own
+ * DEFAULT. It is a statement that there is no standing to show, not a
+ * measurement of a low one. `public_level` stays NOT NULL in migration 2999
+ * precisely because this answer exists.
+ */
+export function levelForOverall(overall: number | null, s: Settings): PublicTrustLevel {
+  if (overall === null) return "new_traveler";
+  return scoreToLevel(overall, s);
+}
+
 export interface TrustScoreResult {
   userId: string;
-  overall_score: number;
+  /**
+   * The renormalised weighted mean over the categories actually present, or
+   * `null` = NOT SCORED when none is (Q1, owner decision 2026-09-22). See
+   * `aggregateOverall`.
+   *
+   * `null` IS NOT ZERO and is not 50. A consumer that coerces it — `Number(null)`
+   * is 0, and `Number.isFinite(0)` is true — publishes the lowest measurement
+   * available as a fact about a person nobody measured.
+   */
+  overall_score: number | null;
   public_level: PublicTrustLevel;
-  categories: Record<TrustCategory, number>;
+  /** Per category: the measured score, or `null` = NOT SCORED (no events in it). */
+  categories: Record<TrustCategory, number | null>;
   capsApplied: string[];
   /**
    * False when the user had NO qualifying trust events, in which case nothing was
@@ -395,33 +521,44 @@ export async function recalculateTrustScore(
   ]);
 
   const halfLife = settings.decay_half_life_days;
-  const categories: Record<string, number> = {};
+  const categories: Record<string, number | null> = {};
   const capsApplied: string[] = [];
 
   for (const cat of ALL_CATEGORIES) {
-    let score = computeCategoryScore(events, cat, halfLife);
-    // Apply cap ceiling
-    if (caps[cat] !== undefined && score > caps[cat]) {
-      score = caps[cat];
+    const score = computeCategoryScore(events, cat, halfLife);
+    // NOT SCORED stays NOT SCORED. A cap is a CEILING on a measurement, and
+    // there is nothing here to put a ceiling on: applying one would manufacture
+    // a score for a category with no evidence — and, because ceilings are low
+    // by construction, it would manufacture a BAD one. A cap on an unmeasured
+    // category takes effect the moment that category is first measured, which
+    // is the correct time for it to bite.
+    if (score === null) {
+      categories[cat] = null;
+      continue;
+    }
+    let capped = score;
+    if (caps[cat] !== undefined && capped > caps[cat]) {
+      capped = caps[cat];
       capsApplied.push(cat);
     }
-    categories[cat] = Math.round(score * 100) / 100;
+    categories[cat] = Math.round(capped * 100) / 100;
   }
 
-  // Weighted overall score
-  const overall = Math.round(
-    (categories.plan_attendance  * settings.weight_plan_attendance +
-     categories.host_quality     * settings.weight_host_quality +
-     categories.communication    * settings.weight_communication +
-     categories.respect_safety   * settings.weight_respect_safety +
-     categories.location_honesty * settings.weight_location_honesty +
-     categories.content_quality  * settings.weight_content_quality +
-     categories.community_value  * settings.weight_community_value +
-     categories.guide_accuracy   * settings.weight_guide_accuracy +
-     categories.passport_authenticity * settings.weight_passport_auth) * 100
-  ) / 100;
+  // Renormalised over the categories actually present — see `aggregateOverall`
+  // for the rule and for what it deliberately does not do.
+  const overall = aggregateOverall(categories, {
+    plan_attendance:       settings.weight_plan_attendance,
+    host_quality:          settings.weight_host_quality,
+    communication:         settings.weight_communication,
+    respect_safety:        settings.weight_respect_safety,
+    location_honesty:      settings.weight_location_honesty,
+    content_quality:       settings.weight_content_quality,
+    community_value:       settings.weight_community_value,
+    guide_accuracy:        settings.weight_guide_accuracy,
+    passport_authenticity: settings.weight_passport_auth,
+  });
 
-  const public_level = scoreToLevel(overall, settings);
+  const public_level = levelForOverall(overall, settings);
   const evidence = measureEvidence(events, halfLife);
 
   // ── NO EVIDENCE IS NOT NEUTRAL EARNED TRUST ────────────────────────────────
@@ -573,7 +710,10 @@ export async function recalculateTrustScore(
     userId,
     overall_score: overall,
     public_level,
-    categories: categories as Record<TrustCategory, number>,
+    // `number | null` — the cast said `number` until Q1 and would now be a
+    // lie the compiler accepts (it is assignable either way), hiding the very
+    // nullability this return exists to carry.
+    categories: categories as Record<TrustCategory, number | null>,
     capsApplied,
     persisted: true,
     evidenceWeight: evidence.weight,
@@ -761,9 +901,21 @@ function shapeProfile(userId: string, data: unknown): TrustScoreResult {
       const n = Number(v);
       return Number.isFinite(n) ? n : null;
     };
+    // Q1: every score now passes through `num`, which answers `null` for a
+    // NULL column and for an unparseable one alike. Two reasons it is not
+    // optional:
+    //
+    //   1. A NULL score must arrive as `null`, never as 0. These fields used to
+    //      be handed through RAW, so a nullable column (migration 2999) would
+    //      have delivered a literal `null` into a field typed `number` — and
+    //      every downstream `Number(x)` turns that into a hard ZERO.
+    //   2. PostgREST returns numeric(5,2) as a STRING ("50.00"). The raw
+    //      passthrough therefore already put strings behind a `number` type;
+    //      comparisons like `s >= 60` in TrustPrivacyGuard happened to work on
+    //      them by coercion, which is luck rather than a contract.
     return {
       userId,
-      overall_score: d.overall_score,
+      overall_score: num(d.overall_score),
       public_level:  d.public_level,
       capsApplied:   [],
       // A row exists, so by definition this IS persisted state.
@@ -773,15 +925,15 @@ function shapeProfile(userId: string, data: unknown): TrustScoreResult {
       evidenceWeight: num(d.evidence_weight),
       evidenceCount:  num(d.evidence_count),
       categories: {
-        plan_attendance:       d.plan_attendance,
-        host_quality:          d.host_quality,
-        communication:         d.communication,
-        respect_safety:        d.respect_safety,
-        location_honesty:      d.location_honesty,
-        content_quality:       d.content_quality,
-        community_value:       d.community_value,
-        guide_accuracy:        d.guide_accuracy,
-        passport_authenticity: d.passport_authenticity,
+        plan_attendance:       num(d.plan_attendance),
+        host_quality:          num(d.host_quality),
+        communication:         num(d.communication),
+        respect_safety:        num(d.respect_safety),
+        location_honesty:      num(d.location_honesty),
+        content_quality:       num(d.content_quality),
+        community_value:       num(d.community_value),
+        guide_accuracy:        num(d.guide_accuracy),
+        passport_authenticity: num(d.passport_authenticity),
       },
     };
   }

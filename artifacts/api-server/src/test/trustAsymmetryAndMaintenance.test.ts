@@ -44,6 +44,7 @@ process.env["TRUST_MAINTENANCE_MAX_USERS"] = "2";
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { measured } from "./helpers/measuredScore.js";
 import { readFileSync } from "node:fs";
 import { recalculateTrustScore } from "../services/trust/TrustScoreService.js";
 import { expireOldRestrictions } from "../services/trust/TrustRestrictionService.js";
@@ -169,7 +170,7 @@ async function scoreFor(delta: number, n: number): Promise<number> {
   const tables = baseTables();
   seedEvents(tables, USER_A, delta, n);
   const r = await recalculateTrustScore(makeClient(tables), USER_A);
-  return r.categories.host_quality;
+  return measured(r.categories.host_quality, "host_quality");
 }
 
 /**
@@ -255,7 +256,7 @@ describe("TrustScoreService — the earn/lose asymmetry", () => {
     seedEvents(withoutCap, USER_A, -20, 1);
     const uncapped = await recalculateTrustScore(makeClient(withoutCap), USER_A);
     assert.ok(
-      uncapped.categories.host_quality > 50,
+      measured(uncapped.categories.host_quality) > 50,
       `the mean over ten +5s and one -20 is positive by construction; got ` +
       `${uncapped.categories.host_quality}. If this ever drops below neutral the scoring model ` +
       `changed and the comment in TrustEventService no longer describes it.`,
@@ -328,9 +329,19 @@ describe("runTrustMaintenance — the driver", () => {
       tables["trust_profiles"][0].last_recalculated_at,
       undefined,
     );
+    // The CLAIM this test makes is unchanged — a stale 60 computed from events
+    // that have since decayed away must not survive a refresh. What changed is
+    // the value a no-event recalculation produces.
+    //
+    // Q1, owner decision 2026-09-22: it used to be the neutral 50, and that 50
+    // was a fabrication — byte-identical to a genuinely measured neutral, and
+    // (since level_reliable is 50) enough to publish a user with zero events as
+    // a `reliable_traveler`. With no events there is no score, so the refresh
+    // now writes NULL = not scored. The stale 60 still does not survive, which
+    // is what this test is for.
     assert.equal(
-      tables["trust_profiles"][0].overall_score, 50,
-      "with no events the recalculated score is neutral — the stale 60 must not survive",
+      tables["trust_profiles"][0].overall_score, null,
+      "with no events there is NO score — the stale 60 must not survive, and must not be replaced by a fabricated neutral either",
     );
   });
 

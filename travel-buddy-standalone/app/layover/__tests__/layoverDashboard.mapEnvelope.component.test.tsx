@@ -204,10 +204,14 @@ const UNBANDED_REC = {
 // NOTE: intentional stub — the wire behaviour of these calls is covered by the
 // service-level tests; here the screen only needs data to render.
 jest.mock('../../../src/services/layover', () => ({
-  getLayoverOverview: jest.fn(async () => (global as any).__overview),
-  getRecommendations: jest.fn(async () => (global as any).__recs),
+  getLayoverOverview: jest.fn(async () => ({ ok: true, overview: (global as any).__overview })),
+  getRecommendations: jest.fn(async () => ({ ok: true, recommendations: (global as any).__recs })),
   getLayoverBuddies: jest.fn(async () => ({ city: 'Bangkok', buddies: [] })),
   getLayoverPresence: jest.fn(async () => ({ sharing: false, count: 0, travelers: [] })),
+  // census L269 — the screen mounts LayoverDiscoveryCard, which reads through
+  // this module. Kept in step with the exhaustive list above: an omission here
+  // does not fail as a missing card, it throws inside the render.
+  getLayoverDiscovery: jest.fn(async () => ({ ok: true, gems: [] })),
   addStopFromRecommendation: jest.fn(async () => null),
   endLayoverSession: jest.fn(async () => ({ ok: true, outcome: 'cancelled', passportStamp: { requested: false, written: false, reason: 'not_elected' } })),
   sendLayoverTelegraph: jest.fn(async () => null),

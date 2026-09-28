@@ -34,6 +34,94 @@ The root tree partially overlaps with both the canonical and legacy chains and c
 
 The frozen-dir guard (run in CI via `check:frozen-dir` and at startup of `audit:schema`) ensures no one silently adds new files to the root tree.
 
+## An applied migration file is a historical artifact: do not annotate it
+
+**The rule, learned the expensive way on 2026-09-22.** Once a migration has been
+applied anywhere, its bytes are frozen. `apply-migrations` records the SHA-256 of
+the file's exact bytes in the ledger, and on every later run it re-hashes the file
+on disk and refuses if the two differ:
+
+> the ledger records these files as applied, but their contents on disk no longer
+> match the recorded checksum. The SQL that ran and the SQL in this commit are not
+> the same text, so the live schema cannot be derived from the tree. Re-applying is
+> NOT a safe repair (a migration is not necessarily re-runnable). Reconcile by hand.
+
+**That check does not know what a comment is, and it must not.** The digest is over
+bytes. Adding a comment block to an applied file produces exactly the same failure
+as rewriting its DDL, because a checksum that tolerated "harmless" edits would be
+no checksum at all. The script says so itself: a backfill that used a different
+digest looks identical to real drift, so it fails closed on both.
+
+This was learned by breaking it. `2950_input_assistance_telemetry_events.sql`
+carried a header reading "⚠ NOT APPLIED ANYWHERE YET", written on a detached HEAD
+before the file was applied. It was applied to production on 2026-09-21 at
+12:11:18 UTC and to `portava-ci`, and the banner then read as current state to a
+later reader — it contributed directly to production being reported as unmigrated.
+The correction was written **into the file**, as 32 lines of comment with no SQL
+changed. CI went red on the next run: ledger `42072bcd…`, disk `8e8d24ae…`. The
+file has since been restored to the exact bytes that ran (verified: it re-hashes
+to `42072bcd…`), and the correction lives here instead.
+
+**So when an applied migration's header turns out to be wrong, correct it HERE,
+keyed by filename — never in the file.** The ledger stays meaningful and the
+correction still reaches the reader, because this is the document a reader
+checking "was it applied?" is sent to anyway. Reconciling the other direction —
+editing the recorded checksum to match a new file — is not the default: it mutates
+a record of what actually ran, in every database that holds one, and should happen
+only when the recorded digest is itself known to be wrong.
+
+### Correction: 2950_input_assistance_telemetry_events.sql
+
+The file's header banner is **superseded**. Its "NOT APPLIED ANYWHERE YET" was
+true when written and false from 12:11 UTC on 2026-09-21.
+
+2950 is applied to production (`ajrurzioarfkagpuxfnb`) and to `portava-ci`
+(`hwokxgbmezheskbzskfr`). Verified by object probe rather than by a ledger row
+alone: the table exists and all nine constraints are present in production,
+including `iate_event_name_known`, whose CHECK was read back from `pg_constraint`
+carrying all fourteen event names in the file's `ARRAY`. `public.schema_migration_ledger`
+also carries the row.
+
+The rest of that header stands as written, including its point that before the
+apply, every write this lane's code issued against the table failed at PostgREST
+and was answered as a **retryable refusal** — never as a successful empty result
+(`src/lib/inputAssistance/telemetry.ts`).
+
+### Why that confusion arose, written down so it does not recur
+
+**There are TWO ledgers in this project and their columns are disjoint:**
+
+| Table | Identifies a migration by | Does NOT have |
+|---|---|---|
+| `public.schema_migration_ledger` | `filename` | `version` |
+| `supabase_migrations.schema_migrations` | `version` (serial lives in `name`) | `filename` |
+
+A query written for one and run against the other answers zero and still looks
+authoritative.
+
+**The CLI table's `version` is TEXT holding two formats at once** — bare serials
+(`'2272'`) and 14-digit timestamps (`'20260921101005'`). Under `en_US.UTF-8`, a
+14-digit timestamp sorts **below** the four-digit cutoff — `'20260915123045' <
+'2890'` is TRUE — because the THIRD character decides it, `'0'` against `'9'`,
+and the remaining ten digits are never read. So `version >= '2890'` excludes
+EVERY post-cutover row no matter what is applied, and `MAX(version)` returns a
+pre-cutover serial.
+
+*(Corrected 2026-09-22. An earlier form of this paragraph wrote the ordering as
+`'289' < '20260915123045' < '2950'`. The first half is FALSE — `'289' >
+'20260915123045'`, verified in Postgres — and the error mattered because it
+described the trap as timestamps sorting AMONG the serials, when what actually
+happens is that they sort beneath the whole band. The conclusion was right for
+the wrong reason.)* This is what produced the withdrawn claim that there were
+"zero ledger rows at or above 2890".
+
+**Ledger absence is not evidence of non-application.** Probed on the same day,
+`2890`, `2900` and `2958` were all live in production with no hand-ledger row;
+`2958` had no row in *either* ledger and its column existed. Only an object probe
+settles whether a migration ran — and even then it settles that the *objects* are
+there, not that every statement in the file executed. Migration `2298` is the
+precedent for the inverse: a ledger row whose effects were absent.
+
 ## The migration ledger
 
 `public.schema_migration_ledger` (created by
@@ -1915,8 +2003,15 @@ what was wrong.
 
 ### Still open
 
-- **Production is untouched.** Zero ledger rows at or above 2890 there. 2972 has
-  been applied to **portava-ci only**.
+- **Production is untouched.** 2972 has been applied to **portava-ci only**;
+  `public.schema_migration_ledger` on `ajrurzioarfkagpuxfnb` holds **no row whose
+  filename begins `2972`** (measured 2026-09-22 05:29 UTC).
+  *(Corrected 2026-09-22. This bullet previously justified itself with "Zero
+  ledger rows at or above 2890 there", which is FALSE — the correct band query,
+  `filename ~ '^[0-9]{4}_' AND substring(filename from '^[0-9]{4}')::int >= 2890`,
+  answers **20**. The zero is what the CLI ledger's TEXT comparison returns, for
+  the collation reason above. The conclusion survives; the evidence for it is now
+  the absence of 2972's own row rather than a broken count.)*
 - The `authz`-vs-`public` name-keying notes `audit:schema` prints on every run
   (9 function claims resolving in `authz`; `is_accepted_trip_member` existing in
   both) remain as stated — pre-existing, unrelated to this apply.
@@ -2753,6 +2848,97 @@ a *local* PostgreSQL 16 is itself the check that the capture is faithful.
 
 ---
 
+## 2991 APPLIED TO portava-ci, AND WHY A PR CAN NEED THAT AT ALL
+
+`audit:schema` went red on PR 521 with two missing columns:
+
+    ✖ 2991_message_translations_confidence.sql
+        missing column message_translations.confidence
+        missing column message_translations.provider_version
+
+**The failure was real and the code was fine.** The `schema drift` job runs
+`db:apply-migrations:dry-run` — which writes nothing, by design, because a PR
+must not mutate the shared CI database as a side effect of being opened — and
+then runs `audit:schema`, which measures the *live* schema. So a PR that adds a
+migration file fails its own audit until somebody applies it. The dry run says
+so in the same log, one step earlier:
+
+    Would apply 2 migration(s), IN THIS ORDER:
+        1. 2991_message_translations_confidence.sql   [shape=unwrapped]
+        2. 2998_nearby_reachable_flag.sql             [shape=unwrapped]
+
+> **The file quoted above has since been renumbered to
+> `2990_nearby_reachable_flag.sql`** (2026-09-23, at the integration of PR 525 /
+> PR 524, which brought a `2998_story_retention.sql` onto `main` and made 2998 a
+> collision). The transcript is left EXACTLY as the dry run printed it, because
+> it is a record of what a tool said on a date, not a description of the tree —
+> rewriting a log to match a later rename is how a record stops being evidence.
+> The renumbered file's content is byte-identical apart from its own header
+> line, it is applied to no database, so no ledger row and no checksum moves,
+> and the order shown above is the only thing the rename changes: 2990 now sorts
+> BEFORE 2991. That is harmless here and was checked rather than assumed — the
+> file inserts one `public.feature_flags` row and reads nothing 2991 creates.
+
+Only 2991 was reported missing: 2998's claimed objects already exist on CI, so
+it is pending in the LEDGER sense and satisfied in the OBJECT sense — the exact
+distinction the inventory work exists to keep apart, and the reason "pending"
+and "missing" are two different counts in that log.
+
+**What was done.** 2991 applied to **portava-ci (`hwokxgbmezheskbzskfr`) only**,
+via the Supabase MCP, and ledgered with `applied_by='manual'` and a note that
+records the discrepancy between the executed text and the committed file: the
+outer `BEGIN`/`COMMIT` were dropped because the MCP call supplies its own
+transaction, and the header comment block was not re-sent. The checksum in the
+ledger is of the committed file, which is the convention 2966 and 2976 set.
+Both the `$pre$` and `$post$` blocks ran inside that transaction and passed, and
+the result was re-verified independently afterwards rather than taken from the
+migration's own say-so.
+
+**Production was not touched.** `ajrurzioarfkagpuxfnb` does not have these two
+columns and does not need them yet: nothing deployed writes a confidence reading,
+and `upsertTranslation` retries once without both columns on the undefined-column
+refusal, so an unapplied 2991 degrades T242 to "treat every translation as
+not-certain" rather than breaking translation. That is the migration's own stated
+design, not a concession made here — and it is why T240 and T242 stay `W`.
+
+### Re-establish independently
+
+    -- against portava-ci
+    SELECT column_name, is_nullable, column_default
+      FROM information_schema.columns
+     WHERE table_schema='public' AND table_name='message_translations'
+       AND column_name IN ('confidence','provider_version');
+    -- expect two rows, both is_nullable='YES', both column_default NULL
+
+    SELECT pg_get_constraintdef(c.oid)
+      FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid
+      JOIN pg_namespace n ON n.oid=t.relnamespace
+     WHERE n.nspname='public' AND t.relname='message_translations'
+       AND c.conname='message_translations_confidence_check';
+    -- expect CHECK (((confidence IS NULL) OR (confidence = ANY (ARRAY['high'::text, 'low'::text]))))
+
+    SELECT filename, applied_by, left(checksum, 12)
+      FROM public.schema_migration_ledger
+     WHERE filename = '2991_message_translations_confidence.sql';
+    -- expect applied_by='manual', checksum 5af2de56c5da
+
+**The postcondition that forbids a DEFAULT is not boilerplate.** The table held
+0 rows on CI when this was applied, so nothing was backfilled and nothing could
+be invalidated — but the same apply against a populated database leaves every
+historical row NULL, which is the one true statement available about a reading
+nobody took. A default would have asserted, of every one of those rows, that
+somebody measured it.
+
+> **Both sections below were appended independently on 2026-09-23** — this one
+> by the branch that applied 2991, the next by PR #526 for 2998. They document
+> DIFFERENT migrations to the same database and neither supersedes the other,
+> so the merge keeps both rather than choosing. Read together they also close a
+> loop: #526's section records that `certify:migrations` failed at STAGE 1 on
+> ledger parity, naming `2966` and `2991` as rows whose files are not on `main`.
+> Those two files are THIS branch's, and that stage-1 failure clears when it
+> merges — which is the same fact this section's own paragraph states from the
+> other end.
+
 ## `2998_story_retention.sql` — applied to `portava-ci` 2026-09-23, NOT to production
 
 The owner-archive retention unit: `stories.deleted_at` with the trigger that
@@ -2854,3 +3040,86 @@ to apply — not because reversal is anticipated.
            (SELECT count(*) FROM information_schema.columns
              WHERE table_schema='public' AND table_name='story_purge_queue');
     -- portava-ci: story_purge_queue, 14   |   production: NULL, 0
+
+## `3001_highlight_kernel_admits_unhide.sql` — REHEARSED on a throwaway database, applied NOWHERE
+
+Recorded here because a migration that exists and has been executed somewhere
+should be findable from this document, and because census-highlights-memories
+§Y's staleness entry points at this file for the rehearsal. It is **not** an
+application record: there is nothing to record on either database.
+
+**What it is.** A `CREATE OR REPLACE` of `public.highlight_kernel_execute(jsonb)`
+that makes the §17 applier admit `UNHIDE_HIGHLIGHT`. The body is 2993's, derived
+mechanically from that file rather than retyped, with exactly two edits: the
+accepted-type list gains the command name, and a new branch clears
+`archived_at`, emits `highlight.hidden`, and recomputes `to_state` as `EXPIRED`
+when the Highlight's own expiry has passed and `ACTIVE` otherwise.
+
+**Why a new file rather than an edit to 2993.** 2993 travels on PR #523 with
+2992 and 2994 as a byte-identical rehearsed set; editing it would invalidate
+that rehearsal and mean re-rehearsing a pull request instead of adding a file.
+3001 leaves it untouched.
+
+**Why the number is 3001.** 2100-2999 was full — `main` held prefixes to 2997
+and both 2998 and 2999 were claimed by unmerged branches. PR #527 extended
+`NEW_NUMERIC_PREFIX_RE` to admit 3000-3999 hours earlier, for unrelated reasons;
+3000 is #527's own, and 3001 is the first slot above 2993 that has ever been
+legal. The band rule is in
+`artifacts/api-server/src/scripts/migrationPrefixRules.ts:58#NEW_NUMERIC_PREFIX_RE`
+and is written up in `docs/architecture/10_Database_Architecture.md`.
+
+### The rehearsal
+
+Replayed against a real PostgreSQL 16 carrying the baseline plus the canonical
+chain, using `artifacts/api-server/scripts/local-db/up.sh` on an isolated
+database — executed, not read:
+
+| probe | result |
+| --- | --- |
+| `UNHIDE_HIGHLIGHT` on a hidden Highlight | `ok=true`, `archived_at` **cleared** |
+| the event it wrote | ONE row, `type='highlight.hidden'`, `command_type='UNHIDE_HIGHLIGHT'` |
+| outbox | one row |
+| `to_state` on an unexpired Highlight | `ACTIVE` |
+| `to_state` on an **expired** Highlight | `EXPIRED` — expiry survives un-hiding |
+| the same idempotency key twice | second answers `duplicate=true` |
+| `PUBLISH_HIGHLIGHT` (negative control) | still `MEMORY_COMMAND_UNKNOWN_TYPE` |
+
+The rehearsal refused the file twice before accepting it, both times for a
+defect in the file rather than in the database, and both are worth carrying
+forward:
+
+1. The postconditions created a probe Highlight. `highlights.media_url` is
+   `NOT NULL` and `owner_id` references `profiles`, which references
+   `auth.users` — a "simple" fixture is a three-table chain. They were rewritten
+   in 2993's own idiom, which probes REJECTION paths and the catalog and creates
+   no rows at all.
+2. A postcondition asserting that `highlight.unhidden` appears nowhere in the
+   installed function **failed on its own explanatory comment**, because
+   `pg_get_functiondef` returns comments. It now matches the assignment
+   (`v_event_type := '…'`) rather than the bare name.
+
+### Rollback
+
+    -- 3001 REPLACES a function; it creates and drops nothing else. The rollback
+    -- is to re-run 2993, which restores the previous definition verbatim.
+    \i artifacts/api-server/src/migrations/2993_highlight_command_boundary.sql
+    DELETE FROM public.schema_migration_ledger
+     WHERE filename = '3001_highlight_kernel_admits_unhide.sql';
+
+Nothing here destroys user data: `CREATE OR REPLACE` on a function touches no
+row, and the only `UPDATE` in the new branch is the one that clears
+`archived_at` for the Highlight a caller named.
+
+### Re-establish this independently
+
+    SELECT filename FROM public.schema_migration_ledger
+     WHERE filename IN ('2993_highlight_command_boundary.sql',
+                        '3001_highlight_kernel_admits_unhide.sql');
+    -- portava-ci: 0 rows   |   production: 0 rows
+
+**Neither 2993 nor 3001 is applied to any shared database.** 3001 must never be
+applied before 2993, which creates the function it replaces; the file's own
+precondition raises if `to_regprocedure('public.highlight_kernel_execute(jsonb)')`
+is NULL, so the order is enforced rather than documented. Applying either follows
+the same path as 2992/2993/2994 and is the same external step; nothing here
+shortens it.

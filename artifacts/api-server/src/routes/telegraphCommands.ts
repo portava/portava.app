@@ -20,6 +20,7 @@ import { requireUser, sendError, isAcceptedTripMember } from "../lib/http.js";
 
 const cmdLogger = rootLogger.child({ route: "telegraphCommands" });
 import { resolveContext } from "../lib/privacyResolver.js";
+import { dispatchTable, lookup } from "../domain/telegraph/contracts/dispatchTable.js";
 import { getNearbyVenues, formatDistance, type NearbyVenue } from "../lib/venuesService.js";
 import {
   compensateFor,
@@ -31,8 +32,17 @@ const router = Router();
 
 const UUID = /^[0-9a-f-]{36}$/i;
 
-/** Maps a Telegraph intent to the preference category that should be boosted on confirm. */
-const INTENT_CATEGORY: Partial<Record<string, string>> = {
+/**
+ * Maps a Telegraph intent to the preference category that should be boosted on confirm.
+ *
+ * `dispatchTable`, not a bare literal: `stored.intent` is read back out of
+ * `telegraph_commands` rather than re-derived, so a row whose `intent` column
+ * says `constructor` would otherwise index this map to the `Object` FUNCTION —
+ * truthy, so the `?? "unknown"` below never fires — and put it into
+ * `ActionContext.category`, which is typed `string`. See
+ * `domain/telegraph/contracts/dispatchTable.ts`.
+ */
+const INTENT_CATEGORY: Readonly<Record<string, string>> = dispatchTable({
   find_food:            "food",
   find_nightlife:       "nightlife",
   plan_day:             "activity",
@@ -41,7 +51,7 @@ const INTENT_CATEGORY: Partial<Record<string, string>> = {
   fix_schedule_conflict:"planning",
   what_is_missing:      "planning",
   add_to_plan:          "activity",
-};
+});
 
 /* ── Intent types ── */
 export type TelegraphIntent =
@@ -436,7 +446,7 @@ router.post("/telegraph/commands/:commandId/confirm-action", async (req, res) =>
     actionId,
     label: action.label,
     params: action.params,
-    category: (action.params.category as string | undefined) ?? INTENT_CATEGORY[stored.intent] ?? "unknown",
+    category: (action.params.category as string | undefined) ?? lookup(INTENT_CATEGORY, stored.intent) ?? "unknown",
   };
 
   // AUTHORIZE — re-derived now, never taken from the card (§30A.11).

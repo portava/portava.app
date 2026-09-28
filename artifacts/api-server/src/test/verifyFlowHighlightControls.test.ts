@@ -336,7 +336,16 @@ describe("FLOW 3 — an OWNER-scoped control takes a different key and must stil
     // PERSON, so the write stores the owner id and the feed looks it up by
     // owner id. A writer/reader disagreement here is invisible in the stored
     // row and invisible in the listing.
-    const set = await req("PUT", CONTROLS, OWNER, {
+    // THE ACTOR IS VIEWER, NOT OWNER, and that is the whole point of §11.
+    // This case used to PUT as OWNER and assert VIEWER's feed emptied — the H89
+    // defect written down as an expectation. A person-scoped control belongs to
+    // the person doing the resurfacing, so the row that empties VIEWER's feed is
+    // VIEWER's. Reaching VIEWER from OWNER's row would mean any user holding one
+    // Highlight could suppress any other user for EVERY viewer, with no rate
+    // limit, no audit and no notice to either party. The subject stays OWNER,
+    // both assertions stay, and the title stays true: every one of OWNER's
+    // Highlights leaves the feed this control was set on.
+    const set = await req("PUT", CONTROLS, VIEWER, {
       control: "HIDE_PERSON_FROM_RESURFACING", subjectId: OWNER,
     });
     assert.equal(set.status, 200, set.raw);

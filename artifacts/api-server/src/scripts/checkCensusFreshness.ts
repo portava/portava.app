@@ -378,6 +378,68 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/tripCloseout.test.ts",
   ],
   "census-layover.md": [
+    // ── ADDED 2026-09-22 by the INTEGRATING lane, because check:census-scope-coverage
+    // ── went red and the remedy it prescribes is this one, never the floor.
+    //
+    // MEASURED BOTH SIDES BEFORE TOUCHING ANYTHING. At `4f89330b9` — the six-lane
+    // merge, before §41-§44 were written — this census was ALREADY at 89 % against
+    // its 0.97 floor. So the gap arrived with the lanes' own citations and §41-§44
+    // took it 89 % -> 87 %; it is not a defect this pass introduced, and it is not
+    // one this pass gets to leave either. The census-highlights-memories half of
+    // the same failure IS this pass's and is fixed in that entry.
+    //
+    // Every path below is a subject this census GRADES, not a file it mentions:
+    //   lib/providers/routeCorridorProvider.ts + returnRouteRisk.ts and their two
+    //     suites — the routed corridor §12.1 wired into the certified action
+    //     universe; six rows (L60, L68-L71, L282) moved N -> W on them.
+    //   test/layoverApiLifecycle.test.ts — §41 moves L239 and L221 on it.
+    //   lib/layoverExternalEventScheduler.ts + routes/layoverEvents.ts +
+    //     test/db/layoverExternalEventsDedup.db.test.ts — §40's ingest, drain and
+    //     real-database suite.
+    //   lib/layoverCrewExpiryScheduler.ts — the crew half of the same chain.
+    //   lib/crowdState.ts — L276's whole verdict is about what this module exports
+    //     and whether the airport surface calls it (§43's "capability that exists
+    //     in lib/ and is never called is NOT BUILT in this census's usage").
+    //   migrations 2981, 2982, 2986, 2992 — layover migrations this census cites
+    //     by name; 2986 is §42's fanout indexes.
+    //   travel-buddy-standalone/src/lib/layoverPlanCache.ts and the sensing-cadence
+    //     suite — L151/L233's offline cache and the L164/L168 guard §41.4 rests on.
+    //
+    //   test/schedulerRegistration.test.ts — added on a SECOND look, and the
+    //     distinction from test/docCitations.test.ts is worth stating because the
+    //     first draft of this entry got it wrong and excluded both as "a guard's
+    //     own suite". They are not the same. The census rests a factual claim on
+    //     the scheduler guard's STATE — "before this it was an exported function
+    //     nothing called, which is the state `schedulerRegistration.test.ts`
+    //     exists to refuse, and that test was red until the call was added" — so
+    //     its red/green is the evidence for a row's "IS scheduled" half. The
+    //     citation guard, by contrast, is a corpus-wide tool this census reports
+    //     on. Evidence goes in scope; instrumentation does not.
+    //
+    // STILL DELIBERATELY NOT ADDED, extending the list the floor comment in
+    // checkCensusScopeCoverage.ts already names: test/docCitations.test.ts is a
+    // guard's own suite — machinery this census REPORTS ON rather than grades;
+    // routes/messaging.ts and
+    // 2795_trip_kernel_write_guards.sql belong to Telegraph and Trips; and
+    // lib/capability/snapshots/current.ts is corpus-wide capability machinery that
+    // every census cites when it needs to say what production carries.
+    "artifacts/api-server/src/lib/providers/routeCorridorProvider.ts",
+    "artifacts/api-server/src/lib/providers/returnRouteRisk.ts",
+    "artifacts/api-server/src/test/providerRouteCorridor.test.ts",
+    "artifacts/api-server/src/test/providerReturnRouteRisk.test.ts",
+    "artifacts/api-server/src/test/layoverApiLifecycle.test.ts",
+    "artifacts/api-server/src/lib/layoverCrewExpiryScheduler.ts",
+    "artifacts/api-server/src/lib/layoverExternalEventScheduler.ts",
+    "artifacts/api-server/src/test/schedulerRegistration.test.ts",
+    "artifacts/api-server/src/lib/crowdState.ts",
+    "artifacts/api-server/src/routes/layoverEvents.ts",
+    "artifacts/api-server/src/test/db/layoverExternalEventsDedup.db.test.ts",
+    "artifacts/api-server/src/migrations/2981_layover_event_ingest_flag.sql",
+    "artifacts/api-server/src/migrations/2982_layover_traveller_observation_submissions.sql",
+    "artifacts/api-server/src/migrations/2986_layover_sessions_fanout_indexes.sql",
+    "artifacts/api-server/src/migrations/2992_layover_decision_record_and_operational_tables.sql",
+    "travel-buddy-standalone/src/lib/layoverPlanCache.ts",
+    "travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts",
     // ── ADDED 2026-09-15: §24's own two modules, which §24.9 says are covered ──
     // by an acknowledgement and which NOTHING was watching, so they could not be.
     //
@@ -424,20 +486,20 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/routes/discovery.ts",
     "artifacts/api-server/src/compass/TelegraphConversationTools.ts",
     "artifacts/api-server/src/routes/rentABuddyRollout.ts",
-    // ── ADDED 2026-09-22 by the ENTRY GATE lane (§27) ────────────────────────
+    // ── ADDED 2026-09-22 by the ENTRY GATE lane (§45, RENUMBERED FROM §27 AT INTEGRATION 2026-09-23) ────────────────────────
     // This census measured 132 cited / 127 watched — exactly its 96% floor —
-    // before §27 was written. §27 cites four more files and only one of them was
+    // before §45 was written. §45 cites four more files and only one of them was
     // in scope, which took it to 94% and turned check:census-scope-coverage red.
     // That is the guard working: a census cannot grade a file it does not watch.
-    //   lib/entryRequirements.ts — L48's verdict rests on it entirely. §27.1
-    //     grades `readCorridor`'s three-state read, and §27.3's whole argument
+    //   lib/entryRequirements.ts — L48's verdict rests on it entirely. §45.1
+    //     grades `readCorridor`'s three-state read, and §45.3's whole argument
     //     for W-not-C is that this file's table has no INSERT in any migration.
     //     If a migration ever seeds a corridor, or `readCorridor` collapses its
     //     three states back to two, L48 moves — and nothing here was watching.
     //   test/layoverEntryGate.test.ts — the suite that pins L34 and L48,
-    //     including the monotonicity property §27.4 counts toward L235. A row
+    //     including the monotonicity property §45.4 counts toward L235. A row
     //     held in place by a test ages when that test does.
-    //   routes/entryRequirements.ts — §27.9 rests a claim on this file's
+    //   routes/entryRequirements.ts — §45.9 rests a claim on this file's
     //     CONTENTS: that it makes the identical `isFlagEnabled(sc, ENTRY_FLAG)`
     //     call, which is why the gate's own UNRESOLVABLE entry is a copy of an
     //     existing judgement rather than a new one. Same shape as
@@ -553,6 +615,39 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // not watch cannot notice the grep starting to return something.
     "artifacts/api-server/src/lib/liveClaimRead.ts",
     "artifacts/api-server/src/services/airport/",
+    // ── ADDED 2026-09-22 by §27: the §14 crew's persistence half, and the two
+    // migrations three sections now rest verdicts on. Same shape of gap as the
+    // 2026-09-15 entry above, and found the same way — by the coverage floor.
+    //
+    //   services/layover/ — `LayoverCrewStore.ts` is where `createCrew`,
+    //     `joinCrew` and `leaveCrew` live, and §27.4 moves L185/L186/L188 to `C`
+    //     ON those three functions. The solver they feed has been watched for a
+    //     year under `services/airport/`; the storage that finally gave it
+    //     members was in a SIBLING directory nothing watched, so the three rows
+    //     this census now scores `C` rested on a file it could not age. The
+    //     directory also holds their two suites, which are the acceptance
+    //     evidence those verdicts cite.
+    //   2984_layover_crews.sql — §26.2 moves L28 and L29 to `C` on this file
+    //     existing and being applied, and §27.5 rests the "no database-level
+    //     scope underneath the route layer" argument on its zero-policy,
+    //     zero-grant postcondition. A verdict resting on a migration's CONTENT
+    //     has to age when that content moves.
+    //   2971_layover_discovery_mode_flag.sql — §24.6, §25.2 and §29.3 all keep
+    //     L269 at `W` on the specific ground that this file is NOT applied. If
+    //     it changes, the reason three sections give for that verdict changes
+    //     with it.
+    //   2985_layover_events_crew_vocabulary.sql — 2984's deploy dependency, and
+    //     §26.1 records that it was MISSED on the first attempt, producing "a
+    //     feature that looks built and audits nothing" because every crew audit
+    //     row was rejected by the `layover_events.event_type` CHECK and swallowed
+    //     by `emitEvent`'s non-fatal warn. §27.4's `C` on L185 cites the
+    //     `crew_joined` audit as evidence, so that verdict rests on this file's
+    //     vocabulary and must age with it. §26.1 also notes `check:enum-literals`
+    //     cannot see this class, which is the whole reason it needs watching.
+    "artifacts/api-server/src/services/layover/",
+    "artifacts/api-server/src/migrations/2984_layover_crews.sql",
+    "artifacts/api-server/src/migrations/2985_layover_events_crew_vocabulary.sql",
+    "artifacts/api-server/src/migrations/2971_layover_discovery_mode_flag.sql",
     "artifacts/api-server/src/routes/airport.ts",
     "travel-buddy-standalone/src/services/layover.ts",
     "travel-buddy-standalone/src/components/layover/",
@@ -606,6 +701,71 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/2462_meetup_time_votes_write_boundary.sql",
   ],
   "census-highlights-memories.md": [
+    // ── ADDED 2026-09-22 by the INTEGRATING lane. THIS HALF IS THIS PASS'S OWN
+    // ── DEFECT, measured rather than assumed: at `4f89330b9` this census was at
+    // 99 % against its 0.98 floor, and §W and §X took it to 97 %. The layover
+    // entry's gap predates the same pass; this one does not.
+    //
+    // Both paths are subjects this census grades:
+    //   2994_memory_relations_and_outbox_consumer.sql — `memory_relations`, the
+    //     outbox claim/ack/fail functions and the claimable index, all of which
+    //     §12.2-§12.3 and the H1xx outbox rows turn on.
+    //   test/highlightsApiUnhideBoundary.test.ts — §X repoints it to the
+    //     three-artifact invariant over the vocabulary, the applier and the route,
+    //     and grades H159's boundary on it.
+    //
+    // NOT ADDED, on the precedent the layover entry above extends:
+    // 0179_stamp_criteria_engine.sql belongs to Passport and is cited in passing.
+    // (Its citation is also bare, so it resolves onto the STRAY ROOT COPY rather
+    // than onto src/migrations/ — docs/stray-sql-inventory-and-disposition.md
+    // item 2 owns that repair, together with deleting the strays.)
+    "artifacts/api-server/src/migrations/2994_memory_relations_and_outbox_consumer.sql",
+    "artifacts/api-server/src/test/highlightsApiUnhideBoundary.test.ts",
+    // ── ADDED 2026-09-23 by §Y. THE RULING DIRECTLY ABOVE IS REVERSED, on the ──
+    // ── facts that changed, not on the pressure of a red check. ──────────────
+    //
+    // The 2026-09-22 comment ruled scripts/migrationPrefixRules.ts out as
+    // "machinery this census reports on, not a subject", and at the time that was
+    // right: §X.4 named the 2100-2999 band only to explain why the amendment it
+    // wanted could not be written — the census cited the rule the way it cites a
+    // guard that measured it.
+    //
+    // §Y is a different relationship. PR #527 extended the band to 3000-3999, and
+    // the amendment §X.4 had recorded as unbuildable became buildable in the same
+    // hour; 3001 below EXISTS because of the line that module now carries. So the
+    // module is no longer evidence about why this census could not act — it is a
+    // precondition of a migration this census grades, and if the band moves again
+    // §Y's argument for 3001's filename goes stale and must be re-read. That is
+    // exactly what CENSUS_SCOPE is for.
+    //
+    // It is deliberately NOT put in checkCensusScopeCoverage.ts's NOT_GRADED
+    // list, which would have been the cheaper way to go green: that list is
+    // GLOBAL, so one entry stops all thirteen censuses watching a file, and this
+    // module is imported by the APPLIER (scripts/src/apply-migrations.ts) as well
+    // as by two guards — it is shared rule code, not a checker. NOT_GRADED's own
+    // comment names that as the thing that would make it wrong.
+    //
+    // 3001_highlight_kernel_admits_unhide.sql is a subject outright: it is the
+    // CREATE OR REPLACE that makes the §17 applier admit UNHIDE_HIGHLIGHT, which
+    // is what §Y moves H159's boundary on.
+    "artifacts/api-server/src/scripts/migrationPrefixRules.ts",
+    "artifacts/api-server/src/migrations/3001_highlight_kernel_admits_unhide.sql",
+    // ── ADDED 2026-09-23 by §Y.7: the un-hide's CLIENT half. ────────────────
+    // §Y.4 wired the route and §Y.6 said the migration is applied nowhere;
+    // between those two it would be easy to read the un-hide as a server
+    // capability with no caller. §Y.7 follows the chain and finds the screen,
+    // the client service, and four tests that were there all along — which is
+    // what makes H159's `W` mean "not deployed" rather than "not built".
+    //
+    // A section that rests its argument on a screen must age when that screen
+    // changes, so all four are watched. These are SUBJECTS: the archive screen
+    // and its service are the surface H159's requirement is about, and the two
+    // suites are the evidence §Y.7 cites — the same category as
+    // highlightsApiUnhideBoundary.test.ts above, not machinery.
+    "travel-buddy-standalone/app/highlights/archived.tsx",
+    "travel-buddy-standalone/src/services/highlights.ts",
+    "travel-buddy-standalone/app/highlights/__tests__/archived.screen.component.test.tsx",
+    "travel-buddy-standalone/src/services/__tests__/highlights.archive.component.test.ts",
     // ── ADDED 2026-09-15: §M and §O's OWN suites, which the ledger could not ──
     // name because this scope did not.
     //
@@ -778,6 +938,67 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // while changing what this census can claim — the same argument that put
     // test/storyHighlightVisibility.test.ts in this list above.
     "artifacts/api-server/src/test/memoryParticipantLadder.test.ts",
+    // ── WIDENED 2026-09-22 by section Q, on the same argument every test file ──
+    // above was added on: each is the EVIDENCE a row's verdict now cites, so
+    // deleting it would not change the code and would change what this census
+    // can claim.
+    //   highlightLifetimeAndPin.test.ts — §Q's evidence for H94–H97. It drives
+    //     POST /highlights with a §4 class through to the stored column and back
+    //     out of the profile read with its provenance, and pins PERMANENT's
+    //     refusal-by-name on a database without 2975. Three mutations in §Q.2
+    //     turn it red.
+    //   memorySearchRoute.test.ts — §Q's evidence for H110 and H111, whose
+    //     shared blocker was "no route imports the module". It also carries the
+    //     `deterministicMatchCount` case §Q.3 added after a mutation found the
+    //     original green when the field was replaced by the page size.
+    //   highlightSourceLinks.test.ts — §Q's red-first evidence for H32, the
+    //     first TypeScript writer for `highlight_sources`.
+    //   highlightConsentEnforcementMap.test.ts — §Q.5's evidence that the §10
+    //     enforcement map served on `GET /highlights/:id/projection-policy` is
+    //     DERIVED from the gate rather than retyped beside it.
+    //   highlightsSpecHarness.ts — not a suite but the fake all four drive. §Q.1
+    //     changed its generated primary key from `new-<hex>` to a UUID, which is
+    //     the shape every table it stands in for actually has; a harness that
+    //     invents a key shape the database cannot is how a correct handler is
+    //     made to look broken. It is watched for the same reason
+    //     `highlightRouteHarness.ts` is cited in §P.6.
+    "artifacts/api-server/src/test/highlightLifetimeAndPin.test.ts",
+    "artifacts/api-server/src/test/memorySearchRoute.test.ts",
+    "artifacts/api-server/src/test/highlightSourceLinks.test.ts",
+    "artifacts/api-server/src/test/highlightConsentEnforcementMap.test.ts",
+    "artifacts/api-server/src/test/highlightsSpecHarness.ts",
+    // ── AND FIVE THIS SCOPE SHOULD ALREADY HAVE HAD, found by running ────────
+    // check:census-scope-coverage after the five above went in. Each was cited
+    // by §P or by the body and watched by nothing, which is the same hole §O
+    // recorded about its own three suites one widening ago.
+    //   verifyFlowHighlightControls.test.ts — §P.1's whole argument, the
+    //     PUT → GET → feed → DELETE flow that falsified §O.2's "they will stay
+    //     empty". Cited twice.
+    //   highlightPublicProjectionEnforcement.test.ts — §P.2's 39 cases and
+    //     twelve mutations, and §Q.5 drives it too.
+    //   highlightRouteHarness.ts — the table-backed fake both of those suites
+    //     drive. §P.6 names it by name and this scope did not watch it.
+    //   2975_highlights_permanent_lifetime.sql — H98's ENTIRE blocker. The row
+    //     is NOT-BUILT because `highlights.expires_at` is still NOT NULL, and
+    //     this migration is the thing that changes that. §Q.9 names its landing
+    //     as one of four events that turn the section red, so a change to it
+    //     must age the document.
+    //   2320_memory_episode_provenance_spine.sql — PR #470's migration, which
+    //     H18, H19, H23 and H24 each cite as "unmerged PR #470 only". If it
+    //     merges or changes, four rows change.
+    //
+    // NOT ADDED, and said rather than left silent, per the guard's own second
+    // remedy: `0179_stamp_criteria_engine.sql` is cited by BASENAME with no
+    // path, in §N's account of the criteria engine minting a stamp the Passport
+    // then counted. This repository holds several files with that basename in
+    // frozen non-executable roots, so there is no single path to watch, and
+    // adding one would assert a resolution the citation does not make. It is
+    // the one citation this census still does not watch.
+    "artifacts/api-server/src/test/verifyFlowHighlightControls.test.ts",
+    "artifacts/api-server/src/test/highlightPublicProjectionEnforcement.test.ts",
+    "artifacts/api-server/src/test/highlightRouteHarness.ts",
+    "artifacts/api-server/src/migrations/2975_highlights_permanent_lifetime.sql",
+    "artifacts/api-server/src/migrations/2320_memory_episode_provenance_spine.sql",
     // WIDENED 2026-09-13 by section F, which worked §25's H239 from the SURFACE
     // end — "planned activity without occurrence cannot earn a visit
     // Memory/Stamp" — and found that one of the five Passport-stamp seams in the
@@ -1579,6 +1800,24 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/telegraphConversationCapabilities.test.ts",
     "artifacts/api-server/src/test/telegraphNeedsAction.test.ts",
     "travel-buddy-standalone/src/features/telegraph/",
+    // WIDENED 2026-09-22 by the §16/§18 MEDIA / VOICE / COMPASS lane (§34).
+    // Five files §34 rests its measurements on, each cited there and none
+    // watched before. `check:census-scope-coverage` caught the gap the moment
+    // the section landed, which is the check doing exactly its job: a census
+    // that cites a file it does not watch is a census that can go stale in
+    // silence on its own evidence.
+    //
+    // `lib/translation.ts` is the important one. §34.1's whole finding is that
+    // `DetectLanguageResult.confidence` existed in THAT file and was discarded
+    // by `messageTranslation.ts`, so T240 and T242 now rest on the producer as
+    // much as on the consumer — and the consumer was already watched while the
+    // producer was not. That asymmetry is precisely how §29.3's "a verdict can
+    // rest on a file that a cited file CALLS" goes wrong.
+    "artifacts/api-server/src/lib/translation.ts",
+    "artifacts/api-server/src/migrations/2991_message_translations_confidence.sql",
+    "artifacts/api-server/src/test/translationConfidence.test.ts",
+    "artifacts/api-server/src/test/telegraphContextObjectsHonesty.test.ts",
+    "artifacts/api-server/src/test/voicePipelineAuthority.test.ts",
     // WIDENED A THIRD TIME 2026-09-12: the §1–§11 lane (census-telegraph §10)
     // added the Shared Context Rail, the share contract, the typed kinds, the
     // coordination surface, unsend, memory notes and the lifecycle routes.
@@ -1619,6 +1858,88 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // quoted — a test a census rests a closure on is a file that census counts.
     "artifacts/api-server/src/test/messagingSwallowedReadHonesty.test.ts",
     "travel-buddy-standalone/app/messages/",
+    // ADDED 2026-09-22 by the §32 reports reconciliation. §32 rules that the
+    // unified `public.reports` already satisfies Telegraph's reporting
+    // requirement and that no second system may be built — and it rests that
+    // ruling partly on the unified path having REAL readers, of which this
+    // end-to-end moderation FK verification is one. Same principle as
+    // `messagingSwallowedReadHonesty.test.ts` above: a proof a census rests a
+    // closure on is a file that census counts. It sits in `src/scripts/`, but
+    // it is not the `check*.ts` machinery the note below excludes — it is
+    // evidence, and if it is deleted or stops exercising `reports`, §32's
+    // ruling should age with it. Citing it without watching it is what pushed
+    // this census below its coverage floor.
+    "artifacts/api-server/src/scripts/verifyModerationFkE2E.ts",
+    // ADDED 2026-09-22 for the coordination-lifecycle lane (census-telegraph §33).
+    // The lane's three new suites are the evidence §33 rests T168, T187-T192,
+    // T150 and T266 on — the coordination command's two doors, the four §13.2
+    // events, the expiry sweeps and the Discover Together intersection. Same
+    // principle as the two entries above: a proof a census rests a closure on is
+    // a file that census counts, and citing them without watching them is what
+    // pushed the coverage ratio below its floor.
+    "artifacts/api-server/src/test/telegraphCoordinationLifecycle.test.ts",
+    "artifacts/api-server/src/test/telegraphLifecycleEvents.test.ts",
+    "artifacts/api-server/src/test/telegraphDiscoverTogether.test.ts",
+    // And the suite whose STALE case §33 replaced. T168 used to be closed by a
+    // test asserting `POST /telegraph/commands` answers 501 for a §13.1 command
+    // "nothing implements" — which stopped being true when the coordination
+    // session entity arrived, so the test was pinning a lie. It now asserts the
+    // command is issuable, still refuses a call with no idempotency key, and that
+    // UNIMPLEMENTED_COMMANDS is EMPTY so the §13.1 partition stays exhaustive.
+    // §33 rests T168 on that file; this census must therefore age with it.
+    "artifacts/api-server/src/test/telegraphCommandRoute.test.ts",
+    // ADDED 2026-09-22 for the saved-messages lane. T80's evidence is this file:
+    // it is what pins that an edit records the PREVIOUS body, that a missing
+    // `message_edits` table degrades loudly (`recorded: false` and a 503, never
+    // `{versions: []}`), and that the history read re-authorizes like the message
+    // content it is. T80 stays W on a DEPLOYMENT ceiling — migration 2811 is
+    // unapplied to production — so this census must age with the file that would
+    // notice if the code stopped behaving that way.
+    "artifacts/api-server/src/test/telegraphMessageEditHistory.test.ts",
+    // WIDENED 2026-09-22 at the §34/§35 merge. Five proofs these two sections
+    // rest verdicts and findings on, none of which this census aged with before.
+    // §34 grades the departed-member gates on the first, and names the other two
+    // as the reason two unfiltered membership reads in the same file are CORRECT
+    // rather than defects — a ruling that stops being true the day either of
+    // those suites stops holding the dedupe/rejoin behaviour. §35's two are the
+    // red-first evidence for the dispatch-table fail-open and the command
+    // vocabulary; a verdict resting on "the table fails closed" must age with the
+    // file that would notice if it stopped.
+    "artifacts/api-server/src/test/telegraphMembershipHonesty.test.ts",
+    "artifacts/api-server/src/test/messagingThreadDedupe.test.ts",
+    "artifacts/api-server/src/test/messagingThreadRejoinWrite.test.ts",
+    "artifacts/api-server/src/test/telegraphDispatchTablePrototypeKeys.test.ts",
+    "artifacts/api-server/src/test/telegraphCreateCoordinationSession.test.ts",
+    // WIDENED 2026-09-22 by the location/proximity/privacy lane
+    // (census-telegraph §31): §4's Nearby surface and §30A.2's
+    // ReachablePersonProjection are built here, and §17.8/§30A.7's device-bound
+    // precise location lands on the two /me/location-state handlers and their
+    // client. Every path below is CITED by §31, so an edit to any of them ages
+    // the seven rows that section moved — which is exactly what should happen
+    // to a verdict that rests on a bucket ladder or a fail-closed gate.
+    "artifacts/api-server/src/lib/proximityBuckets.ts",
+    "artifacts/api-server/src/lib/invisibleMode.ts",
+    "artifacts/api-server/src/lib/preciseLocationDevice.ts",
+    "artifacts/api-server/src/lib/mapTravelers.ts",
+    "artifacts/api-server/src/services/telegraph/",
+    "artifacts/api-server/src/routes/nearbyReachable.ts",
+    "artifacts/api-server/src/migrations/2990_nearby_reachable_flag.sql",
+    "artifacts/api-server/src/routes/location.ts",
+    "artifacts/api-server/src/routes/index.ts",
+    "artifacts/api-server/src/test/proximityBuckets.test.ts",
+    "artifacts/api-server/src/test/invisibleMode.test.ts",
+    "artifacts/api-server/src/test/nearbyRankOrderChannel.test.ts",
+    "artifacts/api-server/src/test/reachablePersonProjection.test.ts",
+    "artifacts/api-server/src/test/reachablePeopleFailClosed.test.ts",
+    "artifacts/api-server/src/test/preciseLocationDeviceBinding.test.ts",
+    "artifacts/api-server/src/test/nearbyReachableRoute.test.ts",
+    "travel-buddy-standalone/src/hooks/useActiveLocation.ts",
+    "travel-buddy-standalone/src/hooks/activeLocation.state.ts",
+    "travel-buddy-standalone/src/hooks/__tests__/activeLocation.deviceBoundPrecision.test.ts",
+    // Cited by §31 as the pattern the client half copies, not as a Telegraph
+    // behaviour — but a census that rests an argument on another lane's module
+    // should notice when that module changes.
+    "travel-buddy-standalone/src/platform/input-assistance/services/policyStore.ts",
     // STILL NOT WATCHED, deliberately: src/scripts/check*.ts, guardRegistry.ts,
     // generateTelegraphInventory.ts, rlsDispositions.ts, the two workflow YAMLs,
     // and the other censuses this one cross-references. Those are machinery and
@@ -2160,6 +2481,30 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.zeroState.component.test.tsx",
     "artifacts/api-server/src/test/inputAssistanceSelectionMemoryLiveDbStatus.test.ts",
     "travel-buddy-standalone/scripts/run-node-tests.mjs",
+    // ── ADDED 2026-09-21 by §31, for the offline substrate ──────────────────
+    // Ten files the eight rows §31.3 moves cite as their evidence. Four of them
+    // are SHIPPED DATA, which is the unusual half and the reason this block is
+    // not optional: G197's `C` rests on 250 country names and G198's on ~270
+    // city names, so an edit to either artifact can falsify a verdict without
+    // touching a line of executable code. A census that grades a data file and
+    // does not watch it is the same inversion as one that grades a test and
+    // does not watch it.
+    "travel-buddy-standalone/src/platform/input-assistance/data/countries.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/data/cities.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/data/languages.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/data/interests.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/services/localDictionary.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/services/__tests__/localDictionary.test.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/services/localRecentsStore.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/services/__tests__/localRecentsPersistence.test.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/services/installLocalRecents.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.offline.component.test.tsx",
+    // G198's bound IS this file's key set, and G197's country pin is measured
+    // against this one — they are cited as the artifacts the new ones are
+    // derived from and pinned to, so a rename or a trimmed list there moves a
+    // verdict here.
+    "travel-buddy-standalone/src/lib/cityCentroids.ts",
+    "travel-buddy-standalone/src/lib/countryCentroids.ts",
     // ── ADDED 2026-09-21 by §14 (the scattered §27–§56 rows) ────────────────
     // Every path below is cited as EVIDENCE by a row §14 moved or re-read, and
     // scope-coverage measured the census at exactly its 98% floor before them:

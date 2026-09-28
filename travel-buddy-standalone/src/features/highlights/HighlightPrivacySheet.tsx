@@ -34,6 +34,18 @@
  *    KEEP_PRIVATE_FOREVER goes through a confirmation, and the server refuses
  *    it without one, so a client that skipped the prompt would get a 400 rather
  *    than quietly reversing the decision.
+ *
+ * 5. IT DOES NOT OFFER A CONSENT SWITCH NOBODY READS. §10 names five consent
+ *    dimensions and the schema stores all five, but only the ones the server
+ *    reports in `consentEnforcement.enforced` are read by a surface a viewer
+ *    can observe. Those are the only ones rendered, and WHICH ones they are
+ *    comes off the wire — there is no fallback to `consentDimensions`, because
+ *    a fallback would put three dead switches on this sheet on exactly the
+ *    deployment that could not tell us they were dead.
+ *
+ *    This section is why the sheet exists at all for §10: `consent_share =
+ *    false` is a live withholding gate on every non-owner surface, and before
+ *    it there was no user anywhere who could set one.
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import {
@@ -51,11 +63,15 @@ import {
   saveProjectionPolicy,
   isControlSet,
   highlightScopedControls,
+  enforcedConsentDimensions,
+  surfacesGatedBy,
+  consentChoice,
   type ResurfacingControlsView,
   type ProjectionPolicyView,
   type ResurfacingControl,
   type LocationPrecisionRung,
   type PrivacyErrorKind,
+  type ConsentValue,
 } from './privacyControlsApi.ts';
 
 /**
@@ -131,6 +147,34 @@ const CONTROL_LABELS: Partial<Record<ResurfacingControl, string>> = {
   KEEP_PRIVATE_FOREVER: 'Keep private forever',
   RETAIN_BUT_DO_NOT_PERSONALIZE: 'Keep, but don’t personalise from it',
 };
+
+/**
+ * Plain-language names for the §10 consent dimensions.
+ *
+ * PARTIAL on purpose, exactly like CONTROL_LABELS above: a dimension this build
+ * has never heard of falls back to the server's own name and is still offered.
+ * The moment this map decided WHICH dimensions exist, it would be a second copy
+ * of a vocabulary `consentEnforcement` is on the wire to own.
+ */
+const CONSENT_LABELS: Record<string, string> = {
+  STORE: 'Storing this memory',
+  RESURFACE: 'Bringing this back to me later',
+  PERSONALIZE: 'Personalising from it',
+  SHARE: 'Showing this to other people',
+  CONTRIBUTE_TO_AGGREGATE_INTEL: 'Contributing to travel insights',
+};
+
+/** Plain-language names for the surfaces the server names in `bySurface`. */
+const SURFACE_LABELS: Record<string, string> = {
+  proactive_resurfacing: 'memories we resurface',
+  public_projection: 'the public version of this highlight',
+  recap: 'recaps',
+  personalization: 'personalisation',
+};
+
+function surfaceLabel(surface: string): string {
+  return SURFACE_LABELS[surface] ?? surface;
+}
 
 const PRECISION_LABELS: Record<LocationPrecisionRung, string> = {
   EXACT: 'Exact spot',
@@ -220,7 +264,33 @@ export function HighlightPrivacySheet({ visible, highlightId, onClose, onChanged
     onChanged?.();
   }
 
+  /**
+   * Record one §10 consent decision.
+   *
+   * THE PATCH NAMES ONE DIMENSION. `saveProjectionPolicy` treats an ABSENT key
+   * as "leave it alone" and a `null` value as "unset it", and the server keeps
+   * the same distinction. Sending the whole consent object would mean a client
+   * built before a sixth dimension existed resets it to unknown on every save.
+   *
+   * Then it RE-READS rather than patching local state, for the reason
+   * `toggleControl` gives: the server is the only thing that knows what is
+   * stored, and a switch that trusts its own optimism is how a screen shows a
+   * consent as withheld after the write was rejected.
+   */
+  async function chooseConsent(dimension: string, next: ConsentValue) {
+    setSaving(`consent:${dimension}`);
+    const result = await api.savePolicy(highlightId, { consent: { [dimension]: next } });
+    setSaving(null);
+    if (!result.ok) {
+      tell('Not saved', messageFor(result.errorKind, result.message));
+      return;
+    }
+    await load();
+    onChanged?.();
+  }
+
   const offered = highlightScopedControls(controls);
+  const consentDimensions = enforcedConsentDimensions(policy);
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -317,6 +387,85 @@ export function HighlightPrivacySheet({ visible, highlightId, onClose, onChanged
                 No choice saved yet — the location follows who you shared this with.
               </Text>
             )}
+
+            {/* ── §10 consent ────────────────────────────────────────────────
+              * Only the dimensions the SERVER marked ENFORCED are offered. The
+              * others are storable and read by no surface, and a switch whose
+              * effect no viewer can observe is worse than no switch: it is a
+              * promise. `enforcedConsentDimensions` reads that list off the
+              * wire and has no fallback to `consentDimensions` for exactly
+              * that reason.
+              */}
+            <Text style={s.section}>What this highlight may be used for</Text>
+            {consentDimensions.length === 0 ? (
+              <Text style={s.rowNote} testID="highlight-privacy-consent-unavailable">
+                These choices aren’t available on this version of Portava yet.
+              </Text>
+            ) : (
+              consentDimensions.map((dimension) => {
+                const choice = consentChoice(policy, dimension);
+                const surfaces = surfacesGatedBy(policy, dimension).map(surfaceLabel);
+                const busy = saving === `consent:${dimension}`;
+                const label = CONSENT_LABELS[dimension] ?? dimension;
+                return (
+                  <View key={dimension} style={s.consentRow} testID={`highlight-privacy-consent-${dimension}`}>
+                    <View style={s.info}>
+                      <Text style={s.rowTitle}>{label}</Text>
+                      {surfaces.length > 0 && (
+                        <Text style={s.rowNote} testID={`highlight-privacy-consent-surfaces-${dimension}`}>
+                          {`Applies to ${surfaces.join(' and ')}.`}
+                        </Text>
+                      )}
+                      {/* The three states are named, because "no answer" and
+                        * "no" are different facts: only a stored NO withholds
+                        * this highlight, and leaving it unanswered does not. */}
+                      <Text
+                        style={s.rowNote}
+                        testID={`highlight-privacy-consent-state-${dimension}-${choice}`}
+                      >
+                        {choice === 'granted'
+                          ? 'You’ve allowed this.'
+                          : choice === 'withheld'
+                            ? 'You’ve said no — this is withheld.'
+                            : 'You haven’t answered yet, so nothing is withheld.'}
+                      </Text>
+                    </View>
+                    {busy ? (
+                      <ActivityIndicator size="small" color={color.signal} />
+                    ) : (
+                      <View style={s.consentChoices}>
+                        {/* Pressing the choice already stored CLEARS it — the
+                          * same "press the selected rung to unset" the §10
+                          * precision ladder above uses, so a person can take
+                          * an answer back rather than only change it. */}
+                        <Pressable
+                          onPress={() => void chooseConsent(dimension, choice === 'granted' ? null : true)}
+                          disabled={saving !== null}
+                          style={[s.consentBtn, choice === 'granted' && s.consentBtnOn]}
+                          testID={`highlight-privacy-consent-allow-${dimension}`}
+                          accessibilityRole="radio"
+                          accessibilityState={{ selected: choice === 'granted', disabled: saving !== null }}
+                          accessibilityLabel={`Allow: ${label}`}
+                        >
+                          <Text style={[s.consentBtnText, choice === 'granted' && s.consentBtnTextOn]}>Yes</Text>
+                        </Pressable>
+                        <Pressable
+                          onPress={() => void chooseConsent(dimension, choice === 'withheld' ? null : false)}
+                          disabled={saving !== null}
+                          style={[s.consentBtn, choice === 'withheld' && s.consentBtnOn]}
+                          testID={`highlight-privacy-consent-withhold-${dimension}`}
+                          accessibilityRole="radio"
+                          accessibilityState={{ selected: choice === 'withheld', disabled: saving !== null }}
+                          accessibilityLabel={`Don’t allow: ${label}`}
+                        >
+                          <Text style={[s.consentBtnText, choice === 'withheld' && s.consentBtnTextOn]}>No</Text>
+                        </Pressable>
+                      </View>
+                    )}
+                  </View>
+                );
+              })
+            )}
           </ScrollView>
         )}
       </View>
@@ -349,6 +498,16 @@ const s = StyleSheet.create({
   info: { flex: 1, gap: 2 },
   rowTitle: { ...t.bodyStrong, color: color.ink, fontSize: 14 },
   rowNote: { ...t.small, color: color.faint, fontSize: 11 },
+  consentRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: space.sm },
+  consentChoices: { flexDirection: 'row', gap: space.xs },
+  consentBtn: {
+    paddingHorizontal: space.md, paddingVertical: space.xs,
+    borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze,
+    minWidth: 44, alignItems: 'center',
+  },
+  consentBtnOn: { backgroundColor: color.signal, borderColor: color.signal },
+  consentBtnText: { ...t.bodyStrong, color: color.ink, fontSize: 13 },
+  consentBtnTextOn: { color: color.paper },
   warnRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 4, marginTop: 2 },
   warn: { ...t.small, color: color.mute, fontSize: 11, flex: 1 },
   check: {

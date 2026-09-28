@@ -155,8 +155,9 @@ function keysFromObjectLiteral(
 /**
  * Resolve a payload expression to its column keys.
  * Handles object literals, arrays of object literals, conditional
- * expressions (union of both branches), and — one level deep — identifiers
- * whose same-file `const` initializer is an object literal.
+ * expressions (union of both branches), identifiers whose same-file `const`
+ * initializer is an object literal, calls to a row builder DECLARED IN THE
+ * SAME FILE (its returns are unioned), and `xs.map(cb)` batches.
  */
 function resolvePayload(
   expr: ts.Expression,
@@ -210,6 +211,27 @@ function resolvePayload(
     if (init) return resolvePayload(init, sf, usePos, depth + 1);
     return null;
   }
+  // `rowFor(a, b)` — a payload built by a NAMED function declared in the same
+  // file. This tree factors row construction into small exported builders so
+  // they can be unit-tested directly (see LayoverDecisionStore's
+  // certifiedComputationRowFor / timeBudgetRowFor / returnPlanRowFor, each
+  // asserted on in test/layoverDecisionLedger.test.ts). Before this case those
+  // sites resolved to NOTHING and became allowlisted blind spots, which
+  // punished the better-factored code: inlining the literal at the call site
+  // would have made the checker happy and the tests worse.
+  //
+  // Resolution is deliberately SAME-FILE ONLY, the same bound `findInitializer`
+  // keeps for identifiers. Following an import would mean resolving module
+  // specifiers and re-parsing arbitrary files, and a builder that lives
+  // elsewhere is a genuine blind spot rather than one this pass can honestly
+  // close. The returned object's own spreads recurse back through
+  // `keysFromObjectLiteral`, so a builder that spreads another builder resolves
+  // too, up to the shared depth bound.
+  if (ts.isCallExpression(expr) && ts.isIdentifier(expr.expression)) {
+    const fn = findFunctionDeclaration(expr.expression.text, sf);
+    if (fn) return resolveFunctionReturn(fn, sf, usePos, depth + 1);
+    return null;
+  }
   // `xs.map(cb)` / `xs.flatMap(cb)` — a batch of rows built from ONE row
   // shape. The array is variable-length so it can never be an array literal,
   // but the row shape is right there in the callback, and the columns a batch
@@ -240,12 +262,16 @@ function resolvePayload(
  * thing unresolved rather than silently narrowing the answer.
  */
 function resolveFunctionReturn(
-  fn: ts.ArrowFunction | ts.FunctionExpression,
+  fn: ts.ArrowFunction | ts.FunctionExpression | ts.FunctionDeclaration,
   sf: ts.SourceFile,
   usePos: number,
   depth: number,
 ): { keys: string[]; unresolved: boolean } | null {
   if (depth > 3) return null;
+  // A FunctionDeclaration may have no body at all (an overload signature or an
+  // ambient declaration). There is nothing to read, and guessing is exactly the
+  // blind spot this resolver exists to remove.
+  if (!fn.body) return null;
   if (!ts.isBlock(fn.body)) {
     return resolvePayload(fn.body as ts.Expression, sf, usePos, depth);
   }
@@ -276,6 +302,38 @@ function resolveFunctionReturn(
     }
   }
   return { keys, unresolved };
+}
+
+// Per-file map of function name → its declaration, for payloads built by a
+// named same-file builder. Unlike `initializerCache` this is not
+// position-sensitive: a function declaration is hoisted and a file may not
+// declare the same function name twice, so there is no "nearest" to choose.
+// A name that IS declared more than once (legal only across different scopes)
+// resolves to nothing rather than to a guess.
+const functionCache = new Map<
+  ts.SourceFile,
+  Map<string, ts.FunctionDeclaration | null>
+>();
+
+function findFunctionDeclaration(
+  name: string,
+  sf: ts.SourceFile,
+): ts.FunctionDeclaration | undefined {
+  let map = functionCache.get(sf);
+  if (!map) {
+    map = new Map();
+    const visit = (node: ts.Node) => {
+      if (ts.isFunctionDeclaration(node) && node.name) {
+        // Second sighting of a name means ambiguity; record it as unresolvable
+        // rather than picking one.
+        map!.set(node.name.text, map!.has(node.name.text) ? null : node);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sf);
+    functionCache.set(sf, map);
+  }
+  return map.get(name) ?? undefined;
 }
 
 // Per-file map of variable name → declarations (position + initializer),

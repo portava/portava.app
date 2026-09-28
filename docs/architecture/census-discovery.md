@@ -429,10 +429,10 @@ The build puts the sixth capability on the one contract:
 
 | what | where |
 |---|---|
-| The registration, by object family: bucket, structured flag, and the message subtypes each family is carried by | `artifacts/api-server/src/domain/telegraph/contracts/conversationSearch.ts:92#export const SEARCH_BEHAVIOUR` |
-| Its type, stating what §21's last line means by "structured" | `artifacts/api-server/src/domain/telegraph/contracts/conversationSearch.ts:68#export interface TelegraphSearchBehaviour` |
+| The registration, by object family: bucket, structured flag, and the message subtypes each family is carried by | `artifacts/api-server/src/domain/telegraph/contracts/conversationSearch.ts:94#export const SEARCH_BEHAVIOUR` |
+| Its type, stating what §21's last line means by "structured" | `artifacts/api-server/src/domain/telegraph/contracts/conversationSearch.ts:70#export interface TelegraphSearchBehaviour` |
 | The sixth member on the contract itself, beside the other five | `artifacts/api-server/src/services/telegraph/shareables.ts:112#getSearchBehaviour()` |
-| The one searchable card kind with no shareable family, DECLARED rather than folded into `PLACE` | `artifacts/api-server/src/domain/telegraph/contracts/conversationSearch.ts:121#export const FAMILYLESS_SUBTYPE_BUCKET` |
+| The one searchable card kind with no shareable family, DECLARED rather than folded into `PLACE` | `artifacts/api-server/src/domain/telegraph/contracts/conversationSearch.ts:123#export const FAMILYLESS_SUBTYPE_BUCKET` |
 | Fifteen cases across five blocks, including literal copies of both pre-change maps | `artifacts/api-server/src/test/telegraphSearchCapability.test.ts:1#/**` |
 
 `SUBTYPE_BUCKET` and `STRUCTURED_SUBTYPES` are now **derived** from the registration rather than

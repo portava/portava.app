@@ -57,6 +57,13 @@ import { resolvePrivacyVerdict, type TelegraphChatPrivacyVerdict } from "../serv
 import { resolveConversationCapabilities } from "../domain/telegraph/policies/conversationCapabilityPolicy.js";
 import type { ConversationCapabilities } from "../domain/telegraph/contracts/conversationCapabilities.js";
 import { searchConversations } from "../services/telegraphSearch.js";
+import {
+  applyHistoryWindow,
+  historyBoundEnabled,
+  membershipSelect,
+  visibleFromOf,
+  withinWindow,
+} from "../services/groupChatHistoryBound.js";
 import { projectPublicWindows, type ViewerRelationship } from "../services/passport/OpenToPlansService.js";
 
 const log = rootLogger.child({ mod: "telegraphCompassTools" });
@@ -88,6 +95,22 @@ interface Gate {
   verdict: TelegraphChatPrivacyVerdict;
   capabilities: ConversationCapabilities;
   memberIds: string[];
+  /**
+   * The caller's Telegraph §14.3 history bound for this conversation, or null
+   * when it is unbounded (flag off, pre-2400 membership row, or a §14.1
+   * canViewPreMembershipHistory grant). Every tool below that reads `messages`
+   * applies it; see the gate's own comment for why it belongs here and not in
+   * each tool.
+   */
+  visibleFrom: string | null;
+  /**
+   * The participant Compass is answering FOR. It rides with `visibleFrom` for
+   * the same reason `visibleFrom` rides in the gate at all: Q6's exception is
+   * the pair (bound, viewer), and a tool that took one without the other would
+   * apply half a rule. Always the authenticated caller this gate just proved
+   * ACTIVE membership for — never a conversationId-style value out of `args`.
+   */
+  viewerId: string;
 }
 
 function refuse(reason: string, degraded = false): TelegraphToolRefusal {
@@ -115,9 +138,26 @@ export async function gateConversation(
   const conversationId = conversationIdOf(args);
   if (!conversationId) return refuse("conversation_id_required");
 
+  // §14.3, read ONCE for all eight tools. Compass answers on behalf of ONE
+  // participant, so "data authorized to the conversational context" is
+  // authorized to THAT participant's window — a member added to a trip thread
+  // yesterday must not be able to ask Compass what was shared last month and
+  // get an answer. Two tools below read `messages` directly, and putting the
+  // bound in the gate is what stops the third one written later from forgetting
+  // it: a tool that reads messages has to take `gate.visibleFrom` from the same
+  // object it already takes `conversationId` from.
+  //
+  // FALSE ON ERROR is the lane's polarity (lib/featureFlags.isFlagEnabled): an
+  // unreadable `feature_flags` leaves Compass's reach exactly what it is today
+  // rather than blanking every answer. The MEMBERSHIP read below keeps this
+  // file's own refuse-on-unreadable posture.
+  const boundOn = await historyBoundEnabled(sc);
+
   const { data: mine, error: mineErr } = await sc
     .from("message_thread_members")
-    .select("user_id, left_at")
+    // Conditional, so a build carrying this code never names a column a
+    // database that has not run 2400 would reject with 42703.
+    .select(membershipSelect("user_id, left_at", boundOn))
     .eq("thread_id", conversationId)
     .eq("user_id", userId)
     .maybeSingle();
@@ -149,6 +189,8 @@ export async function gateConversation(
     verdict,
     capabilities: caps.capabilities,
     memberIds: ((roster as any[]) ?? []).map((r) => String(r.user_id)),
+    visibleFrom: visibleFromOf(mine as any, boundOn),
+    viewerId: userId,
   };
 }
 
@@ -166,15 +208,58 @@ export async function telegraphGetConversationContext(
   // Compass from reading one participant's private content to another, and the
   // safest reading of "conversation context" is the set of objects the
   // participants deliberately put into the conversation — not the prose.
-  const { data: recent, error } = await sc
+  let recentQ = sc
     .from("messages")
-    .select("id, subtype, created_at")
+    .select("id, sender_id, subtype, created_at")
     .eq("thread_id", gate.conversationId)
     .is("deleted_at", null)
     .not("subtype", "is", null)
     .order("created_at", { ascending: false })
     .limit(10);
-  if (error) log.warn({ err: error }, "conversation context: recent objects unreadable");
+  // §14.3. `recentObjectKinds` is a list of what was put into the conversation
+  // and WHEN it stopped being put there; from before the caller's window it is
+  // pre-membership history in summary form. Bounded in the QUERY so the limit
+  // is spent on rows the caller may see, and re-checked in `withinWindow`
+  // because `gte` and the filter must agree on the boundary instant across the
+  // two ISO spellings Postgres and Node produce.
+  // Q6 in the QUERY: this read is `.limit(10)`, so a plain `.gte` decides the
+  // ten rows in PostgREST and the filter below never sees the caller's own
+  // earlier objects. `sender_id` is selected above for exactly this — the
+  // relaxed clause admits `sender_id = caller` and nothing else, so another
+  // participant's pre-membership objects still never reach the model.
+  recentQ = applyHistoryWindow(recentQ, gate.visibleFrom, gate.viewerId);
+  const { data: recent, error } = await recentQ;
+
+  // AN UNREADABLE OBJECT LIST IS NOT AN EMPTY CONVERSATION.
+  //
+  // This read used to end `((recent as any[]) ?? [])`, and supabase-js RESOLVES
+  // a rejected query with `{ data: null, error }` rather than throwing — so the
+  // `?? []` turned an RLS denial, a timeout or a dropped connection into the
+  // empty array, and Compass was handed "the participants have put nothing into
+  // this conversation" as a fact. The model then says that to the participant.
+  // It is the one failure mode §18.3's boundary sentence cannot tolerate: a
+  // confident statement about a conversation, manufactured by a failure nobody
+  // was told about.
+  //
+  // NULL RATHER THAN A FLAG ALONE. `[]` is iterable and sums to "nothing", so a
+  // caller that forgets the flag still reads the wrong answer; `null` cannot be
+  // mapped over by accident. The flag is there too, because inferring the
+  // reason from a null is the next reader's guess.
+  //
+  // NOT A WHOLE-TOOL REFUSAL, unlike this module's other unreadable reads. The
+  // four other fields below come from the GATE, which already refuses outright
+  // when membership, roster, privacy or capabilities cannot be read — so by the
+  // time execution reaches here those are all known-good. Refusing everything
+  // over one failed non-essential read would trade a false answer for no answer
+  // when a true partial one is available. `telegraph_search_conversation`
+  // already returns `degraded` beside real hits for the same reason.
+  const recentObjectsUnreadable = Boolean(error);
+  if (error) {
+    log.warn(
+      { err: error, conversationId: gate.conversationId },
+      "conversation context: recent objects unreadable — reported as unreadable, not as empty",
+    );
+  }
 
   return {
     authorized: true,
@@ -188,8 +273,19 @@ export async function telegraphGetConversationContext(
     circleContextAvailable: gate.verdict.canUseCircleContext,
     availabilityContextAvailable: gate.verdict.canUseAvailability,
     destination: gate.verdict.tripDestination,
-    recentObjectKinds: ((recent as any[]) ?? []).map((r) => String(r.subtype)),
-    note: "Approximate context only. No coordinates, no live location, no message prose.",
+    recentObjectKinds: recentObjectsUnreadable
+      ? null
+      : ((recent as any[]) ?? [])
+          .filter((r) => withinWindow(r.created_at, gate.visibleFrom,
+                                      { senderId: r.sender_id, viewerId: gate.viewerId }))
+          .map((r) => String(r.subtype)),
+    recentObjectsUnreadable,
+    note: recentObjectsUnreadable
+      ? "Approximate context only. No coordinates, no live location, no message prose. " +
+        "The list of shared objects COULD NOT BE READ — it is null, which is not empty. " +
+        "Do not tell the participant that nothing has been shared in this conversation, " +
+        "and do not offer a reason: say you could not check."
+      : "Approximate context only. No coordinates, no live location, no message prose.",
   };
 }
 
@@ -299,14 +395,27 @@ export async function telegraphGetSharedPlaces(
   const gate = await gateConversation(sc, userId, args);
   if (gate.authorized !== true) return gate;
 
-  const { data: rows, error } = await sc
+  let placesQ = sc
     .from("messages")
-    .select("id, body, subtype, created_at")
+    .select("id, sender_id, body, subtype, created_at")
     .eq("thread_id", gate.conversationId)
     .is("deleted_at", null)
     .in("subtype", ["discovery_card", "hidden_gem", "meeting_point", "compass_card"])
     .order("created_at", { ascending: false })
     .limit(25);
+  // §14.3. This tool returns a card's TITLE and its safe summary text — the
+  // content of a message — so a pre-membership card here is the disclosure
+  // §14.3 forbids, arriving through the model instead of through the thread
+  // read. The messageId it returns is also a handle the caller could carry to
+  // another endpoint. Same two-layer shape as every other windowed read in this
+  // tree: bounded in the query, re-checked per row.
+  // Q6 in the QUERY, and `.limit(25)` is why it has to be here: this tool
+  // returns a card's TITLE and summary — message CONTENT — so the clause must
+  // admit the caller's own earlier cards and no one else's. A card shared by
+  // another participant before this member's window is still withheld, and the
+  // `messageId` handle it would have carried is still never minted.
+  placesQ = applyHistoryWindow(placesQ, gate.visibleFrom, gate.viewerId);
+  const { data: rows, error } = await placesQ;
   if (error) {
     log.warn({ err: error, conversationId: gate.conversationId }, "shared places unreadable");
     return refuse("places_unavailable", true);
@@ -314,6 +423,8 @@ export async function telegraphGetSharedPlaces(
 
   const { indexableText } = await import("../domain/telegraph/contracts/conversationSearch.js");
   const places = ((rows as any[]) ?? [])
+    .filter((r) => withinWindow(r.created_at, gate.visibleFrom,
+                                { senderId: r.sender_id, viewerId: gate.viewerId }))
     .map((r) => {
       const { objectTitle, text } = indexableText(r.body, r.subtype);
       return objectTitle === null ? null : {

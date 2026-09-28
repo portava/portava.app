@@ -240,6 +240,52 @@ export function feedSubjectScope(control: ResurfacingControl): "highlight" | "ow
 }
 
 /**
+ * WHOSE stored row governs this control on a feed — the Highlight's OWNER, or
+ * the VIEWER reading it.
+ *
+ * ── THE DEFECT THIS EXISTS TO NAME ─────────────────────────────────────────
+ * `feedSubjectScope` answers which id to MATCH a row against. It does not
+ * answer whose rows to LOAD, and until this function existed both feeds loaded
+ * every control for the owners on the page. Census §Q.6 measured what that
+ * costs, on H89:
+ *
+ *     "the set is read for the OWNERS on the page and the key is `h.owner_id`,
+ *      so a row `(owner Q, HIDE_PERSON_FROM_RESURFACING, subject O)` hides O's
+ *      Highlights from every viewer's feed that has Q on the page. §11's
+ *      control removes ONE PERSON from the SETTER's resurfacing; this removes
+ *      an owner from everyone's."
+ *
+ * Any user who owns one Highlight that reaches a page could write one row and
+ * remove another user's Highlights from every viewer's proactive feeds. It
+ * discloses nothing, so it is not a leak; it is an abuse vector with no rate
+ * limit, no audit and no notice to either party.
+ *
+ * ── THE RULE, AND WHY IT IS DERIVED ────────────────────────────────────────
+ * A `person`-scoped control is a statement about OTHER PEOPLE, and §11 gives
+ * it to the person doing the resurfacing — CONTROL_EFFECTS' own note reads
+ * "one control removes one person from every resurfaced Highlight", meaning
+ * every Highlight resurfaced TO THE SETTER. Every other control is the owner
+ * speaking about their own record, and must keep being read for the owners on
+ * the page or KEEP_PRIVATE_FOREVER — §11's strongest control — would stop
+ * being enforceable, because the person it protects is not the person reading.
+ *
+ * DERIVED from `scope` rather than listed, for the reason
+ * FEED_ENFORCEABLE_CONTROLS gives: a seventh control cannot be added to the
+ * vocabulary and routed to the wrong reader by omission.
+ *
+ * ── WHAT THIS DOES NOT FIX ─────────────────────────────────────────────────
+ * §11 keys this control on a PARTICIPANT. `public.highlights` carries no
+ * participants, so the only person a row identifies is its owner and that is
+ * what the subject is matched against. Census H89 stays BUILT-BUT-WRONG on
+ * exactly that, and this function does not change it — a Highlight that merely
+ * FEATURES a hidden person is still resurfaced. It changes who the control
+ * belongs to, which was wrong independently.
+ */
+export function controlSetter(control: ResurfacingControl): "owner" | "viewer" {
+  return CONTROL_EFFECTS[control].scope === "person" ? "viewer" : "owner";
+}
+
+/**
  * Which controls in this set suppress a proactive feed and CANNOT be resolved
  * on it.
  *

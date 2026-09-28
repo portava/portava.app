@@ -12,6 +12,18 @@ import type { LayoverRecommendation } from '../../services/layover.ts';
 interface Props {
   recs: LayoverRecommendation[];
   loading: boolean;
+  /**
+   * census L294 (C2) — the SERVER's sentence when the read produced no
+   * list, and `null` when it produced one (however short).
+   *
+   * Required, not optional, and that is the point. `GET /:id/recommendations`
+   * refuses with `degraded_unavailable` rather than serving `[]` on a failed
+   * read, because "there is nothing to do on your layover" is a claim about a
+   * city. This card used to receive that refusal as an empty array and print
+   * the claim. A caller now has to say which of the two it holds.
+   */
+  error: string | null;
+  onRetry: () => void;
   canPlan: boolean;
   addedRecIds: Set<string>;
   addingRecId: string | null;
@@ -21,7 +33,7 @@ interface Props {
 type Filter = 'all' | 'inside' | 'outside';
 
 export function LayoverRecsSection({
-  recs, loading, canPlan, addedRecIds, addingRecId, onAddToPlan,
+  recs, loading, error, onRetry, canPlan, addedRecIds, addingRecId, onAddToPlan,
 }: Props) {
   const [filter, setFilter] = useState<Filter>('all');
 
@@ -38,6 +50,10 @@ export function LayoverRecsSection({
         <Text style={styles.heading}>What you can actually do</Text>
       </View>
 
+      {/* The chips filter a list. With no list they filter nothing, and
+          offering them next to a failure suggests the failure is a filtering
+          result. */}
+      {!error && (
       <View style={styles.filterRow}>
         {(['all', 'inside', 'outside'] as Filter[]).map((f) => (
           <Pressable key={f} style={[styles.filterChip, filter === f && styles.filterChipActive]} onPress={() => setFilter(f)}>
@@ -47,10 +63,28 @@ export function LayoverRecsSection({
           </Pressable>
         ))}
       </View>
+      )}
 
       {loading && <ActivityIndicator color={color.deep} style={{ marginVertical: space.lg }} />}
 
-      {!loading && filtered.length === 0 && (
+      {/* THE REFUSAL, IN THE SERVER'S OWN WORDS. Not "nothing fits" — that is a
+          finished answer about a city, and this is the absence of one. */}
+      {!loading && error && (
+        <View style={styles.errorBox} testID="layover-recs-error">
+          <Text style={styles.errorText}>{error}</Text>
+          <Pressable
+            style={styles.retryBtn}
+            onPress={onRetry}
+            accessibilityRole="button"
+            accessibilityLabel="Retry loading layover ideas"
+            testID="layover-recs-retry"
+          >
+            <Text style={styles.retryText}>Try again</Text>
+          </Pressable>
+        </View>
+      )}
+
+      {!loading && !error && filtered.length === 0 && (
         <Text style={styles.empty}>
           {filter === 'outside'
             ? 'Nothing outside fits this window — the buffers win this time.'
@@ -58,7 +92,7 @@ export function LayoverRecsSection({
         </Text>
       )}
 
-      {!loading && filtered.map((rec, idx) => {
+      {!loading && !error && filtered.map((rec, idx) => {
         const sc = safetyColors(rec.safetyRating);
         const recId = rec.id ?? null;
         const added = recId ? addedRecIds.has(recId) : false;
@@ -120,6 +154,10 @@ const styles = StyleSheet.create({
   filterText:{ ...t.small, color: color.mute },
   filterTextActive: { color: color.onInk },
   empty:     { ...t.small, color: color.faint, marginTop: space.sm },
+  errorBox:  { backgroundColor: color.paper, borderRadius: radius.md, padding: space.md, gap: space.sm, marginTop: space.sm },
+  errorText: { ...t.small, color: color.mute },
+  retryBtn:  { alignSelf: 'flex-start', borderWidth: 1, borderColor: color.deep, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 6 },
+  retryText: { ...t.small, fontWeight: '700', color: color.deep },
 
   recRow:    { flexDirection: 'row', gap: space.md, paddingVertical: space.md, borderBottomWidth: 1, borderBottomColor: color.haze, alignItems: 'flex-start' },
   emoji:     { fontSize: 22, marginTop: 2 },

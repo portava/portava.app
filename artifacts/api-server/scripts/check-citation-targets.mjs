@@ -287,6 +287,217 @@ import {
  * now holds them. The ceiling is the measurement, not a choice between 235 and
  * 238.
  *
+ * LOWERED 2026-09-22, 210 -> 209, at the four-lane Telegraph/Input integration.
+ * LOWERED 2026-09-22, 209 -> 207, by the §6/§7 rich-messaging lane. Adding the
+ * T80 edit-history writer shifted every line of `routes/messaging.ts` after the
+ * import block, so all 172 file:line citations to it — and the 76 bare `:NNN`
+ * continuations that inherit it — were repointed through the diff's exact
+ * insertion map and each anchored one re-verified against the line it names.
+ * Two citations that had been dangling before that pass now land on real code,
+ * because the bare continuations had been stale and the remap put them right.
+ * Not a sweep: the history-privacy lane threaded a visibility window through
+ * `compass/TelegraphConversationTools.ts`, which moved five citations in
+ * census-telegraph onto blank lines and closing braces. They were repointed by
+ * reading the claim and finding the declaration it is about — the spec-name map,
+ * `gateConversation`, `telegraphGetParticipantAvailability`,
+ * `telegraphCreatePlanDraft` and the `requiresConfirmation: true` literal — never
+ * by offset, and all five gained an `#anchor`, so doc-citations holds them from
+ * here and they cannot silently rot back. The net is one BELOW the old ceiling
+ * rather than level with it because the anchors also moved one previously
+ * unanchored citation out of this check's population. The number below is what
+ * the tool measured at that tree, not a target chosen for it. */
+/* LOWERED AGAIN 2026-09-22, 209 -> 208, while making four membership reads
+ * statically resolvable. The gain is one citation, and it is a REAL repair
+ * rather than a side effect: census-telegraph cited
+ * `routes/groupChat.ts:371` for the sentence "Deletion redacts in place —
+ * `.update({ deleted_at: now, body: '' })`", and line 371 has never carried that
+ * statement. It was landing on unrelated real code, which is why this check —
+ * which only asks whether a line is EMPTY — had been satisfied by it. Repointed
+ * to :609, where the redaction actually is, and anchored. The other two moved
+ * citations in this change were ordinary shifts and were repointed to the lines
+ * their claims describe, also with anchors. */
+/** RE-MEASURED 2026-09-22 by the Telegraph lifecycle lane: 208. That lane's own
+ * edits shifted FOUR citations onto blank lines (`routes/availability.ts` :161
+ * and :706, `server/telegraph/commandRoute.ts` :70, and
+ * `domain/telegraph/commands/telegraphCommands.ts` :97), and repairing them by
+ * READING the claim found two more that were already dead at the same sites —
+ * `commandRoute.ts:271`/:306 and `telegraphCommands.ts:121`. All six were
+ * repointed and given anchors, so doc-citations holds them now and an offset
+ * repair cannot bring them back. */
+/** MERGED 2026-09-22. Two lanes lowered this to 208 independently, for
+ * DIFFERENT repairs — the membership-read rewrite above and the lifecycle
+ * lane's four shifted citations plus the two already-dead ones it found at
+ * the same sites. Neither number describes the merged tree, so the value
+ * below is RE-MEASURED after the merge rather than chosen between them.
+ * Both rationales are kept because both repairs are in this tree.
+ *
+ * The merged measurement is 206, BELOW both lanes' 208, because the two sets of
+ * repairs are disjoint: one repointed citations into
+ * `compass/TelegraphConversationTools.ts` and the four membership reads, the
+ * other into `routes/availability.ts`, `server/telegraph/commandRoute.ts` and
+ * `domain/telegraph/commands/telegraphCommands.ts`. Neither lane could have
+ * measured this number, which is the reason the ceiling is re-measured after a
+ * merge instead of inherited from whichever branch landed last. */
+/* RE-MEASURED AGAIN 2026-09-22 at the saved-messages merge. That lane
+ * inserted seven import lines into `routes/messaging.ts`, which renumbered
+ * EVERY line of the file and moved 248 citations across five documents; it
+ * repointed them and measured 207 in its own worktree. This tree measures
+ * something else again, for the same reason as the merge above: the repairs
+ * are disjoint and no branch can see the union. The value below is the
+ * measurement at the merged tree: 205. */
+/* LOWERED 2026-09-22 by the departed-member membership fix. Adding
+ * `.is('left_at', null)` to the three state-changing membership gates in
+ * `routes/messaging.ts` inserted thirteen lines and renumbered everything
+ * below them, which broke 41 anchored citations and 14 unanchored ones.
+ * doc-citations names the exact line each anchor moved to, so those 41 were
+ * repointed from the check's own reading rather than by offset. The 14
+ * unanchored ones turned out to be rot that PREDATED this change by hundreds
+ * of lines — `:2076` for the media endpoint when the endpoint is at 3155,
+ * `:2720` for the message-report writer when it is at 4296 — so each was
+ * repointed by reading the claim and given an anchor, which also removes it
+ * from this check's unanchored population. That is where most of 205 -> 193
+ * comes from: 12 citations left the population and the rest now land.
+ *
+ * Two lanes still unmerged (lane-media-voice, lane-domain) carry their own
+ * ceilings, 205 and 201, each measured on a base that cannot see this repair.
+ * RE-MEASURE at the merge; do not inherit any of the three. */
+/* LOWERED 2026-09-22, 209 -> 201, by the Telegraph domain/commands/authorization
+ * lane. Also not a sweep. That lane made three edits inside `domain/telegraph/`
+ * — a `dispatchTable` import in `contracts/conversationSearch.ts` and
+ * `commands/telegraphCommands.ts`, and one in `policies/attentionLadder.ts` —
+ * plus a comment in `routes/telegraphCommands.ts`, and the shifts broke
+ * seventeen citations across census-telegraph, census-discovery and
+ * census-compass. Every one was repointed by READING the claim and finding the
+ * line that carries it: `:390` was the confirm-action block's own sentence about
+ * re-verifying trip membership, `:34` was the `create_meetup_draft` intent, `:80`
+ * and `:158` were the safe-metadata allowlist and where it is applied, and
+ * 3586's `:412` and `:398` were the authorize hook and the ownership refusal —
+ * the last two had been imprecise BEFORE the shift and now point at the lines
+ * that actually carry those two claims. All of them gained an `#anchor`, which
+ * is why the net is eight below rather than level: the anchors moved eight
+ * previously unanchored citations out of this check's population and into
+ * doc-citations', where a rot is named rather than merely counted. */
+/* MERGED 2026-09-22, lane-domain. Its 201 and this tree's 193 were measured on
+ * bases neither could see the other from: this tree's repair repointed and
+ * anchored citations into `routes/messaging.ts`, that lane's into
+ * `domain/telegraph/` and `routes/telegraphCommands.ts`. Disjoint repairs, so
+ * the union is below both and neither number may be inherited. The value below
+ * is the measurement AT THE MERGED TREE. */
+/** MERGED AGAIN 2026-09-22, by the §16/§18 MEDIA / VOICE / COMPASS lane, and
+ * the rule the paragraph above set is applied to itself: the number is
+ * RE-MEASURED after this merge rather than carried over from either side.
+ *
+ * This lane's repairs are disjoint from both of the two above. Closing the
+ * silent zero in `telegraphGetConversationContext` and threading a translation
+ * confidence through `services/messageTranslation.ts` shifted eight ANCHORED
+ * citations and six UNANCHORED ones. All fourteen were repointed by reading
+ * the claim — the six §18.3 tool entry points in census-telegraph's §11.4
+ * row-move table, the `requiresConfirmation: true` and `safetyBasis` literals,
+ * the four `messageTranslation` declarations, `executeTelegraphConversationTool`
+ * in census-compass and the definitions array in census-highlights-memories —
+ * and the six unanchored ones GAINED an `#anchor`, which is what moves them out
+ * of this check's population for good.
+ *
+ * It overlaps the membership-read lane on ONE file, `TelegraphConversationTools.ts`,
+ * and on no citation: that lane repointed `:73` (the spec-name map) and
+ * `gateConversation`, this one repointed the eight accessors and the two
+ * literals below them. The overlap is why the number is measured and not
+ * summed.
+ *
+ * MEASURED AFTER THE REBASE, AT 205, and the number is the reason this
+ * paragraph exists rather than a note saying "unchanged". This lane measured
+ * 208 against `b7dd1c71f` and the merged tree measures 205 — a figure NEITHER
+ * side could have produced, because the three sets of repairs are disjoint and
+ * each one's anchors move a different citation out of this check's population.
+ * Carrying 208 forward would have been a ceiling three above the truth, which
+ * is a ratchet that has quietly stopped ratcheting. */
+/* MERGED 2026-09-22, lane-media-voice — the fourth disjoint repair set, and the
+ * rule every paragraph above states is applied once more: measured here, never
+ * carried. That lane measured 205 against a tree without this branch's
+ * messaging.ts repoints or lane-domain's `domain/telegraph/` ones; this branch
+ * measured 189 without its fourteen. Neither number survives the union. */
+/* LOWERED 2026-09-22 while clearing `check:write-path-columns` on PR 521. Three
+ * writes/reads that lanes had left computed were made statically resolvable
+ * (two `membershipSelect(...)` select lists, and the `message_edits` insert
+ * whose whole payload came from a one-caller helper). That shifted
+ * `routes/messaging.ts` again and moved 88 anchored citations, each repointed
+ * to the line doc-citations names, plus 24 UNANCHORED ones that had been landing
+ * on real-but-wrong code for a long time — `:2378` for an Edited marker that is
+ * at `:2502`, `:1855` for a send insert at `:2804`, `:708` for an origin write
+ * at `:782`. Those 24 were repointed by reading the claim and every one gained
+ * an `#anchor`, which is what takes them out of this check's population for
+ * good. 188 -> 186. */
+/* LOWERED 2026-09-22 while correcting the §2 concession arithmetic. That edit
+ * added 24 lines to census-telegraph.md and moved FIVE cross-document pointers,
+ * all of which turned out to be wrong ALREADY — the shift only made one of them
+ * land on a blank line instead of on unrelated prose, which is the difference
+ * between a citation this check can see and one it cannot. The two census-media
+ * pointers name WHERE IN census-telegraph a citation lives; grep put the two
+ * MediaProjectionService.ts:1502 citations at :346 and :1164, and both pointers
+ * were stale by 18 and 45 lines respectively. No `#anchor` was added to those
+ * two on purpose: the target line's own text IS a citation, so an anchor would
+ * nest a `#` inside an anchor and no pass could read it — the one case where
+ * the standing "anchor it while you are there" instruction does not apply, and
+ * it is written down here rather than left as an apparent omission. 186 -> 185. */
+/* LOWERED 2026-09-22 while merging `main` (#452, #453) into PR 521, and the
+ * cause is recorded because it is NOT a repair anyone made. #453 added lines to
+ * `travel-buddy-standalone/src/features/passport/TrustScreen.tsx`, which moved
+ * the line `passport-certification.md:92` points at: `TrustScreen.tsx:346` used
+ * to land on `</View>` — punctuation, which this check calls landing on nothing
+ * — and now lands on `{view.domains.map((row) => (`. The pointer got no truer;
+ * it stopped being VISIBLE to this check, which is the failure mode a ratchet
+ * measured on a floor has to be honest about. So the pointer was repointed by
+ * reading its claim — "Client renders server flags only … TrustScreen note" is
+ * the §11 footer note, not a domain map — and anchored, which is what takes it
+ * out of this population for good: `TrustScreen.tsx:379#server owns
+ * authorization`, verified by check:doc-citations rather than by an offset. The
+ * ceiling falls to the measured number either way, because a ceiling that
+ * refuses a drop it did not earn stops being a ceiling. 185 -> 184. */
+/* LOWERED 2026-09-22 integrating Q6 (the own-message rejoin exception). The
+ * lane repointed 167 citations across four census documents after its change
+ * moved `routes/messaging.ts`, `services/groupChatHistoryBound.ts` and the
+ * telegraph route tree, and the measured count came back 183.
+ *
+ * THE LANE DECLINED TO LOWER IT, AND THAT WAS MY FAULT. Its brief said "do not
+ * lower a floor or raise a ceiling", which it read — reasonably — as "do not
+ * move it at all". The ratchet's own rule is narrower and is stated at the top
+ * of this file: the ceiling may only FALL, and a measured gain that is not
+ * banked is a gain thrown away. So the number is taken here, by the
+ * integrator, on the integrated tree rather than on the lane's base.
+ *
+ * 184 -> 183. */
+/* LOWERED 2026-09-22 by the HIGHLIGHTS & MEMORIES lane (census §Q). ONE pointer
+ * left the population, and it is worth reading which, because the first version
+ * of this drop would have been the failure mode the 185 -> 184 note above
+ * describes rather than a repair.
+ *
+ * MEASURED BOTH WAYS, not inferred: `git archive 812720cc0` was extracted and
+ * this script run against that tree with --list, giving 183 and a line-by-line
+ * list; the same run on the lane's tree gives 182, and `diff` of the two lists
+ * is exactly ONE line —
+ *   docs/architecture/census-highlights-memories.md:814
+ *   `routes/highlights.ts:83` -> …/routes/highlights.ts:83 (blank line)
+ *
+ * THE POINTER WAS DEAD BEFORE THIS LANE AND THE LANE NEARLY HID IT. Line 83 of
+ * routes/highlights.ts was BLANK at 1fe72289b and still blank at 812720cc0, so
+ * H91's citation had been pointing at nothing for two head_commits. §Q's edits
+ * to that file pushed a comment line onto 83, which would have removed it from
+ * this count while leaving the row citing a sentence about column projection
+ * for a claim about §11 control enforcement — a pointer that got no truer and
+ * merely stopped being VISIBLE here.
+ *
+ * So it was repointed by READING THE CLAIM instead. The row says
+ * "KEEP_PRIVATE_FOREVER declared and in FEED_SUPPRESSING_CONTROLS"; no such
+ * constant exists any more — §O.6 replaced it with FEED_ENFORCEABLE_CONTROLS,
+ * derived from CONTROL_EFFECTS — so the citation now names that constant and
+ * its application site, ANCHORED, which takes it out of this population for
+ * good because check:doc-citations holds it from here rather than an offset.
+ * The row's verdict is untouched.
+ *
+ * 183 -> 182.
+ *
+ * ── main's history, kept verbatim ──────────────────────────────────────────
+ *
  * LOWERED 2026-09-22, 210 -> 209, by the p0 moderation-and-safety-reads lane.
  * The branch arrived at 212 because its own line shifts killed three pointers,
  * and the repairs went one past putting it back. None was moved by offset:
@@ -315,8 +526,47 @@ import {
  * The one past came from `09_Payment_Architecture.md:529`, cited across
  * documents by census-discovery for the quote "Payments are not a discovery
  * workstream"; the correction above shifted that file, so it now carries the
- * quote as its anchor. 212 -> 209. */
-export const MAX_DEAD_TARGETS = 204;
+ * quote as its anchor. 212 -> 209.
+ *
+ * ── MERGED 2026-09-22 ──────────────────────────────────────────────────────
+ *
+ * Both histories are kept: each records repairs that were really made, on the
+ * two sides of a merge that had diverged. NEITHER number is carried over. This
+ * branch stood at 181 and main at 209, and adopting either would assert a count
+ * of a tree neither side had measured. The value below is the count of THIS
+ * merged tree, measured after the merge: 179, which is BELOW both sides — this
+ * branch had repaired more than main and main had repaired some this branch
+ * had not, so the union is better than either. */
+/* RATCHETED 2026-09-22 179 -> 178. The citation repair that came with the §17
+ * command-boundary lane retired one more dead target than it created. Lowering
+ * this is TIGHTENING: the guard itself printed "178 < 179 — LOWER THE CEILING
+ * ..., or this gain is not kept", and a ceiling left above the measured count
+ * silently re-admits the rot that was just removed. Measured on a quiet tree,
+ * after both lanes had landed and stopped editing, so the number is not a
+ * reading taken mid-edit. */
+/* MERGED 2026-09-23 with PR #527. `main` carried 204 and this branch 178.
+ * 178 is kept because a ceiling may only FALL: adopting 204 would re-admit
+ * 26 dead targets this branch had already repaired, which is the same move
+ * as raising it. Re-measured against the merged tree immediately after the
+ * merge rather than assumed — see the commit message for the figure. */
+/* RATCHETED 2026-09-23 178 -> 177, at the integration of PR #458. That merge
+ * moved the count to 179: it repaired one target in census-passport and
+ * created two in census-trust, on the `C18` and `C19` rows. census-trust §25
+ * repaired both by reading the claims — `C19`'s sweep and its test had simply
+ * drifted, and `C18`'s bare pointer had never resolved to the file it was
+ * cited for — which left the merged tree at 177, one below the ceiling it
+ * inherited. The guard printed "177 < 178 — LOWER THE CEILING ..., or this
+ * gain is not kept", and that is what this does. Both repairs travel in the
+ * same commit as the merge, so nothing here depends on a tree `main` has not
+ * got: once this branch lands, `main`'s own count is this count. */
+/* RATCHETED 2026-09-23 177 -> 176, in the same pass. PR #527 extended the
+ * migration prefix band in the GUARD and left two documents asserting the old
+ * rule; repairing `docs/architecture/10_Database_Architecture.md` repointed its
+ * citation of `migrationPrefixRules.ts` off a line the edit had emptied and
+ * onto the declaration it names, which retired one more dead target. Same rule
+ * as above: the guard printed "176 < 177 — LOWER THE CEILING", and a ceiling
+ * left above the measured count re-admits the rot just removed. */
+export const MAX_DEAD_TARGETS = 176;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);

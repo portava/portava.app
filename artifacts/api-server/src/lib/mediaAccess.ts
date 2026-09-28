@@ -24,9 +24,12 @@ import {
   authorizeMediaContext,
 } from "./mediaVisibility.js";
 import {
-  resolveStoryRetentionConfig,
-  retentionDatesFor,
-} from "../services/stories/storyRetentionPolicy.js";
+  historyBoundEnabled,
+  membershipSelect,
+  visibleFromOf,
+  withinWindow,
+} from "../services/groupChatHistoryBound.js";
+import { resolveStoryRetentionConfig, retentionDatesFor } from "../services/stories/storyRetentionPolicy.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -583,7 +586,11 @@ async function decide(
   try {
     const { data: msgs, error: msgsErr } = await sc
       .from("messages")
-      .select("thread_id, sender_id")
+      // `created_at` is here for the §14.3 window below. It is a column
+      // `messages` has had since the baseline, so naming it unconditionally
+      // cannot make this query fail on a database that has not run 2400 — only
+      // the MEMBERSHIP select has to stay conditional, and it does.
+      .select("thread_id, sender_id, created_at")
       .or(`media_url.in.${inList},media_thumbnail_url.in.${inList}`)
       .limit(1);
     noteLookupFailure("3c messages", msgsErr, { bucket, path });
@@ -608,9 +615,31 @@ async function decide(
       // denies it. Returning false here would let a forged message row SUPPRESS an
       // object its real owner is entitled to publish elsewhere.
       if (owner && owner === (msg as any).sender_id) {
+        // §14.3 GROUP HISTORY BOUNDS, THE MEDIA DOOR.
+        //
+        // Membership alone was the whole test here, and membership alone is
+        // what migration 2400 exists because of: syncTripChatMembers adds every
+        // newly accepted trip member to the trip thread, so "is in the thread"
+        // was true for a person the thread's older messages are not theirs to
+        // read. Every TEXT reader in this tree now excludes messages created
+        // before the caller's `visible_from_at`; this branch decides whether to
+        // hand over BYTES from a PRIVATE bucket for the same messages. A media
+        // URL reachable without the bound is the same disclosure through
+        // another door, and the door that gives up more.
+        //
+        // The flag polarity is the lane's, not this file's: `historyBoundEnabled`
+        // is FALSE ON ERROR (lib/featureFlags.isFlagEnabled), so an unreadable
+        // `feature_flags` leaves thread media exactly as reachable as it is
+        // today rather than denying every member their own thread's photos.
+        // This file's own deny-on-unreadable posture still governs the two
+        // reads that decide ACCESS — `messages` and `message_thread_members`
+        // — and both keep it.
+        const boundOn = await historyBoundEnabled(sc);
         const { data: member, error: memberErr } = await sc
           .from("message_thread_members")
-          .select("user_id")
+          // Conditional, so a build carrying this code never names a column a
+          // database without 2400 would reject with 42703.
+          .select(membershipSelect("user_id", boundOn))
           .eq("thread_id", msg.thread_id)
           .eq("user_id", viewerId)
           .is("left_at", null)
@@ -618,7 +647,38 @@ async function decide(
         // Returned directly: an unreadable membership table denies a member's own
         // thread media exactly as it denies a non-member's.
         noteLookupFailure("3c thread membership", memberErr, { bucket, path, threadId: msg.thread_id });
-        return Boolean(member);
+        if (!member) return false;
+        const visibleFrom = visibleFromOf(member as any, boundOn);
+        // A POLICY deny, not a lookup failure, so it does not go through
+        // noteLookupFailure (which exists to make an undecidable branch
+        // diagnosable). This branch decided.
+        //
+        // Q6, AT THE MEDIA DOOR — AND IT IS A NO-OP HERE, WHICH IS WORTH
+        // SAYING RATHER THAN LEAVING A READER TO ASSUME OTHERWISE.
+        //
+        // This branch is only reached when `owner === msg.sender_id`. Q6 only
+        // fires when the VIEWER is that sender. The two together give
+        // `owner === viewerId` — and `decide()` returned true for exactly that
+        // four branches above, at "1. Owner always sees their own bytes"
+        // (`pathOwner === viewerId`). So the exception cannot change a decision
+        // here today. It is wired in regardless, because the alternative is
+        // leaving the one call site in the tree that spells the window rule
+        // differently, and because this is the branch that hands over BYTES
+        // from a PRIVATE bucket: if step 1 ever narrows, this door must already
+        // be carrying the same rule as every text reader.
+        //
+        // WHAT IS LOAD-BEARING HERE IS THE LIMIT, and it is unchanged: ANOTHER
+        // member's protected attachment from before this member's window stays
+        // refused. `senderId` is then not `viewerId`, the predicate returns
+        // false, and the bytes are not served. An accessible own MESSAGE is
+        // never a key to somebody else's OBJECT — each object is decided by ITS
+        // OWN row's sender, one call at a time.
+        //
+        // The membership read above is `.is("left_at", null)`: an INACTIVE
+        // member has no `member` row here and was already refused.
+        if (!withinWindow((msg as any).created_at, visibleFrom,
+                          { senderId: (msg as any).sender_id, viewerId })) return false;
+        return true;
       }
     }
   } catch { /* fall through */ }
