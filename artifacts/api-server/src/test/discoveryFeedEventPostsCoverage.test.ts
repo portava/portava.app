@@ -247,10 +247,12 @@ describe("GET /discovery/feed — a failed event-post read is on the envelope (D
 // same screen as "nothing live". A token the auth service REJECTED (4xx) is
 // still an anonymous request, which owes no event-post read (C2's posture).
 //
-//   V1  getUser THROWS → refused: upstream_unavailable / feed_viewer_unresolved, "nothing", ["event_posts"], no exposure
+//   V1  getUser THROWS → refused: upstream_unavailable / feed_viewer_unresolved, "nothing", ["event_posts"], no exposure, no serve row
 //   V2  getUser answers AuthRetryableFetchError (status 0) → the same refusal
 //   V3  getUser answers a 5xx → the same refusal
 //   V6  getUser answers AuthUnknownError (no status) → the same refusal
+//   V7  getUser answers 429 (rate limited) → the same refusal: a declined look is not a verdict on the token
+//   V8  getUser answers 408 (timed out) → the same refusal
 //   V4  places served beside it → "partial", places kept, the same code
 //   V5  a place category failed too → both named, under the places code and class
 //   C4  CONTROL: a rejected token (401) is an anonymous request: no refusal
@@ -258,8 +260,10 @@ describe("GET /discovery/feed — a failed event-post read is on the envelope (D
 //   C6  CONTROL: the refusal is not cached — a resolved viewer's next request serves the post
 // ═════════════════════════════════════════════════════════════════════════════
 
+let rpcCalls: string[] = [];
 function setClientWithGetUser(getUser: (token: string) => Promise<unknown>, opts: Parameters<typeof fakeClient>[0] = {}) {
-  const c = { ...fakeClient(opts), auth: { getUser } };
+  rpcCalls = [];
+  const c = { ...fakeClient(opts), auth: { getUser }, rpc: async (name: string) => { rpcCalls.push(name); return { data: null, error: null }; } };
   _setTestClient(c as never, true);
   _setTestServiceClient(c as never);
 }
@@ -278,6 +282,7 @@ describe("GET /discovery/feed — an unresolved viewer's event-post read is a fa
     assert.deepEqual(r.body.refusal.failedSources, ["event_posts"]);
     await settle();
     assert.equal(rankRows().length, 0, "a refused feed enters no exposure denominator");
+    assert.deepEqual(rpcCalls.filter((n) => n === SERVE_REQUEST_RPC), [], "nor a per-request serve row (3376)");
   });
 
   it("V2 getUser answers AuthRetryableFetchError (network, status 0): the same refusal", async () => {
@@ -301,6 +306,20 @@ describe("GET /discovery/feed — an unresolved viewer's event-post read is a fa
     const r = await get(FEED_POSTS_ONLY);
     assert.equal(r.body.refusal?.code, "feed_viewer_unresolved", JSON.stringify(r.body));
     assert.deepEqual(r.body.refusal?.failedSources, ["event_posts"]);
+  });
+
+  it("V7 getUser answers 429 (rate limited): the service declined to look, so the same refusal", async () => {
+    setClientWithGetUser(noUser({ name: "AuthApiError", status: 429, code: "over_request_rate_limit", message: "Request rate limit reached" }), { rows: { posts: [venuePost("p-1")] } });
+    const r = await get(FEED_POSTS_ONLY);
+    assert.equal(r.body.refusal?.class, "upstream_unavailable", JSON.stringify(r.body));
+    assert.equal(r.body.refusal?.code, "feed_viewer_unresolved");
+    assert.deepEqual(r.body.refusal?.failedSources, ["event_posts"]);
+  });
+
+  it("V8 getUser answers 408 (timed out): the same refusal", async () => {
+    setClientWithGetUser(noUser({ name: "AuthApiError", status: 408, message: "Request Timeout" }), { rows: { posts: [venuePost("p-1")] } });
+    const r = await get(FEED_POSTS_ONLY);
+    assert.equal(r.body.refusal?.code, "feed_viewer_unresolved", JSON.stringify(r.body));
   });
 
   it("V4 places served beside an unresolved viewer: 'partial', the places kept, the viewer code", async () => {
@@ -346,3 +365,6 @@ describe("GET /discovery/feed — an unresolved viewer's event-post read is a fa
     assert.equal(good.body.refusal, undefined);
   });
 });
+
+// §97: the per-request serve row's RPC name, imported at the foot so no line above moves.
+import { SERVE_REQUEST_RPC } from "../lib/discoveryServeLog.js";

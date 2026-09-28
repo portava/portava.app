@@ -179,5 +179,12 @@ describe('ForYouTab — pull-to-refresh', () => {
 
     await waitFor(() => expect(mockGetDiscoveryFeed.mock.calls.length).toBeGreaterThan(before));
     await waitFor(() => expect(screen.queryByTestId('discovery-event-posts-rail-refused')).toBeNull());
+
+    // Every pull, not only the first: a refusal can come back, and the next pull must reach the rail again.
+    mockGetDiscoveryFeed.mockResolvedValue(refused);
+    const afterFirst = mockGetDiscoveryFeed.mock.calls.length;
+    await act(async () => { screen.getByTestId('main-scroll').props.refreshControl.props.onRefresh(); });
+    await waitFor(() => expect(mockGetDiscoveryFeed.mock.calls.length).toBeGreaterThan(afterFirst));
+    expect(await screen.findByTestId('discovery-event-posts-rail-refused')).toBeTruthy();
   });
 });

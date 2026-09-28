@@ -10,7 +10,8 @@
  *   O4  a failed read (503 → unavailable) is never silence: the browse list's
  *       no-rows sentence (register D-W10-S1-2)
  *   O5  an empty page, a 404 and a transport failure render nothing
- *   O6  ForYouTab renders the rail for all three kinds (wiring)
+ *   O6  ForYouTab renders the rail for all three kinds (wiring), with the tab's refreshKey
+ *   O7  (§97) a new refreshKey refetches a failed rail; the same key does not
  *
  * Run with: pnpm test:component
  */
@@ -92,6 +93,25 @@ describe('DiscoveryOutputKindsRail (§94)', () => {
   it('O6 ForYouTab renders the rail for all three kinds, gated on the viewer being signed in', () => {
     const src = readFileSync(join(__dirname, '..', 'ForYouTab.tsx'), 'utf8');
     expect(src).toContain("import { DiscoveryOutputKindsRail } from './DiscoveryOutputKindsRail.tsx';");
-    expect(src).toContain("{(['trails', 'shared_moments', 'emerging_discoveries'] as const).map((k) => <DiscoveryOutputKindsRail key={k} kind={k} destination={destination} enabled={isAuthed} />)}");
+    // Restated by §97 (register D-W11X2-11): the rails also take the tab's pull, so the wiring now carries refreshKey.
+    expect(src).toContain("{(['trails', 'shared_moments', 'emerging_discoveries'] as const).map((k) => <DiscoveryOutputKindsRail key={k} kind={k} destination={destination} enabled={isAuthed} refreshKey={railRefreshKey} />)}");
+  });
+
+  it('O7 (§97) a failed rail refetches on a new refreshKey, the tab\'s pull, and not on a re-render with the same key', async () => {
+    mockFlags = { discovery_output_kinds_enabled: true };
+    mockGet.mockResolvedValue({ ok: false, reason: 'unavailable' });
+    const r = await render(<DiscoveryOutputKindsRail kind="trails" destination="Miami" enabled refreshKey={0} />);
+    expect(await r.findByTestId('discovery-output-kind-trails-unavailable')).toBeTruthy();
+    const before = mockGet.mock.calls.length;
+
+    await r.rerender(<DiscoveryOutputKindsRail kind="trails" destination="Miami" enabled refreshKey={0} />);
+    await new Promise((res) => setTimeout(res, 10));
+    expect(mockGet.mock.calls.length).toBe(before);
+
+    mockGet.mockResolvedValue({ ok: true, kind: 'trails', rankedBy: 'pde', items: trails });
+    await r.rerender(<DiscoveryOutputKindsRail kind="trails" destination="Miami" enabled refreshKey={1} />);
+    expect(await r.findByTestId('discovery-output-kind-trails')).toBeTruthy();
+    expect(mockGet.mock.calls.length).toBeGreaterThan(before);
+    expect(r.queryByTestId('discovery-output-kind-trails-unavailable')).toBeNull();
   });
 });

@@ -2656,7 +2656,7 @@ router.get("/discovery/feed", async (req, res) => {
           }
         }
       }
-    }
+    } else if (req.headers.authorization?.startsWith("Bearer ")) viewerUnresolved = true;  // §97: a presented token and no service client to resolve it with
   } catch (err) {
     // Reached for an unresolved viewer (the documented case) AND for a rejected
     // blocks read that threw rather than resolving. Both leave `blockedIds`
@@ -4517,15 +4517,18 @@ import { haversineKm, batchFetchVoteAndRatingAggregates } from "../lib/discovery
  * auth-js reports an unreachable or failing auth service as
  * `AuthRetryableFetchError` (status 0 for a network failure, or 5xx/52x) or
  * `AuthUnknownError` (a response it could not read), and a server failure it
- * did read as an error with a 5xx status. It reports a rejected credential
- * (expired, malformed, revoked) as a 4xx, or `AuthInvalidJwtError` (400). Only
- * the first kind leaves the viewer UNRESOLVED; a rejection is an answer, and
- * the caller is anonymous. An error of neither kind is treated as a rejection,
+ * did read as an error with a 5xx status. A 429 (rate limited) or 408 (timed
+ * out) is the service declining to evaluate the token, which says nothing
+ * about the token; `lib/discoveryRefusal.ts` rules a rate limit an outage for
+ * the same reason. It reports a rejected credential (expired, malformed,
+ * revoked, no session) as another 4xx, or `AuthInvalidJwtError` (400). Only the
+ * first kind leaves the viewer UNRESOLVED; a rejection is an answer, and the
+ * caller is anonymous. An error of neither kind is treated as a rejection,
  * which is the feed's documented posture for a token it cannot use.
  */
 function authServiceUnreachable(error: unknown): boolean {
   const e = error as { name?: unknown; status?: unknown } | null | undefined;
   if (!e) return false;
   if (e.name === "AuthRetryableFetchError" || e.name === "AuthUnknownError") return true;
-  return typeof e.status === "number" && (e.status === 0 || e.status >= 500);
+  return typeof e.status === "number" && (e.status === 0 || e.status === 408 || e.status === 429 || e.status >= 500);
 }
