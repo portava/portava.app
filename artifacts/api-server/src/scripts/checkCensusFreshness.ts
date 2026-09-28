@@ -4067,6 +4067,10 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // cites the two suites that were seen red on the event and route rules and on the counts.
     "artifacts/api-server/src/test/discoveryTrailMemberVisibility.test.ts",
     "artifacts/api-server/src/test/db/trailsMemberVisibility.db.test.ts",
+    // census-discovery §67 (lane P19b, graph revocation): DV-51's revocation leg is graded on this
+    // suite (every edge family revoked then rebuilt, against a scratch build; the fail-visible guards).
+    // compass/CompassGraphEngine.ts, the code it grades, is already watched above (§56).
+    "artifacts/api-server/src/test/compassGraphRevocation.test.ts",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //
