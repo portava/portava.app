@@ -15824,13 +15824,6 @@ All in `artifacts/api-server` unless stated, at this tree.
 - The card's Save writing anything after a refusal, or falling back on anything but `feature_disabled` (C3, S3, S5).
 - "Ask me first" offered while the server's route answers `feature_disabled` (A1, A2, I1).
 
-## Cited, not graded (check:census-scope-coverage)
-
-- NOT-GRADED: artifacts/api-server/src/lib/capability/prerequisitesCore.ts — §93.8 names its function-granular gate boundary as why the Compass KNOWN entry was struck; it is the prerequisite checker's own machinery, and no Discovery verdict rests on it.
-- NOT-GRADED: artifacts/api-server/src/test/flagSchemaPrerequisites.test.ts — §93.5 cites it only as the checker's own suite, run after the KNOWN entry was struck; no Discovery verdict rests on it.
-- NOT-GRADED: artifacts/api-server/src/test/helpers/supabaseConformance.ts — §86.13 cites it only as the file that registers `fakeTrailRulesDb` as a contract Subject; it is shared test machinery (the Supabase contract harness), and no Discovery verdict rests on it.
-- NOT-GRADED: artifacts/api-server/src/test/supabaseContract.test.ts — §86.13 cites it only as the suite that measures `fakeTrailRulesDb` against the real client; shared test machinery, and no Discovery verdict rests on it.
-
 ### 80.13 Round 3: a backslash reached `ilike`, and a missing policy left the search bar dead; both rows are restated after the fixes
 
 A second independent verification of `5a434ec7b` broke one clause of each `C` row. §80.12's `C`s were premature on those clauses. Both are fixed test-first, and both rows are re-graded from the new evidence.
@@ -15950,6 +15943,10 @@ The verifier confirmed B02 and A08 `C` at `de6d2bfbc` and reported four remainin
 
 ## Cited, not graded (check:census-scope-coverage)
 
+- NOT-GRADED: artifacts/api-server/src/lib/capability/prerequisitesCore.ts — §93.8 names its function-granular gate boundary as why the Compass KNOWN entry was struck; it is the prerequisite checker's own machinery, and no Discovery verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/flagSchemaPrerequisites.test.ts — §93.5 cites it only as the checker's own suite, run after the KNOWN entry was struck; no Discovery verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/helpers/supabaseConformance.ts — §86.13 cites it only as the file that registers `fakeTrailRulesDb` as a contract Subject; it is shared test machinery (the Supabase contract harness), and no Discovery verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/supabaseContract.test.ts — §86.13 cites it only as the suite that measures `fakeTrailRulesDb` against the real client; shared test machinery, and no Discovery verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/services/airport/AirportProfileService.ts — §80.14 names `searchAirports` as a third caller of `safeOrIlikeValue` whose query changes with the helper; census-layover grades the airport service (with an argued acknowledgement), and no Discovery verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/compass/CompassExplanationEngine.ts — §13.7 item 3 names Compass's HMAC recommendation-token signer as a refactor this lane declined to make in another lane's file. Discovery's recommendation id is minted by lib/discoveryRecommendationId.ts, and no Discovery verdict rests on the signer.
 - NOT-GRADED: artifacts/api-server/src/routes/plan.ts — §39.1 names its add-to-trip-plan route as the server-side trip add, and §39.4 assigns that add to the Trips lane. The trip_add signal DV-79 and DC-09 grade is written by the client's PlanPickerController (§41.6), not by this route.
