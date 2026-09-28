@@ -771,3 +771,33 @@ Run through the Supabase connector (`execute_sql`, project `hwokxgbmezheskbzskfr
 **What this does not change.** The apply is still to be run **immediately before PR #528 merges** (§5.4: until the merge, `main`'s `schema-drift` job fails `check:migration-ledger` on ledger rows whose files are not on `main`), and **after** the last lane that adds or edits one of these files has landed and the §8.3 end-to-end rehearsal has passed. Merging is the owner's step.
 
 **How it would run through the connector.** The applier (`scripts/src/apply-migrations.ts`) talks to the Management API with `SUPABASE_PROJECT_TOKEN`, which this session does not hold. Through the connector, the equivalent is to send, per file and in §8.1's order, exactly the statement the applier's own `buildApplyStatement` produces (body + ledger row in one transaction), then the file's post-`COMMIT` tail as a second statement — via `execute_sql`, **not** `apply_migration`, because `apply_migration` also records Supabase's own `supabase_migrations` history, which this repository's ledger does not use. Steps 5–8 of §8.4 then run unchanged (dry run → `NOTHING TO DO`, certify, `audit:schema`, post-reads), the certify and audit tools needing the same token; with the connector alone their queries can be read out of the tools and sent the same way.
+
+### 8.8 The apply, 2026-09-28 (integrator, owner-authorized)
+
+The owner authorized the apply to `portava-ci` and the merge of PR #528, and excluded production deployment and flag activation. The target was confirmed as project `hwokxgbmezheskbzskfr` (`portava-ci`); production (`ajrurzioarfkagpuxfnb`) was not touched. Before anything was sent, §8.7's reads were taken again: ledger 607, none of the 73 present, `2481` and `3350` byte-identical, flag md5 unchanged. The migration list was frozen at PR head `a9ce69090`: `git diff 49b8a28e8 a9ce69090` touches no migration, and all 73 files on disk match the manifest's checksums.
+
+**What was sent.** For each of the 73 files, in §8.1's order, one `execute_sql` call carried exactly the statement `scripts/src/apply-migrations.ts buildApplyStatement` generates (`BEGIN`, body, ledger row, `COMMIT`; notes `… PR #528 head a9ce69090`). Where a file has a post-`COMMIT` tail (51 of 73), a second call carried it. Calls ran one at a time, each after the previous one returned.
+
+**The transmission guard.** Each statement was prefixed with a `DO $guard$` block. It cuts the text between `-- <<APPLY-BODY-START>>` and `-- <<APPLY-BODY-END>>` out of `current_query()` and compares its sha256 with the hash of the generated statement. If they differ it raises, so nothing in that call runs. Positive and negative probes proved the guard before it was relied on.
+
+**Transport of non-ASCII text.** The connector decodes `\uXXXX` escapes before the server sees the query. Two consequences:
+- A literal `\u` in a file must travel as `\u`. 3415's line 412 carries `E'Straße Æsir'`. Its first send was refused by the guard, with the hash mismatch naming the one differing line. It was re-sent with `\u00df` / `\u00c6` and the guard then passed byte-identical.
+- Other non-ASCII characters were sent as `\uXXXX`, using surrogate pairs for astral characters. This applied to 3387, 3415, 3440, 3441, 3469, 3477 and 3497. The typographic characters the connector passes through unchanged (`─ — → § … ’ – · é`) were sent as they are.
+
+After those fixes, every one of the 124 statements passed its guard. None of the 73 apply statements and none of the 51 post-`COMMIT` postconditions raised. Early on, two pairs were sent in parallel: 3340/3341, and 3450's apply with its post. Both were harmless: the files are independent, and the post passing shows it ran after its apply committed. After that, calls were strictly sequential.
+
+**Postconditions read after the last file:**
+
+| check | required | `portava-ci` after |
+|---|---|---|
+| ledger rows | 607 + 73 | **680** |
+| rows carrying the `a9ce69090` note | 73 | **73**; md5 of `filename checksum` sorted = `198c6afedadb617a9fb90a4a3609c486`, equal to the frozen manifest's |
+| `2481` row | untouched | **identical** (`ci`, `2026-09-09 14:44:05.770512+00`, `56c12447…d12d1`) |
+| `3350` row | untouched | **identical** (`manual`, `2026-09-27 09:33:12.17104+00`, `9d565ca9…b8eec9`) |
+| the 116 pre-existing flags (flag, enabled, description) | unchanged | **116 present, 9 TRUE, md5 `617552850b2121aced77cdb57b88a433`**, the §8.7 value byte for byte |
+| flags seeded by the set | present, all FALSE | **53 new, 0 TRUE** (169 total) |
+| per-file postconditions (objects, grants, RLS, restrictive policies, SECURITY INVOKER, probes rolled back) | pass | **pass**, 51 of 51 post tails; the in-transaction probes of 3440, 3491 and 3495 passed |
+
+Only 3460 and 3467 update existing flag rows, and they change descriptions only. Both of those flags are among the 53 this set seeds, which is why the pre-existing 116 hash exactly as before.
+
+**Not done here.** Two steps of §8.4 need `SUPABASE_PROJECT_TOKEN`, which this session does not hold: the applier's dry run (expected: `NOTHING TO DO`) and `certify:migrations` / `audit:schema`. The `live-db` workflow runs them on the PR head and again on `main` after the merge. Production is unchanged. No flag was turned on anywhere.
