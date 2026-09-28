@@ -54,8 +54,8 @@ let mockGatewayState: {
   suggestions: Array<Record<string, unknown>>;
   loading: boolean;
   unavailable: boolean;
-  policy: unknown;
-} = { suggestions: [], loading: false, unavailable: false, policy: null };
+  policy: unknown; policyAuthoritative: boolean; // §80 round 3: the real hook reports whether its policy is the authority's; every case here is under an authoritative one
+} = { suggestions: [], loading: false, unavailable: false, policy: null, policyAuthoritative: true };
 
 // NOTE: intentionally exhaustive — the real gateway hook performs its own
 // debounced network calls; this test is about WHO FETCHES, so the gateway's
@@ -86,7 +86,7 @@ async function pastDebounce() {
 
 beforeEach(() => {
   mockLegacyFetches.length = 0;
-  mockGatewayState = { suggestions: [], loading: false, unavailable: false, policy: null };
+  mockGatewayState = { suggestions: [], loading: false, unavailable: false, policy: null, policyAuthoritative: true };
 });
 
 describe('A08 — the legacy typeahead is a fallback, not a parallel system', () => {
@@ -120,7 +120,7 @@ describe('A08 — the legacy typeahead is a fallback, not a parallel system', ()
   });
 
   it('CONTROL: the same keystrokes DO fetch the legacy typeahead while the gateway is unavailable', async () => {
-    mockGatewayState = { suggestions: [], loading: false, unavailable: true, policy: null };
+    mockGatewayState = { suggestions: [], loading: false, unavailable: true, policy: null, policyAuthoritative: true };
     const { rerender } = await renderHook(
       ({ q }: { q: string }) => useGlobalSearchSuggestions(q),
       { initialProps: { q: 'to' } },
@@ -202,7 +202,7 @@ describe('A08 — the legacy typeahead is a fallback, not a parallel system', ()
 
     // The suggest endpoint disappears (404 / offline).
     await act(async () => {
-      mockGatewayState = { suggestions: [], loading: false, unavailable: true, policy: null };
+      mockGatewayState = { suggestions: [], loading: false, unavailable: true, policy: null, policyAuthoritative: true };
     });
     await rerender({ q: 'toky' });
     await pastDebounce();
@@ -217,7 +217,7 @@ describe('A08 — the legacy typeahead is a fallback, not a parallel system', ()
     );
 
     await act(async () => {
-      mockGatewayState = { suggestions: [], loading: false, unavailable: true, policy: null };
+      mockGatewayState = { suggestions: [], loading: false, unavailable: true, policy: null, policyAuthoritative: true };
     });
     await rerender({ q: 'tok' });
     await pastDebounce();
@@ -251,7 +251,7 @@ describe('A08 — the legacy typeahead is a fallback, not a parallel system', ()
 
     // A new query the gateway is still loading: available, no rows yet.
     await act(async () => {
-      mockGatewayState = { suggestions: [], loading: true, unavailable: false, policy: null };
+      mockGatewayState = { suggestions: [], loading: true, unavailable: false, policy: null, policyAuthoritative: true };
     });
     await rerender({ q: 'tokyo' });
     await pastDebounce();

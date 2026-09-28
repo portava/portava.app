@@ -51,7 +51,7 @@
  * This hook is the reversible seam: to disable the gateway wiring, the search
  * screen imports `useSearchSuggestions` again — nothing else changes.
  */
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchSuggestions, type UseSearchSuggestionsOpts } from './useSearchSuggestions.ts';
 import type { SuggestGroup } from '../services/discovery.ts';
 import { useInputAssistance } from '../platform/input-assistance/hooks/useInputAssistance.ts';
@@ -59,7 +59,7 @@ import { mapSuggestionsToGroups, findSuggestionForRow } from '../platform/input-
 import { recordSuggestionSelection } from '../platform/input-assistance/services/selectionRecorder.ts';
 import { extractActionSuggestions } from '../platform/input-assistance/search/smartActions.ts';
 import { GLOBAL_SEARCH_CAPABILITIES } from '../platform/input-assistance/contexts/clientCapabilities.ts';
-import { registerSearchFields, SEARCH_FIELD_IDS } from '../platform/input-assistance/search/searchFields.ts';
+import { registerSearchFields, SEARCH_FIELD_IDS } from '../platform/input-assistance/search/searchFields.ts'; import { refreshPolicyOnUse } from '../platform/input-assistance/services/policyRefreshOnUse.ts';
 import type { InputSessionContext, InputSuggestion } from '../platform/input-assistance/types/inputSuggestion.ts';
 
 // Register the global-search field's policy once at module load (idempotent).
@@ -154,7 +154,7 @@ export function useGlobalSearchSuggestions(
   // successful serve, because `unavailable` clears there.
 
   // The fallback runs exactly while it is the fallback for something.
-  const legacyEnabled = enabled && gateway.unavailable;
+  const legacyEnabled = enabled && (gateway.unavailable || !gateway.policyAuthoritative); usePolicyRefreshOnUse(enabled && !gateway.policyAuthoritative && query.trim().length > 0, query.trim()); // §80 round 3 (D-W10-S1-4): no authoritative policy = the gateway cannot serve, so the fallback runs and the table is asked for again
 
   // Proven path — the fallback. `enabled: false` stops its fetching entirely
   // (useSearchSuggestions.ts:49), which is the whole of the A08 consolidation.
@@ -179,7 +179,7 @@ export function useGlobalSearchSuggestions(
   //   - the legacy hook is not running (A08), in which case the gateway is the
   //     only source and falling back would mean falling back to nothing.
   const preferGateway =
-    enabled && !gateway.unavailable && (!legacyEnabled || gatewayHasRows || gatewayActions.length > 0);
+    enabled && !gateway.unavailable && gateway.policyAuthoritative && (!legacyEnabled || gatewayHasRows || gatewayActions.length > 0);
 
   // §35 — the write half of Phase 8 personalization for this surface. Before
   // this existed, `global_search` selection memory had exactly one writer in the
@@ -205,4 +205,27 @@ export function useGlobalSearchSuggestions(
     refused: preferGateway ? gateway.refusal?.coverage === 'nothing' : legacy.refused, incomplete: preferGateway ? gateway.refusal?.coverage === 'partial' : legacy.incomplete,
     recordPick,
   };
+}
+
+/**
+ * census-discovery §80 round 3 (register D-W10-S1-4, "The missing policy").
+ *
+ * While the search field is being USED without an authoritative policy, ask the
+ * authority for the table again — on each keystroke, which
+ * `policyRefreshOnUse.ts` throttles to one attempt per
+ * `POLICY_RETRY_MIN_GAP_MS` with one in flight — and re-render when a table lands so the mounted
+ * screen moves back to the gateway without waiting for another keystroke. The
+ * gateway hook keys its resolved policy on `policyEpoch()`, so that re-render is
+ * all it needs to read the new table.
+ */
+function usePolicyRefreshOnUse(wanted: boolean, typed: string): void {
+  const [, setLanded] = useState(0);
+  useEffect(() => {
+    if (!wanted) return;
+    let live = true;
+    void refreshPolicyOnUse().then((outcome) => {
+      if (live && outcome === 'installed') setLanded((n) => n + 1);
+    });
+    return () => { live = false; };
+  }, [wanted, typed]);
 }

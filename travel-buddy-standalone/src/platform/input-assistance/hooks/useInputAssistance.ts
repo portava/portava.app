@@ -25,7 +25,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { InputContext } from '../types/inputContext.ts';
 import type { InputFieldPolicy } from '../types/fieldPolicy.ts';
 import type { InputSuggestion, InputSessionContext, WritingDraft, SuggestRefusal } from '../types/inputSuggestion.ts';
-import { resolveFieldPolicy } from '../contexts/fieldRegistry.ts';
+import { resolveFieldPolicy } from '../contexts/fieldRegistry.ts'; import { policyEpoch } from '../services/policyStore.ts';
 import { getContextDescriptor } from '../contexts/inputContexts.ts';
 import { offlineSurfaceAllowed } from '../contexts/policyFallback.ts';
 import {
@@ -92,7 +92,7 @@ export interface UseInputAssistanceResult {
    * back, so an impression still cannot be joined to the selection that
    * followed it." Returning it is the hook's half of closing that.
    */
-  requestId: string | null; /** census-discovery §80 — the serve's coverage (DV-83); null when it read everything. */ refusal: SuggestRefusal | null;
+  requestId: string | null; /** census-discovery §80 — the serve's coverage (DV-83); null when it read everything. */ refusal: SuggestRefusal | null; /** §80 round 3 (D-W10-S1-4) — `policy` came from the authority; false while it is the conservative stand-in (never fetched, failed, expired, superseded, another account). */ policyAuthoritative: boolean;
 }
 
 export function useInputAssistance(
@@ -102,7 +102,7 @@ export function useInputAssistance(
 
   const policy = useMemo(
     () => resolveFieldPolicy(fieldId, context),
-    [fieldId, context],
+    [fieldId, context, policyEpoch()], // §80 round 3 (D-W10-S1-4): re-resolved when the policy table lands, ages out or is superseded under a mounted field
   );
 
   const [suggestions, setSuggestions] = useState<InputSuggestion[]>([]);
@@ -477,5 +477,5 @@ export function useInputAssistance(
   // Abort any in-flight request on unmount.
   useEffect(() => () => { abortRef.current?.abort(); }, []);
 
-  return { suggestions, loading, unavailable, policy, requestId, refusal };
+  return { suggestions, loading, unavailable, policy, requestId, refusal, policyAuthoritative: policy != null && getContextDescriptor(policy.context).authoritative };
 }
