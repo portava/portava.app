@@ -837,8 +837,8 @@ function CategoryMapCoverage({ kind, stale, error, topInset, onRetry }: {
         )}
         {kind === 'partial' && <Text style={styles.emptyDesc} testID="discovery-category-partial">{listPartialNotice('places')}</Text>}
         {stale && <Text style={styles.emptyDesc} testID="discovery-category-stale">{listStaleNotice('places')}</Text>}
-        <Pressable style={mapCoverage.retry} onPress={onRetry} hitSlop={6}>
-          <Text style={mapCoverage.retryText}>Try again</Text>
+        <Pressable style={[styles.retryBtn, mapCoverage.retry]} onPress={onRetry} hitSlop={6}>
+          <Text style={styles.retryText}>Try again</Text>
         </Pressable>
       </View>
     </View>
@@ -856,6 +856,5 @@ const mapCoverage = StyleSheet.create({
     borderWidth: 1,
     borderColor: color.haze,
   },
-  retry: { alignSelf: 'center', paddingVertical: space.xs },
-  retryText: { ...t.bodyStrong, color: color.signalStrong },
+  retry: { alignSelf: 'center', marginTop: 0 },  // the list's own retry button (styles.retryBtn / retryText)
 });

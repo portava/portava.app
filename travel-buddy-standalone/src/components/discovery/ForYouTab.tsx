@@ -890,6 +890,6 @@ const mapCoverageStyles = StyleSheet.create({
     borderWidth: 1,
     borderColor: color.haze,
   },
-  retry: { alignSelf: 'flex-start', paddingVertical: space.xs },
-  retryText: { ...t.bodyStrong, color: color.signalStrong },
+  retry: { alignSelf: 'flex-start', paddingVertical: space.sm, paddingHorizontal: space.lg, borderRadius: radius.md, backgroundColor: color.signal },
+  retryText: { ...t.bodyStrong, color: color.onInk },  // DiscoveryCategoryTab's retry button, not a new token use
 });
