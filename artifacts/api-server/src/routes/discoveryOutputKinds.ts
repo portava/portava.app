@@ -17,13 +17,13 @@
  * three rankers run `rankForViewer` with every modifier off, and no grounded
  * reason code describes a Trail or a Shared Moment yet.
  *
- * NOT LOGGED, AND SAID SO. The other serve points write `rank_events`
- * impressions and a per-request `recommendations` row. Neither store can hold
- * these kinds today: 3376's `recommendations_serve_point_check` admits serve
- * points 1–12 only, and 0153's `rank_events.item_kind` has no Trail or Shared
- * Moment kind. Widening them is a migration, owed and routed (census §91), so
- * no `recommendation_id` is minted: an id that joins to no row is worse than
- * none.
+ * LOGGED AS SERVE POINT 13 (census-discovery §94, lane W11-X2; §91.7 item 1):
+ * one `rank_events` impression per item and one per-request `recommendations`
+ * row, as every serve point writes (lib/discoveryServeLog.ts, behind
+ * discovery_serve_log_enabled); each served item carries its impression's
+ * `recommendationId`. 3491 widens 3376's CHECK to 13. Trails and Shared Moments
+ * are logged as `trail/<id>` / `moment/<id>` with a NULL kind (none of 0153's
+ * six describes them); an emerging discovery is logged as the place it is.
  *
  * Behind `discovery_output_kinds_enabled` (3483, seeded FALSE), read per
  * request as a literal (check:flag-polarity reads call sites; an unreadable
@@ -37,7 +37,7 @@
 import { Router, type Request, type Response } from "express";
 import { requireUser, sendError } from "../lib/http.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
-import { getServiceClient } from "../lib/supabase.js";
+import { getServiceClient } from "../lib/supabase.js"; import { exposureForResponse, serveClockOf, servedRecommendationId } from "../lib/discoveryRecommendationRecord.js"; import { logServeUnlessRefused } from "../lib/discoveryRefusal.js"; import { DiscoveryServePoint, type ServedItem } from "../lib/discoveryServeLog.js";  // §94: the serve log
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { loadPdeViewer } from "../lib/discoveryPde.js";
 import {
@@ -83,8 +83,39 @@ router.get("/v1/discovery/recommendations/:kind", asyncHandler(async (req: Reque
     return sendError(res, "degraded_unavailable", "these recommendations could not be ranked just now", { reason: ranked.unavailable ?? ranked.status });
   }
 
+  // §94: ONE exposure for the response and the serve log, so the id each item
+  // carries is the id its impression row carries (DV-40).
+  const exposure = exposureForResponse(res, auth.user.id);
+  const logged = outputKindServedItems(kind, ranked.items);
+  const items = ranked.items.map((it, i) => ({ ...(it as object), recommendationId: servedRecommendationId(exposure, i, logged[i]!.id) }));
   res.setHeader("Cache-Control", "private, no-store");
-  res.json({ kind: ranked.kind, rankedBy: ranked.rankedBy, items: ranked.items, cursor: null });
+  res.json({ kind: ranked.kind, rankedBy: ranked.rankedBy, items, cursor: null });
+  logServeUnlessRefused(res, sc, {
+    userId: auth.user.id,
+    servePoint: DiscoveryServePoint.OUTPUT_KINDS,
+    route: "GET /v1/discovery/recommendations/:kind",
+    ...serveClockOf(exposure),
+    items: logged,
+    context: { destination: city ?? "", type: kind },
+  });
 }));
+
+/**
+ * What the serve log records for each served item of a kind (census-discovery
+ * §94). Trails and Shared Moments are namespaced (`trail/…`, `moment/…`, the
+ * ids the rankers already rank them under) with a NULL kind: none of
+ * `rank_events.item_kind`'s six values describes them, and an invented kind
+ * would corrupt every per-kind rollup. An emerging discovery IS a place, so it
+ * is logged by its place id and the serve log infers `gem` / `place` as it
+ * does for every other place.
+ */
+export function outputKindServedItems(kind: ServedOutputKind, items: readonly unknown[]): ServedItem[] {
+  return items.map((it) => {
+    const row = it as { id?: unknown; place?: { id?: unknown } };
+    if (kind === "trails") return { id: `trail/${String(row.id)}`, kind: null };
+    if (kind === "shared_moments") return { id: `moment/${String(row.id)}`, kind: null };
+    return { id: String(row.place?.id) };
+  });
+}
 
 export default router;

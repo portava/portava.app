@@ -4385,6 +4385,25 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/discoveryRediscoveryRetestServe.test.ts",
     "artifacts/api-server/src/test/discoveryTrendReviewSuppression.test.ts",
     "artifacts/api-server/src/test/discoverySurfaceObjectiveRank.test.ts",
+    // census-discovery §94 (lane W11-X2, serve path): DV-83 is graded on the feed's event-post suite and the
+    // rail's coverage suite; C19, DC-17, DC-01 and A07 on the byline golden, the platform provenance module and
+    // suite, the output-kinds serve log and its client call, and the Live claim read's failure suite; 3490 and
+    // 3491 with their rollbacks.
+    "artifacts/api-server/src/test/discoveryFeedEventPostsCoverage.test.ts",
+    "artifacts/api-server/src/test/discoveryCommunityBylineCanonical.test.ts",
+    "artifacts/api-server/src/lib/discoveryPlatformGraphProvenance.ts",
+    "artifacts/api-server/src/test/discoveryPlatformGraphProvenance.test.ts",
+    "artifacts/api-server/src/test/discoveryOutputKindsServeLog.test.ts",
+    "artifacts/api-server/src/test/liveClaimReadFailure.test.ts",
+    "artifacts/api-server/src/migrations/3490_discovery_serve_path_flags.sql",
+    "artifacts/api-server/src/migrations/3491_discovery_recommendations_output_kinds_serve_point.sql",
+    "db/rollback/2026-09-28-3490-discovery-serve-path-flags-rollback.sql",
+    "db/rollback/2026-09-28-3491-discovery-recommendations-output-kinds-serve-point-rollback.sql",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryEventPostsRail.coverage.component.test.tsx",
+    "travel-buddy-standalone/src/services/discoveryRecommendations.ts",
+    "travel-buddy-standalone/src/services/__tests__/discoveryRecommendations.test.ts",
+    "travel-buddy-standalone/src/components/discovery/DiscoveryOutputKindsRail.tsx",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryOutputKindsRail.component.test.tsx",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

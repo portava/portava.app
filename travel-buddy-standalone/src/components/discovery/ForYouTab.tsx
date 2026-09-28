@@ -34,7 +34,7 @@ import { CompassWhySheet } from '../compass/CompassWhySheet.tsx';
 import { postCompassFrontloadEvent, postCompassContext } from '../../services/compass.ts';
 import { CompassPicksSection } from '../compass/CompassPicksSection.tsx';
 import { CompassTravelerRow } from '../compass/CompassTravelerRow.tsx';
-import { CompassOnboardingCard } from '../compass/CompassOnboardingCard.tsx';
+import { CompassOnboardingCard } from '../compass/CompassOnboardingCard.tsx'; import { DiscoveryOutputKindsRail } from './DiscoveryOutputKindsRail.tsx';  // census-discovery §94 (DC-01): the three output kinds, behind the server's own FALSE flag
 import { DiscoveryEventPostsRail } from './DiscoveryEventPostsRail.tsx'; import { useFeatureFlags } from '../../context/FeatureFlagsContext.tsx';  // census-discovery §79 — the 3455 capability read, declared on this line so the cited lines below do not move
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -502,7 +502,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
         {isAuthed && <CompassOnboardingCard />}
 
         {/* ── Live from events — serve point 7 (GET /discovery/feed) ── */}
-        <DiscoveryEventPostsRail destination={destination} lat={lat} lng={lng} />
+        <DiscoveryEventPostsRail destination={destination} lat={lat} lng={lng} />{(['trails', 'shared_moments', 'emerging_discoveries'] as const).map((k) => <DiscoveryOutputKindsRail key={k} kind={k} destination={destination} enabled={isAuthed} />)}
 
         {/* ── Compass Picks section — horizontal card strip ── */}
         <CompassPicksSection

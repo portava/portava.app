@@ -101,7 +101,7 @@ export const DiscoveryServePoint = {
   // MAP_SEARCH — routes/mapSearch.ts GET /map/search. Merges travelers, gems
   // and events, then rankResults() orders them and paginate() cuts the served
   // page. Ranked in-request.
-  MAP_SEARCH:             12,
+  MAP_SEARCH:             12, /* census-discovery §94 (W11-X2): GET /v1/discovery/recommendations/:kind — Trails, Shared Moments, emerging discoveries, ranked in the request by rankForViewer; 3491 widens 3376's CHECK to admit it. On this line so no cited line moves. */ OUTPUT_KINDS: 13,
 } as const;
 
 export type DiscoveryServePointId =
@@ -122,7 +122,7 @@ const RANKED_IN_REQUEST = new Set<number>([
   // 11 and 12 DO rank during the request — discoverGems / findNearbyGems for
   // hidden gems, rankResults for map search — so they belong here, unlike 7-10.
   DiscoveryServePoint.HIDDEN_GEMS,
-  DiscoveryServePoint.MAP_SEARCH,
+  DiscoveryServePoint.MAP_SEARCH, DiscoveryServePoint.OUTPUT_KINDS,  // §94: the three output kinds are ranked by rankForViewer during the request
 ]);
 
 /**

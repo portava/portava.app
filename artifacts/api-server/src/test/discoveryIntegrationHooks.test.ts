@@ -522,3 +522,69 @@ describe("H3 — §78 H3: GET /pulse ranks on Pulse's own objective under discov
     }
   });
 });
+
+// ── R2p: census-discovery §94 (lane W11-X2), DC-17 on the PLATFORM path ──────
+// Appended at the foot so no cited line above moves. Where the platform's
+// coverage store answers the reading (CPV2-12), served rows used to carry
+// `graphProvenance: { status: "platform_producer" }` and no facts. Under 3490's
+// `discovery_platform_graph_provenance_enabled` they carry the platform
+// reading's own four (lib/discoveryPlatformGraphProvenance.ts).
+
+const P_NEWEST = new Date(Date.now() - 10 * 60_000).toISOString();
+const P_OLDEST = new Date(Date.now() - 40 * 60_000).toISOString();
+const seedPlatform = (w: WorldState) => {
+  const exp = new Date(Date.now() + 50 * 60_000).toISOString();
+  w.tables.intel_coverage_snapshots = [
+    { city: "Miami", zone_id: "z1", claim_family: "crowd.level", coverage_state: "covered", current_confidence: 0.9, score: 0.1, computed_at: P_NEWEST, expires_at: exp },
+    { city: "Miami", zone_id: "z2", claim_family: "crowd.level", coverage_state: "covered", current_confidence: 0.7, score: 0.2, computed_at: P_OLDEST, expires_at: exp },
+  ];
+};
+
+describe("R2p — §94 (DC-17): the platform path's served rows carry the platform reading's own record", () => {
+  for (const [name, path] of [["serve point 1", CACHE_A_PATH], ["serve point 6", COLD_PATH]] as const) {
+    it(`${name}: 3484 + 3490 ON with the modifiers — every served row stores all four facts of the PLATFORM reading`, async () => {
+      const s = await serve(path, [flag("discovery_ranking_modifiers_enabled", true), flag("compass_city_confidence_windowed_reads_enabled", true), flag("discovery_platform_graph_provenance_enabled", true)], seedPlatform);
+      assertServed(name, s);
+      for (const r of s.rows) {
+        assert.equal(r.features["graphSource"], "platform_coverage", "precondition: the platform answered the reading");
+        const p = r.features["graphProvenance"] as any;
+        assert.equal(p?.status, "recorded", `${r.item_id}: ${JSON.stringify(p)}`);
+        assert.equal(p.modelVersion, "compass-platform-coverage-fold-v1");
+        assert.equal(p.featureVersion, "intel-coverage-cell-state-v1");
+        assert.equal(p.computedAt, P_NEWEST);
+        assert.equal(p.sourceWindow?.startMs, Date.parse(P_OLDEST));
+        assert.equal(p.sourceWindow?.rows?.intel_coverage_snapshots, 2);
+      }
+    });
+    it(`${name}: 3490 OFF — the platform reading is still recorded as platform_producer, with no facts (as before §94)`, async () => {
+      const s = await serve(path, [flag("discovery_ranking_modifiers_enabled", true), flag("compass_city_confidence_windowed_reads_enabled", true), flag("discovery_platform_graph_provenance_enabled", false)], seedPlatform);
+      assertServed(name, s);
+      for (const r of s.rows) assert.deepEqual(r.features["graphProvenance"], { status: "platform_producer" }, r.item_id);
+    });
+  }
+});
+
+// ── R1c: census-discovery §94 (lane W11-X2), routed hunk R-X3-1 from §95 ────
+// A generated row carries the request's distance. §95 gave `rankForViewer` a
+// `center` option (lib/discoveryCandidates/stages.ts); until the served calls
+// pass the request's distance reference, a generated row is served with
+// `distanceKm: null` while every pooled row beside it carries one.
+
+const seedGeneratedFood = (w: WorldState) => {
+  for (let i = 0; i < 200; i++) w.tables.discovery_places!.push(communityRow(`fill-${i}`, { saved_count: 0, rating: null, lat: 26.6, lng: -80.19 }));
+  w.tables.discovery_places!.push(communityRow(GEN, { name: "Generated Food", saved_count: 50, rating: 4.9, lat: 25.78, lng: -80.2 }));
+  w.tables.place_momentum = [{ place_id: `db/${GEN}`, trend_state: "trending", recent_rate: 9, computed_at: "2026-09-28T03:00:00.000Z", source_surface: "discovery" }];
+};
+
+describe("R1c — §94 (R-X3-1): a generated row is served with the request's distance", () => {
+  for (const [name, path, seed] of [["for_you (serve point 1)", CACHE_A_PATH, seedGenerated], ["food (serve point 6)", COLD_PATH, seedGeneratedFood]] as const) {
+    it(`${name}: the generated row carries a non-null distanceKm, measured from the request`, async () => {
+      const s = await serve(path, [flag("discovery_candidate_sources_enabled", true)], seed);
+      assertServed(name, s);
+      const gen = (s.body.places as any[]).find((p) => p.id === `db/${GEN}`);
+      assert.ok(gen, `precondition: the row was generated onto the page: ${s.ids.join(", ")}`);
+      assert.equal(typeof gen.distanceKm, "number", `generated row distanceKm: ${JSON.stringify(gen.distanceKm)}`);
+      assert.ok(gen.distanceKm >= 0 && gen.distanceKm < 5, `measured from the request's point (25.77, -80.19): ${gen.distanceKm}`);
+    });
+  }
+});

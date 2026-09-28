@@ -70,7 +70,7 @@ function buildFakeClient(opts: { errorTables?: string[]; rows?: Record<string, a
       upsert(payload: any) { inserts.push({ table, rows: payload }); return b; },
       delete() { return b; },
       eq(col: string, val: any) { preds.push((r) => r[col] === val); return b; },
-      neq() { return b; }, is() { return b; },
+      neq() { return b; }, is() { return b; }, not() { return b; },  // §94 (W11-X2): the event-post read's Path B ends in .not(); without it that read threw into its own catch and failed — invisible until the feed began reporting a failed event-post read
       gt() { return b; }, gte() { return b; }, lt() { return b; }, lte() { return b; },
       in() { return b; }, or() { return b; }, ilike() { return b; },
       contains() { return b; }, overlaps() { return b; },

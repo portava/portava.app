@@ -500,17 +500,17 @@ export function overpassFilter(cat: string, radius: number, lat: number, lng: nu
 
 // ── Haversine ─────────────────────────────────────────────────────────────────
 
-function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
-  const R = 6371;
-  const dLat = ((lat2 - lat1) * Math.PI) / 180;
-  const dLng = ((lng2 - lng1) * Math.PI) / 180;
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos((lat1 * Math.PI) / 180) *
-      Math.cos((lat2 * Math.PI) / 180) *
-      Math.sin(dLng / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
+// census-discovery §94 (routed hunk R-X3-2, from §95): haversineKm is imported from lib/discoveryPlaceAggregates.ts (foot of this file),
+// the one implementation generated rows use too; the private copy that stood here is deleted. The blank lines keep every cited line below.
+
+
+
+
+
+
+
+
+
 
 // ── Tag extraction ────────────────────────────────────────────────────────────
 
@@ -1368,56 +1368,56 @@ async function enrichOsmSavedCounts(places: DiscoveryPlace[]): Promise<Discovery
 // and 'gem' for hidden gems.  Both lookups run in parallel; any failure is
 // swallowed so tiles degrade gracefully (no counts rather than an error).
 
-type VoteRatingAgg = { worthItCount: number; avgRating: number | null; reviewCount: number };
+// census-discovery §94 (routed hunk R-X3-2, from §95): batchFetchVoteAndRatingAggregates is imported from lib/discoveryPlaceAggregates.ts
+// (foot of this file), the one implementation generated rows use too. The blank lines keep every cited line below.
 
-async function batchFetchVoteAndRatingAggregates(
-  sc: ReturnType<typeof getServiceClient>,
-  entityIds: string[],
-  entityType: "place" | "gem",
-): Promise<Map<string, VoteRatingAgg>> {
-  const result = new Map<string, VoteRatingAgg>();
-  if (!sc || entityIds.length === 0) return result;
 
-  try {
-    const [votesRes, reviewsRes] = await Promise.all([
-      sc
-        .from("place_votes")
-        .select("entity_id, vote")
-        .eq("entity_type", entityType)
-        .in("entity_id", entityIds),
-      sc
-        .from("reviews")
-        .select("entity_id, rating")
-        .eq("entity_type", "place")
-        .in("entity_id", entityIds)
-        .eq("state", "published"),
-    ]);
 
-    for (const row of (votesRes.data ?? []) as any[]) {
-      const id = row.entity_id as string;
-      if (!result.has(id)) result.set(id, { worthItCount: 0, avgRating: null, reviewCount: 0 });
-      if (row.vote === "worth_it") result.get(id)!.worthItCount++;
-    }
 
-    const reviewsByEntity = new Map<string, number[]>();
-    for (const row of (reviewsRes.data ?? []) as any[]) {
-      const id = row.entity_id as string;
-      if (!reviewsByEntity.has(id)) reviewsByEntity.set(id, []);
-      if (row.rating != null) reviewsByEntity.get(id)!.push(parseFloat(String(row.rating)));
-    }
-    for (const [id, ratings] of reviewsByEntity) {
-      if (!result.has(id)) result.set(id, { worthItCount: 0, avgRating: null, reviewCount: 0 });
-      const entry = result.get(id)!;
-      entry.reviewCount = ratings.length;
-      if (ratings.length > 0) {
-        entry.avgRating =
-          Math.round((ratings.reduce((s, r) => s + r, 0) / ratings.length) * 10) / 10;
-      }
-    }
-  } catch { /* non-fatal */ }
 
-  return result;
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 // ── Merge + deduplicate ────────────────────────────────────────────────────────
 //
@@ -1860,7 +1860,7 @@ router.get("/discovery", async (req, res) => {
         const pdeViewer = await loadPdeViewer(
           rankSc, callerUserId, destination!.split(",")[0]?.trim().toLowerCase() ?? null,
         );
-        const outcome = await rankForViewer(merged, pdeViewer, { sc: rankSc, served: true, intentMode: req.query.intentMode, category });  // census-discovery §91: §78 H2 (the mode, read only under 3453) and §85 R1 (the tab bounds a generated row, only under 3480)
+        const outcome = await rankForViewer(merged, pdeViewer, { sc: rankSc, served: true, intentMode: req.query.intentMode, category, center: distRef });  // census-discovery §91: §78 H2 (the mode, read only under 3453) and §85 R1 (the tab bounds a generated row, only under 3480)
         // Same filters as the legacy path — comparing/serving a ranked full list
         // against a differently-filtered one would attribute to ranking what
         // filtering did.
@@ -2277,7 +2277,7 @@ router.get("/discovery", async (req, res) => {
       const rankSc   = getServiceClient();
       const rankCity = destination.split(",")[0]?.trim().toLowerCase() ?? null;
       const pdeViewer = await loadPdeViewer(rankSc, callerUserId, rankCity);
-      const outcome   = await rankForViewer(places, pdeViewer, { sc: rankSc, served: true, intentMode: req.query.intentMode, category });  // census-discovery §91: §78 H2 and §85 R1, as serve points 1/2/3
+      const outcome   = await rankForViewer(places, pdeViewer, { sc: rankSc, served: true, intentMode: req.query.intentMode, category, center: distRef });  // census-discovery §91: §78 H2 and §85 R1, as serve points 1/2/3
       ranked          = outcome.ranked;
       scoredByPlaceId = outcome.scoredById; coldServedStages = outcome.stages;
     } else {
@@ -2668,7 +2668,7 @@ router.get("/discovery/feed", async (req, res) => {
   }
 
   // ── Fetch places across all requested categories ───────────────────────────
-  try {
+  try { const eventPostsReadStatus = { readFailed: false };  // census-discovery §94 (DV-83, hunk §80.7): whether the event-post read FAILED — carried onto the envelope below, never served as a quiet city
     // TODO: denormalize is_event_post flag at write time to avoid per-request join
     const [categoryResults, eventPosts] = await Promise.all([
       Promise.all(
@@ -2700,10 +2700,10 @@ router.get("/discovery/feed", async (req, res) => {
             radiusKm,
             viewerId,
             blockedIds,
-            seenPostIds: new Set<string>(),
+            seenPostIds: new Set<string>(), readStatus: eventPostsReadStatus,
           }).catch((_err) => {
             req.log.warn({ _err }, "discovery/feed: event-post fetch failed (non-fatal)");
-            return [] as DiscoveryEventPost[];
+            eventPostsReadStatus.readFailed = true; return [] as DiscoveryEventPost[];  // §94: a thrown fetch is a failed read, not an empty one
           })
         : Promise.resolve([] as DiscoveryEventPost[]),
     ]);
@@ -2747,7 +2747,7 @@ router.get("/discovery/feed", async (req, res) => {
       },
       sessionId: feedSessionId, ...(gateF.summary ? { layover: gateF.summary } : {}),
     };
-    if (failedCats.length > 0) {
+    if (eventPostsReadStatus.readFailed) failedCats.push("event_posts"); if (failedCats.length > 0) {  // §94 (DV-83): the event posts are a source of this feed too
       // "nothing" only when the failure is the whole answer. If OSM or the event
       // posts produced anything, those items really were served and really are
       // exposure, so the refusal is "partial" and the serve below still logs
@@ -2756,7 +2756,7 @@ router.get("/discovery/feed", async (req, res) => {
       const coverage = feedAnnotated.length === 0 && eventPosts.length === 0 ? "nothing" : "partial";
       sendDiscoveryRefusal(
         res, feedEnvelope,
-        discoveryRefusal("transient_db", "feed_places_read_failed", "GET /discovery/feed", coverage, failedCats),
+        discoveryRefusal("transient_db", failedCats.some((c) => c !== "event_posts") ? "feed_places_read_failed" : "feed_event_posts_read_failed", "GET /discovery/feed", coverage, failedCats),  // §94 (D-W11X2-1): an event-post-only failure has its own code, so an alert on the places code is not raised by the posts
       );
     } else {
       res.json(feedEnvelope);
@@ -2826,7 +2826,7 @@ export interface CommunityDiscoveryItem {
      * is live: changing this field changes what a user sees. Retire it once the
      * client resolves the byline through displayIdentity(displayName, handle).
      */
-    name: string;
+    name: string | null;  // census-discovery §94 (C19): null only under discovery_community_byline_canonical_enabled (3490), where it is the canonical displayName
     /**
      * CANONICAL byline, .agents/memory/display-name-privacy.md shape: the real
      * name iff the submitter is the viewer or opted in via
@@ -3069,7 +3069,7 @@ router.get("/discovery/community", async (req, res) => {
     // request whose query came back empty still resolves no viewer.
     const selfSubmitterId = rows.length > 0 ? await resolveCommunityViewer() : null; const followedSubmitters = await readBylineFollowEdges(sc, selfSubmitterId, rows.map(bylineProfileOf));  // census-discovery §53 — the avatar gate's follower term; read only when a private or opted-out byline needs it
 
-    const items: CommunityDiscoveryItem[] = rows.map((row: any) => {
+    const bylineCanonical = rows.length > 0 && (await isFlagEnabled(sc, "discovery_community_byline_canonical_enabled")); const items: CommunityDiscoveryItem[] = rows.map((row: any) => {  // census-discovery §94 (C19, W11A-B2): the canonical byline, read once per request and only when a byline will be built
       const profile = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
       return {
         id:           row.id,
@@ -3092,7 +3092,7 @@ router.get("/discovery/community", async (req, res) => {
                 id:          profile.id as string,
                 name:        (nameAllowed
                   ? (profile.name ?? "Traveler")
-                  : (profile.username ? `@${profile.username}` : "Traveler")) as string,
+                  : (profile.username ? `@${profile.username}` : "Traveler")) as string, ...(bylineCanonical ? { name: nameAllowed ? ((profile.name ?? null) as string | null) : null } : {}),  // §94 (C19): ON ⇒ the real name iff nameAllowed, else null — never a handle; OFF ⇒ the legacy shape above, byte for byte
                 displayName: nameAllowed ? ((profile.name ?? null) as string | null) : null,
                 avatarUrl:   communityBylineAvatar(profile, selfSubmitterId, followedSubmitters),  // §53 — lib/mediaFeedItem.ts's avatar gate: own / follower / public-and-not-opted-out
                 handle:      (profile.username ?? null) as string | null,
@@ -4503,3 +4503,9 @@ function withCacheARankedAdmission<D extends { included: boolean }>(
   if (!cacheARanked || decision?.included) return decision;
   return { included: true, reason: "cache_a_ranked_enabled" };
 }
+
+// census-discovery §94 (lane W11-X2): the one literal flag read C19 needs (check:flag-polarity reads call sites). At the foot so no cited line moves.
+import { isFlagEnabled } from "../lib/featureFlags.js";
+
+// census-discovery §94 (routed hunk R-X3-2): the two per-row aggregate helpers, ONE implementation shared with generated rows (lib/discoveryCandidates/materialize.ts). At the foot so no cited line moves.
+import { haversineKm, batchFetchVoteAndRatingAggregates } from "../lib/discoveryPlaceAggregates.js";

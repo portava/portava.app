@@ -172,7 +172,7 @@ describe("DV-45 — every CHECK on the Discovery telemetry tables, admitted AND 
     refuses(rq({ user_id: `'${user}'` }), "recommendations_viewer_matches_user_check", "23514", "an ANONYMOUS row carrying a user");
     refuses(rq({ viewer_class: `'signed_in'` }), "recommendations_viewer_matches_user_check", "23514", "a signed-in row with no user");
     refuses(rq({ surface: `'pulse'` }), "recommendations_surface_check", "23514", "not a Discovery serve");
-    refuses(rq({ serve_point: "13" }), "recommendations_serve_point_check", "23514", "no such serve point");
+    refuses(rq({ serve_point: "14" }), "recommendations_serve_point_check", "23514", "no such serve point"); admits(rq({ serve_point: "13", id: `'${RID}t'` }), "serve point 13, the output kinds (3491, census-discovery §94)");
     refuses(rq({ route: `''` }), "recommendations_route_check", "23514", "an empty route");
     refuses(rq({ model_version: `''` }), "recommendations_model_version_check", "23514", "an empty model version");
     refuses(rq({ context_hash: `'x'` }), "recommendations_context_hash_check", "23514", "a malformed context hash");

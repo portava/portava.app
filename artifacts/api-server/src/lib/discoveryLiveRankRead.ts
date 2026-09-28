@@ -154,7 +154,7 @@ export async function withDiscoveryLiveRank<T extends LiveRankSourceRow>(
       let envelopes: LiveClaimEnvelope[] = [];
       let rowReadable = readable && subjectId !== null;
       if (rowReadable && subjectId) {
-        try { envelopes = await read(subjectId); } catch { envelopes = []; rowReadable = false; }
+        try { envelopes = await read(subjectId); if (liveClaimReadFailed(envelopes)) { envelopes = []; rowReadable = false; } } catch { envelopes = []; rowReadable = false; }  // census-discovery §94 (§79 F2): an ERRORED claim read is `unreadable`, exactly as a throw is — never `none`
       }
       return {
         id: p.id,
@@ -238,3 +238,6 @@ export async function withDiscoveryLiveSafety<T extends LiveRankSourceRow>(
     demoted: demotedById.size,
   };
 }
+
+// census-discovery §94 (lane W11-X2): the shared read's failure mark. Imported at the foot so the cited import line above does not move.
+import { liveClaimReadFailed } from "./liveClaimRead.js";
