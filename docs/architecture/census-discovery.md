@@ -14362,7 +14362,8 @@ Several lanes restated the headline against their own base commits: §78.12 said
 | §77 + §76 (`a658174a4`) | 96 | 86 | 5 | 1 | 51.1 % | 96.8 % |
 | §83, where DC-27 moves X → W (`37c0bc9c7`) | 96 | 87 | 5 | 0 | 51.1 % | 97.3 % |
 | §78, where A18 moves N → W (`6d2b45412`) | 96 | 88 | 4 | 0 | 51.1 % | 97.9 % |
-| §79–§92: every wave-10 lane, their follow-up rounds after independent verification, and the W11-A audit (`805826140`) | **100** | **86** | **2** | **0** | **53.2 %** | **98.9 %** |
+| §79–§92: every wave-10 lane, their follow-up rounds after independent verification, and the W11-A audit (`805826140`) | 100 | 86 | 2 | 0 | 53.2 % | 98.9 % |
+| §93 (W11-X1) and §95 (W11-X3, with its O-1 follow-up), plus the integrator fixes below (`ffcadf90e`) | **100** | **86** | **2** | **0** | **53.2 %** | **98.9 %** |
 
 **What the headline does not say.** Every C above is implementation-level evidence on this branch: controlled tests and the local PostgreSQL 16 harness. Nothing is merged to `main`, applied to `portava-ci` or production, deployed or flag-enabled. At this merge, 8 row statements carry `IMPLEMENTATION-COMPLETE; awaits:`. Those rows need only production activation or production evidence. They are counted W, as §31.2 requires.
 
@@ -14384,6 +14385,23 @@ Several lanes restated the headline against their own base commits: §78.12 said
 **The four newest local-run failures are environmental, not defects of this tree.** The full api-server node:test run at `3cc027a06` passed 28,367 of 28,369 tests.
 - One failure is `discoveryClientRouteE2E` failing to load on Node 22. CI runs Node 24, where it passes 13 of 13.
 - The other is `mediaProcessingWorker.test.ts`. It hung under a load average of about 6 and was killed. Alone it passes 42 of 42 in 3.5 s. Its boot-loop case mocks `setTimeout` while bounding a wait in real time, so a pass that overruns under load can leave cleanup waiting on a mocked timer. It is a test-robustness defect in a file wave 10 did not touch, and it is recorded here rather than hidden.
+
+**At `ffcadf90e` the 86 W rows break down as:**
+- **53** carry only `IMPLEMENTATION-COMPLETE; awaits:`.
+- **19** carry that marker and `AWAITS OWNER APPROVAL:`.
+- **11** carry only `AWAITS OWNER APPROVAL:`.
+- **3** still need code: C19, DC-17 and DV-83, in lane W11-X2 (§94), which is still running.
+
+In §93, A11, DV-31 and DV-09 gained their markers. In §95, DV-34 gained its implementation-complete marker, because 3497 closes O-1.
+
+**Four defects the integrator found and fixed on the merged tree in this round.** Each passed its own lane's checks, so each was found only after the merge.
+1. **Entry wiring hidden inside line comments.** Lanes append statements to existing lines so that no cited line moves. Twice, the existing line already ended in a `//` comment:
+   - `startDiscoveryTrendRebuildScheduler` (DC-07) was never started.
+   - `adminTrailsRouter` (DV-74's merge, archive and trend-review routes) was never mounted.
+   Both are fixed. `entryWiringNotCommentedOut.test.ts` now reads both entry files with the TypeScript parser and scans the whole server tree for the pattern. Its control case sees the pre-fix text.
+2. **A golden that depended on the runtime.** CI runs Node 24. `portavaRankDesignGolden` hashed raw floats, and V8 changed `Math.pow` and `Math.exp` in the last bit, so the golden went red although no ranking moved. It now hashes values at 10 significant digits. The recaptured fixture is byte-identical on Node 22 and on Node 24, and a change of one part in a million to a weight still turns it red. The full api-server suite then passes under Node 24 too: 27,976 of 27,977, and the one failure is a spawn timeout under load that passes alone.
+3. **A missing rollback that the two lanes' rules made unrecoverable together.** §87 lets 3366's rollback delete only a row that still carries 3366's seed text. 3460 (§80) rewrites that text and shipped no rollback. 3460's rollback now exists, and B04's Z4 rolls back in dependency order. The harness passes 5 of 5, and 420 of 421 before the fix.
+4. **An applier refusal.** 3468 ran its enum `ADD VALUE` outside the file's transaction. It now runs inside, as 3350 does (fixed earlier in this round, and in `6c8ea611c`).
 
 ## §85 — Candidate generation, pipeline stages, exploration, cold start and the graph reading (lane W10-R3): the eleven sources are built behind 3480, exploration leaves 2289, a new viewer is ranked with what they said, and the city graph states its window; no row moves to C, because every leg waits on a flag, an owner, or another lane's file
 
@@ -16075,3 +16093,4 @@ The verifier confirmed B02 and A08 `C` at `de6d2bfbc` and reported four remainin
 - NOT-GRADED: artifacts/api-server/src/routes/pulse.ts — §78.9 H3 gives the one-line spread that lets Pulse rank on its own `01` §9 objective, and §91.2 cites that spread as integrated; DV-09's Pulse leg rests on discoveryIntegrationHooks.test.ts's served-impression case (watched), not on the route's text, and census-trips and census-trust grade the route.
 - NOT-GRADED: artifacts/api-server/src/test/mediaProcessingWorker.test.ts — §90 names it only to record a load-sensitive hang in a full local run (it passes 42 of 42 alone); census-media grades the worker, and no Discovery verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/migrationApplyOrder.test.ts — §95.7 cites it only as the applier's own suite, run to show 3495 and 3496 are appliable (BEGIN before any `$pre$` block); it is shared migration machinery, and no Discovery verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/entryWiringNotCommentedOut.test.ts — §90 names it as the regression test for entry wiring hidden inside line comments (DC-07's scheduler, DV-74's admin router); it guards the entry files, and no Discovery verdict rests on its text.
