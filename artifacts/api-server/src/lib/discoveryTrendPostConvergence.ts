@@ -106,7 +106,7 @@ export function postAfterVisitAuthors(
   // place (lower-case uuid) → trend key → author → earliest positive outcome.
   const firstVisit = new Map<string, Map<string, Map<string, number>>>();
   for (const r of rows) {
-    if (!r?.item_id || !positive(r.outcome)) continue;
+    if (!r?.item_id || !positive(r.outcome) || !(Date.parse(String(r.served_at)) >= priorSince)) continue;  // §95.9: served inside the window, the loader's read and the SQL twin's (3497)
     const actor = typeof r.user_id === "string" && r.user_id !== "" ? r.user_id.toLowerCase() : null;
     const at = typeof r.outcome_at === "string" ? Date.parse(r.outcome_at) : NaN;
     const key = keyOf(r);

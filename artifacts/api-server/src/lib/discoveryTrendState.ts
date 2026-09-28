@@ -367,7 +367,7 @@ function computeTrendStatesNormalised(
   rows: readonly MomentumRow[], nowMs: number, context: TrendContext, postAfterVisit?: PostAfterVisitInput,
 ): Record<string, TrendReading> {
   const priorSince = nowMs - TREND_PRIOR_MS;
-  const provenance = derivedStoreProvenance({ kind: "bounded", startMs: priorSince, endMs: nowMs }, nowMs, TREND_STATE_VERSIONS_V2);
+  const provenance = derivedStoreProvenance({ kind: "bounded", startMs: priorSince, endMs: nowMs }, nowMs, postAfterVisit?.status === "ok" ? TREND_STATE_VERSIONS_V2_POST : TREND_STATE_VERSIONS_V2);  // §95.9: the post leg is a different per-row contribution
   const out: Record<string, TrendReading> = {};
   for (const [id, r] of Object.entries(computeTrendStatesV2(rows, nowMs, postAfterVisit ? { context, postAfterVisit } : { context }))) {
     out[id] = { state: r.state, evidence: r.evidence, provenance, lifecycle: r.lifecycle, driver: r.driver };
@@ -506,3 +506,17 @@ export async function applyPlaceTrendReviewsToRows<R extends ReviewablePlaceTren
   }
   return out;
 }
+
+// ── census-discovery §95.9 (lane W11-X3): the post-after-visit leg's versions ──
+//
+// With discovery_trend_post_convergence_enabled ON (and the Memory read
+// answered), the v2 reading also counts "visitors post afterward" (D-W11X3-2).
+// That changes what a row contributes to convergence, so it is a different
+// feature version — the in-process reading and 3497's stored rows both carry
+// it. MUST equal 3497's `c_feature_post`. The model is unchanged.
+export const TREND_FEATURE_VERSION_V2_POST = "discovery-exposure-activity-v3+post-after-visit-v1";
+
+const TREND_STATE_VERSIONS_V2_POST: DerivedStoreVersions = {
+  modelVersion:   TREND_STATE_MODEL_VERSION_V2,
+  featureVersion: TREND_FEATURE_VERSION_V2_POST,
+};
