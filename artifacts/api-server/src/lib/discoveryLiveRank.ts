@@ -472,3 +472,105 @@ export function rankDiscoveryLive<T extends LiveRankRow>(rows: readonly T[], opt
     demoted: scored.filter((s) => s.grade.safety.demoted).length,
   };
 }
+
+// ── A07 — a Live-claim read that FAILED fails closed (census-discovery §79) ───
+
+/**
+ * The `01` §11 code whose plain language is a "now" claim ("Close to you and
+ * open around now."). The same code lib/discoveryCandidate withholds from a
+ * demoted row; restated here as a literal so this pure module imports nothing
+ * from the projection it post-processes.
+ */
+export const LIVE_NOW_REASON_CODE = "nearby_now";
+
+/** A served row, as far as the fail-closed rule needs to see it. Structural. */
+export interface LiveClaimSubjectRow {
+  id: string;
+  canonicalPlaceId?: string | null;
+}
+
+/** What a serve point knows about the live read it attempted. */
+export interface LiveReadAttempt {
+  /** `discovery_live_rank_enabled` as the serve read it. OFF ⇒ nothing was attempted, so nothing failed. */
+  flagOn: boolean;
+  /** The layer ran to completion. False with the flag on ⇒ it threw, and nothing it would have read is known. */
+  applied: boolean;
+  /** Grades by row id — EVERY graded row, not only the demoted ones. */
+  byId: ReadonlyMap<string, Pick<DiscoveryLiveRank, "evidence">>;
+}
+
+/**
+ * census-discovery §79, register D-W10R4-3 (D-7) — the rows whose live state
+ * this serve TRIED to read and could not.
+ *
+ * Sensing §20: *"Schema/permission/infrastructure failure ≠ no activity"*, and
+ * §8/§7: a place must never be promoted as the best move now while its safety
+ * reading is unknown because the read failed. A row is in the set when it has
+ * a canonical live subject (so a read was owed) and either the whole layer
+ * threw, or its own grade came back `unreadable` (the gates refused the look, or
+ * its claim read errored). A row with NO canonical subject was never looked at
+ * on any path, with or without a failure, and is not in the set — the rule is
+ * about a read that failed, not about coverage (§2: no coverage is its own fact,
+ * and the ranker already treats it as such). A row past the graded window was
+ * not looked at either, and is likewise not in the set.
+ *
+ * Flag OFF ⇒ the empty set, always. Pure.
+ */
+export function liveClaimReadFailures(rows: readonly LiveClaimSubjectRow[], attempt: LiveReadAttempt): Set<string> {
+  const failed = new Set<string>();
+  if (!attempt.flagOn) return failed;
+  for (const row of rows) {
+    if (typeof row.canonicalPlaceId !== "string" || row.canonicalPlaceId === "") continue;
+    if (!attempt.applied) { failed.add(row.id); continue; }
+    if (attempt.byId.get(row.id)?.evidence === "unreadable") failed.add(row.id);
+  }
+  return failed;
+}
+
+/** A served row that may carry the candidate projection. Structural, so this module needs nothing from it. */
+export interface LiveClaimCarrier {
+  id: string;
+  candidate?: {
+    reasons: ReadonlyArray<{ code: string }>;
+    whyNow: string[] | null;
+    whyNowValidForMs: number | null;
+  };
+}
+
+/**
+ * Serve the candidate, withhold the claim. For every row in `failed` that
+ * carries a projection: the `nearby_now` reason is removed and `whyNow` /
+ * `whyNowValidForMs` are null — no live claim and no "open around now" rests
+ * on a read that did not happen. The row itself, its position and every other
+ * reason are untouched: hiding a place because a read failed would be a second
+ * failure (the same precedent as lib/mapDisplayResolver and
+ * lib/discoveryCandidate `withSafetyPrecedence`).
+ *
+ * `failed` empty ⇒ the SAME array reference, nothing copied — which is what
+ * keeps every flag-off serve byte-identical. Pure.
+ */
+export function withLiveClaimsWithheld<T extends LiveClaimCarrier>(rows: T[], failed: ReadonlySet<string>): T[] {
+  if (failed.size === 0) return rows;
+  return rows.map((row) => {
+    if (!failed.has(row.id) || !row.candidate) return row;
+    return {
+      ...row,
+      candidate: {
+        ...row.candidate,
+        reasons: row.candidate.reasons.filter((r) => r.code !== LIVE_NOW_REASON_CODE),
+        whyNow: null,
+        whyNowValidForMs: null,
+      },
+    };
+  });
+}
+
+/**
+ * The envelope's statement of the degradation — `11` §9, a failure must not
+ * masquerade as success. Null when nothing failed, so a healthy serve (and
+ * every flag-off serve) carries no key at all.
+ */
+export function liveSafetyDegradation(failed: ReadonlySet<string>, servedIds: readonly string[]): { readable: false; claimsWithheld: number } | null {
+  if (failed.size === 0) return null;
+  return { readable: false, claimsWithheld: servedIds.filter((id) => failed.has(id)).length };
+}

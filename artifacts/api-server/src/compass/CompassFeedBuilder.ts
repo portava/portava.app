@@ -832,3 +832,49 @@ export function compassPostPlaceForViewer<T extends { item: CompassItem }>(r: T,
   if (!postPlaceMarkedWithheldFrom(item, viewerId)) return r;
   return { ...r, item: { ...item, placeId: null } };
 }
+
+// ── compassEligibleForDiscovery — census-discovery §79 (C32 / DC-24) ──────────
+
+/** What Compass's gates decided for a Discovery candidate set. Membership only — no order, no score. */
+export interface CompassDiscoveryEligibility {
+  /** Ids (as handed in) of the candidates every Compass gate passed. A Set, so no order can be read from it. */
+  eligibleIds: Set<string>;
+  inputCount: number;
+  blockedCount: number;
+  rejectedCount: number;
+  liveExcludedCount: number;
+}
+
+/**
+ * Compass as a CANDIDATE GATE for the Discovery `for_you` page, not as a ranker.
+ *
+ * With `discovery_for_you_pde_enabled` on, GET /discovery orders `for_you` with
+ * the PDE pipeline and nothing else (lib/discoveryOnePipeline). Compass keeps
+ * the part of its job that is not ordering: `runPipeline`'s gates — the
+ * fail-closed safety filter, eligibility, the safe-return attention hold and the
+ * Live exclusions (IG-07 / AT-14) — decide which candidates ENTER that pipeline.
+ * This returns the ids those gates passed and nothing that could carry an
+ * order: the scores `runPipeline` computes are discarded, and none of
+ * `rankItemsForDiscovery`'s ordering stages (active-user rewards, fair
+ * exposure, slot allocation, creator caps) runs.
+ *
+ * `runPipeline` still writes its per-item score audit row
+ * (`compass_recommendation_scores`), exactly as the Compass path that this
+ * replaces already does for the same candidates; it records Compass's
+ * evaluation, not the served order.
+ */
+export async function compassEligibleForDiscovery(
+  items:   CompassItem[],
+  profile: CompassProfile,
+  context: CompassContext,
+  db:      SupabaseClient | null,
+): Promise<CompassDiscoveryEligibility> {
+  const summary = await runPipeline(items, profile, context, db);
+  return {
+    eligibleIds:       new Set(summary.results.map((r) => r.item.id)),
+    inputCount:        summary.inputCount,
+    blockedCount:      summary.blockedCount,
+    rejectedCount:     summary.rejectedCount,
+    liveExcludedCount: summary.liveExcludedCount,
+  };
+}

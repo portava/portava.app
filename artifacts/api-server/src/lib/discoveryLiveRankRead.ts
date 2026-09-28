@@ -198,7 +198,7 @@ export interface LiveSafetyServeOutcome<T> {
    * withhold its "now" reason (`withSafetyPrecedence`). Every other row is
    * absent, so a serve point that uses this adds NO why-now of any other kind.
    */
-  byId: Map<string, DiscoveryLiveRank>;
+  byId: Map<string, DiscoveryLiveRank>;  /** census-discovery §79 (A07): EVERY graded row, demoted or not, so a serve point can tell a read that failed (`unreadable`) from one that was never owed. Nothing reaches the wire from it. */ gradedById: ReadonlyMap<string, DiscoveryLiveRank>;
   demoted: number;
 }
 
@@ -228,13 +228,13 @@ export async function withDiscoveryLiveSafety<T extends LiveRankSourceRow>(
   const demotedById = new Map<string, DiscoveryLiveRank>();
   for (const [id, grade] of graded.byId) if (grade.safety.demoted) demotedById.set(id, grade);
   if (!graded.applied || demotedById.size === 0) {
-    return { places, applied: graded.applied, readable: graded.readable, byId: demotedById, demoted: 0 };
+    return { places, applied: graded.applied, readable: graded.readable, byId: demotedById, gradedById: graded.byId, demoted: 0 };
   }
   return {
     places: [...places.filter((p) => !demotedById.has(p.id)), ...places.filter((p) => demotedById.has(p.id))],
     applied: true,
     readable: graded.readable,
-    byId: demotedById,
+    byId: demotedById, gradedById: graded.byId,
     demoted: demotedById.size,
   };
 }

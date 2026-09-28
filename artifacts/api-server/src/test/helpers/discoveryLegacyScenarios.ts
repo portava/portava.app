@@ -39,6 +39,7 @@ import { invalidateServeLogFlagCache } from "../../lib/discoveryServeLog.js";
 import { invalidateCandidateProjectionFlagCache } from "../../lib/discoveryCandidate.js";
 import { invalidateLiveRankFlagCache } from "../../lib/discoveryLiveRankRead.js";
 import { invalidateDiscoveryModifiersFlagCache } from "../../lib/discoveryModifiers.js";
+import { invalidateOnePipelineFlagCache } from "../../lib/discoveryOnePipeline.js";
 import { newWorld, worldClient, flag, communityRow, profileRow, overpassBody, type WorldState } from "./fakeDiscoveryWorld.js";
 
 export const LEGACY_VIEWER = "aaaa0000-0000-4000-8000-00000000000a";
@@ -57,11 +58,11 @@ export function osmCached(): DiscoveryPlace[] {
   return [mk(1, "Cafe Uno", "cafe", 4.5, 2), mk(2, "Harbour Walk", "attraction", null, 9), mk(3, "Night Owl", "bar", 3.9, 0), mk(4, "Museo", "museum", 4.8, 5)];
 }
 
-export function legacyWorld(opts: { compass?: boolean } = {}): WorldState {
+export function legacyWorld(opts: { compass?: boolean; extraFlags?: ReturnType<typeof flag>[] } = {}): WorldState {
   return newWorld({
     users: { [LEGACY_TOKEN]: LEGACY_VIEWER },
     tables: {
-      feature_flags: opts.compass ? [flag("COMPASS_V1_RULE_BASED_ENABLED", true)] : [],
+      feature_flags: [...(opts.compass ? [flag("COMPASS_V1_RULE_BASED_ENABLED", true)] : []), ...(opts.extraFlags ?? [])],
       discovery_places: [
         communityRow("p1", { saved_count: 7 }),
         communityRow("p2", { submitted_by: LEGACY_SUBMITTER_S, saved_count: 1 }),
@@ -99,6 +100,7 @@ function resetCaches(): void {
   invalidateCandidateProjectionFlagCache();
   invalidateLiveRankFlagCache();
   invalidateDiscoveryModifiersFlagCache();
+  invalidateOnePipelineFlagCache();
 }
 
 interface Scenario {
@@ -129,7 +131,13 @@ export const LEGACY_SCENARIOS: Scenario[] = [
   { name: "S11 signed-in feed", path: "/discovery/feed?city=Miami&lat=25.77&lng=-80.19&category=food", auth: true },
 ];
 
-export async function runLegacyScenarios(): Promise<Record<string, unknown>> {
+/**
+ * `extraFlags` (census-discovery §79) seeds more flag rows into every scenario's
+ * world — e.g. a new flag present and FALSE — so a suite can prove the golden
+ * holds with the row there as well as with it absent. Absent ⇒ the world the
+ * golden was captured in.
+ */
+export async function runLegacyScenarios(extraFlags: ReturnType<typeof flag>[] = []): Promise<Record<string, unknown>> {
   const server: Server = createServer(express()
     .use((req, _res, next) => { (req as any).log = pino({ level: "silent" }); next(); })
     .use(discoveryRouter));
@@ -155,7 +163,7 @@ export async function runLegacyScenarios(): Promise<Record<string, unknown>> {
   try {
     for (const sc of LEGACY_SCENARIOS) {
       resetCaches();
-      const w = legacyWorld({ compass: sc.compass });
+      const w = legacyWorld({ compass: sc.compass, extraFlags });
       const c = worldClient(w);
       _setTestServiceClient(c as any);
       _setTestClient(c as any, true);
