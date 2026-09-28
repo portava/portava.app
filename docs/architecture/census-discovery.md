@@ -15530,6 +15530,155 @@ No row changes bucket. Ten rows are restated W → W, with their evidence and th
 - CONSTRUCTED 184 / 188 = **97.9 %**. CORRECT 96 / 188 = **51.1 %**. The four buckets sum to 188; the denominator is unchanged.
 - 18 of the census's latest row statements carry `IMPLEMENTATION-COMPLETE; awaits:` (16 at `6594dd495`). DC-11 and DC-01 gained the marker here; A18, DV-12, DV-18, DC-13, DV-54 and A07 kept theirs with corrected awaits; DC-17 and DV-09 carry none, because each still waits on code. Each needs only production activation or production evidence, and is counted W, as §31.2 requires.
 
+## §95 — Projections and cross-architecture client (lane W11-X3): place co-occurrence is built from shared Trails and rebuildable, "visitors post afterward" reaches the v2 classifier, a generated row carries the route's distance and aggregates, and the client's Save and "Ask me first" legs land behind their FALSE flags; no row changes bucket
+
+*Written 2026-09-28 by lane W11-X3 on `disc-w11-x3-data`, branched from `3cc027a06`. It builds W11A-B10 (DV-72), W11A-B9 (DV-34), §85's two stated differences in a generated row (D-W10-R3-1, DC-12), and §81.4's client hunks R1 (A21) and R3 (DV-76). Decisions are in `docs/architecture/discovery-decision-register.md`, section `## W11-X3 — projections and client` (D-W11X3-1 … D-W11X3-4, D-W11X3-A1). Every new behaviour is behind a flag seeded FALSE: `discovery_place_cooccurrence_enabled` and `discovery_trend_post_convergence_enabled` (3496), and, for the client, the server's existing `telegraph_discovery_actions_enabled` (3467) and `tag_permission_approval_required_enabled` (3468). Migrations 3495–3496 are applied to the local PostgreSQL 16 harness only, never to `portava-ci` or production. Every result below is controlled evidence on fakes or the harness, not production evidence. No row changes bucket, so the headline does not move and is not restated. `head_commit` is not re-declared.*
+
+### 95.1 Row statements
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-72 | W | **W** | **Three of `10` §3's five projections now exist and are rebuildable; the three personal forms stay the owner's.** `place_momentum` (2892) and `trail_relations` (3416), as §61 found them, and now the Trail-derived `place_cooccurrence`: pairs of places held by a common non-archived Trail, read from `content_trails` alone (`artifacts/api-server/src/migrations/3495_place_cooccurrence_trail_projection.sql:121#CREATE OR REPLACE FUNCTION public.rebuild_place_cooccurrence(p_now timestamptz DEFAULT now())`). A CHECK admits no other basis (`artifacts/api-server/src/migrations/3495_place_cooccurrence_trail_projection.sql:90#CONSTRAINT place_cooccurrence_basis_trail_only CHECK (basis = 'shared_trail'),`). On the harness the table equals an independent projection of the same rows, lineage included (`artifacts/api-server/src/test/db/placeCooccurrenceRebuild.db.test.ts:152#test("R1. rebuild-equivalence`). It comes back identical after a drop, is unchanged by a second rebuild, and is exact after a source change (R2–R4). No client role reads, writes or rebuilds it, and a people-derived basis is refused (`artifacts/api-server/src/test/db/placeCooccurrenceRebuild.db.test.ts:202#test("R5. no client role`). Its reader and hourly tick sit behind `discovery_place_cooccurrence_enabled` (3496, FALSE) (`artifacts/api-server/src/lib/discoveryPlaceCooccurrence.ts:108#export async function readPlaceCooccurrence(`; `artifacts/api-server/src/test/discoveryPlaceCooccurrence.test.ts:89#it("C1 flag OFF`). `traveler_affinities`, `circle_momentum` and the itinerary form of co-occurrence are behavioural inferences about people and are not built (D-W11X3-1). IMPLEMENTATION-COMPLETE; awaits: 3495 and 3496 applied to production + flag discovery_place_cooccurrence_enabled TRUE in production + one production place_cooccurrence run (D-W11X3-A1). AWAITS OWNER APPROVAL: W10D-C5. |
+| DV-34 | W | **W** | **Two of `03` §6's five signals now reach the v2 classifier's convergence input: unrelated travellers (§84) and visitors posting afterward.** A traveller counts when they published a PUBLIC Memory at the place after their own positive outcome there (`artifacts/api-server/src/lib/discoveryTrendPostConvergence.ts:94#export function postAfterVisitAuthors(`; `artifacts/api-server/src/lib/discoveryTrendPostConvergence.ts:80#return !!m && m.state === "published" && m.visibility === "public";`). A window contributes only with at least two distinct authors (`artifacts/api-server/src/lib/discoveryTrendPostConvergence.ts:56#export const POST_CONVERGENCE_MIN_AUTHORS = 2;`). The independence clusters of authors new to the window are added to its group count (`artifacts/api-server/src/lib/discoveryTrendNormalised.ts:723#function withPostConvergence(`). The leg is behind `discovery_trend_post_convergence_enabled` (3496, FALSE), read only inside the v2 branch (`artifacts/api-server/src/lib/discoveryLocalMomentum.ts:457#if (!(await isFlagEnabled(sc, "discovery_trend_post_convergence_enabled"))) return {};`). Two new authors lift a controlled place from `unknown` to a reading (`artifacts/api-server/src/test/discoveryTrendPostConvergence.test.ts:81#it("P1 two new authors`). A private, draft or removed Memory changes nothing (`artifacts/api-server/src/test/discoveryTrendPostConvergence.test.ts:94#it("P2 a private`). An existing activity actor, a single author, a post before the visit, and accounts posting in lockstep add nothing or one group (P3–P6). With the flag off no Memory is read and the reading is §84's, byte for byte (P0, `artifacts/api-server/src/test/discoveryTrendPostConvergence.test.ts:217#it("L1 flag OFF`). **Why not IMPLEMENTATION-COMPLETE:** the stored twin `rebuild_place_momentum_v2` (3477), which the trend API serves, is not extended (95.4 O-1). Circles, crews, saves converting into visits and cross-network activity need people-derived data (D-W11X3-2). AWAITS OWNER APPROVAL: AR-W11A-2. |
+| DC-12 | W | **W** | **Verdict and markers unchanged (§85.1). The two differences §85 stated between a generated row and a route-read row are closed in code.** `distanceKm` is measured from the request's reference point with the route's rounding (`artifacts/api-server/src/lib/discoveryCandidates/materialize.ts:107#distanceKm: servedDistanceKm(center, lat, lng),`). The route's vote and review aggregates are merged onto curated rows as the route merges them (`artifacts/api-server/src/lib/discoveryCandidates/materialize.ts:245#async function mergeRouteAggregates(`), through helpers pinned token for token to the route's (`artifacts/api-server/src/test/discoveryCandidateRowParity.test.ts:62#it("R1 the restated helpers`). Through `rankForViewer` with 3480 on, the centre reaches every generated row (`artifacts/api-server/src/test/discoveryCandidateRowParity.test.ts:110#it("R5 through rankForViewer`). The route does not pass the centre yet (routed hunk R-X3-1), so a production generated row still carries `distanceKm` null; neither difference is part of DC-12's criterion. IMPLEMENTATION-COMPLETE; awaits: 3480 applied to production + flag discovery_candidate_sources_enabled TRUE in production + one production `rank_events` row whose `features.candidateSources` names a §85 source. AWAITS OWNER APPROVAL: D-W10-R3-4 (the eleventh source's flag, discovery_circle_candidates_enabled). |
+| A21 | W | **W** | **The client now takes the command path §81 routed (R1).** The card's Save posts `POST /telegraph/commands/discovery-card`, then confirms the one proposed action (`travel-buddy-standalone/src/services/discoveryCardSave.ts:75#export async function saveDiscoveryCardViaTelegraph(`; `travel-buddy-standalone/src/components/DiscoveryCardMessage.tsx:203#const viaTelegraph = await saveDiscoveryCardViaTelegraph(payload);`). Only `feature_disabled` falls back to today's `toggleSave`, so with the flag off the person sees today's behaviour (`travel-buddy-standalone/src/components/__tests__/DiscoveryCardMessage.telegraphSave.component.test.tsx:66#it('C1 server flag OFF`; `travel-buddy-standalone/src/services/__tests__/discoveryCardSave.telegraph.component.test.ts:56#it('S1 server flag OFF`). A refusal is shown, and nothing is saved by another path (C3, S3). IMPLEMENTATION-COMPLETE; awaits: flag `telegraph_discovery_actions_enabled` TRUE in production + 3467 applied + the oldest supported client build carrying this Save (D-W10S2-15). |
+| DV-76 | W | **W** | **Verdict and ground unchanged (§81.1). §81's client hunk R3 is built.** "Ask me first" is offered only when `GET /api/me/tags/pending` answers (`artifacts/api-server/src/routes/tags.ts:645#router.get('/me/tags/pending'`; `artifacts/api-server/src/test/tagPendingInbox.test.ts:86#it("I2 flag ON`). Otherwise the settings list is the four options (`travel-buddy-standalone/src/services/tagging.ts:227#export function tagPermissionOptions(`; `travel-buddy-standalone/src/services/__tests__/tagging.askMeFirst.component.test.ts:50#it('A1 the four options`). The inbox approves or declines each pending tag through the server (`travel-buddy-standalone/src/components/PendingTagInbox.tsx:27#export function PendingTagInbox(`; `travel-buddy-standalone/src/components/__tests__/PendingTagInbox.component.test.tsx:53#it('B2 Approve`). What `interacted` and `friends_only` mean is not decided here (D-W10S2-9); `tag_permission_consent_copy_enabled` stays FALSE. IMPLEMENTATION-COMPLETE; awaits: 3422 applied in production (D-W10S2-17). |
+
+No row changes bucket. The headline is unchanged.
+
+### 95.2 Decisions (register § W11-X3)
+
+| id | question | decided |
+|---|---|---|
+| D-W11X3-1 | W11A-B10, W10D-C5's buildable form | `place_cooccurrence` from shared non-archived Trails only; a Trail over 100 places adds no pair; one flag for the tick and the reader |
+| D-W11X3-2 | W11A-B9 | public, published Memories after the author's own positive outcome; a k-floor of 2, applied twice; new authors' independence clusters added to G; in-process classifier only |
+| D-W11X3-3 | D-W10-R3-1's two differences | restate the route's helpers, pinned token for token; the centre reaches generation through `PdeRankOptions` |
+| D-W11X3-4 | §81.4 R1 and R3 | Save is a command, falling back only on `feature_disabled`; "Ask me first" is offered only when the server's pending-tag route answers |
+
+**APPROVAL REQUIRED:** D-W11X3-A1 (production activation of 3495–3496 and the two flags). W10D-C5 and AR-W11A-2 are unchanged. No consent question is decided here.
+
+### 95.3 What changed, and files outside the lane's list
+
+- **New:** migrations 3495 (table `place_cooccurrence`, RLS on, four restrictive client-deny policies, `rebuild_place_cooccurrence`) and 3496 (two flags, FALSE), with rollbacks; `lib/discoveryPlaceCooccurrence.ts`, `lib/discoveryTrendPostConvergence.ts`, `lib/discoveryPlaceAggregates.ts`; the client's `services/discoveryCardSave.ts` and `components/PendingTagInbox.tsx`.
+- **Edited in place, line-neutral where a census cites the file:**
+  - `src/index.ts`: one import and one call, each on an existing line (M6's regex and length pin hold).
+  - `lib/discoveryTrendNormalised.ts`: three existing lines, plus a block appended at the foot.
+  - `lib/discoveryTrendState.ts` and `lib/discoveryLocalMomentum.ts`: pass-throughs on existing lines, plus the loader block at the foot.
+  - `lib/discoveryCandidates/materialize.ts`: its two cited lines keep their numbers.
+  - `lib/discoveryCandidates/generate.ts` and `stages.ts`: the cited line in `stages.ts` keeps its number.
+  - `routes/tags.ts`: the new route is appended after every cited line.
+  - The client's `DiscoveryCardMessage.tsx`: three lines replaced by three.
+  - `services/tagging.ts`: the type on its own line, plus an appended block.
+  - `app/profile/edit/connected.tsx`: the two lines the mobile ledger cites are unchanged.
+- **Checks and registries:** `checkDiscoveryQueryPaths.ts` names `place_cooccurrence` as a Discovery table, so its registry rows are required by construction. `docs/discovery/query-paths.md` gains QP-28, QP-29 and two registry rows. `checkProductionDrift.ts` gains `place_cooccurrence: unapplied`, on the existing last line. `docs/architecture/telegraph-phase0-inventory.md` is regenerated, because the migration count moved from 674 to 676.
+
+### 95.4 Routed hunks (NOT applied) and open work
+
+- **R-X3-1 — `routes/discovery.ts` (lanes W11-X1/X2).** At both PDE serve points (`rankForViewer(merged, pdeViewer, { sc: rankSc, served: true, … category })` in `serveCachedPlaces`, and the miss path's `rankForViewer(places, pdeViewer, { … category })`), add `center: distRef`. `distRef` is already in scope at both. `PdeRankOptions.center` is declared by this lane (`lib/discoveryCandidates/stages.ts`, module augmentation), so the hunk is those two keys only. Test: in `discoveryCandidateRowParity`, a route-level case where a generated row's `distanceKm` equals the route's own for the same row.
+- **R-X3-2 — `routes/discovery.ts`.** Import `haversineKm` and `batchFetchVoteAndRatingAggregates` from `lib/discoveryPlaceAggregates.ts` and delete the private copies. R1 then compares a file with itself and can be restated as an identity check.
+- **O-1 — the stored trend twin (lane W10-R1's 3477).** `rebuild_place_momentum_v2` does not read the post leg, so the trend API's stored reading omits it. Building it needs a new migration that re-creates the function with the same flag read. It should mirror `postAfterVisitAuthors` and `withPostConvergence`: public published Memories, after the author's own positive outcome, the k-floor twice, the new authors' islands of 30 s or less clustered as 3477 clusters activity. It also needs a parity case in `db/discoveryTrendNormalisedParity`. Until then DV-34 carries no `IMPLEMENTATION-COMPLETE`.
+- **Finding, not fixed (lane W10-R1's DC-07).** `startDiscoveryTrendRebuildScheduler` is never started. Both its import (`artifacts/api-server/src/index.ts:35#// census-discovery §52 (DV-56) import { startDiscoveryTrendRebuildScheduler }`) and its call (`artifacts/api-server/src/index.ts:293#seeded FALSE) startDiscoveryTrendRebuildScheduler();`) sit after a `//` on the line §52 wrote, so they are comment text. DC-07's statement "started by `src/index.ts`" does not hold at this tree. This lane did not touch it: it is another row's file and fix. A task is filed.
+
+### 95.5 Tests, byte identity, and mutations
+
+**Five api-server suites** are registered on the `test` line: `discoveryPlaceCooccurrence` (10), `discoveryTrendPostConvergence` (14), `discoveryCandidateRowParity` (5), `tagPendingInbox` (5), and `db/placeCooccurrenceRebuild` (6), which sits beside the other DB suites. **Four client suites** run under jest (`pnpm test:component`): `discoveryCardSave.telegraph` (5), `tagging.askMeFirst` (4), `DiscoveryCardMessage.telegraphSave` (3) and `PendingTagInbox` (5).
+
+**Seen red first.** Each suite was run against the base file restored from git, then the file was restored and its sha256 checked.
+- `discoveryTrendPostConvergence`, with the base `discoveryTrendNormalised.ts`, `discoveryTrendState.ts` and `discoveryLocalMomentum.ts`: P1, P2, P5, P6, P7 and L2 were red (6 of 14).
+- `discoveryCandidateRowParity`, with the base `materialize.ts`, `generate.ts` and `stages.ts`: R2, R3 and R5 were red.
+- `tagPendingInbox`, with the base `routes/tags.ts`: all 5 were red.
+- `db/placeCooccurrenceRebuild`, with 3495 rolled back on the harness: red (`3495 must be applied`).
+- The client's `DiscoveryCardMessage.telegraphSave`, with the base component (only the `testID` added): C1–C3 were red.
+- `tagging.askMeFirst` and `PendingTagInbox`, with the base `tagging.ts`: 8 were red. B5, the empty state, was green at base, because it uses no new export.
+- `discoveryPlaceCooccurrence` and `discoveryCardSave.telegraph` test new modules. Their red is "the module does not exist", and it is stated as that, not claimed as a behavioural red.
+
+**Byte identity with the flags off.**
+- P0 pins the v2 reading with no option. L1 pins the loader with the post flag off and with it absent: no `memories` read, and the same trends.
+- The candidate-pipeline golden (P1–P3) and §75's derived-provenance golden pass unchanged. The parity changes run only with 3480 on.
+- The client's flag-off paths are C1 (today's `toggleSave`, payload and alert) and A1 (the same four-option array, by identity).
+
+**Existing assertions restated:** none. `creatorLedgerMigrationShape3385` M6 went red on the first placement of the scheduler call, so the call was moved after the two calls M6's regex names. The assertion is unchanged.
+
+**Mutations:** 24 of 24 killed. Each was applied alone and the named suite run. SQL mutants were applied to the harness function and restored there. Every file was restored and its sha256 checked (`w11x3-mutate.py`).
+
+| # | file | mutation | red |
+|---|---|---|---|
+| MX1 | `discoveryPlaceCooccurrence.ts` | the reader ignores its flag | C1, C2, C5 |
+| MX2 | same | an unreadable half read as empty | C4 |
+| MX3 | same | the basis filter dropped | C6 |
+| MX4 | 3495 | archived Trails admitted | R1, R4 |
+| MX5 | 3495 | the 100-place cap removed | R1–R4 |
+| MX6 | 3495 | labels counted, not memberships | R1, R4 |
+| MY1 | `discoveryTrendNormalised.ts` | existing activity actors counted again | P3, P4 |
+| MY2 | same | the new-author floor lowered to 1 | P4 |
+| MY3 | `discoveryTrendPostConvergence.ts` | visibility ignored | P2 |
+| MY4 | same | "afterward" ignored | P5 |
+| MY5 | `discoveryTrendNormalised.ts` | clustering replaced by a head count | P6 |
+| MY6 | `discoveryLocalMomentum.ts` | the post flag ignored | L1 |
+| MY7 | `discoveryTrendPostConvergence.ts` | the input's own floor removed | P4 |
+| MZ1 | `materialize.ts` | distance always null | R2, R5 |
+| MZ2 | same | aggregates not merged | R3 |
+| MZ3 | `stages.ts` | the centre not passed | R5 |
+| MT1 | `routes/tags.ts` | removed tags listed | I2 |
+| MT3 | same | the flag gate removed | I1 |
+| MC1 | client `discoveryCardSave.ts` | `feature_disabled` not recognised | S1 |
+| MC2 | client `DiscoveryCardMessage.tsx` | a refusal falls through to `toggleSave` | C3 |
+| MC3 | client `tagging.ts` | "Ask me first" always offered | A1 |
+| MC4 | same | any 404 read as "off" | A2 |
+| MC5 | client `PendingTagInbox.tsx` | the tag leaves on a refused answer | B4 |
+| MQ | `query-paths.md` | `idx_place_cooccurrence_b`'s registry row removed | `check:discovery-query-paths` fails |
+
+**Two survivors on the first run were sharpened, not argued away.**
+- MY4 survived because P5's traveller was also a window actor. P5 now separates the two rules.
+- MY7 survived because the second floor implies the first. P4 now pins the input's own floor.
+
+MX4 first survived as a one-sided mutant: the self-join on one Trail filters both halves, so it is equivalent. It was replaced by the two-sided mutant in the table.
+
+A single-edit mutant of the inbox's `tagged_user_id` filter is equivalent, because the query and the in-code filter each enforce it alone. It was not counted.
+
+### 95.6 Harness (PostgreSQL 16, port 55464, data under `/var/tmp/w11x3-*`, deleted after)
+
+- **Replay.** `up.sh` replayed the chain from 2093 on a fresh database: 384 files applied in order, 3495 and 3496 among them. 12 of the 396 are the known-unreplayable entries, as before, and 2 of those applied on retry.
+- **Re-applying.** A second apply of 3495 and of 3496 is a no-op.
+- **Rollback refusal.** With a 3496 flag TRUE, its rollback raises `ROLLBACK REFUSED (3496)` and a re-apply raises `POSTCONDITION FAILED (3496)`.
+- **Round trips.** 3496's rollback removes both rows, and its re-apply restores them FALSE. 3495's rollback drops the table and function; with it rolled back the suite is red, and after re-applying it is 6 of 6.
+- **EXPLAIN.** QP-28 and QP-29 were captured over 2,000 Trails and 30,000 memberships inside a rolled-back transaction.
+- **The database suites.** `scripts/local-db/run-tests.sh` on this cluster: 421 tests, 419 pass, 0 skipped, 2 fail. `db/placeCooccurrenceRebuild` passes 6 of 6 in that run. Neither failure is this lane's:
+  - `db/discoverySearchProtection` Z4 (`'1' !== '0'` on 3366's rollback). It fails identically alone, and again with 3495 and 3496 rolled back off the harness. The suite, 3366, its rollback and the two libraries it imports are byte-identical to `3cc027a06`.
+  - `db/trailsService` (`fetch failed` from its PostgREST bridge), the failure §81.6 and §85.5 recorded as pre-existing. It passes 14 of 14 alone.
+
+### 95.7 Checks at this tree, after the last edit
+
+All in `artifacts/api-server` unless stated, at this tree.
+
+- **Types.** `tsc -p tsconfig.json --noEmit` is clean. `typecheck:tests` is at its baseline: 863 across 115 files. The new suites add none.
+  - `npm run typecheck` as a whole fails at its first step, `tsc -b ../../lib/db`: `lib/db` has no `node_modules` in this worktree (`drizzle-orm`, `pg`), and the lane may not install. The api-server's own two type checks were run directly, as above.
+- **Pass:** `check:test-registration`, `check:migration-prefixes`, `check:schema-references`, `check:writerless-reads`, `check:enum-literals`, `check:production-drift` (`place_cooccurrence` recorded `unapplied`), `check:flag-polarity`, `check:discovery-query-paths` (72 creations, 72 rows), `check:route-auth-gate`, `check:telegraph-inventory` (regenerated: 676 migrations), and `node --import tsx/esm src/scripts/checkFlagSchemaPrerequisites.ts`.
+- **`migrationApplyOrder.test.ts`:** 59 of 59. 3495 and 3496 open with `BEGIN` before any `$pre$` block.
+- **Census and citation checks, after the last edit:** `check:census-integrity`, `check:doc-citations` (unanchored at its ceiling, 6434), `check:citation-targets`, `check:citation-symbols`, `check:census-freshness`, `check:census-scope-coverage`, `check:census-row-move-labels` and `check:census-policy-citations` all pass.
+  - Acknowledgements are appended for census-discovery (21 files), census-telegraph (`DiscoveryCardMessage.tsx`) and census-trips (the new DB suite, counted under `src/test/db/`). Each is argued per file.
+  - §81.4's NOT-GRADED line for the client's `tagging.ts` is removed, because §95 now grades the file.
+- **Suites.** Every api-server suite that imports or reads a changed file (79 files) was run together: 1,447 of 1,447 pass. That includes both goldens, `discoveryCandidateSources`, `discoveryTrendNormalised`, `tagPermissionApprovalRequired` and `creatorLedgerMigrationShape3385`.
+- **Client (`travel-buddy-standalone`): `check:all` passes.**
+  - node:test: 330 files, 7,185 pass.
+  - jest: 687 suites, 4,379 pass, plus the web suites (4 suites, 12 tests).
+  - `typecheck` and `typecheck:tests` (173, at its baseline), `lint:bare-image`, `lint:avatar-icon-sizing`, `test:avatar-icon-sizing-guard`, `lint:dev-proxy-not-shipped`, and `lint:orphan-tests` (0 new).
+- **Not run:**
+  - `check:write-path-columns`, which needs live credentials. By its extractor, this lane adds no new write payload to a client-reachable table. `place_cooccurrence` is written only inside `rebuild_place_cooccurrence`'s SQL. The new tags route only reads. The client posts to existing routes.
+  - The full api-server `npm test`. The affected-suite run above stands in for it.
+  - No production or `portava-ci` read.
+
+### 95.8 What would turn this red
+
+- A people-derived basis in `place_cooccurrence`, or any user, owner, trip or Memory column in 3495's SQL (M2, R5).
+- An archived Trail's pair, or a pair from a Trail over 100 places (R1).
+- The co-occurrence reader or tick acting with its flag off, or an unreadable half answered as empty (C1, C2, C4, T1).
+- A Memory that is not published and public reaching the post leg, a post before the author's own outcome counting, one author counting, or an existing activity actor counting twice (P2–P5).
+- Any reading differing from §84's with the post flag off or absent (P0, L1).
+- A generated row's distance or aggregates drifting from the route's helpers (R1).
+- The card's Save writing anything after a refusal, or falling back on anything but `feature_disabled` (C3, S3, S5).
+- "Ask me first" offered while the server's route answers `feature_disabled` (A1, A2, I1).
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/test/helpers/supabaseConformance.ts — §86.13 cites it only as the file that registers `fakeTrailRulesDb` as a contract Subject; it is shared test machinery (the Supabase contract harness), and no Discovery verdict rests on it.
@@ -15580,6 +15729,6 @@ No row changes bucket. Ten rows are restated W → W, with their evidence and th
 - NOT-GRADED: travel-buddy-standalone/src/platform/input-assistance/data/cities.ts — §76.3 names it only to say it reads the centroid name tables and not the fold; census-input-intelligence grades it.
 
 
-- NOT-GRADED: travel-buddy-standalone/src/services/tagging.ts — §81.4 names it only as the target of routed hunk R3 (the "Ask me first" option); no §81 verdict rests on the client file.
 
 - NOT-GRADED: artifacts/api-server/src/routes/pulse.ts — §78.9 H3 gives the one-line spread that lets Pulse rank on its own `01` §9 objective, and §91.2 cites that spread as integrated; DV-09's Pulse leg rests on discoveryIntegrationHooks.test.ts's served-impression case (watched), not on the route's text, and census-trips and census-trust grade the route.
+- NOT-GRADED: artifacts/api-server/src/test/migrationApplyOrder.test.ts — §95.7 cites it only as the applier's own suite, run to show 3495 and 3496 are appliable (BEGIN before any `$pre$` block); it is shared migration machinery, and no Discovery verdict rests on it.
