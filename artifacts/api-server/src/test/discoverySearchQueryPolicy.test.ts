@@ -35,7 +35,7 @@ import { invalidateSearchProtectionFlagCache } from "../lib/discoverySearchProte
 import { invalidateDiscoveryTripProjectionFlagCache } from "../lib/discoveryTripProjectionConsumer.js";
 import { VIEWER, installKit, kitGet, startKitServer, type KitState } from "./discoverySearchTestKit.js";
 
-describe("Q1 — sanitizeQuery strips only the PostgREST metacharacters", () => {
+describe("Q1 — sanitizeQuery strips only the PostgREST metacharacters (`(`, `)`, `,` and, since §80, `*`)", () => {
   for (const [input, expected] of [
     ["(a),b", "a b"],
     ["  rock   bar  ", "rock bar"],
@@ -47,6 +47,10 @@ describe("Q1 — sanitizeQuery strips only the PostgREST metacharacters", () => 
     ["rock'n'roll", "rock'n'roll"],
     ["50% off", "50% off"],
     ["👨‍👩‍👧 family", "👨‍👩‍👧 family"],
+    // §80 follow-up: `*` is PostgREST's like-wildcard, so it is a metacharacter
+    // here exactly as `(`, `)` and `,` are — and it carries no search meaning.
+    ["**", ""],
+    ["5* hotel", "5 hotel"],
   ] as const) {
     it(`${JSON.stringify(input)} → ${JSON.stringify(expected)}`, () => {
       assert.equal(sanitizeQuery(input), expected);
@@ -251,6 +255,20 @@ describe("Q8 — an emoji inside a word (the in-word rule, decided)", () => {
     for (const [input, key] of [[`${ENGLAND} pub`, "pub"], [`${KEY_ONE} bar`, "bar"], ["caf\u{2615}e", "cafe"], ["Sky\u{1F525}Bar", "Sky Bar"]] as const) {
       assert.equal(normalizeQuery(input, { context: "global_search", allowTypoCorrection: false }).query, key, input);
     }
+  });
+});
+
+describe("Q9 — a literal '*' is never a wildcard (§80 follow-up)", () => {
+  it("'**' has nothing to search: 400, not every row", async () => {
+    installKit(world());
+    const { status } = await kitGet(base, `/discovery/search?q=${encodeURIComponent("**")}&type=places`);
+    assert.equal(status, 400);
+  });
+  it("no '*' reaches the ilike pattern", async () => {
+    const { calls } = installKit(world());
+    await kitGet(base, `/discovery/search?q=${encodeURIComponent("sky*bar")}&type=places`);
+    const or = calls.ors.find((o) => o.table === "discovery_places");
+    assert.ok(or && !or.expr.includes("*"), `a '*' reached the pattern: ${or?.expr}`);
   });
 });
 

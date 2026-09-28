@@ -114,7 +114,7 @@ export type SearchType = typeof SEARCH_TYPES[number];
 // Exported (additive) so the input-assistance gateway sanitizes typed input
 // with the exact same PostgREST-injection guard the search path uses.
 export function sanitizeQuery(s: string): string {
-  return s.replace(/[(),]/g, " ").replace(/\s+/g, " ").trim();
+  return s.replace(/[(),*]/g, " ").replace(/\s+/g, " ").trim(); // §80: `*` is PostgREST's like-wildcard
 }
 
 // ── Normalized result shape ────────────────────────────────────────────────────
