@@ -30,7 +30,7 @@ import { errorCopy } from '../lib/errorCopy.ts'; import { typedKindPreviewLabel 
 // Telegraph §21 — object-aware, authorization-scoped message search. A
 // different question from this screen's own thread filter; see the row that
 // opens it.
-import { TelegraphSearchScreen } from '../features/telegraph/components/TelegraphSearchScreen.tsx';
+import { TelegraphSearchScreen } from '../features/telegraph/components/TelegraphSearchScreen.tsx'; import { InboxHeaderActions } from '../features/telegraph/components/InboxHeaderActions.tsx';
 
 type FilterKey = 'all' | 'direct' | 'trips' | 'circles' | 'unread' | 'requests';
 
@@ -457,15 +457,15 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
             <Text style={s.brandName}>Telegraph</Text>
           </View>
           {isAuthed && (
-            <Pressable
-              style={s.composeBtn}
-              onPress={() => router.push('/telegraph/new' as any)}
-              accessibilityRole="button"
-              accessibilityLabel="New Telegraph"
-              hitSlop={8}
-            >
-              <MessageCirclePlus size={20} color={color.signal} />
-            </Pressable>
+            // WP-08: Saved messages and Message settings beside New Telegraph
+            // (TEL-F08, TEL-F23). The compose button itself is unchanged.
+            <InboxHeaderActions
+              composeStyle={s.composeBtn}
+              onCompose={() => router.push('/telegraph/new' as any)}
+              onSaved={() => router.push('/messages/saved' as any)}
+              onSettings={() => router.push('/settings/messages' as any)}
+              composeIcon={<MessageCirclePlus size={20} color={color.signal} />}
+            />
           )}
         </View>
       </View>

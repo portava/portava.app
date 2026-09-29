@@ -125,7 +125,7 @@ async function apiFetch<T>(
     },
   });
   const json = await res.json();
-  if (!res.ok) throw new Error((json as any).message ?? `HTTP ${res.status}`);
+  if (!res.ok) throw Object.assign(new Error((json as any).message ?? `HTTP ${res.status}`), { status: res.status, code: (json as any).error as string | undefined }); // status/code: TM-social PLAT-F37 (409 duplicate vs 403 vs outage)
   return json as T;
 }
 

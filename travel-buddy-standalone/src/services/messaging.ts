@@ -590,7 +590,7 @@ export async function saveMessage(
   threadId: string,
   messageId: string,
 ): Promise<MsgResult<{ ok: boolean; savedAt: string }>> {
-  return apiPost(`/api/threads/${threadId}/messages/${messageId}/save`, {});
+  return apiPost<{ ok: boolean; savedAt: string; reason?: string }>(`/api/threads/${threadId}/messages/${messageId}/save`, {}).then(saveOutcome);
 }
 
 /**
@@ -670,7 +670,7 @@ export async function reportThread(
 
 export async function reportMessage(
   messageId: string,
-  reason: string,
+  reason: string, reasonCode?: MessageReportReasonCode,
 ): Promise<MsgResult<{ ok: boolean }>> {
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
   const token = await freshToken();
@@ -679,7 +679,7 @@ export async function reportMessage(
     const res = await fetch(`${apiBase()}/api/messages/${messageId}/report`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ reason }),
+      body: JSON.stringify(reasonCode ? { reason, reason_code: reasonCode } : { reason }),
     });
     if (!res.ok) return mapApiError(res.status, await res.json().catch(() => ({})));
     return { ok: true, data: await res.json() };
@@ -816,4 +816,159 @@ export async function deleteMessage(
     if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
     return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
   }
+}
+
+// ── WP-08 (lane tm-telegraph): saved messages, the canonical edit route, edit
+// history ──────────────────────────────────────────────────────────────────────
+//
+// These four calls do NOT go through apiGet/apiPatch above, for one reason:
+// apiGet answers `{ ok: true, data: null }` on an unconfigured build, and a
+// screen that reads that as "you have no saved messages" or "this message was
+// never edited" is showing a failed read as an empty one (DV-83). Here every
+// non-success is `ok: false` and carries the server's own error `code`, so a
+// caller can tell a retryable `degraded_unavailable` from a refusal.
+
+export interface SavedMessageItem {
+  messageId: string;
+  threadId: string;
+  senderId: string | null;
+  /** Null for an end-to-end encrypted message: the server never held its text. */
+  body: string | null;
+  createdAt: string;
+  savedAt: string;
+  msgType: string;
+  subtype: string | null;
+  mediaUrl: string | null;
+  mediaType: string | null;
+  mediaThumbnailUrl: string | null;
+}
+
+export interface MessageEditVersion {
+  version: number;
+  previousBody: string | null;
+  editorId: string | null;
+  editedAt: string | null;
+}
+
+export interface MessageEditHistory {
+  messageId: string;
+  threadId: string;
+  senderId: string | null;
+  currentBody: string | null;
+  editedAt: string | null;
+  /** Newest first. Version N is the body the message had BEFORE edit N. */
+  versions: MessageEditVersion[];
+}
+
+export interface ThreadMessageEdit {
+  id: string;
+  threadId: string;
+  body: string;
+  editedAt: string;
+  /** `recorded: false` means the edit landed but no earlier version was kept. */
+  versionHistory?: { recorded: boolean; version: number | null; reason?: string };
+}
+
+export interface TelegraphCallResult<T> {
+  ok: boolean;
+  data: T | null;
+  /** The server's error code (`forbidden`, `not_found`, `degraded_unavailable`, `e2ee_thread`, …) or a client-side one. */
+  code?: string;
+  message?: string;
+}
+
+async function telegraphCall<T>(method: 'GET' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<TelegraphCallResult<T>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, code: 'config_error' };
+  const token = await freshToken();
+  if (!token) return { ok: false, data: null, code: 'unauthenticated' };
+  try {
+    const res = await fetch(`${apiBase()}${path}`, {
+      method,
+      headers: body !== undefined
+        ? { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
+        : { Authorization: `Bearer ${token}` },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+    const json = await res.json().catch(() => null);
+    if (!res.ok) {
+      return {
+        ok: false,
+        data: null,
+        code: typeof json?.error === 'string' ? json.error : `http_${res.status}`,
+        message: typeof json?.message === 'string' ? json.message : undefined,
+      };
+    }
+    if (json === null) return { ok: false, data: null, code: 'bad_response' };
+    return { ok: true, data: json as T };
+  } catch (e) {
+    return { ok: false, data: null, code: isNetworkError(e) ? 'network_unreachable' : 'db_error' };
+  }
+}
+
+/** GET /api/me/saved-messages — every item re-authorized by the server at read time. */
+export async function getSavedMessages(limit = 100): Promise<TelegraphCallResult<{ saved: SavedMessageItem[] }>> {
+  const r = await telegraphCall<{ saved?: SavedMessageItem[] }>('GET', `/api/me/saved-messages?limit=${limit}`);
+  if (!r.ok || !r.data) return { ...r, data: null };
+  if (!Array.isArray(r.data.saved)) return { ok: false, data: null, code: 'bad_response' };
+  return { ok: true, data: { saved: r.data.saved } };
+}
+
+/** DELETE /api/me/saved-messages/:messageId — idempotent: `not_saved` is success. */
+export async function unsaveSavedMessage(messageId: string): Promise<TelegraphCallResult<{ status: 'unsaved' | 'not_saved' }>> {
+  return telegraphCall('DELETE', `/api/me/saved-messages/${encodeURIComponent(messageId)}`);
+}
+
+/**
+ * PATCH /api/threads/:threadId/messages/:messageId — THE canonical edit route.
+ * It records the previous body in `message_edits` before overwriting, publishes
+ * `message.updated`, re-checks active membership, and refuses on an end-to-end
+ * encrypted thread. `PATCH /api/messages/:id` (groupChat.ts) does none of the
+ * history half and is no longer called by this client.
+ */
+export async function editThreadMessage(threadId: string, messageId: string, body: string): Promise<TelegraphCallResult<ThreadMessageEdit>> {
+  return telegraphCall('PATCH', `/api/threads/${encodeURIComponent(threadId)}/messages/${encodeURIComponent(messageId)}`, { body });
+}
+
+/** GET /api/threads/:threadId/messages/:messageId/edits — re-authorized at read time; 503 is NOT "never edited". */
+export async function getMessageEditHistory(threadId: string, messageId: string): Promise<TelegraphCallResult<MessageEditHistory>> {
+  const r = await telegraphCall<MessageEditHistory>('GET', `/api/threads/${encodeURIComponent(threadId)}/messages/${encodeURIComponent(messageId)}/edits`);
+  if (r.ok && r.data && !Array.isArray(r.data.versions)) return { ok: false, data: null, code: 'bad_response' };
+  return r;
+}
+
+// ── WP-08 (lane tm-telegraph): report reasons, and an honest save ─────────────
+
+/**
+ * The server's report vocabulary (artifacts/api-server/src/lib/reportReasons.ts
+ * REPORT_REASON_CODES). `POST /api/messages/:id/report` refuses anything else,
+ * and computes severity from it — harassment, hate speech and violence queue
+ * first.
+ */
+export type MessageReportReasonCode =
+  | 'harassment' | 'spam' | 'hate_speech' | 'violence'
+  | 'impersonation' | 'nudity' | 'misinformation' | 'other';
+
+export const MESSAGE_REPORT_REASONS: ReadonlyArray<{ code: MessageReportReasonCode; label: string }> = [
+  { code: 'harassment', label: 'Harassment or bullying' },
+  { code: 'spam', label: 'Spam or scam' },
+  { code: 'hate_speech', label: 'Hate speech' },
+  { code: 'violence', label: 'Violence or threats' },
+  { code: 'impersonation', label: 'Impersonation' },
+  { code: 'nudity', label: 'Nudity or sexual content' },
+  { code: 'misinformation', label: 'Misinformation' },
+  { code: 'other', label: 'Something else' },
+];
+
+/**
+ * The save route answers HTTP 200 `{ ok: false, reason: 'unavailable' }` when
+ * the write itself failed (routes/messaging.ts, the `saved_messages` upsert
+ * branch). `apiPost` only looks at the status, so that answer used to reach the
+ * screen as `ok: true` and the person was told "Saved" about a save that did
+ * not happen. A body that says it failed is a failure.
+ */
+function saveOutcome(r: MsgResult<{ ok: boolean; savedAt: string; reason?: string }>): MsgResult<{ ok: boolean; savedAt: string }> {
+  if (r.ok && r.data && r.data.ok === false) {
+    return { ok: false, data: null, errorKind: 'db_error', message: 'Saving is unavailable right now. Nothing was saved — please try again later.' };
+  }
+  return r;
 }
