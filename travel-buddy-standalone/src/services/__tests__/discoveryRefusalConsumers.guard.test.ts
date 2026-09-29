@@ -44,7 +44,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');   // travel-buddy-standalone/
 const SERVICE = 'src/services/discovery.ts';
-const read = (rel: string) => readFileSync(join(ROOT, rel), 'utf8');
+const read = (rel: string) => overlayRead(rel) ?? readFileSync(join(ROOT, rel), 'utf8');  // §110 (D-W11X2-99): G10's in-memory fixtures first (none outside G10)
 
 /**
  * The carriers, as of census-discovery §60. A change to this list is a change
@@ -251,7 +251,7 @@ function resolveSpec(fromFile: string, spec: string): string | null {
   else return null;
   p = p.split(sep).join('/');
   for (const cand of [p, `${p}.ts`, `${p}.tsx`, `${p}/index.ts`]) {
-    if (existsSync(join(ROOT, cand)) && statSync(join(ROOT, cand)).isFile()) return cand;
+    if (overlayHas(cand) || (existsSync(join(ROOT, cand)) && statSync(join(ROOT, cand)).isFile())) return cand;
   }
   return p;
 }
@@ -274,25 +274,25 @@ function valueImports(file: string, src: string, target: string): string[] {
   for (const m of src.matchAll(/(?:\brequire|\bawait\s+import)\(\s*['"]([^'"]+)['"]\s*\)/g)) {
     if (resolveSpec(file, m[1]!) === target) names.push('<dynamic>');
   }
-  return names;
+  return [...names.filter((n) => n !== '<dynamic>'), ...requireUses(file, src, target), ...otherImportForms(file, src, target)];  // §110 (D-W11X2-99): a namespace import and every dynamic import, read for the names they use
 }
 
 function derivedConsumers(carriers: string[]): Map<string, string[]> {
   const found = new Map<string, string[]>();
-  for (const file of [...walk('src', []), ...walk('app', [])]) {
+  for (const file of withOverlay([...walk('src', []), ...walk('app', [])])) {
     if (file === SERVICE) continue;
     const src = read(file);
     const used = new Set<string>();
     for (const n of valueImports(file, src, SERVICE)) if (n === '<dynamic>' || carriers.includes(n)) used.add(n);
     for (const [mod, names] of Object.entries(EXTRA_CARRIERS)) {
       if (file === mod) continue;
-      for (const n of valueImports(file, src, mod)) if (names.includes(n)) used.add(n);
+      for (const n of valueImports(file, src, mod)) if (names.includes(n) || n === '<dynamic>') used.add(n);  // §110 (D-W11X2-99): an unresolvable dynamic import of a carrier module is a use
     }
     for (const [hook, hookFile] of Object.entries(WRAPPERS)) {
       if (file === hookFile) continue;
       for (const n of valueImports(file, src, hookFile)) if (n === hook || n === '<dynamic>') used.add(hook);
     }
-    if (used.size > 0) found.set(file, [...used].sort());
+    for (const n of reexportedCarrierUses(file, src, carriers)) used.add(n); if (used.size > 0) found.set(file, [...used].sort());  // §110 (D-W11X2-99): through a module that re-exports a carrier
   }
   return found;
 }
@@ -486,7 +486,7 @@ function compassConsumersBranchOnCoverage(): void {
     const src = read(file);
     if (used.some((u) => RAW_COMPASS_CARRIERS.includes(u))) {
       seen.raw++;
-      assert.match(src, /\b(?:compassRecommendationsFailed|tripCompassRecommendations|tripCompassReadState)\(/,
+      assertEachRawSiteBranches(file, src); assert.match(src, /\b(?:compassRecommendationsFailed|tripCompassRecommendations|tripCompassReadState)\(/,  // §110 (D-W11X2-99): every call site, not once per file
         `${file} reads GET /compass/recommendations without the shared predicate: branch through compassRecommendationsFailed (or tripCompassRecommendations / tripCompassReadState), never on \`ok\` alone`);
     }
     if (used.some((u) => MATCHES_COMPASS_CARRIERS.includes(u))) {
@@ -500,4 +500,204 @@ function compassConsumersBranchOnCoverage(): void {
     }
   }
   assert.deepEqual(seen, { raw: 5, matches: 2, trending: 1 }, `the Compass and trending consumers moved: ${JSON.stringify(seen)} — register them, and say so in census-discovery`);
+}
+
+// ── census-discovery §110 (DV-83 round 13, lane W11-X2, D-W11X2-99): the guard's reach ────────────────────
+//
+// The round-12 verifier made four consumers the derivation could not see (GH1–GH4): a namespace import of
+// services/compass.ts, an import through a module that re-exports the carrier, an awaited dynamic import,
+// and a second raw call site appended to an already-registered file (G9 looked for the predicate once per
+// FILE). G10 runs the verifier's fixtures — and a control, and the forms next to them — through the SAME
+// derivation, over an in-memory overlay that is never written to disk. Declarations only (hoisted), so the
+// registry lines above call them without moving a line another census cites.
+
+/** G10's in-memory files, keyed by repo-relative path. Empty outside G10. */
+function overlayMap(): Map<string, string> {
+  const holder = overlayMap as unknown as { files?: Map<string, string> };
+  return (holder.files ??= new Map());
+}
+function overlayRead(rel: string): string | undefined { return overlayMap().get(rel); }
+function overlayHas(rel: string): boolean { return overlayMap().has(rel); }
+function withOverlay(files: string[]): string[] { return [...new Set([...files, ...overlayMap().keys()])]; }
+
+/** Run `fn` with `files` laid over the tree. */
+function withFiles<T>(files: Record<string, string>, fn: () => T): T {
+  const m = overlayMap();
+  for (const [k, v] of Object.entries(files)) m.set(k, v);
+  try { return fn(); } finally { m.clear(); }
+}
+
+/** The verifier's fixtures (scratchpad v12-probes/guard-holes), and the forms next to them. */
+const GH = {
+  named: "import { fetchCompassRecommendations } from '../services/compass.ts';\nexport async function zzRawRecs0(): Promise<number> {\n  const res = await fetchCompassRecommendations({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  namespace: "import * as compass from '../services/compass.ts';\nexport async function zzRawRecs(): Promise<number> {\n  const res = await compass.fetchCompassRecommendations({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  reexport: "export { fetchCompassRecommendations as zzRecs } from './compass.ts';\n",
+  viaReexport: "import { zzRecs } from '../services/zzCompassReexport.ts';\nexport async function zzRawRecs2(): Promise<number> {\n  const res = await zzRecs({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  dynamic: "export async function zzRawRecs3(): Promise<number> {\n  const { fetchCompassRecommendations } = await import('../services/compass.ts');\n  const res = await fetchCompassRecommendations({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  dynamicThen: "export function zzRawRecs5(): Promise<number> {\n  return import('../services/compass.ts').then((m) => m.fetchCompassRecommendations({ surface: 'passport' })).then((res) => (res.ok && res.data ? res.data.recommendations.length : 0));\n}\n",
+  starReexport: "export * from './compass.ts';\n",
+  viaStar: "import { fetchCompassTripBrief } from '../services/zzCompassStar.ts';\nexport async function zzRawRecs6(): Promise<number> {\n  const res = await fetchCompassTripBrief({ tripId: 't' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  typeOnly: "export function zzTitle(item: import('../services/compass.ts').CompassFeedItem): string {\n  return String((item as { title?: unknown }).title ?? '');\n}\n",
+  secondRawSite: "\nexport async function zzSecondRawSite(): Promise<number> {\n  const res = await fetchCompassRecommendations({ surface: 'passport', limit: 3 });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+};
+const unregisteredNow = (): Map<string, string[]> => new Map([...derivedConsumers(derivedCarriers())].filter(([f]) => !(f in CONSUMERS)));
+
+describe("DV-83 guard reach — the round-12 verifier's fixtures (§110, D-W11X2-99)", () => {
+  it('G10 GH0 CONTROL: a raw consumer through a NAMED import is caught', () => {
+    const u = withFiles({ 'src/components/zzGH0.tsx': GH.named }, unregisteredNow);
+    assert.deepEqual(u.get('src/components/zzGH0.tsx'), ['fetchCompassRecommendations']);
+  });
+  it('G10 GH1: through a NAMESPACE import is caught, as the carrier it calls', () => {
+    const u = withFiles({ 'src/components/zzGH1.tsx': GH.namespace }, unregisteredNow);
+    assert.deepEqual(u.get('src/components/zzGH1.tsx'), ['fetchCompassRecommendations'], JSON.stringify([...u]));
+  });
+  it('G10 GH2: through a RE-EXPORT module is caught, as the carrier it re-exports', () => {
+    const u = withFiles({ 'src/services/zzCompassReexport.ts': GH.reexport, 'src/components/zzGH2.tsx': GH.viaReexport }, unregisteredNow);
+    assert.deepEqual(u.get('src/components/zzGH2.tsx'), ['fetchCompassRecommendations'], JSON.stringify([...u]));
+  });
+  it('G10 GH3: through an awaited DYNAMIC import is caught, as the carrier it destructures', () => {
+    const u = withFiles({ 'src/components/zzGH3.tsx': GH.dynamic }, unregisteredNow);
+    assert.deepEqual(u.get('src/components/zzGH3.tsx'), ['fetchCompassRecommendations'], JSON.stringify([...u]));
+  });
+  it('G10 GH3b: a dynamic import read through .then, and an export-star re-export, are caught too', () => {
+    const u = withFiles({ 'src/components/zzGH5.tsx': GH.dynamicThen, 'src/services/zzCompassStar.ts': GH.starReexport, 'src/components/zzGH6.tsx': GH.viaStar }, unregisteredNow);
+    assert.deepEqual(u.get('src/components/zzGH5.tsx'), ['fetchCompassRecommendations'], JSON.stringify([...u]));
+    assert.deepEqual(u.get('src/components/zzGH6.tsx'), ['fetchCompassTripBrief'], JSON.stringify([...u]));
+  });
+  it('G10 GHc CONTROL: a TYPE read through an inline import is not a consumer', () => {
+    const u = withFiles({ 'src/components/zzGHc.tsx': GH.typeOnly }, unregisteredNow);
+    assert.equal(u.has('src/components/zzGHc.tsx'), false, JSON.stringify([...u]));
+  });
+  it('G10 GH4: a second raw call site in a registered consumer fails G9 — every site must branch through the predicate', () => {
+    const file = 'src/components/compass/CompassPassportSuggestions.tsx';
+    const real = read(file);
+    assert.doesNotThrow(() => compassConsumersBranchOnCoverage(), 'the tree as it is passes G9');
+    assert.throws(() => withFiles({ [file]: real + GH.secondRawSite }, () => compassConsumersBranchOnCoverage()), /call site|every site|without the shared predicate/i);
+  });
+});
+
+/** Source with comments removed (a carrier named in a comment is not a use). */
+function stripComments(src: string): string {
+  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:\\'"`])\/\/.*$/gm, '$1');
+}
+function escapeRe(x: string): string { return x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+/** The keys of a destructuring pattern: `{ a, b: c }` → a, b. */
+function patternKeys(pattern: string): string[] { return pattern.split(',').map((p) => p.split(':')[0]!.trim()).filter((p) => /^\w+$/.test(p)); }
+
+/**
+ * The names `file` takes from `target` in the forms the named-import regex cannot read: a namespace
+ * import (its `ns.member` uses), and every dynamic `import()` — destructured, bound, read through
+ * `.then`, or a member of it. `<dynamic>` when the names cannot be told, which counts as a use.
+ */
+function otherImportForms(file: string, src: string, target: string): string[] {
+  const code = stripComments(src);
+  const names: string[] = [];
+  const membersOf = (binding: string) => [...code.matchAll(new RegExp(`\\b${escapeRe(binding)}\\s*\\.\\s*(\\w+)`, 'g'))].map((m) => m[1]!);
+  for (const m of code.matchAll(/import\s+\*\s+as\s+(\w+)\s+from\s*['"]([^'"]+)['"]/g)) {
+    if (resolveSpec(file, m[2]!) !== target) continue;
+    const used = membersOf(m[1]!);
+    names.push(...(used.length > 0 ? used : ['<dynamic>']));
+  }
+  for (const m of code.matchAll(/\bimport\(\s*['"]([^'"]+)['"]\s*\)/g)) {
+    if (resolveSpec(file, m[1]!) !== target) continue;
+    const before = code.slice(Math.max(0, m.index! - 200), m.index!);
+    const after = code.slice(m.index! + m[0].length, m.index! + m[0].length + 300);
+    const destructured = /(?:const|let|var)\s*\{([^}]*)\}\s*=\s*(?:await\s+)?\(?\s*(?:await\s+)?$/.exec(before);
+    const bound = /(?:const|let|var)\s+(\w+)\s*=\s*(?:await\s+)?$/.exec(before);
+    const member = /^\s*\)?\s*\.\s*(\w+)/.exec(after);
+    const thenArg = /^\s*\.then\(\s*(?:async\s*)?\(?\s*(?:\{([^}]*)\}|(\w+))/.exec(after);
+    const found = destructured ? patternKeys(destructured[1]!)
+      : bound ? membersOf(bound[1]!)
+      : thenArg ? (thenArg[1] !== undefined ? patternKeys(thenArg[1]) : membersOf(thenArg[2]!))
+      : member && member[1] !== 'then' ? [member[1]!]
+      : [];
+    names.push(...(found.length > 0 ? found : ['<dynamic>']));
+  }
+  return names;
+}
+
+/** The carrier modules and the carriers each exports: services/discovery.ts, EXTRA_CARRIERS, the wrapper hooks. */
+function carrierModules(carriers: string[]): Map<string, Map<string, string>> {
+  const out = new Map<string, Map<string, string>>([[SERVICE, new Map(carriers.map((c) => [c, c]))]]);
+  for (const [mod, names] of Object.entries(EXTRA_CARRIERS)) out.set(mod, new Map(names.map((c) => [c, c])));
+  for (const [hook, hookFile] of Object.entries(WRAPPERS)) out.set(hookFile, new Map([[hook, hook]]));
+  return out;
+}
+
+/** Every module that re-exports a carrier, with its exported name → the carrier, chains followed. */
+function carrierReexports(carriers: string[]): Map<string, Map<string, string>> {
+  const memo = carrierReexports as unknown as { key?: string; value?: Map<string, Map<string, string>> };
+  const key = `${carriers.join(',')}|${[...overlayMap()].map(([f, v]) => `${f}:${v.length}`).join(',')}`;
+  if (memo.key === key && memo.value) return memo.value;
+  memo.value = carrierReexportsUncached(carriers); memo.key = key;
+  return memo.value;
+}
+
+function carrierReexportsUncached(carriers: string[]): Map<string, Map<string, string>> {
+  const known = carrierModules(carriers);
+  const out = new Map<string, Map<string, string>>();
+  const files = withOverlay([...walk('src', []), ...walk('app', [])]).map((f) => [f, stripComments(read(f))] as const);
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const [file, code] of files) {
+      if (known.has(file) && !out.has(file)) continue;  // a carrier module's own re-exports are its business
+      const add = (exported: string, carrier: string) => {
+        const m = out.get(file) ?? new Map<string, string>();
+        if (!m.has(exported)) { m.set(exported, carrier); out.set(file, m); known.set(file, m); grew = true; }
+      };
+      for (const m of code.matchAll(/export\s*\{([^}]*)\}\s*from\s*['"]([^'"]+)['"]/g)) {
+        const from = known.get(resolveSpec(file, m[2]!) ?? '');
+        if (!from) continue;
+        for (const part of m[1]!.split(',')) {
+          const [orig, alias] = part.trim().replace(/^type\s+/, '').split(/\s+as\s+/).map((x) => x.trim());
+          if (orig && from.has(orig) && !/^type\s/.test(part.trim())) add(alias ?? orig, from.get(orig)!);
+        }
+      }
+      for (const m of code.matchAll(/export\s*\*\s*(?:as\s+(\w+)\s*)?from\s*['"]([^'"]+)['"]/g)) {
+        const from = known.get(resolveSpec(file, m[2]!) ?? '');
+        if (!from) continue;
+        if (m[1]) add(m[1], '<dynamic>');
+        else for (const [name, carrier] of from) add(name, carrier);
+      }
+    }
+  }
+  return out;
+}
+
+/** The carriers `file` reaches through a re-export module (the carrier's own name, so G3 and G9 see it). */
+function reexportedCarrierUses(file: string, src: string, carriers: string[]): string[] {
+  const used: string[] = [];
+  for (const [mod, names] of carrierReexports(carriers)) {
+    if (file === mod) continue;
+    for (const n of valueImports(file, src, mod)) {
+      if (names.has(n)) used.push(names.get(n)!);
+      else if (n === '<dynamic>') used.push('<dynamic>');
+    }
+  }
+  return used;
+}
+
+/** G9, per call site: after EVERY raw Compass read in `file`, before the next, the shared predicate is called. */
+function assertEachRawSiteBranches(file: string, src: string): void {
+  const code = stripComments(src).replace(/^\s*(?:import|export)\b[^;]*\bfrom\s*['"][^'"]+['"];?/gm, '');
+  const locals = new Set<string>(RAW_COMPASS_CARRIERS); const reexports = [...carrierReexports(derivedCarriers()).values()];
+  for (const m of stripComments(src).matchAll(/import\s+\{([^}]*)\}\s*from\s*['"][^'"]+['"]/g)) {
+    for (const part of m[1]!.split(',')) {
+      const [orig, alias] = part.trim().split(/\s+as\s+/).map((x) => x.trim());
+      if (alias && orig && (RAW_COMPASS_CARRIERS.includes(orig) || reexports.some((n) => RAW_COMPASS_CARRIERS.includes(n.get(orig) ?? '')))) locals.add(alias);
+      else if (orig && reexports.some((n) => RAW_COMPASS_CARRIERS.includes(n.get(orig) ?? ''))) locals.add(orig);
+    }
+  }
+  const call = new RegExp(`(?:\\b\\w+\\s*\\.\\s*)?\\b(?:${[...locals].map(escapeRe).join('|')})\\s*\\(`, 'g');
+  const sites = [...code.matchAll(call)].map((m) => m.index!).filter((i) => !/\bfunction\s+$/.test(code.slice(Math.max(0, i - 30), i)));
+  const predicate = /\b(?:compassRecommendationsFailed|tripCompassRecommendations|tripCompassReadState)\(/;
+  sites.forEach((at, k) => {
+    const window = code.slice(at, sites[k + 1] ?? code.length);
+    assert.match(window, predicate, `${file}: a GET /compass/recommendations call site at offset ${at} reads the body without the shared predicate — every site must branch through compassRecommendationsFailed (or tripCompassRecommendations / tripCompassReadState)`);
+  });
+}
+
+/** A `require()` of `target`: the guard cannot see what is used, so it is `<dynamic>`. */
+function requireUses(file: string, src: string, target: string): string[] {
+  return [...stripComments(src).matchAll(/\brequire\(\s*['"]([^'"]+)['"]\s*\)/g)].filter((m) => resolveSpec(file, m[1]!) === target).map(() => '<dynamic>');
 }

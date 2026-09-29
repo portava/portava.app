@@ -17,11 +17,13 @@ import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
 
 const mockGetCompassSuggestions = jest.fn();
+// NOTE: intentionally exhaustive — the rail imports only getCompassSuggestions, and the real service reaches Supabase on import.
 jest.mock('../../services/circle.ts', () => ({
   getCompassSuggestions: (...args: unknown[]) => mockGetCompassSuggestions(...args),
 }));
-// SessionContext reaches supabase auth on import; the rail reads only `isAuthed`.
+// NOTE: intentionally exhaustive — SessionContext reaches supabase auth on import; the rail reads only `isAuthed`.
 jest.mock('../../context/SessionContext.tsx', () => ({ useSession: () => ({ isAuthed: true }) }));
+// NOTE: intentionally exhaustive — the rail uses only `router.push`, and nothing here navigates.
 jest.mock('expo-router', () => ({ router: { push: jest.fn() } }));
 
 import { CircleCompassSuggestions } from '../CircleCompassSuggestions.tsx';
