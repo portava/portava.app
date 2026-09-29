@@ -2232,8 +2232,8 @@ router.get("/events/share-link/:token/preview", async (req, res) => {
   }
 
   const { data: ev } = await sc.from("events").select("*").eq("id", (link as any).event_id).maybeSingle();
-  if (!ev || ["cancelled","archived"].includes((ev as any).state)) {
-    sendError(res, "not_found", "Event not found"); return;
+  if (!ev || ["cancelled","archived"].includes((ev as any).state) || await isBlocked(sc, (ctx as any).user.id, (ev as any).host_id)) {
+    sendError(res, "not_found", "Event not found"); return; // blocked with the host = not found, exactly as GET /events/:id answers
   }
 
   // Increment use count (non-fatal)
@@ -3765,13 +3765,13 @@ router.post("/events/:id/checkin", async (req, res) => {
   if (!(rsvp as any) || (rsvp as any).status !== "going") {
     sendError(res, "forbidden", "You must have a Going RSVP to check in"); return;
   }
-
-  await sc.from("event_attendee_states").upsert(
-    { event_id: id, user_id: user.id, checked_in_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  const checkInGate = await checkInGateFor(sc, id); if (checkInGate) { sendError(res, checkInGate.code, checkInGate.message); return; }
+  const checkedInAt = new Date().toISOString(); const { error: checkInErr } = await sc.from("event_attendee_states").upsert(
+    { event_id: id, user_id: user.id, checked_in_at: checkedInAt, updated_at: checkedInAt },
     { onConflict: "event_id,user_id" },
-  );
+  ); if (checkInErr) { req.log?.error({ err: checkInErr, eventId: id }, "event check-in write failed"); sendError(res, "db_error", checkInErr.message); return; }
 
-  res.json({ ok: true, checkedInAt: new Date().toISOString() });
+  res.json({ ok: true, checkedInAt });
 });
 
 // ── POST /api/events/:id/attendance/:userId ───────────────────────────────────
@@ -3977,8 +3977,8 @@ router.post("/events/:id/memory", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const ok = await isHostOrCoHost(sc, id, user.id);
-  if (!ok) { sendError(res, "forbidden", "Only host or co-host can convert to memory"); return; }
+  const ok = await isHostOrCoHost(sc, id, user.id) || await isGoingAttendee(sc, id, user.id);
+  if (!ok) { sendError(res, "forbidden", "Only the host, co-hosts and Going attendees can save this event as a memory"); return; }
 
   const { data: ev } = await sc.from("events").select("*").eq("id", id).maybeSingle();
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
@@ -3986,7 +3986,7 @@ router.post("/events/:id/memory", async (req, res) => {
     sendError(res, "forbidden", "Only completed events can be converted to a memory"); return;
   }
 
-  // Stub memory record — full Memory System handled separately
+  const priorMemory = await existingEventMemory(sc, id, user.id); if (priorMemory.unreadable) { sendError(res, "degraded_unavailable", "We could not check your saved memories. Please try again."); return; } if (priorMemory.id) { res.status(200).json({ memoryId: priorMemory.id, alreadySaved: true }); return; } // Stub memory record — full Memory System handled separately
   const { data: memory, error } = await sc
     .from("passport_memories")
     .insert({
@@ -5546,7 +5546,7 @@ router.get("/events/:id/cohosts", async (req, res) => {
     .order("added_at", { ascending: true });
 
   if (error) { req.log.error({ err: error }, "get event cohosts"); sendError(res, "db_error", error.message); return; }
-  res.json({ cohosts: cohosts ?? [] });
+  res.json({ cohosts: await withCohostIdentity(sc, (cohosts as any[]) ?? [], user.id) });
 });
 
 // ── POST /api/events/:id/cohosts ──────────────────────────────────────────────
@@ -5578,15 +5578,15 @@ router.post("/events/:id/cohosts", async (req, res) => {
   const { userId: targetId, permissions } = parsed.data;
   if (targetId === user.id) { sendError(res, "invalid_payload", "Host cannot add themselves as co-host"); return; }
 
-  // Upsert into event_cohosts and event_roles
-  await sc.from("event_cohosts").upsert(
+  if (await isBlocked(sc, user.id, targetId)) { sendError(res, "blocked_user", "You can't add this person as a co-host"); return; } // Upsert into event_cohosts and event_roles
+  const { error: cohostErr } = await sc.from("event_cohosts").upsert(
     { event_id: id, user_id: targetId, permissions, added_by: user.id, added_at: new Date().toISOString() },
     { onConflict: "event_id,user_id" },
-  );
-  await sc.from("event_roles").upsert(
+  ); if (cohostErr) { req.log?.error({ err: cohostErr, eventId: id }, "add cohost write failed"); sendError(res, "db_error", cohostErr.message); return; }
+  const { error: cohostRoleErr } = await sc.from("event_roles").upsert(
     { event_id: id, user_id: targetId, role: "co_host" },
     { onConflict: "event_id,user_id" },
-  );
+  ); if (cohostRoleErr) { req.log?.error({ err: cohostRoleErr, eventId: id }, "add cohost role write failed"); sendError(res, "db_error", cohostRoleErr.message); return; }
 
   await logEventActivity(sc, id, user.id, "cohost_added", { targetUserId: targetId });
 
@@ -5609,8 +5609,8 @@ router.delete("/events/:id/cohosts/:userId", async (req, res) => {
   const role = await getEventRole(sc, id, user.id);
   if (role !== "host") { sendError(res, "forbidden", "Only the host can remove co-hosts"); return; }
 
-  await sc.from("event_cohosts").delete().eq("event_id", id).eq("user_id", userId);
-  await sc.from("event_roles").delete().eq("event_id", id).eq("user_id", userId);
+  const { error: rmCohostErr } = await sc.from("event_cohosts").delete().eq("event_id", id).eq("user_id", userId); if (rmCohostErr) { req.log?.error({ err: rmCohostErr, eventId: id }, "remove cohost write failed"); sendError(res, "db_error", rmCohostErr.message); return; } // supabase-js resolves on a DB error: unchecked, a failed removal answered {ok:true}
+  const { error: rmRoleErr } = await sc.from("event_roles").delete().eq("event_id", id).eq("user_id", userId); if (rmRoleErr) { req.log?.error({ err: rmRoleErr, eventId: id }, "remove cohost role write failed"); sendError(res, "db_error", rmRoleErr.message); return; }
 
   await logEventActivity(sc, id, user.id, "cohost_removed", { targetUserId: userId });
 
@@ -5795,7 +5795,7 @@ router.get("/events/:id/posts", async (req, res) => {
   let authorMap: Record<string, any> = {};
   if (authorIds.length > 0) {
     const { data: profiles } = await sc.from("profiles").select("id, handle, name, avatar_url").in("id", authorIds);
-    for (const p of (profiles as any[]) ?? []) authorMap[p.id as string] = p;
+    const allowedAuthors = await nameVisibilitySet(sc, authorIds); for (const p of (profiles as any[]) ?? []) authorMap[p.id as string] = sanitizeIdentity(p, allowedAuthors, user.id);
   }
 
   res.json({
@@ -5933,7 +5933,7 @@ router.post("/events/:id/media", async (req, res) => {
   }
 
   const parsed = z.object({
-    mediaUrl:  z.string().url(),
+    mediaUrl:  z.string().min(1).max(2048), // the ref POST /api/media/upload returns (post-media/<path>) or our own public URL — z.url() refused the former, so no upload could ever land; appStorageUrlInfo below is the gate
     mediaType: z.enum(["image","video"]).default("image"),
     caption:   z.string().max(500).optional(),
   }).safeParse(req.body);
@@ -5999,7 +5999,7 @@ router.get("/events/:id/comments", async (req, res) => {
 
   if (error) { req.log.error({ err: error }, "get event comments"); sendError(res, "db_error", error.message); return; }
 
-  res.json({ updates: updates ?? [], page, limit });
+  res.json({ updates: await withAuthorIdentity(sc, (updates as any[]) ?? [], user.id), page, limit });
 });
 
 // ── POST /api/events/:id/comments ─────────────────────────────────────────────
@@ -6855,3 +6855,100 @@ async function removeUserFromChatThread(sc: any, threadId: string, userId: strin
 }
 
 export default router;
+
+// ── Testing-mode wiring helpers (WP-05, lane tm-events) ───────────────────────
+// Appended at the foot so every census-cited line above keeps its number.
+
+/** Check-in opens this long before `starts_at`. */
+export const EVENT_CHECKIN_OPENS_BEFORE_START_MS = 60 * 60_000;
+/** …and stays open this long after `ends_at`. */
+export const EVENT_CHECKIN_GRACE_AFTER_END_MS = 2 * 60 * 60_000;
+/** With no `ends_at`, the event is taken to last this long for check-in. */
+export const EVENT_CHECKIN_ASSUMED_DURATION_MS = 6 * 60 * 60_000;
+const EVENT_CHECKIN_STATES = new Set(["open", "full", "waitlist", "started"]);
+
+/**
+ * The self check-in rule, pure. Returns null when a Going attendee may check
+ * in at `nowMs`, otherwise the reason they may not.
+ *
+ * Check-in is a self-report — no GPS proof is asked for (decision TM-EV-01 in
+ * docs/ops/testing-mode-flows.md): the trust-bearing signal is the host's
+ * confirmation (POST /attendance/:userId), which the host makes in person.
+ * What this rule does stop is a check-in days before the event, or into one
+ * that was cancelled, archived, left in draft or already completed — each of
+ * which the route used to accept and then feed to POST /complete as
+ * "attended".
+ */
+export function eventCheckInRefusal(
+  ev: { state?: string | null; starts_at?: string | null; ends_at?: string | null },
+  nowMs: number,
+): string | null {
+  if (!EVENT_CHECKIN_STATES.has(String(ev.state ?? ""))) return "Check-in is closed for this event";
+  const startMs = ev.starts_at ? Date.parse(ev.starts_at) : NaN;
+  if (Number.isNaN(startMs)) return "This event has no start time yet";
+  if (nowMs < startMs - EVENT_CHECKIN_OPENS_BEFORE_START_MS) return "Check-in opens 1 hour before the event starts";
+  const endParsed = ev.ends_at ? Date.parse(ev.ends_at) : NaN;
+  const endMs = Number.isNaN(endParsed) ? startMs + EVENT_CHECKIN_ASSUMED_DURATION_MS : endParsed;
+  if (nowMs > endMs + EVENT_CHECKIN_GRACE_AFTER_END_MS) return "Check-in has closed for this event";
+  return null;
+}
+
+async function checkInGateFor(
+  sc: any,
+  eventId: string,
+): Promise<{ code: ApiErrorCode; message: string } | null> {
+  const { data: ev, error } = await sc.from("events").select("state, starts_at, ends_at").eq("id", eventId).maybeSingle();
+  if (error) return { code: "degraded_unavailable", message: "We could not check this event's time. Please try again." };
+  if (!ev) return { code: "not_found", message: "Event not found" };
+  const refusal = eventCheckInRefusal(ev as any, Date.now());
+  return refusal ? { code: "conflict", message: refusal } : null;
+}
+
+/** True only on a readable Going RSVP — an unreadable one is not a grant. */
+async function isGoingAttendee(sc: any, eventId: string, userId: string): Promise<boolean> {
+  const { data, error } = await sc.from("event_rsvps").select("status").eq("event_id", eventId).eq("user_id", userId).maybeSingle();
+  return !error && (data as any)?.status === "going";
+}
+
+/** The caller's existing memory of this event, so a second save does not duplicate it. */
+async function existingEventMemory(
+  sc: any,
+  eventId: string,
+  userId: string,
+): Promise<{ id: string | null; unreadable: boolean }> {
+  const { data, error } = await sc.from("passport_memories").select("id")
+    .eq("user_id", userId).eq("source_type", "event").eq("source_id", eventId).limit(1);
+  if (error) return { id: null, unreadable: true };
+  const row = Array.isArray(data) ? data[0] : data;
+  return { id: (row as any)?.id ?? null, unreadable: false };
+}
+
+async function publicIdentityMap(sc: any, userIds: string[], viewerId: string): Promise<Record<string, any>> {
+  const ids = [...new Set(userIds.filter(Boolean))];
+  if (ids.length === 0) return {};
+  const { data: profiles } = await sc.from("profiles").select("id, handle, name, avatar_url").in("id", ids);
+  const allowed = await nameVisibilitySet(sc, ids);
+  const out: Record<string, any> = {};
+  for (const p of (profiles as any[]) ?? []) {
+    const safe = sanitizeIdentity(p, allowed, viewerId);
+    out[p.id as string] = { id: p.id, handle: safe.handle ?? null, displayName: safe.name ?? null, avatarUrl: safe.avatar_url ?? null };
+  }
+  return out;
+}
+
+/** GET /events/:id/cohosts rows, each with the co-host's public identity. */
+async function withCohostIdentity(sc: any, rows: any[], viewerId: string): Promise<any[]> {
+  const map = await publicIdentityMap(sc, rows.map((r) => r.user_id as string), viewerId);
+  return rows.map((r) => ({
+    ...r,
+    handle: map[r.user_id]?.handle ?? null,
+    displayName: map[r.user_id]?.displayName ?? null,
+    avatarUrl: map[r.user_id]?.avatarUrl ?? null,
+  }));
+}
+
+/** GET /events/:id/comments rows, each with `author` (public identity or null). */
+async function withAuthorIdentity(sc: any, rows: any[], viewerId: string): Promise<any[]> {
+  const map = await publicIdentityMap(sc, rows.map((r) => r.author_id as string), viewerId);
+  return rows.map((r) => ({ ...r, author: map[r.author_id] ?? null }));
+}

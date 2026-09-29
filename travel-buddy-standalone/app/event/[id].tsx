@@ -53,7 +53,7 @@ import { useScreenTiming } from '../../src/hooks/useScreenTiming';
 import { useEventRsvp } from '../../src/hooks/useEventRsvp';
 import { EventPassportShareCard } from '../../src/features/passport/EventPassportShareCard';
 import { HostDashboardPanel } from '../../src/components/HostDashboardPanel';
-import { EventVoiceRoomCard } from '../../src/components/events/EventVoiceRoomCard.tsx';
+import { EventVoiceRoomCard } from '../../src/components/events/EventVoiceRoomCard.tsx'; import { EventCheckInCard } from '../../src/components/events/EventCheckInCard.tsx'; import { EventCommunitySection } from '../../src/components/events/EventCommunitySection.tsx'; import { EventMemoryCard } from '../../src/components/events/EventMemoryCard.tsx'; import { SharedEventLinkPreview } from '../../src/components/events/SharedEventLinkPreview.tsx'; import { isEventParticipant } from '../../src/lib/eventCommunity.ts';
 import { StampButton } from '../../src/components/stamps/StampButton';
 import { ReviewsSection } from '../../src/components/ReviewsSection';
 import { ReportSheet } from '../../src/components/ReportSheet';
@@ -144,8 +144,8 @@ function openMap(locationName: string | null, lat: number | null, lng: number | 
 export default function EventDetailScreen() {
   const insets = useSafeAreaInsets();
   const { inset: barInset, onBarLayout } = useStickyBarInset();
-  const { id, tripId: tripIdParam, sessionId: rawFeedSession } =
-    useLocalSearchParams<{ id: string; tripId?: string; sessionId?: string }>();
+  const { id, tripId: tripIdParam, sessionId: rawFeedSession, share: shareToken } = // `share`: the token a shared link carries (handleShare below) — PLAT-F29
+    useLocalSearchParams<{ id: string; tripId?: string; sessionId?: string; share?: string }>();
   // Present only when this screen was opened from a feed card; null for deep
   // links, notifications and search. See src/lib/feedAttribution.ts.
   const feedSessionId = readFeedSession(rawFeedSession);
@@ -707,7 +707,7 @@ export default function EventDetailScreen() {
             </Text>
             <View style={styles.headerRight} />
           </View>
-          <PrivateEventCard
+          {typeof shareToken === 'string' && shareToken.length >= 8 ? <SharedEventLinkPreview token={shareToken} /> : null}<PrivateEventCard
             event={privateEvent}
             onRequestSent={() => setHasPendingRequest(true)}
           />
@@ -957,7 +957,7 @@ export default function EventDetailScreen() {
             )}
 
             {/* Live voice room entry (visible only inside the event context) */}
-            <EventVoiceRoomCard eventId={event.id} />
+            <EventVoiceRoomCard eventId={event.id} /><EventCheckInCard event={event} onCheckedIn={refreshLoad} />
 
             {/* Host */}
             {event.host && (
@@ -1174,13 +1174,13 @@ export default function EventDetailScreen() {
               </View>
             )}
 
-            {/* Comments / event updates — not yet built; shown as disabled coming-soon row */}
-            {event.chatEnabled && (event.myRsvp === 'going' || event.myRsvp === 'maybe' || isHost) && (
-              <View style={[styles.commentsRow, styles.commentsRowDisabled]}>
-                <MessageSquare size={15} color={color.faint} />
-                <Text style={[styles.commentsText, styles.commentsTextDisabled]}>Event updates & comments — coming soon</Text>
-              </View>
+            {/* Posts, photos and comments (PLAT-F30) — participants only: the scope the three GET routes apply */}
+            {isEventParticipant(event) && (
+              <EventCommunitySection event={event} />
             )}
+            {/* Save as memory (PLAT-F30) — the card renders only for a completed event
+                and the host, co-hosts or Going attendees (lib/eventCommunity.ts) */}
+            <EventMemoryCard event={event} />
 
             {/* Temporary event Passport (spec §25/§31, Phase 8). Offered only to
                 someone who is actually attending; the card itself renders
