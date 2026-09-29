@@ -2117,7 +2117,7 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     // §4 Media Contribution (census-media §19). A current perspective of one
     // canonical place, through the existing upload + post write.
   },
-];
+  { key: 'admin-console', path: 'admin/console', title: 'Testing Console', parent: null, icon: null, requiresAuth: true, adminOnly: true }, { key: 'admin-hidden-gems', path: 'admin/hidden-gems', title: 'Hidden Gem Review', parent: null, icon: null, requiresAuth: true, adminOnly: true }, { key: 'admin-local-guides', path: 'admin/local-guides', title: 'Local Guides', parent: null, icon: null, requiresAuth: true, adminOnly: true }, { key: 'admin-live-scopes', path: 'admin/live-scopes', title: 'Live-Label Scopes', parent: null, icon: null, requiresAuth: true, adminOnly: true }, { key: 'admin-user-stamps', path: 'admin/user-stamps', title: 'User Stamps', parent: null, icon: null, requiresAuth: true, adminOnly: true }, { key: 'admin-airports', path: 'admin/airports', title: 'Airports', parent: null, icon: null, requiresAuth: true, adminOnly: true }, ]; // testing mode (TM-admin WP-21, 2026-09-29): on the closing line, so every cited line keeps its number
 
 // ── Layout registry ───────────────────────────────────────────────────────────
 //
