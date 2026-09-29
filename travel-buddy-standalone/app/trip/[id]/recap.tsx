@@ -108,5 +108,5 @@ const s = StyleSheet.create({
   list: { padding: space.lg, gap: space.sm },
   card: { backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze, borderRadius: radius.md, padding: space.md, gap: 2 },
   retry: { paddingVertical: space.sm, paddingHorizontal: space.lg },
-  retryText: { ...(t.bodyStrong as object), color: color.signalStrong },
+  retryText: { ...(t.bodyStrong as object), color: color.deep },
 });

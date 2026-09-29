@@ -104,5 +104,5 @@ const s = StyleSheet.create({
   title: { ...(t.bodyStrong as object), color: color.ink, paddingHorizontal: space.sm, paddingTop: space.xs },
   more: { width: '100%', alignItems: 'center', paddingVertical: space.md },
   retry: { alignSelf: 'flex-start', paddingVertical: space.sm },
-  retryText: { ...(t.bodyStrong as object), color: color.signalStrong },
+  retryText: { ...(t.bodyStrong as object), color: color.deep },
 });

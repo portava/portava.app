@@ -88,7 +88,7 @@ const s = StyleSheet.create({
   body: { ...typography.body, color: color.mute },
   card: { backgroundColor: color.paperRaised, borderColor: color.haze, borderWidth: 1, borderRadius: radius.md, padding: space.md, gap: space.sm },
   row: { flexDirection: 'row', gap: space.sm },
-  primary: { backgroundColor: color.signalStrong, borderRadius: radius.md, paddingVertical: space.sm, paddingHorizontal: space.lg, alignItems: 'center' },
+  primary: { backgroundColor: color.signal, borderRadius: radius.md, paddingVertical: space.sm, paddingHorizontal: space.lg, alignItems: 'center' },
   primaryText: { ...t.bodyStrong, color: color.paper },
   secondary: { borderWidth: 1, borderColor: color.haze, borderRadius: radius.md, paddingVertical: space.sm, paddingHorizontal: space.lg, alignItems: 'center' },
   secondaryText: { ...t.bodyStrong, color: color.ink },

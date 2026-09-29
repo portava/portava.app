@@ -75,5 +75,5 @@ const s = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingVertical: space.xs },
   chip: { ...typography.caption, color: color.mute },
   chipLive: { color: color.success, fontWeight: '700' },
-  link: { ...t.bodyStrong, color: color.signalStrong },
+  link: { ...t.bodyStrong, color: color.deep },
 });

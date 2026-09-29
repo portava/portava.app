@@ -144,7 +144,7 @@ const s = StyleSheet.create({
   input: { borderWidth: 1, borderColor: color.haze, borderRadius: radius.md, padding: space.md, ...(t.body as object), color: color.ink },
   list: { maxHeight: 280 },
   threadRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: space.md, borderBottomWidth: 1, borderColor: color.haze, gap: space.md },
-  send: { ...(t.small as object), color: color.signalStrong, fontWeight: '700' },
+  send: { ...(t.small as object), color: color.deep, fontWeight: '700' },
   retry: { alignSelf: 'flex-start', paddingVertical: space.sm },
-  retryText: { ...(t.bodyStrong as object), color: color.signalStrong },
+  retryText: { ...(t.bodyStrong as object), color: color.deep },
 });

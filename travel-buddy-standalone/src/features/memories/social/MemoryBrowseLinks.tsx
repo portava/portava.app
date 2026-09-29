@@ -22,7 +22,7 @@ export function MemoryBrowseLinks({ memory, isOwner }: { memory: Memory; isOwner
     <View style={s.wrap}>
       {isOwner ? (
         <Pressable testID="memory-open-timeline" style={s.link} onPress={() => router.push('/memory/timeline' as never)} accessibilityRole="button">
-          <Clock size={14} color={color.signalStrong} />
+          <Clock size={14} color={color.deep} />
           <Text style={s.text}>Your timeline</Text>
         </Pressable>
       ) : null}
@@ -33,12 +33,12 @@ export function MemoryBrowseLinks({ memory, isOwner }: { memory: Memory; isOwner
           onPress={() => router.push({ pathname: '/memory/place-history' as never, params: { placeId, label: placeLabel } } as never)}
           accessibilityRole="button"
         >
-          <MapPin size={14} color={color.signalStrong} />
+          <MapPin size={14} color={color.deep} />
           <Text style={s.text}>Your history at {placeLabel}</Text>
         </Pressable>
       ) : null}
       <Pressable testID="memory-open-saved" style={s.link} onPress={() => router.push('/memory/saved' as never)} accessibilityRole="button">
-        <Bookmark size={14} color={color.signalStrong} />
+        <Bookmark size={14} color={color.deep} />
         <Text style={s.text}>Saved memories</Text>
       </Pressable>
     </View>
@@ -48,5 +48,5 @@ export function MemoryBrowseLinks({ memory, isOwner }: { memory: Memory; isOwner
 const s = StyleSheet.create({
   wrap: { marginTop: space.md, gap: space.sm },
   link: { flexDirection: 'row', alignItems: 'center', gap: space.xs },
-  text: { ...(t.small as object), color: color.signalStrong, fontWeight: '600' },
+  text: { ...(t.small as object), color: color.deep, fontWeight: '600' },
 });

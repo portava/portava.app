@@ -1294,5 +1294,5 @@ export default function TripDetail() {
 // Declared at the TAIL so no line above moves; `const` is read only at render time.
 const tmRecap = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  link: { ...t.small, color: color.signalStrong, fontWeight: '700' },
+  link: { ...t.small, color: color.deep, fontWeight: '700' },
 });

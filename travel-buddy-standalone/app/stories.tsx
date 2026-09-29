@@ -148,5 +148,5 @@ const s = StyleSheet.create({
   caption: { ...(t.small as object), color: color.mute },
   empty: { paddingVertical: space.xl, alignItems: 'center' },
   retry: { paddingVertical: space.sm, paddingHorizontal: space.lg },
-  retryText: { ...(t.bodyStrong as object), color: color.signalStrong },
+  retryText: { ...(t.bodyStrong as object), color: color.deep },
 });
