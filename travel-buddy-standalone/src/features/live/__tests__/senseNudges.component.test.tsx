@@ -124,7 +124,7 @@ describe('COMP-F11 useSenseAutoCheck — who asks Sense to look', () => {
     await waitFor(() => expect(posts()).toBe(2));
   });
   it('senseLocationKey: ~1 km cells from coordinates, else the city, else nothing', () => {
-    expect(senseLocationKey({ coords: { latitude: 16.06781, longitude: 108.22083 } })).toBe('16.07,108.22');
+    expect(senseLocationKey({ coords: { lat: 16.06781, lng: 108.22083 } })).toBe('16.07,108.22');
     expect(senseLocationKey({ coords: null, place: { city: 'Da Nang' } })).toBe('city:Da Nang');
     expect(senseLocationKey(null)).toBeNull();
   });

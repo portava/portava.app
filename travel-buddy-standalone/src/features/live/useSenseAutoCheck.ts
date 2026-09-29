@@ -27,10 +27,10 @@ export const SENSE_FOREGROUND_MIN_INTERVAL_MS = 10 * 60_000;
 export const SENSE_MOVE_MIN_INTERVAL_MS = 2 * 60_000;
 
 /** A coarse key for "has the traveller moved": ~1 km cells when coordinates exist, else the city. */
-export function senseLocationKey(loc: { coords?: { latitude: number; longitude: number } | null; place?: { city?: string | null } | null } | null | undefined): string | null {
+export function senseLocationKey(loc: { coords?: { lat: number; lng: number } | null; place?: { city?: string | null } | null } | null | undefined): string | null {
   if (!loc) return null;
-  if (loc.coords && Number.isFinite(loc.coords.latitude) && Number.isFinite(loc.coords.longitude)) {
-    return `${loc.coords.latitude.toFixed(2)},${loc.coords.longitude.toFixed(2)}`;
+  if (loc.coords && Number.isFinite(loc.coords.lat) && Number.isFinite(loc.coords.lng)) {
+    return `${loc.coords.lat.toFixed(2)},${loc.coords.lng.toFixed(2)}`;
   }
   return loc.place?.city ? `city:${loc.place.city}` : null;
 }
