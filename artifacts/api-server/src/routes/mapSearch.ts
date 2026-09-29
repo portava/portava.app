@@ -17,7 +17,7 @@ import { Router } from "express";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
-import { isFlagEnabled } from "../lib/featureFlags.js";
+import { isFlagEnabled } from "../lib/featureFlags.js"; import { readFlagState } from "../lib/capability/schemaCapability.js";  // census-discovery §107 (D-W11X2-71)
 import { fetchBlockedSet } from "../lib/blocks.js";
 import { listMapTravelers } from "../lib/mapTravelers.js";
 import { findNearbyGems } from "../services/hiddenGems/HiddenGemDiscoveryService.js";
@@ -151,7 +151,7 @@ router.get("/map/search", asyncHandler(async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
   const generatedAt = new Date().toISOString();
-  if (!(await isFlagEnabled(sc, "map_search_enabled"))) {
+  const mapSearchFlag = await readFlagState(sc, "map_search_enabled"); if (mapSearchFlag === "unreadable") { res.json({ enabled: false, refusal: "flag_unreadable", results: [], viewport: null, total: 0, nextCursor: null, sources: null, generatedAt }); return; } if (mapSearchFlag !== "on") {  // census-discovery §107 (DV-83, D-W11X2-71): an UNREAD flag is named, never the flag-off body — was: if (!(await isFlagEnabled(sc, "map_search_enabled"))) {
     res.json({ enabled: false, results: [], viewport: null, total: 0, nextCursor: null, sources: null, generatedAt });
     return;
   }
