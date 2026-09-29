@@ -17379,6 +17379,29 @@ An independent re-verification at the merged head is owed before the integrator 
   - "N places found" beside a failed refresh (E8); the picks section hiding a failed read (P1, P2); another query's suggestion groups under a failure (Q1, Q2); a failed Wikidata read drawn as "nothing more" (WK1);
   - any path §101.11 lists.
 
+### 102.11 Integrator: DV-83 held at W after the independent re-verification at `5f2b0e7eb`
+
+*Integrator, 2026-09-29. §102 was merged at `5f2b0e7eb`. An independent verifier then checked that tree, ran every probe below and restored every mutated file byte-identical, checked by sha256. (Recorded as 102.11 because 102.10 is §102's own "Left open".)*
+
+- **Confirmed.** Every §101.12 finding and every §102.6 sweep fix is closed in behaviour; 22 of 23 lane mutations are killed (the survivor, CM12, is off-criterion and listed below).
+- **Found: three paths that break the criterion's wording, each shown by a probe that fails against this tree.**
+  1. **DiscoveryCategoryTab shows another filter's rows under "Couldn't refresh" (clause c, wrong rows).** The client cache key holds only destination, category, radius, page and intent mode (`travel-buddy-standalone/src/services/discovery.ts:663#function _discoveryCacheKey(dest: string, cat: string, radiusKm: number, page: number, intentMode?: DiscoveryIntentMode | null): string {`). It omits the age filter, custom ages, `openNow`, `minRating`, `sortBy`, the context and the coordinates. The age filter and `openNow` re-run `load(1)` without a remount; the tab hydrates from the OLD query's cached page, and when the new query's read fails, `refreshFailed` draws those rows under the stale line. Map mode is the same. V6-K1 (age any → 21_plus, the 21_plus read fails) and V6-K2 (openNow off → on) are red; V6-K3 (same query) is the control.
+  2. **Search and suggest silently drop travelers when the real-name read fails (clause a).** `nameVisibilitySet` answers an empty set on an error or a throw (`artifacts/api-server/src/lib/publicIdentity.ts:106#if (error) return new Set();`), and the C09 filter then drops every row matched only by real name (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:583#const allowedNames = await nameVisibilitySet(sc, visible.map((p: any) => p.id as string));`). type=travelers, buddies, all and /discovery/suggest answer 200 with no refusal (V6-N1, V6-N2 red; V6-N0 control).
+  3. **A Compass section build failure on Discovery For You is hidden like "Compass disabled" (clause c; the build-error half of D-W11X2-41).** The section route's catch arm answers `200 { section: null, fallback: true, safeItems }` with no `compassEnabled` and no refusal (`artifacts/api-server/src/routes/compass.ts:778#res.json({ section: null, nextCursor: null, fallback: true, safeItems: fallback.safeItems });`). The client normalizer reads `compassEnabled: raw.compassEnabled ?? !raw.fallback` as `false`, and the section returns null before its failed-read branch, dropping `safeItems` (V6-P1, V6-P1b red; V6-PC, the disabled arm, is the control).
+- **Possible, not proven.**
+  - With `discovery_for_you_pde_enabled` ON (testing mode will turn it on), `consolidatedForYouCandidates` runs Compass's fail-closed gates; an unreadable safety or flag input may withhold candidates with no refusal.
+  - Buddies: with `discovery_buddy_launch_gate_enabled` ON, a failing `rent_buddy_enabled` read reads as "flag off" and answers an empty 200.
+  - `DiscoveryEventPostsRail.tsx` reacts only to `event_posts`, not `blocks` (a superset; Trust).
+  - `useSearchSuggestions` keys its held groups by text only, so a location change followed by a failure keeps another location's groups (the lane pinned this deliberately in its C1).
+  - CM12 survived: `PlaceDetailSheet` does not reset `wikidataFailed` on a place change, so a place with no `wikidataId` can show a false "Couldn't load more".
+- **Next.** A round-7 lane closes the three paths with the verifier's probes as failing-first tests, decides the possibles, and sweeps once more. The row moves only after that.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | C | **W** | §102 closes §101.12's four paths, confirmed under mutation at `5f2b0e7eb` (§102.11). Three paths still present a failed read as empty, complete or over the wrong rows: the client cache key that omits server-affecting parameters (`travel-buddy-standalone/src/services/discovery.ts:663#function _discoveryCacheKey(dest: string, cat: string, radiusKm: number, page: number, intentMode?: DiscoveryIntentMode | null): string {`); search's real-name visibility read answered as an empty set (`artifacts/api-server/src/lib/publicIdentity.ts:106#if (error) return new Set();`); and the Compass section route's build-error arm read as "Compass disabled" (`artifacts/api-server/src/routes/compass.ts:778#res.json({ section: null, nextCursor: null, fallback: true, safeItems: fallback.safeItems });`). |
+
+Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/lib/capability/prerequisitesCore.ts — §93.8 names its function-granular gate boundary as why the Compass KNOWN entry was struck; it is the prerequisite checker's own machinery, and no Discovery verdict rests on it.
