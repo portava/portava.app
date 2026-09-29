@@ -1739,7 +1739,7 @@ async function toolWhosAround(
   profile: CompassProfile | null,
   userId: string,
 ): Promise<unknown> {
-  const { people, contextsChecked } = await getWhosAround(sc, userId, hiddenUserIds(profile));
+  const { people, contextsChecked, unread } = await getWhosAround(sc, userId, hiddenUserIds(profile)); if (unread && people.length === 0) return { people: [], info: WHOS_AROUND_UNREAD_INFO };  // census-discovery §107 (DV-83, D-W11X2-73): a failed presence read is neither "no active trips" nor "nobody is sharing"
   if (contextsChecked === 0) {
     return { people: [], info: "The user has no active trips or upcoming events with a circle to check." };
   }
@@ -2424,3 +2424,7 @@ export async function executeCompassTool(
     return { error: "Tool execution failed.", detail: err instanceof Error ? err.message.slice(0, 200) : "unknown" };
   }
 }
+
+// census-discovery §107 sweep (DV-83 round 10, D-W11X2-73): what get_whos_around tells the model when a
+// presence read FAILED (getWhosAround's `unread`) and nobody could be shown. Appended so no cited line moves.
+const WHOS_AROUND_UNREAD_INFO = "Circle presence could not be checked right now (a read failed). Say it could not be checked; do not say nobody is around or that the user has no trips.";
