@@ -2777,3 +2777,106 @@ PassportMemoryService, mediaLocationVisibility, eventPostsDiscovery, and
 census-media's other 87) arrived with the merges and are not this lane's.
 
 This section does not restate any census headline, because no row moved.
+
+---
+
+## §46 — 2026-09-29: the Compass → Map command channel gets its handler, and the circle need-help route gets its button (TM-social lane, MAP-F04 / MAP-F08)
+
+Testing-mode lane `lane-tm-social`, branch cut from `main` at `18518e982`. `head_commit` is **NOT**
+re-declared: this records a build and grades no row. Controlled evidence only — component and
+unit tests in this repository. No flag was touched, no migration was added, no database was read.
+
+**No row moves.** M9, M104 and M143 are already C and rest on the Compass map model, which is
+unchanged; the map-screen change below is covered by this census's existing acknowledgement for
+`app/map/index.tsx` and is argued in §46.4 rather than left to that entry.
+
+### 46.1 MAP-F04 — decision: build the command handler; leave `/map/search` uncalled
+
+The work package offered two ways out: handle Compass → Map commands on the map, or retire the
+routes. The architecture answers each route separately:
+
+- `POST /map/compass-command` (`artifacts/api-server/src/routes/mapSearch.ts:297#router.post("/map/compass-command"`)
+  exists to replace the client's "geocode the query string and fly" heuristic with a
+  server-resolved, range-validated set-viewport. The map still ran that heuristic. **Built.**
+- `GET /map/search` stays without a client caller **on purpose**, per the mobile reachability
+  ledger ("The two map leads", docs/architecture/mobile-reachability-ledger.md): the map's search
+  sheet already searches nine entity types through the input-assistance gateway, and `/map/search`
+  normalises three, so re-pointing it would be a regression. It is not retired either — deleting
+  a flag-gated backend is not a testing-mode change. It remains BACKEND WITH NO MOBILE CONSUMER.
+
+### 46.2 What was built for MAP-F04
+
+- The handler: `travel-buddy-standalone/src/services/mapCompassCommands.ts:148#export async function flyToCompassQuery(`.
+  It asks the server with a `go_to` intent, re-validates every returned command against the
+  server's own ranges (`travel-buddy-standalone/src/services/mapCompassCommands.ts:67#export function validateClientMapCommands(`),
+  and moves the camera only on a valid set-viewport.
+- **Flag-off is the old behaviour.** With `map_compass_commands_enabled` off the route answers
+  `{ enabled: false }` (`artifacts/api-server/src/routes/mapSearch.ts:304#if (!(await isFlagEnabled(sc, "map_compass_commands_enabled"))) {`)
+  and the legacy device-geocoder fly runs unchanged; the same happens when the request cannot be
+  made (`travel-buddy-standalone/src/services/mapCompassCommands.ts:156#if (!res.ok || !res.data.enabled) {`).
+- **Flag-on with nothing resolvable leaves the map where it is**
+  (`travel-buddy-standalone/src/services/mapCompassCommands.ts:165#return { via: 'server', moved: false, explanation: res.data.explanation };`).
+  Flying somewhere confident and wrong is the failure the protocol exists to prevent, so the device
+  geocoder is not used as a second guess.
+- Both Compass flies on the map go through it:
+  `travel-buddy-standalone/app/map/index.tsx:1511#void flyToCompassQuery(query, cameraRef, geocodeAndFly);`
+  and `travel-buddy-standalone/app/map/index.tsx:3219#void flyToCompassQuery(compassQuery, cameraRef, geocodeAndFly);`.
+  Both edits are line-neutral.
+
+Tests: `travel-buddy-standalone/src/services/__tests__/mapCompassCommands.component.test.ts:121#it('flag on + nothing resolvable`
+and its 11 siblings (flag off, request failed, set-viewport, validation, the request's shape, and a
+source check that no Compass fly calls the device geocoder directly). Red first: the module did
+not exist and the route had no caller. Mutations — geocoder as a second guess, the client range
+check loosened, one map call site reverted — each reddened the suite; all restored by sha256.
+
+### 46.3 MAP-F08 — the circle need-help button
+
+- The route: `artifacts/api-server/src/routes/circle.ts:1673#router.post("/circle/contexts/:type/:id/need-help"`.
+  It marks the caller `needs_help`, logs a check-in and an audit event, and sends ONE push to the
+  context's HOST with no location (`artifacts/api-server/src/routes/circle.ts:1734#// Alert the context host only (fire-and-forget).`).
+- **Decision: the button says what the route does, not what the catalogue's intent line says.**
+  The flow catalogue describes "circle members get an alert with your location". The route
+  deliberately does neither — host only, no GPS — and that is the privacy position its own comments
+  state. Building a member broadcast with location would be a new safety/privacy feature, not a
+  testing-mode wiring; the client therefore offers **Alert the host** and says the location was
+  not shared.
+- Client: `travel-buddy-standalone/src/services/circle.ts:461#export async function postNeedHelp(`;
+  the button's handler `travel-buddy-standalone/src/components/circle/CheckInActions.tsx:72#async function alertHost() {`,
+  offered to a member beside **Open Safe Return**
+  (`travel-buddy-standalone/src/components/circle/CheckInActions.tsx:129#{ text: 'Alert the host', onPress: () => { void alertHost(); }, style: 'destructive' },`).
+  A host is offered Safe Return only (`travel-buddy-standalone/src/components/circle/CheckInActions.tsx:113#if (isHost) {`)
+  — the alert would reach nobody but themselves. The screen passes the role in:
+  `travel-buddy-standalone/app/circle-presence.tsx:441#isHost={isHostParam}`.
+- A 429, a 403 or an outage is **Alert not sent** with the reason, never "sent".
+
+Tests: `travel-buddy-standalone/src/components/circle/__tests__/CheckInActions.needHelp.component.test.tsx:52#it('alerting the host calls the need-help route`
+and 5 siblings. Mutations — any response treated as sent, the host branch removed, the host
+option removed — each reddened the suite; all restored by sha256.
+
+### 46.4 Why the map-screen change cannot move a verdict here
+
+`app/map/index.tsx` changed on two lines, each replacing `void geocodeAndFly(...)` with the handler
+call, plus one joined import. With the flag off — its production state — the handler calls the
+same `geocodeAndFly` with the same argument, so the map's behaviour is unchanged. No row of this
+census grades the Ask-Compass fly; M9, M104 and M143 grade the Compass map model, which is not
+touched.
+
+### 46.5 What is left open
+
+- **The route's own success message is untrue.** It answers "Your circle has been notified" while
+  notifying only the host (`circleNeedHelpAlertSilence.test.ts` quotes it). The client never shows
+  it; correcting the server copy belongs to the circle area and is left for its owner.
+- **Only `go_to` is issued.** The route also accepts `search`, `select`, `filter` and `clear`; the
+  map's Compass bar only ever needs a place to fly to. Nothing on the map yet asks for the others.
+- Red if: a Compass fly calls the device geocoder directly again; the client applies an
+  unvalidated command; or the need-help button reports a refusal as sent.
+
+- NOT-GRADED: travel-buddy-standalone/src/services/mapCompassCommands.ts — §46.2's Compass → Map command handler; built work for MAP-F04, no Map verdict rests on it
+- NOT-GRADED: artifacts/api-server/src/routes/mapSearch.ts — §46.1 cites the compass-command route and its flag gate as the contract the handler calls; no Map verdict rests on it
+- NOT-GRADED: artifacts/api-server/src/routes/circle.ts — §46.3 cites the need-help route as the contract the button calls; no Map verdict rests on it
+- NOT-GRADED: travel-buddy-standalone/src/services/circle.ts — §46.3's need-help client wrapper; built work, no Map verdict rests on it
+- NOT-GRADED: travel-buddy-standalone/src/components/circle/CheckInActions.tsx — §46.3's need-help button; built work for MAP-F08, no Map verdict rests on it
+- NOT-GRADED: travel-buddy-standalone/app/circle-presence.tsx — §46.3 cites only the role prop passed to the button; this census grades no circle-presence behaviour
+- NOT-GRADED: travel-buddy-standalone/src/services/__tests__/mapCompassCommands.component.test.ts — §46.2's suite for the handler; no verdict rests on it
+- NOT-GRADED: travel-buddy-standalone/src/components/circle/__tests__/CheckInActions.needHelp.component.test.tsx — §46.3's suite for the button; no verdict rests on it
+- NOT-GRADED: artifacts/api-server/src/test/circleNeedHelpAlertSilence.test.ts — named in §46.5 only because it quotes the route's untrue success message; no Map verdict rests on it
