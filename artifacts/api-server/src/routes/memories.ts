@@ -16,7 +16,7 @@
  * DELETE /memories/:id/like              — unlike
  * POST   /memories/:id/save              — save (idempotent)
  * DELETE /memories/:id/save              — unsave
- * POST   /memories/:id/share             — log share intent
+ * POST   /memories/:id/share             — share gate: readability, then the Telegraph MEMORY reference
  *
  * POST   /trips/:tripId/memory           — create-from-trip (owner only)
  * POST   /events/:eventId/memory         — handled in events.ts (stub upgraded below)
@@ -2518,7 +2518,7 @@ router.post("/memories/:id/share", async (req, res) => {
   const { id } = req.params;
   if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid memory id"); return; }
 
-  res.json({ ok: true });
+  await answerMemoryShare(req, res, auth.user.id, id); // testing-mode WP-06 (HM-F13): the gate, at the foot of this file
 });
 
 // ── POST /trips/:tripId/memory — create-from-trip ─────────────────────────────
@@ -3398,6 +3398,49 @@ router.get("/me/saved-memories", asyncHandler(async (req: any, res: any) => {
     truncated: order.length >= SAVED_MEMORIES_LIMIT,
   });
 }));
+
+// ── POST /memories/:id/share — the share gate (testing-mode WP-06, HM-F13) ───
+//
+// This route answered `{ ok: true }` for any well-formed id and did nothing: a
+// Memory the caller could not read, a blocked owner's, a deleted one — all
+// "shared". It is now the GATE a share passes before it is made. The share
+// itself is a Telegraph §5 object REFERENCE the client posts into a thread
+// (`POST /threads/:id/share`), resolved per reader at read time by
+// services/telegraph/shareables.ts, so a later narrowing, block or deletion is
+// honoured in the chat; nothing is copied here and nothing is written.
+//
+// Readability is the save route's, exactly: owner always; otherwise the block
+// check (fail-closed) and §23's canReadMemory "single". A refusal is the same
+// not_found a Memory that does not exist gets, so the gate is not an oracle.
+async function answerMemoryShare(req: any, res: any, userId: string, id: string): Promise<void> {
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+  const { data: memory, error } = await sc
+    .from("memories")
+    .select("id, owner_id, visibility, allowed_user_ids, hidden_user_ids, trip_id, state")
+    .eq("id", id)
+    .neq("state", "deleted")
+    .maybeSingle();
+  if (error) {
+    req.log.error({ err: error, memoryId: id }, "memories: share gate read failed — refusing rather than approving a share");
+    sendError(res, "db_error", "Could not check this Memory. Please try again.", { exposeDetail: true });
+    return;
+  }
+  if (!memory) { sendError(res, "not_found", "Memory not found"); return; }
+  if ((memory as any).owner_id !== userId) {
+    if (await isBlocked(sc, userId, (memory as any).owner_id)) { sendError(res, "not_found", "Memory not found"); return; }
+    if (!(await canReadMemory(sc, memory, userId, "single"))) { sendError(res, "not_found", "Memory not found"); return; }
+  }
+  res.json({
+    ok: true,
+    share: {
+      objectType: "MEMORY",
+      objectId: id,
+      deepLink: `/memory/${id}`,
+      public: (memory as any).visibility === "public" && (memory as any).state === "published",
+    },
+  });
+}
 
 // Imported at the TAIL so no line above moves; ESM hoists it.
 import { asyncHandler } from "../lib/asyncHandler.js";

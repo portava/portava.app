@@ -235,3 +235,57 @@ describe("HM-F13 — GET /me/saved-memories is the collection a save puts a Memo
     } finally { await app.close(); }
   });
 });
+
+// HM-F13 share. `POST /memories/:id/share` answered `{ok:true}` for ANY
+// well-formed id — a Memory the caller could not read, a blocked owner's, a
+// deleted one — and did nothing, so a client that believed it had a share had
+// nothing. It is now the share GATE: the same readability the save route
+// applies, answered with the Telegraph §5 object reference the client puts
+// into a thread (resolved per reader at read time by services/telegraph/
+// shareables.ts, never a snapshot). RED at 18518e982: every refusal below is a
+// 200, and the success carries no `share`.
+describe("HM-F13 — POST /memories/:id/share is a gate, not a stub", () => {
+  it("a readable Memory answers the MEMORY reference to share", async () => {
+    const app = await startApp(baseState());
+    try {
+      const { status, body } = await call(app.baseUrl, "POST", `/api/memories/${M_PUBLIC}/share`, "viewer-tok");
+      assert.equal(status, 200);
+      assert.deepEqual(body.share, { objectType: "MEMORY", objectId: M_PUBLIC, deepLink: `/memory/${M_PUBLIC}`, public: true });
+    } finally { await app.close(); }
+  });
+
+  it("the owner may share their own private Memory into a chat, and is told it is not public", async () => {
+    const app = await startApp(baseState());
+    try {
+      const { status, body } = await call(app.baseUrl, "POST", `/api/memories/${M_NARROWED}/share`, "owner-tok");
+      assert.equal(status, 200);
+      assert.equal(body.share.public, false);
+    } finally { await app.close(); }
+  });
+
+  for (const [label, id] of [["a Memory the caller may not read", M_NARROWED], ["a blocked owner's Memory", M_BLOCKED], ["a deleted Memory", M_DELETED]] as const) {
+    it(`${label} is not_found — the same answer as one that does not exist`, async () => {
+      const app = await startApp(baseState());
+      try {
+        const { status, body } = await call(app.baseUrl, "POST", `/api/memories/${id}/share`, "viewer-tok");
+        assert.equal(status, 404);
+        assert.equal(body.error, "not_found");
+        assert.equal(body.share, undefined);
+      } finally { await app.close(); }
+    });
+  }
+
+  it("an unreadable memories table is refused, never a green light", async () => {
+    const app = await startApp(baseState(), new Set(["memories"]));
+    try {
+      const { status, body } = await call(app.baseUrl, "POST", `/api/memories/${M_PUBLIC}/share`, "viewer-tok");
+      assert.ok(status >= 500, `expected a 5xx, got ${status}`);
+      assert.equal(body.share, undefined);
+    } finally { await app.close(); }
+  });
+
+  it("requires authentication", async () => {
+    const app = await startApp(baseState());
+    try { assert.equal((await call(app.baseUrl, "POST", `/api/memories/${M_PUBLIC}/share`)).status, 401); } finally { await app.close(); }
+  });
+});

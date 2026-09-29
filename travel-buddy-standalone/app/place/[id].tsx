@@ -421,7 +421,7 @@ export default function PlaceDetailScreen() {
                 stale. ADDITIVE + flag-gated (media_request_a_view_enabled) —
                 renders nothing until the capability is enabled. */}
             <RequestAViewPrompt placeId={canonicalPlace.id} city={city} />
-            {/* Worth-It / Skip-It voting */}
+            <PlaceRecapsSection placeId={canonicalPlace.id} enabled={isLivePlacesEnabled('place_recaps_enabled')} />{/* HM-F19; then Worth-It / Skip-It voting */}
             <View style={ps.socialCard}>
               <WorthItVoteRow entityId={canonicalPlace.id} entityType="place" />
             </View>
@@ -722,3 +722,6 @@ const fb = StyleSheet.create({
     fontSize: 13,
   },
 });
+
+// Testing mode WP-07 (HM-F19): your recaps of this place. Imported at the TAIL; ESM hoists it.
+import { PlaceRecapsSection } from '../../src/features/placeRecaps/PlaceRecapsSection.tsx';
