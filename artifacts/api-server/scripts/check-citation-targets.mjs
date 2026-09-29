@@ -577,7 +577,7 @@ import {
  * guard printed "164 < 165 — LOWER THE CEILING"; the merge brought census
  * §48's re-anchored citations, and which one retired the dead target was not
  * isolated. Same rule as above. */
-export const MAX_DEAD_TARGETS = 164;
+export const MAX_DEAD_TARGETS = 163; /* RATCHETED 2026-09-29 164 -> 163 on lane-tm-admin (WP-21): with the lane's commits the guard printed "163 < 164 — LOWER THE CEILING". Not isolated: no citation into a file this lane changed is on the dead list before or after, and no base citation pointed past the end of a file the lane lengthened. Same rule as above. */
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);

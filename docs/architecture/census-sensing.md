@@ -6071,6 +6071,50 @@ None.
 | S49 · S92 · S26 · S66 | W | **W** | §27.5 — controlled forms run; each real-world form is a flag, a launch or a ruling. |
 | S17 | X | **X** | §27.5 — unobservable from this environment. |
 
+## §28 — 2026-09-29: live-scope promotion reaches an admin screen (lane TM-admin, WP-21, SEN-F06). MOVES NOTHING.
+
+Branch `lane-tm-admin`, cut from `main` at `18518e982`. `head_commit` is not re-declared; no row
+moves. Controlled evidence only. No flag was touched, no migration was added, nothing was read from
+or written to any database.
+
+### 28.1 What was missing
+
+SEN-F06's admin half ("admin promotes the test city scope … withdraw the scope and the label
+disappears") had routes and a runbook (`docs/architecture/intel-live-scope-promotion-runbook.md`)
+but no screen: `artifacts/api-server/src/routes/admin.ts:3424#router.get("/admin/intel/live-scopes"`,
+`artifacts/api-server/src/routes/admin.ts:3478#router.post("/admin/intel/live-scopes/promote"` and
+`artifacts/api-server/src/routes/admin.ts:3523#router.post("/admin/intel/live-scopes/withdraw"`.
+They are unchanged by this lane: admin-only (`requireAdmin`), gated on
+`intel_live_scope_admin_surface_enabled` and, for writes, `intel_live_scope_promotion_enabled`, and
+each write is logged with the admin's id and name.
+
+### 28.2 What was built
+
+`travel-buddy-standalone/app/admin/live-scopes.tsx:42#export default function AdminLiveScopesScreen(`
+lists the scopes in force (or every row, withdrawn and expired included), promotes a
+(zone, claim type) with a review horizon of 1–90 days and the provenance the route requires — the
+density-gate assessment as JSON and the promoter's reasoning — and withdraws a scope with a reason.
+The form is checked before any request by
+`travel-buddy-standalone/src/services/adminConsole.ts:146#export function buildPromoteBody(`, which
+also sends an empty zone as `null` (the route requires the zone-less scope to be SAID, not
+defaulted). A closed surface or writer flag is shown as the server's own message, never as "no scopes".
+
+### 28.3 Tests and mutations
+
+`travel-buddy-standalone/app/admin/__tests__/AdminConsoleScreens.component.test.tsx:147#describe('Live-label scopes (SEN-F06)'`
+(4 cases) and the `buildPromoteBody` cases in
+`travel-buddy-standalone/src/services/__tests__/adminConsole.services.component.test.ts`. Mutations,
+each restored by sha256: a closed surface rendered as empty (1 red); the zone-less scope sent as `""`
+(2 red). The server routes were not changed and their suite (`src/test/intelLiveScopeOps.test.ts`) was
+not re-run for this section.
+
+### 28.4 What this does not claim
+
+- No row moves. S126 (claim LIVE only when every gate is satisfied) is exactly what keeps this
+  screen honest: it can promote nothing while either flag is off.
+- The loop still needs corroborated observations in the scope for a label to appear; that half of
+  SEN-F06 is a physical-world signal this lane does not simulate.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 Declared 2026-09-27 by the coverage-guard fix (census-media §32.14). Each line names a file this census cites and does not grade, and says why. The guard refuses a declaration for any file a verdict row cites.
@@ -6082,3 +6126,8 @@ Declared 2026-09-27 by the coverage-guard fix (census-media §32.14). Each line 
 - NOT-GRADED: artifacts/api-server/src/migrations/2402_telegraph_membership_rls_recursion.sql — Telegraph's frozen migration, named in §4.1 as where the msg_select policy the watched telegraphLiveReferences db suite exercises was last defined; S87/S88 rest on that suite and on lib/liveReference.ts, and a later redefinition would land in a new migration, not in this file.
 - NOT-GRADED: artifacts/api-server/baseline/20260819_baseline_structure.sql — the frozen 2026-08-19 schema snapshot, cited in §4 for msg_insert WITH CHECK (false) to explain why a share is written by the service client; the live fact is pinned by the watched telegraphLiveReferences db suite, and S87/S88 rest on lib/liveReference.ts.
 - NOT-GRADED: artifacts/api-server/src/lib/envValidation.ts — named in §9.1's referrer enumeration because its optional-env list names the sensing pepper in a comment; §9 moved no verdict, and its "no route imports the stack" finding was superseded by §26's ingest route, which is watched.
+- NOT-GRADED: travel-buddy-standalone/app/admin/live-scopes.tsx — §28's admin live-scope screen; built work for SEN-F06's admin half, no sensing verdict rests on it.
+- NOT-GRADED: travel-buddy-standalone/src/services/adminConsole.ts — §28 cites its promote-body builder; client wrapper over unchanged admin routes, no sensing verdict rests on it.
+- NOT-GRADED: travel-buddy-standalone/app/admin/__tests__/AdminConsoleScreens.component.test.tsx — §28.3's admin-screen suite; no verdict rests on it.
+- NOT-GRADED: travel-buddy-standalone/src/services/__tests__/adminConsole.services.component.test.ts — §28.3's service suite; no verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/intelLiveScopeOps.test.ts — named in §28.3 only as the live-scope route suite this section did not re-run; no verdict of §28 rests on it.
