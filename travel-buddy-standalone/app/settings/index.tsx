@@ -260,7 +260,7 @@ export default function Settings() {
       router.push('/profile/edit/location' as any);
     } else if (label === 'Nearby visibility') {
       router.push('/profile/edit/location' as any);
-    } else if (label === 'Private account' || label === 'Hide upcoming trips' || label === 'Message permissions') {
+    } else if (label === 'Message permissions') { router.push('/settings/messages' as any); /* WP-08 TM-TEL-D6 */ } else if (label === 'Private account' || label === 'Hide upcoming trips') {
       router.push('/profile/edit/privacy' as any);
     } else if (label === 'Safe Return history') {
       router.push('/safety-history' as any);
