@@ -5,8 +5,8 @@
  *   - Requests  — approve / deny join requests
  *   - Attendees — view Going list, remove/ban/promote
  *   - Waitlist  — waitlist order
- *   - Controls  — event state controls, post pinned update
- */
+ *   - Controls  — event state controls, post pinned update (cancel / complete through their own routes)
+ *   Attendance (check-ins, confirm / no-show) and Co-hosts: src/components/events/ (PLAT-F26, PLAT-F28). */
 import React, { useEffect, useState } from 'react';
 import {
   View, Text, Pressable, StyleSheet, ScrollView,
@@ -17,14 +17,14 @@ import { X, Check, X as XIcon, UserX, Crown, Shield, Clock, Sparkles } from 'luc
 import {
   getJoinRequests, reviewJoinRequest, assignEventRole, removeEventRole,
   postEventUpdate, updateEvent, getEventWaitlist,
-  postponeEvent, archiveEvent, closeRsvps, reopenRsvps, inviteUserToEvent,
+  postponeEvent, archiveEvent, closeRsvps, reopenRsvps, inviteUserToEvent, completeEvent,
   type EventDetail, type JoinRequest, type WaitlistEntry,
 } from '../services/events.ts';
 import { searchUsers, type TravelerSearchResult } from '../services/follows.ts';
 import { Avatar } from './ui.tsx';
 import { color, space, radius, type as t, avatar } from '../theme/tokens.ts';
 import { useFeatureFlags } from '../context/FeatureFlagsContext.tsx';
-import { GenerateHeaderSheet } from './events/GenerateHeaderSheet.tsx';
+import { GenerateHeaderSheet } from './events/GenerateHeaderSheet.tsx'; import { EventAttendancePanel } from './events/EventAttendancePanel.tsx'; import { EventCohostsPanel } from './events/EventCohostsPanel.tsx'; import { EventCancelControl } from './events/EventCancelControl.tsx';
 
 interface Props {
   event: EventDetail;
@@ -32,7 +32,7 @@ interface Props {
   onRefresh: () => void;
 }
 
-type Tab = 'requests' | 'attendees' | 'waitlist' | 'invite' | 'controls';
+type Tab = 'requests' | 'attendees' | 'attendance' | 'cohosts' | 'waitlist' | 'invite' | 'controls';
 
 export function HostDashboardPanel({ event, onDismiss, onRefresh }: Props) {
   const [tab, setTab] = useState<Tab>('requests');
@@ -50,7 +50,7 @@ export function HostDashboardPanel({ event, onDismiss, onRefresh }: Props) {
   const [invitedIds, setInvitedIds]         = useState<Set<string>>(new Set());
   // AI header image generation
   const { isEnabled } = useFeatureFlags();
-  const aiHeadersEnabled = isEnabled('ai_event_headers_enabled');
+  const aiHeadersEnabled = isEnabled('ai_event_headers_enabled'); const startTransitionOn = isEnabled('event_start_transition_enabled'); // PATCH cannot write `started` (server refuses by name); only the scheduler behind this flag starts an event
   const [generateSheetVisible, setGenerateSheetVisible] = useState(false);
 
   useEffect(() => {
@@ -130,7 +130,7 @@ export function HostDashboardPanel({ event, onDismiss, onRefresh }: Props) {
         text: 'Yes',
         style: newState === 'cancelled' ? 'destructive' : 'default',
         onPress: async () => {
-          const res = await updateEvent(event.id, { state: newState });
+          const res = newState === 'completed' ? await completeEvent(event.id) : await updateEvent(event.id, { state: newState }); // POST /complete awards attendance trust, stamps and review prompts; PATCH skipped them
           if (!res.ok) Alert.alert('Error', res.message ?? 'Failed');
           else onRefresh();
         },
@@ -192,7 +192,7 @@ export function HostDashboardPanel({ event, onDismiss, onRefresh }: Props) {
 
   const TABS: { key: Tab; label: string }[] = [
     { key: 'requests',  label: `Requests${requests.length ? ` (${requests.length})` : ''}` },
-    { key: 'attendees', label: 'Attendees' },
+    { key: 'attendees', label: 'Attendees' }, { key: 'attendance', label: 'Attendance' }, { key: 'cohosts', label: 'Co-hosts' },
     { key: 'waitlist',  label: 'Waitlist' },
     { key: 'invite',    label: 'Invite' },
     { key: 'controls',  label: 'Controls' },
@@ -284,7 +284,7 @@ export function HostDashboardPanel({ event, onDismiss, onRefresh }: Props) {
               </>
             )}
 
-            {/* ── Waitlist tab ── */}
+            {tab === 'attendance' && <EventAttendancePanel event={event} />}{tab === 'cohosts' && <EventCohostsPanel event={event} onChanged={onRefresh} />}{/* ── Waitlist tab ── */}
             {tab === 'waitlist' && (
               waitlistLoading ? (
                 <ActivityIndicator color={color.signal} style={{ marginTop: space.xl }} />
@@ -373,10 +373,10 @@ export function HostDashboardPanel({ event, onDismiss, onRefresh }: Props) {
                       <Text style={s.stateBtnText}>Publish (Open)</Text>
                     </Pressable>
                   )}
-                  {event.state === 'open' && (
-                    <Pressable style={s.stateBtn} onPress={() => handleStateChange('started')}>
-                      <Text style={s.stateBtnText}>Mark as started</Text>
-                    </Pressable>
+                  {['open', 'full', 'waitlist'].includes(event.state) && (
+                    <Text style={s.sectionNote} testID="host-start-note">{startTransitionOn
+                      ? 'The event switches to Happening now at its start time. Attendance and Mark as completed open then.'
+                      : "Events don't start automatically yet, so attendance marking and completion aren't available."}</Text>
                   )}
                   {event.state === 'started' && (
                     <Pressable style={s.stateBtn} onPress={() => handleStateChange('completed')}>
@@ -384,9 +384,9 @@ export function HostDashboardPanel({ event, onDismiss, onRefresh }: Props) {
                     </Pressable>
                   )}
                   {!['cancelled', 'completed', 'archived'].includes(event.state) && (
-                    <Pressable style={[s.stateBtn, s.stateBtnDanger]} onPress={() => handleStateChange('cancelled')}>
-                      <Text style={[s.stateBtnText, { color: '#DC2626' }]}>Cancel event</Text>
-                    </Pressable>
+                    <EventCancelControl eventId={event.id} onCancelled={onRefresh}
+                      /* POST /events/:id/cancel records the reason, applies the host-cancel trust rule
+                         and notifies everyone going; PATCH { state } did none of that. */ />
                   )}
                   {['open', 'started'].includes(event.state) && (
                     <Pressable style={s.stateBtn} onPress={handlePostpone}>

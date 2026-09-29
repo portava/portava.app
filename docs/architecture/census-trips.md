@@ -9321,7 +9321,261 @@ TR128 bullet (line 7803) points here.
 no Trips window can be certified until a routed provider is wired. This section
 enables no API, sets no key and wires nothing.
 
-## §77 Regroup, free time, "I'm bored" and replan reach the trip screen (TM-live lane, TRIP-F19 / TRIP-F21) — 2026-09-29
+## §77 WP-10 — the trips collaboration surfaces reach the app (TRIP-F06, F15, F16, F22, F23, F24, F25, F26) — 2026-09-29
+
+*Written 2026-09-29 by the testing-mode lane `lane-tm-trips` (work package
+WP-10 of the flow catalogue). This is a **client wiring pass**. No verdict
+letter moves, no flag is changed, and no migration is added. Every surface is
+labelled by the flow it closes, and the evidence is **controlled** (unit,
+component and harness tests), never production.*
+
+### §77.1 What the architecture routes through the kernel, and what this pass sends there
+
+The rule this pass kept: a write that the architecture routes through
+`trip_kernel_execute` or a proposal goes through it, and a write whose table
+has no kernel family goes through its route and nothing else. No client code
+added here writes a table directly.
+
+| write | path | why that path |
+| --- | --- | --- |
+| approve a join request | POST `/join-requests/:id/approve`, which issues `ADD_PARTICIPANT` / `SET_PARTICIPANT_ROLE` (`artifacts/api-server/src/routes/trips-expansion.ts:1101#type: existingRow ? "SET_PARTICIPANT_ROLE" : "ADD_PARTICIPANT",`) | participant family, flag-gated cutover; the client sends one `Idempotency-Key` per tap (`artifacts/api-server/src/domain/trips/commands/tripKernel.ts:562#export const IDEMPOTENCY_KEY_HEADER`) |
+| vote, accept, reject | POST `/trips/:id/commands` `VOTE_ON_PROPOSAL` / `ACCEPT_PROPOSAL` / `REJECT_PROPOSAL` (`artifacts/api-server/src/server/trips/commandRoute.ts:80#CREATE_PROPOSAL", "VOTE_ON_PROPOSAL", "ACCEPT_PROPOSAL", "REJECT_PROPOSAL",`) | §9.3; the kernel applies the rule against `trip_proposal_tally` |
+| cancel / complete / archive / delete | POST `/cancel`, `/complete`, `/archive`, DELETE `/trips/:id` (`artifacts/api-server/src/routes/trips-expansion.ts:718#type: "COMPLETE_TRIP",`) | trip family; "Mark trip as complete" no longer PATCHes `status` (`travel-buddy-standalone/app/trip/[id].tsx:250#runLifecycleAction(id, 'complete'`) |
+| transport policy | PUT `/transport-policy` (`artifacts/api-server/src/routes/tripFeasibility.ts:468#router.put("/trips/:tripId/transport-policy"`) | NOT a kernel command by 2793's design: a setting the feasibility check reads, `trips.version` does not move |
+| saved places | POST / DELETE `/saved-places` | §18.3 set operations, not kernel commands (TR347, TR350) |
+| notes, documents, checklists, trip reminders | their `/trips/:id/...` routes | the kernel carries no family for these tables — TR378's open work (§75.6); this pass does not add one |
+
+### §77.2 What was built, per flow
+
+- **TRIP-F06 join requests.** The owner reviews pending requests on the trip page
+  (`travel-buddy-standalone/app/trip/[id].tsx:606#<JoinRequestsList`) and on a
+  review screen across every owned trip
+  (`travel-buddy-standalone/app/trip/join-requests.tsx:21#export default function TripJoinRequestsScreen`,
+  registered in PORTAVA_ROUTES). Both use
+  `travel-buddy-standalone/src/features/trips/joinRequests/JoinRequestsList.tsx:40#export function JoinRequestsList`.
+  An approval that got no answer is retried with the same key
+  (`travel-buddy-standalone/src/features/trips/joinRequests/tripJoinRequests.ts:52#export function approveJoinRequest`).
+  The requester withdraws a pending request from the private-trip card
+  (`travel-buddy-standalone/src/components/privacy/PrivateTripCard.tsx:83#async function handleCancel`).
+- **TRIP-F15 ballots.** `travel-buddy-standalone/src/features/trips/planning/TripBallotsCard.tsx:39#export function TripBallotsCard`
+  lists the open proposals with the server's tally and the viewer's own ballot,
+  and votes through `travel-buddy-standalone/src/features/trips/planning/tripBallots.ts:68#export async function castBallot`.
+  One key is minted per tap (`travel-buddy-standalone/src/features/trips/planning/tripBallots.ts:64#export function ballotKey`),
+  because a key derived from (proposal, vote) would let the receipt answer
+  "yes → no → yes" with the first yes. The owner, or anyone under ANYONE, or
+  anyone once the vote has carried, is offered Accept / Reject.
+- **TRIP-F16 transport policy.** `travel-buddy-standalone/src/features/trips/planning/TripTransportPolicyCard.tsx:32#export function TripTransportPolicyCard`
+  reads the current policy from the feasibility response it governs, lets the
+  owner flip modes, and saves through
+  `travel-buddy-standalone/src/features/trips/planning/tripTransportPolicy.ts:48#export async function setTransportPolicy`.
+  With `trip_operational_projections_enabled` off, the response carries no policy
+  and the card says the rules cannot be set on this deployment. It does not draw
+  "every mode allowed".
+- **TRIP-F22 after the trip.** `travel-buddy-standalone/src/features/trips/closeout/TripPostTripCard.tsx:44#export function TripPostTripCard`
+  shows the memory candidates and the passport preview. It mounts beside the
+  closeout questions (`travel-buddy-standalone/app/trip/[id].tsx:586#<TripPostTripCard`).
+  "Keep as memory" sends the candidate's own draft
+  (`travel-buddy-standalone/src/features/trips/closeout/tripPostTrip.ts:85#export function draftToMemoryInput`).
+- **TRIP-F23 lifecycle.** `travel-buddy-standalone/src/features/trips/lifecycle/TripLifecycleCard.tsx:49#export function TripLifecycleCard`
+  shows the derived §3.1 lifecycle and, to the owner, the arrows the status
+  registry draws
+  (`travel-buddy-standalone/src/features/trips/lifecycle/tripLifecycle.ts:26#export function lifecycleActions`).
+  Each action is confirmed, then sent with a key that a retry reuses.
+- **TRIP-F24 shared contents.** `travel-buddy-standalone/src/features/trips/sharedContent/TripSharedContentSection.tsx:339#export function TripSharedContentSection`
+  has five tabs — notes, documents, checklists, trip reminders, and the activity
+  feed for hosts. Each tab draws loading, a failed read with retry, and a true
+  empty state. A trip reminder is kept on the account, and its alert is
+  scheduled on the device that set it
+  (`travel-buddy-standalone/src/features/trips/sharedContent/tripSharedContent.ts:173#export async function createTripReminder`).
+- **TRIP-F25 saved places.** The trip page, its hook
+  (`travel-buddy-standalone/src/hooks/useTripSavedPlaces.ts:86#listLocalSaved(tripId)`)
+  and the Save-to-trip picker
+  (`travel-buddy-standalone/src/components/discovery/TripWishlistPicker.tsx:149#applyTripSaveToggle(trip.id`)
+  now read and write the trip's list through
+  `travel-buddy-standalone/src/features/trips/savedPlaces/tripSavedPlacesSync.ts:160#export async function syncTripSavedPlaces`,
+  under the merge rule WP10-D1.
+- **TRIP-F26 geofence.** `travel-buddy-standalone/src/features/trips/crew/TripGeofenceCard.tsx:51#export function TripGeofenceCard`
+  mounts GeofenceSettingsSheet and HostAttendanceDashboard for the owner, and
+  PlanCheckInView for members
+  (`travel-buddy-standalone/app/trip/[id].tsx:673#<TripGeofenceCard`). It renders
+  nothing while `plan_geofence_enabled` is off.
+
+The edits to trip/[id].tsx, TripPage.tsx, TripWishlistPicker.tsx and
+portavaRoutes.ts are line-neutral. discoveryBookmarks.ts only gained lines at
+its foot.
+
+### §77.3 Decisions (routine, decided here; this census has no separate register)
+
+- **WP10-D1 — saved places, the merge rule for device-only saves.** A device save
+  is PENDING until the server acknowledges it. An acknowledgement is a 201, a 409
+  "already saved", or the member's own row already present.
+  1. Pending saves are pushed on every sync, union only, and are kept on the
+     device while pending. The first sync therefore pushes every save the device
+     holds and deletes nothing.
+  2. Once acknowledged, the server is authoritative. A save later removed
+     elsewhere is dropped here, not pushed back.
+  3. Only the member's OWN rows acknowledge, so a crewmate's removal cannot take
+     this member's save with it.
+  4. An unreadable list decides nothing.
+
+  The device is read BEFORE `listSaved()`, because that call replaces the device
+  list with /api/wishlist's
+  (`travel-buddy-standalone/src/services/discoveryBookmarks.ts:454#export async function listLocalSaved`).
+  No save is lost.
+- **WP10-D2 — one idempotency key per user intent.** Ballots, approvals and
+  lifecycle actions each mint a key per tap or confirmation and reuse it only to
+  retry that intent (`travel-buddy-standalone/src/features/trips/shared/tripApi.ts:74#export async function sendTripWrite`).
+- **WP10-D3 — the requester's request id.** It is recovered from the
+  join-request route's own idempotent answer while the request is pending
+  (`artifacts/api-server/src/routes/trips-expansion.ts:992#status: "already_requested", requestId`).
+  No new read route was added.
+- **WP10-D4 — trip reminders are the member's own.** The route scopes them to
+  the caller (`artifacts/api-server/src/routes/trips-expansion.ts:3072#.from("trip_reminders")`),
+  so "shared" means account-synced, not crew-visible. Nothing server-side
+  delivers them, so the setting device schedules the alert, and the tab says
+  which reminders ring here. Crew-wide items belong in checklists and notes.
+- **WP10-D5 — documents are text.** `trip_documents` has no file column. A ticket
+  is recorded as its reference text. Attaching the file itself needs a storage
+  column and is not built here.
+- **WP10-D6 — a memory candidate is kept as a DRAFT memory.** It is not
+  published on a projection's say-so; the traveller publishes it.
+- **WP10-D7 — the geofence is the trip's meetup point.** routes/geofence.ts keeps
+  one row per trip, so the card mounts once on the trip page. It is not mounted
+  per plan item.
+
+### §77.4 Tests — seen red, then green, and mutations
+
+Client node suites, all on Node 24:
+- tripJoinRequests: 6 tests.
+- tripLifecycle: 5 tests.
+- tripBallots: 7 tests.
+- tripTransportPolicy: 4 tests.
+- tripSharedContent: 7 tests.
+- tripPostTrip: 4 tests.
+- tripSavedPlacesSync: 9 tests.
+- discoveryBookmarks.tripLocal: 2 tests.
+
+Each was RED first with ERR_MODULE_NOT_FOUND, then green.
+
+Jest component suites, each run RED against the HEAD version of the file it
+covers, then green:
+- useTripSavedPlaces.tripSync: 6/6 red.
+- TripWishlistPicker.tripSync: 2/2 red.
+- PrivateTripCard.withdraw: 3/3 red.
+- TripDetail.wp10Surfaces: 3/3 red.
+
+New component suites, written with their components:
+- TripBallotsCard: 6 tests.
+- TripTransportPolicyCard: 5 tests.
+- TripLifecycleCard: 6 tests.
+- JoinRequestsList: 5 tests.
+- TripSharedContentSection: 7 tests.
+- TripPostTripCard: 3 tests.
+- TripGeofenceCard: 4 tests.
+
+Kernel:
+- `artifacts/api-server/src/test/db/tripBallotKernel.db.test.ts:63#const first = ok({ type: "VOTE_ON_PROPOSAL"`
+  pins the four facts the ballot key relies on. On the local harness, 4/4 pass,
+  and `tripKernelPipeline.db.test.ts` stays green alongside it.
+- A harness mutation changed the kernel's vote upsert to `DO NOTHING`. That
+  turned it RED; restoring the function definition byte-identically (sha256
+  prefix 494f9d87e99e) turned it green again.
+- The live twin is appended to tripKernelLive
+  (`artifacts/api-server/src/test/tripKernelLive.test.ts:447#describe("WP-10 ballots`).
+  It **was not run**: the suite's ciSupabaseGuard refuses without the CI project
+  configuration, as it does at HEAD.
+
+Every mutation was restored by sha256, and each turned its suite RED:
+- the union push, own-rows-only acknowledgement, dropping an acknowledged save,
+  409-as-acknowledgement, and the unsave rollback (all in the sync);
+- the approve key;
+- lifecycle as a status PATCH;
+- a deterministic ballot key, and the vote payload;
+- 503 treated as a refusal;
+- a kept memory published instead of a draft;
+- disallowing the last transport mode;
+- a retry minting a new key, in the ballot card, the lifecycle card and the join
+  list;
+- ticking a checklist item optimistically;
+- withdrawing the wrong request id;
+- the geofence member flag;
+- the transport card's gate-off branch.
+
+One mutant survived as equivalent: removing the refused-reminder guard. A
+refused body has no id, so scheduling throws inside its own catch.
+
+### §77.5 Rows looked at; none moves
+
+- **TR6, TR153 (W).** Ballots now reach the kernel from a screen. What holds these
+  rows is history and the proposal contract, not a client.
+- **TR134 (W).** The policy control exists. The route-availability check still
+  waits on the gate and on a routed provider (§76).
+- **TR378 (W).** Unchanged. The sub-table routes remain direct writes, and this
+  pass adds no kernel family.
+- **Held as they were:** TR350 C, TR382 C, TR388 C, TR390 C, TR25 C, TR259 C,
+  TR35 C, TR167 C.
+- **TR133 (W, OWNER).** Unchanged.
+
+### §77.6 What is still not done, and why
+
+- **TRIP-F15.** The explain route (`/decisions/:decisionId/explain`) still has no
+  caller. The decisions board carries decision-task ids, not decision-ledger ids,
+  so nothing here can name a decision to explain.
+- **TRIP-F16.** The policy can be set only where `trip_operational_projections_enabled`
+  is on. That is a production activation, not this lane's.
+- **TRIP-F24.** Two gaps remain: files as documents (WP10-D5), and server-side
+  delivery of trip reminders (WP10-D4).
+- **TRIP-F26.** A real check-in needs device GPS on two test devices.
+- **TRIP-F06.** Co-hosts can approve on a trip, but GET /trips/join-requests lists
+  only the owner's trips, so they get no review queue there.
+- **Everything above** is controlled evidence. `trip_kernel_enabled` decides
+  whether approve and lifecycle run through the kernel or through their flag-off
+  twins.
+
+### §77.7 Checks run on this pass, and what was not run
+
+**artifacts/api-server — `int-guards.sh`:** all 24 exit 0. That covers:
+- typecheck, and typecheck:tests (baseline held);
+- test-registration;
+- census-integrity, census-freshness, census-scope-coverage and census-row-move-labels;
+- doc-citations (UNANCHORED held at its ceiling of 6434), citation-targets and citation-symbols;
+- migration-prefixes, production-drift, writerless-reads, schema-references and enum-literals;
+- flag-polarity, discovery-query-paths, route-auth-gate, api-prefix and async-handlers;
+- frozen-dir, telegraph-inventory, guard-coverage and unissued-supabase-writes.
+
+**Node suites** (with `SUPABASE_URL=http://127.0.0.1:9`): censusHeadCommit,
+censusPolicyCitations, tripReadiness, tripCrewRosterUnreadable, tripsExpansion,
+tripTransportPolicyRoute and tripKernelFamiliesWiring. 166/166 pass.
+
+**Local harness** (the whole chain replayed; baseline 388 tables):
+- `scripts/local-db/run-tests.sh`: 429 pass, 2 fail, 0 skipped.
+- The two failures are in trailsModeration and trailsService. Both are
+  `fetch failed / ECONNRESET` inside the in-process PostgREST bridge
+  (trailPostgrestBridge). They are Discovery trails suites; this pass touched no
+  code they reach. A rerun of those two files alone failed 1 of 25 with the same
+  ECONNRESET.
+- The trip suites were green, including tripBallotKernel 4/4 and tripKernelPipeline.
+
+**travel-buddy-standalone:**
+- `check:all`.
+- `check-route-registry` (205 screens, all present).
+- `check-close-then-navigate`, and lint:mocks.
+
+**Repo root and `scripts/`:**
+- `check:hook-order`, `test:dead-routes`, `test:routes-guard`,
+  `test:cross-tree-paths`, `test:route-param-any`, `test:fixture-guard` and
+  `check:rent-buddy-contract`: all exit 0.
+- `test:truncate-guard` exits 2 here only because it looks for its default host
+  `helium`. Pointed at the harness's postgres with `TRUNCATE_GUARD_DATABASE_URL`,
+  it passes 3/3.
+
+**NOT RUN:**
+- `tripKernelLive.test.ts`. ciSupabaseGuard refuses without the CI project
+  configuration, at HEAD as here.
+- `check:write-path-columns`, which needs live credentials. This pass adds no
+  server write path, so its extractor has nothing new to read.
+
+## §78 Regroup, free time, "I'm bored" and replan reach the trip screen (TM-live lane, TRIP-F19 / TRIP-F21) — 2026-09-29
 
 Testing-mode lane `lane-tm-live` (WP-11), branch cut from `main` at `978d886bf`. `head_commit` is
 **NOT** re-declared. Controlled evidence only — component tests through the real client service with
