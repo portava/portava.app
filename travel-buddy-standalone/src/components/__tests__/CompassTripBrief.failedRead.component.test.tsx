@@ -25,6 +25,7 @@
  *   TB11     moving to another trip whose read THROWS never leaves the previous trip's items on it
  *   TB12     a failed trip, then no trip and no city → the brief hides (no stale failed line)
  *   TB13     a trip still loading, then no trip and no city → the brief hides (no stale spinner)
+ *   TB14     trip t1's late answer lands while t2 is still loading → t2 is still loading, never hidden as "no results"
  *
  * Run with: pnpm test:component
  */
@@ -201,5 +202,17 @@ describe('CompassTripBrief — a failed, refused or partial /compass/recommendat
     await flush();
     expect(screen.queryByText('Loading recommendations…')).toBeNull();
     expect(screen.queryByText('Compass Brief')).toBeNull();
+  });
+
+  it("TB14 trip t1's late answer while t2 is still loading → t2 stays loading, never hidden as 'no results'", async () => {
+    let resolveT1: (v: any) => void = () => {};
+    mockFetch.mockImplementation(((p: { tripId: string }) => p.tripId === 't1'
+      ? new Promise((r) => { resolveT1 = r; })
+      : new Promise(() => {})) as any);
+    const view = await render(<CompassTripBrief tripId="t1" city="Cebu" />);
+    await view.rerender(<CompassTripBrief tripId="t2" city="Lisbon" />);
+    await act(async () => { resolveT1({ ok: true, data: { recommendations: [], surface: 'trip' } }); await Promise.resolve(); await Promise.resolve(); });
+    expect(screen.getByText('Loading recommendations…')).toBeTruthy();
+    expect(screen.getByText('Compass Brief')).toBeTruthy();
   });
 });

@@ -15,6 +15,7 @@
  *   GR3   no circle named, the current trip unread → never "no active or upcoming trip group"
  *   GR4   no circle named, the trip found, its members read fails → no recommendation over a partial group, said
  *   GR5   a named circle the user only JOINED, the joined-circles read fails → never "not a member of a circle by that name"
+ *   GR6   a named circle the user only JOINED, the viewer's memberships read fails → never "not a member of a circle by that name"
  *   GRc   CONTROL: a named circle the user is not in, every read healthy → "not a member of a circle by that name"
  *   PD1   get_place_details, the discovery_places read fails → never "Place not found."
  *   PDc   CONTROL: no such place, the read healthy → "Place not found."
@@ -111,6 +112,20 @@ describe("get_group_recommendation over failed group reads (§109, D-W11X2-89)",
         if (t === "circles" && eqCall(calls, "owner_id")) return { data: [], error: null };
         if (t === "circle_memberships" && eqCall(calls, "other_id")) return { data: [{ user_id: "a7000000-0000-4000-a000-000000000007", status: "accepted" }], error: null };
         if (t === "circles" && inCall(calls, "owner_id")) return failed;
+        return undefined;
+      },
+    });
+    const r = await run(w, "get_group_recommendation", { circleName: "Joined crew" });
+    assert.deepEqual(r.candidates, []);
+    assert.doesNotMatch(String(r.info), /not a member of a circle by that name/, JSON.stringify(r));
+    assert.match(String(r.info), /could not be (read|checked)/i, JSON.stringify(r));
+  });
+
+  it("GR6 the viewer's circle_memberships read fails (the circle is a joined one) → never 'not a member of a circle by that name'", async () => {
+    const w = compassWorld({
+      answer: (t, calls) => {
+        if (t === "circles" && eqCall(calls, "owner_id")) return { data: [], error: null };
+        if (t === "circle_memberships" && eqCall(calls, "other_id")) return failed;
         return undefined;
       },
     });

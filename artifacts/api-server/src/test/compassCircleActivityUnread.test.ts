@@ -20,6 +20,7 @@
  *   CA6      the client throws → circle membership could not be checked
  *   CA7      the prompt: an unread circles, bookings or stamps read is said; a healthy context adds no line
  *   CA8      the booking and stamp reads: a failed read is marked, never an empty section alone
+ *   CA9      the prompt: circles read but their member read failed → the member lists are said incomplete
  *   CAc      CONTROL: a viewer in no circles, every read healthy → "The user is not in any circles." and no marker
  */
 import { describe, it } from "node:test";
@@ -122,6 +123,14 @@ describe("get_circle_activity over failed circle reads (§109, D-W11X2-88)", () 
     const s = await buildStructuredCompassContext(compassWorld({ failTables: ["user_stamps"] }).client as any, profile);
     assert.deepEqual(s.recentStamps, []);
     assert.deepEqual(s.unread, { stamps: true });
+  });
+
+  it("CA9 the prompt: circles read but their member read failed → the member lists are said incomplete", async () => {
+    const ctx = await buildStructuredCompassContext(circleWorld({ members: true }).client as any, profile);
+    assert.deepEqual(ctx.unread, { circleMembers: true });
+    const lines = formatStructuredContextLines(ctx).join("\n");
+    assert.match(lines, /circle member lists could not be read/i, lines);
+    assert.doesNotMatch(lines, /circle membership could not be read/i);
   });
 
   it("CAc CONTROL: a viewer in no circles, every read healthy → 'The user is not in any circles.' and no marker", async () => {
