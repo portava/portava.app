@@ -6,7 +6,7 @@
  *
  * Scope filter: Global | Current City | Nearby
  */
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   View, Text, Pressable, FlatList, StyleSheet, ActivityIndicator, ScrollView, Alert,
 } from 'react-native';
@@ -209,6 +209,10 @@ export default function HashtagFeedScreen() {
   const [meta, setMeta] = useState<HashtagMeta | null>(null);
   const [metaLoading, setMetaLoading] = useState(true);
   const [unavailable, setUnavailable] = useState(false);
+  // census-discovery §105 (DV-83, D-W11X2-61): a hashtag read that FAILED (500, network) is not
+  // "removed or blocked" — only a 404 is. `metaReload` is the failed state's "Try again".
+  const [metaFailed, setMetaFailed] = useState(false);
+  const [metaReload, setMetaReload] = useState(0);
   const [following, setFollowing] = useState(false);
   const [followBusy, setFollowBusy] = useState(false);
   const [reportBusy, setReportBusy] = useState(false);
@@ -226,6 +230,8 @@ export default function HashtagFeedScreen() {
   useEffect(() => {
     if (!slug) return;
     setMetaLoading(true);
+    setUnavailable(false);
+    setMetaFailed(false);
     getHashtag(slug).then((res) => {
       setMetaLoading(false);
       if (res.ok && res.data) {
@@ -233,28 +239,39 @@ export default function HashtagFeedScreen() {
         setFollowing(res.data.isFollowing);
       } else {
         setUnavailable(true);
+        setMetaFailed(res.status !== 404);
       }
     });
-  }, [slug]);
+  }, [slug, metaReload]);
+
+  // census-discovery §105 (DV-83, D-W11X2-61): only the LATEST feed request writes the screen,
+  // as DiscoveryCategoryTab does (D-W11X2-38). A tab answered after the viewer moved to another
+  // tab (or scope) is dropped, so a tab never shows another tab's rows.
+  const feedReqRef = useRef(0);
 
   const loadFeed = useCallback(
     async (tab: FeedTab, sc: FeedScope, before?: string | null) => {
       if (!slug) return;
+      const myId = ++feedReqRef.current;
       if (before) {
         setLoadingMore(true);
       } else {
         setFeedLoading(true);
         setFeedError(null);
+        setLoadingMore(false);
       }
       // Pass city for scoped requests — locationState.place.city comes from GPS or manual selection.
       const city = (sc === 'city' || sc === 'nearby') ? (locationState.place.city ?? null) : null;
       const res = await getHashtagFeed(slug, tab, sc, city, before ?? null);
+      if (feedReqRef.current !== myId) return;
       if (before) {
         setLoadingMore(false);
       } else {
         setFeedLoading(false);
       }
-      if (res.ok && res.data) {
+      // §105: a 200 carrying a Discovery refusal is a failed read, never its (empty or short) rows.
+      const refused = res.ok && res.data != null && (res.data as { refusal?: unknown }).refusal != null;
+      if (res.ok && res.data && !refused) {
         if (before) {
           setItems((prev) => [...prev, ...res.data!.items]);
         } else {
@@ -266,7 +283,7 @@ export default function HashtagFeedScreen() {
         // because the cursor comes from hashtag_usage.created_at, not the entity.
         setCursor(res.data.nextCursor ?? null);
       } else {
-        setFeedError(res.error ?? 'Failed to load feed');
+        setFeedError(refused ? 'This feed couldn’t be loaded just now. Try again in a moment.' : (res.error ?? 'Failed to load feed'));
       }
     },
     [slug, locationState.place.city],
@@ -330,6 +347,28 @@ export default function HashtagFeedScreen() {
         </View>
         <View style={s.center}>
           <ActivityIndicator color={color.signal} />
+        </View>
+      </View>
+    );
+  }
+
+  if (metaFailed) {
+    return (
+      <View style={[s.container, { paddingTop: insets.top }]}>
+        <View style={s.topBar}>
+          <Pressable onPress={() => router.back()} hitSlop={10}>
+            <ArrowLeft size={22} color={color.ink} />
+          </Pressable>
+        </View>
+        <View style={s.center}>
+          <View style={s.unavailWrap}>
+            <Hash size={32} color={color.haze} />
+            <Text style={s.unavailTitle}>This hashtag couldn’t be loaded just now</Text>
+            <Text style={s.unavailSub}>This is on our side. Try again in a moment.</Text>
+            <Pressable style={s.retryBtn} onPress={() => setMetaReload((n) => n + 1)}>
+              <Text style={s.retryText}>Try again</Text>
+            </Pressable>
+          </View>
         </View>
       </View>
     );

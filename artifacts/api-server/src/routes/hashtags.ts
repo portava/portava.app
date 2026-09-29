@@ -492,13 +492,13 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
-  const { data: ht } = await sc
+  const { data: ht, error: htErr } = await sc
     .from('hashtags')
     .select('id, is_blocked')
     .eq('slug', slug)
     .maybeSingle();
 
-  if (!ht || (ht as any).is_blocked) { sendError(res, 'not_found', 'Hashtag not found'); return; }
+  if (htErr) return sendFeedReadFailed(req, res, htErr, 'hashtag');  if (!ht || (ht as any).is_blocked) { sendError(res, 'not_found', 'Hashtag not found'); return; }
 
   const htId = (ht as any).id;
 
@@ -620,8 +620,8 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
 
   } else if (tab === 'people') {
     // Exclude blocked/blocking profiles
-    const { data: profiles } = await sc
-      .from('profiles').select('id, handle, name, avatar_url').in('id', sourceIds);
+    const { data: profiles, error: peopleErr } = await sc
+      .from('profiles').select('id, handle, name, avatar_url').in('id', sourceIds); if (peopleErr) return sendFeedReadFailed(req, res, peopleErr, 'people');
     const visiblePeople = (profiles ?? []).filter((p: any) => !isExcluded(feedBlockedSet, p.id));
     // Universal display-name rule: real name only when the subject opted in.
     const allowedPeopleNames = await nameVisibilitySet(sc, visiblePeople.map((p: any) => p.id as string));
@@ -638,8 +638,8 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
   } else if (tab === 'places') {
     try {
       // submitted_by allows filtering out content from blocked users
-      const { data: places } = await sc
-        .from('discovery_places').select('id, name, city, place_type, image_url, submitted_by').in('id', sourceIds);
+      const { data: places, error: placesErr } = await sc
+        .from('discovery_places').select('id, name, city, place_type, image_url, submitted_by').in('id', sourceIds); if (placesErr) return sendFeedReadFailed(req, res, placesErr, 'places');
       const items = (places ?? [])
         .filter((p: any) => !isExcluded(feedBlockedSet, p.submitted_by))
         .map((p: any) => ({
@@ -647,17 +647,17 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
           placeType: p.place_type ?? null, imageUrl: p.image_url ?? null,
         }));
       res.status(200).json({ items, posts: [], hasMore: items.length === limit, nextCursor, tab, scope });
-    } catch { res.status(200).json({ items: [], posts: [], hasMore: false, nextCursor: null, tab, scope }); }
+    } catch (err) { sendFeedReadFailed(req, res, err, 'places'); }  // census-discovery §105 (DV-83): a thrown read is a failed tab, never an empty page
 
   } else if (tab === 'trips') {
     try {
       // Visibility: only show public trips OR trips the viewer is a member/owner of
-      const { data: memberRows } = await sc
-        .from('trip_members').select('trip_id').eq('user_id', user.id).in('trip_id', sourceIds);
+      const { data: memberRows, error: tripMembersErr } = await sc
+        .from('trip_members').select('trip_id').eq('user_id', user.id).in('trip_id', sourceIds); if (tripMembersErr) return sendFeedReadFailed(req, res, tripMembersErr, 'trips');
       const viewerTripIds = new Set((memberRows ?? []).map((r: any) => r.trip_id as string));
 
-      const { data: trips } = await sc
-        .from('trips').select('id, title, destination_city, status, owner_id, visibility').in('id', sourceIds);
+      const { data: trips, error: tripsErr } = await sc
+        .from('trips').select('id, title, destination_city, status, owner_id, visibility').in('id', sourceIds); if (tripsErr) return sendFeedReadFailed(req, res, tripsErr, 'trips');
       const items = (trips ?? [])
         .filter((t: any) =>
           !isExcluded(feedBlockedSet, t.owner_id) &&
@@ -667,19 +667,19 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
           id: t.id, type: 'trip', name: t.title, destination: t.destination_city ?? null, status: t.status,
         }));
       res.status(200).json({ items, posts: [], hasMore: items.length === limit, nextCursor, tab, scope });
-    } catch { res.status(200).json({ items: [], posts: [], hasMore: false, nextCursor: null, tab, scope }); }
+    } catch (err) { sendFeedReadFailed(req, res, err, 'trips'); }  // census-discovery §105 (DV-83): a thrown read is a failed tab, never an empty page
 
   } else if (tab === 'circles') {
     try {
       // Visibility: only show circles the viewer owns, is a member of, or are public.
       // Live membership table is circle_memberships(user_id = circle owner,
       // other_id = member) — membership is keyed by circle OWNER, not circle id.
-      const { data: circles } = await sc.from('circles').select('id, name, owner_id, visibility').in('id', sourceIds);
+      const { data: circles, error: circlesErr } = await sc.from('circles').select('id, name, owner_id, visibility').in('id', sourceIds); if (circlesErr) return sendFeedReadFailed(req, res, circlesErr, 'circles');
       const ownerIds = [...new Set((circles ?? []).map((c: any) => c.owner_id as string))];
       let viewerCircleOwnerIds = new Set<string>();
       if (ownerIds.length > 0) {
-        const { data: memberRows } = await sc
-          .from('circle_memberships').select('user_id').eq('other_id', user.id).in('user_id', ownerIds);
+        const { data: memberRows, error: circleMembersErr } = await sc
+          .from('circle_memberships').select('user_id').eq('other_id', user.id).in('user_id', ownerIds); if (circleMembersErr) return sendFeedReadFailed(req, res, circleMembersErr, 'circles');
         viewerCircleOwnerIds = new Set((memberRows ?? []).map((r: any) => r.user_id as string));
       }
       const items = (circles ?? [])
@@ -689,13 +689,13 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
         )
         .map((c: any) => ({ id: c.id, type: 'circle', name: c.name }));
       res.status(200).json({ items, posts: [], hasMore: items.length === limit, nextCursor, tab, scope });
-    } catch { res.status(200).json({ items: [], posts: [], hasMore: false, nextCursor: null, tab, scope }); }
+    } catch (err) { sendFeedReadFailed(req, res, err, 'circles'); }  // census-discovery §105 (DV-83): a thrown read is a failed tab, never an empty page
 
   } else if (tab === 'events') {
     try {
       // Events are public by nature; filter out those by blocked organizers
-      const { data: events } = await sc
-        .from('events').select('id, title, location_name, starts_at, ends_at, host_id').in('id', sourceIds);
+      const { data: events, error: eventsErr } = await sc
+        .from('events').select('id, title, location_name, starts_at, ends_at, host_id').in('id', sourceIds); if (eventsErr) return sendFeedReadFailed(req, res, eventsErr, 'events');
       const items = (events ?? [])
         .filter((e: any) => !isExcluded(feedBlockedSet, e.host_id))
         .map((e: any) => ({
@@ -703,7 +703,7 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
           startAt: e.starts_at ?? null, endAt: e.ends_at ?? null,
         }));
       res.status(200).json({ items, posts: [], hasMore: items.length === limit, nextCursor, tab, scope });
-    } catch { res.status(200).json({ items: [], posts: [], hasMore: false, nextCursor: null, tab, scope }); }
+    } catch (err) { sendFeedReadFailed(req, res, err, 'events'); }  // census-discovery §105 (DV-83): a thrown read is a failed tab, never an empty page
 
   } else {
     res.status(200).json({ items: [], posts: [], hasMore: false, nextCursor: null, tab, scope });
@@ -1059,3 +1059,16 @@ router.patch('/admin/hashtags/:slug', async (req, res) => {
 });
 
 export default router;
+
+// ── census-discovery §105 (DV-83 round 9, lane W11-X2, D-W11X2-61): a failed hashtag-feed read ──
+// GET /hashtags/:slug/feed is the page every Discover trending chip opens. Its people,
+// places, trips, circles and events tabs read `{ data }` alone and their catches answered
+// `{ items: [], hasMore: false }`, so a failed read was an empty tab ("No {tab} content
+// yet"); the hashtag lookup ignored its error, so a failed read was "Hashtag not found".
+// Each read now answers `db_error` (500) on failure, exactly as the posts tab always did.
+// A read that SUCCEEDED and found nothing is unchanged: an empty tab, or 404 for a hashtag
+// that is absent or blocked. The message is generic: the DB's own text is for the log.
+function sendFeedReadFailed(req: { log: { error: (o: object, m: string) => void } }, res: Parameters<typeof sendError>[0], err: unknown, read: string): void {
+  req.log.error({ err, read }, 'hashtag feed read failed');
+  sendError(res, 'db_error', 'this hashtag feed could not be loaded just now');
+}

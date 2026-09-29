@@ -17,7 +17,7 @@ async function freshToken(): Promise<string | null> {
   }
 }
 
-async function apiGet<T>(path: string): Promise<{ ok: boolean; data?: T; error?: string }> {
+async function apiGet<T>(path: string): Promise<{ ok: boolean; data?: T; error?: string; status?: number }> {  // census-discovery §105 (DV-83): the status, so a failed read is not read as "not found"
   const token = await freshToken();
   if (!token) return { ok: false, error: 'Not authenticated' };
   try {
@@ -26,7 +26,7 @@ async function apiGet<T>(path: string): Promise<{ ok: boolean; data?: T; error?:
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      return { ok: false, error: serviceFailure('hashtag', res, (body as any)?.message, 'Could not complete that request.') };
+      return { ok: false, status: res.status, error: serviceFailure('hashtag', res, (body as any)?.message, 'Could not complete that request.') };
     }
     return { ok: true, data: (await res.json()) as T };
   } catch (err) {
