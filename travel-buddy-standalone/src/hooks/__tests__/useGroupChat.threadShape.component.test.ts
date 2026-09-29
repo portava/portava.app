@@ -43,7 +43,7 @@ jest.mock('../../context/SessionContext.tsx', () => ({
 // NOTE: intentionally exhaustive — subscribe must return an unsubscribe fn
 // (plain function, not jest.fn, so resetAllMocks cannot wipe the impl).
 jest.mock('../../services/telegraphRealtimeService.ts', () => ({
-  telegraphRealtime: { subscribe: () => () => {} },
+  telegraphRealtime: { subscribe: () => () => {}, onStatus: () => () => {}, getStatus: () => 'idle' },
 }));
 
 const MSG = (id: string, createdAt: string) => ({
@@ -136,7 +136,12 @@ describe('useGroupChat — accepts both /chat payload shapes', () => {
     expect(mockGetThreadMessages).not.toHaveBeenCalled();
   });
 
-  it('flat shape with a failed message-page fetch still opens the chat (empty list)', async () => {
+  // RESTATED by lane tm-telegraph (WP-08, decision TM-TEL-D5). This case used
+  // to pin `state: 'active'` with an empty list — a failed read shown as a
+  // silent chat, which is the DV-83 failure. A failed first page is now the
+  // error state (with the screen's existing Try again), and the thread is not
+  // presented as open.
+  it('flat shape with a failed message-page fetch is the error state, not an empty chat', async () => {
     mockGetTripChat.mockResolvedValueOnce({
       ok: true,
       data: { threadId: 't-3', threadType: 'trip', title: 'Trip', tripId: 'trip-9', circleOwnerId: null },
@@ -145,8 +150,8 @@ describe('useGroupChat — accepts both /chat payload shapes', () => {
 
     const { result } = await renderHook(() => useGroupChat('trip', 'trip-9'));
 
-    await waitFor(() => expect(result.current.state).toBe('active'));
-    expect(result.current.thread?.id).toBe('t-3');
+    await waitFor(() => expect(result.current.state).toBe('error'));
+    expect(result.current.thread).toBeNull();
     expect(result.current.messages).toEqual([]);
   });
 
