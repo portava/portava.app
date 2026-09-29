@@ -27,6 +27,7 @@ import {
   type TelegraphEvent,
 } from '../services/telegraphRealtimeService.ts';
 import { useReconnectCatchUp } from '../features/telegraph/hooks/useReconnectCatchUp.ts';
+import { editErrorCopy } from '../features/telegraph/messageActions/messageActionRules.ts';
 
 function makeClientId(): string {
   return `client-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -52,7 +53,8 @@ export interface GroupChatData {
   send: (body: string, replyToId?: string) => Promise<{ ok: boolean }>;
   retrySend: (clientId: string) => Promise<void>;
   notifyTyping: (isTyping: boolean) => void;
-  edit: (messageId: string, body: string) => Promise<void>;
+  /** Resolves `ok: true` only when the server accepted the edit; otherwise carries the copy to show. */
+  edit: (messageId: string, body: string) => Promise<{ ok: boolean; message?: string }>;
   remove: (messageId: string) => Promise<void>;
   loadMore: () => Promise<void>;
 }
@@ -317,7 +319,7 @@ export function useGroupChat(
 
   const edit = useCallback(async (messageId: string, body: string) => {
     const tid = threadIdRef.current;
-    if (!tid) return;
+    if (!tid) return { ok: false, message: editErrorCopy(undefined, 'This conversation is not open yet.') };
     // The canonical edit route: it keeps the previous body as a version and
     // refuses on an end-to-end encrypted thread (WP-08, TM-TEL-D2).
     const res = await editThreadMessage(tid, messageId, body);
@@ -330,9 +332,11 @@ export function useGroupChat(
             : m,
         ),
       );
-    } else {
-      Alert.alert('Could not edit message', res.message ?? 'Please try again.');
+      return { ok: true };
     }
+    // The edit sheet shows this in place and keeps the typed text; an Alert
+    // on top of it would stack a second surface over the one that failed.
+    return { ok: false, message: editErrorCopy(res.code, res.message) };
   }, []);
 
   const remove = useCallback(async (messageId: string) => {

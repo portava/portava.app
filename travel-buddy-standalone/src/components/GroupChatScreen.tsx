@@ -35,7 +35,7 @@ import { router } from 'expo-router';
 import {
   ArrowLeft, Send, Users, Globe, Info, VolumeX, Languages, Paperclip,
   Compass, Bot, Copy, Trash2, Flag, Reply, Check, CheckCheck, Search, BookmarkPlus, X,
-  AlertCircle, RefreshCw, CalendarClock, Clock,
+  AlertCircle, RefreshCw, CalendarClock, Clock, Pencil, History,
 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useGroupChat } from '../hooks/useGroupChat.ts';
@@ -49,7 +49,10 @@ import type { Message } from '../services/messaging.ts';
 import { deleteMessage, saveMessage, sendMediaMessage, muteThread } from '../services/messaging.ts';
 import { useMessageMediaPicker } from '../hooks/useMessageMediaPicker.ts';
 import { MessageMediaBubble } from './MessageMediaBubble.tsx';
-import { reportContent, type ReasonCode } from '../services/reports.ts';
+// WP-08: per-message report (§22 evidence), edit, edit history.
+import { MessageReportSheet } from '../features/telegraph/messageActions/MessageReportSheet.tsx';
+import { ThreadActionSheets } from '../features/telegraph/messageActions/ThreadActionSheets.tsx';
+import { canEditMessage, canViewEditHistory } from '../features/telegraph/messageActions/messageActionRules.ts';
 import { getTripMembers, getCircleMembers, type FriendUser } from '../services/friends.ts';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
@@ -92,16 +95,6 @@ const dd = StyleSheet.create({
   label: { ...t.stamp, fontFamily: 'Courier', fontSize: 10, color: color.mute, paddingHorizontal: 10, letterSpacing: 0.5 },
 });
 
-const REPORT_MSG_REASONS: { code: ReasonCode; label: string }[] = [
-  { code: 'spam',           label: 'Spam or misleading' },
-  { code: 'harassment',     label: 'Harassment or bullying' },
-  { code: 'hate_speech',    label: 'Hate speech' },
-  { code: 'violence',       label: 'Violent or dangerous content' },
-  { code: 'nudity',         label: 'Nudity or sexual content' },
-  { code: 'misinformation', label: 'Misinformation' },
-  { code: 'other',          label: 'Something else' },
-];
-
 function LongPressActionSheet({
   message,
   mine,
@@ -109,6 +102,10 @@ function LongPressActionSheet({
   onDeleteForMe,
   onReply,
   onSave,
+  canEdit = false,
+  showHistory = false,
+  onEdit,
+  onHistory,
 }: {
   message: Message | null;
   mine: boolean;
@@ -116,32 +113,12 @@ function LongPressActionSheet({
   onDeleteForMe: (id: string) => Promise<void>;
   onReply: (msg: Message) => void;
   onSave: (msg: Message) => void;
+  canEdit?: boolean;
+  showHistory?: boolean;
+  onEdit?: (msg: Message) => void;
+  onHistory?: (msg: Message) => void;
 }) {
   const [showReport, setShowReport] = useState(false);
-  const [reportReason, setReportReason] = useState<ReasonCode | null>(null);
-  const [reportDetail, setReportDetail] = useState('');
-  const [reportSending, setReportSending] = useState(false);
-
-  async function submitReport() {
-    if (!reportReason || !message) return;
-    setReportSending(true);
-    const detail = reportDetail.trim();
-    const result = await reportContent({
-      target_type: 'message',
-      target_id: message.id,
-      reason_code: reportReason,
-      ...(detail ? { reason_detail: detail } : {}),
-    }).catch(() => ({ ok: false as const }));
-    setReportSending(false);
-    if (result.ok) {
-      setShowReport(false);
-      onClose();
-      Alert.alert('Report submitted', 'Thank you. Our team will review this message.');
-    } else {
-      Alert.alert('Error', (result as any).error ?? 'Could not submit report');
-    }
-  }
-
   if (!message) return null;
   const text = message.displayBody ?? message.body ?? '';
   const actions: [string, string, React.ComponentType<{ size: number; color: string }>][] = [
@@ -150,51 +127,20 @@ function LongPressActionSheet({
     ['reply',     'Reply',         Reply        ],
     ['copy',      'Copy text',     Copy         ],
     ['save',      'Save message',  BookmarkPlus ],
-    ['report',    'Report',        Flag         ],
+    ...(canEdit ? [['edit', 'Edit', Pencil] as [string, string, React.ComponentType<{ size: number; color: string }>]] : []),
+    ...(showHistory ? [['history', 'Edit history', History] as [string, string, React.ComponentType<{ size: number; color: string }>]] : []),
+    // Your own message is not yours to report.
+    ...(!mine ? [['report', 'Report', Flag] as [string, string, React.ComponentType<{ size: number; color: string }>]] : []),
   ];
   if (showReport) {
+    // §22: the Telegraph route snapshots the message before it answers, so a
+    // sender who unsends after noticing cannot take the evidence with it.
     return (
-      <Modal visible animationType="slide" transparent onRequestClose={onClose}>
-        <Pressable style={las.overlay} onPress={onClose} />
-        <View style={las.sheet}>
-          <View style={las.handle} />
-          <Text style={las.reportTitle}>Report this message</Text>
-          <Text style={las.reportSub}>What's wrong with this message?</Text>
-          {REPORT_MSG_REASONS.map((r) => (
-            <Pressable
-              key={r.code}
-              style={[las.reasonOption, reportReason === r.code && las.reasonSelected]}
-              onPress={() => setReportReason(r.code)}
-            >
-              <Text style={[las.reasonText, reportReason === r.code && las.reasonTextSelected]}>{r.label}</Text>
-              {reportReason === r.code && <Text style={las.reasonCheck}>✓</Text>}
-            </Pressable>
-          ))}
-          {reportReason !== null && (
-            <TextInput
-              style={las.detailInput}
-              value={reportDetail}
-              onChangeText={setReportDetail}
-              placeholder="Tell us more (optional)"
-              placeholderTextColor={color.mute}
-              multiline
-              maxLength={500}
-            />
-          )}
-          <Pressable
-            style={[las.reportBtn, (!reportReason || reportSending) && las.reportBtnDisabled]}
-            onPress={submitReport}
-            disabled={!reportReason || reportSending}
-          >
-            {reportSending
-              ? <ActivityIndicator size="small" color={color.onInk} />
-              : <Text style={las.reportBtnLabel}>Submit Report</Text>}
-          </Pressable>
-          <Pressable style={las.backBtn} onPress={() => setShowReport(false)}>
-            <Text style={las.backLabel}>Back</Text>
-          </Pressable>
-        </View>
-      </Modal>
+      <MessageReportSheet
+        visible
+        messageId={message.id}
+        onClose={() => { setShowReport(false); onClose(); }}
+      />
     );
   }
   return (
@@ -222,6 +168,12 @@ function LongPressActionSheet({
               } else if (key === 'save') {
                 onClose();
                 onSave(message);
+              } else if (key === 'edit') {
+                onClose();
+                onEdit?.(message);
+              } else if (key === 'history') {
+                onClose();
+                onHistory?.(message);
               } else {
                 onClose();
                 Alert.alert(label, 'This feature is coming soon.');
@@ -464,7 +416,9 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
   const [threadMuted, setThreadMuted] = useState(false);
   const insets = useSafeAreaInsets();
   const { userId } = useSession();
-  const { state, thread, messages, sending, errorMessage, reload, send, retrySend, notifyTyping, typingUserIds } = useGroupChat(type, id);
+  const { state, thread, messages, sending, errorMessage, reload, send, retrySend, notifyTyping, typingUserIds, edit } = useGroupChat(type, id);
+  const [editingMsg, setEditingMsg] = useState<Message | null>(null);
+  const [historyMsg, setHistoryMsg] = useState<Message | null>(null);
   const [input, setInput] = useState('');
   const mediaPicker = useMessageMediaPicker();
   const [showMediaPickerSheet, setShowMediaPickerSheet] = useState(false);
@@ -1104,9 +1058,28 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
           setActionMsg(null);
           if (!tid) return;
           saveMessage(tid, msg.id).then((r) => {
-            if (r.ok) Alert.alert('Saved', 'Message saved to your collection.');
+            if (r.ok) Alert.alert('Saved', 'Message saved to your collection.', [{ text: 'OK' }, { text: 'View saved', onPress: () => router.push('/messages/saved' as never) }]);
+            // A failed save used to be silent here; the person believed it was kept.
+            else Alert.alert('Not saved', r.message ?? 'We could not save that message. Please try again.');
           });
         }}
+        // Trip and circle chats are never end-to-end encrypted (only direct threads can be).
+        canEdit={canEditMessage(actionMsg, actionMsgMine, false)}
+        showHistory={!!thread?.id && canViewEditHistory(actionMsg)}
+        onEdit={(m) => setEditingMsg(m)}
+        onHistory={(m) => setHistoryMsg(m)}
+      />
+
+      <ThreadActionSheets
+        threadId={thread?.id ?? ''}
+        editing={editingMsg}
+        onCloseEdit={() => setEditingMsg(null)}
+        onEdited={() => {}}
+        submitEdit={edit}
+        history={historyMsg}
+        onCloseHistory={() => setHistoryMsg(null)}
+        askVisible={false}
+        onCloseAsk={() => {}}
       />
 
       {/* Per-thread translation settings */}

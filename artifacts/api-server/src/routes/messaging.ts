@@ -60,7 +60,7 @@ import { isKillSwitchEngaged } from '../lib/featureFlags.js';
 import { appStorageUrlInfo } from '../lib/mediaUrl.js';
 import { classifyMemoryMediaUrl } from '../services/memory/memoryMediaOrigin.js';
 import { messagingStopUnknownRefusal } from '../lib/telegraphThreadWrite.js';
-import { isUuid } from '../lib/followDecisions';
+import { isUuid } from '../lib/followDecisions'; import { REPORT_REASON_CODES, reportSeverityFor, type ReportReasonCode } from '../lib/reportReasons';
 import {
   translateMessageForThread,
   markTranslationsPending,
@@ -4385,7 +4385,7 @@ router.post('/messages/:messageId/report', async (req, res) => {
   const { messageId } = req.params;
   if (!isUuid(messageId)) { sendError(res, 'invalid_payload', 'Invalid message id'); return; }
   const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim().slice(0, 200) : '';
-  if (!reason) { sendError(res, 'invalid_payload', 'reason is required'); return; }
+  if (!reason) { sendError(res, 'invalid_payload', 'reason is required'); return; } const reasonCode = messageReportReasonCode(req.body?.reason_code); if (reasonCode === null) { sendError(res, 'invalid_payload', 'reason_code is not a known report reason'); return; } // WP-08 TEL-F09
 
   const { data: filedMessageReport, error } = await sc
     .from('reports')
@@ -4393,9 +4393,9 @@ router.post('/messages/:messageId/report', async (req, res) => {
       reporter_id: user.id,
       target_type: 'message',
       target_id: messageId,
-      reason_code: 'other',
+      reason_code: reasonCode,
       reason_detail: reason,
-      severity: 'normal',
+      severity: reportSeverityFor(reasonCode),
     })
     .select('id')
     .maybeSingle();
@@ -4476,4 +4476,24 @@ async function refuseEditOnEncryptedThread(
     return true;
   }
   return false;
+}
+
+/* ---------------------------------------------------------------------------
+ * WP-08 (lane tm-telegraph) — the reason a per-message report carries.
+ * ---------------------------------------------------------------------------
+ * POST /messages/:messageId/report used to write `reason_code: 'other'` and
+ * `severity: 'normal'` for every report, so a harassment report filed from a
+ * thread queued behind spam (lib/reportReasons.ts: a `reports` writer that does
+ * not compute severity "leaves the reporter unprotected by omission"). The
+ * client now sends the same vocabulary /api/reports takes.
+ *
+ *   absent / null / ''  → 'other'  (an older client keeps the old contract)
+ *   a known code        → that code
+ *   anything else       → null     (the caller refuses 400; a typo must not
+ *                                    silently become 'other')
+ */
+function messageReportReasonCode(raw: unknown): ReportReasonCode | null {
+  if (raw === undefined || raw === null || raw === '') return 'other';
+  if (typeof raw !== 'string') return null;
+  return (REPORT_REASON_CODES as readonly string[]).includes(raw) ? (raw as ReportReasonCode) : null;
 }

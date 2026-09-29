@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { Avatar } from './ui/Avatar.tsx';
 import { router, useFocusEffect } from 'expo-router';
-import { Zap, Users, Globe, BellOff, Search, MessageCirclePlus, Compass, Bot, ShieldOff, Flag, UserCheck, UserMinus } from 'lucide-react-native';
+import { Zap, Users, Globe, BellOff, Search, MessageCirclePlus, Compass, Bot, ShieldOff, Flag, UserCheck, UserMinus, Bookmark, Settings2 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useMyThreads, useIncomingMessageRequests } from '../hooks/useMessaging.ts';
 import { useSession } from '../context/SessionContext.tsx';
@@ -457,15 +457,40 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
             <Text style={s.brandName}>Telegraph</Text>
           </View>
           {isAuthed && (
-            <Pressable
-              style={s.composeBtn}
-              onPress={() => router.push('/telegraph/new' as any)}
-              accessibilityRole="button"
-              accessibilityLabel="New Telegraph"
-              hitSlop={8}
-            >
-              <MessageCirclePlus size={20} color={color.signal} />
-            </Pressable>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+              {/* WP-08 / TEL-F08 and TEL-F23: the two Telegraph screens that
+                  had no way in — the saved-messages list and the settings the
+                  server's canMessage actually enforces. */}
+              <Pressable
+                style={s.composeBtn}
+                onPress={() => router.push('/messages/saved' as any)}
+                accessibilityRole="button"
+                accessibilityLabel="Saved messages"
+                testID="telegraph-inbox-saved"
+                hitSlop={8}
+              >
+                <Bookmark size={19} color={color.mute} />
+              </Pressable>
+              <Pressable
+                style={s.composeBtn}
+                onPress={() => router.push('/settings/messages' as any)}
+                accessibilityRole="button"
+                accessibilityLabel="Message settings"
+                testID="telegraph-inbox-settings"
+                hitSlop={8}
+              >
+                <Settings2 size={19} color={color.mute} />
+              </Pressable>
+              <Pressable
+                style={s.composeBtn}
+                onPress={() => router.push('/telegraph/new' as any)}
+                accessibilityRole="button"
+                accessibilityLabel="New Telegraph"
+                hitSlop={8}
+              >
+                <MessageCirclePlus size={20} color={color.signal} />
+              </Pressable>
+            </View>
           )}
         </View>
       </View>

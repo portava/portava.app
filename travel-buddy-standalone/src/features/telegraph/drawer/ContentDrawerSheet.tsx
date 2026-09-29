@@ -47,6 +47,12 @@ export interface ContentDrawerSheetProps {
   onOpenMessage?: (messageId: string) => void;
   /** Test seam: skip the fetch and render this. */
   initialDrawer?: DrawerResponse | null;
+  /**
+   * §21 "Ask this conversation" (WP-08 / TEL-F16). When given, a row under the
+   * search box hands off to the caller, which closes this sheet and opens the
+   * ask sheet — two stacked Modals are unreliable on iOS.
+   */
+  onAsk?: () => void;
 }
 
 export function ContentDrawerSheet({
@@ -55,6 +61,7 @@ export function ContentDrawerSheet({
   onClose,
   onOpenMessage,
   initialDrawer = null,
+  onAsk,
 }: ContentDrawerSheetProps) {
   const palette = useTelegraphPalette();
   const styles = useMemo(() => makeStyles(palette), [palette]);
@@ -124,6 +131,17 @@ export function ContentDrawerSheet({
             testID="telegraph-drawer-search-input"
             returnKeyType="search"
           />
+          {onAsk ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Ask this conversation a question"
+              onPress={onAsk}
+              testID="telegraph-drawer-ask"
+              hitSlop={4}
+            >
+              <Text style={styles.close}>Ask this conversation a question →</Text>
+            </Pressable>
+          ) : null}
 
           <View style={styles.tabRow}>
             <TabChip

@@ -590,7 +590,7 @@ export async function saveMessage(
   threadId: string,
   messageId: string,
 ): Promise<MsgResult<{ ok: boolean; savedAt: string }>> {
-  return apiPost(`/api/threads/${threadId}/messages/${messageId}/save`, {});
+  return apiPost<{ ok: boolean; savedAt: string; reason?: string }>(`/api/threads/${threadId}/messages/${messageId}/save`, {}).then(saveOutcome);
 }
 
 /**
@@ -670,7 +670,7 @@ export async function reportThread(
 
 export async function reportMessage(
   messageId: string,
-  reason: string,
+  reason: string, reasonCode?: MessageReportReasonCode,
 ): Promise<MsgResult<{ ok: boolean }>> {
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
   const token = await freshToken();
@@ -679,7 +679,7 @@ export async function reportMessage(
     const res = await fetch(`${apiBase()}/api/messages/${messageId}/report`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ reason }),
+      body: JSON.stringify(reasonCode ? { reason, reason_code: reasonCode } : { reason }),
     });
     if (!res.ok) return mapApiError(res.status, await res.json().catch(() => ({})));
     return { ok: true, data: await res.json() };
@@ -933,5 +933,42 @@ export async function editThreadMessage(threadId: string, messageId: string, bod
 export async function getMessageEditHistory(threadId: string, messageId: string): Promise<TelegraphCallResult<MessageEditHistory>> {
   const r = await telegraphCall<MessageEditHistory>('GET', `/api/threads/${encodeURIComponent(threadId)}/messages/${encodeURIComponent(messageId)}/edits`);
   if (r.ok && r.data && !Array.isArray(r.data.versions)) return { ok: false, data: null, code: 'bad_response' };
+  return r;
+}
+
+// ── WP-08 (lane tm-telegraph): report reasons, and an honest save ─────────────
+
+/**
+ * The server's report vocabulary (artifacts/api-server/src/lib/reportReasons.ts
+ * REPORT_REASON_CODES). `POST /api/messages/:id/report` refuses anything else,
+ * and computes severity from it — harassment, hate speech and violence queue
+ * first.
+ */
+export type MessageReportReasonCode =
+  | 'harassment' | 'spam' | 'hate_speech' | 'violence'
+  | 'impersonation' | 'nudity' | 'misinformation' | 'other';
+
+export const MESSAGE_REPORT_REASONS: ReadonlyArray<{ code: MessageReportReasonCode; label: string }> = [
+  { code: 'harassment', label: 'Harassment or bullying' },
+  { code: 'spam', label: 'Spam or scam' },
+  { code: 'hate_speech', label: 'Hate speech' },
+  { code: 'violence', label: 'Violence or threats' },
+  { code: 'impersonation', label: 'Impersonation' },
+  { code: 'nudity', label: 'Nudity or sexual content' },
+  { code: 'misinformation', label: 'Misinformation' },
+  { code: 'other', label: 'Something else' },
+];
+
+/**
+ * The save route answers HTTP 200 `{ ok: false, reason: 'unavailable' }` when
+ * the write itself failed (routes/messaging.ts, the `saved_messages` upsert
+ * branch). `apiPost` only looks at the status, so that answer used to reach the
+ * screen as `ok: true` and the person was told "Saved" about a save that did
+ * not happen. A body that says it failed is a failure.
+ */
+function saveOutcome(r: MsgResult<{ ok: boolean; savedAt: string; reason?: string }>): MsgResult<{ ok: boolean; savedAt: string }> {
+  if (r.ok && r.data && r.data.ok === false) {
+    return { ok: false, data: null, errorKind: 'db_error', message: 'Saving is unavailable right now. Nothing was saved — please try again later.' };
+  }
   return r;
 }
