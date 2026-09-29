@@ -481,8 +481,8 @@ router.get("/compass/feed", async (req, res) => {
     return;
   }
 
-  const enabled = await isCompassEnabled(sc);
-  if (!enabled) {
+  const enabledRead = await readCompassEnabled(sc); const enabled = enabledRead === true;  // census-discovery §105 (DV-83, D-W11X2-62): null = the flag table could not be read — was: isCompassEnabled (the fail-safe map, where unread is "off")
+  if (!enabled) { if (enabledRead === null) return sendCompassFeedFlagsUnread(res);  // §105: an unread flag is a failed read, never the off body below
     res.json({
       sections:  [],
       nextCursor: null,
@@ -492,19 +492,19 @@ router.get("/compass/feed", async (req, res) => {
   }
 
   // Check COMPASS_FEED_ENABLED flag
-  let feedEnabled = false;
+  let feedEnabled = false; let feedFlagUnread = false;  // census-discovery §105 (DV-83, D-W11X2-62): the feed flag is read STRICTLY
   try {
-    const { data } = await sc
+    const { data, error: feedFlagErr } = await sc
       .from("feature_flags")
       .select("enabled")
       .eq("flag", "COMPASS_FEED_ENABLED")
       .maybeSingle();
-    feedEnabled = Boolean((data as any)?.enabled);
+    feedFlagUnread = Boolean(feedFlagErr); feedEnabled = !feedFlagErr && Boolean((data as any)?.enabled);
   } catch (err) {
-    req.log?.warn({ err }, "Compass feed: COMPASS_FEED_ENABLED flag lookup failed — degrading to empty feed");
+    feedFlagUnread = true; req.log?.warn({ err }, "Compass feed: COMPASS_FEED_ENABLED flag lookup failed — degrading to empty feed");
   }
 
-  if (!feedEnabled) {
+  if (feedFlagUnread) return sendCompassFeedFlagsUnread(res); if (!feedEnabled) {  // §105: only a flag that was READ and is off answers the off body
     res.json({ sections: [], nextCursor: null, fallback: true });
     return;
   }
@@ -4993,4 +4993,20 @@ function sendRecommendations(res: import("express").Response, body: { recommenda
 // only to NAME the page partial (someone was withheld unchecked), never to admit anyone.
 function personGatesUnread(gates: ReadonlyArray<{ allowed: true } | { allowed: false; reason: string }>): boolean {
   return gates.some((g) => g.allowed === false && g.reason === "check_failed");
+}
+
+// ── census-discovery §105 (DV-83 round 9, lane W11-X2, D-W11X2-62): GET /compass/feed's unread flags ──
+// The feed read COMPASS_ENABLED through `isCompassEnabled` (the fail-safe map: an unread
+// table is "off") and COMPASS_FEED_ENABLED with its error ignored, so an unread flag answered
+// the flag-off bytes with no refusal. §103/§104 fixed the section route and
+// /compass/recommendations the same way; this is the feed's arm of that rule. A flag that
+// was READ and is off still answers `{ sections: [], nextCursor: null, fallback: true }`.
+function sendCompassFeedFlagsUnread(res: import("express").Response): void {
+  res.json({
+    sections: [],
+    nextCursor: null,
+    fallback: true,
+    fallbackReason: "compass_flags_unreadable",
+    refusal: discoveryRefusal("transient_db", "compass_flags_unreadable", "GET /compass/feed", "nothing", ["feature_flags"]),
+  });
 }
