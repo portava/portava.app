@@ -26,10 +26,15 @@ export function WorthItVoteRow({ entityId, entityType = 'place' }: WorthItVoteRo
   const [myVote,       setMyVote]       = useState<PlaceVoteType | null>(null);
   const [loading,      setLoading]      = useState(true);
   const [casting,      setCasting]      = useState(false);
+  // TM-social TRUST-F13 (DV-83): unreadable tallies are an error state, not
+  // "0 · 0" — and no vote is offered from a baseline that was never read.
+  const [loadError,    setLoadError]    = useState(false);
+  const [reloadKey,    setReloadKey]    = useState(0);
 
   useEffect(() => {
     let active = true;
     setLoading(true);
+    setLoadError(false);
     getPlaceVotes(entityId, entityType)
       .then((data) => {
         if (!active) return;
@@ -38,11 +43,12 @@ export function WorthItVoteRow({ entityId, entityType = 'place' }: WorthItVoteRo
         setMyVote(data.myVote);
       })
       .catch(() => {
-        // Fail silently — votes section disappears, detail screen still works
+        // The detail screen still works; this row says it could not load.
+        if (active) setLoadError(true);
       })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [entityId, entityType]);
+  }, [entityId, entityType, reloadKey]);
 
   const handleVote = useCallback(async (vote: PlaceVoteType) => {
     if (!isAuthed) {
@@ -86,6 +92,24 @@ export function WorthItVoteRow({ entityId, entityType = 'place' }: WorthItVoteRo
   }, [isAuthed, casting, myVote, worthItCount, skipItCount, entityId, entityType]);
 
   if (loading) return null;
+
+  if (loadError) {
+    return (
+      <View style={s.row}>
+        <Text style={s.label}>Worth It?</Text>
+        <Text style={s.tally}>Couldn't load votes.</Text>
+        <Pressable
+          onPress={() => setReloadKey((k) => k + 1)}
+          accessibilityRole="button"
+          accessibilityLabel="Retry loading votes"
+          testID="votes-retry"
+          hitSlop={8}
+        >
+          <Text style={s.retry}>Try again</Text>
+        </Pressable>
+      </View>
+    );
+  }
 
   const totalVotes = worthItCount + skipItCount;
 
@@ -194,6 +218,7 @@ const s = StyleSheet.create({
   pillTextWorthActive: { color: '#047857', fontWeight: '700' },
   pillTextSkipActive:  { color: '#B91C1C', fontWeight: '700' },
 
+  retry: { fontSize: 12, fontWeight: '700', color: '#2563EB' },
   tally: {
     fontSize:   11,
     color:      '#9CA3AF',

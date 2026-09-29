@@ -126,9 +126,78 @@ export async function savePushToken(
   if (!token) return;
 
   const doFetch = opts?.fetchImpl ?? fetch;
-  await doFetch(`${base}/api/me/devices`, {
+  const registration = await doFetch(`${base}/api/me/devices`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ pushToken, platform: 'expo' }),
-  }).catch(() => {});
+  }).catch(() => null); await rememberRegisteredDevice(registration); // TM-social PLAT-F20: sign-out needs this device's row id
+}
+
+// ── Device unregistration on sign-out — TM-social PLAT-F20 ───────────────────
+//
+// POST /me/devices answers `{ ok, deviceId }` (routes/notifications.ts) and
+// DELETE /me/devices/:id removes that row for the signed-in user only. Until
+// this block, the id was thrown away and sign-out never deleted the row, so
+// the server kept pushing the previous account's notifications to a device
+// that no longer belonged to that session.
+//
+// The id is kept in memory, not on disk: usePushToken re-registers on every
+// authenticated launch, which re-learns it, and a stale id surviving a crash
+// could only ever delete a row that the next registration replaces anyway.
+
+let _registeredDeviceId: string | null = null;
+
+async function rememberRegisteredDevice(res: unknown): Promise<void> {
+  const r = res as { ok?: boolean; json?: () => Promise<unknown> } | null;
+  if (!r || r.ok !== true || typeof r.json !== 'function') return;
+  const body = (await r.json().catch(() => null)) as { deviceId?: unknown } | null;
+  if (body && typeof body.deviceId === 'string' && body.deviceId) _registeredDeviceId = body.deviceId;
+}
+
+/** The notification_devices row this app registered in this session, if any. */
+export function getRegisteredDeviceId(): string | null {
+  return _registeredDeviceId;
+}
+
+/** Test seam — reset the remembered device id. */
+export function _resetRegisteredDevice(): void {
+  _registeredDeviceId = null;
+}
+
+/**
+ * Remove this device's push registration BEFORE the session is torn down —
+ * DELETE /me/devices/:id needs the outgoing user's bearer token.
+ *
+ * Best-effort by design: sign-out must never be blocked by the network, so the
+ * call is bounded by `timeoutMs` and every failure is swallowed. The outcome is
+ * returned so it can be observed (and tested) rather than assumed:
+ *   'none'     — this session never registered a device; nothing to remove
+ *   'removed'  — the server confirmed the delete
+ *   'failed'   — the server refused or the network failed
+ *   'timeout'  — no answer within the bound; sign-out proceeds anyway
+ */
+export async function unregisterPushDeviceOnSignOut(opts?: {
+  /** Defaults to notifications.unregisterDevice (DELETE /api/me/devices/:id). */
+  unregister?: (deviceId: string) => Promise<boolean>;
+  timeoutMs?: number;
+}): Promise<'none' | 'removed' | 'failed' | 'timeout'> {
+  const deviceId = _registeredDeviceId;
+  if (!deviceId) return 'none';
+  const unregister =
+    opts?.unregister ??
+    (async (id: string) => {
+      const { unregisterDevice } = await import('./notifications.ts');
+      return unregisterDevice(id);
+    });
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<'timeout'>((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), opts?.timeoutMs ?? 4000);
+  });
+  const attempt = unregister(deviceId)
+    .then((ok): 'removed' | 'failed' => (ok ? 'removed' : 'failed'))
+    .catch((): 'failed' => 'failed');
+  const outcome = await Promise.race([attempt, timeout]);
+  if (timer) clearTimeout(timer);
+  if (outcome === 'removed') _registeredDeviceId = null;
+  return outcome;
 }
