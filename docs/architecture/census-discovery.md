@@ -17926,6 +17926,55 @@ HS1 was already green on the client: the screen already drew a non-2xx as its fa
   - a why sheet written by a stale answer (Y1, Y2);
   - any path §104.10 lists.
 
+### 105.12 Results at the final code commit (`ed5652624`)
+
+- **`int-guards.sh /home/user/wt-v8`**: all 24 exit 0. `typecheck:tests` is at 863 against a baseline of 863.
+
+```
+typecheck exit=0
+typecheck:tests exit=0
+check:test-registration exit=0
+check:census-integrity exit=0
+check:doc-citations exit=0
+check:citation-targets exit=0
+check:citation-symbols exit=0
+check:census-freshness exit=0
+check:census-scope-coverage exit=0
+check:census-row-move-labels exit=0
+check:migration-prefixes exit=0
+check:production-drift exit=0
+check:writerless-reads exit=0
+check:schema-references exit=0
+check:enum-literals exit=0
+check:flag-polarity exit=0
+check:discovery-query-paths exit=0
+check:route-auth-gate exit=0
+check:api-prefix exit=0
+check:async-handlers exit=0
+check:frozen-dir exit=0
+check:telegraph-inventory exit=0
+check:guard-coverage exit=0
+check:unissued-supabase-writes exit=0
+
+[exited with code 0]
+```
+
+- **api-server node:test** (Node v24.21.0, `SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy`). The run covers 257 files:
+  - every `src/test/discovery*`, `compass*`, `trail*`, `hashtag*` and `adminTrails` suite, the four new §105 suites among them;
+  - `hashtags`, `compass-home` and `entryWiringNotCommentedOut`;
+  - the hydrator's readers (`enumLiteralGuard`, `impressionLogFireAndForget`, `postPublishGatePlatformWide`, `postLocationModeRemainingReaders`, `mediaTaggedBucketLiveSchema`, `wallRouteDegradation`).
+
+  Result: `ℹ tests 4621 · ℹ pass 4621 · ℹ fail 0`. Two live-DB suites are left out, as in §104.11: `compassMemoryClientBoundary` and `discoveryPlaceWriteBoundary`.
+- **`entryWiringNotCommentedOut`** (CI's failure on #530's head) is in that run and passes 4 of 4.
+- **The whole-repo scan** `src/services/airport/__tests__/layoverSurfaceErrorBinding.test.ts`: `ℹ tests 5 · ℹ pass 5 · ℹ fail 0`.
+- **Client.**
+  - `pnpm run -s check:all`: `✔ ALL CHECKS PASSED`.
+    - Node suites: `ℹ pass 7298 · ℹ fail 0`.
+    - Component suites: `Test Suites: 759 passed, 759 total · Tests: 4843 passed, 4843 total`.
+    - Web suites: `4 passed, 12 tests`.
+    - `typecheck:tests` is at 173 against a baseline of 173.
+  - `node scripts/check-route-registry.mjs`: "OK. All 210 screen file(s) are represented in PORTAVA_ROUTES and all 9 layout file(s) are represented in PORTAVA_LAYOUT_FILES."
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: travel-buddy-standalone/app/discover.tsx — §105.11 names it only as a path seen and not built, left for its owner: it is the social people search over services/follows.ts, not a Discovery envelope, and no DV-83 verdict rests on it.
