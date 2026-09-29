@@ -40,11 +40,11 @@ export function compassWorld(opts: WorldOpts = {}) {
         if (opts.flagsFail) return { data: null, error: DB_ERR };
         return { data: Object.entries(flags).map(([flag, enabled]) => ({ flag, enabled })), error: null };
       }
-      if (table === "feature_flags") return { data: null, error: null };
       if (table === "profiles" && arg0("select") === "account_status") return { data: { account_status: "active" }, error: null };
-      readsSeen.push(table);
+      if (table !== "feature_flags") readsSeen.push(table);
       const custom = opts.answer?.(table, calls, single);
       if (custom) return custom;
+      if (table === "feature_flags") return { data: null, error: null };
       if (fail.has(table)) return { data: null, error: DB_ERR };
       if (table === "user_location_state") return { data: opts.city === null ? null : { city: opts.city ?? "Paris", country: "FR" }, error: null };
       if (table === "message_thread_members") return single ? { data: { user_id: VIEWER }, error: null } : { data: [{ user_id: VIEWER }], error: null };
