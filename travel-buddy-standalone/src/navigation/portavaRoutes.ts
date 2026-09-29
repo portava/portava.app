@@ -2117,7 +2117,7 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     // §4 Media Contribution (census-media §19). A current perspective of one
     // canonical place, through the existing upload + post write.
   },
-];
+  { key: 'messages-saved', path: 'messages/saved', title: 'Saved messages', parent: 'tab-messages', icon: null, requiresAuth: true, deepLink: '/messages/saved' }, { key: 'settings-messages', path: 'settings/messages', title: 'Message settings', parent: 'settings-index', icon: null, requiresAuth: true }, ]; // WP-08 (census-telegraph §38): on the closing line so every cited line above stays put
 
 // ── Layout registry ───────────────────────────────────────────────────────────
 //
