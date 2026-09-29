@@ -20,7 +20,7 @@
  * beside the read for check-flag-polarity to resolve it, and because a caller
  * that forgot would otherwise be handed a decision it had no right to serve.
  */
-import { liveClaimReadFailed, liveLabelsServable, readLiveClaimEnvelopes, type LiveClaimEnvelope } from "./liveClaimRead.js";
+import { liveLabelsServable, readLiveClaimEnvelopes, type LiveClaimEnvelope } from "./liveClaimRead.js"; import { liveClaimReadFailed } from "./liveClaimRead.js"; // TM-live COMP-F15
 import { haversineKm } from "./mapSearch.js";
 import { WALKING_SPEED_KMH } from "../compass/CompassLiveConstraints.js";
 import { decideCompass, type CompassDecisionResult, type DecisionIntent, type DecisionSubject } from "./compassDecision.js";

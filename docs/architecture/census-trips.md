@@ -9320,3 +9320,84 @@ TR128 bullet (line 7803) points here.
 **What this does not do.** No verdict letter moves. All four stay `W`, because
 no Trips window can be certified until a routed provider is wired. This section
 enables no API, sets no key and wires nothing.
+
+## §77 Regroup, free time, "I'm bored" and replan reach the trip screen (TM-live lane, TRIP-F19 / TRIP-F21) — 2026-09-29
+
+Testing-mode lane `lane-tm-live` (WP-11), branch cut from `main` at `978d886bf`. `head_commit` is
+**NOT** re-declared. Controlled evidence only — component tests through the real client service with
+only `fetch` faked. No flag was touched, no migration was added, no server file in Trips changed.
+
+**No row moves.** TR170, TR177, TR186, TR195, TR196 and TR209 are already C on the server; this lane
+gives them a client and does not alter them. TR133 stays **W** for the gate reason its latest restatement gives. The routes'
+own `trip_kernel_enabled` / `trip_operational_projections_enabled` gates are unchanged.
+
+### 77.1 TRIP-F19 — regroup and meeting checkpoints
+
+**Tester steps.** Two crew members on one trip, both sharing location (mock GPS on two devices). On
+the trip screen, **Regroup** → **Where should we meet?** shows the §14.3 answer; **Regroup here** (or
+**Call a regroup**) agrees a checkpoint. Each member marks **on the way** / **arrived** / **running
+late**; the caller or host taps **We met** (or **Cancel it**).
+
+- `travel-buddy-standalone/src/features/trips/crew/tripRegroup.ts:46#export async function fetchCheckpoints(`,
+  `travel-buddy-standalone/src/features/trips/crew/tripRegroup.ts:54#export async function previewMeetingPoint(`,
+  `travel-buddy-standalone/src/features/trips/crew/tripRegroup.ts:62#export async function callRegroup(`,
+  `travel-buddy-standalone/src/features/trips/crew/tripRegroup.ts:71#export async function setArrival(` and
+  `travel-buddy-standalone/src/features/trips/crew/tripRegroup.ts:78#export async function closeCheckpoint(`; the card
+  `travel-buddy-standalone/src/features/trips/crew/TripRegroupCard.tsx:43#export function TripRegroupCard(`, mounted after
+  the crew presence card (`travel-buddy-standalone/app/trip/[id].tsx:606#<TripRegroupCard tripId=`).
+- Every write is the kernel's: with it off the card says "Not written: regroups are recorded only
+  through the trip kernel" (503 `TRIP_KERNEL_UNAVAILABLE`), and a refusal is named (not a
+  participant, not the host, invalid transition). A failed checkpoint read is "couldn't load" with
+  Try again, never "no open checkpoints".
+
+**Decisions.** (a) Participants are shown as counts per arrival state ("1 arrived · 1 on the way ·
+1 not yet"): the checkpoint carries user ids, not names, and positions are never shown. (b) Arrival
+and close are offered to everyone; the kernel decides who may, and its refusal is shown. (c) One
+idempotency key per user action, reused when that action is retried after a failure, so a retry is
+one kernel command (the §11 command client's rule).
+
+### 77.2 TRIP-F21 — free time, "I'm bored", opportunities, replan, simulate, pulse
+
+**Tester steps.** On a trip in progress: **Free time** lists today's windows with the options §13
+compiled for each (**Add to plan**); **I'm bored** answers for the window containing now. **Trip
+pulse** shows the kept signals and names any source that could not be read. **Replan today** shows a
+diff; **Simulate** / **Impact** check one change; **Send as proposals** is the only write.
+
+- `travel-buddy-standalone/src/features/trips/opportunities/tripFreeTime.ts:51#export async function fetchFreedomWindows(`,
+  `travel-buddy-standalone/src/features/trips/opportunities/tripFreeTime.ts:61#export async function fetchTripOpportunities(`,
+  `travel-buddy-standalone/src/features/trips/opportunities/tripFreeTime.ts:79#export async function fetchBored(`,
+  `travel-buddy-standalone/src/features/trips/opportunities/tripFreeTime.ts:85#export async function acceptOpportunity(`,
+  `travel-buddy-standalone/src/features/trips/opportunities/tripFreeTime.ts:96#export async function fetchTripPulse(`,
+  `travel-buddy-standalone/src/features/trips/opportunities/tripFreeTime.ts:117#export async function replanToday(`,
+  `travel-buddy-standalone/src/features/trips/opportunities/tripFreeTime.ts:142#export async function simulateChange(` and
+  `travel-buddy-standalone/src/features/trips/opportunities/tripFreeTime.ts:151#export async function previewChange(`.
+  Projections (freedom windows, opportunities, pulse) go through §19.1's `acceptProjection`: another
+  schema or a stale projection is a failure, never a free day.
+- `travel-buddy-standalone/src/features/trips/opportunities/TripFreeTimeCard.tsx:34#export function TripFreeTimeCard(` and
+  `travel-buddy-standalone/src/features/trips/opportunities/TripReplanCard.tsx:35#export function TripReplanCard(`, mounted after
+  the rescue entry (`travel-buddy-standalone/app/trip/[id].tsx:567#<TripFreeTimeCard tripId=`).
+- Options are withheld under a non-NORMAL §17.2 switch, in the server's reading. **Add to plan** is
+  ADD_PLAN through the kernel and says "Not added" by name with the kernel off. Replan's first request
+  never carries `createProposals`; skipped proposals are "No proposals were created: <server reason>".
+
+**Decision.** Simulate and Impact are offered per changed diff entry (move / cancel / add, mapped to
+§9.4's change kinds), not as a free-form editor: the diff is where a traveller meets a concrete change.
+
+### 77.3 Tests, red first, and mutations
+
+- `travel-buddy-standalone/src/features/trips/crew/__tests__/TripRegroupCard.component.test.tsx` (7) and
+  `travel-buddy-standalone/src/features/trips/opportunities/__tests__/tripFreeTime.component.test.tsx` (9),
+  through the real service. Red first: the modules did not exist and no client called these routes.
+  Mutations T19-1…4 and T21-1…6 (failed list read as none, a retry minting a new key, a refusal shown
+  as done, the kernel reason lost, the envelope unchecked, suppression ignored, replan auto-proposing,
+  skipped proposals reported as sent, an unread pulse source hidden, an accept refusal shown as added)
+  each reddened its suite; all restored by sha256. Trip screen, trips feature and tabs suites: 312/312.
+- The trip screen's edits are line-neutral (three joined lines).
+
+### 77.4 What is left, and what needs the hosted deployment
+
+- **Hosted:** `trip_kernel_enabled` and `trip_operational_projections_enabled` TRUE on the testing
+  deployment (catalogue target; unchanged here). The meeting point needs at least two crew positions
+  through the crew map (GPS mocks on two devices).
+- Red if: a checkpoint read failure renders as "no open checkpoints"; a kernel refusal renders as
+  done; replan proposes without being asked; a refused projection renders as a free day.

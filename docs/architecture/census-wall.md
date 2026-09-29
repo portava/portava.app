@@ -1947,3 +1947,61 @@ All 21 cases in the file pass.
 **Verdict.** W72 stays **C**. The row grades the §18 surface and its
 exclusions, and the defect dropped legitimate items rather than admitting
 illegitimate ones. The headline is unchanged. Nothing here is deployed.
+
+---
+
+## §18 — 2026-09-29: Wall Moments reach the Wall, and a failed current read stops counting as "nothing changed" (TM-live lane, WALL-F13)
+
+Testing-mode lane `lane-tm-live` (WP-11), branch cut from `main` at `978d886bf`. `head_commit` is
+**NOT** re-declared. Controlled evidence only. No flag was touched, no migration was added, no
+database was read.
+
+**No row moves.** No row of this census grades the moments route or a client for it; the Wall rows
+this touches (the header's Live strip, W72's Quick Media row) are unchanged in behaviour.
+
+### 18.1 What was built
+
+**Tester steps.** With `wall_enabled` and `wall_moments_enabled` on and live claims flowing, open the
+Wall. Under the Live For You strip, **What changed nearby** lists server-built moments (busy → packed,
+building, a queue appearing) at the places the strip shows; tap one to open the place.
+
+- `GET /api/wall/moments` had no client caller. `travel-buddy-standalone/src/features/wall/services/wallMoments.ts:47#export async function fetchWallMoments(`
+  names the Live For You strip's subjects (the server's own viewer-relevant, bounded live set — a
+  moment can only exist where a current claim does), relevance `nearby`, and sends shown moments back
+  as `seen`.
+- `travel-buddy-standalone/src/features/wall/components/WallMomentsStrip.tsx:40#export function WallMomentsStrip(`, mounted under the
+  Live strip in the header (`travel-buddy-standalone/src/features/wall/components/WallScreen.tsx:111#/><WallMomentsStrip liveItems=`),
+  renders only moments the Attention Engine routed WALL or NOTIFY, each with its truth class and
+  freshness; SILENT / IGNORE are counted ("N quieter changes not shown here").
+- Every non-answer is named: a place the server refused is "couldn't be checked — not the same as
+  nothing changing"; Live intelligence closed says changes can't be checked; a failed request is
+  "couldn't check" with Try again; off, or no live places to ask about, renders nothing.
+- **Server defect fixed.** A current snapshot read that ERRORED was reported `refusal: null,
+  moments: 0` — "looked, nothing changed". It is now refused `error`
+  (`artifacts/api-server/src/routes/wallMoments.ts:133#if (liveClaimReadFailed(current))`), honouring the
+  failed-read mark census-discovery §94 introduced.
+
+**Decisions.** (a) Subjects are the Live strip's, not saved places: no list endpoint for saved places
+exists, and a moment needs a current live claim, which is what the strip's subjects have. (b) The
+Attention Engine's placement is obeyed on the client — SILENT and IGNORE are not drawn.
+
+### 18.2 Tests, red first, and mutations
+
+- Server: `artifacts/api-server/src/test/tmLiveSurfaces.test.ts:111#describe("WALL-F13 GET /wall/moments`
+  — red on `main` (`refusal: null`), green after; mutation M1 reddened it, restored by sha256. The
+  existing moments route suite passes unchanged.
+- Client: `WallMomentsStrip.component.test.tsx`, 5/5 through the real service with only `fetch`
+  faked; mutations W13-1…5 reddened it, restored by sha256. The Wall's §38 accessibility scan caught
+  two text colours (`faint`, `signal`) in the first draft; they are `mute` and `deep`. Wall suites:
+  205/205.
+
+### 18.3 What is left, and what needs the hosted deployment
+
+- **Hosted:** `wall_enabled` and `wall_moments_enabled` TRUE on the testing deployment (catalogue
+  target; unchanged here), the Live gate chain and the Sensing secrets so claims — and so moments —
+  exist. NOTIFY is still only a routing decision: no dispatcher sends it (the route's header says so).
+- Red if: a refused place is counted among the places "looked at"; a failed request renders as an
+  empty strip; a SILENT moment is drawn.
+
+- NOT-GRADED: artifacts/api-server/src/routes/wallMoments.ts — §18.1 cites the one line it fixed (a failed current read refused `error`); no Wall row grades the moments route
+- NOT-GRADED: artifacts/api-server/src/test/tmLiveSurfaces.test.ts — §18.2's route suite for that fix; controlled evidence for built work, no Wall verdict rests on it
