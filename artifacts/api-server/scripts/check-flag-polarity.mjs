@@ -1423,7 +1423,7 @@ const DIRECT_READS = [
   { file: 'routes/featureFlags.ts',       shape: 'management', reason: `THE ADMIN READ SURFACE: selects flag/enabled/description for the admin UI. Not a gate — it reports flag state, it does not act on it. Errors surface as db_error. ${V}.` },
   { file: 'routes/admin.ts',              shape: 'management', reason: `Admin dashboard listing all flags for display (select flag/enabled/description/updated_at, no filter). Not a gate — it reports flag state. ${V}.` },
   { file: 'routes/adminCompass.ts',       shape: 'management', reason: `Admin upsert of Compass flags by variable. A write. ${V}.` },
-  { file: 'routes/circle.ts',             shape: 'management', reason: `POST /admin/circle/kill-switch — the OPERATOR'S CONTROL SURFACE for find_your_circle_disabled. It upserts the stop; it does not read it to gate. Fails LOUDLY (db_error) on write failure, which is correct: an operator flipping a stop must learn if it did not take. ${V}.` },
+  // routes/circle.ts (POST /admin/circle/kill-switch) was listed here as a direct upsert; tm-followups moved it onto toggle_feature_flag_with_audit, so the entry was removed.
   // notifications.ts and admin.ts (safe-return) previously wrote flags via a raw
   // `.update({enabled}).eq("flag", <var>)`; audit FLAG-1/2 moved both onto the
   // audited toggle_feature_flag_with_audit RPC, so those var-shaped direct

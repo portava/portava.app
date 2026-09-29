@@ -19,7 +19,7 @@ import { requireUser, sendError } from "../lib/http.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { moderationReportRateLimit } from "../lib/rateLimit.js";
-
+import { refuseUnlessReporterSees } from "../lib/reportTargetAccess.js";  // a message report needs a reporter who can see the message (PR #537 rule)
 import { resolveContentOwnerDetailed, type ContentOwnerResolution } from "../lib/contentOwner.js";
 
 const router = Router();
@@ -106,8 +106,8 @@ router.post("/moderation/report", asyncHandler(async (req, res) => {
   }
 
   const sc = getServiceClient();
-  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
-
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }  if (!(await refuseUnlessReporterSees(sc, req, res, { type: subjectType, id: subjectId, userId: user.id }))) return;  // tm-followups A1
+  if (subjectType === "message" && threadId && !(await refuseUnlessReporterSees(sc, req, res, { type: "thread", id: threadId, userId: user.id }))) return;  // a supplied threadId must be a conversation the reporter is in
   // Duplicate open-report collapse.
   //
   // Deliberately NOT fail-closed: this is the abuse-reporting path, and

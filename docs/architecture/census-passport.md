@@ -2074,6 +2074,37 @@ an anchor:
   of them iterates `profiles`. The population this actually protected is narrow. It is named
   there rather than repeated here.
 
+## §24 — Stamp revoke and restore: a database error is no longer "not found"; Compass remembers and Recaps on the Passport links (lane tm-followups). NO PASSPORT ROW MOVES
+
+Branch `lane-tm-followups`, cut from `main` at `978d886bf`; code in `23f78ab1a` and `09dd3925a`.
+Controlled evidence only. No flag, no migration, no database. Placed before §22 so it merges
+cleanly beside a parallel lane's §23 (admin stamp screens), which it complements.
+
+**The defect.** `POST /admin/stamps/:userStampId/revoke` and `/restore` answered 404 `not_found`
+for every failure, including a refused UPDATE and a failed audit write — an admin was told the
+stamp did not exist when the database had not answered. `revokeStamp` / `restoreStamp` now mark a
+database failure (`artifacts/api-server/src/services/passport/StampAwardEngine.ts:838#if (error) return { revoked: false, reason: error.message, failure: "db_error" };`,
+`artifacts/api-server/src/services/passport/StampAwardEngine.ts:922#if (error) return { restored: false`),
+a failed audit write is marked the same way, and a rollback that fails after it is named in the
+reason (`artifacts/api-server/src/services/passport/StampAwardEngine.ts:864#const rolledBack = rollbackErr`).
+The routes log it and answer db_error; "no stamp in that state" is still 404
+(`artifacts/api-server/src/routes/adminStamps.ts:263#if (result.failure === "db_error")`,
+`artifacts/api-server/src/routes/adminStamps.ts:287#if (result.failure === "db_error")`). The route
+edit is line-neutral; the engine grew below every line this census cites. The not-found result
+shape is unchanged, so `stampRevoke.test.ts`'s `deepEqual`s hold.
+
+**Tests.** `artifacts/api-server/src/test/tmFollowupSafety.test.ts:304#describe(` — four red cases
+(UPDATE error and audit-write failure, revoke and restore) and two controls. Mutations (the
+route's db_error branch removed; the engine's `failure` dropped on the restore read and the revoke
+audit path) each went RED and were restored by sha256.
+
+**Passport links.** `PassportQuickLinks` gains two owner entries, **Compass remembers** and
+**Recaps & On this day** (census-compass §31), below the rows P18 cites (its lines 57-100 and 89), which
+did not move. P18 stays `C`.
+
+- NOT-GRADED: artifacts/api-server/src/test/stampRevoke.test.ts — §24 names it only to say its not-found assertions still hold; no Passport verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/tmFollowupSafety.test.ts — §24's route suite (item A3); no Passport verdict rests on it.
+
 ## §22 — Stamp collections and the stamp catalog reach a screen (TM-social lane, PASS-F09). NO PASSPORT ROW MOVES
 
 **2026-09-29, testing-mode lane `lane-tm-social` (branch cut from `main` at `18518e982`).**
