@@ -4568,6 +4568,9 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/components/compass/__tests__/CompassBuddyRow.failedRead.component.test.tsx",
     "travel-buddy-standalone/src/features/trips/map/__tests__/tripCompassRead.test.ts",
     "travel-buddy-standalone/app/map/__tests__/tripCompassAlternativesRead.component.test.tsx",
+    // census-discovery §109 (lane W11-X2, round 12): DV-83 re-graded on the trip page's Compass Brief and get_circle_activity.
+    "travel-buddy-standalone/src/components/TripPage.tsx",  // §109.1 BK1: CompassTripBrief never branches on coverage
+    "artifacts/api-server/src/compass/CompassStructuredContext.ts",  // §109.1 BK2: the circle reads read as `{ data }` alone
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

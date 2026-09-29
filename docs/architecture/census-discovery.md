@@ -18413,6 +18413,27 @@ check:unissued-supabase-writes exit=0
   - `node scripts/check-route-registry.mjs`: "OK. All 217 screen file(s) are represented in PORTAVA_ROUTES and all 9 layout file(s) are represented in PORTAVA_LAYOUT_FILES."
 - **The verifier's v10 probes**, copied in unchanged and deleted after: 15 of 15 server (V10-HP0..3, V10-SM6, V10-WT1, V10-WT2, V10-TC0, V10-TC1, V10-SC0, V10-SC1, V10-HT0, V10-HT1, V10-CC0, V10-CC7) and 3 of 3 client (V10-CH0..2) pass.
 
+## §109 — DV-83 round 12 (lane W11-X2)
+
+### 109.1 Integrator: DV-83 held at W after independent re-verification at `1023bc3d4`
+
+*Integrator, 2026-09-29. §108 was merged with main at `1023bc3d4` (PR #530's head). An independent verifier then checked that tree: it re-ran every round-10, round-9, round-8 and round-7 probe unchanged, wrote new ones (`zz-v11-*`), and restored every mutated file byte-identical, checked by sha256. Its report is the round-11 verifier's `dv83-r11-verifier.md`.*
+
+- **Confirmed.** §108.1's six breaks, SM6, §107.1's five, §105.1's four and round 7's three are closed in behaviour: the v10, v9, v8 and v7 probes re-run unchanged all pass (50 server, 15 client). 24 of 32 mutations are killed; of the eight survivors, seven are argued equivalent or outside DV-83.
+- **Found: two paths that break the criterion's wording, each shown by a probe that fails against this tree (6 red probes).**
+  1. **BK1. The trip page's Compass Brief never branches on coverage (clauses c, d).** `CompassTripBrief` reads GET /compass/recommendations?surface=trip as `res.ok && res.data` alone, swallows a transport failure, and hides itself whenever its list is empty. A refused (`nothing`) answer and a network error are hidden exactly like "no results"; a `partial` answer carrying only the static safety note is drawn as a complete brief; and a late answer for one trip is drawn on another trip's brief, because the effect has no latest-request guard (V11-TB1, V11-TB2, V11-TB3, V11-TB4 red; V11-TB0 the control) (`travel-buddy-standalone/src/components/TripPage.tsx`). The static consumer guard derives its carriers from `services/discovery.ts` alone, so it could not see this consumer.
+  2. **BK2. `get_circle_activity` states a failed read as a fact (clause a).** `buildStructuredCompassContext` reads `circles`, `circle_memberships` and the member handles as `{ data }` alone and catches every failure as "no circle context", so the tool answers the model "The user is not in any circles." over a failed read — the `get_whos_around` defect on the sibling tool (V11-CA1, V11-CA2 red; V11-CA0 the control) (`artifacts/api-server/src/compass/CompassStructuredContext.ts`, `artifacts/api-server/src/compass/CompassTools.ts`).
+- **Ruling not honest.** D-W11X2-82's "every /compass/recommendations consumer … reads through [the predicate]", repeated by §108.13 clause 4: the trip page's Compass Brief is a consumer and did not (BK1).
+- **Surviving mutation.** V3 (GET /hashtags/trending's page read without its `id` tie-break) is non-equivalent and sits on a DV-83 line: over rows sharing one `created_at`, LIMIT/OFFSET pages may disagree, so a skewed ranking is served as complete. V11-HTT1 is green on this tree and red under it; no round-11 fake models ties (`artifacts/api-server/src/routes/hashtags.ts`). V4, V8, V9, V10, V21, V28 and V29 are argued equivalent or outside DV-83, and C8b is confirmed equivalent.
+- **Upheld.** `readNameVisibilitySet` after the merge (V11-NV0, V11-NV1 green), and every ruling of D-W11X2-85 except the consumer claim above.
+- **Next.** A round-12 lane closes the two paths with the verifier's probes as failing-first tests, registers the Compass carriers in the static guard, pins V3, records the argued survivors, corrects the ruling, and sweeps the Discovery and Compass read surfaces again — the client consumers of Compass endpoints and the Compass tools' "nothing found" sentences in particular. The row moves only after that.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | C | **W** | §108 closes §108.1's six paths, confirmed at `1023bc3d4` (§109.1). Two paths still present a failed or partial read as empty, complete, over the wrong rows or as a fact: the trip page's Compass Brief, which never branches on coverage and has no latest-request guard (`travel-buddy-standalone/src/components/TripPage.tsx`), and `get_circle_activity`, which tells the model a failed circle read is "not in any circles" (`artifacts/api-server/src/compass/CompassStructuredContext.ts`). The surviving mutation V3 is unpinned (`artifacts/api-server/src/routes/hashtags.ts`). D-W11X2-82's "every consumer" is not honest. |
+
+Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: travel-buddy-standalone/app/discover.tsx — §105.11 names it only as a path seen and not built, left for its owner, and §106 records Find Travelers' failed-search state and generation guard: it is the social people search over services/follows.ts, not a Discovery envelope, and no Discovery row or DV-83 verdict rests on it.
