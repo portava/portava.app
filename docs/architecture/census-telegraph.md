@@ -9722,6 +9722,142 @@ the text checks §31.1 rests on: removing the receipt `FOR UPDATE` leaves the
 words `FOR UPDATE` in the body, since the message lock uses them too. The text
 check stays green. Only the executed probe goes red.
 
+## §38 — WP-08 (lane tm-telegraph): the seven messaging gaps a tester could not reach, and two rows that had gone stale
+
+Written 2026-09-29 by lane tm-telegraph against `main` at `18518e982`. It
+builds the client halves of seven flows whose server routes already existed
+(TEL-F03, F07, F08, F09, F10, F16, F23 in the testing-mode flow catalogue),
+closes one server hole found on the way, and re-grades **T326** and **T53**,
+whose stated reasons no longer describe this tree. **All evidence here is
+CONTROLLED** — in-process route tests over a fake client, component tests
+against stubbed services, and mutations. None of it is production evidence.
+
+### 38.1 What was built, per flow
+
+| Flow | Built | Where |
+| --- | --- | --- |
+| TEL-F03 cancel a request | A Cancel control on the sender's "Waiting for reply" banner. It asks once, calls the existing compare-and-swap cancel route (`artifacts/api-server/src/routes/messaging.ts:1250#router.post('/message-requests/:requestId/cancel'`), and on success or on "no longer pending" RE-READS the status, so the banner goes because the server says nothing is pending. `useOutgoingRequestStatus` now carries the request id the server already returned. | `travel-buddy-standalone/src/features/telegraph/requests/CancelRequestButton.tsx:26#export function CancelRequestButton(`, `travel-buddy-standalone/app/messages/[id].tsx:2279#<CancelRequestButton requestId={outgoingRequestId}`, `travel-buddy-standalone/src/hooks/useMessaging.ts:98#const [requestId, setRequestId]` |
+| TEL-F07 edit + history | Edit on your own delivered plain-text message, never on an E2EE thread (`travel-buddy-standalone/src/features/telegraph/messageActions/messageActionRules.ts:22#export function canEditMessage(`), through the canonical route only (`travel-buddy-standalone/src/services/messaging.ts:928#export async function editThreadMessage(`). An Edit history sheet over `artifacts/api-server/src/routes/messaging.ts:3800#router.get('/threads/:threadId/messages/:messageId/edits'` keeps a 503 apart from "no earlier version". Recipients now SEE an edit: `message.updated` reached the hook before, but the merge only accepted new ids, so the edited body stayed stale (`travel-buddy-standalone/src/hooks/useMessaging.ts:351#const edited = incomingById.get(m.id);`). In both the thread screen and trip/circle chats. | `travel-buddy-standalone/src/features/telegraph/messageActions/EditHistorySheet.tsx:48#export function EditHistorySheet(`, `travel-buddy-standalone/src/features/telegraph/messageActions/ThreadActionSheets.tsx:54#const r = await editThreadMessage(threadId, editing.id, body);`, `travel-buddy-standalone/src/hooks/useGroupChat.ts:325#const res = await editThreadMessage(tid, messageId, body);` |
+| TEL-F08 Saved messages | `/messages/saved` over `artifacts/api-server/src/routes/messaging.ts:4222#router.get('/me/saved-messages'` (re-authorized per read) with loading, error + Try again, empty and list states, and Remove over the idempotent DELETE (`artifacts/api-server/src/routes/savedMessages.ts:44#/me/saved-messages/:messageId`). Entered from the inbox header and from the "Saved" confirmation. A save the server answered HTTP 200 `{ok:false}` is no longer reported as "Saved" (`travel-buddy-standalone/src/services/messaging.ts:969#function saveOutcome(`); the group chat's silent save failure now says so. | `travel-buddy-standalone/src/features/telegraph/savedMessages/SavedMessagesScreen.tsx:61#export function SavedMessagesScreen(`, `travel-buddy-standalone/src/components/TelegraphInboxScreen.tsx:465#router.push('/messages/saved' as any)` |
+| TEL-F09 report one message | Both chat screens file a message report through the Telegraph route, which snapshots §22 evidence before answering (`artifacts/api-server/src/routes/messaging.ts:4412#await captureMessageEvidence(sc, {`). The route now takes a `reason_code` from the shared vocabulary, computes severity from it, and refuses an unknown code (`artifacts/api-server/src/routes/messaging.ts:4388#const reasonCode = messageReportReasonCode(req.body?.reason_code);`, `artifacts/api-server/src/routes/messaging.ts:4398#severity: reportSeverityFor(reasonCode),`). | `travel-buddy-standalone/src/features/telegraph/messageActions/MessageReportSheet.tsx:65#const r = await reportMessage(`, `travel-buddy-standalone/app/messages/[id].tsx:323#<MessageReportSheet`, `travel-buddy-standalone/src/components/GroupChatScreen.tsx:133#const sent = await reportMessage(message.id, reasonText` |
+| TEL-F10 sync on reconnect | A trip/circle chat re-reads its thread when the realtime stream re-opens after a drop, or when the app returns to the foreground; the DM thread polls at once on foreground return. A catch-up refused as `forbidden` moves the chat to no-access, and a failed FIRST page is the error state, not an empty chat. | `travel-buddy-standalone/src/features/telegraph/hooks/useReconnectCatchUp.ts:56#export function useReconnectCatchUp(`, `travel-buddy-standalone/src/hooks/useGroupChat.ts:193#useReconnectCatchUp(() => { void silentRefresh(); }, !!id);`, `travel-buddy-standalone/src/hooks/useGroupChat.ts:137#if (!msgRes.ok` |
+| TEL-F16 ask | "Ask this conversation" from the thread's content drawer, over `artifacts/api-server/src/server/telegraph/searchRoute.ts:97#/threads/:threadId/ask`. Structured plans and places answer first; a DEGRADED empty is a floor, never "nothing answers that". | `travel-buddy-standalone/src/features/telegraph/ask/AskConversationSheet.tsx:53#export function AskConversationSheet(`, `travel-buddy-standalone/src/features/telegraph/drawer/ContentDrawerSheet.tsx:132#testID="telegraph-drawer-ask"` |
+| TEL-F23 message settings | `/settings/messages` edits `user_message_settings`, the store `canMessage` enforces (`artifacts/api-server/src/lib/messagingPermissions.ts:180#.from('user_message_settings')`). A failed read shows no controls; a refused save puts the old value back. | `travel-buddy-standalone/src/features/telegraph/settings/MessageSettingsScreen.tsx:71#export function MessageSettingsScreen(`, `travel-buddy-standalone/src/features/telegraph/settings/MessageSettingsScreen.tsx:183#Read receipts are always on.` |
+
+**The server hole closed on the way.** Neither message-edit route read
+`message_threads.is_e2ee` before overwriting `messages.body`, while every other
+text write in these files does. One gate now serves both, after their
+membership and sender checks (`artifacts/api-server/src/services/telegraph/editE2eeGate.ts:28#export async function refuseEditOnEncryptedThread(`,
+called at `artifacts/api-server/src/routes/messaging.ts:3642#if (await refuseEditOnEncryptedThread(sc, req, res, threadId, messageId)) return;`
+and `artifacts/api-server/src/routes/groupChat.ts:519#if (await refuseEditOnEncryptedThread(sc, req, res, m.thread_id, messageId)) return;`).
+An E2EE thread answers 422 `e2ee_thread`; an unreadable flag answers 503. Both
+call sites are same-line edits, so no citation into either file moved.
+
+Coverage gap, stated: the trip/circle chat screen (`GroupChatScreen.tsx`) has no
+component test in this tree. Its new wiring is typechecked and calls pieces that
+are tested — `reportMessage`, the hook's `edit`, `ThreadActionSheets`,
+`canEditMessage` — but the screen itself is not rendered by any test here.
+
+Block, mute, privacy and membership checks: no check was removed or bypassed.
+Every new surface calls an existing route that already re-authorizes (active
+membership, blocks, the §14.3 window); the client adds affordance rules only.
+
+### 38.2 Decisions (this census has no decision register, so they are recorded here)
+
+| id | Decision | Why |
+| --- | --- | --- |
+| TM-TEL-D1 | The sender's Cancel lives on the thread's "Waiting for reply" banner. | It is the one place a sender sees a pending request; the inbox lists only incoming ones. |
+| TM-TEL-D2 | `PATCH /threads/:t/messages/:m` is the canonical edit route; the client no longer calls `PATCH /messages/:id`. The legacy route stays mounted (an older client may call it) but is E2EE-gated like the canonical one. | Only the canonical route keeps version history (§7.5). Removing a live route is not a routine decision. |
+| TM-TEL-D3 | "Sync on reconnect" is a re-read of the thread, not a call to `POST /trips/:id/chat/sync` or its circle twin. | Those are owner-only membership-repair endpoints: every non-owner gets 403, and `GET /trips/:id/chat` already re-syncs members on open. |
+| TM-TEL-D4 | A per-message report files through `POST /messages/:id/report`, with an optional `reason_code` from `lib/reportReasons.ts`; severity is computed from it; an unknown code is refused 400; no code keeps the old 'other'/'normal' contract. | It is the only report path that snapshots §22 evidence and writes the one queue §32.2 rules canonical. Before this, the thread screen filed to `moderation_reports` and group chats to `/api/reports`, neither of which snapshots. |
+| TM-TEL-D5 | A failed first message page in a trip/circle chat is the error state. `useGroupChat.threadShape` pinned the opposite and is restated. | DV-83: a failed read shown as an empty chat tells a member the trip chat is silent. |
+| TM-TEL-D6 | Message settings edit `user_message_settings`. The Privacy screen's "Who can message you" radios (writing `profile_privacy_settings.allow_messages_from`, which `canMessage` never reads) become a link to them. | Choosing "Nobody" there left a person fully reachable. `allow_messages_from` is left in the schema: dropping it is not this lane's call. |
+| TM-TEL-D7 | Read receipts are stated on the settings screen, not offered as a switch. | No stored preference exists, and §7.3–7.4 make "seen" what closes the unsend window; hiding receipts needs a spec rule, not a settings row. |
+| TM-TEL-D8 | "Ask this conversation" is entered from the content drawer, which hands off rather than stacking a second Modal. | The drawer is the thread's existing "search this conversation" surface; stacked Modals are unreliable on iOS. |
+
+### 38.3 Row moves
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T326 | N | **W** | §27.1 **message unseen → unsend may succeed** — the stated reason, *"No unsend. PR #472's test … is unmerged"*, is stale twice over: the unsend route landed at `1fe72289b` and its race-closing function with PR #527 (`dc2862295`). The property is now ENFORCED, not absent: P-06 (`artifacts/api-server/src/domain/telegraph/invariants/propertyInvariants.ts:137#id: "P-06",`) quantifies over 204 enumerated states (`artifacts/api-server/src/test/telegraphPropertyInvariants.test.ts:771#it("P-06: no eligible recipient has seen it`) against BOTH copies of the rule — `planUnsend` (`artifacts/api-server/src/services/telegraph/unsend.ts:236#if (seen.length > 0) {`) and the model of the SQL function pinned against migration 3000 (`artifacts/api-server/src/test/telegraphUnsendFunctionFake.ts:142#if (seenBy > 0) return`). Controlled evidence at this tree: 22/22 green; mutating either copy to refuse an unseen message turns exactly P-06 red, each restored by sha256. **Not C**, unlike its §27.1 siblings T321–T325, because those resolvers are live and this one is not: the route calls the function 3000 installs, production has neither 3000 nor the 2810 columns it asserts, and so every production unsend fails closed. IMPLEMENTATION-COMPLETE; awaits: migrations 2325 → 2810 → 3000 applied to production + one production unsend of a message no eligible recipient has seen, answered `unsent`. |
+| T53 | N | **W** | §6.2 **Message kind VOICE** — the stated reason, *"No voice message, no `media_duration_seconds` writer for audio, no waveform, no audio MIME"*, and §21.5's *"REFUSED by name"* are both stale (§30.2 named them; neither was re-graded). VOICE is a kind with a payload (`artifacts/api-server/src/services/telegraph/messageKinds.ts:191#VOICE: VoicePayload,`), its own upload and send routes (`artifacts/api-server/src/routes/telegraphVoice.ts:131#/telegraph/voice/upload`, `artifacts/api-server/src/routes/telegraphVoice.ts:201#/threads/:threadId/voice`), a voice-only audio allowlist (`artifacts/api-server/src/lib/mediaPipeline.ts:281#audio/mp4`), migration 2989 widening `messages.media_type` to admit `'audio'`, and a recorder and player in `travel-buddy-standalone/src/features/telegraph/voice/`. Controlled evidence: 83/83 across `telegraphVoice`, `verifyFlowVoiceEndToEnd`, `voicePipelineAuthority` and `verifyAuthzVoiceMediaOwnership`, including the recipient receiving `mediaType: 'audio'` (`artifacts/api-server/src/test/verifyFlowVoiceEndToEnd.test.ts:286#reaches the client as 'audio'`). It landed with PR #507 (`adcd56142`), not #527. Until 2989 is applied the send refuses by name (`artifacts/api-server/src/routes/telegraphVoice.ts:345#voice insert refused: migration 2989 is not applied`). IMPLEMENTATION-COMPLETE; awaits: migration 2989 applied to production + one production `messages` row with `media_type = 'audio'` sent through the voice route. |
+
+**Evidence corrections, no verdict moved.**
+
+* **T283 / T284** (§22 evidence) stay W on the same ceiling (2812 unapplied,
+  `telegraph_report_evidence_enabled` FALSE). What changed is a fact their
+  statements did not record: until this lane NO client report ever reached
+  `captureMessageEvidence`, because the thread screen filed message reports to
+  `/api/moderation/report` and group chats to `/api/reports`. Applying 2812 and
+  turning the flag on would have snapshotted nothing a traveller reported. It
+  now would.
+* **T80** (edit version history) stays W on 2811. It now has a client reader
+  as well as a server one.
+* **T376** (reliability) stays N. Reconnect catch-up is one of its four
+  mechanisms; the outbox is undrained and there is no idempotency or
+  backpressure.
+* **T327** is in exactly T326's state and was not re-graded: outside this
+  lane's brief, named so the next lane does not have to rediscover it.
+
+### 38.4 Tests, shown red first, and mutations
+
+New suites (red on the pre-change tree, then green):
+`artifacts/api-server/src/test/telegraphEditE2eeRefusal.test.ts` (7; the
+canonical route's two E2EE rules red at `18518e982`, the legacy route's two red
+before the shared gate), `artifacts/api-server/src/test/telegraphMessageReportReason.test.ts`
+(5; three rules red, two controls green), and twelve client suites under
+`travel-buddy-standalone/src/features/telegraph/__tests__/` and
+`travel-buddy-standalone/src/hooks/__tests__/` (53 cases). One existing case
+was restated by decision TM-TEL-D5 (`useGroupChat.threadShape`), and one
+guard's consumer list by TM-TEL-D4 (`sharedSheetContrast.consumers`:
+`app/messages/[id].tsx` no longer draws `ReportSheet`). No assertion was
+weakened.
+
+Thirty-one mutations, every one red and every one restored byte-identically
+(sha256): five on the server routes (reason code ignored, severity not
+computed, unknown code read as 'other', E2EE edit allowed, unreadable flag read
+as plaintext), two on the shared gate, one removing the legacy route's gate,
+fourteen on the new client surfaces (among them a failed saved-messages read
+shown as ready, a refused settings save not reverted, a 503 edit history shown
+as empty, a failed report shown as sent, a degraded ask shown as "nothing",
+Edit offered on an E2EE thread), seven on the reconnect/edit hooks, and two
+for T326 above.
+
+### 38.5 Checks, and what was not run
+
+Run on the final commit: the lane's 24-check integrator guard, the api-server
+`typecheck` and `typecheck:tests` (863, unchanged), every api-server suite that
+imports a touched route (53 files), the property and voice suites, client
+`typecheck`, the touched client suites, and `check:all`.
+
+Not run: `check:write-path-columns`, which needs live credentials. By its
+extractor the only new write is `reports.reason_code` / `reports.severity` on an
+existing insert, both columns the sibling `/api/reports` writer already writes.
+No migration was added. No flag was changed.
+
+### 38.6 What would turn this red
+
+A client that calls `PATCH /messages/:id` again; a message report routed
+anywhere but `/messages/:id/report`; a saved-messages, edit-history or ask
+failure rendered as an empty result; either edit route writing without the
+gate; or — for the two rows — 2989, 2810 or 3000 found applied to production,
+which would make both W rows owe their production evidence now.
+
+### 38.7 The headline, restated from the rows
+
+Two rows moved `N → W` and nothing else changed bucket. Counted with
+`check:census-integrity`, not by arithmetic on §36.7:
+
+| bucket | count |
+| --- | --- |
+| BUILT-AND-CORRECT | **238** |
+| BUILT-BUT-WRONG | **173** |
+| NOT-BUILT | **37** |
+| CANNOT-VERIFY | **3** |
+
+451 rows. CONSTRUCTED (C + W) is 411 of 451 = 91.1 %; CORRECT is 238 of 451 =
+52.8 %. CORRECT did not move: both rows are built and live nowhere.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 Declared 2026-09-27 by the coverage-guard fix (census-media §32.14). Each line names a file this census cites and does not grade, and says why. The guard refuses a declaration for any file a verdict row cites.

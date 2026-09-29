@@ -13,7 +13,7 @@ import {
   getTripChat,
   getCircleChat,
   sendMessage,
-  editMessage,
+  editThreadMessage,
   deleteMessage,
   getThreadMessages,
   sendTyping,
@@ -26,6 +26,8 @@ import {
   telegraphRealtime,
   type TelegraphEvent,
 } from '../services/telegraphRealtimeService.ts';
+import { useReconnectCatchUp } from '../features/telegraph/hooks/useReconnectCatchUp.ts';
+import { editErrorCopy } from '../features/telegraph/messageActions/messageActionRules.ts';
 
 function makeClientId(): string {
   return `client-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -51,7 +53,8 @@ export interface GroupChatData {
   send: (body: string, replyToId?: string) => Promise<{ ok: boolean }>;
   retrySend: (clientId: string) => Promise<void>;
   notifyTyping: (isTyping: boolean) => void;
-  edit: (messageId: string, body: string) => Promise<void>;
+  /** Resolves `ok: true` only when the server accepted the edit; otherwise carries the copy to show. */
+  edit: (messageId: string, body: string) => Promise<{ ok: boolean; message?: string }>;
   remove: (messageId: string) => Promise<void>;
   loadMore: () => Promise<void>;
 }
@@ -128,10 +131,19 @@ export function useGroupChat(
         memberAccess: 'active',
       };
       const msgRes = await getThreadMessages(d.threadId);
+      // DV-83: a first page that could not be read is NOT an empty chat. It
+      // used to open as 'active' with no messages, which told a member their
+      // trip chat was silent when the read had simply failed.
+      if (!msgRes.ok || !msgRes.data) {
+        if (msgRes.errorKind === 'forbidden') { setState('no_access'); return; }
+        setState('error');
+        setErrorMessage(msgRes.message ?? 'Failed to load messages');
+        return;
+      }
       setThread(synthesized);
       // Endpoint returns newest-first; reverse into chronological order
       // (same convention as useThreadMessages / loadMore).
-      setMessages(msgRes.ok && msgRes.data ? [...(msgRes.data.messages ?? [])].reverse() : []);
+      setMessages([...(msgRes.data.messages ?? [])].reverse());
       setState('active');
       return;
     }
@@ -149,6 +161,10 @@ export function useGroupChat(
     const tid = threadIdRef.current;
     if (!tid) return;
     const res = await getThreadMessages(tid);
+    // The server re-authorizes every read. A member removed while this screen
+    // was open (or while the device was away) is told so, rather than left
+    // looking at a conversation they are no longer in.
+    if (!res.ok && res.errorKind === 'forbidden') { setState('no_access'); return; }
     if (!res.ok || !res.data) return;
     const incoming = res.data.messages ?? [];
     setMessages((prev) => {
@@ -170,6 +186,11 @@ export function useGroupChat(
       );
     });
   }, []);
+
+  // TEL-F10 — a member who was offline or backgrounded catches up on return.
+  // See useReconnectCatchUp for why this is a re-read and not the owner-only
+  // `/chat/sync` repair endpoint.
+  useReconnectCatchUp(() => { void silentRefresh(); }, !!id);
 
   // Helper: clear a user from typing list
   const clearTyping = useCallback((uid: string) => {
@@ -297,7 +318,11 @@ export function useGroupChat(
   }, []);
 
   const edit = useCallback(async (messageId: string, body: string) => {
-    const res = await editMessage(messageId, body);
+    const tid = threadIdRef.current;
+    if (!tid) return { ok: false, message: editErrorCopy(undefined, 'This conversation is not open yet.') };
+    // The canonical edit route: it keeps the previous body as a version and
+    // refuses on an end-to-end encrypted thread (WP-08, TM-TEL-D2).
+    const res = await editThreadMessage(tid, messageId, body);
     if (res.ok && res.data) {
       const updated = res.data as any;
       setMessages((prev) =>
@@ -307,9 +332,11 @@ export function useGroupChat(
             : m,
         ),
       );
-    } else {
-      Alert.alert('Could not edit message', res.message ?? 'Please try again.');
+      return { ok: true };
     }
+    // The edit sheet shows this in place and keeps the typed text; an Alert
+    // on top of it would stack a second surface over the one that failed.
+    return { ok: false, message: editErrorCopy(res.code, res.message) };
   }, []);
 
   const remove = useCallback(async (messageId: string) => {
