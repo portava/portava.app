@@ -28,6 +28,11 @@
  *   V10-WT1  get_whos_around, circle_visibility_settings fails → never "Nobody … is sharing"
  *   V10-WT2  get_whos_around, one context's read fails while @ana is shown → the list may be incomplete
  *   WT2c     CONTROL: every read answered, @ana shown → the complete-list wording
+ *   MO0      sweep (D-W11X2-83), get_meetup_opportunities CONTROL: both sharing → one occasion, the complete wording
+ *   MO1      the forward consent read fails → "could not be checked", never "Nobody … is sharing"
+ *   MO2      the viewer's trip read fails → never "no active trips or upcoming events"
+ *   MO3      the reciprocity (viewer-side) read fails → "could not be checked", never "isn't shared both ways"
+ *   MO4      an event context's read fails while an occasion is found → the occasion, and the list may be incomplete
  *
  * Run: SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy node --import tsx/esm --test src/test/compassPresenceConsentUnread.test.ts
  */
@@ -198,5 +203,54 @@ describe("§108 (BK1, BK2) the get_whos_around tool", () => {
     assert.equal(r.people.length, 1, JSON.stringify(r));
     assert.match(r.info, /^Only people who opted in to sharing appear/, r.info);
     assert.doesNotMatch(r.info, /incomplete/i, r.info);
+  });
+});
+
+/** friendWorld, plus the VIEWER's own sharing rows the reciprocity guard reads (single reads, by user). */
+function meetupWorld(opts: { fail?: string; extra?: Extra; viewerSideFails?: boolean; tripsFail?: boolean } = {}): WorldOpts["answer"] {
+  const now = new Date().toISOString();
+  const later = new Date(Date.now() + 3_600_000).toISOString();
+  const base = friendWorld(opts.fail, opts.extra)!;
+  return (table, calls, single) => {
+    const byUser = eqValue(calls, "user_id");
+    if (opts.tripsFail && table === "trips") return { data: null, error: DB_ERR };
+    if (single && byUser === VIEWER) {
+      if (table === "circle_visibility_settings") return opts.viewerSideFails ? { data: null, error: DB_ERR } : { data: { global_enabled: true, visibility_mode: "status_only", trip_sharing_default: null, event_sharing_default: null, is_paused: false, consent_version: "v1", consented_at: now }, error: null };
+      if (table === "circle_context_settings") return { data: null, error: null };
+      if (table === "circle_presence") return { data: { id: "pv", status: "active", status_label: null, approximate_label: null, venue_label: null, checked_in: false, last_seen_at: now, expires_at: later, stale_after_secs: 900, is_stale: false, needs_help: false, updated_at: now }, error: null };
+    }
+    if (table === "user_account_states" && byUser === VIEWER) return { data: [], error: null };
+    return base(table, calls, single);
+  };
+}
+const meetup = async (answer: WorldOpts["answer"]) => (await executeCompassTool(compassWorld({ answer }).client as any, VIEWER, profile, "get_meetup_opportunities", {})) as { opportunities: any[]; withheldForPrivacy: number; info: string };
+
+describe("§108 sweep (D-W11X2-83): the get_meetup_opportunities tool over a failed read", () => {
+  it("MO0 CONTROL: both sharing, every read answered → one occasion, the complete wording", async () => {
+    const r = await meetup(meetupWorld());
+    assert.equal(r.opportunities.length, 1, JSON.stringify(r));
+    assert.match(r.info, /^Each occasion exists only because both people/, r.info);
+  });
+  it("MO1 the forward consent read fails → could not be checked, never 'Nobody … is sharing'", async () => {
+    const r = await meetup(meetupWorld({ fail: "circle_visibility_settings" }));
+    assert.deepEqual(r.opportunities, []);
+    assert.doesNotMatch(r.info, /Nobody in the user's circles/, r.info);
+    assert.match(r.info, /could not be checked/i, r.info);
+  });
+  it("MO2 the viewer's trip read fails → never 'no active trips or upcoming events'", async () => {
+    const r = await meetup(meetupWorld({ tripsFail: true }));
+    assert.doesNotMatch(r.info, /no active trips/, r.info);
+    assert.match(r.info, /could not be checked/i, r.info);
+  });
+  it("MO3 the reciprocity read fails → could not be checked, never 'isn't shared both ways'", async () => {
+    const r = await meetup(meetupWorld({ viewerSideFails: true }));
+    assert.deepEqual(r.opportunities, []);
+    assert.doesNotMatch(r.info, /isn't shared both ways/, r.info);
+    assert.match(r.info, /could not be checked/i, r.info);
+  });
+  it("MO4 an event context's read fails while an occasion is found → the occasion, and the list may be incomplete", async () => {
+    const r = await meetup(meetupWorld({ extra: { rsvps: "going", eventMembersFail: true } }));
+    assert.equal(r.opportunities.length, 1, JSON.stringify(r));
+    assert.match(r.info, /may be incomplete/i, r.info);
   });
 });

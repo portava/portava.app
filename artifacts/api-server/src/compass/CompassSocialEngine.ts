@@ -687,8 +687,8 @@ export async function getMeetupOpportunities(
   viewerId: string,
   hidden: Set<string>,
   opts: { nowMs?: number } = {},
-): Promise<{ opportunities: MeetupOpportunity[]; contextsChecked: number; withheldForPrivacy: number }> {
-  const { found, contextsChecked } = await collectPresence(sc, viewerId, hidden);
+): Promise<{ opportunities: MeetupOpportunity[]; contextsChecked: number; withheldForPrivacy: number; /** census-discovery §108 (DV-83, D-W11X2-83): a read on the walk or the reciprocity check failed */ unread?: true }> {
+  const unread: PresenceUnread = { v: false }; const { found, contextsChecked } = await collectPresence(sc, viewerId, hidden, unread);  // §108: the meetup walk says a failed read, as getWhosAround does
   const nowMs = opts.nowMs ?? Date.now();
 
   // Group by context: the reciprocity guard is per-context, and one batched
@@ -712,7 +712,7 @@ export async function getMeetupOpportunities(
     } catch {
       // Fail-closed: an unreadable reciprocity check is a closed one. Every
       // person in this context is withheld, and none is named.
-      withheldForPrivacy += list.length;
+      withheldForPrivacy += list.length; markPresenceUnread(unread);  // §108: withheld (fail closed), and said
       continue;
     }
     for (const f of list) {
@@ -720,7 +720,7 @@ export async function getMeetupOpportunities(
       // `allowed` alone is not enough: the guard allows a viewer with no
       // presence row of their own, and someone who is not sharing presence in
       // this context is not the other half of a mutual arrangement.
-      if (!(access.allowed && (access as any).presenceRow)) {
+      if (presenceDeniedUnread((access as { reason?: string }).reason)) markPresenceUnread(unread); if (!(access.allowed && (access as any).presenceRow)) {  // §108: a reciprocity read that failed is not "not shared both ways"
         withheldForPrivacy += 1;
         continue;
       }
@@ -728,7 +728,7 @@ export async function getMeetupOpportunities(
     }
   }
 
-  return { opportunities: opportunities.slice(0, 20), contextsChecked, withheldForPrivacy };
+  return { opportunities: opportunities.slice(0, 20), contextsChecked, withheldForPrivacy, ...(unread.v ? { unread: true as const } : {}) };
 }
 
 // ── Relationship gate for compatibility lookups ───────────────────────────────

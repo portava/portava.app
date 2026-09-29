@@ -3650,22 +3650,22 @@ router.get("/compass/recommendations", async (req, res) => {
       // city; Compass must agree, or it advertises buddies the directory
       // (correctly) says don't exist here. No effectiveCity => no
       // recommendations, matching the directory's "enter a city" state.
-      if (!effectiveCity) {
+      if (!effectiveCity) { if (profile.locationUnread) { sendRecommendationsRefusal(res, { recommendations: [], surface, sessionId: effectiveSessionId }, "buddy_city_unread", ["user_location_state"]); return; }  // census-discovery §108 (DV-83, D-W11X2-84): an UNREAD location is not "no city", so never "no buddies"
         res.json({ recommendations: [], surface, sessionId: effectiveSessionId });
         return;
       }
 
-      const { data: buddyRows, error: buddyRowsErr } = await sc
+      const { data: buddyRows, error: buddyRowsErr, count: buddyRowsCount } = await sc
         .from("rent_buddy_profiles")
         .select(
           "id, user_id, display_name, city, country, categories, languages, " +
           "hourly_rate_usd, status, verified, average_rating, review_count, " +
           "cover_photo_url, admin_status, risk_hold",
-        )
+        { count: "exact" })  // census-discovery §108 (D-W11X2-84): db-max-rows cuts this read silently — the count says so
         .eq("status", "active")
         .ilike("city", effectiveCity); if (buddyRowsErr) { sendRecommendationsRefusal(res, { recommendations: [], surface, sessionId: effectiveSessionId }, "buddy_read_failed", ["rent_buddy_profiles"]); return; }  // census-discovery §104 (DV-83, D-W11X2-55)
 
-      const ADULT_CATS = new Set(["escort", "adult", "dating", "romantic", "sexual"]);
+      const ADULT_CATS = new Set(["escort", "adult", "dating", "romantic", "sexual"]); const buddyFailed: string[] = typeof buddyRowsCount === "number" && buddyRowsCount > (buddyRows ?? []).length ? ["rent_buddy_profiles"] : [];  // §108: a cut read is ranked, but served as partial
 
       // Pre-filter candidates before availability lookup
       const candidateBuddies = ((buddyRows ?? []) as any[]).filter((b) =>
@@ -3684,13 +3684,13 @@ router.get("/compass/recommendations", async (req, res) => {
         const nowDate     = new Date(nowMs);
         const todayStr    = nowDate.toISOString().slice(0, 10);
         const nextWeekStr = new Date(nowDate.getTime() + 7 * 86_400_000).toISOString().slice(0, 10);
-        const { data: availRows } = await sc
+        const { data: availRows, error: availErr, count: availCount } = await sc
           .from("rent_buddy_availability")
-          .select("buddy_id, date")
+          .select("buddy_id, date", { count: "exact" })
           .in("buddy_id", candidateBuddies.map((b: any) => b.id))
           .eq("is_available", true)
           .gte("date", todayStr)
-          .lte("date", nextWeekStr);
+          .lte("date", nextWeekStr); if (availErr || (typeof availCount === "number" && availCount > (availRows ?? []).length)) buddyFailed.push("rent_buddy_availability");  // census-discovery §108 (DV-83, D-W11X2-84): a failed or cut availability read decides the rank and the badge — said, never "not available"
         for (const r of (availRows ?? []) as any[]) {
           if (r.date === todayStr) {
             availMap.set(r.buddy_id, "available_today");
@@ -3779,7 +3779,7 @@ router.get("/compass/recommendations", async (req, res) => {
       }));
 
       void logCompassImpression(buddyRecommendations, user.id, effectiveSessionId);
-      res.json({ recommendations: buddyRecommendations, surface, sessionId: effectiveSessionId });
+      sendRecommendations(res, { recommendations: buddyRecommendations, surface, sessionId: effectiveSessionId }, buddyFailed);  // §108 (D-W11X2-84): `partial` beside the picks when a read failed or was cut
       return;
     }
 

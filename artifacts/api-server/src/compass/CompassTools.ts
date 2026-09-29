@@ -1765,9 +1765,9 @@ async function toolMeetupOpportunities(
   profile: CompassProfile | null,
   userId: string,
 ): Promise<unknown> {
-  const { opportunities, contextsChecked, withheldForPrivacy } =
+  const { opportunities, contextsChecked, withheldForPrivacy, unread } =
     await getMeetupOpportunities(sc, userId, hiddenUserIds(profile));
-  if (contextsChecked === 0) {
+  if (unread && opportunities.length === 0) return { opportunities: [], withheldForPrivacy, info: MEETUP_UNREAD_INFO }; if (contextsChecked === 0) {  // census-discovery §108 (DV-83, D-W11X2-83): a failed read is neither "no trips", "nobody sharing" nor "not shared both ways"
     return { opportunities: [], withheldForPrivacy: 0, info: "The user has no active trips or upcoming events with a circle to check." };
   }
   if (opportunities.length === 0) {
@@ -1783,7 +1783,7 @@ async function toolMeetupOpportunities(
   return {
     opportunities,
     withheldForPrivacy,
-    info: "Each occasion exists only because both people are sharing presence with each other. Location is approximate only — repeat the `where` string exactly and never propose a place the result did not name.",
+    info: unread ? MEETUP_PARTIAL_INFO : "Each occasion exists only because both people are sharing presence with each other. Location is approximate only — repeat the `where` string exactly and never propose a place the result did not name.",  // §108: a read failed, so the list may be incomplete
   };
 }
 
@@ -2431,3 +2431,8 @@ const WHOS_AROUND_UNREAD_INFO = "Circle presence could not be checked right now 
 
 /** census-discovery §108 (DV-83 round 11, D-W11X2-76): people were found, but a presence read on the walk failed, so the list is partial. */
 const WHOS_AROUND_PARTIAL_INFO = "Only people who opted in to sharing appear, at the granularity they chose. Location is approximate only — never precise. Some circles could not be checked right now (a read failed), so this list may be incomplete: say so, and do not say these are the only people around.";
+
+/** census-discovery §108 (DV-83 round 11, D-W11X2-83): a read on the meetup walk or its reciprocity check failed, and no occasion could be built. */
+const MEETUP_UNREAD_INFO = "Meetup availability could not be checked right now (a read failed). Say it could not be checked; do not say nobody is sharing, that the user has no trips, or that the sharing is one-way.";
+/** census-discovery §108 (D-W11X2-83): occasions were found, but a read failed, so the list is partial. */
+const MEETUP_PARTIAL_INFO = "Each occasion exists only because both people are sharing presence with each other. Location is approximate only — repeat the `where` string exactly and never propose a place the result did not name. Some circles could not be checked right now (a read failed), so this list may be incomplete: say so.";
