@@ -38,7 +38,7 @@ import { Router, type Request, type Response } from "express";
 import { requireUser, sendError } from "../lib/http.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { getServiceClient } from "../lib/supabase.js"; import { exposureForResponse, serveClockOf, servedRecommendationId } from "../lib/discoveryRecommendationRecord.js"; import { logServeUnlessRefused } from "../lib/discoveryRefusal.js"; import { DiscoveryServePoint, type ServedItem } from "../lib/discoveryServeLog.js";  // §94: the serve log
-import { unlessDiscoveryStopped } from "../lib/discoveryStopGate.js";  // census-discovery §104 (DV-83, D-W11X2-56): the flag is read strictly at the foot — was: import { isFlagEnabled } from "../lib/featureFlags.js";
+import { unlessDiscoveryStopped } from "../lib/discoveryStopGate.js";  // census-discovery §104 (DV-83, D-W11X2-56): the flag is read strictly at the foot — this line used to bring in the isFlagEnabled helper from lib/featureFlags
 import { loadPdeViewer } from "../lib/discoveryPde.js";
 import {
   rankTrailsForViewer, rankSharedMomentsForViewer, rankEmergingForViewer, type RankedKind,
