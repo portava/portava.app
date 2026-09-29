@@ -251,8 +251,7 @@ async function fetchUpcomingEvents(
     // events; only one of them is a fact about the world.
     if (error) return unusable([]); if (profile?.locationUnread && !profile.currentCity) return unusable([]);  // census-discovery §107 (D-W11X2-73): events for no city are not this viewer's events
     const hidden = hiddenUserIds(profile);
-    return sourced(((data ?? []) as any[])
-      .filter((e) => !hidden.has(e.host_id as string))
+    const readRows = (data ?? []) as any[]; const visibleRows = readRows.filter((e) => !hidden.has(e.host_id as string)); return sourced(withMoreThanShown(visibleRows.length > limit || readRows.length >= limit * 3, visibleRows  // census-discovery §110 (D-W11X2-97): a list cut by the slice or by the read's cap says so
       .slice(0, limit)
       .map((e) => ({
         id: String(e.id),
@@ -261,7 +260,7 @@ async function fetchUpcomingEvents(
         country: (e.country as string | null) ?? null,
         startsAt: (e.starts_at as string | null) ?? null,
         category: (e.category as string | null) ?? null,
-      })));
+      }))));
   } catch {
     return unusable([]);
   }
@@ -279,10 +278,10 @@ function buildTonightVibe(events: HomeEvent[]): { headline: string; events: Home
     if (c) counts.set(c, (counts.get(c) ?? 0) + 1);
   }
   const top = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
-  const headline =
-    events.length === 1
+  const n = moreThanShown(events) ? `${events.length}+` : String(events.length); const headline =  // §110 (D-W11X2-97): counted before the cut, or said to be more
+    n === "1"
       ? `1 event on tonight`
-      : `${events.length} events on tonight${top ? ` — ${top} leads the night` : ""}`;
+      : `${n} events on tonight${top ? ` — ${top} leads the night` : ""}`;
   return { headline, events: events.slice(0, 4) };
 }
 
@@ -543,3 +542,11 @@ function compassHomeFailure(compassEnabled: boolean, reason: "compass_flags_unre
     refusal: discoveryRefusal("transient_db", reason, "GET /compass/home", "nothing", [source]),
   };
 }
+
+// ── census-discovery §110 (DV-83 round 13, lane W11-X2, D-W11X2-97): "N events on tonight" is never a cut list's length ──
+// `fetchUpcomingEvents` reads `limit * 3` rows, drops hidden hosts and keeps `limit`, and the headline
+// counted what was kept: a city with 12 events tonight said 8. A list cut by the slice, or read to its
+// row cap, is marked here (beside the array, so the served list is unchanged) and counted "N+".
+const MORE_THAN_SHOWN = new WeakSet<object>();
+function withMoreThanShown<T extends object>(more: boolean, list: T): T { if (more) MORE_THAN_SHOWN.add(list); return list; }
+function moreThanShown(list: object): boolean { return MORE_THAN_SHOWN.has(list); }

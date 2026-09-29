@@ -1607,7 +1607,7 @@ router.post("/compass/ask", async (req, res) => {
     modeWeightingLines = buildModeWeightingLines(ctx.contextState, intentMode);
     const structured = await buildStructuredCompassContext(sc, effProfile);
     structuredLines  = formatStructuredContextLines(structured);
-  } catch { /* non-fatal — proceed without structured context */ }
+  } catch { structuredLines = [STRUCTURED_CONTEXT_UNREAD_LINE]; /* census-discovery §110 (DV-83, D-W11X2-97): the section is said to be unread, not dropped — was: non-fatal — proceed without structured context */ }
 
   const locLine = locationCtx?.currentCity
     ? `${locationCtx.currentCity}${locationCtx.currentCountry ? `, ${locationCtx.currentCountry}` : ""}`
@@ -5028,3 +5028,8 @@ function telegraphCoverage(rawItems: unknown[], cardCount: number) {
 function sendTelegraphRefused(res: import("express").Response, city: string | null, code: string, sources: string[]): void {
   res.json({ cards: [], city, refusal: discoveryRefusal("transient_db", code, "GET /compass/telegraph", "nothing", sources) });
 }
+
+// ── census-discovery §110 (DV-83 round 13, lane W11-X2, D-W11X2-97): /compass/ask never drops the structured context silently ──
+// A thrown profile read (a failed blocks or mutes read fails `getCompassProfile` closed) dropped the whole
+// circles / bookings / passport block with no line, so the model answered as if the user had none.
+const STRUCTURED_CONTEXT_UNREAD_LINE = "The user's circles, buddy bookings and passport history could not be read right now: do not say the user has none of them.";

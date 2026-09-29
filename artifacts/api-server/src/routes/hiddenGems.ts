@@ -453,7 +453,7 @@ router.get("/hidden-gems", async (req, res) => {
         .maybeSingle(),
     ]);
 
-    const tripRow = tripRes.data as any;
+    if (tripRes.error || memberRes.error) { sendError(res, "degraded_unavailable", "We could not check that trip right now. Please try again shortly."); return; } const tripRow = tripRes.data as any;  // census-discovery §110 (D-W11X2-97): a failed read is not "Trip not found"
     if (!tripRow) { sendError(res, "not_found", "Trip not found"); return; }
 
     const isOwner = tripRow.owner_id === user.id;
@@ -468,13 +468,13 @@ router.get("/hidden-gems", async (req, res) => {
       // recorded in trip_plan_items (source_type="hidden_gem", source_id =
       // gem id), the same table /:id/plan writes to. Resolve the gem ids via
       // that join table first, then fetch the gems themselves.
-      const { data: planItems } = await sc
+      const { data: planItems, error: planItemsErr } = await sc
         .from("trip_plan_items")
         .select("source_id")
         .eq("trip_id", callerTripId)
         .eq("source_type", "hidden_gem");
-      const gemIdsForTrip = [...new Set(((planItems as any[]) ?? []).map((p: any) => p.source_id as string))];
-      const { data: tripGems } = gemIdsForTrip.length
+      if (planItemsErr) throw planItemsErr; const gemIdsForTrip = [...new Set(((planItems as any[]) ?? []).map((p: any) => p.source_id as string))];
+      const { data: tripGems, error: tripGemsErr } = gemIdsForTrip.length
         ? await sc
             .from("hidden_gems")
             .select("*")
@@ -482,8 +482,8 @@ router.get("/hidden-gems", async (req, res) => {
             .eq("status", "active")
             .order("created_at", { ascending: false })
             .limit(opts.limit)
-        : { data: [] as any[] };
-      const safe = await applyGemPrivacyBatch(tripGems ?? [], sc, user.id, callerTripId);
+        : { data: [] as any[], error: null };
+      if (tripGemsErr) throw tripGemsErr; const safe = await applyGemPrivacyBatch(tripGems ?? [], sc, user.id, callerTripId);  // §110 (D-W11X2-97): a failed read is not "no gems on this trip"
       const gemIds = (safe as any[]).map((g: any) => g.id as string);
       const agg = await batchFetchGemAggregates(sc, gemIds);
       const enriched = (safe as any[]).map((g: any) => {
@@ -499,14 +499,14 @@ router.get("/hidden-gems", async (req, res) => {
   // submittedBy: return gems submitted by a specific user (public guide profile queries)
   if (opts.submittedBy) {
     try {
-      const { data: userGems } = await sc
+      const { data: userGems, error: userGemsErr } = await sc
         .from("hidden_gems")
         .select("*")
         .eq("submitted_by", opts.submittedBy)
         .eq("status", "active")
         .order("created_at", { ascending: false })
         .limit(opts.limit);
-      const safe = await applyGemPrivacyBatch(userGems ?? [], sc, callerId, callerTripId);
+      if (userGemsErr) throw userGemsErr; const safe = await applyGemPrivacyBatch(userGems ?? [], sc, callerId, callerTripId);  // §110 (D-W11X2-97): a failed read is not "this guide has no gems"
       const gemIds2 = (safe as any[]).map((g: any) => g.id as string);
       const agg2 = await batchFetchGemAggregates(sc, gemIds2);
       const enriched2 = (safe as any[]).map((g: any) => {
