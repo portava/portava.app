@@ -2,7 +2,7 @@
 
 *Consolidated 2026-09-28 by lane W11-P (`disc-w11-approvals`, at integration head `3fd11f858`). Census section: census-discovery §96. Register section: `## W11-P — the owner approval request, consolidated` in `docs/architecture/discovery-decision-register.md`. This page replaces lane W10-D's pack (census §83), which predated every lane after §83. §2 maps each earlier request id (`W10D-…`) and every later register entry to the actions below.*
 
-**Nothing in this page has been done.** No migration of this programme is applied to `portava-ci` or to production. Nothing is deployed, and no Discovery flag has been turned on. Every verdict below rests on controlled evidence: unit suites and a local PostgreSQL 16 harness. None of it is production evidence.
+**Nothing in this page has been done in production.** Step 0 is done: the programme's migrations were applied to `portava-ci` on 2026-09-28 and PR #528 merged (§3; `docs/ops/discovery-portava-ci-apply-plan.md` §8.8). Nothing of this programme is applied to production. Nothing is deployed, and no Discovery flag has been turned on. Every verdict below rests on controlled evidence: unit suites and a local PostgreSQL 16 harness. None of it is production evidence.
 
 **How to answer.** Each action gives the exact thing to approve. Reply per action number: "approve", "decline", or a value. The four kinds of decision the programme may not make itself are marked:
 - **consent** — real user consent or a new use of someone's data;
@@ -125,7 +125,7 @@ How the 87 open rows split:
 
 ## 3. Step 0 — the `portava-ci` apply (not a decision)
 
-**It is already authorised** (owner, 2026-09-28: *"after checking dependencies, preserving existing data and flag values, and verifying recovery and postconditions. Do not modify the intentional 2481 ledger entry."*). It is blocked only because this session has no credentials for `portava-ci` (`hwokxgbmezheskbzskfr`).
+**It is already authorised** (owner, 2026-09-28: *"after checking dependencies, preserving existing data and flag values, and verifying recovery and postconditions. Do not modify the intentional 2481 ledger entry."*). **DONE 2026-09-28** through the Supabase connector: 124 guarded statements in dependency order, ledger 680 rows, the 2481 and 3350 rows unchanged, 116 existing flag values preserved and 53 new flags seeded FALSE (`docs/ops/discovery-portava-ci-apply-plan.md` §8.8). PR #528 merged at `0d7dedb57` with every check green, live-DB included. The credential steps below are kept as the record of how it was unblocked.
 
 **What you do (one of the two):**
 1. **Preferred.** In the cloud environment's settings (the environment menu in the session's title bar, then Edit), add under API credentials, or as environment variables:
