@@ -299,7 +299,7 @@ export const TEMPLATES: NotificationTemplate[] = [
     defaultPriority: 'normal',
     defaultChannels: ['in_app', 'push'],
     title: ({ actor }) => `${actor} shared their location`,
-    body: () => 'Live location sharing is active. No exact coordinates are shown.',
+    body: () => 'Live location sharing is active. No exact coordinates are shown.', actionUrl: ({ shareId }) => (shareId ? `/safe-return/${encodeURIComponent(shareId)}` : '/notifications'),
   }),
   tpl({
     eventType: 'location.geofence_triggered',

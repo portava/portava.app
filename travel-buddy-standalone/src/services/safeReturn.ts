@@ -163,7 +163,7 @@ export async function cancelSession(sessionId: string): Promise<{ ok: boolean; e
 export async function startLiveShare(
   sessionId: string,
   opts: { recipientContactId: string; durationMinutes?: number },
-): Promise<{ ok: boolean; share?: { id: string; expiresAt: string | null }; error?: string }> {
+): Promise<{ ok: boolean; share?: { id: string; expiresAt: string | null }; error?: string; recipientNotified?: boolean; recipientNoticeReason?: string }> {
   return apiFetch(`/api/me/safe-return/sessions/${sessionId}/live-share/start`, {
     method: 'POST',
     body: JSON.stringify(opts),
