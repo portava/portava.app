@@ -1099,7 +1099,7 @@ async function toolSearchEvents(
   const withheldDetail = safeHeld.withheld > 0 ? safeHeld.detail : held.detail;
   return safeHeld.kept.length > 0
     ? { candidates: safeHeld.kept, ranked: ranking !== null, attention: wire, safetyAttention: safetyWire }
-    : { candidates: [], attention: wire, safetyAttention: safetyWire, info: rankingFlagsUnread(ranking) ? TOOL_FLAGS_UNREAD_INFO : withheldTotal > 0 ? `No candidates offered: ${withheldDetail}` : "No matching upcoming public events found." };  // §110 (D-W11X2-92)
+    : { candidates: [], attention: wire, safetyAttention: safetyWire, info: rankingFlagsUnread(ranking) ? TOOL_FLAGS_UNREAD_INFO : withheldTotal > 0 ? `No candidates offered: ${withheldDetail}` : ((data ?? []) as any[]).length >= limit * 2 ? cappedReadInfo(limit * 2, "upcoming public events") : "No matching upcoming public events found." };  // §110 (D-W11X2-92, D-W11X2-102): an unread flag read, or a read cut at its cap, is not "none"
 }
 
 async function toolGetPlaceDetails(sc: SupabaseClient, args: Record<string, unknown>): Promise<unknown> {
@@ -2132,7 +2132,7 @@ async function toolGroupRecommendation(
     : (viewerProfile.currentCity ?? null);
 
   let candidates: any[] = [];
-  let groupConstraintsApplied: string[] = []; let flagsUnread = false;  // census-discovery §110 (D-W11X2-92)
+  let groupConstraintsApplied: string[] = []; let flagsUnread = false; let readCapped = 0;  // census-discovery §110 (D-W11X2-92, D-W11X2-102)
 
   if (kind === "events") {
     const cutoff = new Date(Date.now() - 2 * 3600_000).toISOString();
@@ -2151,7 +2151,7 @@ async function toolGroupRecommendation(
       q = q.or(`title.ilike.${pat},description.ilike.${pat}`);
     }
     if (city) q = q.ilike("city", sqlPattern(city));
-    const { data, error } = await q.limit(limit * 3);
+    const { data, error } = await q.limit(limit * 3); if (((data ?? []) as any[]).length >= limit * 3) readCapped = limit * 3;  // §110 (D-W11X2-102): more may exist past the cap
     if (error) return { candidates: [], info: "Event search unavailable right now." };
 
     const constrained: any[] = [];
@@ -2235,7 +2235,7 @@ async function toolGroupRecommendation(
         candidates: [],
         group: { label: group.groupLabel, size: agg.size, memberHandles },
         groupConstraintsApplied: [...new Set(groupConstraintsApplied)],
-        info: flagsUnread ? TOOL_FLAGS_UNREAD_INFO : "No candidates satisfy the whole group's constraints right now.",  // §110 (D-W11X2-92): an unread flag read is not "no candidates"
+        info: flagsUnread ? TOOL_FLAGS_UNREAD_INFO : readCapped > 0 ? cappedReadInfo(readCapped, "events for the whole group") : "No candidates satisfy the whole group's constraints right now.",  // §110 (D-W11X2-92): an unread flag read is not "no candidates"
       };
 }
 
@@ -2499,4 +2499,14 @@ function circleListBoundsInfo(u: StructuredContextUnread | undefined): { info?: 
     u.circleMembers ? CIRCLE_MEMBERS_PARTIAL_INFO : u.circleMembersTruncated ? CIRCLE_MEMBERS_TRUNCATED_INFO : null,
   ].filter((x): x is string => x !== null);
   return { info: parts.join(" ") };
+}
+
+// ── census-discovery §110 (DV-83 round 13, lane W11-X2, D-W11X2-102): a read cut at its cap is not "none" ──
+// search_events reads `limit * 2` rows and drops hidden hosts; get_group_recommendation reads `limit * 3`
+// and drops what fails a member's constraint. When the read reached its cap and nothing survived, "No
+// matching …" was stated over rows never read.
+
+/** The answer when a capped read had no survivor: only the first `n` were checked. */
+function cappedReadInfo(n: number, what: string): string {
+  return `None of the first ${n} matching ${what} Compass checked could be offered; there may be more it did not read. Say none could be shown from what was checked, not that there are none.`;
 }
