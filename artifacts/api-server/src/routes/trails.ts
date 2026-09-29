@@ -213,7 +213,7 @@ router.get("/v1/discovery/trails/:id", asyncHandler(async (req: Request, res: Re
 
   const r = await getTrail(getServiceClient(), id.data, Date.now(), { viewerId: auth.user.id }); // §64: memberCount and status count only what this viewer is served
   if (r.refusal) return sendTrailRefusal(res, r.refusal);
-  if (!r.trail) return sendError(res, "not_found", "trail not found");
+  if (!r.trail) return sendError(res, "not_found", "trail not found"); if (r.membersUnread) return sendTrailRead(res, "GET /v1/discovery/trails/:id", r.membersUnread, true, { trail: toPublicTrail(r.trail), status: null, memberCount: null }); // census-discovery §105 (DV-83): a count and a §12 word over a failed member read are not stated
   res.json({
     trail: toPublicTrail(r.trail),
     // §12's word. `healthScale` and the nine metrics stay on the server.
@@ -265,7 +265,7 @@ router.get("/v1/discovery/trails/:id/modules", asyncHandler(async (req: Request,
   const r = await getTrailModules(sc, id.data, { viewerId: auth.user.id });
   if (r.refusal) return sendTrailRefusal(res, r.refusal);
 
-  res.json({
+  sendTrailRead(res, "GET /v1/discovery/trails/:id/modules", r.membersUnread, r.modules.some((m) => m.items.length > 0), { // census-discovery §105 (DV-83): a failed member read is partial or nothing, never a complete page
     modules: r.modules.map((m) => ({
       key: m.key,
       // §8: "Each spotlight has its own objective and time horizon." Published
@@ -336,7 +336,7 @@ router.get("/v1/discovery/trails/:id/trending", asyncHandler(async (req: Request
   // that no reading was taken, which is not the same as "not trending".
   // `readingProvenance` rather than `momentumProvenance`: see the note on the
   // modules route above — the `11` §4 tripwire forbids the WORD here.
-  res.json({
+  sendTrailRead(res, "GET /v1/discovery/trails/:id/trending", r.membersUnread, r.items.length > 0, { // census-discovery §105 (DV-83): the service answers trending unknown (null) too
     trending: r.momentumUnread ? null : (r.momentum ?? 0) > 0, // H-P8-1 (§58.4, §61, §61.17): a FAILED read is unknown (null), never a measured "not trending"; an empty Trail is a measured false (DC-17)
     items: r.items, ...(r.moreFromThisPlace ? { moreFromThisPlace: r.moreFromThisPlace } : {}), // §86 follow-up (DV-23): §10 clause 5 on this list — present only when something was held back; GET …/more lists them
     readingProvenance: toPublicProvenance(r.momentumProvenance),
@@ -500,7 +500,7 @@ router.get("/v1/discovery/trails/:id/places/:placeId/more", asyncHandler(async (
   const cursor = typeof req.query.cursor === "string" && req.query.cursor.length > 0 ? req.query.cursor : null; // §86.14 (D-W10T-17): members older than the window
   const r = await moreFromThisPlace(getServiceClient(), id.data, placeId.data, { viewerId: auth.user.id, cursor });
   if (r.refusal) return sendTrailRefusal(res, r.refusal);
-  res.json({ placeId: r.placeId, modules: r.modules, next: r.next });
+  sendTrailRead(res, "GET /v1/discovery/trails/:id/places/:placeId/more", r.membersUnread, r.modules.length > 0, { placeId: r.placeId, modules: r.modules, next: r.next }); // census-discovery §105 (DV-83)
 }));
 
 /**
@@ -518,7 +518,7 @@ router.get("/v1/discovery/trails/:id/more", asyncHandler(async (req: Request, re
   const cursor = typeof req.query.cursor === "string" && req.query.cursor.length > 0 ? req.query.cursor : null; // §86.14 (D-W10T-17)
   const r = await moreFromThisTrail(getServiceClient(), id.data, { viewerId: auth.user.id, cursor });
   if (r.refusal) return sendTrailRefusal(res, r.refusal);
-  res.json({ lists: r.lists, next: r.next });
+  sendTrailRead(res, "GET /v1/discovery/trails/:id/more", r.membersUnread, r.lists.length > 0, { lists: r.lists, next: r.next }); // census-discovery §105 (DV-83)
 }));
 
 /**
@@ -577,3 +577,20 @@ import {
 } from "../services/trails/TrailService.js";
 
 export default router;
+
+// ── census-discovery §105 (DV-83 round 9, lane W11-X2, D-W11X2-60): a Trail read over a failed member read ──
+// The service withholds a member whose source read failed (fail closed, §64) and says so in
+// `membersUnread`. The route then sends the SAME body beside the Discovery refusal envelope:
+// `partial` when the body still carries served rows, `nothing` when it carries none. The
+// refusal names ONE generic source, never the table: which read failed would say what KIND
+// of member the Trail holds, and a member withheld for privacy must read exactly as an absent
+// one (§64). A privacy withhold is not a failed read and never reaches here. With every read
+// healthy `membersUnread` is absent and the body is sent exactly as before.
+import { discoveryRefusal, sendDiscoveryRefusal } from "../lib/discoveryRefusal.js";
+
+export const TRAIL_MEMBER_SOURCES = "trail_member_sources";
+
+function sendTrailRead(res: Response, route: string, membersUnread: readonly string[] | undefined, servedRows: boolean, body: object): void {
+  if (!membersUnread || membersUnread.length === 0) { res.json(body); return; }
+  sendDiscoveryRefusal(res, body, discoveryRefusal("transient_db", "trail_member_sources_unread", route, servedRows ? "partial" : "nothing", [TRAIL_MEMBER_SOURCES]));
+}

@@ -29,7 +29,7 @@ import {
   getOutputKindRecommendations, outputKindItemLabel, outputKindItemId,
   type OutputKind, type OutputKindItem,
 } from '../../services/discoveryRecommendations.ts';
-import { listPartialEmptyTitle, LIST_PARTIAL_EMPTY_BODY } from '../../services/discoveryCoverageNotice.ts';
+import { listPartialEmptyTitle, listPartialNotice, LIST_PARTIAL_EMPTY_BODY } from '../../services/discoveryCoverageNotice.ts';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 
 /** The server's flag, read by name (api-server migration 3483). */
@@ -57,18 +57,18 @@ export function DiscoveryOutputKindsRail({ kind, destination, enabled, refreshKe
   const flagOn = useFeatureFlags().isEnabled(DISCOVERY_OUTPUT_KINDS_FLAG);
   const active = enabled && flagOn && (kind !== 'emerging_discoveries' || !!destination);
   const [items, setItems] = useState<OutputKindItem[]>([]);
-  const [failed, setFailed] = useState(false);
+  const [failed, setFailed] = useState(false); const [partial, setPartial] = useState(false);  // census-discovery §105 (DV-83): a partial page is said
   const loadIdRef = useRef(0);
 
   useEffect(() => {
-    if (!active) { setItems([]); setFailed(false); return; }
+    if (!active) { setItems([]); setFailed(false); setPartial(false); return; }
     const myId = ++loadIdRef.current;
     let cancelled = false;
     getOutputKindRecommendations(kind, { destination })
       .then((r) => {
         if (cancelled || loadIdRef.current !== myId) return;
-        if (r.ok) { setItems(r.items); setFailed(false); return; }
-        setItems([]);
+        if (r.ok) { setItems(r.items); setPartial(r.partial === true); setFailed(r.partial === true && r.items.length === 0); return; }  // §105: a partial page with no rows is the failed state, never silence
+        setItems([]); setPartial(false);
         setFailed(r.reason === 'unavailable' || r.reason === 'network');  // §100 (D-W11X2-27): a transport failure is a failed read too, never the empty page's silence
       })
       .catch(() => { if (!cancelled && loadIdRef.current === myId) { setItems([]); setFailed(true); } });  // §100: a thrown read likewise
@@ -97,7 +97,7 @@ export function DiscoveryOutputKindsRail({ kind, destination, enabled, refreshKe
       <View style={styles.header}>
         <Sparkles size={14} color={color.signal} />
         <Text style={styles.title}>{TITLE[kind]}</Text>
-      </View>
+      </View>{partial ? <Text style={styles.noticeText} testID={`discovery-output-kind-${kind}-partial`}>{listPartialNotice(NOUN[kind])}</Text> : null}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rail}>
         {items.map((item) => {
           const id = outputKindItemId(kind, item);

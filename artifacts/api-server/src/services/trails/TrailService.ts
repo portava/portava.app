@@ -170,7 +170,7 @@ export async function listTrails(
 }
 
 export interface TrailDetail {
-  refusal: TrailRefusal;
+  refusal: TrailRefusal; /** census-discovery §105 (DV-83, D-W11X2-60): the member-source reads that FAILED, present only then; the route names one generic source, never these. */ membersUnread?: string[];
   trail: TrailRow | null;
   health: TrailHealth | null;
   /** §12's user-facing word, over the members THIS viewer may be served (§64). Never a number — §12 forbids opaque quality scores. */
@@ -413,7 +413,7 @@ export async function getTrail(sc: any, trailId: string, nowMs = Date.now(), opt
     health,
     status: trailStatusLabel(t.trail.lifecycle_status, view),
     healthScale: trailHealthScale(health),
-    memberCount: view.memberCount,
+    memberCount: view.memberCount, ...(view.membersUnread ? { membersUnread: view.membersUnread } : {}), // §105: a count over a failed read is not the count
   };
 }
 
@@ -480,7 +480,7 @@ export interface TrailModule {
 }
 
 export interface TrailModulesResult {
-  refusal: TrailRefusal;
+  refusal: TrailRefusal; /** census-discovery §105 (DV-83, D-W11X2-60): the member-source reads that FAILED, present only then; the route names one generic source, never these. */ membersUnread?: string[];
   modules: TrailModule[];
   health: TrailHealth | null;
   /**
@@ -662,8 +662,8 @@ export function exposureCountsFrom(
  * creator or one place cannot own a spotlight, and `just_arrived` reserves §9's
  * bounded exploration slots (DV-22).
  */
-export async function getTrailModules(
-  sc: any, trailId: string, opts: { pageSize?: number; nowMs?: number; viewerId?: string | null } = {},
+async function trailModulesRead( // census-discovery §105: exported as getTrailModules at the foot, which names a failed member read
+  sc: any, trailId: string, opts: { pageSize?: number; nowMs?: number; viewerId?: string | null; memberUnread?: Set<string> } = {},
 ): Promise<TrailModulesResult> {
   if (!sc) return { refusal: "no_service_client", modules: [], health: null, momentumProvenance: null };
   const nowMs = opts.nowMs ?? Date.now();
@@ -684,7 +684,7 @@ export async function getTrailModules(
     reportCount: await readOpenReportCount(sc, trailId), geoCellByItem: geo.cellBySource ?? undefined, impressionsBySource: await readMemberImpressions(sc, m.members, nowMs),
     nowMs,
   });
-  const served = linkVenueClusters(await servableMembers(sc, m.members, opts.viewerId ?? null, nowMs), geo); // §86 (DV-23): a post's venue → the place member of that venue
+  const served = linkVenueClusters(await servableMembers(sc, m.members, opts.viewerId ?? null, nowMs, opts.memberUnread), geo); // §86 (DV-23): a post's venue → the place member of that venue
 
   if (flags.exploration) return trailModulesExplored(sc, trailId, m.members, served, health, { nowMs, pageSize, flags, viewerId: opts.viewerId ?? null }); const demoted = flags.healthOrder ? healthDemotedRowIds(m.members, health, nowMs) : null; // §86 — ONE `rank_events` read serves both of this function's readings: §9's
   // exposure denominators for the exploration candidates and `trending_now`'s
@@ -899,7 +899,7 @@ export async function relatedTrails(sc: any, trailId: string): Promise<RelatedTr
 // ── `11` §4 — trending by Trail (DC-21, one of five actions) ────────────────
 
 export interface TrailTrendingResult {
-  refusal: TrailRefusal;
+  refusal: TrailRefusal; /** census-discovery §105 (DV-83, D-W11X2-60): the member-source reads that FAILED, present only then; the route names one generic source, never these. */ membersUnread?: string[];
   /** Trail-level momentum in [0,1] from the SHIPPING momentum kernel, or null. */
   momentum: number | null; /** §61.17: set ONLY when the Trail-momentum read FAILED — `momentum: null` alone also means "no members", a measured empty (DC-17). */ momentumUnread?: true; /** §86 (DV-74): a trend integrity review in force suppresses this Trail's trend. */ trendSuppressed?: true;
   /** Member items with momentum, strongest first. Never a raw score to a client. */
@@ -930,8 +930,8 @@ export interface TrailTrendingResult {
 /** Items GET …/trending lists — the bound it has always had (`.slice(0, 20)`). */
 export const TRAIL_TRENDING_PAGE_SIZE = 20;
 
-export async function trailTrending(
-  sc: any, trailId: string, nowMs = Date.now(), opts: { viewerId?: string | null; ignoreTrendReview?: boolean } = {}, // §86: the admin evidence reads the trend UNDER review
+async function trailTrendingRead( // census-discovery §105: exported as trailTrending at the foot, which names a failed member read
+  sc: any, trailId: string, nowMs = Date.now(), opts: { viewerId?: string | null; ignoreTrendReview?: boolean; memberUnread?: Set<string> } = {}, // §86: the admin evidence reads the trend UNDER review
 ): Promise<TrailTrendingResult> {
   // A FUNCTION, not a shared object. Every refusal path used to build its own
   // literal; spreading one constant instead would hand every one of them the
@@ -944,7 +944,7 @@ export async function trailTrending(
   const m = await readMembers(sc, trailId);
   if (m.refusal) return none(m.refusal);
 
-  const servable = await servableMembers(sc, m.members, opts.viewerId ?? null, nowMs); // §64: every reading below is over what THIS viewer may be served
+  const servable = await servableMembers(sc, m.members, opts.viewerId ?? null, nowMs, opts.memberUnread); // §64: every reading below is over what THIS viewer may be served
   // Nothing this viewer may be served ⇒ no reading was taken (DC-17), exactly
   // as for an EMPTY Trail, so a withheld member is not told apart from none (§64).
   if (servable.length === 0) return none(null);
@@ -1744,16 +1744,16 @@ async function memberAccessFor(
  * (the ranking multiplier, the hourly snapshot) is unchanged and never served.
  * When every member is servable to the viewer, the two are the same numbers.
  */
-async function servedTrailView(sc: any, members: readonly MemberRow[], viewerId: string | null, nowMs: number): Promise<TrailHealth> {
-  const served = await servableMembers(sc, members, viewerId, nowMs);
-  return computeTrailHealth({
+async function servedTrailView(sc: any, members: readonly MemberRow[], viewerId: string | null, nowMs: number): Promise<TrailHealth & { membersUnread?: string[] }> {
+  const unread = new Set<string>(); const served = await servableMembers(sc, members, viewerId, nowMs, unread); // §105 (DV-83): a failed member read is carried to the route
+  return withMembersUnread(computeTrailHealth({
     members: served.map((r) => ({
       source_id: r.source_id, contributor_id: r.contributor_id,
       confidence: Number(r.confidence), content_state: r.content_state, created_at: r.created_at,
     })),
     reportCount: null, // the view feeds §12's word and the count only; `report_rate` stays the whole Trail's
     nowMs,
-  });
+  }), unread);
 }
 
 // ── census-discovery §75 (DC-17, lane P33, H-P21-3): the snapshot keeps its window and feature version ─
@@ -2119,7 +2119,7 @@ export const TRAIL_MEMBER_WINDOW = 500;
 export const TRAIL_MORE_PAGE_SIZE = 200;
 
 export interface MoreFromPlaceResult {
-  refusal: TrailRefusal;
+  refusal: TrailRefusal; /** census-discovery §105 (DV-83, D-W11X2-60): the member-source reads that FAILED, present only then; the route names one generic source, never these. */ membersUnread?: string[];
   placeId: string;
   /** Per module (and the trending list), exactly the members it counted in `moreFromThisPlace[placeId]`; on a cursor page, the window's older members at this place. */
   modules: Array<{ key: HeldBackListKey; items: TrailModule["items"] }>;
@@ -2163,16 +2163,16 @@ type HeldList = { key: HeldBackListKey; byPlace: Record<string, TrailModule["ite
 /** Every list this viewer is served for a Trail, with what each held back: the modules, then GET …/trending's list; and the cursor past the window. */
 async function heldBackLists(
   sc: any, trailId: string, opts: { viewerId?: string | null; nowMs?: number },
-): Promise<{ refusal: TrailRefusal; lists: HeldList[]; next: string | null }> {
+): Promise<{ refusal: TrailRefusal; lists: HeldList[]; next: string | null; membersUnread?: string[] }> {
   const r = await getTrailModules(sc, trailId, { viewerId: opts.viewerId ?? null, nowMs: opts.nowMs });
   if (r.refusal) return { refusal: r.refusal, lists: [], next: null };
   const t = await trailTrending(sc, trailId, opts.nowMs ?? Date.now(), { viewerId: opts.viewerId ?? null });
   const lists: HeldList[] = r.modules.map((m) => ({ key: m.key as HeldBackListKey, byPlace: m.heldBackByPlace ?? {}, unplaced: m.heldBackUnplaced ?? [] }));
-  if (!t.refusal) lists.push({ key: "trending", byPlace: t.heldBackByPlace ?? {}, unplaced: t.heldBackUnplaced ?? [] });
+  if (t.refusal) return { refusal: t.refusal, lists: [], next: null }; lists.push({ key: "trending", byPlace: t.heldBackByPlace ?? {}, unplaced: t.heldBackUnplaced ?? [] }); // §105 (DV-83): a refused trending read is refused, never a silently missing list (the push used to run only when it was not refused)
   const m = await readMembers(sc, trailId);
   if (m.refusal) return { refusal: m.refusal, lists: [], next: null };
   const edge = m.members.length >= TRAIL_MEMBER_WINDOW ? m.members[m.members.length - 1] : undefined;
-  return { refusal: null, lists, next: edge ? encodeMemberCursor(edge) : null };
+  return { refusal: null, lists, next: edge ? encodeMemberCursor(edge) : null, ...(r.membersUnread || t.membersUnread ? { membersUnread: [...new Set([...(r.membersUnread ?? []), ...(t.membersUnread ?? [])])].sort() } : {}) };
 }
 
 /**
@@ -2183,7 +2183,7 @@ async function heldBackLists(
  */
 async function olderMembersPage(
   sc: any, trailId: string, cursor: MemberCursor, viewerId: string | null, nowMs: number,
-): Promise<{ refusal: TrailRefusal; list: HeldList | null; next: string | null }> {
+): Promise<{ refusal: TrailRefusal; list: HeldList | null; next: string | null; membersUnread?: string[] }> {
   const t = await readTrail(sc, trailId);
   if (t.refusal || !t.trail) return { refusal: t.refusal ?? "unknown_trail", list: null, next: null };
   const tie = await sc.from("content_trails").select(MEMBER_COLUMNS)
@@ -2196,7 +2196,7 @@ async function olderMembersPage(
   if (older.error) return { refusal: refusalFor(older.error, "olderMembersPage.older"), list: null, next: null };
   const rows = [...((tie.data ?? []) as MemberRow[]), ...((older.data ?? []) as MemberRow[])].slice(0, TRAIL_MORE_PAGE_SIZE);
   const edge = rows.length >= TRAIL_MORE_PAGE_SIZE ? rows[rows.length - 1] : undefined;
-  const served = linkVenueClusters(await servableMembers(sc, rows, viewerId, nowMs), await readMemberGeography(sc, rows));
+  const unread = new Set<string>(); const served = linkVenueClusters(await servableMembers(sc, rows, viewerId, nowMs, unread), await readMemberGeography(sc, rows));
   const seen = new Set<string>();
   const byPlace: Record<string, TrailModule["items"]> = {};
   const unplaced: TrailModule["items"] = [];
@@ -2207,7 +2207,7 @@ async function olderMembersPage(
     const it = { id: r.id, sourceType: r.source_type, sourceId: r.source_id, contentState: r.content_state };
     if (r.clusterPlaceId) (byPlace[r.clusterPlaceId] ??= []).push(it); else unplaced.push(it);
   }
-  return { refusal: null, list: { key: "beyond_window", byPlace, unplaced }, next: edge ? encodeMemberCursor(edge) : null };
+  return withMembersUnread({ refusal: null, list: { key: "beyond_window", byPlace, unplaced }, next: edge ? encodeMemberCursor(edge) : null }, unread);
 }
 
 export async function moreFromThisPlace(
@@ -2219,19 +2219,19 @@ export async function moreFromThisPlace(
     const p = await olderMembersPage(sc, trailId, c, opts.viewerId ?? null, opts.nowMs ?? Date.now());
     if (p.refusal || !p.list) return { refusal: p.refusal, placeId, modules: [], next: null };
     const items = p.list.byPlace[placeId] ?? [];
-    return { refusal: null, placeId, modules: items.length > 0 ? [{ key: "beyond_window", items }] : [], next: p.next };
+    return { refusal: null, placeId, modules: items.length > 0 ? [{ key: "beyond_window", items }] : [], next: p.next, ...(p.membersUnread ? { membersUnread: p.membersUnread } : {}) };
   }
   const h = await heldBackLists(sc, trailId, opts);
   if (h.refusal) return { refusal: h.refusal, placeId, modules: [], next: null };
   return {
     refusal: null, placeId,
     modules: h.lists.map((l) => ({ key: l.key, items: l.byPlace[placeId] ?? [] })).filter((m) => m.items.length > 0),
-    next: h.next,
+    next: h.next, ...(h.membersUnread ? { membersUnread: h.membersUnread } : {}),
   };
 }
 
 export interface MoreFromTrailResult {
-  refusal: TrailRefusal;
+  refusal: TrailRefusal; /** census-discovery §105 (DV-83, D-W11X2-60): the member-source reads that FAILED, present only then; the route names one generic source, never these. */ membersUnread?: string[];
   /** Per list, EVERY member it held back: by place, and those with no place (D-W10T-15); on a cursor page, the window's older members. */
   lists: HeldList[];
   /** Opaque cursor to the next bounded page of members older than the window, or null when there are none (D-W10T-17). */
@@ -2247,11 +2247,11 @@ export async function moreFromThisTrail(
     if (!c) return { refusal: "invalid_request", lists: [], next: null };
     const p = await olderMembersPage(sc, trailId, c, opts.viewerId ?? null, opts.nowMs ?? Date.now());
     if (p.refusal || !p.list) return { refusal: p.refusal, lists: [], next: null };
-    return { refusal: null, lists: Object.keys(p.list.byPlace).length > 0 || p.list.unplaced.length > 0 ? [p.list] : [], next: p.next };
+    return { refusal: null, lists: Object.keys(p.list.byPlace).length > 0 || p.list.unplaced.length > 0 ? [p.list] : [], next: p.next, ...(p.membersUnread ? { membersUnread: p.membersUnread } : {}) };
   }
   const h = await heldBackLists(sc, trailId, opts);
   if (h.refusal) return { refusal: h.refusal, lists: [], next: null };
-  return { refusal: null, lists: h.lists.filter((l) => Object.keys(l.byPlace).length > 0 || l.unplaced.length > 0), next: h.next };
+  return { refusal: null, lists: h.lists.filter((l) => Object.keys(l.byPlace).length > 0 || l.unplaced.length > 0), next: h.next, ...(h.membersUnread ? { membersUnread: h.membersUnread } : {}) };
 }
 
 // ── DV-74: a trend integrity review in force ──────────────────────────────────
@@ -2424,4 +2424,32 @@ export async function decideSuggestion(
     .eq("id", suggestionId).eq("state", "pending").select("id");
   if (upd.error) return { refusal: refusalFor(upd.error, "decideSuggestion.update"), state: null, attach };
   return { refusal: null, state: decision === "accept" ? "accepted" : "declined", ...(attach ? { attach } : {}) };
+}
+
+// ── census-discovery §105 (DV-83 round 9, lane W11-X2, D-W11X2-60): a failed member-source read is named ──
+// `servableMembers` withholds every member of a table whose read failed (fail closed, §64) and
+// names the read in its `unread` set, but before §105 no READ path passed one: GET …/modules,
+// …/trending, …/:id and the two "more" routes served a timed-out read as a complete Trail. The
+// two readers below are the exported names, so every caller (the routes, `heldBackLists`, the
+// admin evidence) is told. A privacy withhold is not a failed read and adds nothing to the set.
+export async function getTrailModules(
+  sc: any, trailId: string, opts: { pageSize?: number; nowMs?: number; viewerId?: string | null } = {},
+): Promise<TrailModulesResult> {
+  const memberUnread = new Set<string>();
+  const r = await trailModulesRead(sc, trailId, { ...opts, memberUnread });
+  return r.refusal ? r : withMembersUnread(r, memberUnread);
+}
+
+/** A failed member read makes the Trail's trend UNKNOWN (`momentumUnread`), never a measured "not trending"; a review's suppression stays decisive. */
+export async function trailTrending(
+  sc: any, trailId: string, nowMs = Date.now(), opts: { viewerId?: string | null; ignoreTrendReview?: boolean } = {},
+): Promise<TrailTrendingResult> {
+  const memberUnread = new Set<string>();
+  const r = await trailTrendingRead(sc, trailId, nowMs, { ...opts, memberUnread });
+  if (r.refusal || memberUnread.size === 0) return r;
+  return { ...withMembersUnread(r, memberUnread), ...(r.trendSuppressed ? {} : { momentumUnread: true as const }) };
+}
+
+function withMembersUnread<T extends object>(r: T, unread: ReadonlySet<string>): T & { membersUnread?: string[] } {
+  return unread.size > 0 ? { ...r, membersUnread: [...unread].sort() } : r;
 }
