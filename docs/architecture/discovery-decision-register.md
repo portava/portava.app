@@ -2301,7 +2301,7 @@ No APPROVAL REQUIRED entry is added. Arming the stop (D-W10-O-3) and gate 2 (D-W
   - **Recorded consequence.** The tab-bar prefetch (`app/(tabs)/_layout.tsx`) warms only the query it sends (no centre, no context). It no longer paints the For You tab when the tab's own query differs; before, it painted another query's page. Not changed: warming the right page needs the tab's inputs, which the layout does not hold.
   - **`getDiscoveryPlaces`' old literal.** Its eighteen lines are now a comment listing the builder's entries, and the line §71's citation names quotes the builder's own intent-mode line; the executable line is in `discoveryPlacesParams`.
 - **Reversibility.** Revert the named lines and the foot helpers; delete the stamp module. The cache is in memory only; nothing is stored.
-- **Where.** Tests: `travel-buddy-standalone/src/services/__tests__/discovery.cacheKey.test.ts` K1–K5, C1 (K1 and K2 fail if a parameter reaches the URL without reaching the key); `DiscoveryCategoryTab.cacheKey` V6-K1, V6-K2 (the verifier's probes), V6-K3; `DiscoveryCategoryTab.heldQuery` G1, G2, C1, C2.
+- **Where.** Tests: `travel-buddy-standalone/src/services/__tests__/discovery.cacheKey.test.ts` K1–K6, C1 (K1 and K2 fail if a parameter reaches the URL without reaching the key); `DiscoveryCategoryTab.cacheKey` V6-K1, V6-K2, V6-K3 (the verifier's probes), V6-K4; `DiscoveryCategoryTab.heldQuery` G1, G2, C1, C2.
 
 ### D-W11X2-48 — search's real-name visibility read is strict: a failed read names `profile_privacy_settings`
 
@@ -2325,7 +2325,7 @@ No APPROVAL REQUIRED entry is added. Arming the stop (D-W10-O-3) and gate 2 (D-W
   - `rankItemsForDiscovery` and `buildSection` throw `CompassFlagsUnreadableError`. The route refuses on the Compass-order path instead of falling through, and the section route answers `compass_flags_unreadable` (D-W11X2-50).
   - **Ruled, not changed.** A failed read of the CAPABILITY flag `COMPASS_V1_RULE_BASED_ENABLED` reads OFF. That is `flags.ts`' documented posture ("capability gates read off"), and the page then serves every candidate, withholding nothing (U-C1). The profile reads (block list, safe return) fail toward serving, and nothing is withheld. DV-07's thrown-Compass degradation is unchanged.
 - **Reversibility.** Revert the named lines, the foot helper and the error class. Nothing is stored; the refused page is never cached.
-- **Where.** Tests: `discoveryOnePipeline` U-P1, U-P2, U-C1; `compassFlagsUnreadableGate` R1–R4, C1, C2.
+- **Where.** Tests: `discoveryOnePipeline` U-P1, U-P2, U-P3, U-C1 (its own describe at the file's foot); `compassFlagsUnreadableGate` R1–R4, C1, C2.
 
 ### D-W11X2-50 — GET /compass/feed/section says a failed build or an unread flag table; the picks section says it too
 
@@ -2368,3 +2368,8 @@ No APPROVAL REQUIRED entry is added. Arming the stop (D-W10-O-3) and gate 2 (D-W
   - `inactiveSubmitterIds` answers null on failure.
   - The candidate retrievals throw `ReadFailed`.
   - Every other Discovery catch arm answers a refusal or a write's `ok: false`.
+  - Every Discovery serve or search path that reads a capability flag with `isFlagEnabled`: only the buddy launch gate withheld rows the viewer asked for when the read failed (D-W11X2-51). Every other flag's off arm serves the pre-flag answer in full (a ranking, a projection, a log or an extra pass is skipped), so an unread flag is never a short list.
+  - The client cache's other writer, `getDiscoveryCategoryCounts`, goes through `getDiscoveryPlaces`, so its seven category pages are keyed by the query each one sent. The map's `getDiscoveryPlaces` call reads no cache.
+  - The Compass feed's device scope is section and city. `tzOffsetMinutes`, the one request parameter outside it, is the device clock's offset, not a query the viewer chose; a feed kept under a failed refresh after a time-zone change is that section's and city's feed, not yet refreshed, which is what the stale line says.
+  - Every caller of `buildSection` and `rankItemsForDiscovery` handles the new throw: the Compass home's best-next-move answers `unusable`, the ask context is non-fatal, and `/compass/recommendations` and `/compass/telegraph` take their existing build-failed arms. Each answered the same empty list before, from the fail-safe map.
+- **Seen, not changed.** `/compass/recommendations`' build-failed arm answers `{ recommendations: [] }`. Search draws it as the optional Compass rail under a zero-result search, and the trip map reads it for its trip's Compass picks. The Discovery answer beside it is complete, and the route is Compass's, graded by census-compass, so it is left to that census.

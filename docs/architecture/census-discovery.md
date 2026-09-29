@@ -17402,6 +17402,184 @@ An independent re-verification at the merged head is owed before the integrator 
 
 Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
 
+## §103 — DV-83 round 7 (lane W11-X2): the cache key is the query sent, the real-name read is strict, a failed Compass section is said, the fail-safe flag map refuses, and DV-83 moves W → C
+
+*Written 2026-09-29 by lane W11-X2 (round 7) on `disc-w11-x2-r7`, from `5f2b0e7eb` (§102) and `d60498cdd` (§102.11). It closes §102.11's three paths, each with the verifier's probe copied in as a red test. It decides the five possibles; two were real and are closed. The round's sweep found no further path. Decisions are in `docs/architecture/discovery-decision-register.md`, section "W11-X2 round 7", D-W11X2-47 to D-W11X2-53.*
+
+*No migration and no new flag. Each change alters output only when a Discovery read failed, a flag table could not be read, or a query changed while its rows were on screen. With every read healthy, every served byte is unchanged: the full api-server suite passes apart from two load artefacts that pass alone (103.7), and apart from the restatements in 103.7 no existing assertion changed. Every edit in a cited file is line-neutral: lines are changed in place (each keeping its old text in a `was:` comment where a citation names it), and new code is appended at a file's foot.*
+
+*All evidence is controlled: in-process routes over fake worlds, the real client service over a fake `fetch`, and jest over the real tabs, sections and hooks. None of it is production evidence, and no client build carrying the change has shipped.*
+
+### 103.1 The client cache key is the query the request sends (§102.11 finding 1; D-W11X2-47)
+
+- **Before.** `_discoveryCacheKey` held destination, category, radius, page and intent mode. A page fetched under one age filter, open-now, rating, sort, context or centre was replayed for another, and the new query's failed read drew the old query's rows under "Couldn't refresh" (V6-K1, V6-K2).
+- **Now.**
+  - **One builder.** `discoveryPlacesParams` (foot of the service, `travel-buddy-standalone/src/services/discovery.ts:1403#function discoveryPlacesParams(`) builds the query. `getDiscoveryPlaces` sends that `params` object and writes the cache under a key derived from it (`travel-buddy-standalone/src/services/discovery.ts:766#_CLIENT_CACHE.set(_discoveryCacheKey(params), { data, at: Date.now(), scope: lease.scope });`). The key is every entry of the query, with the destination normalised (`travel-buddy-standalone/src/services/discovery.ts:663#function _discoveryCacheKey(params: URLSearchParams): string {`). A parameter that reaches the URL reaches the key.
+  - **The test that fails if a parameter is not in the key.** K2 sends a request with every parameter set, then enumerates the fetched URL's own parameters. Changing any one of them must change the key. The list comes from the URL, not from the test, so a parameter added later is covered the day it is added. K1 pins that the one stored entry is the key of the URL actually fetched.
+  - **The readers.** The readers take the rest of the query as an optional sixth argument, so an existing five-argument call keeps its meaning (the no-filter query). The tab hydrates with the whole query, built from the same inputs `load()` sends (`categoryTabCacheQuery`, foot), and so does ForYouTab (`forYouCacheQuery`, foot).
+  - **Rows never sit under another query's failure.** Every page and every transport failure carries the identity of the query it was sent for, kept beside the object in a WeakMap so no body changes shape (`travel-buddy-standalone/src/services/discoveryQueryStamp.ts:30#export function discoveryQueryIdentity(params: URLSearchParams): string {`). The tab records the identity of the rows on screen. A failed page-1 read for a different identity clears them, so the tab draws its error state and never the stale line (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:500#if (!res.ok) { if (nextPage === 1 && heldForAnotherQuery(heldQueryRef.current, res)) {`). This holds even if a cache were ever to hand over the wrong page (G1–G3). Map mode draws from the same `places` and `refreshFailed`, so it follows.
+  - **The count writer.** `getDiscoveryCategoryCounts`, the cache's other writer (§102.11), goes through `getDiscoveryPlaces`, so each of its seven category pages is keyed by the query it sent.
+
+### 103.2 Search's real-name visibility read is strict (§102.11 finding 2; D-W11X2-48)
+
+- **Before.** `nameVisibilitySet` answered an empty set on an error or a throw, and search's C09 rule then dropped every traveler matched only by real name. type=travelers, buddies, all and suggest answered 200 with no refusal (V6-N1, V6-N2).
+- **Now.** C09 reads with a strict variant, `nameVisibilitySetOrNull` (foot of `artifacts/api-server/src/lib/publicIdentity.ts`, `artifacts/api-server/src/lib/publicIdentity.ts:190#if (error) return null;`). A null throws `DiscoverySearchReadError("profile_privacy_settings")` (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:583#if (allowedNames === null) throw new DiscoverySearchReadError("profile_privacy_settings", "show_real_name");`). type=travelers is refused `nothing`, and type=all and suggest name `travelers`. The posture is unchanged: nothing name-matched is served unchecked. The lenient `nameVisibilitySet` stays for its eight callers, where the set only redacts a label and drops no row.
+
+### 103.3 A failed Compass section is said, never hidden like "Compass is off" (§102.11 finding 3; D-W11X2-50)
+
+- **Before.** GET /compass/feed/section's catch arm answered `{ section: null, fallback: true, safeItems }`. The client normalizer read that as `compassEnabled: false`, and `CompassPicksSection` hid itself before its failed-read branch, dropping `safeItems` (V6-P1, V6-P1b). The sweep found the disabled arm answering an unread flag table the same way.
+- **Now.**
+  - **The server.** A failed build answers `compassEnabled: true`, `fallbackReason: "section_build_error"` and the refusal envelope: `partial` when safe items ride along, `nothing` when none do (`artifacts/api-server/src/routes/compass.ts:778#sendCompassSectionFailure(res, err instanceof CompassFlagsUnreadableError ? "compass_flags_unreadable" : "section_build_error", fallback.safeItems);`). An unread flag table (`readCompassEnabled` → null, `artifacts/api-server/src/compass/flags.ts:192#export async function readCompassEnabled(db: SupabaseClient): Promise<boolean | null> {`) answers `compass_flags_unreadable` and never `compassEnabled: false` (`artifacts/api-server/src/routes/compass.ts:633#if (enabledRead === null) { sendCompassSectionFailure(res, "compass_flags_unreadable", []); return; }`). The disabled arm, with the flags read and Compass off, is byte-identical (C1, C2).
+  - **The client.** The normalizer infers the marker from a server that predates it: a build-error arm carries `safeItems` and no `compassEnabled`, and the disabled arm carries neither (`travel-buddy-standalone/src/services/compass.ts:161#fallbackReason: raw.fallbackReason ?? (raw.fallback && raw.compassEnabled === undefined && Array.isArray(raw.safeItems) ? 'section_build_error' : undefined),`). `useCompassFeed` never caches a failure answer and never lets it replace same-scope picks (`travel-buddy-standalone/src/hooks/compass/useCompassFeed.ts:68#if (result.ok && result.data && !isCompassSectionFailure(result.data)) {`). The section hides only for Compass's own "off" (`travel-buddy-standalone/src/components/compass/CompassPicksSection.tsx:335#if (!compass.compassEnabled && !compass.loading && !isCompassSectionFailure(compass.data)) return null;`). A failure shows the failed line, or the safe items under the stale line.
+  - **Every consumer, checked.** On the client, `fetchCompassSection` has one caller, `useCompassFeed`, whose two users are `CompassPicksSection` and `ForYouTab` (the Discovery tab screen's For You tab). For `ForYouTab`, the hook's `compassEnabled` stays false for any fallback, so safe items never replace the OSM list, and kept Compass items carry the tab's stale line. `fetchCompassFeed` has no caller. The Compass home, Live and the trip heartbeat read other routes. On the server, every other `buildSection` caller already handles a thrown build (103.6).
+
+### 103.4 The fail-safe flag map refuses; it is never an empty For You page (possible 1; D-W11X2-49)
+
+- **Probed and real.** Take the case where `discovery_for_you_pde_enabled` is ON and the pipeline's COMPASS_% read resolves an error. `fetchCompassFlags` then answers `FAILSAFE_COMPASS_FLAGS`, in which every `_SAFETY_BLOCK` is engaged, so every Discovery candidate is blocked. The for_you page was served `{ places: [] }` with no refusal (U-P1). The 3455-OFF Compass-order path did the same, and also wrote the empty ranking to Cache B (U-P2). A Cache A hit did the same (U-P3).
+- **Now.**
+  - `runPipeline` reports `flagsUnreadable` only when the fail-safe map gated the batch (`artifacts/api-server/src/compass/CompassPipeline.ts:217#let flagsOk = true;`). A thrown read keeps its historical empty map and reports nothing, per `fetchCompassFlags`' own note (compassFlagsUnreadableGate C2).
+  - The Discovery gate carries it through. Both for_you serve points refuse `nothing`, with class `transient_db`, code `compass_gate_unreadable` and `failedSources: ["compass_flags"]` (`artifacts/api-server/src/routes/discovery.ts:1838#if (forYouA.source === "compass_unreadable")`, `artifacts/api-server/src/routes/discovery.ts:2106#if (forYouM.source === "compass_unreadable")`).
+  - `rankItemsForDiscovery` and `buildSection` throw `CompassFlagsUnreadableError`. The Compass-order path then refuses instead of degrading, and caches nothing (`artifacts/api-server/src/routes/discovery.ts:2254#if (err instanceof CompassFlagsUnreadableError)`).
+  - Compass's posture is kept: it fails closed, and nothing is served un-gated. Only the silence goes.
+- **Ruled, not changed.** A failed read of the capability flag `COMPASS_V1_RULE_BASED_ENABLED` reads OFF, which is `flags.ts`' documented posture. The page then serves every candidate and withholds nothing (U-C1). The profile's safety inputs (the block list and safe return) fail toward serving, so nothing is withheld. The live-intel stage fails to "no constraints", so nothing is excluded.
+
+### 103.5 The other possibles
+
+- **Buddies (possible 2; D-W11X2-51): real, and closed.** With `discovery_buddy_launch_gate_enabled` ON, a failing `rent_buddy_enabled` read made `isFlagEnabled` answer false, and every buddy was withheld as an empty 200. The flag is now read strictly (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:483#return !(await rentBuddyLaunchedOrThrow(sc));`). A failed read throws `DiscoverySearchReadError("feature_flags")`, so type=buddies is refused `nothing` and type=all and suggest name `buddies` (B1, B2). An absent row is still "not launched" (C4). `check-flag-polarity` records the direct read in `DIRECT_READS`.
+- **Suggestion groups (possible 4; D-W11X2-52): closed.** The held key was the text alone, and the device cache key left out `city`, which the request sends. The cache key now carries the city, and the held key is the cache key (`travel-buddy-standalone/src/hooks/useSearchSuggestions.ts:72#setGroups(cached.groups); heldQueryRef.current = key;`). Under a failure, another location's groups are dropped (C1, C3 restated; L1). In flight, nothing flashes empty (Q3), and returning to a city is a cache hit for its own groups (L2).
+- **CM12 (possible 5; D-W11X2-53): killed.** The sheet already resets `wikidataFailed` on a place change (`travel-buddy-standalone/src/components/discovery/PlaceDetailSheet.tsx:91#setWikidataEnrichment(null); setWikidataFailed(false);`), but no test pinned it. WK4 (the next place has no Wikidata id) and WK5 (its read is still in flight) now kill that mutation.
+- **The event-posts rail's `blocks` (possible 3; D-W11X2-53): ruled, not changed.** When the block list is unreadable, the rail shows more rows, not fewer. Whether a viewer is told that belongs to Trust's fail-open posture for event posts (D-W11X2-37), and is not a completeness question.
+
+### 103.6 The sweep
+
+Recorded in D-W11X2-53. No new break was found.
+
+- **Cache keys against their requests.**
+  - `useCommunityDiscovery`: city and sort; `type` and `limit` are constants.
+  - The live-status key: name and city.
+  - `useSearchSuggestions`: fixed in 103.5.
+  - The Compass feed: section and city. `tzOffsetMinutes` is the device clock, not a query.
+  - The Discovery cache's two writers: 103.1.
+- **Lenient empty sets that filter rows.** Only C09's was one (103.2). `readBylineFollowEdges` and `suggestionSeenCache` redact a label or admit more rows. `inactiveSubmitterIds` answers null.
+- **Flag reads that withhold rows.** Only the buddy launch gate did (103.5). Every other Discovery flag's off arm serves the pre-flag answer in full.
+- **Callers of the new throw.** The Compass home answers `unusable`, and the ask context is non-fatal. `/compass/recommendations` and `/compass/telegraph` take their existing build-failed arms; each answered the same empty list before.
+- **Seen, not changed.** `/compass/recommendations`' build-failed arm answers `[]`. Search draws it as the optional Compass rail under a zero-result search, and the Discovery answer beside it is complete. The route is Compass's and is left to census-compass (103.10).
+
+### 103.7 Tests, seen red, and mutations
+
+- **New suites.**
+  - `artifacts/api-server/src/test/discoverySearchNameVisibility.test.ts` (12): V6-N0–V6-N2 are the verifier's probes; N3–N5, B1, B2, C1–C4.
+  - `artifacts/api-server/src/test/compassSectionFailedRead.test.ts` (4): S1, S2, C1, C2.
+  - `artifacts/api-server/src/test/compassFlagsUnreadableGate.test.ts` (6): R1–R4, C1, C2.
+  - `travel-buddy-standalone/src/services/__tests__/discovery.cacheKey.test.ts` (7, node:test): K1–K6, C1.
+  - `travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryCategoryTab.cacheKey.component.test.tsx` (4): V6-K1–V6-K3 are the verifier's probes; V6-K4.
+  - `travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryCategoryTab.heldQuery.component.test.tsx` (5): G1–G3, C1, C2.
+  - `travel-buddy-standalone/src/components/compass/__tests__/CompassPicksSection.buildError.component.test.tsx` (7): V6-P1, V6-P1b and V6-PC are the verifier's probes; P2–P5.
+  - The three new server suites are on the api-server `test` line.
+- **Existing suites extended.**
+  - `discoveryOnePipeline`: U-P1–U-P3, U-C1.
+  - `useSearchSuggestions.heldQuery`: L1, L2.
+  - `PlaceDetailSheet.wikidata`: WK4, WK5.
+- **Restated pins.** No assertion was removed; each restatement is a recorded decision.
+  1. `discoverySearch` "gate ON + marketplace flag UNREADABLE". It asserted that the predicate answered `true` (withheld). It now asserts the named read error; the read-order assertion is unchanged (D-W11X2-51).
+  2. `useSearchSuggestions.heldQuery` C1. The group count changes from 1 to 0, with `refused` asserted as before (D-W11X2-52).
+  3. `useSearchSuggestions.heldQuery` C3. Its cache-replay half is kept, and its location-change half now asserts the groups dropped (D-W11X2-52).
+  4. `discoveryClientRouteE2E`: nine device-cache reads now name the query the suite fetched (`{ lat, lng }`). The four-argument read named a query the suite never sent. Every assertion is unchanged (D-W11X2-47).
+- **Red first.** Each was run at the unfixed code, and the output is kept in the lane's scratch.
+  - Category tab: V6-K1, V6-K2 and V6-K4 red; V6-K3 green. G1–G3 red; C1 and C2 green.
+  - The service key: K1–K6 red; C1 green (a control), and B1-a turns it red.
+  - Search: V6-N1 and V6-N2 red; V6-N0 green. N3–N5, B1, B2 and C1–C4 were written with the fix; their red is B2-a, B2-b and P-BUD-a.
+  - The section route: S1 and S2 red; C1 and C2 green.
+  - The picks section: V6-P1, V6-P1b and P2–P5 red; V6-PC green.
+  - The fail-safe map: U-P1–U-P3 red; U-C1 green. R1–R4 were written with the fix; their red is P-PDE-a, b, d and f.
+  - The buddy pin (restated) red.
+  - Suggestions: C1, C3, L1 and L2 red; Q1–Q3 and C2 green.
+  - Sheet: WK4 and WK5 were green at the unfixed code, because the reset was already there. Their red is CM12.
+- **Mutations.** All 25 are killed. Each was applied alone, its suites run, and the file restored byte-identical (sha256 checked).
+
+| # | mutation | red |
+|---|---|---|
+| B1-a | the key back to the five fields | K2–K4, C1, V6-K4 |
+| B1-b | one parameter (`openNow`) dropped from the key | K2–K4 |
+| B1-c | the tab keeps another query's rows under the failure | G1–G3 |
+| B1-d | the page is not stamped | K5 |
+| B1-e | the tab hydrates with the old partial query | V6-K4 |
+| B2-a | C09 back to the lenient set | V6-N1, V6-N2, N3 |
+| B2-b | the strict read answers an empty set on error | V6-N1, V6-N2, N3, N4 |
+| B3-a | the section catch arm back to the unmarked body | S1 |
+| B3-b | an unread flag table answered as disabled | S2 |
+| B3-c | `readCompassFlag` answers false for a failed load | S2 |
+| B3-d | the picks section hides a failure like Compass off | V6-P1, V6-P1b, P2, P3 |
+| B3-e | the normalizer drops the inferred marker | V6-P1, V6-P1b |
+| B3-f | the hook caches a failure as an answer | V6-P1, V6-P1b, P2–P5 |
+| P-PDE-a | the pipeline never reports the fail-safe map | R1–R4, U-P1, U-P2 (the first six reds listed) |
+| P-PDE-b | the gate drops `flagsUnreadable` | R4, U-P1, U-P3 |
+| P-PDE-c | the candidates served empty, not refused | U-P1, U-P3 |
+| P-PDE-d | the rank path no longer throws | R2, U-P2 |
+| P-PDE-e | the Compass-order catch degrades instead of refusing | U-P2 |
+| P-PDE-f | `buildSection` no longer throws | R3 |
+| P-PDE-g | serve point A does not refuse | U-P3 |
+| P-PDE-h | serve point M does not refuse | U-P1 |
+| P-BUD-a | the launch flag back to `isFlagEnabled` | B1, B2, the restated pin |
+| P-SUG-a | the cache key without the city | L1, L2 |
+| P-SUG-b | the held key back to the text | C1, C3, L1 |
+| CM12 | no `wikidataFailed` reset on a place change | WK4, WK5 |
+
+- **Existing tests, run at the final tree.**
+  - The api-server `test` script in full, under Node v24.21.0 (the repository's pinned major): 28,655 tests, 28,653 passing. The two failures are load artefacts of a shared machine, and both pass when their file is run alone: `guardReachability` CONTROL (its checker was killed by the 180 s spawn timeout; 25/25 alone) and `wallPerformance`'s round-trip ratchet (~111 against 110 under load; 6/6 alone). Neither imports a file this section changed; the guard checker scans the whole tree, this one included, and passes on it alone.
+  - The touched client suites, first alone (36 jest suites under `src/components/discovery`, `src/components/compass` and the hooks, 229 tests; and the node:test cache-key suite) and then inside `check:all` (103.8).
+
+### 103.8 Checks
+
+Run on the final commit.
+
+- **`artifacts/api-server`, the integrator's 24-check guard script (`int-guards.sh`), all exit 0:**
+  - `typecheck`, and `typecheck:tests` (863 against a baseline of 863);
+  - `check:test-registration` (the three new suites are on the `test` line);
+  - `check:census-integrity` (discovery: C 101 / W 85 / N 2 / X 0 over 188);
+  - `check:doc-citations`, `check:citation-targets` and `check:citation-symbols`;
+  - `check:census-freshness`, `check:census-scope-coverage` and `check:census-row-move-labels`;
+  - `check:migration-prefixes`, `check:production-drift`, `check:writerless-reads`, `check:schema-references`, `check:enum-literals` and `check:flag-polarity` (the new direct read is in `DIRECT_READS`);
+  - `check:discovery-query-paths`, `check:route-auth-gate`, `check:api-prefix`, `check:async-handlers` and `check:frozen-dir`;
+  - `check:telegraph-inventory`, `check:guard-coverage` and `check:unissued-supabase-writes`.
+- **Acknowledgements.** census-compass names `compass/flags.ts`, and argues its companion Compass edits in the same entry. census-highlights-memories and census-telegraph name `lib/publicIdentity.ts`: a function appended at the foot, and no cited line moved. census-discovery names the files that joined its CENSUS_SCOPE in this section: `compass/flags.ts`, `compass/CompassPipeline.ts`, `lib/publicIdentity.ts`, the two new client modules and the six new suites.
+- **`travel-buddy-standalone`:** `typecheck` (clean), `typecheck:tests` (173 against 173) and `check:all` (ALL CHECKS PASSED): node tests 7,219, component suites 712 with 4,586 tests, the web suites (4, with 12 tests), and the lints. `check-test-mocks` first flagged the verifier probes' bare jest stand-ins; each now carries the NOTE the guard asks for.
+- **Not run:**
+  - the harness, since no migration was added;
+  - `check:write-path-columns`, which needs live credentials. No write payload changed;
+  - the merge of `origin/claude/sensing-completion-20260925` that the integrator asked for before the final verification. The session's permission check refused the fetch and merge, so every result above is at this branch's own head (from `5f2b0e7eb`), not at a merged head. The integrator's notes say that branch changes only the api-server `test` line, the acknowledgement file and one test fixture (`discoveryTrendingApi`), none of which this section touches except as unions.
+
+### 103.9 DV-83, restated
+
+§102.11's three paths are closed, each with the verifier's probe red first and green now. Of the five possibles, the fail-safe map and the buddy flag were real and are closed, the suggestion key is closed, CM12 is killed, and the rail's `blocks` is ruled Trust's. The sweep found no further path. Every clause of DV-83's criterion holds on every path this lane examined:
+
+1. **Producers send the failure.** Search names an unread real-name set and an unread launch flag. For You names an unreadable Compass gate. The Compass section names a failed build and an unread flag table.
+2. **Nothing refused or partial is cached as complete.** The device cache is keyed by the whole query it sent. The Compass-order path caches no fail-safe ranking. The Compass feed hook caches no failure answer.
+3. **Nothing refused is rendered as empty, complete, or over the wrong rows.** No tab keeps another query's rows under its stale line. The picks section says a failed build. The typeahead drops another location's groups under its failure. The sheet does not carry one place's failure to the next.
+4. **Consumers branch on coverage.** The picks section and the feed hook branch on `fallbackReason` and the refusal envelope. The tab branches on the query identity beside the transport failure, and search's consumers branch on `failedSources` as before.
+
+An independent re-verification at the merged head is owed before the integrator accepts the move, as §101.12 and §102.11 ask.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§102.11's three paths are closed, each with its verifier probe red first. The two real possibles are closed, CM12 is killed, and 25 of 25 mutations are killed.** **The device cache key is the query the request sends** (`travel-buddy-standalone/src/services/discovery.ts:766#_CLIENT_CACHE.set(_discoveryCacheKey(params), { data, at: Date.now(), scope: lease.scope });`; K1–K6, a test that fails if any sent parameter is not in the key), **and no tab keeps another query's rows under its failure** (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:500#if (!res.ok) { if (nextPage === 1 && heldForAnotherQuery(heldQueryRef.current, res)) {`; V6-K1, V6-K2, V6-K4, G1–G3). **Search names an unread real-name set** (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:583#if (allowedNames === null) throw new DiscoverySearchReadError("profile_privacy_settings", "show_real_name");`; V6-N1, V6-N2, N3) **and an unread launch flag** (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:483#return !(await rentBuddyLaunchedOrThrow(sc));`; B1, B2). **A failed Compass section is said** (`artifacts/api-server/src/routes/compass.ts:778#sendCompassSectionFailure(res, err instanceof CompassFlagsUnreadableError ? "compass_flags_unreadable" : "section_build_error", fallback.safeItems);`, `travel-buddy-standalone/src/components/compass/CompassPicksSection.tsx:335#if (!compass.compassEnabled && !compass.loading && !isCompassSectionFailure(compass.data)) return null;`; S1, S2, V6-P1, V6-P1b, P2–P5). **A batch gated by the fail-safe flag map is refused, never an empty For You page** (`artifacts/api-server/src/routes/discovery.ts:1838#if (forYouA.source === "compass_unreadable")`; U-P1–U-P3, R1–R4). **Suggestion groups belong to the whole query** (`travel-buddy-standalone/src/hooks/useSearchSuggestions.ts:72#setGroups(cached.groups); heldQueryRef.current = key;`; C1, C3, L1). Every path §94 to §102 closed still holds: their suites pass, with four pins restated by recorded decisions (103.7). **Stated limits.** Controlled evidence only; no client build carrying these changes has shipped. The fail-safe arm runs only when the COMPASS_% read fails, and the buddy arm only with `discovery_buddy_launch_gate_enabled` ON (seeded FALSE). An independent re-verification at the merged head is owed. |
+
+**Headline.** DV-83 moves W → C. `check:census-integrity` counts **C 101 / W 85 / N 2 / X 0** over 188: CONSTRUCTED 186 / 188 = **98.9 %**, CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged.
+
+### 103.10 Left open, and what would turn this red
+
+- **Seen and not built.**
+  - `/compass/recommendations`' build-failed arm answers `{ recommendations: [] }`. It is Compass's route, graded by census-compass. Search draws it only as the optional rail under a zero-result search, whose own answer is complete.
+  - The event posts' fail-open posture on an unreadable block list, and whether the rail says so, stay Trust's (D-W11X2-37, D-W11X2-53).
+  - The tab-bar prefetch warms only the query it sends (no centre, no context), so it no longer paints the For You tab when the tab's own query differs (D-W11X2-47).
+- **What would turn DV-83 red again:**
+  - a request parameter that reaches the URL without reaching the device cache key (K1, K2), or a tab drawing another query's rows under its stale line (V6-K1, V6-K2, G1–G3);
+  - an unread real-name set or launch flag answered as a short or empty search (V6-N1, V6-N2, N3, B1, B2);
+  - a failed section build or an unread flag table answered, or drawn, as "Compass is off" (S1, S2, V6-P1, V6-P1b, P2, P3), or cached as picks (P5);
+  - a fail-safe-gated batch served, or cached, as an empty For You page (U-P1–U-P3);
+  - another location's suggestion groups under a failure (C1, L1), or one place's Wikidata failure on the next place (WK4, WK5);
+  - any path §102.10 lists.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/lib/capability/prerequisitesCore.ts — §93.8 names its function-granular gate boundary as why the Compass KNOWN entry was struck; it is the prerequisite checker's own machinery, and no Discovery verdict rests on it.
