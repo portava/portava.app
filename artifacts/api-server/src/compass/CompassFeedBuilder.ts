@@ -673,9 +673,9 @@ export async function buildFeed(
     ? items.filter((it) => !ignoredSet.has(String(it.id ?? "")))
     : items;
 
-  const { sectionMap, pipelineMeta } = await runFeedPipeline(
+  const { sectionMap, pipelineMeta, flagsUnreadable } = await runFeedPipeline(
     filteredItems, profile, context, db, _overrides,
-  );
+  ); if (flagsUnreadable) throw new CompassFlagsUnreadableError();  // census-discovery §110 (DV-83, D-W11X2-100): a feed the fail-safe flag map emptied is neither served nor cached as the feed — the route refuses, the front-load hands no first page
 
   // ── Category-weight post-adjustment ───────────────────────────────────────
   // Apply user's category weight preferences (from hide_category / show_more

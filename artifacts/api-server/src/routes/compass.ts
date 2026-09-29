@@ -608,7 +608,7 @@ router.get("/compass/feed", async (req, res) => {
     if (feedFailedSources.length === 0) void setCachedFeed(sc, user.id, cacheKey, "feed", enrichedFeed);
     res.json(feedFailedSources.length === 0 ? enrichedFeed : compassFeedSourcesUnreadBody(enrichedFeed, feedFailedSources));
   } catch (err) {
-    req.log.error({ err }, "compass/feed: build failed, using fallback");
+    if (err instanceof CompassFlagsUnreadableError) return sendCompassFeedFlagsUnread(res); req.log.error({ err }, "compass/feed: build failed, using fallback");  // §110 (D-W11X2-100): the pipeline's own flag read failed — the §105 refusal, never the fallback feed
     const profile = await getCompassProfile(sc, user.id).catch(() => null);
     const result  = await buildFallbackFeed(sc, user.id, profile, "build_error");
     res.json(result);
