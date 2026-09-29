@@ -18434,6 +18434,144 @@ check:unissued-supabase-writes exit=0
 
 Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
 
+### 109.2 Round 12: what this lane did
+
+*Written 2026-09-29 by lane W11-X2 (round 12) on `disc-w11-x2-r12`, from `1023bc3d4` and §109.1. It closes §109.1's two breaks, each with the verifier's probe copied in as a failing-first test, makes the static consumer guard see the carriers it could not, pins the surviving mutation V3, records the seven argued survivors, corrects the ruling the verifier found not honest (D-W11X2-82 and §108.13 clause 4), and sweeps the Discovery and Compass read surfaces again — the client consumers of Compass endpoints and the Compass tools' "nothing found" sentences in particular — for the seven defect classes: an unchecked `.error`; a catch that answers empty or a default; an unread flag, stop or measurement read as off; a refusal cached or rendered as empty or complete; a partial result with no incomplete line; an unbounded read ranked as complete; a stale-response race. The sweep closed four more paths. Decisions are in `docs/architecture/discovery-decision-register.md`, section "W11-X2 round 12", D-W11X2-86 to D-W11X2-91.*
+
+*No migration and no new flag. Each change alters output only when a read failed, was refused, was partial or was superseded; with every read healthy, complete and current, every served byte and every rendered brief is unchanged (V11-TB0, TB8, the `CompassTripBrief.attention` suite, V11-CA0, CAc, TTc, GRc, PDc, V11-HTT0). Every edit in a cited file is line-neutral: lines are changed in place, and new code is appended at a file's foot. `src/index.ts` is untouched.*
+
+*All evidence is controlled: in-process tools over fake worlds, the real routes over a fake client, and jest over the real component. None of it is production evidence, and no client build carrying the change has shipped.*
+
+### 109.3 The trip page's Compass Brief branches on coverage (§109.1 BK1; D-W11X2-86)
+
+- **Client.** `CompassTripBrief` composes its answer through round 11's `tripCompassRecommendations` / `tripCompassReadState` — the shared predicate (`travel-buddy-standalone/src/components/TripPage.tsx:810#if (cancelled) return; setReadState(tripCompassReadState(res)); setItems(tripCompassRecommendations(res));`). A failed, refused or unknown-coverage read is "Couldn’t load the Compass Brief just now." with Retry, never the hidden brief (`travel-buddy-standalone/src/components/TripPage.tsx:844#)}{!loading && readState === 'failed' ? (<View style={cb.loadingRow} testID="compass-brief-failed">`); a `partial` read keeps its rows — the safety note included — under `listPartialNotice('recommendations')`; an answered empty list still hides the brief (`travel-buddy-standalone/src/components/TripPage.tsx:824#if (fetched && items.length === 0 && !loading && !suppressed && readState === null) return null;`).
+- **Only the latest request writes.** The effect resets the brief on a trip change and is guarded by `cancelled`, so another trip's rows, held-back note, failure or spinner never stay, and a superseded request never ends the newer one's loading (V11-TB4, TB7, TB9–TB14).
+- **D-W11X2-82 and §108.13 clause 4 corrected**: the list of /compass/recommendations consumers was assembled by hand and missed this one; §109.4 makes it a check.
+
+### 109.4 The static guard sees every carrier (D-W11X2-87)
+
+The guard derived its carriers from `services/discovery.ts` alone. It now also derives the GET /compass/recommendations carriers from `services/compass.ts` and the GET /hashtags/trending carrier from `services/hashtag.ts`, pins them (G1), registers every consumer — 16 files, five new — with its branch, partial branch and refusal proof suite (G2–G7), and checks each consumer's branch structurally: a raw-body consumer calls the shared predicate, a matches consumer keeps a failed and a partial state over a service that still reads through `compassMatchesFromBody`, and a trending consumer reads the refusal (G9) (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts:383#it('G9.`). Against the pre-fix brief it fails G4, G7, G8 and G9; a new unregistered consumer of either carrier fails G2, G6 and G9 (mutations G2, G3).
+
+### 109.5 `get_circle_activity` and the structured context say a failed read (§109.1 BK2; D-W11X2-88)
+
+- **Server.** Each read in `buildStructuredCompassContext` checks its `.error`, and the context carries an `unread` marker (circles, circle members, bookings, stamps) only when a read failed (`artifacts/api-server/src/compass/CompassStructuredContext.ts:140#if (ownedErr || membershipsErr) markUnread(result, "circles");`, `artifacts/api-server/src/compass/CompassStructuredContext.ts:377#export interface StructuredContextUnread {`). `get_circle_activity` says membership could not be checked when nothing could be read, keeps the circles it found and says the list or the member lists may be incomplete when a later read failed (`artifacts/api-server/src/compass/CompassTools.ts:1159#: circlesUnread ? { circles: [], info: CIRCLES_UNREAD_INFO }`). /compass/ask's prompt says an unread section instead of omitting it (`artifacts/api-server/src/compass/CompassStructuredContext.ts:331#lines.push(...unreadContextLines(ctx)); return lines;`).
+- **An older test corrected.** `compass-structured-context`'s thrown-client case asserted the bare empty context; it now asserts the same sections marked unread.
+
+### 109.6 The sweep (D-W11X2-89, D-W11X2-91)
+
+- **Closed: four more paths, all Compass tools stating a failed read to the model as a fact.**
+  1. **Eight trip tools** (freedom windows, route chain, today, crew, live conditions, commitments, saved ideas, opportunities) dropped `toolGetCurrentTrip`'s "Trip context unavailable: …" and said "No active or upcoming trip." over an unread trips read; they pass it on (`artifacts/api-server/src/compass/CompassTools.ts:1364#return id ? { id } : { info: noCurrentTripInfo(current) };`).
+  2. **The search tools' priority-switch reading** said the same; it says the current trip could not be read.
+  3. **`get_group_recommendation`** read its circles and members as `{ data }` alone: a failed circle read was "not a member of a circle by that name", and a failed member read ranked for part of the group. It says the circles could not be checked, and makes no recommendation over an unread member list, fail closed (`artifacts/api-server/src/compass/CompassTools.ts:2004#if (membersErr) return { error: GROUP_MEMBERS_UNREAD_INFO };`, `artifacts/api-server/src/compass/CompassTools.ts:2020#if (tripMembersErr) return { error: GROUP_MEMBERS_UNREAD_INFO };`). The five `resolveGroupMemberIds` entries of the unchecked-reads ledger are deleted.
+  4. **`get_place_details`** answered a failed read "Place not found."; it says the place could not be read (`artifacts/api-server/src/compass/CompassTools.ts:1113#if (error) return { place: null, info: PLACE_UNREAD_INFO };`).
+- **Swept and found sound** (D-W11X2-91): AskCompassBar, CompassPassportSuggestions, CompassTravelerRow, CompassBuddyRow, the city-confidence badge, the Telegraph tray and chip, the Compass home, the search tools' own reads, and `get_travel_compatibility`'s uniform privacy answer.
+- **Ruled, not changed** (D-W11X2-91): surface=trip's `partial` over only the static tips — the tips are real content, now drawn under the incomplete line; `nothing` would drop the safety note from every consumer.
+- **Seen, not built; other owners** (D-W11X2-91): CompassStatusCard's reward card; the structured context's by-design caps; the Compass memory screens and the autopilot card.
+
+### 109.7 The survivors (D-W11X2-90)
+
+- **V3 is pinned** by V11-HTT0/HTT1, copied into `hashtagsTrendingComplete`, whose fake now models Postgres ties (`artifacts/api-server/src/test/hashtagsTrendingComplete.test.ts:228#it("V11-HTT1`); re-applied, V3 is killed.
+- **Recorded equivalent or outside DV-83**, with the verifier's reasons, each re-read against the code: V4, V8, V9, V10, V21, V28, V29 (the register gives each). **C8b** is equivalent, confirmed.
+
+### 109.8 Tests, seen red, and mutations
+
+**Seen red first**, run against the code before each fix (logs in the lane's `r12/` scratch directory, `red-*.log`):
+
+| Area | Red | Controls, green |
+|---|---|---|
+| The trip page's Compass Brief | V11-TB1, V11-TB2, V11-TB3, V11-TB4, TB5, TB6, TB9 | V11-TB0, TB7 (no failed line existed), TB8 |
+| The static guard | G4, G7, G8, G9 against the pre-fix brief | G1–G3, G5, G6 |
+| `get_circle_activity` and the context | V11-CA1, V11-CA2, CA3–CA8 | V11-CA0, CAc |
+| Sweep: the tools | TT1, TT2, GR1–GR4, PD1 | TTc, GRc, PDc |
+
+**Written against the fixed code:** TB10–TB14, CA9, GR5, GR6, V11-HTT0/HTT1 (green at `1023bc3d4`: they pin V3). Each is shown to bite by the mutation that removes the line it pins (K8a, K8b, K8c, K10, K12, S14, T15, T14b, V3).
+
+**Mutations.** Each was applied alone, its pin suites were run (13 api-server suites; `CompassTripBrief.failedRead`, `CompassTripBrief.attention` and `CompassBuddyRow.failedRead` under jest and the static guard under node on the client), and the file was restored byte-identically; the sha256 matched on every one. Runner and logs: the lane's `r12/muts/` scratch directory (`muts12.py`, `run12.py`, `run12.out`).
+
+- **Client, 19 applied.** The brief K1–K13 (the `cancelled` guard in the answer, the catch and the finally; the read state; the predicate; the hide; the failed and partial lines; each reset; the retry dependency and button; the no-trip branch; the cleanup); the guard's reach G1 (a matches carrier without `compassMatchesFromBody`), G2 and G3 (a new unregistered consumer of each carrier, created and deleted).
+- **Server, 36 applied.** The context S1–S14 (each read's mark, each catch, the prompt line and each of its sentences); the tools T1–T18 (the circle tool's three answers, the unread test, each of the eight trip sites and the switch reading, place details, the group recommendation's circle, joined, viewer-memberships, member and trip-member reads); V3.
+- **Result: 55 applied, 55 killed.** K12, S14 and T14b survived the first run; TB14, CA9 and GR6 now pin them, and re-applied they are killed. No mutation is argued equivalent.
+
+### 109.9 Checks
+
+- **Line-neutral in every cited file**, so every anchored citation still lands on its text: `check:doc-citations`, `check:citation-targets` and `check:citation-symbols` are clean. `travel-buddy-standalone/src/components/TripPage.tsx:16#import { resolveCompassTitle, formatCompassSubtitle }` and `travel-buddy-standalone/src/components/TripPage.tsx:840#<Text style={cb.attentionNote} testID="compass-brief-attention">`, and the guard's cited `it('G1.`, `it('G2.`, `it('G7.` and `it('G8.` lines, keep their text.
+- **Scope.** `TripPage.tsx` and `CompassStructuredContext.ts` joined this census's `CENSUS_SCOPE` with the hold (§109.1); §109's three new suites join it here. `compass/CompassTools.ts` stays NOT-GRADED here (§56.3), so no verdict row cites it. The acknowledgement for every census that counts a changed file carries a §109 paragraph with its "why it cannot move a verdict": census-discovery, census-trips, census-compass, census-sensing, census-input-intelligence, census-layover, census-highlights-memories, census-trust, census-telegraph and census-passport.
+- **Suites.** The two new api-server suites are on the `test` line (`check:test-registration`); the new client suite is a jest component suite, not on KNOWN_BROKEN.
+- **Allowlist.** The five `resolveGroupMemberIds` entries of `UNCHECKED_READS_ALLOWLIST.json` are deleted; the checker reports no stale entry.
+- **Write-path select sites.** No `.select()` argument changed; the write-path-columns replica prints OK.
+
+### 109.10 DV-83, restated
+
+§109.1's two breaks are closed, each with the verifier's probe red first and green now. V3 is pinned and killed; the seven argued survivors and C8b are recorded. The ruling the verifier found not honest is corrected, and the guard now checks what it only listed. The sweep closed four more paths. Every clause of DV-83's criterion holds on every path this lane examined:
+
+1. **Producers send the refusal envelope or a named failure.** The Compass tools name a failed read to the model — circle membership, the current trip, the group's circles and members, a place — instead of stating an absence.
+2. **Nothing refused or partial is cached as complete.** No path in §109 caches; no cache changed.
+3. **Nothing refused is rendered as empty, as complete, or over the wrong rows.** The trip page's brief says a failed read with Retry, a partial read under the incomplete line, and draws only its latest trip's answer.
+4. **Consumers branch on coverage.** Every consumer of a GET /compass/recommendations or GET /hashtags/trending carrier branches through the shared predicate, and the static guard derives and checks them (G1, G2, G9), not a hand-kept list.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§109.1's two breaks are closed, each with its verifier probe red first; V3 is killed; the static guard derives and checks every Compass recommendations and trending consumer; the sweep closed four more paths; 55 mutations: 55 killed. CONTROLLED EVIDENCE ONLY — this row still awaits independent re-verification.** **The trip page's Compass Brief branches on coverage and writes only its latest answer** (`travel-buddy-standalone/src/components/TripPage.tsx:810#if (cancelled) return; setReadState(tripCompassReadState(res)); setItems(tripCompassRecommendations(res));`, `travel-buddy-standalone/src/components/TripPage.tsx:844#)}{!loading && readState === 'failed' ? (<View style={cb.loadingRow} testID="compass-brief-failed">`; V11-TB1..TB4, TB5–TB14). **Every consumer is derived and checked** (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts:383#it('G9.`; G1, G2, G9). **A failed circle read is never "not in any circles"** (`artifacts/api-server/src/compass/CompassStructuredContext.ts:140#if (ownedErr || membershipsErr) markUnread(result, "circles");`, `artifacts/api-server/src/compass/CompassStructuredContext.ts:331#lines.push(...unreadContextLines(ctx)); return lines;`; V11-CA1, V11-CA2, CA3–CA9). **The trending pages are a partition over ties** (`artifacts/api-server/src/test/hashtagsTrendingComplete.test.ts:228#it("V11-HTT1`; V3 killed). **Sweep:** the trip tools, the switch reading, the group recommendation and place details say an unread read (`artifacts/api-server/src/test/compassToolsUnreadFacts.test.ts:41#it("TT1`; TT1, TT2, GR1–GR6, PD1). |
+
+**Headline.** DV-83 moves W → C. `check:census-integrity` counts **C 101 / W 85 / N 2 / X 0** over 188: CONSTRUCTED 186 / 188 = **98.9 %**, CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged. The move is on controlled evidence and awaits independent re-verification.
+
+### 109.11 Left open, and what would turn this red
+
+- **Seen and not built (other owners; D-W11X2-91).** CompassStatusCard's reward card; the structured context's by-design caps; the Compass memory screens and the autopilot card; everything §108.14 lists.
+- **Ruled and unchanged.** surface=trip's `partial` over only the static tips (D-W11X2-91); every D-W11X2-85 ruling other than D-W11X2-82's consumer claim.
+- **What would turn DV-83 red again:**
+  - a /compass/recommendations or trending consumer that renders a refusal as empty or complete, draws another request's rows, or is not registered with the guard (V11-TB*, TB5–TB14, G2, G9);
+  - a Compass tool that states a failed read as a fact — "not in any circles", "No active or upcoming trip.", "not a member of a circle by that name", "Place not found." — or recommends over a partial group (V11-CA*, CA3–CA9, TT*, GR*, PD1);
+  - a trending window whose pages over tied timestamps are served as complete (V11-HTT1);
+  - any path §108.14 lists.
+
+### 109.12 Results at the final code commit (`9c25dad5b`)
+
+The code is final at `9c25dad5b`; the census commit that follows changes only this census, the register, `CENSUS_STALENESS_ACKNOWLEDGED.json` and `CENSUS_SCOPE`, and the guards below were run again on it.
+
+- **`int-guards.sh /home/user/wt-v8`**: all 24 exit 0. `typecheck:tests` is at 863 against a baseline of 863.
+
+```
+typecheck exit=0
+typecheck:tests exit=0
+check:test-registration exit=0
+check:census-integrity exit=0
+check:doc-citations exit=0
+check:citation-targets exit=0
+check:citation-symbols exit=0
+check:census-freshness exit=0
+check:census-scope-coverage exit=0
+check:census-row-move-labels exit=0
+check:migration-prefixes exit=0
+check:production-drift exit=0
+check:writerless-reads exit=0
+check:schema-references exit=0
+check:enum-literals exit=0
+check:flag-polarity exit=0
+check:discovery-query-paths exit=0
+check:route-auth-gate exit=0
+check:api-prefix exit=0
+check:async-handlers exit=0
+check:frozen-dir exit=0
+check:telegraph-inventory exit=0
+check:guard-coverage exit=0
+check:unissued-supabase-writes exit=0
+```
+
+- **api-server node:test** (Node v24.21.0, `SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy`), 369 files: every `src/test/discovery*`, `compass*`, `trail*`, `hashtag*`, `circle*`, `adminTrails` and map-search suite, the two new §109 suites among them; the presence, meetup, block-gate, locate-friends, Telegraph, user-search, `flagPhantomReads` and `emergencyFlags` suites; `compass-structured-context`, `memoryCompassLaneRepairs` and `ageGateGroupTravel` (touched); `securityCheckSuite`, `uncheckedSupabaseReads`, `entryWiringNotCommentedOut` and `layoverSurfaceErrorBinding`. It is a superset of the round-11 verifier's 364. Result: `ℹ tests 6924 · ℹ suites 1522 · ℹ pass 6924 · ℹ fail 0 · ℹ cancelled 0`. The live-DB suites are left out (`compassMemoryClientBoundary`, `discoveryPlaceWriteBoundary`, `tripKernelLive`, `meetupRlsLive`).
+  - Alone: `securityCheckSuite` 17/17, `uncheckedSupabaseReads` 69/69, `entryWiringNotCommentedOut` 4/4, `layoverSurfaceErrorBinding` 5/5.
+  - `node --import tsx/esm src/scripts/checkUncheckedSupabaseReads.ts`: "no NEW in-scope read ignores its .error … 137 in scope (1 benign, 136 ledgered known defects: 0 FAIL-OPEN / 132 FAIL-CLOSED / 4 UNCLASSIFIED)", no stale allowlist entry (141 ledgered before; the five `resolveGroupMemberIds` sites are closed).
+  - The write-path-columns replica (`uacheck.mts`): `OK (117 tracked)`.
+- **Client.**
+  - `pnpm run -s check:all`: `✔ ALL CHECKS PASSED`.
+    - Node suites: `# tests 7491 · # pass 7491 · # fail 0`.
+    - Component suites: `Test Suites: 825 passed, 825 total · Tests: 5292 passed, 5292 total`.
+    - Web suites: `4 passed, 12 tests`.
+    - `typecheck:tests` is at 173 against a baseline of 173.
+  - `node scripts/check-route-registry.mjs`: "OK. All 231 screen file(s) are represented in PORTAVA_ROUTES and all 9 layout file(s) are represented in PORTAVA_LAYOUT_FILES."
+- **The verifiers' probes**, copied in unchanged and deleted after: server 37 of 37 (v11: V11-CA0..CA2, V11-TS0, V11-HTT0, V11-HTT1, V11-NV0, V11-NV1; v10: V10-HP0..3, V10-SM6, V10-WT1, V10-WT2, V10-TC0, V10-TC1, V10-SC0, V10-SC1, V10-HT0, V10-HT1, V10-CC0, V10-CC7; v9: V9-H0, HC1, HB1, HB2, HW1, TG0–TG2, CC1, MS0, MS1, KS0, KS1, SM28) and client 11 of 11 (V11-TB0..TB4, V10-CH0..2, V9-TT0..2).
+- **Regression: the round-11 verifier's 32 mutations** (V1–V32), re-run from a copy of its runner and pin list (the lane's `r12/v11muts/`): 25 killed, V3 among them; the seven survivors are exactly V4, V8, V9, V10, V21, V28 and V29, the set §109.7 records as equivalent or outside DV-83. The sha256 matched on all 12 mutated files.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: travel-buddy-standalone/app/discover.tsx — §105.11 names it only as a path seen and not built, left for its owner, and §106 records Find Travelers' failed-search state and generation guard: it is the social people search over services/follows.ts, not a Discovery envelope, and no Discovery row or DV-83 verdict rests on it.
