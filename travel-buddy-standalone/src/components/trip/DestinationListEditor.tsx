@@ -24,11 +24,15 @@ import DraggableFlatList, {
 } from 'react-native-draggable-flatlist';
 import { GlobalPlacePicker } from '../selectors/GlobalPlacePicker.tsx';
 import { GlobalCalendarPicker } from '../selectors/GlobalCalendarPicker.tsx';
-import { CalendarDays, X } from 'lucide-react-native';
+import { CalendarDays, ClipboardPaste, X } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import { formatDisplayDate, fromISODate } from '../../lib/dateTime/formatters.ts';
 import type { Place } from '../../lib/location/placeTypes.ts';
 import { addDestination, reorderDestinations, deleteDestination, patchDestination } from '../../services/tripDestinations.ts';
+import { PasteReviewSheet } from '../../platform/input-assistance/paste/PasteReviewSheet.tsx';
+import { persistPastedDestinations } from '../../platform/input-assistance/paste/persistPastedDestinations.ts';
+import type { PasteDestination } from '../../platform/input-assistance/paste/pasteReview.ts';
+import { VoiceDictationButton } from '../../platform/input-assistance/voice/VoiceDictationButton.tsx';
 
 export interface DestinationEntry {
   /** Local unique key — stable across re-renders. */
@@ -65,6 +69,8 @@ export function DestinationListEditor({ tripId, destinations, onChange }: Props)
   const [calPickerKey, setCalPickerKey] = useState<string | null>(null);
   // Per-row busy state for API calls (add / date-patch; remove is optimistic)
   const [busyRows, setBusyRows] = useState<Record<string, boolean>>({});
+  // §24 paste review (GII-F08): open while the person reviews a pasted list.
+  const [pasteOpen, setPasteOpen] = useState(false);
 
   const visible = destinations.filter((d) => !d.removed);
 
@@ -78,6 +84,29 @@ export function DestinationListEditor({ tripId, destinations, onChange }: Props)
     onChange([...destinations, newEntry]);
     setPlacePickerKey(newEntry.key);
   }, [destinations, onChange]);
+
+  // ── §24: persist exactly what the paste review screen confirmed ─────────
+  // Edit mode writes each ticked stop through POST /trips/:id/destinations;
+  // create mode adds them to the draft the create screen persists. The ones
+  // that failed go back to the review screen, which keeps them with Retry.
+  const handlePasteConfirm = useCallback(async (picked: PasteDestination[]): Promise<PasteDestination[]> => {
+    const result = await persistPastedDestinations(tripId, picked, visible.length + 1);
+    if (result.saved.length > 0) {
+      onChange([
+        ...destinations,
+        ...result.saved.map(({ destination: d, serverId }) => ({
+          key: makeKey(),
+          id: serverId ?? undefined,
+          city: d.city,
+          country: d.country,
+          lat: d.lat,
+          lng: d.lng,
+          placeId: d.placeId,
+        })),
+      ]);
+    }
+    return result.failed;
+  }, [tripId, visible.length, destinations, onChange]);
 
   // ── Remove a row (optimistic) ────────────────────────────────────────────
   const handleRemove = useCallback((key: string) => {
@@ -322,6 +351,30 @@ export function DestinationListEditor({ tripId, destinations, onChange }: Props)
         <Text style={styles.addBtnText}>Add stop</Text>
       </Pressable>
 
+      {/* §24 Paste Intelligence (GII-F08): a list, a map link or coordinates,
+          reviewed before anything is added. */}
+      <Pressable
+        style={({ pressed }) => [styles.pasteBtn, pressed && { opacity: 0.7 }]}
+        onPress={() => setPasteOpen(true)}
+        accessibilityRole="button"
+        accessibilityLabel="Paste a list, map link or coordinates"
+        testID="paste-destinations"
+      >
+        <ClipboardPaste size={14} color={color.deep} />
+        <Text style={styles.pasteBtnText}>Paste a list, link or coordinates</Text>
+      </Pressable>
+      <PasteReviewSheet
+        visible={pasteOpen}
+        context="trip_destination"
+        fieldId="trip.destination"
+        noun="stop"
+        onClose={() => setPasteOpen(false)}
+        onConfirm={handlePasteConfirm}
+        renderInputAccessory={(append) => (
+          <VoiceDictationButton fieldId="trip.destination" context="trip_destination" onTranscript={append} />
+        )}
+      />
+
       {/* Single place picker for all rows */}
       <GlobalPlacePicker
         visible={placePickerKey !== null}
@@ -400,4 +453,12 @@ const styles = StyleSheet.create({
     backgroundColor: `${color.signal}08`,
   },
   addBtnText: { ...t.small, color: color.signal, fontWeight: '700' },
+  pasteBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: space.sm,
+    paddingVertical: space.xs,
+  },
+  pasteBtnText: { ...t.small, color: color.deep, fontWeight: '600' },
 });

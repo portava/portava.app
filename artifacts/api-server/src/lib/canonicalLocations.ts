@@ -710,7 +710,7 @@ export async function suggestCanonicalLocations(
 //     graceful fallback for the pre-migration deploy window (or fixtures without
 //     the column), the legacy `normalized_name` — whichever returns rows.
 // Prefix matches lead contains matches; rows are deduped and city-class only.
-// Fail-soft: any hard error returns [].
+// Fail-soft on a PARTIAL error; when EVERY read fails it throws CanonicalRegistryUnreadable (an outage is not "no such city").
 export async function suggestCanonicalLocationsFolded(
   db: SupabaseClient,
   q: string,
@@ -730,7 +730,7 @@ export async function suggestCanonicalLocationsFolded(
       db.from(TABLE).select("*").ilike("normalized_name", `${escNorm}%`).limit(fetch),
       db.from(TABLE).select("*").ilike("normalized_name", `%${escNorm}%`).limit(fetch),
     ]);
-    // Prefix rows first (both columns), then contains rows. A per-result error
+    if ([skPrefix, skContains, nnPrefix, nnContains].every((r) => r.error)) throw new CanonicalRegistryUnreadable(); // Prefix rows first (both columns), then contains rows. A per-result error
     // (e.g. search_key missing pre-migration) is simply skipped — the other
     // column still yields matches.
     const prefixRows = [
@@ -759,8 +759,8 @@ export async function suggestCanonicalLocationsFolded(
       if (out.length >= limit) break;
     }
     return out;
-  } catch {
-    return [];
+  } catch (e) { // A thrown read (network, client) is an outage exactly like four errored ones.
+    throw e instanceof CanonicalRegistryUnreadable ? e : new CanonicalRegistryUnreadable();
   }
 }
 
@@ -771,4 +771,17 @@ export async function suggestCanonicalLocationsFolded(
  */
 export function rowSearchKey(row: CanonicalRow): string {
   return (row.search_key ?? searchKey(row.name)) || "";
+}
+
+/**
+ * Every read of the registry failed — an OUTAGE, not "no such city". Thrown by
+ * `suggestCanonicalLocationsFolded` so the input gateway can record the cities
+ * source as unreadable on its coverage (§80) instead of serving an empty list
+ * that reads as "nothing matched" (§24 paste honesty, GII-F08).
+ */
+export class CanonicalRegistryUnreadable extends Error {
+  constructor() {
+    super("canonical_locations unreadable");
+    this.name = "CanonicalRegistryUnreadable";
+  }
 }
