@@ -11,7 +11,7 @@ import { findBlockingAvailabilityException, sendBuddyUnavailable, getUserLimits,
 import { adjustBuddyCounter } from "../services/rentBuddy/ReliabilityCounters.js";
 import { requireBookingKyc } from "../lib/rentBuddyKycGate.js";
 import { TRAINING_CHECKLIST_ITEMS } from "./rentABuddy.js";
-import { isKillSwitchEngaged } from "../lib/featureFlags.js";
+import { isKillSwitchEngaged, engagedRabBookingKillSwitch } from "../lib/featureFlags.js";
 import { checkRentBuddyAccess } from "./rentABuddyRollout.js";
 import { loadTravelerIdentity } from "../lib/travelerVerification.js";
 import { isPrivateLocation } from "../lib/rentaBuddyScanner.js";
@@ -418,7 +418,7 @@ router.post("/rent-a-buddy/buddies/:buddyId/request", asyncHandler(async (req, r
 
   if (await isKillSwitchEngaged(serviceClient, 'disable_rent_buddy_booking')
       || await isKillSwitchEngaged(serviceClient, 'disable_rab_bookings')) {
-    return res.status(404).json({ error: 'feature_disabled', message: 'Rent-a-Buddy bookings are temporarily disabled' });
+    return res.status(404).json({ error: 'feature_disabled', gate: await engagedRabBookingKillSwitch(serviceClient), message: 'Rent-a-Buddy bookings are temporarily disabled' });
   }
 
   const { buddyId } = req.params;
