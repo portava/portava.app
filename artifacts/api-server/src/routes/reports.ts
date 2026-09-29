@@ -27,7 +27,7 @@ import { reportRateLimit } from "../lib/rateLimit";
 // POST /api/media/:id/report wrote the same `reports` table from its own,
 // narrower contract — any string, no severity, no rate limit. Two writers of one
 // table cannot each own the list; see lib/reportReasons.ts for what that cost.
-import { REPORT_REASON_CODES, reportSeverityFor } from "../lib/reportReasons";
+import { REPORT_REASON_CODES, reportSeverityFor } from "../lib/reportReasons";  import { refuseUnlessReporterSees } from "../lib/reportTargetAccess";
 
 const router = Router();
 
@@ -99,7 +99,7 @@ router.post("/reports", async (req, res) => {
   }
 
   const sc = getServiceClient();
-  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }  if (!(await refuseUnlessReporterSees(sc, req, res, { type: target_type, id: target_id, userId: user.id }))) return;  // message/thread: the reporter must be able to see it
 
   // For user reports: permission engine — fail-closed block check + canReport
   if (target_type === "user") {

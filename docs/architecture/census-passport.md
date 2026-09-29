@@ -2099,7 +2099,7 @@ route's db_error branch removed; the engine's `failure` dropped on the restore r
 audit path) each went RED and were restored by sha256.
 
 **Passport links.** `PassportQuickLinks` gains two owner entries, **Compass remembers** and
-**Recaps & On this day** (census-compass §29), below the rows P18 cites (its lines 57-100 and 89), which
+**Recaps & On this day** (census-compass §31), below the rows P18 cites (its lines 57-100 and 89), which
 did not move. P18 stays `C`.
 
 - NOT-GRADED: artifacts/api-server/src/test/stampRevoke.test.ts — §24 names it only to say its not-found assertions still hold; no Passport verdict rests on it.
@@ -2167,6 +2167,61 @@ person could not see a collection, how much of it they had earned, or what stamp
 - Red if: the route again binds only `collectionsRes.error`; the client maps the flag's 503 to an
   outage or to `ok: true`; or the screen renders an empty list for a failed read.
 
+## §23 — Award, revoke and restore a person's stamp from an admin screen (TM-admin lane, PASS-F23). NO PASSPORT ROW MOVES
+
+**2026-09-29, testing-mode lane `lane-tm-admin` (branch cut from `main` at `18518e982`).**
+Numbered §23 because the TM-social lane's §22 lands on the same integration branch.
+`head_commit` is NOT re-declared: this section records a build and grades no row. Controlled
+evidence only. No flag was touched, no migration was added, nothing was read from or written to any
+database.
+
+### 23.1 What was missing
+
+PASS-F23 ("admin awards a special stamp, revokes it, restores it, runs a campaign") was server-only.
+Award, revoke and restore existed (`routes/adminStamps.ts`, admin-gated by `requireAdmin`, every
+action audited in `stamp_award_events`), but revoke and restore take a `user_stamps.id` and no admin
+route handed one out: the public stamp routes hide revoked rows, so a stamp revoked by mistake could
+never be found again to restore.
+
+### 23.2 What was built
+
+- **Server, one read route, appended after the file's default export so no cited line moves.**
+  `artifacts/api-server/src/routes/adminStamps.ts:674#router.get("/admin/stamps/users/:userId/stamps"`
+  lists one person's stamps with ids, revoked ones included, newest first. Admin-only, audited through
+  `admin_access_log` exactly as `GET /admin/stamps/audit` is
+  (`artifacts/api-server/src/routes/adminStamps.ts:694#void logAdminAccess(sc, admin.userId, "profile", userId, "view"`),
+  and a failed read is `db_error`, never an empty list.
+- **Screen.** `travel-buddy-standalone/app/admin/user-stamps.tsx:43#export default function AdminUserStampsScreen(`:
+  find a person by @handle (the existing `GET /api/admin/users`) or user id, then award by definition
+  slug, revoke or restore — each with a required reason — and re-read the list after every action so
+  what is shown is what the server holds. Reached from the admin Testing Console.
+
+### 23.3 Tests, seen red, and mutations
+
+- Server: `artifacts/api-server/src/test/tmAdminConsole.test.ts:252#describe("GET /api/admin/stamps/users/:userId/stamps (PASS-F23)"`
+  — all four cases RED before the route existed (404). Mutations, each restored by sha256: the read
+  error turned into a list, the audit write dropped, the `user_id` filter dropped (1 red each), and the
+  admin gate removed (2 red).
+- Client: `travel-buddy-standalone/app/admin/__tests__/AdminConsoleScreens.component.test.tsx:189#describe('User stamps (PASS-F23)'`
+  (3 cases). Mutations: the reason no longer required; a failed stamp read rendered as "holds no
+  stamps" (1 red each).
+
+### 23.4 Decisions (this area has no decision register)
+
+- **Campaigns stay API-only.** A campaign is a definition-plus-window record with no in-app loop that
+  a tester closes; the calls are in `docs/ops/testing-mode-flows.md`.
+- **Award is by slug, typed.** The definitions list can be long and changes; the award engine's own
+  refusal (`definition_not_found`, `not_eligible`, …) is shown as "Not awarded: …".
+
+### 23.5 What this does not claim, and what would turn it red
+
+- No P row moves; none grades an admin surface.
+- Open, not fixed here: the revoke and restore routes answer `not_found` for ANY engine refusal,
+  including a database error (`result.reason` is the error text). The screen shows that text, so
+  nothing is reported as done, but the status code is wrong for an outage.
+- Red if: the per-user route answers a list for a failed read, or answers a non-admin; the screen
+  acts without a reason or shows an empty list for a failed read.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/scripts/lib/censusHeadCommit.ts — The head_commit parser that check:census-freshness imports. §18.2 reads the declaration shape out of it and §18.6 records why it is not scoped. It is guard machinery that the NOT_GRADED pattern stops short of (it lives in src/scripts/lib/), and no Passport row grades it.
@@ -2179,3 +2234,6 @@ person could not see a collection, how much of it they had earned, or what stamp
 - NOT-GRADED: travel-buddy-standalone/app/__tests__/stamp-collections.component.test.tsx — §22.3's screen suite for PASS-F09; no verdict rests on it
 - NOT-GRADED: travel-buddy-standalone/src/services/__tests__/tmSocial.services.component.test.ts — §22.3's service suite for the stamp browse wrappers; no verdict rests on it
 - NOT-GRADED: travel-buddy-standalone/app/stamp/[stampId].tsx — §22.4 names it only to explain why catalog rows do not link to it; this census grades no behaviour of that screen
+- NOT-GRADED: travel-buddy-standalone/app/admin/user-stamps.tsx — §23's admin stamp screen; built work for PASS-F23, no Passport verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/tmAdminConsole.test.ts — the TM-admin lane's server suite, cited in §23.3 for the per-user stamp route; no verdict rests on it.
+- NOT-GRADED: travel-buddy-standalone/app/admin/__tests__/AdminConsoleScreens.component.test.tsx — §23.3's admin-screen suite; no verdict rests on it.

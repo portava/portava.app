@@ -7,7 +7,7 @@
  *   - Waitlist  — waitlist order
  *   - Controls  — event state controls, post pinned update (cancel / complete through their own routes)
  *   Attendance (check-ins, confirm / no-show) and Co-hosts: src/components/events/ (PLAT-F26, PLAT-F28). */
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, Pressable, StyleSheet, ScrollView,
   ActivityIndicator, Alert, TextInput,
@@ -45,7 +45,7 @@ export function HostDashboardPanel({ event, onDismiss, onRefresh }: Props) {
   // Invite tab
   const [inviteQuery, setInviteQuery]     = useState('');
   const [inviteResults, setInviteResults] = useState<TravelerSearchResult[]>([]);
-  const [inviteSearching, setInviteSearching] = useState(false);
+  const [inviteSearching, setInviteSearching] = useState(false); const [inviteFailed, setInviteFailed] = useState(false); const inviteSeqRef = useRef(0); // census-discovery §106 (tm-people): the last search's read failed; the generation of the latest search
   const [inviteSending, setInviteSending]   = useState<string | null>(null);
   const [invitedIds, setInvitedIds]         = useState<Set<string>>(new Set());
   // AI header image generation
@@ -174,11 +174,11 @@ export function HostDashboardPanel({ event, onDismiss, onRefresh }: Props) {
   }
 
   async function handleInviteSearch(query: string) {
-    setInviteQuery(query);
-    if (query.trim().length < 2) { setInviteResults([]); return; }
+    setInviteQuery(query); const seq = ++inviteSeqRef.current; setInviteFailed(false);
+    if (query.trim().length < 2) { setInviteResults([]); setInviteSearching(false); return; }
     setInviteSearching(true);
-    const res = await searchUsers(query.trim());
-    if (res.ok) setInviteResults(res.data ?? []);
+    const res = await searchUsers(query.trim()); if (seq !== inviteSeqRef.current) return; // only the latest request writes the list
+    if (res.ok && res.data) setInviteResults(res.data); else { setInviteResults([]); setInviteFailed(true); } // a failed read is neither the last query's people nor "No users found"
     setInviteSearching(false);
   }
 
@@ -335,8 +335,8 @@ export function HostDashboardPanel({ event, onDismiss, onRefresh }: Props) {
                   autoCapitalize="none"
                   autoCorrect={false}
                 />
-                {inviteSearching && <ActivityIndicator color={color.signal} style={{ marginTop: space.md }} />}
-                {!inviteSearching && inviteQuery.length >= 2 && inviteResults.length === 0 && (
+                {inviteSearching && <ActivityIndicator color={color.signal} style={{ marginTop: space.md }} />}{!inviteSearching && inviteFailed && (<View style={s.empty}><Text style={s.emptyText}>We couldn't search travelers just now.</Text><Pressable style={[s.inviteBtn, { marginTop: space.sm }]} onPress={() => { void handleInviteSearch(inviteQuery); }} accessibilityRole="button" accessibilityLabel="Retry"><Text style={s.inviteBtnText}>Try again</Text></Pressable></View>)}
+                {!inviteSearching && !inviteFailed && inviteQuery.length >= 2 && inviteResults.length === 0 && (
                   <View style={s.empty}><Text style={s.emptyText}>No users found</Text></View>
                 )}
                 {inviteResults.map((u) => (

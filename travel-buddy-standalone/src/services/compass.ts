@@ -109,7 +109,7 @@ function deviceTzOffsetMinutes(): number {
 // per-section feed below (fetchCompassSection via useCompassFeed). A whole-feed
 // call would be a second recommendation surface beside Home, so it is retired
 // rather than wired. The server route stays for API callers; the decision and
-// its reasons are in docs/architecture/census-compass.md §29.
+// its reasons are in docs/architecture/census-compass.md §31.
 //
 // These comment lines hold the function's former line span, because this file
 // is cited by line number throughout the censuses.

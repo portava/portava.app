@@ -127,7 +127,7 @@ export function DiscoveryShareSheet({ visible, item, onClose }: Props) {
   // Search
   const [threadSearch, setThreadSearch] = useState('');
   const [userResults, setUserResults] = useState<TravelerSearchResult[]>([]);
-  const [searchingUsers, setSearchingUsers] = useState(false);
+  const [searchingUsers, setSearchingUsers] = useState(false); const [userSearchFailed, setUserSearchFailed] = useState(false); const userSearchSeqRef = useRef(0); // census-discovery §106 (tm-people): the last people search's read failed; the generation of the latest search
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -150,14 +150,14 @@ export function DiscoveryShareSheet({ visible, item, onClose }: Props) {
   // Reset search state when sheet closes
   useEffect(() => {
     if (!visible) {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
+      if (debounceRef.current) clearTimeout(debounceRef.current); userSearchSeqRef.current++; setUserSearchFailed(false); // a closed sheet takes no late answer
       setThreadSearch('');
       setUserResults([]);
     }
   }, [visible]);
 
   function handleSearchChange(text: string) {
-    setThreadSearch(text);
+    setThreadSearch(text); const seq = ++userSearchSeqRef.current; setUserSearchFailed(false); // a new query: whatever is in flight answers a question no longer asked
     setSelectedId(null);
 
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -171,16 +171,16 @@ export function DiscoveryShareSheet({ visible, item, onClose }: Props) {
     debounceRef.current = setTimeout(async () => {
       setSearchingUsers(true);
       try {
-        const res = await searchUsers(text.trim(), 10);
+        const res = await searchUsers(text.trim(), 10); if (seq !== userSearchSeqRef.current) return; // only the latest request writes the People section
         if (res.ok && res.data) {
           setUserResults(res.data);
         } else {
-          setUserResults([]);
+          setUserResults([]); setUserSearchFailed(true); // a failed read is not "No people found"
         }
       } catch {
-        setUserResults([]);
+        if (seq === userSearchSeqRef.current) { setUserResults([]); setUserSearchFailed(true); }
       } finally {
-        setSearchingUsers(false);
+        if (seq === userSearchSeqRef.current) setSearchingUsers(false);
       }
     }, 350);
   }
@@ -383,7 +383,7 @@ export function DiscoveryShareSheet({ visible, item, onClose }: Props) {
               ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: color.haze }} />}
             />
           )
-        ) : filteredThreads.length === 0 && !searchingUsers && userResults.length === 0 ? (
+        ) : filteredThreads.length === 0 && !searchingUsers && !userSearchFailed && userResults.length === 0 ? (
           <View style={s.loadingRow}>
             <MessageCircle size={24} color={color.faint} />
             <Text style={s.emptyLabel}>No results for "{threadSearch}".</Text>
@@ -413,7 +413,7 @@ export function DiscoveryShareSheet({ visible, item, onClose }: Props) {
               <View style={s.loadingRow}>
                 <ActivityIndicator size="small" color={color.signal} />
               </View>
-            ) : userResults.length > 0 ? (
+            ) : userSearchFailed ? (<View style={s.loadingRow}><Text style={s.emptyLabel}>We couldn't search people just now.</Text><Pressable onPress={() => handleSearchChange(threadSearch)} accessibilityRole="button" accessibilityLabel="Retry" hitSlop={8}><Text style={s.startChatText}>Try again</Text></Pressable></View>) : userResults.length > 0 ? (
               userResults.map((user, i) => (
                 <View key={user.id}>
                   <UserResultRow user={user} onPress={() => handleUserResultPress(user)} />

@@ -1,6 +1,6 @@
 /**
  * GET /compass/feed is RETIRED from the client (testing-mode WP-12, flow
- * COMP-F03; decision recorded in census-compass §29).
+ * COMP-F03; decision recorded in census-compass §31).
  *
  * `fetchCompassFeed` had no caller: the Compass tab renders Compass Home
  * (GET /compass/home — the server-built current-context projection CPV2-05

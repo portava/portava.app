@@ -82,14 +82,14 @@ export async function refreshDailyBrief(
   }
 }
 
-export async function executeBriefAction(tripId: string, actionId: string): Promise<{ ok: boolean; data?: any }> {
-  if (!isSupabaseConfigured || !apiBase()) return { ok: false };
+export async function executeBriefAction(tripId: string, actionId: string): Promise<{ ok: boolean; data?: any; status?: number; error?: string }> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'not_configured' };
   try {
-    const res = await authedFetch(`/api/trips/${tripId}/daily-brief/actions/${actionId}`, { method: 'POST' });
-    const data = await res.json();
-    return { ok: res.ok, data };
-  } catch {
-    return { ok: false };
+    const res = await authedFetch(`/api/trips/${tripId}/daily-brief/actions/${encodeURIComponent(actionId)}`, { method: 'POST' });
+    const data = await res.json().catch(() => null); // TM-live COMP-F14: only the server's `ok: true` is an executed action
+    return { ok: res.ok && data?.ok === true, data, status: res.status, error: res.ok ? undefined : (data?.error ?? `http_${res.status}`) };
+  } catch (e: any) {
+    return { ok: false, error: e?.message ?? 'network_error' };
   }
 }
 

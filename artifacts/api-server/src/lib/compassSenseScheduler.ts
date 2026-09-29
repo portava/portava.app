@@ -22,6 +22,9 @@
  *     runSense — no separate send path.
  *   - Gated on COMPASS_ENABLED like every Compass surface; flag off → the
  *     sweep is a no-op.
+ *   - A user whose signal sources could not be read counts as an ERROR for
+ *     the tick (and, if nothing could be read, is not counted as evaluated):
+ *     a failed read is never recorded as a clean, empty run (DV-83).
  *
  * Follows the compassAbuseScanScheduler pattern: initial run shortly after
  * server start, fixed interval thereafter, per-user errors swallowed so the
@@ -31,7 +34,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { getServiceClient, isServiceClientReady } from "./supabase.js";
 import { logger as rootLogger } from "./logger.js";
 import { isCompassEnabled } from "../compass/flags.js";
-import { runSense } from "../compass/CompassSenseEngine.js";
+import { runSense, senseCoverage } from "../compass/CompassSenseEngine.js";
 
 const logger = rootLogger.child({ job: "CompassSenseScheduler" });
 
@@ -139,7 +142,20 @@ export async function runSenseSweep(
       // never surface as unhandled rejections after the sweep moved on.
       promise.catch(() => {});
       const result = await withUserTimeout(promise, timeoutMs);
-      summary.usersEvaluated += 1;
+      // DV-83: a user whose signal sources could not be read is a FAILED
+      // evaluation for this tick, not a clean empty one. Some sources unread:
+      // the readable ones still ran (and may have delivered), so the user is
+      // evaluated AND the tick records an error. None readable: there was no
+      // evaluation at all, so the user is not counted as evaluated.
+      const coverage = senseCoverage(result.failedSources);
+      if (coverage !== "complete") {
+        summary.errors += 1;
+        logger.warn(
+          { userId, coverage, failedSources: result.failedSources },
+          "CompassSenseScheduler: Sense sources unread for user; recorded as a failed evaluation",
+        );
+      }
+      if (coverage !== "none") summary.usersEvaluated += 1;
       summary.nudgesDelivered += result.delivered.length;
     } catch (err) {
       summary.errors += 1;
