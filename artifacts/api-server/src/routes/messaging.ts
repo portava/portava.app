@@ -60,7 +60,7 @@ import { isKillSwitchEngaged } from '../lib/featureFlags.js';
 import { appStorageUrlInfo } from '../lib/mediaUrl.js';
 import { classifyMemoryMediaUrl } from '../services/memory/memoryMediaOrigin.js';
 import { messagingStopUnknownRefusal } from '../lib/telegraphThreadWrite.js';
-import { isUuid } from '../lib/followDecisions'; import { REPORT_REASON_CODES, reportSeverityFor, type ReportReasonCode } from '../lib/reportReasons';
+import { isUuid } from '../lib/followDecisions'; import { REPORT_REASON_CODES, reportSeverityFor, type ReportReasonCode } from '../lib/reportReasons'; import { refuseEditOnEncryptedThread } from '../services/telegraph/editE2eeGate';
 import {
   translateMessageForThread,
   markTranslationsPending,
@@ -4433,50 +4433,6 @@ router.post('/messages/:messageId/report', async (req, res) => {
 });
 
 export default router;
-
-/* ---------------------------------------------------------------------------
- * WP-08 (lane tm-telegraph) — the E2EE gate on the canonical edit route.
- * ---------------------------------------------------------------------------
- * PATCH /threads/:threadId/messages/:messageId is the one edit route the client
- * calls, and it was the only write in this file that could put text on the
- * server without first reading `message_threads.is_e2ee`: the send, the media
- * send and the translate retry all refuse. An edit on an encrypted thread would
- * have overwritten `messages.body` in the clear AND copied the previous body
- * into `message_edits`.
- *
- * Same posture as the send path (`thread E2EE flag read failed — refusing
- * rather than risking plaintext storage`): an unreadable flag is NOT a false
- * one, so it refuses with the retryable `degraded_unavailable`. It runs AFTER
- * the membership and sender checks, so an outsider still learns nothing about
- * the thread from it. Kept at the file foot so the route above stays
- * line-neutral for the census citations into it.
- *
- * Returns true when it has already answered the request.
- */
-async function refuseEditOnEncryptedThread(
-  sc: NonNullable<ReturnType<typeof getServiceClient>>,
-  req: any,
-  res: any,
-  threadId: string,
-  messageId: string,
-): Promise<boolean> {
-  const { data: threadMeta, error: threadMetaErr } = await sc
-    .from('message_threads')
-    .select('is_e2ee')
-    .eq('id', threadId)
-    .maybeSingle();
-  if (threadMetaErr) {
-    req.log.error({ err: threadMetaErr, threadId, messageId },
-      'thread E2EE flag read failed on edit — refusing rather than risking a plaintext edit in an E2EE thread');
-    sendError(res, 'degraded_unavailable', 'We could not verify this conversation right now. Please try again shortly.');
-    return true;
-  }
-  if ((threadMeta as any)?.is_e2ee === true) {
-    sendError(res, 'e2ee_thread', 'Editing is unavailable for end-to-end encrypted messages');
-    return true;
-  }
-  return false;
-}
 
 /* ---------------------------------------------------------------------------
  * WP-08 (lane tm-telegraph) — the reason a per-message report carries.

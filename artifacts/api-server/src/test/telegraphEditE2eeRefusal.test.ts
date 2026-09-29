@@ -27,6 +27,7 @@ import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import messagingRouter from "../routes/messaging.js";
+import groupChatRouter from "../routes/groupChat.js";
 
 const ALICE = "aaaaaaaa-0000-4000-8000-000000000001";
 const BOB = "bbbbbbbb-0000-4000-8000-000000000002";
@@ -144,6 +145,7 @@ before(async () => {
     next();
   });
   app.use("/api", messagingRouter);
+  app.use("/api", groupChatRouter);
   server = createServer(app);
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   baseUrl = `http://127.0.0.1:${(server.address() as any).port}`;
@@ -192,5 +194,49 @@ describe("TEL-F07 — the canonical edit route and end-to-end encryption", () =>
     const notSender = await patch(BOB, { body: "x" });
     assert.equal(notSender.status, 403);
     assert.equal(notSender.body.error, "forbidden");
+  });
+});
+
+/* ── The LEGACY route (routes/groupChat.ts PATCH /messages/:messageId) ──────
+ * The client no longer calls it, but any authenticated caller still can, and it
+ * overwrote `messages.body` with no E2EE read at all. Same gate, same order:
+ * membership first, then the flag. */
+async function legacyPatch(asUser: string, body: unknown) {
+  const r = await fetch(`${baseUrl}/api/messages/${MSG}`, {
+    method: "PATCH",
+    headers: { authorization: `Bearer ${asUser}`, "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const text = await r.text();
+  let parsed: any = null;
+  try { parsed = JSON.parse(text); } catch { parsed = text; }
+  return { status: r.status, body: parsed };
+}
+
+describe("TEL-F07 — the legacy edit route is gated the same way", () => {
+  it("refuses an edit on an E2EE thread and writes nothing", async () => {
+    const c = use({ e2ee: true });
+    const r = await legacyPatch(ALICE, { body: "plaintext through the side door" });
+    assert.equal(r.status, 422);
+    assert.equal(r.body.error, "e2ee_thread");
+    assert.equal((c as any)._db.messages[0].body, "original");
+    assert.equal((c as any)._db.messages[0].edited_at, null);
+  });
+
+  it("an unreadable flag refuses (503), not 'plaintext'", async () => {
+    const c = use({ failTable: "message_threads" });
+    const r = await legacyPatch(ALICE, { body: "edited" });
+    assert.equal(r.status, 503);
+    assert.equal((c as any)._db.messages[0].body, "original");
+  });
+
+  it("a plaintext thread still edits (control), and an outsider is refused first", async () => {
+    const c = use({ e2ee: false });
+    const r = await legacyPatch(ALICE, { body: "fixed typo" });
+    assert.equal(r.status, 200);
+    assert.equal((c as any)._db.messages[0].body, "fixed typo");
+    use({ e2ee: true });
+    const notSender = await legacyPatch(BOB, { body: "x" });
+    assert.equal(notSender.status, 403);
   });
 });
