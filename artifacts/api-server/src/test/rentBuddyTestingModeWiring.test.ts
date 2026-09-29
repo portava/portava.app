@@ -199,7 +199,7 @@ before(async () => {
   app.use("/api", rentABuddyRouter);
   app.use("/api", marketplaceRouter);
   app.use("/api", specRouter);
-  await new Promise<void>((resolve) => { server = app.listen(0, resolve); });
+  await new Promise<void>((resolve) => { server = app.listen(0, "127.0.0.1", () => resolve()); });
   const addr = server.address() as { port: number };
   base = `http://127.0.0.1:${addr.port}`;
 });
