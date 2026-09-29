@@ -59,7 +59,7 @@ const R = {
 };
 
 type Row = Record<string, any>;
-const iso = (msAgo: number) => new Date(Date.now() - msAgo).toISOString();
+let seedNow = Date.now(); const iso = (msAgo: number) => new Date(seedNow - msAgo).toISOString();  // one clock reading per SEED(): rows of one run share computed_at exactly (the route selects the run by .eq(computed_at))
 
 /** A momentum row as 3410's rebuild writes it — rates, weights and all. */
 const pm = (place: string, state: string, recent: number | null, window: number | null, over: Row = {}): Row => ({
@@ -78,7 +78,7 @@ const exposure = (user: string, rec: string, item: string, over: Row = {}): Row 
 
 const K = TREND_DISCLOSURE_MIN_TRAVELERS;
 
-const SEED = (): Record<string, Row[]> => ({
+const SEED = (): Record<string, Row[]> => (seedNow = Date.now(), {
   feature_flags: [{ flag: TREND_API_FLAG, enabled: true }],
   rank_events: [
     exposure(USER, R.trending, `db/${P1}`),
