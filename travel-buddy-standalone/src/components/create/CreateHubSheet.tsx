@@ -71,7 +71,7 @@ const SHARE_ENTRIES: HubEntry[] = [
     sublabel: 'A photo gallery from your trip',
     icon: BookImage,
     iconColor: '#8B5CF6',
-    route: '/memory/edit',
+    route: '/memory/new',
   },
   {
     id: 'gem',

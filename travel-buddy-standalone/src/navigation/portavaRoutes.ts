@@ -2117,7 +2117,7 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     // §4 Media Contribution (census-media §19). A current perspective of one
     // canonical place, through the existing upload + post write.
   },
-  { key: 'saved-people', path: 'saved-people', title: 'Saved People', parent: 'saved', icon: null, requiresAuth: true, ownerOnly: true }, { key: 'stamp-collections', path: 'stamp-collections', title: 'Stamp Collections', parent: 'stamps', icon: null, requiresAuth: true, ownerOnly: true }, ]; // testing mode (TM-social, 2026-09-29): on the closing line, so every cited line keeps its number
+  { key: 'saved-people', path: 'saved-people', title: 'Saved People', parent: 'saved', icon: null, requiresAuth: true, ownerOnly: true }, { key: 'stamp-collections', path: 'stamp-collections', title: 'Stamp Collections', parent: 'stamps', icon: null, requiresAuth: true, ownerOnly: true }, { key: 'memory-new', path: 'memory/new', title: 'New Memory', parent: null, icon: null, requiresAuth: true, ownerOnly: true }, ]; // testing mode (TM-social, 2026-09-29): on the closing line, so every cited line keeps its number; memory-new: TM-create HM-F08, the Create hub's Memory entry
 
 // ── Layout registry ───────────────────────────────────────────────────────────
 //

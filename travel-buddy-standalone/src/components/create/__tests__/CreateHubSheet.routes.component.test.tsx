@@ -34,7 +34,7 @@ describe('CreateHubSheet — route navigation', () => {
     try {
       const liveEntries: Array<[string, string]> = [
         ['Post', '/create'],
-        ['Memory', '/memory/edit'],
+        ['Memory', '/memory/new'],
         ['Add a Gem', '/gems/submit'],
         ['Event', '/events/create'],
         ['Trip', '/trip/new'],
