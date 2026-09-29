@@ -18309,6 +18309,50 @@ When every tripped condition tripped only because its measurement is unreadable,
   - a trending, buddy or trip-map list served as complete over a cut or failed read (V10-HT1, HT*, TP*, BA*, BR*, TC*, TM*);
   - any path §107.12 lists.
 
+### 108.15 Results at the final code commit (`63af227d5`)
+
+- **`int-guards.sh /home/user/wt-v8`**: all 24 exit 0. `typecheck:tests` is at 863 against a baseline of 863.
+
+```
+typecheck exit=0
+typecheck:tests exit=0
+check:test-registration exit=0
+check:census-integrity exit=0
+check:doc-citations exit=0
+check:citation-targets exit=0
+check:citation-symbols exit=0
+check:census-freshness exit=0
+check:census-scope-coverage exit=0
+check:census-row-move-labels exit=0
+check:migration-prefixes exit=0
+check:production-drift exit=0
+check:writerless-reads exit=0
+check:schema-references exit=0
+check:enum-literals exit=0
+check:flag-polarity exit=0
+check:discovery-query-paths exit=0
+check:route-auth-gate exit=0
+check:api-prefix exit=0
+check:async-handlers exit=0
+check:frozen-dir exit=0
+check:telegraph-inventory exit=0
+check:guard-coverage exit=0
+check:unissued-supabase-writes exit=0
+```
+
+- **api-server node:test** (Node v24.21.0, `SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy`), 317 files: every `src/test/discovery*`, `compass*`, `trail*`, `hashtag*`, `circle*`, `adminTrails` and map-search suite, the five new §108 suites among them; `hashtags`, `flagPhantomReads`, `emergencyFlags`, the presence, meetup, block-gate, locate-friends and Telegraph shared-context suites (the consent batch §108 changes); `securityCheckSuite`, `uncheckedSupabaseReads`, `entryWiringNotCommentedOut` and `layoverSurfaceErrorBinding`. Result: `ℹ tests 5578 · ℹ suites 1237 · ℹ pass 5578 · ℹ fail 0 · ℹ cancelled 0`. The live-DB suites are left out, as in §107.13 (`compassMemoryClientBoundary`, `discoveryPlaceWriteBoundary`, `meetupRlsLive`). The run was at `fa5dd2c01`; `63af227d5` changes only one client test's file read.
+  - Alone: `securityCheckSuite` 17/17, `uncheckedSupabaseReads` 69/69, `entryWiringNotCommentedOut` 4/4, `layoverSurfaceErrorBinding` 5/5.
+  - `node --import tsx/esm src/scripts/checkUncheckedSupabaseReads.ts`: "no NEW in-scope read ignores its .error", no stale allowlist entry.
+  - The write-path-columns replica (`uacheck.mts`): `OK (117 tracked)`.
+- **Client.**
+  - `pnpm run -s check:all`: `✔ ALL CHECKS PASSED`.
+    - Node suites: `ℹ tests 7404 · ℹ pass 7404 · ℹ fail 0`.
+    - Component suites: `Test Suites: 790 passed, 790 total · Tests: 5036 passed, 5036 total`.
+    - Web suites: `4 passed, 12 tests`.
+    - `typecheck:tests` is at 173 against a baseline of 173.
+  - `node scripts/check-route-registry.mjs`: "OK. All 217 screen file(s) are represented in PORTAVA_ROUTES and all 9 layout file(s) are represented in PORTAVA_LAYOUT_FILES."
+- **The verifier's v10 probes**, copied in unchanged and deleted after: 15 of 15 server (V10-HP0..3, V10-SM6, V10-WT1, V10-WT2, V10-TC0, V10-TC1, V10-SC0, V10-SC1, V10-HT0, V10-HT1, V10-CC0, V10-CC7) and 3 of 3 client (V10-CH0..2) pass.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: travel-buddy-standalone/app/discover.tsx — §105.11 names it only as a path seen and not built, left for its owner: it is the social people search over services/follows.ts, not a Discovery envelope, and no DV-83 verdict rests on it.
