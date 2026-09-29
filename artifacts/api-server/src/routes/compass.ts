@@ -39,7 +39,7 @@ import {
   sharedItems,
 } from "../services/passport/PassportConsumerProjections.js";
 import { allowDiscoveryPersonCard } from "../services/passport/PassportConsumerAccess.js";
-import { isCompassEnabled, isEnabled } from "../compass/flags.js";
+import { isCompassEnabled, isEnabled, readCompassEnabled } from "../compass/flags.js"; import { discoveryRefusal } from "../lib/discoveryRefusal.js";
 import { isFlagEnabled as isPlatformFlagEnabled } from "../lib/featureFlags.js";
 import { buildCompassHomeProjection } from "./compassHome.js";
 import {
@@ -76,7 +76,7 @@ import {
   buildModeWeightingLines,
 } from "../compass/CompassStructuredContext.js";
 import { buildDestinationContextLines } from "../compass/CompassGraphEngine.js";
-import { buildFeed, buildSection, SECTION_NAMES, type SectionName, type FeedPage } from "../compass/CompassFeedBuilder.js";
+import { buildFeed, buildSection, SECTION_NAMES, type SectionName, type FeedPage, CompassFlagsUnreadableError } from "../compass/CompassFeedBuilder.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { hydrateCompassItems } from "../compass/CompassItemHydrator.js";
 import {
@@ -628,9 +628,9 @@ router.get("/compass/feed/section/:section", async (req, res) => {
     return;
   }
 
-  const enabled = await isCompassEnabled(sc);
+  const enabledRead = await readCompassEnabled(sc); const enabled = enabledRead === true;  // census-discovery §103 (D-W11X2-50): null = the flag table could not be read
   if (!enabled) {
-    res.json({ section: null, nextCursor: null, fallback: true, compassEnabled: false });
+    if (enabledRead === null) { sendCompassSectionFailure(res, "compass_flags_unreadable", []); return; } res.json({ section: null, nextCursor: null, fallback: true, compassEnabled: false });  // census-discovery §103 (DV-83, D-W11X2-50): "disabled" only when the flags were READ; an unread flag table is a failed read, not an off switch
     return;
   }
 
@@ -775,7 +775,7 @@ router.get("/compass/feed/section/:section", async (req, res) => {
       req.log?.error({ err: fallbackErr, userId: user.id }, "compass/feed/section: fallback feed build itself failed — returning empty safeItems");
       return { safeItems: [] };
     });
-    res.json({ section: null, nextCursor: null, fallback: true, safeItems: fallback.safeItems });
+    sendCompassSectionFailure(res, err instanceof CompassFlagsUnreadableError ? "compass_flags_unreadable" : "section_build_error", fallback.safeItems);  // census-discovery §103 (DV-83, D-W11X2-50): the build failed, and the body says so — was: res.json({ section: null, nextCursor: null, fallback: true, safeItems: fallback.safeItems });
   }
 });
 
@@ -4906,3 +4906,35 @@ router.get("/compass/people/:userId/passport", async (req, res) => {
 });
 
 export default router;
+
+// ── census-discovery §103 (DV-83, D-W11X2-50): the section route's failed reads ──
+//
+// GET /compass/feed/section is read by Discovery's For You tab (CompassPicksSection,
+// ForYouTab). Its build-error arm used to answer `{ section: null, fallback: true,
+// safeItems }` with no `compassEnabled`, which the client read as "Compass is
+// disabled" and hid: a failed build drawn exactly like "no picks here". An unread
+// COMPASS_% flag table did the same through the disabled arm, because `getFlags`
+// answers the fail-safe map, in which COMPASS_ENABLED is absent (off); the route now
+// reads the flag with `readCompassEnabled`, whose `null` is that failed load.
+//
+// Both now answer the section envelope plus a marker and the refusal envelope:
+// `fallbackReason` names the failure, `refusal.coverage` is `partial` when safe items
+// ride along and `nothing` when none do. The disabled arm (flags read, Compass off)
+// is unchanged and stays hidden.
+function sendCompassSectionFailure(res: import("express").Response, reason: "section_build_error" | "compass_flags_unreadable", safeItems: unknown[]): void {
+  res.json({
+    section: null,
+    nextCursor: null,
+    fallback: true,
+    ...(reason === "section_build_error" ? { compassEnabled: true } : {}),
+    fallbackReason: reason,
+    safeItems,
+    refusal: discoveryRefusal(
+      "transient_db",
+      reason,
+      "GET /compass/feed/section",
+      safeItems.length > 0 ? "partial" : "nothing",
+      [reason === "section_build_error" ? "compass_section" : "feature_flags"],
+    ),
+  });
+}

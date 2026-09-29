@@ -16,7 +16,7 @@ import { TelegraphSendIcon } from '../icons/TelegraphSendIcon.tsx';
 import { DiscoveryShareSheet } from '../DiscoveryShareSheet.tsx';
 import type { DiscoverySharePayload } from '../DiscoveryShareSheet.tsx';
 import type { DiscoveryPlace } from '../../services/discovery.ts';
-import { getDiscoveryPlaces, getSavedPlaceIds, getCachedDiscoveryPlaces } from '../../services/discovery.ts'; import { listPartialNotice, listPartialEmptyTitle, LIST_PARTIAL_EMPTY_BODY, listStaleNotice } from '../../services/discoveryCoverageNotice.ts'; import { liveClaimsUnchecked, LIVE_UNCHECKED_NOTICE } from './liveUnchecked.ts';  // census-discovery §91 (A07)
+import { getDiscoveryPlaces, getSavedPlaceIds, getCachedDiscoveryPlaces, type DiscoveryCacheQuery, type DiscoveryContextMode } from '../../services/discovery.ts'; import { listPartialNotice, listPartialEmptyTitle, LIST_PARTIAL_EMPTY_BODY, listStaleNotice } from '../../services/discoveryCoverageNotice.ts'; import { liveClaimsUnchecked, LIVE_UNCHECKED_NOTICE } from './liveUnchecked.ts';  // census-discovery §91 (A07)
 import { PlaceSkeletonList } from './PlaceSkeleton.tsx';
 import PlaceCard from './PlaceCard.tsx';
 import { PlaceDetailSheet } from './PlaceDetailSheet.tsx';
@@ -93,12 +93,12 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
   // SWR: seed from in-memory client cache so second opens paint instantly.
   const [items, setItems]       = useState<ForYouItem[]>(() => {
     if (!destination) return [];
-    const cached = getCachedDiscoveryPlaces(destination, 'for_you', 25, 1, intentMode);
+    const cached = getCachedDiscoveryPlaces(destination, 'for_you', 25, 1, intentMode, forYouCacheQuery(sortBy, contextMode, lat, lng, userLat, userLng));
     return cached?.places.slice(0, 15).map((p) => ({ kind: 'osm' as const, place: p })) ?? [];
   });
   const [loading, setLoading]   = useState<boolean>(() => {
     if (!destination) return false;
-    return getCachedDiscoveryPlaces(destination, 'for_you', 25, 1, intentMode) === null;
+    return getCachedDiscoveryPlaces(destination, 'for_you', 25, 1, intentMode, forYouCacheQuery(sortBy, contextMode, lat, lng, userLat, userLng)) === null;
   });
   const [refreshing, setRefreshing] = useState(false);
   // 'refused' is a FOURTH state and not a flavour of 'none'.
@@ -109,7 +109,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
   // 'none' here is exactly the consumer-side collapse the sentence forbids —
   // the user is told "there is nothing in Lisbon" when the truth is "we never
   // managed to look".
-  const [source, setSource]     = useState<'compass' | 'osm' | 'none' | 'refused'>(() => ((destination ? getCachedDiscoveryPlaces(destination, 'for_you', 25, 1, intentMode)?.places.length ?? 0 : 0) > 0 ? 'osm' : 'none')); const [osmPartial, setOsmPartial] = useState(() => (destination ? getCachedDiscoveryPlaces(destination, 'for_you', 25, 1, intentMode)?.refusal?.coverage === 'partial' : false)); const [railRefreshKey, setRailRefreshKey] = useState(0); // §80 (DV-83): the OSM lane answered PARTIAL; §99: the first frame, seeded from the cache like `items` above, carries the cached page's source and coverage
+  const [source, setSource]     = useState<'compass' | 'osm' | 'none' | 'refused'>(() => ((destination ? getCachedDiscoveryPlaces(destination, 'for_you', 25, 1, intentMode, forYouCacheQuery(sortBy, contextMode, lat, lng, userLat, userLng))?.places.length ?? 0 : 0) > 0 ? 'osm' : 'none')); const [osmPartial, setOsmPartial] = useState(() => (destination ? getCachedDiscoveryPlaces(destination, 'for_you', 25, 1, intentMode, forYouCacheQuery(sortBy, contextMode, lat, lng, userLat, userLng))?.refusal?.coverage === 'partial' : false)); const [railRefreshKey, setRailRefreshKey] = useState(0); // §80 (DV-83): the OSM lane answered PARTIAL; §99: the first frame, seeded from the cache like `items` above, carries the cached page's source and coverage
   // The saved-places read is a separate surface with a separate failure: your
   // bookmarks are not the place list, and one can fail while the other works.
   const [savedIdsUnavailable, setSavedIdsUnavailable] = useState(false); const [liveUnchecked, setLiveUnchecked] = useState(false); const [loadFailed, setLoadFailed] = useState<string | null>(null);  // census-discovery §91 (A07): the GET /discovery page's "now" claims were withheld (meta.liveSafety); §100 (DV-83, D-W11X2-22): the last read FAILED in transport (network / non-2xx) — its own state, never 'none'
@@ -304,7 +304,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
     );
     if (!compassActive) {
       const cachedResult = destination
-        ? getCachedDiscoveryPlaces(destination, 'for_you', 25, 1, intentMode)
+        ? getCachedDiscoveryPlaces(destination, 'for_you', 25, 1, intentMode, forYouCacheQuery(sortBy, contextMode, lat, lng, userLat, userLng))
         : null;
       if (cachedResult) {
         setItems(cachedResult.places.slice(0, 15).map((p) => ({ kind: 'osm' as const, place: p })));
@@ -893,3 +893,23 @@ const mapCoverageStyles = StyleSheet.create({
   retry: { alignSelf: 'flex-start', paddingVertical: space.sm, paddingHorizontal: space.lg, borderRadius: radius.md, backgroundColor: color.signal },
   retryText: { ...t.bodyStrong, color: color.onInk },  // DiscoveryCategoryTab's retry button, not a new token use
 });
+
+/**
+ * census-discovery §103 (DV-83, D-W11X2-47): the rest of the GET /discovery query the
+ * For You tab's OSM lane sends (sort, context, destination coordinates, and the user's
+ * position for the nearest sort only), for the cache read — so a cached page is replayed
+ * only for the query that fetched it, never for another sort, context or centre.
+ */
+function forYouCacheQuery(
+  sortBy: string | null | undefined,
+  contextMode: DiscoveryContextMode | null | undefined,
+  lat: number | null | undefined,
+  lng: number | null | undefined,
+  userLat: number | null | undefined,
+  userLng: number | null | undefined,
+): DiscoveryCacheQuery {
+  return {
+    sortBy: sortBy ?? null, contextMode, lat, lng,
+    userLat: sortBy === 'nearest' ? userLat : null, userLng: sortBy === 'nearest' ? userLng : null,
+  };
+}

@@ -37,7 +37,7 @@ jest.mock('react-native', () => {
 
 import React from 'react';
 import { Linking } from 'react-native';
-import { render, fireEvent, waitFor } from '@testing-library/react-native';
+import { render, fireEvent, waitFor, act } from '@testing-library/react-native';
 import { PlaceDetailSheet } from '../PlaceDetailSheet.tsx';
 import type { DiscoveryPlace } from '../../../services/discovery.ts';
 import { getWikidataEnrichment } from '../../../services/discovery.ts';
@@ -348,4 +348,30 @@ describe('PlaceDetailSheet — a failed Wikidata read is said (DV-83, §102)', (
     expect(mockGetWikidataEnrichment).not.toHaveBeenCalled();
     expect(queryByTestId('place-sheet-wikidata-failed')).toBeNull();
   });
+
+  // §103 (DV-83, W11-X2 round 7): the verifier's CM12 mutation (no reset of `wikidataFailed` on a place change)
+  // survived §102. A failure belongs to the place whose read failed: the next place — with no Wikidata id, or
+  // with a read still in flight — is not told "couldn't load more".
+  it('WK4 a failed read for one place is not carried to the next place (no wikidataId)', async () => {
+    mockGetWikidataEnrichment.mockResolvedValueOnce(null);
+    const utils = await mountSheet({ ...BASE_PLACE, description: null, wikidataId: 'Q243' });
+    await utils.findByTestId('place-sheet-wikidata-failed');
+    await act(async () => {
+      utils.rerender(<PlaceDetailSheet place={{ ...BASE_PLACE, id: 'place-wiki-2', description: null, wikidataId: null }} visible onClose={jest.fn()} onAddToPlan={jest.fn()} />);
+    });
+    expect(utils.queryByTestId('place-sheet-wikidata-failed')).toBeNull();
+  });
+
+  it('WK5 nor to the next place whose own read is still in flight', async () => {
+    mockGetWikidataEnrichment.mockResolvedValueOnce(null);
+    const utils = await mountSheet({ ...BASE_PLACE, description: null, wikidataId: 'Q243' });
+    await utils.findByTestId('place-sheet-wikidata-failed');
+    mockGetWikidataEnrichment.mockImplementationOnce(() => new Promise(() => {}));
+    await act(async () => {
+      utils.rerender(<PlaceDetailSheet place={{ ...BASE_PLACE, id: 'place-wiki-3', description: null, wikidataId: 'Q999' }} visible onClose={jest.fn()} onAddToPlan={jest.fn()} />);
+    });
+    expect(mockGetWikidataEnrichment).toHaveBeenLastCalledWith('Q999');
+    expect(utils.queryByTestId('place-sheet-wikidata-failed')).toBeNull();
+  });
 });
+

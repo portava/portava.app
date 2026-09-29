@@ -158,7 +158,7 @@ function normalizeSectionResponse(raw: any): CompassFeedResponse {
     sections,
     nextCursor:    raw.nextCursor ?? null,
     fallback:      raw.fallback ?? false,
-    fallbackReason: raw.fallbackReason ?? undefined,
+    fallbackReason: raw.fallbackReason ?? (raw.fallback && raw.compassEnabled === undefined && Array.isArray(raw.safeItems) ? 'section_build_error' : undefined),  // census-discovery §103 (DV-83, D-W11X2-50): a server without the marker still answers its build-error arm with `safeItems` and no `compassEnabled`; the disabled arm carries neither
     compassEnabled: raw.compassEnabled ?? !raw.fallback,
     safeItems:     (raw.safeItems ?? []).map((fi: any): CompassFeedItem => {
       const inner = fi.item ?? fi;

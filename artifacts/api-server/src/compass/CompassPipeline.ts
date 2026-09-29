@@ -61,7 +61,7 @@ import {
   type SafetyAttentionReading,
 } from "./CompassSafetyAttention.js";
 import { logger } from "../lib/logger.js";
-import { fetchCompassFlags } from "./flags.js";
+import { fetchCompassFlags, FAILSAFE_COMPASS_FLAGS } from "./flags.js";
 
 export interface PipelineResult {
   item:             CompassItem;
@@ -139,7 +139,7 @@ export interface PipelineSummary {
    */
   safetyAttention:   ReturnType<typeof safetyAttentionOnTheWire>;
   /** CCL-05 — what the shared platform projections contributed to this ranking. */
-  sharedProjections: PipelineSharedProjectionsSummary;
+  sharedProjections: PipelineSharedProjectionsSummary; /** census-discovery §103 (D-W11X2-49): present (true) only when the COMPASS_% flag read FAILED and the fail-safe map gated this batch. */ flagsUnreadable?: true;
 }
 
 /** Injectable gate overrides for testing (do not use in production). */
@@ -183,8 +183,8 @@ export interface PipelineTestOverrides {
  * the pipeline wants the live flag state for the batch it is about to score,
  * not a value up to 30 s old.
  */
-async function loadFlags(db: SupabaseClient | null): Promise<Record<string, boolean>> {
-  const load = await fetchCompassFlags(db);
+async function loadFlags(db: SupabaseClient | null, onRead?: (ok: boolean) => void): Promise<Record<string, boolean>> {
+  const load = await fetchCompassFlags(db); onRead?.(load.ok || load.flags !== FAILSAFE_COMPASS_FLAGS);  // census-discovery §103 (DV-83, D-W11X2-49): the caller learns the map is the fail-safe one
   if (!load.ok) {
     logger.warn(
       { err: load.error },
@@ -214,7 +214,7 @@ export async function runPipeline(
   circleMemoryTags?: Set<string>,
 ): Promise<PipelineSummary> {
   // Pre-load feature flags once for the whole batch
-  const flags = await loadFlags(db);
+  let flagsOk = true; const flags = await loadFlags(db, (ok) => { flagsOk = ok; });  // §103: a failed read engages every _SAFETY_BLOCK — the summary says so
 
   // Phase 7 — load memory-derived preference tags once per pipeline call.
   // Callers may pass pre-gated circle-scoped group memory tags (group
@@ -437,7 +437,7 @@ export async function runPipeline(
     blockedCount,
     rejectedCount,
     passedCount:  results.length,
-    results,
+    results, ...(flagsOk ? {} : { flagsUnreadable: true as const }),  // §103 (D-W11X2-49): present only when the COMPASS_% read failed, so a healthy summary is unchanged
     liveExcludedCount: liveExcluded.length,
     liveConstraints: {
       ran:             liveStage !== null,

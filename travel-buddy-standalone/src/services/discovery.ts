@@ -4,7 +4,7 @@
 // this module loading (and type-checking) under Node, where the route→client leg drives it (census-discovery §60, DC-33).
 import type { DiscoveryEventPost } from '../types/discovery.ts';
 import { openDiscoveryLease, isCurrentDiscoveryScope, isLeaseViewerCurrent, onDiscoveryScopeChange, VIEWER_CHANGED_ERROR, type DiscoveryLease, type DiscoveryScope } from './discoveryViewerScope.ts';
-import { stampCandidateReceipt } from '../features/discovery/candidateProjection.ts';
+import { stampCandidateReceipt } from '../features/discovery/candidateProjection.ts'; import { discoveryQueryIdentity, stampDiscoveryQuery } from './discoveryQueryStamp.ts';
 
 const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 
@@ -660,11 +660,11 @@ export type DiscoveryAgeFilter =
 const _CLIENT_CACHE = new Map<string, { data: DiscoveryResult; at: number; scope: DiscoveryScope }>();
 const CLIENT_CACHE_TTL = 4 * 60 * 1_000; // 4 minutes
 
-function _discoveryCacheKey(dest: string, cat: string, radiusKm: number, page: number, intentMode?: DiscoveryIntentMode | null): string {
-  const key = `${dest.toLowerCase().trim()}:${cat}:${radiusKm}:${page}`;
-  // A mode's page is a different order of the same query, so it gets its own
-  // entry; the no-mode key stays exactly what it was before modes existed.
-  return isDiscoveryIntentMode(intentMode) ? `${key}:intent=${intentMode}` : key;
+function _discoveryCacheKey(params: URLSearchParams): string {  // census-discovery §103 (DV-83, D-W11X2-47): the key IS the query the request sends — was: function _discoveryCacheKey(dest: string, cat: string, radiusKm: number, page: number, intentMode?: DiscoveryIntentMode | null): string {
+  // Every entry of the request's own query enters the key (the destination normalised), so a server-affecting
+  // parameter can never be left out of it again: §102.11 found age, open-now, rating, sort, context and the
+  // coordinates missing, and one filter's failed read drawn over another filter's cached rows.
+  return _discoveryCacheKeyOf(params);  // a mode's page, like every other parameter's, is its own entry — was: return isDiscoveryIntentMode(intentMode) ? `${key}:intent=${intentMode}` : key;
 }
 
 /** Test seam: drop every client-cached result. Carries no production caller. */
@@ -682,9 +682,9 @@ export function getCachedDiscoveryPlaces(
   category: DiscoveryCategory,
   radiusKm: number,
   page = 1,
-  intentMode?: DiscoveryIntentMode | null,
+  intentMode?: DiscoveryIntentMode | null, rest: DiscoveryCacheQuery = {},  // §103 (D-W11X2-47): the rest of the query the page was fetched with — the key holds all of it
 ): DiscoveryResult | null {
-  return _liveCacheEntry(_discoveryCacheKey(destination, category, radiusKm, page, intentMode))?.data ?? null;
+  return _liveCacheEntry(_discoveryCacheKey(discoveryPlacesParamsFor(destination, category, radiusKm, page, intentMode, rest)))?.data ?? null;
 }
 
 /**
@@ -695,9 +695,9 @@ export function isDiscoveryCacheFresh(
   category: DiscoveryCategory,
   radiusKm: number,
   page = 1,
-  intentMode?: DiscoveryIntentMode | null,
+  intentMode?: DiscoveryIntentMode | null, rest: DiscoveryCacheQuery = {},
 ): boolean {
-  const e = _liveCacheEntry(_discoveryCacheKey(destination, category, radiusKm, page, intentMode));
+  const e = _liveCacheEntry(_discoveryCacheKey(discoveryPlacesParamsFor(destination, category, radiusKm, page, intentMode, rest)));
   return !!e && Date.now() - e.at < CLIENT_CACHE_TTL;
 }
 
@@ -729,32 +729,32 @@ export async function getDiscoveryPlaces(
   const base = apiBase();
   if (!base) return { ok: false, error: 'API not configured' };
 
-  const params = new URLSearchParams({
-    destination,
-    category,
-    radiusKm: String(filters.radiusKm),
-    page: String(page),
-    ...(filters.openNow ? { openNow: '1' } : {}),
-    ...(filters.minRating != null ? { minRating: String(filters.minRating) } : {}),
-    ...(filters.sortBy ? { sortBy: filters.sortBy } : {}),
-    ...(contextMode ? { context: contextMode } : {}),
-    ...(ageFilter && ageFilter !== 'any' ? { ageFilter } : {}),
-    ...(ageFilter === 'custom' && customMinAge != null ? { customMinAge: String(customMinAge) } : {}),
-    ...(ageFilter === 'custom' && customMaxAge != null ? { customMaxAge: String(customMaxAge) } : {}),
-    ...(lat != null ? { lat: String(lat) } : {}),
-    ...(lng != null ? { lng: String(lng) } : {}),
-    ...(userLat != null ? { userLat: String(userLat) } : {}),
-    ...(userLng != null ? { userLng: String(userLng) } : {}),
-    // Last, and only when chosen: with no selection the URL is the one sent before modes existed.
-    ...(isDiscoveryIntentMode(filters.intentMode) ? { intentMode: filters.intentMode } : {}),
-  });
+  const params = discoveryPlacesParams(destination, category, filters, page, contextMode, ageFilter, customMinAge, customMaxAge, lat, lng, userLat, userLng); const queryId = discoveryQueryIdentity(params);
+  // census-discovery §103 (DV-83, D-W11X2-47): the query is built by ONE function, `discoveryPlacesParams`
+  // (foot of file), and the SAME `params` object is sent, keyed in the cache and stamped on the answer, so
+  // the cache key cannot drift from the request again. The query, entry by entry, as that builder writes it:
+  //   destination, category, radiusKm, page — always;
+  //   openNow=1 — only when filters.openNow;
+  //   minRating — only when set;
+  //   sortBy — only when set;
+  //   context — the context mode, only when set;
+  //   ageFilter — only when set and not 'any';
+  //   customMinAge — only with ageFilter 'custom';
+  //   customMaxAge — only with ageFilter 'custom';
+  //   lat — the destination's latitude, when known;
+  //   lng — the destination's longitude, when known;
+  //   userLat — the user's position, sent for the nearest sort only;
+  //   userLng — likewise;
+  //   intentMode — last, and only when chosen: with no selection the URL is the one sent before modes existed:
+  //   ...(isDiscoveryIntentMode(filters.intentMode) ? { intentMode: filters.intentMode } : {}), — the builder's own line.
+  // A new parameter goes in the builder, and so into the request, the key and the stamp at once.
   const lease = openDiscoveryLease(await freshToken());  // the viewer this page is fetched AS — VIEWER SCOPE, foot of file
   try {
     const res = await fetch(`${base}/api/discovery?${params}`, lease.init);
-    if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+    if (!res.ok) return stampDiscoveryQuery({ ok: false as const, error: `HTTP ${res.status}` }, queryId);  // §103: a failed read carries the identity of the query that failed
     const body = (await res.json()) as unknown;
     const data = stampCandidateReceipt(withParsedRefusal<DiscoveryResult>(body), Date.now());  // DSV2-04: why-now expiry runs on THIS device's clock
-    const refusal = data.refusal;
+    const refusal = data.refusal; stampDiscoveryQuery(data, queryId);  // §103 (D-W11X2-47): the page carries the identity of the query it answers, into the cache with it
     // A page fetched AS one viewer is never handed to another: the account switched mid-flight.
     if (!isLeaseViewerCurrent(lease)) return { ok: false, error: VIEWER_CHANGED_ERROR };
     // Populate client cache so the next mount of the same tab is instant — UNLESS the server
@@ -763,7 +763,7 @@ export async function getDiscoveryPlaces(
     // recovery; a `coverage: "partial"` body IS cached, its items are real) or the scope moved
     // while this was in flight (a block or dismissal the page may predate).
     if (!refusedEverything(refusal) && isCurrentDiscoveryScope(lease.scope)) {
-      _CLIENT_CACHE.set(_discoveryCacheKey(destination, category, filters.radiusKm, page, filters.intentMode), { data, at: Date.now(), scope: lease.scope });
+      _CLIENT_CACHE.set(_discoveryCacheKey(params), { data, at: Date.now(), scope: lease.scope });  // §103: keyed by the query this request SENT
     }
     // Signal search intent to Compass so category_weights reflect browsing.
     // Only fires when the caller opts in (emitSignal=true) AND this is page 1
@@ -776,7 +776,7 @@ export async function getDiscoveryPlaces(
     }
     return { ok: true, data };
   } catch {
-    return { ok: false, error: 'Network error — check your connection' };
+    return stampDiscoveryQuery({ ok: false as const, error: 'Network error — check your connection' }, queryId);  // §103
   }
 }
 
@@ -1376,3 +1376,89 @@ export function _setDiscoveryTokenSourceForTests(source: (() => Promise<string |
  * clock. Declared at the foot so no cited line above moves; read only at call time.
  */
 export const DISCOVERY_FEED_TIMEOUT_MS = 15_000;
+
+// ── THE GET /discovery QUERY (census-discovery §103, DV-83, D-W11X2-47) ─────────
+//
+// ONE builder for the query `getDiscoveryPlaces` sends. The cache is written under
+// a key derived from the very `params` object that was sent, and read under a key
+// derived from this builder over the reader's arguments, so a parameter the
+// request carries is a parameter the key carries. `discovery.cacheKey.test.ts`
+// fails if a parameter ever reaches the URL without reaching the key.
+
+/** The rest of a GET /discovery query, for the cache readers (the arguments `getDiscoveryPlaces` takes after page). */
+export interface DiscoveryCacheQuery {
+  openNow?: boolean;
+  minRating?: number | null;
+  sortBy?: string | null;
+  contextMode?: DiscoveryContextMode | null;
+  ageFilter?: DiscoveryAgeFilter | null;
+  customMinAge?: number | null;
+  customMaxAge?: number | null;
+  lat?: number | null;
+  lng?: number | null;
+  userLat?: number | null;
+  userLng?: number | null;
+}
+
+function discoveryPlacesParams(
+  destination: string,
+  category: DiscoveryCategory,
+  filters: DiscoveryFilters,
+  page: number,
+  contextMode?: DiscoveryContextMode | null,
+  ageFilter?: DiscoveryAgeFilter | null,
+  customMinAge?: number | null,
+  customMaxAge?: number | null,
+  lat?: number | null,
+  lng?: number | null,
+  userLat?: number | null,
+  userLng?: number | null,
+): URLSearchParams {
+  return new URLSearchParams({
+    destination,
+    category,
+    radiusKm: String(filters.radiusKm),
+    page: String(page),
+    ...(filters.openNow ? { openNow: '1' } : {}),
+    ...(filters.minRating != null ? { minRating: String(filters.minRating) } : {}),
+    ...(filters.sortBy ? { sortBy: filters.sortBy } : {}),
+    ...(contextMode ? { context: contextMode } : {}),
+    ...(ageFilter && ageFilter !== 'any' ? { ageFilter } : {}),
+    ...(ageFilter === 'custom' && customMinAge != null ? { customMinAge: String(customMinAge) } : {}),
+    ...(ageFilter === 'custom' && customMaxAge != null ? { customMaxAge: String(customMaxAge) } : {}),
+    ...(lat != null ? { lat: String(lat) } : {}),
+    ...(lng != null ? { lng: String(lng) } : {}),
+    ...(userLat != null ? { userLat: String(userLat) } : {}),
+    ...(userLng != null ? { userLng: String(userLng) } : {}),
+    // Last, and only when chosen: with no selection the URL is the one sent before modes existed.
+    ...(isDiscoveryIntentMode(filters.intentMode) ? { intentMode: filters.intentMode } : {}),
+  });
+}
+
+function discoveryPlacesParamsFor(
+  destination: string, category: DiscoveryCategory, radiusKm: number, page: number,
+  intentMode: DiscoveryIntentMode | null | undefined, rest: DiscoveryCacheQuery,
+): URLSearchParams {
+  return discoveryPlacesParams(
+    destination, category,
+    { radiusKm, openNow: rest.openNow ?? false, minRating: rest.minRating ?? null, sortBy: rest.sortBy ?? null, intentMode },
+    page, rest.contextMode, rest.ageFilter, rest.customMinAge, rest.customMaxAge, rest.lat, rest.lng, rest.userLat, rest.userLng,
+  );
+}
+
+/** Every entry of the query, the destination normalised (case, spacing), in a fixed order. */
+function _discoveryCacheKeyOf(params: URLSearchParams): string {
+  return [...params.entries()]
+    .map(([k, v]) => [k, k === 'destination' ? v.toLowerCase().trim() : v] as const)
+    .sort(([a, av], [b, bv]) => (a === b ? (av < bv ? -1 : av > bv ? 1 : 0) : a < b ? -1 : 1))
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+    .join('&');
+}
+
+/** Test seam: the cache key for a query, and the keys the device holds. No production caller. */
+export function _discoveryCacheKeyForTests(params: URLSearchParams): string {
+  return _discoveryCacheKey(params);
+}
+export function _discoveryClientCacheKeysForTests(): string[] {
+  return [..._CLIENT_CACHE.keys()];
+}

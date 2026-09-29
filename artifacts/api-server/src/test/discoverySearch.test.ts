@@ -497,8 +497,8 @@ describe("GET /api/discovery/search — buddy launch-eligibility gate", () => {
   });
 
   // The route-level fake cannot fail one flag read while answering another, so
-  // the second closure is pinned on the exported predicate directly.
-  it("gate ON + marketplace flag UNREADABLE: withheld — an eligibility gate that cannot be established is not passed", async () => {
+  // the second closure is pinned on the exported predicate directly. census-discovery §103 (DV-83, D-W11X2-51) RESTATED: still withheld — nothing is served — and now SAID. The predicate used to answer `true` ("withhold") for an unread flag, which the search then served as "no buddies"; it now throws the named read error the route refuses by. The read order is unchanged.
+  it("gate ON + marketplace flag UNREADABLE: withheld AND said — an eligibility gate that cannot be established is not passed, and not called empty", async () => {
     const calls: string[] = [];
     const sc: any = {
       from: (_t: string) => ({
@@ -513,7 +513,7 @@ describe("GET /api/discovery/search — buddy launch-eligibility gate", () => {
         }),
       }),
     };
-    assert.equal(await buddiesWithheldByLaunchGate(sc), true);
+    await assert.rejects(buddiesWithheldByLaunchGate(sc), (e: Error) => e.name === "DiscoverySearchReadError" && (e as Error & { relation?: string }).relation === "feature_flags");
     assert.deepEqual(calls, [DISCOVERY_BUDDY_LAUNCH_GATE_FLAG, "rent_buddy_enabled"],
       "the marketplace flag is read only once the gate is known to be on");
   });

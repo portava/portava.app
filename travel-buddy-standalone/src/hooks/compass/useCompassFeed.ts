@@ -5,7 +5,7 @@ import {
   setCachedFeed,
   type CompassFeedResponse,
 } from '../../services/compass.ts';
-import { useSession } from '../../context/SessionContext.tsx';
+import { useSession } from '../../context/SessionContext.tsx'; import { isCompassSectionFailure } from './compassSectionFailure.ts';
 
 interface UseCompassFeedOptions {
   section?: string;
@@ -65,12 +65,12 @@ export function useCompassFeed({
     setLoading(false);
     setRefreshing(false);
 
-    if (result.ok && result.data) {
+    if (result.ok && result.data && !isCompassSectionFailure(result.data)) {  // census-discovery §103 (DV-83, D-W11X2-50): a build or flag-read failure is not an answer — never cached, never over kept picks
       setData(result.data); setDataScope(scope);
       setError(null);
       if (userId) setCachedFeed(userId, result.data, scope).catch(() => {});
     } else {
-      setError(result.error ?? 'unknown'); setErrorScope(scope);  // §101: kept data stays (same scope only); the failure is returned beside it
+      setError(result.error ?? (result.ok ? result.data?.fallbackReason ?? 'unknown' : 'unknown')); setErrorScope(scope); if (result.ok && result.data && (!data || dataScope !== scope)) { setData(result.data); setDataScope(scope); }  // §101: kept data stays (same scope only); the failure is returned beside it. §103: with nothing kept, a failed section's safe items are held (uncached) for the section to show under its failure
     }
   }, [isAuthed, enabled, section, city, userId, data, dataScope, scope]);
 

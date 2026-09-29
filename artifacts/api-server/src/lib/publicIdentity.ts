@@ -166,3 +166,30 @@ export function sanitizeIdentityKeys<T extends Record<string, any>>(
   for (const k of keys) if (k in copy) copy[k] = null;
   return copy;
 }
+
+/**
+ * census-discovery §103 (DV-83, D-W11X2-48): the same batched read as
+ * `nameVisibilitySet`, but a failed read is `null`, never an empty set.
+ *
+ * `nameVisibilitySet`'s empty set is right where the set only REDACTS a label
+ * (no name shown, the row stays). It is wrong where the set FILTERS rows: search's
+ * C09 rule drops a traveler matched only by a real name the set does not allow,
+ * so an unread set silently removed every such traveler and the list was served
+ * as the whole answer. A caller that filters by this set uses this variant and
+ * says the read failed instead.
+ */
+export async function nameVisibilitySetOrNull(sc: any, userIds: Array<string | null | undefined>): Promise<Set<string> | null> {
+  const ids = [...new Set(userIds.filter((x): x is string => typeof x === "string" && x.length > 0))];
+  if (ids.length === 0) return new Set();
+  try {
+    const { data, error } = await sc
+      .from("profile_privacy_settings")
+      .select("user_id")
+      .in("user_id", ids)
+      .eq("show_real_name", true);
+    if (error) return null;
+    return new Set((((data as any[]) ?? []).map((r) => r.user_id as string)));
+  } catch {
+    return null;
+  }
+}

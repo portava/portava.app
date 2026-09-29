@@ -1306,6 +1306,7 @@ const DIRECT_READS = [
   { file: 'routes/stamps.ts',                      flag: 'stamp_system_v2_enabled',       reason: `Read directly, error branch ${V}: catch returns 503 feature_not_available, same as the disabled path. Fail-closed.` },
   { file: 'services/passport/UnifiedStampService.ts', flag: 'stamp_unified_view_enabled', reason: `Read directly, error branch ${V}: checks \`error\` → false, legacy counts stay authoritative. Fail-closed.` },
   { file: 'services/trust/TrustEventService.ts',   flag: 'trust_engine_enabled',          reason: `Read directly, error branch ${V}: catch → false. Fail-closed.` },
+  { file: 'lib/inputAssistance/searchCandidates.ts', flag: 'rent_buddy_enabled', reason: 'Read directly (rentBuddyLaunchedOrThrow), error branch verified by hand at 5f2b0e7eb + census-discovery §103 (D-W11X2-51): a resolved error AND a throw both raise DiscoverySearchReadError("feature_flags"), so buddies are withheld and the search refuses by name; an ABSENT row reads false (not launched). Fail-closed, and said. Read only while discovery_buddy_launch_gate_enabled is on.' },
   { file: 'services/trust/TrustGamingDetectionService.ts', flag: 'trust_gaming_detection_enabled', reason: `Read directly, error branch ${V}: no try/catch, but checks \`error\` explicitly, logs, and returns false. Fail-closed against a returned error; an outright throw propagates to the caller.` },
 
   // ── Fail-closed, but by a variable INITIALIZED OUTSIDE THE TRY, which is ──
