@@ -508,7 +508,7 @@ export async function generateSuggestions(
   // disambiguation) and global_search (merged as SearchResults).
   let geoRes: GeoResolution =
     wantsEntities && wantsCities && !isHandle && q.length >= 2
-      ? await resolveGeoCandidates(sc, q, Math.max(4, policy.maxSuggestions)).catch(() => EMPTY_GEO)
+      ? await resolveGeoCandidates(sc, q, Math.max(4, policy.maxSuggestions)).catch(() => { noteTypeUnreadable(coverage, 'cities'); return EMPTY_GEO; })
       : EMPTY_GEO;
 
   // ── §10 typo tolerance — a SECOND attempt, never a rewrite ──────────────────
@@ -532,7 +532,7 @@ export async function generateSuggestions(
       sc,
       norm.correctedQuery,
       Math.max(4, policy.maxSuggestions),
-    ).catch(() => EMPTY_GEO);
+    ).catch(() => { noteTypeUnreadable(coverage, 'cities'); return EMPTY_GEO; });
     if (retry.rows.length > 0) {
       geoRes = retry;
       correctionHelped = true;
@@ -1066,7 +1066,7 @@ export async function generateSuggestionsWithCoverage(
       POLICY_VERSION,
     );
   }
-  const coverage = newGatewayCoverage();
+  const coverage = newGatewayCoverage(); const meetAt = await serveTelegraphMeetAt(sc, params, generateSuggestionsWithCoverage); if (meetAt) return meetAt; // §54 (GII-F10): "meet at …" in a Telegraph message is an ACTION takeover
   const suggestions = await generateSuggestions(sc, { ...params, coverage });
   const dispatched = uniq((params.policy.entityTypes ?? []).map(entityToSearchType));
   return { suggestions, refusal: gatewayCoverageRefusal(coverage, dispatched) };
@@ -1085,3 +1085,5 @@ import {
 export function gatewayFailureRefusal(): DiscoveryRefusal {
   return discoveryRefusal("transient_db", "suggest_failed", GATEWAY_ROUTE);
 }
+
+import { serveTelegraphMeetAt } from "./telegraphActions";

@@ -12,7 +12,7 @@
  * so an exact coordinate can only enter a thread through a surface that asked
  * for it explicitly.
  */
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { space, radius, type as t } from '../../../theme/tokens.ts';
 import { useTelegraphPalette, type TelegraphPalette } from '../theme/telegraphTheme.ts';
@@ -25,7 +25,7 @@ export interface TypedComposePromptProps {
   onCancel: () => void;
   onSubmit: (kind: SendableKind, payload: unknown) => void;
   /** Used as MEMORY_NOTE's authorId; the server re-derives the sender anyway. */
-  authorId: string | null;
+  authorId: string | null; /** §54 (GII-F10): the "meet at" action's structured share, PRE-FILLED — the sender still presses Send. */ initialLocation?: { label: string; placeId: string | null; precision: 'area' | 'venue' | 'exact' } | null;
 }
 
 const PRECISIONS = [
@@ -34,11 +34,11 @@ const PRECISIONS = [
   { id: 'exact', label: 'Exact' },
 ] as const;
 
-export function TypedComposePrompt({ kind, onCancel, onSubmit, authorId }: TypedComposePromptProps) {
+export function TypedComposePrompt({ kind, onCancel, onSubmit, authorId, initialLocation }: TypedComposePromptProps) {
   const palette = useTelegraphPalette();
   const styles = useMemo(() => makeStyles(palette), [palette]);
   const [text, setText] = useState('');
-  const [precision, setPrecision] = useState<'area' | 'venue' | 'exact'>('area');
+  const [precision, setPrecision] = useState<'area' | 'venue' | 'exact'>('area'); useEffect(() => { if (kind === 'LOCATION' && initialLocation) setText(initialLocation.label); }, [kind, initialLocation]); // §4.3: pre-filling the LABEL never pre-selects a finer precision — the sheet still opens on Approximate area
 
   const close = () => {
     setText('');
@@ -50,7 +50,7 @@ export function TypedComposePrompt({ kind, onCancel, onSubmit, authorId }: Typed
     const value = text.trim();
     if (value.length === 0) return;
     if (kind === 'LOCATION') {
-      onSubmit('LOCATION', { label: value, precision });
+      onSubmit('LOCATION', { label: value, precision, ...(initialLocation?.placeId && value === initialLocation.label ? { placeId: initialLocation.placeId } : {}) }); // an edited label no longer names that place, so its id is dropped
     } else {
       onSubmit('MEMORY_NOTE', {
         memoryNoteId: `note-${Date.now()}`,

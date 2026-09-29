@@ -307,3 +307,47 @@ export async function voiceIntakeFromCapture(
 
   return submitVoiceIntake(outcome.result, opts, deps);
 }
+
+// ── §25 / G163: dictation from the PLATFORM recognizer (flow GII-F09) ─────────
+//
+// The clip-based path above (`voiceIntakeFromCapture`) is for a transcription
+// SERVICE. A platform recognizer owns the microphone itself, so it enters here
+// instead — and ends in the SAME `voiceIntakeRequest`, the typed path's own
+// builder and refusals. The accepted text is what the field receives; from
+// there it is ordinary typed text in the ordinary pipeline.
+import { resolveSpeechRecognizer, type SpeechRecognizerPort } from './speechRecognizer.ts';
+import type { TranscriptionOutcome } from './transcriptionPort.ts';
+
+export interface DictationDeps {
+  recognizer?: SpeechRecognizerPort;
+  signal?: AbortSignal;
+  onPartial?: (r: TranscriptionResult) => void;
+}
+
+/**
+ * Listen once and return the intake outcome for a field. Never throws; with no
+ * recognizer it answers `unavailable` BEFORE anything asks for the microphone.
+ */
+export async function dictateIntoField(opts: VoiceIntakeOptions, deps: DictationDeps = {}): Promise<VoiceIntakeOutcome> {
+  const recognizer = deps.recognizer ?? resolveSpeechRecognizer();
+  let available = false;
+  try {
+    available = (await recognizer.isAvailable()) === true;
+  } catch {
+    available = false;
+  }
+  if (!available) {
+    return {
+      state: 'unavailable',
+      reason: recognizer.providerId === 'none' ? 'no_provider' : 'provider_error',
+      error: recognizer.providerId === 'none'
+        ? 'Voice input isn’t available on this build yet — it needs a speech recognizer the app doesn’t include.'
+        : 'Speech recognition isn’t available on this device right now.',
+    };
+  }
+  const outcome = await recognizer
+    .recognizeOnce({ language: opts.language ?? null, signal: deps.signal, onPartial: deps.onPartial })
+    .catch((): TranscriptionOutcome => ({ ok: false, unavailable: false, reason: 'provider_error', error: 'Speech recognition stopped unexpectedly.' }));
+  if (!outcome.ok) return { state: 'unavailable', reason: outcome.reason, error: outcome.error };
+  return voiceIntakeRequest(outcome.result, opts);
+}

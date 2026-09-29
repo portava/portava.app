@@ -60,7 +60,7 @@ export async function fetchInputPolicies(signal?: AbortSignal): Promise<PolicyFe
   if (!token) return { ok: false, unavailable: true, error: 'Not signed in' };
 
   try {
-    const res = await fetch(`${base}/input-assistance/policies`, {
+    const res = await fetch(`${base}/api/input-assistance/policies`, {
       method: 'GET',
       headers: { Authorization: `Bearer ${token}` },
       signal,
