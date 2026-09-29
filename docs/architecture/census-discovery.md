@@ -17781,7 +17781,7 @@ check:unissued-supabase-writes exit=0
   - `typecheck` is clean, and `typecheck:tests` is at 173 against a baseline of 173.
   - The client tree is unchanged since `37b656531`.
 
-## §105 — DV-83 round 9 (lane W11-X2)
+## §105 — DV-83 round 9 (lane W11-X2): the Trail reads refuse a failed member read, the hashtag feed says a failed tab, /compass/feed and the Compass home refuse an unread flag, the why sheet takes only its latest answer, and DV-83 moves W → C
 
 ### 105.1 Integrator: DV-83 held at W after independent re-verification at `d3f573530`
 
@@ -17802,8 +17802,133 @@ check:unissued-supabase-writes exit=0
 
 Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
 
+### 105.2 Round 9: what this lane did
+
+*Written 2026-09-29 by lane W11-X2 (round 9) on `disc-w11-x2-r9`, from `d3f573530` and §105.1. It closes §105.1's four breaks, each with the verifier's probe copied in as a failing-first test. It pins the three surviving mutations and sweeps the Discovery and Compass read surfaces for the five defect classes: an ignored `error`, a catch that answers a default, an unread flag read as off, a cached refusal, and a stale answer. The sweep closed three more paths. Decisions are in `docs/architecture/discovery-decision-register.md`, section "W11-X2 round 9", D-W11X2-60 to D-W11X2-66.*
+
+*No migration and no new flag. Each change alters output only when a read failed or a flag table could not be read, or when a stale answer arrives. With every read healthy, every served byte is unchanged (TR0, TR14c, HF0, HF6, HT0, CF0, CF4, CF5, HM1c, HM3, RR3). Every edit in a cited file is line-neutral: lines are changed in place, and new code is appended at a file's foot. `src/index.ts` is untouched.*
+
+*All evidence is controlled: in-process routes over fake worlds, the real client services over a fake `fetch`, and jest over the real screens and components. None of it is production evidence, and no client build carrying the change has shipped.*
+
+### 105.3 The Trail read routes refuse a failed member read (§105.1 BK1; D-W11X2-60)
+
+- **Fix.** `servableMembers`' `unread` set now reaches every Trail READ path. The exported readers are foot wrappers that carry it (`artifacts/api-server/src/services/trails/TrailService.ts:2435#export async function getTrailModules(`, `artifacts/api-server/src/services/trails/TrailService.ts:2444#export async function trailTrending(`, `artifacts/api-server/src/services/trails/TrailService.ts:1748#const served = await servableMembers(sc, members, viewerId, nowMs, unread);`). So do the cursor page and `heldBackLists`. The routes send the same body beside the refusal envelope: `partial` when rows remain, `nothing` when none do. The refusal names ONE generic source, `trail_member_sources`, so it is no existence oracle for §64's withheld-equals-absent rule (`artifacts/api-server/src/routes/trails.ts:596#function sendTrailRead(`).
+- **Trending** answers `trending: null` over a failed member read, never a measured false.
+- **The detail route** states no count and no §12 word, and still serves the Trail row it read (`artifacts/api-server/src/routes/trails.ts:216#if (r.membersUnread) return sendTrailRead(res, "GET /v1/discovery/trails/:id"`).
+- **A privacy withhold** is not a failed read and draws no refusal (TR6).
+- **V2 restated.** `discoveryTrailMemberVisibility` V2 stopped at the empty page, which pinned the defect. It now also asserts the `nothing` refusal and the generic source; the withholding it pins is unchanged.
+- **Client.** The detail, modules and trending routes have no client consumer (D-W11X2-6). The one Trail consumer, the output-kinds rail, now branches on a refusal beside a 200: `nothing` is its failed state; `partial` keeps the rows and prints the partial line (`travel-buddy-standalone/src/services/discoveryRecommendations.ts:97#if (body.refusal && coverage !== 'partial')`, `travel-buddy-standalone/src/components/discovery/DiscoveryOutputKindsRail.tsx:70#setPartial(r.partial === true);`).
+
+### 105.4 The hashtag feed never serves a failed read as an empty tab (§105.1 BK2; D-W11X2-61)
+
+- **Server.** The five tabs' reads, their visibility reads, their catches and the feed's hashtag lookup answer `db_error` on failure, as the posts tab always did (`artifacts/api-server/src/routes/hashtags.ts:501#if (htErr) return sendFeedReadFailed(req, res, htErr, 'hashtag');`, `artifacts/api-server/src/routes/hashtags.ts:698#if (eventsErr) return sendFeedReadFailed(req, res, eventsErr, 'events');`, `artifacts/api-server/src/routes/hashtags.ts:650#} catch (err) { sendFeedReadFailed(req, res, err, 'places'); }`). A read that succeeded is unchanged, including 404 for an absent or blocked hashtag (HF6).
+- **Client.** `app/hashtag/[slug].tsx` already drew a non-2xx as its failed state, so once the server says the failure, the tab says it. The sweep of the screen found three more paths, now closed:
+  - a late tab answer wrote the screen after the viewer had moved to another tab (`travel-buddy-standalone/app/hashtag/[slug].tsx:266#if (feedReqRef.current !== myId) return;`);
+  - a 200 carrying a refusal was drawn as its rows;
+  - a failed hashtag read said "It may have been removed or blocked." Only a 404 does now (`travel-buddy-standalone/app/hashtag/[slug].tsx:242#setMetaFailed(res.status !== 404);`).
+- **Scope, argued.** `routes/hashtags.ts` is another census's route. §104 put it in this census's scope for the reads a Discover chip leads to, and §105 grades only those. The edits are line-neutral failure arms; no hashtag write, block rule or ranking weight changed.
+
+### 105.5 GET /compass/feed refuses an unread flag (§105.1 BK3; D-W11X2-62)
+
+`readCompassEnabled` and a strict read of COMPASS_FEED_ENABLED. An unread flag answers `fallbackReason: "compass_flags_unreadable"` with the refusal envelope (`nothing`, `feature_flags`) (`artifacts/api-server/src/routes/compass.ts:485#if (!enabled) { if (enabledRead === null) return sendCompassFeedFlagsUnread(res);`, `artifacts/api-server/src/routes/compass.ts:507#if (feedFlagUnread) return sendCompassFeedFlagsUnread(res);`). A flag that was READ and is off answers `{"sections":[],"nextCursor":null,"fallback":true}` exactly as before (CF4, CF5).
+
+### 105.6 The why sheet takes only its latest answer (§105.1 BK4; D-W11X2-63)
+
+A request-id ref drops any answer that is not the latest, and closing the sheet invalidates a read still in flight (`travel-buddy-standalone/src/hooks/compass/useCompassWhyExplanation.ts:26#if (reqRef.current !== myId) return null;`).
+
+### 105.7 The survivors, and the sweep (D-W11X2-64, D-W11X2-60, D-W11X2-61, D-W11X2-65, D-W11X2-66)
+
+- **The survivors.** SM14 is pinned by `compassCandidateSourcesUnread` SM14 and SM14b, SM15 by SM15 (CompassFlagsUnreadableError really thrown into the build), and SM17 by `discoveryFlagUnreadable` FT3 and FT3c. All three are killed when re-applied.
+- **The sweep closed three more paths.**
+  1. **The Trail activity read.** A failed `rank_events` read left `trending_now` and GET …/trending's list empty with no refusal. It is now refused as `trail_activity` (`artifacts/api-server/src/services/trails/TrailService.ts:700#if (!events) opts.memberUnread?.add("rank_events");`, `artifacts/api-server/src/services/trails/TrailService.ts:966#opts.activityUnread = true;`). `heldBackLists` no longer drops a refused trending list silently (`artifacts/api-server/src/services/trails/TrailService.ts:2171#if (t.refusal) return { refusal: t.refusal, lists: [], next: null };`).
+  2. **GET /hashtags/trending's ranking reads.** They decide which hashtags the chips show. A failed read is now `db_error`, where it was a re-ranked list served as complete (`artifacts/api-server/src/routes/hashtags.ts:226#if (postUsageErr) {`). This reverses D-W11X2-57's "only score; unchanged".
+  3. **GET /compass/home and CompassHome.** An unread flag table was the Compass-off body, and a failed build was a bare fallback. The home drew both, a failed fetch and a degraded projection as "nothing to show". The route now names both failures with a refusal, and the home says them (`artifacts/api-server/src/routes/compassHome.ts:343#if (enabledRead === null) { res.json(compassHomeFailure(false`, `artifacts/api-server/src/routes/compassHome.ts:379#res.json(compassHomeFailure(true, "home_build_failed"`, `travel-buddy-standalone/src/components/compass/CompassHome.tsx:36#export function isCompassHomeFailure(`).
+- **Swept and found sound, and ruled.** D-W11X2-66 records the ordering flags that fail to "off" over the same rows, the enrichment reads, and the guards already present.
+- **Left for other owners.** Two paths are not Discovery envelopes, and D-W11X2-66 names them: `app/discover.tsx`'s people search, and the Compass live, sense, autopilot, me-context and ask flag gates.
+- **Also fixed: CI's `entryWiringNotCommentedOut`.** It read round 8's comment on `artifacts/api-server/src/routes/discoveryOutputKinds.ts:41#this line used to bring in the isFlagEnabled helper` as a commented-out import. The comment is reworded in place, and the guard is unchanged.
+
+### 105.8 Tests, seen red, and mutations
+
+**Seen red first**, run against the code before each fix:
+
+| Area | Red | Controls, green |
+|---|---|---|
+| Trail member reads | TR1, TR1b, TR2, TR2b, TR3, TR4, TR5, TR7, TR8, TR9 (10) | TR0, TR6 |
+| Trail activity read | TR10, TR11, TR12 | — |
+| Output-kinds rail | RR1, RR2, OP1, OP3 | RR3, OP2 |
+| Hashtag feed tabs | HF1–HF5 (12 cases) | HF0, HF6 |
+| Hashtag trending ranking | HT1 ×3, HT2 | HT0 |
+| Hashtag screen | HS2, HS3, HS4 | — |
+| /compass/feed flags | CF1, CF2, CF3 | CF0, CF4, CF5 |
+| Why sheet | Y1, Y2 | Y3, Y4 |
+| /compass/home | HM1, HM2 | HM1c, HM3 |
+| CompassHome | CH1–CH4 | CH5, CH6 |
+
+HS1 was already green on the client: the screen already drew a non-2xx as its failed state, and the break was the server's 200.
+
+**Written against the fixed code:** SM14, SM14b, SM15, FT3, FT3c, TR13–TR16, TR14c, OP4, HS6, HSS1–HSS3, CH7 and CH8. Each is shown to bite by the mutation that removes the line it pins.
+
+**Mutations.** Each mutation was applied alone, its suites were run, and the file was restored byte-identically; the sha256 matched on all 69.
+
+- **Server, 50 of 50 killed.**
+  - Trails, T1–T25: the `unread` set on each path, each wrapper, the detail spread, the refused-trending guard, the union in `heldBackLists`, the cursor page and both "more" spreads, the activity marks on both module branches, the route helper's gate, coverage and sources, and each route's call.
+  - Hashtags, H1–H16: the lookup, each tab's error check and catch, and the three ranking reads and their catch.
+  - /compass/feed, F1–F6: each gate, the strict read and its catch, and the refusal's coverage.
+  - The round-8 survivors, re-applied: SM14, SM15 and SM17.
+  - /compass/home, CH1–CH3.
+- **Client, 19 of 19 killed.**
+  - R1–R4: the rail's service and component.
+  - S1–S7: the hashtag screen's guard, refusal branch, meta status, retry dependency, load-more reset and meta reset, plus the service's kept status.
+  - Y1, Y2: the why hook's guard and its close.
+  - H1c–H6c: CompassHome's predicate, the unread-flag arm, the catch, the failure branch, the partial line and the recovery.
+- **Three survivors in an earlier client run, removed rather than kept.** The rail's partial reset on an inactive or failed read, and the why hook's loading reset on close. Each was redundant (nothing renders it), so each was removed. The final client run is 19 of 19.
+- **Runner and logs:** the lane's `r9-muts/` scratch directory (`muts.py`, `run.py`, `summary.txt`).
+
+### 105.9 Checks
+
+- **Line-neutral in every cited file**, so every anchored citation still lands on its text: `check:doc-citations`, `check:citation-targets` and `check:citation-symbols` are clean.
+- **Scope.** §105's graded files and suites joined this census's `CENSUS_SCOPE` and are named in its acknowledgement: the hashtag screen and service, CompassHome and the new suites. The acknowledgement for every census that counts a changed file carries a §105 paragraph with its "why it cannot move a verdict": census-discovery, census-compass, census-passport, census-media, census-sensing, census-trips, census-trust and census-highlights-memories.
+- **Suites.** The four new api-server suites are on the `test` line (`check:test-registration`).
+
+### 105.10 DV-83, restated
+
+§105.1's four breaks are closed, each with the verifier's probe red first and green now. The three survivors are pinned and killed, and the sweep closed three more paths. Every clause of DV-83's criterion holds on every path this lane examined:
+
+1. **Producers send the refusal envelope.**
+   - The Trail reads name a failed member or activity read.
+   - The hashtag feed and the trending ranking answer a failed read as `db_error`.
+   - /compass/feed and /compass/home refuse an unread flag, and the home names a failed build.
+2. **Nothing refused or partial is cached as complete.** The Trail, hashtag and home routes write no cache on these arms. The home's cache already skipped a degraded or fallback payload.
+3. **Nothing refused is rendered as empty, as complete, or over the wrong rows.**
+   - The output-kinds rail says a partial or failed Trail read.
+   - The hashtag screen says a failed tab or hashtag and never shows another tab's rows.
+   - The why sheet never shows another card's reason.
+   - The Compass home says a failed or partial read.
+4. **Consumers branch on coverage.** The rail's service branches on `refusal.coverage`, the hashtag screen on the refusal, and CompassHome on `fallbackReason` and `degraded`.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§105.1's four breaks are closed, each with its verifier probe red first; SM14, SM15 and SM17 are killed; the sweep closed three more paths; 69 of 69 mutations are killed. CONTROLLED EVIDENCE ONLY — this row still awaits independent re-verification.** **The Trail read routes refuse a failed member or activity read with one generic source** (`artifacts/api-server/src/routes/trails.ts:596#function sendTrailRead(`, `artifacts/api-server/src/services/trails/TrailService.ts:2435#export async function getTrailModules(`, `artifacts/api-server/src/services/trails/TrailService.ts:700#if (!events) opts.memberUnread?.add("rank_events");`; TR0–TR16), **and the rail branches on it** (`travel-buddy-standalone/src/services/discoveryRecommendations.ts:97#if (body.refusal && coverage !== 'partial')`; RR1–RR3, OP1–OP4). **The hashtag feed and the chips' ranking never serve a failed read** (`artifacts/api-server/src/routes/hashtags.ts:698#if (eventsErr) return sendFeedReadFailed(req, res, eventsErr, 'events');`, `artifacts/api-server/src/routes/hashtags.ts:226#if (postUsageErr) {`; HF0–HF6, HT0–HT2), **and the screen says it** (`travel-buddy-standalone/app/hashtag/[slug].tsx:266#if (feedReqRef.current !== myId) return;`; HS1–HS6, HSS1–HSS3). **An unread flag is never "Compass off"** (`artifacts/api-server/src/routes/compass.ts:485#if (!enabled) { if (enabledRead === null) return sendCompassFeedFlagsUnread(res);`, `artifacts/api-server/src/routes/compassHome.ts:343#if (enabledRead === null) { res.json(compassHomeFailure(false`; CF0–CF5, HM1–HM3), **and the Compass home says a failure** (`travel-buddy-standalone/src/components/compass/CompassHome.tsx:36#export function isCompassHomeFailure(`; CH1–CH8). **The why sheet takes only its latest answer** (`travel-buddy-standalone/src/hooks/compass/useCompassWhyExplanation.ts:26#if (reqRef.current !== myId) return null;`; Y1–Y4). |
+
+**Headline.** DV-83 moves W → C. `check:census-integrity` counts **C 101 / W 85 / N 2 / X 0** over 188: CONSTRUCTED 186 / 188 = **98.9 %**, CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged. The move is on controlled evidence and awaits independent re-verification.
+
+### 105.11 Left open, and what would turn this red
+
+- **Seen and not built (other owners; D-W11X2-66).**
+  - `app/discover.tsx`'s people search draws a failed search as "No travelers found" and has no latest-request guard.
+  - The Compass live, sense, autopilot and me-context gates still read an unread flag table as "Compass off". POST /compass/ask labels the same case `compass_disabled`, although its message is already honest.
+- **Still open from §104.10.** The trip map's Compass alternatives, and Rent-a-Buddy's `CompassBuddyRow`.
+- **What would turn DV-83 red again:**
+  - a Trail read that serves a failed member or activity read with no refusal, or a refusal that names the failed table (TR0–TR16);
+  - a hashtag feed tab, lookup or trending ranking read whose failure is served as a result (HF0–HF6, HT0–HT2);
+  - a tab or hashtag screen state drawn over a failed or stale read (HS1–HS6);
+  - an unread flag answered as "Compass off" on the feed or the home (CF1–CF3, HM1);
+  - a why sheet written by a stale answer (Y1, Y2);
+  - any path §104.10 lists.
+
 ## Cited, not graded (check:census-scope-coverage)
 
+- NOT-GRADED: travel-buddy-standalone/app/discover.tsx — §105.11 names it only as a path seen and not built, left for its owner: it is the social people search over services/follows.ts, not a Discovery envelope, and no DV-83 verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/services/airport/__tests__/layoverSurfaceErrorBinding.test.ts — §104.8 names it only as the integrator's whole-repo scan, run on the final commit; no DV-83 verdict rests on its content.
 - NOT-GRADED: artifacts/api-server/src/lib/capability/prerequisitesCore.ts — §93.8 names its function-granular gate boundary as why the Compass KNOWN entry was struck; it is the prerequisite checker's own machinery, and no Discovery verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/flagSchemaPrerequisites.test.ts — §93.5 cites it only as the checker's own suite, run after the KNOWN entry was struck; no Discovery verdict rests on it.

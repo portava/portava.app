@@ -4508,6 +4508,21 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/components/map/__tests__/AskCompassBar.refusal.component.test.tsx",
     "travel-buddy-standalone/src/services/__tests__/compassMatches.refusal.component.test.ts",
     "travel-buddy-standalone/src/components/compass/__tests__/CompassWhySheet.failedRead.component.test.tsx",
+    // census-discovery §105 (lane W11-X2, round 9): DV-83 re-graded on the Trail read routes, the hashtag
+    // feed and its screen, GET /compass/feed's flags, the why sheet's latest request and the Compass home.
+    "artifacts/api-server/src/test/discoveryTrailMemberSourceUnread.test.ts",
+    "artifacts/api-server/src/test/hashtagFeedTabsUnread.test.ts",
+    "artifacts/api-server/src/test/compassFeedFlagUnread.test.ts",
+    "artifacts/api-server/src/test/compassHomeFlagsUnread.test.ts",
+    "travel-buddy-standalone/app/hashtag/[slug].tsx",  // §105 grades its failed states and latest-request guard (D-W11X2-61)
+    "travel-buddy-standalone/src/services/hashtag.ts",  // §105 grades the failure status it keeps (D-W11X2-61)
+    "travel-buddy-standalone/src/components/compass/CompassHome.tsx",  // §105 grades its failed and partial lines (D-W11X2-65)
+    "travel-buddy-standalone/app/__tests__/hashtag.failedRead.component.test.tsx",
+    "travel-buddy-standalone/src/services/__tests__/hashtag.status.component.test.ts",
+    "travel-buddy-standalone/src/services/__tests__/discoveryRecommendationsRefusal.test.ts",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryOutputKindsRail.partial.component.test.tsx",
+    "travel-buddy-standalone/src/components/compass/__tests__/CompassWhySheet.latestRequest.component.test.tsx",
+    "travel-buddy-standalone/src/components/compass/__tests__/CompassHome.failedRead.component.test.tsx",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //
