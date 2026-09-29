@@ -371,7 +371,7 @@ async function notifyTagged(sc: any, memory: any, taggedUserId: string): Promise
       await sendPushWithRetry(sc, { userId: taggedUserId, tokens: [tagged.expo_push_token] }, {
         title: "You were tagged in a Memory",
         body: `${ownerName} tagged you in a memory. Tap to approve or remove.`,
-        data: { screen: "memory", memoryId: memory.id },
+        data: { screen: "memory", memoryId: memory.id, actionUrl: `/memory/${memory.id}` },
       });
     }
 
@@ -383,7 +383,7 @@ async function notifyTagged(sc: any, memory: any, taggedUserId: string): Promise
       user_id: taggedUserId,
       actor_id: memory.owner_id,
       event_type: "trip.memory_tagged",
-      category: "trips",
+      category: "trips", action_url: `/memory/${memory.id}`, // testing-mode WP-06: the tap lands on the screen that hosts the approval
       title: "You were tagged in a Memory",
       body: "Tap to approve or remove the tag.",
       metadata: { memoryId: memory.id, memoryTitle: memory.title },
@@ -3320,5 +3320,86 @@ router.get("/users/:userId/memories/highlights", async (req, res) => {
     },
   });
 });
+
+// ── GET /me/saved-memories — the collection POST /memories/:id/save fills ─────
+//
+// Testing-mode WP-06 (flow HM-F13). `memory_saves` had a writer and no list
+// reader, so "save to your collection" stored a row nobody could find again.
+//
+// A SAVE IS NOT A GRANT. Every row is re-judged NOW by §23's `canReadMemory`
+// (surface "single" — the same addressed read `GET /memories/:id` runs) and the
+// block check, so a Memory the owner has since narrowed, or whose owner has
+// blocked the saver, drops off the shelf instead of being served from a stale
+// save. Serialized through `enrichMemories`, the single list serialization
+// point, so location protection and the owner-only audience lists apply here
+// exactly as on every other list.
+//
+// DV-83: an unreadable `memory_saves` or `memories` is a 503, never an empty
+// shelf — "you saved nothing" is a statement a failed read cannot make.
+const SAVED_MEMORIES_LIMIT = 100;
+
+router.get("/me/saved-memories", asyncHandler(async (req: any, res: any) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: saves, error: savesErr } = await sc
+    .from("memory_saves")
+    .select("memory_id, created_at")
+    .eq("user_id", user.id)
+    .order("created_at", { ascending: false })
+    .limit(SAVED_MEMORIES_LIMIT);
+  if (savesErr) {
+    req.log.error({ err: savesErr, userId: user.id }, "memories: saved list read failed — refusing rather than reporting an empty shelf");
+    sendError(res, "degraded_unavailable", "We could not load your saved memories. Please try again.");
+    return;
+  }
+  const order = ((saves ?? []) as any[]).map((r) => r.memory_id as string);
+  if (order.length === 0) { res.json({ memories: [], truncated: false }); return; }
+
+  const precisionEnabled = await isFlagEnabled(sc, "memory_location_precision_enabled");
+  const rows: any[] = [];
+  for (const batch of chunkIds(order)) {
+    const { data, error } = await sc
+      .from("memories")
+      .select((precisionEnabled ? MEMORY_SELECT_WITH_PRECISION : MEMORY_SELECT) as any)
+      .in("id", batch)
+      .neq("state", "deleted");
+    if (error) {
+      req.log.error({ err: error, userId: user.id }, "memories: saved memories read failed — refusing rather than reporting an empty shelf");
+      sendError(res, "degraded_unavailable", "We could not load your saved memories. Please try again.");
+      return;
+    }
+    rows.push(...((data ?? []) as any[]));
+  }
+
+  // Block check once per owner; `isBlocked` fails CLOSED on an unreadable table.
+  const owners = [...new Set(rows.map((m) => m.owner_id as string).filter((o) => o !== user.id))];
+  const blockedOwners = new Set<string>();
+  for (const ownerId of owners) {
+    if (await isBlocked(sc, user.id, ownerId)) blockedOwners.add(ownerId);
+  }
+  const readable = await Promise.all(rows.map((m) => (
+    blockedOwners.has(m.owner_id as string) ? Promise.resolve(false) : canReadMemory(sc, m, user.id, "single")
+  )));
+  const byId = new Map(rows.filter((_, i) => readable[i]).map((m) => [m.id as string, m]));
+  const visible = order.map((id) => byId.get(id)).filter((m): m is any => Boolean(m));
+
+  const enriched = await enrichMemories(sc, visible, user.id, precisionEnabled, req.log);
+  if (!enriched.ok) {
+    sendError(res, "degraded_unavailable", "We could not load your saved memories. Please try again.");
+    return;
+  }
+  res.json({
+    memories: enriched.rows.map((m: any) => ({ ...m, savedByMe: true })),
+    truncated: order.length >= SAVED_MEMORIES_LIMIT,
+  });
+}));
+
+// Imported at the TAIL so no line above moves; ESM hoists it.
+import { asyncHandler } from "../lib/asyncHandler.js";
 
 export default router;
