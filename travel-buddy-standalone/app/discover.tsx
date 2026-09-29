@@ -10,6 +10,7 @@ import { AppHeader } from '../src/components/ui/AppHeader';
 import { ProfileCard } from '../src/components/cards/ProfileCard';
 import { ProfileSkeleton } from '../src/components/loading/ProfileSkeleton';
 import { EmptyState } from '../src/components/ui/EmptyState';
+import { ErrorState } from '../src/components/ui/ErrorState';
 import { searchUsers, getSuggestedTravelers, clearSuggestionsSeen, followUser, unfollowUser, type TravelerSearchResult } from '../src/services/follows';
 import { color, space, radius, type as t } from '../src/theme/tokens';
 import { useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
@@ -32,13 +33,30 @@ export default function DiscoverScreen() {
   // Optimistic request-pending overrides — Map<userId, pending>; for private accounts
   const [requestPendingOverrides, setRequestPendingOverrides] = useState<Map<string, boolean>>(new Map());
   const [togglingIds, setTogglingIds] = useState<Set<string>>(new Set());
+  // census-discovery §106 (tm-people): a failed read is its own state, never an
+  // empty list. `searchFailed` is the last search's read failing (network, a
+  // db_error, the search stop's refusal); `suggestionsFailed` is the same for
+  // "People you may know".
+  const [searchFailed, setSearchFailed] = useState(false);
+  const [suggestionsFailed, setSuggestionsFailed] = useState(false);
+  // The generation of the latest search. Every new query, clear or retry bumps
+  // it; an answer for an older generation never writes the screen (the
+  // DiscoveryCategoryTab loadIdRef pattern, D-W11X2-38).
+  const searchSeqRef = useRef(0);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<TextInput>(null);
 
   const loadSuggestions = useCallback(async () => {
     setLoadingSuggestions(true);
+    setSuggestionsFailed(false);
     const res = await getSuggestedTravelers(10);
-    const data = res.data ?? [];
+    if (!res.ok || !res.data) {
+      // Not "you've seen everyone": the read failed, and the screen says so.
+      setSuggestionsFailed(true);
+      setLoadingSuggestions(false);
+      return;
+    }
+    const data = res.data;
     setSuggestions(data);
     if (data.length > 0) setHasHadSuggestions(true);
     setLoadingSuggestions(false);
@@ -58,6 +76,8 @@ export default function DiscoverScreen() {
   }, [refreshingSuggestions, loadingSuggestions, loadSuggestions]);
 
   const runSearch = useCallback(async (q: string) => {
+    const seq = ++searchSeqRef.current;
+    setSearchFailed(false);
     if (!q.trim()) {
       setResults([]);
       setSearched(false);
@@ -66,13 +86,25 @@ export default function DiscoverScreen() {
     }
     setLoading(true);
     const res = await searchUsers(q.trim());
+    // Only the latest request writes: a slower answer for an earlier query can
+    // neither replace the later one's rows nor end its loading.
+    if (seq !== searchSeqRef.current) return;
     setLoading(false);
     setSearched(true);
-    setResults(res.data ?? []);
+    if (!res.ok || !res.data) {
+      // A failed read is not "No travelers found".
+      setResults([]);
+      setSearchFailed(true);
+      return;
+    }
+    setResults(res.data);
   }, []);
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
+    // The query changed: whatever is in flight answers a question no longer asked.
+    searchSeqRef.current++;
+    setSearchFailed(false);
     if (!query.trim()) {
       setResults([]);
       setSearched(false);
@@ -154,7 +186,7 @@ export default function DiscoverScreen() {
     }
   }, [togglingIds, handleSuggestionFollowed]);
 
-  const showEmpty = searched && !loading && results.length === 0;
+  const showEmpty = searched && !loading && !searchFailed && results.length === 0;
   const showIdle = !searched && !loading && !query.trim();
 
   return (
@@ -193,7 +225,14 @@ export default function DiscoverScreen() {
 
         {/* Idle state: show suggestions if available, otherwise placeholder */}
         {!loading && showIdle && (
-          suggestions.length > 0 ? (
+          suggestionsFailed && !loadingSuggestions ? (
+            <View style={styles.center}>
+              <ErrorState
+                message="We couldn't load suggestions just now."
+                onRetry={() => { void loadSuggestions(); }}
+              />
+            </View>
+          ) : suggestions.length > 0 ? (
             <FlatList
               data={suggestions}
               keyExtractor={(item) => item.id}
@@ -278,6 +317,13 @@ export default function DiscoverScreen() {
               description="Search by name or @username to discover travelers"
             />
           )
+        )}
+
+        {!loading && searchFailed && !!query.trim() && (
+          <ErrorState
+            message="We couldn't search travelers just now. Nothing was searched, so this doesn't mean no one matched."
+            onRetry={() => { void runSearch(query); }}
+          />
         )}
 
         {!loading && showEmpty && (
