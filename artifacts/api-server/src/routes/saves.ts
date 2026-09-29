@@ -17,7 +17,7 @@ import { Router } from "express";
 import { requireUser, sendError } from "../lib/http";
 import { isUuid } from "../lib/followDecisions";
 import { getServiceClient } from "../lib/supabase";
-import { nameVisibilitySet } from "../lib/publicIdentity";
+import { nameVisibilitySet } from "../lib/publicIdentity"; import { fetchBlockedSet } from "../lib/blocks.js";
 import { resolveInteractionPermissions } from "../services/interactionPermissions";
 import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine";
 
@@ -142,21 +142,21 @@ router.get("/me/saves", async (req, res) => {
     return;
   }
 
-  const ids = (rows ?? []).map((r: any) => r.saved_id as string);
+  const blocked = await fetchBlockedSet(sc, user.id); if (!blocked) { sendError(res, "degraded_unavailable", "Your block list could not be read"); return; } const visible = (rows ?? []).filter((r: any) => !blocked.has(r.saved_id as string)); const ids = visible.map((r: any) => r.saved_id as string); // TM-social: a block in either direction removes the person from my saved list
   let profileMap: Record<string, any> = {};
   if (ids.length > 0) {
-    const { data: profiles } = await sc
+    const { data: profiles, error: profilesErr } = await sc
       .from("profiles")
       .select("id, handle, name, avatar_url")
       .in("id", ids);
-    for (const p of profiles ?? []) profileMap[(p as any).id] = p;
+    if (profilesErr) { req.log.error({ err: profilesErr }, "user_saves profile hydrate failed"); sendError(res, "degraded_unavailable", "Saved profiles could not be read"); return; } for (const p of profiles ?? []) profileMap[(p as any).id] = p;
   }
 
   // Universal display-name rule: saved users show @handle unless opted in.
   const allowedSavedNames = await nameVisibilitySet(sc, ids);
 
   res.status(200).json({
-    saves: (rows ?? []).map((r: any) => {
+    saves: visible.filter((r: any) => profileMap[r.saved_id] !== undefined).map((r: any) => { // a saved account that no longer has a profile row is gone, not "no handle"
       const p = profileMap[r.saved_id] ?? {};
       return {
         id:        r.saved_id as string,

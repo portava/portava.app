@@ -4,7 +4,7 @@ import { getSessionUserId, onAuthChange, signOut as svcSignOut, ensureProfile } 
 import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
 import { getAccountStatus, TOKEN_UNAVAILABLE } from '../services/profile.ts';
 import type { AccountStatus } from '../services/profile.ts';
-import { pauseOnSessionEnd } from '../services/circle.ts';
+import { pauseOnSessionEnd } from '../services/circle.ts'; import { unregisterPushDeviceOnSignOut } from '../services/pushTokenService.ts';
 import { clearForUser as clearSavedForUser, primeSaved } from '../services/savedPostsCache.ts';
 import { fetchMySavedPostIds } from '../services/postEngagement.ts';
 import { clearCachedFeed } from '../services/compass.ts';
@@ -320,7 +320,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     } catch {
       // Non-fatal — proceed with sign-out regardless.
     }
-    await svcSignOut();
+    await unregisterPushDeviceOnSignOut().catch(() => 'failed'); await svcSignOut(); // TM-social PLAT-F20: DELETE /me/devices/:id needs the OUTGOING token, so it runs before the session is torn down (bounded; never blocks sign-out)
     setUserId(null);
     setAccountStatus(null);
     setDeletionScheduledAt(null);

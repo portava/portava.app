@@ -232,3 +232,21 @@ export async function acceptTripInvite(tripId: string): Promise<FriendResult<{ s
 export async function declineTripInvite(tripId: string): Promise<FriendResult<{ status: string }>> {
   return apiPost(`/api/trips/${tripId}/decline-invite`);
 }
+
+// ── Circle membership (owner actions) — TM-social PLAT-F11 ──────────────────
+
+/**
+ * DELETE /circles/:circleOwnerId/members/:memberId — the circle OWNER removes
+ * an accepted member. The server refuses anyone but the owner (403), answers
+ * 404 when the person is not a member, and only reports "removed" once the
+ * membership row is observably gone (routes/friends.ts). A failure here is
+ * shown to the owner; it is never reported as a removal.
+ */
+export async function removeCircleMember(
+  circleOwnerId: string,
+  memberId: string,
+): Promise<FriendResult<{ status: string; memberId: string }>> {
+  return apiDelete(
+    `/api/circles/${encodeURIComponent(circleOwnerId)}/members/${encodeURIComponent(memberId)}`,
+  );
+}
