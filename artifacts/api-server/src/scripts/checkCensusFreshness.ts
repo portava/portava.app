@@ -2900,6 +2900,8 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // these three do not live there, so the trailing-slash entry never reached
     // them and a change to any of the three aged nothing.
     "artifacts/api-server/src/lib/contextKernel.ts",
+    // census-compass §33 (lane W11-X2, round 13): the membership predicate's evidence — joins written by the real writers.
+    "artifacts/api-server/src/test/compassCircleMembershipPredicate.test.ts",
     "artifacts/api-server/src/lib/opportunityEngine.ts",
     "artifacts/api-server/src/routes/opportunities.ts",
     "artifacts/api-server/src/compass/",
@@ -4576,6 +4578,19 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/compassToolsUnreadFacts.test.ts",
     // census-discovery §110 (lane W11-X2, round 13): DV-83 re-graded on the Compass search tools, GET /map/search's events source, the structured context's circle caps and GET /circle/compass-suggestions.
     "artifacts/api-server/src/routes/circle.ts",  // §110.1 BK4: GET /circle/compass-suggestions reads `{ data }` alone
+    // census-discovery §110 (lane W11-X2, round 13): the round's suites and the files §110 grades.
+    "artifacts/api-server/src/test/compassToolsFlagsUnread.test.ts",
+    "artifacts/api-server/src/test/mapSearchEventGateUnread.test.ts",
+    "artifacts/api-server/src/test/compassCircleReadBounds.test.ts",
+    "artifacts/api-server/src/test/circleCompassSuggestionsUnread.test.ts",
+    "artifacts/api-server/src/test/compassHonestStatesRound13.test.ts",
+    "artifacts/api-server/src/test/hiddenGemsBranchReads.test.ts",
+    "artifacts/api-server/src/test/compassFeedPipelineFlagsUnread.test.ts",
+    "artifacts/api-server/src/test/eventDetailUnreadGate.test.ts",
+    "artifacts/api-server/src/test/compassToolsCappedReads.test.ts",
+    "artifacts/api-server/src/test/discoveryAggregatesTruncated.test.ts",
+    "travel-buddy-standalone/src/components/__tests__/CircleCompassSuggestions.refusal.component.test.tsx",
+    "artifacts/api-server/src/compass/CompassFeedBuilder.ts",  // §110 grades buildFeed's flagsUnreadable (D-W11X2-100)
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

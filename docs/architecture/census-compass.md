@@ -4105,6 +4105,66 @@ What would turn this red: an unread settings row answered as `passive` or writte
 read as 0; a live tick delivering over an unread row; a panel that renders a 503 or a partial check as a
 clean result.
 
+## §33 — 2026-09-29: Compass reads a circle membership as every other surface does; `circle_memberships.status` has no writer (lane W11-X2, round 13) — MOVES NOTHING
+
+Lane W11-X2 (round 13), branch `disc-w11-x2-r13` from `202617ff7`. `head_commit` is **NOT** re-declared: this records a
+finding and a build. The round-12 DV-83 verifier noted it beside its breaks (census-discovery §110.1), outside DV-83's
+failed-or-partial clause: every read here SUCCEEDED, and the answer was still false. Register: census-discovery's
+D-W11X2-94 (Compass has no register of its own). Controlled evidence only — node:test over the real writer routes and
+the real Compass tools, over an in-memory table that applies the column's real default.
+
+### 33.1 The finding
+
+- **The column.** `circle_memberships.status` is `text NOT NULL DEFAULT 'pending'`, with no CHECK on its values
+  (`artifacts/api-server/baseline/20260819_baseline_structure.sql:4448#status text DEFAULT 'pending'::text NOT NULL,`; the table's only CHECK is
+  `user_id <> other_id`). Loaded into PostgreSQL 16 and written the way PostgREST writes an upsert, a join lands as
+  `status = 'pending'`, and a second upsert of the same pair leaves it so.
+- **The writers.** The only two writers upsert `{ user_id, other_id, created_at }` and never name `status`:
+  `artifacts/api-server/src/routes/friends.ts:872#.upsert({ user_id: (inv as any).owner_id, other_id: user.id, created_at: now });` (POST /circle-invites/:inviteId/accept,
+  whose banner says it is the only place a membership row is created) and
+  `artifacts/api-server/src/routes/requests.ts:531#const { error: cmUpsertErr } = await sc.from("circle_memberships").upsert(` (POST /me/requests/circle_invite/:id/accept).
+  No SQL function, trigger or client write sets it; nothing moves a row to `accepted`.
+- **What 'pending' means.** Nothing. The invite/accept flow's states (pending, accepted, declined, cancelled) live on
+  `circle_invites`; a membership row is written only AFTER an accept, so every row is an accepted join. The column is a
+  leftover of an older "mutually accepted pair" design.
+- **What the rest of the app treats as a member.** The row. The circle chat sync, circle locations, the memory read
+  policy, meetups, locate-friends, messaging permissions, posts, stories, highlights and GET /circles/:owner/members all
+  test for the row and never read `status`.
+- **Compass alone filtered on it** — `(status ?? "accepted") === "accepted"` in the structured context's joined circles
+  and member lists and in `get_group_recommendation`'s joined circles and members. Every real join was therefore
+  invisible to `get_circle_activity`, /compass/ask's prompt and `get_group_recommendation`: a joiner was "not in any
+  circles", an owner's circle had no members, and a named joined circle was "not a member of a circle by that name" —
+  each from a read that succeeded. Every earlier fixture wrote `status: "accepted"`, so no suite saw it.
+
+### 33.2 The change
+
+The Compass readers use the predicate the rest of the app uses: the row is the membership
+(`artifacts/api-server/src/compass/CompassStructuredContext.ts:144#census-compass §33 (D-W11X2-94): no`,
+`artifacts/api-server/src/compass/CompassTools.ts:1983#census-compass §33 (D-W11X2-94): no`). `status` is still selected and simply not
+consulted. No writer, no data and no migration changed, and no database but the local test one was touched.
+
+**Tests, red first.** `artifacts/api-server/src/test/compassCircleMembershipPredicate.test.ts` writes each join through the
+REAL writer route into a table that applies the column's real default (CM4 pins that the rows are `pending`, as in
+production): CM1 (the joiner's `get_circle_activity`), CM2 (the owner's member list, tool and prompt) and CM3
+(`get_group_recommendation` through the second writer) were red before and green after; CMc (another viewer's row, and
+no row at all) was green throughout. Mutations B3i, B3j, B3o and B3p (the `accepted` filter put back at each of the four
+sites) are killed (census-discovery §110.9).
+
+### 33.3 What this does not reach, and what is left
+
+- **`public.circles` has no writer.** Compass takes circle NAMES from `public.circles`, which nothing in the tree writes
+  (check:writerless-reads classifies it dead-lane: "the product's actual Circle is the pair table"). The fixtures here
+  seed a named circle by hand — the one part of this world production does not have. On production data the circle
+  tools therefore still find no named circle and say "The user is not in any circles." from a successful read of an
+  empty table. Closing that needs a product ruling: derive Compass's circles from the pair table (the viewer's own
+  circle and each owner's circle the viewer joined), or retire the named-circle readers. Not built here.
+- **The SQL `in_accepted_circle`.** It requires two mutual `accepted` rows, which no writer produces, so it is always
+  false on production data. It feeds `can_see_location` and one of the two permissive `highlights` SELECT policies (the
+  other tests the row). Other owners (census-trust, census-highlights-memories); recorded, not changed.
+
+**MOVES NOTHING.** No census-compass row grades the circle tools' membership predicate. What would turn this red: a Compass reader that
+filters `circle_memberships` on `status` again while no writer sets it (CM1–CM3).
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/routes/verification.ts — §18.4 cites line 257 only to report that census-trust §14.6's TV-1a sentence is false at HEAD. The route is Trust's subject, graded in census-trust as TV-1a, and no Compass row rests on it.
@@ -4137,3 +4197,6 @@ clean result.
 - NOT-GRADED: travel-buddy-standalone/src/features/live/liveApi.ts — §32.2 cites only the line that keeps a 5xx body so a 503 can name its sources; no Compass verdict rests on the helper.
 - NOT-GRADED: travel-buddy-standalone/src/features/live/__tests__/senseCheckHonesty.component.test.tsx — §32.3's suite for the Sense panel and the auto-check; no verdict rests on it.
 - NOT-GRADED: travel-buddy-standalone/src/components/compass/__tests__/CompassLive.checkHonesty.component.test.tsx — §32.3's suite for the live card; no verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/routes/friends.ts — §33.1 cites its circle-invite accept only as one of the two writers of `circle_memberships`, to show it never sets `status`; no census-compass row grades the friends routes.
+- NOT-GRADED: artifacts/api-server/src/routes/requests.ts — §33.1 cites its circle-invite accept only as the second writer of `circle_memberships`, for the same fact; no census-compass row grades the requests routes.
+- NOT-GRADED: artifacts/api-server/baseline/20260819_baseline_structure.sql — §33.1 cites the `circle_memberships` CREATE TABLE only for the column's default and the absence of a CHECK on it; the baseline is the schema of record, not a surface this census grades.

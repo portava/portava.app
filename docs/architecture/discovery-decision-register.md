@@ -2777,3 +2777,93 @@ No APPROVAL REQUIRED entry is added. Arming the stop (D-W10-O-3) and gate 2 (D-W
 - **The question.** The brief names the global search's people section. On `main` its Travelers tab already routes a failed or refused read to the error state with "Tap to retry" (`travel-buddy-standalone/app/search.tsx:232#if (!res.ok) {`), and `GET /discovery/search` refuses an unreadable block or age set (`artifacts/api-server/src/routes/discoverySearch.ts:243#if (!blockedSet || !ageRestrictedSet) {`). What remains on `main` is the stale-answer race (same query and tab re-run; a superseded page 1 ending the newer one's loading).
 - **Decision.** Leave the file to the open branch `origin/claude/sensing-completion-20260925`, whose commit `c2221c48f` adds exactly that generation guard (D-W11X2-44) on lines this lane would have to rewrite. Editing them here would conflict with that branch and duplicate its fix.
 - **Consequence.** Until that branch lands, the race remains on `main`'s global search. Recorded in §106 as open.
+
+## W11-X2 round 13 — DV-83's §110.1 paths: the Compass search tools over an unread flag read, map search's events withheld unchecked, the structured context's circle caps, the Compass circle suggestions, the round-12 survivors H2–H4, the guard's reach, and a sweep (census §110)
+
+*Lane W11-X2, round 13, 2026-09-29, branch `disc-w11-x2-r13` from `202617ff7` (PR #530's head). Census section §110. No flag, no migration; `app/discover.tsx`, the Compass live, sense and autopilot gates, `routes/compassSense.ts`, `CompassSenseEngine.ts` and `CompassLiveEngine.ts` untouched. Every edit in a cited file is line-neutral.*
+
+### D-W11X2-92 — the Compass search tools say an unread COMPASS_% flag read (§110.1 BK1)
+
+- **The question.** `rankToolCandidates` kept `runPipeline`'s `results` and dropped `flagsUnreadable` (§103, D-W11X2-49). A failed flag read engages every `COMPASS_<TYPE>_SAFETY_BLOCK`, so zero survived, and `search_places`, `search_events` and `get_group_recommendation` told the model "No matching …".
+- **Options.** (a) Fall back to the unranked list when the flags are unread. Rejected: it skips the safety gate — exactly what the fail-safe map exists to prevent. (b) Carry the unread state and offer nothing, saying why. (c) Retry the flag read. Rejected: a second blip is the same answer later.
+- **Decision.** (b). The ranking is an EMPTY map carrying `flagsUnread`, so a caller that forgot the check still offers nothing; each tool says "Compass could not check its safety settings right now (a read failed), so nothing was offered … do not say there are none".
+- **Where.** `artifacts/api-server/src/compass/CompassTools.ts` (the pipeline line in place; helpers at the foot). Tests: `compassToolsFlagsUnread` (V12-SP0/SP1/SE0/SE1, FU1–FU3, FUc).
+
+### D-W11X2-93 — GET /map/search names the events a gate withheld because it could not be read (§110.1 BK2)
+
+- **The question.** `loadNearbyEvents`' per-event gates fail closed on a failed read and the row was `continue`d; the source was then `{ refusal: null }`. The same function feeds the NOW gateway and the Wall.
+- **Options.** (a) Admit a row whose gate could not be read. Rejected: an authorization gate must not open on a failed read. (b) Change the return type to `{ rows, withheldUnchecked }`. Rejected: three callers and their tests would change for a count only two of them state. (c) Keep the array and count beside it.
+- **Decision.** (c): a WeakMap beside the array (`nearbyEventsWithheldUnchecked`), so every healthy body built from it is byte-identical. `checkEventEligibility` marks its unavailable arms `unread` (ban, verified, trust, age) and no longer states a failed verified read as "verified users only"; the friends-only read binds `.error`. /map/search answers `refusal: "event_gates_unreadable"` with `withheldUnchecked`; the gateway stops naming the events layer (the client already says a layer it did not name could not be read); the inferred-cause report says it could not look. The Wall picks a best event per place and states no absence, so it is unchanged and honest.
+- **Not built, argued.** The staff-role read at the top of `checkEventEligibility` still binds only `data`: a failed read sends a co-host through the viewer gates, which fail closed; it cannot admit anyone. The per-event block check is two-state (`isBlockedBetween` answers `true` on a failed read); the route's own block set is read and refused first, so only a block created between the two reads is affected.
+- **Where.** `routes/mapSearch.ts`, `routes/mapProjection.ts`, `routes/events.ts` (all in place; the WeakMap at mapSearch's foot). One stale unchecked-reads ledger entry deleted (`checkEventEligibility::profiles.maybeSingle`). Tests: `mapSearchEventGateUnread` (V12-MS0..2, MS3–MS5, MSb, MSd, GW0, GW1), `mapInferredCause` GW2.
+
+### D-W11X2-94 — Compass reads a circle membership as every other surface does (census-compass §33)
+
+- **The finding.** `circle_memberships.status` is `text NOT NULL DEFAULT 'pending'` with no CHECK on its values (confirmed on PostgreSQL 16 from the baseline's CREATE TABLE). Its only writers — `POST /circle-invites/:inviteId/accept` and `POST /me/requests/circle_invite/:id/accept` — upsert `{ user_id, other_id, created_at }`; nothing writes `status`. The invite flow's states live on `circle_invites`; a membership row is written only after an accept. Every other reader treats the row as the membership. Compass alone filtered `accepted`, so every real join was invisible to it.
+- **Options.** (a) Have the writers set `status: 'accepted'`, plus a backfill. Rejected here: a data migration is out of this lane's remit, and it would make `status` a second truth about a fact the row already records. (b) Keep the filter. Rejected: 'pending' has no meaning on this table — no path writes or reads a pending membership as anything but a member. (c) Compass uses the row, like everything else.
+- **Decision.** (c). Recorded in census-compass §33 with the evidence, including what the fix does NOT reach: `public.circles`, from which Compass takes circle names, has no writer in the tree (check:writerless-reads, dead-lane), so on production data the circle tools still find no named circle. That needs a product ruling.
+- **Where.** `compass/CompassStructuredContext.ts`, `compass/CompassTools.ts` (in place). Tests: `compassCircleMembershipPredicate` (CM1–CM4, CMc), whose joins are written by the real writer routes into a table that applies the real default.
+
+### D-W11X2-95 — the Compass circle reads say a capped read; D-W11X2-91's cap ruling corrected (§110.1 BK3)
+
+- **Corrected.** D-W11X2-91 ruled the structured context's bounds "a by-design cap … the tool's answer is about those circles". The model is told "the user's Circles", and ten other rows read first gave "The user is not in any circles." The ruling is withdrawn.
+- **Decision.** Each circle read is ordered and reads one row past its cap (memberships and circles 10, members 200; the group recommendation's circles 25 and members 100). A longer list, and the display's 5 circles and 8 handles, are marked (`circlesTruncated`, `circleMembersTruncated`, present only then) and said by the tool and the prompt. "Not in any circles" is said only over a complete, error-free read; the group recommendation says a circle past the cap could not be checked and never recommends over part of a group.
+- **Where.** `compass/CompassStructuredContext.ts`, `compass/CompassTools.ts`. Tests: `compassCircleReadBounds` (V12-CC0..2, CB1–CB8, CBc).
+
+### D-W11X2-96 — GET /circle/compass-suggestions builds no card on a read that failed (§110.1 BK4)
+
+- **Decision.** Every read's `.error` is bound. A card is emitted only over inputs that were read: a failed caller- or context-presence read drops that context's cards; a failed host or meeting-point read drops `set_meeting_point` only. The body names the rest: `refusal: { class: "transient_db", code: "circle_suggestions_unread", coverage: partial | nothing, failedSources }`. A healthy body is byte-identical.
+- **The client.** The rail draws exactly the cards it is sent, states no absence, and draws nothing for a failed request; it needed no change (`CircleCompassSuggestions.refusal`, green at HEAD, pins it).
+- **Where.** `routes/circle.ts` (in place; the refusal helper at the foot). Tests: `circleCompassSuggestionsUnread` (V12-CS0..2, CS3–CS5, CSb).
+
+### D-W11X2-97 — the smaller honest states the verifier noted
+
+- **The bookings' buddy handles.** The read now checks its `.error` (`bookingBuddies`, said in the prompt), so §109.5's "each read in `buildStructuredCompassContext` checks its `.error`" is now true.
+- **/compass/ask.** A thrown profile read (a failed blocks or mutes read) dropped the circles, bookings and passport block silently; the prompt now says they could not be read.
+- **Compass Home's "N events on tonight".** Counted after `slice(0, 8)`; a list cut by the slice, or read to its `limit * 3` cap, is now counted "N+".
+- **GET /hidden-gems' `tripId` and `submittedBy` branches.** Cheap, so fixed rather than ruled: a failed read is `degraded_unavailable` or `db_error`, never "Trip not found", "not a member" or an empty gem list.
+- **Tests.** `compassHonestStatesRound13` (SB1, SBc, SA1, SAc, TN1, TN2, TNc), `hiddenGemsBranchReads` (HG1–HG5, HGc).
+
+### D-W11X2-98 — the round-12 survivors: H2, H3, H4 pinned; S9 and H5 equivalent
+
+- **Pinned.** The verifier's V12-HTT2..4 are copied into `hashtagsTrendingComplete` (at its foot). Each is green on this code and red under the mutation that drops that read's `id` key; re-applied, H2, H3 and H4 are killed.
+- **Equivalent, the verifier's reasons re-read against the code.** S9 (`else if` → `if` on the member-lists prompt line) says both lines when both reads failed: more disclosure, not less. H5 (`id` descending) is still a total order; V11-HTT0/HTT1 and V12-HTT2..4 stay green under it.
+
+### D-W11X2-99 — the static consumer guard sees every import form and every raw call site; §109.4 / §109.10 corrected
+
+- **Corrected.** §109.4 and §109.10 said the guard "derives and checks every Compass recommendations and trending consumer". The verifier's GH1–GH4 each escaped it.
+- **Decision.** `valueImports` also reads a namespace import's member uses and every dynamic import's names (destructured, bound, through `.then`, or a member of it); a form whose names cannot be told is `<dynamic>`, which now counts as a use of every carrier module. `derivedConsumers` follows re-export modules (named and export-star, chains followed) to the carrier they re-export. G9 requires the shared predicate after EVERY raw call site, not once per file. G10 runs the verifier's fixtures, a control and the neighbouring forms through the same derivation over an in-memory overlay.
+- **Where.** `travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts` (cited lines unchanged; edits in place, helpers at the foot).
+
+### D-W11X2-100 — the sweep: `buildFeed` refuses a feed the fail-safe flag map emptied
+
+- **The finding.** GET /compass/feed reads COMPASS_ENABLED through the 30 s flag cache while `runPipeline` re-reads the table uncached. A failed pipeline read blocked every candidate, and `buildFeed` dropped `flagsUnreadable`: the route served the empty feed and WROTE IT TO THE FEED CACHE as complete, and the front-load preloaded it as the first page — a refusal cached as complete.
+- **Decision.** `buildFeed` throws `CompassFlagsUnreadableError`, as `buildSection` and `rankItemsForDiscovery` already did; the route answers §105's flags refusal and caches nothing; the front-load hands no first page (its catch), so the client asks the feed.
+- **Tests.** `compassFeedPipelineFlagsUnread` (FB0–FB2, FL1, FLc).
+
+### D-W11X2-101 — the sweep: GET /events/:id never answers an unread gate or a failed event read as "not found"
+
+- **Decision.** The event page a Discovery or map card opens answered `checkEventEligibility`'s unread arms as 404 "Event not found or access denied", and a failed `events` read as "Event not found". Both are `degraded_unavailable`; a real ban and a real absence are unchanged. The viewer had already passed `canViewEvent`, so the event's existence is not a secret from them.
+- **Tests.** `eventDetailUnreadGate` (ED1, ED2, EDc).
+
+### D-W11X2-102 — the sweep: a Compass tool read cut at its cap is never "none"
+
+- **Decision.** `search_events` reads `limit * 2` rows and drops hidden hosts; `get_group_recommendation` reads `limit * 3` and drops what fails a member's constraint. When the read reached its cap and nothing survived, "No matching …" was stated over rows never read. At the cap the tools now say only the first N were checked; under it the sentence is unchanged.
+- **Tests.** `compassToolsCappedReads` (CR1, CR2, CRc).
+
+### D-W11X2-103 — the sweep: a served place's vote and review counts are stated only over a complete read
+
+- **Decision.** `batchFetchVoteAndRatingAggregates` (every served Discovery place) and the Hidden Gems copy read `place_votes` and `reviews` with no range; PostgREST cuts a response at db-max-rows with `error: null` (the §108 BK6 shape). Each read now asks for its exact count; a read short of it, or failed, states no count — the card draws no badge, as for a place with none — never a low one.
+- **Tests.** `discoveryAggregatesTruncated` (AG1–AG3, AGc).
+
+### D-W11X2-104 — recorded: rulings upheld and considered, the sound paths, and what is left for other owners
+
+- **Upheld by the round-12 verifier, recorded unchanged.** surface=trip's `partial` over the static tips (D-W11X2-91); the emerging-trails leg (behind a flag 3410 refuses ON; no client caller); blocked tags filtered after the top N (the reads succeeded); the admin merge (a write path); the trip map's other five sources (census-trips); GET /circle presence wording (D-W11X2-75; the sibling route is D-W11X2-96).
+- **Considered and kept: "Some … couldn't be loaded" when none were.** The verifier noted that surface=trip's partial over the static tips alone is drawn under `listPartialNotice('recommendations')` — "Some recommendations couldn’t be loaded just now, so this list may be incomplete." — when no dynamic recommendation was read. The safety tip IS a served recommendation row, so "some … couldn't be loaded" is literally true, and the sentence's operative clause ("may be incomplete") is the one DV-83 requires. Rewording would fork the one ratified sentence (D-W10-S1-2, pinned by G8) for one case. Kept.
+- **Swept and found sound.** `runPipeline`'s other consumers: `buildSection`, `rankItemsForDiscovery` and `compassEligibleForDiscovery` honour the marker; the testing sandbox passes no client, so its flags are never unread. `checkEventEligibility`'s RSVP, join, waitlist and approve callers answer its message, which now says "temporarily unavailable" over an unread gate. The Wall's event strip states no absence.
+- **Seen, not built; left for their owners.**
+  - `rankToolCandidates` answers a THROWN pipeline, and a null profile, with the unranked list (`ranked: false`), which skips the safety gate. It is not a failed read stated as a fact, and it is the tools' documented fallback; it is a Compass safety question (census-compass).
+  - `public.circles` has no writer in the tree, so the Compass circle tools find no named circle on production data (census-compass §33; needs a product ruling).
+  - The SQL `in_accepted_circle(viewer, target)` requires two mutual `accepted` rows, which no writer produces; it is always false on production data. It feeds `can_see_location` and one of the two permissive `highlights` SELECT policies (the other checks the row). The owners of those surfaces (census-trust, census-highlights-memories).
+  - The media world's experience projection folds a failed eligibility read into its "not available" shape, and the call gateway maps it to `not_event_eligible` (census-media, census-telegraph).
+  - The temporal gateway's forecast reads `loadNearbyEvents(...).catch(() => [])`, so a failed events read is a forecast with no events (census-map).
