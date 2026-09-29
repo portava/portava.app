@@ -17580,6 +17580,25 @@ An independent re-verification at the merged head is owed before the integrator 
   - another location's suggestion groups under a failure (C1, L1), or one place's Wikidata failure on the next place (WK4, WK5);
   - any path §102.10 lists.
 
+### 103.11 Integrator: DV-83 held at W after independent re-verification at `67d900e55`
+
+*Integrator, 2026-09-29. §103 was merged at `67d900e55`. An independent verifier then checked that tree, ran every probe below and restored every mutated file byte-identical, checked by sha256. (Recorded as 103.11 because 103.10 is §103's own "Left open".)*
+
+- **Confirmed.** Every §102.11 finding and every §103 probe fix is closed in behaviour; 17 of 20 lane mutations are killed. The three survivors (CM7, CM10, CM13) are unpinned lines, listed below.
+- **Found: three paths that break the criterion's wording, each shown by a probe that fails against this tree.**
+  1. **BK1. GET /compass/feed/section serves a section built from FAILED candidate reads as complete, and caches it (clauses a, b).** `CompassItemHydrator.ts` ignores the read error on posts, buddies, events and places, and hidden gems log and answer `[]`; `hydrateCompassItems` "never throws". The route answers `200 { sections: [{ items: [] }], fallback: false, compassEnabled: true }` with no refusal and writes it to L1 and the DB cache; `useCompassFeed` writes it to AsyncStorage. For You's picks section hides it as "no picks" (V7-S1, V7-S2 red; V7-C1 the control).
+  2. **BK2. GET /compass/recommendations answers `[]` with no refusal on a failed read, and both Discovery consumers hide it (clauses a, c, d).** The flag read fails to "off", the block check answers `{ recommendations: [], error: "block_check_failed" }` (the client ignores `error`), the traveler-profiles read ignores its error, and the build-failed catch answers `[]`. Search draws a zero-result search with no Compass rail, and For You's "Travelers You May Vibe With" row returns null (V7-R1, V7-R2, V7-T1, V7-T2 red; V7-TC the control).
+  3. **BK3. The Discover screen's trending chips keep the previous city's chips when the new city's read fails (clause c, wrong rows).** The chips are set only on a good read and never cleared on a city change (V7-H1 red).
+- **Possible, not proven.** The output-kinds and trending routes answer a failed flag READ as `404 feature_disabled`, and the output-kinds rail hides it exactly like the feature being off (the "unread flag = off" class §103 closed elsewhere).
+- **Unpinned survivors.** CM7 (ForYouTab's cache query drops `sortBy`), CM10 (the query identity ignores the age filter and open-now), CM13 (an HTTP-error failure left unstamped; only the network-error arm is pinned).
+- **Next.** A round-8 lane closes the three paths with the verifier's probes as failing-first tests, decides the possible, pins the survivors, and sweeps the Compass → Discovery seam once more. The row moves only after that.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | C | **W** | §103 closes §102.11's three paths, confirmed under mutation at `67d900e55` (§103.11). Three paths still present a failed read as empty, complete or over the wrong rows: the Compass hydrator's swallowed candidate reads, served and cached as a complete section (`artifacts/api-server/src/compass/CompassItemHydrator.ts`); `/compass/recommendations`' empty-list failure arms, drawn as an absence by search and by For You's traveler row (`artifacts/api-server/src/routes/compass.ts`); and the Discover screen's trending chips kept across a city change (`travel-buddy-standalone/app/(tabs)/discovery.tsx`). |
+
+Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/lib/capability/prerequisitesCore.ts — §93.8 names its function-granular gate boundary as why the Compass KNOWN entry was struck; it is the prerequisite checker's own machinery, and no Discovery verdict rests on it.
