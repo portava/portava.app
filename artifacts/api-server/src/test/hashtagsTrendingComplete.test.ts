@@ -24,6 +24,12 @@
  *   HT9      the window's count read fails → db_error, never a ranking of unknown completeness
  *   HT10     the count says rows exist and the pages return none → refusal `nothing`, never "nothing trending"
  *   HT11     the city window is empty and only the global fallback falls short of its count → refusal `partial`
+ *   V11-HTT0 CONTROL (§109, D-W11X2-90): distinct timestamps → #bravo (760) before #alpha (740), complete
+ *   V11-HTT1 (§109, D-W11X2-90) 1 500 rows sharing one created_at → never #alpha first served complete. Postgres
+ *            leaves rows with equal sort keys unordered, and LIMIT/OFFSET pages over ties may disagree; the
+ *            `id` key is what makes the pages a partition. The fake models it: without `id` in the order, a
+ *            page after the first orders tied rows differently (the round-11 verifier's V3 survived for want
+ *            of this).
  *
  * Run: SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy node --import tsx/esm --test src/test/hashtagsTrendingComplete.test.ts
  */
@@ -38,7 +44,7 @@ import { _setTestClient } from "../lib/http.js";
 const VIEWER = "ab000000-0000-4000-a000-000000000012";
 const TOKEN = "tok-r11-trending";
 const MAX_ROWS = 1000;
-const TAGS: Record<string, string> = { "ht-cold": "cold", "ht-warm": "warm", "ht-hot": "hot" };
+const TAGS: Record<string, string> = { "ht-cold": "cold", "ht-warm": "warm", "ht-hot": "hot", "ht-a": "alpha", "ht-b": "bravo" };
 const DB_ERR = { code: "57014", message: "canceling statement due to statement timeout" };
 
 type Row = { id: string; hashtag_id: string; author_id: string; city: string | null; source_type: string; source_id: string; created_at: string };
@@ -60,7 +66,7 @@ function client(rows: Row[], opts: FakeOpts = {}) {
       }
       const src: any[] = table === "hashtag_usage" ? rows : table === "posts" ? posts : [];
       let all = src.filter((r) => filters.every((f) => f(r)));
-      if (ordered.length > 0) all = [...all].sort((a, b) => { for (const k of ordered) { if (a[k] < b[k]) return -1; if (a[k] > b[k]) return 1; } return 0; });
+      if (ordered.length > 0) { const flip = !ordered.includes("id") && (range?.[0] ?? 0) > 0; all = [...all].sort((a, b) => { for (const k of ordered) { if (a[k] < b[k]) return -1; if (a[k] > b[k]) return 1; } return flip ? (a.hashtag_id < b.hashtag_id ? 1 : a.hashtag_id > b.hashtag_id ? -1 : 0) : 0; }); }  // §109 (V11-HTT1): Postgres leaves ties unordered — LIMIT/OFFSET pages may order tied rows differently unless `id` fixes a unique order
       const on = (eqs.get('source_type') as string | undefined) ?? (eqs.has('city') ? 'city-window' : 'window');
       const total = all.length + (opts.countExtra ?? 0) + (opts.countExtraOn === on ? 5 : 0);
       if (head && opts.failHead) return { data: null, count: null, error: DB_ERR };
@@ -202,5 +208,28 @@ describe("§108 (BK6) GET /hashtags/trending never ranks a truncated read as com
     assert.equal(status, 200);
     assert.equal(body.scope, "global");
     assert.equal(body.refusal?.coverage, "partial", JSON.stringify(body));
+  });
+});
+
+// census-discovery §109 (DV-83 round 12, D-W11X2-90): the round-11 verifier's V11-HTT0/HTT1, copied in. They pin the
+// page read's `id` tie-break (routes/hashtags.ts): without it, pages over tied `created_at` stop being a partition,
+// rows.length still reaches the count, and a skewed ranking is served as complete.
+const T0 = new Date(Date.now() - 3_600_000).toISOString();
+const rowsFor = (id: string, n: number, tied: boolean) => Array.from({ length: n }, (_, i) => ({ id: `u-${id}-${String(i).padStart(6, "0")}`, hashtag_id: id, author_id: `a-${id}-${i % 50}`, city: null, source_type: "comment", source_id: `s-${id}-${i}`, created_at: tied ? T0 : new Date(Date.now() - 3_600_000 + i).toISOString() }));
+
+describe("§109 GET /hashtags/trending pages over tied created_at (D-W11X2-90)", () => {
+  it("V11-HTT0 CONTROL: distinct timestamps → bravo then alpha, complete", async () => {
+    _setTestClient(client([...rowsFor("ht-a", 740, false), ...rowsFor("ht-b", 760, false)]) as any, true);
+    const { status, body } = await get();
+    assert.equal(status, 200);
+    assert.deepEqual(slugs(body), ["bravo", "alpha"]);
+    assert.equal(body.refusal, undefined);
+  });
+  it("V11-HTT1 1 500 rows sharing one created_at → never alpha-first served as complete", async () => {
+    _setTestClient(client([...rowsFor("ht-a", 740, true), ...rowsFor("ht-b", 760, true)]) as any, true);
+    const { status, body } = await get();
+    assert.ok(status !== 200 || body.refusal != null || slugs(body)?.[0] === "bravo", `served ${JSON.stringify(slugs(body))} as complete (true top: bravo 760)`);
+    assert.deepEqual(slugs(body), ["bravo", "alpha"], "the pages are a partition: the complete ranking");
+    assert.equal(body.refusal, undefined);
   });
 });
