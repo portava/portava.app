@@ -28,7 +28,7 @@ import { buildCompassContext, defaultSignals } from "../compass/CompassContextEn
 import { hydrateCompassItems, compassHydrationFailedSources } from "../compass/CompassItemHydrator.js";
 import { buildSection } from "../compass/CompassFeedBuilder.js";
 import { getWhosAround } from "../compass/CompassSocialEngine.js";
-import { getWeatherContext } from "../lib/weatherCache.js";
+import { getWeatherContext, type WeatherReadStatus } from "../lib/weatherCache.js";
 import type { CompassProfile } from "../compass/types.js";
 import {
   localHourFor,
@@ -304,10 +304,10 @@ async function fetchWeatherWindow(profile: CompassProfile | null): Promise<Sourc
   if (!city) return sourced(null);
   try {
     const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1_000).toISOString().slice(0, 10);
-    const wx = await getWeatherContext(city, tomorrow, tomorrow);
+    const wxStatus: WeatherReadStatus = {}; const wx = await getWeatherContext(city, tomorrow, tomorrow, wxStatus);
     const f = wx?.forecasts?.find((d) => d.date === tomorrow) ?? wx?.forecasts?.[0];
     // The provider answered with no usable day — reachable, but nothing to say.
-    if (!f) return sourced(null);
+    if (!f) return wxStatus.failed ? unusable(null) : sourced(null);  // census-discovery §106 (D-W11X2-67): a failed forecast read is not "no usable day"
     const rainy = f.precipMm > 2 || f.weatherCode >= 51;
     const headline = rainy
       ? `${f.summary} tomorrow — plan an indoor window`
@@ -451,8 +451,8 @@ export async function buildCompassHomeProjection(
             if (items.length === 0) return compassHydrationFailedSources(items).length > 0 ? unusable(null) : sourced(null);  // census-discovery §104 (DV-83, D-W11X2-54): an empty pool from a failed read is not "no best move"
             const result = await buildSection("for_you", items, profile, context, sc, null);
             const top: any = result.section?.items?.[0] ?? null;
-            if (!top?.item) return sourced(null);
-            return sourced({
+            const bestSource = compassHydrationFailedSources(items).length > 0 ? unusable : sourced; if (!top?.item) return bestSource(null);  // census-discovery §106 (DV-83, D-W11X2-67): a best move from a partial pool is not "ok" (so the home is degraded and not cached)
+            return bestSource({
               id: String(top.item.id),
               type: String(top.item.type ?? ""),
               title: (top.item.title as string | undefined) ?? null,
@@ -470,9 +470,9 @@ export async function buildCompassHomeProjection(
         // Circle activity — Phase 9 who's-around, consent-gated per target
         (async () => {
           try {
-            const { people } = await getWhosAround(sc, userId, hiddenUserIds(profile));
-            if (people.length === 0) return sourced(null);
-            return sourced({
+            const { people, unread: presenceUnread } = await getWhosAround(sc, userId, hiddenUserIds(profile));
+            if (people.length === 0) return presenceUnread ? unusable(null) : sourced(null);  // census-discovery §106 (D-W11X2-67): a failed presence read is not "nobody is around"
+            return (presenceUnread ? unusable : sourced)({
               people: people.slice(0, 5).map((p: any) => ({
                 label: p.label,
                 handle: p.handle ?? null,

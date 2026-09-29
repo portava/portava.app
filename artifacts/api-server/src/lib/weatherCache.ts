@@ -144,7 +144,7 @@ async function fetchWithTimeout(url: string, options?: RequestInit): Promise<Res
 async function geocode(destination: string): Promise<{ lat: number; lng: number } | null> {
   const url = `${GEOCODE_URL}?name=${encodeURIComponent(destination)}&count=1&language=en&format=json`;
   const res = await fetchWithTimeout(url);
-  if (!res.ok) return null;
+  if (!res.ok) throw new Error(`geocoder answered HTTP ${res.status}`);  // census-discovery §106 (D-W11X2-67): a failed geocode is a failed read, not "no such place"
   const data = await res.json() as any;
   const r = data?.results?.[0];
   if (!r) return null;
@@ -156,7 +156,7 @@ async function geocode(destination: string): Promise<{ lat: number; lng: number 
 export async function getWeatherContext(
   destination: string,
   startDate?: string,
-  endDate?: string,
+  endDate?: string, status?: WeatherReadStatus,
 ): Promise<WeatherContext | null> {
   // Single clock read for this call — `today` and the cache timestamp both
   // derive from nowMs so they can never disagree (split-clock risk).
@@ -190,7 +190,7 @@ export async function getWeatherContext(
       `&timezone=auto&start_date=${start}&end_date=${end}`;
 
     const res = await fetchWithTimeout(url);
-    if (!res.ok) return null;
+    if (!res.ok) { if (status) status.failed = true; return null; }
 
     const data = await res.json() as any;
     const daily = data?.daily;
@@ -218,6 +218,14 @@ export async function getWeatherContext(
 
     return context;
   } catch {
-    return null;
+    if (status) status.failed = true; return null;
   }
 }
+
+/**
+ * census-discovery §106 (DV-83 round 10, lane W11-X2, D-W11X2-67): why `getWeatherContext` answered
+ * null. `failed` is set when a provider could not be read (an HTTP failure, a throw, a timeout); it
+ * stays unset when the provider answered and there is nothing to forecast (no such place, no day).
+ * Optional and additive: every caller that passes nothing gets exactly the null it always got.
+ */
+export interface WeatherReadStatus { failed?: boolean }

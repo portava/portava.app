@@ -357,49 +357,49 @@ export interface WhosAroundEntry {
 
 interface ContextRef { type: ContextType; id: string; title: string }
 
-async function activeContexts(sc: SupabaseClient, userId: string): Promise<ContextRef[]> {
+async function activeContexts(sc: SupabaseClient, userId: string, unread?: PresenceUnread): Promise<ContextRef[]> {
   const out: ContextRef[] = [];
   try {
-    const { data: memberRows } = await sc
+    const { data: memberRows, error: memberRowsErr } = await sc
       .from("trip_members")
       .select("trip_id, role, status")
       .eq("user_id", userId)
       .in("role", ["owner", "co_host", "member", "viewer"]);
-    const tripIds = ((memberRows ?? []) as any[])
+    if (memberRowsErr) markPresenceUnread(unread); const tripIds = ((memberRows ?? []) as any[])
       .filter((r) => r.status == null || r.status === "accepted")
       .map((r) => r.trip_id as string);
     if (tripIds.length > 0) {
-      const { data: trips } = await sc
+      const { data: trips, error: tripsErr } = await sc
         .from("trips")
         .select("id, title, destination_city, status")
         .in("id", tripIds)
         .in("status", ["active", "upcoming"]);
-      for (const t of ((trips ?? []) as any[]).slice(0, 3)) {
+      if (tripsErr) markPresenceUnread(unread); for (const t of ((trips ?? []) as any[]).slice(0, 3)) {
         out.push({ type: "trip", id: t.id, title: String(t.title ?? t.destination_city ?? "Trip") });
       }
     }
-  } catch { /* non-fatal */ }
+  } catch { markPresenceUnread(unread); /* non-fatal — but said: census-discovery §106 (D-W11X2-67) */ }
   try {
     const cutoff = new Date(Date.now() - 6 * 3600_000).toISOString();
-    const { data: rsvps } = await sc
+    const { data: rsvps, error: rsvpsErr } = await sc
       .from("event_rsvps")
       .select("event_id, status")
       .eq("user_id", userId)
       .eq("status", "going");
-    const eventIds = ((rsvps ?? []) as any[]).map((r) => r.event_id as string);
+    if (rsvpsErr) markPresenceUnread(unread); const eventIds = ((rsvps ?? []) as any[]).map((r) => r.event_id as string);
     if (eventIds.length > 0) {
-      const { data: events } = await sc
+      const { data: events, error: eventsErr } = await sc
         .from("events")
         .select("id, title, starts_at")
         .in("id", eventIds)
         .gte("starts_at", cutoff)
         .order("starts_at", { ascending: true })
         .limit(3);
-      for (const e of (events ?? []) as any[]) {
+      if (eventsErr) markPresenceUnread(unread); for (const e of (events ?? []) as any[]) {
         out.push({ type: "event", id: e.id, title: String(e.title ?? "Event") });
       }
     }
-  } catch { /* non-fatal */ }
+  } catch { markPresenceUnread(unread); /* non-fatal — but said: census-discovery §106 (D-W11X2-67) */ }
   return out.slice(0, 5);
 }
 
@@ -408,12 +408,12 @@ async function contextMemberIds(
   ctx: ContextRef,
 ): Promise<string[]> {
   if (ctx.type === "trip") {
-    const { data } = await sc
+    const { data, error } = await sc
       .from("trip_members")
       .select("user_id, role, status")
       .eq("trip_id", ctx.id)
       .in("role", ["owner", "co_host", "member", "viewer"]);
-    return ((data ?? []) as any[])
+    if (error) throw error; return ((data ?? []) as any[])  // §106: a failed member read is thrown to collectPresence, which says it
       .filter((r) => r.status == null || r.status === "accepted")
       .map((r) => r.user_id as string);
   }
@@ -421,7 +421,7 @@ async function contextMemberIds(
     sc.from("event_rsvps").select("user_id").eq("event_id", ctx.id).eq("status", "going"),
     sc.from("event_attendees").select("user_id").eq("event_id", ctx.id),
   ]);
-  const going = new Set(((rsvpResult.data ?? []) as any[]).map((r) => r.user_id as string));
+  if (rsvpResult.error || attendeeResult.error) throw rsvpResult.error ?? attendeeResult.error; const going = new Set(((rsvpResult.data ?? []) as any[]).map((r) => r.user_id as string));
   const att = new Set(((attendeeResult.data ?? []) as any[]).map((r) => r.user_id as string));
   return [...going].filter((id) => att.has(id));
 }
@@ -437,9 +437,9 @@ export async function getWhosAround(
   sc: SupabaseClient,
   viewerId: string,
   hidden: Set<string>,
-): Promise<{ people: WhosAroundEntry[]; contextsChecked: number }> {
-  const { found, contextsChecked } = await collectPresence(sc, viewerId, hidden);
-  return { people: found.map((f) => f.entry).slice(0, 20), contextsChecked };
+): Promise<{ people: WhosAroundEntry[]; contextsChecked: number; /** census-discovery §106 (DV-83, D-W11X2-67): a presence read failed, so an empty `people` is not "nobody is around" */ unread?: true }> {
+  const unread: PresenceUnread = { v: false }; const { found, contextsChecked } = await collectPresence(sc, viewerId, hidden, unread);
+  return { people: found.map((f) => f.entry).slice(0, 20), contextsChecked, ...(unread.v ? { unread: true as const } : {}) };
 }
 
 /**
@@ -475,9 +475,9 @@ interface PresenceFinding {
 async function collectPresence(
   sc: SupabaseClient,
   viewerId: string,
-  hidden: Set<string>,
+  hidden: Set<string>, unread?: PresenceUnread,
 ): Promise<{ found: PresenceFinding[]; contextsChecked: number }> {
-  const contexts = await activeContexts(sc, viewerId);
+  const contexts = await activeContexts(sc, viewerId, unread);
   const found: PresenceFinding[] = [];
   const seenUsers = new Set<string>();
 
@@ -485,7 +485,7 @@ async function collectPresence(
     let memberIds: string[] = [];
     try {
       memberIds = await contextMemberIds(sc, ctx);
-    } catch { continue; }
+    } catch { markPresenceUnread(unread); continue; }
     const targets = memberIds
       .filter((id) => id !== viewerId && !hidden.has(id) && !seenUsers.has(id))
       .slice(0, 20);
@@ -497,14 +497,14 @@ async function collectPresence(
     try {
       accessById = await canViewCirclePresenceBatch(sc, viewerId, targets, ctx.type, ctx.id);
     } catch {
-      continue;
+      markPresenceUnread(unread); continue;
     }
     const results = targets.map((targetId) => ({
       targetId,
       access: accessById.get(targetId) ?? { allowed: false as const },
     }));
 
-    const visible = results.filter((r) => r.access.allowed && (r.access as any).presenceRow);
+    if (results.some((r) => presenceDeniedUnread((r.access as { reason?: string }).reason))) markPresenceUnread(unread); const visible = results.filter((r) => r.access.allowed && (r.access as any).presenceRow);
     if (visible.length === 0) continue;
 
     const ids = visible.map((r) => r.targetId);
@@ -814,3 +814,15 @@ export async function sharesSocialContext(
   }
   return { shares: false, relationship: verdict.relationshipLabel, reason: "no_shared_context" };
 }
+
+// ── census-discovery §106 (DV-83 round 10, lane W11-X2, D-W11X2-67): "who's around" says an unread read ──
+// Every read on the presence walk used to be "non-fatal": a failed trip_members, trips,
+// event_rsvps or events read, a failed context-member read, a thrown consent batch, and a
+// batch that could not read (reason `unavailable`) or whose stop is engaged or unreadable
+// (reason `kill_switch`, which `isKillSwitchEngaged` also answers for an unread stop) all
+// left `people` short or empty. GET /compass/home then said "ok — nobody is around". The walk
+// is unchanged in every privacy respect (the same reads, the same gate, fail-closed per
+// target); it now also SAYS that a read failed, so a caller can tell the two apart.
+export interface PresenceUnread { v: boolean }
+function markPresenceUnread(unread: PresenceUnread | undefined): void { if (unread) unread.v = true; }
+function presenceDeniedUnread(reason: string | undefined): boolean { return reason === "unavailable" || reason === "kill_switch"; }
