@@ -109,7 +109,7 @@ export const adminStyles = StyleSheet.create({
   },
   label: { ...t.small, color: color.mute, fontWeight: '700' },
   notice: { ...t.small, color: color.success, fontWeight: '700' },
-  formError: { ...t.small, color: color.signalStrong, fontWeight: '700' },
+  formError: { ...t.small, color: color.ink, fontWeight: '700' },
   tabs: { flexDirection: 'row', gap: space.sm, paddingHorizontal: space.lg, paddingBottom: space.sm },
 });
 
@@ -129,13 +129,14 @@ const s = StyleSheet.create({
   errorBox: {
     backgroundColor: color.paperRaised,
     borderWidth: 1,
-    borderColor: color.signalStrong,
+    borderColor: color.signal,
+    borderLeftWidth: 4,
     borderRadius: radius.md,
     padding: space.md,
     gap: space.sm,
     alignItems: 'flex-start',
   },
-  errorText: { ...t.body, color: color.signalStrong },
+  errorText: { ...t.body, color: color.ink },
   emptyBox: { paddingVertical: space.xl, alignItems: 'center' },
   emptyText: { ...t.body, color: color.mute, textAlign: 'center' },
   btn: {
@@ -147,8 +148,8 @@ const s = StyleSheet.create({
     backgroundColor: color.paperRaised,
   },
   btnPrimary: { backgroundColor: color.deep, borderColor: color.deep },
-  btnDanger: { borderColor: color.signalStrong },
+  btnDanger: { borderColor: color.signal, borderWidth: 2 },
   btnText: { ...t.small, color: color.ink, fontWeight: '700' },
   btnTextOnFill: { color: color.onInk },
-  btnTextDanger: { color: color.signalStrong },
+  btnTextDanger: { color: color.ink },
 });
