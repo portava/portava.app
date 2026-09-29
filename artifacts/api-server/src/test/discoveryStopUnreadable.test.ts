@@ -16,6 +16,7 @@
  *   KS2  CONTROL: the stop READ and engaged → exactly the flag-off 404 bytes
  *   KS3  an unread stop is not cached: once the read recovers, the next request serves
  *   KS4  the gate: an unread stop is `stop_unreadable`, and every other reader still halts on it
+ *   KS5  the stop check itself throws → `stop_unreadable` (still a halt), never "the stop condition tripped"
  */
 import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
@@ -135,5 +136,11 @@ describe("census-discovery §107 (DV-83, D-W11X2-69): the output kinds behind an
     assert.equal(await unlessDiscoveryStopped(sc, true), false, "fail-closed: a rollout flag reads OFF while the stop is unread");
     state.stop = "engaged";
     assert.equal(await discoveryStopHalt(sc), "kill_switch_engaged");
+  });
+
+  it("KS5 the stop check itself throws → stop_unreadable (still a halt)", async () => {
+    const sc = serve();
+    const throwing = { get measure(): boolean { throw new Error("boom"); } };
+    assert.equal(await discoveryStopHalt(sc, throwing), "stop_unreadable");
   });
 });

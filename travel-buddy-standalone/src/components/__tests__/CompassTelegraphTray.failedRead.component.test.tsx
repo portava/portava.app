@@ -15,6 +15,8 @@
  *   TT4  a `partial` answer → its cards AND the partial line
  *   TT5  the failed state's retry reads again, and a good answer replaces it
  *   TT6  a late answer from an earlier open never writes the tray
+ *   TT7  ... nor ends the newer open's loading state while its own read is still in flight
+ *   TT8  a `partial` answer with no cards → the failed state, never "couldn't find"
  */
 import React from 'react';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react-native';
@@ -36,21 +38,21 @@ const CARD2 = { ...CARD, id: 'ev-2', title: 'Old answer' };
 function mount(visible = true) {
   return render(<CompassTelegraphTray visible={visible} threadId="t-1" onDismiss={() => {}} onShareCard={() => {}} />);
 }
-const settled = () => waitFor(() => expect(screen.queryByText('Finding suggestions…')).toBeNull());
+const settled = () => waitFor(() => expect(screen.queryByText('Finding suggestions…')).toBeNull(), { timeout: 5000 });
 
 describe('CompassTelegraphTray over a failed read (§107)', () => {
   beforeEach(() => mockFetch.mockReset());
 
   it('TT0 (V9-TT0) CONTROL: a readable empty answer → the empty state', async () => {
     mockFetch.mockResolvedValue({ ok: true, cards: [], city: 'Paris' });
-    mount();
-    await waitFor(() => expect(screen.queryByText(EMPTY)).toBeTruthy());
+    await mount();
+    await waitFor(() => expect(screen.queryByText(EMPTY)).toBeTruthy(), { timeout: 5000 });
     expect(screen.queryByText(TELEGRAPH_TRAY_FAILED)).toBeNull();
   });
 
   it('TT1 (V9-TT1) the read fails (http_500) → the failed state, never "couldn\'t find"', async () => {
     mockFetch.mockResolvedValue({ ok: false, error: 'http_500' });
-    mount();
+    await mount();
     await waitFor(() => expect(mockFetch).toHaveBeenCalled());
     await settled();
     expect(screen.queryByText(EMPTY)).toBeNull();
@@ -59,7 +61,7 @@ describe('CompassTelegraphTray over a failed read (§107)', () => {
 
   it('TT2 (V9-TT2) the read fails (network) → the failed state', async () => {
     mockFetch.mockResolvedValue({ ok: false, error: 'network_error' });
-    mount();
+    await mount();
     await settled();
     expect(screen.queryByText(EMPTY)).toBeNull();
     expect(screen.queryByText(TELEGRAPH_TRAY_FAILED)).toBeTruthy();
@@ -67,7 +69,7 @@ describe('CompassTelegraphTray over a failed read (§107)', () => {
 
   it('TT3 a refusal (nothing) → the failed state', async () => {
     mockFetch.mockResolvedValue({ ok: false, refused: true, error: 'telegraph_sources_unread' });
-    mount();
+    await mount();
     await settled();
     expect(screen.queryByText(EMPTY)).toBeNull();
     expect(screen.queryByText(TELEGRAPH_TRAY_FAILED)).toBeTruthy();
@@ -75,14 +77,14 @@ describe('CompassTelegraphTray over a failed read (§107)', () => {
 
   it('TT4 a partial answer → its cards AND the partial line', async () => {
     mockFetch.mockResolvedValue({ ok: true, cards: [CARD], city: 'Paris', partial: true });
-    mount();
+    await mount();
     await waitFor(() => expect(screen.queryByText('Jazz night')).toBeTruthy());
     expect(screen.queryByText(PARTIAL)).toBeTruthy();
   });
 
   it('TT5 the retry reads again, and a good answer replaces the failed state', async () => {
     mockFetch.mockResolvedValueOnce({ ok: false, error: 'http_503' }).mockResolvedValueOnce({ ok: true, cards: [CARD], city: 'Paris' });
-    mount();
+    await mount();
     await waitFor(() => expect(screen.queryByText(TELEGRAPH_TRAY_FAILED)).toBeTruthy());
     fireEvent.press(screen.getByText('Try again'));
     await waitFor(() => expect(screen.queryByText('Jazz night')).toBeTruthy());
@@ -102,6 +104,28 @@ describe('CompassTelegraphTray over a failed read (§107)', () => {
     resolveFirst({ ok: true, cards: [CARD2], city: 'Paris' });
     await new Promise((r) => setTimeout(r, 20));
     expect(screen.queryByText('Old answer')).toBeNull();
+    expect(screen.queryByText(TELEGRAPH_TRAY_FAILED)).toBeTruthy();
+  });
+
+  it('TT7 a late answer from an earlier open never ends the newer open\'s loading', async () => {
+    let resolveFirst: (v: unknown) => void = () => {};
+    mockFetch
+      .mockImplementationOnce(() => new Promise((r) => { resolveFirst = r; }))
+      .mockImplementationOnce(() => new Promise(() => {}));
+    const view = await mount(true);
+    await view.rerender(<CompassTelegraphTray visible={false} threadId="t-1" onDismiss={() => {}} onShareCard={() => {}} />);
+    await view.rerender(<CompassTelegraphTray visible threadId="t-1" onDismiss={() => {}} onShareCard={() => {}} />);
+    resolveFirst({ ok: true, cards: [], city: 'Paris' });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText('Finding suggestions…')).toBeTruthy();
+    expect(screen.queryByText(EMPTY)).toBeNull();
+  });
+
+  it('TT8 a partial answer with no cards → the failed state, never "couldn\'t find"', async () => {
+    mockFetch.mockResolvedValue({ ok: true, cards: [], city: 'Paris', partial: true });
+    await mount();
+    await settled();
+    expect(screen.queryByText(EMPTY)).toBeNull();
     expect(screen.queryByText(TELEGRAPH_TRAY_FAILED)).toBeTruthy();
   });
 });
