@@ -20,21 +20,21 @@ import { GlobalTimePicker } from '../../../src/components/selectors/GlobalTimePi
 import { formatDisplayDate, fromISODate, fromHHmm, formatDisplayTime, toISODate } from '../../../src/lib/dateTime/formatters';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { usePlainBottomInset } from '../../../src/hooks/useBottomInset';
+import { useSession } from '../../../src/context/SessionContext';
+import { BookingLifecyclePanel } from '../../../src/components/rentabuddy/BookingLifecyclePanel';
+import { RabGateRefusalState } from '../../../src/components/rentabuddy/RabGateRefusalState';
+import { bookingParty, bookingStatusLabel } from '../../../src/services/rentABuddyLifecycle';
+import { describeGateRefusal, type GateRefusal } from '../../../src/services/rentABuddyGates';
 
 type BookingStatus = BuddyBooking['status'];
 
-const STATUS_LABELS: Record<BookingStatus, string> = {
-  requested: 'Requested',
-  scheduled: 'Confirmed',
-  in_progress: 'Active',
-  completed: 'Completed',
-  cancelled: 'Cancelled',
-  disputed: 'Disputed',
-  expired: 'Expired',
-  no_show_pending: 'No-Show Review',
-};
-
-const STATUS_COLORS: Record<BookingStatus, string> = {
+// Labels come from rentABuddyLifecycle.bookingStatusLabel, which covers every
+// status the server writes (this map had 8 of 14, so e.g.
+// completed_pending_traveler_confirmation rendered as a blank badge).
+const STATUS_COLORS: Partial<Record<BookingStatus, string>> = {
+  pending: color.warn,
+  confirmed: color.deep,
+  completed_pending_traveler_confirmation: color.deep,
   requested: color.warn,
   scheduled: color.deep,
   in_progress: color.success,
@@ -59,11 +59,11 @@ const THREAD_ELIGIBLE_STATUSES: BookingStatus[] = [
 ];
 
 function StatusBadge({ status }: { status: BookingStatus }) {
-  const col = STATUS_COLORS[status];
+  const col = STATUS_COLORS[status] ?? color.mute;
   return (
     <View style={[sb.pill, { borderColor: col }]}>
       <View style={[sb.dot, { backgroundColor: col }]} />
-      <Text style={[sb.text, { color: col }]}>{STATUS_LABELS[status]}</Text>
+      <Text style={[sb.text, { color: col }]}>{bookingStatusLabel(status)}</Text>
     </View>
   );
 }
@@ -386,6 +386,8 @@ export default function BookingDetail() {
   const [booking, setBooking] = useState<BuddyBooking | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [loadGate, setLoadGate] = useState<GateRefusal | null>(null);
+  const { userId } = useSession();
   const [confirmBannerVisible, setConfirmBannerVisible] = useState(fromCheckout === '1');
   const bannerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [safetyOpen, setSafetyOpen] = useState(false);
@@ -398,10 +400,15 @@ export default function BookingDetail() {
   const [blockedRanges, setBlockedRanges] = useState<BuddyBlockedRange[]>([]);
 
   const load = useCallback(async () => {
-    setLoading(true); setError(null);
+    setLoading(true); setError(null); setLoadGate(null);
     const res = await getBooking(id);
     setLoading(false);
-    if (!res.ok) { setError(res.error); return; }
+    if (!res.ok) {
+      const g = describeGateRefusal(res.error, res.gate);
+      if (g) { setLoadGate(g); return; }
+      setError(bookingErrorCopy(res.error, "Couldn't load this booking."));
+      return;
+    }
     setBooking(res.data.booking);
   }, [id]);
 
@@ -461,8 +468,10 @@ export default function BookingDetail() {
   };
 
   if (loading) return <TravelLoadingState label="Loading booking…" />;
+  if (loadGate) return <RabGateRefusalState refusal={loadGate} onRetry={load} />;
   if (error || !booking) return <TravelErrorState title="Couldn't load booking" sub={error ?? undefined} onRetry={load} />;
 
+  const party = bookingParty(booking, userId);
   const isActive = booking.status === 'in_progress';
   const isCompleted = booking.status === 'completed';
   const isCancellable = booking.status === 'requested' || booking.status === 'scheduled';
@@ -611,9 +620,17 @@ export default function BookingDetail() {
           </View>
         )}
 
+        {/* Session lifecycle: start / complete / confirm / check-in / suggested changes (testing mode, lane tm-rab) */}
+        <BookingLifecyclePanel
+          booking={booking}
+          party={party}
+          onChanged={load}
+          onOpenDispute={() => setDisputeVisible(true)}
+        />
+
         {/* Actions */}
         <View style={{ paddingHorizontal: space.lg, marginTop: space.xl, gap: space.md }}>
-          {isActive && (
+          {isActive && party === 'traveler' && (
             <Pressable
               style={({ pressed }) => [styles.actionBtn, styles.actionBtnPrimary, pressed && { opacity: layout.pressedOpacity }]}
               onPress={() => router.push({ pathname: '/(rent-a-buddy)/active' as any, params: { bookingId: id } })}
