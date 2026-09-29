@@ -41,7 +41,7 @@ import {
 } from '../../services/compass.ts';
 import { followUser } from '../../services/follows.ts';
 import { reportContent } from '../../services/reports.ts';
-import { blockUser } from '../../services/blocks.ts';
+import { blockUser } from '../../services/blocks.ts'; import { listPartialNotice } from '../../services/discoveryCoverageNotice.ts';
 
 interface Props {
   city?: string | null;
@@ -288,12 +288,12 @@ function TravelerCard({ item }: { item: CompassTravelerResult }) {
 
 export function CompassTravelerRow({ city, limit = 6 }: Props) {
   const [loading, setLoading] = useState(true);
-  const [items, setItems] = useState<CompassTravelerResult[]>([]);
+  const [items, setItems] = useState<CompassTravelerResult[]>([]); const [readState, setReadState] = useState<'failed' | 'partial' | null>(null);  // census-discovery §104 (DV-83, D-W11X2-55): a failed or partial read is said, never the "no matches" silence
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      setLoading(true);
+      setLoading(true); setReadState(null);
       // Settings gate — skip traveler API call if setting is off
       const settingsRes = await fetchCompassSettings();
       if (!cancelled && settingsRes.ok && settingsRes.data?.show_people_recommendations === false) {
@@ -303,7 +303,7 @@ export function CompassTravelerRow({ city, limit = 6 }: Props) {
 
       const res = await fetchCompassTravelerMatches({ city, limit });
       if (!cancelled) {
-        setItems((res.ok && !res.disabled) ? (res.data ?? []) : []);
+        setItems((res.ok && !res.disabled) ? (res.data ?? []) : []); setReadState(!res.ok ? 'failed' : (!res.disabled && res.partial) ? 'partial' : null);
         setLoading(false);
       }
     })();
@@ -326,19 +326,19 @@ export function CompassTravelerRow({ city, limit = 6 }: Props) {
     );
   }
 
-  if (items.length === 0) return null;
+  if (items.length === 0 && readState === null) return null;  // census-discovery §104 (DV-83, D-W11X2-55): hidden only when the read ANSWERED with no one
 
   return (
     <View style={s.wrap}>
       <View style={s.header}>
         <Users size={13} color={color.signal} />
         <Text style={s.headerText}>Travelers You May Vibe With</Text>
-      </View>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.strip}>
+      </View>{readState ? (<Text style={{ color: color.mute, fontSize: 12, paddingHorizontal: space.lg, marginBottom: space.sm }} testID={`compass-travelers-${readState}`}>{readState === 'failed' ? COMPASS_TRAVELERS_FAILED : listPartialNotice('travelers')}</Text>) : null}
+      {items.length > 0 ? (<ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.strip}>
         {items.map((item) => (
           <TravelerCard key={item.id} item={item} />
         ))}
-      </ScrollView>
+      </ScrollView>) : null}
     </View>
   );
 }
@@ -474,3 +474,6 @@ const s = StyleSheet.create({
     padding: 3,
   },
 });
+
+// census-discovery §104 (DV-83, D-W11X2-55): the traveler read failed (transport, or refused `nothing`).
+const COMPASS_TRAVELERS_FAILED = 'Couldn\u2019t load traveler matches just now.';

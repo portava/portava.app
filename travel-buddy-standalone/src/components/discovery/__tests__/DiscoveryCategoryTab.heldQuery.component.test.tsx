@@ -27,7 +27,7 @@
 
 import React from 'react';
 import { render, screen, act } from '@testing-library/react-native';
-import { stampDiscoveryQuery } from '../../../services/discoveryQueryStamp.ts';
+import { stampDiscoveryQuery, discoveryQueryIdentity } from '../../../services/discoveryQueryStamp.ts';
 
 const mockGetDiscoveryPlaces       = jest.fn();
 const mockGetCachedDiscoveryPlaces = jest.fn();
@@ -145,4 +145,30 @@ describe('§103 DiscoveryCategoryTab — another query\'s rows are never kept un
     await act(async () => {});
     expect(onScreen()).toEqual({ row: true, stale: true, error: false });
   });
+});
+
+// census-discovery §104 (DV-83, §103.11 survivor CM10): the identities above are written by
+// hand, so nothing tied the guard to the REAL `discoveryQueryIdentity`. G4 stamps with the
+// identity of the query the service would send, so an identity that ignored the age filter
+// or open-now would keep the old rows under the new query's failure.
+describe('§104 DiscoveryCategoryTab — the guard, with the real query identity (CM10)', () => {
+  const idOf = (extra: string) => discoveryQueryIdentity(new URLSearchParams(`destination=Paris&category=places&radiusKm=10&page=1${extra}`));
+  const tabWith = (filters: object, ageFilter: string) => <DiscoveryCategoryTab category="places" destination="Paris" onSelectPlace={jest.fn()} onAddToPlan={jest.fn()} filters={filters as never} ageFilter={ageFilter as never} />;
+
+  for (const [name, fromTab, toTab, toExtra] of [
+    ['the age filter', tabWith(F10, 'any'), tabWith(F10, '21_plus'), '&ageFilter=21_plus'],
+    ['open-now', tabWith(F10, 'any'), tabWith({ ...F10, openNow: true }, 'any'), '&openNow=1'],
+  ] as const) {
+    it(`G4 ${name} changes, the new query's read FAILS → the old rows are not kept under its stale line`, async () => {
+      mockGetDiscoveryPlaces.mockResolvedValueOnce({ ok: true, data: page('any-age', idOf('')) });
+      const t = await render(fromTab);
+      await act(async () => {});
+      expect(onScreen().row).toBe(true);
+      mockGetCachedDiscoveryPlaces.mockImplementation(() => page('any-age', idOf('')));
+      mockGetDiscoveryPlaces.mockResolvedValueOnce(failed(idOf(toExtra)));
+      await act(async () => { t.rerender(toTab); });
+      await act(async () => {});
+      expect(onScreen()).toEqual({ row: false, stale: false, error: true });
+    });
+  }
 });

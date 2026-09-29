@@ -15,12 +15,12 @@ import {
   clearSearchHistory,
 } from '../src/services/discovery';
 import type { UnifiedSearchResult, SearchHistoryEntry } from '../src/services/discovery';
-import { fetchCompassRecommendations } from '../src/services/compass';
+import { fetchCompassRecommendations } from '../src/services/compass'; import { compassRecommendationsFailed } from '../src/services/compassRecommendationsRefusal';
 import type { CompassRecommendation } from '../src/services/compass';
 import { CompassTravelerRow } from '../src/components/compass/CompassTravelerRow';
 import { useActiveLocation } from '../src/hooks/useActiveLocation';
 import { parseSearchIntent, intentSummary } from '../src/lib/compassIntent';
-import { SearchSuggestionsPanel } from '../src/components/search/SearchSuggestionsPanel'; import { SEARCH_PARTIAL_NOTICE, listMoreFailedNotice } from '../src/services/discoveryCoverageNotice';
+import { SearchSuggestionsPanel } from '../src/components/search/SearchSuggestionsPanel'; import { SEARCH_PARTIAL_NOTICE, listMoreFailedNotice, listPartialNotice } from '../src/services/discoveryCoverageNotice';
 import { useGlobalSearchSuggestions } from '../src/hooks/useGlobalSearchSuggestions';
 import { getSubmitQuery } from '../src/platform/input-assistance/search/globalSearch';
 import { getAddToTripTarget, getOpenCompassTarget } from '../src/platform/input-assistance/search/smartActions';
@@ -124,7 +124,7 @@ export default function SearchScreen() {
   const [detectedIntent, setDetectedIntent] = useState<ReturnType<typeof parseSearchIntent>>({});
 
   // ── Compass no-results fallback state ───────────────────────────────────────
-  const [compassFallback, setCompassFallback] = useState<CompassRecommendation[]>([]);
+  const [compassFallback, setCompassFallback] = useState<CompassRecommendation[]>([]); const [compassFallbackRead, setCompassFallbackRead] = useState<'failed' | 'partial' | null>(null);  // census-discovery §104 (DV-83, D-W11X2-55): the rail's read failed or was partial
   const [compassFallbackLoading, setCompassFallbackLoading] = useState(false);
 
   // ── Active follow-up chips — reset when query or tab changes ───────────────
@@ -206,7 +206,7 @@ export default function SearchScreen() {
       setPartialSources(null);
       setTimeLabel(null);
       setSearched(true);
-      setCompassFallback([]);
+      setCompassFallback([]); setCompassFallbackRead(null);
       activeQueryRef.current = trimmed;
       activeTabRef.current = tab;
     } else {
@@ -302,7 +302,7 @@ export default function SearchScreen() {
             limit: 6,
           }).then((cr) => {
             if (trimmed !== activeQueryRef.current) return;
-            setCompassFallback(cr.ok && cr.data ? cr.data.recommendations : []);
+            const rFailed = !cr.ok || !cr.data || compassRecommendationsFailed(cr.data); setCompassFallback(rFailed || !cr.data ? [] : cr.data.recommendations); setCompassFallbackRead(rFailed ? 'failed' : cr.data?.refusal?.coverage === 'partial' ? 'partial' : null);  // census-discovery §104 (DV-83, D-W11X2-55): a failed rail read is said, never the rail's absence
           }).catch(() => {}).finally(() => {
             setCompassFallbackLoading(false);
           });
@@ -335,7 +335,7 @@ export default function SearchScreen() {
       setError(null);
       setTimeLabel(null);
       setDetectedIntent({});
-      setCompassFallback([]);
+      setCompassFallback([]); setCompassFallbackRead(null);
       setActiveChips(new Set());
       return;
     }
@@ -377,7 +377,7 @@ export default function SearchScreen() {
     setSearched(false);
     setError(null);
     setTimeLabel(null);
-    setCompassFallback([]);
+    setCompassFallback([]); setCompassFallbackRead(null);
     setActiveChips(new Set());
   }
 
@@ -391,7 +391,7 @@ export default function SearchScreen() {
     setError(null);
     setTimeLabel(null);
     setDetectedIntent({});
-    setCompassFallback([]);
+    setCompassFallback([]); setCompassFallbackRead(null);
     setActiveChips(new Set());
     inputRef.current?.focus();
   }
@@ -731,7 +731,7 @@ export default function SearchScreen() {
           )}
 
           {/* Compass fallback section */}
-          {(compassFallbackLoading || compassFallback.length > 0) && (
+          {(compassFallbackLoading || compassFallback.length > 0 || compassFallbackRead !== null) && (
             <View style={styles.compassFallbackSection}>
               <View style={styles.compassFallbackHeader}>
                 <Sparkles size={13} color={color.signal} />
@@ -753,7 +753,7 @@ export default function SearchScreen() {
                     ) : null}
                   </View>
                 ))
-              )}
+              )}{!compassFallbackLoading && compassFallbackRead ? (<Text style={styles.compassFallbackReason} testID={`compass-fallback-${compassFallbackRead}`}>{compassFallbackRead === 'failed' ? 'Compass suggestions couldn\u2019t load just now.' : listPartialNotice('Compass suggestions')}</Text>) : null}
 
               {/* Create Instead chips */}
               <Text style={styles.createInsteadLabel}>Create Instead</Text>

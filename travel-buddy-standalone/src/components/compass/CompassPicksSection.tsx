@@ -29,7 +29,7 @@ import { postCompassAnalyticsEvent, reportCompassViewed, COMPASS_ENGINE_VERSION 
 import type { CompassFeedItem } from '../../services/compass.ts';
 import { resolveCompassTitle, formatCompassSubtitle, formatCompassContext, resolveCompassCategory, resolveCompassImageUrl } from '../../utils/compassFormat.ts';
 import { getPlaceCategoryFallback } from '../../utils/placeCategoryFallback.ts';
-import { listStaleNotice } from '../../services/discoveryCoverageNotice.ts'; import { isCompassSectionFailure } from '../../hooks/compass/compassSectionFailure.ts';
+import { listStaleNotice, listPartialNotice } from '../../services/discoveryCoverageNotice.ts'; import { isCompassSectionFailure, isCompassSectionPartial } from '../../hooks/compass/compassSectionFailure.ts';
 
 /** census-discovery §102 (DV-83, D-W11X2-41): a failed Compass read, said. */
 const COMPASS_PICKS_FAILED = 'Couldn\u2019t load Compass picks just now.';
@@ -374,7 +374,7 @@ export function CompassPicksSection({
     <>
       <View style={s.container}>
         <SectionHeader city={effectiveCity} onSwitchCity={onSwitchCity} />
-        {compass.error ? (<Text style={[s.failedText, s.failedRow]} testID="compass-picks-stale">{listStaleNotice('picks')}</Text>) : null}{/* §102 (D-W11X2-41): a failed refresh over kept picks is said */}
+        {compass.error ? (isCompassSectionPartial(compass.data) ? (<Text style={[s.failedText, s.failedRow]} testID="compass-picks-partial">{listPartialNotice('picks')}</Text>) : (<Text style={[s.failedText, s.failedRow]} testID="compass-picks-stale">{listStaleNotice('picks')}</Text>)) : null}{/* §102 (D-W11X2-41): a failed refresh over kept picks is said; §104 (D-W11X2-54): picks read while another candidate read failed are said to be incomplete */}
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}

@@ -225,7 +225,7 @@ export async function fetchCompassWhy(
   try {
     const r = await authedFetch(`/api/compass/why/${encodeURIComponent(recommendationId)}`);
     if (!r.ok) return { ok: false, error: `http_${r.status}` };
-    const body = await r.json();
+    const body = await r.json(); if (body?.refusal?.coverage === 'nothing') return { ok: false, error: body.refusal.code ?? 'refused' };  // census-discovery §104 (DV-83, D-W11X2-58): a failed lookup is not an explanation
     return {
       ok: true,
       explanation:    body.explanation ?? 'Based on your travel preferences.',
@@ -992,7 +992,7 @@ export interface CompassBriefAttention {
 
 export interface CompassRecommendationsResponse {
   recommendations: CompassRecommendation[];
-  surface: string;
+  surface: string; refusal?: CompassRecommendationsRefusal | null; error?: string;  // census-discovery §104 (DV-83, D-W11X2-55): a failed read's refusal envelope; `error` is an older server's marker
   /** Present only on the trip surface. */
   attention?: CompassBriefAttention;
 }
@@ -1534,7 +1534,7 @@ export interface CompassBuddyMatchesResult {
   ok: boolean;
   data?: CompassBuddyResult[];
   disabled?: boolean;
-  error?: string;
+  error?: string; partial?: boolean;  // census-discovery §104 (DV-83, D-W11X2-55)
 }
 
 export async function fetchCompassBuddyMatches(params: {
@@ -1551,7 +1551,7 @@ export async function fetchCompassBuddyMatches(params: {
     if (!r.ok) return { ok: false, error: `http_${r.status}` };
     const body = await r.json();
     if (body.disabled) return { ok: true, data: [], disabled: true };
-    return { ok: true, data: (body.recommendations ?? []) as CompassBuddyResult[] };
+    return compassMatchesFromBody<CompassBuddyResult>(body);  // census-discovery §104 (DV-83, D-W11X2-55) — was: return { ok: true, data: (body.recommendations ?? []) as CompassBuddyResult[] };
   } catch {
     return { ok: false, error: 'network_error' };
   }
@@ -1586,7 +1586,7 @@ export interface CompassTravelerMatchesResult {
   ok: boolean;
   data?: CompassTravelerResult[];
   disabled?: boolean;
-  error?: string;
+  error?: string; partial?: boolean;  // census-discovery §104 (DV-83, D-W11X2-55)
 }
 
 export async function fetchCompassTravelerMatches(params: {
@@ -1603,7 +1603,7 @@ export async function fetchCompassTravelerMatches(params: {
     if (!r.ok) return { ok: false, error: `http_${r.status}` };
     const body = await r.json();
     if (body.disabled) return { ok: true, data: [], disabled: true };
-    return { ok: true, data: (body.recommendations ?? []) as CompassTravelerResult[] };
+    return compassMatchesFromBody<CompassTravelerResult>(body);  // census-discovery §104 (DV-83, D-W11X2-55) — was: return { ok: true, data: (body.recommendations ?? []) as CompassTravelerResult[] };
   } catch {
     return { ok: false, error: 'network_error' };
   }
@@ -2041,3 +2041,7 @@ export async function postMemoryReset(
     return { ok: false, error: 'network_error' };
   }
 }
+
+// ── census-discovery §104 (DV-83, D-W11X2-55): the route's refusal, read in its own module ──
+import { compassMatchesFromBody, type CompassRecommendationsRefusal } from './compassRecommendationsRefusal.ts';
+export { compassRecommendationsFailed, type CompassRecommendationsRefusal } from './compassRecommendationsRefusal.ts';

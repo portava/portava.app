@@ -42,7 +42,7 @@ import { discoveryQueryOf, discoveryQueryIdentity } from '../discoveryQueryStamp
 
 const API = 'http://api.test';
 let urls: string[] = [];
-let fail = false;
+let fail = false; let httpStatus = 200;  // §104 (CM13): a non-2xx answer, as well as a thrown fetch
 const realFetch = globalThis.fetch;
 before(() => {
   process.env.EXPO_PUBLIC_API_BASE_URL = API;
@@ -50,11 +50,12 @@ before(() => {
   globalThis.fetch = (async (url: string | URL | Request) => {
     urls.push(String(url));
     if (fail) throw new TypeError('Network request failed');
+    if (httpStatus !== 200) return new Response(JSON.stringify({ error: 'unavailable' }), { status: httpStatus, headers: { 'Content-Type': 'application/json' } });
     return new Response(JSON.stringify({ places: [{ id: 'node/1', name: 'One' }], total: 1, destination: 'Lisbon', cached: false }), { status: 200, headers: { 'Content-Type': 'application/json' } });
   }) as typeof fetch;
 });
 after(() => { globalThis.fetch = realFetch; _setDiscoveryTokenSourceForTests(null); });
-beforeEach(() => { urls = []; fail = false; _resetDiscoveryViewerScopeForTests(); _resetDiscoveryClientCache(); });
+beforeEach(() => { urls = []; fail = false; httpStatus = 200; _resetDiscoveryViewerScopeForTests(); _resetDiscoveryClientCache(); });
 
 /** Every argument getDiscoveryPlaces takes, set; `custom` so both custom ages are sent. */
 const FULL = {
@@ -150,6 +151,17 @@ describe('§103 the client cache key is the query the request sends (D-W11X2-47)
       const other = new URLSearchParams(base); other.set(k, v);
       assert.notEqual(discoveryQueryIdentity(other), discoveryQueryIdentity(base), `${k} decides which rows, or their order`);
     }
+  });
+
+  it('K7 (CM13) an HTTP error answer carries the identity of the query that was sent, like a network error', async () => {
+    const ok = await fetchFull();
+    const id = discoveryQueryIdentity(new URL(urls[0]).searchParams);
+    assert.equal(ok.ok, true);
+    httpStatus = 503;
+    const bad = await fetchFull({ ageFilter: '21_plus' });
+    assert.equal(bad.ok, false);
+    assert.equal(discoveryQueryOf(bad), discoveryQueryIdentity(new URL(urls[1]).searchParams), 'the HTTP-error arm left the failure unstamped');
+    assert.notEqual(discoveryQueryOf(bad), id);
   });
 });
 

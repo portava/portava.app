@@ -141,6 +141,9 @@ interface World {
   places?: unknown[];
   privacyError?: boolean;         // the person-card gate's reads fail
   travelerListError?: boolean;    // the traveler candidate read (profiles, .neq) fails
+  throwTables?: string[];         // `from(table)` THROWS (a client fault, not a PostgREST error)
+  projectionThrows?: boolean;     // the traveler's own profile row makes the person projection throw
+  postsOnly?: "city" | "global";  // only the city-scoped (ilike) or only the global posts read fails
 }
 const writes: string[] = [];
 function world(w: World) {
@@ -153,8 +156,10 @@ function world(w: World) {
       }
       if (table === "feature_flags") return { data: single && calls.eq?.[1] === "COMPASS_FEED_ENABLED" ? { enabled: true } : null, error: null };
       if (w.failTables?.includes(table)) return { data: null, error: DB_ERR };
+      if (table === "posts" && w.postsOnly && (w.postsOnly === "city") === (calls.ilike !== undefined)) return { data: null, error: DB_ERR };
       if ((table === "profile_privacy_settings" || table === "user_privacy_settings") && w.privacyError) return { data: null, error: DB_ERR };
       if (table === "profiles" && calls.select?.[0] === "account_status") return { data: { account_status: "active" }, error: null };
+      if (table === "profiles" && single && w.projectionThrows && calls.eq?.[1] === TRAVELER) return { data: new Proxy({}, { get(_t, k) { if (k === "then") return undefined; throw new Error("projection fault"); } }), error: null };
       if (table === "profiles" && calls.neq && w.travelerListError) return { data: null, error: DB_ERR };
       if (table === "profiles" && calls.neq) return { data: [{ id: TRAVELER, home_city: "Paris", spoken_languages: [], interests: [], verified: false, account_status: "active", is_private: false, created_at: new Date().toISOString() }], error: null };
       if (table === "profiles") return { data: single ? { id: VIEWER, account_status: "active" } : [], error: null };
@@ -174,7 +179,7 @@ function world(w: World) {
   }
   return {
     auth: { getUser: async (tok: string) => (tok === TOKEN ? { data: { user: { id: VIEWER } }, error: null } : { data: { user: null }, error: { message: "bad token" } }) },
-    from: (table: string) => builder(table),
+    from: (table: string) => { if (w.throwTables?.includes(table)) throw new Error(`${table}: socket hang up`); return builder(table); },
     rpc: () => Promise.resolve({ data: null, error: null }),
   };
 }
@@ -355,5 +360,95 @@ describe("§104 round 8: the other callers of the hydrator", () => {
     const okDb = world({}) as any;
     const healthy = await buildFrontLoadPayload(okDb, VIEWER, await getCompassProfile(okDb, VIEWER), { networkHint: "wifi" });
     assert.notEqual(healthy.tier1.find((i) => i.type === "first_feed_page")?.data, null);
+  });
+});
+
+describe("§104 round 8: the thrown arms (a client fault, not a PostgREST error)", () => {
+  it("T1 buddy and traveler: the block list read THROWS → refused, never []", async () => {
+    _setTestClient(world({ throwTables: ["blocks"] }) as any, true);
+    for (const surface of ["buddy", "traveler"]) {
+      const { body } = await get(`/compass/recommendations?surface=${surface}&city=Paris&limit=4`);
+      assert.deepEqual(body.recommendations, [], surface);
+      assert.equal(body.refusal?.code, "block_check_failed", surface);
+    }
+  });
+
+  it("T2 passport: the block list read THROWS → refused, never []", async () => {
+    _setTestClient(world({ throwTables: ["blocks"] }) as any, true);
+    const { body } = await get("/compass/recommendations?surface=passport&limit=8");
+    assert.equal(body.refusal?.code, "block_check_failed");
+  });
+
+  it("T3 a candidate source THROWS → it is named like a resolved error", async () => {
+    const { hydrateCompassItems, compassHydrationFailedSources } = await import("../compass/CompassItemHydrator.js");
+    const profile: any = { userId: VIEWER, currentCity: "Paris", blockedUserIds: [], blockerUserIds: [] };
+    for (const t of ["posts", "rent_buddy_profiles", "discovery_places", "events", "hidden_gems"]) {
+      const items = await hydrateCompassItems(world({ throwTables: [t] }) as any, profile);
+      assert.deepEqual([...compassHydrationFailedSources(items)], [t], t);
+    }
+  });
+
+  it("T4 with no city: the posts and events reads that still run are named when they fail", async () => {
+    const { hydrateCompassItems, compassHydrationFailedSources } = await import("../compass/CompassItemHydrator.js");
+    const profile: any = { userId: VIEWER, currentCity: null, blockedUserIds: [], blockerUserIds: [] };
+    const items = await hydrateCompassItems(world({ failTables: ["posts", "events"] }) as any, profile);
+    assert.deepEqual([...compassHydrationFailedSources(items)].sort(), ["events", "posts"]);
+    const ok = await hydrateCompassItems(world({}) as any, profile);
+    assert.deepEqual(compassHydrationFailedSources(ok), [], "CONTROL: with no city the city-scoped sources are not read, and nothing failed");
+  });
+
+  it("T5 each source alone: one failed read names exactly that table", async () => {
+    const { hydrateCompassItems, compassHydrationFailedSources } = await import("../compass/CompassItemHydrator.js");
+    const profile: any = { userId: VIEWER, currentCity: "Paris", blockedUserIds: [], blockerUserIds: [] };
+    for (const t of ["posts", "rent_buddy_profiles", "discovery_places", "events", "hidden_gems"]) {
+      const items = await hydrateCompassItems(world({ failTables: [t] }) as any, profile);
+      assert.deepEqual([...compassHydrationFailedSources(items)], [t], t);
+    }
+  });
+
+  it("T7 posts: the city-scoped read and the global read are each a read of the source", async () => {
+    const { hydrateCompassItems, compassHydrationFailedSources } = await import("../compass/CompassItemHydrator.js");
+    const profile: any = { userId: VIEWER, currentCity: "Paris", blockedUserIds: [], blockerUserIds: [] };
+    for (const only of ["city", "global"] as const) {
+      const items = await hydrateCompassItems(world({ postsOnly: only }) as any, profile);
+      assert.deepEqual([...compassHydrationFailedSources(items)], ["posts"], only);
+    }
+  });
+
+  it("T6 traveler: a person projection that throws makes the page name it", async () => {
+    _setTestClient(world({ projectionThrows: true }) as any, true);
+    const { body } = await get("/compass/recommendations?surface=traveler&city=Paris&limit=6");
+    assert.ok(body.refusal, JSON.stringify(body).slice(0, 300));
+    assert.ok(body.refusal.failedSources.includes("passport_projection"));
+  });
+});
+
+describe("§104 round 8: GET /compass/why says a failed lookup (D-W11X2-58)", () => {
+  async function tokenFor(userId: string) {
+    const { encodeRecommendationToken } = await import("../compass/CompassExplanationEngine.js");
+    return encodeRecommendationToken({ userId, itemId: "place:1", itemType: "place", sectionName: "for_you", explanationKey: "k" } as any);
+  }
+
+  it("W1 the served-recommendation lookup fails → refused, never \"not found\"", async () => {
+    _setTestClient(world({ failTables: ["compass_served_recommendations"] }) as any, true);
+    const { body } = await get(`/compass/why/${encodeURIComponent(await tokenFor(VIEWER))}`);
+    assert.equal(body.refusal?.code, "why_unavailable");
+    assert.deepEqual(body.refusal?.failedSources, ["compass_served_recommendations"]);
+  });
+
+  it("W2 the lookup THROWS → refused, never the generic reason as the explanation", async () => {
+    _setTestClient(world({ throwTables: ["compass_served_recommendations"] }) as any, true);
+    const { body } = await get(`/compass/why/${encodeURIComponent(await tokenFor(VIEWER))}`);
+    assert.equal(body.refusal?.code, "why_unavailable");
+    assert.deepEqual(body.refusal?.failedSources, ["compass_why"]);
+  });
+
+  it("W1c CONTROL a token for someone else, and a lookup that READ no row, are answers: no refusal", async () => {
+    _setTestClient(world({}) as any, true);
+    const other = await get(`/compass/why/${encodeURIComponent(await tokenFor(TRAVELER))}`);
+    assert.ok(!("refusal" in other.body));
+    const none = await get(`/compass/why/${encodeURIComponent(await tokenFor(VIEWER))}`);
+    assert.ok(!("refusal" in none.body));
+    assert.match(none.body.explanation, /not found/);
   });
 });

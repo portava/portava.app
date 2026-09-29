@@ -241,3 +241,36 @@ describe('ForYouTab — the SWR replay keeps a partial page partial (§99)', () 
     expect(screen.queryByTestId('for-you-partial-empty')).toBeNull();
   });
 });
+
+// census-discovery §104 (DV-83, §103.11 survivor CM7): the cache is read with the tab's WHOLE
+// query — the sort, the context, the centre, and the position only for the nearest sort — so
+// another sort's page is never painted as this one's. Nothing pinned `forYouCacheQuery`.
+describe('ForYouTab — the cache read names the whole query (§104, CM7)', () => {
+  it('Q1 every cache read carries the tab\'s sort, context and centre; the position only for the nearest sort', async () => {
+    pendingRefetch();
+    await render(<ForYouTab destination="Lisbon" onAddToPlan={jest.fn()} sortBy="rating" contextMode={'solo' as never} lat={38.7} lng={-9.1} userLat={38.71} userLng={-9.14} />);
+    await act(async () => {});
+    expect(mockGetCachedDiscoveryPlaces).toHaveBeenCalled();
+    for (const call of mockGetCachedDiscoveryPlaces.mock.calls) {
+      expect(call.slice(0, 4)).toEqual(['Lisbon', 'for_you', 25, 1]);
+      expect(call[5]).toEqual({ sortBy: 'rating', contextMode: 'solo', lat: 38.7, lng: -9.1, userLat: null, userLng: null });
+    }
+  });
+
+  it('Q2 the nearest sort reads the cache with the position it sends', async () => {
+    pendingRefetch();
+    await render(<ForYouTab destination="Lisbon" onAddToPlan={jest.fn()} sortBy="nearest" userLat={38.71} userLng={-9.14} />);
+    await act(async () => {});
+    for (const call of mockGetCachedDiscoveryPlaces.mock.calls) {
+      expect(call[5]).toMatchObject({ sortBy: 'nearest', userLat: 38.71, userLng: -9.14 });
+    }
+  });
+
+  it('Q3 a page cached for ANOTHER sort is not painted as this sort\'s first frame', async () => {
+    pendingRefetch();
+    mockGetCachedDiscoveryPlaces.mockImplementation((...a: unknown[]) => ((a[5] as { sortBy?: string | null } | undefined)?.sortBy ?? null) === null ? COMPLETE_PAGE : null);
+    await render(<ForYouTab destination="Lisbon" onAddToPlan={jest.fn()} sortBy="rating" />);
+    await act(async () => {});
+    expect(screen.queryByText('Cafe A')).toBeNull();
+  });
+});

@@ -973,7 +973,7 @@ router.get("/compass/why/:recommendationId", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) {
     // Service client unavailable — return generic rather than accepting client data
-    res.json({ explanation: "Based on your travel preferences and recent activity." });
+    res.json({ explanation: "Based on your travel preferences and recent activity.", refusal: discoveryRefusal("transient_db", "why_unavailable", "GET /compass/why/:recommendationId", "nothing", ["service_client"]) });  // census-discovery §104 (DV-83, D-W11X2-58): a stub, not the explanation
     return;
   }
 
@@ -997,7 +997,7 @@ router.get("/compass/why/:recommendationId", async (req, res) => {
 
     if (rowErr) {
       req.log?.warn({ err: rowErr, userId: user.id }, "compass/why: served-recommendation lookup unavailable; denying");
-      res.json({ explanation: "Recommendation not found or not available for your account." });
+      res.json({ explanation: "Recommendation not found or not available for your account.", refusal: discoveryRefusal("transient_db", "why_unavailable", "GET /compass/why/:recommendationId", "nothing", ["compass_served_recommendations"]) });  // census-discovery §104 (DV-83, D-W11X2-58): the lookup failed; it did not find nothing
       return;
     }
 
@@ -1055,7 +1055,7 @@ router.get("/compass/why/:recommendationId", async (req, res) => {
     res.json({ explanation: templateExplanation });
   } catch (err) {
     req.log.error({ err }, "compass/why: resolution failed");
-    res.json({ explanation: "Based on your travel preferences and recent activity." });
+    res.json({ explanation: "Based on your travel preferences and recent activity.", refusal: discoveryRefusal("transient_db", "why_unavailable", "GET /compass/why/:recommendationId", "nothing", ["compass_why"]) });  // census-discovery §104 (DV-83, D-W11X2-58)
   }
 });
 

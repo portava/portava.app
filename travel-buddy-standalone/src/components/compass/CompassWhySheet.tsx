@@ -20,7 +20,7 @@ interface Props {
 
 export function CompassWhySheet({ visible, recommendationId, onClose }: Props) {
   const {
-    explanation, factors, compassMatch, communityScore, loading, fetch, clear,
+    explanation, factors, compassMatch, communityScore, loading, failed, fetch, clear,
   } = useCompassWhyExplanation();
 
   useEffect(() => {
@@ -61,7 +61,7 @@ export function CompassWhySheet({ visible, recommendationId, onClose }: Props) {
           ) : (
             <View style={styles.body}>
               <Text style={styles.explanation}>
-                {explanation ?? 'Based on your travel preferences and recent activity.'}
+                {failed ? 'Couldn\u2019t load why this was suggested just now.' : (explanation ?? 'Based on your travel preferences and recent activity.')}{/* §104 (D-W11X2-58): a failed read is said, never the generic reason */}
               </Text>
 
               {/* Phase 7 — two independent signals */}

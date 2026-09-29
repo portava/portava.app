@@ -111,15 +111,15 @@ function DiscoveryHubScreen() {
   } = useFollowingHighlights();
   const currentCity = locationState.place.city ?? null;
 
-  const [trendingHashtags, setTrendingHashtags] = useState<TrendingHashtag[]>([]);
+  const [trendingHashtags, setTrendingHashtags] = useState<TrendingHashtag[]>([]); const [trendingFailed, setTrendingFailed] = useState(false);  // census-discovery §104 (DV-83, D-W11X2-57): a failed read is said
   useEffect(() => {
-    let cancelled = false;
+    let cancelled = false; setTrendingHashtags([]); setTrendingFailed(false);  // census-discovery §104 (DV-83, D-W11X2-57): chips belong to the city they were read for; a new city starts with none
     getTrendingHashtags('city', currentCity).then((res) => {
       if (cancelled) return;
       // Normalize at the boundary: missing/invalid array → [].
-      if (res.ok && res.data) setTrendingHashtags((res.data.trending ?? []).slice(0, 12));
+      if (res.ok && res.data) setTrendingHashtags((res.data.trending ?? []).slice(0, 12)); else setTrendingFailed(true);
     }).catch((err) => {
-      if (!cancelled && __DEV__) console.error('[Discovery] trending hashtags failed:', err);
+      if (!cancelled) setTrendingFailed(true); if (!cancelled && __DEV__) console.error('[Discovery] trending hashtags failed:', err);
     });
     return () => { cancelled = true; };
   }, [currentCity]);
@@ -1044,7 +1044,7 @@ function DiscoveryHubScreen() {
             </View>
           )}
 
-          {/* Trending hashtags */}
+          {/* Trending hashtags */}{trendingFailed && trendingHashtags.length === 0 ? (<Text style={[styles.trendingChipText, { paddingHorizontal: space.lg, paddingTop: 4, color: color.mute }]} testID="discovery-trending-failed">Couldn’t load trending tags just now.</Text>) : null}
           {trendingHashtags.length > 0 && (
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.trendingBar} contentContainerStyle={styles.trendingBarContent} pointerEvents="auto">
               {trendingHashtags.map((ht) => (

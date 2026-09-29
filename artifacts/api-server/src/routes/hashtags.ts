@@ -197,10 +197,10 @@ router.get('/hashtags/trending', async (req, res) => {
   let effectiveScope: 'global' | 'city' = scope;
   if (scope === 'city' && Object.keys(usageByHt).length === 0) {
     effectiveScope = 'global';
-    const { data: fbRows } = await sc
+    const { data: fbRows, error: fbErr } = await sc
       .from('hashtag_usage')
       .select('hashtag_id, author_id, city')
-      .gte('created_at', since);
+      .gte('created_at', since); if (fbErr) { req.log.error({ err: fbErr }, 'hashtags/trending global fallback failed'); sendError(res, 'db_error', fbErr.message); return; }  // census-discovery §104 (DV-83, D-W11X2-57): the Discover screen's chips; a failed fallback read is not "nothing trending"
     for (const row of (fbRows ?? []) as any[]) {
       if (!usageByHt[row.hashtag_id]) {
         usageByHt[row.hashtag_id] = { total: 0, authors: new Set(), cityCount: 0 };
