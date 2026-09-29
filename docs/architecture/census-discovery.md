@@ -18121,6 +18121,48 @@ CF1 and CF3 were already green on the client: a 503 was never cached, and the br
   - an unread map-search flag answered as off (MS1, MS1b);
   - any path §105.11 lists.
 
+### 107.13 Results at the final code commit (`35ee01629`)
+
+- **`int-guards.sh /home/user/wt-v8`**: all 24 exit 0. `typecheck:tests` is at 863 against a baseline of 863.
+
+```
+typecheck exit=0
+typecheck:tests exit=0
+check:test-registration exit=0
+check:census-integrity exit=0
+check:doc-citations exit=0
+check:citation-targets exit=0
+check:citation-symbols exit=0
+check:census-freshness exit=0
+check:census-scope-coverage exit=0
+check:census-row-move-labels exit=0
+check:migration-prefixes exit=0
+check:production-drift exit=0
+check:writerless-reads exit=0
+check:schema-references exit=0
+check:enum-literals exit=0
+check:flag-polarity exit=0
+check:discovery-query-paths exit=0
+check:route-auth-gate exit=0
+check:api-prefix exit=0
+check:async-handlers exit=0
+check:frozen-dir exit=0
+check:telegraph-inventory exit=0
+check:guard-coverage exit=0
+check:unissued-supabase-writes exit=0
+```
+
+- **api-server node:test** (Node v24.21.0, `SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy`), 300 files: every `src/test/discovery*`, `compass*`, `trail*`, `hashtag*`, `adminTrails` and map-search suite, the seven new §107 suites among them; `hashtags`, `compass-home`, `flagPhantomReads`, `emergencyFlags`, `circle` and the presence suites (the consent batch §107 reads); the hydrator's readers; `securityCheckSuite`, `uncheckedSupabaseReads`, `entryWiringNotCommentedOut` and `layoverSurfaceErrorBinding`. Result: `ℹ tests 5284 · ℹ pass 5284 · ℹ fail 0 · ℹ cancelled 0`. The live-DB suites are left out, as in §105.12 (`compassMemoryClientBoundary`, `discoveryPlaceWriteBoundary`, and the `*Live*` suites). The run started at `7f932a2fa`; `35ee01629` only types one test's response body, and that suite was re-run on it (4 of 4).
+  - Alone: `securityCheckSuite` 17/17, `uncheckedSupabaseReads` 69/69, `entryWiringNotCommentedOut` 4/4, `layoverSurfaceErrorBinding` 5/5.
+  - `node --import tsx/esm src/scripts/checkUncheckedSupabaseReads.ts`: "no NEW in-scope read ignores its .error", no stale allowlist entry.
+- **Client.**
+  - `pnpm run -s check:all`: `✔ ALL CHECKS PASSED`.
+    - Node suites: `# tests 7362 · # pass 7362 · # fail 0`.
+    - Component suites: `Test Suites: 776 passed, 776 total · Tests: 4949 passed, 4949 total`.
+    - Web suites: `4 passed, 12 tests`.
+    - `typecheck:tests` is at 173 against a baseline of 173.
+  - `node scripts/check-route-registry.mjs`: "OK. All 217 screen file(s) are represented in PORTAVA_ROUTES and all 9 layout file(s) are represented in PORTAVA_LAYOUT_FILES."
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: travel-buddy-standalone/app/discover.tsx — §105.11 names it only as a path seen and not built, left for its owner: it is the social people search over services/follows.ts, not a Discovery envelope, and no DV-83 verdict rests on it.
