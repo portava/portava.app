@@ -4554,6 +4554,8 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/components/__tests__/CompassTelegraphTray.failedRead.component.test.tsx",
     "travel-buddy-standalone/src/services/__tests__/compassTelegraph.refusal.component.test.ts",
     "travel-buddy-standalone/src/services/__tests__/cityConfidence.refusal.component.test.tsx",
+    // census-discovery §108 (lane W11-X2, round 11): DV-83 re-graded on the presence walk's consent batch.
+    "artifacts/api-server/src/lib/circleAccessGuard.ts",  // §108.1 BK1: canViewCirclePresenceBatch's unchecked consent reads
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

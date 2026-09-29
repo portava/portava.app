@@ -18163,6 +18163,31 @@ check:unissued-supabase-writes exit=0
     - `typecheck:tests` is at 173 against a baseline of 173.
   - `node scripts/check-route-registry.mjs`: "OK. All 217 screen file(s) are represented in PORTAVA_ROUTES and all 9 layout file(s) are represented in PORTAVA_LAYOUT_FILES."
 
+## §108 — DV-83 round 11 (lane W11-X2)
+
+### 108.1 Integrator: DV-83 held at W after independent re-verification at `8283eaaa9`
+
+*Integrator, 2026-09-29. §107 was merged with main at `8283eaaa9` (PR #530's head). An independent verifier then checked that tree: it re-ran every round-9, round-8 and round-7 probe unchanged, wrote new ones (`zz-v10-*`), and restored every mutated file byte-identical, checked by sha256. Its report is the round-10 verifier's `dv83-r10-verifier.md`.*
+
+- **Confirmed.** §107.1's five breaks, §105.1's four and round 7's three are closed in behaviour: the v9, v8 and v7 probes re-run unchanged all pass (35 server, 12 client). 53 of 54 mutations are killed.
+- **Found: six paths that break the criterion's wording, each shown by a probe that fails against this tree (10 red probes).**
+  1. **BK1. The presence walk's consent batch ignores four of its five read errors (clauses a, b).** A failed `circle_visibility_settings` read denies every target as `target_sharing_off`, and a failed `circle_presence` read allows a target with no presence row, which the walk drops. Neither reason is `unavailable`, so the walk is not marked unread: /compass/home answers `circleActivity: "ok"` and caches it, and `get_whos_around` says "Nobody … is sharing". A failed context-settings or account-state read also fails OPEN on privacy (V10-HP1, V10-HP2, V10-HP3, V10-WT1 red; V10-HP0 the control) (`artifacts/api-server/src/lib/circleAccessGuard.ts`, `artifacts/api-server/src/compass/CompassSocialEngine.ts`).
+  2. **BK2. `get_whos_around` presents a partial list as complete (clause c).** When a read failed but someone was found, the tool answers with the complete-list wording (V10-WT2 red) (`artifacts/api-server/src/compass/CompassTools.ts`).
+  3. **BK3. Telegraph serves another city's cards when the viewer's location is unread (clause c, the wrong rows).** With no trip city and a failed `user_location_state` read, the route falls through to another participant's home city, which masks the hydrator's `user_location_state` marker (V10-TC1 red; V10-TC0 the control) (`artifacts/api-server/src/routes/compass.ts`).
+  4. **BK4. The Ask Compass chip is hidden as "off" on a transport failure (clauses a, c).** `checkCompassTelegraphAvailable` answers `false` for an HTTP 5xx or a network error, so the tray's failed state cannot be reached (V10-CH1, V10-CH2 red; V10-CH0 the control) (`travel-buddy-standalone/src/services/compass.ts`).
+  5. **BK5. An armed stop over an UNREADABLE measurement answers the output kinds' flag-off 404 (clauses a, c).** The gate names every trip `stop_condition`, including a condition tripped only because its measurement could not be read (V10-SC1 red; V10-SC0 the control) (`artifacts/api-server/src/lib/discoveryStopGate.ts`, `artifacts/api-server/src/routes/discoveryOutputKinds.ts`).
+  6. **BK6. GET /hashtags/trending ranks a silently truncated read as complete (clauses a, c).** The 48 h `hashtag_usage` read has no limit, range or count; PostgREST caps it at db-max-rows with no error, and the chips are ranked over the subset (V10-HT1 red; V10-HT0 the control) (`artifacts/api-server/src/routes/hashtags.ts`).
+- **Rulings not honest.** D-W11X2-67's "every failed read on the walk" (BK1), and D-W11X2-74's ruling that /hashtags/trending's truncation is "outside DV-83's failed-read classes" (BK6): DV-83 covers a partial read.
+- **Surviving mutation.** SM6 (`CompassSocialEngine.ts`: `attendeeResult.error` dropped from the member-read throw) is reachable and unpinned: V10-SM6 is green on this tree and red under it. No round-10 suite fails `event_attendees` alone.
+- **Upheld.** CompassRediscover's collapse (by scope), the hashtag feed's `hasMore` (a pagination defect over reads that succeeded), /hashtags/suggestions (labels and ranks only), the city-confidence note over an unread platform (V10-CC7 green), and the rows owned by other lanes.
+- **Next.** A round-11 lane closes the six paths with the verifier's probes as failing-first tests, pins SM6, corrects the two rulings, rules or fixes CompassBuddyRow and the trip map's Compass alternatives (open since §104.10), and sweeps the Discovery and Compass read surfaces again. The row moves only after that.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | C | **W** | §107 closes §107.1's five paths, confirmed at `8283eaaa9` (§108.1). Six paths still present a failed or partial read as complete, empty, "off" or over the wrong rows: the presence walk's consent batch (`artifacts/api-server/src/lib/circleAccessGuard.ts`), the who's-around tool's partial list (§108.1 BK2), Telegraph's city over an unread location (`artifacts/api-server/src/routes/compass.ts`), the Ask Compass chip on a transport failure (`travel-buddy-standalone/src/services/compass.ts`), the output kinds behind an unreadable stop measurement (`artifacts/api-server/src/lib/discoveryStopGate.ts`), and the trending ranking over a truncated read (`artifacts/api-server/src/routes/hashtags.ts`). One DV-83 line is unpinned (SM6). |
+
+Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: travel-buddy-standalone/app/discover.tsx — §105.11 names it only as a path seen and not built, left for its owner: it is the social people search over services/follows.ts, not a Discovery envelope, and no DV-83 verdict rests on it.
