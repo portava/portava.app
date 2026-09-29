@@ -18,7 +18,7 @@ import {
   stopLiveShare,
   getSessionContacts,
   type SessionContact,
-} from '../../src/services/safeReturn';
+} from '../../src/services/safeReturn'; import { liveShareNoticeCopy } from '../../src/lib/liveShareRecipient.ts';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useStickyBarInset } from '../../src/hooks/useBottomInset';
 
@@ -300,7 +300,7 @@ export default function RentABuddyActive() {
       setShareRecipientName(contact.contactName ?? 'Trusted contact');
       setShareExpiresAt(res.share.expiresAt ?? null);
       setNowTick(Date.now());
-      setCircleShare(true);
+      setCircleShare(true); const notice = liveShareNoticeCopy(res, contact.contactName ?? 'Your contact'); if (notice) Alert.alert('Contact not notified', notice); // TRUST-F10: never imply a contact was told when they were not
     } else {
       // Show error and leave toggle OFF.
       Alert.alert(

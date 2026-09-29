@@ -2949,6 +2949,104 @@ One mutation per fix reddened its suite. The four pre-existing ReviewsSection su
 - NOT-GRADED: artifacts/api-server/src/test/reviews.test.ts — named in §27.2 only as a pre-existing reviews suite that stays green; no Trust verdict rests on it
 - NOT-GRADED: artifacts/api-server/src/test/placeReviews.test.ts — named in §27.2 only as a pre-existing place-reviews suite that stays green; no Trust verdict rests on it
 
+## §28 — 2026-09-29 · Safe Return live share reaches the contact (TRUST-F10, lane tm-events). **NO ROW MOVES.**
+
+**Read this first: no verdict in this document moves, and `head_commit` is NOT re-declared.** This
+section records testing-mode work package WP-04 (flow TRUST-F10, *"Safe Return live location share
+to a contact; contact views it"*). No row of this census grades the live-share recipient path: TV-5a
+grades the Safety Center hub's links, and nothing here changes a link that row counts. The evidence
+below is CONTROLLED (fake-client route tests and component tests), never production.
+
+### §28.1 What was missing
+
+The sender half was wired; the recipient half was not. `LiveShareRecipientView` was imported by
+nothing, so a contact could not open a share in the app; the `location.live_share_started` template
+had no emitter, so the contact was never told a share had started; and the view collapsed every
+failure — a 503 as much as a 404 — into *"unavailable or has expired"*.
+
+### §28.2 What was built
+
+- **The screen.** `travel-buddy-standalone/app/safe-return/[shareId].tsx:19#export default function SafeReturnLiveShareScreen() {`
+  mounts the view at `travel-buddy-standalone/app/safe-return/[shareId].tsx:28#<LiveShareRecipientView shareId={id} />`,
+  registered at `travel-buddy-standalone/src/navigation/portavaRoutes.ts:2120#key: 'safe-return-live-share',`
+  (on the array's closing line, so the file stays line-neutral and the entries censuses cite by line do not move).
+- **The notice (server).** Starting a share now calls
+  `artifacts/api-server/src/routes/safeReturn.ts:894#const recipientNotice = await noticeLiveShareRecipient(`,
+  which reaches `artifacts/api-server/src/services/safeReturn/SafeReturnLiveShareNotifier.ts:52#export async function notifyLiveShareRecipient(`.
+  It refuses across a block in either direction
+  (`artifacts/api-server/src/services/safeReturn/SafeReturnLiveShareNotifier.ts:58#isBlockedBetween(db, sharerId, recipientUserId)`,
+  fail-closed through `lib/blockGuard`) and goes through the notification privacy guard with
+  `artifacts/api-server/src/services/safeReturn/SafeReturnLiveShareNotifier.ts:69#isLiveShare: true,`,
+  so a push preview never carries an area. The template's link is
+  `artifacts/api-server/src/services/notifications/NotificationTemplateService.ts:302#actionUrl: ({ shareId })`;
+  both the in-app row (`travel-buddy-standalone/app/notifications.tsx:164#router.push(notification.actionUrl as any);`)
+  and a push tap (`travel-buddy-standalone/src/hooks/useNotificationHandler.ts:32#return data.actionUrl;`) follow it.
+- **The sharer is told the truth.** The start response carries `recipientNotified`; when it is
+  false the sharer sees
+  `travel-buddy-standalone/app/(rent-a-buddy)/active.tsx:303#const notice = liveShareNoticeCopy(`,
+  whose copy (`travel-buddy-standalone/src/lib/liveShareRecipient.ts:60#export function liveShareNoticeCopy(`)
+  says a contact without an account is not on Portava and otherwise says only that the contact was
+  not notified. **A block is never disclosed to the sharer.**
+- **Failure honesty on the recipient view.** The fetch stays at
+  `travel-buddy-standalone/src/components/safeReturn/LiveShareRecipientView.tsx:50#live-share/${encodeURIComponent(shareId)}`
+  and returns `travel-buddy-standalone/src/components/safeReturn/LiveShareRecipientView.tsx:55#return classifyRecipientResponse(res.status, data);`.
+  `travel-buddy-standalone/src/lib/liveShareRecipient.ts:37#export function classifyRecipientResponse(`
+  keeps the server's three answers apart: 404 = ended (with the server's reason), 403 = not shared
+  with you, 503 / network / a 200 without a share = Retry. While a share is active the area refreshes
+  every minute (`travel-buddy-standalone/src/components/safeReturn/LiveShareRecipientView.tsx:61#const REFRESH_MS = 60_000;`);
+  a failed refresh keeps the last area and says it is not fresh
+  (`travel-buddy-standalone/src/components/safeReturn/LiveShareRecipientView.tsx:79#if (silent && r.kind === 'error')`)
+  rather than replacing it with "ended".
+
+### §28.3 Decisions (routine; recorded here because this census has no decision register)
+
+| ID | Decision |
+|---|---|
+| TM-SR-01 | The recipient lands on `/safe-return/<shareId>`, the link the notice carries. The screen needs sign-in: the route is recipient-only on the server (`requireSafeReturnRecipient`). |
+| TM-SR-02 | The sharer is told when the contact was not notified. The reason is named only for "not on Portava"; blocked, suppressed and failed notices read the same, so a block is not disclosed. |
+| TM-SR-03 | While active, the recipient view re-reads every 60 s. A failed re-read keeps the last area and labels its time; only a 404 says the share has ended. |
+
+### §28.4 Tests, red first, and mutations
+
+- Server: `artifacts/api-server/src/test/safeReturnLiveShareRecipientNotice.test.ts` (registered on the
+  api-server `test` line) — the template's link, the contact notified with a link to
+  `/safe-return/<shareId>`, a contact with no account not notified and reported so, a blocked contact
+  not notified. Red before the notifier existed; mutations S-M12 (template link), S-M13 (route emits),
+  S-M14 (block check), S-M15 (non-account) all KILLED and restored by sha256.
+- Client: `travel-buddy-standalone/src/lib/__tests__/liveShareRecipient.test.ts` (red on the missing
+  module first) and `travel-buddy-standalone/app/safe-return/__tests__/safeReturnLiveShare.component.test.tsx`
+  (active share; 503 → Retry → reads again; network failure → Retry; 404 → ended with the reason and
+  no Retry; 403; a link with no id reads nothing). The screen test is RED against the pre-change
+  `LiveShareRecipientView.tsx` (HEAD bytes restored by sha256 afterwards). Mutations C-M13 (a 503
+  shown as ended), C-M14 (403 lost), C-M15 (sharer never told) all KILLED and restored by sha256.
+
+### §28.5 What is not done, and what would turn this red
+
+- **Not done.** The moving sharer is a physical signal (GPS mocking in the testing app). The area is
+  city-level from `user_location_state`; the recipient view shows the sharer's `profiles.display_name`,
+  which the server reads directly rather than through the display-name rule — recorded, not changed
+  here. The view's "Message" action stays unwired: the recipient payload carries no sharer id.
+- **Red when:** the recipient route starts answering a failed read with a 404 (the view would then say
+  "ended" for an outage); the notifier stops checking blocks or stops setting `isLiveShare`; or the
+  template's `actionUrl` stops pointing at `/safe-return/<shareId>`.
+
+### §28.6 Cited, not graded
+
+No row of this census grades the files §28 cites for TRUST-F10, so they are declared rather than
+added to `CENSUS_SCOPE`: watching them would age this census on changes no verdict rests on.
+
+- NOT-GRADED: travel-buddy-standalone/src/components/safeReturn/LiveShareRecipientView.tsx — the trusted contact's live-share view, cited in §28.2 for the recipient path; no Trust row grades Safe Return live sharing
+- NOT-GRADED: artifacts/api-server/src/services/safeReturn/SafeReturnLiveShareNotifier.ts — the recipient notice, cited in §28.2 for its block check and privacy-guard flag; no Trust row grades Safe Return notifications
+- NOT-GRADED: travel-buddy-standalone/app/safe-return/[shareId].tsx — the screen that mounts the view, cited in §28.2; TV-5a grades the Safety Center hub's links, not this deep-link target
+- NOT-GRADED: travel-buddy-standalone/src/lib/liveShareRecipient.ts — pure response classifier and sharer copy, cited in §28.2 for how the view keeps 404 / 403 / 503 apart
+- NOT-GRADED: artifacts/api-server/src/services/notifications/NotificationTemplateService.ts — cited in §28.2 only for the live-share template's actionUrl
+- NOT-GRADED: travel-buddy-standalone/app/notifications.tsx — cited in §28.2 only for following a notification's actionUrl
+- NOT-GRADED: travel-buddy-standalone/src/hooks/useNotificationHandler.ts — cited in §28.2 only for following a push's actionUrl
+- NOT-GRADED: travel-buddy-standalone/app/(rent-a-buddy)/active.tsx — the sharer's screen, cited in §28.2 for the not-notified notice; no Trust row grades it
+- NOT-GRADED: artifacts/api-server/src/test/safeReturnLiveShareRecipientNotice.test.ts — §28.4's server suite for the recipient notice
+- NOT-GRADED: travel-buddy-standalone/src/lib/__tests__/liveShareRecipient.test.ts — §28.4's suite for the classifier and the sharer copy
+- NOT-GRADED: travel-buddy-standalone/app/safe-return/__tests__/safeReturnLiveShare.component.test.tsx — §28.4's screen suite for the recipient view's five states
+
 ## §29 (lane tm-rab) — 2026-09-29 · Rent-a-Buddy gates are named when they refuse. **NO ROW MOVES.**
 
 Testing-mode work package WP-01 (flows PLAT-F43, F45, F49, F50, F55, F56) wired
