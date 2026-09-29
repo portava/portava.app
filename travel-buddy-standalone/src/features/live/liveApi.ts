@@ -74,7 +74,10 @@ export async function liveRequest<T = any>(
   const error = typeof parsed?.error === 'string' ? parsed.error : `http_${res.status}`;
   const detail = typeof parsed?.detail === 'string' ? parsed.detail : typeof parsed?.message === 'string' ? parsed.message : null;
   if (error === 'feature_disabled' || parsed?.reason === 'FEATURE_DISABLED') return { kind: 'off', reason: 'feature_disabled', detail };
-  if (res.status >= 500 || res.status === 0) return { kind: 'unavailable', status: res.status, detail: detail ?? error };
+  if (res.status >= 500 || res.status === 0) {
+    const why = typeof parsed?.reason === 'string' ? parsed.reason : null;
+    return { kind: 'unavailable', status: res.status, detail: why ? `${why}${detail ? ` — ${detail}` : ''}` : detail ?? error };
+  }
   return { kind: 'refused', status: res.status, error, reason: typeof parsed?.reason === 'string' ? parsed.reason : null, detail, body: parsed ?? null };
 }
 
