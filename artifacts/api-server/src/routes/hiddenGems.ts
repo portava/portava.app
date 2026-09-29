@@ -1536,7 +1536,7 @@ router.post("/admin/hidden-gems/:id/verify", async (req, res) => {
     .maybeSingle();
 
   try {
-    await recordAdminVerification(sc, req.params.id, user.id, parsed.data.result, parsed.data.notes);
+    const gemFound = await recordAdminVerification(sc, req.params.id, user.id, parsed.data.result, parsed.data.notes);  if (!gemFound) { sendError(res, "not_found", "Gem not found"); return; }  // WP-21: a missing gem is not an approval
     res.json({ ok: true });
   } catch (err: any) {
     sendError(res, "db_error", err.message);
@@ -1684,8 +1684,8 @@ router.post("/admin/local-guides/:userId/status", async (req, res) => {
   }
 
   try {
-    await setGuideStatus(sc, req.params.userId, status);
-    res.json({ ok: true });
+    const guide = await setGuideStatus(sc, req.params.userId, status);  if (!guide) { sendError(res, "not_found", "This user has no local guide profile"); return; }
+    req.log?.info?.({ adminId: user.id, guideUserId: req.params.userId, status, verifiedAt: guide.verified_at }, "local guide status set via admin surface");  res.json({ ok: true, guide });  // the audit record of an admin guide decision (WP-21)
   } catch (err: any) {
     sendError(res, "db_error", err.message);
   }

@@ -9858,6 +9858,74 @@ Two rows moved `N → W` and nothing else changed bucket. Counted with
 451 rows. CONSTRUCTED (C + W) is 411 of 451 = 91.1 %; CORRECT is 238 of 451 =
 52.8 %. CORRECT did not move: both rows are built and live nowhere.
 
+## §39 — A report is filed only by someone who can see what they report (lane TM-admin, WP-21). NO ROW MOVES
+
+**2026-09-29, testing-mode lane `lane-tm-admin` (branch cut from `main` at `18518e982`).**
+`head_commit` is NOT re-declared. This section records a fix and grades no row. Controlled
+evidence only: route tests in this repository against an in-memory client. No flag was touched,
+no migration was added, nothing was read from or written to any database.
+
+### 39.1 What was wrong (verified before the fix)
+
+`POST /api/messages/:messageId/report`
+(`artifacts/api-server/src/routes/messaging.ts:4379#router.post('/messages/:messageId/report'`),
+`POST /api/threads/:threadId/report`
+(`artifacts/api-server/src/routes/messaging.ts:4126#router.post('/threads/:threadId/report'`) and
+`POST /api/reports` for `target_type` `message` / `thread` (`artifacts/api-server/src/routes/reports.ts:67#router.post("/reports"`)
+took an id and filed a report without asking whether the reporter was in the conversation. With
+`telegraph_report_evidence_enabled` on, the two Telegraph routes then copied the reported content
+into restricted moderation storage (§22's snapshot, `artifacts/api-server/src/services/telegraphReportEvidence.ts:88#export async function captureMessageEvidence(`).
+So any signed-in user holding an id could have another thread's message, or its 20-message window,
+snapshotted as evidence, and an upheld message report charges the sender for words the reporter was
+never shown. Seen red before the fix: `artifacts/api-server/src/test/reportReporterMembership.test.ts`
+failed 8 of 12 (a non-member got 201 and the evidence row was written); the 4 green were the member
+and non-conversation controls.
+
+### 39.2 The rule and where it lives
+
+One guard, `artifacts/api-server/src/lib/reportTargetAccess.ts:82#export async function refuseUnlessReporterSees(`,
+called on an existing line of each route, so no cited line of `routes/messaging.ts` or
+`routes/reports.ts` moves: `artifacts/api-server/src/routes/messaging.ts:4388#refuseUnlessReporterSees(sc, req, res, { type: 'message'`,
+`artifacts/api-server/src/routes/messaging.ts:4135#refuseUnlessReporterSees(sc, req, res, { type: 'thread'`,
+`artifacts/api-server/src/routes/reports.ts:102#refuseUnlessReporterSees(sc, req, res, { type: target_type`.
+The rule is the one the message read paths already apply: an ACTIVE membership row (`left_at` null)
+and, for a message, the reporter's §14.3 history window while the bound is on, their own messages
+always admitted. Not visible is a 404 (what the thread read answers a non-member, so the refusal is
+not an oracle for the id); an unreadable membership or message read is a 503
+`degraded_unavailable`, and no report is filed on an unchecked read. Other target types pass through.
+
+### 39.3 Decisions (this census has no decision register)
+
+- **A member who has left cannot report the thread afterwards.** The codebase treats a departed
+  member as having no access (§34; the save and edit-history routes refuse them), and the app files
+  a thread report from inside the open thread, before any leave. Consistency with §14.2's
+  re-authorization was preferred over a report-after-leave path no client uses.
+- **A hard-deleted message can no longer be reported** (404). Messages are soft-deleted, so a
+  missing row is not a normal state; a soft-deleted one is still reportable and still records
+  `already_deleted` evidence.
+
+### 39.4 Tests, mutations, fixtures restated
+
+- `artifacts/api-server/src/test/reportReporterMembership.test.ts` — 12/12 green. Mutations, each
+  restored by sha256: drop the message-route guard (5 red), drop the thread-route guard (1),
+  drop the `/api/reports` guard (2), admit a left member (1), drop the history window (1), turn an
+  unreadable membership into "not visible" (1), ignore a message read error (1).
+- `artifacts/api-server/src/test/reports.test.ts` cases 1b and 1i filed message and thread reports
+  with ids nobody was a member of. Their fixtures now seed the reporter's membership; their
+  assertions (201 with a report id) are unchanged.
+- Every other suite importing `routes/messaging.ts` or `routes/reports.ts` (56 files) is green.
+
+### 39.5 What this does not claim, and what would turn it red
+
+- No row moves. T176 (`REPORT_MESSAGE`, C) and T153 describe what a report writes; neither graded
+  who may file one, and this adds a refusal in front of the same write.
+- Not changed: `POST /api/moderation/report` also accepts `subjectType: "message"` with no membership
+  check. It snapshots nothing, so it is outside this fix; it is recorded as an open item.
+- The thread snapshot window (`captureThreadEvidence`) is still the thread's latest 20 messages, not
+  the reporter's §14.3 window. The snapshot is service-role-only storage, never shown to the reporter.
+- Red if: a non-member's report is filed or snapshotted; a left member's is; an unreadable
+  membership read files a report or answers 404.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 Declared 2026-09-27 by the coverage-guard fix (census-media §32.14). Each line names a file this census cites and does not grade, and says why. The guard refuses a declaration for any file a verdict row cites.
@@ -9888,3 +9956,7 @@ Declared 2026-09-27 by the coverage-guard fix (census-media §32.14). Each line 
 - NOT-GRADED: artifacts/api-server/src/test/mapTravelers.test.ts — the four assertions pinning §31.9's Map-surface allowlist fix; §31.9 states that no verdict moves on it here or in census-map and leaves the Map lane to decide.
 - NOT-GRADED: artifacts/api-server/src/test/passportSharedContext.test.ts — Passport's suite, named in §33.10 only as re-run unchanged beside the lane's own; §33's rows rest on the three new coordination suites, which are watched.
 - NOT-GRADED: artifacts/api-server/src/test/splitClockGuard.test.ts — a repo-wide invariant suite (no function reads the clock twice), named in §33.10 as what caught a split clock read in the typed-message route; it grades no Telegraph behaviour.
+- NOT-GRADED: artifacts/api-server/src/routes/reports.ts — the unified report route, cited in §39 for the membership guard added to its message/thread targets; T153 and T176 grade what a Telegraph report writes, not who may file one, and no verdict here rests on this file.
+- NOT-GRADED: artifacts/api-server/src/lib/reportTargetAccess.ts — §39's reporter-visibility guard; it adds a refusal in front of the report write that T176 grades, and §39 moves no row, so no verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/reportReporterMembership.test.ts — §39's suite for the reporter-visibility guard; no verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/reports.test.ts — the unified report route's suite, named in §39.4 because two fixtures were restated; no Telegraph verdict rests on it.
