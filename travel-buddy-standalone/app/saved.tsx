@@ -397,6 +397,26 @@ function RenameCollectionModal({ collection, onClose, onRenamed }: RenameCollect
   );
 }
 
+// ── Saved people entry — TM-social PLAT-F16 ──────────────────────────────────
+// Saved PROFILES live in user_saves, not in a collection, so they get their
+// own row here rather than a fake collection card with a guessed count.
+function SavedPeopleEntry() {
+  return (
+    <Pressable
+      style={s.newCollectionRow}
+      onPress={() => router.push('/saved-people' as never)}
+      accessibilityRole="button"
+      accessibilityLabel="Saved people"
+      testID="saved-people-entry"
+    >
+      <User size={18} color={color.deep} />
+      <Text style={s.newCollectionText}>Saved people</Text>
+      <View style={{ flex: 1 }} />
+      <ChevronRight size={16} color={color.mute} />
+    </Pressable>
+  );
+}
+
 // ── Main screen ───────────────────────────────────────────────────────────────
 
 export default function SavedScreen() {
@@ -473,6 +493,7 @@ export default function SavedScreen() {
               scrollEventThrottle={16}
             >
               <AppHeader variant="detail" title="Saved" onBack={router.back} />
+              <SavedPeopleEntry />
               <EmptyState
                 icon={Bookmark}
                 title="Nothing saved yet"
@@ -506,6 +527,7 @@ export default function SavedScreen() {
               ListHeaderComponent={
                 <>
                   <AppHeader variant="detail" title="Saved" onBack={router.back} />
+                  <SavedPeopleEntry />
                   <Pressable style={s.newCollectionRow} onPress={() => setCreateOpen(true)}>
                     <FolderPlus size={18} color={color.deep} />
                     <Text style={s.newCollectionText}>New collection</Text>

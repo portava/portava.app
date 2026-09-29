@@ -2117,7 +2117,7 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     // §4 Media Contribution (census-media §19). A current perspective of one
     // canonical place, through the existing upload + post write.
   },
-  { key: 'messages-saved', path: 'messages/saved', title: 'Saved messages', parent: 'tab-messages', icon: null, requiresAuth: true, deepLink: '/messages/saved' }, { key: 'settings-messages', path: 'settings/messages', title: 'Message settings', parent: 'settings-index', icon: null, requiresAuth: true }, ]; // WP-08 (census-telegraph §38): on the closing line so every cited line above stays put
+  { key: 'messages-saved', path: 'messages/saved', title: 'Saved messages', parent: 'tab-messages', icon: null, requiresAuth: true, deepLink: '/messages/saved' }, { key: 'settings-messages', path: 'settings/messages', title: 'Message settings', parent: 'settings-index', icon: null, requiresAuth: true }, { key: 'saved-people', path: 'saved-people', title: 'Saved People', parent: 'saved', icon: null, requiresAuth: true, ownerOnly: true }, { key: 'stamp-collections', path: 'stamp-collections', title: 'Stamp Collections', parent: 'stamps', icon: null, requiresAuth: true, ownerOnly: true }, ]; // testing mode: entries on the closing line so every cited line keeps its number
 
 // ── Layout registry ───────────────────────────────────────────────────────────
 //

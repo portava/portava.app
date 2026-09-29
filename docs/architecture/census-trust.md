@@ -2859,3 +2859,92 @@ the specific rows §16 rests on, not the whole distribution.
 No verdict moves here. The three counted files were read, the one RED WHEN they
 could trigger was executed and did not fire, and the distribution change is
 attributed to later sections rather than to them.
+
+## §27 — 2026-09-29 · Reviews lists keep blocks and say when they failed (TM-social lane, TRUST-F13). **NO ROW MOVES.**
+
+Testing-mode lane `lane-tm-social`, branch cut from `main` at `18518e982`. `head_commit` is **NOT**
+re-declared: this records a build and grades no row. Controlled evidence only — route and
+component tests in this repository; no database was read or written and no flag was touched.
+
+### 27.1 What the flow needed, and what was already there
+
+TRUST-F13 is "read reviews for a place / trip / user, and vote on a place". The catalogue listed
+the five routes as having no client caller; measured at this tree that is **stale** — the reviews
+list already renders on place, trip, event and gem detail
+(`travel-buddy-standalone/app/trip/[id].tsx:856#<ReviewsSection`), the Worth-It vote row on place
+and gem detail (`travel-buddy-standalone/app/place/[id].tsx:426#<WorthItVoteRow entityId={canonicalPlace.id} entityType="place" />`),
+and host reviews on a profile's About tab
+(`travel-buddy-standalone/app/u/[username].tsx:1162#<HostReviewsSummary userId={profile.id} />`).
+What was wrong was what those lists did with blocks and with failure.
+
+### 27.2 Server — a block holds on every reviews list
+
+- The place and trip lists drop any review whose author is in a block relation with the viewer,
+  in either direction, anonymous reviews included (the server knows the author even when the
+  reader does not): `artifacts/api-server/src/routes/reviews.ts:377#const rows = await dropBlockedReviewers(sc, viewerId,`,
+  `artifacts/api-server/src/routes/reviews.ts:300#const rows = await dropBlockedReviewers(sc, auth.user.id,`,
+  helper `artifacts/api-server/src/routes/reviews.ts:929#async function dropBlockedReviewers(`.
+  An unreadable block list is a 503, never the unfiltered list. An unauthenticated place reader
+  has no block relation and is served as before.
+- Host reviews refuse a host in a block relation with the viewer outright
+  (`artifacts/api-server/src/routes/reviews.ts:440#if (blockedSet.has(id)) { sendError(res, "forbidden", "User not available"); return; }`)
+  and drop blocked reviewers from the rows.
+- **DV-83 on the aggregates.** The rating aggregate, the hosted-trips/events reads and the event
+  reviews read bound only `data`; an outage became "no rating", "no reviews" or a trips-only
+  total. Each now fails closed:
+  `artifacts/api-server/src/routes/reviews.ts:386#if (countErr) { req.log.error({ err: countErr }, "place reviews aggregate");`,
+  `artifacts/api-server/src/routes/reviews.ts:481#if (tripReviewsRes.error || eventReviewsRes.error) {`.
+- **Decision (routine, recorded here — this census has no decision register): the aggregate stays
+  over every published review.** A count is not content, and recomputing it per viewer would give
+  one place a different rating for each reader. Only the rows a viewer SEES are block-filtered.
+
+Tests: `artifacts/api-server/src/test/tmSocialListGuards.test.ts:351#describe("GET /places/:id/reviews`
+and the trip/host suites after it (`artifacts/api-server/src/test/tmSocialListGuards.test.ts:415#describe("GET /users/:id/reviews`).
+Run against the pre-lane route (`18518e982`): 11 of the 15 reviews cases RED, every healthy twin
+green; all green now. Eight mutations (block filter off, unreadable blocks served, each aggregate
+/ hosted / event-reviews error unbound, blocked host served) each reddened the suite and were
+restored by sha256. `reviews.test.ts` (37), `placeReviews.test.ts` (10) and
+`trustEventCoverage.test.ts` (6) stay green.
+
+### 27.3 Client — a failed read is not "No reviews yet"
+
+- `ReviewsSection` swallowed a failed read ("silent — don't block the parent screen") and then
+  rendered its empty branch, inviting the reader to "be the first". It now shows
+  **Couldn't load reviews · Try again**: `travel-buddy-standalone/src/components/ReviewsSection.tsx:171#if (active) setLoadError(true); // DV-83`,
+  `travel-buddy-standalone/src/components/ReviewsSection.tsx:402#function ReviewsLoadError(`.
+  Every edit above line 321 is line-neutral, so TV-3a's citation of the review ReportSheet block
+  (`:313-321`) still lands on the same, unchanged lines.
+- `WorthItVoteRow` rendered its initial `0 · 0` on a failed tally read and let a tap "vote" from
+  that unread baseline. It now says it could not load and offers no vote buttons until the
+  tallies are real: `travel-buddy-standalone/src/components/WorthItVoteRow.tsx:47#if (active) setLoadError(true);`.
+- Host reviews rendered nothing on failure — the same nothing as "never reviewed". Moved verbatim
+  into its own module and given an error state:
+  `travel-buddy-standalone/src/components/profile/HostReviewsSummary.tsx:38#.catch(() => { if (active) setFailed(true); })`.
+
+Tests, seen red first (6 red, 4 healthy twins green), then green:
+`travel-buddy-standalone/src/components/__tests__/ReviewsSection.loadError.component.test.tsx:71#it('place: an unreadable list says so`,
+`travel-buddy-standalone/src/components/__tests__/WorthItVoteRow.loadError.component.test.tsx:42#it('an unreadable tally says so`,
+`travel-buddy-standalone/src/components/profile/__tests__/HostReviewsSummary.loadError.component.test.tsx:51#it('an unreadable list says so`.
+One mutation per fix reddened its suite. The four pre-existing ReviewsSection suites stay green.
+
+### 27.4 What this does not claim, and what would turn it red
+
+- **No row moves.** TV-3a (report entry points) rests on the ReportSheet mounts, which are
+  unchanged; no trust event type gains or loses a producer.
+- The client relies on the SERVER for block filtering of reviews (the list component also refuses
+  to link a blocked author's profile, as before); a stale client blocks context cannot re-show a
+  review the server dropped.
+- Red if: `dropBlockedReviewers` again returns the rows when the block list is unreadable; an
+  aggregate read goes back to binding only `data`; or a reviews list renders its empty branch for a
+  failed read.
+
+- NOT-GRADED: travel-buddy-standalone/src/components/profile/HostReviewsSummary.tsx — the host-reviews block moved out of app/u/[username].tsx by §27.3; cited as built work, it carries no Trust verdict
+- NOT-GRADED: travel-buddy-standalone/src/components/WorthItVoteRow.tsx — the place/gem vote row, cited in §27.3 for its failure state; votes are not a Trust requirement this census grades
+- NOT-GRADED: travel-buddy-standalone/src/components/__tests__/ReviewsSection.loadError.component.test.tsx — §27.3's red-first suite for the reviews list's failure state; no verdict rests on it
+- NOT-GRADED: travel-buddy-standalone/src/components/__tests__/WorthItVoteRow.loadError.component.test.tsx — §27.3's red-first suite for the vote row's failure state; no verdict rests on it
+- NOT-GRADED: travel-buddy-standalone/src/components/profile/__tests__/HostReviewsSummary.loadError.component.test.tsx — §27.3's red-first suite for host reviews' failure state; no verdict rests on it
+- NOT-GRADED: artifacts/api-server/src/test/tmSocialListGuards.test.ts — the TM-social lane's server suite, cited in §27.2 for the reviews-list block and failure rules; no verdict rests on it
+- NOT-GRADED: travel-buddy-standalone/app/trip/[id].tsx — cited in §27.1 only to show the reviews list was already mounted; this census grades no trip-screen behaviour
+- NOT-GRADED: travel-buddy-standalone/app/place/[id].tsx — cited in §27.1 only to show the vote row was already mounted; this census grades no place-screen behaviour
+- NOT-GRADED: artifacts/api-server/src/test/reviews.test.ts — named in §27.2 only as a pre-existing reviews suite that stays green; no Trust verdict rests on it
+- NOT-GRADED: artifacts/api-server/src/test/placeReviews.test.ts — named in §27.2 only as a pre-existing place-reviews suite that stays green; no Trust verdict rests on it
