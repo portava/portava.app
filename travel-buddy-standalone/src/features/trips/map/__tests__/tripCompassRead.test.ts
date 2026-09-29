@@ -23,6 +23,7 @@ import { tripCompassRecommendations, tripCompassReadState } from '../tripCompass
 import { compassRecommendationsFailed } from '../../../../services/compassRecommendationsRefusal.ts';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 
 const REC = { id: 'r1', type: 'place', title: 'Cafe', reason: 'r', city: 'Manila', data: {} } as never;
 const refusal = (coverage: unknown) => ({ class: 'transient_db', code: 'compass_sources_unread', coverage, failedSources: ['events'] }) as never;
@@ -69,7 +70,7 @@ test('UC1 compassRecommendationsFailed: a missing or unknown coverage is a faile
 });
 
 test('TCw the map screen composes its alternatives and its banner through tripCompassRecommendations / tripCompassReadState', () => {
-  const screen = readFileSync(fileURLToPath(new URL('../../../../../app/map/index.tsx', import.meta.url)), 'utf8');
+  const screen = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../../../../../app/map/index.tsx'), 'utf8');
   assert.match(screen, /compassRecommendations: tripCompassRecommendations\(compassRes\),/);
   assert.match(screen, /\{ compassRead: tripCompassReadState\(compassRes\) \}/);
   assert.doesNotMatch(screen, /compassRecommendations: compassRes\.ok \?/);
