@@ -133,15 +133,15 @@ export async function buildStructuredCompassContext(
   // ── Circles ────────────────────────────────────────────────────────────────
   try {
     const [{ data: owned, error: ownedErr }, { data: memberships, error: membershipsErr }] = await Promise.all([  // §109: each read's error is read
-      sc.from("circles").select("id, name, owner_id").eq("owner_id", userId).limit(10),
-      sc.from("circle_memberships").select("user_id, other_id, status").eq("other_id", userId).limit(10),
+      sc.from("circles").select("id, name, owner_id").eq("owner_id", userId).order("id", { ascending: true }).limit(CIRCLE_READ_CAP + 1),  // census-discovery §110 (D-W11X2-95): ordered, and one past the cap so a longer list is known
+      sc.from("circle_memberships").select("user_id, other_id, status").eq("other_id", userId).order("user_id", { ascending: true }).limit(CIRCLE_READ_CAP + 1),
     ]);
 
-    if (ownedErr || membershipsErr) markUnread(result, "circles"); const ownedRows = ((owned ?? []) as any[]).map((r) => stripCoordinateFields(r));
+    if (ownedErr || membershipsErr) markUnread(result, "circles"); const ownedRows = capRows(result, "circlesTruncated", (owned ?? []) as any[], CIRCLE_READ_CAP).map((r) => stripCoordinateFields(r));
 
     // Circles the user belongs to via membership (user_id = circle owner)
-    const joinedOwnerIds = ((memberships ?? []) as any[])
-      .filter((m) => (m.status ?? "accepted") === "accepted")
+    const joinedOwnerIds = capRows(result, "circlesTruncated", (memberships ?? []) as any[], CIRCLE_READ_CAP)
+      // census-compass §33 (D-W11X2-94): no `status` filter — a row IS the membership, as on every other surface; no writer sets status (its default is 'pending')
       .map((m) => m.user_id as string)
       .filter((id) => !hidden.has(id));
 
@@ -151,8 +151,8 @@ export async function buildStructuredCompassContext(
         .from("circles")
         .select("id, name, owner_id")
         .in("owner_id", joinedOwnerIds)
-        .limit(10);
-      if (joinedErr) markUnread(result, "circles"); joinedRows = ((joined ?? []) as any[]).map((r) => stripCoordinateFields(r));
+        .order("id", { ascending: true }).limit(CIRCLE_READ_CAP + 1);  // §110 (D-W11X2-95)
+      if (joinedErr) markUnread(result, "circles"); joinedRows = capRows(result, "circlesTruncated", (joined ?? []) as any[], CIRCLE_READ_CAP).map((r) => stripCoordinateFields(r));
     }
 
     const allCircles = [
@@ -168,9 +168,9 @@ export async function buildStructuredCompassContext(
         .from("circle_memberships")
         .select("user_id, other_id, status")
         .in("user_id", ownerIds)
-        .limit(200);
-      if (membersErr) markUnread(result, "circleMembers"); memberRows = ((members ?? []) as any[]).filter(
-        (m) => (m.status ?? "accepted") === "accepted",
+        .order("user_id", { ascending: true }).order("other_id", { ascending: true }).limit(MEMBER_READ_CAP + 1);  // §110 (D-W11X2-95)
+      if (membersErr) markUnread(result, "circleMembers"); memberRows = capRows(result, "circleMembersTruncated", (members ?? []) as any[], MEMBER_READ_CAP).filter(
+        (m) => m != null,  // census-compass §33 (D-W11X2-94): no `status` filter — a row IS the membership
       );
     }
 
@@ -194,7 +194,7 @@ export async function buildStructuredCompassContext(
       }
     }
 
-    result.circles = allCircles.slice(0, 5).map((c: any) => {
+    if (allCircles.length > CIRCLES_SHOWN) markUnread(result, "circlesTruncated"); result.circles = allCircles.slice(0, CIRCLES_SHOWN).map((c: any) => {  // §110 (D-W11X2-95): a shortened list is said
       const members = memberRows
         .filter((m) => m.user_id === c.owner_id)
         .map((m) => m.other_id as string)
@@ -203,7 +203,7 @@ export async function buildStructuredCompassContext(
         .filter(Boolean) as string[];
       return {
         name: wrapUgc(String(c.name ?? "Circle")),
-        memberHandles: [...new Set(members)].slice(0, 8),
+        memberHandles: capHandles(result, [...new Set(members)]),  // §110: more than shown is said
         isOwner: Boolean(c.__isOwner),
       };
     });
@@ -234,12 +234,12 @@ export async function buildStructuredCompassContext(
     const buddyIds = [...new Set(rows.map((r: any) => r.buddy_id as string).filter(Boolean))];
     const buddyHandleById = new Map<string, string>();
     if (buddyIds.length > 0) {
-      const { data: profs } = await sc
+      const { data: profs, error: buddyHandlesErr } = await sc
         .from("profiles")
         .select("id, handle")
         .in("id", buddyIds)
         .limit(20);
-      for (const p of (profs ?? []) as any[]) {
+      if (buddyHandlesErr) markUnread(result, "bookingBuddies"); for (const p of (profs ?? []) as any[]) {  // census-discovery §110 (D-W11X2-97): §109.5's "each read checks its .error" now holds here too
         if (p.handle) buddyHandleById.set(p.id as string, `@${p.handle}`);
       }
     }
@@ -380,7 +380,7 @@ export interface StructuredContextUnread {
   /** The circles were read, but their member or handle read failed: member lists may be incomplete. */
   circleMembers?: true;
   bookings?: true;
-  stamps?: true;
+  stamps?: true; /** §110 (D-W11X2-95/97): the circle list or member lists are longer than read or shown; the bookings' buddy handles could not be read */ circlesTruncated?: true; circleMembersTruncated?: true; bookingBuddies?: true;
 }
 
 function markUnread(ctx: StructuredCompassContext, section: keyof StructuredContextUnread): void {
@@ -396,5 +396,40 @@ function unreadContextLines(ctx: StructuredCompassContext): string[] {
   else if (u.circleMembers) out.push("Circle member lists could not be read in full right now: do not say a circle has no other members.");
   if (u.bookings) out.push("Active buddy bookings could not be read right now: do not say the user has no bookings.");
   if (u.stamps) out.push("Passport history could not be read right now: do not say the user has no stamps.");
+  out.push(...boundedContextLines(u)); return out;
+}
+
+// ── census-discovery §110 (DV-83 round 13, lane W11-X2, D-W11X2-95): a capped read is said, never stated as the whole ──
+//
+// The circle reads were bounded (10 memberships, 10 circles, 200 member rows) and unordered, the
+// shown list was cut to 5 circles and 8 handles, and nothing said so: a longer list reached the model
+// as the user's circles, and ten other rows read first as "not in any circles" (§110.1 BK3). Each read
+// is now ordered and reads one row past its cap; a longer list, and a shortened display, are marked
+// here (present only then, so a context that fits is unchanged) and said by the tool and the prompt.
+
+const CIRCLE_READ_CAP = 10;
+const CIRCLES_SHOWN = 5;
+const MEMBER_READ_CAP = 200;
+const MEMBER_HANDLES_SHOWN = 8;
+
+/** The first `cap` rows; a read that returned more marks `mark`. */
+function capRows<T>(ctx: StructuredCompassContext, mark: "circlesTruncated" | "circleMembersTruncated", rows: T[], cap: number): T[] {
+  if (rows.length <= cap) return rows;
+  markUnread(ctx, mark);
+  return rows.slice(0, cap);
+}
+
+/** The handles shown for one circle; more than shown marks the member lists shortened. */
+function capHandles(ctx: StructuredCompassContext, handles: string[]): string[] {
+  if (handles.length > MEMBER_HANDLES_SHOWN) markUnread(ctx, "circleMembersTruncated");
+  return handles.slice(0, MEMBER_HANDLES_SHOWN);
+}
+
+/** The prompt lines for a shortened list (a failed read's own line already says "may be incomplete"). */
+function boundedContextLines(u: StructuredContextUnread): string[] {
+  const out: string[] = [];
+  if (u.circlesTruncated && !u.circles) out.push("These are not all of the user's circles (there are more than Compass reads at once): do not say they are all of them, or that the user is in no other circle.");
+  if (u.circleMembersTruncated && !u.circleMembers) out.push("Circle member lists are shortened: do not say a circle has only the members listed.");
+  if (u.bookingBuddies) out.push("The buddies on these bookings could not be read right now: do not say a booking has no buddy.");
   return out;
 }

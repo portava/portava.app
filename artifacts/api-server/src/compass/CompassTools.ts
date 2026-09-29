@@ -42,7 +42,7 @@ import { randomUUID } from "node:crypto";
 import { isTruthClass } from "../lib/truthClass.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CompassItem, CompassProfile } from "./types.js";
-import { stripCoordinateFields, wrapUgc, buildStructuredCompassContext } from "./CompassStructuredContext.js";
+import { stripCoordinateFields, wrapUgc, buildStructuredCompassContext, type StructuredContextUnread } from "./CompassStructuredContext.js";
 import { proposalContractPayload } from "../domain/trips/contracts/TripProposalContract.js";
 import { isAcceptedTripMember, canEditPlan, TripAccessUnavailableError } from "../lib/http.js";
 import { buildTripCompassProjection } from "../domain/trips/projections/TripCompassProjection.js";
@@ -1155,8 +1155,8 @@ async function toolGetCircleActivity(
     profile ?? ({ userId, blockedUserIds: [], blockerUserIds: [], mutedUserIds: [] } as unknown as CompassProfile);
   const structured = await buildStructuredCompassContext(sc, effProfile); const circlesUnread = structured.unread?.circles === true, membersUnread = structured.unread?.circleMembers === true;  // census-discovery §109 (DV-83, D-W11X2-88): a failed circle read is never "not in any circles"
   return structured.circles.length > 0
-    ? { circles: structured.circles, ...(circlesUnread ? { info: CIRCLES_PARTIAL_INFO } : membersUnread ? { info: CIRCLE_MEMBERS_PARTIAL_INFO } : {}) }
-    : circlesUnread ? { circles: [], info: CIRCLES_UNREAD_INFO } : { circles: [], info: "The user is not in any circles." };
+    ? { circles: structured.circles, ...(circlesUnread ? { info: CIRCLES_PARTIAL_INFO } : membersUnread ? { info: CIRCLE_MEMBERS_PARTIAL_INFO } : {}), ...circleListBoundsInfo(structured.unread) }  // census-discovery §110 (D-W11X2-95): a longer list than read or shown is said
+    : circlesUnread ? { circles: [], info: CIRCLES_UNREAD_INFO } : structured.unread?.circlesTruncated ? { circles: [], info: CIRCLES_TRUNCATED_EMPTY_INFO } : { circles: [], info: "The user is not in any circles." };  // §110: "not in any circles" only over a complete read
 }
 
 async function toolCheckTripConflicts(
@@ -1976,16 +1976,16 @@ async function resolveGroupMemberIds(
   if (circleName) {
     // Circles the user owns, or belongs to (circle_memberships: user_id = owner).
     const [{ data: owned, error: ownedErr }, { data: memberships, error: membershipsErr }] = await Promise.all([  // census-discovery §109 (D-W11X2-89): each read's error is read
-      sc.from("circles").select("id, name, owner_id").eq("owner_id", userId).limit(25),
-      sc.from("circle_memberships").select("user_id, status").eq("other_id", userId).limit(25),
+      sc.from("circles").select("id, name, owner_id").eq("owner_id", userId).order("id", { ascending: true }).limit(GROUP_CIRCLE_READ_CAP + 1),  // census-discovery §110 (D-W11X2-95): ordered, one past the cap
+      sc.from("circle_memberships").select("user_id, status").eq("other_id", userId).order("user_id", { ascending: true }).limit(GROUP_CIRCLE_READ_CAP + 1),
     ]);
-    const joinedOwnerIds = ((memberships ?? []) as any[])
-      .filter((m) => (m.status ?? "accepted") === "accepted")
+    const joinedOwnerIds = ((memberships ?? []) as any[]).slice(0, GROUP_CIRCLE_READ_CAP)
+      // census-compass §33 (D-W11X2-94): no `status` filter — a row IS the membership, as on every other surface; no writer sets status
       .map((m) => m.user_id as string);
-    let joined: any[] = []; let circlesUnread = Boolean(ownedErr || membershipsErr);
+    let joined: any[] = []; let circlesUnread = Boolean(ownedErr || membershipsErr); let circlesTruncated = ((owned ?? []) as any[]).length > GROUP_CIRCLE_READ_CAP || ((memberships ?? []) as any[]).length > GROUP_CIRCLE_READ_CAP;
     if (joinedOwnerIds.length > 0) {
-      const { data, error: joinedErr } = await sc.from("circles").select("id, name, owner_id").in("owner_id", joinedOwnerIds).limit(25);
-      joined = (data ?? []) as any[]; if (joinedErr) circlesUnread = true;
+      const { data, error: joinedErr } = await sc.from("circles").select("id, name, owner_id").in("owner_id", joinedOwnerIds).order("id", { ascending: true }).limit(GROUP_CIRCLE_READ_CAP + 1);
+      joined = (data ?? []) as any[]; if (joinedErr) circlesUnread = true; if (joined.length > GROUP_CIRCLE_READ_CAP) circlesTruncated = true;
     }
     const wanted = circleName.trim().toLowerCase();
     const circle = [...((owned ?? []) as any[]), ...joined].find(
@@ -1993,17 +1993,17 @@ async function resolveGroupMemberIds(
     );
     // Cross-circle probing defense: circles the user is not in are indistinguishable
     // from circles that don't exist.
-    if (!circle) return { error: circlesUnread ? GROUP_CIRCLES_UNREAD_INFO : "The user is not a member of a circle by that name." };  // §109: a failed read is not "not a member"
+    if (!circle) return { error: circlesUnread ? GROUP_CIRCLES_UNREAD_INFO : circlesTruncated ? GROUP_CIRCLES_TRUNCATED_INFO : "The user is not a member of a circle by that name." };  // §109: a failed read is not "not a member"
 
     const ownerId = String(circle.owner_id);
     const { data: members, error: membersErr } = await sc
       .from("circle_memberships")
       .select("other_id, status")
       .eq("user_id", ownerId)
-      .limit(100);
+      .order("other_id", { ascending: true }).limit(GROUP_MEMBER_READ_CAP + 1);  // §110 (D-W11X2-95): one past the cap
     if (membersErr) return { error: GROUP_MEMBERS_UNREAD_INFO }; const ids = new Set<string>([ownerId, userId]);  // §109: never a recommendation over a partial group
-    for (const m of (members ?? []) as any[]) {
-      if ((m.status ?? "accepted") === "accepted") ids.add(String(m.other_id));
+    if (((members ?? []) as any[]).length > GROUP_MEMBER_READ_CAP) return { error: GROUP_MEMBERS_TRUNCATED_INFO }; for (const m of (members ?? []) as any[]) {  // §110: never a recommendation over part of the group
+      ids.add(String(m.other_id));  // census-compass §33 (D-W11X2-94): a row IS the membership — no writer sets status
     }
     return { memberIds: [...ids], groupLabel: wrapUgc(String(circle.name ?? "Circle")), circleOwnerId: ownerId };
   }
@@ -2479,4 +2479,24 @@ function flagsUnreadRanking(): Map<string, ToolRankEntry> {
 /** True when the ranking is the empty one `flagsUnreadRanking` builds. */
 function rankingFlagsUnread(ranking: Map<string, ToolRankEntry> | null): boolean {
   return ranking !== null && (ranking as { flagsUnread?: boolean }).flagsUnread === true;
+}
+
+// ── census-discovery §110 (DV-83 round 13, lane W11-X2, D-W11X2-95): a capped circle read is never the whole list ──
+
+const GROUP_CIRCLE_READ_CAP = 25;
+const GROUP_MEMBER_READ_CAP = 100;
+const CIRCLES_TRUNCATED_INFO = "The user is in more circles than Compass reads at once, so this is not the whole list: say so, and do not say these are all of the user's circles.";
+const CIRCLES_TRUNCATED_EMPTY_INFO = "Compass could not check all of the user's circle memberships at once, so it cannot say the user is in no circles. Say it could not be checked in full.";
+const CIRCLE_MEMBERS_TRUNCATED_INFO = "The member lists are shortened (a circle has more members than listed): do not say a circle has only these members.";
+const GROUP_CIRCLES_TRUNCATED_INFO = "The user is in more circles than Compass reads at once and that circle was not among those read, so no group recommendation was made. Say it could not be checked; do not say the user is not in that circle.";
+const GROUP_MEMBERS_TRUNCATED_INFO = "The circle has more members than Compass reads at once, so no group recommendation was made: a recommendation over part of the group could ignore a member's constraints.";
+
+/** The info for a circle list longer than read or shown. A failed circle read's own sentence already says the list may be incomplete. */
+function circleListBoundsInfo(u: StructuredContextUnread | undefined): { info?: string } {
+  if (!u || u.circles || !(u.circlesTruncated || u.circleMembersTruncated)) return {};
+  const parts = [
+    u.circlesTruncated ? CIRCLES_TRUNCATED_INFO : null,
+    u.circleMembers ? CIRCLE_MEMBERS_PARTIAL_INFO : u.circleMembersTruncated ? CIRCLE_MEMBERS_TRUNCATED_INFO : null,
+  ].filter((x): x is string => x !== null);
+  return { info: parts.join(" ") };
 }
