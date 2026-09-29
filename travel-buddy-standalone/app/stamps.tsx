@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, ScrollView, Pressable, Modal, StyleSheet, ActivityIndicator, RefreshControl } from 'react-native';
-import { X } from 'lucide-react-native';
+import { X, Layers } from 'lucide-react-native';
 import { router } from 'expo-router';
 import { AppHeader } from '../src/components/ui/AppHeader';
 import { PulseFilterRail } from '../src/components/PulseFilterRail';
@@ -106,7 +106,15 @@ export default function StampsPage() {
 
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
-      <AppHeader variant="detail" title="STAMPS" onBack={router.back} />
+      <AppHeader
+        variant="detail"
+        title="STAMPS"
+        onBack={router.back}
+        rightActions={[
+          // TM-social PASS-F09 — collections progress + the stamp catalog
+          { icon: <Layers size={22} color={color.signal} />, onPress: () => router.push('/stamp-collections' as never), accessibilityLabel: 'Stamp collections' },
+        ]}
+      />
 
       <PulseFilterRail
         filters={FILTERS.map((f) => f.label)}
