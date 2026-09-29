@@ -4556,6 +4556,18 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/services/__tests__/cityConfidence.refusal.component.test.tsx",
     // census-discovery §108 (lane W11-X2, round 11): DV-83 re-graded on the presence walk's consent batch.
     "artifacts/api-server/src/lib/circleAccessGuard.ts",  // §108.1 BK1: canViewCirclePresenceBatch's unchecked consent reads
+    "travel-buddy-standalone/src/components/compass/CompassBuddyRow.tsx",  // §108 grades its failed and partial states (D-W11X2-81)
+    "travel-buddy-standalone/src/features/trips/map/tripCompassRead.ts",  // §108 grades the trip map's Compass read (D-W11X2-81)
+    "artifacts/api-server/src/test/compassPresenceConsentUnread.test.ts",
+    "artifacts/api-server/src/test/compassTelegraphCityUnread.test.ts",
+    "artifacts/api-server/src/test/discoveryStopMeasurementUnread.test.ts",
+    "artifacts/api-server/src/test/hashtagsTrendingComplete.test.ts",
+    "artifacts/api-server/src/test/compassBuddyArmUnread.test.ts",
+    "travel-buddy-standalone/src/services/__tests__/compassTelegraphChip.transport.component.test.ts",
+    "travel-buddy-standalone/app/(tabs)/__tests__/discovery.trendingPartial.component.test.tsx",
+    "travel-buddy-standalone/src/components/compass/__tests__/CompassBuddyRow.failedRead.component.test.tsx",
+    "travel-buddy-standalone/src/features/trips/map/__tests__/tripCompassRead.test.ts",
+    "travel-buddy-standalone/app/map/__tests__/tripCompassAlternativesRead.component.test.tsx",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

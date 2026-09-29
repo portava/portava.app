@@ -18188,6 +18188,127 @@ check:unissued-supabase-writes exit=0
 
 Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
 
+### 108.2 Round 11: what this lane did
+
+*Written 2026-09-29 by lane W11-X2 (round 11) on `disc-w11-x2-r11`, from `8283eaaa9` and §108.1. It closes §108.1's six breaks, each with the verifier's probe copied in as a failing-first test, pins the surviving mutation SM6, corrects the two rulings the verifier found not honest (D-W11X2-67's walk and D-W11X2-74's trending ruling), fixes the two consumers open since §104.10 (CompassBuddyRow and the trip map's Compass alternatives), and sweeps the Discovery and Compass read surfaces again for the six defect classes: an unchecked `.error` on a read that gates a person, card or list; a catch that answers a default; an unread flag, stop or measurement read as off; a cached refusal; an unbounded read ranked as complete (the 1000-row cap); and a failure answered with a flag-off or "nothing here" shape. The sweep closed three more paths. Decisions are in `docs/architecture/discovery-decision-register.md`, section "W11-X2 round 11", D-W11X2-75 to D-W11X2-85.*
+
+*No migration and no new flag. Each change alters output only when a read failed or was cut short, or a stop measurement could not be read. With every read healthy and complete, every served byte is unchanged (CB0, V10-HP0, WT2c, V10-TC0, TC3, V10-SC0, SC2, V10-HT0, V10-CH0, CH3, TPc, BRc, TCc, TMc, MO0, BA0, BA4c). Every edit in a cited file is line-neutral: lines are changed in place, and new code is appended at a file's foot. `src/index.ts` is untouched.*
+
+*All evidence is controlled: in-process routes over fake worlds, the real client services over a fake `fetch`, and jest over the real components. None of it is production evidence, and no client build carrying the change has shipped.*
+
+### 108.3 The consent batch refuses its own failed reads (§108.1 BK1; D-W11X2-75)
+
+- **Server.** `canViewCirclePresenceBatch` denies every accepted target as `unavailable` when its `circle_visibility_settings`, `circle_context_settings`, `user_account_states` or `circle_presence` read fails, as `canBeSeenByViewersBatch` already did for its five (`artifacts/api-server/src/lib/circleAccessGuard.ts:816#const consentUnreadable = consentBatchReadFailed(`, `artifacts/api-server/src/lib/circleAccessGuard.ts:845#if (consentUnreadable) { out.set(targetUserId, { allowed: false, reason: "unavailable" }); continue; }`). The presence walk's existing `presenceDeniedUnread` marks it, so /compass/home says `circleActivity: "unavailable"`, is not cached, and `get_whos_around` says presence could not be checked.
+- **Privacy.** A failed context-settings or account-state read no longer skips a context pause or a ban: the target is withheld (CB2, CB3; CB2c and CB3c are the read controls).
+- **D-W11X2-67 corrected**: "every failed read on the walk" now includes the batch's own reads.
+
+### 108.4 The who's-around tool says a partial list (§108.1 BK2; D-W11X2-76)
+
+With a failed read and people found, `get_whos_around` keeps the people and says the list may be incomplete (V10-WT2; WT2c is the complete-list control).
+
+### 108.5 Telegraph's city over an unread viewer location (§108.1 BK3; D-W11X2-77)
+
+With no trip city, a viewer profile that could not be built or whose location is unread refuses before the participants' cities, naming `compass_profile` or `user_location_state` (`artifacts/api-server/src/routes/compass.ts:4770#if (!cityContext && (profile === null || profile.locationUnread))`). A profile that fails once and builds on the route's second read is refused too (TC2). A viewer who shares no city keeps the participants' city (TC3).
+
+### 108.6 The Ask Compass chip survives a transport failure (§108.1 BK4; D-W11X2-80)
+
+`checkCompassTelegraphAvailable` hides the chip only for the flag read and off, a non-member (403) and an unconfigured client (`travel-buddy-standalone/src/services/compass.ts:1673#result.error !== 'forbidden' && result.error !== 'not_configured'`). An HTTP 5xx or a network error keeps it, and the tray's failed state says the failure. A refusal keeps it whatever its code, so D-W11X2-68's clause stays explicit on the same line (`travel-buddy-standalone/src/services/compass.ts:1673#|| result.refused === true;`; CH4). The edit is one line inside the function and its doc comment (PR #545 edits other lines of the file).
+
+### 108.7 An unreadable stop measurement is `stop_unreadable` (§108.1 BK5; D-W11X2-78)
+
+When every tripped condition tripped only because its measurement is unreadable, the gate answers `stop_unreadable` — a halt for every reader — and the output kinds answer their 503 (`artifacts/api-server/src/lib/discoveryStopGate.ts:80#halt = trippedOnlyUnreadable(verdict) ? "stop_unreadable" : "stop_condition";`). A condition measured over its threshold keeps `stop_condition` and the flag-off 404 bytes (SC2).
+
+### 108.8 GET /hashtags/trending reads its window to the end (§108.1 BK6; D-W11X2-79)
+
+- **Server.** No aggregate RPC or view exists for `hashtag_usage`, and none is added. Each read of the 48 h window — the window, the city→global fallback, the post-engagement read and the event-activity read — is an exact count and then pages ordered by `created_at, id` until the count is reached, capped at 20 000 rows, with `.in()` lists in chunks of 100 ids (`artifacts/api-server/src/routes/hashtags.ts:1095#async function readTrendingWindow<T>(`). A window over the cap or short of its count is ranked over what was read and served with the refusal envelope, coverage `partial` (`nothing` with no row), naming `hashtag_usage`; a failed count or page is `db_error` (`artifacts/api-server/src/routes/hashtags.ts:174#let windowIncomplete = !usageRead.complete;`, `artifacts/api-server/src/routes/hashtags.ts:1122#function sendTrending(`). The two anchored lines census-discovery cites in the route keep their text (`artifacts/api-server/src/routes/hashtags.ts:203#if (fbErr)`, `artifacts/api-server/src/routes/hashtags.ts:226#if (postUsageErr) {`).
+- **Client.** The Discover screen branches on the refusal's coverage: `partial` keeps the chips under "Trending tags may be incomplete right now."; any other refusal is the failed line (`travel-buddy-standalone/app/(tabs)/discovery.tsx:120#const coverage = trendingCoverage(`).
+- **D-W11X2-74 corrected**: DV-83 covers a partial read; the truncation was one.
+
+### 108.9 §104.10's two open consumers (D-W11X2-81)
+
+- **CompassBuddyRow** says a failed read and keeps partial picks under the incomplete line, as CompassTravelerRow does; it hides only when the read answered with no one, or the flag or the viewer's setting is off (`travel-buddy-standalone/src/components/compass/CompassBuddyRow.tsx:170#if (items.length === 0 && readState === null) return null;`).
+- **The trip map's Compass alternatives** are composed through `tripCompassRecommendations` — none over a failed or refused read, a `partial` body's rows kept — and the map says a failed or partial Compass read over the trip (`travel-buddy-standalone/app/map/index.tsx:1211#compassRecommendations: tripCompassRecommendations(compassRes),`, `travel-buddy-standalone/src/features/trips/map/tripCompassRead.ts:29#export function tripCompassReadState(`). The read state rides on the composed trip, so only the latest build writes it. The map's other five sources keep §33's posture (census-trips).
+
+### 108.10 The survivor and the sweep (D-W11X2-82, D-W11X2-83, D-W11X2-84, D-W11X2-85)
+
+- **SM6** is pinned by the verifier's V10-SM6, copied in (`artifacts/api-server/src/test/compassPresenceConsentUnread.test.ts:185#it("V10-SM6`); re-applied, it is killed.
+- **The sweep closed three more paths.**
+  1. **The /compass/recommendations predicate** took a refusal with a missing or unknown coverage for a complete answer; it is now a failed read, for every consumer (`travel-buddy-standalone/src/services/compassRecommendationsRefusal.ts:23#if (body.refusal) return body.refusal.coverage !== 'partial';`).
+  2. **`get_meetup_opportunities`** walked the presence path without the `unread` signal, and a failed reciprocity read read as "availability isn't shared both ways"; it now says a failed or partial walk and keeps everyone affected withheld (`artifacts/api-server/src/compass/CompassSocialEngine.ts:691#collectPresence(sc, viewerId, hidden, unread);  // §108: the meetup walk says a failed read`).
+  3. **The buddy arm of /compass/recommendations** ignored its availability read's error, read its buddy and availability rows without a bound, and answered `[]` over an unread location; it now names each (`artifacts/api-server/src/routes/compass.ts:3693#buddyFailed.push("rent_buddy_availability");`, `artifacts/api-server/src/routes/compass.ts:3653#if (profile.locationUnread) { sendRecommendationsRefusal(res, { recommendations: [], surface, sessionId: effectiveSessionId }, "buddy_city_unread"`). This refines D-W11X2-66's "availability … label or rank" for this arm.
+- **Upheld, recorded unchanged (D-W11X2-85).** CompassRediscover's collapse, the hashtag feed's `hasMore`, /hashtags/suggestions, the city-confidence note over an unread platform, `app/discover.tsx`'s people search, and the Compass live, sense, autopilot and me-context gates.
+- **Seen, not built (D-W11X2-85).** The emerging-trails leg of the trending explanations (behind `discovery_trending_api_enabled`, seeded FALSE); the trending ranking's post-limit block filter; the admin hashtag merge's unbounded read; GET /circle presence's wording over a withheld member; the trip map's other five sources.
+
+### 108.11 Tests, seen red, and mutations
+
+**Seen red first**, run against the code before each fix (logs in the lane's `r11/` scratch directory, `red-*.log`):
+
+| Area | Red | Controls, green |
+|---|---|---|
+| The consent batch and /compass/home | CB1–CB4, V10-HP1, V10-HP2, V10-HP3, HP4, HP5 | CB0, CB2c, CB3c, V10-HP0, V10-SM6 (green at `8283eaaa9`; it pins SM6) |
+| The who's-around tool | V10-WT1, V10-WT2 | WT2c |
+| Telegraph's city | V10-TC1, TC1b, TC2 | V10-TC0, TC3 |
+| The stop measurement | V10-SC1, SC1b, SC3 | V10-SC0, SC2 |
+| /hashtags/trending | V10-HT1, HT1b, HT2–HT6 | V10-HT0 |
+| The trending chips | TP1–TP3 | TPc |
+| The Ask Compass chip | V10-CH1, V10-CH2 | V10-CH0, CH3 (CH4, a refusal whose code reads `forbidden`, was green: the old check kept every refusal) |
+| CompassBuddyRow | BR1, BR1b, BR2 | BRc |
+| The trip map's Compass read | TC1–TC4, UC1 (against a stub of the new module that reproduced the old inline read, and the old predicate); TM1–TM3 | TCc, TMc, TMc2 |
+| Sweep: the meetup tool | MO1–MO4 | MO0 |
+| Sweep: the buddy arm | BA1–BA4 | BA0, BA4c |
+
+**Written against the fixed code:** HT7–HT11, MO5, TCw, CH4, TC4, TC5. Each is shown to bite by the mutation that removes the line it pins (B6c/B6i, B6d, B6e, B6a/B6l, B6b, S1b, C16/C17, C3b, SM28r, SM26r).
+
+**Mutations.** Each was applied alone, its pin suites were run (17 api-server suites; 7 jest suites and one node suite on the client), and the file was restored byte-identically; the sha256 matched on every one. Runner and logs: the lane's `r11/muts/` scratch directory (`muts11.py`, `run11.py`, `run11.out`).
+
+- **Server, 37 applied.** The consent batch B1a–B1f (the denial, the helper's return, each of the four reads dropped from it); the tool's partial wording B2a; Telegraph B3a–B3c; the stop gate B5a (the name), B5b (`every` → `some`); trending B6a–B6m (the window flag, each of the four reads' incompleteness mark, the count error, the page error, the loop's end, the completeness answer, the chunk mark and error, the envelope, `partial` vs `nothing`, the row cap); SM6; the meetup walk S1a–S1f; the buddy arm S2a–S2e.
+- **Client, 20 applied.** The chip C1–C3b (C3b drops the explicit refusal clause; CH4 kills it); the trending chips C4–C8b; CompassBuddyRow C9–C11; the trip map's read C12–C17; the shared predicate C18.
+- **Result: 59 applied (with SM26r and SM28r below), 58 killed, 1 equivalent.**
+  - B6b (the fallback window's incompleteness mark) survived the first run: no test failed the global fallback alone. HT11 now does; re-applied, B6b is killed. S1a was first skipped because its target text also matched `getWhosAround`'s line; re-targeted to the meetup line, it is killed.
+  - **C8b is equivalent.** It drops `setTrendingPartial(false)` from the city-change reset. The partial line renders only with `trendingHashtags.length > 0`; the reset clears the chips on the same line, and chips are written only together with `setTrendingPartial(coverage === 'partial')`, so no state can draw a stale partial line.
+- **Regression pass.** The round-10 verifier's own 54 mutations (SM1–SM42, CM1–CM12) and SM6p were re-run against this tree from a copy of its runner and suite list (the lane's `r11/v10muts/`): 51 of 54 killed, sha256 OK on every applied one.
+  - SM6 survives there only because that suite list predates V10-SM6; SM6p (which runs V10-SM6) is killed, as is SM6 in the round-11 run.
+  - CM8's target line is BK4's line now (C1–C3b cover it), so it was skipped.
+  - SM26 (Telegraph's card-source set without `user_location_state`) and SM28 (the later profile arm answering `{ cards: [] }`) survived: BK3's early refusal now answers PL3 and TG4 before the arms they remove. TC5 (the profile cache expiring between the route's two profile reads) and TC4 (a trip thread whose profile cannot be built) reach those arms directly; re-applied as SM26r and SM28r against the round-11 suites, both are killed.
+
+### 108.12 Checks
+
+- **Line-neutral in every cited file**, so every anchored citation still lands on its text: `check:doc-citations`, `check:citation-targets` and `check:citation-symbols` are clean.
+- **Scope.** `lib/circleAccessGuard.ts` joined this census's `CENSUS_SCOPE` with the hold (§108.1); CompassBuddyRow, `tripCompassRead.ts` and §108's suites join it here. The acknowledgement for every census that counts a changed file carries a §108 paragraph with its "why it cannot move a verdict": census-discovery, census-compass, census-trust, census-input-intelligence, census-trips, census-map, census-telegraph, census-highlights-memories, census-layover, census-passport, census-media and census-sensing. `compass/CompassTools.ts` stays out of this census's scope: §56.3 declares it NOT-GRADED here, so no verdict row cites it.
+- **Suites.** The five new api-server suites are on the `test` line (`check:test-registration`).
+- **Allowlist.** No entry of `UNCHECKED_READS_ALLOWLIST.json` named a site §108 closed; the checker reports no stale entry.
+- **Write-path select sites.** Every new `.select()` argument is a literal; the write-path-columns replica prints OK.
+
+### 108.13 DV-83, restated
+
+§108.1's six breaks are closed, each with the verifier's probe red first and green now. SM6 is pinned and killed. The two rulings the verifier found not honest are corrected (D-W11X2-75, D-W11X2-79). §104.10's two open consumers are fixed (D-W11X2-81), and the sweep closed three more paths. Every clause of DV-83's criterion holds on every path this lane examined:
+
+1. **Producers send the refusal envelope or a named failure.**
+   - The consent batch denies as `unavailable` over any failed read, so the walk, /compass/home and both presence tools say it.
+   - Telegraph refuses over the viewer's unread location or profile; the buddy arm refuses over an unread location and names a failed or cut read.
+   - The stop gate names an unreadable measurement; /hashtags/trending names an incomplete window.
+2. **Nothing refused or partial is cached as complete.** A home over a failed consent read is degraded and not cached (V10-HP3). No new path caches.
+3. **Nothing refused is rendered as empty, as complete, or over the wrong rows.** Telegraph never draws another city; the chip stays for the tray's failed state; the trending chips, the buddy strip and the trip map say a failed or partial read.
+4. **Consumers branch on coverage.** The Discover screen's trending chips, the trip map and every /compass/recommendations consumer (through the shared predicate, now strict on a missing or unknown coverage) branch on `refusal.coverage`.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§108.1's six breaks are closed, each with its verifier probe red first; SM6 is killed; §104.10's two open consumers are fixed; the sweep closed three more paths; 59 mutations: 58 killed, 1 equivalent (C8b). CONTROLLED EVIDENCE ONLY — this row still awaits independent re-verification.** **The consent batch denies over its own failed reads, fail closed** (`artifacts/api-server/src/lib/circleAccessGuard.ts:845#if (consentUnreadable) { out.set(targetUserId, { allowed: false, reason: "unavailable" }); continue; }`; CB1–CB4, V10-HP1..3, HP4, HP5, V10-SM6). **Telegraph never draws another city over an unread location** (`artifacts/api-server/src/routes/compass.ts:4770#if (!cityContext && (profile === null || profile.locationUnread))`; V10-TC1, TC1b, TC2, TC4, TC5). **The chip survives a transport failure** (`travel-buddy-standalone/src/services/compass.ts:1673#result.error !== 'forbidden' && result.error !== 'not_configured'`; V10-CH1, V10-CH2, CH4). **An unreadable stop measurement is a failed read, still a halt** (`artifacts/api-server/src/lib/discoveryStopGate.ts:80#halt = trippedOnlyUnreadable(verdict) ? "stop_unreadable" : "stop_condition";`; V10-SC1, SC1b, SC3). **The trending ranking reads its window to the end, and an incomplete one is `partial`** (`artifacts/api-server/src/routes/hashtags.ts:174#let windowIncomplete = !usageRead.complete;`, `travel-buddy-standalone/app/(tabs)/discovery.tsx:120#const coverage = trendingCoverage(`; V10-HT1, HT1b, HT2–HT11, TP1–TP3). **CompassBuddyRow and the trip map say a failed read** (`travel-buddy-standalone/src/components/compass/CompassBuddyRow.tsx:170#if (items.length === 0 && readState === null) return null;`, `travel-buddy-standalone/app/map/index.tsx:1211#compassRecommendations: tripCompassRecommendations(compassRes),`; BR1, BR1b, BR2, TC1–TC4, TM1–TM3). **Sweep:** a missing or unknown coverage is a failed read (`travel-buddy-standalone/src/services/compassRecommendationsRefusal.ts:23#if (body.refusal) return body.refusal.coverage !== 'partial';`; UC1), the meetup walk says a failed read (`artifacts/api-server/src/compass/CompassSocialEngine.ts:691#collectPresence(sc, viewerId, hidden, unread);  // §108: the meetup walk says a failed read`; MO1–MO5), and the buddy arm names a failed or cut read (`artifacts/api-server/src/routes/compass.ts:3693#buddyFailed.push("rent_buddy_availability");`; BA1–BA4). |
+
+**Headline.** DV-83 moves W → C. `check:census-integrity` counts **C 101 / W 85 / N 2 / X 0** over 188: CONSTRUCTED 186 / 188 = **98.9 %**, CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged. The move is on controlled evidence and awaits independent re-verification.
+
+### 108.14 Left open, and what would turn this red
+
+- **Seen and not built (other owners; D-W11X2-85).** The emerging-trails leg of GET /v1/discovery/trending/explanations (flag seeded FALSE); the trending ranking's post-limit block filter; the admin hashtag merge's unbounded read; GET /circle presence's wording over a withheld member; the trip map's other five sources.
+- **Upheld and unchanged.** CompassRediscover's collapse; the hashtag feed's `hasMore`; /hashtags/suggestions; `app/discover.tsx`'s people search; the Compass live, sense, autopilot and me-context gates.
+- **What would turn DV-83 red again:**
+  - a consent-batch read whose failure is not `unavailable`, or a presence walk or tool that says "nobody" or a complete list over one (CB*, V10-HP*, HP4, HP5, V10-WT*, MO*);
+  - a Telegraph answer drawn for another city over the viewer's unread location (V10-TC1, TC1b, TC2);
+  - a chip hidden as "off" over a transport failure (V10-CH1, V10-CH2);
+  - an unreadable stop measurement answered as the feature being off (V10-SC1, SC1b);
+  - a trending, buddy or trip-map list served as complete over a cut or failed read (V10-HT1, HT*, TP*, BA*, BR*, TC*, TM*);
+  - any path §107.12 lists.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: travel-buddy-standalone/app/discover.tsx — §105.11 names it only as a path seen and not built, left for its owner: it is the social people search over services/follows.ts, not a Discovery envelope, and no DV-83 verdict rests on it.
