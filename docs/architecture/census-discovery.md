@@ -17998,6 +17998,129 @@ check:unissued-supabase-writes exit=0
 
 Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
 
+### 107.2 Round 10: what this lane did
+
+*Written 2026-09-29 by lane W11-X2 (round 10) on `disc-w11-x2-r10`, from `0b7141b7c` and §107.1. It closes §107.1's five breaks, each with the verifier's probe copied in as a failing-first test, pins the two surviving mutations (SM23 is argued equivalent), corrects the three rulings the verifier found not honest, and sweeps the Discovery and Compass read surfaces again for the six defect classes: an ignored `error`, a catch that answers a default, an unread flag or stop read as off, a cached refusal, a stale answer, and a failed read turned into a measured-looking value. The sweep closed two more paths. Decisions are in `docs/architecture/discovery-decision-register.md`, section "W11-X2 round 10", D-W11X2-67 to D-W11X2-74. This section is §107 because a testing-mode lane took §106.*
+
+*No migration and no new flag. Each change alters output only when a read failed, a flag or stop could not be read, or a stale answer arrives. With every read healthy, every served byte is unchanged (H0, HB3, HC4, HC14c, HW3, TG0, TG1c, TG2c, TG5e, KS0, KS2, CC0, CC4, CC5, MS0, MS0b, PLc, WAc). Every edit in a cited file is line-neutral: lines are changed in place, and new code is appended at a file's foot. `src/index.ts` is untouched.*
+
+*All evidence is controlled: in-process routes over fake worlds, the real client services over a fake `fetch`, and jest over the real components. None of it is production evidence, and no client build carrying the change has shipped.*
+
+### 107.3 GET /compass/home never says "ok" over a failed read (§107.1 BK1; D-W11X2-67)
+
+- **Presence.** `getWhosAround` says `unread` when any read on its walk failed or threw, or the consent batch could not read (reason `unavailable`) or its stop was engaged or unreadable (`kill_switch`) (`artifacts/api-server/src/compass/CompassSocialEngine.ts:368#if (memberRowsErr) markPresenceUnread(unread);`, `artifacts/api-server/src/compass/CompassSocialEngine.ts:507#presenceDeniedUnread`). The home's circle section is then `unavailable`, keeping any people who were read (`artifacts/api-server/src/routes/compassHome.ts:474#return presenceUnread ? unusable(null) : sourced(null);`).
+- **Best move.** A pick from a pool with any failed candidate source is `unavailable` with its row kept, so the home is degraded and not cached (`artifacts/api-server/src/routes/compassHome.ts:454#const bestSource = compassHydrationFailedSources(items).length > 0 ? unusable : sourced;`). This corrects D-W11X2-54's "stays sourced".
+- **Weather.** `getWeatherContext` reports a failed provider read (HTTP failure, throw, a failed geocode) through an optional status; the section is `unavailable`, and "no such place" stays an answer (`artifacts/api-server/src/routes/compassHome.ts:310#if (!f) return wxStatus.failed ? unusable(null) : sourced(null);`).
+- **Client.** CompassHome says each unavailable section in its place, and marks a best move picked from partial results (`travel-buddy-standalone/src/components/compass/CompassHome.tsx:338#export const HOME_SECTION_UNREAD`).
+- **Restated world.** `compassRevocationAndAvailability` C assumed an unreachable forecast provider answers "ok"; its home world now seeds the forecast (same line, no assertion changed).
+
+### 107.4 GET /compass/telegraph and the Ask Compass tray (§107.1 BK2; D-W11X2-68)
+
+- **Server.** COMPASS_TELEGRAPH is read strictly (`artifacts/api-server/src/routes/compass.ts:4695#const telegraphRead = await readCompassFlag(sc, "COMPASS_TELEGRAPH")`); an unread table, a failed membership, thread, trip or participant read, a failed profile build and the catch answer `{ cards: [], city, refusal }` naming the source (`artifacts/api-server/src/routes/compass.ts:5028#function sendTelegraphRefused(`), and the served cards say a failed card source, `partial` beside cards (`artifacts/api-server/src/routes/compass.ts:5023#function telegraphCoverage(`). A flag READ and off keeps its 404.
+- **Client.** The reader turns any non-`partial` refusal into `ok: false` and keeps the chip on a refusal (`travel-buddy-standalone/src/services/compass.ts:2057#function telegraphRefused(`); the tray has a failed state with a retry, a partial line, and a latest-request guard (`travel-buddy-standalone/src/components/CompassTelegraphTray.tsx:89#if (!result.ok || !result.cards ||`).
+- **Guard change.** check:flag-polarity lists `readCompassFlag` as a CAP reader, as it lists `readFlagState`; `flagPhantomReads`' COMPASS_TELEGRAPH case is restated to the new read text.
+
+### 107.5 An unread Discovery stop is a failed read (§107.1 BK3; D-W11X2-69)
+
+`isKillSwitchEngaged` can say `unread` through an optional status while still answering "engaged" (`artifacts/api-server/src/lib/featureFlags.ts:167#export interface KillSwitchReadStatus`); the gate names `stop_unreadable`, never holds it for the TTL, and still halts on it (`artifacts/api-server/src/lib/discoveryStopGate.ts:85#s.kill.unread ? "stop_unreadable" : "kill_switch_engaged"`); the output-kinds route answers 503 `stop_unreadable` and keeps the 404 bytes for a stop READ and engaged (`artifacts/api-server/src/routes/discoveryOutputKinds.ts:64#const stopHalt = await discoveryStopHalt(sc);`). D-W11X2-69 revisits D-W11X2-56's ruling for every reader of the gate: only the output-kinds route hid a surface; the for_you, Cache A, rank-design, pipeline and engine-mode halts serve complete flag-off pages.
+
+### 107.6 GET /compass/city-confidence refuses a failed read (§107.1 BK4; D-W11X2-70)
+
+`getCityConfidence` reports `unread` when nothing was measured and a read failed (`artifacts/api-server/src/compass/CompassGraphEngine.ts:1705#if (!local) { if (status && (localUnread || !readable)) status.unread = true; return null; }`); the route answers 503 `city_confidence_unreadable` (`artifacts/api-server/src/routes/compassGraph.ts:111#const confStatus: CityConfidenceReadStatus`), and a city with no rows keeps its "thin" bytes. The client caches neither a 503 nor a 200 carrying a refusal (`travel-buddy-standalone/src/services/compass.ts:406#if ((body as { refusal?: unknown } | null)?.refusal != null) return { ok: false, error: 'refused' };`), and the destination badge never draws "Limited local data" over a failure. D-W11X2-59's "neutral default" is withdrawn for this route.
+
+### 107.7 GET /map/search names an unread flag (§107.1 BK5; D-W11X2-71)
+
+`readFlagState`; `unreadable` answers `enabled: false, refusal: "flag_unreadable"`, and an off or absent flag keeps the flag-off body (`artifacts/api-server/src/routes/mapSearch.ts:154#const mapSearchFlag = await readFlagState`).
+
+### 107.8 The survivors and the sweep (D-W11X2-72, D-W11X2-73, D-W11X2-74)
+
+- **Survivors.** SM28 is pinned by `discoveryTrailMemberSourceUnread` TR17, the verifier's V9-SM28 (`artifacts/api-server/src/test/discoveryTrailMemberSourceUnread.test.ts:388#it("TR17 (V9-SM28)`), and CM1 by `discoveryRecommendationsRefusal` RR4 (`travel-buddy-standalone/src/services/__tests__/discoveryRecommendationsRefusal.test.ts:53#it('RR4 (§107, CM1)`). Both are killed when re-applied. SM23 is equivalent: `readCompassEnabled` cannot reject (D-W11X2-72).
+- **The sweep closed two more paths.**
+  1. **A failed location read is never "no city".** The Compass profile carries `locationUnread` and is not cached; the hydrator names `user_location_state`, so the section route, /compass/recommendations, the home and Telegraph refuse or degrade (`artifacts/api-server/src/compass/CompassProfileService.ts:181#const locStateUnread =`, `artifacts/api-server/src/compass/CompassItemHydrator.ts:441#profile.locationUnread && !profile.currentCity ? ["user_location_state"] : []`).
+  2. **Compass's `get_whos_around` tool** says presence could not be checked instead of "no active trips" or "nobody is sharing" (`artifacts/api-server/src/compass/CompassTools.ts:1742#const { people, contextsChecked, unread }`).
+- **Swept and found sound, and left for owners.** D-W11X2-74: the preload manifest, the front-load payload, the Compass components' request guards and the client caches are sound. Left: CompassRediscover's collapse on the Compass home (tied to migration 2188's pending production press; census-highlights-memories), and GET /hashtags/trending's unbounded read, the feed's post-filter `hasMore` and /hashtags/suggestions' label reads (the hashtag product; no read fails).
+- **Allowlist.** The three `contextMemberIds` entries in `artifacts/api-server/src/scripts/UNCHECKED_READS_ALLOWLIST.json` are deleted: BK1 closed those sites.
+
+### 107.9 Tests, seen red, and mutations
+
+**Seen red first**, run against the code before each fix (logs in the lane's `r10/` scratch directory, `red-*.log`):
+
+| Area | Red | Controls, green |
+|---|---|---|
+| /compass/home | HC1, HC2, HC3, HB1, HB2, HW1, HW2 (V9-HC1, V9-HB1, V9-HB2, V9-HW1 among them) | H0, HC4, HB1b, HB3, HW3 |
+| CompassHome sections | SU1–SU5 | SUc |
+| /compass/telegraph | TG1, TG1b, TG2, TG3, TG4, TG5, TG6 (V9-TG1, V9-TG2) | TG0, TG1c, TG2c |
+| Telegraph reader and tray | TS1–TS3; TT1–TT3 (V9-TT1, V9-TT2) — the whole tray file was red, the control included, because the failed state's export did not exist yet | TS4 (see below) |
+| Output kinds behind an unread stop | KS1, KS1b, KS3, KS4 (V9-KS1) | KS0, KS2 |
+| /compass/city-confidence | CC1, CC2, CC3, CC6 (V9-CC1) | CC0, CC4, CC5 |
+| City-confidence reader | CF2 | CF1, CF3, CFc |
+| /map/search | MS1, MS1b (V9-MS1) | MS0, MS0b |
+| Sweep: location read | PL1, PL2, PL3 | PLc |
+| Sweep: who's-around tool | WA1, WA2 | WAc |
+
+CF1 and CF3 were already green on the client: a 503 was never cached, and the break was the server's 200. TS4 was green because the old reader already kept the chip for a 200; it pins that a refusal keeps it.
+
+**Written against the fixed code:** HC5–HC14c (each read on the presence walk alone, and the kept-people arm), TG5b–TG5e, KS5, TT7, TT8, TR17 (SM28), RR4 (CM1), RR5. Each is shown to bite by the mutation that removes the line it pins.
+
+**Mutations.** Each was applied alone, its suites were run, and the file was restored byte-identically; the sha256 matched on all of them. Runner and logs: the lane's `r10/muts/` and `r10/muts2/` scratch directories (`muts.py`, `run.py`, `mut-summary.txt`).
+
+- **Server, 60 applied in the main run; 57 killed.**
+  - The presence walk, S1–S14 (S12b): each marked read, both catches, the member-read throws, the consent batch's catch and denial check, both denial reasons, the `unread` spread and the marker itself.
+  - The home, H1–H8: the presence arms, the best move's source, the forecast status and its arm, the location arms, and the degraded-only cache.
+  - The forecast read, W1–W3; the profile, P1–P3; the hydrator, Y1; Telegraph's `user_location_state` card source, T13.
+  - Telegraph, T2–T12: the flag arm, each context read, the profile arm, the coverage spread, its `partial`, the card-source filter and the catch.
+  - The stop, K1–K8: the route's 503 arm and its 404 arm, the gate's third state, the TTL skip, the catch, both `unread` marks in `isKillSwitchEngaged`, and the status argument.
+  - City confidence, Z1–Z5 (Z3b); map search, MS1.
+  - The round-9 survivor SM28: killed by TR17.
+- **Survived, and settled.**
+  - **T1 and SM23 are equivalent.** Each replaces `.catch(() => null)` with `.catch(() => false)` on `readCompassFlag` / `readCompassEnabled`, which cannot reject: `fetchCompassFlags` catches everything and returns a load (D-W11X2-72).
+  - **MS2** (an absent flag served as on) survived because MS0b compared only the body's keys. MS0b now asserts `enabled: false`; re-applied as MS2r, it is killed.
+- **Client, 17 applied in the main run; 16 killed.** CM1 (the round-9 survivor, killed by RR4); the Telegraph reader C1–C4; the tray C6–C11 and C15; CompassHome C12, C13; the city-confidence reader C14.
+  - **C5** (the tray's latest-request return removed) survived: a late answer never replaced an earlier FAILED state, so TT6 could not see it. TT6b (a late failure after the newer open's cards) now pins it; re-applied as C5r, it is killed.
+- **Supplemental run, 5 of 5 killed:** the who's-around tool WA1, WA2; MS2r; C5r; and H6r (the location arm on line 252, re-applied after it was split in place to keep census-compass's `(error)` anchor).
+- **Total: 82 applied, 78 killed, 2 equivalent (T1, SM23), 2 survivors closed by a strengthened test and killed on re-application (MS2 → MS2r, C5 → C5r).** No non-equivalent survivor remains on a DV-83 line.
+
+### 107.10 Checks
+
+- **Line-neutral in every cited file**, so every anchored citation still lands on its text: `check:doc-citations`, `check:citation-targets` and `check:citation-symbols` are clean. One displaced anchor was caught and restored in place: census-compass cites `artifacts/api-server/src/routes/compassHome.ts:252#(error)`.
+- **Scope.** §107's graded files and suites joined this census's `CENSUS_SCOPE`. The acknowledgement for every census that counts a changed file carries a §107 paragraph with its "why it cannot move a verdict": census-discovery, census-compass, census-highlights-memories, census-layover, census-map, census-telegraph and census-trust.
+- **Suites.** The seven new api-server suites are on the `test` line (`check:test-registration`).
+- **Guard change.** check:flag-polarity lists `readCompassFlag` among its CAP readers (D-W11X2-68).
+- **Allowlist.** Three `contextMemberIds` entries left `UNCHECKED_READS_ALLOWLIST.json`; the checker reports no stale entry.
+
+### 107.11 DV-83, restated
+
+§107.1's five breaks are closed, each with the verifier's probe red first and green now. SM28 and CM1 are pinned and killed; SM23 is argued equivalent. The three rulings the verifier found not honest are corrected (D-W11X2-67, 68, 69, 70). The sweep closed two more paths and recorded the rest. Every clause of DV-83's criterion holds on every path this lane examined:
+
+1. **Producers send the refusal envelope or a named failure.**
+   - /compass/home marks a failed presence, candidate, location or forecast read `unavailable` (degraded).
+   - /compass/telegraph refuses a failed flag, context, profile, candidate or build read.
+   - The output kinds answer 503 `stop_unreadable` for an unread stop; /compass/city-confidence answers 503 over a failed read; /map/search names an unread flag.
+2. **Nothing refused or partial is cached as complete.** A degraded home is not cached; a profile over a failed location read is not cached; an unread stop is not held for the TTL; the client caches no refused city-confidence answer.
+3. **Nothing refused is rendered as empty, as complete, or over the wrong rows.**
+   - CompassHome says each unavailable section; the Telegraph tray says a failure with a retry and only its latest answer writes it; the destination badge draws nothing over a failure; the output-kinds rail's failed state takes the 503.
+4. **Consumers branch on coverage.** The Telegraph reader and the output-kinds reader branch on `refusal.coverage` (`partial` keeps rows; anything else is a failed read); CompassHome on `sources`.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§107.1's five breaks are closed, each with its verifier probe red first; SM28 and CM1 are killed and SM23 is argued equivalent; the sweep closed two more paths; 82 mutations: 78 killed, 2 equivalent (T1, SM23), and MS2 and C5 killed on re-application after their tests were strengthened. CONTROLLED EVIDENCE ONLY — this row still awaits independent re-verification.** **The Compass home never says "ok" over a failed read and never caches it** (`artifacts/api-server/src/compass/CompassSocialEngine.ts:507#presenceDeniedUnread`, `artifacts/api-server/src/routes/compassHome.ts:454#const bestSource = compassHydrationFailedSources(items).length > 0 ? unusable : sourced;`, `artifacts/api-server/src/routes/compassHome.ts:310#if (!f) return wxStatus.failed ? unusable(null) : sourced(null);`; H0, HC1–HC14c, HB1–HB3, HW1–HW3), **and says which section** (`travel-buddy-standalone/src/components/compass/CompassHome.tsx:338#export const HOME_SECTION_UNREAD`; SU1–SU5). **Telegraph's cards refuse and the tray says it** (`artifacts/api-server/src/routes/compass.ts:5028#function sendTelegraphRefused(`, `travel-buddy-standalone/src/components/CompassTelegraphTray.tsx:89#if (!result.ok || !result.cards ||`; TG0–TG6, TS1–TS4, TT0–TT8). **An unread stop is a failed read, still fail-closed** (`artifacts/api-server/src/routes/discoveryOutputKinds.ts:64#const stopHalt = await discoveryStopHalt(sc);`; KS0–KS5, RR5). **A failed city-confidence read is never a measured "thin"** (`artifacts/api-server/src/routes/compassGraph.ts:111#const confStatus: CityConfidenceReadStatus`; CC0–CC6, CF1–CF3). **Map search names an unread flag** (`artifacts/api-server/src/routes/mapSearch.ts:154#const mapSearchFlag = await readFlagState`; MS0–MS1b). **A failed location read is never "no city"** (`artifacts/api-server/src/compass/CompassItemHydrator.ts:441#profile.locationUnread && !profile.currentCity ? ["user_location_state"] : []`; PL1–PL3). |
+
+**Headline.** DV-83 moves W → C. `check:census-integrity` counts **C 101 / W 85 / N 2 / X 0** over 188: CONSTRUCTED 186 / 188 = **98.9 %**, CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged. The move is on controlled evidence and awaits independent re-verification.
+
+### 107.12 Left open, and what would turn this red
+
+- **Seen and not built (other owners; D-W11X2-74).**
+  - CompassRediscover's collapse on the Compass home draws a failed read as nothing; surfacing it waits on migration 2188's production press (census-highlights-memories).
+  - GET /hashtags/trending's unbounded 48 h read, the hashtag feed's post-filter `hasMore`, and /hashtags/suggestions' label reads (the hashtag product; no read fails).
+- **Still open from §105.11 and §104.10.** `app/discover.tsx`'s people search; the Compass live, sense, autopilot and me-context gates; the trip map's Compass alternatives; Rent-a-Buddy's `CompassBuddyRow`.
+- **What would turn DV-83 red again:**
+  - a home section that says "ok" over a failed read, or a degraded home that is cached (HC*, HB*, HW*, PL1, PL2);
+  - a Telegraph answer that serves a failed read as cards or as none, or a tray that says "couldn't find" over one (TG*, TS*, TT*);
+  - an unread stop answered as the feature being off (KS*);
+  - a failed city-confidence read answered or cached as a measurement (CC*, CF*);
+  - an unread map-search flag answered as off (MS1, MS1b);
+  - any path §105.11 lists.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: travel-buddy-standalone/app/discover.tsx — §105.11 names it only as a path seen and not built, left for its owner: it is the social people search over services/follows.ts, not a Discovery envelope, and no DV-83 verdict rests on it.

@@ -4529,6 +4529,18 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/lib/weatherCache.ts",  // §107 grades getWeatherContext's failure status (D-W11X2-67)
     "artifacts/api-server/src/routes/compassGraph.ts",  // §107 grades GET /compass/city-confidence's refusal (D-W11X2-70)
     "travel-buddy-standalone/src/components/CompassTelegraphTray.tsx",  // §107 grades its failed state (D-W11X2-68)
+    "artifacts/api-server/src/compass/CompassProfileService.ts",  // §107 grades its location-unread mark (D-W11X2-73)
+    "artifacts/api-server/src/test/compassHomeSourcesUnread.test.ts",
+    "artifacts/api-server/src/test/compassTelegraphUnread.test.ts",
+    "artifacts/api-server/src/test/discoveryStopUnreadable.test.ts",
+    "artifacts/api-server/src/test/compassCityConfidenceUnread.test.ts",
+    "artifacts/api-server/src/test/mapSearchFlagUnread.test.ts",
+    "artifacts/api-server/src/test/compassProfileLocationUnread.test.ts",
+    "artifacts/api-server/src/test/compassWhosAroundToolUnread.test.ts",
+    "travel-buddy-standalone/src/components/compass/__tests__/CompassHome.sectionUnread.component.test.tsx",
+    "travel-buddy-standalone/src/components/__tests__/CompassTelegraphTray.failedRead.component.test.tsx",
+    "travel-buddy-standalone/src/services/__tests__/compassTelegraph.refusal.component.test.ts",
+    "travel-buddy-standalone/src/services/__tests__/cityConfidence.refusal.component.test.tsx",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //
