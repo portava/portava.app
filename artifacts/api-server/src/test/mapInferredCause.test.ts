@@ -494,3 +494,20 @@ describe("§10 inferred cause through GET /api/map/projection", () => {
     assert.deepEqual([...r.body.sources].sort(), ["crowd_flow", "events"]);
   });
 });
+
+// ── census-discovery §110 (DV-83 round 13, lane W11-X2, D-W11X2-93): an event withheld UNCHECKED ──
+// `loadNearbyEvents` fails closed on a gate it cannot read and now counts what it withheld; the
+// inferred-cause report says it could not look, because the withheld event could be the adjacent one.
+describe("§10 inferred cause over an event gate that could not be read (census-discovery §110)", () => {
+  let app: ProjectionApp | null = null;
+  beforeEach(() => { _clearProtectedZoneCache(); _clearFlowZoneCache(); });
+  afterEach(async () => { if (app) await app.close(); app = null; });
+  it("GW2 the event's ban read fails → eventsReadFailed, never 'no adjacent event'", async () => {
+    const now = Date.now();
+    app = await startRouterApp(mapProjectionRouter, flowWorld(now, [event(now)], { event_roles: { error: { message: "event_roles down" } } } as FakeState), { token: TOKEN, userId: USER });
+    const r = await app.projection(`bbox=${BBOX}&zoom=14&kinds=crowd_flow`);
+    assert.equal(r.status, 200);
+    assert.equal(flowsIn(r.body)[0].payload.inferred, null);
+    assert.equal(r.body.crowdFlow.inferredCause.eventsReadFailed, true, JSON.stringify(r.body.crowdFlow.inferredCause));
+  });
+});

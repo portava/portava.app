@@ -17,6 +17,7 @@
  *   V12-SE1  search_events, the flag read fails → never "No matching upcoming public events found."
  *   FU1      search_places / search_events over an unread flag read: no candidate, the unread said
  *   FU2      get_group_recommendation over an unread flag read → never "No candidates satisfy …"
+ *   FU3      the same through its events branch
  *   FUc      CONTROL: a healthy read that matches nothing is still "No matching places found in the catalog."
  */
 import { describe, it, beforeEach } from "node:test";
@@ -80,6 +81,21 @@ describe("the Compass search tools over a failed COMPASS_% flag read (§110, D-W
     assert.match(String(r.info), UNREAD, JSON.stringify(r));
   });
 
+  it("FU3 get_group_recommendation (events) over an unread flag read → never 'No candidates satisfy …'", async () => {
+    const world = compassWorld({
+      flagsFail: true,
+      answer: (t, calls) => {
+        if (t === "circles" && eqCall(calls, "owner_id")) return { data: [{ id: "c1", name: "Porto crew", owner_id: VIEWER }], error: null };
+        if (t === "circle_memberships") return { data: [], error: null };
+        if (t === "profiles" && calls.some(([k, a]) => k === "in" && a[0] === "id")) return { data: [{ id: VIEWER, budget_style: "mid", interests: ["music"] }], error: null };
+        if (t === "events") return { data: [{ ...EVENT, max_attendees: null, going_count: 0, age_min: null, verified_only: false }], error: null };
+        return undefined;
+      },
+    });
+    const r = (await executeCompassTool(world.client as any, VIEWER, profile, "get_group_recommendation", { circleName: "Porto crew", kind: "events", city: "Paris" })) as Tool;
+    assert.deepEqual(r.candidates, [], JSON.stringify(r));
+    assert.match(String(r.info), UNREAD, JSON.stringify(r));
+  });
   it("FUc CONTROL: a healthy read that matches nothing is still 'No matching places found in the catalog.'", async () => {
     const w = compassWorld({ answer: (t) => (t === "discovery_places" ? { data: [], error: null } : undefined) });
     const r = (await executeCompassTool(w.client as any, VIEWER, profile, "search_places", { query: "nothing", city: "Paris" })) as Tool;

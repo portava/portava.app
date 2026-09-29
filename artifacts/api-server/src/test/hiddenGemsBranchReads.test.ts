@@ -10,6 +10,8 @@
  *   HG1  tripId: the trips read fails → never 404 "Trip not found"
  *   HG2  tripId: the trip_plan_items read fails → never `{ gems: [] }`
  *   HG3  submittedBy: the hidden_gems read fails → never `{ gems: [] }`
+ *   HG4  tripId: the plan items read, the hidden_gems read fails → never `{ gems: [] }`
+ *   HG5  tripId: the trip_members read fails for a non-owner → never 403 "not a member"
  *   HGc  CONTROL: a trip with no gems attached, every read healthy → `{ gems: [], total: 0 }`; no such trip → 404
  */
 import { describe, it, before, after } from "node:test";
@@ -26,13 +28,14 @@ const GUIDE = "ab000000-0000-4000-a000-0000000000e2";
 const TOKEN = "tok-r13-gems";
 const ERR = { code: "57014", message: "canceling statement due to statement timeout" };
 
-function client(opts: { fail?: string[]; trip?: boolean } = {}) {
+function client(opts: { fail?: string[]; trip?: boolean; planItems?: boolean; notOwner?: boolean } = {}) {
   const fail = new Set(opts.fail ?? []);
   const b = (table: string): any => {
     const answer = (single: boolean) => {
       if (table === "feature_flags") return { data: single ? { enabled: true } : [{ enabled: true }], error: null };
       if (fail.has(table)) return { data: null, error: ERR };
-      if (table === "trips") return { data: opts.trip === false ? null : { id: TRIP, owner_id: VIEWER, status: "active" }, error: null };
+      if (table === "trips") return { data: opts.trip === false ? null : { id: TRIP, owner_id: opts.notOwner ? GUIDE : VIEWER, status: "active" }, error: null };
+      if (table === "trip_plan_items" && opts.planItems) return { data: [{ source_id: "11111111-1111-4111-a111-111111111111" }], error: null };
       if (table === "profiles" && single) return { data: { id: VIEWER, account_status: "active" }, error: null };
       return { data: single ? null : [], error: null };
     };
@@ -74,6 +77,15 @@ describe("GET /hidden-gems' tripId and submittedBy branches over a failed read (
   it("HG3 submittedBy: the hidden_gems read fails → never { gems: [] }", async () => {
     const { status, body } = await gems(`submittedBy=${GUIDE}`, client({ fail: ["hidden_gems"] }));
     assert.ok(!(status === 200 && Array.isArray(body.gems) && body.gems.length === 0), `${status} ${JSON.stringify(body)}`);
+  });
+  it("HG4 tripId: the plan items read, the hidden_gems read fails → never { gems: [] }", async () => {
+    const { status, body } = await gems(`tripId=${TRIP}`, client({ fail: ["hidden_gems"], planItems: true }));
+    assert.ok(!(status === 200 && Array.isArray(body.gems) && body.gems.length === 0), `${status} ${JSON.stringify(body)}`);
+  });
+  it("HG5 tripId: the trip_members read fails (the caller is not the owner) → never 403 'not a member'", async () => {
+    const { status, body } = await gems(`tripId=${TRIP}`, client({ fail: ["trip_members"], notOwner: true }));
+    assert.notEqual(status, 403, JSON.stringify(body));
+    assert.equal(body.error, "degraded_unavailable", JSON.stringify(body));
   });
   it("HGc CONTROL: healthy reads → a trip with no gems is { gems: [], total: 0 }; no such trip is 404", async () => {
     const ok = await gems(`tripId=${TRIP}`, client());

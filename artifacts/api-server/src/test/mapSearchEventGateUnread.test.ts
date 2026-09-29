@@ -17,6 +17,7 @@
  *   V12-MS2  a friend's friends-only event, the `user_friendships` read fails → not complete
  *   MS3      a trust-gated event, the `trust_profiles` read fails → the source says what it withheld unchecked
  *   MS4      a verified-only event, the viewer's `verified` read fails → the same (never "verified users only")
+ *   MS5      an age-gated event, the viewer's age read fails → the same
  *   MSb      CONTROL: a healthy body carries no new key — `sources` is byte-identical
  *   MSd      CONTROL: a friends-only event of a NON-friend, every read healthy → withheld, and the source complete
  *   GW0      CONTROL: GET /map/projection names the events layer over healthy gates
@@ -102,6 +103,11 @@ describe("GET /map/search's events source over an unreadable per-event gate (§1
   });
   it("MS4 a verified-only event, the viewer's verified read fails → the same, never withheld as 'not verified'", async () => {
     _setTestClient(client({ events: [ev("e5", "public", { verified_only: true })], failSelect: { profiles: "verified" } }) as any, true);
+    const { body } = await search();
+    assert.deepEqual(body.sources.event, { refusal: "event_gates_unreadable", collected: 0, withheldUnchecked: 1 }, JSON.stringify(body.sources));
+  });
+  it("MS5 an age-gated event, the viewer's age read fails → the same, never withheld as 'too young'", async () => {
+    _setTestClient(client({ events: [ev("e6", "public", { age_min: 18 })], failSelect: { profiles: "date_of_birth" } }) as any, true);
     const { body } = await search();
     assert.deepEqual(body.sources.event, { refusal: "event_gates_unreadable", collected: 0, withheldUnchecked: 1 }, JSON.stringify(body.sources));
   });
