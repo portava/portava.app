@@ -764,7 +764,7 @@ async function rankToolCandidates(
   try {
     const p = normalizeProfileForRanking(profile);
     const context = buildCompassContext(p, defaultSignals(p));
-    const { results } = await runPipeline(items, p, context, sc, undefined, circleMemoryTags);
+    const { results, flagsUnreadable } = await runPipeline(items, p, context, sc, undefined, circleMemoryTags); if (flagsUnreadable) return flagsUnreadRanking();  // census-discovery §110 (DV-83, D-W11X2-92): what the fail-safe flag map withheld is not "no match" — an EMPTY map (nothing offered, the gate is never skipped) that says so
     // A successful pipeline run with zero survivors means every candidate was
     // intentionally gated out (safety/eligibility/kill-switch) — honour that
     // with an EMPTY ranking map so the tool returns no candidates. Raw
@@ -1018,7 +1018,7 @@ async function toolSearchPlaces(
   const withheldDetail = safeHeld.withheld > 0 ? safeHeld.detail : held.detail;
   return safeHeld.kept.length > 0
     ? { candidates: safeHeld.kept, ranked: ranking !== null, attention: wire, safetyAttention: safetyWire }
-    : { candidates: [], attention: wire, safetyAttention: safetyWire, info: withheldTotal > 0 ? `No candidates offered: ${withheldDetail}` : "No matching places found in the catalog." };
+    : { candidates: [], attention: wire, safetyAttention: safetyWire, info: rankingFlagsUnread(ranking) ? TOOL_FLAGS_UNREAD_INFO : withheldTotal > 0 ? `No candidates offered: ${withheldDetail}` : "No matching places found in the catalog." };  // §110 (D-W11X2-92)
 }
 
 async function toolSearchEvents(
@@ -1099,7 +1099,7 @@ async function toolSearchEvents(
   const withheldDetail = safeHeld.withheld > 0 ? safeHeld.detail : held.detail;
   return safeHeld.kept.length > 0
     ? { candidates: safeHeld.kept, ranked: ranking !== null, attention: wire, safetyAttention: safetyWire }
-    : { candidates: [], attention: wire, safetyAttention: safetyWire, info: withheldTotal > 0 ? `No candidates offered: ${withheldDetail}` : "No matching upcoming public events found." };
+    : { candidates: [], attention: wire, safetyAttention: safetyWire, info: rankingFlagsUnread(ranking) ? TOOL_FLAGS_UNREAD_INFO : withheldTotal > 0 ? `No candidates offered: ${withheldDetail}` : "No matching upcoming public events found." };  // §110 (D-W11X2-92)
 }
 
 async function toolGetPlaceDetails(sc: SupabaseClient, args: Record<string, unknown>): Promise<unknown> {
@@ -2132,7 +2132,7 @@ async function toolGroupRecommendation(
     : (viewerProfile.currentCity ?? null);
 
   let candidates: any[] = [];
-  let groupConstraintsApplied: string[] = [];
+  let groupConstraintsApplied: string[] = []; let flagsUnread = false;  // census-discovery §110 (D-W11X2-92)
 
   if (kind === "events") {
     const cutoff = new Date(Date.now() - 2 * 3600_000).toISOString();
@@ -2170,7 +2170,7 @@ async function toolGroupRecommendation(
       eventStartsAt: e.starts_at ?? null,
       authorId:      e.host_id ? String(e.host_id) : undefined,
     } as CompassItem));
-    const ranking = await rankToolCandidates(sc, groupProfile, rankItems, circleMemoryTags);
+    const ranking = await rankToolCandidates(sc, groupProfile, rankItems, circleMemoryTags); flagsUnread = rankingFlagsUnread(ranking);
     candidates = applyToolRanking(
       visible.map((e) => ({
         id:          e.id,
@@ -2201,7 +2201,7 @@ async function toolGroupRecommendation(
       qualityScore: typeof p.rating === "number" ? p.rating * 2 : undefined,
       savedCount:   Number(p.saved_count ?? 0),
     } as CompassItem));
-    const ranking = await rankToolCandidates(sc, groupProfile, rankItems, circleMemoryTags);
+    const ranking = await rankToolCandidates(sc, groupProfile, rankItems, circleMemoryTags); flagsUnread = rankingFlagsUnread(ranking);
     candidates = applyToolRanking(
       rows.map((p) => ({
         ...p,
@@ -2235,7 +2235,7 @@ async function toolGroupRecommendation(
         candidates: [],
         group: { label: group.groupLabel, size: agg.size, memberHandles },
         groupConstraintsApplied: [...new Set(groupConstraintsApplied)],
-        info: "No candidates satisfy the whole group's constraints right now.",
+        info: flagsUnread ? TOOL_FLAGS_UNREAD_INFO : "No candidates satisfy the whole group's constraints right now.",  // §110 (D-W11X2-92): an unread flag read is not "no candidates"
       };
 }
 
@@ -2460,3 +2460,23 @@ function noCurrentTripInfo(current: unknown): string {
 const GROUP_CIRCLES_UNREAD_INFO = "The user's circles could not be read right now (a read failed), so no group recommendation was made. Say it could not be checked; do not say the user is not in that circle.";
 const GROUP_MEMBERS_UNREAD_INFO = "The group's members could not be read right now (a read failed), so no group recommendation was made: a recommendation over part of the group could ignore a member's constraints.";
 const PLACE_UNREAD_INFO = "The place's details could not be read right now (a read failed). Say so; do not say the place does not exist.";
+
+// ── census-discovery §110 (DV-83 round 13, lane W11-X2, D-W11X2-92): an unread COMPASS_% flag read is not an empty catalog ──
+//
+// `runPipeline` reads the COMPASS_% flags uncached; a failed read answers the fail-safe map, which
+// engages every `COMPASS_<TYPE>_SAFETY_BLOCK`, and says so with `flagsUnreadable` (§103). The tools
+// read "zero survivors" as "every candidate intentionally gated out" and told the model "No matching
+// …". The ranking now carries the unread state as an EMPTY map — nothing is offered, and the safety
+// gate is never skipped (no fallback to the unranked list) — and each tool says it could not check.
+
+const TOOL_FLAGS_UNREAD_INFO = "Compass could not check its safety settings right now (a read failed), so nothing was offered. Say the catalog could not be checked; do not say there are none.";
+
+/** An empty ranking (every candidate withheld) that says the flag read failed. */
+function flagsUnreadRanking(): Map<string, ToolRankEntry> {
+  return Object.assign(new Map<string, ToolRankEntry>(), { flagsUnread: true as const });
+}
+
+/** True when the ranking is the empty one `flagsUnreadRanking` builds. */
+function rankingFlagsUnread(ranking: Map<string, ToolRankEntry> | null): boolean {
+  return ranking !== null && (ranking as { flagsUnread?: boolean }).flagsUnread === true;
+}
