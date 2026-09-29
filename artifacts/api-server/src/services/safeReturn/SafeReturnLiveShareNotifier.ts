@@ -41,7 +41,7 @@ export interface LiveShareNoticeInput {
 
 async function sharerLabel(db: SupabaseClient, sharerId: string): Promise<string> {
   const { data, error } = await db.from("profiles").select("id, handle, name").eq("id", sharerId).maybeSingle();
-  if (error || !data) return "Someone";
+  if (error) logger.warn({ err: error, sharerId }, "live-share notice: sharer profile unreadable, label degrades to 'Someone'"); if (error || !data) return "Someone";
   const allowed = await nameVisibilitySet(db, [sharerId]);
   const name = presentedName(data as any, allowed.has(sharerId));
   if (name) return name;

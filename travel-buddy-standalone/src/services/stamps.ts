@@ -311,3 +311,103 @@ export async function unstampEntity(
     return { ok: false, message: e instanceof Error ? e.message : 'Network error' };
   }
 }
+
+// ── Collections + catalog browse — TM-social PASS-F09 ─────────────────────────
+
+export interface StampCollectionProgress {
+  id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  iconUrl: string | null;
+  /** Stamps in the collection. */
+  total: number;
+  /** Of those, how many the caller has earned (unrevoked). */
+  earned: number;
+  complete: boolean;
+}
+
+export interface StampCatalogEntry {
+  id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  stampType: string;
+  category: string | null;
+  rarity: string | null;
+  iconUrl: string | null;
+  artworkUrl: string | null;
+  city: string | null;
+  country: string | null;
+}
+
+/**
+ * The stamp router answers 503 `feature_not_available` while Stamp System v2
+ * is off (routes/stamps.ts gate). That is a real state, not an outage, and the
+ * screen says so instead of "couldn't load" — so it is carried separately.
+ */
+export type StampBrowseResult<T> =
+  | { ok: true; data: T }
+  | { ok: false; disabled: boolean; message: string };
+
+async function stampBrowseGet<T>(path: string): Promise<StampBrowseResult<T>> {
+  const token = await freshToken();
+  if (!token) return { ok: false, disabled: false, message: 'Not authenticated' };
+  try {
+    const res = await fetch(`${apiBase()}/api${path}`, { headers: { Authorization: `Bearer ${token}` } });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return {
+        ok: false,
+        disabled: res.status === 503 && (body as any)?.error === 'feature_not_available',
+        message: (body as any)?.message ?? `API ${res.status}`,
+      };
+    }
+    return { ok: true, data: body as T };
+  } catch (e) {
+    return { ok: false, disabled: false, message: e instanceof Error ? e.message : 'Network error' };
+  }
+}
+
+/** GET /stamps/me/collections — each active collection with my earned/total. */
+export async function getMyStampCollections(): Promise<StampBrowseResult<StampCollectionProgress[]>> {
+  const res = await stampBrowseGet<{ collections?: any[] }>('/stamps/me/collections');
+  if (!res.ok) return res;
+  if (!Array.isArray(res.data?.collections)) return { ok: false, disabled: false, message: 'Unexpected response' };
+  return {
+    ok: true,
+    data: res.data.collections.map((c) => ({
+      id: String(c.id),
+      slug: String(c.slug ?? ''),
+      name: String(c.name ?? ''),
+      description: c.description ?? null,
+      iconUrl: c.iconUrl ?? null,
+      total: Number(c.total ?? 0),
+      earned: Number(c.earned ?? 0),
+      complete: c.complete === true,
+    })),
+  };
+}
+
+/** GET /stamps/definitions — the active stamp catalog (what can be earned). */
+export async function getStampCatalog(): Promise<StampBrowseResult<StampCatalogEntry[]>> {
+  const res = await stampBrowseGet<{ definitions?: any[] }>('/stamps/definitions');
+  if (!res.ok) return res;
+  if (!Array.isArray(res.data?.definitions)) return { ok: false, disabled: false, message: 'Unexpected response' };
+  return {
+    ok: true,
+    data: res.data.definitions.map((d) => ({
+      id: String(d.id),
+      slug: String(d.slug ?? ''),
+      name: String(d.name ?? ''),
+      description: d.description ?? null,
+      stampType: String(d.stamp_type ?? ''),
+      category: d.category ?? null,
+      rarity: d.rarity ?? null,
+      iconUrl: d.icon_url ?? null,
+      artworkUrl: d.universal_artwork_url ?? null,
+      city: d.city ?? null,
+      country: d.country ?? null,
+    })),
+  };
+}
