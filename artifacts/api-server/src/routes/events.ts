@@ -5843,7 +5843,7 @@ router.post("/events/:id/posts", async (req, res) => {
 
   const parsed = z.object({
     body:      z.string().min(1).max(2000),
-    mediaUrls: z.array(z.string().url()).max(10).default([]),
+    mediaUrls: z.array(z.string().url().refine((u) => Boolean(appStorageUrlInfo(u)), "mediaUrls must be uploaded app media URLs (use /api/media/upload first)")).max(10).default([]), // same storage-ref check as POST /events/:id/media (TM-create)
     pinned:    z.boolean().default(false),
   }).safeParse(req.body);
   if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
