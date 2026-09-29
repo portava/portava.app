@@ -5190,7 +5190,7 @@ recorded here (§34.4).
 ### §34.1 What was built
 
 **Paste (GII-F08).** `POST /api/input-assistance/extract`
-(`artifacts/api-server/src/routes/inputAssistance.ts:557#'/input-assistance/extract'`)
+(`artifacts/api-server/src/routes/inputAssistance.ts:557#/input-assistance/extract`)
 classifies a pasted blob
 (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:371#export function classifyPaste`:
 coordinates `artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:122#export function parseCoordinates`,
@@ -5201,7 +5201,7 @@ item through the SAME serve typed text uses —
 calls `generateSuggestionsWithCoverage`, so a pasted "hcmc" meets the same alias
 table, stroke fold, privacy gate and ranking as a typed one. It writes nothing
 and says so on every answer
-(`artifacts/api-server/src/routes/inputAssistance.ts:617#        mutated: false,`).
+(`artifacts/api-server/src/routes/inputAssistance.ts:617#mutated: false,`).
 Each item is `resolved`, `no_match`, `failed` or `unsupported`, plus `partial`;
 a failed source with no rows is `failed`, never `no_match`
 (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:475#if (rows.length === 0 && refusal)`).
@@ -5298,7 +5298,7 @@ opens the §6.2 LOCATION sheet pre-filled
 | G157 | N | **C** | Controlled. Decimal, hemisphere and DMS pairs (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:122#export function parseCoordinates`), named by `artifacts/api-server/src/services/geocodingService.ts:110#export async function reverseGeocodeOutcome` and then resolved like typed text; a geocoder outage is `failed` (mutations S5, S6 red). |
 | G160 | N | W | Itinerary blocks are PARSED: day headings and time hints are carried to the review screen and kept out of the place query (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:371#export function classifyPaste`). NOT built: §24's "Create 3 Trip stops" with their TIMES — the only mounted target is the Trip's destination list, which has no time column, so "Dinner at 7" is shown as an honest no-match for a city field. |
 | G161 | N | **C** | Controlled. Newline, bullet, numbered, arrow, semicolon and "then" lists split into items (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:371#export function classifyPaste`) and land on the Trip stop editor's review screen (`travel-buddy-standalone/src/components/trip/DestinationListEditor.tsx:366#<PasteReviewSheet`). |
-| G162 | N | **C** | Controlled. The extract route writes nothing (`artifacts/api-server/src/routes/inputAssistance.ts:617#        mutated: false,`; the server suite fails on ANY write verb, mutation S8 red), the client refuses an answer that does not say so (`travel-buddy-standalone/src/platform/input-assistance/paste/pasteReview.ts:74#if (b.mutated !== false) return null;`, mutation C4 red), and `travel-buddy-standalone/src/platform/input-assistance/paste/__tests__/pasteReviewFlow.component.test.tsx` asserts zero POSTs to `/destinations` while the review screen is up and only the ticked ones after confirm. |
+| G162 | N | **C** | Controlled. The extract route writes nothing (`artifacts/api-server/src/routes/inputAssistance.ts:617#mutated: false,`; the server suite fails on ANY write verb, mutation S8 red), the client refuses an answer that does not say so (`travel-buddy-standalone/src/platform/input-assistance/paste/pasteReview.ts:74#if (b.mutated !== false) return null;`, mutation C4 red), and `travel-buddy-standalone/src/platform/input-assistance/paste/__tests__/pasteReviewFlow.component.test.tsx` asserts zero POSTs to `/destinations` while the review screen is up and only the ticked ones after confirm. |
 | G163 | N | W | Implementation of the ROUTING is complete and controlled-proven: a platform transcript enters `voiceIntakeRequest` (`travel-buddy-standalone/src/platform/input-assistance/voice/voiceIntake.ts:352#return voiceIntakeRequest(outcome.result, opts);`) and the dictated paste reaches `POST /api/input-assistance/extract` exactly as typed text does (`travel-buddy-standalone/src/platform/input-assistance/voice/__tests__/voiceDictation.component.test.tsx`). The hosted testing app is iOS/Android, where no recognizer is installed, so no user can dictate there today. AWAITS OWNER APPROVAL: II-TM-A1 |
 | G133 | N | W | Three of §21's six Telegraph actions: meeting point, Trip stop and location when permitted (`artifacts/api-server/src/lib/inputAssistance/telegraphActions.ts:159#export async function serveTelegraphMeetAt`). Share Place is covered only as a meeting point; Event and media have no candidate. |
 | G362 | N | **C** | Controlled. The §54 chain, clause by clause: "meet at" → `telegraph_message` context → action rows only (§48 declaration `travel-buddy-standalone/src/platform/input-assistance/social/telegraphMeetAt.ts:30#export const TELEGRAPH_COMPOSER_CAPABILITIES`) → the three candidates → eligibility (server for Trip stops, device for current Place) → tap → the structured LOCATION share opens pre-filled in the composer's §6.2 sheet (`travel-buddy-standalone/app/messages/[id].tsx:2444#<MeetAtActionBar draft={input}`). Server `artifacts/api-server/src/test/inputAssistanceTelegraphActions.test.ts`, client `travel-buddy-standalone/src/platform/input-assistance/social/__tests__/meetAtActions.component.test.tsx`. |
