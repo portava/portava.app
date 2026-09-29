@@ -13,6 +13,7 @@
  *   V10-CH1  HTTP 503 → the chip is not hidden as "off"
  *   V10-CH2  a network error → the chip is not hidden as "off"
  *   CH3      CONTROL: a 403 (not a member of the thread) hides the chip; a healthy answer keeps it
+ *   CH4      a 200 refusal whose code reads 'forbidden' is still a refusal (a failed read), never "not a member"
  *
  * THE SERVICE IS REAL (services/compass.ts imports react-native, so this runs under jest).
  */
@@ -56,6 +57,10 @@ describe('§108 the Ask Compass chip over a transport failure', () => {
     status = 403; answer = { error: 'forbidden', message: 'Not a member of this thread' };
     expect(await checkCompassTelegraphAvailable('t-1')).toBe(false);
     status = 200; answer = { cards: [CARD], city: 'Paris' };
+    expect(await checkCompassTelegraphAvailable('t-1')).toBe(true);
+  });
+  it('CH4 a 200 refusal whose code reads "forbidden" is still a refusal — the chip stays', async () => {
+    answer = { cards: [], city: null, refusal: { class: 'transient_db', code: 'forbidden', route: 'GET /compass/telegraph', coverage: 'nothing', failedSources: ['message_thread_members'] } };
     expect(await checkCompassTelegraphAvailable('t-1')).toBe(true);
   });
 });

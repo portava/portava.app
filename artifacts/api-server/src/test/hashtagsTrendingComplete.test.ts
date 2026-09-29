@@ -19,6 +19,11 @@
  *   HT4      a page after the first fails → db_error, never a ranking of the pages that were read
  *   HT5      the city window is empty and the global fallback is over the cap → complete global ranking, #hot first
  *   HT6      the count says more rows than the pages return → refusal `partial`, never complete
+ *   HT7      only the post-engagement read falls short of its count → refusal `partial`
+ *   HT8      only the event-activity read falls short of its count → refusal `partial`
+ *   HT9      the window's count read fails → db_error, never a ranking of unknown completeness
+ *   HT10     the count says rows exist and the pages return none → refusal `nothing`, never "nothing trending"
+ *   HT11     the city window is empty and only the global fallback falls short of its count → refusal `partial`
  *
  * Run: SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy node --import tsx/esm --test src/test/hashtagsTrendingComplete.test.ts
  */
@@ -37,12 +42,13 @@ const TAGS: Record<string, string> = { "ht-cold": "cold", "ht-warm": "warm", "ht
 const DB_ERR = { code: "57014", message: "canceling statement due to statement timeout" };
 
 type Row = { id: string; hashtag_id: string; author_id: string; city: string | null; source_type: string; source_id: string; created_at: string };
-interface FakeOpts { failRangeFrom?: number; countExtra?: number; posts?: Array<{ id: string; like_count: number; comment_count: number }> }
+interface FakeOpts { failRangeFrom?: number; countExtra?: number; posts?: Array<{ id: string; like_count: number; comment_count: number }>; /** inflate only the count of the reads filtered to this source_type ('window' = the unfiltered window) */ countExtraOn?: string; failHead?: boolean }
 
 function client(rows: Row[], opts: FakeOpts = {}) {
   const posts = opts.posts ?? [];
   function builder(table: string) {
     const filters: Array<(r: any) => boolean> = [];
+    const eqs = new Map<string, unknown>();
     let head = false, count = false, range: [number, number] | null = null;
     const ordered: string[] = [];
     let single = false;
@@ -55,7 +61,9 @@ function client(rows: Row[], opts: FakeOpts = {}) {
       const src: any[] = table === "hashtag_usage" ? rows : table === "posts" ? posts : [];
       let all = src.filter((r) => filters.every((f) => f(r)));
       if (ordered.length > 0) all = [...all].sort((a, b) => { for (const k of ordered) { if (a[k] < b[k]) return -1; if (a[k] > b[k]) return 1; } return 0; });
-      const total = all.length + (opts.countExtra ?? 0);
+      const on = (eqs.get('source_type') as string | undefined) ?? (eqs.has('city') ? 'city-window' : 'window');
+      const total = all.length + (opts.countExtra ?? 0) + (opts.countExtraOn === on ? 5 : 0);
+      if (head && opts.failHead) return { data: null, count: null, error: DB_ERR };
       if (head) return { data: null, count: count ? total : null, error: null };
       if (range && opts.failRangeFrom !== undefined && range[0] >= opts.failRangeFrom) return { data: null, error: DB_ERR };
       const window = range ? all.slice(range[0], range[1] + 1) : all;
@@ -64,7 +72,7 @@ function client(rows: Row[], opts: FakeOpts = {}) {
     const inArgs = new Map<string, unknown[]>();
     const b: any = {
       select(_cols: string, o?: { count?: string; head?: boolean }) { if (o?.count === "exact") count = true; if (o?.head) head = true; return b; },
-      eq(c: string, v: unknown) { filters.push((r) => r[c] === v); return b; },
+      eq(c: string, v: unknown) { eqs.set(c, v); filters.push((r) => r[c] === v); return b; },
       in(c: string, vs: unknown[]) { inArgs.set(c, vs); filters.push((r) => vs.includes(r[c])); return b; },
       gte(c: string, v: string) { filters.push((r) => String(r[c]) >= v); return b; },
       not() { return b; },
@@ -163,6 +171,36 @@ describe("§108 (BK6) GET /hashtags/trending never ranks a truncated read as com
   it("HT6 the count says more rows than the pages return → refusal `partial`, never complete", async () => {
     _setTestClient(client([...usage("ht-cold", 600), ...usage("ht-hot", 300)], { countExtra: 5 }) as any, true);
     const { body } = await get();
+    assert.equal(body.refusal?.coverage, "partial", JSON.stringify(body));
+  });
+  it("HT7 only the post-engagement read falls short of its count → refusal `partial`", async () => {
+    _setTestClient(client([...usage("ht-cold", 60, null, "post"), ...usage("ht-hot", 40, null, "post")], { countExtraOn: "post" }) as any, true);
+    const { body } = await get();
+    assert.equal(body.refusal?.coverage, "partial", JSON.stringify(body));
+  });
+  it("HT8 only the event-activity read falls short of its count → refusal `partial`", async () => {
+    _setTestClient(client([...usage("ht-cold", 60, null, "event"), ...usage("ht-hot", 40, null, "event")], { countExtraOn: "event" }) as any, true);
+    const { body } = await get();
+    assert.equal(body.refusal?.coverage, "partial", JSON.stringify(body));
+  });
+  it("HT9 the window's count read fails → db_error, never a ranking of unknown completeness", async () => {
+    _setTestClient(client([...usage("ht-cold", 60), ...usage("ht-hot", 40)], { failHead: true }) as any, true);
+    const { status, body } = await get();
+    assert.notEqual(status, 200, JSON.stringify(body));
+    assert.equal(body.error, "db_error");
+  });
+  it("HT10 the count says rows exist and the pages return none → refusal `nothing`, never 'nothing trending'", async () => {
+    _setTestClient(client([], { countExtra: 5 }) as any, true);
+    const { status, body } = await get();
+    assert.equal(status, 200);
+    assert.deepEqual(body.trending, []);
+    assert.equal(body.refusal?.coverage, "nothing", JSON.stringify(body));
+  });
+  it("HT11 the city window is empty and only the global fallback falls short of its count → refusal `partial`", async () => {
+    _setTestClient(client([...usage("ht-cold", 60), ...usage("ht-hot", 40)], { countExtraOn: "window" }) as any, true);
+    const { status, body } = await get("scope=city&city_id=Rome&limit=20");
+    assert.equal(status, 200);
+    assert.equal(body.scope, "global");
     assert.equal(body.refusal?.coverage, "partial", JSON.stringify(body));
   });
 });

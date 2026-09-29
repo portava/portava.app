@@ -15,6 +15,9 @@
  *   TC2      the viewer's profile cannot be built the first time (a safety list unread) and can the second →
  *            a refusal naming compass_profile, never the participant's city
  *   TC3      CONTROL: the viewer shares no location (read, no row) → the participant's city, as before
+ *   TC4      a trip thread (the trip's city) and the viewer's profile cannot be built → the later profile arm refuses (pins SM28)
+ *   TC5      no trip and no participant city; the profile cache expires between the route's two profile reads and
+ *            the second build loses the location → the hydrator's user_location_state is a refusal (pins SM26)
  *
  * Run: SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy node --import tsx/esm --test src/test/compassTelegraphCityUnread.test.ts
  */
@@ -110,5 +113,30 @@ describe("§108 (BK3) Telegraph's city over an unread viewer location", () => {
     assert.equal(status, 200);
     assert.equal(body.city, "Lisbon", JSON.stringify(body));
     assert.equal(body.refusal, undefined, JSON.stringify(body));
+  });
+  it("TC4 a trip thread and the viewer's profile cannot be built → a refusal naming compass_profile, for the trip's city", async () => {
+    serve({ failTables: ["blocks"], answer: (table, _c, single) => (table === "message_threads" && single ? { data: { thread_type: "trip", trip_id: "a1000000-0000-4000-a000-000000000001" }, error: null } : table === "trips" ? { data: { destination_city: "Paris" }, error: null } : undefined) });
+    const { body } = await get(`/compass/telegraph?threadId=${THREAD}`);
+    assert.equal(body.refusal?.coverage, "nothing", JSON.stringify(body));
+    assert.deepEqual(body.refusal?.failedSources, ["compass_profile"]);
+    assert.equal(body.city, "Paris");
+  });
+  it("TC5 the profile cache expires between the route's two reads and the second loses the location → a refusal naming user_location_state", async () => {
+    const realNow = Date.now;
+    let expired = false;
+    try {
+      serve(tgWorld("none", (table, calls) => {
+        if (table === "profiles" && calls.some(([k, a]) => k === "select" && a[0] === "home_city")) { expired = true; Date.now = () => realNow() + 10 * 60_000; return { data: [], error: null }; }
+        if (table === "user_location_state" && expired) return { data: null, error: DB_ERR };
+        return undefined;
+      }));
+      const { status, body } = await get(`/compass/telegraph?threadId=${THREAD}`);
+      assert.equal(status, 200);
+      assert.ok(expired, "precondition: the participants' city read ran, between the two profile reads");
+      assert.ok(body.refusal, JSON.stringify(body));
+      assert.ok(body.refusal.failedSources.includes("user_location_state"), JSON.stringify(body.refusal));
+    } finally {
+      Date.now = realNow;
+    }
   });
 });

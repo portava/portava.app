@@ -14,11 +14,15 @@
  *   TC4  a refusal with a missing or unknown coverage → no alternatives, `failed` (never complete)
  *   TCc  CONTROL: a healthy body → its rows, no read state
  *   UC1  compassRecommendationsFailed: a missing or unknown coverage is a failed read; `partial` is not; no refusal is not
+ *   TCw  the map screen composes its alternatives through these two functions (a source pin: the screen's
+ *        harness stubs the entity hook, so the composed pins are not observable there; TM1–TM3 pin the banner)
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { tripCompassRecommendations, tripCompassReadState } from '../tripCompassRead.ts';
 import { compassRecommendationsFailed } from '../../../../services/compassRecommendationsRefusal.ts';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 const REC = { id: 'r1', type: 'place', title: 'Cafe', reason: 'r', city: 'Manila', data: {} } as never;
 const refusal = (coverage: unknown) => ({ class: 'transient_db', code: 'compass_sources_unread', coverage, failedSources: ['events'] }) as never;
@@ -62,4 +66,11 @@ test('UC1 compassRecommendationsFailed: a missing or unknown coverage is a faile
   assert.equal(compassRecommendationsFailed({ refusal: refusal('partial') }), false);
   assert.equal(compassRecommendationsFailed({}), false);
   assert.equal(compassRecommendationsFailed({ error: 'block_check_failed' }), true);
+});
+
+test('TCw the map screen composes its alternatives and its banner through tripCompassRecommendations / tripCompassReadState', () => {
+  const screen = readFileSync(fileURLToPath(new URL('../../../../../app/map/index.tsx', import.meta.url)), 'utf8');
+  assert.match(screen, /compassRecommendations: tripCompassRecommendations\(compassRes\),/);
+  assert.match(screen, /\{ compassRead: tripCompassReadState\(compassRes\) \}/);
+  assert.doesNotMatch(screen, /compassRecommendations: compassRes\.ok \?/);
 });

@@ -1670,7 +1670,7 @@ export async function fetchCompassTelegraphCards(
  */
 export async function checkCompassTelegraphAvailable(threadId: string): Promise<boolean> {
   const result = await fetchCompassTelegraphCards(threadId);
-  return !result.flagDisabled && result.error !== 'forbidden' && result.error !== 'not_configured';  // census-discovery §107/§108 (D-W11X2-68, D-W11X2-80): a refusal, a 5xx or a network error is not "off" — the chip stays and the tray says the failure
+  return (!result.flagDisabled && result.error !== 'forbidden' && result.error !== 'not_configured') || result.refused === true;  // census-discovery §107/§108 (D-W11X2-68, D-W11X2-80): a refusal, a 5xx or a network error is not "off" — the chip stays and the tray says the failure
 }
 
 // ── AsyncStorage helpers ──────────────────────────────────────────────────────

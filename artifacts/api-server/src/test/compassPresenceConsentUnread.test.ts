@@ -1,5 +1,5 @@
 /**
- * census-discovery §108 (DV-83 round 11, lane W11-X2; D-W11X2-75, D-W11X2-76, D-W11X2-80).
+ * census-discovery §108 (DV-83 round 11, lane W11-X2; D-W11X2-75, D-W11X2-76, D-W11X2-83, D-W11X2-85).
  *
  * §108.1 BK1: `canViewCirclePresenceBatch` — the consent batch the Compass presence walk reads —
  * checked only its `blocks` read. A failed `circle_visibility_settings` read denied every target as
@@ -33,6 +33,7 @@
  *   MO2      the viewer's trip read fails → never "no active trips or upcoming events"
  *   MO3      the reciprocity (viewer-side) read fails → "could not be checked", never "isn't shared both ways"
  *   MO4      an event context's read fails while an occasion is found → the occasion, and the list may be incomplete
+ *   MO5      the reciprocity check THROWS → could not be checked (withheld, and said)
  *
  * Run: SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy node --import tsx/esm --test src/test/compassPresenceConsentUnread.test.ts
  */
@@ -207,13 +208,14 @@ describe("§108 (BK1, BK2) the get_whos_around tool", () => {
 });
 
 /** friendWorld, plus the VIEWER's own sharing rows the reciprocity guard reads (single reads, by user). */
-function meetupWorld(opts: { fail?: string; extra?: Extra; viewerSideFails?: boolean; tripsFail?: boolean } = {}): WorldOpts["answer"] {
+function meetupWorld(opts: { fail?: string; extra?: Extra; viewerSideFails?: boolean; tripsFail?: boolean; viewerSideThrows?: boolean } = {}): WorldOpts["answer"] {
   const now = new Date().toISOString();
   const later = new Date(Date.now() + 3_600_000).toISOString();
   const base = friendWorld(opts.fail, opts.extra)!;
   return (table, calls, single) => {
     const byUser = eqValue(calls, "user_id");
     if (opts.tripsFail && table === "trips") return { data: null, error: DB_ERR };
+    if (single && byUser === VIEWER && opts.viewerSideThrows && table === "circle_presence") throw new Error("socket hang up");
     if (single && byUser === VIEWER) {
       if (table === "circle_visibility_settings") return opts.viewerSideFails ? { data: null, error: DB_ERR } : { data: { global_enabled: true, visibility_mode: "status_only", trip_sharing_default: null, event_sharing_default: null, is_paused: false, consent_version: "v1", consented_at: now }, error: null };
       if (table === "circle_context_settings") return { data: null, error: null };
@@ -252,5 +254,10 @@ describe("§108 sweep (D-W11X2-83): the get_meetup_opportunities tool over a fai
     const r = await meetup(meetupWorld({ extra: { rsvps: "going", eventMembersFail: true } }));
     assert.equal(r.opportunities.length, 1, JSON.stringify(r));
     assert.match(r.info, /may be incomplete/i, r.info);
+  });
+  it("MO5 the reciprocity check THROWS → could not be checked, never 'nobody is sharing'", async () => {
+    const r = await meetup(meetupWorld({ viewerSideThrows: true }));
+    assert.deepEqual(r.opportunities, []);
+    assert.match(r.info, /could not be checked/i, r.info);
   });
 });
