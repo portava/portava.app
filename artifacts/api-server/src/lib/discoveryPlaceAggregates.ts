@@ -55,25 +55,25 @@ export async function batchFetchVoteAndRatingAggregates(
     const [votesRes, reviewsRes] = await Promise.all([
       sc
         .from("place_votes")
-        .select("entity_id, vote")
+        .select("entity_id, vote", { count: "exact" })  // census-discovery §110 (D-W11X2-103): the whole count, so a response cut at db-max-rows is known
         .eq("entity_type", entityType)
         .in("entity_id", entityIds),
       sc
         .from("reviews")
-        .select("entity_id, rating")
+        .select("entity_id, rating", { count: "exact" })
         .eq("entity_type", "place")
         .in("entity_id", entityIds)
         .eq("state", "published"),
     ]);
 
-    for (const row of (votesRes.data ?? []) as any[]) {
+    for (const row of (aggregateReadComplete(votesRes) ? votesRes.data ?? [] : []) as any[]) {  // §110: a cut or failed read states no count, never a low one
       const id = row.entity_id as string;
       if (!result.has(id)) result.set(id, { worthItCount: 0, avgRating: null, reviewCount: 0 });
       if (row.vote === "worth_it") result.get(id)!.worthItCount++;
     }
 
     const reviewsByEntity = new Map<string, number[]>();
-    for (const row of (reviewsRes.data ?? []) as any[]) {
+    for (const row of (aggregateReadComplete(reviewsRes) ? reviewsRes.data ?? [] : []) as any[]) {
       const id = row.entity_id as string;
       if (!reviewsByEntity.has(id)) reviewsByEntity.set(id, []);
       if (row.rating != null) reviewsByEntity.get(id)!.push(parseFloat(String(row.rating)));
@@ -90,4 +90,16 @@ export async function batchFetchVoteAndRatingAggregates(
   } catch { /* non-fatal */ }
 
   return result;
+}
+
+// ── census-discovery §110 (DV-83 round 13, lane W11-X2, D-W11X2-103): a count is stated only over a complete read ──
+// PostgREST cuts every response at db-max-rows (production 1000) with `error: null`. A votes or reviews
+// read that came back short of its exact count — or failed — states no count from it (no badge, as for
+// a place with none), never a low one presented as the count.
+
+/** True when the read succeeded and returned every row its exact count says exists (no count: taken as complete). */
+export function aggregateReadComplete(res: { data?: unknown; error?: unknown; count?: number | null }): boolean {
+  if (res.error) return false;
+  const rows = Array.isArray(res.data) ? res.data.length : 0;
+  return typeof res.count !== "number" || res.count <= rows;
 }

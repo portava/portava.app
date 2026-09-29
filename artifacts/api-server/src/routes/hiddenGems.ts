@@ -87,7 +87,7 @@ import {
 import { GEM_CONTRIBUTION_TYPES } from "../lib/hiddenGemState.js";
 import { logDiscoveryServe, DiscoveryServePoint } from "../lib/discoveryServeLog.js";  import { stampServedRecommendations, exposureForResponse, serveClockOf } from "../lib/discoveryRecommendationRecord.js";  // census-discovery §48 — serve point 11's response carries the ids its serve-log rows do
 
-import { isAdmin } from "../lib/requireAdmin.js";  import { layoverGemWindow, gemsUnderLayoverMode, certifiedWindowKeys, LAYOVER_WINDOW_UNREADABLE_MESSAGE } from "../lib/discoveryLayoverGems.js";  // census-discovery §56 (A13/A14): the layover window is the certified snapshot's
+import { isAdmin } from "../lib/requireAdmin.js"; import { aggregateReadComplete } from "../lib/discoveryPlaceAggregates.js";  import { layoverGemWindow, gemsUnderLayoverMode, certifiedWindowKeys, LAYOVER_WINDOW_UNREADABLE_MESSAGE } from "../lib/discoveryLayoverGems.js";  // census-discovery §56 (A13/A14): the layover window is the certified snapshot's
 
 const router = Router();
 
@@ -216,23 +216,23 @@ async function batchFetchGemAggregates(
     const [votesRes, reviewsRes] = await Promise.all([
       sc
         .from("place_votes")
-        .select("entity_id, vote")
+        .select("entity_id, vote", { count: "exact" })  // census-discovery §110 (D-W11X2-103)
         .eq("entity_type", "gem")
         .in("entity_id", gemIds),
       sc
         .from("reviews")
-        .select("entity_id, rating")
+        .select("entity_id, rating", { count: "exact" })
         .eq("entity_type", "place")
         .in("entity_id", gemIds)
         .eq("state", "published"),
     ]);
-    for (const row of (votesRes.data ?? []) as any[]) {
+    for (const row of (aggregateReadComplete(votesRes) ? votesRes.data ?? [] : []) as any[]) {  // §110: a cut or failed read states no count
       const id = row.entity_id as string;
       if (!result.has(id)) result.set(id, { worthItCount: 0, avgRating: null, reviewCount: 0 });
       if (row.vote === "worth_it") result.get(id)!.worthItCount++;
     }
     const reviewsByGem = new Map<string, number[]>();
-    for (const row of (reviewsRes.data ?? []) as any[]) {
+    for (const row of (aggregateReadComplete(reviewsRes) ? reviewsRes.data ?? [] : []) as any[]) {
       const id = row.entity_id as string;
       if (!reviewsByGem.has(id)) reviewsByGem.set(id, []);
       if (row.rating != null) reviewsByGem.get(id)!.push(parseFloat(String(row.rating)));
