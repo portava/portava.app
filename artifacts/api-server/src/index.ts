@@ -440,3 +440,15 @@ app.listen(port, (err) => {
     logger.warn({ err: startupErr }, "startup: could not query push retry queue health");
   });
 });
+
+// ── Payments / identity provider mode: ONE startup line, booleans only ──────
+// Appended at the foot so every line the censuses cite keeps its number (ES
+// imports are hoisted). Provider name, key present, key mode (test/live/
+// unknown/none), live allowed, key refused — never the key. See
+// lib/paymentsMode.ts; for sandbox testing PAYMENTS_ALLOW_LIVE stays unset.
+import { paymentsStartupSummary } from "./lib/paymentsMode.js";
+{
+  const paymentsMode = paymentsStartupSummary();
+  if (paymentsMode.keyRefused) logger.warn(paymentsMode, "startup: payments/identity provider mode — key REFUSED, every provider call will be refused");
+  else logger.info(paymentsMode, "startup: payments/identity provider mode");
+}

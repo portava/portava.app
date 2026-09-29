@@ -108,7 +108,7 @@ export const mockProvider: IdentityVerificationProvider = {
   },
 
   async handleWebhook(event: WebhookEvent): Promise<VerificationResult | null> {
-    // Mock webhook: JSON body { sessionId, outcome? } from the dev screen.
+    if (!unsignedMockWebhookPermitted(process.env)) throw new MockWebhookRefusedError(); // UNSIGNED JSON { sessionId, outcome? } from the dev screen: explicit IDENTITY_PROVIDER=mock + a local run only
     let body: { sessionId?: string; outcome?: MockSession['hint'] };
     try {
       body = JSON.parse(event.rawBody);
@@ -140,3 +140,7 @@ export const mockProvider: IdentityVerificationProvider = {
     // Nothing external to delete.
   },
 };
+
+// The unsigned webhook is refused unless IDENTITY_PROVIDER=mock is set explicitly
+// AND the process is a local run (lib/paymentsMode.ts mockIdentityPermitted).
+import { MockWebhookRefusedError, unsignedMockWebhookPermitted } from '../../lib/paymentsMode.js';
