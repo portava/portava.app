@@ -302,7 +302,7 @@ export function SavedIdeas({ ideas }: { ideas: SavedIdea[]; tripId: string }) {
  * The full toggle is still available for add/remove via the TripWishlistPicker.
  * ─────────────────────────────────────────────────────────────────────────── */
 export function TripSavedPlacesSection({ tripId }: { tripId: string }) {
-  const { places, loading, error: placesError, remove, clearAll } = useTripSavedPlaces(tripId);
+  const { places, loading, error: placesError, remove, clearAll, syncLabel } = useTripSavedPlaces(tripId); // WP-10: syncLabel says when this is not the whole trip list
 
   const handleClearAll = () => {
     Alert.alert(
@@ -326,7 +326,7 @@ export function TripSavedPlacesSection({ tripId }: { tripId: string }) {
   return (
     <View style={section.wrap}>
       <SectionHead
-        title="Saved Places"
+        title={syncLabel ? `Saved Places · ${syncLabel}` : 'Saved Places'}
         onViewAll={places.length > 0 ? () => router.push('/saved') : undefined}
         onClearAll={places.length > 0 ? handleClearAll : undefined}
       />
