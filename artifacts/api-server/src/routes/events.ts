@@ -666,7 +666,7 @@ async function promoteNextWaitlisted(sc: any, eventId: string, req?: any): Promi
 // any user from joining through a back-door that bypasses server-side gates.
 
 type EligibilityOk   = { ok: true };
-type EligibilityFail = { ok: false; errorCode: string; message: string };
+type EligibilityFail = { ok: false; errorCode: string; message: string; /** census-discovery §110 (D-W11X2-93): present only when a check could not be READ — the refusal is not a verdict about the viewer */ unread?: true };
 
 export async function checkEventEligibility(
   sc: any,
@@ -704,7 +704,7 @@ export async function checkEventEligibility(
     .eq("role", "banned")
     .maybeSingle();
   if (bannedErr) {
-    return { ok: false, errorCode: "forbidden", message: "Event access check is temporarily unavailable" };
+    return { ok: false, errorCode: "forbidden", message: "Event access check is temporarily unavailable", unread: true };
   }
   if (bannedRole) return { ok: false, errorCode: "forbidden", message: "You are banned from this event" };
 
@@ -712,7 +712,7 @@ export async function checkEventEligibility(
   const trustGatesEnabled = await isFlagEnabled(sc, "events_trust_gates_enabled");
   if (trustGatesEnabled) {
     if (ev.verified_only) {
-      const { data: profile } = await sc.from("profiles").select("verified").eq("id", userId).maybeSingle();
+      const { data: profile, error: verifiedErr } = await sc.from("profiles").select("verified").eq("id", userId).maybeSingle(); if (verifiedErr) return { ok: false, errorCode: "forbidden", message: "Verification check is temporarily unavailable for this event", unread: true };  // §110 (D-W11X2-93): a failed read is not "not verified"
       if (!(profile as any)?.verified) {
         return { ok: false, errorCode: "forbidden", message: "This event is for verified users only" };
       }
@@ -729,7 +729,7 @@ export async function checkEventEligibility(
       // gate evaluates) from "could not read" (gate refuses).
       const tpRead = await getTrustProfileResult(sc, userId);
       if (tpRead.state === "unavailable") {
-        return { ok: false, errorCode: "forbidden", message: "Trust check is temporarily unavailable for this event" };
+        return { ok: false, errorCode: "forbidden", message: "Trust check is temporarily unavailable for this event", unread: true };
       }
       const score = (tpRead.state === "ok" ? tpRead.profile.overall_score : null) ?? TRUST_SCORE_WHEN_NO_PROFILE;
       if (score < ev.trust_score_min) {
@@ -745,7 +745,7 @@ export async function checkEventEligibility(
       // read that failed. The seam answers all three cases distinctly.
       const gateAge = await resolveGateAge(sc, userId);
       if (gateAge.state === "unreadable") {
-        return { ok: false, errorCode: "forbidden", message: AGE_CHECK_UNAVAILABLE_MESSAGE };
+        return { ok: false, errorCode: "forbidden", message: AGE_CHECK_UNAVAILABLE_MESSAGE, unread: true };
       }
       if (gateAge.state === "verified_minor") {
         return { ok: false, errorCode: "forbidden", message: AGE_NOT_VERIFIED_ADULT_MESSAGE };

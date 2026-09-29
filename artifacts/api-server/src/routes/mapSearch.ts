@@ -102,19 +102,19 @@ export async function loadNearbyEvents(
   // needs the distinction (the §10 inferred-cause path reports eventsReadFailed)
   // can tell them apart. Callers that don't care coalesce null to [].
   if (error || !Array.isArray(data)) return null;
-  const out: any[] = [];
+  const out: any[] = []; let withheldUnchecked = 0;  // census-discovery §110 (DV-83, D-W11X2-93): rows a gate withheld because its read FAILED
   for (const ev of data as any[]) {
     if (blockedSet.has(ev.host_id)) continue;
     if (ev.visibility === "friends_only" && ev.host_id !== viewerId) {
-      const { data: friendship } = await sc
+      const { data: friendship, error: friendshipErr } = await sc
         .from("user_friendships")
         .select("user_a")
         .or(`and(user_a.eq.${viewerId},user_b.eq.${ev.host_id}),and(user_b.eq.${viewerId},user_a.eq.${ev.host_id})`)
         .maybeSingle();
-      if (!friendship) continue;
+      if (friendshipErr) { withheldUnchecked++; continue; } if (!friendship) continue;  // §110: an unread friendship is withheld, and counted — never "not a friend"
     }
     const elig = await checkEventEligibility(sc, ev, viewerId);
-    if (!elig.ok) continue;
+    if (!elig.ok) { if (elig.unread) withheldUnchecked++; continue; }  // §110: a gate that could not be read is counted, not folded into "ineligible"
     // Honor show_exact_location, matching formatEvent(): a host who hid the exact
     // location must not have its coordinates echoed on the discovery map to
     // anyone but themselves. (Participants still see the exact spot in the event
@@ -125,7 +125,7 @@ export async function loadNearbyEvents(
     }
     out.push(ev);
   }
-  return out;
+  if (withheldUnchecked > 0) WITHHELD_UNCHECKED.set(out, withheldUnchecked); return out;
 }
 
 /**
@@ -138,7 +138,7 @@ export async function loadNearbyEvents(
  */
 interface SourceReport {
   refusal: string | null;
-  collected: number;
+  collected: number; /** §110 (D-W11X2-93): present only when rows were withheld because a gate could not be read */ withheldUnchecked?: number;
 }
 
 // ── GET /api/map/search ───────────────────────────────────────────────────────
@@ -249,7 +249,7 @@ router.get("/map/search", asyncHandler(async (req, res) => {
     const events = await loadNearbyEvents(sc, user.id, lat, lng, radiusKm, blockedSet).catch(() => null);
     if (events === null) { sources.event = { refusal: "events_unreadable", collected: 0 }; return; }
     for (const ev of events) results.push(normalizeEvent(ev));
-    sources.event = { refusal: null, collected: events.length };
+    const unchecked = nearbyEventsWithheldUnchecked(events); sources.event = unchecked > 0 ? { refusal: "event_gates_unreadable", collected: events.length, withheldUnchecked: unchecked } : { refusal: null, collected: events.length };  // §110 (DV-83, D-W11X2-93): rows withheld unchecked are not a complete source
   })());
 
   await Promise.all(tasks);
@@ -317,3 +317,17 @@ router.post("/map/compass-command", asyncHandler(async (req, res) => {
 }));
 
 export default router;
+
+// ── census-discovery §110 (DV-83 round 13, lane W11-X2, D-W11X2-93): what a gate withheld UNCHECKED ──
+//
+// Every row `loadNearbyEvents` reads passes per-event gates that fail CLOSED on a failed read (the
+// friends-only friendship read; `checkEventEligibility`'s ban, verified, trust and age reads). Failing
+// closed is right — an unreadable gate must not admit — but the row is then missing for a reason
+// that is not a fact about the event, so the caller must be able to say so. The count rides beside
+// the array (a WeakMap, so a healthy array and every body built from it are unchanged).
+const WITHHELD_UNCHECKED = new WeakMap<object, number>();
+
+/** How many rows `loadNearbyEvents` withheld because a gate could not be read (0 when none, or for any other array). */
+export function nearbyEventsWithheldUnchecked(rows: unknown): number {
+  return rows && typeof rows === "object" ? (WITHHELD_UNCHECKED.get(rows as object) ?? 0) : 0;
+}

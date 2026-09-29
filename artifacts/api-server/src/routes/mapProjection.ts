@@ -122,7 +122,7 @@ import { foldDiscoveryCandidates, refusedDiscoveryCandidates, selectDiscoveryCan
 import { findNearbyGems } from "../services/hiddenGems/HiddenGemDiscoveryService.js";
 import { applyGemPrivacyBatch } from "../services/hiddenGems/HiddenGemPrivacyGuard.js";
 import { readLiveClaims, toLiveClaimEnvelope } from "../lib/liveClaimRead.js";
-import { loadNearbyEvents } from "./mapSearch.js";
+import { loadNearbyEvents, nearbyEventsWithheldUnchecked } from "./mapSearch.js";
 import { aggregateForViewport, bboxContains, deriveCrowdFlow, type BBox } from "../lib/mapAggregation.js";
 import { applyProtection, type ProtectedZone } from "../lib/protectedLocations.js";
 import { clearProtectedZoneCache, loadActiveProtectedZones } from "../lib/protectedZoneStore.js";
@@ -665,7 +665,7 @@ router.get(
           const events = await loadEventsOnce();
           if (events === null) return;
           for (const ev of events) collected.push(projectEvent(ev, nowMs));
-          sources.push("events");
+          if (nearbyEventsWithheldUnchecked(events) === 0) sources.push("events");  // census-discovery §110 (DV-83, D-W11X2-93): a layer whose rows a gate withheld UNCHECKED is not named as read — the client says it could not be read in full
         })(),
       );
     }
@@ -920,7 +920,7 @@ router.get(
           const events = await loadEventsOnce();
           const causes = deriveEventCauseHypotheses(events ?? [], zones, { now: nowMs });
           report.inferredCause.events = causes.considered;
-          report.inferredCause.eventsReadFailed = events === null;
+          report.inferredCause.eventsReadFailed = events === null || nearbyEventsWithheldUnchecked(events) > 0;  // §110 (D-W11X2-93): an event withheld unchecked could be the adjacent one
           report.inferredCause.hypotheses = causes.hypotheses.length;
 
           // read → derive → attach cause. Every gate below is the producer's
