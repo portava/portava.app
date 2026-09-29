@@ -53,7 +53,7 @@ describe("§104 GET /compass/why with no service client", () => {
   it("W3 the generic sentence carries the refusal: it is a stub, not the explanation", async () => {
     const tok = encodeRecommendationToken({ userId: VIEWER, itemId: "place:1", itemType: "place", sectionName: "for_you", explanationKey: "k" } as any);
     const r = await fetch(`${base}/compass/why/${encodeURIComponent(tok)}`, { headers: { Authorization: `Bearer ${TOKEN}` } });
-    const body = await r.json();
+    const body = (await r.json()) as { refusal?: { code?: string; failedSources?: string[] } };
     assert.equal(body.refusal?.code, "why_unavailable", JSON.stringify(body));
     assert.deepEqual(body.refusal?.failedSources, ["service_client"]);
   });

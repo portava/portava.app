@@ -59,7 +59,7 @@ after(() => server.close());
 
 async function get() {
   const r = await fetch(`${base}/hashtags/trending?scope=city&city_id=Rome`, { headers: { Authorization: `Bearer ${TOKEN}` } });
-  return { status: r.status, body: await r.json() };
+  return { status: r.status, body: (await r.json()) as { error?: string; trending?: unknown[] } };
 }
 
 describe("§104 GET /hashtags/trending — the global fallback read", () => {
