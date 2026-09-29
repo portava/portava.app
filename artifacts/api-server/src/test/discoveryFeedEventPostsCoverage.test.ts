@@ -504,3 +504,27 @@ describe("GET /discovery/feed — an auth error with no status and no known name
     }
   });
 });
+
+// census-discovery §102 (DV-83 round 6 sweep, D-W11X2-37). Event posts keep
+// their documented fail-OPEN posture when the viewer's block list cannot be
+// read (a Trust decision this lane does not change) — but posts served without
+// the block check are no longer served AS IF checked: the feed names "blocks".
+describe("GET /discovery/feed — event posts served without a block check say so (DV-83, §102)", () => {
+  it("EB1 blocks unreadable, a post served: partial, failedSources names blocks, the post kept", async () => {
+    setClient({ errorTables: ["blocks"], rows: { posts: [venuePost("p-1")] } });
+    const r = await get(FEED_POSTS_ONLY);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.posts.map((p: any) => p.id), ["p-1"]);
+    assert.equal(r.body.refusal?.coverage, "partial", JSON.stringify(r.body.refusal));
+    assert.deepEqual(r.body.refusal?.failedSources, ["blocks"]);
+    assert.equal(r.body.refusal?.code, "author_set_unreadable");
+  });
+
+  it("EB2 CONTROL blocks unreadable, no post and no place served: nothing went out unchecked, no refusal", async () => {
+    setClient({ errorTables: ["blocks"] });
+    const r = await get(FEED_POSTS_ONLY);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.posts, []);
+    assert.equal(r.body.refusal, undefined, JSON.stringify(r.body.refusal));
+  });
+});

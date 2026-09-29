@@ -318,3 +318,34 @@ describe('PlaceDetailSheet — Wikidata enrichment (description fallback)', () =
     });
   });
 });
+
+// ── census-discovery §102 (DV-83 round 6, D-W11X2-39) ─────────────────────────
+// `getWikidataEnrichment` answers null for a failed read (a 502 from the route,
+// which since §102 includes Wikidata's 200-with-error, a network failure, bad
+// JSON) and an enrichment object — all-null for an entity Wikidata reports
+// missing — for a read that happened. A failed read is said; it is never the
+// same screen as "Wikidata has nothing more on this place".
+describe('PlaceDetailSheet — a failed Wikidata read is said (DV-83, §102)', () => {
+  afterEach(() => jest.clearAllMocks());
+
+  it('WK1 the enrichment read failed → "couldn\'t load more" line', async () => {
+    mockGetWikidataEnrichment.mockResolvedValueOnce(null);
+    const { findByTestId } = await mountSheet({ ...BASE_PLACE, description: null, wikidataId: 'Q243' });
+    const line = await findByTestId('place-sheet-wikidata-failed');
+    expect(line.props.children).toBe('Couldn’t load more about this place just now.');
+  });
+
+  it('WK2 CONTROL an entity Wikidata reports missing → no failure line', async () => {
+    mockGetWikidataEnrichment.mockResolvedValueOnce({ description: null, wikipediaUrl: null, commonsImageUrl: null });
+    const { queryByTestId, getByTestId } = await mountSheet({ ...BASE_PLACE, description: null, wikidataId: 'Q244' });
+    await waitFor(() => expect(mockGetWikidataEnrichment).toHaveBeenCalledWith('Q244'));
+    await waitFor(() => expect(getByTestId('place-sheet-wikidata')).toBeTruthy());
+    expect(queryByTestId('place-sheet-wikidata-failed')).toBeNull();
+  });
+
+  it('WK3 CONTROL no wikidataId → no read, no failure line', async () => {
+    const { queryByTestId } = await mountSheet({ ...BASE_PLACE, wikidataId: null });
+    expect(mockGetWikidataEnrichment).not.toHaveBeenCalled();
+    expect(queryByTestId('place-sheet-wikidata-failed')).toBeNull();
+  });
+});

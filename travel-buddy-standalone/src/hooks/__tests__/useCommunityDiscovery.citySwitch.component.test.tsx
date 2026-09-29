@@ -186,3 +186,35 @@ describe('useCommunityDiscovery — held rows belong to the city they were read 
     expect(result.current.unavailable).toBe(true);
   });
 });
+
+// census-discovery §102 (DV-83 round 6, D-W11X2-37): GET /discovery/community
+// now answers a viewer whose block/mute set could not be read with the venue
+// facts it could show and `partial` naming "blocks" (or `nothing` when every
+// row was authored). The hook must never hold either as the city's whole list.
+describe('useCommunityDiscovery — the unreadable-author-set answer (DV-83, §102)', () => {
+  beforeEach(() => { mockGetCommunityPlaces.mockReset(); mockGetCommunityPlaces.mockReturnValue(new Promise(() => {})); });
+  const BLOCKS = { class: 'transient_db', code: 'community_blocks_unreadable', route: 'GET /discovery/community', failedSources: ['blocks'] };
+
+  it('CB1 partial ["blocks"]: incomplete, and a cache replay on the next mount is still incomplete', async () => {
+    mockGetCommunityPlaces.mockResolvedValueOnce({ ok: true, data: { items: [gem('v1')], city: 'BlocksCity', total: 1, refusal: { ...BLOCKS, coverage: 'partial' } } });
+    const first = await renderHook(() => useCommunityDiscovery('BlocksCity', null));
+    await waitFor(() => expect(first.result.current.loading).toBe(false));
+    expect(first.result.current.incomplete).toBe(true);
+    expect(first.result.current.gems.map((g) => g.id)).toEqual(['v1']);
+    await act(async () => { first.unmount(); });
+    const second = await renderHook(() => useCommunityDiscovery('BlocksCity', null));
+    expect(second.result.current.incomplete).toBe(true);
+  });
+
+  it('CB2 nothing ["blocks"]: refused, and not cached', async () => {
+    mockGetCommunityPlaces.mockResolvedValueOnce({ ok: true, data: { items: [], city: 'BlocksCity2', total: 0, refusal: { ...BLOCKS, coverage: 'nothing' } } });
+    const first = await renderHook(() => useCommunityDiscovery('BlocksCity2', null));
+    await waitFor(() => expect(first.result.current.loading).toBe(false));
+    expect(first.result.current.refused).toBe(true);
+    await act(async () => { first.unmount(); });
+    mockGetCommunityPlaces.mockResolvedValueOnce(page('BlocksCity2', 'b1'));
+    const second = await renderHook(() => useCommunityDiscovery('BlocksCity2', null));
+    await waitFor(() => expect(second.result.current.gems).toHaveLength(1));
+    expect(mockGetCommunityPlaces).toHaveBeenCalledTimes(2);
+  });
+});

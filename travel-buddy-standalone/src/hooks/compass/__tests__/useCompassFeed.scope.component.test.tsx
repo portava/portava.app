@@ -117,3 +117,20 @@ describe('useCompassFeed — a feed is shown only for the scope it was read for 
     expect(result.current.error).toBeNull();
   });
 });
+
+// census-discovery §102 (DV-83 round 6): the verifier's surviving mutation V-E1
+// (`loading` not raised on a scope switch) is killed here. It reaches the
+// screen: CompassPicksSection draws its skeleton only while `loading` — with
+// `loading` false and this scope's `data` null, the section hides, which is the
+// screen it draws for "Compass has no picks here".
+describe('useCompassFeed — a scope switch is loading, never "nothing here" (DV-83, §102)', () => {
+  it('H7 city A answered, switch to B (in flight): loading, and no data', async () => {
+    mockFetchCompassSection.mockResolvedValueOnce({ ok: true, data: feed('a') });
+    const { result, rerender } = await renderHook(({ c }: { c: string }) => useCompassFeed({ section: 'compass_picks', city: c }), { initialProps: { c: 'Lisbon' } });
+    await waitFor(() => expect(firstId(result.current.data)).toBe('a'));
+    expect(result.current.loading).toBe(false);
+    await act(async () => { rerender({ c: 'Porto' }); });
+    expect(result.current.data).toBeNull();
+    expect(result.current.loading).toBe(true);
+  });
+});

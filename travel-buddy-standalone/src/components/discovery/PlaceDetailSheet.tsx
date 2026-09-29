@@ -67,7 +67,7 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city, r
   const [localAiHeaderUrl, setLocalAiHeaderUrl] = useState<string | null>(null);
   // Wikidata enrichment — description, Wikipedia link, Commons image.
   // Fetched lazily when the sheet opens for a place that has a wikidataId.
-  const [wikidataEnrichment, setWikidataEnrichment] = useState<WikidataEnrichment | null>(null);
+  const [wikidataEnrichment, setWikidataEnrichment] = useState<WikidataEnrichment | null>(null); const [wikidataFailed, setWikidataFailed] = useState(false);  // census-discovery §102 (DV-83, D-W11X2-39): null from the service is a failed read, never "nothing more on this place"
   // "Already know it" — optimistic confirmation once the already_known signal
   // is recorded (or already was: the write is idempotent server-side).
   const [known, setKnown] = useState(false);
@@ -88,7 +88,7 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city, r
   // Reset local override and enrichment when a different place is shown.
   useEffect(() => {
     setLocalAiHeaderUrl(null);
-    setWikidataEnrichment(null);
+    setWikidataEnrichment(null); setWikidataFailed(false);
     setKnown(false);
   }, [place?.id]);
 
@@ -99,7 +99,7 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city, r
     if (!place?.wikidataId || !visible) return;
     let cancelled = false;
     getWikidataEnrichment(place.wikidataId)
-      .then((data) => { if (!cancelled) setWikidataEnrichment(data); })
+      .then((data) => { if (!cancelled) { setWikidataEnrichment(data); setWikidataFailed(data === null); } })
       .catch(() => {});
     return () => { cancelled = true; };
   }, [place?.id, place?.wikidataId, visible]);
@@ -426,7 +426,7 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city, r
 
           {/* Description — prefer the place's own description; fall back to
               the Wikidata English description when available and no local one. */}
-          {(place.description || wikidataEnrichment?.description) && (
+          {wikidataFailed && (<View style={styles.section}><Text style={styles.desc} testID="place-sheet-wikidata-failed">{'Couldn\u2019t load more about this place just now.'}</Text></View>)}{(place.description || wikidataEnrichment?.description) && (
             <View style={styles.section}>
               <Text style={styles.sectionLabel}>About</Text>
               <Text style={styles.desc}>{place.description ?? wikidataEnrichment?.description}</Text>

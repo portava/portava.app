@@ -372,7 +372,7 @@ async function geocode(location: string): Promise<{ lat: number; lng: number; di
   }));
   if (!res.ok) throw new UpstreamUnavailableError("nominatim", `nominatim_http_${res.status}`);
   const data = await upstreamCall("nominatim", async () => (await res.json()) as Array<{ lat: string; lon: string; display_name: string }>);
-  const r = data?.[0];
+  if (!Array.isArray(data)) throw new UpstreamUnavailableError("nominatim", "nominatim_error_body"); const r = data[0];  // census-discovery §102 (DV-83, D-W11X2-45): a 200 whose body is not Nominatim's array (an error object) is an outage, never "no such place" cached for 24 h
   if (!r) return null; // THE ONLY null: Nominatim answered and knows no such place — a fact, and cacheable. See GEOCODE OUTAGES at the foot of this file.
   return { lat: parseFloat(r.lat), lng: parseFloat(r.lon), display: r.display_name };
 }
@@ -1135,11 +1135,11 @@ async function queryDbPlaces(
     // Enrich DB places with vote counts and review aggregates (best-effort, cached alongside places)
     const rawIds = dbPlaces.map((p) => p.id.slice(3)); // strip 'db/' prefix
     const agg = await batchFetchVoteAndRatingAggregates(sc, rawIds, "place");
-    if (agg.size === 0) return dbPlaces;
-    return dbPlaces.map((p) => {
+    if (agg.size === 0) return markAuthorsUnchecked(dbPlaces, data as any[], blockedIds);  // census-discovery §102 (DV-83, D-W11X2-37): an unreadable author-exclusion set withheld authored rows — the page says so
+    return markAuthorsUnchecked(dbPlaces.map((p) => {
       const a = agg.get(p.id.slice(3));
       return a ? { ...p, worthItCount: a.worthItCount, avgRating: a.avgRating, reviewCount: a.reviewCount } : p;
-    });
+    }), data as any[], blockedIds);
   } catch {
     // Same reasoning as the `error` branch above: a throw is a failed read, and
     // a failed read is not an empty city.
@@ -1304,7 +1304,7 @@ async function loadCuratedAndCanonicalPlaces(
     // `=== null`, never falsiness: `[]` is a real and trustworthy answer, and an
     // empty city never acquires a refusal. MERGE ORDER. Controls pin both ways.
     failedSources: [...(curated   === null ? [DISCOVERY_CURATED_SOURCE]   : []),
-                    ...(canonical === null ? [DISCOVERY_CANONICAL_SOURCE] : [])],
+                    ...(canonical === null ? [DISCOVERY_CANONICAL_SOURCE] : []), ...(authorsUnchecked(curated) ? [DISCOVERY_AUTHOR_SET_SOURCE] : [])],  // §102 (D-W11X2-37): authored rows withheld for an unreadable block/mute set
   };
 }
 
@@ -2623,7 +2623,7 @@ router.get("/discovery/feed", async (req, res) => {
   // always failed open (see the catch below), while a community place fails
   // closed — null here, per submitterIsVisible. Stays an empty set when no
   // viewer resolves, which is not a failure: there is simply nobody to block.
-  let placeBlockedIds: Set<string> | null = new Set<string>();
+  let placeBlockedIds: Set<string> | null = new Set<string>(); let postsBlocksUnread = false;  // census-discovery §102 (DV-83, D-W11X2-37): event posts were served without the block check (their documented fail-open)
   try {
     const sc = getServiceClient();
     if (sc) {
@@ -2646,7 +2646,7 @@ router.get("/discovery/feed", async (req, res) => {
           //  - community places fail CLOSED: `placeBlockedIds` stays null and
           //    submitterIsVisible withholds every authored row.
           const viewerBlocks = await fetchBlockedSet(sc, viewerId); placeBlockedIds = await withMutedAuthors(sc, viewerId, viewerBlocks);  // census-discovery §47: places also exclude the viewer's mutes (fail-closed); event posts keep the BLOCK set alone and their documented posture.
-          if (viewerBlocks === null) {
+          if (viewerBlocks === null) { postsBlocksUnread = true;
             req.log.warn(
               { userId: viewerId },
               "discovery/feed: block-state read failed — blocked users are NOT being filtered from event posts",
@@ -2714,7 +2714,7 @@ router.get("/discovery/feed", async (req, res) => {
     let totalOsm = 0;
     let totalDb  = 0;
     const failedCats: string[] = [];
-    for (const { cat, osmPlaces, dbPlaces, dbReadFailed, osmReadFailed, merged } of categoryResults) { if (osmReadFailed && !failedCats.includes(DISCOVERY_OVERPASS_SOURCE)) failedCats.push(DISCOVERY_OVERPASS_SOURCE);  // §94.10 (DV-83)
+    for (const { cat, osmPlaces, dbPlaces, dbReadFailed, osmReadFailed, merged } of categoryResults) { if (osmReadFailed && !failedCats.includes(DISCOVERY_OVERPASS_SOURCE)) failedCats.push(DISCOVERY_OVERPASS_SOURCE); if ((authorsUnchecked(dbPlaces) || (postsBlocksUnread && eventPosts.length > 0)) && !failedCats.includes(DISCOVERY_AUTHOR_SET_SOURCE)) failedCats.push(DISCOVERY_AUTHOR_SET_SOURCE);  // §94.10 (DV-83); §102 (D-W11X2-37): authored rows withheld for an unreadable block/mute set are named, never a smaller city
       totalOsm += osmPlaces.length;
       totalDb  += dbPlaces.length;
       if (dbReadFailed) failedCats.push(cat);
@@ -2756,7 +2756,7 @@ router.get("/discovery/feed", async (req, res) => {
       const coverage = feedAnnotated.length === 0 && eventPosts.length === 0 ? "nothing" : "partial";
       sendDiscoveryRefusal(
         res, feedEnvelope,
-        discoveryRefusal(failedCats.some((c) => c !== "event_posts") ? (failedCats.every((c) => c === DISCOVERY_OVERPASS_SOURCE || c === "event_posts") ? "upstream_unavailable" : "transient_db") : viewerUnresolved ? "upstream_unavailable" : "transient_db", failedCats.some((c) => c !== "event_posts") ? (failedCats.every((c) => c === DISCOVERY_OVERPASS_SOURCE || c === "event_posts") ? "overpass_unavailable" : "feed_places_read_failed") : viewerUnresolved ? "feed_viewer_unresolved" : "feed_event_posts_read_failed", "GET /discovery/feed", coverage, failedCats),  // §94 (D-W11X2-1): an event-post-only failure has its own code, so an alert on the places code is not raised by the posts; §100 (D-W11X2-25): an Overpass-only PLACE failure is the upstream's (upstream_unavailable / overpass_unavailable), as on GET /discovery and the counts
+        discoveryRefusal(failedCats.some((c) => c !== "event_posts") ? (failedCats.every((c) => c === DISCOVERY_OVERPASS_SOURCE || c === "event_posts") ? "upstream_unavailable" : "transient_db") : viewerUnresolved ? "upstream_unavailable" : "transient_db", failedCats.some((c) => c !== "event_posts") ? (failedCats.every((c) => c === DISCOVERY_OVERPASS_SOURCE || c === "event_posts") ? "overpass_unavailable" : feedPlacesCode(failedCats)) : viewerUnresolved ? "feed_viewer_unresolved" : "feed_event_posts_read_failed", "GET /discovery/feed", coverage, failedCats),  // §94 (D-W11X2-1): an event-post-only failure has its own code, so an alert on the places code is not raised by the posts; §100 (D-W11X2-25): an Overpass-only PLACE failure is the upstream's (upstream_unavailable / overpass_unavailable), as on GET /discovery and the counts
       );
     } else {
       res.json(feedEnvelope);
@@ -3042,11 +3042,11 @@ router.get("/discovery/community", async (req, res) => {
     // the viewer actually received. Skipped entirely when the query came back
     // empty, so a request that would not have resolved a viewer still doesn't.
     const rawRows = (data ?? []) as any[];
-    let rows = rawRows;
+    let rows = rawRows; let authorsUncheckedComm = false;  // census-discovery §102 (DV-83, D-W11X2-37): authored rows withheld because the viewer's block/mute set could not be read
     if (rawRows.length > 0) {
       const viewerId = await resolveCommunityViewer();
       const blocked  = viewerId ? await withMutedAuthors(sc, viewerId, await fetchBlockedSet(sc, viewerId)) : new Set<string>(); const inactive = inactiveSubmittersFromEmbed(rawRows);  // census-discovery §47: mutes join blocks (fail-closed), and a submitter whose account is not `active` loses both the pick and the byline — the standing is read from the byline embed above, no second round trip.
-      rows = rawRows.filter((row: any) => submitterIsVisible(row.submitted_by, blocked) && submitterInGoodStanding(row.submitted_by, inactive));
+      rows = rawRows.filter((row: any) => submitterIsVisible(row.submitted_by, blocked) && submitterInGoodStanding(row.submitted_by, inactive)); authorsUncheckedComm = blocked === null && rawRows.some((row: any) => Boolean(row.submitted_by));
     }
 
     // Universal display-name rule: submitter names show @handle unless opted in.
@@ -3149,7 +3149,7 @@ router.get("/discovery/community", async (req, res) => {
       batchFetchVoteAndRatingAggregates(getServiceClient(), placeIds, "place"),
     ]);
 
-    res.json({
+    sendCommunityBody(res, authorsUncheckedComm, {  // §102 (D-W11X2-37): was `res.json({` — a list whose authored rows were never block-checked is partial (or nothing), never the city's whole list
       items: stampServedRecommendations(servedItems, exposureForResponse(res, communityViewerId)).map((i) => {  // §48 DV-40 — every served item carries its exposure id, anonymous included
         const a = voteAgg.get(i.id);
         return {
@@ -3614,7 +3614,7 @@ router.get("/discovery/wikidata/:wikidataId", async (req, res) => {
   }
 
   const entities = (body as Record<string, unknown>)?.entities as Record<string, unknown> | undefined;
-  const item = entities?.[wikidataId] as Record<string, unknown> | undefined;
+  const item = entities?.[wikidataId] as Record<string, unknown> | undefined;  if ((body as { error?: unknown } | null)?.error !== undefined || !item) { sendError(res, "upstream_error", "Wikidata answered with an error, not an entity"); return; }  // census-discovery §102 (DV-83, D-W11X2-39): a 200 carrying `error` (maxlag) or no entity was a failed read cached as "missing" for 24 h; only `missing` is an absence
 
   if (!item || (item as { missing?: string }).missing !== undefined) {
     // Entity doesn't exist on Wikidata — return empty enrichment and cache it.
@@ -3845,7 +3845,7 @@ const DISCOVERY_DISMISSED_SOURCE = "rank_events";
  */
 function discoveryPlaceSourcesCode(failedSources: readonly string[]): string { const withOverpass = overpassSourcesCode(failedSources); if (withOverpass) return withOverpass;  // census-discovery §94.10: Overpass reports too
   const curated   = failedSources.includes(DISCOVERY_CURATED_SOURCE);
-  const canonical = failedSources.includes(DISCOVERY_CANONICAL_SOURCE);
+  const canonical = failedSources.includes(DISCOVERY_CANONICAL_SOURCE); if (!curated && !canonical && !failedSources.includes(DISCOVERY_DISMISSED_SOURCE) && failedSources.includes(DISCOVERY_AUTHOR_SET_SOURCE)) return "author_set_unreadable";  // §102 (D-W11X2-37)
   if (curated && canonical) return "discovery_place_sources_read_failed";
   if (canonical) return "canonical_places_read_failed";
   // The dismissal list failing ALONE. Previously unreachable — this function is
@@ -4661,4 +4661,50 @@ function countsRefusalCause(results: readonly PromiseSettledResult<unknown>[], d
   const upstream = reasons.filter((e): e is UpstreamUnavailableError => e instanceof UpstreamUnavailableError);
   const first = upstream[0];
   return first !== undefined && upstream.length === reasons.length ? ["upstream_unavailable", first.code] : ["transient_db", dbCode];
+}
+
+
+// ── census-discovery §102 (DV-83 round 6, lane W11-X2; D-W11X2-37) ────────────
+//
+// A signed-in viewer whose author-exclusion set (blocks both ways + mutes,
+// `withMutedAuthors`) could not be READ is served only the rows that need no
+// such check: venue facts with no submitter. Authored rows are withheld
+// (fail-closed, lib/blocks.ts) — and, since §102, the answer SAYS so. Before,
+// GET /discovery/community, GET /discovery/feed and GET /discovery answered
+// 200 with the venue facts alone and no refusal: a list whose authored rows
+// were never checked, presented as the city's whole list, and cached by the
+// client as such. The name on `failedSources` is the relation that failed.
+// Declared at the foot so no cited line moves; referenced only at request time.
+const DISCOVERY_AUTHOR_SET_SOURCE = "blocks";
+const _authorsUnchecked = new WeakSet<object>();
+
+/** Mark `out` when the author set was unreadable and the read held an authored row it therefore withheld. */
+function markAuthorsUnchecked<T extends object>(out: T, rows: readonly any[], blockedIds: Set<string> | null): T {
+  if (blockedIds === null && rows.some((r) => Boolean(r?.submitted_by))) _authorsUnchecked.add(out);
+  return out;
+}
+
+/** True when this curated page withheld authored rows it could not block-check. */
+function authorsUnchecked(page: unknown): boolean {
+  return typeof page === "object" && page !== null && _authorsUnchecked.has(page);
+}
+
+/** GET /discovery/community's answer: a plain 200, or — authored rows withheld unchecked — the D11 envelope. */
+function sendCommunityBody<T extends { items: readonly unknown[] }>(
+  res: Parameters<typeof sendDiscoveryRefusal>[0],
+  authorsWithheld: boolean,
+  body: T,
+): void {
+  if (!authorsWithheld) { res.json(body); return; }
+  sendDiscoveryRefusal(res, body, discoveryRefusal(
+    "transient_db", "community_blocks_unreadable", "GET /discovery/community",
+    body.items.length > 0 ? "partial" : "nothing", [DISCOVERY_AUTHOR_SET_SOURCE],
+  ));
+}
+
+
+/** §102 (D-W11X2-37): the feed's refusal code when a non-post source failed — the author set alone (with or without Overpass) is not a failed places read. */
+function feedPlacesCode(failedCats: readonly string[]): string {
+  const others = failedCats.filter((c) => c !== "event_posts" && c !== DISCOVERY_OVERPASS_SOURCE);
+  return others.length > 0 && others.every((c) => c === DISCOVERY_AUTHOR_SET_SOURCE) ? "author_set_unreadable" : "feed_places_read_failed";
 }

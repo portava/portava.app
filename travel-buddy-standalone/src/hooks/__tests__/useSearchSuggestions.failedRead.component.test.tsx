@@ -14,7 +14,8 @@
  * arm now raises the same flag: to the panel both are a read with no answer.
  *
  *   S1  transport failure with nothing on screen: refused (the panel's unavailable line), no groups
- *   S2  transport failure over the previous query's groups: groups kept, refused
+ *   S2  transport failure over the previous query's groups: refused, and the groups dropped — RESTATED
+ *       by census-discovery §102 (D-W11X2-42): they were the previous query's answer, not this one's
  *   S3  a good read after a failure clears it
  *   S4  the failure is not cached: returning to the query asks again
  *   C1  CONTROL: an ABORTED read (a newer keystroke) is not a failure
@@ -54,7 +55,7 @@ describe('useSearchSuggestions — a transport failure is said, never "no quick 
     expect(result.current.refused).toBe(true);
   });
 
-  it('S2 transport failure over the previous query\'s groups: groups kept, refused', async () => {
+  it('S2 transport failure over the previous query\'s groups: refused, groups dropped (restated, §102)', async () => {
     mockGetSearchSuggestions.mockResolvedValue({ ok: true, groups: [group('g1')] });
     const { result, rerender } = await renderHook(({ q }: { q: string }) => useSearchSuggestions(q, {}), { initialProps: { q: 'sushi' } });
     await waitFor(() => expect(result.current.groups).toHaveLength(1), PAST_DEBOUNCE);
@@ -62,7 +63,7 @@ describe('useSearchSuggestions — a transport failure is said, never "no quick 
     await act(async () => { rerender({ q: 'sushii' }); });
     await waitFor(() => expect(mockGetSearchSuggestions).toHaveBeenCalledTimes(2), PAST_DEBOUNCE);
     await waitFor(() => expect(result.current.loading).toBe(false), PAST_DEBOUNCE);
-    expect(result.current.groups).toHaveLength(1);
+    expect(result.current.groups).toHaveLength(0);  // §102 (D-W11X2-42): was toHaveLength(1) — 'sushi''s groups are not 'sushii''s answer
     expect(result.current.refused).toBe(true);
   });
 

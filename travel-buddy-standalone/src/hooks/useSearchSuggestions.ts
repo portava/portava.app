@@ -34,7 +34,7 @@ export function useSearchSuggestions(query: string, opts: UseSearchSuggestionsOp
   const [loading, setLoading] = useState(false);
   /**
    * The last answer was a REFUSAL, not a result — the server did not read the
-   * sources. `groups` then holds whatever was on screen before, deliberately,
+   * sources. `groups` then holds only THIS query's earlier groups, if any (§102),
    * so a consumer that renders "no matches" must consult this first.
    */
   const [refused, setRefused] = useState(false); const [incomplete, setIncomplete] = useState(false); // §80: a partial answer, rows real, list short
@@ -42,7 +42,7 @@ export function useSearchSuggestions(query: string, opts: UseSearchSuggestionsOp
   const cacheRef = useRef<Map<string, CacheEntry>>(new Map());
   const abortRef = useRef<AbortController | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const seqRef = useRef(0);
+  const seqRef = useRef(0); const heldQueryRef = useRef<string | null>(null);  // census-discovery §102 (DV-83, D-W11X2-42): the text the groups on screen were read for
 
   const trimmed = query.trim().toLowerCase();
   // ~1km coord rounding: tiny GPS drift must not bust the cache key
@@ -56,7 +56,7 @@ export function useSearchSuggestions(query: string, opts: UseSearchSuggestionsOp
       abortRef.current?.abort();
       abortRef.current = null;
       seqRef.current++;
-      setGroups([]);
+      setGroups([]); heldQueryRef.current = null;
       setLoading(false);
       setRefused(false); setIncomplete(false);
       return;
@@ -69,7 +69,7 @@ export function useSearchSuggestions(query: string, opts: UseSearchSuggestionsOp
       cacheRef.current.delete(key);
       cacheRef.current.set(key, cached);
       seqRef.current++;
-      setGroups(cached.groups);
+      setGroups(cached.groups); heldQueryRef.current = trimmed;
       setLoading(false);
       setRefused(false); setIncomplete(cached.incomplete);
       return;
@@ -113,7 +113,7 @@ export function useSearchSuggestions(query: string, opts: UseSearchSuggestionsOp
           // same stated reason: keep whatever was on screen, never flash empty.
           // Caching this would freeze the outage in for 60s with no further
           // request able to notice the server had recovered.
-          setLoading(false);
+          setLoading(false); if (heldQueryRef.current !== trimmed) { setGroups([]); heldQueryRef.current = null; }  // §102 (D-W11X2-42): another query's groups are not this query's answer
           return;
         }
         const cache = cacheRef.current;
@@ -123,11 +123,11 @@ export function useSearchSuggestions(query: string, opts: UseSearchSuggestionsOp
           if (oldest == null) break;
           cache.delete(oldest);
         }
-        setGroups(res.groups);
+        setGroups(res.groups); heldQueryRef.current = trimmed;
         setLoading(false);
       } else if (!res.aborted) {
         // Transient error: keep whatever was on screen (never flash empty) — and SAY it, as the refusal arm does (§100, D-W11X2-26): no answer is not "no quick matches"
-        setLoading(false); setRefused(true); setIncomplete(false);
+        setLoading(false); setRefused(true); setIncomplete(false); if (heldQueryRef.current !== trimmed) { setGroups([]); heldQueryRef.current = null; }  // §102 (D-W11X2-42)
       }
     }, DEBOUNCE_MS);
 

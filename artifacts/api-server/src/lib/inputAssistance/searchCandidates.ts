@@ -487,7 +487,7 @@ export async function buddiesWithheldByLaunchGate(sc: any): Promise<boolean> {
 //
 // Fetches the set of IDs (from a candidate owner/host list) that have an
 // active account. Used to exclude content from suspended/banned/deleted owners.
-// Fails closed (returns empty set) on DB errors to prevent leaking owner-gated content.
+// Fails closed on DB errors (nothing owner-gated is served) and, since census-discovery §102, refuses by name rather than returning an empty set that read as "no results".
 
 async function fetchActiveOwnerSet(sc: any, ownerIds: string[]): Promise<Set<string>> {
   if (ownerIds.length === 0) return new Set();
@@ -498,10 +498,10 @@ async function fetchActiveOwnerSet(sc: any, ownerIds: string[]): Promise<Set<str
       .in("id", ownerIds)
       .in("account_status", ["active"]);
     // Fail-closed: unknown owner status → treat all as inactive (exclude content)
-    if (error) return new Set();
+    if (error) throw new DiscoverySearchReadError("profiles", error);  // census-discovery §102 (DV-83, D-W11X2-43): still fail-closed — nothing served — and now SAID, never "no results"
     return new Set<string>((data ?? []).map((p: any) => p.id as string));
-  } catch {
-    return new Set();  // fail-closed: prefer exclusion over leaking suspended-owner content
+  } catch (err) {
+    throw err instanceof DiscoverySearchReadError ? err : new DiscoverySearchReadError("profiles", err);  // §102: a thrown standing read is the same unread gate, refused by name
   }
 }
 
@@ -836,7 +836,7 @@ function leadWithTripFit(rows: SearchResult[]): SearchResult[] {
  *   Discovery no longer states the visibility rule; it consumes
  *   `discoverable`. A read that fails AFTER the probe passed
  *   (TRIP_PROJECTION_UNAVAILABLE — a transient error, a revoked grant, a
- *   schema-cache lag) is `[]`, never a crash and never a leak; the capability
+ *   schema-cache lag) is a refusal naming `trips` (§102), never a crash, never a leak, never `[]`; the capability
  *   decides the branch, so there is no silent fallback that would hide it.
  *   The owner's non-member privacy toggles then apply to a searcher; see
  *   lib/discoveryTripProjectionConsumer.ts for why that is accepted.
@@ -867,8 +867,8 @@ async function searchTrips(
         limit: fetchLimit,
       });
       if (!r.ok) {
-        logger.warn({ reason: r.reason, detail: r.detail }, "trip discovery projection unavailable; trips search returns nothing");
-        return [];
+        logger.warn({ reason: r.reason, detail: r.detail }, "trip discovery projection unavailable; trips search refuses (census-discovery §102, D-W11X2-36)");
+        throw new DiscoverySearchReadError("trips", r.detail); // DV-83 §102: was `return [];`, an outage answered as "no trips match"
       }
       const { accepted, rejected } = acceptTripDiscoveryProjections(r.projections);
       if (rejected > 0) logger.warn({ rejected }, "trip discovery projections of an unreadable schema version dropped");
@@ -1003,11 +1003,11 @@ async function searchPlans(
     if (gate.source === "projection") {
       // Not filtered by discoverability in SQL: the by-id reader returns the
       // owner's own private trip too, and tripDiscoveryAdmits — Trips' rule,
-      // not restated here — decides per viewer. A failed read is `[]`.
+      // not restated here — decides per viewer. A failed read refuses (§102), never `[]`.
       const r = await readTripDiscoveryProjections(sc, tripIds);
       if (!r.ok) {
-        logger.warn({ reason: r.reason, detail: r.detail }, "trip discovery projection unavailable; plans search returns nothing");
-        return [];
+        logger.warn({ reason: r.reason, detail: r.detail }, "trip discovery projection unavailable; plans search refuses (census-discovery §102, D-W11X2-36)");
+        throw new DiscoverySearchReadError("trips", r.detail); // DV-83 §102: was `return [];` — the parent trips are unreadable, so no plan can be admitted: say so, never "no plans match"
       }
       const { accepted, rejected } = acceptTripDiscoveryProjections(r.projections);
       if (rejected > 0) logger.warn({ rejected }, "trip discovery projections of an unreadable schema version dropped");

@@ -136,7 +136,7 @@ export default function SearchScreen() {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<TextInput>(null);
   const activeQueryRef = useRef('');
-  const activeTabRef = useRef<TabKey>('all');
+  const activeTabRef = useRef<TabKey>('all'); const searchSeqRef = useRef(0);  // census-discovery §102 (DV-83, D-W11X2-44): the generation of the latest page-1 search — same query and tab is not the same search
 
   const locationGranted = locationState.permissionStatus === 'granted';
 
@@ -197,7 +197,7 @@ export default function SearchScreen() {
     cursor?: string | null,
     intentOverride?: Record<string, string>,
   ) => {
-    const trimmed = q.trim();
+    const trimmed = q.trim(); const mySeq = !cursor ? ++searchSeqRef.current : searchSeqRef.current;  // §102: a page-1 run starts a generation; a cursor page belongs to the one it continues
     const isFirstPage = !cursor;
 
     if (isFirstPage) {
@@ -227,7 +227,7 @@ export default function SearchScreen() {
         intentParams: Object.keys(currentIntent).length > 0 ? currentIntent : undefined,
       });
 
-      if (trimmed !== activeQueryRef.current || tab !== activeTabRef.current) return;
+      if (mySeq !== searchSeqRef.current) return; if (trimmed !== activeQueryRef.current || tab !== activeTabRef.current) return;
 
       if (!res.ok) {
         if (isFirstPage) setError(res.error); else setMoreFailed(true);  // §101 (D-W11X2-30): a failed cursor page is said, not silent
@@ -315,9 +315,9 @@ export default function SearchScreen() {
       }
       setNextCursor(newCursor);
     } catch {
-      if (isFirstPage) setError('Something went wrong. Tap to retry.'); else setMoreFailed(true);  // §101: a thrown cursor read is the same failure
+      if (mySeq !== searchSeqRef.current) return; if (isFirstPage) setError('Something went wrong. Tap to retry.'); else setMoreFailed(true);  // §101: a thrown cursor read is the same failure
     } finally {
-      if (isFirstPage) setLoading(false);
+      if (isFirstPage) { if (mySeq === searchSeqRef.current) setLoading(false); }  // §102: a superseded page 1 does not end the newer one's loading
       else setLoadingMore(false);
     }
   }, [userCoords, tz, activeChips]);

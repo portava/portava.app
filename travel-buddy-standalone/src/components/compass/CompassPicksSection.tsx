@@ -29,6 +29,10 @@ import { postCompassAnalyticsEvent, reportCompassViewed, COMPASS_ENGINE_VERSION 
 import type { CompassFeedItem } from '../../services/compass.ts';
 import { resolveCompassTitle, formatCompassSubtitle, formatCompassContext, resolveCompassCategory, resolveCompassImageUrl } from '../../utils/compassFormat.ts';
 import { getPlaceCategoryFallback } from '../../utils/placeCategoryFallback.ts';
+import { listStaleNotice } from '../../services/discoveryCoverageNotice.ts';
+
+/** census-discovery §102 (DV-83, D-W11X2-41): a failed Compass read, said. */
+const COMPASS_PICKS_FAILED = 'Couldn\u2019t load Compass picks just now.';
 
 // ── Action label mapping ──────────────────────────────────────────────────────
 
@@ -348,13 +352,29 @@ export function CompassPicksSection({
     );
   }
 
-  // Nothing to show — hide silently (no error state)
-  if (displayItems.length === 0) return null;
+  // Nothing to show. Hidden only when that is Compass's answer — census-discovery
+  // §102 (DV-83, D-W11X2-41): a FAILED read with nothing held is said, with a
+  // retry, never the silence Compass's "no picks here" draws.
+  if (displayItems.length === 0) {
+    if (!compass.error) return null;
+    return (
+      <View style={s.container} testID="compass-picks-failed">
+        <SectionHeader city={effectiveCity} onSwitchCity={onSwitchCity} />
+        <View style={s.failedRow}>
+          <Text style={s.failedText}>{COMPASS_PICKS_FAILED}</Text>
+          <Pressable onPress={compass.refresh} hitSlop={8} testID="compass-picks-retry" accessibilityRole="button">
+            <Text style={s.failedRetry}>Try again</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <>
       <View style={s.container}>
         <SectionHeader city={effectiveCity} onSwitchCity={onSwitchCity} />
+        {compass.error ? (<Text style={[s.failedText, s.failedRow]} testID="compass-picks-stale">{listStaleNotice('picks')}</Text>) : null}{/* §102 (D-W11X2-41): a failed refresh over kept picks is said */}
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -574,5 +594,20 @@ const s = StyleSheet.create({
     color: color.onInk,
     fontWeight: '700' as const,
     fontSize: 11,
+  },
+  // §102 (D-W11X2-41): the failed-read line — existing tokens only
+  failedRow: {
+    paddingHorizontal: space.lg,
+    paddingBottom: space.sm,
+  },
+  failedText: {
+    ...t.small,
+    color: color.mute,
+  },
+  failedRetry: {
+    ...t.small,
+    color: color.ink,
+    fontWeight: '700' as const,
+    marginTop: space.xs,
   },
 });

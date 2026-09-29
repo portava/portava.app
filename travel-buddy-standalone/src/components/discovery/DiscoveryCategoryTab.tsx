@@ -411,7 +411,7 @@ export function DiscoveryCategoryTab({
   const [page, setPage]             = useState(1);
   const [total, setTotal]           = useState(0);  const [moreRefused, setMoreRefused] = useState(false); const [partial, setPartial] = useState(false);  // DV-83: page ≥ 2 was REFUSED — see load(); §80: a page came back PARTIAL
   const [locationNudge, setLocationNudge] = useState(false); const [liveUnchecked, setLiveUnchecked] = useState(false); const [refreshFailed, setRefreshFailed] = useState(false); const [moreFailed, setMoreFailed] = useState(false);  // census-discovery §91 (A07): the served page's "now" claims were withheld (meta.liveSafety); §100 (DV-83, D-W11X2-22): the last PAGE-1 read failed in transport while places stayed on screen; §101 (DV-83, D-W11X2-30): the last LOAD-MORE (page ≥ 2) failed in transport, and the footer says so
-  const loadingMore                 = useRef(false);
+  const loadingMore                 = useRef(false); const loadIdRef = useRef(0);  // census-discovery §102 (DV-83, D-W11X2-38): the generation of the latest page-1 read — an answer for an older one never writes the screen
   const nudgeOpacity                = useRef(new Animated.Value(0)).current;
   const nudgeTimer                  = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Stores the coords that were active when the last fetch fired. */
@@ -461,7 +461,7 @@ export function DiscoveryCategoryTab({
   }, [nudgeOpacity]);
 
   const load = useCallback(async (nextPage: number, currentFilters: DiscoveryFilters, reset: boolean) => {
-    if (!destination) return;
+    if (!destination) return; const myGen = nextPage === 1 ? ++loadIdRef.current : loadIdRef.current;  // §102: a page-1 read starts a generation; a load-more belongs to the one it continues
     if (reset) setLoading(true);
     setError(null); setMoreRefused(false); setMoreFailed(false); if (nextPage === 1) setRefreshFailed(false);
 
@@ -491,7 +491,7 @@ export function DiscoveryCategoryTab({
     const res = await getDiscoveryPlaces(destination, category, requestFilters, nextPage, contextMode, ageFilter, customMinAge, customMaxAge, lat, lng, nearestUserLat, nearestUserLng);
 
     // Always clear — bootstrap guard is only needed during the async window.
-    nearestFetchPendingWithCoords.current = false;
+    nearestFetchPendingWithCoords.current = false; if (myGen !== loadIdRef.current) return;  // §102 (D-W11X2-38): superseded (radius, age filter, custom ages, a retry, a new query) — it can neither overwrite a refused or failed read nor sit under the wrong notice
 
     setLoading(false);
     setRefreshing(false);
@@ -713,7 +713,7 @@ export function DiscoveryCategoryTab({
                   <Text style={styles.retryText}>Try again</Text>
                 </Pressable>
               </View>
-            ) : moreFailed ? (<View style={styles.moreRefused} testID="discovery-category-more-failed"><Text style={styles.emptyDesc}>{listMoreFailedNotice('places')}</Text><Pressable style={styles.retryBtn} onPress={handleLoadMore}><Text style={styles.retryText}>Try again</Text></Pressable></View>) : !error && !partial && total > 0 && places.length >= total && places.length > 0 ? (  // §101 (D-W11X2-29): the end claim only after a read that did not fail, beside no partial page, with a known total
+            ) : moreFailed ? (<View style={styles.moreRefused} testID="discovery-category-more-failed"><Text style={styles.emptyDesc}>{listMoreFailedNotice('places')}</Text><Pressable style={styles.retryBtn} onPress={handleLoadMore}><Text style={styles.retryText}>Try again</Text></Pressable></View>) : !refreshFailed && !error && !partial && total > 0 && places.length >= total && places.length > 0 ? (  // §101 (D-W11X2-29): the end claim only after a read that did not fail, beside no partial page, with a known total
               <Text style={styles.endText}>{places.length} places found</Text>
             ) : null
           }

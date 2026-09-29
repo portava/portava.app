@@ -4448,6 +4448,17 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/services/compass.ts",  // §101 grades its feed cache's scope (D-W11X2-34)
     "artifacts/api-server/src/test/discoveryOutputKindsFailedReads.test.ts",
     "artifacts/api-server/src/test/discoveryNoServiceClientRefusals.test.ts",
+    // census-discovery §102 (lane W11-X2, round 6): DV-83 re-graded on the trip projection arms, an unreadable
+    // author set, the tab's and search's latest request, the Wikidata and Nominatim error bodies, and the Compass picks.
+    "artifacts/api-server/src/test/discoveryAuthorSetUnreadable.test.ts",
+    "artifacts/api-server/src/test/discoveryUpstreamErrorBody.test.ts",
+    "artifacts/api-server/src/test/discoveryTripProjectionConsumer.test.ts",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryCategoryTab.latestRequest.component.test.tsx",
+    "travel-buddy-standalone/app/__tests__/search.latestRequest.component.test.tsx",
+    "travel-buddy-standalone/src/components/compass/__tests__/CompassPicksSection.failedRead.component.test.tsx",
+    "travel-buddy-standalone/src/components/compass/CompassPicksSection.tsx",  // §102 grades its failed-read state (D-W11X2-41)
+    "travel-buddy-standalone/src/hooks/__tests__/useSearchSuggestions.heldQuery.component.test.tsx",
+    "travel-buddy-standalone/src/components/discovery/__tests__/PlaceDetailSheet.wikidata.component.test.tsx",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //
