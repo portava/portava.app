@@ -17166,6 +17166,219 @@ An independent re-verification at the merged head is owed before the integrator 
 
 Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
 
+## §102 — DV-83 round 6 (lane W11-X2): the trip projection arms refuse, an unreadable author set is stated, only the latest request writes the screen, an upstream error body is never a cached absence, and DV-83 moves W → C
+
+*Written 2026-09-29 by lane W11-X2 (round 6) on `disc-w11-x2-r6`, from `fedaaa06e`. It closes the four paths of §101.12, each with the verifier's probe copied in as a red test. It decides the five possibles, and the round's own sweep closes four more paths. Decisions are in `docs/architecture/discovery-decision-register.md`, section "W11-X2 round 6", D-W11X2-36 to D-W11X2-46.*
+
+*No migration and no new flag. Each change alters output only in four cases: a Discovery read failed, a safety set could not be read, an upstream answered with an error body, or an older request's answer landed after a newer one. With every read healthy, every served byte is unchanged: the 89 server suites that touch the changed files pass, and apart from the four restatements in 102.7 no existing assertion changed. Every edit in a cited file is line-neutral: lines are changed in place, and new code is appended at a file's foot.*
+
+*All evidence is controlled: in-process routes over fake worlds, and jest over the real screens, tabs, sections and hooks. None of it is production evidence, and no client build carrying the change has shipped.*
+
+### 102.1 Search: a failed trip projection read refuses by name (§101.12 finding 1; D-W11X2-36)
+
+- **Before.** With `discovery_trip_projection_enabled` ON and the schema ready, a projection read that failed after the probe passed was logged and answered `[]`. type=trips and type=plans answered `200 { results: [] }`, and type=all and GET /discovery/suggest did not name `trips`. §22.5 had flagged it, and `discoveryTripProjectionConsumer.test.ts` pinned the empty 200.
+- **Now.** Both arms throw the file's named read error. `searchTrips` does it at `artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:871#throw new DiscoverySearchReadError("trips", r.detail);`, and `searchPlans` at `artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:1010#throw new DiscoverySearchReadError("trips", r.detail);`, since the parent trips are what could not be read. The effects:
+  - a single type is refused `transient_db` / `search_failed` / `nothing`;
+  - type=all and suggest name `trips`.
+  Each line keeps its old text in a comment, so §101.12's anchors still land on the arm they describe.
+- **The pin, restated.** The "capability READY" block asserted the empty 200. That was DV-83's violation, and it now asserts the refusal. No assertion was removed: the trips, plans and thrown cases each gain `refusal.coverage === "nothing"`, and the trips case gains the code.
+
+### 102.2 An unreadable author-exclusion set is stated, not served as a checked list (§101.12 finding 2 and the sweep; D-W11X2-37)
+
+- **Before.** For a signed-in viewer whose block or mute set could not be read, `submitterIsVisible` withheld every authored row, which is the right direction (fail-closed). GET /discovery/community then answered 200 with the venue facts and `total` counting them, with no refusal, and the hook cached that list for five minutes (V5-B1). The sweep found the same silence on GET /discovery and GET /discovery/feed, because `queryDbPlaces` withheld authored rows and reported nothing. The verifier's feed probe passed only because its Overpass read had failed too, so the feed carried a partial refusal for another reason.
+- **Now.**
+  - **Community.** The route serves the rows that need no check. It refuses `partial` when any remain and `nothing` when none do, with `failedSources` `["blocks"]` and code `community_blocks_unreadable` (`artifacts/api-server/src/routes/discovery.ts:3152#sendCommunityBody(res, authorsUncheckedComm, {`). The refusal is sent only when the read held an authored row that was therefore withheld: a city of venue facts alone is complete (C2), and an anonymous caller has nothing to check (C3). A failed mute read is the same case (B3).
+  - **GET /discovery.** A curated page that withheld authored rows is marked. `loadCuratedAndCanonicalPlaces`, the one funnel of the route's four serve paths, names `blocks` (`artifacts/api-server/src/routes/discovery.ts:1307#...(authorsUnchecked(curated) ? [DISCOVERY_AUTHOR_SET_SOURCE] : [])`). The blocks-only code is `author_set_unreadable`. Cache B's context key already carries `failedSources`, so such a page is never replayed as whole.
+  - **The feed.** It names `blocks` for a withheld place row. Its event posts keep their documented fail-open posture on an unreadable block list (a Trust decision, not changed here); the change is that posts served without the check now name `blocks` too (`artifacts/api-server/src/routes/discovery.ts:2717#if ((authorsUnchecked(dbPlaces) || (postsBlocksUnread && eventPosts.length > 0))`). When nothing went out unchecked there is no refusal (EB2).
+  - **The client.** `useCommunityDiscovery` renders `partial` as incomplete and never caches `nothing`. CB1 and CB2 pin both for this body; a cached partial replays as partial, never as the whole list.
+
+### 102.3 DiscoveryCategoryTab: only the latest request writes the screen (§101.12 finding 3; D-W11X2-38)
+
+- **Before.** `load()` had no latest-request guard, and radius, the age filter and custom ages re-run `load(1)` without a remount. The verifier's two probes showed the damage. V5-R3: an older answer overwrote a refused read, putting its rows on screen with no notice. V5-R4: an older answer drew rows under a failure that belonged to the newer request.
+- **Now.** A page-1 read starts a generation, and a load-more belongs to the generation it continues (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:464#const myGen = nextPage === 1 ? ++loadIdRef.current : loadIdRef.current;`). An answer from an older generation writes nothing (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:494#if (myGen !== loadIdRef.current) return;`). A plain counter bumped by every load was rejected: a load-more during a page-1 refresh would then swallow that refresh's failure (R8).
+
+### 102.4 GET /discovery/wikidata/:id: an error body is an upstream error, and the sheet says so (§101.12 finding 4; D-W11X2-39)
+
+- **Before.** Wikidata's HTTP 200 carrying `error` (maxlag) has no `entities`. It was answered and cached for 24 h as an entity with no description, no Wikipedia link and no image (V5-W1).
+- **Now.** An `error` key, or no entity for the id, is `upstream_error` (502) and is not cached (`artifacts/api-server/src/routes/discovery.ts:3617#?.error !== undefined || !item) {`). An `error` body is not trusted even beside an entity (W3). Only Wikidata's `missing` is an absence (C1).
+- **The client.** `PlaceDetailSheet` already dropped a failed read, but silently. With no local description, the sheet looked like "Wikidata has nothing on this place". It now says "Couldn’t load more about this place just now." when, and only when, the read failed (`travel-buddy-standalone/src/components/discovery/PlaceDetailSheet.tsx:429#testID="place-sheet-wikidata-failed"`; WK1–WK3).
+
+### 102.5 The possibles, decided (§101.12; D-W11X2-40, D-W11X2-41, D-W11X2-42, D-W11X2-46)
+
+- **"N places found" beside a failed refresh: real, and closed.** E8 reproduces it. After a failed refresh over a cached page, a good page 2 reaching the total drew "2 places found" beside "Couldn’t refresh just now", a claim that the set ended, about a list whose page 1 nobody re-read. The end claim now also needs `!refreshFailed` (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:716#) : !refreshFailed && !error && !partial && total > 0`).
+- **CompassPicksSection's silent hide: in scope, and closed.** The section is on the Discovery For You tab, and on a failed read it drew exactly the screen Compass draws for "no picks here".
+  - With nothing held, a failed read now shows the header, "Couldn’t load Compass picks just now." and "Try again" (`travel-buddy-standalone/src/components/compass/CompassPicksSection.tsx:359#if (!compass.error) return null;`).
+  - A failed refresh over kept picks says they may be out of date (`travel-buddy-standalone/src/components/compass/CompassPicksSection.tsx:377#testID="compass-picks-stale"`).
+  - Compass disabled, or an answer with no picks, stays hidden (C1, C2). No new colour token.
+- **V-E1 (`useCompassFeed`'s `loading` on a scope switch): it reaches the screen, and is now killed.** With `loading` false and this scope's `data` null, the picks section hides instead of drawing its skeleton. H7 pins `loading` on a switch (`travel-buddy-standalone/src/hooks/compass/useCompassFeed.ts:60#else if (!data || dataScope !== scope) setLoading(true);`). No hook code changed.
+- **`useSearchSuggestions`' held groups: in scope, and closed.** This is the verifier's own V5-R4 shape, a stated failure over the wrong rows: the panel drew "lis"'s suggestions as "lisb"'s above "Suggestions are unavailable". Groups now belong to the text they were read for. A failed or refused read for other text holds nothing; a failure re-asking the same text keeps that text's groups; typing still never flashes empty while a read is in flight (`travel-buddy-standalone/src/hooks/useSearchSuggestions.ts:116#if (heldQueryRef.current !== trimmed) { setGroups([]); heldQueryRef.current = null; }`). Two pins that encoded §100's "keep them" rule are restated (102.7).
+- **V-E3: harmless, recorded.** The search screen draws its partial notice from `partialSources !== null` and never lists the sources, so replacing rather than unioning them changes nothing on screen.
+
+### 102.6 The sweep: four more paths, closed (D-W11X2-43, D-W11X2-44, D-W11X2-45; D-W11X2-37's feed and GET /discovery halves)
+
+This round swept for the verifier's four classes:
+- a `return []` or `?? []` on a failed read in a Discovery search, suggest or candidate producer;
+- a Discovery route that filters by an unreadable safety set and answers 200;
+- a Discovery client screen, tab or hook whose async load has no latest-request guard while its inputs change without a remount;
+- an upstream 200 carrying an error, cached as empty.
+
+- **Found and closed.**
+  1. **The owner-standing read in search.** `fetchActiveOwnerSet` failed closed to an empty set, so every owner-gated row of events, trips, plans, hidden gems, posts and circles was dropped as "not active", and the search answered an empty 200. It still serves nothing owner-gated, and now refuses by name (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:501#if (error) throw new DiscoverySearchReadError("profiles", error);`; S1–S4).
+  2. **GET /discovery and GET /discovery/feed with an unreadable author set** (102.2; D1, F1, EB1).
+  3. **The search screen's late answers.** It dropped a late answer only when its query or tab differed. A tab switched away and back, a chip or a retry re-runs the same query and tab, and the older answer then did four kinds of damage:
+     - cleared the newer partial answer's notice (SQ1);
+     - appended a superseded load-more to the new list (SQ3);
+     - drew a failure over a good answer (SQ4);
+     - ended the newer read's loading, so the empty state showed mid-read (SQ5).
+     A generation now guards it, as on the tab (`travel-buddy-standalone/app/search.tsx:200#const mySeq = !cursor ? ++searchSeqRef.current : searchSeqRef.current;`, `travel-buddy-standalone/app/search.tsx:230#if (mySeq !== searchSeqRef.current) return;`).
+  4. **Nominatim's error body.** `geocode` read `data?.[0]` from any 200, so an error object became the file's cacheable "no such place" for 24 h, and the counts answered `{ counts: {} }`. A body that is not Nominatim's array is now the upstream's outage (`artifacts/api-server/src/routes/discovery.ts:375#if (!Array.isArray(data)) throw new UpstreamUnavailableError("nominatim", "nominatim_error_body");`; N1, NC).
+- **Read and found sound.**
+  - **Producers.** Every other `return []` in `lib/discovery*` and `lib/discoveryCandidates/` is either:
+    - a genuine empty (no ids, no run, no row);
+    - a named-failure throw (`rows()` → `ReadFailed`);
+    - or an enrichment whose failure removes a label and never a row (`readAreaRows`, `canonicalCentroids`).
+  - **The search protection pass.** On an unreadable policy it hides positions and removes no row.
+  - **Client guards.** These consumers already guard, or re-run on an effect with a `cancelled` cleanup:
+    - `useCommunityDiscovery` (abort);
+    - `useSearchSuggestions` (sequence);
+    - `MapSearchSheet` (sequence);
+    - the rails and ForYouTab (`loadIdRef`);
+    - the map's places layer, the counts badge and the sheet's live status and saved state (`cancelled`).
+  - **Upstreams.** Overpass's in-body failure was closed by §99.
+- **Recorded, not changed (D-W11X2-46).**
+  - **The per-type catch-all arms in `searchCandidates.ts`.** They swallow thrown code faults, not failed reads: supabase-js resolves a failed read, and every resolved error there already throws the named error. Converting them would change the input-assistance gateway's contract, which census-input-intelligence grades.
+  - **Mention resolution.** `socialIdentity`'s `.catch(() => [])` is Input Intelligence's, not Discovery's.
+  - **Event posts' fail-open posture.** It stays a Trust decision; it is now stated on the wire.
+
+### 102.7 Tests, seen red, and mutations
+
+- **New suites.**
+  - `artifacts/api-server/src/test/discoveryAuthorSetUnreadable.test.ts` (9): B1 is the verifier's V5-B1; B2, B3, F1, D1, C1–C4.
+  - `artifacts/api-server/src/test/discoveryUpstreamErrorBody.test.ts` (7): W1 is the verifier's V5-W1; W2, W3, C1, C2, N1, NC.
+  - `travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryCategoryTab.latestRequest.component.test.tsx` (8): R3 and R4 are the verifier's V5-R3 and V5-R4; R5–R8, E8, C1.
+  - `travel-buddy-standalone/app/__tests__/search.latestRequest.component.test.tsx` (6): SQ1–SQ5, C1.
+  - `travel-buddy-standalone/src/components/compass/__tests__/CompassPicksSection.failedRead.component.test.tsx` (6): P1–P3, C1–C3.
+  - `travel-buddy-standalone/src/hooks/__tests__/useSearchSuggestions.heldQuery.component.test.tsx` (6): Q1–Q3, C1–C3.
+- **Existing suites extended.**
+  - `discoveryTripProjectionConsumer`: V5-T1–V5-T3 (the verifier's probes), T4, T5 and C1; the sweep's S1–S4 and C1.
+  - `discoveryFeedEventPostsCoverage`: EB1, EB2.
+  - `useCommunityDiscovery.citySwitch`: CB1, CB2.
+  - `useCompassFeed.scope`: H7.
+  - `PlaceDetailSheet.wikidata`: WK1–WK3.
+  - The two new server suites are on the api-server `test` line.
+- **Restated pins.** No assertion was removed; each restatement is a recorded decision.
+  1. `discoveryTripProjectionConsumer` "capability READY — a projection read that fails AFTER the probe passed". Its three cases asserted the empty 200 and now also assert `refusal.coverage === "nothing"` (D-W11X2-36).
+  2. `useSearchSuggestions.failedRead` S2. The group count changes from 1 to 0 (D-W11X2-42).
+  3. `useSearchSuggestions.refusal` "OUTAGE: does not FLASH EMPTY". The group count changes from 1 to 0, with the title and reason restated beside it (D-W11X2-42).
+  4. The block's title and case names, restated to say what they now assert.
+- **Red first.** Each was run at the unfixed code, and the output is kept in the lane's scratch.
+  - Trip projection: V5-T1–V5-T3, T4 and T5 red; C1 green.
+  - Owner standing: S1–S3 red; C1 green. S4 was written after the fix; its red is S-M2.
+  - Author set: B1–B3, F1 and D1 red; C1–C3 green. EB1 was red; EB2 green. C4 was written after the fix; its red is B-M4.
+  - Wikidata: W1 and W2 red; C1 and C2 green. W3 was written after the fix; its red is W-M2.
+  - Nominatim: N1 red; NC green.
+  - Category tab: R3–R7 and E8 red; C1 green. R8 was written after the fix; its red is R-M2.
+  - Search: SQ1 and SQ3 red; SQ2 and C1 green. SQ2 pins that a newer refusal keeps the screen, which held already. SQ4 and SQ5 were written after the fix; their red is Q-M2 and Q-M3, which is the pre-fix code on those lines.
+  - Picks: P1 and P2 red; P3 and C1–C3 green.
+  - Suggestions: Q1 and Q2 red; Q3, C1 and C2 green. C3 was written after the fix; its red is G-M4.
+  - Sheet: WK1 red; WK2 and WK3 green.
+  - `useCompassFeed` H7: green, because it pins code that was already right. Its red is K-M6, the verifier's V-E1.
+- **Mutations.** 32 of 33 are killed. Each was applied alone, its suite run, and the file restored byte-identical (sha256 checked). The one survivor, Q-M4, is equivalent (D-W11X2-46): `handleLoadMore` refuses while page 1 is loading (`travel-buddy-standalone/app/search.tsx:519#if (loadingMore || loading || !nextCursor) return;`), so a cursor run never starts while a page-1 run is in flight.
+
+| # | mutation | red |
+|---|---|---|
+| T-M1 | the trips projection failure answered `[]` | V5-T1, V5-T3, T4, T5, the restated block |
+| T-M2 | the plans parent-trip failure answered `[]` | V5-T2, T5, the restated block |
+| S-M1 | a standing read error → an empty set | S1–S3 |
+| S-M2 | a thrown standing read → an empty set | S1–S4 |
+| B-M1 | community sends no refusal | B1–B3 |
+| B-M2 | the community refusal is always `partial` | B2 |
+| B-M3 | a curated page is never marked | D1, F1 |
+| B-M4 | a curated page is marked with no authored row | C4 |
+| B-M5 | GET /discovery's funnel does not name `blocks` | D1 |
+| B-M6 | the feed does not name `blocks` | F1, EB1 |
+| B-M7 | the feed does not record its posts' unread block list | EB1 |
+| B-M8 | the feed names `blocks` with nothing unchecked served | EB2 |
+| B-M9 | GET /discovery's blocks-only code removed | D1 |
+| B-M10 | the feed's blocks-only code removed | F1, EB1 |
+| W-M1 | the Wikidata error body cached as missing | W1–W3 |
+| W-M2 | the Wikidata `error` key not checked | W3 |
+| N-M1 | a Nominatim error body read as "no such place" | N1 |
+| R-M1 | the tab has no latest-request guard | R3–R7 |
+| R-M2 | a load-more starts a generation | R8 |
+| E-M8 | the end claim beside a failed refresh | E8 |
+| Q-M1 | search has no generation guard | SQ1, SQ3 |
+| Q-M2 | a stale thrown search draws the failure | SQ4 |
+| Q-M3 | a stale page 1 ends the newer one's loading | SQ5 |
+| Q-M4 | a cursor page starts a search generation | SURVIVED — equivalent (above) |
+| P-M1 | the picks section hides a failed read | P1 |
+| P-M2 | the picks' stale line removed | P2 |
+| G-M1 | a transport failure keeps another query's groups | Q1, S2 |
+| G-M2 | a refusal keeps another query's groups | Q2, OUTAGE |
+| G-M3 | a fresh answer does not mark its query | C1 |
+| G-M4 | a cache replay does not mark its query | C3 |
+| K-M6 | V-E1: `loading` not raised on a scope switch | H7 |
+| K-M7 | the sheet does not record a failed enrichment | WK1 |
+| K-M8 | the sheet calls a missing entity a failure | WK2 |
+
+- **Existing tests, run at the final tree.**
+  - Every api-server suite that imports `routes/discovery`, `routes/discoverySearch`, `lib/inputAssistance/searchCandidates` or the input-assistance gateway, search page or social identity, plus the two new ones: 89 files, 1,600 tests, all passing, under Node v24.21.0 (the repository's pinned major).
+  - The client jest suites under `src/components/discovery`, `src/components/compass`, `src/hooks`, `src/components/search` and `app/__tests__/search*`: 128 suites, 835 tests, all green. The node:test files under the same paths run in `check:all` (102.8).
+
+### 102.8 Checks
+
+Run on the final commit.
+
+- **`artifacts/api-server`, the integrator's 24-check guard script, all exit 0:**
+  - `typecheck`, and `typecheck:tests` (863 against a baseline of 863);
+  - `check:test-registration` (the two new suites are on the `test` line);
+  - `check:census-integrity` (discovery: C 101 / W 85 / N 2 / X 0 over 188);
+  - `check:doc-citations` (RESULT clean), `check:citation-targets` (163 against a ceiling of 163) and `check:citation-symbols`;
+  - `check:census-freshness`, `check:census-scope-coverage` and `check:census-row-move-labels`;
+  - `check:migration-prefixes`, `check:production-drift`, `check:writerless-reads`, `check:schema-references`, `check:enum-literals` and `check:flag-polarity`;
+  - `check:discovery-query-paths`, `check:route-auth-gate`, `check:api-prefix`, `check:async-handlers` and `check:frozen-dir`;
+  - `check:telegraph-inventory`, `check:guard-coverage` and `check:unissued-supabase-writes`.
+- **Acknowledgements.** census-discovery's entry names §102's new and extended suites and `CompassPicksSection.tsx`, with the reason they cannot have moved a verdict silently. Every other census that counts a changed file already names it, and `check:census-freshness` passes for each. §102's new suites and `CompassPicksSection.tsx` join this census's CENSUS_SCOPE.
+- **`travel-buddy-standalone`:** `tsc --noEmit -p .` (clean), `typecheck:tests` (173 against 173) and `check:all` (ALL CHECKS PASSED): node tests 7,208, component suites 709 with 4,566 tests, typecheck, typecheck:tests and the lints.
+- **Not run:**
+  - the harness, since no migration was added;
+  - `check:write-path-columns`, which needs live credentials. No write payload changed;
+  - the full api-server `pnpm test`. The 89 suites that touch the changed server files were run instead.
+
+### 102.9 DV-83, restated
+
+§101.12's four paths are closed, each with the verifier's probe red first and green now. Of the five possibles, three were real and are closed, V-E1 is killed, and V-E3 is harmless. The sweep closed four more paths. Every clause of DV-83's criterion holds on every path this lane examined:
+
+1. **Producers send the failure.** Search's trip, plan and owner-standing arms name their source. The community route, GET /discovery and the feed state an unreadable author set. The Wikidata and Nominatim error bodies are upstream failures.
+2. **Nothing refused is cached as complete.** The Wikidata and geocode caches never hold an error body. The community hook replays a partial only as partial and never caches a `nothing`. Cache B keys a `blocks` page apart.
+3. **Nothing refused or failed is rendered as empty or complete.** Four screens now say so:
+   - the tab and search never let a superseded answer overwrite a failed or refused one;
+   - the end claim is not made beside a failed refresh;
+   - the picks section and the place sheet say a failed read;
+   - the typeahead does not draw another query's rows under its failure.
+4. **Consumers branch on coverage.** The community hook, the tab and search read `partial`, `nothing` and the transport failure. `blocks` rides on `failedSources` like every other source.
+
+An independent re-verification at the merged head is owed before the integrator accepts the move, as §101.12's process asks.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§101.12's four paths are closed, each with its verifier probe red first. The three real possibles are closed, V-E1 is killed, the sweep closed four more paths, and 32 of 33 mutations are killed (the 33rd is argued equivalent).** **Search names a failed trip read.** The projection arms throw the named read error (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:871#throw new DiscoverySearchReadError("trips", r.detail);`; V5-T1–V5-T3, T4, T5), and so does the owner-standing read (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:501#if (error) throw new DiscoverySearchReadError("profiles", error);`; S1–S4). **An unreadable author set is stated.** Community, GET /discovery and the feed refuse `partial` or `nothing` naming `blocks` whenever an authored row was withheld unchecked or event posts went out unchecked (`artifacts/api-server/src/routes/discovery.ts:3152#sendCommunityBody(res, authorsUncheckedComm, {`, `artifacts/api-server/src/routes/discovery.ts:1307#...(authorsUnchecked(curated) ? [DISCOVERY_AUTHOR_SET_SOURCE] : [])`; B1–B3, D1, F1, EB1, CB1, CB2). **Only the latest request writes the screen**, on the tab and on search (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:494#if (myGen !== loadIdRef.current) return;`, `travel-buddy-standalone/app/search.tsx:230#if (mySeq !== searchSeqRef.current) return;`; R3–R8, SQ1–SQ5). **An upstream error body is never a cached absence** (`artifacts/api-server/src/routes/discovery.ts:3617#?.error !== undefined || !item) {`, `artifacts/api-server/src/routes/discovery.ts:375#if (!Array.isArray(data)) throw new UpstreamUnavailableError("nominatim", "nominatim_error_body");`; W1–W3, N1), and the sheet says a failed read (WK1). **No failed read is drawn as empty or ended.** This holds for the end claim beside a failed refresh (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:716#) : !refreshFailed && !error && !partial && total > 0`; E8), for the Compass picks (`travel-buddy-standalone/src/components/compass/CompassPicksSection.tsx:359#if (!compass.error) return null;`; P1, P2, H7) and for the typeahead's held groups (`travel-buddy-standalone/src/hooks/useSearchSuggestions.ts:116#if (heldQueryRef.current !== trimmed) { setGroups([]); heldQueryRef.current = null; }`; Q1, Q2). Every path §94, §94.11, §98, §99, §100 and §101 closed still holds: their suites pass, with four pins restated by recorded decisions (102.7). **Stated limits.** Controlled evidence only; no client build carrying these changes has shipped. The trip projection arms run only with `discovery_trip_projection_enabled` ON (seeded FALSE). An independent re-verification at the merged head is owed. |
+
+**Headline.** DV-83 moves W → C. `check:census-integrity` counts **C 101 / W 85 / N 2 / X 0** over 188: CONSTRUCTED 186 / 188 = **98.9 %**, CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged.
+
+### 102.10 Left open, and what would turn this red
+
+- **Seen and not built.**
+  - The feed's refusal `class` for a blocks failure beside Overpass stays `transient_db`, which is the feed's existing rule. GET /discovery's class and code for `["overpass", "blocks"]` stay Overpass's (`onlyOverpassFailed` counts only the retrievals). `failedSources` names both, and consumers key on it.
+  - The per-type catch-all arms, the event posts' fail-open posture and mention resolution's `.catch(() => [])` are recorded in D-W11X2-46, not changed.
+- **What would turn DV-83 red again:**
+  - a failed trip, plan or owner-standing read answered as an empty search, or type=all or suggest not naming it (V5-T1–V5-T3, T4, T5, S1–S4);
+  - an authored row withheld for an unreadable block or mute set, or an event post served without the check, with no refusal naming `blocks` (B1–B3, D1, F1, EB1);
+  - an older answer writing the tab or the search screen over a newer one (R3–R8, SQ1–SQ5);
+  - an upstream error body answered or cached as an absence (W1–W3, N1);
+  - "N places found" beside a failed refresh (E8); the picks section hiding a failed read (P1, P2); another query's suggestion groups under a failure (Q1, Q2); a failed Wikidata read drawn as "nothing more" (WK1);
+  - any path §101.11 lists.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/lib/capability/prerequisitesCore.ts — §93.8 names its function-granular gate boundary as why the Compass KNOWN entry was struck; it is the prerequisite checker's own machinery, and no Discovery verdict rests on it.
