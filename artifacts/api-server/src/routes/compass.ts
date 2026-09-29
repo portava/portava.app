@@ -4767,7 +4767,7 @@ router.get("/compass/telegraph", async (req, res) => {
     // Fallback: use viewer's Compass profile city, or participants' cities
     if (!cityContext) {
       const profile = await getCompassProfile(sc, user.id).catch(() => null);
-      cityContext = profile?.currentCity ?? null;
+      cityContext = profile?.currentCity ?? null; if (!cityContext && (profile === null || profile.locationUnread)) return sendTelegraphRefused(res, null, profile === null ? "telegraph_profile_unread" : "telegraph_context_unread", [profile === null ? "compass_profile" : "user_location_state"]);  // census-discovery §108 (DV-83, D-W11X2-77): the viewer's own city outranks the participants' — unread, it is not "no city", so never another participant's city instead
     }
 
     if (!cityContext && memberRowsErr) return sendTelegraphRefused(res, null, "telegraph_context_unread", ["message_thread_members"]); if (!cityContext && participantIds.length > 0) {

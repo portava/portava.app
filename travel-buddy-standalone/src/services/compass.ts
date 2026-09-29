@@ -1665,12 +1665,12 @@ export async function fetchCompassTelegraphCards(
 
 /**
  * Lightweight flag check: returns true when COMPASS_TELEGRAPH is enabled for
- * this thread. Returns false when the flag is off or on any network/auth error.
+ * this thread. Returns false only when the flag was READ and is off, for a non-member, or with no client.
  * Use this to gate the Ask Compass chip without loading full card data.
  */
 export async function checkCompassTelegraphAvailable(threadId: string): Promise<boolean> {
   const result = await fetchCompassTelegraphCards(threadId);
-  return (result.ok && !result.flagDisabled) || result.refused === true;  // census-discovery §107 (D-W11X2-68): a refusal (e.g. an unread flag table) is not "off" — the chip stays and the tray says the failure
+  return !result.flagDisabled && result.error !== 'forbidden' && result.error !== 'not_configured';  // census-discovery §107/§108 (D-W11X2-68, D-W11X2-80): a refusal, a 5xx or a network error is not "off" — the chip stays and the tray says the failure
 }
 
 // ── AsyncStorage helpers ──────────────────────────────────────────────────────

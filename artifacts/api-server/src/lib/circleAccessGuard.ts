@@ -813,7 +813,7 @@ export async function canViewCirclePresenceBatch(
       : Promise.resolve({ data: [] }),
   ]);
 
-  const settingsById = new Map<string, any>();
+  const settingsById = new Map<string, any>(); const consentUnreadable = consentBatchReadFailed([["circle_visibility_settings", settingsRes], ["circle_context_settings", ctxRes], ["user_account_states", statesRes], ["circle_presence", presenceRes]], contextType, contextId);  // census-discovery §108 (DV-83, D-W11X2-75): these four reads were unchecked
   for (const s of (settingsRes.data ?? []) as any[]) settingsById.set(s.user_id as string, s);
   const ctxById = new Map<string, any>();
   for (const c of (ctxRes.data ?? []) as any[]) ctxById.set(c.user_id as string, c);
@@ -842,7 +842,7 @@ export async function canViewCirclePresenceBatch(
     if (!acceptedTargets.has(targetUserId)) {
       out.set(targetUserId, { allowed: false, reason: "target_not_member" });
       continue;
-    }
+    } if (consentUnreadable) { out.set(targetUserId, { allowed: false, reason: "unavailable" }); continue; }  // §108: a failed consent read denies as `unavailable` (fail closed), never "sharing off", "no presence", or a skipped pause or ban
 
     const settings = settingsById.get(targetUserId) as {
       global_enabled: boolean;
@@ -957,4 +957,19 @@ export async function canViewCirclePresenceBatch(
   }
 
   return out;
+}
+
+/**
+ * census-discovery §108 (DV-83 round 11, D-W11X2-75): `canViewCirclePresenceBatch`'s consent reads.
+ * Until §108 only its `blocks` read was checked. A failed `circle_visibility_settings` read denied every
+ * target as `target_sharing_off` (a fact nobody read), a failed `circle_presence` read allowed a target
+ * with no presence row, and a failed `circle_context_settings` or `user_account_states` read skipped a
+ * context pause or a ban — failing OPEN on privacy. Any one of them failing now denies every target as
+ * `unavailable`, exactly as `canBeSeenByViewersBatch` already does, so the presence walk reports it.
+ */
+function consentBatchReadFailed(reads: Array<[string, unknown]>, contextType: ContextType, contextId: string): boolean {
+  const failed = reads.filter(([, r]) => Boolean((r as { error?: unknown } | null)?.error)).map(([name]) => name);
+  if (failed.length === 0) return false;
+  log.error({ failed, contextType, contextId }, "canViewCirclePresenceBatch: consent read failed; denying every target as unavailable");
+  return true;
 }

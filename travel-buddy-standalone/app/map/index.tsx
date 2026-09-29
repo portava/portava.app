@@ -91,7 +91,7 @@ import { listSaved } from '../../src/services/discoveryBookmarks.ts';
 import { getCrewMap } from '../../src/features/trips/crew/tripCrewLocation.ts';
 import { fetchTripRoutePlan } from '../../src/services/routePlan.ts';
 import { getActiveSession } from '../../src/services/safeReturn.ts';
-import { fetchCompassRecommendations } from '../../src/services/compass.ts';
+import { fetchCompassRecommendations } from '../../src/services/compass.ts'; import { tripCompassRecommendations, tripCompassReadState, type TripCompassRead } from '../../src/features/trips/map/tripCompassRead.ts';  // census-discovery §108 (D-W11X2-81)
 import { useMediaPicker } from '../../src/hooks/useMediaPicker.ts';
 import type { MapMediaAsset } from '../../src/features/map/truth/contributionFlow.ts';
 import type { MediaKind } from '../../src/features/map/truth/liveTruth.ts';
@@ -1182,7 +1182,7 @@ function FullScreenMapScreenInner() {
   const tripId = firstParam(params.tripId);
   const tripCity = title;
   const [composedTrip, setComposedTrip] = useState<ComposedTripMap | null>(null);
-  const [proposal, setProposal] = useState<OptimizeProposal | null>(null);
+  const [proposal, setProposal] = useState<OptimizeProposal | null>(null); const compassAltRead: TripCompassRead = (composedTrip as (ComposedTripMap & { compassRead?: TripCompassRead }) | null)?.compassRead ?? null;  // census-discovery §108 (DV-83, D-W11X2-81): the trip's Compass read, said — carried on the composed trip, so only the latest build writes it
 
   const buildComposedTrip = useCallback(async (): Promise<ComposedTripMap | null> => {
     if (!tripId) return null;
@@ -1201,16 +1201,16 @@ function FullScreenMapScreenInner() {
     // to this trip (§24 purpose-bound); an unrelated session is not projected.
     const safeReturnSession =
       safeRes.session && safeRes.session.tripId === tripId ? safeRes.session : null;
-    return composeTripMap({
+    return Object.assign(composeTripMap({
       tripId,
       planItems,
       savedPlaces,
       crew: crewRes.ok ? crewRes.data.members : [],
       routePlan,
       safeReturnSession,
-      compassRecommendations: compassRes.ok ? (compassRes.data?.recommendations ?? []) : [],
+      compassRecommendations: tripCompassRecommendations(compassRes),  // census-discovery §108 (DV-83, D-W11X2-81): branch on coverage — was: compassRes.ok ? (compassRes.data?.recommendations ?? []) : []
       now: nowIso,
-    });
+    }), { compassRead: tripCompassReadState(compassRes) });
   }, [tripId, tripCity]);
 
   useEffect(() => {
@@ -2674,7 +2674,7 @@ function FullScreenMapScreenInner() {
           </Text>
         </View>
       ) : null}
-      {legacyPlacesActive && placesPartial && places.length > 0 ? (<View style={[s.cityBanner, showCityLocationBanner ? { top: 26 } : null]} pointerEvents="none" testID="map-places-partial"><AlertTriangle size={12} color="#fff" /><Text style={s.cityBannerText}>{listPartialNotice('places')}</Text></View>) : null}
+      {legacyPlacesActive && placesPartial && places.length > 0 ? (<View style={[s.cityBanner, showCityLocationBanner ? { top: 26 } : null]} pointerEvents="none" testID="map-places-partial"><AlertTriangle size={12} color="#fff" /><Text style={s.cityBannerText}>{listPartialNotice('places')}</Text></View>) : null}{tripId && compassAltRead ? (<View style={[s.cityBanner, { top: 52 }]} pointerEvents="none" testID={`map-compass-alternatives-${compassAltRead}`}><AlertTriangle size={12} color="#fff" /><Text style={s.cityBannerText}>{compassAltRead === 'failed' ? 'Couldn\u2019t load Compass alternatives just now.' : listPartialNotice('Compass alternatives')}</Text></View>) : null}
       {/* Passport mode banner */}
       {mode === 'passport' ? (
         <View style={s.modeBanner} pointerEvents="none">

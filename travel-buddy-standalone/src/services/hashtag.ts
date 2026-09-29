@@ -202,7 +202,7 @@ export async function getTrendingHashtags(
 ) {
   const qs = new URLSearchParams({ scope });
   if (city) qs.set('city_id', city);
-  return apiGet<{ trending: TrendingHashtag[]; scope: string; city: string | null }>(
+  return apiGet<{ trending: TrendingHashtag[]; scope: string; city: string | null; /** census-discovery §108 (D-W11X2-79): a window read incompletely */ refusal?: { coverage?: 'nothing' | 'partial' | string; code?: string } | null }>(
     `/api/hashtags/trending?${qs}`,
   );
 }

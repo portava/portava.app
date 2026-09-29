@@ -25,7 +25,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { requireUser, sendError } from '../lib/http.js';
 import { getServiceClient } from '../lib/supabase.js';
-import { nameVisibilitySet } from '../lib/publicIdentity.js';
+import { nameVisibilitySet } from '../lib/publicIdentity.js'; import { discoveryRefusal, sendDiscoveryRefusal } from '../lib/discoveryRefusal.js';  // census-discovery §108 (D-W11X2-79)
 
 import { requireAdmin } from "../lib/requireAdmin.js";
 import { readBlockExclusions, isExcluded, sendExclusionsUnavailable } from '../lib/exclusionSet.js';
@@ -165,15 +165,15 @@ router.get('/hashtags/trending', async (req, res) => {
 
   const since = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
 
-  // Fetch usage rows in window
-  let usageQ = sc
-    .from('hashtag_usage')
-    .select('hashtag_id, author_id, city')
-    .gte('created_at', since);
+  // Fetch usage rows in window — census-discovery §108 (DV-83, D-W11X2-79): read to its end in ordered pages against an exact count; PostgREST's db-max-rows cut the unbounded read silently
+  const cityOnly = scope === 'city' && cityId ? cityId : null; const usageRead = await readTrendingWindow<any>(
+    () => { const q = sc.from('hashtag_usage').select('id', { count: 'exact', head: true }).gte('created_at', since); return cityOnly ? q.eq('city', cityOnly) : q; },
+    (from, to) => { const q = sc.from('hashtag_usage').select('hashtag_id, author_id, city').gte('created_at', since); return (cityOnly ? q.eq('city', cityOnly) : q).order('created_at', { ascending: true }).order('id', { ascending: true }).range(from, to); },
+  );
 
-  if (scope === 'city' && cityId) usageQ = usageQ.eq('city', cityId);
+  let windowIncomplete = !usageRead.complete;  // §108: a window read short of its count, or over the cap, is never served as the complete ranking
 
-  const { data: usageRows, error: usageErr } = await usageQ;
+  const { data: usageRows, error: usageErr } = { data: usageRead.rows, error: usageRead.error };
 
   if (usageErr) {
     req.log.error({ err: usageErr }, 'hashtags/trending usage failed');
@@ -197,10 +197,10 @@ router.get('/hashtags/trending', async (req, res) => {
   let effectiveScope: 'global' | 'city' = scope;
   if (scope === 'city' && Object.keys(usageByHt).length === 0) {
     effectiveScope = 'global';
-    const { data: fbRows, error: fbErr } = await sc
-      .from('hashtag_usage')
-      .select('hashtag_id, author_id, city')
-      .gte('created_at', since); if (fbErr) { req.log.error({ err: fbErr }, 'hashtags/trending global fallback failed'); sendError(res, 'db_error', fbErr.message); return; }  // census-discovery §104 (DV-83, D-W11X2-57): the Discover screen's chips; a failed fallback read is not "nothing trending"
+    const fbRead = await readTrendingWindow<any>(() => sc.from('hashtag_usage').select('id', { count: 'exact', head: true }).gte('created_at', since),
+      (from, to) => sc.from('hashtag_usage').select('hashtag_id, author_id, city').gte('created_at', since).order('created_at', { ascending: true }).order('id', { ascending: true }).range(from, to));
+    const { data: fbRows, error: fbErr } = { data: fbRead.rows, error: fbRead.error }; if (!fbRead.complete) windowIncomplete = true;  // census-discovery §108 (D-W11X2-79): the fallback window is paged the same way
+    if (fbErr) { req.log.error({ err: fbErr }, 'hashtags/trending global fallback failed'); sendError(res, 'db_error', fbErr.message); return; }  // census-discovery §104 (DV-83, D-W11X2-57): the Discover screen's chips; a failed fallback read is not "nothing trending"
     for (const row of (fbRows ?? []) as any[]) {
       if (!usageByHt[row.hashtag_id]) {
         usageByHt[row.hashtag_id] = { total: 0, authors: new Set(), cityCount: 0 };
@@ -212,18 +212,18 @@ router.get('/hashtags/trending', async (req, res) => {
   }
 
   if (Object.keys(usageByHt).length === 0) {
-    res.status(200).json({ trending: [], scope: effectiveScope, city: cityId ?? null });
+    sendTrending(res, [], effectiveScope, cityId ?? null, windowIncomplete);  // §108: an incomplete window is never "nothing trending"
     return;
   }
 
   // Fetch engagement for posts using these hashtags in the window
   const htIds = Object.keys(usageByHt);
-  const { data: postUsage, error: postUsageErr } = await sc
-    .from('hashtag_usage')
-    .select('hashtag_id, source_id')
-    .eq('source_type', 'post')
-    .in('hashtag_id', htIds)
-    .gte('created_at', since); if (postUsageErr) { req.log.error({ err: postUsageErr }, 'hashtags/trending ranking read failed'); sendError(res, 'db_error', 'trending hashtags could not be ranked just now'); return; }  // census-discovery §105 (DV-83, D-W11X2-61): a failed ranking read is not a ranking
+  const postUsageRead = await readByIdChunks(htIds, (ids) => readTrendingWindow<any>(
+    () => sc.from('hashtag_usage').select('id', { count: 'exact', head: true }).eq('source_type', 'post').in('hashtag_id', ids).gte('created_at', since),
+    (from, to) => sc.from('hashtag_usage').select('hashtag_id, source_id').eq('source_type', 'post').in('hashtag_id', ids).gte('created_at', since).order('created_at', { ascending: true }).order('id', { ascending: true }).range(from, to),
+  ));  // census-discovery §108 (DV-83, D-W11X2-79): paged to its end, in id chunks a request URL can carry
+  const { data: postUsage, error: postUsageErr } = { data: postUsageRead.rows, error: postUsageRead.error }; if (!postUsageRead.complete) windowIncomplete = true;
+  if (postUsageErr) { req.log.error({ err: postUsageErr }, 'hashtags/trending ranking read failed'); sendError(res, 'db_error', 'trending hashtags could not be ranked just now'); return; }  // census-discovery §105 (DV-83, D-W11X2-61): a failed ranking read is not a ranking
 
   const postsByHt: Record<string, string[]> = {};
   for (const row of (postUsage ?? []) as any[]) {
@@ -235,10 +235,10 @@ router.get('/hashtags/trending', async (req, res) => {
   let engagementMap: Record<string, number> = {};
 
   if (allPostIds.length > 0) {
-    const { data: postsData, error: postsDataErr } = await sc
-      .from('posts')
-      .select('id, like_count, comment_count')
-      .in('id', allPostIds); if (postsDataErr) { req.log.error({ err: postsDataErr }, 'hashtags/trending ranking read failed'); sendError(res, 'db_error', 'trending hashtags could not be ranked just now'); return; }  // §105
+    const postsRead = await readByIdChunks(allPostIds, async (ids) => { const { data, error } = await sc.from('posts').select('id, like_count, comment_count').in('id', ids); return { rows: (data ?? []) as any[], error, complete: !error }; });
+    // census-discovery §108 (D-W11X2-79): in id chunks; a chunk is at most TRENDING_ID_CHUNK rows (ids are keys), below db-max-rows, so each read is complete
+    const { data: postsData, error: postsDataErr } = { data: postsRead.rows, error: postsRead.error };
+    if (postsDataErr) { req.log.error({ err: postsDataErr }, 'hashtags/trending ranking read failed'); sendError(res, 'db_error', 'trending hashtags could not be ranked just now'); return; }  // §105
 
     const postEngMap: Record<string, number> = {};
     for (const p of (postsData ?? []) as any[]) {
@@ -253,12 +253,12 @@ router.get('/hashtags/trending', async (req, res) => {
   // Compute event activity (hashtag_usage rows where source_type='event' in window)
   const eventActMap: Record<string, number> = {};
   try {
-    const { data: evtUsage, error: evtUsageErr } = await sc
-      .from('hashtag_usage')
-      .select('hashtag_id')
-      .eq('source_type', 'event')
-      .in('hashtag_id', htIds)
-      .gte('created_at', since); if (evtUsageErr) throw evtUsageErr;  // §105: answered below
+    const evtRead = await readByIdChunks(htIds, (ids) => readTrendingWindow<any>(
+      () => sc.from('hashtag_usage').select('id', { count: 'exact', head: true }).eq('source_type', 'event').in('hashtag_id', ids).gte('created_at', since),
+      (from, to) => sc.from('hashtag_usage').select('hashtag_id').eq('source_type', 'event').in('hashtag_id', ids).gte('created_at', since).order('created_at', { ascending: true }).order('id', { ascending: true }).range(from, to),
+    ));  // census-discovery §108 (D-W11X2-79): paged like the window
+    const { data: evtUsage, error: evtUsageErr } = { data: evtRead.rows, error: evtRead.error }; if (!evtRead.complete) windowIncomplete = true;
+    if (evtUsageErr) throw evtUsageErr;  // §105: answered below
     for (const row of (evtUsage ?? []) as any[]) {
       eventActMap[row.hashtag_id] = (eventActMap[row.hashtag_id] ?? 0) + 1;
     }
@@ -312,7 +312,7 @@ router.get('/hashtags/trending', async (req, res) => {
     }))
     .sort((a: any, b: any) => b.trendingScore - a.trendingScore);
 
-  res.status(200).json({ trending, scope: effectiveScope, city: cityId ?? null });
+  sendTrending(res, trending, effectiveScope, cityId ?? null, windowIncomplete);  // census-discovery §108 (DV-83, D-W11X2-79): a ranking over an incomplete window is served as partial
 });
 
 // ─── GET /api/hashtags/:slug ──────────────────────────────────────────────────
@@ -1071,4 +1071,56 @@ export default router;
 function sendFeedReadFailed(req: { log: { error: (o: object, m: string) => void } }, res: Parameters<typeof sendError>[0], err: unknown, read: string): void {
   req.log.error({ err, read }, 'hashtag feed read failed');
   sendError(res, 'db_error', 'this hashtag feed could not be loaded just now');
+}
+
+// ─── census-discovery §108 (DV-83 round 11, D-W11X2-79): GET /hashtags/trending reads its windows to the end ──
+//
+// PostgREST caps every response at db-max-rows (production: 1000, census §67.3) and says nothing, so an
+// unbounded read of a busy 48 h window came back PARTIAL with `error: null`, and the chips were ranked over
+// it as the complete list. Each window read is now an exact count, then ordered pages (created_at, id — new
+// rows land at the end, so the pages do not shift) until the count is reached. A window over the row cap,
+// or pages that fall short of the count, is ranked over what was read and served with coverage `partial`;
+// a failed page is a failed read (db_error), never a ranking of the pages before it.
+
+export const TRENDING_WINDOW_PAGE = 1000;
+export const TRENDING_WINDOW_MAX_ROWS = 20_000;
+/** Ids per `.in()` read: a list a request URL can carry. */
+export const TRENDING_ID_CHUNK = 100;
+
+type TrendingReadError = { message: string } | null;
+interface TrendingWindowRead<T> { rows: T[]; error: TrendingReadError; complete: boolean }
+type TrendingCountRead = () => PromiseLike<{ count?: number | null; error: unknown }>;
+type TrendingPageRead = (from: number, to: number) => PromiseLike<{ data: unknown; error: unknown }>;
+
+async function readTrendingWindow<T>(countRead: TrendingCountRead, pageRead: TrendingPageRead): Promise<TrendingWindowRead<T>> {
+  const head = await countRead();
+  if (head.error) return { rows: [], error: head.error as TrendingReadError, complete: false };
+  const total = typeof head.count === 'number' ? head.count : null;
+  const rows: T[] = [];
+  while (rows.length < TRENDING_WINDOW_MAX_ROWS) {
+    const { data, error } = await pageRead(rows.length, rows.length + TRENDING_WINDOW_PAGE - 1);
+    if (error) return { rows: [], error: error as TrendingReadError, complete: false };
+    const got = (Array.isArray(data) ? data : []) as T[];
+    rows.push(...got);
+    if (got.length === 0 || (total !== null ? rows.length >= total : got.length < TRENDING_WINDOW_PAGE)) break;
+  }
+  return { rows, error: null, complete: total !== null ? rows.length >= total : rows.length < TRENDING_WINDOW_MAX_ROWS };
+}
+
+async function readByIdChunks<T>(ids: string[], read: (chunk: string[]) => Promise<TrendingWindowRead<T>>): Promise<TrendingWindowRead<T>> {
+  const rows: T[] = [];
+  let complete = true;
+  for (let i = 0; i < ids.length; i += TRENDING_ID_CHUNK) {
+    const r = await read(ids.slice(i, i + TRENDING_ID_CHUNK));
+    if (r.error) return { rows: [], error: r.error, complete: false };
+    rows.push(...r.rows);
+    if (!r.complete) complete = false;
+  }
+  return { rows, error: null, complete };
+}
+
+function sendTrending(res: import('express').Response, trending: unknown[], scope: 'global' | 'city', city: string | null, incomplete: boolean): void {
+  const body = { trending, scope, city };
+  if (!incomplete) { res.status(200).json(body); return; }
+  sendDiscoveryRefusal(res, body, discoveryRefusal('transient_db', 'trending_window_incomplete', 'GET /hashtags/trending', trending.length > 0 ? 'partial' : 'nothing', ['hashtag_usage']));
 }

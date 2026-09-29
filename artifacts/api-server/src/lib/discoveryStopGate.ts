@@ -45,7 +45,7 @@
  */
 import { isKillSwitchEngaged, type KillSwitchReadStatus } from "./featureFlags.js";
 import { logger } from "./logger.js";
-import { evaluateStopConditions } from "./discoveryStopConditions.js";
+import { evaluateStopConditions, type StopConditionVerdict } from "./discoveryStopConditions.js";
 import { refreshDiscoveryStopMeasurements } from "./discoveryStopMeasurements.js";
 
 const TTL_MS = 30_000;
@@ -77,7 +77,7 @@ export async function discoveryStopHalt(sc: unknown, opts: { measure?: boolean }
       void refreshDiscoveryStopMeasurements(sc);
     }
     let halt: DiscoveryStopHalt = null;
-    if (evaluateStopConditions().tripped.length > 0) halt = "stop_condition";
+    const verdict = evaluateStopConditions(); if (verdict.tripped.length > 0) halt = trippedOnlyUnreadable(verdict) ? "stop_unreadable" : "stop_condition";  // census-discovery §108 (DV-83, D-W11X2-78): a trip whose every condition only could not be MEASURED is an unread stop, still a halt
     else {
       if (!s.kill || s.kill.unread || nowMs - s.kill.at >= TTL_MS) {  // §107: an UNREAD stop is never held for the TTL
         const ks: KillSwitchReadStatus = {}; s.kill = { value: sc ? await isKillSwitchEngaged(sc, "disable_discovery_pde", ks) : false, at: nowMs, unread: ks.unread === true };
@@ -98,4 +98,14 @@ export async function discoveryStopHalt(sc: unknown, opts: { measure?: boolean }
 /** `flagOn && !halted`. The one shape every gated reader uses; a flag that reads OFF costs nothing here. */
 export async function unlessDiscoveryStopped(sc: unknown, flagOn: boolean, opts: { measure?: boolean } = {}): Promise<boolean> {
   return flagOn && (await discoveryStopHalt(sc, opts)) === null;
+}
+
+/**
+ * census-discovery §108 (DV-83 round 11, D-W11X2-78). An armed condition whose measurement could not be
+ * read trips (D-W10-O-2, "cannot read halts"). When EVERY tripped condition tripped only that way, the
+ * stop's state is unknown rather than engaged: the halt is `stop_unreadable`, exactly as an unread manual
+ * stop is (D-W11X2-69). A condition measured over its threshold keeps `stop_condition`.
+ */
+function trippedOnlyUnreadable(verdict: StopConditionVerdict): boolean {
+  return verdict.tripped.every((c) => verdict.readings?.[c]?.state === "unreadable");
 }

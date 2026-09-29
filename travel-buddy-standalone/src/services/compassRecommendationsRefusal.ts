@@ -20,7 +20,7 @@ export interface CompassRecommendationsRefusal {
 /** Is this answer a FAILED read — refused `nothing`, or an older server's `error` marker? */
 export function compassRecommendationsFailed(body: { refusal?: CompassRecommendationsRefusal | null; error?: unknown } | null | undefined): boolean {
   if (!body) return false;
-  if (body.refusal) return body.refusal.coverage === 'nothing';
+  if (body.refusal) return body.refusal.coverage !== 'partial';  // census-discovery §108 (DV-83, D-W11X2-82): a missing or unknown coverage is a failed read, never a complete answer — was: === 'nothing'
   return typeof body.error === 'string';
 }
 

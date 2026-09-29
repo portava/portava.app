@@ -1746,7 +1746,7 @@ async function toolWhosAround(
   return people.length > 0
     ? {
         people,
-        info: "Only people who opted in to sharing appear, at the granularity they chose. Location is approximate only — never precise.",
+        info: unread ? WHOS_AROUND_PARTIAL_INFO : "Only people who opted in to sharing appear, at the granularity they chose. Location is approximate only — never precise.",  // census-discovery §108 (DV-83, D-W11X2-76): a read failed, so the list may be incomplete
       }
     : { people: [], info: "Nobody in the user's circles is sharing their presence right now." };
 }
@@ -2428,3 +2428,6 @@ export async function executeCompassTool(
 // census-discovery §107 sweep (DV-83 round 10, D-W11X2-73): what get_whos_around tells the model when a
 // presence read FAILED (getWhosAround's `unread`) and nobody could be shown. Appended so no cited line moves.
 const WHOS_AROUND_UNREAD_INFO = "Circle presence could not be checked right now (a read failed). Say it could not be checked; do not say nobody is around or that the user has no trips.";
+
+/** census-discovery §108 (DV-83 round 11, D-W11X2-76): people were found, but a presence read on the walk failed, so the list is partial. */
+const WHOS_AROUND_PARTIAL_INFO = "Only people who opted in to sharing appear, at the granularity they chose. Location is approximate only — never precise. Some circles could not be checked right now (a read failed), so this list may be incomplete: say so, and do not say these are the only people around.";
