@@ -6295,6 +6295,114 @@ re-measured in census-map §44. `routes/compass.ts` and
 Totals unchanged. Ten counted files read, zero cited by this census, and the
 one substantive finding handed to the census that owns it.
 
+## §AA — 2026-09-29 (lane TM-create, testing mode): HM-F08, a Memory can be created from the app, and NO VERDICT MOVES
+
+**What was wrong.** The flow catalogue marked HM-F08 ("Create a Memory with
+photos, place and location precision") as built end to end, on the strength of
+the server route and the live-DB suites. From the app it was unreachable. The
+Create hub's Memory row pushed `/memory/edit` with no id; that screen starts in
+`loading` and only leaves it when `getMemory(id)` settles, and with no id it
+never asks, so the person saw a spinner forever. Nothing in the client called
+`createMemory`, so `POST /api/memories` — the §17 CREATE_MEMORY command,
+`artifacts/api-server/src/routes/memories.ts:432#router.post("/memories"`,
+dispatched at `artifacts/api-server/src/routes/memories.ts:517#commandType: "CREATE_MEMORY"`
+— had no way in from the app.
+
+### §AA.1 What was built
+
+- **A create screen**, `travel-buddy-standalone/app/memory/new.tsx`, on the
+  trip/new + trip/edit pattern rather than a mode inside the editor. Fields:
+  title, photos (up to 10, the detail screen's ceiling), caption, place, the
+  §10 location precision (shown once a place is chosen), and visibility
+  (`travel-buddy-standalone/app/memory/new.tsx:54#const VISIBILITY_OPTIONS`,
+  `travel-buddy-standalone/app/memory/new.tsx:66#const PRECISION_OPTIONS`).
+- **Create goes through the command, never a table.** One `createMemory` call
+  (`travel-buddy-standalone/app/memory/new.tsx:142#const result = await createMemory`),
+  which sends the §19 Idempotency-Key the service derives from the payload, so
+  Try again after a failure is the same operation. Photos are then uploaded and
+  attached to the NEW id in order through ADD_MEDIA
+  (`travel-buddy-standalone/app/memory/new.tsx:167#const item = await addMemoryItem`),
+  and the screen is replaced by the Memory
+  (`travel-buddy-standalone/app/memory/new.tsx:177#router.replace`).
+- **True states.** Creating and "Adding photos n of m" are shown on the button;
+  a refused or unreachable create is an error with **Try again**
+  (`travel-buddy-standalone/app/memory/new.tsx:189#: failedOnce ? 'Try again'`)
+  and never a navigation; a photo that fails after the Memory exists is reported
+  ("n of m photos didn't upload") and the person still lands on the Memory
+  (`travel-buddy-standalone/app/memory/new.tsx:171#if (failed > 0)`), because §19
+  says a failed upload does not invalidate saved Memory facts.
+- **The entry.** The hub routes Memory to the new screen
+  (`travel-buddy-standalone/src/components/create/CreateHubSheet.tsx:74#route: '/memory/new'`),
+  and `/memory/edit` without an id now redirects there instead of spinning
+  (`travel-buddy-standalone/app/memory/edit.tsx:148#if (!id) return <Redirect`),
+  line-neutral.
+- **Precision on the wire.** `createMemory` accepts `locationPrecision`
+  (`travel-buddy-standalone/src/services/memories.ts:337#taggedUserIds?: string[];`,
+  `travel-buddy-standalone/src/services/memories.ts:382#taggedUserIds: input.taggedUserIds ?? [], locationPrecision`),
+  line-neutral; an unset precision is dropped by `JSON.stringify`, so a create
+  without one is byte-identical on the wire to before and its §19 key is
+  unchanged.
+- The route is registered as `memory-new` on PORTAVA_ROUTES' closing line.
+
+### §AA.2 Decisions (routine product decisions; this census has no register)
+
+1. **A dedicated screen, not an editor mode.** The codebase pairs create and
+   edit screens (trip/new + trip/edit, events/create); edit.tsx is cited by
+   line, and folding a create mode into it would have moved every cited line.
+2. **Only me by default.** The spec's Memories are private-first (§10 "Automatic
+   Memories default PRIVATE"; H255 names "private Memories" as Phase 1). The
+   server's own default stays `friends_only`; the client now chooses private
+   explicitly, and wider is the person's choice.
+3. **Trip crew is not offered on create.** This screen links no trip, and
+   `canPublishMemory` refuses a crew audience with no trip — offering it would be
+   offering a refusal.
+4. **No precision is pre-selected.** The column's default is the owner's pending
+   decision (the route's own comment says so), not this screen's. Unchosen, the
+   field is not sent and "the app's default precision applies" is shown.
+5. **A title or at least one photo is required**, so an empty Memory cannot be
+   created by an accidental tap.
+
+### §AA.3 Tests seen red, and mutations
+
+`travel-buddy-standalone/app/memory/__tests__/memoryCreate.hubEntry.component.test.tsx:200#it('the hub entry opens a create form`
+and three siblings drive the hub, then the screen the hub pushed, through the
+real service module with only `fetch` faked. **4/4 red** against `8f1a6d6cb`
+(the first three on the forever-spinner, the fourth on the missing redirect),
+**4/4 green** after. Eight mutations, each red, each restored by sha256: hub
+route back to `/memory/edit`; the screen dropping `locationPrecision`; the
+service dropping it from the body; a refused create that navigates; a photo
+failure not reported; photos attached at one position; `/memory/edit` without an
+id spinning again; the default visibility back to `friends_only`.
+`CreateHubSheet.routes.component.test.tsx` was RESTATED (its Memory row now
+expects `/memory/new`), and `sharedSheetContrast.consumers.test.ts` names the new
+screen as a GlobalPlacePicker consumer (consumers 67 → 68; pairs unchanged).
+
+### §AA.4 Why no verdict moves
+
+Every row the catalogue attached to HM-F08 — H17, H22, H29, H30, H76, H130,
+H160, H255 — grades the server, the schema, the kernel's receipts and outbox, or
+production state, and this lane changed none of them. **H76** stays W: the owner
+can now choose a precision from the app, but the server drops it unless
+`memory_location_precision_enabled` is on, and that flag reads false
+(the row's blocker, restated in this census's later sections). **H255** stays W:
+the client now creates private Memories, but the schema default is still
+`friends_only` and there is still no correction path. **H130/H29/H30/H160** stay
+W on the kernel's deployment. Evidence here is controlled (component tests with a
+faked network), not production.
+
+### §AA.5 What is left open
+
+- **Not rehearsed on the testing deployment.** Whether a tester sees the
+  precision stored depends on `memory_location_precision_enabled` there; the
+  kernel path depends on `memory_kernel_enabled`. Both are testing targets in
+  the flow catalogue; neither was changed.
+- No trip or event link on create (the detail and trip-recap paths exist); no
+  offline draft queue (§19's local CREATE_MEMORY_DRAFT) — a create needs a
+  connection, and says so when it has none.
+- Red if: the hub's Memory row points at a screen that cannot create; a refused
+  create navigates; the create writes a table instead of calling the route; or
+  a precision the person chose is not sent.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/migrations/0067_reviews.sql — Cited once, in the headline's 2026-09-14 attribution restatement, to show that the migration the first headline credited to the Memories scrapbook is a cross-domain review system for trips and bookings. That paragraph moves no verdict, and no row grades reviews.
@@ -6302,3 +6410,6 @@ one substantive finding handed to the census that owns it.
 - NOT-GRADED: 0179_stamp_criteria_engine.sql — §L.2's bare citation resolves onto this stray repo-root copy, a duplicate nobody runs (docs/stray-sql-inventory-and-disposition.md item 2). The seed it means is Passport's src/migrations/0179, named in passing for the flag that holds a latent instance off; no row here rests on that seed.
 - NOT-GRADED: artifacts/api-server/src/test/sensingConsumersRevocationReach.test.ts — §Z.2 names it as the only importer of sessionRevocationReach, to show that census-sensing's S112 is W on false evidence. S112 is a Sensing row, corrected in census-sensing §22, and no row in this census rests on the suite.
 - NOT-GRADED: artifacts/api-server/src/lib/sensingRevocationLineage.ts — §Z.2 notes that it names sessionRevocationReach only in a comment, as part of the S112 finding handed to census-sensing. It is Sensing lane code, and no row in this census grades it.
+- NOT-GRADED: travel-buddy-standalone/app/memory/new.tsx — §AA's HM-F08 create screen; built client work, no row here grades a client screen and none moves on it
+- NOT-GRADED: travel-buddy-standalone/app/memory/__tests__/memoryCreate.hubEntry.component.test.tsx — §AA.3's suite for the create flow; controlled evidence, no verdict rests on it
+- NOT-GRADED: travel-buddy-standalone/src/components/create/CreateHubSheet.tsx — §AA.1 cites the hub's Memory route; no row here grades the hub

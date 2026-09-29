@@ -126,3 +126,62 @@ them. Where a flag is off, the stated flag-off behaviour is what the app shows.
 - TRUST-F13 (reviews lists and place votes) — `docs/architecture/census-trust.md` §27.
 - MAP-F04 (Compass → Map commands) and MAP-F08 (circle need-help) —
   `docs/architecture/census-map.md` §46.
+
+## TM-create lane — create a Memory, event-post media, circle need-help copy
+
+Branch `lane-tm-create`. Controlled evidence only (tests with faked clients);
+nothing here was run against the testing deployment.
+
+### HM-F08 — create a Memory from the Create hub
+
+- **Where:** the Create hub → **Memory** (now `/memory/new`; `/memory/edit`
+  without an id redirects there instead of spinning forever).
+- **Steps:** add a title, **Add** two photos, tap **Location** and pick a place,
+  choose a precision (for example **City only**), leave **Only me** or pick
+  another audience, then **Create memory**.
+- **Expected:** one `POST /api/memories` (CREATE_MEMORY, with an
+  `Idempotency-Key`), then each photo is uploaded and attached to the new id, and
+  the screen is replaced by the new Memory. A refused or unreachable create shows
+  the reason with **Try again** and stays on the form; Try again reuses the same
+  key. If a photo fails after the Memory exists, an alert says how many did not
+  upload and the Memory still opens.
+- **Check:** a `memories` row with the title, place and visibility; with
+  `memory_kernel_enabled` on, a `memory_command_receipts` and a
+  `memory_event_outbox` row for the create; with
+  `memory_location_precision_enabled` on, `location_precision = 'city'` (flag
+  off, the server drops it and the column keeps its default); `memory_items`
+  rows at positions 0 and 1.
+- **Recorded:** `docs/architecture/census-highlights-memories.md` §AA.
+
+### Event posts only store this app's media
+
+- **Where:** `POST /api/events/:id/posts` (no client screen sends `mediaUrls`
+  today).
+- **Changed:** every entry of `mediaUrls` must be an uploaded app media URL — the
+  same storage-ref check `POST /api/events/:id/media` already enforces. An
+  external URL, or one external URL beside app ones, is refused **400
+  invalid_payload** ("mediaUrls must be uploaded app media URLs (use
+  /api/media/upload first)") and nothing is written. A text-only post is
+  unchanged.
+- **Check:** a post with `mediaUrls: ["https://example.com/x.jpg"]` is 400 and
+  adds no `event_posts` row; one with a `/storage/v1/object/public/post-media/…`
+  URL on this project's Supabase is 201.
+- **Tests:** `artifacts/api-server/src/test/mediaUploadHardening.test.ts`,
+  "POST /api/events/:id/posts — mediaUrls storage-origin validation": 2 red
+  before the fix, 4/4 green after; 3 mutations red, restored by sha256.
+
+### Circle need-help says who was alerted
+
+- **Where:** a trip or event Circle → **I need help** → **Alert the host**
+  (`POST /api/circle/contexts/:type/:id/need-help`).
+- **Changed:** the server's success message was "Your circle has been
+  notified. Stay safe." while it alerts the host only. It now reads "We're
+  alerting your host. Only the host is notified, not the rest of your circle.
+  Stay safe." The app never showed the server's message; its own copy already
+  says **Alert sent to the host**, so nothing changes on screen.
+- **Check:** the 200 body's `message` names the host; only the host receives a
+  `circle.need_help_host_alert` push.
+- **Tests:** `artifacts/api-server/src/test/circleNeedHelpAlertSilence.test.ts`,
+  "the message is honest": red before, green after; 3 mutations red, restored by
+  sha256. `circle.test.ts` (68) and `telegraphCoordination.test.ts` (105) stay
+  green.
