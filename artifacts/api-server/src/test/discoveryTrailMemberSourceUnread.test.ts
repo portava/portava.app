@@ -378,3 +378,28 @@ describe("census-discovery §105 (DV-83, D-W11X2-60): cursor pages, exploration,
     assert.notEqual(r.status, 200, `a refused trending read was dropped from the lists silently: ${r.text}`);
   });
 });
+
+// census-discovery §107 (DV-83 round 10, D-W11X2-72): the round-9 verifier's V9-SM28, pinned. SM28
+// reduced `heldBackLists`' union to the modules read's unread set, dropping the TRENDING read's, and
+// no suite noticed. The world: a Trail whose only member is an evergreen event, so the modules read
+// makes no rank_events read (no place member, no exploration candidate) and only trending's per-item
+// activity read fails. GET …/more must still refuse, naming trail_activity.
+describe("census-discovery §107 (DV-83, D-W11X2-72): the trending read's unread set inside GET …/more", () => {
+  it("TR17 (V9-SM28) only trending's activity read fails → refused, naming trail_activity", async () => {
+    const s = { trails: [trail()], content_trails: [member("m-e", { content_state: "evergreen", created_at: ago(3_600_000) })], events: [event()], rank_events: surge() };
+    const db = makeDb(s, ["rank_events"]);
+    _setTestClient(db, true);
+    const r = await call(`/v1/discovery/trails/${T}/more`, STRANGER);
+    assert.equal(r.status, 200, r.text);
+    assert.ok(r.body?.refusal, "a failed trending activity read inside GET …/more is dropped silently");
+    assert.deepEqual(r.body.refusal.failedSources, ["trail_activity"]);
+  });
+
+  it("TR17c CONTROL: the same Trail with the activity read healthy → no refusal", async () => {
+    const s = { trails: [trail()], content_trails: [member("m-e", { content_state: "evergreen", created_at: ago(3_600_000) })], events: [event()], rank_events: surge() };
+    _setTestClient(makeDb(s), true);
+    const r = await call(`/v1/discovery/trails/${T}/more`, STRANGER);
+    assert.equal(r.status, 200, r.text);
+    assert.equal(r.body?.refusal, undefined, r.text);
+  });
+});
