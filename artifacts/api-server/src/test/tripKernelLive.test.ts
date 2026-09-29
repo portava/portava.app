@@ -436,3 +436,46 @@ describe("TRIP_KERNEL_CREATE_TRIP_UNGUARDED_INSERT — pinned as the CURRENT beh
     }
   });
 });
+
+// ── WP-10 TRIP-F15 (census-trips §77): the ballot path the app now issues ─────
+// travel-buddy-standalone src/features/trips/planning/tripBallots.ts mints ONE
+// key per tap. That is right only if the deployed kernel applies a changed
+// vote under a new key and answers a replayed old key as a duplicate WITHOUT
+// resurrecting the old vote, and if ACCEPT applies a MAJORITY rule against the
+// tally. The same four facts run on the local harness in
+// src/test/db/tripBallotKernel.db.test.ts; this is the live twin.
+describe("WP-10 ballots — a changed vote, a replayed tap, and the rule ACCEPT applies", () => {
+  let ballotProposal = "";
+  const myVote = async () => {
+    const { data, error } = await sc.from("trip_proposal_votes").select("vote").eq("proposal_id", ballotProposal).eq("user_id", owner);
+    if (error) throw new Error(`read trip_proposal_votes failed: ${error.message}`);
+    if (!Array.isArray(data)) throw new Error("read trip_proposal_votes returned a non-array body");
+    return data.map((r: { vote: string }) => r.vote);
+  };
+
+  it("a vote, then a changed vote under a NEW key: one row, the latest vote", async (t) => {
+    if (!CREDS) return t.skip("no live credentials");
+    ballotProposal = (await ok({
+      type: "CREATE_PROPOSAL", idempotencyKey: key("wp10-ballot-proposal"),
+      payload: { proposal_type: "stage_change", payload_json: { stage_id: stageTwo }, decision_rule: "majority" },
+    })).result.id;
+    const first = await ok({ type: "VOTE_ON_PROPOSAL", idempotencyKey: key("wp10-vote-yes"), payload: { proposal_id: ballotProposal, vote: "yes" } });
+    assert.equal(first.duplicate, false);
+    const changed = await ok({ type: "VOTE_ON_PROPOSAL", idempotencyKey: key("wp10-vote-no"), payload: { proposal_id: ballotProposal, vote: "no" } });
+    assert.equal(changed.duplicate, false);
+    assert.ok(changed.version > first.version, "the changed vote is a transition");
+    assert.deepEqual(await myVote(), ["no"]);
+  });
+
+  it("replaying the first tap's key is a duplicate and does not bring the old vote back", async (t) => {
+    if (!CREDS) return t.skip("no live credentials");
+    const replay = await ok({ type: "VOTE_ON_PROPOSAL", idempotencyKey: key("wp10-vote-yes"), payload: { proposal_id: ballotProposal, vote: "yes" } });
+    assert.equal(replay.duplicate, true);
+    assert.deepEqual(await myVote(), ["no"]);
+  });
+
+  it("ACCEPT on a MAJORITY proposal the electorate voted down is refused TRIP_PROPOSAL_VOTE_NOT_MET", async (t) => {
+    if (!CREDS) return t.skip("no live credentials");
+    await refused("TRIP_PROPOSAL_VOTE_NOT_MET", { type: "ACCEPT_PROPOSAL", idempotencyKey: key("wp10-accept"), payload: { proposal_id: ballotProposal } });
+  });
+});

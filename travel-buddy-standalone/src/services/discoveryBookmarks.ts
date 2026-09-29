@@ -443,3 +443,25 @@ export async function removeSaved(id: string): Promise<void> {
     }
   }
 }
+
+// ── WP-10 (census-trips §77, decision WP10-D1): local-only access for the
+// trip saved-places merge in src/features/trips/savedPlaces/. listSaved()
+// replaces the device list with /api/wishlist's when that read succeeds, so a
+// trip save that has not reached the server yet must be read — and, while it
+// is pending, kept — without going through it.
+
+/** This device's saves for one list, never the server's. A failed read is []: nothing is pushed or dropped on it. */
+export async function listLocalSaved(listId: string): Promise<BookmarkedPlace[]> {
+  const all = await readAll();
+  return all.filter((b) => (b.listId ?? 'global') === listId);
+}
+
+/** Add a device copy of `place` to `listId` if it is not already there. Local only; never removes. */
+export function ensureSavedInList(place: BookmarkedPlace, listId: string): Promise<void> {
+  return withWriteLock(async () => {
+    const all = await readAll();
+    if (all.some((b) => b.id === place.id && (b.listId ?? 'global') === listId)) return;
+    all.unshift({ ...place, listId, savedAt: place.savedAt || Date.now() });
+    await writeAll(all);
+  });
+}
