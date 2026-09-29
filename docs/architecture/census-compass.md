@@ -3887,6 +3887,127 @@ are unaffected in their criteria. This removes a false "nothing to nudge", and a
 no gate. What would turn this red: any evaluator read that drops `error` again, or a Sense or Live
 answer that reports `evaluated: 0` with no `failedSources` while a source is unread.
 
+## §31 — Testing-mode WP-12 (lane tm-followups): "Compass remembers", Recaps and On this day reach Passport, a failed read is stated, and the whole feed is retired from the client. NO VERDICT MOVES
+
+Branch `lane-tm-followups`, cut from `main` at `978d886bf`. Code in `23f78ab1a` and `09dd3925a`.
+**Controlled evidence only** (route tests over an in-memory client, component tests). No flag
+was touched, no migration was added, and nothing was read from or written to any database.
+`head_commit` is not re-declared; the counted files this section changed are argued in the
+census-compass acknowledgement.
+
+### §31.1 What a tester could not do, and what they can now
+
+The flow catalogue's COMP-F16 ("Compass remembers" on Passport: view, forget, correct) and
+COMP-F17 (Personal Recaps and "On this day") were server-only: `GET /compass/me/passport/remembers`
+and its `forget` / `correct` routes, and `GET /compass/me/recaps` / `GET /compass/me/on-this-day`,
+had no client caller.
+
+- **Passport → Explore your passport → Compass remembers** (`travel-buddy-standalone/src/components/passport/PassportQuickLinks.tsx:115#key: 'remembers'`)
+  opens `app/passport/remembers.tsx`, which mounts
+  `travel-buddy-standalone/src/features/passport/CompassRemembersScreen.tsx:32#export function CompassRemembersScreen`.
+  Every group the server returns is listed with its items. **Forget** confirms, then calls
+  `travel-buddy-standalone/src/services/compassMemorySurfaces.ts:154#export function forgetRemembered`
+  (a derived item by its projection id, a source item by its subject); **Correct** is offered only
+  where the server says `controls.correct.supported` and records the value through
+  `travel-buddy-standalone/src/services/compassMemorySurfaces.ts:158#export function correctRemembered`.
+  The list changes only after the server accepted; a refusal is an alert and the item stays.
+- **Passport → Recaps & On this day** (`travel-buddy-standalone/src/components/passport/PassportQuickLinks.tsx:123#key: 'recaps'`)
+  opens `app/passport/recaps.tsx` →
+  `travel-buddy-standalone/src/features/passport/MemoryRecapsScreen.tsx:55#export function MemoryRecapsScreen`:
+  an On this day card and a recap for This month / This year / last year.
+  `memory_recaps` off (the server's inert answer, `enabled: false`) reads as "not turned on yet",
+  never as "no memories".
+
+### §31.2 The defect under both surfaces: a failed read was a true-looking empty group
+
+Both builders read each source fail-available, and supabase-js RESOLVES on a database error, so an
+unreadable source became `[]` — a well-formed, EMPTY group. On a transparency surface that is a
+false statement ("Portava remembers nothing here"). It is exactly the state a testing database
+without 2213/2214 would produce: a missing `memory_remembers_for_user` / `memory_recaps_for_user`
+read as "nothing remembered". Two sharper cases: an unreadable `memory_feedback` put every item the
+owner had FORGOTTEN back on screen, and in a recap it would have been resurfaced; and a failed trip
+read answered "Trip not found.".
+
+Now (additive to the response; nothing removed):
+
+- every group carries `availability` and the surface lists `unavailable`
+  (`artifacts/api-server/src/compass/PassportRemembersService.ts:779#availability: unavailable.has(g)`,
+  `artifacts/api-server/src/compass/PassportRemembersService.ts:794#unavailable: GROUP_ORDER.filter`),
+  fed by a per-build failure sink the builders take as an optional argument
+  (`artifacts/api-server/src/compass/PassportRemembersService.ts:806#export type RememberReadFailures`;
+  the derived read, for one, at `artifacts/api-server/src/compass/PassportRemembersService.ts:249#if (error) { failures?.set("derived_memory"`);
+- an unreadable suppression set WITHHOLDS the source groups
+  (`artifacts/api-server/src/compass/PassportRemembersService.ts:768#const withheld = failures.has("suppressions")`);
+  derived memory is suppressed inside its SQL read and stays;
+- a recap or On this day over an unreadable `memory_feedback` is refused (db_error)
+  (`artifacts/api-server/src/compass/MemoryRecapsService.ts:231#if (baseFailure) throw`), and lists
+  the sources it could not read (`artifacts/api-server/src/compass/MemoryRecapsService.ts:479#unavailable: [...failures.keys()]`);
+- a failed trip read is an error (`artifacts/api-server/src/compass/MemoryRecapsService.ts:323#if (error) throw new Error(`);
+- the route logs each failed source (`artifacts/api-server/src/routes/compass.ts:2776#const surface = await buildRememberSurface(sc, auth.user.id, { onReadFailure`).
+
+The client shows "Couldn't load this section" for an unavailable group and an error with
+**Try again** when every group failed or the request failed
+(`travel-buddy-standalone/src/features/passport/CompassRemembersScreen.tsx:93#} else if (load.surface.groups.length > 0`).
+Edits inside the lines this census cites in that file (393 and 396-402) are
+line-neutral: those lines still hold the Memories read and its deleted/removed/hidden filter, so
+CC-16 and CH-03 read as they did.
+
+### §31.3 Decision (routine, taken here): `GET /compass/feed` is RETIRED from the client
+
+`fetchCompassFeed` had no caller. The Compass v2 architecture puts a server-built current-context
+projection behind Home (CPV2-05, graded on CX-06) and the Compass tab renders exactly that
+(`/compass/home`) plus the per-section feed
+(`travel-buddy-standalone/src/hooks/compass/useCompassFeed.ts:62#const result = await fetchCompassSection`).
+A whole-feed call would be a second recommendation surface beside Home, not a missing screen. So
+the dead function is removed, line-neutrally
+(`travel-buddy-standalone/src/services/compass.ts:104#// ── fetchCompassFeed — RETIRED`), and a test
+fails if any client source calls the whole feed. The server route
+(`artifacts/api-server/src/routes/compass.ts:473#router.get("/compass/feed"`) stays for API callers
+and its time-awareness test; retiring it server-side is a separate, larger change that no flow needs.
+
+### §31.4 Tests (seen RED first) and mutations
+
+- `artifacts/api-server/src/test/tmCompassMemoryHonesty.test.ts:100#describe(` and `:154#describe(` —
+  13 cases; 11 red before the fix. The one that passed at once (a missing
+  `memory_feedback.corrected_value` makes Correct a db_error, not 201) is recorded as already right.
+  A 12th red case was added after a mutation survived (below).
+- `travel-buddy-standalone/src/features/passport/__tests__/compassMemorySurfaces.component.test.tsx:102#describe(`
+  and `:180#describe(` — nine component cases over the real service with `fetch` stubbed.
+- `travel-buddy-standalone/src/services/__tests__/compassFeedRetired.component.test.ts:38#describe(` —
+  red while `fetchCompassFeed` existed. `compass.tzOffsetSurfaces.test.ts`'s feed case is restated to
+  the retirement; that file is on `run-node-tests.mjs`'s KNOWN_BROKEN list, so it is not counted as
+  evidence here.
+- Mutations (each restored by sha256): group availability forced `"ok"`; the derived / profile /
+  suppression failure not recorded; `safe()` not recording; the withhold disabled; the recap's
+  suppression refusal removed; the trip-read throw removed; the windowed-derived failure not
+  recorded; the client mapper forcing `"ok"`; the all-unavailable error branch removed; the forget
+  failure alert removed; the recap `enabled` check removed; a failed recap mapped to an empty one —
+  **all RED**. One survived at first: removing the §12 suppression refusal inside the recap, because
+  the second `memory_feedback` read also failed in the fixture; a case where only the first read
+  fails was added and the mutation then went RED.
+
+### §31.5 What remains
+
+- The `memory_recaps` flag read is fail-closed through `isFlagEnabled`, so an UNREADABLE flag still
+  answers "not enabled yet". That is the flag's documented posture and is not changed here.
+- 2205/2213/2214 must be on the testing database for derived memory, corrections and recaps to
+  have content; without them the surfaces now say which sections they could not load.
+- No verdict moves: CC-16, CH-03 and CCL-10 read as before (CCL-10's rule — distinguish an empty
+  result from a dependency failure — now also holds on these two surfaces, which it never graded).
+
+- NOT-GRADED: travel-buddy-standalone/app/passport/remembers.tsx — §31.1's route wrapper for Compass remembers; it only mounts the screen, no row rests on it.
+- NOT-GRADED: travel-buddy-standalone/app/passport/recaps.tsx — §31.1's route wrapper for Recaps & On this day; it only mounts the screen, no row rests on it.
+- NOT-GRADED: travel-buddy-standalone/src/services/__tests__/compass.tzOffsetSurfaces.test.ts — §31.4 names it only because its feed case was restated to the retirement; it is on the node runner's KNOWN_BROKEN list and is not evidence here.
+- NOT-GRADED: travel-buddy-standalone/scripts/run-node-tests.mjs — §31.4 names its KNOWN_BROKEN list only to say why one test is not counted; it grades nothing.
+- NOT-GRADED: travel-buddy-standalone/src/features/passport/CompassRemembersScreen.tsx — §29's client screen for COMP-F16; built work, no Compass row rests on it.
+- NOT-GRADED: travel-buddy-standalone/src/features/passport/MemoryRecapsScreen.tsx — §29's client screen for COMP-F17; built work, no Compass row rests on it.
+- NOT-GRADED: travel-buddy-standalone/src/services/compassMemorySurfaces.ts — §29's client service for the two surfaces; no Compass row rests on it.
+- NOT-GRADED: travel-buddy-standalone/src/components/passport/PassportQuickLinks.tsx — §31 names only its two new entries; census-passport grades the component (P18).
+- NOT-GRADED: travel-buddy-standalone/src/hooks/compass/useCompassFeed.ts — §31.3 cites its section call only to show what the Compass tab renders; no row rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/tmCompassMemoryHonesty.test.ts — §29's route suite; controlled evidence, no verdict moves on it.
+- NOT-GRADED: travel-buddy-standalone/src/features/passport/__tests__/compassMemorySurfaces.component.test.tsx — §29's component suite; no verdict moves on it.
+- NOT-GRADED: travel-buddy-standalone/src/services/__tests__/compassFeedRetired.component.test.ts — §31.3's retirement test; no verdict moves on it.
+
 ## §32 — 2026-09-29: the three fail-open reads §30 left open are closed, and the Sense and Live checks say what they could not run (lane TM-sense2) — MOVES NOTHING
 
 Testing-mode lane `lane-tm-sense2`, branch cut from `main` at `1ee6cefa5` (PR #542 TM-live and PR #543

@@ -460,3 +460,86 @@ non-member, reporting a message id from another thread answers 404 and writes no
 - SEN-F06 (admin half) — `docs/architecture/census-sensing.md` §28.
 - LAY-F16 — `docs/architecture/census-layover.md` §47.
 - Report-route membership — `docs/architecture/census-telegraph.md` §39.
+
+## TM-followups lane — safety follow-ups, Compass memory surfaces (WP-12), media small gaps (WP-17)
+
+Branch `lane-tm-followups`, cut from `main` at `978d886bf`. Controlled evidence only; no flag was
+changed, no migration was added, nothing was applied to any database. The area flows are recorded
+in their censuses (listed at the end); the checks below are what a tester can walk.
+
+### Safety and honesty follow-ups (found by other lanes)
+
+- **Moderation report of a message** (`POST /api/moderation/report`, `subjectType: "message"`):
+  a reporter who is not an active member of the message's thread gets **404** and nothing is filed;
+  a `threadId` the reporter is not in is refused the same way; if membership cannot be read the
+  answer is **503** and nothing is filed. Check: no `moderation_reports` row for the refused cases.
+  Same module and rule as PR #537 (`lib/reportTargetAccess.ts`). Recorded in census-telegraph §40.
+- **Hidden-gem admin: mark sensitive / merge duplicate** (`POST /api/admin/hidden-gems/:id/sensitive`,
+  `/merge`): an unknown gem (or unknown canonical gem) is **404**, a refused write is **db_error**,
+  merging a gem into itself is **400**; success still answers `{ ok: true }` and the row changes
+  (`sensitivity_level`, or `status = 'merged'` + `merged_into`). Census-media §46.3.
+- **Stamp revoke / restore** (`POST /api/admin/stamps/:userStampId/revoke|restore`): a database
+  failure or a failed audit write is **db_error**, not 404; a stamp not in the needed state is
+  still 404. Census-passport §24.
+- **Find Your Circle kill switch** (`POST /api/admin/circle/kill-switch`): every flip goes through
+  `toggle_feature_flag_with_audit`, the path the Feature Flags admin uses. Check: a new
+  `feature_flag_audit_log` row for `find_your_circle_disabled` with the admin as
+  `changed_by_user_id`. A missing function is **503** naming migration 0119; a missing flag row
+  (0108 seeds it) is **404**.
+- **Rent-a-Buddy active session → Safe Return check-in switch**: turning it on records a check-in
+  of type `check_ok` / response `ok`. It used to send `safe_return_enabled`, which the
+  `rent_buddy_checkin_type` enum (0047 + 0113) does not have, and swallowed the refusal. Now a
+  refused check-in turns the switch back off with **Safe Return check-in failed**; the route
+  answers **400** for an unknown type and **db_error** (not `ok: true`) for a refused insert.
+  `start_safe_return` was not used: the route counts it as a distress signal and opens a safety
+  event against the other party. Check: a `rent_buddy_safety_checkins` row, and no
+  `rent_buddy_safety_events` row.
+
+### COMP-F16 — Compass remembers (view, forget, correct)
+
+- **Where:** Passport tab → Explore your passport → **Compass remembers** (`/passport/remembers`).
+- **Expected:** each group Portava keeps (About you, Your interests, What Portava figured out,
+  Saved & created, …). **Forget** asks, then removes the item after the server confirms and shows
+  its message. **Correct** (offered only on inferred items the server allows) takes the right
+  value; the wrong one leaves the view. A group the server could not read says **Couldn't load
+  this section** — never "Nothing here." — and if nothing could be read the screen is an error
+  with **Try again**.
+- **Check:** `memory_feedback` rows (`kind = 'forget'`, or `'incorrect'` with `corrected_value`).
+  Without 2213 on the database, derived memory shows as unavailable and Correct is a stated error.
+
+### COMP-F17 — Recaps and On this day
+
+- **Where:** Passport tab → **Recaps & On this day** (`/passport/recaps`), or from Compass
+  remembers.
+- **Expected:** with `memory_recaps` off, both cards say the feature is **not turned on yet**.
+  With it on: On this day lists earlier years' postcards, trips, stamps and shared moments from
+  today's date; the recap shows This month / This year / last year. A source that could not be read
+  is named ("Couldn't load Saved & created …"); a failed request is an error with Try again. If
+  `memory_feedback` cannot be read the recap is refused rather than built without your forgets.
+
+### COMP-F03 — the whole Compass feed
+
+Decided: **retired from the client.** The Compass tab renders Compass Home and the per-section
+feed; `GET /api/compass/feed` stays as an API route with no screen. Census-compass §31.3.
+
+### MED-F06 — media like, Stamp It and comments
+
+Decided (MD424): media **Like** and **"Stamp It"** are retired from the client; **Stamp** (the
+viewer's stamp button) and **Comments** (the viewer's comment button → the post comment sheet) are
+the reactions. Nothing new to walk: stamp and comment from the media viewer as before. Census-media §46.1.
+
+### MED-F25 — retry a failed upload
+
+- **Where:** Media → My World. When an upload's processing failed, a card lists it.
+- **Expected:** **Retry** queues it again and the row leaves (the server answered 202); with the
+  processing worker off (`media_processing_worker_enabled`) the card says retrying is not
+  available and the uploads are kept. A failed check says **Couldn't check for failed uploads**.
+- **Check:** the `media_assets` row goes `failed → queued` (`processing_terminal = false`).
+  Attachments (`POST /api/media/:id/attachments`) are not wired. Census-media §46.2.
+
+### Where the area flows of this lane are recorded
+
+- COMP-F03, COMP-F16, COMP-F17 — `docs/architecture/census-compass.md` §31.
+- MED-F06, MED-F25 (and the hidden-gem writes) — `docs/architecture/census-media.md` §46.
+- Stamp revoke/restore — `docs/architecture/census-passport.md` §24.
+- Moderation report membership — `docs/architecture/census-telegraph.md` §40.

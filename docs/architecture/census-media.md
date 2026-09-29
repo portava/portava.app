@@ -15663,6 +15663,92 @@ them.
 - NOT-GRADED: artifacts/api-server/src/routes/places.ts — cited in §43.5 (4) for the near-duplicate groups endpoint that can carry a withheld post's media; a Places route, recorded, not fixed, no MD verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/placeLiving.test.ts — the Live Places living-page suite, cited in §43.4 for the two cached-payload fixtures that now model a mode-aware cache row; its assertions are unchanged and no MD verdict rests on it.
 
+## 46. Lane tm-followups (WP-17) — MD424 decided: Like and "Stamp It" retired, Stamp and Comments wired; a failed upload is retried from My World; two hidden-gem admin writes checked — 2026-09-29
+
+Branch `lane-tm-followups`, cut from `main` at `978d886bf`. Code in `23f78ab1a` (the hidden-gem
+writes) and `09dd3925a` (the rest). **No MD row moves**; `head_commit` is not re-declared.
+Controlled evidence only (route tests over in-memory clients, component tests). No flag was
+touched, no migration was added, nothing was read from or written to any database. Placed before
+§41 rather than at the foot, so it merges cleanly beside a parallel lane's §45.
+
+### 46.1 MED-F06 — the MD424 decision (routine; taken here)
+
+The flow catalogue asked that media like, "Stamp it" and comments be wired or retired per MD424
+("No Heart/Like as primary hierarchy"). The spec decides it: the viewer's social layer is
+"Stamp · Comment · Share · Save" (§14), and "Heart/Like as primary hierarchy" is on §46.2's
+anti-pattern list. What the tree held:
+
+| Reaction | Client | Server | Decision |
+|---|---|---|---|
+| Like (heart) | `likeMedia` / `unlikeMedia`, no caller | `POST/DELETE /media/:id/like`, a compat wrapper over Stamp "until mobile clients are migrated" (`artifacts/api-server/src/routes/mediaFeed.ts:2223#// Compat wrapper`) | **Retired from the client.** This client already stamps through `/stamps`. The server wrapper stays for older clients; MD386's `C` rests on it. |
+| "Stamp It" | `reactToMediaStampIt`, no caller | `POST /media/:id/react` → `media_stamp_reactions` (`artifacts/api-server/src/routes/mediaFeed.ts:2271#router.post("/media/:id/react"`) | **Retired from the client.** A second, separately counted stamp gesture beside Stamp is two stamps and two counts for one act, against §14's single Stamp and MD408's minimal vanity metrics. The route stays for API callers. |
+| Stamp | `StampButton` in the viewer (`travel-buddy-standalone/app/media-viewer/[id].tsx:303#<StampButton`) and `useWatchStamp` in Watch | `/stamps` | **Wired** (already). |
+| Comments | `MediaCommentSheet` (`travel-buddy-standalone/app/media-viewer/[id].tsx:788#<MediaCommentSheet`) → the post comment endpoints (`travel-buddy-standalone/src/components/media/MediaCommentSheet.tsx:34#postId={mediaId}`) | `GET /media/:id/comments` (`artifacts/api-server/src/routes/mediaFeed.ts:2462#router.get("/media/:id/comments"`) is a thinner read of the same table | **Wired through the post sheet** (threading, edit, report, block handling); the media read is not wired. |
+
+The dead client functions are removed line-neutrally
+(`travel-buddy-standalone/src/services/mediaInteractions.ts:60#// ── Like — RETIRED`,
+`travel-buddy-standalone/src/services/mediaInteractions.ts:130#// ── Stamp It reaction — RETIRED`).
+**MD424 itself stays `W`**: its evidence is the Watch overlay's rail prominence, which §34 built
+behind `MEDIA_WATCH_CONTEXT_OVERLAY_ENABLED` and which waits on owner decision F2. Nothing here
+changes that surface. Residual: the viewer's owner-only "Stamp It" count still renders
+`stampItCount`, which no client in this tree writes any more; removing that display is a surface
+change left with F2.
+
+### 46.2 MED-F25 — a failed upload is found and retried from the client
+
+`POST /media/:id/retry` takes a `media_assets.id`, and no client surface held one: My World's
+Processing bucket is built from posts. And the retry answered 404 `not_found` when its asset read
+or its re-queue write FAILED — an outage told the owner their upload did not exist.
+
+- `GET /media/me/failed-uploads` (`artifacts/api-server/src/routes/mediaActions.ts:613#router.get(`)
+  lists the caller's own failed, un-purged assets, owner-scoped in the query, with
+  `retryAvailable` — the processing-worker flag the retry itself obeys (§30) — so the client never
+  offers a Retry that can only be refused. A failed read is db_error, never an empty list.
+- The retry carries `dbError`
+  (`artifacts/api-server/src/services/media/MediaLifecycleService.ts:375#if (readError) return`,
+  `artifacts/api-server/src/services/media/MediaLifecycleService.ts:390#return error ? { ok: false, alreadyQueued: false, dbError`)
+  and the route answers db_error
+  (`artifacts/api-server/src/routes/mediaActions.ts:600#if (result.dbError)`). Line-neutral: the
+  lines §30 cites (378, 380, 382, 389, 593, 597) are where they were.
+- My World shows the section
+  (`travel-buddy-standalone/src/features/media/screens/MyWorldMediaScreen.tsx:150#{memory ? <MyWorldMemorySection memory={memory} /> : null}<FailedUploadsSection />`,
+  `travel-buddy-standalone/src/features/media/components/FailedUploadsSection.tsx:31#export function FailedUploadsSection`):
+  nothing while loading or when nothing failed; "Couldn't check for failed uploads" with Try again
+  on a failed read; each failed upload with **Retry** when `retryAvailable`, else "kept, not lost";
+  a row leaves only after the server queued it (202); a refusal keeps the row and says why.
+- `POST /media/:id/attachments` (the other half of the catalogue's flow name) is not wired: no
+  client surface creates the §6.1 link, and the flow's blocker names only the retry affordance.
+
+### 46.3 Hidden-gem admin writes (item A2 of this lane)
+
+`markSensitive` and `mergeDuplicate` awaited their UPDATE and dropped the result, so a missing gem
+and a refused write both answered the admin `{ ok: true }`. They now read their row back
+(`artifacts/api-server/src/services/hiddenGems/HiddenGemModerationService.ts:184#.eq("id", gemId).select("id").maybeSingle(); if (error) throw error;`,
+`artifacts/api-server/src/services/hiddenGems/HiddenGemModerationService.ts:208#if (error) throw error; return merged`);
+the routes answer 404 for a missing gem or canonical gem, db_error for a refused write, and 400 for
+a self-merge (`artifacts/api-server/src/routes/hiddenGems.ts:1603#const gemFound = await markSensitive`,
+`artifacts/api-server/src/routes/hiddenGems.ts:1626#const merge = await mergeDuplicate`) — the
+pattern the fixed `recordAdminVerification` follows. Line-neutral in both files.
+
+### 46.4 Tests (seen RED first) and mutations
+
+- `artifacts/api-server/src/test/tmMediaUploadRetry.test.ts:95#describe(` and `:118#describe(` —
+  five of six red before the fix (the control passed).
+- `travel-buddy-standalone/src/features/media/__tests__/failedUploadsSection.component.test.tsx:50#describe(`
+  — five component cases.
+- `travel-buddy-standalone/src/services/__tests__/mediaReactionsRetired.component.test.ts:44#describe(`
+  — red while the three functions existed; its control pins the viewer's Stamp and Comment.
+- `artifacts/api-server/src/test/tmFollowupSafety.test.ts:227#describe(` — the A2 cases, six red.
+- Mutations, each restored by sha256 and each RED: the retry's read `dbError` and write `dbError`
+  removed; the route's dbError branch disabled; the list's owner filter, purge filter and error
+  branch removed; the section's error branch, `retryAvailable` check and refusal notice removed;
+  a like or `fetchCompassFeed`-style export re-added; `markSensitive` returning `true` or not
+  throwing; `mergeDuplicate` skipping the canonical check or not throwing; the self-merge guard off.
+
+- NOT-GRADED: artifacts/api-server/src/test/tmMediaUploadRetry.test.ts — §46.4's route suite; no MD verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/tmFollowupSafety.test.ts — §46.4 cites its A2 cases; no MD verdict rests on it.
+- NOT-GRADED: travel-buddy-standalone/src/services/__tests__/mediaReactionsRetired.component.test.ts — §46.1's retirement test; no MD verdict rests on it.
+
 ## 41. Wave-8 integration — the 49 non-C rows, each split into implementation, activation and external verification — 2026-09-27
 
 Integration owner's section. It records what the wave-8 lanes merged, restates
