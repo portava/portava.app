@@ -24,6 +24,7 @@
  *   CM2  the same join → the owner's circle lists the joiner as a member (tool and prompt)
  *   CM3  a join through POST /me/requests/circle_invite/:id/accept → get_group_recommendation finds the circle
  *   CM4  the writers leave `status` at the column default — the fixture is what production holds
+ *   CM5  the same join → the OWNER's get_group_recommendation counts the joiner in the group
  *   CMc  CONTROL: another viewer's membership is not this viewer's; no row → "not in any circles"
  */
 import { describe, it, before, after, beforeEach } from "node:test";
@@ -164,6 +165,12 @@ describe("Compass reads a circle membership as every other surface does (census-
     assert.notEqual(r.info, "The user is not a member of a circle by that name.", `a real join was "not a member": ${JSON.stringify(r)}`);
   });
 
+  it("CM5 the OWNER's group recommendation counts the joiner (a row written by the real writer) as a member", async () => {
+    const w = world();
+    await accept(w, `/circle-invites/${INVITE_A}/accept`, "tok-joiner");
+    const r = (await executeCompassTool(w.client as any, OWNER, profileOf(OWNER), "get_group_recommendation", { circleName: "Porto crew" })) as any;
+    assert.equal(r.group?.size, 2, `the joiner was dropped from the owner's group: ${JSON.stringify(r)}`);
+  });
   it("CMc CONTROL: another viewer's membership is not this viewer's; no row → 'not in any circles'", async () => {
     const w = world();
     await accept(w, `/circle-invites/${INVITE_A}/accept`, "tok-joiner");

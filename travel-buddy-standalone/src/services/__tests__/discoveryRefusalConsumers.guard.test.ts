@@ -537,6 +537,7 @@ const GH = {
   dynamicThen: "export function zzRawRecs5(): Promise<number> {\n  return import('../services/compass.ts').then((m) => m.fetchCompassRecommendations({ surface: 'passport' })).then((res) => (res.ok && res.data ? res.data.recommendations.length : 0));\n}\n",
   starReexport: "export * from './compass.ts';\n",
   viaStar: "import { fetchCompassTripBrief } from '../services/zzCompassStar.ts';\nexport async function zzRawRecs6(): Promise<number> {\n  const res = await fetchCompassTripBrief({ tripId: 't' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  dynamicOpaque: "export async function zzRawRecs7(run: (m: unknown) => Promise<number>): Promise<number> {\n  const loaded = await import('../services/compass.ts');\n  return run(loaded);\n}\n",
   typeOnly: "export function zzTitle(item: import('../services/compass.ts').CompassFeedItem): string {\n  return String((item as { title?: unknown }).title ?? '');\n}\n",
   secondRawSite: "\nexport async function zzSecondRawSite(): Promise<number> {\n  const res = await fetchCompassRecommendations({ surface: 'passport', limit: 3 });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
 };
@@ -563,6 +564,10 @@ describe("DV-83 guard reach — the round-12 verifier's fixtures (§110, D-W11X2
     const u = withFiles({ 'src/components/zzGH5.tsx': GH.dynamicThen, 'src/services/zzCompassStar.ts': GH.starReexport, 'src/components/zzGH6.tsx': GH.viaStar }, unregisteredNow);
     assert.deepEqual(u.get('src/components/zzGH5.tsx'), ['fetchCompassRecommendations'], JSON.stringify([...u]));
     assert.deepEqual(u.get('src/components/zzGH6.tsx'), ['fetchCompassTripBrief'], JSON.stringify([...u]));
+  });
+  it('G10 GH3c: a dynamic import whose names cannot be told is still a use of the carrier module', () => {
+    const u = withFiles({ 'src/components/zzGH7.tsx': GH.dynamicOpaque }, unregisteredNow);
+    assert.deepEqual(u.get('src/components/zzGH7.tsx'), ['<dynamic>'], JSON.stringify([...u]));
   });
   it('G10 GHc CONTROL: a TYPE read through an inline import is not a consumer', () => {
     const u = withFiles({ 'src/components/zzGHc.tsx': GH.typeOnly }, unregisteredNow);

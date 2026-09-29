@@ -90,6 +90,7 @@ describe("Compass Home's 'events on tonight' count (§110, D-W11X2-97)", () => {
   beforeEach(() => { invalidateFlagsCache(); clearCompassProfileCache(); _clearCompassHomeCache(); });
   const tonight = (n: number, hiddenFirst = 0) => compassWorld({
     answer: (t, calls) => {
+      if (t === "blocks" && calls.some(([k, a]) => k === "eq" && a[0] === "blocker_id")) return { data: [{ blocked_id: "hidden-host" }], error: null };
       if (t !== "events" || String(calls.find(([k]) => k === "select")?.[1][0] ?? "").includes("going_count")) return undefined;
       const rows = Array.from({ length: n }, (_, i) => ({ id: `ev-${i}`, title: `Event ${i}`, city: "Paris", country: "FR", starts_at: new Date(Date.now() + (i + 1) * 60_000).toISOString(), category: "music", host_id: i < hiddenFirst ? "hidden-host" : `h-${i}`, state: "open", visibility: "public" }));
       return { data: rows.slice(0, limitOf(calls)), error: null };
@@ -101,10 +102,11 @@ describe("Compass Home's 'events on tonight' count (§110, D-W11X2-97)", () => {
     assert.equal(home.tonightVibe?.events?.length, 4);
     assert.match(String(home.tonightVibe?.headline), /^8\+ events on tonight/, JSON.stringify(home.tonightVibe));
   });
-  it("TN2 a read that reached its row cap → an 'N+' count, never an exact one", async () => {
+  it("TN2 a read that reached its row cap, hidden hosts filtered after it → an 'N+' count, never an exact one", async () => {
     void hiddenProfile;
-    const home: any = await buildCompassHomeProjection(tonight(24).client as any, VIEWER, { localHour: 22 });
-    assert.match(String(home.tonightVibe?.headline), /^8\+ events/, JSON.stringify(home.tonightVibe));
+    const home: any = await buildCompassHomeProjection(tonight(24, 17).client as any, VIEWER, { localHour: 22 });
+    assert.equal(home.tonightVibe?.events?.length, 4);
+    assert.match(String(home.tonightVibe?.headline), /^7\+ events/, JSON.stringify(home.tonightVibe));
   });
   it("TNc CONTROL: 3 events tonight → '3 events on tonight'", async () => {
     const home: any = await buildCompassHomeProjection(tonight(3).client as any, VIEWER, { localHour: 22 });
