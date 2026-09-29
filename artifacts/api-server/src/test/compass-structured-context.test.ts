@@ -190,10 +190,10 @@ describe("buildStructuredCompassContext — accurate references", () => {
     assert.equal(ctx.recentStamps.length, 0);
   });
 
-  it("degrades to empty sections when the DB fails", async () => {
+  it("degrades to empty sections when the DB fails — each MARKED unread (census-discovery §109, D-W11X2-88)", async () => {
     const failing = { from: () => { throw new Error("db down"); } } as any;
     const ctx = await buildStructuredCompassContext(failing, profile());
-    assert.deepEqual(ctx, { circles: [], activeBookings: [], recentStamps: [] });
+    assert.deepEqual(ctx, { circles: [], activeBookings: [], recentStamps: [], unread: { circles: true, bookings: true, stamps: true } });  // was: no marker — a failed read was an empty section
   });
 });
 

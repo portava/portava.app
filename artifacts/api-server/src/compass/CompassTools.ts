@@ -951,7 +951,7 @@ async function resolveTripAttention(sc: SupabaseClient, userId: string, tripIdAr
   if (!tripId) {
     const current: any = await toolGetCurrentTrip(sc, userId);
     tripId = current?.trip?.id ?? null;
-    if (!tripId) return attentionNotConsulted(null, "No active or upcoming trip; the priority switch was not consulted.");
+    if (!tripId) return attentionNotConsulted(null, currentTripUnread(current) ? "The user's current trip could not be read; the priority switch was not consulted." : "No active or upcoming trip; the priority switch was not consulted.");  // census-discovery §109 (D-W11X2-89)
   }
   return readTripAttention(sc, tripId, userId);
 }
@@ -1110,7 +1110,7 @@ async function toolGetPlaceDetails(sc: SupabaseClient, args: Record<string, unkn
     .select(PLACE_SAFE_COLUMNS + ", secondary_categories, place_type")
     .eq("id", placeId)
     .maybeSingle();
-  if (error || !data) return { place: null, info: "Place not found." };
+  if (error) return { place: null, info: PLACE_UNREAD_INFO }; if (!data) return { place: null, info: "Place not found." };  // census-discovery §109 (D-W11X2-89): a failed read is not "not found"
   const p = data as any;
 
   // Phase 8 — live open-now lookup at tool time (weather-cache pattern:
@@ -1153,10 +1153,10 @@ async function toolGetCircleActivity(
   // members filtered out and names UGC-wrapped.
   const effProfile: CompassProfile =
     profile ?? ({ userId, blockedUserIds: [], blockerUserIds: [], mutedUserIds: [] } as unknown as CompassProfile);
-  const structured = await buildStructuredCompassContext(sc, effProfile);
+  const structured = await buildStructuredCompassContext(sc, effProfile); const circlesUnread = structured.unread?.circles === true, membersUnread = structured.unread?.circleMembers === true;  // census-discovery §109 (DV-83, D-W11X2-88): a failed circle read is never "not in any circles"
   return structured.circles.length > 0
-    ? { circles: structured.circles }
-    : { circles: [], info: "The user is not in any circles." };
+    ? { circles: structured.circles, ...(circlesUnread ? { info: CIRCLES_PARTIAL_INFO } : membersUnread ? { info: CIRCLE_MEMBERS_PARTIAL_INFO } : {}) }
+    : circlesUnread ? { circles: [], info: CIRCLES_UNREAD_INFO } : { circles: [], info: "The user is not in any circles." };
 }
 
 async function toolCheckTripConflicts(
@@ -1250,7 +1250,7 @@ export async function toolGetFreedomWindows(sc: SupabaseClient, userId: string, 
   } else {
     const current: any = await toolGetCurrentTrip(sc, userId);
     trip = current?.trip ?? null;
-    if (!trip) return { windows: [], info: "No active or upcoming trip." };
+    if (!trip) return { windows: [], info: noCurrentTripInfo(current) };  // census-discovery §109 (D-W11X2-89): an unread trip is not "no trip"
   }
   const built = await buildTripFreedomProjection(sc, trip.id);
   if (!built.ok) return { windows: [], info: built.reason === "FEATURE_DISABLED" ? `Freedom windows are not enabled: ${built.message}` : `Freedom windows unavailable: ${built.message}` };
@@ -1290,7 +1290,7 @@ export async function toolGetRouteChain(sc: SupabaseClient, userId: string, args
   } else {
     const current: any = await toolGetCurrentTrip(sc, userId);
     id = current?.trip?.id ?? null;
-    if (!id) return { chain: null, info: "No active or upcoming trip." };
+    if (!id) return { chain: null, info: noCurrentTripInfo(current) };  // census-discovery §109 (D-W11X2-89): an unread trip is not "no trip"
   }
   const built = await buildTripRouteChainProjection(sc, id);
   if (!built.ok) return { chain: null, info: built.reason === "FEATURE_DISABLED" ? `The route chain is not enabled: ${built.message}` : `Route chain unavailable (${built.reason}): ${built.message}` };
@@ -1324,7 +1324,7 @@ export async function toolGetLiveConditions(sc: SupabaseClient, userId: string, 
   } else {
     const current: any = await toolGetCurrentTrip(sc, userId);
     id = current?.trip?.id ?? null;
-    if (!id) return { pulse: null, info: "No active or upcoming trip." };
+    if (!id) return { pulse: null, info: noCurrentTripInfo(current) };  // census-discovery §109 (D-W11X2-89): an unread trip is not "no trip"
   }
   const built = await buildTripPulseProjection(sc, id, userId);
   if (!built.ok) return { pulse: null, info: built.reason === "FEATURE_DISABLED" ? `Trip Pulse is not enabled: ${built.message}` : `Trip Pulse unavailable (${built.reason}): ${built.message}` };
@@ -1361,7 +1361,7 @@ async function resolveMemberTrip(sc: SupabaseClient, userId: string, args: Recor
   }
   const current: any = await toolGetCurrentTrip(sc, userId);
   const id = current?.trip?.id ?? null;
-  return id ? { id } : { info: "No active or upcoming trip." };
+  return id ? { id } : { info: noCurrentTripInfo(current) };  // census-discovery §109 (D-W11X2-89): an unread trip is not "no trip"
 }
 
 /** §12.1 getCommitments(tripId) — trip_commitments (2761), under the operational-projections gate that owns that table. */
@@ -1549,7 +1549,7 @@ export async function toolGetTodayState(sc: SupabaseClient, userId: string, args
   } else {
     const current: any = await toolGetCurrentTrip(sc, userId);
     id = current?.trip?.id ?? null;
-    if (!id) return { today: null, info: "No active or upcoming trip." };
+    if (!id) return { today: null, info: noCurrentTripInfo(current) };  // census-discovery §109 (D-W11X2-89): an unread trip is not "no trip"
   }
   const built = await buildTripTodayProjection(sc, id, userId);
   if (!built.ok) return { today: null, info: built.reason === "FEATURE_DISABLED" ? `Today is not enabled: ${built.message}` : `Today unavailable (${built.reason}): ${built.message}` };
@@ -1591,7 +1591,7 @@ export async function toolGetCrewState(sc: SupabaseClient, userId: string, args:
   } else {
     const current: any = await toolGetCurrentTrip(sc, userId);
     id = current?.trip?.id ?? null;
-    if (!id) return { crew: null, info: "No active or upcoming trip." };
+    if (!id) return { crew: null, info: noCurrentTripInfo(current) };  // census-discovery §109 (D-W11X2-89): an unread trip is not "no trip"
   }
   if (!(await isKernelFlagEnabled(sc, "trip_crew_map_enabled"))) {
     return { crew: null, info: "The crew map is not enabled (trip_crew_map_enabled is off); no crew was read." };
@@ -1975,17 +1975,17 @@ async function resolveGroupMemberIds(
 ): Promise<{ memberIds: string[]; groupLabel: string; circleOwnerId: string | null } | { error: string }> {
   if (circleName) {
     // Circles the user owns, or belongs to (circle_memberships: user_id = owner).
-    const [{ data: owned }, { data: memberships }] = await Promise.all([
+    const [{ data: owned, error: ownedErr }, { data: memberships, error: membershipsErr }] = await Promise.all([  // census-discovery §109 (D-W11X2-89): each read's error is read
       sc.from("circles").select("id, name, owner_id").eq("owner_id", userId).limit(25),
       sc.from("circle_memberships").select("user_id, status").eq("other_id", userId).limit(25),
     ]);
     const joinedOwnerIds = ((memberships ?? []) as any[])
       .filter((m) => (m.status ?? "accepted") === "accepted")
       .map((m) => m.user_id as string);
-    let joined: any[] = [];
+    let joined: any[] = []; let circlesUnread = Boolean(ownedErr || membershipsErr);
     if (joinedOwnerIds.length > 0) {
-      const { data } = await sc.from("circles").select("id, name, owner_id").in("owner_id", joinedOwnerIds).limit(25);
-      joined = (data ?? []) as any[];
+      const { data, error: joinedErr } = await sc.from("circles").select("id, name, owner_id").in("owner_id", joinedOwnerIds).limit(25);
+      joined = (data ?? []) as any[]; if (joinedErr) circlesUnread = true;
     }
     const wanted = circleName.trim().toLowerCase();
     const circle = [...((owned ?? []) as any[]), ...joined].find(
@@ -1993,15 +1993,15 @@ async function resolveGroupMemberIds(
     );
     // Cross-circle probing defense: circles the user is not in are indistinguishable
     // from circles that don't exist.
-    if (!circle) return { error: "The user is not a member of a circle by that name." };
+    if (!circle) return { error: circlesUnread ? GROUP_CIRCLES_UNREAD_INFO : "The user is not a member of a circle by that name." };  // §109: a failed read is not "not a member"
 
     const ownerId = String(circle.owner_id);
-    const { data: members } = await sc
+    const { data: members, error: membersErr } = await sc
       .from("circle_memberships")
       .select("other_id, status")
       .eq("user_id", ownerId)
       .limit(100);
-    const ids = new Set<string>([ownerId, userId]);
+    if (membersErr) return { error: GROUP_MEMBERS_UNREAD_INFO }; const ids = new Set<string>([ownerId, userId]);  // §109: never a recommendation over a partial group
     for (const m of (members ?? []) as any[]) {
       if ((m.status ?? "accepted") === "accepted") ids.add(String(m.other_id));
     }
@@ -2011,13 +2011,13 @@ async function resolveGroupMemberIds(
   // Default: current/upcoming trip members.
   const current: any = await toolGetCurrentTrip(sc, userId);
   const trip = current?.trip;
-  if (!trip) return { error: "No circle name given and the user has no active or upcoming trip group." };
-  const { data: members } = await sc
+  if (!trip) return { error: currentTripUnread(current) ? `${String(current.info)} No group recommendation was made: this is NOT "no trip group".` : "No circle name given and the user has no active or upcoming trip group." };  // §109
+  const { data: members, error: tripMembersErr } = await sc
     .from("trip_members")
     .select("user_id, role, status")
     .eq("trip_id", trip.id)
     .in("role", ["owner", "co_host", "member", "viewer"]);
-  const ids = new Set<string>([userId]);
+  if (tripMembersErr) return { error: GROUP_MEMBERS_UNREAD_INFO }; const ids = new Set<string>([userId]);  // §109: never a recommendation over a partial group
   for (const m of (members ?? []) as any[]) {
     if (m.status == null || m.status === "accepted") ids.add(String(m.user_id));
   }
@@ -2436,3 +2436,27 @@ const WHOS_AROUND_PARTIAL_INFO = "Only people who opted in to sharing appear, at
 const MEETUP_UNREAD_INFO = "Meetup availability could not be checked right now (a read failed). Say it could not be checked; do not say nobody is sharing, that the user has no trips, or that the sharing is one-way.";
 /** census-discovery §108 (D-W11X2-83): occasions were found, but a read failed, so the list is partial. */
 const MEETUP_PARTIAL_INFO = "Each occasion exists only because both people are sharing presence with each other. Location is approximate only — repeat the `where` string exactly and never propose a place the result did not name. Some circles could not be checked right now (a read failed), so this list may be incomplete: say so.";
+
+// census-discovery §109 (DV-83 round 12, D-W11X2-88): get_circle_activity over a failed circle read — the
+// WHOS_AROUND_UNREAD_INFO rule on the sibling tool. The circles found are kept; the model is told what could not be checked.
+const CIRCLES_UNREAD_INFO = "Circle membership could not be checked right now (a read failed). Say it could not be checked; do not say the user is in no circles.";
+const CIRCLES_PARTIAL_INFO = "Some of the user's circles could not be checked right now (a read failed), so this list may be incomplete: say so, and do not say these are all of the user's circles.";
+const CIRCLE_MEMBERS_PARTIAL_INFO = "The circles are listed, but their member lists could not be read in full right now (a read failed): do not say a circle has no other members.";
+
+// census-discovery §109 (DV-83 round 12, D-W11X2-89): the sweep of the tools' "nothing found" sentences. Eight trip
+// tools and the search tools' priority-switch reading resolve the current trip through `toolGetCurrentTrip`, which says
+// "Trip context unavailable: …" when the user's trips could not be read — and each dropped that and told the model
+// "No active or upcoming trip.". A group recommendation over an unread circle or member list was "not a member" or a
+// ranking over a partial group, and an unread place was "Place not found.".
+function currentTripUnread(current: unknown): boolean {
+  const info = (current as { trip?: unknown; info?: unknown } | null)?.info;
+  return typeof info === "string" && info.startsWith("Trip context unavailable");
+}
+function noCurrentTripInfo(current: unknown): string {
+  return currentTripUnread(current)
+    ? `${String((current as { info: string }).info)} The user's trips could not be read: say so, and do not say the user has no trip.`
+    : "No active or upcoming trip.";
+}
+const GROUP_CIRCLES_UNREAD_INFO = "The user's circles could not be read right now (a read failed), so no group recommendation was made. Say it could not be checked; do not say the user is not in that circle.";
+const GROUP_MEMBERS_UNREAD_INFO = "The group's members could not be read right now (a read failed), so no group recommendation was made: a recommendation over part of the group could ignore a member's constraints.";
+const PLACE_UNREAD_INFO = "The place's details could not be read right now (a read failed). Say so; do not say the place does not exist.";

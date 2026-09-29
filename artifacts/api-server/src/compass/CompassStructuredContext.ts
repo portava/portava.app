@@ -65,7 +65,7 @@ export interface StructuredStamp {
 export interface StructuredCompassContext {
   circles: StructuredCircle[];
   activeBookings: StructuredBooking[];
-  recentStamps: StructuredStamp[];
+  recentStamps: StructuredStamp[]; /** census-discovery §109 (DV-83, D-W11X2-88): the sections whose read failed — present only then, so a healthy context is unchanged */ unread?: StructuredContextUnread;
 }
 
 // ── UGC delimiters ────────────────────────────────────────────────────────────
@@ -117,8 +117,8 @@ function hiddenUserIds(profile: CompassProfile): Set<string> {
 }
 
 /**
- * Build the structured Compass context for a user. Never throws — any data
- * source failure degrades to an empty section.
+ * Build the structured Compass context for a user. Never throws — a data source
+ * failure degrades to an empty section MARKED in `unread` (§109), never a bare empty one.
  */
 export async function buildStructuredCompassContext(
   sc: SupabaseClient,
@@ -132,12 +132,12 @@ export async function buildStructuredCompassContext(
 
   // ── Circles ────────────────────────────────────────────────────────────────
   try {
-    const [{ data: owned }, { data: memberships }] = await Promise.all([
+    const [{ data: owned, error: ownedErr }, { data: memberships, error: membershipsErr }] = await Promise.all([  // §109: each read's error is read
       sc.from("circles").select("id, name, owner_id").eq("owner_id", userId).limit(10),
       sc.from("circle_memberships").select("user_id, other_id, status").eq("other_id", userId).limit(10),
     ]);
 
-    const ownedRows = ((owned ?? []) as any[]).map((r) => stripCoordinateFields(r));
+    if (ownedErr || membershipsErr) markUnread(result, "circles"); const ownedRows = ((owned ?? []) as any[]).map((r) => stripCoordinateFields(r));
 
     // Circles the user belongs to via membership (user_id = circle owner)
     const joinedOwnerIds = ((memberships ?? []) as any[])
@@ -147,12 +147,12 @@ export async function buildStructuredCompassContext(
 
     let joinedRows: any[] = [];
     if (joinedOwnerIds.length > 0) {
-      const { data: joined } = await sc
+      const { data: joined, error: joinedErr } = await sc
         .from("circles")
         .select("id, name, owner_id")
         .in("owner_id", joinedOwnerIds)
         .limit(10);
-      joinedRows = ((joined ?? []) as any[]).map((r) => stripCoordinateFields(r));
+      if (joinedErr) markUnread(result, "circles"); joinedRows = ((joined ?? []) as any[]).map((r) => stripCoordinateFields(r));
     }
 
     const allCircles = [
@@ -164,12 +164,12 @@ export async function buildStructuredCompassContext(
     const ownerIds = allCircles.map((c: any) => c.owner_id as string);
     let memberRows: any[] = [];
     if (ownerIds.length > 0) {
-      const { data: members } = await sc
+      const { data: members, error: membersErr } = await sc
         .from("circle_memberships")
         .select("user_id, other_id, status")
         .in("user_id", ownerIds)
         .limit(200);
-      memberRows = ((members ?? []) as any[]).filter(
+      if (membersErr) markUnread(result, "circleMembers"); memberRows = ((members ?? []) as any[]).filter(
         (m) => (m.status ?? "accepted") === "accepted",
       );
     }
@@ -184,12 +184,12 @@ export async function buildStructuredCompassContext(
     ];
     const handleById = new Map<string, string>();
     if (visibleMemberIds.length > 0) {
-      const { data: profs } = await sc
+      const { data: profs, error: profsErr } = await sc
         .from("profiles")
         .select("id, handle")
         .in("id", visibleMemberIds)
         .limit(200);
-      for (const p of (profs ?? []) as any[]) {
+      if (profsErr) markUnread(result, "circleMembers"); for (const p of (profs ?? []) as any[]) {
         if (p.handle) handleById.set(p.id as string, `@${p.handle}`);
       }
     }
@@ -207,11 +207,11 @@ export async function buildStructuredCompassContext(
         isOwner: Boolean(c.__isOwner),
       };
     });
-  } catch { /* non-fatal — no circle context */ }
+  } catch { markUnread(result, "circles"); /* §109: a thrown read is an unread section, never "no circles" — was: non-fatal — no circle context */ }
 
   // ── Active bookings ────────────────────────────────────────────────────────
   try {
-    const { data: bookings } = await sc
+    const { data: bookings, error: bookingsErr } = await sc
       .from("rent_buddy_bookings")
       // `date_from` / `date_to` are NOT columns of rent_buddy_bookings — the
       // table has `booking_date` (date) + `start_time` + `duration_h`, and
@@ -227,7 +227,7 @@ export async function buildStructuredCompassContext(
       .in("status", ["confirmed", "in_progress"])
       .limit(5);
 
-    const rows = ((bookings ?? []) as any[])
+    if (bookingsErr) markUnread(result, "bookings"); const rows = ((bookings ?? []) as any[])
       .map((r) => stripCoordinateFields(r))
       .filter((r: any) => !hidden.has(r.buddy_id as string));
 
@@ -257,12 +257,12 @@ export async function buildStructuredCompassContext(
       // rent_buddy_bookings.notes (the traveller's free text — hotel, room
       // number, meeting point) is intentionally NEVER selected or included.
     }));
-  } catch { /* non-fatal — no booking context */ }
+  } catch { markUnread(result, "bookings"); /* §109 — was: non-fatal — no booking context */ }
 
   // ── Passport / stamp history ───────────────────────────────────────────────
   try {
     // lat/lng columns intentionally NOT selected
-    const { data: stamps } = await sc
+    const { data: stamps, error: stampsErr } = await sc
       .from("user_stamps")
       .select("title_override, city, country, earned_at, is_revoked, stamp_definitions(name)")
       .eq("user_id", userId)
@@ -270,7 +270,7 @@ export async function buildStructuredCompassContext(
       .order("earned_at", { ascending: false })
       .limit(10);
 
-    result.recentStamps = ((stamps ?? []) as any[])
+    if (stampsErr) markUnread(result, "stamps"); result.recentStamps = ((stamps ?? []) as any[])
       .map((r) => stripCoordinateFields(r))
       .map((r: any) => {
         const defName = r.stamp_definitions?.name ?? null;
@@ -284,7 +284,7 @@ export async function buildStructuredCompassContext(
           earnedAt: String(r.earned_at ?? ""),
         };
       });
-  } catch { /* non-fatal — no stamp context */ }
+  } catch { markUnread(result, "stamps"); /* §109 — was: non-fatal — no stamp context */ }
 
   return result;
 }
@@ -328,7 +328,7 @@ export function formatStructuredContextLines(ctx: StructuredCompassContext): str
     }
   }
 
-  return lines;
+  lines.push(...unreadContextLines(ctx)); return lines;  // §109 (D-W11X2-88): a section that could not be read is said, never simply omitted
 }
 
 // ── Mode weighting ────────────────────────────────────────────────────────────
@@ -364,4 +364,37 @@ export function buildModeWeightingLines(
     `Context state: ${contextState}`,
     `Mode weighting: ${parts.join("; ")}`,
   ];
+}
+
+// ── census-discovery §109 (DV-83 round 12, lane W11-X2, D-W11X2-88): a failed read is said, not omitted ──
+//
+// Every read above was destructured as `{ data }` alone and each block's catch was "no … context",
+// so a failed circle read reached `get_circle_activity` as "The user is not in any circles." and
+// /compass/ask's prompt as a section that was simply absent. Each read's error now marks its
+// section here. The marker exists only when a read failed, so a healthy context is unchanged.
+
+/** The sections of a structured context whose read failed. */
+export interface StructuredContextUnread {
+  /** The owned, joined or membership read failed: the circle list may be incomplete or empty. */
+  circles?: true;
+  /** The circles were read, but their member or handle read failed: member lists may be incomplete. */
+  circleMembers?: true;
+  bookings?: true;
+  stamps?: true;
+}
+
+function markUnread(ctx: StructuredCompassContext, section: keyof StructuredContextUnread): void {
+  ctx.unread = { ...(ctx.unread ?? {}), [section]: true };
+}
+
+/** The prompt lines for the sections that could not be read. */
+function unreadContextLines(ctx: StructuredCompassContext): string[] {
+  const u = ctx.unread;
+  if (!u) return [];
+  const out: string[] = [];
+  if (u.circles) out.push("Circle membership could not be read right now: do not say the user is in no circles, or that the circles listed are all of them.");
+  else if (u.circleMembers) out.push("Circle member lists could not be read in full right now: do not say a circle has no other members.");
+  if (u.bookings) out.push("Active buddy bookings could not be read right now: do not say the user has no bookings.");
+  if (u.stamps) out.push("Passport history could not be read right now: do not say the user has no stamps.");
+  return out;
 }
