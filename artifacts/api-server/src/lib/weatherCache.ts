@@ -144,7 +144,7 @@ async function fetchWithTimeout(url: string, options?: RequestInit): Promise<Res
 async function geocode(destination: string): Promise<{ lat: number; lng: number } | null> {
   const url = `${GEOCODE_URL}?name=${encodeURIComponent(destination)}&count=1&language=en&format=json`;
   const res = await fetchWithTimeout(url);
-  if (!res.ok) throw new Error(`geocoder answered HTTP ${res.status}`);  // census-discovery §106 (D-W11X2-67): a failed geocode is a failed read, not "no such place"
+  if (!res.ok) throw new Error(`geocoder answered HTTP ${res.status}`);  // census-discovery §107 (D-W11X2-67): a failed geocode is a failed read, not "no such place"
   const data = await res.json() as any;
   const r = data?.results?.[0];
   if (!r) return null;
@@ -223,7 +223,7 @@ export async function getWeatherContext(
 }
 
 /**
- * census-discovery §106 (DV-83 round 10, lane W11-X2, D-W11X2-67): why `getWeatherContext` answered
+ * census-discovery §107 (DV-83 round 10, lane W11-X2, D-W11X2-67): why `getWeatherContext` answered
  * null. `failed` is set when a provider could not be read (an HTTP failure, a throw, a timeout); it
  * stays unset when the provider answered and there is nothing to forecast (no such place, no day).
  * Optional and additive: every caller that passes nothing gets exactly the null it always got.

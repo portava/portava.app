@@ -59,7 +59,7 @@ export async function isKillSwitchEngaged(sc: any, flag: string, status?: KillSw
       .select("enabled")
       .eq("flag", flag)
       .maybeSingle();
-    if (error) { if (status) status.unread = true; return true; } // state unknown → treat as stopped (and say so, when asked: census-discovery §106)
+    if (error) { if (status) status.unread = true; return true; } // state unknown → treat as stopped (and say so, when asked: census-discovery §107)
     return Boolean((data as any)?.enabled);
   } catch {
     if (status) status.unread = true; return true; // state unknown → treat as stopped
@@ -158,7 +158,7 @@ export const KILL_SWITCH_UNKNOWN_MESSAGE =
   "We could not check whether this is available right now. Please try again shortly.";
 
 /**
- * census-discovery §106 (DV-83 round 10, lane W11-X2, D-W11X2-69): why a stop read ENGAGED.
+ * census-discovery §107 (DV-83 round 10, lane W11-X2, D-W11X2-69): why a stop read ENGAGED.
  * `unread` is set when the stop's state could not be read (a resolved error or a throw), where
  * `isKillSwitchEngaged` still answers `true` — the fail-closed posture is unchanged. A caller whose
  * halt would otherwise be served as "this feature is off" passes this to tell the two apart and

@@ -1,9 +1,9 @@
 /**
- * census-discovery §106 (DV-83 round 10, lane W11-X2, register D-W11X2-68): GET /compass/telegraph
+ * census-discovery §107 (DV-83 round 10, lane W11-X2, register D-W11X2-68): GET /compass/telegraph
  * — the cards behind Telegraph's "Ask Compass" chip — never answers a failed read as "no
  * suggestions", and never answers an unread flag table as "Compass Telegraph is off".
  *
- * §106.1 BK2: the route served the hydrated pool without reading `compassHydrationFailedSources`
+ * §107.1 BK2: the route served the hydrated pool without reading `compassHydrationFailedSources`
  * (D-W11X2-54's contract for every caller that serves the pool), its catch answered
  * `{ cards: [], city: null }`, a failed profile read answered `{ cards: [] }`, and COMPASS_TELEGRAPH
  * was read through the fail-safe map, so an unread table was the flag-off `404 feature_disabled`.
@@ -64,7 +64,7 @@ function assertRefused(r: { status: number; body: any }, coverage: "nothing" | "
   assert.equal(r.body.refusal.route, "GET /compass/telegraph");
 }
 
-describe("census-discovery §106 (DV-83, D-W11X2-68): GET /compass/telegraph over a failed read", () => {
+describe("census-discovery §107 (DV-83, D-W11X2-68): GET /compass/telegraph over a failed read", () => {
   it("TG0 (V9-TG0) CONTROL: healthy reads → the public event is a card, no refusal", async () => {
     serve();
     const r = await get();

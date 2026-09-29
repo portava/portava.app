@@ -1,5 +1,5 @@
 /**
- * census-discovery §106 (DV-83 round 10, lane W11-X2): the fake world the round-9 verifier's
+ * census-discovery §107 (DV-83 round 10, lane W11-X2): the fake world the round-9 verifier's
  * probes ran over (scratchpad v9-probes/zz-v9-compassHomeTelegraphConfidence), shared by the
  * round-10 suites for GET /compass/home, GET /compass/telegraph and GET /compass/city-confidence.
  *

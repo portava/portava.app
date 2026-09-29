@@ -62,7 +62,7 @@ function stateFor(sc: unknown): ClientGateState {
   return s;
 }
 
-export type DiscoveryStopHalt = "stop_condition" | "kill_switch_engaged" | "stop_unreadable" | null;  // census-discovery §106 (D-W11X2-69): `stop_unreadable` = the stop could not be read; it halts exactly as an engaged stop does
+export type DiscoveryStopHalt = "stop_condition" | "kill_switch_engaged" | "stop_unreadable" | null;  // census-discovery §107 (D-W11X2-69): `stop_unreadable` = the stop could not be read; it halts exactly as an engaged stop does
 
 /**
  * Why a rollout flag that reads ON must be served as OFF right now, or null.
@@ -79,7 +79,7 @@ export async function discoveryStopHalt(sc: unknown, opts: { measure?: boolean }
     let halt: DiscoveryStopHalt = null;
     if (evaluateStopConditions().tripped.length > 0) halt = "stop_condition";
     else {
-      if (!s.kill || s.kill.unread || nowMs - s.kill.at >= TTL_MS) {  // §106: an UNREAD stop is never held for the TTL
+      if (!s.kill || s.kill.unread || nowMs - s.kill.at >= TTL_MS) {  // §107: an UNREAD stop is never held for the TTL
         const ks: KillSwitchReadStatus = {}; s.kill = { value: sc ? await isKillSwitchEngaged(sc, "disable_discovery_pde", ks) : false, at: nowMs, unread: ks.unread === true };
       }
       if (s.kill.value) halt = s.kill.unread ? "stop_unreadable" : "kill_switch_engaged";
@@ -91,7 +91,7 @@ export async function discoveryStopHalt(sc: unknown, opts: { measure?: boolean }
     return halt;
   } catch (err) {
     logger.warn({ err }, "discoveryStopGate: the stop check threw — rollout flags read OFF");
-    return "stop_unreadable";  // census-discovery §106 (D-W11X2-69): the stop state could not be established — still a halt
+    return "stop_unreadable";  // census-discovery §107 (D-W11X2-69): the stop state could not be established — still a halt
   }
 }
 

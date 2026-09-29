@@ -17975,9 +17975,9 @@ check:unissued-supabase-writes exit=0
     - `typecheck:tests` is at 173 against a baseline of 173.
   - `node scripts/check-route-registry.mjs`: "OK. All 210 screen file(s) are represented in PORTAVA_ROUTES and all 9 layout file(s) are represented in PORTAVA_LAYOUT_FILES."
 
-## §106 — DV-83 round 10 (lane W11-X2)
+## §107 — DV-83 round 10 (lane W11-X2)
 
-### 106.1 Integrator: DV-83 held at W after independent re-verification at `ba4888f20`
+### 107.1 Integrator: DV-83 held at W after independent re-verification at `ba4888f20`
 
 *Integrator, 2026-09-29. §105 was merged with main at `ba4888f20`; `0b7141b7c` (PR #530's head) adds only an unchecked-reads allowlist fix on top. An independent verifier then checked that tree: it re-ran every round-8 and round-7 probe, wrote new ones, and restored every mutated file byte-identical, checked by sha256.*
 
@@ -17994,7 +17994,7 @@ check:unissued-supabase-writes exit=0
 
 | ID | from | **to** | evidence |
 |---|---|---|---|
-| DV-83 | C | **W** | §105 closes §105.1's four paths, confirmed at `ba4888f20` (§106.1). Five paths still present a failed read as complete, empty, "off" or measured: the Compass home's presence, best-move and weather sections (`artifacts/api-server/src/routes/compassHome.ts`), the Telegraph cards and their tray (`artifacts/api-server/src/routes/compass.ts`, `travel-buddy-standalone/src/components/CompassTelegraphTray.tsx`), the output-kinds route behind an unread stop (`artifacts/api-server/src/lib/discoveryStopGate.ts`), the city-confidence "thin" (`artifacts/api-server/src/compass/CompassGraphEngine.ts`), and map search's unread flag (`artifacts/api-server/src/routes/mapSearch.ts`). Two DV-83 lines are unpinned (SM28, CM1). |
+| DV-83 | C | **W** | §105 closes §105.1's four paths, confirmed at `ba4888f20` (§107.1). Five paths still present a failed read as complete, empty, "off" or measured: the Compass home's presence, best-move and weather sections (`artifacts/api-server/src/routes/compassHome.ts`), the Telegraph cards and their tray (`artifacts/api-server/src/routes/compass.ts`, `travel-buddy-standalone/src/components/CompassTelegraphTray.tsx`), the output-kinds route behind an unread stop (`artifacts/api-server/src/lib/discoveryStopGate.ts`), the city-confidence "thin" (`artifacts/api-server/src/compass/CompassGraphEngine.ts`), and map search's unread flag (`artifacts/api-server/src/routes/mapSearch.ts`). Two DV-83 lines are unpinned (SM28, CM1). |
 
 Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
 

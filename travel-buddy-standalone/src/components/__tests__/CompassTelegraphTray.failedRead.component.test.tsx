@@ -1,5 +1,5 @@
 /**
- * census-discovery §106 (DV-83 round 10, D-W11X2-68): the Telegraph "Ask Compass" tray never
+ * census-discovery §107 (DV-83 round 10, D-W11X2-68): the Telegraph "Ask Compass" tray never
  * draws a failed read as "nothing found". Adapted from the round-9 verifier's probe
  * (scratchpad v9-probes/zz-v9-CompassTelegraphTray.failedRead).
  *
@@ -38,7 +38,7 @@ function mount(visible = true) {
 }
 const settled = () => waitFor(() => expect(screen.queryByText('Finding suggestions…')).toBeNull());
 
-describe('CompassTelegraphTray over a failed read (§106)', () => {
+describe('CompassTelegraphTray over a failed read (§107)', () => {
   beforeEach(() => mockFetch.mockReset());
 
   it('TT0 (V9-TT0) CONTROL: a readable empty answer → the empty state', async () => {

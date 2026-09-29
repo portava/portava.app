@@ -1,12 +1,12 @@
 /**
- * census-discovery §106 (DV-83 round 10, lane W11-X2, register D-W11X2-69): an UNREAD Discovery
+ * census-discovery §107 (DV-83 round 10, lane W11-X2, register D-W11X2-69): an UNREAD Discovery
  * stop is a failed read, never the flag-off answer. Adapted from the round-9 verifier's probe
  * (scratchpad v9-probes/zz-v9-outputKindsKillSwitchUnread).
  *
  * GET /v1/discovery/recommendations/:kind with its rollout flag READ and ON, and the manual stop
  * `disable_discovery_pde` UNREAD: `isKillSwitchEngaged` answers the error as "engaged" (fail
  * closed, D3=B), the stop gate halts, and the route answered `404 feature_disabled` — the flag-off
- * body the output-kinds rail hides exactly like the feature being off (§106.1 BK3). §104's FK1/FK2
+ * body the output-kinds rail hides exactly like the feature being off (§107.1 BK3). §104's FK1/FK2
  * fixed the same observable for the rollout flag one line earlier. Fail-closed stays (no rows); the
  * answer now says the stop could not be read.
  *
@@ -85,7 +85,7 @@ async function get(path = "/v1/discovery/recommendations/trails?destination=Miam
   return { status: res.status, raw: await res.text() };
 }
 
-describe("census-discovery §106 (DV-83, D-W11X2-69): the output kinds behind an UNREAD Discovery stop", () => {
+describe("census-discovery §107 (DV-83, D-W11X2-69): the output kinds behind an UNREAD Discovery stop", () => {
   it("KS0 (V9-KS0) CONTROL: the stop read, absent → the rail is served", async () => {
     serve();
     const r = await get();

@@ -329,7 +329,7 @@ const s = StyleSheet.create({
   askHintText:     { ...t.small, color: color.mute },
 });
 
-// ── census-discovery §106 (DV-83 round 10, lane W11-X2, D-W11X2-67): which section could not be read ──
+// ── census-discovery §107 (DV-83 round 10, lane W11-X2, D-W11X2-67): which section could not be read ──
 // The server marks a section `unavailable` when its source could not be read — the circle's
 // presence reads, the forecast provider, a best move picked from a partial candidate pool. A
 // missing card is otherwise drawn exactly like an empty one ("nobody is around", "no forecast"),

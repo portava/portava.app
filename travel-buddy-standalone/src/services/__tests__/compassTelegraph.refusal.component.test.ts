@@ -1,8 +1,8 @@
 /**
- * census-discovery §106 (DV-83 round 10, D-W11X2-68) — the Telegraph card reader names the
+ * census-discovery §107 (DV-83 round 10, D-W11X2-68) — the Telegraph card reader names the
  * route's refusal. GET /compass/telegraph now answers a failed read with the Discovery refusal
  * envelope beside `{ cards, city }`: `nothing` for a failed build, profile, context or flag read,
- * `partial` beside the cards when one card source failed. Before §106 the reader passed
+ * `partial` beside the cards when one card source failed. Before §107 the reader passed
  * `body.cards` on as a complete answer, and the chip's availability check hid an unread flag
  * table exactly like the flag being off.
  *
@@ -38,7 +38,7 @@ beforeEach(() => {
 const CARD = { id: 'ev-1', type: 'event', title: 'Jazz night', city: 'Paris', category: 'music', description: null, imageUrl: null };
 const refusal = (coverage: unknown, code = 'telegraph_sources_unread') => ({ class: 'transient_db', code, route: 'GET /compass/telegraph', coverage, failedSources: ['events'] });
 
-describe('§106 the Telegraph card reader names the route\'s refusal', () => {
+describe('§107 the Telegraph card reader names the route\'s refusal', () => {
   it('TS1 refused `nothing` → ok:false, refused, with its code', async () => {
     answer = { cards: [], city: null, refusal: refusal('nothing', 'telegraph_build_failed') };
     expect(await fetchCompassTelegraphCards('t-1')).toEqual({ ok: false, refused: true, error: 'telegraph_build_failed' });

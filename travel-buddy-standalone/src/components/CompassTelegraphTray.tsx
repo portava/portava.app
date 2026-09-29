@@ -9,7 +9,7 @@
  * filters to public-only items accessible to all thread participants.
  *
  * Empty state: "No suggestions right now" with a dismiss button — no fake cards.
- * Failed state (census-discovery §106, D-W11X2-68): a failed read or a refusal says so, with a retry — only a readable empty answer is the empty state. A partial answer keeps its cards under one "may be incomplete" line.
+ * Failed state (census-discovery §107, D-W11X2-68): a failed read or a refusal says so, with a retry — only a readable empty answer is the empty state. A partial answer keeps its cards under one "may be incomplete" line.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -77,16 +77,16 @@ export function CompassTelegraphTray({
   const [city, setCity]             = useState<string | null>(null);
   const [loading, setLoading]       = useState(false);
   const [sharedId, setSharedId]     = useState<string | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null); const [failed, setFailed] = useState(false); const [partial, setPartial] = useState(false); const trayReqRef = useRef(0);  // §106
+  const [selectedId, setSelectedId] = useState<string | null>(null); const [failed, setFailed] = useState(false); const [partial, setPartial] = useState(false); const trayReqRef = useRef(0);  // §107
 
   const load = useCallback(async () => {
-    if (!threadId) return; const myId = ++trayReqRef.current;  // §106: only the latest open's answer writes the tray
+    if (!threadId) return; const myId = ++trayReqRef.current;  // §107: only the latest open's answer writes the tray
     setLoading(true); setFailed(false); setPartial(false);
     setCards([]);
     setCity(null);
     try {
       const result = await fetchCompassTelegraphCards(threadId); if (trayReqRef.current !== myId) return;
-      if (!result.ok || !result.cards || (result.partial === true && result.cards.length === 0)) setFailed(true); else {  // census-discovery §106 (DV-83, D-W11X2-68): a failed read or a refusal is never "couldn't find"
+      if (!result.ok || !result.cards || (result.partial === true && result.cards.length === 0)) setFailed(true); else {  // census-discovery §107 (DV-83, D-W11X2-68): a failed read or a refusal is never "couldn't find"
         setCards(result.cards);
         setCity(result.city ?? null); setPartial(result.partial === true);
       }
@@ -467,7 +467,7 @@ const cr = StyleSheet.create({
   },
 });
 
-// ── census-discovery §106 (DV-83 round 10, lane W11-X2, D-W11X2-68): the tray's failed state ──
+// ── census-discovery §107 (DV-83 round 10, lane W11-X2, D-W11X2-68): the tray's failed state ──
 // The tray set its cards only on `result.ok`, so an HTTP failure, a network failure and a refusal
 // all fell through to the empty state, "Compass couldn't find relevant recommendations for this
 // chat" — a claim about the chat made from a read that did not answer. Only a readable empty

@@ -378,7 +378,7 @@ async function activeContexts(sc: SupabaseClient, userId: string, unread?: Prese
         out.push({ type: "trip", id: t.id, title: String(t.title ?? t.destination_city ?? "Trip") });
       }
     }
-  } catch { markPresenceUnread(unread); /* non-fatal — but said: census-discovery §106 (D-W11X2-67) */ }
+  } catch { markPresenceUnread(unread); /* non-fatal — but said: census-discovery §107 (D-W11X2-67) */ }
   try {
     const cutoff = new Date(Date.now() - 6 * 3600_000).toISOString();
     const { data: rsvps, error: rsvpsErr } = await sc
@@ -399,7 +399,7 @@ async function activeContexts(sc: SupabaseClient, userId: string, unread?: Prese
         out.push({ type: "event", id: e.id, title: String(e.title ?? "Event") });
       }
     }
-  } catch { markPresenceUnread(unread); /* non-fatal — but said: census-discovery §106 (D-W11X2-67) */ }
+  } catch { markPresenceUnread(unread); /* non-fatal — but said: census-discovery §107 (D-W11X2-67) */ }
   return out.slice(0, 5);
 }
 
@@ -413,7 +413,7 @@ async function contextMemberIds(
       .select("user_id, role, status")
       .eq("trip_id", ctx.id)
       .in("role", ["owner", "co_host", "member", "viewer"]);
-    if (error) throw error; return ((data ?? []) as any[])  // §106: a failed member read is thrown to collectPresence, which says it
+    if (error) throw error; return ((data ?? []) as any[])  // §107: a failed member read is thrown to collectPresence, which says it
       .filter((r) => r.status == null || r.status === "accepted")
       .map((r) => r.user_id as string);
   }
@@ -437,7 +437,7 @@ export async function getWhosAround(
   sc: SupabaseClient,
   viewerId: string,
   hidden: Set<string>,
-): Promise<{ people: WhosAroundEntry[]; contextsChecked: number; /** census-discovery §106 (DV-83, D-W11X2-67): a presence read failed, so an empty `people` is not "nobody is around" */ unread?: true }> {
+): Promise<{ people: WhosAroundEntry[]; contextsChecked: number; /** census-discovery §107 (DV-83, D-W11X2-67): a presence read failed, so an empty `people` is not "nobody is around" */ unread?: true }> {
   const unread: PresenceUnread = { v: false }; const { found, contextsChecked } = await collectPresence(sc, viewerId, hidden, unread);
   return { people: found.map((f) => f.entry).slice(0, 20), contextsChecked, ...(unread.v ? { unread: true as const } : {}) };
 }
@@ -815,7 +815,7 @@ export async function sharesSocialContext(
   return { shares: false, relationship: verdict.relationshipLabel, reason: "no_shared_context" };
 }
 
-// ── census-discovery §106 (DV-83 round 10, lane W11-X2, D-W11X2-67): "who's around" says an unread read ──
+// ── census-discovery §107 (DV-83 round 10, lane W11-X2, D-W11X2-67): "who's around" says an unread read ──
 // Every read on the presence walk used to be "non-fatal": a failed trip_members, trips,
 // event_rsvps or events read, a failed context-member read, a thrown consent batch, and a
 // batch that could not read (reason `unavailable`) or whose stop is engaged or unreadable

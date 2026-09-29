@@ -1,8 +1,8 @@
 /**
- * census-discovery §106 (DV-83 round 10, lane W11-X2, register D-W11X2-67): GET /compass/home never
+ * census-discovery §107 (DV-83 round 10, lane W11-X2, register D-W11X2-67): GET /compass/home never
  * says "ok" over a read that failed, and never caches a home built over one.
  *
- * The round-9 verifier found three sections of the home claiming "ok" over failed reads (§106.1 BK1):
+ * The round-9 verifier found three sections of the home claiming "ok" over failed reads (§107.1 BK1):
  *   - circle activity: `getWhosAround` swallowed its read errors, so a failed presence read was
  *     `people: []`, i.e. `sourced(null)` — "nobody is around", the answer the route's own comment
  *     calls the single most misleading thing it can say;
@@ -91,7 +91,7 @@ function tripWorld(fail: { contextMembers?: boolean; gateMembership?: boolean } 
   };
 }
 
-describe("census-discovery §106 (DV-83, D-W11X2-67): GET /compass/home's presence, best move and weather", () => {
+describe("census-discovery §107 (DV-83, D-W11X2-67): GET /compass/home's presence, best move and weather", () => {
   it("H0 (V9-H0) CONTROL: healthy reads → every source ok, not degraded, a best move", async () => {
     serve();
     const { body } = await get(homePath());

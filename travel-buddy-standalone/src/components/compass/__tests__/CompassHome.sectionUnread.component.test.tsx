@@ -1,8 +1,8 @@
 /**
- * CompassHome says WHICH section could not be read — census-discovery §106 (DV-83 round 10,
+ * CompassHome says WHICH section could not be read — census-discovery §107 (DV-83 round 10,
  * register D-W11X2-67). The server now marks a section `unavailable` when its read failed: the
  * circle's presence reads, the forecast provider, a best move picked from a partial candidate pool.
- * Before §106 the home only printed one generic "may be incomplete" line and then drew a missing
+ * Before §107 the home only printed one generic "may be incomplete" line and then drew a missing
  * section exactly like an empty one (no "Your circle" card = "nobody is around").
  *
  *   SU1  circleActivity unavailable → the circle line, never silence
@@ -43,7 +43,7 @@ async function mount(body: unknown) {
   await waitFor(() => expect(mockFetchCompassHome).toHaveBeenCalled());
 }
 
-describe('CompassHome says which section could not be read (§106)', () => {
+describe('CompassHome says which section could not be read (§107)', () => {
   beforeEach(() => { jest.clearAllMocks(); });
 
   it('SU1 circleActivity unavailable → the circle line', async () => {

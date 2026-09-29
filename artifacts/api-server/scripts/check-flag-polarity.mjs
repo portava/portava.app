@@ -235,7 +235,7 @@ const STOP_READER = 'isKillSwitchEngaged';
 // — whether the CALLER's branch on the value is the right one — it could not
 // say for isFlagEnabled either; the file's own header states that limit
 // ("IT DOES NOT ENFORCE: that the classification is RIGHT").
-const CAP_READERS = ['isFlagEnabled', 'isLivePlacesCapabilityEnabled', 'isEnabled', 'getFlagRow', 'readFlagState', 'readCompassFlag'];  // `readCompassFlag` joined on 2026-09-29 (census-discovery §106, D-W11X2-68): compass/flags.ts's strict reader over the SAME COMPASS_% bulk load and cache as `isEnabled` — true/false when read, null when the load failed — deciding nothing (the caller refuses on null). GET /compass/telegraph moved COMPASS_TELEGRAPH onto it so an unread table stops answering "off"; listing it widens what this check sees, as readFlagState did, and keeps a STOP read through it visible to R2.
+const CAP_READERS = ['isFlagEnabled', 'isLivePlacesCapabilityEnabled', 'isEnabled', 'getFlagRow', 'readFlagState', 'readCompassFlag'];  // `readCompassFlag` joined on 2026-09-29 (census-discovery §107, D-W11X2-68): compass/flags.ts's strict reader over the SAME COMPASS_% bulk load and cache as `isEnabled` — true/false when read, null when the load failed — deciding nothing (the caller refuses on null). GET /compass/telegraph moved COMPASS_TELEGRAPH onto it so an unread table stops answering "off"; listing it widens what this check sees, as readFlagState did, and keeps a STOP read through it visible to R2.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SCAN SCOPE

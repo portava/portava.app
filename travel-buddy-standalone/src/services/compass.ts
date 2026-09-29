@@ -1627,7 +1627,7 @@ export interface CompassTelegraphResult {
   cards?:       CompassTelegraphCard[];
   city?:        string | null;
   flagDisabled?: boolean;
-  error?:       string; /** census-discovery §106 (D-W11X2-68): the route refused (a failed read) — the chip stays, the tray says it. */ refused?: true; /** §106: a card source failed; the cards are real, the list may be incomplete. */ partial?: true;
+  error?:       string; /** census-discovery §107 (D-W11X2-68): the route refused (a failed read) — the chip stays, the tray says it. */ refused?: true; /** §107: a card source failed; the cards are real, the list may be incomplete. */ partial?: true;
 }
 
 /**
@@ -1652,7 +1652,7 @@ export async function fetchCompassTelegraphCards(
       return { ok: false, error: r.status === 403 ? 'forbidden' : `http_${r.status}` };
     }
     if (!r.ok) return { ok: false, error: `http_${r.status}` };
-    const body = await r.json(); const refused = telegraphRefused(body); if (refused) return refused;  // census-discovery §106 (DV-83, D-W11X2-68): a refusal is a failed read, never a complete (or empty) card list
+    const body = await r.json(); const refused = telegraphRefused(body); if (refused) return refused;  // census-discovery §107 (DV-83, D-W11X2-68): a refusal is a failed read, never a complete (or empty) card list
     return {
       ok:    true,
       cards: (body.cards ?? []) as CompassTelegraphCard[],
@@ -1670,7 +1670,7 @@ export async function fetchCompassTelegraphCards(
  */
 export async function checkCompassTelegraphAvailable(threadId: string): Promise<boolean> {
   const result = await fetchCompassTelegraphCards(threadId);
-  return (result.ok && !result.flagDisabled) || result.refused === true;  // census-discovery §106 (D-W11X2-68): a refusal (e.g. an unread flag table) is not "off" — the chip stays and the tray says the failure
+  return (result.ok && !result.flagDisabled) || result.refused === true;  // census-discovery §107 (D-W11X2-68): a refusal (e.g. an unread flag table) is not "off" — the chip stays and the tray says the failure
 }
 
 // ── AsyncStorage helpers ──────────────────────────────────────────────────────
@@ -1822,7 +1822,7 @@ export interface CompassHomePerson {
 
 export interface CompassHomeResponse {
   compassEnabled: boolean;
-  fallback:       boolean; /** census-discovery §105 (D-W11X2-65): why a fallback is a FAILURE (`compass_flags_unreadable`, `home_build_failed`); absent when Compass was read and is off. */ fallbackReason?: string; /** §105: true when a section's source could not be read (`sources[k] === 'unavailable'`). */ degraded?: boolean; /** census-discovery §106 (D-W11X2-67): per section, whether its source could be read. */ sources?: Partial<Record<CompassHomeSection, 'ok' | 'unavailable'>>;
+  fallback:       boolean; /** census-discovery §105 (D-W11X2-65): why a fallback is a FAILURE (`compass_flags_unreadable`, `home_build_failed`); absent when Compass was read and is off. */ fallbackReason?: string; /** §105: true when a section's source could not be read (`sources[k] === 'unavailable'`). */ degraded?: boolean; /** census-discovery §107 (D-W11X2-67): per section, whether its source could be read. */ sources?: Partial<Record<CompassHomeSection, 'ok' | 'unavailable'>>;
   timeOfDay?:     'morning' | 'afternoon' | 'evening' | 'night';
   contextState?:  string;
   city?:          string | null;
@@ -2046,11 +2046,11 @@ export async function postMemoryReset(
 import { compassMatchesFromBody, type CompassRecommendationsRefusal } from './compassRecommendationsRefusal.ts';
 export { compassRecommendationsFailed, type CompassRecommendationsRefusal } from './compassRecommendationsRefusal.ts';
 
-/** census-discovery §106 (DV-83 round 10, D-W11X2-67): the five sections GET /compass/home reports a source for. */
+/** census-discovery §107 (DV-83 round 10, D-W11X2-67): the five sections GET /compass/home reports a source for. */
 export type CompassHomeSection = 'bestNextMove' | 'circleActivity' | 'startingSoon' | 'tonightVibe' | 'weatherWindow';
 
 /**
- * census-discovery §106 (DV-83 round 10, D-W11X2-68): GET /compass/telegraph's refusal envelope.
+ * census-discovery §107 (DV-83 round 10, D-W11X2-68): GET /compass/telegraph's refusal envelope.
  * `partial` keeps its cards (and is marked); any other coverage — `nothing`, missing or unknown —
  * is a failed read, never a complete or empty list.
  */

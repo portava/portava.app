@@ -4523,12 +4523,12 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryOutputKindsRail.partial.component.test.tsx",
     "travel-buddy-standalone/src/components/compass/__tests__/CompassWhySheet.latestRequest.component.test.tsx",
     "travel-buddy-standalone/src/components/compass/__tests__/CompassHome.failedRead.component.test.tsx",
-    // census-discovery §106 (lane W11-X2, round 10): DV-83 re-graded on the Compass home's presence and
+    // census-discovery §107 (lane W11-X2, round 10): DV-83 re-graded on the Compass home's presence and
     // weather reads, the Telegraph cards and their tray, and the city-confidence route.
-    "artifacts/api-server/src/compass/CompassSocialEngine.ts",  // §106 grades getWhosAround's unread signal (D-W11X2-67)
-    "artifacts/api-server/src/lib/weatherCache.ts",  // §106 grades getWeatherContext's failure status (D-W11X2-67)
-    "artifacts/api-server/src/routes/compassGraph.ts",  // §106 grades GET /compass/city-confidence's refusal (D-W11X2-70)
-    "travel-buddy-standalone/src/components/CompassTelegraphTray.tsx",  // §106 grades its failed state (D-W11X2-68)
+    "artifacts/api-server/src/compass/CompassSocialEngine.ts",  // §107 grades getWhosAround's unread signal (D-W11X2-67)
+    "artifacts/api-server/src/lib/weatherCache.ts",  // §107 grades getWeatherContext's failure status (D-W11X2-67)
+    "artifacts/api-server/src/routes/compassGraph.ts",  // §107 grades GET /compass/city-confidence's refusal (D-W11X2-70)
+    "travel-buddy-standalone/src/components/CompassTelegraphTray.tsx",  // §107 grades its failed state (D-W11X2-68)
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //
