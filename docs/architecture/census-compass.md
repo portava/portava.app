@@ -3887,6 +3887,103 @@ are unaffected in their criteria. This removes a false "nothing to nudge", and a
 no gate. What would turn this red: any evaluator read that drops `error` again, or a Sense or Live
 answer that reports `evaluated: 0` with no `failedSources` while a source is unread.
 
+## §32 — 2026-09-29: the three fail-open reads §30 left open are closed, and the Sense and Live checks say what they could not run (lane TM-sense2) — MOVES NOTHING
+
+Testing-mode lane `lane-tm-sense2`, branch cut from `main` at `1ee6cefa5` (PR #542 TM-live and PR #543
+TM-sense merged). `head_commit` is **NOT** re-declared: this records a build. Controlled evidence only —
+node:test route and engine suites over a fake PostgREST client on the server, jest through the real
+client service layer with only `fetch` faked. No flag, no migration, nothing under payments; `routes/compass.ts`,
+`routes/compassHome.ts`, `CompassSocialEngine.ts` and `lib/weatherCache.ts` were not touched.
+
+### 32.1 The server: an unread row is never a permissive answer
+
+**(a) Settings.** `getSenseSettings` still resolves an unread row to the `passive` default — the right
+SEND posture — but that default is no longer an ANSWER or a write base.
+- `GET /compass/sense/settings` over an unread row (bound error or rejected read) is a retryable
+  `503 {"error":"degraded_unavailable","message":"Your Compass Sense settings could not be read right now. Please try again shortly.","retryable":true}`,
+  never `presenceLevel: "passive"` (`artifacts/api-server/src/routes/compassSense.ts:63#sendSenseSettingsUnavailable(res, "get")`).
+- `PUT` needs the current row whenever the patch leaves the level or any category unnamed; it then
+  refuses before writing (`artifacts/api-server/src/compass/CompassSenseEngine.ts:202#throw new SenseSettingsUnavailable("read")`),
+  answered `503 degraded_unavailable` "…could not be read, so nothing was changed…" through
+  `artifacts/api-server/src/routes/compassSense.ts:95#senseSettingsRefused(res, err)`. The stored categories are left exactly as they were.
+  A patch naming the level and all five categories needs nothing from the row
+  (`artifacts/api-server/src/compass/CompassSenseEngine.ts:839#export function senseSettingsPatchComplete(`) and is written as sent.
+- A write the database reports as failed is a `503` "…could not be saved…", no longer a 200 carrying
+  settings that were never stored (`artifacts/api-server/src/compass/CompassSenseEngine.ts:219#throw new SenseSettingsUnavailable("write"`).
+
+**(b) The daily cap fails closed.** `countDeliveredToday` answers `null` over an unread log
+(`artifacts/api-server/src/compass/CompassSenseEngine.ts:579#Promise<number | null>`); every candidate that reaches the cap gate is
+then held back as `daily_cap_unread` (`artifacts/api-server/src/compass/CompassSenseEngine.ts:650#daily_cap_unread`), and the run names
+the log as the source `nudge_log` (`artifacts/api-server/src/compass/CompassSenseEngine.ts:716#failedSources: countUnread`,
+`artifacts/api-server/src/compass/CompassSenseEngine.ts:756#export type SenseSource`). `senseCoverage` counts only the five signals
+toward `none` (`artifacts/api-server/src/compass/CompassSenseEngine.ts:771#export function senseCoverage(`), so an unread log alone is
+`partial`: the check answers `200` with `partial: true, failedSources: ["nudge_log"]`, and the sweep records an error.
+
+**(c) A live tick fails closed.** `runLiveCheck` reads settings with the unread flag
+(`artifacts/api-server/src/compass/CompassLiveEngine.ts:516#const settingsRead = { settings: false }`); over an unread row every
+candidate is held back as `permission_unread` (`artifacts/api-server/src/compass/CompassLiveEngine.ts:532#permission_unread`) and
+`settings` is added to `failedSources` (`artifacts/api-server/src/compass/CompassLiveEngine.ts:625#[...failedSources, "settings"]`), which the
+route already turns into `partial: true`.
+
+**Response shapes.** Healthy bodies are byte-identical (pinned). New shapes:
+- `GET /compass/sense/settings`, row unread → `503 {"error":"degraded_unavailable","message":"Your Compass Sense settings could not be read right now. Please try again shortly.","retryable":true}`.
+- `PUT /compass/sense/settings`, row needed and unread → `503 {…,"message":"Your Compass Sense settings could not be read, so nothing was changed. Please try again shortly.","retryable":true}`; write failed → `503 {…,"message":"Your Compass Sense settings could not be saved. Please try again shortly.","retryable":true}`.
+- `POST /compass/sense/check`, day's count unread → `200 {"compassEnabled":true,"presenceLevel":…,"evaluated":N,"delivered":[],"suppressed":[{…,"reason":"daily_cap_unread"}],"partial":true,"failedSources":["nudge_log"]}` (other unread signals are listed before it).
+- `POST /compass/live/check`, settings unread → `200 {…,"delivered":[],"suppressed":[{…,"reason":"permission_unread"}],"partial":true,"failedSources":[…,"settings"]}`.
+
+**Decisions (routine; recorded here, Compass has no register).** (1) "The current row is needed" means the
+patch leaves the level or a category unnamed, since the upsert writes the whole row. (2) An unread count
+is reported whether or not a candidate reached the cap: the log could not be read, and the sweep should
+count that. (3) `nudge_log` is not a signal, so it alone never makes a check a 503. (4) A write error on
+PUT is the same class of defect and was closed with it.
+
+### 32.2 The client: the checks say what they could not run
+
+- `runSenseCheck` reads `failedSources` on a 200 and on a 503 — `liveRequest` now keeps a 5xx body
+  (`travel-buddy-standalone/src/features/live/liveApi.ts:79#body: parsed ?? null`, `travel-buddy-standalone/src/features/live/senseNudges.ts:57#failedSources: named`).
+- **Check now**: a partial 200 shows `Some checks couldn't run: … Nothing from them is included above — this is not everything.`
+  beside what was delivered (`travel-buddy-standalone/src/features/live/SenseNudgesPanel.tsx:78#sense-check-partial`, words from
+  `travel-buddy-standalone/src/features/live/senseNudges.ts:117#export const SENSE_SOURCE_WORDS`). A 503 is an error that names the checks, with
+  **Try again** (`travel-buddy-standalone/src/features/live/SenseNudgesPanel.tsx:87#sense-check-retry`); it is never "nothing to nudge you about".
+- **Recent nudges**: verified, not changed — its 503 is already `unavailable` with Try again, pinned by §29.4's `senseNudges.component.test.tsx`.
+- **Auto-checks** never record a partial or failed check as clean (`travel-buddy-standalone/src/features/live/senseNudges.ts:143#export function senseCheckIsClean(`):
+  after one, the next trigger may ask again after `travel-buddy-standalone/src/features/live/useSenseAutoCheck.ts:88#SENSE_RETRY_MIN_INTERVAL_MS = 60_000`
+  instead of the 10-minute / 2-minute throttle (`travel-buddy-standalone/src/features/live/useSenseAutoCheck.ts:60#const wait = lastClean.current`).
+  Before this, the throttle was stamped at ask time, so a failed check hid itself for ten minutes.
+- **Compass Live** (`POST /compass/live/check`): `checkCompassLive` carries the keys
+  (`travel-buddy-standalone/src/services/compass.ts:1247#partial: true, failedSources`); the live card names what a tick could not read
+  (`travel-buddy-standalone/src/components/compass/CompassLive.tsx:38#function checkIssueLine(`), and a failed tick, once silently dropped, is an
+  error with Try again (`travel-buddy-standalone/src/components/compass/CompassLive.tsx:78#setCheckIssue({ kind: 'failed'`).
+
+### 32.3 Tests, red first, and mutations
+
+- Server: `artifacts/api-server/src/test/compassSenseFailClosed.test.ts:269#describe("A. GET/PUT`,
+  `artifacts/api-server/src/test/compassSenseFailClosed.test.ts:358#describe("B. countDeliveredToday`,
+  `artifacts/api-server/src/test/compassSenseFailClosed.test.ts:437#describe("C. runLiveCheck` — 23 cases, 13 red on `1ee6cefa5`
+  (the 10 green are healthy byte pins and the complete-patch case), 23/23 after. Mutations S1–S14 (GET gate, PUT read gate, PUT write
+  gate, patch-complete predicate, route catch, count error, count catch, cap gate, cap reason, `nudge_log` report, coverage filter,
+  live gate, live `settings` report, live reason) each reddened the suite and were restored with a sha256 match.
+- Client: `travel-buddy-standalone/src/features/live/__tests__/senseCheckHonesty.component.test.tsx:77#describe('SenseNudgesPanel`,
+  `travel-buddy-standalone/src/features/live/__tests__/senseCheckHonesty.component.test.tsx:136#describe('useSenseAutoCheck`,
+  `travel-buddy-standalone/src/components/compass/__tests__/CompassLive.checkHonesty.component.test.tsx:73#describe('CompassLive` — 17 cases,
+  13 red before, 17/17 after. Mutations C1–C13 each reddened their suite and were restored with a sha256 match.
+
+### 32.4 What moves, and what is left
+
+**MOVES NOTHING.** CPH-11 is already `C`; its *"no spam"* (the daily cap) and *"permissions honored"*
+criteria held only while the nudge log and the settings row were readable, and now also hold during
+those outages. That strengthens a passing verdict; it does not change it. CPH-12 is unaffected in its
+criteria. No other row grades the settings routes, the cap's read, or the client panels.
+
+**Left open.** (1) `runSense`'s last-gate re-read over an unread row still reads as `revoked_mid_run`:
+fail-closed, but the reason names a revocation that may not have happened. Naming it `settings` would
+turn a run that already delivered into a 503, so it was left. (2) The Compass preferences screen ignores a
+failed PUT: the control keeps showing the last value read, which is true, but says nothing. (3) The
+Open-Meteo case §30 recorded. (4) The nudge-log INSERT in `runSense`/`runLiveCheck` still drops its error.
+What would turn this red: an unread settings row answered as `passive` or written over; an unread count
+read as 0; a live tick delivering over an unread row; a panel that renders a 503 or a partial check as a
+clean result.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/routes/verification.ts — §18.4 cites line 257 only to report that census-trust §14.6's TV-1a sentence is false at HEAD. The route is Trust's subject, graded in census-trust as TV-1a, and no Compass row rests on it.
@@ -3914,3 +4011,8 @@ answer that reports `evaluated: 0` with no `failedSources` while a source is unr
 - NOT-GRADED: artifacts/api-server/src/lib/discoveryRefusal.ts — §30 names it only as the codebase's statement of the failure-honesty rule (DV-83) that the Sense fix follows. It is Discovery's refusal vocabulary, graded in census-discovery, and no Compass verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/lib/weatherCache.ts — §30 names it only to record a residual it left open: `getWeatherContext` answers null for both "no forecast" and "fetch failed". No Compass row grades the weather cache, and the weather evaluator's verdict rests on CompassSenseEngine.ts.
 - NOT-GRADED: artifacts/api-server/src/test/compassSenseReadHonesty.test.ts — §29's controlled evidence for a change that moves no row. No Compass verdict rests on it, and CPH-11/CPH-12 keep the evidence they already cite.
+- NOT-GRADED: artifacts/api-server/src/test/compassSenseFailClosed.test.ts — §32.3's controlled evidence for the three closed fail-open reads; no Compass verdict moves on it, and CPH-11/CPH-12 keep the evidence they already cite.
+- NOT-GRADED: travel-buddy-standalone/src/features/live/senseNudges.ts — §32.2's Sense client (coverage keys, source words, the clean-check rule); built work, no Compass row grades it.
+- NOT-GRADED: travel-buddy-standalone/src/features/live/liveApi.ts — §32.2 cites only the line that keeps a 5xx body so a 503 can name its sources; no Compass verdict rests on the helper.
+- NOT-GRADED: travel-buddy-standalone/src/features/live/__tests__/senseCheckHonesty.component.test.tsx — §32.3's suite for the Sense panel and the auto-check; no verdict rests on it.
+- NOT-GRADED: travel-buddy-standalone/src/components/compass/__tests__/CompassLive.checkHonesty.component.test.tsx — §32.3's suite for the live card; no verdict rests on it.
