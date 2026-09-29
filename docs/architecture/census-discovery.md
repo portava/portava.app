@@ -17781,6 +17781,27 @@ check:unissued-supabase-writes exit=0
   - `typecheck` is clean, and `typecheck:tests` is at 173 against a baseline of 173.
   - The client tree is unchanged since `37b656531`.
 
+## §105 — DV-83 round 9 (lane W11-X2)
+
+### 105.1 Integrator: DV-83 held at W after independent re-verification at `d3f573530`
+
+*Integrator, 2026-09-29. §104 was merged with main (PR #534) at `d3f573530`, PR #530's head. An independent verifier then checked that tree: it re-ran every round-7 probe, wrote new ones, and restored every mutated file byte-identical, checked by sha256.*
+
+- **Confirmed.** §103.11's three breaks and its possible are closed in behaviour (V7-S1, V7-S2, V7-R1, V7-R2, V7-C1, V7-T1, V7-T2, V7-TC, V7-H1 all green). The merge touches only the map's camera fly, with no Discovery rows. 37 of 40 mutations are killed.
+- **Found: four paths that break the criterion's wording, each shown by a probe that fails against this tree.**
+  1. **BK1. The Trails read routes serve a failed member-source read as a complete Trail (clauses a, c).** `servableMembers` withholds every member of a table whose read errored and names it only in an optional `unread` set that no read caller passes (modules, trending, detail). Modules answer 200 without the member; trending answers a measured `trending: false`; detail answers "Quiet right now" over one member of two (V8-TR1, V8-TR2, V8-TR3 red; V8-TR0 the control). The pin `discoveryTrailMemberVisibility` V2 asserts the broken answer (`artifacts/api-server/src/services/trails/TrailService.ts`, `artifacts/api-server/src/routes/trails.ts`).
+  2. **BK2. The hashtag feed, which every Discover trending chip opens, serves failed tab reads as empty tabs (clauses a, c).** The people, places, trips, circles and events tabs ignore their read errors, their catches answer an empty page, and the hashtag lookup answers a failed read as `404 Hashtag not found`. The screen draws "No {tab} content yet" (V8-HF1, V8-HF2, V8-HF3 red; V8-HF0 the control) (`artifacts/api-server/src/routes/hashtags.ts`).
+  3. **BK3. GET /compass/feed answers an unread flag as "Compass off" (clause a).** The fail-safe flag map and the ignored `COMPASS_FEED_ENABLED` read both answer the flag-off bytes (V8-CF1, V8-CF2 red; V8-CF0 the control) (`artifacts/api-server/src/routes/compass.ts`).
+  4. **BK4. For You's "Why am I seeing this?" sheet can draw another card's reason over a failed read (clause c, wrong rows).** `useCompassWhyExplanation` has no latest-request guard (V8-Y1 red) (`travel-buddy-standalone/src/hooks/compass/useCompassWhyExplanation.ts`).
+- **Unpinned survivors.** SM14 (`/compass/recommendations` with zero rows forced to `partial`), SM15 (the build catch's `compass_flags_unreadable` code), SM17 (the trending route's unread lists flag behind a readable API flag).
+- **Next.** A round-9 lane closes the four paths with the verifier's probes as failing-first tests, pins the survivors, and sweeps the Discovery and Compass read surfaces for the same defect classes. The row moves only after that.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | C | **W** | §104 closes §103.11's three paths and its possible, confirmed at `d3f573530` (§105.1). Four paths still present a failed read as empty, complete or over the wrong rows: the Trails read routes' withheld unread members (`artifacts/api-server/src/services/trails/TrailService.ts`), the hashtag feed's empty tabs over failed reads (`artifacts/api-server/src/routes/hashtags.ts`), `/compass/feed`'s unread flags answered as "off" (`artifacts/api-server/src/routes/compass.ts`), and the why sheet's unguarded late answer (`travel-buddy-standalone/src/hooks/compass/useCompassWhyExplanation.ts`). Three DV-83 lines are unpinned (SM14, SM15, SM17). |
+
+Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/services/airport/__tests__/layoverSurfaceErrorBinding.test.ts — §104.8 names it only as the integrator's whole-repo scan, run on the final commit; no DV-83 verdict rests on its content.
