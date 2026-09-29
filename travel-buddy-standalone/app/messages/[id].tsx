@@ -75,7 +75,7 @@ import {
 import { headerSubtitle } from '../../src/features/telegraph/header/headerAxes.ts';
 import { useConversationHeader } from '../../src/features/telegraph/header/useConversationHeader.ts';
 import { ComposerPlusMenu } from '../../src/features/telegraph/composer/ComposerPlusMenu.tsx'; import { VoiceRecorderSheet } from '../../src/features/telegraph/voice/VoiceRecorderSheet.tsx'; // one line: census-telegraph cites this file at :253, :270, :844, :869, :1624, :1831, :1947, :1958, :2089, :2094, :2114, :2172, :2227, :2269 and :2376.
-import { TypedComposePrompt, type TypedComposeKind } from '../../src/features/telegraph/composer/TypedComposePrompt.tsx';
+import { TypedComposePrompt, type TypedComposeKind } from '../../src/features/telegraph/composer/TypedComposePrompt.tsx'; import { MeetAtActionBar } from '../../src/platform/input-assistance/social/MeetAtActionBar.tsx'; import type { TelegraphLocationDraft } from '../../src/platform/input-assistance/social/telegraphMeetAt.ts'; // §54 GII-F10; one line: this file is cited by line
 import { sendTypedMessage, type SendableKind } from '../../src/features/telegraph/kinds/kindsApi.ts';
 import { TelegraphRecommendationCard } from '../../src/components/TelegraphRecommendationCard';
 import type { TelegraphSuggestion, MeetupPrefill } from '../../src/services/telegraphChat';
@@ -1583,7 +1583,7 @@ export default function TelegraphThread() {
   const telegraphHeader = useConversationHeader(id ?? null);
   // Telegraph §6.1: the composer's + menu, and the two typed-compose sheets.
   const [showPlusMenu, setShowPlusMenu] = useState(false);
-  const [typedCompose, setTypedCompose] = useState<TypedComposeKind | null>(null); const [showVoiceRecorder, setShowVoiceRecorder] = useState(false); // §6.2 VOICE — the sheet the + menu's Voice entry opens. Shares a line because census-telegraph cites every line below it.
+  const [typedCompose, setTypedCompose] = useState<TypedComposeKind | null>(null); const [locationDraft, setLocationDraft] = useState<TelegraphLocationDraft | null>(null); const [showVoiceRecorder, setShowVoiceRecorder] = useState(false); // §6.2 VOICE — the sheet the + menu's Voice entry opens. Shares a line because census-telegraph cites every line below it.
 
   // Send button springs in/out with input content
   const hasInput = input.trim().length > 0 || mediaPicker.media !== null;
@@ -2396,11 +2396,11 @@ export default function TelegraphThread() {
       />
 
       <TypedComposePrompt
-        kind={typedCompose}
+        kind={typedCompose} initialLocation={locationDraft}
         authorId={userId ?? null}
-        onCancel={() => setTypedCompose(null)}
+        onCancel={() => { setTypedCompose(null); setLocationDraft(null); }}
         onSubmit={async (kind: SendableKind, payload: unknown) => {
-          setTypedCompose(null);
+          setTypedCompose(null); setLocationDraft(null);
           if (!id) return;
           const res = await sendTypedMessage(id, kind, payload);
           if (!res.ok) {
@@ -2441,7 +2441,7 @@ export default function TelegraphThread() {
         }}
       />
 
-      <View style={[styles.compose, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+      <MeetAtActionBar draft={input} onPick={(d) => { setLocationDraft(d); setTypedCompose('LOCATION'); }} /><View style={[styles.compose, { paddingBottom: Math.max(insets.bottom, 8) }]}>
         {/* Media attachment button */}
         <Pressable
           style={styles.composeIconBtn}

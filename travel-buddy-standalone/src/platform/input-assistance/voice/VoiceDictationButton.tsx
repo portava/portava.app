@@ -88,8 +88,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: color.haze,
   },
-  btnOn: { backgroundColor: color.signalStrong, borderColor: color.signalStrong },
+  btnOn: { backgroundColor: color.deep, borderColor: color.deep },
   btnOff: { opacity: 0.7 },
   msg: { ...t.small, color: color.mute, textAlign: 'center' },
-  msgBad: { color: color.signalStrong },
+  msgBad: { color: color.ink, fontWeight: '600' },
 });

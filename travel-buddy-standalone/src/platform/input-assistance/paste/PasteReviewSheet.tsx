@@ -167,7 +167,7 @@ export function PasteReviewSheet({
             </View>
             {phase === 'error' && error ? (
               <View style={styles.errorBox} accessibilityRole="alert" testID="paste-error">
-                <AlertTriangle size={iconToken.s16} color={color.signalStrong} />
+                <AlertTriangle size={iconToken.s16} color={color.signal} />
                 <Text style={styles.errorText}>{error.message}</Text>
               </View>
             ) : null}
@@ -205,7 +205,7 @@ export function PasteReviewSheet({
               ) : null}
               {applyFailed > 0 ? (
                 <View style={styles.errorBox} accessibilityRole="alert" testID="paste-apply-error">
-                  <AlertTriangle size={iconToken.s16} color={color.signalStrong} />
+                  <AlertTriangle size={iconToken.s16} color={color.signal} />
                   <Text style={styles.errorText}>
                     {plural(applyFailed)} couldn’t be added. The others were saved. Try again for these.
                   </Text>
@@ -289,7 +289,7 @@ const styles = StyleSheet.create({
   title: { ...t.heading, color: color.ink, flex: 1 },
   body: { gap: space.md },
   help: { ...t.small, color: color.mute },
-  warnText: { ...t.small, color: color.muteStrong },
+  warnText: { ...t.small, color: color.mute },
   inputRow: { flexDirection: 'row', gap: space.sm, alignItems: 'flex-start' },
   input: {
     flex: 1,
@@ -304,7 +304,7 @@ const styles = StyleSheet.create({
     textAlignVertical: 'top',
   },
   errorBox: { flexDirection: 'row', gap: space.sm, alignItems: 'flex-start' },
-  errorText: { ...t.small, color: color.signalStrong, flexShrink: 1 },
+  errorText: { ...t.small, color: color.ink, flexShrink: 1 },
   primary: {
     backgroundColor: color.signal,
     borderRadius: radius.md,
