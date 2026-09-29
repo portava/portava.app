@@ -8866,6 +8866,11 @@ cited file is watched" was never true to the extent reported.
 - NOT-GRADED: artifacts/api-server/scripts/check-flag-polarity.mjs — the flag-polarity guard, listed in §21.7 among the guard machinery §21 edited when it reclassified MEDIA_WORLD_SHELL_ENABLED as a capability; it measures flag declarations and grades nothing, and the machinery pattern reaches only src/scripts/check*.ts, not scripts/*.mjs.
 - NOT-GRADED: artifacts/api-server/src/test/censusIntegrityQualifiedVerdicts.test.ts — the suite that asserts check:census-integrity exits 0, named in §21.8 to explain why it was red while the headline waited for the integrator's restatement; it tests the census tool, not Media code, and no MD verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/routes/index.ts — the API router registry, listed in §22.7 only among the files §22 edited, to say which censuses' acknowledgements already name it (highlights-memories, telegraph); the §22 and §23.8 scope notes keep it out on purpose because every feature's mount edits it, and no MD row cites it as evidence.
+- NOT-GRADED: artifacts/api-server/src/test/tmAdminConsole.test.ts — the TM-admin lane's server suite, cited in §45.3 for the gem-verify and guide-status honesty cases; no MD verdict rests on it.
+- NOT-GRADED: travel-buddy-standalone/app/admin/__tests__/AdminConsoleScreens.component.test.tsx — §45.3's admin-screen suite; no MD verdict rests on it.
+- NOT-GRADED: travel-buddy-standalone/app/admin/hidden-gems.tsx — §45's admin gem-review screen; built work for PLAT-F39, no MD verdict rests on it.
+- NOT-GRADED: travel-buddy-standalone/app/admin/local-guides.tsx — §45's admin guide-approval screen; built work for PLAT-F38, no MD verdict rests on it.
+- NOT-GRADED: travel-buddy-standalone/app/admin/console.tsx — §45 names the admin Testing Console only as the entry to the two screens; this census grades no behaviour of it.
 
 ### 32.15 The scope-coverage hole, closed: every census watches what it cites
 
@@ -15911,3 +15916,67 @@ migration and owner decision these rows wait on is listed in one place:
 `docs/ops/sensing-production-approval-request.md`, section H (H1–H16), with its
 "Decisions the flags cannot take" list and the H-build section on the builds
 and devices this environment cannot reach.
+
+## 45. Lane TM-admin (WP-21) — hidden-gem review and local-guide approval reach an admin screen — 2026-09-29
+
+Branch `lane-tm-admin`, cut from `main` at `18518e982`. No MD row moves; `head_commit` is not
+re-declared. Controlled evidence only (route tests against an in-memory client, component tests).
+No flag was touched, no migration was added, nothing was read from or written to any database.
+
+### 45.1 What was missing
+
+The flow catalogue's PLAT-F39 (admin reviews pending and reported gems) and PLAT-F38 (become a
+local guide) were server-only: the routes existed and were admin-gated (`isAdmin`), but no screen
+called them, so a submitted gem stayed `pending` and a guide applicant stayed `applicant` unless a
+tester had an API client. Two of those routes also answered `{ ok: true }` for work that had not
+happened, which a screen would have repeated to the admin.
+
+### 45.2 What was built
+
+- **Server, two honest answers, line-neutral in the route file.**
+  `recordAdminVerification` now checks its status UPDATE and says whether a gem was found
+  (`artifacts/api-server/src/services/hiddenGems/HiddenGemVerificationService.ts:364#if (updErr) throw updErr;`);
+  the route answers 404 for a gem id that matches nothing and `db_error` for a refused write
+  (`artifacts/api-server/src/routes/hiddenGems.ts:1539#const gemFound = await recordAdminVerification(`).
+  `setGuideStatus` returns the updated row or null and throws on a refused write
+  (`artifacts/api-server/src/services/hiddenGems/LocalGuideService.ts:263#if (error) throw error;`);
+  the route answers 404 for a user with no guide profile and writes an audit log line with the
+  admin id, the guide and the new status, as the live-scope admin routes do
+  (`artifacts/api-server/src/routes/hiddenGems.ts:1688#local guide status set via admin surface`).
+  The gem decision's own audit row (`hidden_gem_verifications`, `method: "admin"`) was already written.
+- **Screens.** `travel-buddy-standalone/app/admin/hidden-gems.tsx:46#export default function AdminHiddenGemsScreen(`
+  (Pending: approve / reject with an optional note; Reported: uphold / dismiss) and
+  `travel-buddy-standalone/app/admin/local-guides.tsx:37#export default function AdminLocalGuidesScreen(`
+  (approve → `active`, decline → `demoted`), reached from the admin Testing Console
+  (`travel-buddy-standalone/app/admin/console.tsx`), itself one row in Settings → Connected features.
+  A row leaves its queue only after the server confirmed the decision; a failed read is an announced
+  error with a retry, never "nothing to review".
+
+### 45.3 Tests, seen red, and mutations
+
+- Server: `artifacts/api-server/src/test/tmAdminConsole.test.ts:171#describe("POST /api/admin/local-guides/:userId/status (PLAT-F38)"`
+  and `artifacts/api-server/src/test/tmAdminConsole.test.ts:209#describe("POST /api/admin/hidden-gems/:id/verify (PLAT-F39)"`. Against the pre-lane
+  code, the guide audit case, the no-profile 404, the refused-write error, the missing-gem 404 and
+  the refused gem write were RED; the admin-only and approve/reject cases were the green controls.
+  Mutations (each restored by sha256, each reddened exactly one case): swallow the guide UPDATE error;
+  drop the guide 404; drop the audit line; swallow the gem UPDATE error; drop the gem 404.
+- Client: `travel-buddy-standalone/app/admin/__tests__/AdminConsoleScreens.component.test.tsx:75#describe('Hidden gem review (PLAT-F39)'`
+  and `travel-buddy-standalone/app/admin/__tests__/AdminConsoleScreens.component.test.tsx:118#describe('Local guides (PLAT-F38)'`. Mutations: a refused decision still removing its
+  row (gems and guides, 1 red each); a failed queue read rendered as empty (2 red).
+
+### 45.4 Decisions (this census has no decision register)
+
+- **Decline is `demoted`.** The profile table allows `applicant | active | suspended | demoted`; an
+  applicant who is declined was never active, and `suspended` reads as a temporary sanction.
+- **Merge and sensitivity marking stay API-only.** `mergeDuplicate` and `markSensitive` still await
+  their UPDATEs unchecked, so a screen over them would report success it cannot know. They are listed
+  with their calls in `docs/ops/testing-mode-flows.md` and recorded as an open item.
+
+### 45.5 What this does not claim, and what would turn it red
+
+- MD115 and MD448 do not move: they grade community confirmation and gem intelligence, and the
+  admin decision path they rest on is unchanged except that its failures are now reported.
+- The loop closes only where `hidden_gems_enabled` and `local_guides_enabled` are on; the admin
+  routes themselves are not flag-gated.
+- Red if: the verify or guide-status route answers ok for a refused write or a missing target; a
+  screen shows an empty queue for a failed read, or drops a row the server refused.

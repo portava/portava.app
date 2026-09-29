@@ -19,7 +19,7 @@
  */
 
 import { Router } from "express";
-import { logAdminAccess, accessReason } from "../lib/adminAudit.js";
+import { logAdminAccess, accessReason } from "../lib/adminAudit.js";  import { asyncHandler } from "../lib/asyncHandler.js";
 import { z } from "zod";
 import { sendError } from "../lib/http.js";
 import { awardStamp, revokeStamp, restoreStamp } from "../services/passport/StampAwardEngine.js";
@@ -658,3 +658,40 @@ router.post("/admin/stamps/artwork/approve-candidates", async (req, res) => {
 });
 
 export default router;
+
+// ── GET /admin/stamps/users/:userId/stamps (testing-mode WP-21, PASS-F23) ─────
+//
+// Revoke and restore take a `user_stamps.id`, and nothing handed an admin one:
+// the public stamp routes hide revoked rows, so a stamp revoked by mistake
+// could never be found again to restore. This lists ONE person's stamps, with
+// ids, revoked ones included, newest first. Admin-only (requireAdmin), audited
+// through admin_access_log exactly as GET /admin/stamps/audit is, and a failed
+// read is an error — never an empty list, which would read as "has no stamps".
+//
+// Registered after the default export on purpose: the router object is the
+// same one, and appending here keeps every cited line of this file where it is.
+
+router.get("/admin/stamps/users/:userId/stamps", asyncHandler(async (req, res) => {
+  const { userId } = req.params;
+  if (!isUuid(userId)) { sendError(res, "invalid_payload", "Invalid userId"); return; }
+
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc } = admin;
+
+  const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 100));
+  const { data, error, count } = await sc
+    .from("user_stamps")
+    .select(
+      "id, user_id, stamp_definition_id, earned_at, city, country, source_type, is_revoked, revoked_at, revoked_reason, stamp_definitions(slug, name, stamp_type)",
+      { count: "exact" },
+    )
+    .eq("user_id", userId)
+    .order("earned_at", { ascending: false })
+    .limit(limit);
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+  void logAdminAccess(sc, admin.userId, "profile", userId, "view", accessReason(req));
+  const stamps = data ?? [];
+  res.json({ stamps, total: typeof count === "number" ? count : stamps.length });
+}));
