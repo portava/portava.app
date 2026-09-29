@@ -21,6 +21,10 @@
  *   TB7      trip t1's late FAILURE lands after t2 answered → t2's brief keeps its item and no failed line
  *   TB8      CONTROL: an answered empty list with no refusal still hides the brief
  *   TB9      moving to another trip whose read fails never leaves the previous trip's items on it
+ *   TB10     moving to another trip whose read fails never leaves the previous trip's held-back note on it
+ *   TB11     moving to another trip whose read THROWS never leaves the previous trip's items on it
+ *   TB12     a failed trip, then no trip and no city → the brief hides (no stale failed line)
+ *   TB13     a trip still loading, then no trip and no city → the brief hides (no stale spinner)
  *
  * Run with: pnpm test:component
  */
@@ -153,5 +157,49 @@ describe('CompassTripBrief — a failed, refused or partial /compass/recommendat
     await flush();
     expect(screen.queryByText('Cebu pharmacy')).toBeNull();
     expect(screen.getByTestId('compass-brief-failed')).toBeTruthy();
+  });
+
+  it("TB10 moving to another trip whose read fails never leaves the previous trip's held-back note on it", async () => {
+    const suppressed = { consulted: true, tripId: 't1', mode: 'SAFETY_EVENT', suppressed: true, reason: 'TRIP_DISRUPTION_SUPPRESSED', withheld: 2, detail: null, info: null } as any;
+    mockFetch.mockImplementation(((p: { tripId: string }) => p.tripId === 't1'
+      ? Promise.resolve({ ok: true, data: { recommendations: [item('r1', 'Cebu pharmacy')], surface: 'trip', attention: suppressed } })
+      : Promise.resolve({ ok: false, error: 'network_error' })) as any);
+    const view = await render(<CompassTripBrief tripId="t1" city="Cebu" />);
+    await screen.findByTestId('compass-brief-attention');
+    await view.rerender(<CompassTripBrief tripId="t2" city="Lisbon" />);
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(2));
+    await flush();
+    expect(screen.getByTestId('compass-brief-failed')).toBeTruthy();
+    expect(screen.queryByTestId('compass-brief-attention')).toBeNull();
+  });
+
+  it("TB11 moving to another trip whose read THROWS never leaves the previous trip's items on it", async () => {
+    mockFetch.mockImplementation(((p: { tripId: string }) => p.tripId === 't1'
+      ? Promise.resolve({ ok: true, data: { recommendations: [item('r1', 'Cebu pharmacy')], surface: 'trip' } })
+      : Promise.reject(new Error('socket hang up'))) as any);
+    const view = await render(<CompassTripBrief tripId="t1" city="Cebu" />);
+    await screen.findByText('Cebu pharmacy');
+    await view.rerender(<CompassTripBrief tripId="t2" city="Lisbon" />);
+    await screen.findByTestId('compass-brief-failed');
+    expect(screen.queryByText('Cebu pharmacy')).toBeNull();
+  });
+
+  it('TB12 a failed trip, then no trip and no city → the brief hides', async () => {
+    mockFetch.mockResolvedValue({ ok: false, error: 'network_error' });
+    const view = await render(<CompassTripBrief tripId="t1" city="Cebu" />);
+    await screen.findByTestId('compass-brief-failed');
+    await view.rerender(<CompassTripBrief tripId={undefined as any} city={undefined as any} />);
+    await flush();
+    expect(screen.queryByText('Compass Brief')).toBeNull();
+  });
+
+  it('TB13 a trip still loading, then no trip and no city → the brief hides, no stale spinner', async () => {
+    mockFetch.mockImplementation((() => new Promise(() => {})) as any);
+    const view = await render(<CompassTripBrief tripId="t1" city="Cebu" />);
+    await screen.findByText('Loading recommendations…');
+    await view.rerender(<CompassTripBrief tripId={undefined as any} city={undefined as any} />);
+    await flush();
+    expect(screen.queryByText('Loading recommendations…')).toBeNull();
+    expect(screen.queryByText('Compass Brief')).toBeNull();
   });
 });
