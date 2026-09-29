@@ -233,3 +233,42 @@ describe("§109 GET /hashtags/trending pages over tied created_at (D-W11X2-90)",
     assert.equal(body.refusal, undefined);
   });
 });
+
+// ── census-discovery §110 (DV-83 round 13, lane W11-X2, D-W11X2-98): the other three paged reads over ties ──
+//
+// §109 pinned the `id` tie-break on the window read only (V11-HTT1). The route pages three more reads
+// the same way — the city→global FALLBACK window, the POST usage read that feeds engagement and the
+// EVENT usage read — each against an exact count and declared complete when its rows reach the count.
+// Without `id` in their order a skewed ranking is served complete (the round-12 verifier's surviving
+// mutations H2, H3, H4). These are the verifier's V12-HTT2..4, copied in: green on this code, red under
+// the mutation that drops that read's `id` key.
+//
+//   V12-HTT2 city scope with no city usage → the global fallback over 1 500 tied rows → never alpha-first complete
+//   V12-HTT3 post usage over 1 500 tied rows (engagement decides) → never alpha-first complete
+//   V12-HTT4 event usage over 1 500 tied rows (event activity decides) → never alpha-first complete
+const T0_TIED = new Date(Date.now() - 3_600_000).toISOString();
+const tiedRows = (id: string, n: number, sourceType: string) => Array.from({ length: n }, (_, i) => ({ id: `u-${id}-${sourceType}-${String(i).padStart(6, "0")}`, hashtag_id: id, author_id: `a-${id}-${i % 50}`, city: null, source_type: sourceType, source_id: `p-${id}-${i}`, created_at: T0_TIED }));
+const liked = (rows: Row[]) => rows.map((r) => ({ id: r.source_id, like_count: 1, comment_count: 0 }));
+const expectBravo = (status: number, body: any) => {
+  assert.ok(status !== 200 || body.refusal != null || slugs(body)?.[0] === "bravo", `served ${JSON.stringify(slugs(body))} as complete (true top: bravo)`);
+};
+
+describe("§110 GET /hashtags/trending's other paged reads over tied created_at (D-W11X2-98)", () => {
+  it("V12-HTT2 city scope, no city usage -> the global fallback window over tied rows", async () => {
+    _setTestClient(client([...tiedRows("ht-a", 740, "comment"), ...tiedRows("ht-b", 760, "comment")]) as any, true);
+    const { status, body } = await get("scope=city&city_id=Nowhere&limit=20");
+    expectBravo(status, body);
+  });
+  it("V12-HTT3 post usage over tied rows, engagement decides", async () => {
+    const rows = [...tiedRows("ht-a", 740, "post"), ...tiedRows("ht-b", 760, "post")];
+    _setTestClient(client(rows, { posts: liked(rows) }) as any, true);
+    const { status, body } = await get();
+    expectBravo(status, body);
+  });
+  it("V12-HTT4 event usage over tied rows, event activity decides", async () => {
+    const rows = [...tiedRows("ht-a", 740, "event"), ...tiedRows("ht-b", 760, "event")];
+    _setTestClient(client(rows) as any, true);
+    const { status, body } = await get();
+    expectBravo(status, body);
+  });
+});
