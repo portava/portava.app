@@ -25,7 +25,7 @@ import { color } from '../../../theme/tokens.ts';
 import { WallHeader } from './WallHeader.tsx';
 import { FeedModeSwitcher } from './FeedModeSwitcher.tsx';
 import { WallFeed } from './WallFeed.tsx';
-import { LiveForYouStrip } from './LiveForYouStrip.tsx';
+import { LiveForYouStrip } from './LiveForYouStrip.tsx'; import { WallMomentsStrip } from './WallMomentsStrip.tsx';
 import { QuickMediaRow, type QuickMediaEntry } from './QuickMediaRow.tsx';
 import { useWallFeed } from '../hooks/useWallFeed.ts';
 import { useLiveForYou } from '../hooks/useLiveForYou.ts';
@@ -108,7 +108,7 @@ export function WallScreen({
         // §35 entry: the Wall is not a member of MapEntryPoint, so the origin is
         // stated as unknown rather than mislabelled as a tab or a deep link.
         onSeeLive={() => router.push('/map?entry=unknown' as never)}
-      />
+      /><WallMomentsStrip liveItems={live.items} />{/* TM-live WALL-F13: server-built moments at the places the Live strip shows */}
     </>
   );
 

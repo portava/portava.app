@@ -38,7 +38,7 @@ import { ReviewsSection } from '../../src/components/ReviewsSection';
 import { WorthItVoteRow } from '../../src/components/WorthItVoteRow';
 import { useSession } from '../../src/context/SessionContext';
 import { LivingDestinationPage } from '../../src/components/place/living/LivingDestinationPage';
-import { RequestAViewPrompt } from '../../src/features/media/components/RequestAViewPrompt';
+import { RequestAViewPrompt } from '../../src/features/media/components/RequestAViewPrompt'; import { PlaceLivePanel } from '../../src/features/live/PlaceLivePanel';
 import type { CanonicalPlace } from '../../src/types/canonicalPlace';
 import type { MapEntity } from '../../src/types/mapTypes';
 import type { DiscoveryPlace, PlaceLiveStatus } from '../../src/services/discovery';
@@ -413,7 +413,7 @@ export default function PlaceDetailScreen() {
             <PlaceCard place={canonicalPlace} />
             {/* Supplemental section: full opening hours + provisional disclaimer.
                 PlaceCard already shows phone, website, and address. */}
-            <PlaceInfoSection place={canonicalPlace} supplemental />
+            <PlaceInfoSection place={canonicalPlace} supplemental /><PlaceLivePanel placeId={canonicalPlace.id} neighborhood={canonicalPlace.neighborhood} />{/* TM-live WP-11: decision, live state, typical, pulse, session */}
             <View style={ps.actionRowWrap}>
               <MapEntityActionRow entity={entity} />
             </View>

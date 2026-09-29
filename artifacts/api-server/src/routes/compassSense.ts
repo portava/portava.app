@@ -127,14 +127,14 @@ router.get("/compass/sense/nudges", asyncHandler(async (req, res) => {
 
   try {
     const sinceIso = new Date(Date.now() - 7 * 24 * 60 * 60 * 1_000).toISOString();
-    const { data } = await sc
+    const { data, error } = await sc
       .from("compass_sense_nudges")
       .select("id, nudge_type, category, title, body, action_url, confidence, created_at")
       .eq("user_id", auth.user.id)
       .gte("created_at", sinceIso)
       .order("created_at", { ascending: false })
       .limit(20);
-    res.json({
+    if (error) { sendError(res, "degraded_unavailable", "Your nudges could not be read"); return; } res.json({ // TM-live COMP-F11: a FAILED read is not "no nudges" (DV-83)
       compassEnabled: true,
       nudges: ((data ?? []) as any[]).map((n) => ({
         id: String(n.id),
@@ -148,7 +148,7 @@ router.get("/compass/sense/nudges", asyncHandler(async (req, res) => {
       })),
     });
   } catch {
-    res.json({ compassEnabled: true, nudges: [] });
+    sendError(res, "degraded_unavailable", "Your nudges could not be read"); // TM-live COMP-F11: was `nudges: []`
   }
 }));
 

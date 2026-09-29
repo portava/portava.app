@@ -11,7 +11,7 @@ import { NotificationBell } from '../../src/components/NotificationBell';
 import { color, space, type as t, shadow } from '../../src/theme/tokens';
 import { useIsDesktop } from '../../src/hooks/useBreakpoint';
 import { useUnreadCounts } from '../../src/hooks/useMessaging';
-import { useGeofenceMonitor } from '../../src/hooks/useGeofenceMonitor';
+import { useGeofenceMonitor } from '../../src/hooks/useGeofenceMonitor'; import { useSenseAutoCheck, senseLocationKey } from '../../src/features/live/useSenseAutoCheck';
 import { getIncomingMessageRequests } from '../../src/services/messaging';
 import { getPendingTripInvites } from '../../src/services/trips';
 import { getMyProfile } from '../../src/services/profile';
@@ -398,7 +398,7 @@ export default function TabLayout() {
     });
   }, [isAuthed, loading]);
 
-  useGeofenceMonitor();
+  useGeofenceMonitor(); useSenseAutoCheck({ enabled: isAuthed && !loading, locationKey: senseLocationKey(resolvedLocation) }); // TM-live COMP-F11: nothing else ever asks Compass Sense to look
 
   useEffect(() => {
     getIncomingMessageRequests().then((res) => {
