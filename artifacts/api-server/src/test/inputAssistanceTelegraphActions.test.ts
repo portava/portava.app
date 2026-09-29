@@ -184,7 +184,7 @@ describe("POST /suggest (telegraph_message) — §54 action candidates (G362/G13
     }
     const meet = body.suggestions.find((s: any) => shareOf(s) === "meeting_point");
     assert.equal(meet.structuredValue.eligible, true);
-    assert.deepEqual(meet.structuredValue.draft, { label: "Dragon Bridge", placeId: "place-dragon", precision: "venue" });
+    assert.deepEqual(meet.structuredValue.draft, { label: "Dragon Bridge", placeId: "place-dragon", precision: "area" }, "§4.3: approximate by default");
     assert.equal(body.refusal, undefined, "everything was readable");
   });
 

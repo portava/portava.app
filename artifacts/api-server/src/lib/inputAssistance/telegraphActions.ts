@@ -195,8 +195,9 @@ export async function serveTelegraphMeetAt(
   for (const [i, p] of places.entries()) {
     suggestions.push(row(`telegraph-action:meeting_point:${i}`, `Share meeting point: ${p.label}`, {
       telegraphShare: 'meeting_point', kind: 'LOCATION', eligible: true, ineligibleReason: null, requires: null,
-      // A hidden gem was dropped above; an approximate one is shared as an AREA.
-      draft: { label: p.label, placeId: p.entityId ?? null, precision: p.locationPrecision === 'approximate' ? 'area' : 'venue' },
+      // Telegraph §4.3: a share opens at "Approximate area"; a finer precision is
+      // the SENDER's second tap in the compose sheet, never a suggestion's default.
+      draft: { label: p.label, placeId: p.entityId ?? null, precision: 'area' },
     }, { subtitle: p.subtitle, confidence: 0.9 - i * 0.05 }));
   }
   if (places.length === 0) {

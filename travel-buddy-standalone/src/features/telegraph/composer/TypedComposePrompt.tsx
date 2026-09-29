@@ -38,7 +38,7 @@ export function TypedComposePrompt({ kind, onCancel, onSubmit, authorId, initial
   const palette = useTelegraphPalette();
   const styles = useMemo(() => makeStyles(palette), [palette]);
   const [text, setText] = useState('');
-  const [precision, setPrecision] = useState<'area' | 'venue' | 'exact'>('area'); useEffect(() => { if (kind === 'LOCATION' && initialLocation) { setText(initialLocation.label); setPrecision(initialLocation.precision); } }, [kind, initialLocation]);
+  const [precision, setPrecision] = useState<'area' | 'venue' | 'exact'>('area'); useEffect(() => { if (kind === 'LOCATION' && initialLocation) setText(initialLocation.label); }, [kind, initialLocation]); // §4.3: pre-filling the LABEL never pre-selects a finer precision — the sheet still opens on Approximate area
 
   const close = () => {
     setText('');

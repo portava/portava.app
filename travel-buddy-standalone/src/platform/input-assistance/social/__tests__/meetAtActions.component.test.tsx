@@ -31,7 +31,7 @@ const row = (id: string, label: string, v: Record<string, unknown>) => ({
 });
 const MEET = row('telegraph-action:meeting_point:0', 'Share meeting point: Dragon Bridge', {
   telegraphShare: 'meeting_point', kind: 'LOCATION', eligible: true, ineligibleReason: null, requires: null,
-  draft: { label: 'Dragon Bridge', placeId: 'place-dragon', precision: 'venue' },
+  draft: { label: 'Dragon Bridge', placeId: 'place-dragon', precision: 'area' },
 });
 const NO_STOPS = row('telegraph-action:trip_stop', 'Share Trip stop', {
   telegraphShare: 'trip_stop', kind: 'LOCATION', eligible: false, ineligibleReason: 'You have no upcoming Trip stops to share.', requires: null, draft: null,
@@ -107,11 +107,26 @@ test('"meet at Dragon Bridge": only the fragment leaves the phone; tap opens the
 
   await fireEvent.press(screen.getByTestId('meet-at-telegraph-action:meeting_point:0'));
   await waitFor(() => expect(screen.getByTestId('telegraph-typed-compose-input').props.value).toBe('Dragon Bridge'));
-  expect(screen.getByTestId('telegraph-precision-venue').props.accessibilityState).toMatchObject({ selected: true });
+  // Telegraph §4.3 survives the pre-fill: the sheet still opens on Approximate area.
+  expect(screen.getByTestId('telegraph-precision-area').props.accessibilityState).toMatchObject({ selected: true });
   expect(sent).not.toHaveBeenCalled();
 
   await fireEvent.press(screen.getByTestId('telegraph-typed-compose-send'));
-  expect(sent).toHaveBeenCalledWith('LOCATION', { label: 'Dragon Bridge', precision: 'venue', placeId: 'place-dragon' });
+  expect(sent).toHaveBeenCalledWith('LOCATION', { label: 'Dragon Bridge', precision: 'area', placeId: 'place-dragon' });
+});
+
+test('Telegraph §4.3: even a candidate that SUGGESTS "exact" opens the sheet on Approximate area', async () => {
+  const exact = row('telegraph-action:meeting_point:9', 'Share meeting point: Dragon Bridge', {
+    telegraphShare: 'meeting_point', kind: 'LOCATION', eligible: true, ineligibleReason: null, requires: null,
+    draft: { label: 'Dragon Bridge', placeId: 'place-dragon', precision: 'exact' },
+  });
+  serve = () => ({ status: 200, body: { requestId: 'r', policyVersion: 'v', suggestions: [exact] } });
+  await render(<Composer initial="meet at Dragon Bridge" sent={jest.fn()} />);
+  await waitFor(() => expect(screen.getByTestId('meet-at-telegraph-action:meeting_point:9')).toBeTruthy());
+  await fireEvent.press(screen.getByTestId('meet-at-telegraph-action:meeting_point:9'));
+  await waitFor(() => expect(screen.getByTestId('telegraph-typed-compose-input').props.value).toBe('Dragon Bridge'));
+  expect(screen.getByTestId('telegraph-precision-area').props.accessibilityState).toMatchObject({ selected: true });
+  expect(screen.getByTestId('telegraph-precision-exact').props.accessibilityState).toMatchObject({ selected: false });
 });
 
 test('an edited label drops the place id — it no longer names that place', async () => {
@@ -121,7 +136,7 @@ test('an edited label drops the place id — it no longer names that place', asy
   await fireEvent.press(screen.getByTestId('meet-at-telegraph-action:meeting_point:0'));
   await fireEvent.changeText(screen.getByTestId('telegraph-typed-compose-input'), 'The east end of Dragon Bridge');
   await fireEvent.press(screen.getByTestId('telegraph-typed-compose-send'));
-  expect(sent).toHaveBeenCalledWith('LOCATION', { label: 'The east end of Dragon Bridge', precision: 'venue' });
+  expect(sent).toHaveBeenCalledWith('LOCATION', { label: 'The east end of Dragon Bridge', precision: 'area' });
 });
 
 test('a failed request is an ERROR with Retry, never "no suggestions"', async () => {
