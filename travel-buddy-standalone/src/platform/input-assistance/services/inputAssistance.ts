@@ -68,7 +68,7 @@ export async function requestSuggestions(
   let budget: Budget | null = null;
   try {
     budget = withBudget(signal);
-    const res = await fetch(`${base}/input-assistance/suggest`, {
+    const res = await fetch(`${base}/api/input-assistance/suggest`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -166,7 +166,7 @@ export async function requestMapSearchPage(
   if (!token) return { ok: false, error: 'Not signed in' };
   const budget = withBudget(signal);
   try {
-    const res = await fetch(`${base}/input-assistance/suggest`, {
+    const res = await fetch(`${base}/api/input-assistance/suggest`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify(buildMapSearchBody(query, opts)),
