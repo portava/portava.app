@@ -4459,6 +4459,20 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/components/compass/CompassPicksSection.tsx",  // §102 grades its failed-read state (D-W11X2-41)
     "travel-buddy-standalone/src/hooks/__tests__/useSearchSuggestions.heldQuery.component.test.tsx",
     "travel-buddy-standalone/src/components/discovery/__tests__/PlaceDetailSheet.wikidata.component.test.tsx",
+    // census-discovery §103 (lane W11-X2, round 7): DV-83 re-graded on the client cache key, the real-name read,
+    // the Compass section's failed build and unread flags, the buddy launch flag and the suggestion groups' key.
+    "artifacts/api-server/src/compass/flags.ts",  // §103 grades readCompassEnabled / readCompassFlag (D-W11X2-50)
+    "artifacts/api-server/src/compass/CompassPipeline.ts",  // §103 grades flagsUnreadable (D-W11X2-49)
+    "artifacts/api-server/src/lib/publicIdentity.ts",  // §103 grades nameVisibilitySetOrNull (D-W11X2-48)
+    "artifacts/api-server/src/test/discoverySearchNameVisibility.test.ts",
+    "artifacts/api-server/src/test/compassSectionFailedRead.test.ts",
+    "artifacts/api-server/src/test/compassFlagsUnreadableGate.test.ts",
+    "travel-buddy-standalone/src/services/discoveryQueryStamp.ts",
+    "travel-buddy-standalone/src/hooks/compass/compassSectionFailure.ts",
+    "travel-buddy-standalone/src/services/__tests__/discovery.cacheKey.test.ts",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryCategoryTab.cacheKey.component.test.tsx",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryCategoryTab.heldQuery.component.test.tsx",
+    "travel-buddy-standalone/src/components/compass/__tests__/CompassPicksSection.buildError.component.test.tsx",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

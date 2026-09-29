@@ -26,8 +26,8 @@ const profile: CompassProfile = {
   safetyPreference: "standard", visibilityPreference: "semi_private", blockedUserIds: [], blockerUserIds: [], mutedUserIds: [],
   blockCount: 0, blockerCount: 0, trustScore: 75, trustLevel: "trusted_traveler", activeUserScore: null, hasActiveTrip: false,
   hasActiveBooking: false, upcomingTripWithin48h: false, hasFutureTripScheduled: false, currentCity: "Miami", currentCountry: "US",
-  safeReturnActive: false, computedAt: new Date().toISOString(),
-} as CompassProfile;
+  safeReturnActive: false, categoryWeights: null, ignoredItemIds: [], mutedHashtags: [], computedAt: new Date().toISOString(),
+};
 const context: CompassContext = {
   contextState: "exploring_now",
   signals: { hourUtc: 14, safeReturnActive: false, activeBooking: false, upcomingTripWithin48h: false, activeTripNow: false, hasPendingDelayedPosts: false, hasFutureTripScheduled: false },

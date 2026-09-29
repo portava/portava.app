@@ -124,9 +124,7 @@ function place(id: string, savedCount: number): ServerPlace {
 const FOUR = () => [place("p1", 1), place("p2", 2), place("p3", 3), place("p4", 4)];
 
 /** The page the For You tab asks for, through the shipping client. */
-const loadMiami = () => getDiscoveryPlaces("Miami", "for_you", FILTERS, 1, null, null, null, null, 25.77, -80.19);
-/** census-discovery §103 (DV-83, D-W11X2-47): the rest of the query `loadMiami` sends. The device cache is keyed by the WHOLE query now, so a read names the query it means — restated from the four-argument read, which named a query this suite never fetched (no coordinates). */
-const MIAMI_QUERY = { lat: 25.77, lng: -80.19 };
+const loadMiami = () => getDiscoveryPlaces("Miami", "for_you", FILTERS, 1, null, null, null, null, 25.77, -80.19); const MIAMI_QUERY = { lat: 25.77, lng: -80.19 };  // census-discovery §103 (DV-83, D-W11X2-47): the rest of the query `loadMiami` sends — the device cache is keyed by the WHOLE query now, so a read names the query it means (restated from the four-argument read, which named a query this suite never fetched: no coordinates)
 
 function install(opts: Parameters<typeof makeTelemetryDb>[0] = {}) {
   db = makeTelemetryDb({ users: USERS, flags: { discovery_serve_log_enabled: { enabled: true } }, ...opts });

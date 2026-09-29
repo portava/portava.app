@@ -497,10 +497,7 @@ describe("GET /api/discovery/search — buddy launch-eligibility gate", () => {
   });
 
   // The route-level fake cannot fail one flag read while answering another, so
-  // the second closure is pinned on the exported predicate directly.
-  // census-discovery §103 (DV-83, D-W11X2-51) RESTATED: still withheld — nothing is served — and now SAID. The predicate
-  // used to answer `true` ("withhold") for an unread flag, which the search then served as "no buddies"; it now throws the
-  // named read error the route refuses by. The read order is unchanged.
+  // the second closure is pinned on the exported predicate directly. census-discovery §103 (DV-83, D-W11X2-51) RESTATED: still withheld — nothing is served — and now SAID. The predicate used to answer `true` ("withhold") for an unread flag, which the search then served as "no buddies"; it now throws the named read error the route refuses by. The read order is unchanged.
   it("gate ON + marketplace flag UNREADABLE: withheld AND said — an eligibility gate that cannot be established is not passed, and not called empty", async () => {
     const calls: string[] = [];
     const sc: any = {

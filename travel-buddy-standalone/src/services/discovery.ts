@@ -664,7 +664,7 @@ function _discoveryCacheKey(params: URLSearchParams): string {  // census-discov
   // Every entry of the request's own query enters the key (the destination normalised), so a server-affecting
   // parameter can never be left out of it again: §102.11 found age, open-now, rating, sort, context and the
   // coordinates missing, and one filter's failed read drawn over another filter's cached rows.
-  return _discoveryCacheKeyOf(params);  // a mode's page, like every other parameter's, is its own entry
+  return _discoveryCacheKeyOf(params);  // a mode's page, like every other parameter's, is its own entry — was: return isDiscoveryIntentMode(intentMode) ? `${key}:intent=${intentMode}` : key;
 }
 
 /** Test seam: drop every client-cached result. Carries no production caller. */
@@ -746,7 +746,7 @@ export async function getDiscoveryPlaces(
   //   userLat — the user's position, sent for the nearest sort only;
   //   userLng — likewise;
   //   intentMode — last, and only when chosen: with no selection the URL is the one sent before modes existed:
-  //   ...(isDiscoveryIntentMode(filters.intentMode) ? { intentMode: filters.intentMode } : {}) (the builder's own line).
+  //   ...(isDiscoveryIntentMode(filters.intentMode) ? { intentMode: filters.intentMode } : {}), — the builder's own line.
   // A new parameter goes in the builder, and so into the request, the key and the stamp at once.
   const lease = openDiscoveryLease(await freshToken());  // the viewer this page is fetched AS — VIEWER SCOPE, foot of file
   try {
