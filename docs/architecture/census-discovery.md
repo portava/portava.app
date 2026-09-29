@@ -17142,6 +17142,30 @@ An independent re-verification at the merged head is owed before the integrator 
   - a no-client arm answering an empty collection without a refusal (NC1, ND1, NS1);
   - any path §100.10 lists.
 
+### 101.12 Integrator: DV-83 held at W after the independent re-verification at `0db25c816`
+
+*Integrator, 2026-09-29. §101 was merged at `0db25c816`. An independent verifier then checked that tree, ran every probe below and restored every mutated file byte-identical, checked by sha256. (Recorded as 101.12 because 101.11 is §101's own "Left open".)*
+
+- **Confirmed.** Every §100.11 finding and every §101.7 sweep fix is closed in behaviour; 18 of 18 lane mutations are killed; the lane's suites are green (jest 53/53, node:test 18/18). /counts, /feed, /suggest, the output kinds, the map layer, ForYouTab's OSM path, the rails and the batch counts are sound.
+- **Found: four paths that break the criterion's wording, each shown by a probe that fails against this tree.**
+  1. **Search answers a failed trip projection read as "no trips".** With `discovery_trip_projection_enabled` ON and the schema ready, `searchTrips` and `searchPlans` log the failed read and `return []` (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:871#return [];`, `artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:1010#return [];`). type=trips and type=plans answer `200 { results: [] }` (V5-T1, V5-T2); type=all and /discovery/suggest do not name `trips` in `failedSources` (V5-T3). §22.5 flagged it, and `discoveryTripProjectionConsumer.test.ts`'s "capability READY" block pins the empty 200 — that pin encodes the violation.
+  2. **GET /discovery/community silently truncates when the viewer's block or mute set cannot be read.** `submitterIsVisible` withholds every authored row (`artifacts/api-server/src/routes/discovery.ts:3048#const blocked  = viewerId ? await withMutedAuthors(sc, viewerId, await fetchBlockedSet(sc, viewerId))`) and the route answers 200 with `total: servedItems.length` and no refusal; `useCommunityDiscovery` caches that list for five minutes (V5-B1: items ["Legacy Row"], total 1, 3 of 4 rows dropped, refusal undefined).
+  3. **DiscoveryCategoryTab lets a superseded answer overwrite a refused or failed read.** `load()` has no latest-request guard (ForYouTab has `loadIdRef`), and radius, the age filter and custom ages re-run `load(1)` without a remount. V5-R3: radius 25 refused, then the radius-10 answer lands — its rows shown, the error cleared, no notice. V5-R4: the transport-failure variant puts the old rows under the "couldn't refresh" line.
+  4. **GET /discovery/wikidata/:id caches a failed read as "entity missing"** (the integrator rules it IN SCOPE: clause b). A Wikidata HTTP 200 carrying `error` (maxlag) has no `entities`, so the route answers and caches the empty enrichment for the full 24 h TTL (V5-W1: the second request is served from the cache; upstream calls 1).
+- **Possible, not proven.**
+  - `CompassPicksSection` hides itself on a failed read, drawing the screen Compass draws for "no picks here".
+  - `useSearchSuggestions` keeps the previous query's groups under the refused notice.
+  - DiscoveryCategoryTab: after a failed refresh over a cached page, a good page 2 clears `error` while `refreshFailed` stays set, so "N places found" may appear beside the stale line. Untested.
+  - `useCompassFeed`: `loading` not raised on a scope switch (the verifier's mutation V-E1 survived).
+  - V-E3 survived: a partial cursor page's `failedSources` replace rather than union. Harmless: the notice keys on non-null.
+- **Next.** A round-6 lane closes the four paths with the verifier's probes as failing-first tests, decides the possibles, and sweeps once more. The row moves only after that.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | C | **W** | §101 closes §100.11's four paths, confirmed under mutation at `0db25c816` (§101.12). Four paths still present a failed read as empty or complete: search's trip and plan projection arms (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:871#return [];`); GET /discovery/community with an unreadable block or mute set (`artifacts/api-server/src/routes/discovery.ts:3048#const blocked  = viewerId ? await withMutedAuthors(sc, viewerId, await fetchBlockedSet(sc, viewerId))`); DiscoveryCategoryTab's unguarded `load()` (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:463#const load = useCallback(async (nextPage: number, currentFilters: DiscoveryFilters, reset: boolean) => {`); and the Wikidata route's cached `missing` for an error body (`artifacts/api-server/src/routes/discovery.ts:3619#(item as { missing?: string }).missing !== undefined`). |
+
+Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/lib/capability/prerequisitesCore.ts — §93.8 names its function-granular gate boundary as why the Compass KNOWN entry was struck; it is the prerequisite checker's own machinery, and no Discovery verdict rests on it.
