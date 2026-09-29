@@ -334,7 +334,7 @@ export interface CreateMemoryInput {
   startsAt?: string | null;
   endsAt?: string | null;
   state?: 'draft' | 'published';
-  taggedUserIds?: string[];
+  taggedUserIds?: string[]; /** §10 owner's precision ceiling (HM-F08); omitted, the column keeps its DEFAULT. */ locationPrecision?: MemoryLocationPrecision;
   /**
    * §19. The caller's own operation id, reused verbatim across retries of the
    * same intent. Omit it and one is derived — see the §19 block at the top of
@@ -379,7 +379,7 @@ export async function createMemory(
     startsAt: input.startsAt ?? null,
     endsAt: input.endsAt ?? null,
     state: input.state ?? 'published',
-    taggedUserIds: input.taggedUserIds ?? [],
+    taggedUserIds: input.taggedUserIds ?? [], locationPrecision: input.locationPrecision, // undefined is dropped by JSON.stringify: an unset precision is not on the wire
   };
   // §17 CREATE_MEMORY. The subject is the empty string because the Memory does
   // not exist yet — the payload IS the identity of this intent.
@@ -727,3 +727,7 @@ export async function unlikeMemory(id: string): Promise<{ ok: boolean; likeCount
 import { attachPosterInBackground } from './media/generalVideoPoster.ts';
 // §37 MD282 (census-media §37): the device compression seam. At the TAIL for the same reason.
 import { videoUriForUpload } from './media/videoCompression.ts';
+// HM-F08 (census-highlights-memories §AA): the §10 location precision ladder, the
+// values `routes/memories.ts` createMemorySchema accepts. At the TAIL so no line
+// above moves; a type alias is visible to the whole module wherever it sits.
+export type MemoryLocationPrecision = 'exact' | 'venue' | 'neighborhood' | 'city' | 'country' | 'hidden';

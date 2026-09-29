@@ -846,3 +846,58 @@ import { checkRateLimit, _resetRateLimit } from "../lib/rateLimit.js";
 import { UPLOAD_RATE_WINDOW_MS } from "../lib/mediaPipeline.js";
 // census-media §37.8: a real container that states no display size (an audio-only M4A).
 import { AUDIO_ONLY_M4A } from "./videoProbeFixtures.js";
+
+// ── TM-create (testing mode, 2026-09-29): POST /events/:id/posts ─────────────
+// The post route took `mediaUrls: z.array(z.string().url())` — ANY external URL
+// — while POST /events/:id/media beside it refuses anything that is not this
+// app's own storage (the "previous injection hole" above: hotlinks, trackers,
+// another user's object). A post's media_urls render to every participant just
+// like event_media does, so the same storage-ref check now applies per URL.
+describe("POST /api/events/:id/posts — mediaUrls storage-origin validation", () => {
+  const hostState: FakeState = {
+    flags: {},
+    events: [{ id: EVENT_ID, state: "published", host_id: USER_ID, attendee_comments_enabled: true }],
+    eventRoles: [{ event_id: EVENT_ID, user_id: USER_ID, role: "host" }],
+    rsvps: [{ event_id: EVENT_ID, user_id: USER_ID, status: "going" }],
+  };
+  const APP_URL = `${SB}/storage/v1/object/public/post-media/${USER_ID}/123.jpg`;
+
+  it("rejects an external URL, and writes nothing", async () => {
+    const client = makeClient(hostState);
+    setClients(client);
+    const r = await jsonReq("POST", `/api/events/${EVENT_ID}/posts`, {
+      body: "Meet at the gate", mediaUrls: ["https://evil.example.com/tracker.jpg"],
+    });
+    assert.equal(r.status, 400, JSON.stringify(r.body));
+    assert.equal(r.body.error, "invalid_payload");
+    assert.match(String(JSON.stringify(r.body)), /app media URL/i);
+    assert.equal(client._inserted.some((i: any) => i.table === "event_posts"), false);
+  });
+
+  it("rejects a list that smuggles one external URL beside an app one", async () => {
+    const client = makeClient(hostState);
+    setClients(client);
+    const r = await jsonReq("POST", `/api/events/${EVENT_ID}/posts`, {
+      body: "Photos", mediaUrls: [APP_URL, "https://cdn.other.example/x.jpg"],
+    });
+    assert.equal(r.body.error, "invalid_payload");
+    assert.equal(client._inserted.some((i: any) => i.table === "event_posts"), false);
+  });
+
+  it("accepts app-storage URLs and stores them", async () => {
+    const client = makeClient(hostState);
+    setClients(client);
+    const r = await jsonReq("POST", `/api/events/${EVENT_ID}/posts`, { body: "Photos", mediaUrls: [APP_URL] });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    const row = client._inserted.find((i: any) => i.table === "event_posts")?.row;
+    assert.deepEqual(row?.media_urls, [APP_URL]);
+  });
+
+  it("CONTROL: a text-only post is unaffected", async () => {
+    const client = makeClient(hostState);
+    setClients(client);
+    const r = await jsonReq("POST", `/api/events/${EVENT_ID}/posts`, { body: "No media" });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.deepEqual(client._inserted.find((i: any) => i.table === "event_posts")?.row?.media_urls, []);
+  });
+});
