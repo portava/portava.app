@@ -2074,6 +2074,68 @@ an anchor:
   of them iterates `profiles`. The population this actually protected is narrow. It is named
   there rather than repeated here.
 
+## §22 — Stamp collections and the stamp catalog reach a screen (TM-social lane, PASS-F09). NO PASSPORT ROW MOVES
+
+**2026-09-29, testing-mode lane `lane-tm-social` (branch cut from `main` at `18518e982`).**
+`head_commit` is **NOT** re-declared: this section records a build, not a re-measurement, and
+grades no row. Controlled evidence only — unit, component and route tests in this repository.
+No flag was touched, no migration was added, nothing was read from or written to any database.
+
+### 22.1 What was missing
+
+The flow catalogue's PASS-F09 ("open a stamp and see progress towards the next tier; browse
+stamp collections") was partially built: progress had a caller, but
+`artifacts/api-server/src/routes/stamps.ts:351#router.get("/stamps/me/collections"` and
+`artifacts/api-server/src/routes/stamps.ts:213#router.get("/stamps/definitions"` had none. A
+person could not see a collection, how much of it they had earned, or what stamps exist.
+
+### 22.2 What was built
+
+- **Server, one fail-closed fix.** The collections route read the caller's earned stamps and
+  checked only the collections read's error, so an unreadable `user_stamps` became "0 of N
+  earned" for every collection. It now answers `db_error` when either read fails:
+  `artifacts/api-server/src/routes/stamps.ts:369#if (collectionsRes.error || earnedRes.error)`.
+- **Client service.**
+  `travel-buddy-standalone/src/services/stamps.ts:373#export async function getMyStampCollections(`
+  and `travel-buddy-standalone/src/services/stamps.ts:393#export async function getStampCatalog(`.
+  The stamp router's 503 `feature_not_available` (Stamp System v2 off) is carried as its own
+  state, `travel-buddy-standalone/src/services/stamps.ts:362#disabled: res.status === 503 && (body as any)?.error === 'feature_not_available',`,
+  so the screen can say "not switched on" instead of "couldn't load" or an empty catalog.
+- **Screen.** `travel-buddy-standalone/app/stamp-collections.tsx:76#export default function StampCollectionsScreen(`
+  — two views: *Collections* (earned of total, a progress bar, "Complete") and *All stamps*
+  (the active catalog grouped by category). Every state is a true one:
+  `travel-buddy-standalone/app/stamp-collections.tsx:36#return r.disabled ? { state: 'disabled' } : { state: 'error' };`.
+  Entry: the Stamps screen header, `travel-buddy-standalone/app/stamps.tsx:115#router.push('/stamp-collections' as never)`.
+
+### 22.3 Tests, seen red, and mutations
+
+- Server: `artifacts/api-server/src/test/tmSocialListGuards.test.ts:315#describe("GET /stamps/me/collections`
+  — run against the pre-lane route (`18518e982`), the unreadable-`user_stamps` case was RED (it
+  served "0 of 2 earned" with a 200) and its healthy twin (one of two earned) was green; both are
+  green now. Mutation: dropping `|| earnedRes.error` reddened the failure case again.
+- Client: `travel-buddy-standalone/app/__tests__/stamp-collections.component.test.tsx:47#it('the v2 flag being off is`
+  (5 cases) and `travel-buddy-standalone/src/services/__tests__/tmSocial.services.component.test.ts:99#describe('PASS-F09 stamp browse'`
+  (4 cases). Mutations: mapping the 503 to `disabled: false` reddened the service suite; turning the
+  screen's error into an empty list reddened 2 of 5 screen cases. All restored by sha256.
+
+### 22.4 Decision recorded here (this area has no decision register)
+
+- **The catalog is browsable by everyone signed in, collections are per person.** The routes
+  already say so (`/stamps/definitions` is unauthenticated, `/stamps/me/collections` is the
+  caller's); the screen follows them and adds no visibility rule of its own.
+- **Tapping a catalog stamp opens nothing yet.** `app/stamp/[stampId].tsx` shows an EARNED stamp
+  (a `user_stamps` row), not a definition, and a definition-detail route does not exist. Linking a
+  catalog row there would open the wrong thing, so the rows are informational.
+
+### 22.5 What this does not claim, and what would turn it red
+
+- **P61 does not move.** It grades the eleven stamp TYPES, and a screen that lists whatever types
+  the catalog holds changes none of them.
+- The screen is only as complete as the `stamp_collections` / `stamp_definitions` rows the testing
+  database holds; with none, it truthfully shows the empty state.
+- Red if: the route again binds only `collectionsRes.error`; the client maps the flag's 503 to an
+  outage or to `ok: true`; or the screen renders an empty list for a failed read.
+
 ## §23 — Award, revoke and restore a person's stamp from an admin screen (TM-admin lane, PASS-F23). NO PASSPORT ROW MOVES
 
 **2026-09-29, testing-mode lane `lane-tm-admin` (branch cut from `main` at `18518e982`).**
@@ -2133,6 +2195,14 @@ never be found again to restore.
 
 - NOT-GRADED: artifacts/api-server/src/scripts/lib/censusHeadCommit.ts — The head_commit parser that check:census-freshness imports. §18.2 reads the declaration shape out of it and §18.6 records why it is not scoped. It is guard machinery that the NOT_GRADED pattern stops short of (it lives in src/scripts/lib/), and no Passport row grades it.
 - NOT-GRADED: travel-buddy-standalone/src/features/wall/components/__tests__/WallDesignSystem.component.test.tsx — §15.5 cites census-wall W166's token-pinning suite for contrast, to show that P129 and P132 have no equivalent test. It pins Wall surfaces only, and no Passport verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/routes/stamps.ts — §22 cites the stamp collections and definitions routes as built work for PASS-F09; no Passport verdict rests on the stamp router
+- NOT-GRADED: travel-buddy-standalone/src/services/stamps.ts — §22's client wrappers for stamp collections and the catalog; built work, no Passport verdict rests on them
+- NOT-GRADED: travel-buddy-standalone/app/stamp-collections.tsx — §22's collections and catalog screen; built work for PASS-F09, no Passport verdict rests on it
+- NOT-GRADED: travel-buddy-standalone/app/stamps.tsx — §22 cites only its header entry to the collections screen; this census grades no behaviour of the stamps list
+- NOT-GRADED: artifacts/api-server/src/test/tmSocialListGuards.test.ts — the TM-social lane's server suite, cited in §22.3 for the collections fail-closed case; no verdict rests on it
+- NOT-GRADED: travel-buddy-standalone/app/__tests__/stamp-collections.component.test.tsx — §22.3's screen suite for PASS-F09; no verdict rests on it
+- NOT-GRADED: travel-buddy-standalone/src/services/__tests__/tmSocial.services.component.test.ts — §22.3's service suite for the stamp browse wrappers; no verdict rests on it
+- NOT-GRADED: travel-buddy-standalone/app/stamp/[stampId].tsx — §22.4 names it only to explain why catalog rows do not link to it; this census grades no behaviour of that screen
 - NOT-GRADED: travel-buddy-standalone/app/admin/user-stamps.tsx — §23's admin stamp screen; built work for PASS-F23, no Passport verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/tmAdminConsole.test.ts — the TM-admin lane's server suite, cited in §23.3 for the per-user stamp route; no verdict rests on it.
 - NOT-GRADED: travel-buddy-standalone/app/admin/__tests__/AdminConsoleScreens.component.test.tsx — §23.3's admin-screen suite; no verdict rests on it.

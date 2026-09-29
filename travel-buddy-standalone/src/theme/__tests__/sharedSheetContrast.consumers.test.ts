@@ -383,8 +383,10 @@ function changedNested(): Changed[] {
     { file: SF_NESTED.tagPreview, draws: /<TagPreviewSheet\b/, consumers: ['src/components/RichText.tsx'] },
     { file: SF_NESTED.profilePreview, draws: /<ProfilePreviewCard\b/, consumers: ['src/components/CommentsSheet.tsx'] },
     { file: SF_NESTED.likers, draws: /<EngagementUserListSheet\b/, consumers: ['src/components/CommentsSheet.tsx', 'src/components/HighlightViewer.tsx', 'src/components/PostEngagementBar.tsx'] },
+    // RESTATED by lane tm-telegraph (WP-08, TM-TEL-D4): app/messages/[id].tsx no longer draws ReportSheet — a
+    // per-message report now files through the Telegraph route (MessageReportSheet), which snapshots §22 evidence.
     { file: SF_NESTED.report, draws: /<ReportSheet\b/, consumers: [
-      'app/(rent-a-buddy)/buddy/[id].tsx', 'app/event/[id].tsx', 'app/map/index.tsx', 'app/messages/[id].tsx', 'app/post/[id].tsx', 'app/u/[username].tsx',
+      'app/(rent-a-buddy)/buddy/[id].tsx', 'app/event/[id].tsx', 'app/map/index.tsx', 'app/post/[id].tsx', 'app/u/[username].tsx',
       'src/components/CommentsSheet.tsx', 'src/components/PulseFeedCard.tsx', 'src/components/ReviewsSection.tsx', 'src/components/ThreadSafetySheet.tsx', 'src/components/map/MapEntityActionRow.tsx',
     ] },
     { file: SF_NESTED.sourceSheet, draws: /<MediaSourceSheet\b/, consumers: ['app/profile/edit/photos.tsx', 'src/components/EventComposerSheet.tsx', 'src/components/MemoriesTab.tsx', 'src/components/ui/MediaPickerButton.tsx'] },

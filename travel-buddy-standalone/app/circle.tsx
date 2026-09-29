@@ -26,7 +26,7 @@ import { UserNameButton } from '../src/components/interaction/UserNameButton';
 import { UserOverflowMenu } from '../src/components/interaction/UserOverflowMenu';
 import { useBlockedIds } from '../src/context/BlockedIdsContext';
 import { useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
-import { usePlainBottomInset } from '../src/hooks/useBottomInset';
+import { usePlainBottomInset } from '../src/hooks/useBottomInset'; import { MyCircleMembersPanel } from '../src/components/circle/MyCircleMembersPanel';
 
 
 function CircleUserRow({
@@ -331,6 +331,9 @@ export default function Circle() {
             <Text style={styles.chatBannerSub}>Message everyone in your circle</Text>
           </Pressable>
         )}
+
+        {/* TM-social PLAT-F11 — trusted-circle membership: who holds circle access, invite, remove */}
+        {tab === 'circle' && live && userId && !tripId && <MyCircleMembersPanel ownerId={userId} />}
 
         {/* Circle age settings — only shown in circle tab for the logged-in owner */}
         {tab === 'circle' && live && (

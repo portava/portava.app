@@ -127,8 +127,6 @@ them. Where a flag is off, the stated flag-off behaviour is what the app shows.
 - MAP-F04 (Compass → Map commands) and MAP-F08 (circle need-help) —
   `docs/architecture/census-map.md` §46.
 
----
-
 ## TM-admin lane (WP-21) — the admin console
 
 Branch `lane-tm-admin`, cut from `main` at `18518e982`. Controlled evidence only;

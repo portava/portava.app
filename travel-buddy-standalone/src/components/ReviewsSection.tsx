@@ -127,7 +127,7 @@ export function ReviewsSection({
   const [reviews, setReviews]         = useState<Review[]>([]);
   const [total, setTotal]             = useState(0);
   const [avgRating, setAvg]           = useState<number | null>(null);
-  const [loading, setLoading]         = useState(true);
+  const [loading, setLoading]         = useState(true); const [loadError, setLoadError] = useState(false); const [reloadKey, setReloadKey] = useState(0); // TM-social TRUST-F13
   const [alreadyReviewed, setAlready] = useState(false);
   const [myReviewId, setMyReviewId]   = useState<string | null>(null);
   const [deleting, setDeleting]       = useState(false);
@@ -140,7 +140,7 @@ export function ReviewsSection({
     useCallback(() => {
       let active = true;
       const load = async () => {
-        try {
+        try { if (active) setLoadError(false);
           if (entityType === 'trip') {
             const resp: ReviewsResponse = await getTripReviews(entityId, 1, 5);
             if (active) {
@@ -168,14 +168,14 @@ export function ReviewsSection({
             }
           }
         } catch {
-          // silent — don't block the parent screen
+          if (active) setLoadError(true); // DV-83: a failed read is an error state (below), never "No reviews yet"; the parent screen is still not blocked
         } finally {
           if (active) setLoading(false);
         }
       };
       load();
       return () => { active = false; };
-    }, [entityType, entityId]),
+    }, [entityType, entityId, reloadKey]),
   );
 
   // Separately check whether the current user has already submitted a review.
@@ -287,7 +287,7 @@ export function ReviewsSection({
       )}
 
       {/* Review list */}
-      {reviews.length === 0 ? (
+      {loadError ? (<ReviewsLoadError onRetry={() => { setLoading(true); setReloadKey((k) => k + 1); }} />) : reviews.length === 0 ? (
         <Text style={s.emptyText}>
           No reviews yet.{canReview && !alreadyReviewed ? ' Be the first to share your experience.' : ''}
         </Text>
@@ -306,7 +306,7 @@ export function ReviewsSection({
         ))
       )}
 
-      {total > 5 && (
+      {!loadError && total > 5 && (
         <Text style={s.moreText}>+ {total - 5} more reviews</Text>
       )}
 
@@ -391,5 +391,21 @@ const s = StyleSheet.create({
   tagText: { fontSize: 11, color: '#6B7280', textTransform: 'capitalize' },
 
   emptyText: { fontSize: 13, color: '#9CA3AF', paddingVertical: 8 },
+  loadErrorRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  retryText: { fontSize: 13, color: '#2563EB', fontWeight: '700' },
   moreText:  { fontSize: 12, color: '#9CA3AF', textAlign: 'center', marginTop: 6 },
 });
+
+// ── Load failure — TM-social TRUST-F13 (DV-83) ───────────────────────────────
+// A reviews read that failed is not a place with no reviews: say so, and let
+// the reader try again instead of inviting them to "be the first".
+function ReviewsLoadError({ onRetry }: { onRetry: () => void }) {
+  return (
+    <View style={s.loadErrorRow}>
+      <Text style={s.emptyText}>Couldn't load reviews.</Text>
+      <Pressable onPress={onRetry} accessibilityRole="button" accessibilityLabel="Retry loading reviews" testID="reviews-retry" hitSlop={8}>
+        <Text style={s.retryText}>Try again</Text>
+      </Pressable>
+    </View>
+  );
+}
