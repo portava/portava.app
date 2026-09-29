@@ -9722,6 +9722,35 @@ the text checks §31.1 rests on: removing the receipt `FOR UPDATE` leaves the
 words `FOR UPDATE` in the body, since the message lock uses them too. The text
 check stays green. Only the executed probe goes red.
 
+## §40 — `POST /api/moderation/report` holds a message report to the reporter's membership too (lane tm-followups, item A1). NO ROW MOVES
+
+Branch `lane-tm-followups`, cut from `main` at `978d886bf`; code in `23f78ab1a`. Controlled
+evidence only. Placed before §38 so it merges cleanly beside a parallel lane's §39, whose rule it
+extends to the fourth report path.
+
+**The gap.** §39's lane (PR #537) held `POST /messages/:id/report`, `POST /threads/:id/report` and
+`POST /reports` to the rule "a reporter must be able to see what they report". The fourth path,
+`POST /api/moderation/report` with `subjectType: "message"`, filed a report on any message id, and
+stored a client-supplied `threadId` beside it.
+
+**The fix.** The same guard, from the same module — `artifacts/api-server/src/lib/reportTargetAccess.ts:82#export async function refuseUnlessReporterSees`,
+added byte-identical to PR #537's file so the two merge without conflict — runs before the report
+is looked up or filed (`artifacts/api-server/src/routes/moderation.ts:109#if (!sc) {`), and a
+supplied `threadId` must be a conversation the reporter is an active member of
+(`artifacts/api-server/src/routes/moderation.ts:110#if (subjectType === "message" && threadId &&`).
+A non-member gets 404 (not an oracle); an unreadable membership read gets 503 and nothing is filed.
+Non-conversation subjects pass through untouched. Line-neutral: the lines census-trust cites
+(46-55, 139-141, 161-162 and 247-250) hold what they held.
+
+**Tests.** `artifacts/api-server/src/test/tmFollowupSafety.test.ts:169#describe(` — three red cases
+(non-member, foreign thread, unreadable membership) and two controls; `moderation.test.ts`'s
+message happy path now seeds the reporter's membership, since filing without one is what was
+fixed. Both guard lines mutation-checked RED and restored by sha256.
+
+- NOT-GRADED: artifacts/api-server/src/test/tmFollowupSafety.test.ts — §40's route suite (item A1); controlled evidence, no Telegraph verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/moderation.test.ts — §40 names its restated message fixture only; no Telegraph verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/lib/reportTargetAccess.ts — §40's guard module (PR #537's file, byte-identical); built work, no row moves on it here.
+
 ## §38 — WP-08 (lane tm-telegraph): the seven messaging gaps a tester could not reach, and two rows that had gone stale
 
 Written 2026-09-29 by lane tm-telegraph against `main` at `18518e982`. It

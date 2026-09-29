@@ -854,6 +854,7 @@ export async function revokeStamp(
   });
 
   if (auditErr) {
+    const auditReason = `audit_write_failed: ${auditErr.message}`;
     // Roll back the revoke to keep data consistent. A rollback that fails leaves
     // the stamp revoked with no audit row, so it is named in the reason.
     const { error: rollbackErr } = await sc
@@ -861,7 +862,7 @@ export async function revokeStamp(
       .update({ is_revoked: false, revoked_at: null, revoked_reason: null })
       .eq("id", userStampId);
     const rolledBack = rollbackErr ? `; rollback_failed: ${rollbackErr.message}` : "";
-    return { revoked: false, reason: `audit_write_failed: ${auditErr.message}${rolledBack}`, failure: "db_error" };
+    return { revoked: false, reason: `${auditReason}${rolledBack}`, failure: "db_error" };
   }
 
   // Charge the adjudicated finding: an admin has determined this stamp was not
@@ -936,6 +937,7 @@ export async function restoreStamp(
   });
 
   if (auditErr) {
+    const auditReason = `audit_write_failed: ${auditErr.message}`;
     // Roll back the restore to keep data consistent. A failed rollback is named.
     const { error: rollbackErr } = await sc
       .from("user_stamps")
@@ -946,7 +948,7 @@ export async function restoreStamp(
       })
       .eq("id", userStampId);
     const rolledBack = rollbackErr ? `; rollback_failed: ${rollbackErr.message}` : "";
-    return { restored: false, reason: `audit_write_failed: ${auditErr.message}${rolledBack}`, failure: "db_error" };
+    return { restored: false, reason: `${auditReason}${rolledBack}`, failure: "db_error" };
   }
 
   return { restored: true, reason: "restored" };

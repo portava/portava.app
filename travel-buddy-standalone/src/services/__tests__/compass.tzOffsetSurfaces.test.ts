@@ -54,13 +54,14 @@ describe('Compass surfaces send tzOffsetMinutes', () => {
   it('the full feed is retired: no fetchCompassFeed, and no client source calls GET /compass/feed', async () => {
     assert.equal((compass as Record<string, unknown>).fetchCompassFeed, undefined);
     const { readFileSync, readdirSync, statSync } = await import('node:fs');
-    const { join } = await import('node:path');
+    const path = await import('node:path');
+    const { join } = path;
     const root = join(import.meta.dirname, '../../..');
     const offenders: string[] = [];
     const walk = (dir: string) => {
       for (const name of readdirSync(dir)) {
         if (name === 'node_modules' || name === '__tests__') continue;
-        const full = join(dir, name);
+        const full = path.resolve(dir, name);
         if (statSync(full).isDirectory()) walk(full);
         else if (/\.(ts|tsx)$/.test(name) && /\/api\/compass\/feed\?/.test(readFileSync(full, 'utf8'))) offenders.push(full);
       }

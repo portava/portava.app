@@ -57,7 +57,7 @@ async function call(
   }
 }
 
-// ── Like — RETIRED (MD424; testing-mode WP-17, census-media §45) ────────────
+// ── Like — RETIRED (MD424; testing-mode WP-17, census-media §46) ────────────
 //
 // likeMedia / unlikeMedia called POST/DELETE /api/media/:id/like and had no
 // caller. Heart/Like is on the Media spec's anti-pattern list, and the server
@@ -136,7 +136,7 @@ export async function hideMedia(mediaId: string): Promise<MediaActionResult> {
  * Stamp control and its minimal vanity metrics (MD408). Stamp is the one media
  * reaction; Comments open the post comment sheet (MediaCommentSheet).
  *
- * The server route stays for API callers; census-media §45 records the
+ * The server route stays for API callers; census-media §46 records the
  * decision. These lines keep the former line span (the file is cited by line).
  */
 

@@ -15,6 +15,7 @@
  * Run: npx jest src/services/__tests__/compassFeedRetired
  */
 import { readFileSync, readdirSync, statSync } from 'fs';
+import * as path from 'path';
 import { join } from 'path';
 import * as compass from '../compass.ts';
 
@@ -24,7 +25,7 @@ function sourcesCalling(pattern: RegExp): string[] {
   const walk = (dir: string) => {
     for (const name of readdirSync(dir)) {
       if (name === 'node_modules' || name === '__tests__') continue;
-      const full = join(dir, name);
+      const full = path.resolve(dir, name);
       if (statSync(full).isDirectory()) walk(full);
       else if (/\.(ts|tsx)$/.test(name) && pattern.test(readFileSync(full, 'utf8'))) out.push(full.slice(root.length + 1));
     }

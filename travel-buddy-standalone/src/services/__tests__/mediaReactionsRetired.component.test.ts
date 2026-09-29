@@ -1,6 +1,6 @@
 /**
  * MD424 decision (testing-mode WP-17, flow MED-F06; recorded in census-media
- * §45): media Like and "Stamp It" are RETIRED from the client; Stamp and
+ * §46): media Like and "Stamp It" are RETIRED from the client; Stamp and
  * Comments are the wired reactions.
  *
  *   - Heart/Like is on the spec's anti-pattern list ("Heart/Like as primary
@@ -20,6 +20,7 @@
  * Run: npx jest src/services/__tests__/mediaReactionsRetired
  */
 import { readFileSync, readdirSync, statSync } from 'fs';
+import * as path from 'path';
 import { join } from 'path';
 import * as media from '../mediaInteractions.ts';
 
@@ -30,7 +31,7 @@ function sourcesMatching(pattern: RegExp): string[] {
   const walk = (dir: string) => {
     for (const name of readdirSync(dir)) {
       if (name === 'node_modules' || name === '__tests__') continue;
-      const full = join(dir, name);
+      const full = path.resolve(dir, name);
       if (statSync(full).isDirectory()) walk(full);
       else if (/\.(ts|tsx)$/.test(name) && pattern.test(readFileSync(full, 'utf8'))) out.push(full.slice(ROOT.length + 1));
     }
