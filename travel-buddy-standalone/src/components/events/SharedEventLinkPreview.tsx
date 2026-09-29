@@ -104,8 +104,8 @@ const s = StyleSheet.create({
   metaText: { ...t.small, color: color.mute, flex: 1 },
   host:     { ...t.small, color: color.ink, fontWeight: '600' },
   desc:     { ...t.body, color: color.ink, marginTop: space.xs },
-  note:     { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginHorizontal: space.lg, marginTop: space.md, padding: space.md, borderRadius: radius.md, backgroundColor: color.haze },
-  noteText: { ...t.small, color: color.muteStrong, flex: 1, textAlign: 'center' },
+  note:     { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginHorizontal: space.lg, marginTop: space.md, padding: space.md, borderRadius: radius.md, backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze },
+  noteText: { ...t.small, color: color.mute, flex: 1, textAlign: 'center' },
   retryBtn: { paddingHorizontal: space.lg, paddingVertical: space.sm, backgroundColor: color.signal, borderRadius: radius.pill, marginTop: space.sm },
   retryText:{ ...t.small, color: color.onInk, fontWeight: '700' },
 });

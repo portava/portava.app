@@ -226,9 +226,9 @@ export function EventCommunitySection({ event }: Props) {
 const s = StyleSheet.create({
   card:     { marginHorizontal: space.lg, marginTop: space.md, backgroundColor: color.paperRaised, borderRadius: radius.lg, borderWidth: 1, borderColor: color.haze, padding: space.md, gap: space.sm },
   tabs:     { flexDirection: 'row', gap: space.xs, marginBottom: space.xs },
-  tab:      { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: space.md, paddingVertical: 6, borderRadius: radius.pill, backgroundColor: color.haze },
-  tabOn:    { backgroundColor: color.paper, borderWidth: 1, borderColor: color.ink },
-  tabText:  { ...t.small, color: color.muteStrong, fontWeight: '600' },
+  tab:      { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: space.md, paddingVertical: 6, borderRadius: radius.pill, backgroundColor: color.paper, borderWidth: 1, borderColor: color.haze },
+  tabOn:    { borderColor: color.ink },
+  tabText:  { ...t.small, color: color.mute, fontWeight: '600' },
   tabTextOn:{ color: color.ink, fontWeight: '700' },
   center:   { alignItems: 'center', gap: space.sm, paddingVertical: space.md },
   muted:    { ...t.small, color: color.mute, textAlign: 'center' },

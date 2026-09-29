@@ -46,7 +46,7 @@ Client (`travel-buddy-standalone`):
 - `src/components/events/SharedEventLinkPreview.tsx` — shared-link preview.
 - `app/event/[id].tsx` — mounts the above (line-neutral edits).
 - `src/components/meetups/MeetupInviteMoreCard.tsx`, `src/lib/meetupInvites.ts` — invite more; mounted in `app/meetup/[id].tsx`.
-- `app/meetups/invites.tsx` — the meetup invites inbox; entry in `app/meetups/index.tsx`; registered in `src/navigation/portavaRoutes.ts` (appended at the array foot).
+- `app/meetups/invites.tsx` — the meetup invites inbox; entry in `app/meetups/index.tsx`; registered in `src/navigation/portavaRoutes.ts` (on the array's closing line, line-neutral).
 - `src/services/events.ts` — client calls for the routes above (appended at the file foot).
 
 Every new read has a loading state, an error state with Retry, and an empty state

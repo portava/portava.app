@@ -2879,8 +2879,8 @@ failure — a 503 as much as a 404 — into *"unavailable or has expired"*.
 
 - **The screen.** `travel-buddy-standalone/app/safe-return/[shareId].tsx:19#export default function SafeReturnLiveShareScreen() {`
   mounts the view at `travel-buddy-standalone/app/safe-return/[shareId].tsx:28#<LiveShareRecipientView shareId={id} />`,
-  registered at `travel-buddy-standalone/src/navigation/portavaRoutes.ts:2133#key: 'safe-return-live-share',`
-  (appended at the array foot, so the entries this and other censuses cite by line do not move).
+  registered at `travel-buddy-standalone/src/navigation/portavaRoutes.ts:2120#key: 'safe-return-live-share',`
+  (on the array's closing line, so the file stays line-neutral and the entries censuses cite by line do not move).
 - **The notice (server).** Starting a share now calls
   `artifacts/api-server/src/routes/safeReturn.ts:894#const recipientNotice = await noticeLiveShareRecipient(`,
   which reaches `artifacts/api-server/src/services/safeReturn/SafeReturnLiveShareNotifier.ts:52#export async function notifyLiveShareRecipient(`.

@@ -2117,30 +2117,7 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     // §4 Media Contribution (census-media §19). A current perspective of one
     // canonical place, through the existing upload + post write.
   },
-  // Testing-mode wiring (lane tm-events). Appended at the foot: census rows
-  // cite entries above by line.
-  {
-    key: 'meetups-invites',
-    path: 'meetups/invites',
-    title: 'Meetup Invites',
-    parent: 'meetups-list',
-    icon: null,
-    requiresAuth: true,
-    ownerOnly: true,
-    // PLAT-F31: pending meetup invites + confirmed-time notices.
-  },
-  {
-    key: 'safe-return-live-share',
-    path: 'safe-return/[shareId]',
-    title: 'Live location',
-    parent: null,
-    icon: null,
-    requiresAuth: true,
-    deepLink: '/safe-return/[shareId]',
-    // TRUST-F10: a trusted contact's view of a Safe Return live share; the
-    // location.live_share_started notification links here.
-  },
-];
+  { key: 'meetups-invites', path: 'meetups/invites', title: 'Meetup Invites', parent: 'meetups-list', icon: null, requiresAuth: true, ownerOnly: true }, { key: 'safe-return-live-share', path: 'safe-return/[shareId]', title: 'Live location', parent: null, icon: null, requiresAuth: true, deepLink: '/safe-return/[shareId]' }, ]; // lane tm-events, on the closing line so the file stays line-neutral: PLAT-F31 meetup invites inbox; TRUST-F10 a trusted contact's view of a Safe Return live share (the location.live_share_started notice links here)
 
 // ── Layout registry ───────────────────────────────────────────────────────────
 //
