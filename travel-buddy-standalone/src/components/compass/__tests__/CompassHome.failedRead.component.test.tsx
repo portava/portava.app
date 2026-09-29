@@ -11,6 +11,7 @@
  *   CH4  a degraded projection → its cards AND the partial line
  *   CH5  CONTROL: Compass READ and off → no failed line (unchanged)
  *   CH6  CONTROL: a healthy home → no failed or partial line
+ *   CH7  a THROWN fetch → the failed line
  */
 import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react-native';
@@ -83,5 +84,11 @@ describe('CompassHome failed and partial reads (§105)', () => {
     await waitFor(() => expect(screen.queryByText('Rooftop DJ set')).not.toBeNull());
     expect(screen.queryByText(FAILED)).toBeNull();
     expect(screen.queryByText(PARTIAL)).toBeNull();
+  });
+
+  it('CH7 a thrown fetch → the failed line', async () => {
+    mockFetchCompassHome.mockRejectedValue(new Error('socket hang up'));
+    await render(<CompassHome onAsk={jest.fn()} />);
+    await waitFor(() => expect(screen.queryByText(FAILED)).not.toBeNull());
   });
 });

@@ -22,7 +22,7 @@ import http from "node:http";
 import express from "express";
 import { _setTestClient, _clearTestClient } from "../lib/http.js";
 import trailsRouter from "../routes/trails.js";
-import { getTrail, type MemberRow } from "../services/trails/TrailService.js";
+import { getTrail, encodeMemberCursor, type MemberRow } from "../services/trails/TrailService.js";
 import { orPredicate } from "./helpers/postgrestOrFilter.js";
 
 const u = (n: string) => `11111111-1111-4111-8111-1111111111${n}`;
@@ -70,6 +70,7 @@ function makeDb(seed: Record<string, Row[]>, erroring: string[] = []) {
       in(c: string, v: any[]) { filters.push((r) => v.includes(r[c])); return b; },
       is(c: string, v: any) { filters.push((r) => (r[c] ?? null) === v); return b; },
       gt(c: string, v: any) { filters.push((r) => String(r[c] ?? "") > String(v)); return b; },
+      lt(c: string, v: any) { filters.push((r) => String(r[c] ?? "") < String(v)); return b; },
       gte(c: string, v: any) { filters.push((r) => String(r[c] ?? "") >= String(v)); return b; },
       or(expr: string) { filters.push(orPredicate(expr)); return b; },
       order() { return b; },
@@ -321,5 +322,59 @@ describe("census-discovery §105 sweep (DV-83, D-W11X2-60): the Trail activity r
     _setTestClient(makeDb(seed(), ["events", "rank_events"]), true);
     const r = await call(MODULES, STRANGER);
     assert.deepEqual(r.body.refusal?.failedSources, ["trail_member_sources", "trail_activity"]);
+  });
+});
+
+// ── §105: the paths a mutation must not slip through ──
+// The window cursor ("members older than the window", §86.14), the exploration branch
+// (3485's flag on), and a trending read refused after the modules read succeeded.
+describe("census-discovery §105 (DV-83, D-W11X2-60): cursor pages, exploration, and a refused trending read", () => {
+  const cursor = () => encodeMemberCursor({ created_at: new Date(Date.now() - 1000).toISOString(), id: "99999999-9999-4999-8999-999999999999" });
+
+  it("TR13 GET …/:id/more?cursor=: the events read fails → a refusal on the older-members page", async () => {
+    _setTestClient(makeDb(seed(), ["events"]), true);
+    const r = await call(`${MORE}?cursor=${cursor()}`, STRANGER);
+    assert.equal(r.status, 200, r.text);
+    assertMemberRefusal(r.body, "GET /v1/discovery/trails/:id/more", "partial");
+  });
+
+  it("TR14 GET …/:id/places/:placeId/more?cursor=: the events read fails → a refusal", async () => {
+    _setTestClient(makeDb(seed(), ["events"]), true);
+    const r = await call(`${PLACE_MORE}?cursor=${cursor()}`, STRANGER);
+    assert.equal(r.status, 200, r.text);
+    assertMemberRefusal(r.body, "GET /v1/discovery/trails/:id/places/:placeId/more", "partial");
+  });
+
+  it("TR14c CONTROL: the same cursor pages with every read healthy carry no refusal", async () => {
+    _setTestClient(makeDb(seed()), true);
+    for (const p of [`${MORE}?cursor=${cursor()}`, `${PLACE_MORE}?cursor=${cursor()}`]) {
+      const r = await call(p, STRANGER);
+      assert.equal(r.status, 200, r.text);
+      assert.ok(!("refusal" in r.body), p);
+    }
+  });
+
+  it("TR15 exploration on (3485): the events read fails → partial; the activity read fails → trail_activity", async () => {
+    const flags = { feature_flags: [{ flag: "discovery_trail_exploration_enabled", enabled: true }] };
+    _setTestClient(makeDb(seed(flags), ["events"]), true);
+    const m = await call(MODULES, STRANGER);
+    assertMemberRefusal(m.body, "GET /v1/discovery/trails/:id/modules", "partial");
+    _setTestClient(makeDb(seed(flags), ["rank_events"]), true);
+    const a = await call(MODULES, STRANGER);
+    assert.deepEqual(a.body.refusal?.failedSources, ["trail_activity"]);
+    _setTestClient(makeDb(seed(flags)), true);
+    assert.ok(!("refusal" in (await call(MODULES, STRANGER)).body), "CONTROL: exploration on, every read healthy");
+  });
+
+  it("TR16 GET …/:id/more: the trending read is refused after the modules read succeeded → refused, never a list set missing trending", async () => {
+    const db = makeDb(seed());
+    let trailReads = 0;
+    const from = db.from;
+    _setTestClient({ ...db, from: (t: string) => {
+      if (t === "trails" && ++trailReads >= 2) return makeDb(seed(), ["trails"]).from(t);
+      return from(t);
+    } }, true);
+    const r = await call(MORE, STRANGER);
+    assert.notEqual(r.status, 200, `a refused trending read was dropped from the lists silently: ${r.text}`);
   });
 });

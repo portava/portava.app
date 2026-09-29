@@ -22,7 +22,7 @@ export function useCompassWhyExplanation(): UseCompassWhyExplanationResult {
   const [failed, setFailed]                 = useState(false); const reqRef = useRef(0);  // census-discovery §105 (DV-83, D-W11X2-63): only the LATEST request writes the sheet (as DiscoveryCategoryTab, D-W11X2-38)
 
   const fetch = useCallback(async (recommendationId: string): Promise<string | null> => {
-    const myId = ++reqRef.current; setLoading(true); setExplanation(null); setFactors([]); setCompassMatch(null); setCommunityScore(null); setFailed(false);  // §105: a new card never shows the last card's reason
+    const myId = ++reqRef.current; setLoading(true);  // §105: this request's id
     const r = await fetchCompassWhy(recommendationId); if (reqRef.current !== myId) return null;  // §105: another card's (or a closed sheet's) late answer is dropped
     setLoading(false);
     setFailed(!r.ok);
