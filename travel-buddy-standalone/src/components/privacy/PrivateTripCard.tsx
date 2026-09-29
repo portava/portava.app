@@ -8,6 +8,12 @@
  *
  * Deliberately does NOT render dates, hotel, route, members, itinerary,
  * destination details, or any other restricted field.
+ *
+ * WP-10 TRIP-F06 (census-trips §77): a pending requester can withdraw the
+ * request. The request id comes from the join-request route itself, which
+ * answers a repeat while one is pending with that request's id and files
+ * nothing new (decision WP10-D3); the card then cancels it. A request that
+ * could not be sent or withdrawn says so instead of silently doing nothing.
  */
 import React, { useState } from 'react';
 import {
@@ -17,6 +23,8 @@ import { CachedImage } from '../CachedImage.tsx';
 import { Lock, Plane, Clock } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
 import { requestTripAccess } from '../../services/trips.ts';
+import { sendJoinRequest, cancelJoinRequest } from '../../features/trips/joinRequests/tripJoinRequests.ts';
+import { writeFailureText } from '../../features/trips/shared/tripApi.ts';
 
 /** Minimal safe fields returned by the private-trip sentinel. */
 export interface PrivateTripPreview {
@@ -50,6 +58,7 @@ interface Props {
 export function PrivateTripCard({ trip, onRequestSent }: Props) {
   const [pending, setPending] = useState(trip.myJoinRequestStatus === 'pending');
   const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const ownerLine = trip.ownerDisplayName ?? (trip.ownerHandle ? `@${trip.ownerHandle}` : 'Unknown');
   const ownerHandle = trip.ownerHandle ? `@${trip.ownerHandle}` : null;
@@ -58,11 +67,31 @@ export function PrivateTripCard({ trip, onRequestSent }: Props) {
     if (pending || busy) return;
     setBusy(true);
     try {
+      setNotice(null);
       const res = await requestTripAccess(trip.id);
       if (res.ok) {
         setPending(true);
         onRequestSent?.();
+      } else {
+        setNotice("Your request couldn't be sent. Try again.");
       }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleCancel() {
+    if (!pending || busy) return;
+    setBusy(true);
+    setNotice(null);
+    try {
+      // Idempotent while pending: returns the existing request's id, files nothing.
+      const mine = await sendJoinRequest(trip.id);
+      if (mine.state === 'member') { setNotice('You are already on this trip.'); return; }
+      if (mine.state !== 'pending') { setNotice(writeFailureText(mine)); return; }
+      const w = await cancelJoinRequest(trip.id, mine.requestId);
+      if (w.state === 'done') { setPending(false); setNotice('Request withdrawn.'); }
+      else setNotice(writeFailureText(w));
     } finally {
       setBusy(false);
     }
@@ -114,10 +143,22 @@ export function PrivateTripCard({ trip, onRequestSent }: Props) {
 
         {/* CTA */}
         {pending ? (
-          <View style={[s.btn, s.btnPending]}>
-            <Clock size={15} color={color.mute} />
-            <Text style={[s.btnText, s.btnTextPending]}>Request sent</Text>
-          </View>
+          <>
+            <View style={[s.btn, s.btnPending]}>
+              <Clock size={15} color={color.mute} />
+              <Text style={[s.btnText, s.btnTextPending]}>Request sent</Text>
+            </View>
+            <Pressable
+              style={({ pressed }) => [s.cancelLink, pressed && { opacity: 0.7 }]}
+              onPress={handleCancel}
+              disabled={busy}
+              accessibilityRole="button"
+              accessibilityLabel="Withdraw your request to join"
+              testID="private-trip-cancel-request"
+            >
+              {busy ? <ActivityIndicator size="small" color={color.mute} /> : <Text style={s.cancelLinkText}>Withdraw request</Text>}
+            </Pressable>
+          </>
         ) : (
           <Pressable
             style={({ pressed }) => [s.btn, s.btnRequest, pressed && { opacity: 0.8 }]}
@@ -135,12 +176,16 @@ export function PrivateTripCard({ trip, onRequestSent }: Props) {
             </Text>
           </Pressable>
         )}
+        {notice ? <Text style={s.notice} testID="private-trip-request-notice">{notice}</Text> : null}
       </View>
     </View>
   );
 }
 
 const s = StyleSheet.create({
+  cancelLink: { alignSelf: 'center', marginTop: space.sm, padding: space.xs },
+  cancelLinkText: { ...t.small, color: color.signalStrong, fontWeight: '600' },
+  notice: { ...t.small, color: color.mute, textAlign: 'center', marginTop: space.sm },
   card: {
     margin: space.lg,
     borderRadius: radius.lg,

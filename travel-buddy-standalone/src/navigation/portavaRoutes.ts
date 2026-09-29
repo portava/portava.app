@@ -2117,7 +2117,7 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     // §4 Media Contribution (census-media §19). A current perspective of one
     // canonical place, through the existing upload + post write.
   },
-];
+  { key: 'trip-join-requests', path: 'trip/join-requests', title: 'Join requests', parent: 'tab-trips', icon: null, requiresAuth: true, ownerOnly: true }, ]; // WP-10 TRIP-F06 (census-trips §77): owner review of join requests
 
 // ── Layout registry ───────────────────────────────────────────────────────────
 //
