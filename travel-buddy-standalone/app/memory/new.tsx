@@ -30,7 +30,7 @@ import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { X, Globe, Users, Lock, MapPin, ChevronDown, ImagePlus } from 'lucide-react-native';
 import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
-import { color, space, radius, type as t } from '../../src/theme/tokens';
+import { color, space, radius, icon, type as t } from '../../src/theme/tokens';
 import {
   createMemory, addMemoryItem,
   type MemoryVisibility, type MemoryLocationPrecision,
@@ -433,9 +433,9 @@ const s = StyleSheet.create({
     position: 'absolute',
     top: 4,
     right: 4,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+    width: icon.s20,
+    height: icon.s20,
+    borderRadius: icon.s20 / 2,
     backgroundColor: color.ink,
     alignItems: 'center',
     justifyContent: 'center',

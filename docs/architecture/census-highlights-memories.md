@@ -6413,3 +6413,7 @@ faked network), not production.
 - NOT-GRADED: travel-buddy-standalone/app/memory/new.tsx — §AA's HM-F08 create screen; built client work, no row here grades a client screen and none moves on it
 - NOT-GRADED: travel-buddy-standalone/app/memory/__tests__/memoryCreate.hubEntry.component.test.tsx — §AA.3's suite for the create flow; controlled evidence, no verdict rests on it
 - NOT-GRADED: travel-buddy-standalone/src/components/create/CreateHubSheet.tsx — §AA.1 cites the hub's Memory route; no row here grades the hub
+- NOT-GRADED: travel-buddy-standalone/src/services/memories.ts — §AA.1 cites the two in-place lines that put `locationPrecision` on createMemory's wire; the client service is built work for HM-F08, and no verdict in this census moves on it
+- NOT-GRADED: travel-buddy-standalone/app/memory/edit.tsx — §AA.1 cites the in-place redirect for a missing id; the editor is client work, and no row here grades it
+- NOT-GRADED: travel-buddy-standalone/src/components/create/__tests__/CreateHubSheet.routes.component.test.tsx — §AA.3 names it as restated for the hub's new Memory route; controlled client evidence, no verdict rests on it
+- NOT-GRADED: travel-buddy-standalone/src/theme/__tests__/sharedSheetContrast.consumers.test.ts — §AA.3 names it for the new GlobalPlacePicker consumer it now lists; a design-system suite graded by census-media, and no row here rests on it
