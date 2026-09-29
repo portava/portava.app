@@ -384,3 +384,10 @@ export type CompassTrip         = CompassItem & { type: 'trip' };
 export type CompassStamp        = CompassItem & { type: 'stamp' };
 export type CompassNotification = CompassItem & { type: 'notification' };
 export type CompassSuggestion   = CompassItem & { type: 'suggestion' };
+
+// ── census-discovery §107 sweep (DV-83 round 10, D-W11X2-73): a failed location read is not "no city" ──
+// Declaration merging adds one optional field to CompassProfile above (appended so no cited line moves).
+// `locationUnread` is set when the viewer's `user_location_state` read FAILED, where `currentCity: null`
+// otherwise means "this viewer has shared no city". A profile carrying it is never cached, and a
+// caller that scopes by city names the failure instead of answering "nothing in no city".
+export interface CompassProfile { locationUnread?: true }

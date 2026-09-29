@@ -178,7 +178,7 @@ async function buildProfile(
     ? (trustRes.value.profile as any)
     : null;
   const prefProf   = prefProfileRes.status === "fulfilled" ? (prefProfileRes.value.data as any) : null;
-  const locState   = locStateRes.status   === "fulfilled" ? (locStateRes.value.data as any) : null;
+  const locState   = locStateRes.status   === "fulfilled" ? (locStateRes.value.data as any) : null; const locStateUnread = locStateRes.status === "rejected" || Boolean((locStateRes.value as any)?.error);  // census-discovery §107 (D-W11X2-73)
   const locPref    = locPrefRes.status    === "fulfilled" ? (locPrefRes.value.data as any) : null;
   const blocksSent = blockSentRes.status  === "fulfilled" ? ((blockSentRes.value.data as any[]) ?? []) : [];
   const blocksRecv = blockRecvRes.status  === "fulfilled" ? ((blockRecvRes.value.data as any[]) ?? []) : [];
@@ -260,7 +260,7 @@ async function buildProfile(
     hasActiveBooking: bookings.length > 0,
     upcomingTripWithin48h,
     hasFutureTripScheduled,
-    currentCity: locState?.city ?? null,
+    currentCity: locState?.city ?? null, ...(locStateUnread ? { locationUnread: true as const } : {}),  // §107: null over a FAILED read is not "no city"
     currentCountry: locState?.country ?? null,
     safeReturnActive: safeReturn.length > 0,
     categoryWeights: await getDecayedWeights(
@@ -290,6 +290,6 @@ export async function getCompassProfile(
     }
   }
   const profile = await buildProfile(db, userId);
-  _cache.set(userId, { profile, cachedAt: Date.now() });
+  if (!profile.locationUnread) _cache.set(userId, { profile, cachedAt: Date.now() });  // census-discovery §107 (D-W11X2-73): a profile built over a failed location read is never cached
   return profile;
 }

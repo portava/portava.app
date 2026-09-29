@@ -438,7 +438,7 @@ export async function hydrateCompassItems(
   // Each fetch* already catches its own errors internally, so these branches
   // are a defensive backstop — but if one ever rejects instead (e.g. a bug
   // introduced in a future edit), the rejection must not vanish silently.
-  const failed: string[] = []; const settled: [string, PromiseSettledResult<CompassItem[]>][] = [
+  const failed: string[] = profile.locationUnread && !profile.currentCity ? ["user_location_state"] : [];  /* census-discovery §107 (D-W11X2-73): the city-scoped sources read nothing because the city was unread */ const settled: [string, PromiseSettledResult<CompassItem[]>][] = [
     ["posts", posts], ["buddies", buddies], ["places", places],
     ["events", events], ["hidden_gems", hiddenGems],
   ];

@@ -249,7 +249,7 @@ async function fetchUpcomingEvents(
     const { data, error } = await q.limit(limit * 3);
     // A read that errored is not an empty calendar. Both still surface as no
     // events; only one of them is a fact about the world.
-    if (error) return unusable([]);
+    if (error || (profile?.locationUnread && !profile.currentCity)) return unusable([]);  // census-discovery §107 (D-W11X2-73): events for no city are not this viewer's events
     const hidden = hiddenUserIds(profile);
     return sourced(((data ?? []) as any[])
       .filter((e) => !hidden.has(e.host_id as string))
@@ -301,7 +301,7 @@ async function fetchWeatherWindow(profile: CompassProfile | null): Promise<Sourc
   const city = profile?.currentCity;
   // No city is an authorized empty result, not an outage: there is nothing to
   // forecast for, and the traveller can fix it by setting a city.
-  if (!city) return sourced(null);
+  if (!city) return profile?.locationUnread ? unusable(null) : sourced(null);  // census-discovery §107 (D-W11X2-73): an UNREAD city is not "no city set"
   try {
     const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1_000).toISOString().slice(0, 10);
     const wxStatus: WeatherReadStatus = {}; const wx = await getWeatherContext(city, tomorrow, tomorrow, wxStatus);
