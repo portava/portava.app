@@ -89,7 +89,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   // the problem. Both ends of every vertical slice are listed.
   "census-trips.md": [
     // The kernel and its command families.
-    "artifacts/api-server/src/domain/trips/commands/tripKernel.ts",
+    "artifacts/api-server/src/domain/trips/commands/tripKernel.ts", "travel-buddy-standalone/src/components/privacy/PrivateTripCard.tsx", "travel-buddy-standalone/src/components/discovery/TripWishlistPicker.tsx", "travel-buddy-standalone/src/services/discoveryBookmarks.ts", // WP-10 §77: the requester's withdraw, the Save-to-trip picker and the device store the saved-places merge reads
     // §45: the decision-diff harness, its golden, and the Phase 0 inventory (generated and hand-written halves).
     "artifacts/api-server/src/domain/trips/replay/corpus.ts",
     "artifacts/api-server/src/domain/trips/replay/run.ts",
