@@ -24,11 +24,11 @@ import { mayDiscloseGemIdentity } from "../services/hiddenGems/HiddenGemPrivacyG
 /**
  * Logs a Compass candidate-source failure so a degraded feed (a source
  * silently returning zero items) is visible in logs instead of vanishing
- * without a trace. Never throws — the caller's fail-soft `[]` behavior is
- * unchanged, this only adds observability.
+ * without a trace. Never throws. census-discovery §104 (DV-83, D-W11X2-54): a failed read is no
+ * longer an empty source; hydrateCompassItems names it (compassHydrationFailedSources).
  */
 function logCompassSourceFailure(source: string, err: unknown, userId: string): void {
-  logger.warn({ compassSource: source, userId, err }, `Compass feed: ${source} candidate source failed — degraded to empty`);
+  logger.warn({ compassSource: source, userId, err }, `Compass feed: ${source} candidate source failed — named as a failed source`);
 }
 
 const POSTS_WINDOW_HOURS  = 72;
@@ -95,8 +95,8 @@ async function fetchPosts(
         .order("created_at", { ascending: false })
         .limit(MAX_POSTS / 2);
 
-      const { data: globalData } = await query;
-      const { data: cityData } = cityRes;
+      const { data: globalData, error: globalErr } = await query; if (globalErr) throw globalErr;  // census-discovery §104 (DV-83, D-W11X2-54): supabase-js RESOLVES a failed read
+      const { data: cityData, error: cityErr } = cityRes; if (cityErr) throw cityErr;
 
       const seen = new Set<string>();
       const merged: any[] = [];
@@ -106,11 +106,11 @@ async function fetchPosts(
       return merged.filter(isPostPublished).slice(0, MAX_POSTS).map(postToItem);
     }
 
-    const { data } = await query;
+    const { data, error } = await query; if (error) throw error;
     return ((data as any[]) ?? []).filter(isPostPublished).map(postToItem);
   } catch (err) {
-    logCompassSourceFailure("posts", err, profile.userId);
-    return [];
+    throw err;  // census-discovery §104 (DV-83, D-W11X2-54): a failed read is named by hydrateCompassItems, never an empty source
+    // was: logCompassSourceFailure("posts", err, profile.userId); return [];
   }
 }
 
@@ -147,12 +147,12 @@ async function fetchBuddies(db: SupabaseClient, profile: CompassProfile): Promis
   // which also shows nothing until a city is chosen.
   if (!profile.currentCity) return [];
   try {
-    const { data } = await db
+    const { data, error } = await db
       .from("rent_buddy_profiles")
       .select("user_id, status, verified, verified_at, city, profiles!user_id(id, created_at)")
       .eq("status", "active")
       .ilike("city", profile.currentCity)
-      .limit(MAX_BUDDIES);
+      .limit(MAX_BUDDIES); if (error) throw error;
 
     return ((data as any[]) ?? []).map((buddy): CompassItem => {
       const profile = Array.isArray(buddy.profiles)
@@ -176,8 +176,8 @@ async function fetchBuddies(db: SupabaseClient, profile: CompassProfile): Promis
       };
     });
   } catch (err) {
-    logCompassSourceFailure("buddies", err, profile.userId);
-    return [];
+    throw err;  // census-discovery §104 (DV-83, D-W11X2-54)
+    // was: logCompassSourceFailure("buddies", err, profile.userId); return [];
   }
 }
 
@@ -213,11 +213,11 @@ async function fetchEvents(
         baseQuery(),
       ]);
       const seen = new Set<string>();
-      for (const ev of [...(cityRes.data ?? []), ...(globalRes.data ?? [])] as any[]) {
+      if (cityRes.error) throw cityRes.error; if (globalRes.error) throw globalRes.error; for (const ev of [...(cityRes.data ?? []), ...(globalRes.data ?? [])] as any[]) {
         if (!seen.has(ev.id)) { seen.add(ev.id); rawEvents.push(ev); }
       }
     } else {
-      const { data } = await baseQuery();
+      const { data, error } = await baseQuery(); if (error) throw error;
       rawEvents = (data as any[]) ?? [];
     }
 
@@ -282,8 +282,8 @@ async function fetchEvents(
       },
     }));
   } catch (err) {
-    logCompassSourceFailure("events", err, profile.userId);
-    return [];
+    throw err;  // census-discovery §104 (DV-83, D-W11X2-54)
+    // was: logCompassSourceFailure("events", err, profile.userId); return [];
   }
 }
 
@@ -295,7 +295,7 @@ async function fetchPlaces(
 ): Promise<CompassItem[]> {
   if (!profile.currentCity) return [];
   try {
-    const { data } = await db
+    const { data, error } = await db
       .from("discovery_places")
       .select(
         "id, city, name, category, status, rating, created_at, submitted_by, " +
@@ -303,7 +303,7 @@ async function fetchPlaces(
       )
       .ilike("city", profile.currentCity)
       .eq("status", "active")
-      .limit(MAX_PLACES);
+      .limit(MAX_PLACES); if (error) throw error;
 
     return ((data as any[]) ?? []).map((place): CompassItem => ({
       id:              `place:${place.id}`,
@@ -336,8 +336,8 @@ async function fetchPlaces(
       },
     }));
   } catch (err) {
-    logCompassSourceFailure("places", err, profile.userId);
-    return [];
+    throw err;  // census-discovery §104 (DV-83, D-W11X2-54)
+    // was: logCompassSourceFailure("places", err, profile.userId); return [];
   }
 }
 
@@ -379,8 +379,8 @@ async function fetchHiddenGems(
     // gems in this city" and "the read failed" the same empty array —
     // logCompassSourceFailure only ever fired on a REJECTED promise. Bind it.
     if (error) {
-      logCompassSourceFailure("hidden_gems", error, profile.userId);
-      return [];
+      throw error;  // census-discovery §104 (DV-83, D-W11X2-54): hydrateCompassItems logs it under compassSource "hidden_gems" and names it
+      // was: logCompassSourceFailure("hidden_gems", error, profile.userId); return [];
     }
 
     return ((data as any[]) ?? [])
@@ -412,8 +412,8 @@ async function fetchHiddenGems(
       data: { id: String(gem.id), name: gem.name, category: gem.category, city: gem.city, country: gem.country },
     }));
   } catch (err) {
-    logCompassSourceFailure("hidden_gems", err, profile.userId);
-    return [];
+    throw err;  // census-discovery §104 (DV-83, D-W11X2-54)
+    // was: logCompassSourceFailure("hidden_gems", err, profile.userId); return [];
   }
 }
 
@@ -421,7 +421,7 @@ async function fetchHiddenGems(
 
 /**
  * Fetch a pool of candidate CompassItems for the given user's feed.
- * Never throws — returns an empty array on any DB error.
+ * Never throws. A source whose read failed contributes nothing and is NAMED: compassHydrationFailedSources(items) (§104, D-W11X2-54).
  */
 export async function hydrateCompassItems(
   db: SupabaseClient,
@@ -438,13 +438,13 @@ export async function hydrateCompassItems(
   // Each fetch* already catches its own errors internally, so these branches
   // are a defensive backstop — but if one ever rejects instead (e.g. a bug
   // introduced in a future edit), the rejection must not vanish silently.
-  const settled: [string, PromiseSettledResult<CompassItem[]>][] = [
+  const failed: string[] = []; const settled: [string, PromiseSettledResult<CompassItem[]>][] = [
     ["posts", posts], ["buddies", buddies], ["places", places],
     ["events", events], ["hidden_gems", hiddenGems],
   ];
   for (const [name, result] of settled) {
     if (result.status === "rejected") {
-      logCompassSourceFailure(name, result.reason, profile.userId);
+      logCompassSourceFailure(name, result.reason, profile.userId); failed.push(name);
     }
   }
 
@@ -458,10 +458,36 @@ export async function hydrateCompassItems(
 
   // Exclude blocked users
   const blockedSet = new Set([...profile.blockedUserIds, ...profile.blockerUserIds]);
-  return allItems.filter(
+  return stampCompassHydration(allItems.filter(
     (item) => !item.authorId || !blockedSet.has(item.authorId),
-  );
+  ), failed);
 }
 
 // census-media §43 — appended at the tail so no cited line above moves; ESM hoists imports.
 import { postPlaceMark } from "../lib/postPlaceDisclosure.js";
+
+// ── census-discovery §104 (DV-83, D-W11X2-54): a failed candidate read is NAMED ──
+//
+// Each fetch* above used to destructure `{ data }` alone. supabase-js RESOLVES a
+// failed read as `{ data: null, error }`, so a timed-out posts, buddies, events or
+// places read became an empty source, and the Compass section built from it was
+// served, and cached, as complete: For You's picks hid it as "no picks here". A
+// fetch* now throws its read error; hydrateCompassItems logs it (as before) and
+// records the source here, beside the returned array, so no caller's type changes.
+// A caller that serves or caches the pool reads compassHydrationFailedSources and
+// refuses (partial / nothing) or skips its cache. The names are the tables read.
+// Enrichment reads (an event's follow and RSVP rows) only rank; they are not sources.
+const COMPASS_HYDRATION_SOURCE_TABLES: Readonly<Record<string, string>> = {
+  posts: "posts", buddies: "rent_buddy_profiles", places: "discovery_places", events: "events", hidden_gems: "hidden_gems",
+};
+const _compassHydrationFailed = new WeakMap<readonly CompassItem[], readonly string[]>();
+
+function stampCompassHydration(items: CompassItem[], failed: readonly string[]): CompassItem[] {
+  if (failed.length > 0) _compassHydrationFailed.set(items, failed.map((n) => COMPASS_HYDRATION_SOURCE_TABLES[n] ?? n));
+  return items;
+}
+
+/** The candidate sources whose read FAILED for this pool (table names); empty when every source was read. */
+export function compassHydrationFailedSources(items: readonly CompassItem[]): readonly string[] {
+  return _compassHydrationFailed.get(items) ?? [];
+}

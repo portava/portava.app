@@ -26,8 +26,8 @@
  * six describes them); an emerging discovery is logged as the place it is.
  *
  * Behind `discovery_output_kinds_enabled` (3483, seeded FALSE), read per
- * request as a literal (check:flag-polarity reads call sites; an unreadable
- * flag reads OFF). Signed-in only: every order here is the viewer's own.
+ * request as a literal (check:flag-polarity reads call sites; §104: an unreadable
+ * flag is a 503 flag_unreadable, never OFF). Signed-in only: every order here is the viewer's own.
  *
  * `11` §9: 401 unauthenticated · 404 feature_disabled (flag off, or an unknown
  * kind) · 400 invalid_payload (emerging discoveries without a destination) ·
@@ -38,7 +38,7 @@ import { Router, type Request, type Response } from "express";
 import { requireUser, sendError } from "../lib/http.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { getServiceClient } from "../lib/supabase.js"; import { exposureForResponse, serveClockOf, servedRecommendationId } from "../lib/discoveryRecommendationRecord.js"; import { logServeUnlessRefused } from "../lib/discoveryRefusal.js"; import { DiscoveryServePoint, type ServedItem } from "../lib/discoveryServeLog.js";  // §94: the serve log
-import { isFlagEnabled } from "../lib/featureFlags.js"; import { unlessDiscoveryStopped } from "../lib/discoveryStopGate.js";
+import { unlessDiscoveryStopped } from "../lib/discoveryStopGate.js";  // census-discovery §104 (DV-83, D-W11X2-56): the flag is read strictly at the foot — was: import { isFlagEnabled } from "../lib/featureFlags.js";
 import { loadPdeViewer } from "../lib/discoveryPde.js";
 import {
   rankTrailsForViewer, rankSharedMomentsForViewer, rankEmergingForViewer, type RankedKind,
@@ -59,7 +59,7 @@ router.get("/v1/discovery/recommendations/:kind", asyncHandler(async (req: Reque
   if (!sc) return sendError(res, "degraded_unavailable", "recommendations are not available in this deployment", { reason: "no_service_client" });
 
   // Literal at the read site (check:flag-polarity reads call sites).
-  if (!(await isFlagEnabled(sc, "discovery_output_kinds_enabled"))) {
+  const kindsFlag = await outputKindsFlagRead(sc); if (kindsFlag === null) return sendError(res, "degraded_unavailable", "these recommendations could not be checked just now", { reason: "flag_unreadable" }); if (!kindsFlag) {  // census-discovery §104 (DV-83, D-W11X2-56): an UNREAD flag is a failed read, never the off 404 — was: if (!(await isFlagEnabled(sc, "discovery_output_kinds_enabled"))) {
     return sendError(res, "feature_disabled", "these recommendations are not enabled");
   } if (!(await unlessDiscoveryStopped(sc, true))) return sendError(res, "feature_disabled", "these recommendations are not enabled");  // census-discovery §97: flag ON but the Discovery stop engaged ⇒ exactly the flag-off 404
 
@@ -119,3 +119,19 @@ export function outputKindServedItems(kind: ServedOutputKind, items: readonly un
 }
 
 export default router;
+
+// ── census-discovery §104 (DV-83, D-W11X2-56): the rollout flag, read strictly ──
+// `isFlagEnabled` answers false for a failed read as for an off flag, so a timed-out
+// feature_flags read was "these recommendations are not enabled" (404), which the
+// output-kinds rail hides exactly like the feature being off. `null` here is the failed
+// read: the route answers 503 degraded_unavailable / flag_unreadable, the rail's failed
+// state. An ABSENT row is still off. check:flag-polarity records this read in DIRECT_READS.
+async function outputKindsFlagRead(sc: any): Promise<boolean | null> {
+  try {
+    const { data, error } = await sc.from("feature_flags").select("enabled").eq("flag", "discovery_output_kinds_enabled").maybeSingle();
+    if (error) return null;
+    return Boolean((data as any)?.enabled);
+  } catch {
+    return null;
+  }
+}

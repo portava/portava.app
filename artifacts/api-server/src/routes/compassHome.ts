@@ -25,7 +25,7 @@ import { getServiceClient } from "../lib/supabase.js";
 import { isCompassEnabled } from "../compass/flags.js";
 import { getCompassProfile } from "../compass/CompassProfileService.js";
 import { buildCompassContext, defaultSignals } from "../compass/CompassContextEngine.js";
-import { hydrateCompassItems } from "../compass/CompassItemHydrator.js";
+import { hydrateCompassItems, compassHydrationFailedSources } from "../compass/CompassItemHydrator.js";
 import { buildSection } from "../compass/CompassFeedBuilder.js";
 import { getWhosAround } from "../compass/CompassSocialEngine.js";
 import { getWeatherContext } from "../lib/weatherCache.js";
@@ -448,7 +448,7 @@ export async function buildCompassHomeProjection(
         (async () => {
           try {
             const items = await hydrateCompassItems(sc, profile);
-            if (items.length === 0) return sourced(null);
+            if (items.length === 0) return compassHydrationFailedSources(items).length > 0 ? unusable(null) : sourced(null);  // census-discovery §104 (DV-83, D-W11X2-54): an empty pool from a failed read is not "no best move"
             const result = await buildSection("for_you", items, profile, context, sc, null);
             const top: any = result.section?.items?.[0] ?? null;
             if (!top?.item) return sourced(null);

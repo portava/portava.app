@@ -78,7 +78,7 @@ import {
 import { buildDestinationContextLines } from "../compass/CompassGraphEngine.js";
 import { buildFeed, buildSection, SECTION_NAMES, type SectionName, type FeedPage, CompassFlagsUnreadableError } from "../compass/CompassFeedBuilder.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { hydrateCompassItems } from "../compass/CompassItemHydrator.js";
+import { hydrateCompassItems, compassHydrationFailedSources } from "../compass/CompassItemHydrator.js";
 import {
   buildFrontLoadPayload,
   buildPreloadManifest,
@@ -567,7 +567,7 @@ router.get("/compass/feed", async (req, res) => {
       settings.use_location === false && settings.use_chosen_city === false
         ? { ...profile, currentCity: null as string | null }
         : profile;
-    const items = await hydrateCompassItems(sc, hydrateProfile);
+    const items = await hydrateCompassItems(sc, hydrateProfile); const feedFailedSources = compassHydrationFailedSources(items);  // census-discovery §104 (DV-83, D-W11X2-54): a pool built from a failed read is never cached or served as complete
 
     // Apply type-based candidate gates driven by settings toggles.
     const excludeTypes = new Set<string>();
@@ -605,8 +605,8 @@ router.get("/compass/feed", async (req, res) => {
     }
 
     // Write-through: cache the result (fire-and-forget — never blocks response)
-    void setCachedFeed(sc, user.id, cacheKey, "feed", enrichedFeed);
-    res.json(enrichedFeed);
+    if (feedFailedSources.length === 0) void setCachedFeed(sc, user.id, cacheKey, "feed", enrichedFeed);
+    res.json(feedFailedSources.length === 0 ? enrichedFeed : compassFeedSourcesUnreadBody(enrichedFeed, feedFailedSources));
   } catch (err) {
     req.log.error({ err }, "compass/feed: build failed, using fallback");
     const profile = await getCompassProfile(sc, user.id).catch(() => null);
@@ -690,7 +690,7 @@ router.get("/compass/feed/section/:section", async (req, res) => {
       sectionSettings.use_location === false && sectionSettings.use_chosen_city === false
         ? { ...profile, currentCity: null as string | null }
         : profile;
-    const items = await hydrateCompassItems(sc, sectionHydrateProfile);
+    const items = await hydrateCompassItems(sc, sectionHydrateProfile); const sectionFailedSources = compassHydrationFailedSources(items);  // census-discovery §104 (DV-83, D-W11X2-54)
 
     // Apply type-gate and session-suppression filters (same logic as /feed)
     const sectionExcludeTypes = new Set<string>();
@@ -759,8 +759,8 @@ router.get("/compass/feed/section/:section", async (req, res) => {
     };
 
     // Write-through: cache the result (fire-and-forget)
-    void setCachedFeed(sc, user.id, cacheKey, "section", response);
-    res.json(response);
+    if (sectionFailedSources.length === 0) void setCachedFeed(sc, user.id, cacheKey, "section", response);  // census-discovery §104 (DV-83, D-W11X2-54): never L1, never the DB cache
+    if (sectionFailedSources.length > 0) sendCompassSectionSourcesUnread(res, response, sectionFailedSources); else res.json(response);
   } catch (err) {
     // On unhandled error, return section-schema fields + safe fallback content.
     // `section: null` is the consistent fallback signal; `safeItems` carries
@@ -3599,9 +3599,9 @@ router.get("/compass/recommendations", async (req, res) => {
   );
 
   // Feature-flag gate — silently return empty list when Compass is off.
-  const enabled = await isCompassEnabled(sc);
+  const enabledRead = await readCompassEnabled(sc); const enabled = enabledRead === true;  // census-discovery §104 (DV-83, D-W11X2-55): null = the flag table could not be read
   if (!enabled) {
-    res.json({ recommendations: [], surface });
+    if (enabledRead === null) sendRecommendationsRefusal(res, { recommendations: [], surface }, "compass_flags_unreadable", ["feature_flags"]); else res.json({ recommendations: [], surface });  // census-discovery §104 (DV-83, D-W11X2-55): "off" only when the flags were READ
     return;
   }
 
@@ -3630,7 +3630,7 @@ router.get("/compass/recommendations", async (req, res) => {
           .select("blocked_id, blocker_id")
           .or(`blocker_id.eq.${user.id},blocked_id.eq.${user.id}`);
         if (blkErr) {
-          res.json({ recommendations: [], surface, error: "block_check_failed" });
+          sendRecommendationsRefusal(res, { recommendations: [], surface, error: "block_check_failed" }, "block_check_failed", ["blocks"]);  // census-discovery §104 (DV-83, D-W11X2-55)
           return;
         }
         for (const bRow of (blkRows ?? []) as any[]) {
@@ -3638,7 +3638,7 @@ router.get("/compass/recommendations", async (req, res) => {
           if (bRow.blocked_id === user.id) buddyBlockedIds.add(bRow.blocker_id);
         }
       } catch {
-        res.json({ recommendations: [], surface, error: "block_check_failed" });
+        sendRecommendationsRefusal(res, { recommendations: [], surface, error: "block_check_failed" }, "block_check_failed", ["blocks"]);  // census-discovery §104 (DV-83, D-W11X2-55)
         return;
       }
 
@@ -3655,7 +3655,7 @@ router.get("/compass/recommendations", async (req, res) => {
         return;
       }
 
-      const { data: buddyRows } = await sc
+      const { data: buddyRows, error: buddyRowsErr } = await sc
         .from("rent_buddy_profiles")
         .select(
           "id, user_id, display_name, city, country, categories, languages, " +
@@ -3663,7 +3663,7 @@ router.get("/compass/recommendations", async (req, res) => {
           "cover_photo_url, admin_status, risk_hold",
         )
         .eq("status", "active")
-        .ilike("city", effectiveCity);
+        .ilike("city", effectiveCity); if (buddyRowsErr) { sendRecommendationsRefusal(res, { recommendations: [], surface, sessionId: effectiveSessionId }, "buddy_read_failed", ["rent_buddy_profiles"]); return; }  // census-discovery §104 (DV-83, D-W11X2-55)
 
       const ADULT_CATS = new Set(["escort", "adult", "dating", "romantic", "sexual"]);
 
@@ -3804,7 +3804,7 @@ router.get("/compass/recommendations", async (req, res) => {
           .select("blocked_id, blocker_id")
           .or(`blocker_id.eq.${user.id},blocked_id.eq.${user.id}`);
         if (blkErr) {
-          res.json({ recommendations: [], surface, error: "block_check_failed" });
+          sendRecommendationsRefusal(res, { recommendations: [], surface, error: "block_check_failed" }, "block_check_failed", ["blocks"]);  // census-discovery §104 (DV-83, D-W11X2-55)
           return;
         }
         for (const bRow of (blkRows ?? []) as any[]) {
@@ -3812,7 +3812,7 @@ router.get("/compass/recommendations", async (req, res) => {
           if (bRow.blocked_id === user.id) travBlockedIds.add(bRow.blocker_id);
         }
       } catch {
-        res.json({ recommendations: [], surface, error: "block_check_failed" });
+        sendRecommendationsRefusal(res, { recommendations: [], surface, error: "block_check_failed" }, "block_check_failed", ["blocks"]);  // census-discovery §104 (DV-83, D-W11X2-55)
         return;
       }
 
@@ -3830,7 +3830,7 @@ router.get("/compass/recommendations", async (req, res) => {
       // wider than the page, which cannot afford a per-person projection.
       // `verified` is in that set as a +10 ranking term only; the verified BADGE
       // the client renders comes from the projection, never from this column.
-      const { data: travelerRows } = await sc
+      const { data: travelerRows, error: travelerRowsErr } = await sc
         .from("profiles")
         .select(
           "id, home_city, spoken_languages, interests, verified, " +
@@ -3838,7 +3838,7 @@ router.get("/compass/recommendations", async (req, res) => {
         )
         .neq("id", user.id)
         .in("account_status", ["active"])
-        .limit(50);
+        .limit(50); if (travelerRowsErr) { sendRecommendationsRefusal(res, { recommendations: [], surface, sessionId: effectiveSessionId }, "traveler_read_failed", ["profiles"]); return; }  // census-discovery §104 (DV-83, D-W11X2-55)
 
       // Pre-filter blocked users to obtain candidate IDs for batch signal queries
       const travCandidates = ((travelerRows ?? []) as any[]).filter((p) => !travBlockedIds.has(p.id));
@@ -4106,13 +4106,13 @@ router.get("/compass/recommendations", async (req, res) => {
       const travGates = await Promise.all(
         intentPool.map((s) => allowDiscoveryPersonCard(sc, s.id)),
       );
-      const topTravSlice = intentPool.filter((_, i) => travGates[i].allowed).slice(0, limit);
+      const topTravSlice = intentPool.filter((_, i) => travGates[i].allowed).slice(0, limit); const travFailedSources: string[] = personGatesUnread(travGates) ? ["profile_privacy_settings"] : [];  // census-discovery §104 (DV-83, D-W11X2-55): a person withheld UNCHECKED makes the page partial
 
       const travCards = await Promise.all(
         topTravSlice.map((s) =>
           buildConsumerProjection(sc, "discovery_card", s.id, user.id, { nowMs })
             .catch((err: unknown) => {
-              req.log.warn({ err, userId: s.id }, "compass traveler card projection failed");
+              req.log.warn({ err, userId: s.id }, "compass traveler card projection failed"); if (!travFailedSources.includes("passport_projection")) travFailedSources.push("passport_projection");
               return null;
             }),
         ),
@@ -4185,7 +4185,7 @@ router.get("/compass/recommendations", async (req, res) => {
       });
 
       void logCompassImpression(travelerRecommendations, user.id, effectiveSessionId);
-      res.json({ recommendations: travelerRecommendations, surface, sessionId: effectiveSessionId });
+      sendRecommendations(res, { recommendations: travelerRecommendations, surface, sessionId: effectiveSessionId }, travFailedSources);  // census-discovery §104 (DV-83, D-W11X2-55)
       return;
     }
 
@@ -4204,7 +4204,7 @@ router.get("/compass/recommendations", async (req, res) => {
     // the k-anonymity aggregation, so it can only reorder what a user may
     // already see, never widen it.
     if (temporaryIntent) context.temporaryIntent = temporaryIntent;
-    const items   = await hydrateCompassItems(sc, effectiveProfile as typeof profile);
+    const items   = await hydrateCompassItems(sc, effectiveProfile as typeof profile); const recFailedSources = compassHydrationFailedSources(items);  // census-discovery §104 (DV-83, D-W11X2-55)
 
     // Choose section and type whitelist by surface
     const sectionName: SectionName =
@@ -4287,7 +4287,7 @@ router.get("/compass/recommendations", async (req, res) => {
           .eq("blocker_id", user.id);
         if (blocksErr) {
           req.log.warn({ err: blocksErr }, "compass/recommendations: block-list fetch failed; returning empty");
-          res.json({ recommendations: [], surface });
+          sendRecommendationsRefusal(res, { recommendations: [], surface }, "block_check_failed", ["blocks"]);  // census-discovery §104 (DV-83, D-W11X2-55)
           return;
         }
         blockedIds = new Set<string>();
@@ -4296,7 +4296,7 @@ router.get("/compass/recommendations", async (req, res) => {
         }
       } catch (err) {
         req.log.warn({ err }, "compass/recommendations: block-list fetch threw; returning empty");
-        res.json({ recommendations: [], surface });
+        sendRecommendationsRefusal(res, { recommendations: [], surface }, "block_check_failed", ["blocks"]);  // census-discovery §104 (DV-83, D-W11X2-55)
         return;
       }
 
@@ -4412,13 +4412,13 @@ router.get("/compass/recommendations", async (req, res) => {
     }
 
     void logCompassImpression(recommendations, user.id, effectiveSessionId);
-    res.json({
+    sendRecommendations(res, {
       recommendations, surface, sessionId: effectiveSessionId,
       ...(tripAttention ? { attention: attentionOnTheWire(tripAttention, attentionWithheld) } : {}),
-    });
+    }, recFailedSources);  // census-discovery §104 (DV-83, D-W11X2-55)
   } catch (err) {
     req.log.error({ err }, "compass/recommendations: build failed");
-    res.json({ recommendations: [], surface });
+    sendRecommendationsRefusal(res, { recommendations: [], surface }, err instanceof CompassFlagsUnreadableError ? "compass_flags_unreadable" : "recommendations_build_failed", [err instanceof CompassFlagsUnreadableError ? "feature_flags" : "compass_recommendations"]);  // census-discovery §104 (DV-83, D-W11X2-55) — was: res.json({ recommendations: [], surface });
   }
 });
 
@@ -4937,4 +4937,60 @@ function sendCompassSectionFailure(res: import("express").Response, reason: "sec
       [reason === "section_build_error" ? "compass_section" : "feature_flags"],
     ),
   });
+}
+
+// ── census-discovery §104 (DV-83, D-W11X2-54, D-W11X2-55): the Compass reads Discovery shows ──
+//
+// A Compass pool is built from five candidate reads (CompassItemHydrator). When one
+// FAILED, the section and the feed were served, and cached, as complete: For You's
+// picks hid an empty section as "no picks here". The section now answers the failure
+// arm the client already says (§103): `fallback: true`, `compassEnabled: true`,
+// `fallbackReason: "compass_sources_unread"`, the sections that WERE read, and the
+// refusal envelope (`partial` with rows, `nothing` without). It is cached nowhere.
+// The full feed carries the refusal and is not cached either.
+function sendCompassSectionSourcesUnread(
+  res: import("express").Response,
+  response: { sections: Array<{ items?: readonly unknown[] }>; nextCursor: unknown },
+  failedSources: readonly string[],
+): void {
+  const served = response.sections.reduce((n, s) => n + (s.items?.length ?? 0), 0);
+  res.json({
+    ...response,
+    fallback: true,
+    compassEnabled: true,
+    fallbackReason: "compass_sources_unread",
+    safeItems: [],
+    refusal: discoveryRefusal("transient_db", "compass_sources_unread", "GET /compass/feed/section", served > 0 ? "partial" : "nothing", [...failedSources]),
+  });
+}
+
+function compassFeedSourcesUnreadBody<P extends object>(page: P, failedSources: readonly string[]): P & { refusal: ReturnType<typeof discoveryRefusal> } {
+  const sections = (page as { sections?: Array<{ items?: readonly unknown[] }> }).sections ?? [];
+  const served = sections.reduce((n, s) => n + (s.items?.length ?? 0), 0);
+  return { ...page, refusal: discoveryRefusal("transient_db", "compass_sources_unread", "GET /compass/feed", served > 0 ? "partial" : "nothing", [...failedSources]) };
+}
+
+// GET /compass/recommendations is read by two Discovery screens: search's Compass
+// rail under a zero-result search (surface=search) and For You's "Travelers You May
+// Vibe With" row (surface=traveler). The trip map and the Passport tab share its
+// arms. Every failure arm answered `{ recommendations: [] }`, the body a city with
+// nothing to suggest gets. A failure now carries the refusal envelope: `nothing` when
+// the read that fills the list failed (the flag table, the block list, the candidate
+// table, a failed build), and `partial` beside the rows that were read when a
+// candidate source or a per-person check failed. With every read healthy the body is
+// byte-identical: `sendRecommendations` answers the same object.
+function sendRecommendationsRefusal(res: import("express").Response, body: Record<string, unknown>, code: string, failedSources: readonly string[]): void {
+  res.json({ ...body, refusal: discoveryRefusal("transient_db", code, "GET /compass/recommendations", "nothing", [...failedSources]) });
+}
+
+function sendRecommendations(res: import("express").Response, body: { recommendations: readonly unknown[] } & Record<string, unknown>, failedSources: readonly string[]): void {
+  if (failedSources.length === 0) { res.json(body); return; }
+  res.json({ ...body, refusal: discoveryRefusal("transient_db", "compass_sources_unread", "GET /compass/recommendations", body.recommendations.length > 0 ? "partial" : "nothing", [...failedSources]) });
+}
+
+// The traveler list ADMITS on `.allowed` alone (compassPersonIdentity 4b2): a gate that
+// could not be read denies exactly like "not discoverable". This reads a denial's reason
+// only to NAME the page partial (someone was withheld unchecked), never to admit anyone.
+function personGatesUnread(gates: ReadonlyArray<{ allowed: true } | { allowed: false; reason: string }>): boolean {
+  return gates.some((g) => g.allowed === false && g.reason === "check_failed");
 }
