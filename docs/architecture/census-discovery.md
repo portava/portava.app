@@ -17975,6 +17975,29 @@ check:unissued-supabase-writes exit=0
     - `typecheck:tests` is at 173 against a baseline of 173.
   - `node scripts/check-route-registry.mjs`: "OK. All 210 screen file(s) are represented in PORTAVA_ROUTES and all 9 layout file(s) are represented in PORTAVA_LAYOUT_FILES."
 
+## §106 — DV-83 round 10 (lane W11-X2)
+
+### 106.1 Integrator: DV-83 held at W after independent re-verification at `ba4888f20`
+
+*Integrator, 2026-09-29. §105 was merged with main at `ba4888f20`; `0b7141b7c` (PR #530's head) adds only an unchecked-reads allowlist fix on top. An independent verifier then checked that tree: it re-ran every round-8 and round-7 probe, wrote new ones, and restored every mutated file byte-identical, checked by sha256.*
+
+- **Confirmed.** §105.1's four breaks and round 7's three are closed in behaviour: the v8 and v7 probes re-run unchanged all pass (V8-TR0..3, V8-HF0..3, V8-CF0..2, V8-Y1, V7-S1, V7-S2, V7-R1, V7-R2, V7-C1, V7-T1, V7-T2, V7-TC, V7-H1). 43 of 46 mutations are killed.
+- **Found: five paths that break the criterion's wording, each shown by a probe that fails against this tree (13 red probes).**
+  1. **BK1. GET /compass/home says "ok" over failed reads and caches them (clauses a, b, c).** `getWhosAround` swallows its read errors, so a failed presence read is "nobody is around" with `circleActivity: "ok"`. A best move picked from a partial candidate pool is "ok", not degraded, and is cached for 45 s. A failed forecast is `weatherWindow: "ok"` with no value (V9-HC1, V9-HB1, V9-HB2, V9-HW1 red; V9-H0 the control) (`artifacts/api-server/src/routes/compassHome.ts`, `artifacts/api-server/src/compass/CompassSocialEngine.ts`, `artifacts/api-server/src/lib/weatherCache.ts`).
+  2. **BK2. GET /compass/telegraph and the Telegraph "Ask Compass" tray show a failed read as "nothing found" (clauses a, c, d).** The route serves the hydrated pool without reading its failed sources, its catch answers `{ cards: [] }`, and an unread flag table is the flag-off 404. The tray draws every failure as "Compass couldn't find relevant recommendations for this chat" (V9-TG1, V9-TG2, V9-TT1, V9-TT2 red; V9-TG0, V9-TT0 the controls) (`artifacts/api-server/src/routes/compass.ts`, `travel-buddy-standalone/src/components/CompassTelegraphTray.tsx`).
+  3. **BK3. An unread Discovery stop hides the output-kinds rail as if the feature were off (clauses a, c).** `isKillSwitchEngaged` answers a failed read as engaged, the stop gate halts, and the output-kinds route answers its flag-off `404 feature_disabled`, which the rail renders as nothing (V9-KS1 red; V9-KS0 the control) (`artifacts/api-server/src/lib/discoveryStopGate.ts`, `artifacts/api-server/src/routes/discoveryOutputKinds.ts`).
+  4. **BK4. GET /compass/city-confidence presents a failed read as a measured "thin" (clauses a, b).** Both depth reads failing answers the bytes of a city with no rows, "Limited local data for …", and the client caches it in memory and in AsyncStorage (V9-CC1 red) (`artifacts/api-server/src/compass/CompassGraphEngine.ts`, `artifacts/api-server/src/routes/compassGraph.ts`).
+  5. **BK5. GET /map/search answers an unread `map_search_enabled` with the flag-off body (clause a)** (V9-MS1 red; V9-MS0 the control) (`artifacts/api-server/src/routes/mapSearch.ts`).
+- **Rulings not honest.** D-W11X2-59's "Telegraph's cards … claim no list" (BK2) and "`getCityConfidence` fails to null, the documented neutral default" (BK4), and D-W11X2-56's ruling that the Discovery stop is "not a completeness claim" on the output-kinds route (BK3).
+- **Surviving mutations.** SM28 (`heldBackLists` dropping the trending read's unread set; reachable, shown by V9-SM28) and CM1 (a refusal with a missing or unknown coverage served as complete) are unpinned. SM23 survives and is equivalent: `readCompassEnabled` cannot reject.
+- **Next.** A round-10 lane closes the five paths with the verifier's probes as failing-first tests, pins SM28 and CM1, corrects the three rulings, and sweeps the Discovery and Compass read surfaces again. The row moves only after that.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | C | **W** | §105 closes §105.1's four paths, confirmed at `ba4888f20` (§106.1). Five paths still present a failed read as complete, empty, "off" or measured: the Compass home's presence, best-move and weather sections (`artifacts/api-server/src/routes/compassHome.ts`), the Telegraph cards and their tray (`artifacts/api-server/src/routes/compass.ts`, `travel-buddy-standalone/src/components/CompassTelegraphTray.tsx`), the output-kinds route behind an unread stop (`artifacts/api-server/src/lib/discoveryStopGate.ts`), the city-confidence "thin" (`artifacts/api-server/src/compass/CompassGraphEngine.ts`), and map search's unread flag (`artifacts/api-server/src/routes/mapSearch.ts`). Two DV-83 lines are unpinned (SM28, CM1). |
+
+Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: travel-buddy-standalone/app/discover.tsx — §105.11 names it only as a path seen and not built, left for its owner: it is the social people search over services/follows.ts, not a Discovery envelope, and no DV-83 verdict rests on it.
