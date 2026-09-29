@@ -89,7 +89,7 @@ touch no messaging table.
 | `src/routes/highlights.ts` | 23 | message_thread_members, message_threads, messages |
 | `src/routes/meetups.ts` | 12 | message_threads, messages |
 | `src/routes/messaging.ts` | 32 | message_requests, message_thread_members, message_threads, message_translations, messages, saved_messages |
-| `src/routes/rentABuddy.ts` | 116 | message_thread_members, message_threads, messages |
+| `src/routes/rentABuddy.ts` | 117 | message_thread_members, message_threads, messages |
 | `src/routes/telegraphChat.ts` | 7 | message_thread_members, message_threads, messages |
 | `src/routes/telegraphCoordination.ts` | 9 | message_thread_members, message_threads, messages |
 | `src/routes/telegraphKinds.ts` | 4 | message_thread_members, message_threads, messages |

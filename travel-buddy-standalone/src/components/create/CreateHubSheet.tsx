@@ -63,7 +63,7 @@ const SHARE_ENTRIES: HubEntry[] = [
     sublabel: 'Disappearing photo or short video',
     icon: Camera,
     iconColor: color.warn,
-    // No live route yet — shows "Soon" badge
+    route: '/stories', // testing mode WP-06 (PLAT-F32/F33): the viewer + composer live there
   },
   {
     id: 'memory',

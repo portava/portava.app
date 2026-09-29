@@ -38,7 +38,7 @@ import { TripTodayCard } from '../../src/features/trips/today/TripTodayCard.tsx'
 import { TripTimelineConflictsCard } from '../../src/features/trips/timeline/TripTimelineConflictsCard.tsx';
 import { TripCloseoutCard } from '../../src/features/trips/closeout/TripCloseoutCard.tsx'; import { TripPostTripCard } from '../../src/features/trips/closeout/TripPostTripCard.tsx';
 import { TripOfflineCard } from '../../src/features/trips/offline/TripOfflineCard.tsx'; import { TripSharedContentSection } from '../../src/features/trips/sharedContent/TripSharedContentSection.tsx';
-import { TripRescueEntry } from '../../src/features/trips/disruption/TripRescueEntry.tsx';
+import { TripRescueEntry } from '../../src/features/trips/disruption/TripRescueEntry.tsx'; import { TripRegroupCard } from '../../src/features/trips/crew/TripRegroupCard.tsx'; import { TripFreeTimeCard } from '../../src/features/trips/opportunities/TripFreeTimeCard.tsx'; import { TripReplanCard } from '../../src/features/trips/opportunities/TripReplanCard.tsx';
 import { BeforeYouGoSection } from '../../src/components/trip/BeforeYouGoSection';
 import { TripFsqPlacesSection } from '../../src/components/trip/TripFsqPlacesSection';
 import { TripDestinationInfoCard } from '../../src/components/trip/TripDestinationInfoCard';
@@ -564,7 +564,7 @@ function TripDetailScreen() {
             The traveller names the problem in the server's vocabulary and gets
             the server's plan; whether the disruption was declared is the
             server's word (with the kernel off it says "not declared"). */}
-        {live && trip.id ? <TripRescueEntry tripId={trip.id} attentionMode={attentionMode} /> : null}
+        {live && trip.id ? <TripRescueEntry tripId={trip.id} attentionMode={attentionMode} /> : null}{live && trip.id ? <TripFreeTimeCard tripId={trip.id} /> : null}{live && trip.id ? <TripReplanCard tripId={trip.id} /> : null}{/* TM-live TRIP-F21: free time, I'm bored, opportunities, replan, pulse */}
 
         {/* ── §18 offline copy and queue ─────────────────────────────────
             The signed bundle kept as issued, its age and version judged by the
@@ -603,7 +603,7 @@ function TripDetailScreen() {
             and nothing displayed it. Stale rows are shown rather than hidden —
             §10.4 needs last-known data to remain available — but never drawn
             like live ones. */}
-        {live && trip.id ? <TripCrewPresenceCard tripId={trip.id} /> : null}{live && trip.id && realTrip.ownerId === userId ? <JoinRequestsList tripId={trip.id} onOpenAll={() => router.push('/trip/join-requests' as any)} onApproved={() => setCrewRefreshKey((k) => k + 1)} /> : null}
+        {live && trip.id ? <TripCrewPresenceCard tripId={trip.id} /> : null}{live && trip.id && realTrip.ownerId === userId ? <JoinRequestsList tripId={trip.id} onOpenAll={() => router.push('/trip/join-requests' as any)} onApproved={() => setCrewRefreshKey((k) => k + 1)} /> : null}{live && trip.id ? <TripRegroupCard tripId={trip.id} /> : null}{/* TM-live TRIP-F19: regroup + meeting checkpoints */}
 
         {/* ── §8 decisions and risks ───────────────────────────────────────
             The chain §8 describes — goal, decision task, proposals, §7
@@ -1096,7 +1096,7 @@ function TripMemorySection({
 
   return (
     <View style={tm.wrap}>
-      <Text style={tm.title}>Trip Memory</Text>
+      <View style={tmRecap.row}><Text style={tm.title}>Trip Memory</Text>{memory ? <Pressable testID="trip-open-recap" onPress={() => router.push(`/trip/${tripId}/recap` as any)} accessibilityRole="button" hitSlop={6}><Text style={tmRecap.link}>View trip recap</Text></Pressable> : null}</View>
       {memory ? (
         <Pressable style={tm.card} onPress={() => router.push(`/memory/${memory.id}` as any)}>
           {memory.cover?.mediaUrl && !memoryCoverFailed ? (
@@ -1289,3 +1289,10 @@ export default function TripDetail() {
     </ScreenErrorBoundary>
   );
 }
+
+// Testing mode WP-06 (HM-F15): the "View trip recap" link beside the Trip Memory title.
+// Declared at the TAIL so no line above moves; `const` is read only at render time.
+const tmRecap = StyleSheet.create({
+  row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  link: { ...t.small, color: color.deep, fontWeight: '700' },
+});

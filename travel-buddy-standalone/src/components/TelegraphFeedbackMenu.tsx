@@ -58,7 +58,7 @@ export function TelegraphFeedbackMenu({
 
   return (
     <View>
-      <Pressable style={s.trigger} onPress={() => setOpen(true)} hitSlop={8}>
+      <Pressable style={s.trigger} onPress={() => setOpen(true)} hitSlop={8} testID={`feedback-menu-${recommendationId}`} accessibilityLabel="Feedback options">
         <MoreHorizontal size={16} color={sent ? color.signal : color.mute} />
       </Pressable>
 

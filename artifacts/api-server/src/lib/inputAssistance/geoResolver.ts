@@ -24,7 +24,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import tzLookup from 'tz-lookup';
 import {
-  suggestCanonicalLocationsFolded,
+  suggestCanonicalLocationsFolded, CanonicalRegistryUnreadable,
   rowSearchKey,
   resolveGeoAlias,
   searchKey,
@@ -201,7 +201,7 @@ const IATA_RE = /^[a-z]{3}$/i;
 /**
  * Resolve typed text to canonical city candidates + an ambiguity verdict.
  * Pure w.r.t. side effects (read-only); fail-soft to an empty, unambiguous
- * result on any error.
+ * result on a partial error, and REJECTS when the registry was wholly unreadable.
  */
 export async function resolveGeoCandidates(
   db: SupabaseClient,
@@ -216,7 +216,7 @@ export async function resolveGeoCandidates(
   // must OFFER that, not silently swap it.
   const airport = IATA_RE.test(trimmed) ? resolveStaticByIata(trimmed) : null;
 
-  const rows = await suggestCanonicalLocationsFolded(db, trimmed, limit).catch(() => [] as CanonicalRow[]);
+  const rows = await suggestCanonicalLocationsFolded(db, trimmed, limit).catch((e) => { if (e instanceof CanonicalRegistryUnreadable) throw e; return [] as CanonicalRow[]; });
 
   // Same-name-different-place ambiguity (§19): count DISTINCT canonical cities
   // whose folded key EXACTLY equals the resolved query key.

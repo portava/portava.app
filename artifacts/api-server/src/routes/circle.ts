@@ -2167,19 +2167,19 @@ router.post("/admin/circle/kill-switch", async (req, res) => {
   }
 
   // enabled=true means the kill switch is ACTIVE (feature is DISABLED for users)
-  const { error } = await sc
-    .from("feature_flags")
-    .upsert(
-      {
-        flag:        "find_your_circle_disabled",
-        enabled,
-        description: "Emergency kill switch — disables all Find Your Circle endpoints",
-        updated_at:  new Date().toISOString(),
-      },
-      { onConflict: "flag" },
-    );
-
-  if (error) { sendError(res, "db_error", error.message); return; }
+  // tm-followups A4: through the audited toggle (migration 0119), the path
+  // PATCH /admin/feature-flags/:flag uses, so every flip leaves a
+  // feature_flag_audit_log row. 0108 seeds the flag row; it is not invented here.
+  const { data: toggled, error } = await sc.rpc("toggle_feature_flag_with_audit", {
+    p_flag:          "find_your_circle_disabled",
+    p_new_enabled:   enabled,
+    p_changed_by_id: adminUserId,
+  });
+  if (error?.code === "42883") { req.log?.error?.({ pgCode: error.code }, "toggle_feature_flag_with_audit missing — apply migration 0119"); res.status(503).json({ error: "server_not_configured", message: "toggle_feature_flag_with_audit function is missing — apply migration 0119 to the database" }); return; }
+  if (error && (error.code === "P0002" || error.message?.includes("Flag not found"))) { sendError(res, "not_found", "Flag 'find_your_circle_disabled' not found"); return; }
+  if (error) { req.log?.error?.({ err: error }, "circle kill-switch toggle failed"); sendError(res, "db_error", error.message); return; }
+  const toggledRow = Array.isArray(toggled) ? toggled[0] : toggled;
+  if (!toggledRow) { sendError(res, "not_found", "Flag 'find_your_circle_disabled' not found"); return; }
 
   // Owner decision A: engaging the kill switch empties the store of every
   // circle estimate, so a fused read cannot outlive the feature by a TTL.

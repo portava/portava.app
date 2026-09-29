@@ -210,7 +210,7 @@ export function InvitePanel({
 }) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<TravelerSearchResult[]>([]);
-  const [searching, setSearching] = useState(false);
+  const [searching, setSearching] = useState(false); const [outcome, setOutcome] = useState<'idle' | 'ok' | 'failed'>('idle'); const seqRef = useRef(0); // census-discovery §106 (tm-people): what the latest search came to; its generation
   const [state, setState] = useState<Record<string, 'sending' | 'sent' | 'failed'>>({});
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -219,18 +219,18 @@ export function InvitePanel({
   }, []);
 
   const onChange = useCallback((q: string) => {
-    setQuery(q);
+    setQuery(q); const seq = ++seqRef.current; setOutcome('idle'); // a new query: whatever is in flight answers a question no longer asked
     if (debounce.current) clearTimeout(debounce.current);
     if (q.trim().length < 2) {
-      setResults([]);
+      setResults([]); setSearching(false);
       return;
     }
     debounce.current = setTimeout(() => {
       setSearching(true);
       searchUsers(q.trim(), 10)
-        .then((r) => setResults(r.ok && r.data ? r.data : []))
-        .catch(() => setResults([]))
-        .finally(() => setSearching(false));
+        .then((r) => { if (seq !== seqRef.current) return; if (r.ok && r.data) { setResults(r.data); setOutcome('ok'); } else { setResults([]); setOutcome('failed'); } }) // only the latest request writes; a failed read is not an empty list
+        .catch(() => { if (seq === seqRef.current) { setResults([]); setOutcome('failed'); } })
+        .finally(() => { if (seq === seqRef.current) setSearching(false); });
     }, 300);
   }, []);
 
@@ -257,7 +257,7 @@ export function InvitePanel({
         autoCorrect={false}
         accessibilityLabel="Search travellers to invite"
       />
-      {searching ? <ActivityIndicator size="small" color={color.mute} /> : null}
+      {searching ? <ActivityIndicator size="small" color={color.mute} /> : null}{!searching && outcome === 'failed' ? (<View style={s.row}><Text style={s.rowLabel}>We couldn't search travellers just now.</Text><Pressable onPress={() => onChange(query)} accessibilityRole="button" accessibilityLabel="Retry" hitSlop={8}><Text style={s.caption}>Try again</Text></Pressable></View>) : null}{!searching && outcome === 'ok' && results.length === 0 ? <Text style={s.caption}>No travellers found</Text> : null}
       {results.map((u) => {
         const st = state[u.id];
         return (

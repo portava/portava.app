@@ -94,3 +94,51 @@ export async function reverseGeocode(lat: number, lng: number): Promise<PlaceRes
     return NULL_RESULT;
   }
 }
+
+// ── Outcome-reporting variant (§24 Paste Intelligence, GII-F08) ──────────────
+//
+// `reverseGeocode` above never throws and answers NULL_RESULT for EVERY kind of
+// miss — a provider outage and a point in the ocean read the same. That is
+// right for a passive location stamp and wrong for a paste the person asked us
+// to read: a failed lookup must be shown as a failure, never as "nothing here".
+// This variant keeps the two apart. It reuses the Mapbox reader and the
+// Nominatim throttle above, and never throws.
+export type ReverseGeocodeOutcome =
+  | { ok: true; place: PlaceResult }
+  | { ok: false; reason: string };
+
+export async function reverseGeocodeOutcome(lat: number, lng: number): Promise<ReverseGeocodeOutcome> {
+  if (process.env.MAPBOX_TOKEN) {
+    try {
+      return { ok: true, place: await reverseGeocodeMapbox(lat, lng) };
+    } catch {
+      // fall through to Nominatim, exactly as reverseGeocode does
+    }
+  }
+  try {
+    await nominatimThrottle();
+    const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&zoom=14&addressdetails=1`;
+    const res = await fetch(url, {
+      headers: { "User-Agent": "TravelBuddyApp/1.0 (contact via app)" },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) return { ok: false, reason: `nominatim_${res.status}` };
+    const data: any = await res.json();
+    // Nominatim ANSWERS "Unable to geocode" for a point with nothing there: an
+    // answer, not an outage.
+    if (data && typeof data.error === "string") return { ok: true, place: NULL_RESULT };
+    const addr = data?.address ?? {};
+    return {
+      ok: true,
+      place: {
+        city: addr.city ?? addr.town ?? addr.village ?? addr.municipality ?? addr.county ?? null,
+        district: addr.suburb ?? addr.neighbourhood ?? addr.quarter ?? null,
+        country: addr.country ?? null,
+        countryCode: (addr.country_code as string | undefined)?.toUpperCase() ?? null,
+        formatted: (data?.display_name as string | undefined)?.split(",").slice(0, 3).join(",").trim() || null,
+      },
+    };
+  } catch {
+    return { ok: false, reason: "nominatim_unreachable" };
+  }
+}

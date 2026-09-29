@@ -620,8 +620,8 @@ export async function resolvePlaceIntelState(
     return { state: anyLive ? "live" : "emerging", claims: live };
   }
   const typical = await readTypicalPatterns(sc, subjectId, opts);
-  if (typical.length > 0) return { state: "typical", claims: typical };
-  return { state: "unknown", claims: [] };
+  if (typical.length > 0) return { state: "typical", claims: carryLiveClaimReadFailure(live, typical) }; // TM-live SEN-F08: the live rung FAILED (§94) stays visible under the fallback
+  return { state: "unknown", claims: carryLiveClaimReadFailure(live, []) }; // TM-live SEN-F08: `unknown` after a FAILED live read is marked, never silence
 }
 
 // ── census-discovery §94 (lane W11-X2), §79 F2: an errored read is not "no claim" ──

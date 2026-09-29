@@ -1536,7 +1536,7 @@ router.post("/admin/hidden-gems/:id/verify", async (req, res) => {
     .maybeSingle();
 
   try {
-    await recordAdminVerification(sc, req.params.id, user.id, parsed.data.result, parsed.data.notes);
+    const gemFound = await recordAdminVerification(sc, req.params.id, user.id, parsed.data.result, parsed.data.notes);  if (!gemFound) { sendError(res, "not_found", "Gem not found"); return; }  // WP-21: a missing gem is not an approval
     res.json({ ok: true });
   } catch (err: any) {
     sendError(res, "db_error", err.message);
@@ -1600,7 +1600,7 @@ router.post("/admin/hidden-gems/:id/sensitive", async (req, res) => {
   }
 
   try {
-    await markSensitive(sc, req.params.id, sensitivityLevel);
+    const gemFound = await markSensitive(sc, req.params.id, sensitivityLevel);  if (!gemFound) { sendError(res, "not_found", "Gem not found"); return; }  // tm-followups A2: a missing gem is not a success
     res.json({ ok: true });
   } catch (err: any) {
     sendError(res, "db_error", err.message);
@@ -1620,10 +1620,10 @@ router.post("/admin/hidden-gems/:id/merge", async (req, res) => {
   }
 
   const canonicalGemId = req.body?.canonicalGemId;
-  if (!canonicalGemId) { sendError(res, "invalid_payload", "canonicalGemId is required"); return; }
+  if (!canonicalGemId) { sendError(res, "invalid_payload", "canonicalGemId is required"); return; }  if (typeof canonicalGemId !== "string") { sendError(res, "invalid_payload", "canonicalGemId must be a gem id"); return; }  if (canonicalGemId === req.params.id) { sendError(res, "invalid_payload", "A gem cannot be merged into itself"); return; }
 
   try {
-    await mergeDuplicate(sc, req.params.id, canonicalGemId);
+    const merge = await mergeDuplicate(sc, req.params.id, canonicalGemId);  if (merge !== "merged") { sendError(res, "not_found", merge === "canonical_not_found" ? "Canonical gem not found" : "Gem not found"); return; }  // tm-followups A2
     res.json({ ok: true });
   } catch (err: any) {
     sendError(res, "db_error", err.message);
@@ -1684,8 +1684,8 @@ router.post("/admin/local-guides/:userId/status", async (req, res) => {
   }
 
   try {
-    await setGuideStatus(sc, req.params.userId, status);
-    res.json({ ok: true });
+    const guide = await setGuideStatus(sc, req.params.userId, status);  if (!guide) { sendError(res, "not_found", "This user has no local guide profile"); return; }
+    req.log?.info?.({ adminId: user.id, guideUserId: req.params.userId, status, verifiedAt: guide.verified_at }, "local guide status set via admin surface");  res.json({ ok: true, guide });  // the audit record of an admin guide decision (WP-21)
   } catch (err: any) {
     sendError(res, "db_error", err.message);
   }

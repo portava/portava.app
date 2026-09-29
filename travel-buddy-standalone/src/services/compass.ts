@@ -101,22 +101,22 @@ function deviceTzOffsetMinutes(): number {
   return -new Date().getTimezoneOffset();
 }
 
-export async function fetchCompassFeed(
-  params: { city?: string; cursor?: string } = {},
-): Promise<{ ok: boolean; data?: CompassFeedResponse; error?: string }> {
-  if (!isSupabaseConfigured || !apiBase()) return notConfigured();
-  try {
-    const qs = new URLSearchParams();
-    if (params.city) qs.set('city', params.city);
-    if (params.cursor) qs.set('cursor', params.cursor);
-    qs.set('tzOffsetMinutes', String(deviceTzOffsetMinutes()));
-    const r = await authedFetch(`/api/compass/feed?${qs.toString()}`);
-    if (!r.ok) return { ok: false, error: `http_${r.status}` };
-    return { ok: true, data: await r.json() };
-  } catch {
-    return { ok: false, error: 'network_error' };
-  }
-}
+// ── fetchCompassFeed — RETIRED (testing-mode WP-12, flow COMP-F03) ──────────
+//
+// This called the whole GET /api/compass/feed and nothing ever called it. The
+// Compass tab renders Compass Home (GET /compass/home: the server-built
+// current-context projection the Compass v2 spec asks for, CPV2-05) and the
+// per-section feed below (fetchCompassSection via useCompassFeed). A whole-feed
+// call would be a second recommendation surface beside Home, so it is retired
+// rather than wired. The server route stays for API callers; the decision and
+// its reasons are in docs/architecture/census-compass.md §31.
+//
+// These comment lines hold the function's former line span, because this file
+// is cited by line number throughout the censuses.
+//
+//
+//
+//
 
 /**
  * Normalize a raw section API response to the CompassFeedResponse envelope.
@@ -1228,7 +1228,7 @@ export interface CompassLiveResult {
   session?: CompassLiveSession | null;
   delivered?: CompassLiveNudge[];
   summary?: CompassLiveSummary | null;
-  error?: string;
+  error?: string; partial?: boolean; failedSources?: string[]; // census-compass §32: a live check names the Sense sources it could not read
 }
 
 async function liveCall(path: string, method: 'GET' | 'POST'): Promise<CompassLiveResult> {
@@ -1244,7 +1244,7 @@ async function liveCall(path: string, method: 'GET' | 'POST'): Promise<CompassLi
       active: Boolean(body.active),
       session: body.session ?? null,
       delivered: body.delivered ?? [],
-      summary: body.summary ?? null,
+      summary: body.summary ?? null, ...(body.partial === true || Array.isArray(body.failedSources) ? { partial: true, failedSources: Array.isArray(body.failedSources) ? body.failedSources.map(String) : ['unknown'] } : {}),
     };
   } catch {
     return { ok: false, error: 'network_error' };

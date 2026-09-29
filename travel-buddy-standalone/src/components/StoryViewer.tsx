@@ -10,14 +10,19 @@
  */
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
-  ActivityIndicator, Animated, Dimensions, Modal, Pressable,
+  ActivityIndicator, Animated, Dimensions, Modal, Pressable, TextInput,
   StyleSheet, Text, TouchableWithoutFeedback, View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { X, Eye, Users } from 'lucide-react-native';
+import { X, Eye, Users, Bookmark, Send } from 'lucide-react-native';
 import { color, radius, space, type as t, avatar } from '../theme/tokens.ts';
 import type { Story, StoryFeedUser } from '../services/stories.ts';
-import { getViewers, type StoryViewer } from '../services/stories.ts';
+import { getViewers, reactToStory, saveToHighlight, type StoryViewer } from '../services/stories.ts';
+import { sendStoryReply } from '../services/storyReply.ts';
+import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
+
+/** PLAT-F33 quick reactions. Any short emoji is accepted by the route (max 10 chars). */
+const QUICK_REACTIONS = ['❤️', '😂', '😮', '🔥', '👏'];
 import { useSession } from '../context/SessionContext.tsx';
 import { formatRelativeTime as formatRelative } from '../lib/dateTime/formatters.ts';
 import { primaryIdentityText } from '../lib/displayIdentity.ts';
@@ -43,6 +48,13 @@ export function StoryViewer({ visible, feedUser, onClose }: Props) {
   const [viewers, setViewers] = useState<StoryViewer[]>([]);
   const [viewersHidden, setViewersHidden] = useState(false);
   const [loadingViewers, setLoadingViewers] = useState(false);
+  const [viewersError, setViewersError] = useState(false);
+  // PLAT-F33: react / reply (someone else's story) and save-to-highlight (your own).
+  const [replyText, setReplyText] = useState('');
+  const [replying, setReplying] = useState(false);
+  const [savingHighlight, setSavingHighlight] = useState(false);
+  const [savedHighlightIds, setSavedHighlightIds] = useState<Record<string, string>>({});
+  const [notice, setNotice] = useState<string | null>(null);
   const progressAnim = useRef(new Animated.Value(0)).current;
   const animRef = useRef<Animated.CompositeAnimation | null>(null);
   const stories: Story[] = feedUser?.stories ?? [];
@@ -77,27 +89,60 @@ export function StoryViewer({ visible, feedUser, onClose }: Props) {
   }, [visible, idx, paused, current, startProgress]);
 
   useEffect(() => {
-    if (visible) { setIdx(0); setPaused(false); }
+    if (visible) { setIdx(0); setPaused(false); setReplyText(''); setNotice(null); }
   }, [visible, feedUser]);
+
+  useEffect(() => { setNotice(null); }, [idx]);
 
   async function openViewers() {
     if (!current) return;
     setViewersOpen(true);
     setLoadingViewers(true);
+    setViewersError(false);
     const res = await getViewers(current.id);
     setLoadingViewers(false);
     if (res.ok) {
       setViewers(res.viewers);
       setViewersHidden(res.hidden);
+    } else {
+      // A failed read is not "No viewers yet" (DV-83).
+      setViewersError(true);
     }
+  }
+
+  async function react(emoji: string) {
+    if (!current) return;
+    const res = await reactToStory(current.id, emoji);
+    setNotice(res.ok ? 'Reaction sent' : 'Your reaction could not be sent.');
+  }
+
+  async function sendReply() {
+    if (!current || !feedUser || replying || !replyText.trim()) return;
+    setReplying(true);
+    const res = await sendStoryReply({ storyId: current.id, ownerId: feedUser.userId, text: replyText.trim() });
+    setReplying(false);
+    if (res.ok) { setReplyText(''); setNotice('Reply sent to their chat'); setPaused(false); }
+    else setNotice(res.message);
+  }
+
+  async function saveCurrentToHighlight() {
+    if (!current || savingHighlight) return;
+    setSavingHighlight(true);
+    setPaused(true);
+    const res = await saveToHighlight(current.id);
+    setSavingHighlight(false);
+    if (res.ok) { setSavedHighlightIds((m) => ({ ...m, [current.id]: res.highlightId })); setNotice('Saved to your highlights'); }
+    else setNotice(res.message);
   }
 
   if (!visible || !feedUser || !current) return null;
 
   const isOwner = userId === feedUser.userId;
+  const alreadySaved = Boolean(savedHighlightIds[current.id] || (current as Story & { saved_to_highlight_id?: string | null }).saved_to_highlight_id);
 
   return (
     <Modal visible={visible} animationType="slide" statusBarTranslucent onRequestClose={onClose}>
+      <KeyboardSafeScrollView style={s.root}>
       <View style={[s.root, { paddingTop: insets.top }]}>
         {/* Progress bars */}
         <View style={s.progressRow}>
@@ -171,11 +216,47 @@ export function StoryViewer({ visible, feedUser, onClose }: Props) {
         </TouchableWithoutFeedback>
 
         {/* Footer */}
-        {isOwner && (
-          <Pressable style={[s.viewersBtn, { marginBottom: insets.bottom + space.md }]} onPress={openViewers}>
-            <Eye size={16} color="#fff" />
-            <Text style={s.viewersBtnText}>Viewers</Text>
-          </Pressable>
+        {notice ? <Text style={s.notice} accessibilityLiveRegion="polite">{notice}</Text> : null}
+        {isOwner ? (
+          <View style={[s.ownerRow, { marginBottom: insets.bottom + space.md }]}>
+            <Pressable style={s.viewersBtn} onPress={openViewers}>
+              <Eye size={16} color="#fff" />
+              <Text style={s.viewersBtnText}>Viewers</Text>
+            </Pressable>
+            {alreadySaved ? (
+              <Text style={s.viewersBtnText}>In your highlights</Text>
+            ) : (
+              <Pressable style={s.viewersBtn} onPress={saveCurrentToHighlight} disabled={savingHighlight} testID="story-save-highlight" accessibilityRole="button">
+                {savingHighlight ? <ActivityIndicator size="small" color="#fff" /> : <Bookmark size={16} color="#fff" />}
+                <Text style={s.viewersBtnText}>Save to highlight</Text>
+              </Pressable>
+            )}
+          </View>
+        ) : (
+          <View style={[s.replyWrap, { marginBottom: insets.bottom + space.sm }]}>
+            <View style={s.reactRow}>
+              {QUICK_REACTIONS.map((emoji) => (
+                <Pressable key={emoji} onPress={() => react(emoji)} testID={`story-react-${emoji}`} accessibilityRole="button" accessibilityLabel={`React ${emoji}`} hitSlop={6}>
+                  <Text style={s.reactEmoji}>{emoji}</Text>
+                </Pressable>
+              ))}
+            </View>
+            <View style={s.replyRow}>
+              <TextInput
+                testID="story-reply-input"
+                value={replyText}
+                onChangeText={setReplyText}
+                onFocus={() => setPaused(true)}
+                placeholder="Reply…"
+                placeholderTextColor="rgba(255,255,255,0.6)"
+                style={s.replyInput}
+                maxLength={1000}
+              />
+              <Pressable testID="story-reply-send" onPress={sendReply} disabled={replying || !replyText.trim()} style={[s.sendBtn, (replying || !replyText.trim()) && s.dim]} accessibilityRole="button" accessibilityLabel="Send reply">
+                {replying ? <ActivityIndicator size="small" color="#fff" /> : <Send size={16} color="#fff" />}
+              </Pressable>
+            </View>
+          </View>
         )}
 
         {/* Viewers sheet */}
@@ -187,6 +268,8 @@ export function StoryViewer({ visible, feedUser, onClose }: Props) {
               <Text style={s.sheetTitle}>Viewers</Text>
               {loadingViewers ? (
                 <ActivityIndicator color={color.deep} style={{ marginVertical: 24 }} />
+              ) : viewersError ? (
+                <Text style={s.emptyText}>Viewers could not be loaded.</Text>
               ) : viewersHidden ? (
                 <View style={s.hiddenMsg}>
                   <Users size={24} color={color.mute} />
@@ -218,6 +301,7 @@ export function StoryViewer({ visible, feedUser, onClose }: Props) {
           </Modal>
         )}
       </View>
+      </KeyboardSafeScrollView>
     </Modal>
   );
 }
@@ -249,4 +333,13 @@ const s = StyleSheet.create({
   viewerNameRow: { flex: 1, flexDirection: 'row' as const, alignItems: 'center' as const, gap: 3 },
   viewerName: { flexShrink: 1, ...t.body, color: color.ink },
   viewerTime: { ...t.small, color: color.mute },
+  notice: { color: '#fff', textAlign: 'center', fontSize: 13, paddingHorizontal: space.md, paddingVertical: space.xs },
+  ownerRow: { flexDirection: 'row', justifyContent: 'center', gap: space.xl },
+  replyWrap: { paddingHorizontal: space.md, gap: space.sm },
+  reactRow: { flexDirection: 'row', justifyContent: 'space-around' },
+  reactEmoji: { fontSize: 26 },
+  replyRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  replyInput: { flex: 1, borderWidth: 1, borderColor: 'rgba(255,255,255,0.5)', borderRadius: radius.pill, paddingHorizontal: space.md, paddingVertical: space.sm, color: '#fff', fontSize: 15 },
+  sendBtn: { padding: space.sm },
+  dim: { opacity: 0.5 },
 });

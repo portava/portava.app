@@ -6,7 +6,7 @@ import React from 'react';
 import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ArrowLeft, Users, BookOpen, ShieldAlert, BarChart2, ClipboardList, Globe, Store } from 'lucide-react-native';
+import { ArrowLeft, Users, BookOpen, ShieldAlert, BarChart2, ClipboardList, Globe, Store, Star, LifeBuoy, AlertTriangle, SlidersHorizontal } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow } from '../../../src/theme/tokens';
 import { useRentABuddyFlag } from '../../../src/hooks/useRentABuddyFlag';
 
@@ -16,6 +16,13 @@ const SECTIONS = [
     label: 'Rollout Dashboard',
     sub: 'City rollout stages, QA gate, beta access, global kill switches',
     route: '/(rent-a-buddy)/admin/rollout',
+    accent: '#6366F1',
+  },
+  {
+    icon: SlidersHorizontal,
+    label: 'Launch Controls',
+    sub: 'Per country / city / category booking policy: open, waitlist, ages, ID & phone',
+    route: '/(rent-a-buddy)/admin/launch-controls',
     accent: '#6366F1',
   },
   {
@@ -44,6 +51,27 @@ const SECTIONS = [
     label: 'Safety Flags',
     sub: 'Confirm or dismiss open policy violation flags',
     route: '/(rent-a-buddy)/admin/flags',
+    accent: color.signal,
+  },
+  {
+    icon: Star,
+    label: 'Review Moderation',
+    sub: 'Approve or reject buddy reviews before they go public',
+    route: '/(rent-a-buddy)/admin/reviews',
+    accent: color.deep,
+  },
+  {
+    icon: LifeBuoy,
+    label: 'Support Reports',
+    sub: 'Reports filed from bookings — triage, notes, resolve',
+    route: '/(rent-a-buddy)/admin/support',
+    accent: color.signal,
+  },
+  {
+    icon: AlertTriangle,
+    label: 'Risk Review',
+    sub: 'Buddies on watch / limited / under review; verification overrides',
+    route: '/(rent-a-buddy)/admin/risk',
     accent: color.signal,
   },
   {

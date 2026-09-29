@@ -564,12 +564,12 @@ function PassportDocumentScreenInner() {
                     The projection returns nothing when the owner hasn't shared
                     any with this viewer, so an unpermitted viewer still sees a
                     clear empty state — read-only, never the owner's edit tab. */}
-                {tab === 'memories'  && (
+                {tab === 'memories'  && (<>
                   <PassportViewerMemoriesList
                     memories={projection.data?.memories ?? []}
                     loading={projection.loading}
                   />
-                )}
+                  <ProfileMemoryAlbums userId={profile.id} /></>)}
                 {tab === 'plans'     && (
                   <PassportViewerPlansList
                     plans={projection.data?.upcomingPlans ?? []}
@@ -719,3 +719,7 @@ const vs = StyleSheet.create({
     marginTop: 2,
   },
 });
+
+// Testing mode WP-06 (HM-F14): the `memories` albums this viewer may see, under the
+// passport entries on the Memories tab. Imported at the TAIL so no line above moves.
+import { ProfileMemoryAlbums } from '../../src/features/memories/social/ProfileMemoryAlbums.tsx';

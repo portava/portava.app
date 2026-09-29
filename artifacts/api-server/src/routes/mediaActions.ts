@@ -45,7 +45,7 @@ import {
   type MediaIntentKind,
 } from "../services/media/MediaActionResolver.js";
 import { authorizeMediaContext } from "../lib/mediaVisibility.js";
-import { retryMediaProcessing, type RetryProcessingResult } from "../services/media/MediaLifecycleService.js";
+import { retryMediaProcessing, isMediaProcessingWorkerEnabled, type RetryProcessingResult } from "../services/media/MediaLifecycleService.js";
 import { recordMediaAttachment } from "../lib/mediaAssets.js";
 
 const router = Router();
@@ -597,5 +597,49 @@ function sendRetryRefusal(res: any, result: RetryProcessingResult): boolean {
     sendError(res, "feature_disabled", "Media processing is not available");
     return true;
   }
-  return false;
+  if (result.dbError) { (res.req?.log?.error ?? console.error).call(res.req?.log ?? console, { reason: result.dbError }, "media retry: the asset read or re-queue write failed"); sendError(res, "db_error", "Could not retry this upload right now"); return true; }  return false;  // tm-followups WP-17: an outage is never "not found"
 }
+
+// ── GET /media/me/failed-uploads  (tm-followups WP-17, flow MED-F25) ──────────
+//
+// POST /media/:id/retry takes a `media_assets.id`, and no client surface held
+// one: My World's "Processing" bucket is built from posts. This lists the
+// CALLER's own assets whose processing failed (owner-scoped in the query, never
+// a parameter), newest first, un-purged only — the set the retry accepts — and
+// says whether a retry is possible now: the retry refuses while the processing
+// worker is off (census-media §30), so the client does not offer a button that
+// can only be refused. A failed read is db_error, never an empty list.
+// Appended at the foot: the census cites this file by line.
+router.get(
+  "/media/me/failed-uploads",
+  asyncHandler(async (req, res) => {
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+    const sc = getServiceClient();
+    if (!sc) {
+      sendError(res, "server_not_configured");
+      return;
+    }
+    const { data, error } = await sc
+      .from("media_assets")
+      .select("id, media_type, thumbnail_url, created_at, processing_terminal, purge_status")
+      .eq("owner_user_id", auth.user.id)
+      .eq("processing_status", "failed")
+      .order("created_at", { ascending: false })
+      .limit(50);
+    if (error) {
+      req.log.error({ err: error, userId: auth.user.id }, "failed-uploads: media_assets read failed");
+      sendError(res, "db_error", "Could not load your failed uploads");
+      return;
+    }
+    const items = ((data ?? []) as Array<Record<string, unknown>>)
+      .filter((r) => r.purge_status !== "completed")
+      .map((r) => ({
+        id: String(r.id),
+        mediaType: r.media_type === "video" ? "video" : "image",
+        thumbnailUrl: typeof r.thumbnail_url === "string" ? r.thumbnail_url : null,
+        createdAt: typeof r.created_at === "string" ? r.created_at : null,
+      }));
+    res.json({ items, retryAvailable: await isMediaProcessingWorkerEnabled(sc) });
+  }),
+);
