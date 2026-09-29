@@ -32,7 +32,7 @@ import {
   toggleSave,
   getSavedListIds,
   type BookmarkedPlace,
-} from '../../services/discoveryBookmarks.ts';
+} from '../../services/discoveryBookmarks.ts'; import { applyTripSaveToggle } from '../../features/trips/savedPlaces/tripSavedPlacesSync.ts'; // WP-10: the trip's shared list
 import { color, space, radius, type as t, shadow, avatar } from '../../theme/tokens.ts';
 
 // ── Shared payload type ────────────────────────────────────────────────────────
@@ -146,7 +146,7 @@ export function TripWishlistPicker({
     });
     try {
       const bookmark = payloadToBookmark(payload);
-      const { added: nowSaved } = await toggleSave(bookmark, trip.id);
+      const { added: nowSaved } = await toggleSave(bookmark, trip.id); const shared = await applyTripSaveToggle(trip.id, bookmark, nowSaved); if (shared.state === 'failed') throw new Error(shared.detail); // an unsave the trip list refused was rolled back on the device
       setSavedIds((prev) => {
         const next = new Set(prev);
         if (nowSaved) {
