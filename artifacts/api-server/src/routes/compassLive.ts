@@ -113,7 +113,7 @@ router.post("/compass/live/check", asyncHandler(async (req, res) => {
     session: result.session,
     evaluated: result.evaluated,
     delivered: result.delivered,
-    suppressed: result.suppressed,
+    suppressed: result.suppressed, ...(result.failedSources.length > 0 ? { partial: true, failedSources: result.failedSources } : {}),
   });
 }));
 

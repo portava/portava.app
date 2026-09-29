@@ -38,7 +38,7 @@
  * Confidence: every nudge carries a Phase 8 confidence label (makeConfidence)
  * reflecting its data source class.
  */
-
+import { logger as rootLogger } from "../lib/logger.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { makeConfidence, type Confidence } from "../lib/liveIntelligence.js";
 import { isQuietHours } from "./CompassNotificationEngine.js";
@@ -147,7 +147,7 @@ export interface SuppressedNudge {
 
 export interface SenseRunResult {
   presenceLevel: PresenceLevel;
-  evaluated: number;
+  evaluated: number; failedSources: SenseSource[]; // DV-83: unread sources, never folded into `evaluated`
   delivered: CandidateNudge[];
   suppressed: SuppressedNudge[];
 }
@@ -169,15 +169,15 @@ export function defaultSenseSettings(): SenseSettings {
 
 export async function getSenseSettings(
   sc: SupabaseClient,
-  userId: string,
+  userId: string, unread?: { settings: boolean }, // DV-83: set when the row could not be read; the answer stays passive
 ): Promise<SenseSettings> {
   try {
-    const { data } = await sc
+    const { data, error } = await sc
       .from("compass_sense_settings")
       .select("presence_level, categories")
       .eq("user_id", userId)
       .maybeSingle();
-    const defaults = defaultSenseSettings();
+    const defaults = defaultSenseSettings(); if (error && unread) unread.settings = true;
     if (!data) return defaults;
     const row = data as any;
     const level = ["passive", "aware", "active"].includes(row.presence_level)
@@ -190,7 +190,7 @@ export async function getSenseSettings(
     }
     return { presenceLevel: level, categories: cats };
   } catch {
-    return defaultSenseSettings();
+    if (unread) unread.settings = true; return defaultSenseSettings();
   }
 }
 
@@ -246,23 +246,23 @@ async function evalSavedEventStarting(
   nowMs: number,
 ): Promise<CandidateNudge[]> {
   try {
-    const { data: saves } = await sc
+    const { data: saves, error: savesErr } = await sc
       .from("event_saves")
       .select("event_id")
       .eq("user_id", userId);
-    const ids = ((saves ?? []) as any[]).map((r) => String(r.event_id));
+    const ids = senseRows("event_saves", saves, savesErr).map((r) => String(r.event_id));
     if (ids.length === 0) return [];
 
     const fromIso = new Date(nowMs).toISOString();
     const toIso = new Date(nowMs + SAVED_EVENT_WINDOW_MS).toISOString();
-    const { data: events } = await sc
+    const { data: events, error: eventsErr } = await sc
       .from("events")
       .select("id, title, starts_at, state")
       .in("id", ids)
       .gte("starts_at", fromIso)
       .lte("starts_at", toIso);
 
-    return ((events ?? []) as any[])
+    return senseRows("events", events, eventsErr)
       .filter((e) => !["cancelled", "deleted", "banned"].includes(String(e.state ?? "")))
       .map((e) => ({
         type: "saved_event_starting" as const,
@@ -273,8 +273,8 @@ async function evalSavedEventStarting(
         actionUrl: `/event/${e.id}`,
         confidence: makeConfidence("verified_live", "Event time from the host's listing"),
       }));
-  } catch {
-    return [];
+  } catch (err) {
+    throw err; // DV-83: never `return []` over a failed read — evaluateSenseSignals marks the source unread
   }
 }
 
@@ -285,14 +285,14 @@ async function evalLeaveEarlier(
   nowMs: number,
 ): Promise<CandidateNudge[]> {
   try {
-    const { data: plans } = await sc
+    const { data: plans, error: plansErr } = await sc
       .from("route_plans")
       .select("id, title")
       .eq("owner_user_id", userId);
     const out: CandidateNudge[] = [];
 
-    for (const plan of ((plans ?? []) as any[]).slice(0, 5)) {
-      const [{ data: stops }, { data: legs }] = await Promise.all([
+    for (const plan of senseRows("route_plans", plans, plansErr).slice(0, 5)) {
+      const [{ data: stops, error: stopsErr }, { data: legs, error: legsErr }] = await Promise.all([
         sc
           .from("route_stops")
           .select("id, title, order_index, checkpoint_status, planned_arrival_time")
@@ -303,9 +303,9 @@ async function evalLeaveEarlier(
           .eq("route_plan_id", plan.id),
       ]);
       const durByStop = new Map(
-        ((legs ?? []) as any[]).map((l) => [String(l.to_stop_id), Number(l.duration_seconds ?? 0)]),
+        senseRows("route_legs", legs, legsErr).map((l) => [String(l.to_stop_id), Number(l.duration_seconds ?? 0)]),
       );
-      const pending = ((stops ?? []) as any[])
+      const pending = senseRows("route_stops", stops, stopsErr)
         .filter((s) => s.checkpoint_status === "pending" && s.planned_arrival_time)
         .sort((a, b) => Number(a.order_index ?? 0) - Number(b.order_index ?? 0));
 
@@ -332,8 +332,8 @@ async function evalLeaveEarlier(
       }
     }
     return out;
-  } catch {
-    return [];
+  } catch (err) {
+    throw err; // DV-83: never `return []` over a failed read — evaluateSenseSignals marks the source unread
   }
 }
 
@@ -349,10 +349,10 @@ async function fetchActiveTrip(
   // `get_current_trip` calls current, from the same rows. The seam orders by
   // earliest start, which is what the tool has always done.
   //
-  // `unread` returns null, preserving this function's existing contract: no
-  // trip grounding rather than grounding on a union we know is incomplete.
+  // `unread` THROWS (DV-83): a null here would read as "no trip, nothing to
+  // nudge"; the calling evaluator is reported unread by evaluateSenseSignals.
   const resolved = await resolveCurrentTrip(sc, userId, ["active"]);
-  if (resolved.status !== "ok") return null;
+  if (resolved.status === "unread") throw new SenseReadError("trips", resolved.reason); if (resolved.status !== "ok") return null;
   return { id: resolved.trip.id, city: resolved.trip.destinationCity };
 }
 
@@ -363,16 +363,16 @@ async function fetchTodayPlanItems(
   today: string,
 ): Promise<Array<{ id: string; starts_at: string | null }>> {
   try {
-    const { data } = await sc
+    const { data, error } = await sc
       .from("trip_plan_items")
       .select("id, starts_at, status, day_date, removed_at")
       .eq("trip_id", tripId)
       .eq("day_date", today);
-    return ((data ?? []) as any[])
+    return senseRows("trip_plan_items", data, error)
       .filter((i) => i.status !== "cancelled" && i.removed_at == null)
       .map((i) => ({ id: String(i.id), starts_at: (i.starts_at as string | null) ?? null }));
-  } catch {
-    return [];
+  } catch (err) {
+    throw err; // DV-83: never `return []` over a failed read — evaluateSenseSignals marks the source unread
   }
 }
 
@@ -430,22 +430,22 @@ async function evalCirclePlanChange(
   nowMs: number,
 ): Promise<CandidateNudge[]> {
   try {
-    const { data: rsvps } = await sc
+    const { data: rsvps, error: rsvpsErr } = await sc
       .from("meetup_invites")
       .select("meetup_id, status")
       .eq("user_id", userId)
       .in("status", ["going", "maybe"]);
-    const ids = ((rsvps ?? []) as any[]).map((r) => String(r.meetup_id));
+    const ids = senseRows("meetup_invites", rsvps, rsvpsErr).map((r) => String(r.meetup_id));
     if (ids.length === 0) return [];
 
     const sinceIso = new Date(nowMs - CIRCLE_CHANGE_WINDOW_MS).toISOString();
-    const { data: meetups } = await sc
+    const { data: meetups, error: meetupsErr } = await sc
       .from("meetups")
       .select("id, title, status, updated_at")
       .in("id", ids)
       .gte("updated_at", sinceIso);
 
-    return ((meetups ?? []) as any[])
+    return senseRows("meetups", meetups, meetupsErr)
       .filter((m) => ["cancelled", "confirmed"].includes(String(m.status ?? "")))
       .map((m) => ({
         type: "circle_plan_change" as const,
@@ -456,8 +456,8 @@ async function evalCirclePlanChange(
         actionUrl: `/meetup/${m.id}`,
         confidence: makeConfidence("verified_live", "Meetup status change from the organiser"),
       }));
-  } catch {
-    return [];
+  } catch (err) {
+    throw err; // DV-83: never `return []` over a failed read — evaluateSenseSignals marks the source unread
   }
 }
 
@@ -498,25 +498,25 @@ async function evalFreeTimeBlock(
   }];
 }
 
-/** Run all evaluators over real data. Returns candidate nudges only. */
+/** Run all evaluators over real data: candidates, plus every source that could not be read (DV-83). */
 export async function evaluateSenseSignals(
   sc: SupabaseClient,
   userId: string,
   opts: { nowMs?: number; hourUtc?: number } = {},
-): Promise<CandidateNudge[]> {
+): Promise<SenseEvaluation> {
   const nowMs = opts.nowMs ?? Date.now();
   const nowUtc = new Date(nowMs);
   const hourUtc = opts.hourUtc !== undefined
     ? opts.hourUtc
     : localHourFor(nowUtc, null, await fetchUserTimezone(sc, userId));
-  const results = await Promise.all([
+  const results = await Promise.allSettled([
     evalSavedEventStarting(sc, userId, nowMs),
     evalLeaveEarlier(sc, userId, nowMs),
     evalWeatherChange(sc, userId, nowMs),
     evalCirclePlanChange(sc, userId, nowMs),
     evalFreeTimeBlock(sc, userId, nowMs, hourUtc),
   ]);
-  return results.flat();
+  return settleSenseSignals(userId, results);
 }
 
 // ── Delivery gate + throttling ────────────────────────────────────────────────
@@ -611,14 +611,14 @@ export async function runSense(
     ? opts.hourUtc
     : localHourFor(nowUtc, null, await fetchUserTimezone(sc, userId));
   const resolvedOpts = { ...opts, hourUtc: resolvedHourUtc };
-  const settings = await getSenseSettings(sc, userId);
+  const settingsRead = { settings: false }; const settings = await getSenseSettings(sc, userId, settingsRead);
 
   // Passive = silent. Nothing is evaluated, nothing is sent.
   if (settings.presenceLevel === "passive") {
-    return { presenceLevel: "passive", evaluated: 0, delivered: [], suppressed: [] };
+    return { presenceLevel: "passive", evaluated: 0, delivered: [], suppressed: [], failedSources: settingsRead.settings ? ["settings"] : [] };
   }
 
-  const candidates = await evaluateSenseSignals(sc, userId, resolvedOpts);
+  const { candidates, failedSources } = await evaluateSenseSignals(sc, userId, resolvedOpts);
   const delivered: CandidateNudge[] = [];
   const suppressed: SuppressedNudge[] = [];
 
@@ -713,8 +713,104 @@ export async function runSense(
 
   return {
     presenceLevel: settings.presenceLevel,
-    evaluated: candidates.length,
+    evaluated: candidates.length, failedSources,
     delivered,
     suppressed,
   };
+}
+
+// ── Failure honesty: an unread source is reported, never "no signal" ─────────
+//
+// census-discovery DV-83 (the rule lib/discoveryRefusal.ts states for
+// Discovery): a failed read is never presented as empty or complete.
+// supabase-js RESOLVES on a database error (`{ data: null, error }`), so every
+// evaluator above used to fold an outage into `data ?? []`, and a `catch` that
+// returned `[]` did the same for a rejected read. Either way "we could not
+// look" left this module as "nothing worth a nudge", and the check route then
+// answered `evaluated: 0`. Now each read goes through `senseRows`, which throws
+// on a bound error, the evaluators' catches rethrow, and `evaluateSenseSignals`
+// settles all five independently: a readable signal still fires, and every
+// unreadable one is logged and named in `failedSources`.
+
+const logger = rootLogger.child({ module: "CompassSenseEngine" });
+
+/** One name per evaluator: the `type` of the nudge it can produce. */
+export type SenseSignal = CandidateNudge["type"];
+
+/** The evaluators, in the order `evaluateSenseSignals` runs them. */
+export const SENSE_SIGNALS: readonly SenseSignal[] = [
+  "saved_event_starting",
+  "leave_earlier",
+  "weather_change",
+  "circle_plan_change",
+  "free_time_block",
+];
+
+/**
+ * Everything a Sense run reads that can leave it without an answer: the five
+ * signals, plus the traveller's presence setting. An unreadable setting falls
+ * back to `passive` (fail-closed: nothing is sent), but a passive answer over
+ * an unread row would say "Sense is off, nothing evaluated" when the truth is
+ * "we could not read whether it is on", so the run names it.
+ */
+export type SenseSource = SenseSignal | "settings";
+
+export interface SenseEvaluation {
+  candidates: CandidateNudge[];
+  /** Evaluators whose reads failed, in evaluator order. Empty on a healthy pass. */
+  failedSources: SenseSignal[];
+}
+
+/**
+ * How much of the evaluation actually happened. `none` means no evaluator
+ * could read its data, so there is no answer at all; `partial` means the
+ * candidates are real but the absence of others is not evidence of anything.
+ */
+export type SenseCoverage = "complete" | "partial" | "none";
+
+export function senseCoverage(failedSources: readonly SenseSource[]): SenseCoverage {
+  if (failedSources.length === 0) return "complete";
+  if (failedSources.includes("settings")) return "none";
+  return failedSources.length >= SENSE_SIGNALS.length ? "none" : "partial";
+}
+
+/** A signal source could not be read. Carries the table for the log. */
+export class SenseReadError extends Error {
+  constructor(readonly table: string, readonly detail: unknown) {
+    super(`Sense source unread: ${table}`);
+    this.name = "SenseReadError";
+  }
+}
+
+/** The rows of a supabase read, or a throw when the read reported an error. */
+function senseRows(table: string, data: unknown, error: unknown): any[] {
+  if (error) throw new SenseReadError(table, error);
+  return (data ?? []) as any[];
+}
+
+function settleSenseSignals(
+  userId: string,
+  results: ReadonlyArray<PromiseSettledResult<CandidateNudge[]>>,
+): SenseEvaluation {
+  const candidates: CandidateNudge[] = [];
+  const failedSources: SenseSignal[] = [];
+  results.forEach((r, i) => {
+    const source = SENSE_SIGNALS[i]!;
+    if (r.status === "fulfilled") {
+      candidates.push(...r.value);
+      return;
+    }
+    failedSources.push(source);
+    const err = r.reason;
+    logger.warn(
+      {
+        userId,
+        source,
+        table: err instanceof SenseReadError ? err.table : null,
+        err: err instanceof SenseReadError ? err.detail : err,
+      },
+      "CompassSense: signal source unread; reported in failedSources, not as no signal",
+    );
+  });
+  return { candidates, failedSources };
 }

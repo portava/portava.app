@@ -13,7 +13,7 @@
  * every Compass surface — disabled flag returns an honest fallback envelope.
  * All enforcement is server-side; the client never decides what may be sent.
  */
-import { Router } from "express";
+import { Router, type Response } from "express";
 import { z } from "zod";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError } from "../lib/http.js";
@@ -23,7 +23,7 @@ import {
   SENSE_CATEGORIES,
   getSenseSettings,
   upsertSenseSettings,
-  runSense,
+  runSense, senseCoverage, type SenseSource,
   type SenseCategory,
 } from "../compass/CompassSenseEngine.js";
 
@@ -105,15 +105,15 @@ router.post("/compass/sense/check", asyncHandler(async (req, res) => {
   if (!sc) return;
 
   const result = await runSense(sc, auth.user.id, {
-    hourUtc: _testHourUtc ?? undefined,
-    nowMinutes: _testNowMinutes ?? undefined,
+    hourUtc: _testHourUtc ?? undefined, nowMinutes: _testNowMinutes ?? undefined,
   });
+  if (senseCoverage(result.failedSources) === "none") { sendSenseUnavailable(res, result.failedSources); return; }
   res.json({
     compassEnabled: true,
     presenceLevel: result.presenceLevel,
     evaluated: result.evaluated,
     delivered: result.delivered,
-    suppressed: result.suppressed,
+    suppressed: result.suppressed, ...(result.failedSources.length > 0 ? { partial: true, failedSources: result.failedSources } : {}),
   });
 }));
 
@@ -127,13 +127,13 @@ router.get("/compass/sense/nudges", asyncHandler(async (req, res) => {
 
   try {
     const sinceIso = new Date(Date.now() - 7 * 24 * 60 * 60 * 1_000).toISOString();
-    const { data } = await sc
+    const { data, error } = await sc
       .from("compass_sense_nudges")
       .select("id, nudge_type, category, title, body, action_url, confidence, created_at")
       .eq("user_id", auth.user.id)
       .gte("created_at", sinceIso)
       .order("created_at", { ascending: false })
-      .limit(20);
+      .limit(20); if (error) throw error; // DV-83: an unread log is not "no nudges"
     res.json({
       compassEnabled: true,
       nudges: ((data ?? []) as any[]).map((n) => ({
@@ -147,9 +147,32 @@ router.get("/compass/sense/nudges", asyncHandler(async (req, res) => {
         createdAt: String(n.created_at),
       })),
     });
-  } catch {
-    res.json({ compassEnabled: true, nudges: [] });
+  } catch (err) {
+    req.log.warn({ err, userId: auth.user.id }, "compass/sense/nudges unread"); sendError(res, "degraded_unavailable", "Your recent nudges could not be read right now. Please try again shortly.");
   }
 }));
 
 export default router;
+
+// ── DV-83: a check that could not read its sources says so ─────────────────
+//
+// A healthy check answers exactly the five keys it always has. When some
+// signal sources could not be read, the same 200 adds `partial: true` and
+// `failedSources` (a consumer that ignores unknown keys is unaffected, and
+// one that wants the truth can read it). When NONE could be read there is no
+// evaluation to report, so the answer is a retryable 503 rather than
+// `evaluated: 0` — which would be indistinguishable from "nothing worth a
+// nudge". An unreadable presence setting (`failedSources: ["settings"]`) is
+// the same case: the run stays fail-closed and sends nothing, but it cannot
+// claim "passive, nothing evaluated" over a row it never read.
+//
+// GET /compass/sense/nudges follows the same rule: an unreadable nudge log is
+// a retryable 503, never `nudges: []`.
+function sendSenseUnavailable(res: Response, failedSources: readonly SenseSource[]): void {
+  res.status(503).json({
+    error: "degraded_unavailable",
+    message: "Compass could not read any of the signals it checks right now. Please try again shortly.",
+    retryable: true,
+    failedSources,
+  });
+}

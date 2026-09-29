@@ -3690,6 +3690,203 @@ over an ungranted `surface` consent scope. Nothing here ratifies that.
 Totals unchanged. Six counted files read, two rows re-tested against the tree,
 both holding on statements this census had already made correctly.
 
+## §29 — 2026-09-29: the daily brief acts, Sense is asked to look, and the decision reaches a screen (TM-live lane, COMP-F14 / COMP-F11 / COMP-F15)
+
+Testing-mode lane `lane-tm-live` (WP-11), branch cut from `main` at `978d886bf`. `head_commit` is
+**NOT** re-declared: this records a build. Controlled evidence only — route, unit and component
+tests in this repository, with only `fetch` faked on the client and a fake PostgREST on the server.
+No flag was touched, no migration was added, no database was read or written.
+
+**No row moves.** CX-03 and CX-05 stay **W** for the reason §10 gives: the route is gated by
+`compass_decision_enabled`, seeded FALSE, and "on every deployment the route answers
+`feature_disabled`". This lane gave the decision a client; it did not change the gate, and a
+client cannot move a row whose cap is a flag. CX-03 and CX-05: IMPLEMENTATION-COMPLETE; awaits:
+flag compass_decision_enabled TRUE on the testing deployment + one hosted answer showing a decision
+on the place screen. No other Compass row grades the three surfaces below.
+
+### 29.1 COMP-F14 — daily-brief actions and dismissals go through the server
+
+**Tester steps.** On a trip in progress open the trip screen's Today's Brief. Tap **Refresh**; open a
+suggestion's `…` menu → **Dismiss**; tap a quick action (**View plan**, **Ask Telegraph**).
+
+- Quick actions call `POST /daily-brief/actions/:kind` before navigating:
+  `travel-buddy-standalone/src/components/DailyBriefCard.tsx:700#async function runQuickAction(`.
+  `executeBriefAction` had no caller (`travel-buddy-standalone/src/services/intelligence.ts:85#export async function executeBriefAction(`);
+  it now treats only the server's `ok: true` as executed and keeps the status, so a 403 says
+  "Only accepted trip members can do that" and does not navigate.
+- A dismissal leaves the card only once the server recorded it
+  (`travel-buddy-standalone/src/components/DailyBriefCard.tsx:688#async function dismissSuggestion(`); it used to be removed
+  optimistically even when the write failed.
+- **Server defect fixed.** The dismiss route answered `{ ok: true }` when its write failed ("best-effort");
+  it now answers 503 (`artifacts/api-server/src/routes/dailyBrief.ts:1010#if (evtError) { briefLogger.warn(`).
+  And a recorded dismissal came back on the next GET, because the brief is cached per user per day and
+  nothing read the dismissals: every served brief now passes through
+  `artifacts/api-server/src/routes/dailyBrief.ts:1034#async function applyDismissals(`.
+- A brief whose dismissals could not be read says so (`dismissalsApplied: false` → "something you
+  dismissed may show again"); a failed refresh says so; and a GET whose membership read failed
+  (`denialReason: db_error`) is an error with Retry, no longer "only available to accepted trip members".
+
+**Decisions.** (a) The URL segment the route validates is the action **kind** (`view_plan`,
+`ask_telegraph`, …), not the quick-action id (`qa_plan`); the client sends the kind. (b) The server
+route performs no side effect of its own — it validates membership and the kind and says whether
+the action needs confirmation — so "act" is: the server acknowledges, then the app opens the surface
+where the action is completed. Building server-side execution for `create_meetup` / `open_poll` is
+not in this lane (§29.5). (c) A dismissal is scoped to the user and the **UTC day** of the brief:
+recommendation ids such as `rec_culture` recur daily, and the cache is per user per day, not per trip.
+
+### 29.2 COMP-F11 — Compass Sense is asked to look, and its nudges are on screen
+
+**Tester steps.** Compass preferences → Compass Sense → set **Active**. Mock the device location to the
+test city (or open the app from the background). A nudge arrives when a signal passes the server's
+gates; **Recent nudges** lists it, and **Check now** runs a check on demand.
+
+- `POST /compass/sense/check` is the only caller of `runSense` — no scheduler runs it — and nothing in
+  the app called it. `travel-buddy-standalone/src/features/live/useSenseAutoCheck.ts:38#export function useSenseAutoCheck(`
+  asks on sign-in, on return to the foreground (≥ 10 min apart) and when the resolved location moves to
+  another ~1 km cell or city (≥ 2 min apart); it is mounted beside the geofence monitor
+  (`travel-buddy-standalone/app/(tabs)/_layout.tsx:401#useGeofenceMonitor(); useSenseAutoCheck(`).
+- `travel-buddy-standalone/src/features/live/SenseNudgesPanel.tsx:38#export function SenseNudgesPanel(` in the Sense section
+  (`travel-buddy-standalone/app/compass-preferences.tsx:237#<SenseNudgesPanel />`): **Check now** says what was
+  delivered and held back and why — never "nothing to nudge you about" — and **Recent nudges** opens
+  each nudge's surface. A failed Sense settings read is now said with Try again instead of an
+  invisible section.
+- **Server defect fixed.** `GET /compass/sense/nudges` answered `nudges: []` on a failed read; now 503
+  (`artifacts/api-server/src/routes/compassSense.ts:136#if (error) throw error`, answered at `artifacts/api-server/src/routes/compassSense.ts:151#Your recent nudges could not be read`; the TM-sense lane's equivalent lines replaced this lane's on merge, census-compass §30).
+
+**Decisions.** (a) The check sends no position: the server reads the traveller's own signals, so a
+location change is only the *moment* to ask. (b) Check results state only what the server reports
+(delivered, held back and why), because the engine does not report which of its signal reads failed
+(§29.5).
+
+### 29.3 COMP-F15 — the Compass decision on the place screen
+
+**Tester steps.** Open a canonical place (either layout). **Should I go now?** shows one of GO NOW ·
+GO SOON · WAIT · STAY · SWITCH · SKIP · RETURN with the server's sentence, its reasons and its grounding.
+Start a session somewhere (§28 of census-sensing) and open another place to see STAY / SWITCH.
+
+- `travel-buddy-standalone/src/features/live/placeLive.ts:51#export async function fetchCompassDecision(` and the card in
+  `travel-buddy-standalone/src/features/live/PlaceLivePanel.tsx:56#export function PlaceLivePanel(`, mounted on
+  `travel-buddy-standalone/app/place/[id].tsx:416#<PlaceLivePanel placeId=` and
+  `travel-buddy-standalone/src/components/place/living/LivingDestinationPage.tsx:1735#<PlaceLivePanel placeId=`.
+- A WAIT that could not read live intelligence carries the line "Compass couldn't read live intelligence
+  for this place, so it says Wait rather than guess" — never a bare WAIT.
+- **Server defect fixed.** A snapshot read that ERRORED was served as `no_live_evidence` with
+  `liveIntelligenceReadable: true`, i.e. "looked, nothing live"; the assembly now honours
+  liveClaimRead's failed-read mark (`artifacts/api-server/src/lib/compassDecisionAssembly.ts:63#readable: readable && !liveClaimReadFailed(envelopes)`)
+  and answers `live_intelligence_unavailable`, readable false.
+
+**Decisions.** (a) The place screen sends no viewer position; the engine then states
+`interception_unknown` rather than inventing an ETA. (b) The viewer's open experience session is sent
+as `currentSubjectId`, so STAY / SWITCH are reachable and a SWITCH carries its confirmation line.
+
+### 29.4 Tests, red first, and mutations
+
+- Server: `artifacts/api-server/src/test/tmLiveSurfaces.test.ts:217#describe("COMP-F11 GET /compass/sense/nudges`,
+  `artifacts/api-server/src/test/tmLiveSurfaces.test.ts:246#describe("COMP-F14 daily brief` and
+  `artifacts/api-server/src/test/tmLiveSurfaces.test.ts:128#describe("COMP-F15 GET /compass/decision`
+  — red on `main` (the nudges 200 `[]`, the dismissal 200 ok, the dismissed suggestion served again,
+  the decision `no_live_evidence`), green after. Mutations M2, M2b, M5, M6, M7, M7b each reddened the
+  file and were restored by sha256.
+- Client: `DailyBriefCard.tmLive.component.test.tsx` (5 of 7 red on `main`, 7/7 after; mutations C14-1…6),
+  `senseNudges.component.test.tsx` (7; mutations C11-1…7 — C11-7 first survived, and the test was
+  tightened to tell an outage from a refusal), `PlaceLivePanel.component.test.tsx` (13; mutations
+  P15-1…3). Every mutation reddened its suite and was restored by sha256.
+
+### 29.5 What is left, and what needs the hosted deployment
+
+- **Hosted, not controlled:** `COMPASS_ENABLED` and `compass_decision_enabled` must be TRUE on the
+  testing deployment (the catalogue's testing target; not changed here), and a live decision other than
+  WAIT needs the Live gate chain and the Sensing secrets (`SENSING_CONTRIBUTOR_PEPPER`,
+  `INTEL_EVIDENCE_REFERENCE_KEY`) so snapshots exist. Without them every surface above says, in words,
+  that live intelligence is unavailable.
+- **The Sense evaluators swallow their read errors.** `CompassSenseEngine`'s five signal evaluators
+  bind `data` only and return `[]` from `catch`, so a failed read is "no signal" and `evaluated: 0`
+  can hide an outage. Out of this lane's scope; the panel's copy claims nothing about it.
+- **Brief actions execute nothing server-side.** The actions route is a validation step; creating a
+  meetup or a poll from a brief still happens on the trip screen.
+- Red if: a quick action navigates on a refusal; a dismissal leaves the card on a failed write; a
+  failed nudge read renders as "no nudges"; a decision that could not read live intelligence renders
+  without its caveat.
+
+## §30 — 2026-09-29: Sense names an unread source instead of answering "no signals" (lane TM-sense) — MOVES NOTHING
+
+**The defect.** supabase-js resolves on a database error (`{ data: null, error }`). All five
+Sense signal evaluators destructured `{ data }` only, folded `data ?? []` into "nothing here", and
+wrapped the lot in `catch { return []; }`. The weather and free-time evaluators also turned an
+unread trip (`resolveCurrentTrip` → `unread`) into "no active trip". An outage on `event_saves`,
+`route_plans`/`route_stops`/`route_legs`, `trips`/`trip_members`, `trip_plan_items` or
+`meetup_invites`/`meetups` therefore produced the same answer as a traveller with nothing worth a
+nudge: `POST /compass/sense/check` → `200 { evaluated: 0, delivered: [] }`, and a scheduler tick
+counted that user as a clean, empty evaluation. That is the masquerade census-discovery `DV-83`
+forbids (the refusal vocabulary is `artifacts/api-server/src/lib/discoveryRefusal.ts`). An
+unreadable presence setting was the same defect one step earlier: `getSenseSettings` fell back to
+`passive`, so the check answered `presenceLevel: "passive", evaluated: 0`. And
+`GET /compass/sense/nudges` answered `nudges: []` over an unreadable log.
+
+**What was built.** Every evaluator read now goes through `senseRows`
+(`artifacts/api-server/src/compass/CompassSenseEngine.ts:786#function senseRows(`), which throws `SenseReadError` on a bound error. The evaluators'
+catches rethrow (`artifacts/api-server/src/compass/CompassSenseEngine.ts:277#throw err;`, `artifacts/api-server/src/compass/CompassSenseEngine.ts:336#throw err;`, `artifacts/api-server/src/compass/CompassSenseEngine.ts:375#throw err;`,
+`artifacts/api-server/src/compass/CompassSenseEngine.ts:460#throw err;`), and an unread trip throws instead of reading as "no trip"
+(`artifacts/api-server/src/compass/CompassSenseEngine.ts:355#throw new SenseReadError("trips"`). `evaluateSenseSignals` settles the five
+independently (`artifacts/api-server/src/compass/CompassSenseEngine.ts:512#Promise.allSettled([`) and returns `{ candidates, failedSources }`
+(`artifacts/api-server/src/compass/CompassSenseEngine.ts:519#settleSenseSignals(userId, results)`). A readable signal still fires; each unread one
+is logged with its table and named (`artifacts/api-server/src/compass/CompassSenseEngine.ts:803#failedSources.push(source);`). The run also names an
+unreadable presence setting as the `settings` source (`artifacts/api-server/src/compass/CompassSenseEngine.ts:618#settingsRead.settings ? ["settings"] : []`),
+while the send stays fail-closed: nothing is delivered. `senseCoverage` grades the run `complete`,
+`partial` or `none` (`artifacts/api-server/src/compass/CompassSenseEngine.ts:771#export function senseCoverage(`).
+
+**Response shapes (controlled evidence, `compassSenseReadHonesty.test.ts`).**
+- Healthy check: unchanged byte for byte, `{"compassEnabled":true,"presenceLevel":…,"evaluated":N,"delivered":[…],"suppressed":[…]}`.
+- Some sources unread: the same 200 plus `"partial":true,"failedSources":["circle_plan_change",…]`
+  (`artifacts/api-server/src/routes/compassSense.ts:116#partial: true`).
+- Every signal unread, or the presence setting unread: `503 {"error":"degraded_unavailable","message":…,"retryable":true,"failedSources":[…]}`
+  (`artifacts/api-server/src/routes/compassSense.ts:110#sendSenseUnavailable(res`). Never `evaluated: 0`.
+- `GET /compass/sense/nudges`: healthy body unchanged. An unreadable log is a 503 `degraded_unavailable`
+  (`artifacts/api-server/src/routes/compassSense.ts:136#if (error) throw error;`).
+- `POST /compass/live/check`, the other consumer of the evaluators: the same `partial` +
+  `failedSources` keys (`artifacts/api-server/src/routes/compassLive.ts:116#partial: true`), carried from the tick
+  (`artifacts/api-server/src/compass/CompassLiveEngine.ts:505#failedSources } = await evaluateSenseSignals`). No 503 there, because the tick's
+  live-only signals still ran.
+- The background sweep counts a user with unread sources as an error, and a user with nothing
+  readable is not counted as evaluated (`artifacts/api-server/src/lib/compassSenseScheduler.ts:150#senseCoverage(result.failedSources)`).
+
+**Decisions (routine; no register exists for Compass, so recorded here).**
+(1) `failedSources` names evaluators (the nudge `type`), plus `settings`. Tables go to the log.
+(2) `none` coverage answers 503; `partial` keeps the 200 and adds keys. The 200 keeps delivering
+the signals that were read, as the rule for Discovery's additive refusals does.
+(3) At night `free_time_block` needs no read, so an outage of the other four is `partial`, not 503.
+That is true: that evaluator did run.
+(4) A Live tick never answers 503 for Sense sources; it reports them.
+(5) An Open-Meteo failure is not in scope. `getWeatherContext` returns null for both "no forecast"
+and "fetch failed", so it cannot be told apart without changing `lib/weatherCache.ts`. It is recorded
+below as residual.
+
+**Tests (node:test).** `artifacts/api-server/src/test/compassSenseReadHonesty.test.ts`: 37 cases. Before the fix, 26 of the first 31 were red; the 5 green
+were byte pins on healthy shapes. The six settings and nudges-log cases were written later: 4 were red
+before their fix, and 2 are healthy-body pins. After the fix, 37/37 pass. compass-sense 17/17,
+compass-live 13/13, compass-sense-scheduler 7/7 and compassRevocationAndAvailability 14/14 are
+unchanged and green. Each evaluator has failed-table cases and a healthy twin.
+23 mutations, each applied alone, all red, and each restored with a sha256 match: every `senseRows` call
+site reverted to `data ?? []`, each catch returning `[]` again, the trip `unread` throw removed, the
+settle step dropping the name, the coverage threshold off by one, the 503 removed, the partial keys
+removed (Sense and Live), the scheduler's error and evaluated counting, the Live tick dropping
+`failedSources`, the settings flag at each of its three points, and the nudges-log error and catch.
+
+**Client.** No `sense/check` or `sense/nudges` client exists on this base. Pending PR #542's
+panel must read `partial`/`failedSources` on 200 and treat 503 `degraded_unavailable` as
+error-with-retry, never as "no nudges". `CompassLive.tsx` reads `delivered` only and makes no
+"nothing to report" claim, so it was left unchanged.
+
+**What is NOT closed.** `getSenseSettings` still answers `passive` to GET/PUT settings over an
+unread row, and PUT then upserts defaults over the categories it could not read.
+`countDeliveredToday` still reads an unread nudge log as 0, which fails the daily cap open.
+`runLiveCheck`'s own settings read falls back to all categories ON. The Open-Meteo case above is also open.
+
+**MOVES NOTHING.** CPH-11 (*real useful signals · presence · no spam · permissions*) and CPH-12
+are unaffected in their criteria. This removes a false "nothing to nudge", and adds no signal and
+no gate. What would turn this red: any evaluator read that drops `error` again, or a Sense or Live
+answer that reports `evaluated: 0` with no `failedSources` while a source is unread.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/routes/verification.ts — §18.4 cites line 257 only to report that census-trust §14.6's TV-1a sentence is false at HEAD. The route is Trust's subject, graded in census-trust as TV-1a, and no Compass row rests on it.
@@ -3697,3 +3894,23 @@ both holding on statements this census had already made correctly.
 - NOT-GRADED: artifacts/api-server/src/services/ranking/DiscoveryRankingService.ts — §27.6 item 1 names PERSISTED_RANK_SURFACES as the list that turns a retired rank_events surface into a compile error, in a defect no row had asked about. Discovery ranking is census-discovery's subject, and no Compass verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/services/passport/PassportProjectionService.ts — §27.6 item 5 records a whitespace-only display-name fix in buildIdentity, again a defect no row had asked about. The identity projection is census-passport's subject; CP-02 rests on PassportConsumerProjections and the Compass call site, not on this file.
 - NOT-GRADED: artifacts/api-server/src/server/trips/readRoutes/tripProjections.ts — §28.2 names it only as the place a truncated grep's five hits came from, the method error that section records. It is a Trips read route; CT-02 rests on the Compass call site in CompassTools.ts and the raw reads in CompassTripContext.ts, not on this file.
+- NOT-GRADED: artifacts/api-server/src/test/tmLiveSurfaces.test.ts — §29.4's route suite for the three server fixes; controlled evidence for built work, no Compass verdict rests on it
+- NOT-GRADED: travel-buddy-standalone/src/components/DailyBriefCard.tsx — §29.1's brief card, built work for COMP-F14; no Compass row grades the daily brief
+- NOT-GRADED: artifacts/api-server/src/routes/dailyBrief.ts — §29.1 cites the dismiss route and applyDismissals it fixed; the daily brief is not a Compass row's subject
+- NOT-GRADED: travel-buddy-standalone/src/services/intelligence.ts — §29.1 cites executeBriefAction, the client wrapper it wired; no Compass verdict rests on it
+- NOT-GRADED: travel-buddy-standalone/src/features/live/useSenseAutoCheck.ts — §29.2's Sense check trigger, built work for COMP-F11; no Compass row grades it
+- NOT-GRADED: travel-buddy-standalone/app/(tabs)/_layout.tsx — §29.2 cites only the line that mounts the Sense check hook; this census grades nothing in the tabs layout
+- NOT-GRADED: travel-buddy-standalone/src/features/live/SenseNudgesPanel.tsx — §29.2's Sense panel, built work for COMP-F11; no Compass row grades it
+- NOT-GRADED: travel-buddy-standalone/app/compass-preferences.tsx — §29.2 cites only the panel's mount in the Sense section; no Compass verdict rests on the preferences screen
+- NOT-GRADED: travel-buddy-standalone/src/features/live/placeLive.ts — §29.3's decision client, built work for COMP-F15; CX-03/CX-05 rest on the server route and its flag, not on this file
+- NOT-GRADED: travel-buddy-standalone/src/features/live/PlaceLivePanel.tsx — §29.3's decision card, built work for COMP-F15; no Compass verdict rests on it
+- NOT-GRADED: travel-buddy-standalone/app/place/[id].tsx — §29.3 cites only the panel's mount on the classic place layout; this census grades nothing on the place screen
+- NOT-GRADED: travel-buddy-standalone/src/components/place/living/LivingDestinationPage.tsx — §29.3 cites only the panel's mount on the living place layout; no Compass verdict rests on it
+- NOT-GRADED: travel-buddy-standalone/src/components/__tests__/DailyBriefCard.tmLive.component.test.tsx — §29.4's suite for the brief card; no verdict rests on it
+- NOT-GRADED: travel-buddy-standalone/src/features/live/__tests__/senseNudges.component.test.tsx — §29.4's suite for the Sense panel and trigger; no verdict rests on it
+- NOT-GRADED: travel-buddy-standalone/src/features/live/__tests__/PlaceLivePanel.component.test.tsx — §29.4's suite for the place panel; no verdict rests on it
+- NOT-GRADED: artifacts/api-server/src/lib/compassSenseScheduler.ts — §30 cites it only as a consumer of the Sense run that now counts a user with unread sources as an error. No Compass row grades the background sweep; CPH-11 rests on the engine's gates in CompassSenseEngine.ts, not on this file.
+- NOT-GRADED: travel-buddy-standalone/src/components/compass/CompassLive.tsx — §30 names it only to record that it was checked and left unchanged, because it reads `delivered` and makes no "nothing to report" claim. No Compass row verdict rests on the client panel.
+- NOT-GRADED: artifacts/api-server/src/lib/discoveryRefusal.ts — §30 names it only as the codebase's statement of the failure-honesty rule (DV-83) that the Sense fix follows. It is Discovery's refusal vocabulary, graded in census-discovery, and no Compass verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/lib/weatherCache.ts — §30 names it only to record a residual it left open: `getWeatherContext` answers null for both "no forecast" and "fetch failed". No Compass row grades the weather cache, and the weather evaluator's verdict rests on CompassSenseEngine.ts.
+- NOT-GRADED: artifacts/api-server/src/test/compassSenseReadHonesty.test.ts — §29's controlled evidence for a change that moves no row. No Compass verdict rests on it, and CPH-11/CPH-12 keep the evidence they already cite.
