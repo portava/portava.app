@@ -15,6 +15,7 @@
  *   TT4  a `partial` answer → its cards AND the partial line
  *   TT5  the failed state's retry reads again, and a good answer replaces it
  *   TT6  a late answer from an earlier open never writes the tray
+ *   TT6b ... nor a late FAILURE over the newer open's cards
  *   TT7  ... nor ends the newer open's loading state while its own read is still in flight
  *   TT8  a `partial` answer with no cards → the failed state, never "couldn't find"
  */
@@ -127,5 +128,20 @@ describe('CompassTelegraphTray over a failed read (§107)', () => {
     await settled();
     expect(screen.queryByText(EMPTY)).toBeNull();
     expect(screen.queryByText(TELEGRAPH_TRAY_FAILED)).toBeTruthy();
+  });
+
+  it('TT6b a late failure from an earlier open never replaces the newer open\'s cards', async () => {
+    let resolveFirst: (v: unknown) => void = () => {};
+    mockFetch
+      .mockImplementationOnce(() => new Promise((r) => { resolveFirst = r; }))
+      .mockResolvedValueOnce({ ok: true, cards: [CARD], city: 'Paris' });
+    const view = await mount(true);
+    await view.rerender(<CompassTelegraphTray visible={false} threadId="t-1" onDismiss={() => {}} onShareCard={() => {}} />);
+    await view.rerender(<CompassTelegraphTray visible threadId="t-1" onDismiss={() => {}} onShareCard={() => {}} />);
+    await waitFor(() => expect(screen.queryByText('Jazz night')).toBeTruthy());
+    resolveFirst({ ok: false, error: 'http_503' });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText('Jazz night')).toBeTruthy();
+    expect(screen.queryByText(TELEGRAPH_TRAY_FAILED)).toBeNull();
   });
 });

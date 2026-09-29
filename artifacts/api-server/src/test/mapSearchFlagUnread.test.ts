@@ -65,6 +65,7 @@ describe("census-discovery §107 (DV-83, D-W11X2-71): GET /map/search with its f
     _setTestClient(client("absent") as any, true);
     const r = await get();
     assert.deepEqual(Object.keys(r.body), OFF_KEYS);
+    assert.equal(r.body.enabled, false, "an absent flag row is off, never served");
   });
 
   it("MS1 (V9-MS1) the flag read fails → enabled:false WITH refusal flag_unreadable, never the flag-off body alone", async () => {

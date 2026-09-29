@@ -249,7 +249,7 @@ async function fetchUpcomingEvents(
     const { data, error } = await q.limit(limit * 3);
     // A read that errored is not an empty calendar. Both still surface as no
     // events; only one of them is a fact about the world.
-    if (error || (profile?.locationUnread && !profile.currentCity)) return unusable([]);  // census-discovery §107 (D-W11X2-73): events for no city are not this viewer's events
+    if (error) return unusable([]); if (profile?.locationUnread && !profile.currentCity) return unusable([]);  // census-discovery §107 (D-W11X2-73): events for no city are not this viewer's events
     const hidden = hiddenUserIds(profile);
     return sourced(((data ?? []) as any[])
       .filter((e) => !hidden.has(e.host_id as string))
