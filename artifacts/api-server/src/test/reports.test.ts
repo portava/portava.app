@@ -93,6 +93,10 @@ interface FakeState {
   posts?:                      Record<string, any>[];
   trips?:                      Record<string, any>[];
   moderation_actions?:         Record<string, any>[];
+  // A message/thread report needs a reporter who can see the conversation
+  // (lib/reportTargetAccess.ts), so those cases seed the message and membership.
+  messages?:                   Record<string, any>[];
+  message_thread_members?:     Record<string, any>[];
 }
 
 function makeFakeClient(
@@ -114,6 +118,8 @@ function makeFakeClient(
     if (table === "posts")                      return (state.posts ?? []).map((r) => ({ ...r }));
     if (table === "trips")                      return (state.trips ?? []).map((r) => ({ ...r }));
     if (table === "moderation_actions")         return (state.moderation_actions ?? []).map((r) => ({ ...r }));
+    if (table === "messages")                   return (state.messages ?? []).map((r) => ({ ...r }));
+    if (table === "message_thread_members")     return (state.message_thread_members ?? []).map((r) => ({ ...r }));
     return [];
   }
 
@@ -260,7 +266,12 @@ describe("reports routes", () => {
     });
 
     it("1b. message report accepted with target_type=message", async () => {
-      setClients(makeFakeClient({}, USER_B_TOKEN, USER_B_ID));
+      // USER_B is an active member of the thread the message is in.
+      const threadId = "88888888-0001-0002-0003-888888880002";
+      setClients(makeFakeClient({
+        messages: [{ id: MSG_ID, thread_id: threadId, sender_id: USER_A_ID, created_at: "2026-05-01T00:00:00.000Z" }],
+        message_thread_members: [{ thread_id: threadId, user_id: USER_B_ID, left_at: null }],
+      }, USER_B_TOKEN, USER_B_ID));
       const r = await req("POST", "/reports", { target_type: "message", target_id: MSG_ID, reason_code: "harassment" }, USER_B_TOKEN);
       assert.equal(r.status, 201, JSON.stringify(r.body));
       assert.ok(r.body.reportId);
@@ -290,7 +301,8 @@ describe("reports routes", () => {
 
     it("1i. thread report accepted with target_type=thread", async () => {
       const threadId = "88888888-0001-0002-0003-888888880001";
-      setClients(makeFakeClient({}, USER_A_TOKEN, USER_A_ID));
+      // USER_A is an active member of the reported thread.
+      setClients(makeFakeClient({ message_thread_members: [{ thread_id: threadId, user_id: USER_A_ID, left_at: null }] }, USER_A_TOKEN, USER_A_ID));
       const r = await req("POST", "/reports", { target_type: "thread", target_id: threadId, reason_code: "harassment" }, USER_A_TOKEN);
       assert.equal(r.status, 201, JSON.stringify(r.body));
       assert.ok(r.body.reportId);

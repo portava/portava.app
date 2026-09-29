@@ -8394,6 +8394,48 @@ for `entry_unverified`, which reached the verdict union from §45 while
 `riskBandFor` was being written here — that was resolved in code and pinned by a
 test, not by a verdict move. No row's evidence changed.
 
+## §47 — 2026-09-29: the test airport can be seeded from an admin screen (lane TM-admin, WP-21, LAY-F16). NO ROW MOVES
+
+Branch `lane-tm-admin`, cut from `main` at `18518e982`. `head_commit` is not re-declared. Controlled
+evidence only. No flag was touched, no migration was added, nothing was read from or written to any
+database.
+
+### 47.1 What was missing
+
+Every layover flow needs its test airport's profile first, and LAY-F16 was server-only:
+`artifacts/api-server/src/routes/airport.ts:3856#router.post("/admin/airport/profiles"`,
+`artifacts/api-server/src/routes/airport.ts:3875#router.get("/admin/airport/profiles"`,
+`artifacts/api-server/src/routes/airport.ts:4001#router.get("/admin/airport/caution-zones"` and
+`artifacts/api-server/src/routes/airport.ts:4037#router.post("/admin/airport/caution-zones"`, all
+behind `requireAdmin`. They are unchanged by this lane.
+
+### 47.2 What was built
+
+`travel-buddy-standalone/app/admin/airports.tsx:73#export default function AdminAirportsScreen(`:
+search the profiles by IATA code, name or city (30 shown at a time; the list has 3,206 rows in
+production); add or edit one (the route upserts on the IATA code); select one to list and add its
+caution zones. Both forms are validated against the route schemas before a request by
+`travel-buddy-standalone/src/services/adminConsole.ts:276#export function buildAirportProfileBody(`
+and `travel-buddy-standalone/src/services/adminConsole.ts:305#export function buildCautionZoneBody(`.
+The route already refuses (503) rather than serving an empty list when profiles cannot be read; the
+screen shows that refusal as an error with a retry.
+
+### 47.3 Tests and mutations
+
+`travel-buddy-standalone/app/admin/__tests__/AdminConsoleScreens.component.test.tsx:233#describe('Airports (LAY-F16)'`
+(3 cases) and the airport-builder cases in
+`travel-buddy-standalone/src/services/__tests__/adminConsole.services.component.test.ts`. Mutation: a
+failed profile read rendered as "no airport profile exists yet" (1 red), restored by sha256.
+
+### 47.4 What this does not claim, and what stays API-only
+
+- No L row moves; none grades an admin surface.
+- Verified landside places (`PATCH /api/admin/airport/verified-places/:id`) and curated dwell
+  (`PUT /api/admin/airport/place-dwell/:placeId`) stay API-only; their calls are in
+  `docs/ops/testing-mode-flows.md`.
+- Red if: the screen shows an empty list for a failed read, or sends a profile the route's schema
+  would refuse.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/test/docCitations.test.ts — The citation guard's own suite. §27.10 names its case 9 and §30.4 names it as npm test's one failing test; both report on the guard that measured this census. It is machinery this census reports on, not a subject it grades.
@@ -8402,3 +8444,7 @@ test, not by a verdict move. No row's evidence changed.
 - NOT-GRADED: artifacts/api-server/src/migrations/2795_trip_kernel_write_guards.sql — §17.8 item 2 names this Trips migration only as the pattern the two unwritten layover migrations should follow: guarded preconditions, a postcondition block and a rollback. It is census-trips' subject, and no layover row rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/tripOpportunityProjection.test.ts — §17.9 item 7's integration correction cites this Trips suite's frozen clock only to explain why the branch's two suite failures were absent on the merged tree. That is a count of test runs, and no layover row rests on the suite.
 - NOT-GRADED: artifacts/api-server/src/lib/capability/snapshots/current.ts — §40.2 cites it only to identify which production capture was read. Its one job is to name the current snapshot file. The finding that 2860 is applied rests on that capture and on production-applied-migrations.json, which this census watches.
+- NOT-GRADED: travel-buddy-standalone/src/services/adminConsole.ts — §47 cites its airport and caution-zone form builders; client wrapper over unchanged admin routes, no L verdict rests on it.
+- NOT-GRADED: travel-buddy-standalone/app/admin/airports.tsx — §47's admin airport screen; built work for LAY-F16, no L verdict rests on it.
+- NOT-GRADED: travel-buddy-standalone/app/admin/__tests__/AdminConsoleScreens.component.test.tsx — §47.3's admin-screen suite; no verdict rests on it.
+- NOT-GRADED: travel-buddy-standalone/src/services/__tests__/adminConsole.services.component.test.ts — §47.3's service suite; no verdict rests on it.
