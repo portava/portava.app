@@ -2863,9 +2863,9 @@ touched.
 
 ### 46.5 What is left open
 
-- **The route's own success message is untrue.** It answers "Your circle has been notified" while
+- **The route's own success message was untrue — CLOSED 2026-09-29 (lane TM-create).** It answered "Your circle has been notified" while
   notifying only the host (`circleNeedHelpAlertSilence.test.ts` quotes it). The client never shows
-  it; correcting the server copy belongs to the circle area and is left for its owner.
+  it; the server copy now names the host only (docs/ops/testing-mode-flows.md, TM-create section).
 - **Only `go_to` is issued.** The route also accepts `search`, `select`, `filter` and `clear`; the
   map's Compass bar only ever needs a place to fly to. Nothing on the map yet asks for the others.
 - Red if: a Compass fly calls the device geocoder directly again; the client applies an

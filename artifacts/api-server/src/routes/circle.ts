@@ -1800,7 +1800,7 @@ router.post("/circle/contexts/:type/:id/need-help", async (req, res) => {
       // than re-levelled, because raising it would re-level all eleven.
       req.log?.error?.(
         { err, contextType: type, contextId: id, userId: user.id },
-        "need-help host alert FAILED — the emergency alert reached NOBODY, and the caller was told their circle was notified",
+        "need-help host alert FAILED — the emergency alert reached NOBODY, and the caller was told their host is being alerted",
       );
     }
   })();
@@ -1808,7 +1808,7 @@ router.post("/circle/contexts/:type/:id/need-help", async (req, res) => {
   // IMPORTANT: response MUST NOT expose needs_help bool, GPS, or emergency details.
   res.status(200).json({
     acknowledged: true,
-    message:      "Your circle has been notified. Stay safe.",
+    message:      "We're alerting your host. Only the host is notified, not the rest of your circle. Stay safe.", // TM-create: the block above alerts the HOST only
   });
 });
 

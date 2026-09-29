@@ -147,7 +147,7 @@ const CHANGED: readonly Changed[] = [
     file: SF.placePicker, draws: /<GlobalPlacePicker\b/, consumers: [
       'app/(rent-a-buddy)/become/apply.tsx', 'app/(rent-a-buddy)/buddy-dashboard/requests.tsx', 'app/(rent-a-buddy)/index.tsx', 'app/(rent-a-buddy)/marketplace.tsx',
       'app/(rent-a-buddy)/request-buddy.tsx', 'app/(rent-a-buddy)/search.tsx', 'app/(rent-a-buddy)/waitlist.tsx', 'app/events/create/index.tsx', 'app/gems/submit.tsx',
-      'app/memory/edit.tsx', 'app/trip/edit.tsx', 'app/trip/new.tsx', 'src/components/EventComposerSheet.tsx', 'src/components/HighlightComposer.tsx',
+      'app/memory/edit.tsx', 'app/memory/new.tsx', 'app/trip/edit.tsx', 'app/trip/new.tsx', 'src/components/EventComposerSheet.tsx', 'src/components/HighlightComposer.tsx',
       'src/components/ManualCityPicker.tsx', 'src/components/MeetupCreationSheet.tsx', 'src/components/MemoriesTab.tsx', 'src/components/PostcardComposer.tsx',
       'src/components/PulseCreate.tsx', 'src/components/RouteBuilderSheet.tsx', 'src/components/circle/MeetingPointCard.tsx', 'src/components/discovery/DestinationBar.tsx',
       'src/components/itinerary/GeofenceSettingsSheet.tsx', 'src/components/itinerary/PlanItemSheet.tsx', 'src/components/media/AddGemForm.tsx', 'src/components/trip/DestinationListEditor.tsx',
@@ -334,7 +334,7 @@ test('the counts: consumers, pairs, improved, unchanged, worse', () => {
   };
   assert.equal(counts.improved + counts.unchanged + counts.worse, counts.pairs);
   // Recorded in census-media §33. A change to any of these is a change to what §33 claims.
-  assert.deepEqual(counts, { changedComponents: 16, consumers: 67, pairs: 310, asserted: 245, improved: 103, unchanged: 207, worse: 0, failingBefore: 89, failingAfter: 0 }); // §33.13 (was: assert.deepEqual(counts, { changedComponents: 10, consumers: 54, pairs: 205, asserted: 160, improved: 74, unchanged: 131, worse: 0, failingBefore: 65, failingAfter: 0 }), before the nested sheets)
+  assert.deepEqual(counts, { changedComponents: 16, consumers: 68, pairs: 310, asserted: 245, improved: 103, unchanged: 207, worse: 0, failingBefore: 89, failingAfter: 0 }); // HM-F08 (TM-create): +1 consumer, app/memory/new.tsx opens GlobalPlacePicker; its pairs are the sheet's own, so pairs do not move. §33.13 (was: assert.deepEqual(counts, { changedComponents: 10, consumers: 54, pairs: 205, asserted: 160, improved: 74, unchanged: 131, worse: 0, failingBefore: 65, failingAfter: 0 }), before the nested sheets)
 });
 
 test('print the before/after table when SHEET_CONTRAST_TABLE=1', () => {
