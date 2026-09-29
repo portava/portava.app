@@ -85,3 +85,58 @@ export function useRentABuddyFlag(): { enabled: boolean; loading: boolean } {
 
   return { enabled, loading };
 }
+
+// ── Tri-state read (testing mode, lane tm-rab) ────────────────────────────────
+//
+// `_resolveFlag` answers `false` both when the flag is OFF and when the flags
+// could not be READ, so the layout showed the same "coming soon" screen for a
+// switched-off feature and for a network failure. The layout needs the three
+// apart: OFF is a gate refusal (name the gate, say what unblocks it), UNKNOWN is
+// a failed read (error with retry). An UNKNOWN is never cached, so a retry
+// really fetches again; ON/OFF share the existing cache and TTL.
+
+export type RentABuddyFlagState = 'on' | 'off' | 'unknown';
+
+export async function _resolveFlagState(apiBase: string, nowMs = Date.now()): Promise<RentABuddyFlagState> {
+  if (_cachedEnabled !== null && nowMs - _cacheTs < CACHE_TTL_MS) {
+    return _cachedEnabled ? 'on' : 'off';
+  }
+  try {
+    const r = await fetch(`${apiBase}/api/feature-flags`);
+    if (!r.ok) return 'unknown';
+    const body = await r.json() as { flags?: Record<string, boolean> };
+    if (!body || typeof body.flags !== 'object' || body.flags === null) return 'unknown';
+    const val = body.flags['rent_buddy_enabled'] === true;
+    _cachedEnabled = val;
+    _cacheTs = nowMs;
+    return val ? 'on' : 'off';
+  } catch {
+    return 'unknown';
+  }
+}
+
+/** The layout's gate read: loading, on, off (a gate refusal) or unknown (a failed read), with a retry. */
+export function useRentABuddyGate(): { state: RentABuddyFlagState | 'loading'; retry: () => void } {
+  const [state, setState] = useState<RentABuddyFlagState | 'loading'>(
+    _cachedEnabled === null ? 'loading' : (_cachedEnabled ? 'on' : 'off'),
+  );
+  const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    const now = Date.now();
+    if (_cachedEnabled !== null && now - _cacheTs < CACHE_TTL_MS) {
+      setState(_cachedEnabled ? 'on' : 'off');
+      return;
+    }
+    setState('loading');
+    _resolveFlagState(API_BASE, now)
+      .then((s) => { if (!cancelled) setState(s); })
+      .catch(() => { if (!cancelled) setState('unknown'); });
+    return () => { cancelled = true; };
+  }, [attempt]);
+
+  // A retry re-reads the flag: it drops the cached ON/OFF, so "Check again" on
+  // the OFF state sees an admin's flip without waiting out the TTL.
+  return { state, retry: () => { _resetFlagCache(); setAttempt((a) => a + 1); } };
+}

@@ -265,10 +265,10 @@ export interface AdminSupportReport {
 
 export async function getAdminSupportReports(
   status?: string,
-): Promise<AdminSupportReport[]> {
+): Promise<AdminApiResult<AdminSupportReport[]>> {
   const qs = status ? `?status=${encodeURIComponent(status)}` : '';
   const res = await adminGet<{ reports: AdminSupportReport[] }>(`/api/rent-a-buddy/admin/support/reports${qs}`);
-  return res.ok && res.data ? res.data.reports : [];
+  return res.ok ? { ok: true, data: res.data?.reports ?? [] } : res;
 }
 
 export async function updateSupportReport(
@@ -296,10 +296,10 @@ export interface AdminRiskBuddy {
   nightlife_admin_approved: boolean;
 }
 
-export async function getAdminRiskReview(status?: string): Promise<AdminRiskBuddy[]> {
+export async function getAdminRiskReview(status?: string): Promise<AdminApiResult<AdminRiskBuddy[]>> {
   const qs = status ? `?status=${encodeURIComponent(status)}` : '';
   const res = await adminGet<{ profiles: AdminRiskBuddy[] }>(`/api/rent-a-buddy/admin/risk-review${qs}`);
-  return res.ok && res.data ? res.data.profiles : [];
+  return res.ok ? { ok: true, data: res.data?.profiles ?? [] } : res;
 }
 
 export async function updateRiskStatus(
@@ -343,23 +343,23 @@ export interface LaunchControl {
   updated_at: string;
 }
 
-export async function getLaunchControls(): Promise<LaunchControl[]> {
+export async function getLaunchControls(): Promise<AdminApiResult<LaunchControl[]>> {
   const res = await adminGet<{ controls: LaunchControl[] }>('/api/rent-a-buddy/admin/launch-controls');
-  return res.ok && res.data ? res.data.controls : [];
+  return res.ok ? { ok: true, data: res.data?.controls ?? [] } : res;
 }
 
 export async function createLaunchControl(
-  data: Partial<LaunchControl>,
+  data: LaunchControlInput,
 ): Promise<{ ok: boolean; control?: LaunchControl; error?: string }> {
-  const res = await adminPost<{ control: LaunchControl }>('/api/rent-a-buddy/admin/launch-controls', data as Record<string, unknown>);
+  const res = await adminPost<{ control: LaunchControl }>('/api/rent-a-buddy/admin/launch-controls', { ...data });
   return res.ok ? { ok: true, control: res.data?.control } : { ok: false, error: res.error };
 }
 
 export async function updateLaunchControl(
   controlId: string,
-  data: Partial<LaunchControl>,
+  data: Partial<LaunchControlInput>,
 ): Promise<{ ok: boolean; error?: string }> {
-  const res = await adminPatch(`/api/rent-a-buddy/admin/launch-controls/${controlId}`, data as Record<string, unknown>);
+  const res = await adminPatch(`/api/rent-a-buddy/admin/launch-controls/${controlId}`, { ...data });
   return res.ok ? { ok: true } : { ok: false, error: res.error };
 }
 
@@ -373,4 +373,70 @@ export async function fetchAdminAnalytics(
   );
   if (!res.ok && res.error === 'forbidden') throw new Error('forbidden');
   return res.ok && res.data ? res.data : null;
+}
+
+// ── Testing-mode wiring (lane tm-rab, WP-01) ───────────────────────────────────
+//
+// Appended at the foot so the file stays line-neutral for docs/admin/moderation-coverage.md,
+// which cites it by line.
+
+/**
+ * The launch-control fields exactly as POST/PATCH /admin/launch-controls read
+ * them (camelCase; the route destructures these names). `createLaunchControl`
+ * used to take `Partial<LaunchControl>` — the snake_case ROW shape — which the
+ * route never reads, so every field fell back to the route's defaults.
+ * `country_code` / `city` / `category` form the control's key and are set only
+ * on create; PATCH accepts the policy fields.
+ */
+export interface LaunchControlInput {
+  countryCode?: string | null;
+  city?: string | null;
+  category?: string | null;
+  enabled?: boolean;
+  waitlistOnly?: boolean;
+  minAge?: number;
+  nightlifeMinAge?: number;
+  requireIdVerification?: boolean;
+  requirePhoneVerification?: boolean;
+  notes?: string | null;
+}
+
+// ── Review moderation (PLAT-F49) ───────────────────────────────────────────────
+
+export type ReviewModerationStatus = 'pending_moderation' | 'approved' | 'rejected' | 'auto_approved';
+
+/** A rent_buddy_reviews row as GET /admin/reviews returns it (raw columns). */
+export interface AdminReview {
+  id: string;
+  booking_id: string;
+  reviewer_id: string;
+  reviewee_id: string;
+  role: 'traveler' | 'buddy' | string;
+  rating: number;
+  body: string | null;
+  safety_score: number | null;
+  communication_score: number | null;
+  punctuality_score: number | null;
+  moderation_status: ReviewModerationStatus | string;
+  is_public: boolean;
+  created_at: string;
+}
+
+export async function listAdminReviews(
+  moderationStatus: ReviewModerationStatus = 'pending_moderation',
+): Promise<AdminApiResult<{ reviews: AdminReview[]; total: number }>> {
+  const res = await adminGet<{ reviews: AdminReview[]; total: number }>(
+    `/api/rent-a-buddy/admin/reviews?moderationStatus=${encodeURIComponent(moderationStatus)}`,
+  );
+  return res.ok ? { ok: true, data: { reviews: res.data?.reviews ?? [], total: res.data?.total ?? 0 } } : res;
+}
+
+export async function approveReview(reviewId: string): Promise<{ ok: boolean; error?: string }> {
+  const res = await adminPost(`/api/rent-a-buddy/admin/reviews/${reviewId}/approve`, {});
+  return res.ok ? { ok: true } : { ok: false, error: res.error };
+}
+
+export async function rejectReview(reviewId: string, reason?: string): Promise<{ ok: boolean; error?: string }> {
+  const res = await adminPost(`/api/rent-a-buddy/admin/reviews/${reviewId}/reject`, { reason: reason ?? null });
+  return res.ok ? { ok: true } : { ok: false, error: res.error };
 }
