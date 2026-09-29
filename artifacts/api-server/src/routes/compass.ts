@@ -2773,7 +2773,7 @@ router.get("/compass/me/passport/remembers", async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
   try {
     // auth.user.id is the SESSION identity; any ?user_id= in the query is never read.
-    const surface = await buildRememberSurface(sc, auth.user.id);
+    const surface = await buildRememberSurface(sc, auth.user.id, { onReadFailure: (source, reason) => req.log.warn({ source, reason, userId: auth.user.id }, "remembers: a source read failed — its group is reported unavailable, not empty") });
     res.json(surface);
   } catch (err) {
     req.log.error({ err, userId: auth.user.id }, "compass/me/passport/remembers failed");
@@ -2957,7 +2957,7 @@ router.get("/compass/me/recaps", async (req, res) => {
       year: parsed.data.year,
       month: parsed.data.month,
       milestone: parsed.data.milestone,
-      now: new Date(),
+      now: new Date(), onReadFailure: (source, reason) => req.log.warn({ source, reason, userId: auth.user.id }, "recaps: a source read failed — listed as unavailable"),
     });
     res.json(recap);
   } catch (err) {
@@ -2973,7 +2973,7 @@ router.get("/compass/me/on-this-day", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
   try {
-    const surface = await buildOnThisDay(sc, auth.user.id, { now: new Date() });
+    const surface = await buildOnThisDay(sc, auth.user.id, { now: new Date(), onReadFailure: (source, reason) => req.log.warn({ source, reason, userId: auth.user.id }, "on-this-day: a source read failed — listed as unavailable") });
     res.json(surface);
   } catch (err) {
     req.log.error({ err, userId: auth.user.id }, "compass/me/on-this-day failed");

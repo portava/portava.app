@@ -165,3 +165,29 @@ export const KILL_SWITCH_UNKNOWN_MESSAGE =
  * answer a failed read instead. Optional and additive: a caller that passes nothing is unchanged.
  */
 export interface KillSwitchReadStatus { unread?: boolean }
+
+// ── Rent-a-Buddy booking kill switches: WHICH one refused ─────────────────────
+//
+// Two flag names stop Rent-a-Buddy booking creation (FL-06: both are honoured).
+// The five creation paths test them as `A || B` and answered one body for
+// both, `{ error: "feature_disabled" }` — the SAME code the master flag
+// `rent_buddy_enabled` answers with. The app could therefore not tell an
+// operator's emergency stop from "the feature is not launched", nor say which
+// of the two switches to turn off. Testing mode requires a refused gate to say
+// exactly which gate refused and what unblocks it.
+//
+// This does NOT decide whether a booking is stopped: the call sites keep their
+// own `if` unchanged, and only call this on the refusal path to NAME the
+// switch in the body's `gate` field. It reads through `isKillSwitchEngaged`,
+// so a switch whose state could not be read is named exactly as the gate
+// treated it (fail-closed: engaged). If neither reads as engaged by the time
+// this runs (a switch was released between the two reads), the pair's
+// collective name is returned rather than a switch that is not on.
+export const RAB_BOOKING_KILL_SWITCHES = ["disable_rent_buddy_booking", "disable_rab_bookings"] as const;
+
+export async function engagedRabBookingKillSwitch(sc: any): Promise<string> {
+  for (const flag of RAB_BOOKING_KILL_SWITCHES) {
+    if (await isKillSwitchEngaged(sc, flag)) return flag;
+  }
+  return "rab_booking_kill_switch";
+}

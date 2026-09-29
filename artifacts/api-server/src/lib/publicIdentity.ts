@@ -193,3 +193,17 @@ export async function nameVisibilitySetOrNull(sc: any, userIds: Array<string | n
     return null;
   }
 }
+
+/**
+ * nameVisibilitySet, for a caller that can SAY a failure: `null` when the
+ * privacy-settings read failed, instead of the empty set nameVisibilitySet
+ * falls back to. census-discovery §106 (tm-people): GET /users/search drops
+ * every row that matched only on a hidden name, so the empty fallback turned
+ * a failed read into "nobody matched". Callers that can only fail closed keep
+ * nameVisibilitySet; the rule (show_real_name = true) is the same query.
+ *
+ * The same function as nameVisibilitySetOrNull (census-discovery §103), which
+ * landed under that name in parallel; both names stay so neither lane's
+ * callers or citations move.
+ */
+export const readNameVisibilitySet = nameVisibilitySetOrNull;

@@ -2983,7 +2983,7 @@ failure — a 503 as much as a 404 — into *"unavailable or has expired"*.
   and a push tap (`travel-buddy-standalone/src/hooks/useNotificationHandler.ts:32#return data.actionUrl;`) follow it.
 - **The sharer is told the truth.** The start response carries `recipientNotified`; when it is
   false the sharer sees
-  `travel-buddy-standalone/app/(rent-a-buddy)/active.tsx:264#const notice = liveShareNoticeCopy(`,
+  `travel-buddy-standalone/app/(rent-a-buddy)/active.tsx:303#const notice = liveShareNoticeCopy(`,
   whose copy (`travel-buddy-standalone/src/lib/liveShareRecipient.ts:60#export function liveShareNoticeCopy(`)
   says a contact without an account is not on Portava and otherwise says only that the contact was
   not notified. **A block is never disclosed to the sharer.**
@@ -3046,3 +3046,60 @@ added to `CENSUS_SCOPE`: watching them would age this census on changes no verdi
 - NOT-GRADED: artifacts/api-server/src/test/safeReturnLiveShareRecipientNotice.test.ts — §28.4's server suite for the recipient notice
 - NOT-GRADED: travel-buddy-standalone/src/lib/__tests__/liveShareRecipient.test.ts — §28.4's suite for the classifier and the sharer copy
 - NOT-GRADED: travel-buddy-standalone/app/safe-return/__tests__/safeReturnLiveShare.component.test.tsx — §28.4's screen suite for the recipient view's five states
+
+## §29 (lane tm-rab) — 2026-09-29 · Rent-a-Buddy gates are named when they refuse. **NO ROW MOVES.**
+
+Testing-mode work package WP-01 (flows PLAT-F43, F45, F49, F50, F55, F56) wired
+the Rent-a-Buddy booking lifecycle and admin moderation screens. The full record
+— what a tester does, what the server writes, decisions, tests and mutations — is
+in `docs/ops/testing-mode-flows.md` (section "TM-RAB lane (WP-01)"). This census
+records only what touches the gates it already grades (TV-2a, the Rent-a-Buddy
+verification door, §21).
+
+**What changed at the gates.** Nothing about WHETHER a Rent-a-Buddy request is
+refused. What changed is that a refusal now says WHICH gate refused, so the app
+can show it as its own state (the gate's name, and what unblocks it) instead of
+an empty list or a generic error:
+
+- the master switch's 403 carries `gate`:
+  `artifacts/api-server/src/routes/rentABuddy.ts:302#gate: "rent_buddy_enabled"`;
+- the booking kill switches answered the same `feature_disabled` as the master
+  switch; each refusal now names the engaged switch through
+  `artifacts/api-server/src/lib/featureFlags.ts:188#export async function engagedRabBookingKillSwitch(`,
+  which reads through the existing fail-closed `isKillSwitchEngaged` and decides
+  nothing;
+- the client's single mapping from refusal to sentence is
+  `travel-buddy-standalone/src/services/rentABuddyGates.ts:216#export function describeGateRefusal(`.
+  `verification_required` there carries the SAME route the §21 door uses
+  (`/profile/verification`, from `bookingRefusalAction`), and the node test
+  `rentABuddy.gates.test.ts` pins that equality, so the door cannot drift apart
+  between the checkout and the new screens.
+
+**Why no row moves.** TV-2a (entry points: Passport profile, Rent-a-Buddy gate)
+is already `C` on the checkout and `become/apply` doors (§21); this adds more
+screens that show the same actionable refusal, which is more of a met criterion,
+not a new one. No Trust score, restriction, verification or report path changed:
+the admin verification override (`PATCH /admin/users/:id/verification`) now
+answers 5xx when its write fails instead of `ok`, and the new admin screen sends
+only the fields the admin chose — neither alters what the override writes when
+it succeeds. TRV2-08 (restrictions applied at booking) is unchanged: the booking
+path still enforces `rent_buddy_user_limits`, not Trust restrictions.
+
+**Freshness.** `rentABuddyMarketplace.ts` and `rentABuddySpec.ts` changed
+line-neutrally (kill-switch refusal body names the switch; offer withdraw is
+compare-and-set on `pending`); the per-file argument is in this census's entry in
+`CENSUS_STALENESS_ACKNOWLEDGED.json`. The lines this census cites in them — the
+marketplace trust-score read behind A16, A17 and TV-U1, and
+`rentABuddySpec.ts:397#router.post(` — did not move.
+
+**Controlled evidence only.** Route tests on a fake client
+(`artifacts/api-server/src/test/rentBuddyTestingModeWiring.test.ts`, RED 22/29 →
+GREEN 29/29, 19 mutations all red) and client node/jest tests. Nothing was
+applied to any database and no flag was changed.
+
+Cited in this section, graded by no row of this census:
+
+- NOT-GRADED: artifacts/api-server/src/lib/featureFlags.ts — the kill-switch naming helper is Rent-a-Buddy machinery that decides nothing; no Trust row rests on it.
+- NOT-GRADED: travel-buddy-standalone/src/services/rentABuddyGates.ts — the client's refusal-to-sentence map; TV-2a's door is graded on the §21 files, which this only mirrors.
+- NOT-GRADED: travel-buddy-standalone/src/services/__tests__/rentABuddy.gates.test.ts — test evidence for the section above, not a graded surface.
+- NOT-GRADED: artifacts/api-server/src/test/rentBuddyTestingModeWiring.test.ts — test evidence for the section above, not a graded surface.

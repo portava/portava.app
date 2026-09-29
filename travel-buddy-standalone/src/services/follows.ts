@@ -182,7 +182,7 @@ export async function searchUsers(query: string, limit = 20): Promise<FollowResu
       return { ok: false, data: null, errorKind: (body as any)?.error ?? 'db_error', message: (body as any)?.message };
     }
     const body = await res.json();
-    return { ok: true, data: body.users ?? [] };
+    if ((body as any)?.refusal) return { ok: false, data: null, errorKind: (body as any).refusal.class ?? 'refused', message: (body as any).refusal.code }; if (!Array.isArray((body as any)?.users)) return { ok: false, data: null, errorKind: 'malformed_response' }; return { ok: true, data: body.users }; // census-discovery §106 (tm-people): a refusal (the search stop) or a body with no list is a failed read, never "nobody matched"
   } catch (e) {
     if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
     return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
@@ -227,7 +227,7 @@ export async function getSuggestedTravelers(limit = 10): Promise<FollowResult<Tr
       return { ok: false, data: null, errorKind: (body as any)?.error ?? 'db_error', message: (body as any)?.message };
     }
     const body = await res.json();
-    return { ok: true, data: body.users ?? [] };
+    if (!Array.isArray((body as any)?.users)) return { ok: false, data: null, errorKind: 'malformed_response' }; return { ok: true, data: body.users }; // §106 (tm-people): a body with no list is not "no suggestions"
   } catch (e) {
     if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
     return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };

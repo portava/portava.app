@@ -3,9 +3,9 @@
  * preferences' "Compass Sense" section.
  *
  *   - "Check now" asks the server to evaluate the traveller's signals and
- *     deliver what passes its gates, then says what it DELIVERED and what it
- *     held back and why — never "nothing to nudge you about", because the
- *     server does not report whether every signal could be read.
+ *     deliver what passes its gates, then says what it DELIVERED, what it held
+ *     back and why, and which checks could NOT run (census-compass §32) —
+ *     never "nothing to nudge you about". A 503 is an error with Try again.
  *   - "Recent nudges" lists what Sense sent in the last 7 days; a tap opens
  *     the surface the nudge points at.
  *   - A failed read or check says it failed, with Try again. Compass off
@@ -18,7 +18,7 @@ import { Bell, RefreshCw } from 'lucide-react-native';
 
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import { failureLine } from './liveApi.ts';
-import { fetchSenseNudges, runSenseCheck, checkSummary, SUPPRESSION_WORDS, type SenseCheck, type SenseNudge, type SenseRead } from './senseNudges.ts';
+import { fetchSenseNudges, runSenseCheck, checkSummary, partialLine, sourceNames, SUPPRESSION_WORDS, type SenseCheck, type SenseNudge, type SenseRead } from './senseNudges.ts';
 
 interface Props {
   /** Test seams — the real service by default. */
@@ -74,9 +74,20 @@ export function SenseNudgesPanel({ load = fetchSenseNudges, check = runSenseChec
           {last.value.suppressed.map((x, i) => (
             <Text key={`${x.type}-${i}`} style={s.sub}>• {x.type.replace(/_/g, ' ')} held back — {SUPPRESSION_WORDS[x.reason] ?? x.reason}</Text>
           ))}
+          {last.value.failedSources.length > 0 ? (
+            <Text style={s.error} testID="sense-check-partial">{partialLine(last.value)}</Text>
+          ) : null}
         </View>
       ) : last?.state === 'unavailable' ? (
-        <Text style={s.error} testID="sense-check-failed">{failureLine(last.call, 'the Sense check')}</Text>
+        <View testID="sense-check-failed">
+          <Text style={s.error}>{failureLine(last.call, 'the Sense check')}</Text>
+          {last.failedSources && last.failedSources.length > 0 ? (
+            <Text style={s.sub}>{`Couldn't run: ${sourceNames(last.failedSources)}.`}</Text>
+          ) : null}
+          <Pressable onPress={() => void checkNow()} disabled={checking} testID="sense-check-retry" accessibilityRole="button">
+            <Text style={s.checkText}>Try again</Text>
+          </Pressable>
+        </View>
       ) : null}
 
       {list === undefined ? (

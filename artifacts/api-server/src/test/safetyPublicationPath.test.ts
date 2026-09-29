@@ -317,8 +317,8 @@ describe("S2 placement — the canonical Place is the only coordinate source", (
     const { snapshots } = await project();
     const poisoned = {
       ...snapshots[0],
-      latitude: 51.5, longitude: -0.1276, lat: 51.5, lng: -0.1276,
-      value: { level: SAFETY_CLAIM_LEVEL, lat: 51.5, lng: -0.1276 },
+      latitude: 51.5123457, longitude: -0.1276543, lat: 51.5123457, lng: -0.1276543,
+      value: { level: SAFETY_CLAIM_LEVEL, lat: 51.5123457, lng: -0.1276543 },
     };
     const r = await readMap(readerWorld([poisoned]));
     assert.ok(r.ok);
@@ -330,7 +330,7 @@ describe("S2 placement — the canonical Place is the only coordinate source", (
       "pin placed by the reporter is a way to point the Map at anything.",
     );
     assert.equal((r.notices[0].payload as any).placeId, PLACE_ID);
-    assert.ok(!JSON.stringify(r.notices[0]).includes("51.5"),
+    assert.ok(!/51\.5123457|0\.1276543/.test(JSON.stringify(r.notices[0])), // digits no ISO timestamp can hold
       "no assertion-supplied coordinate may survive into the object");
   });
 

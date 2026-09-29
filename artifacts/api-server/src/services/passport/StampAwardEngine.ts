@@ -819,7 +819,7 @@ export async function revokeStamp(
   userStampId: string,
   adminId: string,
   reason: string,
-): Promise<{ revoked: boolean; reason: string }> {
+): Promise<{ revoked: boolean; reason: string; failure?: "db_error" }> {
   const nowMs = Date.now();
   const { data, error } = await sc
     .from("user_stamps")
@@ -833,7 +833,9 @@ export async function revokeStamp(
     .select("id, user_id, stamp_definition_id")
     .maybeSingle();
 
-  if (error) return { revoked: false, reason: error.message };
+  // `failure: "db_error"` tells the route this is an outage, not "no such stamp"
+  // (tm-followups A3: both used to answer 404).
+  if (error) return { revoked: false, reason: error.message, failure: "db_error" };
   if (!data) return { revoked: false, reason: "not_found_or_already_revoked" };
 
   const row = data as any;
@@ -852,12 +854,15 @@ export async function revokeStamp(
   });
 
   if (auditErr) {
-    // Roll back the revoke to keep data consistent
-    await sc
+    const auditReason = `audit_write_failed: ${auditErr.message}`;
+    // Roll back the revoke to keep data consistent. A rollback that fails leaves
+    // the stamp revoked with no audit row, so it is named in the reason.
+    const { error: rollbackErr } = await sc
       .from("user_stamps")
       .update({ is_revoked: false, revoked_at: null, revoked_reason: null })
       .eq("id", userStampId);
-    return { revoked: false, reason: `audit_write_failed: ${auditErr.message}` };
+    const rolledBack = rollbackErr ? `; rollback_failed: ${rollbackErr.message}` : "";
+    return { revoked: false, reason: `${auditReason}${rolledBack}`, failure: "db_error" };
   }
 
   // Charge the adjudicated finding: an admin has determined this stamp was not
@@ -900,7 +905,7 @@ export async function restoreStamp(
   userStampId: string,
   adminId: string,
   reason: string,
-): Promise<{ restored: boolean; reason: string }> {
+): Promise<{ restored: boolean; reason: string; failure?: "db_error" }> {
   const nowMs = Date.now();
   const { data, error } = await sc
     .from("user_stamps")
@@ -914,7 +919,7 @@ export async function restoreStamp(
     .select("id, user_id, stamp_definition_id")
     .maybeSingle();
 
-  if (error) return { restored: false, reason: error.message };
+  if (error) return { restored: false, reason: error.message, failure: "db_error" };  // an outage, not "no such stamp" (tm-followups A3)
   if (!data) return { restored: false, reason: "not_found_or_not_revoked" };
 
   const row = data as any;
@@ -932,8 +937,9 @@ export async function restoreStamp(
   });
 
   if (auditErr) {
-    // Roll back the restore to keep data consistent
-    await sc
+    const auditReason = `audit_write_failed: ${auditErr.message}`;
+    // Roll back the restore to keep data consistent. A failed rollback is named.
+    const { error: rollbackErr } = await sc
       .from("user_stamps")
       .update({
         is_revoked:     true,
@@ -941,7 +947,8 @@ export async function restoreStamp(
         revoked_reason: "auto-rollback: audit write failed during restore",
       })
       .eq("id", userStampId);
-    return { restored: false, reason: `audit_write_failed: ${auditErr.message}` };
+    const rolledBack = rollbackErr ? `; rollback_failed: ${rollbackErr.message}` : "";
+    return { restored: false, reason: `${auditReason}${rolledBack}`, failure: "db_error" };
   }
 
   return { restored: true, reason: "restored" };

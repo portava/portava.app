@@ -1008,4 +1008,53 @@ export async function sweepExpiredStories(sc: any): Promise<number> {
   return rows.length;
 }
 
+// ── GET /me/stories — the owner's own live stories (testing-mode WP-06, PLAT-F33) ──
+//
+// `GET /stories/feed` never includes the viewer's own stories and
+// `GET /stories/archive` lists only expired and saved ones, so an owner could
+// not open the story they had just posted — and "save your story to a
+// highlight" (owner-only, above) could not be reached. This is the owner's
+// read: it takes no user id, so it is only ever the caller's own, and applies
+// no audience filter because the owner is every story's audience. Live means
+// state `active` and not yet expired, the feed's own definition. An unreadable
+// table is a 503, never an empty list.
+router.get("/me/stories", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+  if (!(await storiesEnabled(sc))) { sendError(res, "feature_disabled", "Stories are not enabled"); return; }
+
+  const { data: rows, error } = await sc
+    .from("stories")
+    .select(STORY_COLS)
+    .eq("owner_id", user.id)
+    .eq("state", "active")
+    .gt("expires_at", new Date().toISOString())
+    .order("created_at", { ascending: true })
+    .limit(100);
+  if (error) {
+    req.log.error({ err: error, ownerId: user.id }, "stories/me: own stories unreadable — refusing rather than reporting none");
+    sendError(res, "degraded_unavailable", "We could not load your stories. Please try again.");
+    return;
+  }
+
+  const { data: me, error: meErr } = await sc
+    .from("profiles").select("id, handle, name, avatar_url, verified").eq("id", user.id).maybeSingle();
+  if (meErr) req.log.warn({ err: meErr, userId: user.id }, "stories/me: own profile unreadable — serving the stories without a display name");
+
+  res.status(200).json({
+    author: {
+      userId: user.id,
+      handle: (me as any)?.handle ?? null,
+      name: (me as any)?.name ?? null,
+      avatarUrl: (me as any)?.avatar_url ?? null,
+      verified: (me as any)?.verified ?? false,
+    },
+    stories: rows ?? [],
+  });
+}));
+
 export default router;

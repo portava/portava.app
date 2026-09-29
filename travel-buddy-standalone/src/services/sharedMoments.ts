@@ -76,3 +76,108 @@ export function getSharedMomentFeed(id: string, cursor?: string): Promise<{ item
   const query = cursor ? `?${new URLSearchParams({ cursor })}` : '';
   return request(`/api/shared-moments/${encodeURIComponent(id)}/feed${query}`);
 }
+// ════════════════════════════════════════════════════════════════════════════
+// Testing mode WP-07 (HM-F17, HM-F18): participation reads with a TYPED result.
+// Appended at the foot so no cited line above moves.
+//
+// `request()` above answers null for every failure. The participation screens
+// must tell "you are not a member — here is your invitation" from "the network
+// dropped", and must never render an unreadable list as an empty one (DV-83),
+// so these reads keep the server's refusal code.
+// ════════════════════════════════════════════════════════════════════════════
+
+export type MomentReadCode = 'not_member' | 'not_found' | 'forbidden' | 'degraded_unavailable' | 'unauthorized' | 'unavailable' | 'network' | 'server';
+export type MomentRead<T> = { ok: true; data: T } | { ok: false; code: MomentReadCode; message: string };
+
+const MOMENT_READ_FALLBACK: Record<MomentReadCode, string> = {
+  not_member: 'Join this Moment to view it.',
+  not_found: 'This Moment is unavailable.',
+  forbidden: 'You cannot do that in this Moment.',
+  degraded_unavailable: 'This could not be loaded right now. Please try again.',
+  unauthorized: 'Please sign in again.',
+  unavailable: 'Shared Moments are not available on this build.',
+  network: 'You appear to be offline. Check your connection and try again.',
+  server: 'Something went wrong. Please try again.',
+};
+
+async function momentRead<T>(path: string, pick: (body: any) => T | null, init?: RequestInit): Promise<MomentRead<T>> {
+  const failWith = (code: MomentReadCode, message?: unknown): MomentRead<T> =>
+    ({ ok: false, code, message: typeof message === 'string' && message ? message : MOMENT_READ_FALLBACK[code] });
+  if (!isSupabaseConfigured || !apiBase()) return failWith('unavailable');
+  const token = await freshToken();
+  if (!token) return failWith('unauthorized');
+  try {
+    const res = await fetch(`${apiBase()}${path}`, { ...init, headers: { Authorization: `Bearer ${token}`, ...init?.headers } });
+    const body = await res.json().catch(() => null);
+    if (!res.ok) {
+      const code = body?.error;
+      const known: MomentReadCode | null = code === 'not_member' || code === 'not_found' || code === 'forbidden' || code === 'degraded_unavailable' ? code : null;
+      return failWith(known ?? (res.status === 401 ? 'unauthorized' : res.status === 404 ? 'not_found' : 'server'), body?.message);
+    }
+    const data = body === null ? null : pick(body);
+    return data === null ? failWith('server', 'The server answered in a shape this app does not understand.') : { ok: true, data };
+  } catch {
+    return failWith('network');
+  }
+}
+
+const momentPath = (id: string) => `/api/shared-moments/${encodeURIComponent(id)}`;
+
+/** Member view. A non-member gets `not_member` and should be shown the preview. */
+export function loadSharedMoment(id: string): Promise<MomentRead<SharedMomentDetail>> {
+  return momentRead(momentPath(id), (b) => (b?.moment ? b as SharedMomentDetail : null));
+}
+
+/** Approved contributions, as the member feed serves them. */
+export function loadSharedMomentFeed(id: string, cursor?: string): Promise<MomentRead<{ items: SharedMomentFeedItem[]; nextCursor: string | null }>> {
+  const query = cursor ? `?${new URLSearchParams({ cursor })}` : '';
+  return momentRead(`${momentPath(id)}/feed${query}`, (b) => (Array.isArray(b?.items) ? { items: b.items, nextCursor: b.nextCursor ?? null } : null));
+}
+
+export interface SharedMomentPreview {
+  moment: Pick<SharedMoment, 'id' | 'title' | 'description' | 'placeId' | 'placeDayId' | 'tripId' | 'joinPolicy' | 'status'>;
+  /** The caller's membership status: invited, requested, accepted, declined, left… or null. */
+  myStatus: string | null;
+  myRole: MomentRole | null;
+}
+
+/** What a non-member may see in order to act (invitee, requester, suggestion holder, open door). */
+export function getSharedMomentPreview(id: string): Promise<MomentRead<SharedMomentPreview>> {
+  return momentRead(`${momentPath(id)}/preview`, (b) => (b?.moment ? b as SharedMomentPreview : null));
+}
+
+export interface SharedMomentInvite { moment: SharedMomentPreview['moment']; invitedBy: string | null; invitedAt: string | null }
+export function listMySharedMomentInvites(): Promise<MomentRead<SharedMomentInvite[]>> {
+  return momentRead('/api/me/shared-moment-invites', (b) => (Array.isArray(b?.invites) ? b.invites : null));
+}
+
+export interface SharedMomentJoinRequest { userId: string; handle: string | null; name: string | null; avatarUrl: string | null; requestedAt: string | null }
+export function listSharedMomentJoinRequests(id: string): Promise<MomentRead<SharedMomentJoinRequest[]>> {
+  return momentRead(`${momentPath(id)}/requests`, (b) => (Array.isArray(b?.requests) ? b.requests : null));
+}
+
+export interface PendingSharedMomentContribution {
+  id: string; contributorId: string; postId: string | null; mediaAssetId: string | null;
+  caption: string | null; mediaUrl: string | null; thumbnailUrl: string | null; createdAt: string; mine: boolean;
+}
+/** Pending review. Owner/manager: every pending one; a member: only their own. */
+export function listPendingSharedMomentContributions(id: string): Promise<MomentRead<PendingSharedMomentContribution[]>> {
+  return momentRead(`${momentPath(id)}/contributions`, (b) => (Array.isArray(b?.contributions) ? b.contributions : null));
+}
+
+export interface ContributablePost { id: string; caption: string | null; mediaUrl: string | null; thumbnailUrl: string | null; createdAt: string; contributed: boolean }
+/** The caller's OWN posts at this Moment's place (or on its trip). */
+export function listContributablePosts(id: string): Promise<MomentRead<ContributablePost[]>> {
+  return momentRead(`${momentPath(id)}/contributable-posts`, (b) => (Array.isArray(b?.posts) ? b.posts : null));
+}
+
+export interface SharedMomentSuggestion { id: string; momentId: string; kind: 'compass' | 'clustering' | string; reason: string | null; label: string; createdAt: string }
+/** Offered suggestions. Empty (and labeled) when both suggestion capabilities are off. */
+export function listSharedMomentSuggestions(): Promise<MomentRead<SharedMomentSuggestion[]>> {
+  return momentRead('/api/shared-moments/suggestions/mine', (b) => (Array.isArray(b?.suggestions) ? b.suggestions : null));
+}
+
+export function dismissSharedMomentSuggestion(suggestionId: string): Promise<MomentRead<{ ok: true }>> {
+  return momentRead(`/api/shared-moments/suggestions/${encodeURIComponent(suggestionId)}/dismiss`,
+    (b) => (b?.ok === true ? { ok: true as const } : null), { method: 'POST' });
+}

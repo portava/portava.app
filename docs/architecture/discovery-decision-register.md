@@ -2685,3 +2685,41 @@ No APPROVAL REQUIRED entry is added. Arming the stop (D-W10-O-3) and gate 2 (D-W
   - The admin hashtag merge reads a hashtag's usage without a bound (an admin write path, not a Discovery read).
   - GET /circle presence withholds, and does not name, a member over a failed consent read (D-W11X2-75): the Circle owner's coverage wording.
   - The trip map's other five sources (plan items, saved ideas, crew, route plan, Safe Return) keep §33's swallow-to-empty posture (census-trips, as §104.10).
+
+## TM-P — people search failure honesty (testing mode)
+
+*Lane tm-people, 2026-09-29, branch `lane-tm-people` from `f10a4ac9f`. Census section §106. No flag, no migration, nothing under payments; `routes/compass.ts` and `routes/compassSense.ts` untouched.*
+
+### D-TMP-1 — a failed read on `GET /users/search` answers `db_error`; the emergency stop answers the refusal envelope
+
+- **The question.** The route failed CLOSED on five reads (blocks, discovery opt-outs, the name-visibility rule, follow state, the `disable_profile_search` stop) but said so with `200 {users: []}`, the body a genuine miss gets. DV-83's principle (census-discovery §§60–98): a failed read is never presented as empty.
+- **Options considered.**
+  - (a) Keep 200 and add a refusal envelope everywhere. Honest, but the route already answers its own profiles-read failure with `sendError(res, "db_error")`, so a second failure vocabulary inside one handler.
+  - (b) `db_error` for every failed read, and the refusal envelope only for the stop. The stop is a deliberate soft stop whose 200 shape `emergencyFlags.test.ts` pins; a refusal (`feature_disabled`, `profile_search_stopped`, coverage `nothing`) keeps that shape and stops it being byte-identical to a miss.
+  - (c) `db_error` for the stop too. Rejected: it would restate the pinned soft-stop contract, and an engaged stop is not a database failure.
+- **Decision and rationale.** (b). Still fail-closed — no row is served on any of these paths — and healthy bodies are byte-identical (golden G1, captured before the fix). The stop's flag read also fails closed (`isKillSwitchEngaged` treats an unreadable flag as engaged), so an unreadable flag gets the same refusal; the body says nothing was searched, which is true either way.
+- **Follow-state reads.** A failed read of the viewer's follow edges or pending requests used to serve every row as "not following" / "no request sent" — a wrong action on a real row. It now fails the search (`db_error`) instead of serving degraded rows. A failed shared-destination read still only drops the decorative "Both going to …" label, as before.
+- **Reversibility.** Revert the six in-place lines; nothing is stored.
+- **Where.** `artifacts/api-server/src/routes/follows.ts` (line-neutral), `artifacts/api-server/src/lib/publicIdentity.ts` (`readNameVisibilitySet` at the foot; `nameVisibilitySet` unchanged for its other callers). Tests: `src/test/userSearchFailureHonesty.test.ts` G1–G4, F1–F7, K1–K2.
+
+### D-TMP-2 — the client treats a refusal or a list-less 200 as a failed read
+
+- **Decision.** `searchUsers` returns `ok: false` for a body carrying `refusal` (errorKind = the refusal class) and for a 200 whose `users` is not an array (`malformed_response`); `getSuggestedTravelers` does the same for a list-less 200. Every consumer already branches on `ok`, so the refusal never reaches a screen as data.
+- **Where.** `travel-buddy-standalone/src/services/follows.ts` (two lines, in place). Tests: discover D3, D4, S3.
+
+### D-TMP-3 — every people-search surface: a failed state with Retry, a true empty, and a generation guard
+
+- **Decision.** Each surface over `searchUsers` keeps a generation ref (the `loadIdRef` pattern of DiscoveryCategoryTab, D-W11X2-38 on the open branch): a new query, a clear, a closed sheet or a query shorter than the search minimum bumps it, and an answer for an older generation writes nothing — not its rows, not its failure, not its spinner. A failed read shows the surface's failed state with a Retry control (accessibility label "Retry"); a genuine miss keeps the surface's existing "none found" copy. Two surfaces that showed nothing at all for a miss (Create Event's invite step, the media InvitePanel) now say "No travellers found", in the spelling those screens already use, so a miss and a failure are different screens.
+- **Where.** `app/discover.tsx`, `app/close-friends.tsx`, `app/events/create/index.tsx`, `src/components/HostDashboardPanel.tsx`, `src/components/ShareSheet.tsx`, `src/components/DiscoveryShareSheet.tsx`, `src/features/media/components/MediaActionPanels.tsx` (all line-neutral except `app/discover.tsx`, which no document cites by line).
+
+### D-TMP-4 — Close Friends adds only the exact handle
+
+- **The question.** `searchUsers(raw, 1)` took the first `%raw%` match on name, handle or username, so "@ali" could add "@alison" to Close Friends — who then sees Close Friends stories.
+- **Decision.** Search with the default page (20) and add only the row whose handle equals the typed one, case-insensitively; otherwise "Not found". A failed lookup says so and offers Retry.
+- **Reversibility.** One line. **Where.** `app/close-friends.tsx`; tests C4, C5.
+
+### D-TMP-5 — `app/search.tsx` is not edited by this lane
+
+- **The question.** The brief names the global search's people section. On `main` its Travelers tab already routes a failed or refused read to the error state with "Tap to retry" (`travel-buddy-standalone/app/search.tsx:232#if (!res.ok) {`), and `GET /discovery/search` refuses an unreadable block or age set (`artifacts/api-server/src/routes/discoverySearch.ts:243#if (!blockedSet || !ageRestrictedSet) {`). What remains on `main` is the stale-answer race (same query and tab re-run; a superseded page 1 ending the newer one's loading).
+- **Decision.** Leave the file to the open branch `origin/claude/sensing-completion-20260925`, whose commit `c2221c48f` adds exactly that generation guard (D-W11X2-44) on lines this lane would have to rewrite. Editing them here would conflict with that branch and duplicate its fix.
+- **Consequence.** Until that branch lands, the race remains on `main`'s global search. Recorded in §106 as open.

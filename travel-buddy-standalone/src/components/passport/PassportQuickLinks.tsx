@@ -27,7 +27,7 @@ import {
   CalendarClock,
   CalendarCheck,
   Share2,
-  ChevronRight,
+  ChevronRight, Brain, History,
 } from 'lucide-react-native';
 import { space, radius, avatar, icon } from '../../theme/tokens.ts';
 import { PP, PP_LABEL } from '../../theme/passportTokens.ts';
@@ -110,6 +110,22 @@ export function PassportQuickLinks({ onShare }: PassportQuickLinksProps) {
       Icon: CalendarCheck,
       onPress: () => router.push('/passport/availability' as any),
       testID: 'quicklink-availability',
+    },
+    {
+      key: 'remembers',
+      label: 'Compass remembers',
+      sublabel: 'What Portava remembers — forget or correct it',
+      Icon: Brain,
+      onPress: () => router.push('/passport/remembers' as any),
+      testID: 'quicklink-remembers',
+    },
+    {
+      key: 'recaps',
+      label: 'Recaps & On this day',
+      sublabel: 'Your travel, looked back on — private to you',
+      Icon: History,
+      onPress: () => router.push('/passport/recaps' as any),
+      testID: 'quicklink-recaps',
     },
     {
       key: 'share',

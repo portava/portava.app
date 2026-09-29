@@ -31,7 +31,7 @@ import { fetchMyWorld, isMyWorldEmpty } from '../services/mediaProjection.ts';
 import { useLensProjection } from '../hooks/useLensProjection.ts';
 import { PerspectiveMosaic } from '../components/PerspectiveMosaic.tsx';
 import { LensStateView } from '../components/LensStateView.tsx';
-import { MyWorldMemorySection } from '../components/MyWorldMemorySection.tsx';
+import { MyWorldMemorySection } from '../components/MyWorldMemorySection.tsx'; import { FailedUploadsSection } from '../components/FailedUploadsSection.tsx';
 import {
   INITIAL_MY_MEDIA_STATE,
   activeBucket,
@@ -147,7 +147,7 @@ export function MyWorldMediaScreen({ mode, onOpenMedia, center = null, onOpenClu
         // Timeline. The memory section shows regardless of which bucket is active,
         // and self-hides when there is nothing to remember.
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-          {memory ? <MyWorldMemorySection memory={memory} /> : null}
+          {memory ? <MyWorldMemorySection memory={memory} /> : null}<FailedUploadsSection />
 
           {mode === 'timeline' && media.length > 0 ? (
             <Text style={styles.modeNote}>Newest first — your captures over time.</Text>

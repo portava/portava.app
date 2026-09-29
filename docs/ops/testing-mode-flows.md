@@ -460,3 +460,355 @@ non-member, reporting a message id from another thread answers 404 and writes no
 - SEN-F06 (admin half) — `docs/architecture/census-sensing.md` §28.
 - LAY-F16 — `docs/architecture/census-layover.md` §47.
 - Report-route membership — `docs/architecture/census-telegraph.md` §39.
+
+## TM-followups lane — safety follow-ups, Compass memory surfaces (WP-12), media small gaps (WP-17)
+
+Branch `lane-tm-followups`, cut from `main` at `978d886bf`. Controlled evidence only; no flag was
+changed, no migration was added, nothing was applied to any database. The area flows are recorded
+in their censuses (listed at the end); the checks below are what a tester can walk.
+
+### Safety and honesty follow-ups (found by other lanes)
+
+- **Moderation report of a message** (`POST /api/moderation/report`, `subjectType: "message"`):
+  a reporter who is not an active member of the message's thread gets **404** and nothing is filed;
+  a `threadId` the reporter is not in is refused the same way; if membership cannot be read the
+  answer is **503** and nothing is filed. Check: no `moderation_reports` row for the refused cases.
+  Same module and rule as PR #537 (`lib/reportTargetAccess.ts`). Recorded in census-telegraph §40.
+- **Hidden-gem admin: mark sensitive / merge duplicate** (`POST /api/admin/hidden-gems/:id/sensitive`,
+  `/merge`): an unknown gem (or unknown canonical gem) is **404**, a refused write is **db_error**,
+  merging a gem into itself is **400**; success still answers `{ ok: true }` and the row changes
+  (`sensitivity_level`, or `status = 'merged'` + `merged_into`). Census-media §46.3.
+- **Stamp revoke / restore** (`POST /api/admin/stamps/:userStampId/revoke|restore`): a database
+  failure or a failed audit write is **db_error**, not 404; a stamp not in the needed state is
+  still 404. Census-passport §24.
+- **Find Your Circle kill switch** (`POST /api/admin/circle/kill-switch`): every flip goes through
+  `toggle_feature_flag_with_audit`, the path the Feature Flags admin uses. Check: a new
+  `feature_flag_audit_log` row for `find_your_circle_disabled` with the admin as
+  `changed_by_user_id`. A missing function is **503** naming migration 0119; a missing flag row
+  (0108 seeds it) is **404**.
+- **Rent-a-Buddy active session → Safe Return check-in switch**: turning it on records a check-in
+  of type `check_ok` / response `ok`. It used to send `safe_return_enabled`, which the
+  `rent_buddy_checkin_type` enum (0047 + 0113) does not have, and swallowed the refusal. Now a
+  refused check-in turns the switch back off with **Safe Return check-in failed**; the route
+  answers **400** for an unknown type and **db_error** (not `ok: true`) for a refused insert.
+  `start_safe_return` was not used: the route counts it as a distress signal and opens a safety
+  event against the other party. Check: a `rent_buddy_safety_checkins` row, and no
+  `rent_buddy_safety_events` row.
+
+### COMP-F16 — Compass remembers (view, forget, correct)
+
+- **Where:** Passport tab → Explore your passport → **Compass remembers** (`/passport/remembers`).
+- **Expected:** each group Portava keeps (About you, Your interests, What Portava figured out,
+  Saved & created, …). **Forget** asks, then removes the item after the server confirms and shows
+  its message. **Correct** (offered only on inferred items the server allows) takes the right
+  value; the wrong one leaves the view. A group the server could not read says **Couldn't load
+  this section** — never "Nothing here." — and if nothing could be read the screen is an error
+  with **Try again**.
+- **Check:** `memory_feedback` rows (`kind = 'forget'`, or `'incorrect'` with `corrected_value`).
+  Without 2213 on the database, derived memory shows as unavailable and Correct is a stated error.
+
+### COMP-F17 — Recaps and On this day
+
+- **Where:** Passport tab → **Recaps & On this day** (`/passport/recaps`), or from Compass
+  remembers.
+- **Expected:** with `memory_recaps` off, both cards say the feature is **not turned on yet**.
+  With it on: On this day lists earlier years' postcards, trips, stamps and shared moments from
+  today's date; the recap shows This month / This year / last year. A source that could not be read
+  is named ("Couldn't load Saved & created …"); a failed request is an error with Try again. If
+  `memory_feedback` cannot be read the recap is refused rather than built without your forgets.
+
+### COMP-F03 — the whole Compass feed
+
+Decided: **retired from the client.** The Compass tab renders Compass Home and the per-section
+feed; `GET /api/compass/feed` stays as an API route with no screen. Census-compass §31.3.
+
+### MED-F06 — media like, Stamp It and comments
+
+Decided (MD424): media **Like** and **"Stamp It"** are retired from the client; **Stamp** (the
+viewer's stamp button) and **Comments** (the viewer's comment button → the post comment sheet) are
+the reactions. Nothing new to walk: stamp and comment from the media viewer as before. Census-media §46.1.
+
+### MED-F25 — retry a failed upload
+
+- **Where:** Media → My World. When an upload's processing failed, a card lists it.
+- **Expected:** **Retry** queues it again and the row leaves (the server answered 202); with the
+  processing worker off (`media_processing_worker_enabled`) the card says retrying is not
+  available and the uploads are kept. A failed check says **Couldn't check for failed uploads**.
+- **Check:** the `media_assets` row goes `failed → queued` (`processing_terminal = false`).
+  Attachments (`POST /api/media/:id/attachments`) are not wired. Census-media §46.2.
+
+### Where the area flows of this lane are recorded
+
+- COMP-F03, COMP-F16, COMP-F17 — `docs/architecture/census-compass.md` §31.
+- MED-F06, MED-F25 (and the hidden-gem writes) — `docs/architecture/census-media.md` §46.
+- Stamp revoke/restore — `docs/architecture/census-passport.md` §24.
+- Moderation report membership — `docs/architecture/census-telegraph.md` §40.
+
+## TM-RAB lane (WP-01) — Rent-a-Buddy: run the booking, refused gates, admin moderation
+
+Branch `lane-tm-rab`, cut from `main` at `18518e982`. Flows: PLAT-F43, PLAT-F45,
+PLAT-F49, PLAT-F50, PLAT-F55, PLAT-F56. No other Rent-a-Buddy flow in
+`flows.json` is marked "needs code" without being payment work (see Decisions).
+
+**No payment code.** Nothing here takes, holds, refunds or pays out money. Where
+a screen mentions money it keeps the existing honest copy: no payment goes
+through the app; traveller and buddy settle directly.
+
+**Every gate stays on the server.** `rent_buddy_enabled`, the KYC / identity
+readiness gate (`rent_buddy_allow_bookings_without_kyc`), the kill switches
+`disable_rab_bookings` / `disable_rent_buddy_booking`,
+`rent_buddy_global_controls.all_bookings_paused`, city rollout, beta access,
+launch controls and user limits decide exactly what they decided before. The
+server now only *names* the gate in the refusal body (`gate`), and the app shows
+a refused gate as its own state: which gate refused, and what unblocks it.
+
+### Preconditions on the testing app (owner / admin, unchanged by this lane)
+
+- `rent_buddy_enabled` ON (owner decision). Off, every Rent-a-Buddy screen shows
+  the gate state "Rent a Buddy is switched off — REFUSED BY rent_buddy_enabled —
+  an admin turns it on in Admin → Feature flags". If the flags cannot be read the
+  app says so and offers "Try again"; it never shows "off" for a failed read.
+- New bookings additionally need the KYC gate open (an operational identity
+  provider, or the owner turning `rent_buddy_allow_bookings_without_kyc` on), no
+  kill switch engaged, the city rolled out (and beta access for beta cities), and
+  a launch control covering the location if any control exists (deny-by-default).
+  Each of these, when it refuses, is shown by name with its unblock.
+
+### PLAT-F43 — the buddy suggests another time; the traveller answers
+
+- **Where:** buddy: Buddy dashboard → Booking requests → "Suggest" (existing
+  sheet), or any accepted booking → Session → "Suggest another time". Traveller:
+  the booking screen `(rent-a-buddy)/booking/[id]` → Session → Suggested changes.
+- **Steps:** as the buddy, suggest a new date and/or start time. As the traveller,
+  open the booking: the suggestion reads e.g. "Start time: 10:00 → 14:00" with the
+  buddy's reason. Tap **Accept** (the booking's date/time is updated server-side)
+  or **Decline**. The side that suggested sees "You suggested this — waiting for
+  the other side".
+- **Server:** `POST /api/rent-a-buddy/bookings/:id/suggest` writes
+  `buddy_booking_change_requests`; the NEW read
+  `GET /api/rent-a-buddy/bookings/:id/change-requests` (party-only, behind
+  `rent_buddy_enabled`) returns them with `requestedByMe`;
+  `POST /api/rent-a-buddy/bookings/:id/respond-change-request` answers.
+- **Check:** `SELECT change_field, proposed_value, status FROM buddy_booking_change_requests WHERE booking_id = :id;`
+  then `SELECT booking_date, start_time FROM rent_buddy_bookings WHERE id = :id;`
+
+### PLAT-F45 — run the booking: start, check-ins, emergency phrase, complete, confirm
+
+- **Buddy:** Buddy dashboard → **My sessions** lists accepted, in-progress and
+  awaiting-confirmation bookings. **Start session** (only from scheduled /
+  confirmed) → `in_progress`. **Complete session** (only from in_progress) →
+  `completed_pending_traveler_confirmation` with a 24 h window. The same
+  controls are on the booking screen's Session panel.
+- **Traveller:** the booking screen → Session: **I've arrived** / **All good**
+  (check-ins, `POST …/check-in` with `arrival` / `check_ok`); when the buddy has
+  completed, **Confirm completion** → `completed` (or **Open a dispute**).
+  In the live session (`(rent-a-buddy)/active`): **End session** now completes
+  the booking on the server first and only then opens the review (it used to
+  navigate without writing anything, so the booking stayed in progress and the
+  review was refused). **I need to check my passport** is the discreet
+  emergency phrase: it records the safety event and opens a private prompt only
+  the traveller sees (I am okay → check-in; End booking now; Share location;
+  Start Safe Return; Contact support; Use emergency button → dials 112).
+- **Server:** `/start`, `/complete`, `/traveler-confirm`, `/check-in`,
+  `/safety/emergency-phrase` (all existing).
+- **Check:** `SELECT status, started_at, completed_at FROM rent_buddy_bookings WHERE id = :id;`
+  `SELECT checkin_type FROM rent_buddy_safety_checkins WHERE booking_id = :id;`
+  `SELECT event_type FROM rent_buddy_safety_events WHERE booking_id = :id;`
+- **Physical:** meeting in person is simulated; GPS is not read by these controls.
+
+### PLAT-F49 — review moderation
+
+- **Where:** Admin → Rent a Buddy → **Review Moderation** (`admin/reviews`).
+- **Steps:** after a completed booking, the traveller reviews (existing
+  `review.tsx`). As admin, the review is under Pending; **Approve** makes it
+  public and recalculates the buddy's rating; **Reject** asks for a reason and
+  keeps it hidden. Approved / Rejected tabs list moderated reviews.
+- **Check:** `SELECT moderation_status, is_public FROM rent_buddy_reviews WHERE id = :id;`
+  `SELECT average_rating, review_count FROM rent_buddy_profiles WHERE user_id = :buddy;`
+
+### PLAT-F50 — the buddy lists and withdraws their own offers
+
+- **Where:** Buddy dashboard → **My offers**.
+- **Steps:** every offer the buddy sent, newest first, with its answer
+  (waiting / accepted / declined / expired / withdrawn). **Withdraw offer** on a
+  pending one. An offer the traveller already accepted cannot be withdrawn: the
+  server refuses it (compare-and-set on `pending`) and the app says "Already
+  answered"; an accepted offer links to its booking.
+- **Check:** `SELECT status FROM rent_buddy_offers WHERE id = :id;`
+
+### PLAT-F55 — launch-controls editor
+
+- **Where:** Admin → Rent a Buddy → **Launch Controls** (`admin/launch-controls`).
+- **Steps:** **New control** for a country code / city / category (blank = any)
+  with bookings open, verified-ID and verified-phone requirements. Per control:
+  switches for Bookings open / Waitlist only / Require verified ID / Require
+  verified phone, and steppers for the minimum and nightlife minimum age. The
+  screen states up front that controls are deny-by-default, and asks for
+  confirmation before creating the first one. Payment fields on the row are not
+  edited here.
+- **Check:** `SELECT * FROM rent_buddy_launch_controls;` then, as a traveller, a
+  booking in an uncovered location is refused with the gate state "No launch
+  control covers this booking — REFUSED BY rent_buddy_launch_controls".
+
+### PLAT-F56 — support reports, risk review, verification override
+
+- **Where:** Admin → Rent a Buddy → **Support Reports**, **Risk Review**.
+- **Support:** tabs Open / In review / Resolved / Closed; **Update status /
+  notes**.
+- **Risk:** tabs Watch / Limited / Under review / Suspended / Normal; **Set risk
+  status** with a required note (Suspended also switches the user's Rent-a-Buddy
+  access off server-side); **Verification…** records a manual ID / phone / age
+  decision — each field is "No change" unless chosen, so saving never revokes a
+  verification by accident.
+- **Check:** `SELECT status, admin_notes FROM rent_buddy_support_reports WHERE id = :id;`
+  `SELECT risk_review_status, verification_status, id_verified FROM rent_buddy_profiles WHERE user_id = :u;`
+  `SELECT action FROM rent_buddy_admin_actions ORDER BY created_at DESC LIMIT 5;`
+
+### What was built
+
+- Server (`artifacts/api-server`):
+  - refusals name the gate: `requireRentBuddyEnabled` → `gate: "rent_buddy_enabled"`;
+    the five kill-switch refusals name the engaged switch via
+    `engagedRabBookingKillSwitch` (`src/lib/featureFlags.ts`). Decisions unchanged.
+  - `GET /rent-a-buddy/bookings/:id/change-requests` (new, appended to
+    `src/routes/rentABuddy.ts`).
+  - offer withdraw is compare-and-set on `pending` (`src/routes/rentABuddyMarketplace.ts`).
+  - admin launch-controls / support / risk-review reads, and launch-control PATCH,
+    risk-status, verification override, review approve / reject, now answer 5xx on
+    a database error instead of an empty list or `ok`.
+  - `check:rent-buddy-contract` lists the 17 routes the new screens depend on.
+- Client (`travel-buddy-standalone`): `src/services/rentABuddyGates.ts`,
+  `src/services/rentABuddyLifecycle.ts`,
+  `src/components/rentabuddy/{RabGateRefusalState,BookingLifecyclePanel,RabAdminScaffold}.tsx`,
+  screens `buddy-dashboard/{sessions,my-offers}.tsx`,
+  `admin/{reviews,support,risk,launch-controls}.tsx`; wiring in `_layout.tsx`,
+  `booking/[id].tsx`, `active.tsx`, `buddy-dashboard/index.tsx`, `admin/index.tsx`;
+  service fixes in `src/services/rentABuddy.ts` (refusals keep `gate`;
+  `submitCheckIn` sent `{status, broadArea}` to a route that reads
+  `{checkinType, response}`), `src/services/rentABuddyAdmin.ts` (reads return
+  `ok:false` instead of `[]`; launch-control writes send the route's camelCase
+  keys) and `src/hooks/useRentABuddyFlag.ts` (tri-state read). Six routes
+  registered in `src/navigation/portavaRoutes.ts` (closing line).
+
+### Decisions (routine; decided and implemented)
+
+1. **Traveller "End session" completes the booking** through `POST /complete`
+   (the server's traveller path goes straight to `completed`); the buddy's
+   completion opens the traveller's 24 h confirmation. Mirrors the server.
+2. **Name the gate, don't re-decide it.** Refusal bodies gain a `gate` field;
+   `feature_disabled` without one is the master switch (its only other source).
+3. **Admin screens stay behind the client's `rent_buddy_enabled` check**, as the
+   existing admin screens are. The server exempts admin routes; the admin turns
+   the flag on in Admin → Feature flags (outside the group) first, and city
+   rollouts keep bookings closed until an admin opens a city.
+4. **Verification override is per-field opt-in** ("No change" default): the risk
+   list does not carry current verification columns.
+5. **Launch-control editor leaves payment fields alone** (`full_payment_required`,
+   `min_deposit_pct`): payment policy waits on the owner.
+6. **PLAT-F51 (packages, add-ons, tips) is not built here**: it prices and
+   records money (add-on totals, tips) and the catalogue files it under
+   payments.md rows 4–6. PLAT-F44 (deposit / refund) and PLAT-F53 (payouts) are
+   payment work. All wait on the owner's payment decision.
+
+### Tests (red first → green) and mutations
+
+- `artifacts/api-server/src/test/rentBuddyTestingModeWiring.test.ts` (registered
+  on the `test` line): **RED 22 of 29 → GREEN 29/29**. Mutations M1–M19 (drop
+  each gate name, blank the kill-switch name, drop the withdraw CAS predicate,
+  unscope / un-guard / mis-attribute the change-request read, swallow each admin
+  read and write error): **all 19 red**, each restored byte-identically (sha256).
+  All 89 api-server suites that import or read the touched route files: 1760/1760.
+- Client node:test: `rentABuddy.gates.test.ts` 32, `rentABuddy.lifecycle.test.ts`
+  15, `useRentABuddyFlag.state.test.ts` 8 — red at HEAD (modules/functions
+  absent: 0/1, 0/1, 0/8) → green.
+- Client jest: `rentABuddy.testingModeWiring.component.test.ts` (16),
+  `BookingLifecyclePanel.component.test.tsx` (9), `rabLayout.gate` (3),
+  `buddySessionsOffers` (9), `rabAdminScreens` (10), `activeSession.lifecycle` (4).
+  Against HEAD sources: 6 suites FAIL, 19 failed / 4 passed (the 4 are
+  pass-through cases that were already true). All green on the branch; every
+  RAB-touching jest suite 272/272.
+- Client mutations CM1–CM15 (gate naming, traveller offered Start, `gate`
+  dropped by `apiFetch`, old check-in body, partial sessions list, admin read back
+  to `[]`, gate shown as a generic Alert, failed suggestions read shown empty,
+  End session without completing, unreadable flag shown as off, verification
+  sending untouched fields, failed sessions read shown empty, Withdraw on answered
+  offers, snake_case launch-control keys): **all 15 red**, restored by sha256
+  (CM15 first survived; its test was strengthened to toggle a field whose column
+  and key differ).
+
+### Not done, and why
+
+- **Payments** (PLAT-F44, PLAT-F51, PLAT-F53): owner decision.
+- **Owner/admin activation on the testing app**: `rent_buddy_enabled`, city
+  rollouts, beta access and the KYC gate are unchanged here; with them closed,
+  every flow above shows the named gate state rather than working end to end.
+- **PLAT-F56 user limits and the sensitive-booking view** have routes and no
+  screen; the brief's scope for this lane was support, risk and verification.
+- **`rent_buddy_requests.country_code`** (PLAT-F50's backfill blocker, migration
+  2212 unproven on travel-buddy) is untouched: posting a request can still fail
+  on the testing database until that migration is applied.
+- The existing Safe Return switch on `active.tsx` posts a check-in type
+  (`safe_return_enabled`) that is not in the `rent_buddy_checkin_type` enum;
+  left as found (out of this lane's flows), noted for the Safety lane.
+
+## Stories: react, reply, save to a highlight (PLAT-F33, lane tm-memories, 2026-09-29)
+
+**Why here.** No `docs/architecture/census-*.md` grades stories. `census-highlights-memories.md` touches the stories domain only where a story becomes a Highlight. It records that note under its own testing-mode section, which points back here.
+
+### What was wrong
+
+- **Nothing mounted the story UI.** `StoriesStrip`, `StoryViewer` and `StoryComposer` existed, but nothing under `app/` mounted any of them. So no story could be opened, reacted to, replied to or saved. The Create hub listed "Story" as *Soon*.
+- **The owner could not open their own stories.** `GET /stories/feed` never includes the viewer's own stories, and `GET /stories/archive` lists only expired and saved ones. So "save your own story to a highlight" (owner-only) was unreachable.
+- **Replies reached nobody.** `POST /stories/:id/reply` writes `story_replies`, and nothing reads that table.
+- **Save-to-highlight lost its answer.** `saveToHighlight(storyId, highlightId)` sent an id the route ignores, since the route *creates* a Highlight. It also answered `{ok}` only, which threw away the 409 that explains why a close-friends story cannot become a Highlight.
+- **A failed viewer-list read looked empty.** The viewer list showed "No viewers yet" when the read had failed.
+
+### What was built
+
+- **Server: `GET /me/stories`** (`artifacts/api-server/src/routes/stories.ts`, at the foot).
+  - It lists the caller's own live stories: state `active`, not expired, oldest first.
+  - It takes no user id, so it can only ever be the caller's own.
+  - An unreadable table is a 503, and `stories_enabled` off is `feature_disabled`, as on the feed.
+- **Client: `/stories`** (`travel-buddy-standalone/app/stories.tsx`, registered in `src/navigation/portavaRoutes.ts`; the Create hub's Story entry now routes there).
+  - "Your story" opens your live stories in the viewer, where Save to highlight is. With none, it opens the composer.
+  - Below it are the people whose stories the feed says you may see.
+  - An unreadable feed is an error with a retry, and stories switched off says so.
+- **`StoryViewer`** (`src/components/StoryViewer.tsx`):
+  - someone else's story: five quick reactions (`POST /stories/:id/react`) and a reply box;
+  - your own story: Viewers, plus Save to highlight, or "In your highlights" once it is saved;
+  - a viewer list that failed to load says so.
+- **`sendStoryReply`** (`src/services/storyReply.ts`) delivers a reply in three steps:
+  1. It runs the story route first. That route is the gate: it re-checks, at send time, that the story is active and visible to the replier.
+  2. It opens the author's direct chat through `openDirectThread`, the funnel that carries DM permissions and new-thread E2EE negotiation.
+  3. It sends the text through the ordinary `sendMessage` path.
+
+  On an E2EE thread the server refuses plaintext and stores none, and the reply is resent **encrypted**; nothing is ever downgraded. No server-side DM write was added, because a second write path into threads would skip rules the send route owns.
+- **`saveToHighlight(storyId)`** answers the new Highlight id, or the server's own sentence.
+
+### Decisions
+
+- **TM-MEM-D5.** A story reply is delivered as a direct message through the client's normal send path, after the story route's gate. `story_replies` is still written, because it is the server's record that the gate passed.
+- **TM-MEM-D6.** `GET /me/stories` is a new owner-only read. `/stories` is the stories home, and the Create hub's Story entry is live. The existing `CreateHubSheet.routes` test was restated: it now expects Story to route to `/stories` instead of being *Soon*.
+
+### Tests (all seen red first)
+
+- `artifacts/api-server/src/test/storyOwnActive.test.ts`: 5 cases, registered on the api-server `test` line. All 5 were red (404) before the route existed.
+- `travel-buddy-standalone/src/services/__tests__/storyInteractions.component.test.ts`: 10 cases. The three save-to-highlight cases were red against the old function.
+- `travel-buddy-standalone/src/components/__tests__/StoryViewer.interactions.component.test.tsx`: 8 cases, all red before the controls existed.
+- `travel-buddy-standalone/app/__tests__/stories.route.component.test.tsx`: 5 cases. Red, because the route was missing.
+- `travel-buddy-standalone/src/components/create/__tests__/CreateHubSheet.routes.component.test.tsx`: restated. Red until the Story entry was routed.
+
+Each fix was mutation-checked and restored by sha256. The results are in the lane report.
+
+### How a tester runs it
+
+1. As A, open Create, then Story, and post a story (public, or friends if A and B follow each other).
+2. As B, open `/stories` and then A. React with an emoji and send a reply. The reply appears in the A–B chat as "Replied to your story: …".
+3. As A, open `/stories` and then "Your story", and tap Save to highlight.
+   - A public or friends story becomes a Highlight.
+   - A close-friends story shows the server's reason instead.
+
+### Still open
+
+- Reactions are stored in `story_reactions`, and nothing shows them to the author yet: there is no reactions list on the author's side. The flow asks only that a viewer can react.
+- `story_replies` has no reader. The author sees a reply in the chat, which is where the flow sends it.

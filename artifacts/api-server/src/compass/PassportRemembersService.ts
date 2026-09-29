@@ -94,7 +94,7 @@ export interface RememberGroupBlock {
   label: string;
   /** Owner-facing note: what this group is, and (for inferred) the caveat. */
   description: string;
-  items: RememberItem[];
+  items: RememberItem[]; /** "unavailable": a read behind this group failed, so it may be incomplete — never read it as "nothing here" (tm-followups WP-12). */ availability: "ok" | "unavailable";
 }
 
 export interface RememberSurface {
@@ -103,7 +103,7 @@ export interface RememberSurface {
   groups: RememberGroupBlock[];
   /** Counts to make the deny boundary observable to the caller/tests. */
   totals: { surfaced: number; suppressed: number };
-  notes: string[];
+  notes: string[]; /** Groups whose read failed (each also marked on its block). Empty when every read answered. */ unavailable: RememberGroup[];
 }
 
 const FORGET_ENDPOINT = "/compass/me/passport/remembers/forget";
@@ -127,7 +127,7 @@ function keyOf(subjectType: string | null | undefined, subjectId: string | null 
  */
 export async function loadSuppressions(
   client: SupabaseClient,
-  userId: string,
+  userId: string, failures?: RememberReadFailures,
 ): Promise<SuppressionSet> {
   const set: SuppressionSet = { keys: new Set(), projectionIds: new Set() };
   try {
@@ -135,7 +135,7 @@ export async function loadSuppressions(
       .from("memory_feedback")
       .select("kind, subject_type, subject_id, projection_id")
       .eq("user_id", userId);
-    if (error || !Array.isArray(data)) return set;
+    if (error) { failures?.set("suppressions", readErr(error)); return set; } if (!Array.isArray(data)) return set;
     for (const row of data as Array<Record<string, unknown>>) {
       const kind = String(row.kind ?? "");
       if (kind !== "forget" && kind !== "hide") continue;
@@ -144,10 +144,10 @@ export async function loadSuppressions(
       }
       if (row.projection_id != null) set.projectionIds.add(String(row.projection_id));
     }
-  } catch {
-    // Fail-available: a feedback read error must not block the whole surface,
-    // but note the SQL read already excluded suppressed derived memory, so a
-    // forgotten derived item cannot leak even if this TS gate is empty.
+  } catch (err) { failures?.set("suppressions", readErr(err));
+    // A caller that passes `failures` learns the set is unchecked (the surface then
+    // withholds source groups); the SQL read already excludes suppressed derived
+    // memory, so a forgotten derived item cannot leak even if this TS gate is empty.
   }
   return set;
 }
@@ -243,10 +243,10 @@ export function mapDerivedRow(r: Record<string, unknown>): RememberItem | null {
 
 export async function buildDerivedMemory(
   client: SupabaseClient,
-  userId: string,
+  userId: string, failures?: RememberReadFailures,
 ): Promise<RememberItem[]> {
   const { data, error } = await client.rpc("memory_remembers_for_user", { p_user_id: userId });
-  if (error || !Array.isArray(data)) return [];
+  if (error) { failures?.set("derived_memory", readErr(error)); return []; } if (!Array.isArray(data)) return [];
   const out: RememberItem[] = [];
   for (const r of data as Array<Record<string, unknown>>) {
     const item = mapDerivedRow(r);
@@ -269,14 +269,14 @@ function labelForMemoryType(t: string | null): string {
 // ── Group 2: profile facts (user-provided) ───────────────────────────────────
 export async function buildProfileFacts(
   client: SupabaseClient,
-  userId: string,
+  userId: string, failures?: RememberReadFailures,
 ): Promise<RememberItem[]> {
   const { data, error } = await client
     .from("profiles")
     .select("home_city, home_country, display_name, bio")
     .eq("id", userId)
     .maybeSingle();
-  if (error || !data) return [];
+  if (error) { failures?.set("profile", readErr(error)); return []; } if (!data) return [];
   const p = data as Record<string, unknown>;
   const items: RememberItem[] = [];
   const push = (field: string, title: string, value: unknown) => {
@@ -309,31 +309,31 @@ export async function buildProfileFacts(
 // ── Group 3: preferences (interests / travel styles) ─────────────────────────
 export async function buildPreferences(
   client: SupabaseClient,
-  userId: string,
+  userId: string, failures?: RememberReadFailures,
 ): Promise<RememberItem[]> {
   let interests: string[] = [];
   let styles: string[] = [];
   try {
-    const { data } = await client
+    const { data, error } = await client
       .from("compass_user_preferences")
       .select("interests, travel_styles")
       .eq("user_id", userId)
-      .maybeSingle();
+      .maybeSingle(); if (error) throw error;
     const c = (data ?? {}) as Record<string, unknown>;
     interests = arr(c.interests);
     styles = arr(c.travel_styles);
-  } catch { /* fall through to profile fallback */ }
+  } catch (err) { failures?.set("preferences", readErr(err)); /* fall through to profile fallback */ }
   if (interests.length === 0 && styles.length === 0) {
     try {
-      const { data } = await client
+      const { data, error } = await client
         .from("profiles")
         .select("interests, travel_styles")
         .eq("id", userId)
-        .maybeSingle();
+        .maybeSingle(); if (error) throw error;
       const c = (data ?? {}) as Record<string, unknown>;
       interests = arr(c.interests);
       styles = arr(c.travel_styles);
-    } catch { /* none */ }
+    } catch (err) { failures?.set("preferences", readErr(err)); }
   }
   const items: RememberItem[] = [];
   for (const v of interests) {
@@ -366,18 +366,18 @@ const SOURCE_LIMIT = 50;
 
 export async function buildSavedContent(
   client: SupabaseClient,
-  userId: string,
+  userId: string, failures?: RememberReadFailures,
 ): Promise<RememberItem[]> {
   const items: RememberItem[] = [];
 
   // Saved places. No status/tombstone column exists on saved_places.
   await safe(async () => {
-    const { data } = await client
+    const { data, error } = await client
       .from("saved_places")
       .select("id, place_id, saved_at")
       .eq("user_id", userId)
       .order("saved_at", { ascending: false })
-      .limit(SOURCE_LIMIT);
+      .limit(SOURCE_LIMIT); if (error) throw error;
     for (const r of asRows(data)) {
       items.push(originItem({
         group: "saved_content", label: "Saved place",
@@ -388,16 +388,16 @@ export async function buildSavedContent(
         occurredAt: isoOrUndefined(r.saved_at),
       }));
     }
-  });
+  }, failures, "saved_content");
 
   // User-created Memories (the scrapbook parent). Exclude deleted/removed states.
   await safe(async () => {
-    const { data } = await client
+    const { data, error } = await client
       .from("memories")
       .select("id, title, caption, state, visibility, created_at")
       .eq("owner_id", userId)
       .order("created_at", { ascending: false })
-      .limit(SOURCE_LIMIT);
+      .limit(SOURCE_LIMIT); if (error) throw error;
     for (const r of asRows(data)) {
       const state = String(r.state ?? "");
       if (state === "deleted" || state === "removed" || state === "hidden") continue;
@@ -411,16 +411,16 @@ export async function buildSavedContent(
         occurredAt: isoOrUndefined(r.created_at),
       }));
     }
-  });
+  }, failures, "saved_content");
 
   // Postcards. Only the owner's own, moderation-active, non-tombstoned rows.
   await safe(async () => {
-    const { data } = await client
+    const { data, error } = await client
       .from("passport_postcards")
       .select("id, caption, note, status, visibility, deleted_at, created_at")
       .eq("user_id", userId)
       .order("created_at", { ascending: false })
-      .limit(SOURCE_LIMIT);
+      .limit(SOURCE_LIMIT); if (error) throw error;
     for (const r of asRows(data)) {
       if (String(r.status ?? "") !== "active") continue; // hidden/reported/deleted excluded
       if (r.deleted_at != null) continue;                 // tombstoned excluded
@@ -433,16 +433,16 @@ export async function buildSavedContent(
         occurredAt: isoOrUndefined(r.created_at),
       }));
     }
-  });
+  }, failures, "saved_content");
 
   // Earned stamps (v2). Exclude revoked.
   await safe(async () => {
-    const { data } = await client
+    const { data, error } = await client
       .from("user_stamps")
       .select("id, stamp_definition_id, earned_at, visibility, is_revoked, display_on_passport")
       .eq("user_id", userId)
       .order("earned_at", { ascending: false })
-      .limit(SOURCE_LIMIT);
+      .limit(SOURCE_LIMIT); if (error) throw error;
     for (const r of asRows(data)) {
       if (r.is_revoked === true) continue;
       items.push(originItem({
@@ -454,16 +454,16 @@ export async function buildSavedContent(
         occurredAt: isoOrUndefined(r.earned_at),
       }));
     }
-  });
+  }, failures, "saved_content");
 
   // Trips the owner created. Exclude cancelled/archived.
   await safe(async () => {
-    const { data } = await client
+    const { data, error } = await client
       .from("trips")
       .select("id, title, status, visibility, destination_city, start_date, end_date, created_at")
       .eq("owner_id", userId)
       .order("id", { ascending: false })
-      .limit(SOURCE_LIMIT);
+      .limit(SOURCE_LIMIT); if (error) throw error;
     for (const r of asRows(data)) {
       const status = String(r.status ?? "");
       if (status === "cancelled" || status === "archived") continue;
@@ -478,7 +478,7 @@ export async function buildSavedContent(
         occurredAt: isoOrUndefined(r.start_date ?? r.created_at),
       }));
     }
-  });
+  }, failures, "saved_content");
 
   return items;
 }
@@ -488,16 +488,17 @@ export async function buildSavedContent(
 // so read defensively.
 export async function buildSavedCompassMemories(
   client: SupabaseClient,
-  userId: string,
+  userId: string, failures?: RememberReadFailures,
 ): Promise<RememberItem[]> {
   const items: RememberItem[] = [];
   await safe(async () => {
-    const { data } = await client
+    const { data, error } = await client
       .from("compass_memories")
       .select("id, content, category, scope, created_at")
       .eq("user_id", userId)
       .order("created_at", { ascending: false })
       .limit(SOURCE_LIMIT);
+    if (error) throw error;
     for (const r of asRows(data)) {
       items.push(originItem({
         group: "saved_compass_memory", label: "Saved Compass memory",
@@ -512,7 +513,7 @@ export async function buildSavedCompassMemories(
         occurredAt: isoOrUndefined(r.created_at),
       }));
     }
-  });
+  }, failures, "saved_compass_memory");
   return items;
 }
 
@@ -537,15 +538,16 @@ export function sharedMomentVisibility(joinPolicy: unknown): string {
 // title only — never another participant's private contribution.
 export async function buildSharedMoments(
   client: SupabaseClient,
-  userId: string,
+  userId: string, failures?: RememberReadFailures,
 ): Promise<RememberItem[]> {
   const items: RememberItem[] = [];
   await safe(async () => {
-    const { data: memberships } = await client
+    const { data: memberships, error: membershipsErr } = await client
       .from("shared_moment_memberships")
       .select("moment_id, status")
       .eq("user_id", userId)
       .eq("status", "accepted"); // consent gate
+    if (membershipsErr) throw membershipsErr;
     // The recorded consent is an ACCEPTED membership. Build the allow-set in TS so
     // the gate holds even if the moments query returns more than we asked for —
     // never trust the row set alone to enforce consent.
@@ -555,7 +557,7 @@ export async function buildSharedMoments(
         .map((m) => String(m.moment_id)),
     );
     if (consented.size === 0) return;
-    const { data: moments } = await client
+    const { data: moments, error: momentsErr } = await client
       .from("shared_moments")
       // `visibility` is NOT a column of shared_moments — the table's audience
       // control is `join_policy` (invite_only | approval_required), and its
@@ -567,6 +569,7 @@ export async function buildSharedMoments(
       .select("id, title, status, join_policy, archived_at, created_at")
       .in("id", Array.from(consented))
       .limit(SOURCE_LIMIT);
+    if (momentsErr) throw momentsErr;
     for (const r of asRows(moments)) {
       if (!consented.has(String(r.id))) continue;        // consent gate (defence in depth)
       if (String(r.status ?? "") !== "active") continue; // archived excluded
@@ -586,22 +589,23 @@ export async function buildSharedMoments(
         occurredAt: isoOrUndefined(r.created_at),
       }));
     }
-  });
+  }, failures, "shared_moment");
   return items;
 }
 
 // ── Group 7: current availability settings (owner-only) ──────────────────────
 export async function buildAvailability(
   client: SupabaseClient,
-  userId: string,
+  userId: string, failures?: RememberReadFailures,
 ): Promise<RememberItem[]> {
   const items: RememberItem[] = [];
   await safe(async () => {
-    const { data } = await client
+    const { data, error } = await client
       .from("user_availability")
       .select("open_to_meet, strict_mode, weekly_days, updated_at")
       .eq("user_id", userId)
       .maybeSingle();
+    if (error) throw error;
     if (!data) return;
     const a = data as Record<string, unknown>;
     items.push(userProvidedItem({
@@ -613,7 +617,7 @@ export async function buildAvailability(
       correctSupported: false, correctNote: "Change this in your availability settings.",
       visibility: "private",
     }));
-  });
+  }, failures, "availability");
   return items;
 }
 
@@ -666,8 +670,14 @@ function originItem(o: {
   };
 }
 
-async function safe(fn: () => Promise<void>): Promise<void> {
-  try { await fn(); } catch { /* a single group's read error must not sink the surface */ }
+/**
+ * Run one source read. A single group's read error must not sink the surface —
+ * but it must not pass for an empty group either: with a `failures` sink the
+ * failure is recorded against `group`, and the surface reports that group
+ * "unavailable" (tm-followups WP-12). Without a sink it degrades as before.
+ */
+async function safe(fn: () => Promise<void>, failures?: RememberReadFailures, group?: RememberGroup): Promise<void> {
+  try { await fn(); } catch (err) { if (failures && group) failures.set(group, readErr(err)); }
 }
 
 function asRows(data: unknown): Array<Record<string, unknown>> {
@@ -715,17 +725,30 @@ const GROUP_LABELS: Record<RememberGroup, string> = {
 export async function buildRememberSurface(
   client: SupabaseClient,
   userId: string,
+  opts: { onReadFailure?: (source: string, reason: string) => void } = {},
 ): Promise<RememberSurface> {
+  const failures: RememberReadFailures = new Map();
   const [sup, derived, profile, prefs, saved, compassMem, moments, avail] = await Promise.all([
-    loadSuppressions(client, userId),
-    buildDerivedMemory(client, userId),
-    buildProfileFacts(client, userId),
-    buildPreferences(client, userId),
-    buildSavedContent(client, userId),
-    buildSavedCompassMemories(client, userId),
-    buildSharedMoments(client, userId),
-    buildAvailability(client, userId),
+    loadSuppressions(client, userId, failures),
+    buildDerivedMemory(client, userId, failures),
+    buildProfileFacts(client, userId, failures),
+    buildPreferences(client, userId, failures),
+    buildSavedContent(client, userId, failures),
+    buildSavedCompassMemories(client, userId, failures),
+    buildSharedMoments(client, userId, failures),
+    buildAvailability(client, userId, failures),
   ]);
+  for (const [source, reason] of failures) opts.onReadFailure?.(source, reason);
+
+  // An unreadable suppression set means Forget cannot be honoured for the
+  // groups the TS gate governs: an item the owner forgot would come back on
+  // screen. Those groups are WITHHELD and reported unavailable. Derived memory
+  // is suppressed inside its SQL read (2213), so it is unaffected.
+  const unavailable = new Set<RememberGroup>();
+  for (const g of GROUP_ORDER) if (failures.has(g)) unavailable.add(g);
+  if (failures.has("suppressions")) {
+    for (const g of GROUP_ORDER) if (g !== "derived_memory") unavailable.add(g);
+  }
 
   const byGroup: Record<RememberGroup, RememberItem[]> = {
     derived_memory: derived,
@@ -742,7 +765,8 @@ export async function buildRememberSurface(
   const groups: RememberGroupBlock[] = [];
   for (const g of GROUP_ORDER) {
     const kept: RememberItem[] = [];
-    for (const item of byGroup[g]) {
+    const withheld = failures.has("suppressions") && g !== "derived_memory";
+    for (const item of withheld ? [] : byGroup[g]) {
       if (isSuppressed(item, sup)) { suppressed += 1; continue; }
       kept.push(item);
     }
@@ -752,6 +776,7 @@ export async function buildRememberSurface(
       label: GROUP_LABELS[g],
       description: GROUP_DESCRIPTIONS[g],
       items: kept,
+      availability: unavailable.has(g) ? "unavailable" : "ok",
     });
   }
 
@@ -764,6 +789,26 @@ export async function buildRememberSurface(
       "This view is private to you and is never shown on your public Passport.",
       "Raw location trails, trust/safety signals, and sensitive inferences are never shown here.",
       "Forget removes an item from this view; for things you created it never deletes the original.",
+      ...(unavailable.size > 0 ? ["Some of what Portava remembers could not be loaded right now. Those sections are marked unavailable — they are not empty."] : []),
     ],
+    unavailable: GROUP_ORDER.filter((g) => unavailable.has(g)),
   };
+}
+
+// ── Read-failure reporting (tm-followups WP-12) ──────────────────────────────
+// Appended at the foot so the lines the censuses cite above keep their numbers.
+
+/**
+ * Which source reads failed during one surface build: a group name (or
+ * "suppressions") → the database's reason. Passed down to each builder as an
+ * optional sink; a builder called without it behaves exactly as before.
+ */
+export type RememberReadFailures = Map<string, string>;
+
+/** A short, loggable reason for a failed read: the PostgREST/PG code and message. */
+export function readErr(err: unknown): string {
+  const e = err as { code?: unknown; message?: unknown } | null;
+  const code = e && typeof e.code === "string" ? e.code : "";
+  const message = e && typeof e.message === "string" ? e.message : String(err);
+  return code ? `${code}: ${message}` : message;
 }
