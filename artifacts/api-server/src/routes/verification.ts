@@ -194,7 +194,7 @@ router.post("/verification/session", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user, client } = auth;
-
+  if (refuseWhenIdentityKeyNotAllowed(req, res)) return; // sandbox guard: before the rate limit and any provider call
   // Rate limit: 3 sessions / 24 h per user
   const rl = checkRateLimit("verification_session", user.id, VERIFICATION_SESSION_LIMIT, VERIFICATION_SESSION_WINDOW_MS);
   if (!rl.allowed) {
@@ -231,7 +231,7 @@ router.post("/verification/session", asyncHandler(async (req, res) => {
     return;
   }
 
-  const appBaseUrl = process.env.APP_RETURN_BASE_URL ?? "portava://app/verification/mock-complete";
+  const appBaseUrl = process.env.APP_RETURN_BASE_URL ?? "travelbuddy://profile/verification"; // app.json scheme + app/profile/verification.tsx
 
   let session;
   try {
@@ -369,7 +369,7 @@ export const webhookHandler = async (req: any, res: any) => {
     // Log the full error server-side; the response stays generic so provider
     // internals / signature material never leak to whoever hit the webhook.
     req.log?.warn({ err }, "verification webhook: signature failure or parse error");
-    res.status(400).json({ error: "invalid_signature", message: "Webhook signature verification failed" });
+    const guardRefusal = webhookGuardRefusalBody(err); if (guardRefusal) { res.status(400).json(guardRefusal); return; } res.status(400).json({ error: "invalid_signature", message: "Webhook signature verification failed" });
     return;
   }
 
@@ -420,7 +420,7 @@ router.get("/verification/status", asyncHandler(async (req, res) => {
     sendError(res, "db_error", rowErr.message);
     return;
   }
-
+  const current = await refreshPendingFromProvider(req, sc, user.id, row); // bounded provider refresh (foot of file)
   // Profile verification level.
   //
   // `error` is bound because supabase-js RESOLVES on a database error: an
@@ -445,10 +445,115 @@ router.get("/verification/status", asyncHandler(async (req, res) => {
   }
 
   res.status(200).json({
-    verificationRow:   row ?? null,
+    verificationRow:   current ?? null,
     verificationLevel: (profile as any)?.verification_level ?? "none",
     verifiedAt:        (profile as any)?.verified_at ?? null,
   });
 }));
 
 export default router;
+
+// ── Sandbox-only guard + provider status refresh ─────────────────────────────
+// Appended at the foot so every line the censuses cite keeps its number. ES
+// imports are hoisted, so these bind before any handler above can run.
+import type { Request, Response } from "express";
+import { identityKeyRefusal } from "../services/identityVerification/readiness.js";
+import {
+  MockWebhookRefusedError,
+  configuredIdentityProvider,
+  isKeyedProvider,
+  isPaymentsLiveModeRefusal,
+  refusalReasonCode,
+} from "../lib/paymentsMode.js";
+
+/**
+ * POST /verification/session used to call the provider factory directly, so a
+ * live Stripe key created a billable live VerificationSession for any
+ * signed-in user. The same key-mode check readiness.ts reports is applied
+ * first: a refused key answers 503 `server_not_configured` with a STABLE
+ * `reason` (`payments_live_key_refused` | `payments_unknown_key_refused`),
+ * never reaches the provider, and does not consume the user's 3/24 h budget.
+ */
+function refuseWhenIdentityKeyNotAllowed(req: Request, res: Response): boolean {
+  const refused = identityKeyRefusal();
+  if (!refused) return false;
+  req.log?.warn(
+    { provider: refused.provider, keyMode: refused.mode, liveAllowed: refused.liveAllowed },
+    "verification: session refused by the sandbox guard (live or unrecognised key)",
+  );
+  sendError(res, "server_not_configured", "Identity verification is not available in this environment", {
+    reason: refusalReasonCode(refused) ?? "payments_unknown_key_refused",
+  });
+  return true;
+}
+
+/**
+ * The 400 body for a webhook a GUARD refused, or null for an ordinary signature
+ * failure. A livemode event (refused by the sandbox guard AFTER its signature
+ * verified) and an unsigned mock body get their own codes so the operator is not
+ * sent looking for a bad signing secret; the provider sees a non-2xx either way
+ * and retries.
+ */
+function webhookGuardRefusalBody(err: unknown): { error: string; message: string } | null {
+  if (isPaymentsLiveModeRefusal(err)) {
+    return { error: "livemode_not_allowed", message: "Live-mode events are not accepted by this deployment" };
+  }
+  if (err instanceof MockWebhookRefusedError) {
+    return { error: "mock_webhook_not_allowed", message: "Unsigned mock webhooks are not accepted by this deployment" };
+  }
+  return null;
+}
+
+const REFRESHABLE_STATUSES = new Set(["created", "pending", "processing"]);
+const STATUS_REFRESH_LIMIT = 1;
+const STATUS_REFRESH_WINDOW_MS = 15_000;
+
+/**
+ * GET /verification/status used to read only the DB, so a user whose webhook
+ * was lost (or never configured) stayed pending forever. For the latest row,
+ * when it is still in flight and belongs to the CONFIGURED real provider, ask
+ * the provider once and persist through the same `persistResult` the webhook
+ * uses.
+ *
+ * Bounded: one provider call per user per 15 s, a 10 s request timeout in the
+ * adapter, and only for created/pending/processing rows. Guarded: the same
+ * key-mode check as session creation, so a refused key makes zero calls. The
+ * mock is never refreshed (its sessions self-approve). Any failure degrades to
+ * the stored row — the poll never 5xxs because the provider is slow.
+ */
+async function refreshPendingFromProvider(
+  req: Request,
+  sc: NonNullable<ReturnType<typeof getServiceClient>>,
+  userId: string,
+  row: unknown,
+): Promise<unknown> {
+  if (!row || typeof row !== "object") return row;
+  const r = row as { provider?: unknown; provider_session_id?: unknown; status?: unknown };
+  const configured = configuredIdentityProvider();
+  if (!isKeyedProvider(configured) || r.provider !== configured) return row;
+  if (typeof r.provider_session_id !== "string" || !REFRESHABLE_STATUSES.has(String(r.status))) return row;
+  if (identityKeyRefusal()) return row;
+  if (!checkRateLimit("verification_status_refresh", userId, STATUS_REFRESH_LIMIT, STATUS_REFRESH_WINDOW_MS).allowed) {
+    return row;
+  }
+  try {
+    const result = await getIdentityProvider().getSessionStatus(r.provider_session_id);
+    if (result.providerSessionId !== r.provider_session_id || result.status === r.status) return row;
+    await persistResult(sc, result, userId);
+    const { data, error } = await sc
+      .from("identity_verifications")
+      .select("id, provider, provider_session_id, status, failure_reason, is_over_18, selfie_match, document_country, verified_at, expires_at, created_at, updated_at")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) {
+      req.log.warn({ err: error }, "verification status: re-read after provider refresh failed; returning the stored row");
+      return row;
+    }
+    return data ?? row;
+  } catch (err) {
+    req.log.warn({ err }, "verification status: provider refresh failed; returning the stored row");
+    return row;
+  }
+}

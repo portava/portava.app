@@ -85,12 +85,12 @@ export async function requestProviderDeletionForUser(
 
   const provider = providerFactory();
 
-  const failures: string[] = [];
+  const failures: string[] = []; let refusedByGuard = 0; // sandbox-guard refusals (lib/paymentsMode.ts), counted apart
   for (const ref of refs) {
     try {
       await provider.requestProviderDeletion(ref);
     } catch (err: any) {
-      failures.push(`${ref}: ${err?.message ?? String(err)}`);
+      if (isPaymentsLiveModeRefusal(err)) refusedByGuard++; failures.push(`${ref}: ${err?.message ?? String(err)}`);
     }
   }
 
@@ -98,11 +98,38 @@ export async function requestProviderDeletionForUser(
     // The refs are in the message on purpose: the rows that hold them are about
     // to be deleted, so this string may be the only surviving record of what
     // still needs redacting at the vendor.
-    throw new Error(
+    throw new ProviderErasureFailure(
       `provider erasure failed for ${failures.length} of ${refs.length} reference(s) — ` +
-        `redact by hand at the provider: ${failures.join("; ")}`,
+        `${refusedByGuard > 0 ? `${GUARD_REFUSED_TEXT} ` : ""}redact by hand at the provider: ${failures.join("; ")}`, refusedByGuard > 0,
     );
   }
 
   return { refs, requested: refs.length };
+}
+
+// ── Sandbox-only guard (appended at the foot so every cited line keeps its number) ──
+//
+// DECISION. Redacting a LIVE session is still possible when a live key is
+// explicitly allowed (PAYMENTS_ALLOW_LIVE === "true"): the adapters' key guard
+// lets it through and the redact call is made. With live refused, the guard
+// throws before any fetch, and this function records that as a named,
+// RETRIABLE failure carrying every ref — never a silent success. Whether the
+// cascade should then KEEP the identity_verifications rows so a later run can
+// retry automatically is a data-retention decision the caller owns
+// (AccountDeletionService); today it records the step failure, surfaces the
+// refs in a warning and proceeds.
+import { isPaymentsLiveModeRefusal } from "../../lib/paymentsMode.js";
+
+const GUARD_REFUSED_TEXT =
+  "RETRIABLE: the sandbox guard refused the provider call before anything was sent (a live key without " +
+  "PAYMENTS_ALLOW_LIVE=\"true\", or an unrecognised key). If these are live sessions and live use is approved, " +
+  "set PAYMENTS_ALLOW_LIVE=true and retry; otherwise";
+
+/** The erasure failure. `retriable` is true when the sandbox guard refused (nothing was sent). */
+export class ProviderErasureFailure extends Error {
+  readonly code = "provider_erasure_failed" as const;
+  constructor(message: string, readonly retriable: boolean) {
+    super(message);
+    this.name = "ProviderErasureFailure";
+  }
 }
