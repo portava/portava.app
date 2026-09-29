@@ -3363,9 +3363,9 @@ router.get("/me/saved-memories", asyncHandler(async (req: any, res: any) => {
   const precisionEnabled = await isFlagEnabled(sc, "memory_location_precision_enabled");
   const rows: any[] = [];
   for (const batch of chunkIds(order)) {
-    const { data, error } = await sc
-      .from("memories")
-      .select((precisionEnabled ? MEMORY_SELECT_WITH_PRECISION : MEMORY_SELECT) as any)
+    const { data, error } = await (precisionEnabled // two literal selects, not a ternary inside one, so check:write-path-columns can verify both column lists
+      ? sc.from("memories").select(MEMORY_SELECT_WITH_PRECISION as any)
+      : sc.from("memories").select(MEMORY_SELECT as any))
       .in("id", batch)
       .neq("state", "deleted");
     if (error) {
