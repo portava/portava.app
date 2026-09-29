@@ -191,13 +191,19 @@ function mockMarker(id: string) {
   const { Text } = jest.requireActual('react-native');
   return (props: Record<string, unknown>) => <Text testID={id}>{JSON.stringify(props, (k, v) => (typeof v === 'function' ? 'fn' : v))}</Text>;
 }
-// NOTE: intentional stubs — marker components; the cards have their own suites.
+// NOTE: intentional stub — a marker component echoing its props; the card has its own suite.
 jest.mock('../../../src/features/trips/planning/TripBallotsCard.tsx', () => ({ TripBallotsCard: mockMarker('wp10-ballots') }));
+// NOTE: intentional stub — a marker component echoing its props; the card has its own suite.
 jest.mock('../../../src/features/trips/planning/TripTransportPolicyCard.tsx', () => ({ TripTransportPolicyCard: mockMarker('wp10-transport') }));
+// NOTE: intentional stub — a marker component echoing its props; the card has its own suite.
 jest.mock('../../../src/features/trips/lifecycle/TripLifecycleCard.tsx', () => ({ TripLifecycleCard: mockMarker('wp10-lifecycle') }));
+// NOTE: intentional stub — a marker component echoing its props; the card has its own suite.
 jest.mock('../../../src/features/trips/joinRequests/JoinRequestsList.tsx', () => ({ JoinRequestsList: mockMarker('wp10-join') }));
+// NOTE: intentional stub — a marker component echoing its props; the card has its own suite.
 jest.mock('../../../src/features/trips/sharedContent/TripSharedContentSection.tsx', () => ({ TripSharedContentSection: mockMarker('wp10-shared') }));
+// NOTE: intentional stub — a marker component echoing its props; the card has its own suite.
 jest.mock('../../../src/features/trips/crew/TripGeofenceCard.tsx', () => ({ TripGeofenceCard: mockMarker('wp10-geofence') }));
+// NOTE: intentional stub — a marker component echoing its props; the card has its own suite.
 jest.mock('../../../src/features/trips/closeout/TripPostTripCard.tsx', () => ({ TripPostTripCard: mockMarker('wp10-posttrip') }));
 const mockRunLifecycleAction = jest.fn();
 jest.mock('../../../src/features/trips/lifecycle/tripLifecycle.ts', () => ({

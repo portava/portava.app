@@ -116,8 +116,8 @@ export function TripLifecycleCard({
                     testID={`trip-lifecycle-${a}`}
                     accessibilityRole="button"
                   >
-                    {busy === a ? <ActivityIndicator size="small" color={color.signal} /> : <Icon size={13} color={a === 'delete' || a === 'cancel' ? color.signalStrong : color.ink} />}
-                    <Text style={[s.buttonText, (a === 'delete' || a === 'cancel') && { color: color.signalStrong }]}>{ACTION_COPY[a].label}</Text>
+                    {busy === a ? <ActivityIndicator size="small" color={color.signal} /> : <Icon size={13} color={a === 'delete' || a === 'cancel' ? color.signal : color.ink} />}
+                    <Text style={[s.buttonText, (a === 'delete' || a === 'cancel') && { color: color.signal }]}>{ACTION_COPY[a].label}</Text>
                   </Pressable>
                 );
               })}
@@ -130,12 +130,12 @@ export function TripLifecycleCard({
               <Text style={[s.detail, { color: color.success, marginTop: 0 }]}>{ACTION_COPY[last.action].done}</Text>
             </View>
           ) : last?.result.state === 'refused' ? (
-            <Text style={[s.detail, { color: color.signalStrong }]} testID={`trip-lifecycle-refused-${last.action}`}>
+            <Text style={[s.detail, { color: color.signal }]} testID={`trip-lifecycle-refused-${last.action}`}>
               {ACTION_COPY[last.action].label} was refused — {writeFailureText(last.result)}
             </Text>
           ) : last?.result.state === 'unavailable' ? (
             <View testID={`trip-lifecycle-unreached-${last.action}`}>
-              <Text style={[s.detail, { color: color.signalStrong }]}>{writeFailureText(last.result)}</Text>
+              <Text style={[s.detail, { color: color.signal }]}>{writeFailureText(last.result)}</Text>
               <Pressable onPress={() => void send(last.action, true)} style={s.button} testID="trip-lifecycle-action-retry" accessibilityRole="button">
                 <Text style={s.buttonText}>Try again</Text>
               </Pressable>
@@ -152,10 +152,10 @@ const s = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'flex-start', gap: space.sm, paddingHorizontal: space.lg, paddingVertical: space.md },
   title: { ...t.small, fontWeight: '600', color: color.ink },
   detail: { ...t.stamp, color: color.mute, marginTop: 2 },
-  link: { ...t.stamp, color: color.signalStrong, fontWeight: '600' },
+  link: { ...t.stamp, color: color.signal, fontWeight: '600' },
   buttons: { flexDirection: 'row', flexWrap: 'wrap', gap: space.xs, marginTop: space.sm },
   button: { flexDirection: 'row', alignItems: 'center', gap: space.xs, alignSelf: 'flex-start', paddingHorizontal: space.md, paddingVertical: space.xs, borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze, marginTop: space.xs },
-  buttonDanger: { borderColor: color.signalStrong },
+  buttonDanger: { borderColor: color.signal },
   buttonText: { ...t.small, color: color.ink },
   inline: { flexDirection: 'row', alignItems: 'center', gap: space.xs, marginTop: space.xs },
 });

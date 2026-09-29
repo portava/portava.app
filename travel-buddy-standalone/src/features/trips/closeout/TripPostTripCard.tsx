@@ -128,7 +128,7 @@ export function TripPostTripCard({ tripId, loadMemory = fetchMemoryCandidates, l
                         <Pressable onPress={() => void onKeep(c)} style={s.button} testID={`trip-posttrip-keep-${c.id}`} accessibilityRole="button">
                           <Text style={s.buttonText}>{k && !k.ok ? 'Try again' : 'Keep as memory'}</Text>
                         </Pressable>
-                        {k && !k.ok ? <Text style={[s.detail, { color: color.signalStrong }]}>Not saved — {k.message}</Text> : null}
+                        {k && !k.ok ? <Text style={[s.detail, { color: color.signal }]}>Not saved — {k.message}</Text> : null}
                       </View>
                     )
                   ) : null}
@@ -150,7 +150,7 @@ const s = StyleSheet.create({
   pad: { paddingHorizontal: space.lg, paddingVertical: space.sm },
   title: { ...t.small, fontWeight: '600', color: color.ink },
   detail: { ...t.stamp, color: color.mute, marginTop: 2 },
-  link: { ...t.stamp, color: color.signalStrong, fontWeight: '600', marginTop: 2 },
+  link: { ...t.stamp, color: color.signal, fontWeight: '600', marginTop: 2 },
   button: { alignSelf: 'flex-start', paddingHorizontal: space.md, paddingVertical: space.xs, borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze, marginTop: space.xs },
   buttonText: { ...t.small, color: color.ink },
   inline: { flexDirection: 'row', alignItems: 'center', gap: space.xs, marginTop: space.xs },

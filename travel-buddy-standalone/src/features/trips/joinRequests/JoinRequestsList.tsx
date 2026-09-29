@@ -142,7 +142,7 @@ export function JoinRequestsList({
                   </View>
                 )}
                 {res && res.state !== 'done' ? (
-                  <Text style={[s.detail, { color: color.signalStrong }]} testID={`join-request-failed-${r.id}`}>{writeFailureText(res)}</Text>
+                  <Text style={[s.detail, { color: color.signal }]} testID={`join-request-failed-${r.id}`}>{writeFailureText(res)}</Text>
                 ) : null}
               </View>
             </View>
@@ -157,7 +157,7 @@ const s = StyleSheet.create({
   wrap: { marginHorizontal: space.lg, marginTop: space.md, backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, ...shadow.card, overflow: 'hidden', paddingVertical: space.xs },
   headRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: space.lg, paddingTop: space.sm },
   heading: { ...t.small, fontWeight: '700', color: color.ink },
-  link: { ...t.small, color: color.signalStrong, fontWeight: '600' },
+  link: { ...t.small, color: color.signal, fontWeight: '600' },
   group: { ...t.stamp, color: color.mute, fontWeight: '700', paddingHorizontal: space.lg, paddingTop: space.sm, textTransform: 'uppercase' },
   row: { flexDirection: 'row', alignItems: 'flex-start', gap: space.sm, paddingHorizontal: space.lg, paddingVertical: space.sm },
   title: { ...t.small, fontWeight: '600', color: color.ink },

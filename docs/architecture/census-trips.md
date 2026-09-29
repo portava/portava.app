@@ -9531,3 +9531,46 @@ refused body has no id, so scheduling throws inside its own catch.
 - **Everything above** is controlled evidence. `trip_kernel_enabled` decides
   whether approve and lifecycle run through the kernel or through their flag-off
   twins.
+
+### §77.7 Checks run on this pass, and what was not run
+
+**artifacts/api-server — `int-guards.sh`:** all 24 exit 0. That covers:
+- typecheck, and typecheck:tests (baseline held);
+- test-registration;
+- census-integrity, census-freshness, census-scope-coverage and census-row-move-labels;
+- doc-citations (UNANCHORED held at its ceiling of 6434), citation-targets and citation-symbols;
+- migration-prefixes, production-drift, writerless-reads, schema-references and enum-literals;
+- flag-polarity, discovery-query-paths, route-auth-gate, api-prefix and async-handlers;
+- frozen-dir, telegraph-inventory, guard-coverage and unissued-supabase-writes.
+
+**Node suites** (with `SUPABASE_URL=http://127.0.0.1:9`): censusHeadCommit,
+censusPolicyCitations, tripReadiness, tripCrewRosterUnreadable, tripsExpansion,
+tripTransportPolicyRoute and tripKernelFamiliesWiring. 166/166 pass.
+
+**Local harness** (the whole chain replayed; baseline 388 tables):
+- `scripts/local-db/run-tests.sh`: 429 pass, 2 fail, 0 skipped.
+- The two failures are in trailsModeration and trailsService. Both are
+  `fetch failed / ECONNRESET` inside the in-process PostgREST bridge
+  (trailPostgrestBridge). They are Discovery trails suites; this pass touched no
+  code they reach. A rerun of those two files alone failed 1 of 25 with the same
+  ECONNRESET.
+- The trip suites were green, including tripBallotKernel 4/4 and tripKernelPipeline.
+
+**travel-buddy-standalone:**
+- `check:all`.
+- `check-route-registry` (205 screens, all present).
+- `check-close-then-navigate`, and lint:mocks.
+
+**Repo root and `scripts/`:**
+- `check:hook-order`, `test:dead-routes`, `test:routes-guard`,
+  `test:cross-tree-paths`, `test:route-param-any`, `test:fixture-guard` and
+  `check:rent-buddy-contract`: all exit 0.
+- `test:truncate-guard` exits 2 here only because it looks for its default host
+  `helium`. Pointed at the harness's postgres with `TRUNCATE_GUARD_DATABASE_URL`,
+  it passes 3/3.
+
+**NOT RUN:**
+- `tripKernelLive.test.ts`. ciSupabaseGuard refuses without the CI project
+  configuration, at HEAD as here.
+- `check:write-path-columns`, which needs live credentials. This pass adds no
+  server write path, so its extractor has nothing new to read.

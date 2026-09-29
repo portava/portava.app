@@ -184,7 +184,7 @@ export function PrivateTripCard({ trip, onRequestSent }: Props) {
 
 const s = StyleSheet.create({
   cancelLink: { alignSelf: 'center', marginTop: space.sm, padding: space.xs },
-  cancelLinkText: { ...t.small, color: color.signalStrong, fontWeight: '600' },
+  cancelLinkText: { ...t.small, color: color.signal, fontWeight: '600' },
   notice: { ...t.small, color: color.mute, textAlign: 'center', marginTop: space.sm },
   card: {
     margin: space.lg,

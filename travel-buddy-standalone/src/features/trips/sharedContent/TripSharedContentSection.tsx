@@ -59,7 +59,7 @@ function Empty({ id, text }: { id: string; text: string }) {
 }
 function WriteError({ w }: { w: ApiWrite<unknown> | null }) {
   if (!w || w.state === 'done') return null;
-  return <Text style={[s.detail, s.pad, { color: color.signalStrong }]} testID="shared-write-error">{writeFailureText(w)}</Text>;
+  return <Text style={[s.detail, s.pad, { color: color.signal }]} testID="shared-write-error">{writeFailureText(w)}</Text>;
 }
 
 // ── Notes ───────────────────────────────────────────────────────────────────
@@ -172,7 +172,7 @@ function DocumentsTab({ tripId, client }: { tripId: string; client: typeof api }
               <Text style={s.detail}>{api.DOCUMENT_TYPE_LABEL[d.document_type as api.DocumentType] ?? d.document_type}{d.is_private ? ' · Private' : ''}</Text>
               {o === 'loading' ? <ActivityIndicator size="small" color={color.signal} />
                 : o?.state === 'ok' ? <Text style={s.body} testID={`shared-doc-body-${d.id}`}>{o.data.content || 'No text in this document.'}</Text>
-                : o?.state === 'unavailable' ? <Text style={[s.detail, { color: color.signalStrong }]}>Couldn&apos;t open it ({o.detail}).</Text>
+                : o?.state === 'unavailable' ? <Text style={[s.detail, { color: color.signal }]}>Couldn&apos;t open it ({o.detail}).</Text>
                 : null}
             </Pressable>
           );
@@ -287,7 +287,7 @@ function RemindersTab({ tripId, client }: { tripId: string; client: typeof api }
           <TextInput value={when} onChangeText={setWhen} placeholder="YYYY-MM-DD HH:MM" placeholderTextColor={color.mute} style={[s.input, { flex: 1 }]} autoCapitalize="none" testID="shared-reminder-when" />
           <Pressable onPress={() => void add()} style={[s.smallBtn, s.primary]} testID="shared-reminder-add" accessibilityRole="button"><Text style={[s.smallBtnText, { color: '#fff' }]}>Add</Text></Pressable>
         </View>
-        {formErr ? <Text style={[s.detail, { color: color.signalStrong }]}>{formErr}</Text> : null}
+        {formErr ? <Text style={[s.detail, { color: color.signal }]}>{formErr}</Text> : null}
         <Text style={s.detail}>Your trip reminders follow your account; each rings on the device you set it on.</Text>
         <WriteError w={err} />
       </View>
