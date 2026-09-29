@@ -279,13 +279,6 @@ export default function PrivacyVisibilityScreen() {
     { value: 'private' as const, label: 'Private', sub: 'Only you can view' },
   ];
 
-  const messageOptions = [
-    { value: 'everyone' as const, label: 'Everyone' },
-    { value: 'friends' as const, label: 'Friends only' },
-    { value: 'followers' as const, label: 'Followers only' },
-    { value: 'nobody' as const, label: 'Nobody' },
-  ];
-
   const visibilityToggles: Array<{ key: keyof PrivacySettings; label: string; sub: string }> = [
     { key: 'show_profile_picture_publicly', label: 'Show profile photo to everyone', sub: 'When off, only followers and friends can see your profile photo' },
     { key: 'show_real_name', label: 'Show my real name', sub: 'Show your name to other travelers instead of just your @handle' },
@@ -369,29 +362,23 @@ export default function PrivacyVisibilityScreen() {
         ))}
       </SettingsSection>
 
-      {/* Who can message you */}
+      {/* Who can message you — WP-08 / TEL-F23, decision TM-TEL-D6.
+          These radios used to write profile_privacy_settings.allow_messages_from,
+          which the server's canMessage (lib/messagingPermissions.ts) never
+          reads: choosing "Nobody" here left a person fully reachable. The
+          setting that IS enforced lives in user_message_settings, edited on
+          the Message settings screen, so this row goes there instead of
+          offering a control that could not keep its promise. */}
       <SettingsSection
         title="Who can message you"
         subtitle="Limit who's able to start a Telegraph conversation with you."
       >
-        {messageOptions.map((opt, idx) => {
-          const checked = privacy.allow_messages_from === opt.value;
-          return (
-            <React.Fragment key={opt.value}>
-              {idx > 0 && <SettingsDivider />}
-              <SettingsRow
-                title={opt.label}
-                onPress={() => handleChange('allow_messages_from', opt.value)}
-                accessibilityRole="radio"
-                accessibilityLabel={opt.label}
-                accessibilityState={{ checked }}
-                right={
-                  <View style={[st.radio, checked && st.radioChecked]} />
-                }
-              />
-            </React.Fragment>
-          );
-        })}
+        <SettingsRow
+          title="Message settings"
+          subtitle="Who can message you, message requests, and read receipts"
+          onPress={() => router.push('/settings/messages' as any)}
+          testID="privacy-message-settings-link"
+        />
       </SettingsSection>
 
       {/* Lists */}

@@ -23,7 +23,7 @@ import {
   cancelMeetup, updateMeetup,
   type MeetupDetail, type TimeOptionVotes, type VoteValue, type RsvpStatus, type TimeBlock,
 } from '../../src/services/meetups';
-import { DatePickerField } from '../../src/components/DateTimePickerField';
+import { DatePickerField } from '../../src/components/DateTimePickerField'; import { MeetupInviteMoreCard } from '../../src/components/meetups/MeetupInviteMoreCard.tsx';
 import { useSession } from '../../src/context/SessionContext';
 import { usePlanPicker } from '../../src/components/PlanPickerController';
 import { RichText } from '../../src/components/RichText';
@@ -736,7 +736,7 @@ export default function MeetupScreen() {
           </View>
         </View>
 
-        {/* Age requirement info card */}
+        <MeetupInviteMoreCard meetup={meetup} onInvited={silentPoll} />{/* Invite more (PLAT-F31) — organiser only; renders nothing otherwise */}{/* Age requirement info card */}
         {meetup.ageLimitEnabled && (
           <View style={[s.card, s.ageGate]}>
             <Text style={s.ageGateTitle}>Age Requirement</Text>

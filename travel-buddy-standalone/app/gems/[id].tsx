@@ -22,7 +22,7 @@ import { useGemDetail, useGemCheckin, useGemReport } from '../../src/hooks/useHi
 import { verificationBadge, sensitivityLabel, shareGemToTelegraph, gemVisitOutcomeSentence, type GemState, type GemConfidence } from '../../src/services/hiddenGems';
 import { GemStateBadge } from '../../src/components/gems/GemStateBadge';
 import { GemContributeSection } from '../../src/components/gems/GemContributeSection';
-import { TripWishlistPicker, type AddToTripPayload } from '../../src/components/discovery/TripWishlistPicker';
+import { TripWishlistPicker, type AddToTripPayload } from '../../src/components/discovery/TripWishlistPicker'; import { GemTripPlanPicker } from '../../src/components/gems/GemTripPlanPicker';
 import { ReviewsSection } from '../../src/components/ReviewsSection';
 import { WorthItVoteRow } from '../../src/components/WorthItVoteRow';
 import { PlaceInfoSection } from '../../src/components/place/PlaceInfoSection';
@@ -245,7 +245,7 @@ export default function GemDetailScreen() {
   const [showReport,      setShowReport]      = useState(false);
   const [sharing,         setSharing]         = useState(false);
   const [builderVisible,  setBuilderVisible]  = useState(false);
-  const [pickerVisible,   setPickerVisible]   = useState(false);
+  const [pickerVisible,   setPickerVisible]   = useState(false); const [planPickerVisible, setPlanPickerVisible] = useState(false); // TM-social PLAT-F37: the trip PLAN (POST /hidden-gems/:id/plan); pickerVisible is the trip WISHLIST
   const [canonicalPlace,  setCanonicalPlace]  = useState<CanonicalPlace | null>(null);
 
   // §16.3 — after a structured contribution the backend re-derives the gem's
@@ -290,7 +290,7 @@ export default function GemDetailScreen() {
 
   const handleAddToPlan = useCallback(() => {
     if (!gem) return;
-    setPickerVisible(true);
+    setPlanPickerVisible(true);
   }, [gem]);
 
   // Cross-platform Thread-ID prompt (Alert.prompt is iOS-only — a silent
@@ -662,6 +662,15 @@ export default function GemDetailScreen() {
         visible={pickerVisible && !!gem}
         onClose={() => setPickerVisible(false)}
       />
+      {gem ? (
+        <GemTripPlanPicker
+          gemId={gem.id}
+          gemName={gem.name}
+          visible={planPickerVisible}
+          onClose={() => setPlanPickerVisible(false)}
+          onOpenWishlist={() => { setPlanPickerVisible(false); setPickerVisible(true); }}
+        />
+      ) : null}
     </SafeAreaView>
   );
 }

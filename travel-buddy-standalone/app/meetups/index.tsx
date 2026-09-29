@@ -14,7 +14,7 @@ import { router, useFocusEffect } from 'expo-router';
 import { FEED_FOCUS_TTL_MS } from '../../src/hooks/usePosts';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
-  ArrowLeft, CalendarClock, MapPin, Plus, CalendarX,
+  ArrowLeft, CalendarClock, MapPin, Plus, CalendarX, Inbox,
 } from 'lucide-react-native';
 import { getMyMeetups, type MeetupListItem, type MeetupStatus, type RsvpStatus } from '../../src/services/meetups';
 import { localTodayKey } from '../../src/utils/localDate';
@@ -197,7 +197,7 @@ function MeetupsScreenInner() {
         <Pressable style={styles.backBtn} onPress={() => router.back()} hitSlop={8}>
           <ArrowLeft size={22} color={color.ink} />
         </Pressable>
-        <Text style={styles.headerTitle}>Meetups</Text>
+        <Text style={styles.headerTitle}>Meetups</Text><Pressable style={{ padding: 4, marginRight: space.xs }} onPress={() => router.push('/meetups/invites' as any)} hitSlop={6} accessibilityRole="button" accessibilityLabel="Meetup invites" testID="meetups-invites-link"><Inbox size={20} color={color.ink} /></Pressable>
         <Pressable
           style={styles.createBtn}
           onPress={() => setShowCreate(true)}

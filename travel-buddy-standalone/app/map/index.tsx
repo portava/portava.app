@@ -97,7 +97,7 @@ import type { MapMediaAsset } from '../../src/features/map/truth/contributionFlo
 import type { MediaKind } from '../../src/features/map/truth/liveTruth.ts';
 import { openInMaps } from '../../src/lib/openInMaps.ts';
 import { centroidOf } from '../../src/types/mapObjects.ts';
-import { MapSearchSheet } from '../../src/components/map/MapSearchSheet.tsx';
+import { MapSearchSheet } from '../../src/components/map/MapSearchSheet.tsx'; import { flyToCompassQuery } from '../../src/services/mapCompassCommands.ts';
 import { MeetHereSheet } from '../../src/components/map/MeetHereSheet.tsx';
 import { LocateFriendsPanel } from '../../src/components/map/LocateFriendsPanel.tsx';
 import {
@@ -1508,7 +1508,7 @@ function FullScreenMapScreenInner() {
     // Fly the camera to the queried location regardless of entity coordinates.
     // toMapEntity (AskCompassBar) now skips results without real lat/lng, so for
     // city/region queries the camera would otherwise stay unless we geocode here.
-    void geocodeAndFly(query);
+    void flyToCompassQuery(query, cameraRef, geocodeAndFly); // TM-social MAP-F04: the server command channel; geocodeAndFly only when it is off/unreachable
   }
 
   function handleCompassClear() {
@@ -3216,7 +3216,7 @@ function FullScreenMapScreenInner() {
               reason: 'not_interested',
               round: alternativeRoundRef.current,
             });
-            void geocodeAndFly(compassQuery);
+            void flyToCompassQuery(compassQuery, cameraRef, geocodeAndFly);
           }}
           accessibilityRole="button"
           accessibilityLabel="Show me something else"
