@@ -49,7 +49,8 @@ before(async () => {
   base = `http://127.0.0.1:${(server.address() as any).port}/api`;
 });
 after(() => server.close());
-const get = async () => { const r = await fetch(`${base}/map/search?lat=48.85&lng=2.35`, { headers: { Authorization: `Bearer ${TOKEN}` } }); return { status: r.status, body: await r.json() }; };
+interface MapSearchBody { enabled: boolean; refusal?: string; results: unknown[]; [key: string]: unknown }
+const get = async () => { const r = await fetch(`${base}/map/search?lat=48.85&lng=2.35`, { headers: { Authorization: `Bearer ${TOKEN}` } }); return { status: r.status, body: (await r.json()) as MapSearchBody }; };
 const OFF_KEYS = ["enabled", "results", "viewport", "total", "nextCursor", "sources", "generatedAt"];
 
 describe("census-discovery §107 (DV-83, D-W11X2-71): GET /map/search with its flag unread", () => {
