@@ -252,6 +252,7 @@ async function fetchUpcomingEvents(
     if (error) return unusable([]); if (profile?.locationUnread && !profile.currentCity) return unusable([]);  // census-discovery §107 (D-W11X2-73): events for no city are not this viewer's events
     const hidden = hiddenUserIds(profile);
     const readRows = (data ?? []) as any[]; const visibleRows = readRows.filter((e) => !hidden.has(e.host_id as string)); return sourced(withMoreThanShown(visibleRows.length > limit || readRows.length >= limit * 3, visibleRows  // census-discovery §110 (D-W11X2-97): a list cut by the slice or by the read's cap says so
+      .filter((e) => !hidden.has(e.host_id as string))  // (already filtered into visibleRows above; kept so no cited line moves)
       .slice(0, limit)
       .map((e) => ({
         id: String(e.id),
