@@ -302,7 +302,7 @@ export default function BuddyDashboard() {
       ) : (
         <View style={s.cardList}>
           {upcoming.map((bk) => (
-            <TravelCard key={bk.id} style={{ padding: space.md }}>
+            <TravelCard key={bk.id} style={{ padding: space.md }} onPress={() => router.push({ pathname: '/(rent-a-buddy)/booking/[id]' as any, params: { id: bk.id } })}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <View>
                   <Text style={s.bkDate}>{new Date(bk.bookingDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', weekday: 'short' })}</Text>
@@ -328,6 +328,16 @@ export default function BuddyDashboard() {
           sub="Review and respond to incoming bookings"
           badge={summary?.pendingRequests ?? 0}
           onPress={() => router.push('/(rent-a-buddy)/buddy-dashboard/requests' as any)}
+        />
+        <NavTile
+          label="My sessions"
+          sub="Accepted bookings — start and complete each session"
+          onPress={() => router.push('/(rent-a-buddy)/buddy-dashboard/sessions' as any)}
+        />
+        <NavTile
+          label="My offers"
+          sub="Offers you've sent — see answers, withdraw pending ones"
+          onPress={() => router.push('/(rent-a-buddy)/buddy-dashboard/my-offers' as any)}
         />
         <NavTile
           label="Requests Inbox"
