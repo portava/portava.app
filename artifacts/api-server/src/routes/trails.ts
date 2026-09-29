@@ -590,7 +590,12 @@ import { discoveryRefusal, sendDiscoveryRefusal } from "../lib/discoveryRefusal.
 
 export const TRAIL_MEMBER_SOURCES = "trail_member_sources";
 
+/** The Trail's activity read (`rank_events`): not a member source, and naming it discloses nothing about the members. */
+export const TRAIL_ACTIVITY = "trail_activity";
+
 function sendTrailRead(res: Response, route: string, membersUnread: readonly string[] | undefined, servedRows: boolean, body: object): void {
   if (!membersUnread || membersUnread.length === 0) { res.json(body); return; }
-  sendDiscoveryRefusal(res, body, discoveryRefusal("transient_db", "trail_member_sources_unread", route, servedRows ? "partial" : "nothing", [TRAIL_MEMBER_SOURCES]));
+  const member = membersUnread.some((s) => s !== "rank_events");
+  const failed = [...(member ? [TRAIL_MEMBER_SOURCES] : []), ...(membersUnread.includes("rank_events") ? [TRAIL_ACTIVITY] : [])];
+  sendDiscoveryRefusal(res, body, discoveryRefusal("transient_db", member ? "trail_member_sources_unread" : "trail_activity_unread", route, servedRows ? "partial" : "nothing", failed));
 }

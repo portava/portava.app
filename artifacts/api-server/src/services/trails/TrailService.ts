@@ -686,7 +686,7 @@ async function trailModulesRead( // census-discovery §105: exported as getTrail
   });
   const served = linkVenueClusters(await servableMembers(sc, m.members, opts.viewerId ?? null, nowMs, opts.memberUnread), geo); // §86 (DV-23): a post's venue → the place member of that venue
 
-  if (flags.exploration) return trailModulesExplored(sc, trailId, m.members, served, health, { nowMs, pageSize, flags, viewerId: opts.viewerId ?? null }); const demoted = flags.healthOrder ? healthDemotedRowIds(m.members, health, nowMs) : null; // §86 — ONE `rank_events` read serves both of this function's readings: §9's
+  if (flags.exploration) return trailModulesExplored(sc, trailId, m.members, served, health, { nowMs, pageSize, flags, viewerId: opts.viewerId ?? null, memberUnread: opts.memberUnread }); const demoted = flags.healthOrder ? healthDemotedRowIds(m.members, health, nowMs) : null; // §86 — ONE `rank_events` read serves both of this function's readings: §9's
   // exposure denominators for the exploration candidates and `trending_now`'s
   // momentum for the place members. Both are read in BOTH served id spaces
   // (`readMemberEvents`), on the surface the momentum loader reads.
@@ -697,7 +697,7 @@ async function trailModulesRead( // census-discovery §105: exported as getTrail
   const placeMembers = served.filter((r) => r.source_type === "place");
   const events: MemberEventRead | undefined = placeMembers.length + explorationCandidates.length > 0
     ? await readMemberEvents(sc, [...placeMembers, ...explorationCandidates], nowMs, "discovery")
-    : { rows: [], truncated: false };
+    : { rows: [], truncated: false }; if (!events) opts.memberUnread?.add("rank_events");  // census-discovery §105 (DV-83): a failed activity read is named, never an empty trending_now
 
   // The ONE non-chronological ordering input, and its arithmetic is borrowed
   // rather than built: `computeLocalMomentum` is the kernel `GET /discovery`'s
@@ -931,7 +931,7 @@ export interface TrailTrendingResult {
 export const TRAIL_TRENDING_PAGE_SIZE = 20;
 
 async function trailTrendingRead( // census-discovery §105: exported as trailTrending at the foot, which names a failed member read
-  sc: any, trailId: string, nowMs = Date.now(), opts: { viewerId?: string | null; ignoreTrendReview?: boolean; memberUnread?: Set<string> } = {}, // §86: the admin evidence reads the trend UNDER review
+  sc: any, trailId: string, nowMs = Date.now(), opts: { viewerId?: string | null; ignoreTrendReview?: boolean; memberUnread?: Set<string>; activityUnread?: boolean } = {}, // §86: the admin evidence reads the trend UNDER review
 ): Promise<TrailTrendingResult> {
   // A FUNCTION, not a shared object. Every refusal path used to build its own
   // literal; spreading one constant instead would hand every one of them the
@@ -963,7 +963,7 @@ async function trailTrendingRead( // census-discovery §105: exported as trailTr
     perItem = { ...reading.values };
     momentumProvenance = reading.provenance;
   } else {
-    logger.warn({ trailId }, "trail trending item read failed");
+    opts.activityUnread = true; logger.warn({ trailId }, "trail trending item read failed");  // §105 (DV-83): the list below is empty BECAUSE of this
   }
 
   let trailMomentum: number | null = null;
@@ -2018,12 +2018,12 @@ function responseOrder(measured: Record<string, TrailExposureCount> | null) {
 
 async function trailModulesExplored(
   sc: any, trailId: string, members: readonly MemberRow[], served: ServableMember[], health: TrailHealth,
-  o: { nowMs: number; pageSize: number; flags: TrailRankingFlags; viewerId?: string | null },
+  o: { nowMs: number; pageSize: number; flags: TrailRankingFlags; viewerId?: string | null; memberUnread?: Set<string> },
 ): Promise<TrailModulesResult> {
   const { nowMs, pageSize } = o;
   const demoted = o.flags.healthOrder ? healthDemotedRowIds(members, health, nowMs) : null;
   // §9 step 3 on MEASURED rows: the Discovery surface, both id spaces, for every served member.
-  const events: MemberEventRead | undefined = served.length > 0 ? await readMemberEvents(sc, served, nowMs, "discovery") : { rows: [], truncated: false };
+  const events: MemberEventRead | undefined = served.length > 0 ? await readMemberEvents(sc, served, nowMs, "discovery") : { rows: [], truncated: false }; if (!events) o.memberUnread?.add("rank_events");  // census-discovery §105 (DV-83)
   const measured = events && !events.truncated ? exposureCountsFrom(events.rows, new Set(served.map((r) => r.source_id))) : null;
   const measuredOf = (r: ServableMember): MeasuredExposure | null => (measured ? (measured[r.source_id] ?? { impressions: 0, positives: 0 }) : null);
 
@@ -2445,9 +2445,13 @@ export async function trailTrending(
   sc: any, trailId: string, nowMs = Date.now(), opts: { viewerId?: string | null; ignoreTrendReview?: boolean } = {},
 ): Promise<TrailTrendingResult> {
   const memberUnread = new Set<string>();
-  const r = await trailTrendingRead(sc, trailId, nowMs, { ...opts, memberUnread });
-  if (r.refusal || memberUnread.size === 0) return r;
-  return { ...withMembersUnread(r, memberUnread), ...(r.trendSuppressed ? {} : { momentumUnread: true as const }) };
+  const o = { ...opts, memberUnread, activityUnread: false };
+  const r = await trailTrendingRead(sc, trailId, nowMs, o);
+  if (r.refusal || (memberUnread.size === 0 && !o.activityUnread)) return r;
+  // The per-item ACTIVITY read failing empties the list but leaves the boolean measured (§75);
+  // a failed MEMBER read makes the boolean unknown too.
+  const named = new Set(memberUnread); if (o.activityUnread) named.add("rank_events");
+  return { ...withMembersUnread(r, named), ...(memberUnread.size > 0 && !r.trendSuppressed ? { momentumUnread: true as const } : {}) };
 }
 
 function withMembersUnread<T extends object>(r: T, unread: ReadonlySet<string>): T & { membersUnread?: string[] } {

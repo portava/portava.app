@@ -292,3 +292,34 @@ describe("census-discovery §105 (DV-83, D-W11X2-60): a Trail read with a member
     assert.deepEqual(again.body.modules, a.body.modules);
   });
 });
+
+// ── §105 sweep (D-W11X2-60): the Trail's ACTIVITY read (`rank_events`) ──
+// `trending_now`'s order, §9's exploration denominators and GET …/trending's list are read
+// from `rank_events`. A failed read left `trending_now` and the trending list EMPTY with no
+// refusal (only `readingProvenance: null` hinted at it). It is now refused as `trail_activity`
+// — not a member source, and naming it discloses nothing about the Trail's members.
+describe("census-discovery §105 sweep (DV-83, D-W11X2-60): the Trail activity read unread", () => {
+  it("TR10 GET …/:id/modules: rank_events fails → the members are served, refused partial naming trail_activity", async () => {
+    _setTestClient(makeDb(seed(), ["rank_events"]), true);
+    const r = await call(MODULES, STRANGER);
+    assert.equal(r.status, 200);
+    assert.ok(itemIds(r.body).includes("m-e"));
+    assert.equal(r.body.refusal?.coverage, "partial");
+    assert.deepEqual(r.body.refusal?.failedSources, ["trail_activity"]);
+  });
+
+  it("TR11 GET …/:id/trending: rank_events fails → trending unknown and the empty list refused, naming trail_activity", async () => {
+    _setTestClient(makeDb(seed(), ["rank_events"]), true);
+    const r = await call(TRENDING, STRANGER);
+    assert.equal(r.body.trending, null);
+    assert.deepEqual(r.body.items, []);
+    assert.equal(r.body.refusal?.coverage, "nothing", "an empty list over a failed activity read is not 'nothing is surging'");
+    assert.deepEqual(r.body.refusal?.failedSources, ["trail_activity"]);
+  });
+
+  it("TR12 both a member source and the activity read fail → both generic sources, in order", async () => {
+    _setTestClient(makeDb(seed(), ["events", "rank_events"]), true);
+    const r = await call(MODULES, STRANGER);
+    assert.deepEqual(r.body.refusal?.failedSources, ["trail_member_sources", "trail_activity"]);
+  });
+});
