@@ -260,7 +260,7 @@ router.post("/admin/stamps/:userStampId/revoke", async (req, res) => {
 
   const result = await revokeStamp(sc, userStampId, adminId, parsed.data.reason);
   if (!result.revoked) {
-    sendError(res, "not_found", result.reason);
+    if (result.failure === "db_error") req.log?.error?.({ userStampId, adminId, reason: result.reason }, "admin stamp revoke failed on the database");  sendError(res, result.failure === "db_error" ? "db_error" : "not_found", result.reason);  // tm-followups A3: an outage is never "not found"
     return;
   }
   res.json(result);
@@ -284,7 +284,7 @@ router.post("/admin/stamps/:userStampId/restore", async (req, res) => {
 
   const result = await restoreStamp(sc, userStampId, adminId, parsed.data.reason);
   if (!result.restored) {
-    sendError(res, "not_found", result.reason);
+    if (result.failure === "db_error") req.log?.error?.({ userStampId, adminId, reason: result.reason }, "admin stamp restore failed on the database");  sendError(res, result.failure === "db_error" ? "db_error" : "not_found", result.reason);  // tm-followups A3: an outage is never "not found"
     return;
   }
   res.json(result);
