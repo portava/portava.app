@@ -2407,7 +2407,7 @@ router.get("/events/:id", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: ev } = await sc.from("events").select("*").eq("id", id).maybeSingle();
+  const { data: ev, error: evErr } = await sc.from("events").select("*").eq("id", id).maybeSingle(); if (evErr) { sendError(res, "degraded_unavailable", "We could not load this event right now. Please try again shortly."); return; }  // census-discovery §110 (D-W11X2-101): a failed read is not "Event not found"
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
 
   // Block check FIRST — blocking overrides all other relationships.
@@ -2436,7 +2436,7 @@ router.get("/events/:id", async (req, res) => {
 
   // Viewer eligibility gates (age / trust / verified) — same rules as RSVP.
   const readElig = await checkEventEligibility(sc, ev as any, user.id);
-  if (!readElig.ok) {
+  if (!readElig.ok) { if (readElig.unread) { sendError(res, "degraded_unavailable", readElig.message); return; }  // §110 (D-W11X2-101): a gate that could not be read is not "not found"
     sendError(res, "not_found", "Event not found or access denied"); return;
   }
 
