@@ -452,3 +452,65 @@ describe("§104 round 8: GET /compass/why says a failed lookup (D-W11X2-58)", ()
     assert.match(none.body.explanation, /not found/);
   });
 });
+
+// ── census-discovery §105 (DV-83 round 9, D-W11X2-64): the round-8 verifier's survivors ──
+//
+// SM14 forced `sendRecommendations`' coverage to "partial" with zero rows and survived:
+// nothing pinned `nothing` on the feed-based surfaces. SM15 replaced the build catch's
+// `compass_flags_unreadable` with `recommendations_build_failed` and survived: no test
+// threw CompassFlagsUnreadableError into the build. Both are pinned here.
+
+/** The route's own COMPASS_ENABLED read succeeds (and is cached); every later COMPASS_% read — the pipeline's uncached one — fails. */
+function flagsFailAfterFirstRead(w: World) {
+  const c = world(w);
+  let likeReads = 0;
+  const failing: any = new Proxy({}, {
+    get(_t, p: string) {
+      if (p === "then") return (f: any, r: any) => Promise.resolve({ data: null, error: DB_ERR }).then(f, r);
+      return () => failing;
+    },
+  });
+  return {
+    ...c,
+    from: (t: string) => {
+      const target: any = c.from(t);
+      if (t !== "feature_flags") return target;
+      const wrap: any = new Proxy({}, {
+        get(_x, p: string) {
+          if (p === "then") return (f: any, r: any) => target.then(f, r);
+          if (p === "maybeSingle" || p === "single") return () => target[p]();
+          if (p === "like") return (...a: unknown[]) => { likeReads += 1; target.like(...a); return likeReads > 1 ? failing : wrap; };
+          return (...a: unknown[]) => { target[p](...a); return wrap; };
+        },
+      });
+      return wrap;
+    },
+  };
+}
+
+describe("§105 round 9: the round-8 verifier's survivors on /compass/recommendations", () => {
+  it("SM14 zero rows because a candidate source failed → coverage `nothing`, never `partial`", async () => {
+    _setTestClient(world({ failTables: ["posts"] }) as any, true);
+    const { body } = await get("/compass/recommendations?surface=search&q=food&city=Paris&limit=6");
+    assert.deepEqual(body.recommendations, [], "the premise: the search rail read no rows");
+    assert.equal(body.refusal?.code, "compass_sources_unread");
+    assert.equal(body.refusal?.coverage, "nothing", "an empty list over a failed read carries nothing, so `partial` would claim rows that are not there");
+  });
+
+  it("SM14b the same failure with rows → `partial` (the other arm of the same line)", async () => {
+    _setTestClient(world({ failTables: ["posts"] }) as any, true);
+    const { body } = await get("/compass/recommendations?surface=for_you&city=Paris&limit=6");
+    assert.ok(body.recommendations.length > 0);
+    assert.equal(body.refusal?.coverage, "partial");
+  });
+
+  it("SM15 the build throws CompassFlagsUnreadableError (the pipeline's flag read failed) → `compass_flags_unreadable`, naming feature_flags", async () => {
+    _setTestClient(flagsFailAfterFirstRead({}) as any, true);
+    const { status, body } = await get("/compass/recommendations?surface=for_you&city=Paris&limit=6");
+    assert.equal(status, 200);
+    assert.deepEqual(body.recommendations, []);
+    assert.equal(body.refusal?.code, "compass_flags_unreadable", JSON.stringify(body).slice(0, 300));
+    assert.equal(body.refusal?.coverage, "nothing");
+    assert.deepEqual(body.refusal?.failedSources, ["feature_flags"]);
+  });
+});

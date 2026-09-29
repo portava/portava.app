@@ -119,3 +119,43 @@ describe("§104 — an unread rollout flag is a failed read, never feature_disab
     assert.equal(e.status, 404, e.raw);
   });
 });
+
+// ── census-discovery §105 (DV-83 round 9, D-W11X2-64): the round-8 verifier's survivor SM17 ──
+// SM17 dropped `|| listsFlag === null` from the trending lists' gate and survived: FT2 fails
+// BOTH flag reads, so the unread API flag answered 503 first and masked the lists flag. Here
+// the API flag is READ and on, and only the lists flag's read fails.
+describe("§105 — trending lists: a readable API flag with an unread lists flag (SM17)", () => {
+  it("FT3 the API flag read and on, the lists flag read fails → 503 flag_unreadable, never 404", async () => {
+    const w = flagless();
+    w["feature_flags"] = [{ flag: "discovery_trending_api_enabled", enabled: true }];
+    // Fail only the lists flag's read: wrap the service client's `feature_flags` builder.
+    const d = makeFakeCandidateDb(w, {});
+    const auth = { getUser: async (t: string) => (t === TOK ? { data: { user: { id: VIEWER } }, error: null } : { data: { user: null }, error: { message: "invalid token" } }) };
+    const from = (d as unknown as { from: (t: string) => any }).from.bind(d);
+    const listsFlagFails = (t: string) => {
+      const b = from(t);
+      if (t !== "feature_flags") return b;
+      let flag: unknown = null;
+      const wrap: any = new Proxy({}, {
+        get(_x, p: string) {
+          if (p === "maybeSingle") return () => (flag === "discovery_trend_lists_enabled" ? Promise.resolve({ data: null, error: { code: "57014", message: "timeout" } }) : b.maybeSingle());
+          if (p === "then") return (f: any, r: any) => b.then(f, r);
+          return (...a: unknown[]) => { if (p === "eq" && a[0] === "flag") flag = a[1]; b[p](...a); return wrap; };
+        },
+      });
+      return wrap;
+    };
+    const client = Object.assign(d, { auth, from: listsFlagFails });
+    _setTestServiceClient(asServiceClient(client)); _setTestClient(client, true);
+    assertUnreadable(await get("/v1/discovery/trending/places?destination=Miami"));
+  });
+
+  it("FT3c CONTROL: the API flag read and on, the lists flag READ and off → 404 feature_disabled", async () => {
+    const w = flagless();
+    w["feature_flags"] = [{ flag: "discovery_trending_api_enabled", enabled: true }, { flag: "discovery_trend_lists_enabled", enabled: false }];
+    serve(w);
+    const r = await get("/v1/discovery/trending/places?destination=Miami");
+    assert.equal(r.status, 404, r.raw);
+    assert.match(r.raw, /feature_disabled/);
+  });
+});
