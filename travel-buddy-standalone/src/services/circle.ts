@@ -444,3 +444,35 @@ export async function getCompassSuggestions(): Promise<ServiceResult<{ cards: Co
     return { ok: false, error: e?.message ?? 'network_error' };
   }
 }
+
+// ── Need help — TM-social MAP-F08 ────────────────────────────────────────────
+
+/**
+ * POST /circle/contexts/:type/:id/need-help — raise a need-help alert in a
+ * trip/event Circle.
+ *
+ * What the server does, and therefore what the UI may claim: it marks the
+ * caller's presence `needs_help`, logs a check-in, writes an audit event and
+ * sends ONE push to the context's HOST (never to every member, and never with
+ * a location — routes/circle.ts). The response carries no GPS, no member list
+ * and no delivery receipt, so the most the client can truthfully say is that
+ * the host alert was sent. It is rate-limited (429) for spam, not for safety.
+ */
+export async function postNeedHelp(
+  contextType: 'trip' | 'event',
+  contextId: string,
+  note?: string | null,
+): Promise<ServiceResult<{ acknowledged: boolean }>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'not_configured' };
+  try {
+    const res = await authedFetch(`/api/circle/contexts/${contextType}/${contextId}/need-help`, {
+      method: 'POST',
+      body: JSON.stringify(note ? { note } : {}),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && (data as any)?.acknowledged === true) return { ok: true, data: { acknowledged: true } };
+    return { ok: false, error: (data as any)?.error ?? 'unknown', status: res.status };
+  } catch (e: any) {
+    return { ok: false, error: e?.message ?? 'network_error' };
+  }
+}

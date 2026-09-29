@@ -366,7 +366,7 @@ router.get("/stamps/me/collections", async (req, res) => {
       .eq("is_revoked", false),
   ]);
 
-  if (collectionsRes.error) { sendError(res, "db_error", collectionsRes.error.message); return; }
+  if (collectionsRes.error || earnedRes.error) { sendError(res, "db_error", (collectionsRes.error ?? earnedRes.error)!.message); return; } // TM-social (PASS-F09): an unreadable user_stamps is not "0 earned"
 
   const earnedDefIds = new Set(
     ((earnedRes.data ?? []) as any[]).map((s: any) => s.stamp_definition_id),
