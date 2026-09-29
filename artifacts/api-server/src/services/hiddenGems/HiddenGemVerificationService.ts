@@ -305,14 +305,21 @@ export async function recordGuideVerification(
   }
 }
 
-/** Admin final verification. */
+/**
+ * Admin final verification.
+ *
+ * Returns false when no gem has this id; throws when the status write is
+ * refused. The status UPDATE used to be unchecked, so a failed approval
+ * answered the admin `{ ok: true }` and the gem stayed pending (testing-mode
+ * WP-21 — the admin gem-review screen reports what this returns).
+ */
 export async function recordAdminVerification(
   db: SupabaseClient,
   gemId: string,
   adminId: string,
   result: "approved" | "rejected" | "hidden",
   notes?: string,
-): Promise<void> {
+): Promise<boolean> {
   // Same audit row, same reasoning as recordGuideVerification above.
   try {
     const { error: auditErr } = await db
@@ -348,5 +355,12 @@ export async function recordAdminVerification(
   };
   if (newVerificationLevel) patch.verification_level = newVerificationLevel;
 
-  await db.from("hidden_gems").update(patch).eq("id", gemId);
+  const { data: updated, error: updErr } = await db
+    .from("hidden_gems")
+    .update(patch)
+    .eq("id", gemId)
+    .select("id")
+    .maybeSingle();
+  if (updErr) throw updErr;
+  return Boolean(updated);
 }

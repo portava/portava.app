@@ -64,7 +64,11 @@ function makeClient(state: FakeState = {}) {
     moderation_reports: [...(state.moderationReports ?? [])],
     posts:              state.posts       ?? [{ id: POST_ID,  user_id: BOB_ID }],
     events:             state.events      ?? [{ id: EVT_ID,   host_id: BOB_ID }],
-    messages:           state.messages    ?? [{ id: MSG_ID,   sender_id: BOB_ID }],
+    // A message sits in a thread the reporter (ALICE) is an active member of:
+    // a message report now needs a reporter who can see the message
+    // (lib/reportTargetAccess, tm-followups A1).
+    messages:           state.messages    ?? [{ id: MSG_ID,   sender_id: BOB_ID, thread_id: THR_ID, created_at: "2026-05-01T00:00:00.000Z" }],
+    message_thread_members: [{ thread_id: THR_ID, user_id: ALICE_ID, left_at: null }, { thread_id: THR_ID, user_id: BOB_ID, left_at: null }],
     comments:           state.comments    ?? [{ id: CMT_ID,   user_id: BOB_ID }],
     reviews:            state.reviews     ?? [{ id: REV_ID,   reviewer_id: BOB_ID }],
     rent_buddy_profiles:state.rent_buddy_profiles ?? [{ id: BUDDY_ID, user_id: BOB_ID }],

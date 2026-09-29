@@ -1,11 +1,11 @@
 import { Router } from "express";
 import { requireUser, sendError } from "../lib/http";
-import { nameVisibilitySet, nameVisibleFor } from "../lib/publicIdentity";
+import { nameVisibilitySet, nameVisibleFor, readNameVisibilitySet } from "../lib/publicIdentity";
 import { decideUnfollow, isUuid } from "../lib/followDecisions";
 import { normalizedFriendshipPair } from "../lib/friendDecisions";
 import { resolveInteractionPermissions } from "../services/interactionPermissions";
 import { getSeenIds, markAsSeen, clearSeen, dailySeed, seededShuffle } from "../lib/suggestionSeenCache";
-import { isKillSwitchEngaged } from "../lib/featureFlags";
+import { isKillSwitchEngaged } from "../lib/featureFlags"; import { discoveryRefusal, sendDiscoveryRefusal } from "../lib/discoveryRefusal"; // census-discovery §106 (tm-people): the people search's stop refuses rather than posing as a miss
 import { safeOrIlikeValue } from "../lib/postgrestFilter";
 
 const router = Router();
@@ -688,7 +688,7 @@ router.get("/users/search", async (req, res) => {
 
   // Emergency stop: disable_profile_search — fail-CLOSED on DB error
   if (await isKillSwitchEngaged(sc, 'disable_profile_search')) {
-    res.status(200).json({ users: [] });
+    sendDiscoveryRefusal(res, { users: [] }, discoveryRefusal("feature_disabled", "profile_search_stopped", "/users/search")); // tm-people: stopped (or stop state unreadable, fail-closed) — the 200 soft stop stays, and the body says nothing was searched
     return;
   }
 
@@ -752,7 +752,7 @@ router.get("/users/search", async (req, res) => {
     req.log.warn({ err: e }, "blocks query threw; suppressing results");
   }
 
-  if (blockQueryFailed) { res.status(200).json({ users: [] }); return; }
+  if (blockQueryFailed) { sendError(res, "db_error", "block state could not be read; nothing was searched"); return; } // tm-people: still fail-closed (no row leaks), but said — not the body a genuine miss gets
 
   // Exclude users who have opted out of profile discovery.
   // Fail-closed: if the privacy query fails we cannot guarantee the opt-out is
@@ -764,8 +764,8 @@ router.get("/users/search", async (req, res) => {
       .in("user_id", ids)
       .eq("allow_profile_discovery", false);
     if (privErr) {
-      req.log.error({ err: privErr }, "search: privacy settings query failed; returning empty results (fail-closed)");
-      res.status(200).json({ users: [] });
+      req.log.error({ err: privErr }, "search: privacy settings query failed; answering db_error (fail-closed)");
+      sendError(res, "db_error", "discovery opt-outs could not be read; nothing was searched"); // tm-people: an unread opt-out is a failure, not "nobody matched"
       return;
     }
     if (noDiscovery && (noDiscovery as any[]).length > 0) {
@@ -773,8 +773,8 @@ router.get("/users/search", async (req, res) => {
       rows.splice(0, rows.length, ...rows.filter((p: any) => !noDiscoverySet.has(p.id as string)));
     }
   } catch (e) {
-    req.log.error({ err: e }, "search: privacy settings threw; returning empty results (fail-closed)");
-    res.status(200).json({ users: [] });
+    req.log.error({ err: e }, "search: privacy settings threw; answering db_error (fail-closed)");
+    sendError(res, "db_error", "discovery opt-outs could not be read; nothing was searched");
     return;
   }
 
@@ -783,7 +783,7 @@ router.get("/users/search", async (req, res) => {
     sc.from("user_follows").select("following_id").in("following_id", ids),
     sc.from("user_follows").select("following_id").eq("follower_id", user.id).in("following_id", ids),
     sc.from("friend_requests").select("recipient_id").eq("requester_id", user.id).eq("status", "pending").in("recipient_id", ids),
-  ]);
+  ]); if (followerEdgesRes.error || myFollowsRes.error || pendingRequestsRes.error) { req.log.error({ err: followerEdgesRes.error ?? myFollowsRes.error ?? pendingRequestsRes.error }, "search: follow-state read failed"); sendError(res, "db_error", "follow state could not be read"); return; } // tm-people: a row is never served as "not following" / "no request sent" on an unread edge
 
   const followerCounts: Record<string, number> = {};
   for (const e of (followerEdgesRes.data ?? [])) {
@@ -887,7 +887,7 @@ router.get("/users/search", async (req, res) => {
   } catch { /* fail-safe: skip shared destinations */ }
 
   // Universal display-name rule: batch-resolve which subjects opted in.
-  const allowedNames = await nameVisibilitySet(sc, rows.map((p: any) => p.id));
+  const allowedNames = await readNameVisibilitySet(sc, rows.map((p: any) => p.id)); if (!allowedNames) { sendError(res, "db_error", "name visibility could not be read"); return; } // tm-people: an unread name rule used to drop every name-matched row and answer "nobody"
   const qLower = q.toLowerCase();
   const users = rows
     .filter((p: any) => !blockedSet.has(p.id as string))

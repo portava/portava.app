@@ -514,10 +514,10 @@ export default function RentABuddyActive() {
                   setSafeReturn(v);
                   if (v && bookingId) {
                     // Broad-area check-in (city only, no GPS) so safety team knows you are OK
-                    await safetyCheckin(bookingId, {
-                      checkinType: 'safe_return_enabled',
+                    const checkin = await safetyCheckin(bookingId, {
+                      checkinType: 'check_ok', // rent_buddy_checkin_type (0047/0113) has no 'safe_return_enabled'; 'start_safe_return' would open a distress event
                       response: 'ok',
-                    }).catch(() => {});
+                    }).catch(() => null); if (!checkin?.ok) { setSafeReturn(false); Alert.alert('Safe Return check-in failed', 'We could not record your check-in. Please try again.'); }
                   }
                 }}
                 trackColor={{ true: color.success, false: color.haze }}

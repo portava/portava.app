@@ -4195,7 +4195,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/safety/checkin", async (req, res)
 
   const { bookingId } = req.params;
   const { checkinType, response: checkinResponse } = req.body ?? {};
-  if (!checkinType) return res.status(400).json({ error: "invalid_payload", message: "checkinType required." });
+  if (!checkinType) return res.status(400).json({ error: "invalid_payload", message: "checkinType required." });  if (!RENT_BUDDY_CHECKIN_TYPES.includes(checkinType)) return res.status(400).json({ error: "invalid_payload", message: "checkinType is not a known check-in type." });  // tm-followups: the enum refuses anything else, and that refusal was discarded below
 
   const { data: booking } = await serviceClient
     .from("rent_buddy_bookings")
@@ -4207,12 +4207,12 @@ router.post("/rent-a-buddy/bookings/:bookingId/safety/checkin", async (req, res)
   const party = await requireBookingParty(serviceClient, booking, auth.user.id, res);
   if (!party) return;
 
-  await serviceClient.from("rent_buddy_safety_checkins").insert({
+  const { error: checkinErr } = await serviceClient.from("rent_buddy_safety_checkins").insert({
     booking_id: bookingId,
     user_id: auth.user.id,
     checkin_type: checkinType,
     response: checkinResponse ?? null,
-  });
+  }); if (checkinErr) { req.log?.error?.({ err: checkinErr, bookingId, checkinType }, "rent_buddy_safety_checkins insert failed"); return res.status(500).json({ error: "db_error", message: "Could not record the check-in." }); }  // never ok:true over a check-in that did not land
 
   const distressResponses = ["uncomfortable", "end_early", "contact_support", "start_safe_return"];
   if (distressResponses.includes(checkinResponse ?? "") || distressResponses.includes(checkinType)) {
@@ -8195,3 +8195,11 @@ router.get("/rent-a-buddy/bookings/:bookingId/change-requests", async (req, res)
 
 export default router;
 
+// ── tm-followups: the labels of rent_buddy_checkin_type (0047 + 0113) ────────
+// Appended at the foot so every cited line above keeps its number. A module
+// `const` is initialised at load, before any request reaches the
+// safety/checkin handler that reads it.
+const RENT_BUDDY_CHECKIN_TYPES: readonly string[] = [
+  "arrival", "comfort_30min", "check_ok", "uncomfortable", "end_early", "contact_support", "start_safe_return", "emergency_phrase",
+  "arrived", "started", "could_not_find", "no_show", "unsafe", "missed",
+];

@@ -235,17 +235,31 @@ export async function recomputeGuideAccuracy(
   return accuracy;
 }
 
-/** Admin: approve or demote a guide. */
+/**
+ * Admin: approve or demote a guide.
+ *
+ * Returns the updated row, or null when the user has no guide profile. Throws
+ * on a refused write. It used to await the UPDATE and drop the result, so a
+ * failed write and a user with no profile both reached the admin as "ok" — an
+ * approval that never happened, reported as done (testing-mode WP-21).
+ */
 export async function setGuideStatus(
   db: SupabaseClient,
   userId: string,
   status: "active" | "suspended" | "demoted",
-): Promise<void> {
+): Promise<{ user_id: string; status: string; verified_at: string | null } | null> {
   const patch: Record<string, unknown> = {
     status,
     updated_at: new Date().toISOString(),
   };
   if (status === "active") patch.verified_at = new Date().toISOString();
 
-  await db.from("local_guide_profiles").update(patch).eq("user_id", userId);
+  const { data, error } = await db
+    .from("local_guide_profiles")
+    .update(patch)
+    .eq("user_id", userId)
+    .select("user_id, status, verified_at")
+    .maybeSingle();
+  if (error) throw error;
+  return (data as { user_id: string; status: string; verified_at: string | null } | null) ?? null;
 }

@@ -34,7 +34,7 @@ import { checkSendRateLimit } from '../domain/telegraph/policies/sendRateLimit.j
 // Telegraph §19 — "12 unread · 1 needs action". The second half.
 import { resolveNeedsAction } from '../domain/telegraph/policies/needsAction.js';
 // Telegraph §22 — restricted moderation storage for reported content.
-import { captureMessageEvidence, captureThreadEvidence } from '../services/telegraphReportEvidence.js';
+import { captureMessageEvidence, captureThreadEvidence } from '../services/telegraphReportEvidence.js';  import { refuseUnlessReporterSees } from '../lib/reportTargetAccess.js';  // a conversation report needs a reporter who can see it
 // Telegraph §22 — why a stranger is reaching out, and whether we can prove it.
 import {
   parseOriginClaim, resolveRequestOrigin, requestOriginEnabled,
@@ -4132,7 +4132,7 @@ router.post('/threads/:threadId/report', async (req, res) => {
   const { threadId } = req.params;
   if (!isUuid(threadId)) { sendError(res, 'invalid_payload', 'Invalid thread id'); return; }
   const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim().slice(0, 200) : '';
-  if (!reason) { sendError(res, 'invalid_payload', 'reason is required'); return; }
+  if (!reason) { sendError(res, 'invalid_payload', 'reason is required'); return; }  if (!(await refuseUnlessReporterSees(sc, req, res, { type: 'thread', id: threadId, userId: user.id }))) return;  // non-members may not report (or snapshot) this thread
 
   const { data: filedThreadReport, error } = await sc
     .from('reports')
@@ -4385,7 +4385,7 @@ router.post('/messages/:messageId/report', async (req, res) => {
   const { messageId } = req.params;
   if (!isUuid(messageId)) { sendError(res, 'invalid_payload', 'Invalid message id'); return; }
   const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim().slice(0, 200) : '';
-  if (!reason) { sendError(res, 'invalid_payload', 'reason is required'); return; } const reasonCode = messageReportReasonCode(req.body?.reason_code); if (reasonCode === null) { sendError(res, 'invalid_payload', 'reason_code is not a known report reason'); return; } // WP-08 TEL-F09
+  if (!reason) { sendError(res, 'invalid_payload', 'reason is required'); return; } const reasonCode = messageReportReasonCode(req.body?.reason_code); if (reasonCode === null) { sendError(res, 'invalid_payload', 'reason_code is not a known report reason'); return; } if (!(await refuseUnlessReporterSees(sc, req, res, { type: 'message', id: messageId, userId: user.id }))) return; // WP-08 TEL-F09; TM-admin: non-members may not report (or snapshot) this message
 
   const { data: filedMessageReport, error } = await sc
     .from('reports')

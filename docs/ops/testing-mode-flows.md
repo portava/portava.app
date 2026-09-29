@@ -230,6 +230,320 @@ Client:
   `passport_memories_enabled` is on.
 - **PLAT-F31:** complete as specified by the catalogue.
 
+## TM-admin lane (WP-21) — the admin console
+
+Branch `lane-tm-admin`, cut from `main` at `18518e982`. Controlled evidence only;
+no flag was changed, no migration was added, nothing was applied to any database.
+
+**Where:** sign in as an admin account (`profiles.role = 'admin'`), then
+Settings → **Connected features** → admin section → **Testing Console**
+(`/admin/console`). Every screen below is admin-only on the server (the existing
+`requireAdmin` / `isAdmin` guards); the in-app gate only keeps other people from
+landing on them. Every screen shows a failed read as **Couldn't load …** with
+**Try again**, never as an empty queue, and removes a row only after the server
+confirmed the decision.
+
+### PLAT-F39 — review submitted and reported hidden gems
+
+- **Where:** Testing Console → **Hidden gem review** (`/admin/hidden-gems`).
+- **Steps:** as a tester, submit a gem (it is `pending` and not listed). As the
+  admin, open **Pending**, optionally type a note, tap **Approve** (or **Reject**).
+  **Reported** lists gems with open reports: **Uphold (hide gem)** or **Dismiss reports**.
+- **Expected:** approve → the gem is `active` and appears in Hidden Gems; the
+  submitter is awarded `hidden_gem_explorer` (server side). Reject → `hidden`.
+  A refusal stays on the row as **Not recorded: …**.
+- **Check:** `hidden_gems.status`; a `hidden_gem_verifications` row with
+  `method = 'admin'` and the admin's id.
+- **Changed on the server:** approving a gem id that matches nothing is now 404,
+  and a refused status write is `db_error` (both used to answer `{ ok: true }`).
+- **API-only:** mark sensitive and merge duplicates (their writes are still
+  unchecked on the server, so no screen reports on them):
+
+  ```sh
+  curl -sS -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+    -d '{"sensitivityLevel":"protected"}' "$API/api/admin/hidden-gems/$GEM_ID/sensitive"
+  # sensitivityLevel: public | approximate | reveal_after_save | reveal_after_acceptance | protected
+  curl -sS -H "Authorization: Bearer $TOKEN" "$API/api/admin/hidden-gems/duplicate-candidates"
+  curl -sS -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+    -d "{\"canonicalGemId\":\"$CANONICAL_GEM_ID\"}" "$API/api/admin/hidden-gems/$DUPLICATE_GEM_ID/merge"
+  ```
+
+### PLAT-F38 — approve a local guide
+
+- **Where:** Testing Console → **Local guides** (`/admin/local-guides`).
+- **Steps:** as a tester, Gems → Guide → apply. As the admin, tap **Approve**
+  (or **Decline**) on their application.
+- **Expected:** approve → `local_guide_profiles.status = 'active'` with
+  `verified_at` set, and the tester's guide profile shows
+  (`GET /api/hidden-gems/guides/:userId`). Decline → `demoted`.
+- **Changed on the server:** a user with no guide profile is now 404 and a
+  refused write is `db_error` (both used to answer `{ ok: true }`). Each change
+  writes the log line `local guide status set via admin surface` with the
+  admin id, the user and the status.
+- **API-only:** suspend or reinstate an active guide:
+
+  ```sh
+  curl -sS -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+    -d '{"status":"suspended"}' "$API/api/admin/local-guides/$USER_ID/status"   # active | suspended | demoted
+  ```
+
+### SEN-F06 (admin half) — promote and withdraw a live-label scope
+
+- **Where:** Testing Console → **Live-label scopes** (`/admin/live-scopes`).
+  Needs `intel_live_scope_admin_surface_enabled` (to see the screen's data) and
+  `intel_live_scope_promotion_enabled` (to write); when either is off the
+  server's message is shown as it is.
+- **Steps:** under **Promote a scope**, leave Zone id empty for the zone-less
+  scope (or enter a zone id), enter the claim type, a review horizon (1–90
+  days), why you are promoting it, and the density-gate assessment JSON
+  (`npm run report:intel-funnel`; `{}` is accepted). **Promote**. To withdraw,
+  type a reason on the scope's card and tap **Withdraw**.
+- **Expected:** the notice names the scope key and what happened (`promoted`,
+  `repromoted`, `renewed`, `already active`); the scope is listed as `active`
+  until withdrawn or past its horizon. Recorded in the sensing census §28.
+
+### PASS-F23 — award, revoke and restore a person's stamp
+
+- **Where:** Testing Console → **User stamps** (`/admin/user-stamps`).
+- **Steps:** enter `@handle` or a user id → **Find**. Type a reason (required
+  for every action). Award by definition slug, or **Revoke** / **Restore** a
+  listed stamp.
+- **Expected:** the list is re-read after each action; a revoked stamp stays
+  listed as "— revoked" with its reason, so it can be restored. An award the
+  engine declines shows **Not awarded: <reason>**.
+- **Check:** `stamp_award_events` rows with `status` `awarded` / `revoked` /
+  `restored` and the admin id; `user_stamps.is_revoked`.
+- **New route:** `GET /api/admin/stamps/users/:userId/stamps` (admin-only,
+  logged to `admin_access_log`). Recorded in the passport census §23.
+- **API-only:** campaigns:
+
+  ```sh
+  curl -sS -H "Authorization: Bearer $TOKEN" "$API/api/admin/stamps/campaigns"
+  curl -sS -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+    -d '{"slug":"tm-test-campaign","name":"TM test campaign","isActive":true,"startsAt":"2026-10-01T00:00:00Z","endsAt":"2026-10-31T00:00:00Z"}' \
+    "$API/api/admin/stamps/campaigns"
+  ```
+
+### LAY-F16 — seed the test airport and its caution zones
+
+- **Where:** Testing Console → **Airports** (`/admin/airports`).
+- **Steps:** search for the test airport; if absent, fill **Add an airport**
+  (IATA, name, city, country, country code, latitude, longitude, optional IANA
+  timezone) → **Save airport** (an upsert on the IATA code, so saving an existing
+  code edits it). **Select** it, then add a caution zone (name, type, centre,
+  radius 50–50000 m).
+- **Check:** an `airport_profiles` row for the code; a `geo_zones` row with
+  `is_system = true` and `metadata.iata_code` = the code. Recorded in the
+  layover census §47.
+- **API-only:** verified landside places and curated dwell:
+
+  ```sh
+  curl -sS -H "Authorization: Bearer $TOKEN" "$API/api/admin/airport/verified-places?status=pending&city=Lisbon"
+  curl -sS -X PATCH -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+    -d '{"status":"approved","verified":true}' "$API/api/admin/airport/verified-places/$PLACE_ID"
+  curl -sS -X PUT -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+    -d '{"activityMin":45,"sourceClass":"curator_measured","confidence":"MEDIUM","evidence":"timed visit 2026-09-29"}' \
+    "$API/api/admin/airport/place-dwell/$PLACE_ID"
+  # sourceClass: venue_stated | curator_measured; confidence: LOW | MEDIUM | HIGH; activityMin 5..720
+  ```
+
+### API-only (admin JWT) — the P3 admin surfaces
+
+Decision: none of these closes an in-app test loop, and each has a working,
+admin-gated server route, so they stay API-only for testing. They are listed on
+the Testing Console so their absence reads as a decision. Set up once:
+
+```sh
+API=https://<the hosted testing app's API origin>
+# An admin account's access token, from Supabase password sign-in (anon key, not the service key):
+TOKEN=$(curl -sS "$SUPABASE_URL/auth/v1/token?grant_type=password" -H "apikey: $SUPABASE_ANON_KEY" \
+  -H 'content-type: application/json' -d '{"email":"<admin email>","password":"<password>"}' | jq -r .access_token)
+H=(-H "Authorization: Bearer $TOKEN" -H 'content-type: application/json')
+```
+
+- **COMP-F20 — Compass weights, version, rollback**
+
+  ```sh
+  curl -sS "${H[@]}" "$API/api/admin/compass/dashboard"
+  curl -sS "${H[@]}" -X POST -d '{"name":"tm-test","weights":{"distance":0.3}}' "$API/api/admin/compass/weights"
+  curl -sS "${H[@]}" -X POST -d "{\"weightSetId\":\"$WEIGHT_SET_ID\",\"versionTag\":\"tm-1\"}" "$API/api/admin/compass/version"
+  curl -sS "${H[@]}" -X POST -d '{"reason":"testing rollback"}' "$API/api/admin/compass/rollback"
+  curl -sS "${H[@]}" -X POST -d '{"userType":"traveler","city":"Lisbon"}' "$API/api/admin/compass/testing-sandbox/preview"
+  ```
+
+- **DISC-F22 — creator ledger hold / release / reverse** (needs `creator_attribution_enabled`)
+
+  ```sh
+  curl -sS "${H[@]}" "$API/api/admin/creator-ledger/attributions/$ATTRIBUTION_ID/audit"
+  curl -sS "${H[@]}" -X POST -d '{"reason":"tm hold"}' "$API/api/admin/creator-ledger/attributions/$ATTRIBUTION_ID/hold"
+  curl -sS "${H[@]}" -X POST -d '{"reason":"tm release"}' "$API/api/admin/creator-ledger/attributions/$ATTRIBUTION_ID/release"
+  curl -sS "${H[@]}" -X POST -d "{\"transactionKey\":\"$TRANSACTION_KEY\",\"reason\":\"tm reverse\"}" "$API/api/admin/creator-ledger/transactions/reverse"
+  ```
+
+- **DISC-F23 — Trails curation, merge, archive; trend-integrity review**
+
+  ```sh
+  curl -sS "${H[@]}" -X POST -d '{"to":"archived","reason":"tm archive"}' "$API/api/admin/discovery/trails/$TRAIL_ID/lifecycle"
+  curl -sS "${H[@]}" -X POST -d "{\"intoTrailId\":\"$OTHER_TRAIL_ID\",\"reason\":\"tm merge\"}" "$API/api/admin/discovery/trails/$TRAIL_ID/merge"
+  curl -sS "${H[@]}" -X POST -d "{\"sourceType\":\"place\",\"sourceId\":\"$PLACE_ID\",\"relationship\":\"supporting\",\"reason\":\"tm curate\"}" "$API/api/admin/discovery/trails/$TRAIL_ID/curate"
+  curl -sS "${H[@]}" "$API/api/admin/discovery/trails/$TRAIL_ID/audit"
+  curl -sS "${H[@]}" -X POST -d "{\"subjectKind\":\"trail\",\"subjectId\":\"$TRAIL_ID\",\"verdict\":\"suspect\",\"reason\":\"tm review\"}" "$API/api/admin/discovery/trend-integrity/reviews"
+  ```
+
+- **DISC-F24 — ranking config and metrics**
+
+  ```sh
+  curl -sS "${H[@]}" "$API/api/admin/ranking/config"
+  curl -sS "${H[@]}" -X PUT -d '{"key":"<config key from the GET>","value":0.5}' "$API/api/admin/ranking/config"   # writes ranking_config_audit_log
+  curl -sS "${H[@]}" "$API/api/admin/ranking/metrics"
+  curl -sS "${H[@]}" "$API/api/admin/ranking/suspicious"
+  curl -sS "${H[@]}" "$API/api/admin/ranking/debug-samples"
+  ```
+
+- **MAP-F15 — circle reports, disable a context, kill switch.** The kill switch
+  is also the flag `find_your_circle_disabled` on the existing **Feature Flags**
+  admin screen, which writes it through the audited toggle.
+
+  ```sh
+  curl -sS "${H[@]}" "$API/api/admin/circle/reports"
+  curl -sS "${H[@]}" -X POST -d "{\"contextType\":\"trip\",\"contextId\":\"$TRIP_ID\",\"reason\":\"tm\"}" "$API/api/admin/circle/disable-context"
+  curl -sS "${H[@]}" -X POST -d '{"enabled":true}' "$API/api/admin/circle/kill-switch"    # true = circle OFF for users
+  curl -sS "${H[@]}" -X POST -d '{"enabled":false}' "$API/api/admin/circle/kill-switch"
+  ```
+
+- **SEN-F10 — coverage missions.** These routes are admin-JWT (`requireAdmin`),
+  not an internal secret. There is no contributor-facing mission UI; `accept`
+  names the contributor as `actorId`.
+
+  ```sh
+  curl -sS "${H[@]}" "$API/api/v1/internal/intel/coverage?city=Lisbon"
+  curl -sS "${H[@]}" "$API/api/v1/internal/intel/missions"
+  curl -sS "${H[@]}" -X POST "$API/api/v1/internal/intel/missions" -d '{"specs":[{"ctx":{"qualifiedDemandEvents6h":5,"requiredLiveFamilyMissing":true,"pendingDecisionsAffectedByContradiction":0,"criticalClaimStale":false,"criticalClaimInActivePlan":false,"campaignHasExplicitBudget":false,"campaignHasAcceptanceContract":false},"mission":{"city":"Lisbon","claimFamily":"crowd","trigger":"demand_spike_missing_family","coverageScore":0.2,"question":"How busy is the square now?"}}]}'
+  curl -sS "${H[@]}" -X POST "$API/api/v1/internal/intel/missions/$MISSION_ID/dispatch"
+  curl -sS "${H[@]}" -X POST -d "{\"actorId\":\"$CONTRIBUTOR_USER_ID\"}" "$API/api/v1/internal/intel/missions/$MISSION_ID/accept"
+  curl -sS "${H[@]}" -X POST -d '{"result":"positive"}' "$API/api/v1/internal/intel/missions/$MISSION_ID/complete"   # positive | negative | inconclusive
+  ```
+
+- **SEN-F12 — safety candidates** (needs `intel_safety_candidates_enabled`)
+
+  ```sh
+  curl -sS "${H[@]}" -X POST -d '{}' "$API/api/admin/intel/safety-candidates/scan"
+  curl -sS "${H[@]}" "$API/api/admin/intel/safety-candidates"
+  curl -sS "${H[@]}" -X POST -d "{\"claimId\":\"$CLAIM_ID\",\"action\":\"approve\",\"reason\":\"tm\"}" "$API/api/admin/intel/safety-review"
+  # action: approve | reject | retract | reconfirm | supersede
+  ```
+
+- **PLAT-F21 — notification templates, account notices, delivery health**
+
+  ```sh
+  curl -sS "${H[@]}" "$API/api/admin/notification-templates"
+  curl -sS "${H[@]}" -X POST -d "{\"userId\":\"$USER_ID\",\"subject\":\"TM notice\",\"body\":\"Testing an account notice.\"}" "$API/api/admin/notifications/account-notice"
+  curl -sS "${H[@]}" "$API/api/admin/notification-delivery-attempts?limit=20"
+  curl -sS "${H[@]}" "$API/api/admin/push-retry-health"
+  curl -sS "${H[@]}" -X PUT -d '{"pushNotificationsEnabled":true}' "$API/api/admin/notification-defaults"
+  ```
+
+### Also in this lane: a report needs a reporter who can see the conversation
+
+`POST /api/messages/:id/report`, `POST /api/threads/:id/report` and
+`POST /api/reports` (message/thread targets) now refuse a reporter who is not an
+active member of the conversation (404) instead of filing the report and, with
+`telegraph_report_evidence_enabled` on, snapshotting another thread's messages.
+An unreadable membership check is 503 and files nothing. **Check:** as a
+non-member, reporting a message id from another thread answers 404 and writes no
+`reports` / `telegraph_report_evidence` row. Recorded in the Telegraph census §39.
+
+### Where the area flows of this lane are recorded
+
+- PLAT-F39, PLAT-F38 — `docs/architecture/census-media.md` §45.
+- PASS-F23 — `docs/architecture/census-passport.md` §23.
+- SEN-F06 (admin half) — `docs/architecture/census-sensing.md` §28.
+- LAY-F16 — `docs/architecture/census-layover.md` §47.
+- Report-route membership — `docs/architecture/census-telegraph.md` §39.
+
+## TM-followups lane — safety follow-ups, Compass memory surfaces (WP-12), media small gaps (WP-17)
+
+Branch `lane-tm-followups`, cut from `main` at `978d886bf`. Controlled evidence only; no flag was
+changed, no migration was added, nothing was applied to any database. The area flows are recorded
+in their censuses (listed at the end); the checks below are what a tester can walk.
+
+### Safety and honesty follow-ups (found by other lanes)
+
+- **Moderation report of a message** (`POST /api/moderation/report`, `subjectType: "message"`):
+  a reporter who is not an active member of the message's thread gets **404** and nothing is filed;
+  a `threadId` the reporter is not in is refused the same way; if membership cannot be read the
+  answer is **503** and nothing is filed. Check: no `moderation_reports` row for the refused cases.
+  Same module and rule as PR #537 (`lib/reportTargetAccess.ts`). Recorded in census-telegraph §40.
+- **Hidden-gem admin: mark sensitive / merge duplicate** (`POST /api/admin/hidden-gems/:id/sensitive`,
+  `/merge`): an unknown gem (or unknown canonical gem) is **404**, a refused write is **db_error**,
+  merging a gem into itself is **400**; success still answers `{ ok: true }` and the row changes
+  (`sensitivity_level`, or `status = 'merged'` + `merged_into`). Census-media §46.3.
+- **Stamp revoke / restore** (`POST /api/admin/stamps/:userStampId/revoke|restore`): a database
+  failure or a failed audit write is **db_error**, not 404; a stamp not in the needed state is
+  still 404. Census-passport §24.
+- **Find Your Circle kill switch** (`POST /api/admin/circle/kill-switch`): every flip goes through
+  `toggle_feature_flag_with_audit`, the path the Feature Flags admin uses. Check: a new
+  `feature_flag_audit_log` row for `find_your_circle_disabled` with the admin as
+  `changed_by_user_id`. A missing function is **503** naming migration 0119; a missing flag row
+  (0108 seeds it) is **404**.
+- **Rent-a-Buddy active session → Safe Return check-in switch**: turning it on records a check-in
+  of type `check_ok` / response `ok`. It used to send `safe_return_enabled`, which the
+  `rent_buddy_checkin_type` enum (0047 + 0113) does not have, and swallowed the refusal. Now a
+  refused check-in turns the switch back off with **Safe Return check-in failed**; the route
+  answers **400** for an unknown type and **db_error** (not `ok: true`) for a refused insert.
+  `start_safe_return` was not used: the route counts it as a distress signal and opens a safety
+  event against the other party. Check: a `rent_buddy_safety_checkins` row, and no
+  `rent_buddy_safety_events` row.
+
+### COMP-F16 — Compass remembers (view, forget, correct)
+
+- **Where:** Passport tab → Explore your passport → **Compass remembers** (`/passport/remembers`).
+- **Expected:** each group Portava keeps (About you, Your interests, What Portava figured out,
+  Saved & created, …). **Forget** asks, then removes the item after the server confirms and shows
+  its message. **Correct** (offered only on inferred items the server allows) takes the right
+  value; the wrong one leaves the view. A group the server could not read says **Couldn't load
+  this section** — never "Nothing here." — and if nothing could be read the screen is an error
+  with **Try again**.
+- **Check:** `memory_feedback` rows (`kind = 'forget'`, or `'incorrect'` with `corrected_value`).
+  Without 2213 on the database, derived memory shows as unavailable and Correct is a stated error.
+
+### COMP-F17 — Recaps and On this day
+
+- **Where:** Passport tab → **Recaps & On this day** (`/passport/recaps`), or from Compass
+  remembers.
+- **Expected:** with `memory_recaps` off, both cards say the feature is **not turned on yet**.
+  With it on: On this day lists earlier years' postcards, trips, stamps and shared moments from
+  today's date; the recap shows This month / This year / last year. A source that could not be read
+  is named ("Couldn't load Saved & created …"); a failed request is an error with Try again. If
+  `memory_feedback` cannot be read the recap is refused rather than built without your forgets.
+
+### COMP-F03 — the whole Compass feed
+
+Decided: **retired from the client.** The Compass tab renders Compass Home and the per-section
+feed; `GET /api/compass/feed` stays as an API route with no screen. Census-compass §31.3.
+
+### MED-F06 — media like, Stamp It and comments
+
+Decided (MD424): media **Like** and **"Stamp It"** are retired from the client; **Stamp** (the
+viewer's stamp button) and **Comments** (the viewer's comment button → the post comment sheet) are
+the reactions. Nothing new to walk: stamp and comment from the media viewer as before. Census-media §46.1.
+
+### MED-F25 — retry a failed upload
+
+- **Where:** Media → My World. When an upload's processing failed, a card lists it.
+- **Expected:** **Retry** queues it again and the row leaves (the server answered 202); with the
+  processing worker off (`media_processing_worker_enabled`) the card says retrying is not
+  available and the uploads are kept. A failed check says **Couldn't check for failed uploads**.
+- **Check:** the `media_assets` row goes `failed → queued` (`processing_terminal = false`).
+  Attachments (`POST /api/media/:id/attachments`) are not wired. Census-media §46.2.
+
+### Where the area flows of this lane are recorded
+
+- COMP-F03, COMP-F16, COMP-F17 — `docs/architecture/census-compass.md` §31.
+- MED-F06, MED-F25 (and the hidden-gem writes) — `docs/architecture/census-media.md` §46.
+- Stamp revoke/restore — `docs/architecture/census-passport.md` §24.
+- Moderation report membership — `docs/architecture/census-telegraph.md` §40.
+
 ## TM-RAB lane (WP-01) — Rent-a-Buddy: run the booking, refused gates, admin moderation
 
 Branch `lane-tm-rab`, cut from `main` at `18518e982`. Flows: PLAT-F43, PLAT-F45,
