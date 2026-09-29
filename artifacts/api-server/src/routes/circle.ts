@@ -21,7 +21,7 @@ import { requireUser, sendError, safeSecretEquals, type ApiErrorCode } from "../
 import { requireAdmin } from "../lib/requireAdmin.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
-import { isFlagEnabled } from "../lib/featureFlags.js";
+import { isFlagEnabled } from "../lib/featureFlags.js"; import { discoveryRefusal } from "../lib/discoveryRefusal.js";
 import {
   canViewCirclePresence,
   canViewCirclePresenceBatch,
@@ -1859,7 +1859,7 @@ router.get("/circle/compass-suggestions", async (req, res) => {
     sc.from("event_rsvps").select("event_id").eq("user_id", user.id).eq("status", "going").limit(20),
     sc.from("event_attendees").select("event_id").eq("user_id", user.id).limit(20),
   ]);
-  // Intersect: only include events where the caller appears in both tables (canonical check).
+  const failedSources = new Set<string>(); if (tripMemberRes.error) failedSources.add("trip_members"); if (eventRsvpRes.error) failedSources.add("event_rsvps"); if (eventAttendeeRes.error) failedSources.add("event_attendees"); let contextsRead = 0;  // census-discovery §110 (DV-83, D-W11X2-96): what could not be read is named. Intersect: only include events where the caller appears in both tables (canonical check).
   const rsvpEventIds   = new Set(((eventRsvpRes.data     ?? []) as any[]).map((r) => r.event_id as string));
   const attendeeEventIds = new Set(((eventAttendeeRes.data ?? []) as any[]).map((r) => r.event_id as string));
   const eligibleEventIds = [...rsvpEventIds].filter((id) => attendeeEventIds.has(id));
@@ -1870,7 +1870,7 @@ router.get("/circle/compass-suggestions", async (req, res) => {
   ];
 
   if (myContexts.length === 0) {
-    res.json({ cards: [] });
+    res.json(failedSources.size > 0 ? { cards: [], refusal: circleSuggestionsRefusal(failedSources, false) } : { cards: [] });  // §110: a failed context read is not "no contexts"
     return;
   }
 
@@ -1909,17 +1909,17 @@ router.get("/circle/compass-suggestions", async (req, res) => {
             .eq("status", "active"),
 
           // Determine if caller is host (trip: owner_id, event: host_id)
-          (async (): Promise<boolean> => {
+          (async (): Promise<boolean | null> => {  // §110: null = the host read failed
             if (ct === "trip") {
-              const { data } = await sc.from("trips").select("owner_id").eq("id", context_id).maybeSingle();
-              return (data as any)?.owner_id === user.id;
+              const { data, error } = await sc.from("trips").select("owner_id").eq("id", context_id).maybeSingle();
+              return error ? null : (data as any)?.owner_id === user.id;
             }
-            const { data } = await sc.from("events").select("host_id").eq("id", context_id).maybeSingle();
-            return (data as any)?.host_id === user.id;
+            const { data, error } = await sc.from("events").select("host_id").eq("id", context_id).maybeSingle();
+            return error ? null : (data as any)?.host_id === user.id;
           })(),
         ]);
 
-        const callerPresence  = callerPresenceRes.data as any;
+        if (callerPresenceRes.error || allPresenceRes.error) { failedSources.add("circle_presence"); return; } contextsRead++; const callerPresence  = callerPresenceRes.data as any;  // §110 (D-W11X2-96): every card below is built on these two reads — none over a failed one
         const allActive       = ((allPresenceRes.data ?? []) as any[]).filter((r) => !r.is_stale);
         const othersActive    = allActive.filter((r) => r.user_id !== user.id);
         const callerIsSharing = callerPresence && callerPresence.status === "active" && !callerPresence.is_stale;
@@ -1951,15 +1951,15 @@ router.get("/circle/compass-suggestions", async (req, res) => {
 
         // Card: set_meeting_point — caller is the host, is sharing, and no active
         // meeting point is set yet.  Independent of circle_active — both can appear.
-        if (isHost) {
-          const { data: mpData } = await sc
+        if (isHost === null) failedSources.add(ct === "trip" ? "trips" : "events"); if (isHost) {  // §110: an unread host is not "not the host"
+          const { data: mpData, error: mpErr } = await sc
             .from("circle_meeting_points")
             .select("id")
             .eq("context_type", ct)
             .eq("context_id", context_id)
             .eq("is_active", true)
             .maybeSingle();
-          if (!mpData) {
+          if (mpErr) failedSources.add("circle_meeting_points"); else if (!mpData) {  // §110: a failed read is never "No meeting point set yet"
             cards.push({
               cardType: "set_meeting_point",
               contextType: context_type,
@@ -1969,7 +1969,7 @@ router.get("/circle/compass-suggestions", async (req, res) => {
             });
           }
         }
-      } catch (err) { logCircleFanoutFailure(req, err, "per-context circle fan-out"); }
+      } catch (err) { failedSources.add("circle_context"); logCircleFanoutFailure(req, err, "per-context circle fan-out"); }
     }),
   );
 
@@ -1977,7 +1977,7 @@ router.get("/circle/compass-suggestions", async (req, res) => {
   const ORDER: Record<string, number> = { circle_active: 0, turn_on_circle: 1, set_meeting_point: 2 };
   cards.sort((a, b) => (ORDER[a.cardType] ?? 9) - (ORDER[b.cardType] ?? 9));
 
-  res.json({ cards: cards.slice(0, 3) });
+  res.json(failedSources.size > 0 ? { cards: cards.slice(0, 3), refusal: circleSuggestionsRefusal(failedSources, contextsRead > 0 || cards.length > 0) } : { cards: cards.slice(0, 3) });  // §110 (D-W11X2-96): a healthy body is unchanged
 });
 
 // ── POST /circle/pause-on-session-end ─────────────────────────────────────────
@@ -2307,3 +2307,14 @@ router.post("/circle/internal/cleanup-presence", async (req, res) => {
 });
 
 export default router;
+
+// ── census-discovery §110 (DV-83 round 13, lane W11-X2, D-W11X2-96): GET /circle/compass-suggestions names what it could not read ──
+//
+// Every read in the route was `{ data }` alone, so a failed read became a card's stated fact: "No
+// meeting point set yet", "Enable location sharing with your group" to a traveller who is sharing, or
+// a "members sharing now" card dropped as if nobody were. A card is now built only over inputs that
+// were read, and the body names the rest. `partial` when some context was read (its cards are real),
+// `nothing` when none was.
+function circleSuggestionsRefusal(failed: Set<string>, someRead: boolean) {
+  return discoveryRefusal("transient_db", "circle_suggestions_unread", "GET /circle/compass-suggestions", someRead ? "partial" : "nothing", [...failed].sort());
+}
