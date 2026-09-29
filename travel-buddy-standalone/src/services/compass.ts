@@ -1627,7 +1627,7 @@ export interface CompassTelegraphResult {
   cards?:       CompassTelegraphCard[];
   city?:        string | null;
   flagDisabled?: boolean;
-  error?:       string;
+  error?:       string; /** census-discovery §106 (D-W11X2-68): the route refused (a failed read) — the chip stays, the tray says it. */ refused?: true; /** §106: a card source failed; the cards are real, the list may be incomplete. */ partial?: true;
 }
 
 /**
@@ -1652,11 +1652,11 @@ export async function fetchCompassTelegraphCards(
       return { ok: false, error: r.status === 403 ? 'forbidden' : `http_${r.status}` };
     }
     if (!r.ok) return { ok: false, error: `http_${r.status}` };
-    const body = await r.json();
+    const body = await r.json(); const refused = telegraphRefused(body); if (refused) return refused;  // census-discovery §106 (DV-83, D-W11X2-68): a refusal is a failed read, never a complete (or empty) card list
     return {
       ok:    true,
       cards: (body.cards ?? []) as CompassTelegraphCard[],
-      city:  body.city ?? null,
+      city:  body.city ?? null, ...(body?.refusal?.coverage === 'partial' ? { partial: true as const } : {}),
     };
   } catch {
     return { ok: false, error: 'network_error' };
@@ -1670,7 +1670,7 @@ export async function fetchCompassTelegraphCards(
  */
 export async function checkCompassTelegraphAvailable(threadId: string): Promise<boolean> {
   const result = await fetchCompassTelegraphCards(threadId);
-  return result.ok && !result.flagDisabled;
+  return (result.ok && !result.flagDisabled) || result.refused === true;  // census-discovery §106 (D-W11X2-68): a refusal (e.g. an unread flag table) is not "off" — the chip stays and the tray says the failure
 }
 
 // ── AsyncStorage helpers ──────────────────────────────────────────────────────
@@ -2048,3 +2048,14 @@ export { compassRecommendationsFailed, type CompassRecommendationsRefusal } from
 
 /** census-discovery §106 (DV-83 round 10, D-W11X2-67): the five sections GET /compass/home reports a source for. */
 export type CompassHomeSection = 'bestNextMove' | 'circleActivity' | 'startingSoon' | 'tonightVibe' | 'weatherWindow';
+
+/**
+ * census-discovery §106 (DV-83 round 10, D-W11X2-68): GET /compass/telegraph's refusal envelope.
+ * `partial` keeps its cards (and is marked); any other coverage — `nothing`, missing or unknown —
+ * is a failed read, never a complete or empty list.
+ */
+function telegraphRefused(body: unknown): CompassTelegraphResult | null {
+  const refusal = (body as { refusal?: { coverage?: unknown; code?: unknown } | null } | null)?.refusal;
+  if (!refusal || refusal.coverage === 'partial') return null;
+  return { ok: false, refused: true, error: typeof refusal.code === 'string' ? refusal.code : 'refused' };
+}

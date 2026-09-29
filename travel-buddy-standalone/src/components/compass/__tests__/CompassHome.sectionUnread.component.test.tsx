@@ -15,6 +15,8 @@
 import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react-native';
 
+// NOTE: intentionally minimal — CompassHome only uses router.push; spreading requireActual('expo-router')
+// drags in native navigation internals that crash under jest-expo (as CompassHome.failedRead does).
 jest.mock('expo-router', () => ({ router: { push: jest.fn() } }));
 
 const mockFetchCompassHome = jest.fn();

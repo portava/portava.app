@@ -39,7 +39,7 @@ import {
   sharedItems,
 } from "../services/passport/PassportConsumerProjections.js";
 import { allowDiscoveryPersonCard } from "../services/passport/PassportConsumerAccess.js";
-import { isCompassEnabled, isEnabled, readCompassEnabled } from "../compass/flags.js"; import { discoveryRefusal } from "../lib/discoveryRefusal.js";
+import { isCompassEnabled, isEnabled, readCompassEnabled, readCompassFlag } from "../compass/flags.js"; import { discoveryRefusal } from "../lib/discoveryRefusal.js";
 import { isFlagEnabled as isPlatformFlagEnabled } from "../lib/featureFlags.js";
 import { buildCompassHomeProjection } from "./compassHome.js";
 import {
@@ -4692,8 +4692,8 @@ router.get("/compass/telegraph", async (req, res) => {
   }
 
   // Feature flag gate
-  const telegraphEnabled = await isEnabled(sc, "COMPASS_TELEGRAPH").catch(() => false);
-  if (!telegraphEnabled) {
+  const telegraphRead = await readCompassFlag(sc, "COMPASS_TELEGRAPH").catch(() => null); const telegraphEnabled = telegraphRead === true;  // census-discovery §106 (DV-83, D-W11X2-68): null = the COMPASS_% table could not be read — was: isEnabled(...).catch(() => false), the fail-safe map
+  if (!telegraphEnabled) { if (telegraphRead === null) return sendTelegraphRefused(res, null, "compass_flags_unreadable", ["feature_flags"]);  // §106: only a flag that was READ and is off answers the off 404 below
     sendError(res, "feature_disabled", "compass_telegraph feature is not enabled");
     return;
   }
@@ -4718,7 +4718,7 @@ router.get("/compass/telegraph", async (req, res) => {
   const { threadId } = parsed.data;
 
   // Verify caller is an active member of the thread
-  const { data: membership } = await sc
+  const { data: membership, error: membershipErr } = await sc
     .from("message_thread_members")
     .select("user_id")
     .eq("thread_id", threadId)
@@ -4726,14 +4726,14 @@ router.get("/compass/telegraph", async (req, res) => {
     .is("left_at", null)
     .maybeSingle();
 
-  if (!membership) {
+  if (membershipErr) return sendTelegraphRefused(res, null, "telegraph_context_unread", ["message_thread_members"]); if (!membership) {  // §106: a failed membership read is not "Not a member"
     sendError(res, "forbidden", "Not a member of this thread");
     return;
   }
 
   try {
     // Load all active thread participants
-    const { data: memberRows } = await sc
+    const { data: memberRows, error: memberRowsErr } = await sc
       .from("message_thread_members")
       .select("user_id")
       .eq("thread_id", threadId)
@@ -4747,21 +4747,21 @@ router.get("/compass/telegraph", async (req, res) => {
     let cityContext: string | null = null;
     let tripId: string | null = null;
 
-    const { data: threadRow } = await sc
+    const { data: threadRow, error: threadErr } = await sc
       .from("message_threads")
       .select("thread_type, trip_id")
       .eq("id", threadId)
       .maybeSingle();
 
-    tripId = (threadRow as any)?.trip_id ?? null;
+    if (threadErr) return sendTelegraphRefused(res, null, "telegraph_context_unread", ["message_threads"]); tripId = (threadRow as any)?.trip_id ?? null;  // §106: an unread thread row leaves the cards' city unknown
 
     if (tripId) {
-      const { data: tripRow } = await sc
+      const { data: tripRow, error: tripErr } = await sc
         .from("trips")
         .select("destination_city")
         .eq("id", tripId)
         .maybeSingle();
-      cityContext = (tripRow as any)?.destination_city ?? null;
+      if (tripErr) return sendTelegraphRefused(res, null, "telegraph_context_unread", ["trips"]); cityContext = (tripRow as any)?.destination_city ?? null;
     }
 
     // Fallback: use viewer's Compass profile city, or participants' cities
@@ -4770,12 +4770,12 @@ router.get("/compass/telegraph", async (req, res) => {
       cityContext = profile?.currentCity ?? null;
     }
 
-    if (!cityContext && participantIds.length > 0) {
-      const { data: profileRows } = await sc
+    if (!cityContext && memberRowsErr) return sendTelegraphRefused(res, null, "telegraph_context_unread", ["message_thread_members"]); if (!cityContext && participantIds.length > 0) {
+      const { data: profileRows, error: profileRowsErr } = await sc
         .from("profiles")
         .select("home_city")
         .in("id", participantIds.filter((id) => id !== user.id));
-      const cities = ((profileRows as any[]) ?? [])
+      if (profileRowsErr) return sendTelegraphRefused(res, null, "telegraph_context_unread", ["profiles"]); const cities = ((profileRows as any[]) ?? [])
         .map((r: any) => r.home_city as string | null)
         .filter(Boolean);
       cityContext = cities[0] ?? null;
@@ -4789,7 +4789,7 @@ router.get("/compass/telegraph", async (req, res) => {
 
     if (!effectiveProfile) {
       // Return empty gracefully when profile is unavailable
-      res.json({ cards: [], city: cityContext });
+      sendTelegraphRefused(res, cityContext, "telegraph_profile_unread", ["compass_profile"]);  // census-discovery §106 (D-W11X2-68): the profile could not be built — was: { cards: [], city }, "no suggestions"
       return;
     }
 
@@ -4847,11 +4847,11 @@ router.get("/compass/telegraph", async (req, res) => {
     });
 
     req.log?.info({ userId: user.id, threadId, cardCount: cards.length, city: cityContext }, "compass/telegraph: served");
-    res.json({ cards, city: cityContext });
+    res.json({ cards, city: cityContext, ...telegraphCoverage(rawItems, cards.length) });  // census-discovery §106 (DV-83, D-W11X2-68): a failed card source is said — `partial` beside cards, `nothing` without
   } catch (err) {
     req.log?.error({ err }, "compass/telegraph: build failed");
     // Always fail open — return empty cards rather than an error
-    res.json({ cards: [], city: null });
+    sendTelegraphRefused(res, null, "telegraph_build_failed", ["compass_telegraph"]);  // §106 — was: { cards: [], city: null }, "fail open" as "no suggestions"
   }
 });
 
@@ -5009,4 +5009,22 @@ function sendCompassFeedFlagsUnread(res: import("express").Response): void {
     fallbackReason: "compass_flags_unreadable",
     refusal: discoveryRefusal("transient_db", "compass_flags_unreadable", "GET /compass/feed", "nothing", ["feature_flags"]),
   });
+}
+
+// ── census-discovery §106 (DV-83 round 10, lane W11-X2, D-W11X2-68): GET /compass/telegraph refuses ──
+// The Telegraph "Ask Compass" tray drew every failure of this route as "Compass couldn't find
+// relevant recommendations for this chat": the hydrated pool was served without reading
+// `compassHydrationFailedSources` (D-W11X2-54's contract for every caller that serves the pool),
+// the catch answered `{ cards: [], city: null }`, a failed profile read `{ cards: [] }`, and an
+// unread COMPASS_% table the flag-off 404. Each now carries the Discovery refusal envelope beside
+// the same body. Only the three tables a Telegraph card can come from are counted: posts and buddy
+// profiles are never cards (TELEGRAPH_SURFACE_TYPES), so their failure changes no card.
+const TELEGRAPH_CARD_SOURCES: ReadonlySet<string> = new Set(["events", "discovery_places", "hidden_gems"]);
+function telegraphCoverage(rawItems: unknown[], cardCount: number) {
+  const failed = compassHydrationFailedSources(rawItems as Parameters<typeof compassHydrationFailedSources>[0]).filter((s) => TELEGRAPH_CARD_SOURCES.has(s)).sort();
+  if (failed.length === 0) return {};
+  return { refusal: discoveryRefusal("transient_db", "telegraph_sources_unread", "GET /compass/telegraph", cardCount > 0 ? "partial" : "nothing", failed) };
+}
+function sendTelegraphRefused(res: import("express").Response, city: string | null, code: string, sources: string[]): void {
+  res.json({ cards: [], city, refusal: discoveryRefusal("transient_db", code, "GET /compass/telegraph", "nothing", sources) });
 }
