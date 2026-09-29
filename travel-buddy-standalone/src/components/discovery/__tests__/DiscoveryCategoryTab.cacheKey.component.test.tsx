@@ -2,8 +2,11 @@
  * census-discovery §103 (DV-83, W11-X2 round 7): the verifier's §102.11 probe, kept as a failing-first test.
  * Real services/discovery (fetch mocked) under the real DiscoveryCategoryTab.
  */
+// NOTE: a stand-in on purpose — the probe needs a signed-in, configured client and nothing else from the module.
 jest.mock('../../../lib/supabase', () => ({ supabase: {}, isSupabaseConfigured: false }));
+// NOTE: a stand-in on purpose — only freshToken is read, and the probe fixes its value.
 jest.mock('../../../services/apiToken', () => ({ freshToken: async () => 'tok-1' }));
+// NOTE: a stand-in on purpose — the tab's empty-destination picker is not under test.
 jest.mock('../../../hooks/usePopularCities', () => ({ usePopularCities: () => ({ places: [], loading: false }) }));
 jest.mock('../PlaceCard', () => {
   const React = require('react');
@@ -15,7 +18,9 @@ jest.mock('../DiscoveryMapView', () => {
   const { View } = require('react-native');
   return { DiscoveryMapView: () => React.createElement(View, { testID: 'discovery-map' }) };
 });
+// NOTE: a stand-in on purpose — the skeleton's markup is not under test.
 jest.mock('../PlaceSkeleton', () => ({ PlaceSkeletonList: () => null }));
+// NOTE: a stand-in on purpose — the picker is not under test.
 jest.mock('../../selectors/GlobalPlacePicker', () => ({ POPULAR: [], GlobalPlacePicker: () => null }));
 
 import React from 'react';

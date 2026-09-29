@@ -2,13 +2,21 @@
  * census-discovery §103 (DV-83, W11-X2 round 7): the verifier's §102.11 probe, kept as a failing-first test.
  * Real CompassPicksSection + real useCompassFeed + real fetchCompassSection/normalizer; fetch mocked.
  */
+// NOTE: a stand-in on purpose — the probe needs a signed-in, configured client and nothing else from the module.
 jest.mock('../../../lib/supabase', () => ({ supabase: { auth: { getSession: async () => ({ data: { session: null } }) } }, isSupabaseConfigured: true }));
+// NOTE: a stand-in on purpose — the probe needs a signed-in, configured client and nothing else from the module.
 jest.mock('../../../lib/supabase.ts', () => ({ supabase: { auth: { getSession: async () => ({ data: { session: null } }) } }, isSupabaseConfigured: true }));
+// NOTE: a stand-in on purpose — only freshToken is read, and the probe fixes its value.
 jest.mock('../../../services/apiToken.ts', () => ({ freshToken: async () => 'tok-1' }));
+// NOTE: a stand-in on purpose — only freshToken is read, and the probe fixes its value.
 jest.mock('../../../services/apiToken', () => ({ freshToken: async () => 'tok-1' }));
+// NOTE: a stand-in on purpose — the section only navigates, and the probe never taps.
 jest.mock('expo-router', () => ({ router: { push: jest.fn(), back: jest.fn(), replace: jest.fn() } }));
+// NOTE: a stand-in on purpose — the sheet is never opened by the probe.
 jest.mock('../CompassWhySheet.tsx', () => ({ CompassWhySheet: () => null }));
+// NOTE: a stand-in on purpose — the menu is never opened by the probe.
 jest.mock('../CompassFeedbackMenu.tsx', () => ({ CompassFeedbackMenu: () => null }));
+// NOTE: a stand-in on purpose — the probe fixes the signed-in viewer.
 jest.mock('../../../context/SessionContext.tsx', () => ({ useSession: () => ({ isAuthed: true, userId: 'user-1' }) }));
 
 import React from 'react';
