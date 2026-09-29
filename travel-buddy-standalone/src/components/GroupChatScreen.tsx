@@ -46,13 +46,10 @@ import { TelegraphSystemNotice } from './TelegraphSystemNotice.tsx';
 import { TranslationSettingsSheet } from './TranslationSettingsSheet.tsx';
 import { TripMembersSheet } from './TripMembersSheet.tsx';
 import type { Message } from '../services/messaging.ts';
-import { deleteMessage, saveMessage, sendMediaMessage, muteThread } from '../services/messaging.ts';
+import { deleteMessage, saveMessage, sendMediaMessage, muteThread, reportMessage, type MessageReportReasonCode } from '../services/messaging.ts'; import { ThreadActionSheets } from '../features/telegraph/messageActions/ThreadActionSheets.tsx'; import { canEditMessage, canViewEditHistory } from '../features/telegraph/messageActions/messageActionRules.ts'; // WP-08, one line: census cites this file by line
 import { useMessageMediaPicker } from '../hooks/useMessageMediaPicker.ts';
 import { MessageMediaBubble } from './MessageMediaBubble.tsx';
-// WP-08: per-message report (§22 evidence), edit, edit history.
-import { MessageReportSheet } from '../features/telegraph/messageActions/MessageReportSheet.tsx';
-import { ThreadActionSheets } from '../features/telegraph/messageActions/ThreadActionSheets.tsx';
-import { canEditMessage, canViewEditHistory } from '../features/telegraph/messageActions/messageActionRules.ts';
+import { type ReasonCode } from '../services/reports.ts'; // the reason list below; the report itself goes to the Telegraph route (WP-08 TM-TEL-D4)
 import { getTripMembers, getCircleMembers, type FriendUser } from '../services/friends.ts';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
@@ -95,30 +92,56 @@ const dd = StyleSheet.create({
   label: { ...t.stamp, fontFamily: 'Courier', fontSize: 10, color: color.mute, paddingHorizontal: 10, letterSpacing: 0.5 },
 });
 
+const REPORT_MSG_REASONS: { code: ReasonCode; label: string }[] = [
+  { code: 'spam',           label: 'Spam or misleading' },
+  { code: 'harassment',     label: 'Harassment or bullying' },
+  { code: 'hate_speech',    label: 'Hate speech' },
+  { code: 'violence',       label: 'Violent or dangerous content' },
+  { code: 'nudity',         label: 'Nudity or sexual content' },
+  { code: 'misinformation', label: 'Misinformation' },
+  { code: 'other',          label: 'Something else' },
+];
+
 function LongPressActionSheet({
   message,
   mine,
   onClose,
   onDeleteForMe,
   onReply,
-  onSave,
-  canEdit = false,
-  showHistory = false,
-  onEdit,
-  onHistory,
+  onSave, canEdit = false, showHistory = false, onEdit, onHistory,
 }: {
   message: Message | null;
   mine: boolean;
   onClose: () => void;
   onDeleteForMe: (id: string) => Promise<void>;
   onReply: (msg: Message) => void;
-  onSave: (msg: Message) => void;
-  canEdit?: boolean;
-  showHistory?: boolean;
-  onEdit?: (msg: Message) => void;
-  onHistory?: (msg: Message) => void;
+  onSave: (msg: Message) => void; canEdit?: boolean; showHistory?: boolean; onEdit?: (msg: Message) => void; onHistory?: (msg: Message) => void;
 }) {
   const [showReport, setShowReport] = useState(false);
+  const [reportReason, setReportReason] = useState<ReasonCode | null>(null);
+  const [reportDetail, setReportDetail] = useState('');
+  const [reportSending, setReportSending] = useState(false);
+
+  async function submitReport() {
+    if (!reportReason || !message) return;
+    setReportSending(true);
+    const detail = reportDetail.trim();
+    // WP-08 TM-TEL-D4: file through the Telegraph route, which snapshots the
+    // message as §22 evidence before it answers; the code sets its severity.
+    const label = REPORT_MSG_REASONS.find((r) => r.code === reportReason)?.label ?? 'Something else';
+    const reasonText = (detail ? `${label}: ${detail}` : label).slice(0, 200);
+    const sent = await reportMessage(message.id, reasonText, reportReason as MessageReportReasonCode);
+    const result = sent.ok ? { ok: true as const } : { ok: false as const, error: sent.message ?? 'Could not submit report' };
+    setReportSending(false);
+    if (result.ok) {
+      setShowReport(false);
+      onClose();
+      Alert.alert('Report submitted', 'Thank you. Our team will review this message.');
+    } else {
+      Alert.alert('Error', (result as any).error ?? 'Could not submit report');
+    }
+  }
+
   if (!message) return null;
   const text = message.displayBody ?? message.body ?? '';
   const actions: [string, string, React.ComponentType<{ size: number; color: string }>][] = [
@@ -126,21 +149,52 @@ function LongPressActionSheet({
     // a menu item that only explained that was a dead end.
     ['reply',     'Reply',         Reply        ],
     ['copy',      'Copy text',     Copy         ],
-    ['save',      'Save message',  BookmarkPlus ],
-    ...(canEdit ? [['edit', 'Edit', Pencil] as [string, string, React.ComponentType<{ size: number; color: string }>]] : []),
-    ...(showHistory ? [['history', 'Edit history', History] as [string, string, React.ComponentType<{ size: number; color: string }>]] : []),
-    // Your own message is not yours to report.
-    ...(!mine ? [['report', 'Report', Flag] as [string, string, React.ComponentType<{ size: number; color: string }>]] : []),
+    ['save',      'Save message',  BookmarkPlus ], ...(canEdit ? [['edit', 'Edit', Pencil] as [string, string, React.ComponentType<{ size: number; color: string }>]] : []), ...(showHistory ? [['history', 'Edit history', History] as [string, string, React.ComponentType<{ size: number; color: string }>]] : []),
+    ...(!mine ? [['report', 'Report', Flag] as [string, string, React.ComponentType<{ size: number; color: string }>]] : []), // your own message is not yours to report
   ];
   if (showReport) {
-    // §22: the Telegraph route snapshots the message before it answers, so a
-    // sender who unsends after noticing cannot take the evidence with it.
     return (
-      <MessageReportSheet
-        visible
-        messageId={message.id}
-        onClose={() => { setShowReport(false); onClose(); }}
-      />
+      <Modal visible animationType="slide" transparent onRequestClose={onClose}>
+        <Pressable style={las.overlay} onPress={onClose} />
+        <View style={las.sheet}>
+          <View style={las.handle} />
+          <Text style={las.reportTitle}>Report this message</Text>
+          <Text style={las.reportSub}>What's wrong with this message?</Text>
+          {REPORT_MSG_REASONS.map((r) => (
+            <Pressable
+              key={r.code}
+              style={[las.reasonOption, reportReason === r.code && las.reasonSelected]}
+              onPress={() => setReportReason(r.code)}
+            >
+              <Text style={[las.reasonText, reportReason === r.code && las.reasonTextSelected]}>{r.label}</Text>
+              {reportReason === r.code && <Text style={las.reasonCheck}>✓</Text>}
+            </Pressable>
+          ))}
+          {reportReason !== null && (
+            <TextInput
+              style={las.detailInput}
+              value={reportDetail}
+              onChangeText={setReportDetail}
+              placeholder="Tell us more (optional)"
+              placeholderTextColor={color.mute}
+              multiline
+              maxLength={500}
+            />
+          )}
+          <Pressable
+            style={[las.reportBtn, (!reportReason || reportSending) && las.reportBtnDisabled]}
+            onPress={submitReport}
+            disabled={!reportReason || reportSending}
+          >
+            {reportSending
+              ? <ActivityIndicator size="small" color={color.onInk} />
+              : <Text style={las.reportBtnLabel}>Submit Report</Text>}
+          </Pressable>
+          <Pressable style={las.backBtn} onPress={() => setShowReport(false)}>
+            <Text style={las.backLabel}>Back</Text>
+          </Pressable>
+        </View>
+      </Modal>
     );
   }
   return (
@@ -168,15 +222,9 @@ function LongPressActionSheet({
               } else if (key === 'save') {
                 onClose();
                 onSave(message);
-              } else if (key === 'edit') {
-                onClose();
-                onEdit?.(message);
-              } else if (key === 'history') {
-                onClose();
-                onHistory?.(message);
               } else {
                 onClose();
-                Alert.alert(label, 'This feature is coming soon.');
+                if (key === 'edit') onEdit?.(message); else if (key === 'history') onHistory?.(message); else Alert.alert(label, 'This feature is coming soon.');
               }
             }}
           >
@@ -416,9 +464,7 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
   const [threadMuted, setThreadMuted] = useState(false);
   const insets = useSafeAreaInsets();
   const { userId } = useSession();
-  const { state, thread, messages, sending, errorMessage, reload, send, retrySend, notifyTyping, typingUserIds, edit } = useGroupChat(type, id);
-  const [editingMsg, setEditingMsg] = useState<Message | null>(null);
-  const [historyMsg, setHistoryMsg] = useState<Message | null>(null);
+  const { state, thread, messages, sending, errorMessage, reload, send, retrySend, notifyTyping, typingUserIds, edit } = useGroupChat(type, id); const [editingMsg, setEditingMsg] = useState<Message | null>(null); const [historyMsg, setHistoryMsg] = useState<Message | null>(null); // WP-08
   const [input, setInput] = useState('');
   const mediaPicker = useMessageMediaPicker();
   const [showMediaPickerSheet, setShowMediaPickerSheet] = useState(false);
@@ -1070,6 +1116,7 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
         onHistory={(m) => setHistoryMsg(m)}
       />
 
+      {/* WP-08 / TEL-F07: edit through the hook (canonical route), and the edit history. */}
       <ThreadActionSheets
         threadId={thread?.id ?? ''}
         editing={editingMsg}

@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { Avatar } from './ui/Avatar.tsx';
 import { router, useFocusEffect } from 'expo-router';
-import { Zap, Users, Globe, BellOff, Search, MessageCirclePlus, Compass, Bot, ShieldOff, Flag, UserCheck, UserMinus, Bookmark, Settings2 } from 'lucide-react-native';
+import { Zap, Users, Globe, BellOff, Search, MessageCirclePlus, Compass, Bot, ShieldOff, Flag, UserCheck, UserMinus } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useMyThreads, useIncomingMessageRequests } from '../hooks/useMessaging.ts';
 import { useSession } from '../context/SessionContext.tsx';
@@ -30,7 +30,7 @@ import { errorCopy } from '../lib/errorCopy.ts'; import { typedKindPreviewLabel 
 // Telegraph §21 — object-aware, authorization-scoped message search. A
 // different question from this screen's own thread filter; see the row that
 // opens it.
-import { TelegraphSearchScreen } from '../features/telegraph/components/TelegraphSearchScreen.tsx';
+import { TelegraphSearchScreen } from '../features/telegraph/components/TelegraphSearchScreen.tsx'; import { InboxHeaderActions } from '../features/telegraph/components/InboxHeaderActions.tsx';
 
 type FilterKey = 'all' | 'direct' | 'trips' | 'circles' | 'unread' | 'requests';
 
@@ -457,40 +457,15 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
             <Text style={s.brandName}>Telegraph</Text>
           </View>
           {isAuthed && (
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-              {/* WP-08 / TEL-F08 and TEL-F23: the two Telegraph screens that
-                  had no way in — the saved-messages list and the settings the
-                  server's canMessage actually enforces. */}
-              <Pressable
-                style={s.composeBtn}
-                onPress={() => router.push('/messages/saved' as any)}
-                accessibilityRole="button"
-                accessibilityLabel="Saved messages"
-                testID="telegraph-inbox-saved"
-                hitSlop={8}
-              >
-                <Bookmark size={19} color={color.mute} />
-              </Pressable>
-              <Pressable
-                style={s.composeBtn}
-                onPress={() => router.push('/settings/messages' as any)}
-                accessibilityRole="button"
-                accessibilityLabel="Message settings"
-                testID="telegraph-inbox-settings"
-                hitSlop={8}
-              >
-                <Settings2 size={19} color={color.mute} />
-              </Pressable>
-              <Pressable
-                style={s.composeBtn}
-                onPress={() => router.push('/telegraph/new' as any)}
-                accessibilityRole="button"
-                accessibilityLabel="New Telegraph"
-                hitSlop={8}
-              >
-                <MessageCirclePlus size={20} color={color.signal} />
-              </Pressable>
-            </View>
+            // WP-08: Saved messages and Message settings beside New Telegraph
+            // (TEL-F08, TEL-F23). The compose button itself is unchanged.
+            <InboxHeaderActions
+              composeStyle={s.composeBtn}
+              onCompose={() => router.push('/telegraph/new' as any)}
+              onSaved={() => router.push('/messages/saved' as any)}
+              onSettings={() => router.push('/settings/messages' as any)}
+              composeIcon={<MessageCirclePlus size={20} color={color.signal} />}
+            />
           )}
         </View>
       </View>

@@ -3795,7 +3795,7 @@ router.patch('/threads/:threadId/messages/:messageId', async (req, res) => {
  * a named 503 — never `{ versions: [] }`, which would assert to the caller that
  * this message has never been edited.
  *
- * INERT: no client calls this route today.
+ * CALLED by the client's Edit history sheet since WP-08 (census-telegraph §38).
  */
 router.get('/threads/:threadId/messages/:messageId/edits', async (req, res) => {
   const auth = await requireUser(req, res);
@@ -4217,7 +4217,7 @@ router.post('/threads/:threadId/report', async (req, res) => {
  * than throws, and a failed read must never be reported as an empty collection
  * (§29 "No silent schema failures that become plausible empty state").
  *
- * INERT: no client calls this route; nothing existing changes shape.
+ * CALLED by the client's Saved messages screen since WP-08 (census-telegraph §38).
  */
 router.get('/me/saved-messages', async (req, res) => {
   const auth = await requireUser(req, res);

@@ -46,13 +46,7 @@ export interface ContentDrawerSheetProps {
   onClose: () => void;
   onOpenMessage?: (messageId: string) => void;
   /** Test seam: skip the fetch and render this. */
-  initialDrawer?: DrawerResponse | null;
-  /**
-   * §21 "Ask this conversation" (WP-08 / TEL-F16). When given, a row under the
-   * search box hands off to the caller, which closes this sheet and opens the
-   * ask sheet — two stacked Modals are unreliable on iOS.
-   */
-  onAsk?: () => void;
+  initialDrawer?: DrawerResponse | null; /** §21 "Ask this conversation" (WP-08 / TEL-F16): a row under the search box hands off to the caller, which closes this sheet and opens the ask sheet — stacked Modals are unreliable on iOS. */ onAsk?: () => void;
 }
 
 export function ContentDrawerSheet({
@@ -60,8 +54,7 @@ export function ContentDrawerSheet({
   threadId,
   onClose,
   onOpenMessage,
-  initialDrawer = null,
-  onAsk,
+  initialDrawer = null, onAsk,
 }: ContentDrawerSheetProps) {
   const palette = useTelegraphPalette();
   const styles = useMemo(() => makeStyles(palette), [palette]);
