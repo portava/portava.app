@@ -17599,8 +17599,153 @@ An independent re-verification at the merged head is owed before the integrator 
 
 Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
 
+## §104 — DV-83 round 8 (lane W11-X2): a failed Compass candidate read is named and never cached, /compass/recommendations refuses and its consumers say so, the trending chips follow their city, an unread rollout flag is not "off", and DV-83 moves W → C
+
+*Written 2026-09-29 by lane W11-X2 (round 8) on `disc-w11-x2-r8`, from `67d900e55` (§103) and §103.11. It closes §103.11's three breaks, each with the verifier's probe copied in as a red test. It decides the possible (real, and closed), pins the three surviving mutations, and sweeps the Compass → Discovery seam once more; the sweep closed two further paths. Decisions are in `docs/architecture/discovery-decision-register.md`, section "W11-X2 round 8", D-W11X2-54 to D-W11X2-59.*
+
+*No migration and no new flag. Each change alters output only when a read failed or a flag table could not be read, or (the trending chips) when the city changes. With every read healthy, every served byte is unchanged (S5, R3c, R4c, R6c, FK1c, FT2c, W1c, HTc). Every edit in a cited file is line-neutral: lines are changed in place, with the old text kept in a `was:` comment where a citation names it, and new code is appended at a file's foot. `src/index.ts` is untouched.*
+
+*All evidence is controlled: in-process routes over fake worlds, the real client services over a fake `fetch`, and jest over the real screens, sections and rows. None of it is production evidence, and no client build carrying the change has shipped.*
+
+### 104.1 A failed Compass candidate read is named, refused and never cached (§103.11 BK1; D-W11X2-54)
+
+- **Before.** The hydrator destructured `{ data }` alone on posts, buddies, events and places, and hidden gems answered `[]`. GET /compass/feed/section served the section built from failed reads as complete, and wrote it to L1 and the DB cache (V7-S1, V7-S2).
+- **Now.**
+  - Each candidate read throws its error; `hydrateCompassItems` still never throws, and names each failed source beside the pool it returns (`artifacts/api-server/src/compass/CompassItemHydrator.ts:447#failed.push(name);`, `artifacts/api-server/src/compass/CompassItemHydrator.ts:491#export function compassHydrationFailedSources(`). Both the city-scoped and the global posts read count (T7), each source alone is named (T5), and a thrown read is named like a resolved error (T3).
+  - The section route answers the failure arm §103 made the client say, with the rows that were read and the refusal (`partial` with rows, `nothing` without), and caches nothing (`artifacts/api-server/src/routes/compass.ts:762#if (sectionFailedSources.length === 0) void setCachedFeed`, `artifacts/api-server/src/routes/compass.ts:763#sendCompassSectionSourcesUnread(res, response, sectionFailedSources)`; V7-S1, V7-S2, S3, S4). A healthy section is cached as before (S5).
+  - The client never caches it and never lets it replace kept picks; with nothing kept, For You's picks show its rows under the incomplete line (`travel-buddy-standalone/src/components/compass/CompassPicksSection.tsx:377#isCompassSectionPartial(compass.data)`; U1–U4). ForYouTab never takes a partial Compass pool over its OSM list.
+  - **Every other caller of the hydrator and of `buildSection`.** GET /compass/feed refuses and is not cached (F1). The front-load engine does not preload a first page built from a failed read (`artifacts/api-server/src/compass/CompassFrontLoadEngine.ts:347#compassHydrationFailedSources(items_)`; H3). The Compass home's best move is `unavailable`, never "no best move", for an empty pool from failed reads (`artifacts/api-server/src/routes/compassHome.ts:451#compassHydrationFailedSources(items).length > 0 ? unusable(null)`; H2). `/compass/recommendations` refuses (104.2). The ask context and Telegraph's cards only rank what was read and claim no list; unchanged (D-W11X2-59).
+
+### 104.2 /compass/recommendations refuses on every failure arm, and every consumer says it (§103.11 BK2; D-W11X2-55)
+
+- **Before.** The flag read failed to "off", the block checks answered `{ recommendations: [], error: "block_check_failed" }` (which the client ignored), the traveler and buddy candidate reads ignored their error, and the catch answered `[]`. Search drew no rail and For You's traveler row returned null (V7-R1, V7-R2, V7-T1, V7-T2).
+- **Server.**
+  - The flag is read with `readCompassEnabled`: unread is refused `compass_flags_unreadable`; read and off keeps the old body byte for byte (`artifacts/api-server/src/routes/compass.ts:3602#const enabledRead = await readCompassEnabled(sc);`; R3, R3c).
+  - The block checks on the buddy, traveler and passport surfaces (resolved error and throw), the buddy and traveler candidate reads and the catch refuse `nothing` (`artifacts/api-server/src/routes/compass.ts:3666#if (buddyRowsErr)`, `artifacts/api-server/src/routes/compass.ts:3841#if (travelerRowsErr)`, `artifacts/api-server/src/routes/compass.ts:4421#err instanceof CompassFlagsUnreadableError ? "compass_flags_unreadable" : "recommendations_build_failed"`; V7-R2, R5, R7, R8, R10, T1, T2).
+  - The feed-based surfaces (search, for_you, map, trip, passport) refuse `partial` or `nothing` when a candidate source failed (`artifacts/api-server/src/routes/compass.ts:4418#}, recFailedSources);`; V7-R1, R4, R4b, R9).
+  - The traveler page is `partial` when a person was withheld because their discovery gate could not be read, or their projection threw (`artifacts/api-server/src/routes/compass.ts:4109#personGatesUnread(travGates)`; R6, T6). Admission stays on `.allowed` alone, so `compassPersonIdentity` 4b2 holds unchanged.
+- **Client.** One predicate, in its own module (`travel-buddy-standalone/src/services/compassRecommendationsRefusal.ts:21#export function compassRecommendationsFailed(`; M1–M4, Mc).
+  - Search's rail says a failed or partial read (`travel-buddy-standalone/app/search.tsx:305#const rFailed = !cr.ok || !cr.data || compassRecommendationsFailed(cr.data);`; CR1–CR4, CRc, CRd).
+  - For You's traveler row hides only for an answered empty list (`travel-buddy-standalone/src/components/compass/CompassTravelerRow.tsx:329#if (items.length === 0 && readState === null) return null;`; V7-T1, V7-T2, V7-TC, T3–T7).
+  - **The shared-arm clients.** The Passport tab's suggestions say a failed or partial read (PS1–PS4, PSc). The map's Ask Compass bar keeps its markers and says a refused read instead of drawing the carousel's empty state (A1, A2, Ac). The trip map's Compass pins have no "none" state and claim nothing; Rent-a-Buddy's row hides on a failure as before. Both are recorded for their owners (D-W11X2-55).
+
+### 104.3 The trending chips follow their city (§103.11 BK3; D-W11X2-57)
+
+- A city change clears the chips, and a failed or rejected read is said when there are no chips (`travel-buddy-standalone/app/(tabs)/discovery.tsx:116#setTrendingHashtags([]); setTrendingFailed(false);`, `travel-buddy-standalone/app/(tabs)/discovery.tsx:120#else setTrendingFailed(true);`; V7-H1, H2–H4).
+- The sweep found the server half: GET /hashtags/trending's city→global fallback read ignored its error and answered `200 { trending: [] }`. It now answers the route's own `db_error` (`artifacts/api-server/src/routes/hashtags.ts:203#if (fbErr)`; HT1 red at the unfixed route, HTc).
+
+### 104.4 An unread rollout flag is a failed read, not "off" (§103.11 possible; D-W11X2-56)
+
+- **Probed and real.** A failed `feature_flags` read answered `404 feature_disabled` on the output kinds and all four trending routes (FK1, FK2, FT1, FT2 red at `67d900e55`), and the output-kinds rail hides a 404 like the feature being off.
+- **Now.** Each route reads its flag strictly at its foot; unread answers `503 degraded_unavailable` / `flag_unreadable`, the rail's failed state (`artifacts/api-server/src/routes/discoveryOutputKinds.ts:62#if (kindsFlag === null) return sendError(res, "degraded_unavailable"`, `artifacts/api-server/src/routes/discoveryTrending.ts:99#if (apiFlag === null || listsFlag === null) return sendError`). An absent or off flag keeps the 404, byte for byte (FK1c, FT2c, and `discoveryOutputKindsFailedReads` F1 unchanged). `check:flag-polarity` records the three direct reads.
+- **Ruled, not changed.** An unread Discovery stop halts, and a halt returns each rollout flag's flag-off output. That is the shared stop's documented posture for every rollout reader, not a completeness claim.
+
+### 104.5 The survivors (D-W11X2-59)
+
+- **CM7** — ForYouTab's cache query without the sort: killed by Q1 and Q2 (`ForYouTab.cachedPartial`).
+- **CM10** — the query identity without the age filter and open-now: killed by G4 (`DiscoveryCategoryTab.heldQuery`), which stamps with the real identity. The suite's own identities were written by hand.
+- **CM13** — the HTTP-error failure left unstamped: killed by K7 (`discovery.cacheKey`).
+- No production code changed for these.
+
+### 104.6 The sweep of the Compass → Discovery seam
+
+Every Compass route or library a Discovery screen reads was checked for its catch arms, lenient empty sets, unread-flag-as-off and caches. It found two further paths, both closed:
+
+- **GET /compass/why (D-W11X2-58).** For You's "Why am I seeing this?" sheet showed a generic reason for a failed lookup. Now the route's failure arms carry the refusal (`artifacts/api-server/src/routes/compass.ts:1000#res.json({ explanation: "Recommendation not found or not available for your account.", refusal: discoveryRefusal(`), and the sheet says the read failed (`travel-buddy-standalone/src/hooks/compass/useCompassWhyExplanation.ts:28#setFailed(!r.ok);`; W1–W3, W1c, Y1, Y2, Yc).
+- **The trending fallback read** (104.3).
+
+The paths found sound are listed in D-W11X2-59:
+
+- the section route's settings, recent-context and fallback-mode reads, which fail toward serving;
+- `buildSection`'s ranking reads;
+- the capability flag read as off, which serves everything;
+- city confidence;
+- the traveler list's ranking and follow-label reads;
+- the non-fatal ask context and Telegraph;
+- the device caches.
+
+### 104.7 Tests, seen red, and mutations
+
+- **New suites.**
+  - `artifacts/api-server/src/test/compassCandidateSourcesUnread.test.ts` (35): V7-S1, V7-S2, V7-R1, V7-R2, V7-C1 are the verifier's probes; S3–S5, F1, R3–R10, H1–H3, T1–T7, W1, W2, W1c.
+  - `artifacts/api-server/src/test/discoveryFlagUnreadable.test.ts` (6): FK1, FK1c, FK2, FT1, FT2, FT2c.
+  - `artifacts/api-server/src/test/compassWhyNoServiceClient.test.ts` (1): W3, in its own file because it clears the Supabase env before import.
+  - `artifacts/api-server/src/test/hashtagsTrendingFallbackRead.test.ts` (2): HT1, HTc.
+  - `travel-buddy-standalone/src/components/compass/__tests__/CompassTravelerRow.failedRead.component.test.tsx` (8): V7-T1, V7-T2, V7-TC are the verifier's probes; T3–T7.
+  - `travel-buddy-standalone/app/(tabs)/__tests__/discovery.trendingCityChange.component.test.tsx` (4): V7-H1 is the verifier's probe; H2–H4. The probe's bare rerender leaves the act scope as the harness header describes, so §104's own pins run first.
+  - `travel-buddy-standalone/app/__tests__/search.compassRailFailed.component.test.tsx` (6), `travel-buddy-standalone/src/components/compass/__tests__/CompassPicksSection.sourcesUnread.component.test.tsx` (5), `travel-buddy-standalone/src/components/compass/__tests__/CompassPassportSuggestions.refusal.component.test.tsx` (5), `travel-buddy-standalone/src/components/map/__tests__/AskCompassBar.refusal.component.test.tsx` (3), `travel-buddy-standalone/src/services/__tests__/compassMatches.refusal.component.test.ts` (5), `travel-buddy-standalone/src/components/compass/__tests__/CompassWhySheet.failedRead.component.test.tsx` (3).
+  - The four new server suites are on the api-server `test` line.
+- **Existing suites extended.** `ForYouTab.cachedPartial`: Q1–Q3. `DiscoveryCategoryTab.heldQuery`: G4 (two cases). `discovery.cacheKey`: K7.
+- **Restated pins.** Both were recorded decisions, and no other assertion changed.
+  1. `discoveryTrendingApi` A3 asserted `404 feature_disabled` for an unreadable flag. It now asserts `503 flag_unreadable` (D-W11X2-56).
+  2. `discoveryTrendingLists` L-A1 had the same assertion inside its loop, restated the same way (D-W11X2-56).
+- **Red first.** Each was run at the unfixed code, and the output is kept in the lane's scratch.
+  - The server probes: V7-S1, V7-S2, V7-R1 and V7-R2 red; V7-C1 green.
+  - The client probes: V7-T1, V7-T2 and V7-H1 red; V7-TC green.
+  - The possible: FK1, FK2, FT1 and FT2 red; FK1c and FT2c green.
+  - The chips' server half: HT1 red; HTc green.
+  - Every other pin was written with its fix, and its red is the mutation that reverts that fix (below).
+- **Mutations.** 70 distinct mutations. Each was applied alone, its suites run, and the file restored byte-identical (sha256 checked).
+  - Three survived the first run. H-posts-city and H-posts-city2 each removed only one of the two posts reads' checks, and the fake failed both reads together; T7 now kills both. C-pass-catch removed the Passport suggestions' `.catch`; PS4 now kills it.
+  - All 70 are killed at the final tree.
+
+| group | mutations | red |
+|---|---|---|
+| the hydrator (each source's check, the thrown arms, the name, the stamp) | 11 | S3, S4, R4, R4b, R9, F1, H1, H3, T3–T5, T7, V7-S1, V7-S2, V7-R1 |
+| the section and the feed (cache guard, refusal, coverage) | 5 | V7-S1, V7-S2, S3, S4, F1 |
+| /compass/recommendations (flag read and arm, buddy and traveler rows, six block arms, gate, projection, traveler send, feed arm, coverage, catch) | 16 | R3–R10, T1, T2, T6, V7-R1, V7-R2 |
+| the other callers (front-load, Compass home) | 2 | H2, H3 |
+| the unread flag (output kinds ×3, trending ×2) | 5 | FK1, FK2, FT1, FT2, A3, L-A1 |
+| /compass/why (three arms; client reader, hook, sheet) | 6 | W1–W3, Y1, Y2 |
+| the client (section reasons, partial notice ×2, predicate ×2, readers ×3, row ×2, search ×3, passport ×3, Ask Compass ×2, chips ×4) | 22 | U1–U4, T3, T4, V7-T1, V7-T2, CR1–CR4, M1–M4, PS2–PS4, A1, A2, V7-H1, H2–H4 |
+| the survivors | 3 | CM7: Q1, Q2 · CM10: G4 · CM13: K7 |
+
+### 104.8 Checks
+
+Run on the final commit.
+
+- **`artifacts/api-server`, the integrator's 24-check guard script (`int-guards.sh`):** see 104.10 for the verbatim result.
+- **Suites.** The api-server node:test run over every `src/test/discovery*.test.ts` and `src/test/compass*.test.ts` plus the touched suites; the whole-repo scan `src/services/airport/__tests__/layoverSurfaceErrorBinding.test.ts`; the client's touched jest suites, `pnpm run -s check:all` and `node scripts/check-route-registry.mjs`. The results are in 104.10.
+- **Acknowledgements.** census-compass watches `routes/compass.ts`, `compass/CompassItemHydrator.ts`, `compass/CompassFrontLoadEngine.ts` and `routes/compassHome.ts`. census-media watches the hydrator. The census that grades `routes/hashtags.ts` watches it too. Each is acknowledged per file in `CENSUS_STALENESS_ACKNOWLEDGED.json`, and no verdict there moves. census-discovery's CENSUS_SCOPE gains the files this section grades.
+- **Not run.**
+  - The harness, since no migration was added.
+  - `check:write-path-columns`, which needs live credentials. No write payload changed; the change removes cache writes and adds none.
+  - `compassMemoryClientBoundary`, a live-DB suite that is not on the `test` line and refuses without CI's Supabase env. It is unrelated to this change.
+
+### 104.9 DV-83, restated
+
+§103.11's three breaks are closed, each with the verifier's probe red first and green now. The possible was real and is closed, the three survivors are pinned, and the sweep closed two more paths. Every clause of DV-83's criterion holds on every path this lane examined:
+
+1. **Producers send the refusal envelope.** The Compass section and feed name failed candidate sources. `/compass/recommendations` refuses on every failure arm, `partial` beside rows. `/compass/why` refuses its failed lookups. The output kinds and trending routes refuse an unread flag. The chips' fallback read answers its error.
+2. **Nothing refused or partial is cached as complete.** The section and the feed are written to neither L1 nor the DB cache. The front-load engine preloads no first page built from a failed read. `useCompassFeed` caches no failure answer.
+3. **Nothing refused is rendered as empty, as complete, or over the wrong rows.** For You's picks show a partial section as incomplete. Search's rail, the traveler row, the Passport suggestions and Ask Compass say a failed read. The trending chips never sit under another city. The why sheet never shows a stub as the reason.
+4. **Consumers branch on coverage.** The picks section and hook branch on `fallbackReason` and the refusal. The Compass match readers and every `/compass/recommendations` consumer branch on `refusal.coverage` through one predicate.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§103.11's three breaks are closed, each with its verifier probe red first. The possible is real and closed, CM7, CM10 and CM13 are killed, the sweep closed two more paths, and 70 of 70 mutations are killed.** **A failed Compass candidate read is named, refused and never cached** (`artifacts/api-server/src/compass/CompassItemHydrator.ts:447#failed.push(name);`, `artifacts/api-server/src/routes/compass.ts:762#if (sectionFailedSources.length === 0) void setCachedFeed`, `artifacts/api-server/src/routes/compass.ts:763#sendCompassSectionSourcesUnread(res, response, sectionFailedSources)`; V7-S1, V7-S2, S3–S5, F1, H1–H3, T3–T5, T7), **and For You's picks show it as incomplete** (`travel-buddy-standalone/src/components/compass/CompassPicksSection.tsx:377#isCompassSectionPartial(compass.data)`; U1–U4). **/compass/recommendations refuses on every failure arm** (`artifacts/api-server/src/routes/compass.ts:3602#const enabledRead = await readCompassEnabled(sc);`, `artifacts/api-server/src/routes/compass.ts:3841#if (travelerRowsErr)`, `artifacts/api-server/src/routes/compass.ts:4418#}, recFailedSources);`, `artifacts/api-server/src/routes/compass.ts:4421#err instanceof CompassFlagsUnreadableError ? "compass_flags_unreadable" : "recommendations_build_failed"`; V7-R1, V7-R2, R3–R10, T1, T2, T6), **and its consumers say it** (`travel-buddy-standalone/src/services/compassRecommendationsRefusal.ts:21#export function compassRecommendationsFailed(`, `travel-buddy-standalone/app/search.tsx:305#const rFailed = !cr.ok || !cr.data || compassRecommendationsFailed(cr.data);`, `travel-buddy-standalone/src/components/compass/CompassTravelerRow.tsx:329#if (items.length === 0 && readState === null) return null;`; V7-T1, V7-T2, T3–T7, CR1–CR4, M1–M4, PS1–PS4, A1, A2). **The trending chips follow their city** (`travel-buddy-standalone/app/(tabs)/discovery.tsx:116#setTrendingHashtags([]); setTrendingFailed(false);`, `artifacts/api-server/src/routes/hashtags.ts:203#if (fbErr)`; V7-H1, H2–H4, HT1). **An unread rollout flag is a failed read, not "off"** (`artifacts/api-server/src/routes/discoveryOutputKinds.ts:62#if (kindsFlag === null) return sendError(res, "degraded_unavailable"`, `artifacts/api-server/src/routes/discoveryTrending.ts:99#if (apiFlag === null || listsFlag === null) return sendError`; FK1, FK2, FT1, FT2). **The why sheet never shows a stub as the reason** (`artifacts/api-server/src/routes/compass.ts:1000#res.json({ explanation: "Recommendation not found or not available for your account.", refusal: discoveryRefusal(`, `travel-buddy-standalone/src/hooks/compass/useCompassWhyExplanation.ts:28#setFailed(!r.ok);`; W1–W3, Y1, Y2). Every path §94 to §103 closed still holds: their suites pass, with two pins restated by a recorded decision (104.7). **Stated limits.** Controlled evidence only; no client build carrying these changes has shipped. The output kinds and trending routes sit behind flags seeded FALSE. An independent re-verification at the merged head is owed. |
+
+**Headline.** DV-83 moves W → C. `check:census-integrity` counts **C 101 / W 85 / N 2 / X 0** over 188: CONSTRUCTED 186 / 188 = **98.9 %**, CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged.
+
+### 104.10 Left open, and what would turn this red
+
+- **Seen and not built.**
+  - The trip map's Compass alternatives have no coverage surface, and neither do its other five sources. Recorded for census-trips.
+  - Rent-a-Buddy's `CompassBuddyRow` hides on a failed read as it did before. Recorded for its owner.
+  - The Discovery stop's unread kill switch halts to each rollout flag's flag-off output. That is the shared stop's posture (104.4).
+- **What would turn DV-83 red again:**
+  - a Compass candidate read whose error is not named, or a pool built from one that is served or cached as complete (V7-S1, V7-S2, S3–S5, T3–T5, T7, F1, H3);
+  - a `/compass/recommendations` failure arm answered as an empty list with no refusal, or a consumer that draws one as an absence (V7-R1, V7-R2, R3–R10, T1, T2, T6, V7-T1, V7-T2, CR1–CR4, PS1–PS4, A1);
+  - a trending chip under another city, or a failed chips read drawn as none (V7-H1, H2–H4, HT1);
+  - an unread rollout flag answered as `feature_disabled` (FK1, FK2, FT1, FT2);
+  - a failed why lookup shown as the reason (W1–W3, Y1, Y2);
+  - any path §103.10 lists.
+
+**Verbatim results at the final commit** are appended below by the lane after the last edit (104.11).
+
 ## Cited, not graded (check:census-scope-coverage)
 
+- NOT-GRADED: artifacts/api-server/src/services/airport/__tests__/layoverSurfaceErrorBinding.test.ts — §104.8 names it only as the integrator's whole-repo scan, run on the final commit; no DV-83 verdict rests on its content.
 - NOT-GRADED: artifacts/api-server/src/lib/capability/prerequisitesCore.ts — §93.8 names its function-granular gate boundary as why the Compass KNOWN entry was struck; it is the prerequisite checker's own machinery, and no Discovery verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/flagSchemaPrerequisites.test.ts — §93.5 cites it only as the checker's own suite, run after the KNOWN entry was struck; no Discovery verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/helpers/supabaseConformance.ts — §86.13 cites it only as the file that registers `fakeTrailRulesDb` as a contract Subject; it is shared test machinery (the Supabase contract harness), and no Discovery verdict rests on it.

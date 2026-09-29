@@ -4473,6 +4473,31 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryCategoryTab.cacheKey.component.test.tsx",
     "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryCategoryTab.heldQuery.component.test.tsx",
     "travel-buddy-standalone/src/components/compass/__tests__/CompassPicksSection.buildError.component.test.tsx",
+    // census-discovery §104 (lane W11-X2, round 8): DV-83 re-graded on the Compass candidate reads, the
+    // /compass/recommendations failure arms and their consumers, the trending chips, an unread rollout flag
+    // and the why sheet.
+    "artifacts/api-server/src/compass/CompassItemHydrator.ts",  // §104 grades compassHydrationFailedSources (D-W11X2-54)
+    "artifacts/api-server/src/compass/CompassFrontLoadEngine.ts",  // §104 grades the first page's failed-read guard (D-W11X2-54)
+    "artifacts/api-server/src/routes/compassHome.ts",  // §104 grades the best move's failed-read arm (D-W11X2-54)
+    "artifacts/api-server/src/routes/hashtags.ts",  // §104 grades the trending fallback read (D-W11X2-57)
+    "artifacts/api-server/src/test/compassCandidateSourcesUnread.test.ts",
+    "artifacts/api-server/src/test/discoveryFlagUnreadable.test.ts",
+    "artifacts/api-server/src/test/compassWhyNoServiceClient.test.ts",
+    "artifacts/api-server/src/test/hashtagsTrendingFallbackRead.test.ts",
+    "travel-buddy-standalone/src/services/compassRecommendationsRefusal.ts",
+    "travel-buddy-standalone/src/components/compass/CompassTravelerRow.tsx",  // §104 grades its failed/partial state (D-W11X2-55)
+    "travel-buddy-standalone/src/components/compass/CompassPassportSuggestions.tsx",  // §104 (D-W11X2-55)
+    "travel-buddy-standalone/src/components/map/AskCompassBar.tsx",  // §104 (D-W11X2-55)
+    "travel-buddy-standalone/src/components/compass/CompassWhySheet.tsx",  // §104 (D-W11X2-58)
+    "travel-buddy-standalone/src/hooks/compass/useCompassWhyExplanation.ts",  // §104 (D-W11X2-58)
+    "travel-buddy-standalone/src/components/compass/__tests__/CompassTravelerRow.failedRead.component.test.tsx",
+    "travel-buddy-standalone/app/(tabs)/__tests__/discovery.trendingCityChange.component.test.tsx",
+    "travel-buddy-standalone/app/__tests__/search.compassRailFailed.component.test.tsx",
+    "travel-buddy-standalone/src/components/compass/__tests__/CompassPicksSection.sourcesUnread.component.test.tsx",
+    "travel-buddy-standalone/src/components/compass/__tests__/CompassPassportSuggestions.refusal.component.test.tsx",
+    "travel-buddy-standalone/src/components/map/__tests__/AskCompassBar.refusal.component.test.tsx",
+    "travel-buddy-standalone/src/services/__tests__/compassMatches.refusal.component.test.ts",
+    "travel-buddy-standalone/src/components/compass/__tests__/CompassWhySheet.failedRead.component.test.tsx",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //
