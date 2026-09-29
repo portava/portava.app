@@ -34,7 +34,7 @@ export function useCompassWhyExplanation(): UseCompassWhyExplanationResult {
     return text;
   }, []);
 
-  const clear = useCallback(() => { reqRef.current += 1; setLoading(false);  // §105: a sheet closed mid-read is written by nothing
+  const clear = useCallback(() => { reqRef.current += 1;  // census-discovery §105 (D-W11X2-63): a sheet closed mid-read is written by nothing
     setExplanation(null);
     setFactors([]);
     setCompassMatch(null);

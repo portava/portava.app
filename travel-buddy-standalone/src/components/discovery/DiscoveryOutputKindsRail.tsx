@@ -61,14 +61,14 @@ export function DiscoveryOutputKindsRail({ kind, destination, enabled, refreshKe
   const loadIdRef = useRef(0);
 
   useEffect(() => {
-    if (!active) { setItems([]); setFailed(false); setPartial(false); return; }
+    if (!active) { setItems([]); setFailed(false); return; }
     const myId = ++loadIdRef.current;
     let cancelled = false;
     getOutputKindRecommendations(kind, { destination })
       .then((r) => {
         if (cancelled || loadIdRef.current !== myId) return;
         if (r.ok) { setItems(r.items); setPartial(r.partial === true); setFailed(r.partial === true && r.items.length === 0); return; }  // §105: a partial page with no rows is the failed state, never silence
-        setItems([]); setPartial(false);
+        setItems([]);
         setFailed(r.reason === 'unavailable' || r.reason === 'network');  // §100 (D-W11X2-27): a transport failure is a failed read too, never the empty page's silence
       })
       .catch(() => { if (!cancelled && loadIdRef.current === myId) { setItems([]); setFailed(true); } });  // §100: a thrown read likewise

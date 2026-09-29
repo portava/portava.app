@@ -12,6 +12,7 @@
  *   CH5  CONTROL: Compass READ and off → no failed line (unchanged)
  *   CH6  CONTROL: a healthy home → no failed or partial line
  *   CH7  a THROWN fetch → the failed line
+ *   CH8  a failed read, then a good refetch → the failed line clears
  */
 import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react-native';
@@ -90,5 +91,15 @@ describe('CompassHome failed and partial reads (§105)', () => {
     mockFetchCompassHome.mockRejectedValue(new Error('socket hang up'));
     await render(<CompassHome onAsk={jest.fn()} />);
     await waitFor(() => expect(screen.queryByText(FAILED)).not.toBeNull());
+  });
+
+  it('CH8 a failed read, then a good refetch → the failed line clears', async () => {
+    mockFetchCompassHome.mockResolvedValueOnce({ ok: false, error: 'http_503' });
+    const view = await render(<CompassHome onAsk={jest.fn()} refreshNonce={0} />);
+    await waitFor(() => expect(screen.queryByText(FAILED)).not.toBeNull());
+    mockFetchCompassHome.mockResolvedValueOnce({ ok: true, data: { ...HOME, degraded: false } });
+    await view.rerender(<CompassHome onAsk={jest.fn()} refreshNonce={1} />);
+    await waitFor(() => expect(screen.queryByText('Rooftop DJ set')).not.toBeNull());
+    expect(screen.queryByText(FAILED)).toBeNull();
   });
 });

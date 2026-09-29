@@ -478,6 +478,7 @@ export default function HashtagFeedScreen() {
         </View>
       ) : (
         <FlatList
+          testID="hashtag-feed-list"
           data={items}
           keyExtractor={(item) => `${item.type}-${item.id}`}
           renderItem={({ item }) => <FeedRow item={item} />}
@@ -495,7 +496,7 @@ export default function HashtagFeedScreen() {
           ListFooterComponent={
             <>
               {loadingMore ? (
-                <View style={s.footerLoader}>
+                <View style={s.footerLoader} testID="hashtag-feed-loading-more">
                   <ActivityIndicator size="small" color={color.signal} />
                 </View>
               ) : null}

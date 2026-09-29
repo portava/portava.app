@@ -5,6 +5,7 @@
  *   OP1  partial rows: the rows are kept AND the browse list's partial line is shown
  *   OP2  CONTROL: a complete page shows no partial line
  *   OP3  a later complete page clears the partial line
+ *   OP4  a partial page with NO rows is the failed state, never silence
  *
  * Run with: pnpm test:component
  */
@@ -54,5 +55,11 @@ describe('DiscoveryOutputKindsRail partial (§105)', () => {
     await view.rerender(<DiscoveryOutputKindsRail kind="trails" destination="Miami" enabled refreshKey={1} />);
     await waitFor(() => expect(view.queryByText(PARTIAL)).toBeNull());
     expect(view.queryByTestId('discovery-output-kind-item-t1')).not.toBeNull();
+  });
+
+  it('OP4 a partial page with no rows is the failed state, never silence', async () => {
+    mockGet.mockResolvedValue({ ok: true, kind: 'trails', rankedBy: 'pde', items: [], partial: true });
+    const { findByTestId } = await render(<DiscoveryOutputKindsRail kind="trails" destination="Miami" enabled />);
+    expect(await findByTestId('discovery-output-kind-trails-unavailable')).toBeTruthy();
   });
 });

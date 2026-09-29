@@ -11,6 +11,7 @@
  *        never "It may have been removed or blocked"; a 404 still is
  *   HS4  a 200 carrying a Discovery refusal is a failed read, never its (empty) rows
  *   HS5  CONTROL: a successful empty tab still says "No events content yet"
+ *   HS6  a load-more left pending when the viewer switches tab never leaves its spinner behind
  *
  * Run with: pnpm test:component
  */
@@ -114,5 +115,20 @@ describe('hashtag feed screen (§105)', () => {
     await waitFor(() => expect(view.queryByText('Events')).not.toBeNull());
     await act(async () => { fireEvent.press(view.getByText('Events')); });
     await waitFor(() => expect(view.queryByText('No events content yet')).not.toBeNull());
+  });
+
+  it('HS6 a load-more left pending when the viewer switches tab never leaves its spinner behind', async () => {
+    mockGetFeed.mockImplementation((_s: string, tab: string, _sc: string, _c: unknown, before: string | null) => {
+      if (before) return new Promise(() => {});
+      if (tab === 'places') return Promise.resolve(page([PLACE], 'places'));
+      return Promise.resolve(page([EVENT], tab, { hasMore: true, nextCursor: 'c1' }));
+    });
+    const view = await render(<HashtagFeedScreen />);
+    await waitFor(() => expect(view.queryByText('Jazz night')).not.toBeNull());
+    await act(async () => { fireEvent(view.getByTestId('hashtag-feed-list'), 'onEndReached'); });
+    expect(view.queryByTestId('hashtag-feed-loading-more')).not.toBeNull();
+    await act(async () => { fireEvent.press(view.getByText('Places')); });
+    await waitFor(() => expect(view.queryByText('Caffè Greco')).not.toBeNull());
+    expect(view.queryByTestId('hashtag-feed-loading-more')).toBeNull();
   });
 });
