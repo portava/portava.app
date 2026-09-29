@@ -817,7 +817,7 @@ function settleSenseSignals(
 
 // ── Settings: an unread row is never "passive", and is never overwritten ─────
 //
-// census-compass §31 (DV-83). `getSenseSettings` answers the `passive` default
+// census-compass §32 (DV-83). `getSenseSettings` answers the `passive` default
 // over a row it could not read, which is the right SEND posture (nothing goes
 // out) but the wrong ANSWER to "what are my settings?", and the wrong base for
 // a write: `upsertSenseSettings` used to merge the patch into those defaults

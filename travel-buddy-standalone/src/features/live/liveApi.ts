@@ -44,7 +44,7 @@ export type LiveCall<T> =
   | { kind: 'ok'; status: number; body: T }
   | { kind: 'off'; reason: 'not_configured' | 'signed_out' | 'feature_disabled'; detail: string | null }
   | { kind: 'refused'; status: number; error: string; reason: string | null; detail: string | null; body: any }
-  | { kind: 'unavailable'; status: number | null; detail: string };
+  | { kind: 'unavailable'; status: number | null; detail: string; body?: any };
 
 export async function liveRequest<T = any>(
   method: 'GET' | 'POST' | 'PUT',
@@ -76,7 +76,7 @@ export async function liveRequest<T = any>(
   if (error === 'feature_disabled' || parsed?.reason === 'FEATURE_DISABLED') return { kind: 'off', reason: 'feature_disabled', detail };
   if (res.status >= 500 || res.status === 0) {
     const why = typeof parsed?.reason === 'string' ? parsed.reason : null;
-    return { kind: 'unavailable', status: res.status, detail: why ? `${why}${detail ? ` — ${detail}` : ''}` : detail ?? error };
+    return { kind: 'unavailable', status: res.status, detail: why ? `${why}${detail ? ` — ${detail}` : ''}` : detail ?? error, body: parsed ?? null };
   }
   return { kind: 'refused', status: res.status, error, reason: typeof parsed?.reason === 'string' ? parsed.reason : null, detail, body: parsed ?? null };
 }

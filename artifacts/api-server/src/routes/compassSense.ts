@@ -182,7 +182,7 @@ function sendSenseUnavailable(res: Response, failedSources: readonly SenseSource
 // GET answers a retryable 503 over an unread row instead of the `passive`
 // default. PUT refuses (503, nothing written) when it needs the current row
 // and cannot read it, or when the database reports its write failed. Healthy
-// bodies are unchanged. census-compass §31.
+// bodies are unchanged. census-compass §32.
 const SENSE_SETTINGS_UNAVAILABLE = {
   get: "Your Compass Sense settings could not be read right now. Please try again shortly.",
   read: "Your Compass Sense settings could not be read, so nothing was changed. Please try again shortly.",
