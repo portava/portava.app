@@ -22,7 +22,7 @@ import { Router } from "express";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
-import { isCompassEnabled } from "../compass/flags.js";
+import { readCompassEnabled } from "../compass/flags.js"; import { discoveryRefusal } from "../lib/discoveryRefusal.js";  // census-discovery §105 (D-W11X2-65) — was: import of isCompassEnabled (the fail-safe map)
 import { getCompassProfile } from "../compass/CompassProfileService.js";
 import { buildCompassContext, defaultSignals } from "../compass/CompassContextEngine.js";
 import { hydrateCompassItems, compassHydrationFailedSources } from "../compass/CompassItemHydrator.js";
@@ -339,8 +339,8 @@ router.get("/compass/home", asyncHandler(async (req, res) => {
     return;
   }
 
-  const enabled = await isCompassEnabled(sc).catch(() => false);
-  if (!enabled) {
+  const enabledRead = await readCompassEnabled(sc).catch(() => null); const enabled = enabledRead === true;  // census-discovery §105 (DV-83, D-W11X2-65): null = the flag table could not be read, never "off"
+  if (!enabled) { if (enabledRead === null) { res.json(compassHomeFailure(false, "compass_flags_unreadable", "feature_flags")); return; }  // §105: only a flag that was READ and is off answers the off body below
     res.json({ compassEnabled: false, fallback: true });
     return;
   }
@@ -376,7 +376,7 @@ router.get("/compass/home", asyncHandler(async (req, res) => {
     res.json(payload);
   } catch (err) {
     req.log.error({ err }, "compass/home: build failed, returning fallback");
-    res.json({ compassEnabled: true, fallback: true });
+    res.json(compassHomeFailure(true, "home_build_failed", "compass_home"));  // census-discovery §105 (D-W11X2-65) — was: { compassEnabled: true, fallback: true }, naming nothing
   }
 }));
 
@@ -530,3 +530,16 @@ export async function buildCompassHomeProjection(
 }
 
 export default router;
+
+// ── census-discovery §105 (DV-83 round 9 sweep, lane W11-X2, D-W11X2-65): GET /compass/home's failures ──
+// An unread COMPASS_% table answered the Compass-off bytes (`isCompassEnabled` answers the
+// fail-safe map, where unread is "off"), and a failed build answered a bare fallback. Both
+// now carry `fallbackReason` and the Discovery refusal envelope, as the section, feed and
+// recommendations routes do; CompassHome says them. A flag that was READ and is off keeps
+// `{ compassEnabled: false, fallback: true }` byte for byte.
+function compassHomeFailure(compassEnabled: boolean, reason: "compass_flags_unreadable" | "home_build_failed", source: string) {
+  return {
+    compassEnabled, fallback: true, fallbackReason: reason,
+    refusal: discoveryRefusal("transient_db", reason, "GET /compass/home", "nothing", [source]),
+  };
+}

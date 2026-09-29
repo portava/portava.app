@@ -26,6 +26,17 @@ import {
   type CompassHomeEvent,
 } from '../../services/compass.ts';
 import { CompassRediscover } from './CompassRediscover.tsx';
+import { listPartialEmptyTitle, listPartialNotice, LIST_PARTIAL_EMPTY_BODY } from '../../services/discoveryCoverageNotice.ts';
+
+/**
+ * census-discovery §105 (DV-83 round 9 sweep, D-W11X2-65): a fallback that is a FAILURE — the
+ * build failed (Compass on, fallback) or the flag table could not be read. Compass READ and off
+ * (`compassEnabled: false` with no reason) is not one, and stays silent as before.
+ */
+export function isCompassHomeFailure(d: Pick<CompassHomeResponse, 'compassEnabled' | 'fallback' | 'fallbackReason'>): boolean {
+  return d.fallback === true && (d.compassEnabled === true || d.fallbackReason === 'compass_flags_unreadable');
+}
+const HOME_NOUN = 'Compass suggestions';
 
 // ── Six core actions — each prefills a grounded intent into the chat flow ─────
 
@@ -112,6 +123,7 @@ export function CompassHome({
 }) {
   const [home, setHome] = useState<CompassHomeResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);  // §105: a failed read is said, never silence
   const loadedAt = useRef(0);
   const inFlight = useRef(false);
   const onRefreshedRef = useRef(onRefreshed);
@@ -123,12 +135,15 @@ export function CompassHome({
     inFlight.current = true;
     fetchCompassHome()
       .then((r) => {
-        if (r.ok && r.data) {
+        if (r.ok && r.data && !isCompassHomeFailure(r.data)) {
           setHome(r.data);
+          setFailed(false);
           loadedAt.current = Date.now();
+        } else {
+          setFailed(true);  // §105: kept cards (if any) stay, and the failure is said beside them
         }
       })
-      .catch(() => {})
+      .catch(() => { setFailed(true); })
       .finally(() => {
         inFlight.current = false;
         setLoading(false);
@@ -194,6 +209,17 @@ export function CompassHome({
 
       {loading ? (
         <ActivityIndicator size="small" color={color.signal} style={{ marginVertical: space.lg }} />
+      ) : null}
+
+      {failed ? (
+        <View style={s.notice} testID="compass-home-failed">
+          <Text style={s.noticeText}>{listPartialEmptyTitle(HOME_NOUN)}</Text>
+          <Text style={s.noticeText}>{LIST_PARTIAL_EMPTY_BODY}</Text>
+        </View>
+      ) : showData && home?.degraded ? (
+        <View style={s.notice} testID="compass-home-partial">
+          <Text style={s.noticeText}>{listPartialNotice(HOME_NOUN)}</Text>
+        </View>
       ) : null}
 
       {/* Best next move */}
@@ -280,6 +306,8 @@ export function CompassHome({
 // ── Styles ────────────────────────────────────────────────────────────────────
 
 const s = StyleSheet.create({
+  notice:          { marginTop: space.md, gap: space.xs },
+  noticeText:      { ...t.small, color: color.mute, textAlign: 'center' },
   wrap:            { gap: space.md },
   hero:            { alignItems: 'center', gap: 4, paddingTop: space.lg, paddingBottom: space.sm },
   heroTitle:       { ...t.heading, color: color.ink, textAlign: 'center' },

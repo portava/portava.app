@@ -1822,7 +1822,7 @@ export interface CompassHomePerson {
 
 export interface CompassHomeResponse {
   compassEnabled: boolean;
-  fallback:       boolean;
+  fallback:       boolean; /** census-discovery §105 (D-W11X2-65): why a fallback is a FAILURE (`compass_flags_unreadable`, `home_build_failed`); absent when Compass was read and is off. */ fallbackReason?: string; /** §105: true when a section's source could not be read (`sources[k] === 'unavailable'`). */ degraded?: boolean;
   timeOfDay?:     'morning' | 'afternoon' | 'evening' | 'night';
   contextState?:  string;
   city?:          string | null;
