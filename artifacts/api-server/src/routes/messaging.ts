@@ -3639,7 +3639,7 @@ router.patch('/threads/:threadId/messages/:messageId', async (req, res) => {
   if (!msgRow) { sendError(res, 'not_found', 'Message not found'); return; }
   const m = msgRow as any;
   if (m.deleted_at) { sendError(res, 'invalid_payload', 'Cannot edit a deleted message'); return; }
-  if (m.sender_id !== user.id) { sendError(res, 'forbidden', 'Only the sender can edit this message'); return; }
+  if (m.sender_id !== user.id) { sendError(res, 'forbidden', 'Only the sender can edit this message'); return; } if (await refuseEditOnEncryptedThread(sc, req, res, threadId, messageId)) return; // WP-08: never write an edit in the clear on an E2EE thread
 
   const now = new Date().toISOString();
 
@@ -4433,3 +4433,47 @@ router.post('/messages/:messageId/report', async (req, res) => {
 });
 
 export default router;
+
+/* ---------------------------------------------------------------------------
+ * WP-08 (lane tm-telegraph) — the E2EE gate on the canonical edit route.
+ * ---------------------------------------------------------------------------
+ * PATCH /threads/:threadId/messages/:messageId is the one edit route the client
+ * calls, and it was the only write in this file that could put text on the
+ * server without first reading `message_threads.is_e2ee`: the send, the media
+ * send and the translate retry all refuse. An edit on an encrypted thread would
+ * have overwritten `messages.body` in the clear AND copied the previous body
+ * into `message_edits`.
+ *
+ * Same posture as the send path (`thread E2EE flag read failed — refusing
+ * rather than risking plaintext storage`): an unreadable flag is NOT a false
+ * one, so it refuses with the retryable `degraded_unavailable`. It runs AFTER
+ * the membership and sender checks, so an outsider still learns nothing about
+ * the thread from it. Kept at the file foot so the route above stays
+ * line-neutral for the census citations into it.
+ *
+ * Returns true when it has already answered the request.
+ */
+async function refuseEditOnEncryptedThread(
+  sc: NonNullable<ReturnType<typeof getServiceClient>>,
+  req: any,
+  res: any,
+  threadId: string,
+  messageId: string,
+): Promise<boolean> {
+  const { data: threadMeta, error: threadMetaErr } = await sc
+    .from('message_threads')
+    .select('is_e2ee')
+    .eq('id', threadId)
+    .maybeSingle();
+  if (threadMetaErr) {
+    req.log.error({ err: threadMetaErr, threadId, messageId },
+      'thread E2EE flag read failed on edit — refusing rather than risking a plaintext edit in an E2EE thread');
+    sendError(res, 'degraded_unavailable', 'We could not verify this conversation right now. Please try again shortly.');
+    return true;
+  }
+  if ((threadMeta as any)?.is_e2ee === true) {
+    sendError(res, 'e2ee_thread', 'Editing is unavailable for end-to-end encrypted messages');
+    return true;
+  }
+  return false;
+}

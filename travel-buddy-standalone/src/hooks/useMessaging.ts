@@ -95,14 +95,14 @@ export function useMessagePermission(userId: string | null | undefined) {
 // ── Outgoing request status (for sender-side "Waiting for reply" state) ───────
 
 export function useOutgoingRequestStatus(otherUserId: string | null | undefined) {
-  const [pending, setPending] = useState<boolean | null>(null);
+  const [pending, setPending] = useState<boolean | null>(null); const [requestId, setRequestId] = useState<string | null>(null); // WP-08 TEL-F03: the id a Cancel needs
   const [loading, setLoading] = useState(false);
 
   const reload = useCallback(async () => {
     if (!otherUserId) return;
     setLoading(true);
     const res = await getOutgoingRequestStatus(otherUserId);
-    if (res.ok && res.data) setPending(res.data.pending);
+    if (res.ok && res.data) { setPending(res.data.pending); setRequestId(res.data.pending ? res.data.requestId ?? null : null); }
     setLoading(false);
   }, [otherUserId]);
 
@@ -110,7 +110,7 @@ export function useOutgoingRequestStatus(otherUserId: string | null | undefined)
     reload();
   }, [reload]);
 
-  return { pending, loading, reload };
+  return { pending, requestId, loading, reload };
 }
 
 // ── Incoming message requests (for Request Inbox) ─────────────────────────────
@@ -348,8 +348,8 @@ export function useThreadMessages(threadId: string | null) {
       // Only replace the entry when status actually changes to avoid flicker.
       let hasTranslationUpdate = false;
       const updated = prev.map((m) => {
-        if (m.translationStatus === 'pending') {
-          const refreshed = incomingById.get(m.id);
+        const edited = incomingById.get(m.id); if (edited && (edited.editedAt !== m.editedAt || edited.deleted !== m.deleted)) { hasTranslationUpdate = true; return edited; } // WP-08 TEL-F07: an edit or delete replaces the stale copy
+        if (m.translationStatus === 'pending') { const refreshed = incomingById.get(m.id);
           if (refreshed && refreshed.translationStatus !== 'pending') {
             hasTranslationUpdate = true;
             return refreshed;
@@ -370,7 +370,7 @@ export function useThreadMessages(threadId: string | null) {
 
   useEffect(() => {
     const sub = AppState.addEventListener('change', (next: AppStateStatus) => {
-      appStateRef.current = next;
+      const was = appStateRef.current; appStateRef.current = next; if (was !== 'active' && next === 'active') void silentPoll(); // WP-08 TEL-F10: catch up on return, not on the next tick
     });
     const timer = setInterval(silentPoll, THREAD_POLL_MS);
     return () => {
