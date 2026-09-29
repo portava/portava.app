@@ -16,7 +16,7 @@
 
 import { Router } from 'express';
 import { requireUser, sendError, isAcceptedTripMember } from '../lib/http';
-import { isUuid } from '../lib/followDecisions';
+import { isUuid } from '../lib/followDecisions'; import { refuseEditOnEncryptedThread } from '../services/telegraph/editE2eeGate';
 import { syncTripChatMembers, syncCircleChatMembers } from '../lib/chatSync';
 import {
   translateMessageForThread,
@@ -516,7 +516,7 @@ router.patch('/messages/:messageId', asyncHandler(async (req, res) => {
     refuseUnreadable(req, res, 'message_thread_members', { threadId: m.thread_id, userId: user.id });
     return;
   }
-  if (!active) { sendError(res, 'forbidden', 'You no longer have access to this thread'); return; }
+  if (!active) { sendError(res, 'forbidden', 'You no longer have access to this thread'); return; } if (await refuseEditOnEncryptedThread(sc, req, res, m.thread_id, messageId)) return; // WP-08: no plaintext edit on an E2EE thread, on this route either
 
   const now = new Date().toISOString();
   const { error: updateErr } = await sc

@@ -2410,6 +2410,16 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "app/messages/[id].tsx",
     // WIDENED 2026-09-27 at the merge of main (#529) into the Discovery integration branch: §31.5 cites the executed unsend probe as the evidence that the receipt lock is observed; on main this census's floor predates 1.0.
     "artifacts/api-server/src/test/db/telegraphUnsend.db.test.ts",
+    // WIDENED 2026-09-29 by lane tm-telegraph (census-telegraph §38, WP-08): T53's W row cites the voice
+    // end-to-end suite as its controlled evidence; §38.1 grades the saved-messages DELETE route, the
+    // report-reason vocabulary the message-report route now computes severity from, the trip/circle chat
+    // hook that now catches up on reconnect and edits through the canonical route, and the two new suites.
+    "artifacts/api-server/src/test/verifyFlowVoiceEndToEnd.test.ts",
+    "artifacts/api-server/src/routes/savedMessages.ts",
+    "artifacts/api-server/src/lib/reportReasons.ts",
+    "travel-buddy-standalone/src/hooks/useGroupChat.ts",
+    "artifacts/api-server/src/test/telegraphEditE2eeRefusal.test.ts",
+    "artifacts/api-server/src/test/telegraphMessageReportReason.test.ts",
   ],
   // census-map.md, census-sensing.md, census-compass.md and
   // census-input-intelligence.md — declared 2026-09-11 on the same basis as
