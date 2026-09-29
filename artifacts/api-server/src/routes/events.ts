@@ -5609,8 +5609,8 @@ router.delete("/events/:id/cohosts/:userId", async (req, res) => {
   const role = await getEventRole(sc, id, user.id);
   if (role !== "host") { sendError(res, "forbidden", "Only the host can remove co-hosts"); return; }
 
-  await sc.from("event_cohosts").delete().eq("event_id", id).eq("user_id", userId);
-  await sc.from("event_roles").delete().eq("event_id", id).eq("user_id", userId);
+  const { error: rmCohostErr } = await sc.from("event_cohosts").delete().eq("event_id", id).eq("user_id", userId); if (rmCohostErr) { req.log?.error({ err: rmCohostErr, eventId: id }, "remove cohost write failed"); sendError(res, "db_error", rmCohostErr.message); return; } // supabase-js resolves on a DB error: unchecked, a failed removal answered {ok:true}
+  const { error: rmRoleErr } = await sc.from("event_roles").delete().eq("event_id", id).eq("user_id", userId); if (rmRoleErr) { req.log?.error({ err: rmRoleErr, eventId: id }, "remove cohost role write failed"); sendError(res, "db_error", rmRoleErr.message); return; }
 
   await logEventActivity(sc, id, user.id, "cohost_removed", { targetUserId: userId });
 
@@ -5933,7 +5933,7 @@ router.post("/events/:id/media", async (req, res) => {
   }
 
   const parsed = z.object({
-    mediaUrl:  z.string().url(),
+    mediaUrl:  z.string().min(1).max(2048), // the ref POST /api/media/upload returns (post-media/<path>) or our own public URL — z.url() refused the former, so no upload could ever land; appStorageUrlInfo below is the gate
     mediaType: z.enum(["image","video"]).default("image"),
     caption:   z.string().max(500).optional(),
   }).safeParse(req.body);

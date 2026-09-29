@@ -20,6 +20,10 @@
  *   - GET  /events/:id/comments     rows carry the author's public identity.
  *   - GET  /me/meetup-invites       an unreadable invites table is an error,
  *                                   never an empty inbox.
+ *   - DELETE /events/:id/cohosts/:u a failed removal is a 500, not {ok:true}.
+ *   - POST /events/:id/media        accepts the storage ref /api/media/upload
+ *                                   returns; z.url() refused it, so no event
+ *                                   photo could ever be added.
  *
  * Run: node --import tsx/esm --test src/test/eventsTestingModeWiring.test.ts
  */
@@ -433,5 +437,75 @@ describe("GET /api/me/meetup-invites", () => {
     assert.equal(r.status, 200);
     assert.equal(r.body.invites.length, 1);
     assert.equal(r.body.invites[0].meetup.title, "Tapas");
+  });
+});
+
+// ── Co-host removal (PLAT-F28) ────────────────────────────────────────────────
+
+describe("DELETE /api/events/:id/cohosts/:userId", () => {
+  it("removes the co-host's row and role", async () => {
+    const client = makeFakeClient({
+      events: { rows: [makeEvent()] },
+      event_cohosts: { rows: [{ event_id: ID.ev1, user_id: ID.going }] },
+      event_roles: { rows: [{ event_id: ID.ev1, user_id: ID.going, role: "co_host" }] },
+    });
+    _setTestClient(client, true);
+    const r = await req(port, "DELETE", `/api/events/${ID.ev1}/cohosts/${ID.going}`, null, ID.host);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(client._db.event_cohosts.rows.length, 0);
+    assert.equal(client._db.event_roles.rows.length, 0);
+  });
+
+  it("a failed removal is a 500, never {ok:true}, and the role is kept", async () => {
+    const client = makeFakeClient({
+      events: { rows: [makeEvent()] },
+      event_cohosts: { rows: [{ event_id: ID.ev1, user_id: ID.going }], readError: "permission denied" },
+      event_roles: { rows: [{ event_id: ID.ev1, user_id: ID.going, role: "co_host" }] },
+    });
+    _setTestClient(client, true);
+    const r = await req(port, "DELETE", `/api/events/${ID.ev1}/cohosts/${ID.going}`, null, ID.host);
+    assert.equal(r.status, 500, JSON.stringify(r.body));
+    assert.equal(client._db.event_roles.rows.length, 1);
+  });
+
+  it("only the host may remove a co-host", async () => {
+    _setTestClient(makeFakeClient({ events: { rows: [makeEvent()] } }), true);
+    const r = await req(port, "DELETE", `/api/events/${ID.ev1}/cohosts/${ID.going}`, null, ID.other);
+    assert.equal(r.status, 403);
+  });
+});
+
+// ── Event photos (PLAT-F30) ───────────────────────────────────────────────────
+
+describe("POST /api/events/:id/media", () => {
+  const tables = () => ({
+    events: { rows: [makeEvent({ state: "started" })] },
+    event_rsvps: { rows: [{ event_id: ID.ev1, user_id: ID.going, status: "going" }] },
+    event_media: { rows: [] as Row[] },
+  });
+
+  it("accepts the storage ref that POST /api/media/upload returns (post-media/<path>)", async () => {
+    const client = makeFakeClient(tables());
+    _setTestClient(client, true);
+    const r = await req(port, "POST", `/api/events/${ID.ev1}/media`, { mediaUrl: `post-media/${ID.going}/photo.jpg`, mediaType: "image" }, ID.going);
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.equal(client._db.event_media.rows.length, 1);
+    assert.equal(client._db.event_media.rows[0].media_url, `post-media/${ID.going}/photo.jpg`);
+  });
+
+  it("still refuses a foreign URL and a non-storage string", async () => {
+    for (const mediaUrl of ["https://tracker.example/pixel.jpg", "not a ref", "private-bucket/x.jpg"]) {
+      const client = makeFakeClient(tables());
+      _setTestClient(client, true);
+      const r = await req(port, "POST", `/api/events/${ID.ev1}/media`, { mediaUrl }, ID.going);
+      assert.equal(r.status, 400, mediaUrl);
+      assert.equal(client._db.event_media.rows.length, 0, mediaUrl);
+    }
+  });
+
+  it("a non-attendee cannot add photos", async () => {
+    _setTestClient(makeFakeClient(tables()), true);
+    const r = await req(port, "POST", `/api/events/${ID.ev1}/media`, { mediaUrl: `post-media/${ID.other}/p.jpg` }, ID.other);
+    assert.equal(r.status, 403);
   });
 });
