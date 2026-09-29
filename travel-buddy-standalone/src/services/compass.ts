@@ -1228,7 +1228,7 @@ export interface CompassLiveResult {
   session?: CompassLiveSession | null;
   delivered?: CompassLiveNudge[];
   summary?: CompassLiveSummary | null;
-  error?: string;
+  error?: string; partial?: boolean; failedSources?: string[]; // census-compass §32: a live check names the Sense sources it could not read
 }
 
 async function liveCall(path: string, method: 'GET' | 'POST'): Promise<CompassLiveResult> {
@@ -1244,7 +1244,7 @@ async function liveCall(path: string, method: 'GET' | 'POST'): Promise<CompassLi
       active: Boolean(body.active),
       session: body.session ?? null,
       delivered: body.delivered ?? [],
-      summary: body.summary ?? null,
+      summary: body.summary ?? null, ...(body.partial === true || Array.isArray(body.failedSources) ? { partial: true, failedSources: Array.isArray(body.failedSources) ? body.failedSources.map(String) : ['unknown'] } : {}),
     };
   } catch {
     return { ok: false, error: 'network_error' };

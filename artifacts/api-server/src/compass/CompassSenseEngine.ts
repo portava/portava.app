@@ -124,7 +124,7 @@ export interface SuppressedNudge {
     | "category_disabled"
     | "quiet_hours"
     | "duplicate"
-    | "daily_cap"
+    | "daily_cap" | "daily_cap_unread" | "permission_unread" // DV-83: the day's count / the permission could not be read, so nothing is sent
     /**
      * The traveller's permission changed BETWEEN the snapshot this run started
      * from and this candidate's delivery. `runSense` reads settings once and
@@ -199,7 +199,7 @@ export async function upsertSenseSettings(
   userId: string,
   patch: { presenceLevel?: PresenceLevel; categories?: Partial<Record<SenseCategory, boolean>> },
 ): Promise<SenseSettings> {
-  const current = await getSenseSettings(sc, userId);
+  const read = { settings: false }; const current = await getSenseSettings(sc, userId, read); if (read.settings && !senseSettingsPatchComplete(patch)) throw new SenseSettingsUnavailable("read"); // DV-83: never merge a patch into defaults over an unread row
   const next: SenseSettings = {
     presenceLevel: patch.presenceLevel ?? current.presenceLevel,
     categories: { ...current.categories },
@@ -208,7 +208,7 @@ export async function upsertSenseSettings(
     const v = patch.categories?.[c];
     if (typeof v === "boolean") next.categories[c] = v;
   }
-  await sc.from("compass_sense_settings").upsert(
+  const written = await sc.from("compass_sense_settings").upsert(
     {
       user_id: userId,
       presence_level: next.presenceLevel,
@@ -216,7 +216,7 @@ export async function upsertSenseSettings(
       updated_at: new Date().toISOString(),
     },
     { onConflict: "user_id" },
-  );
+  ); if (written.error) throw new SenseSettingsUnavailable("write", written.error); // a failed write is not a saved setting
   return next;
 }
 
@@ -576,17 +576,17 @@ async function countDeliveredToday(
   sc: SupabaseClient,
   userId: string,
   nowMs: number,
-): Promise<number> {
+): Promise<number | null> { // DV-83: null = the day's count could not be read; the cap then fails CLOSED
   try {
     const startOfDayIso = new Date(nowMs).toISOString().slice(0, 10) + "T00:00:00.000Z";
-    const { data } = await sc
+    const { data, error } = await sc
       .from("compass_sense_nudges")
       .select("id")
       .eq("user_id", userId)
       .gte("created_at", startOfDayIso);
-    return ((data ?? []) as any[]).length;
+    if (error) return null; return ((data ?? []) as any[]).length;
   } catch {
-    return 0;
+    return null;
   }
 }
 
@@ -624,7 +624,7 @@ export async function runSense(
 
   const quiet = await loadQuietWindow(sc, userId);
   const cap = senseDailyCap(settings.presenceLevel);
-  let deliveredToday = await countDeliveredToday(sc, userId, nowMs);
+  let deliveredToday = await countDeliveredToday(sc, userId, nowMs); const countUnread = deliveredToday === null; // DV-83: an unread count delivers nothing and is named
 
   const notifSvc = new NotificationService(sc);
   const notifRouter = new NotificationRouter(sc);
@@ -646,8 +646,8 @@ export async function runSense(
       suppressed.push({ dedupeKey: nudge.dedupeKey, type: nudge.type, reason: "duplicate" });
       continue;
     }
-    if (deliveredToday >= cap) {
-      suppressed.push({ dedupeKey: nudge.dedupeKey, type: nudge.type, reason: "daily_cap" });
+    if (deliveredToday === null || deliveredToday >= cap) {
+      suppressed.push({ dedupeKey: nudge.dedupeKey, type: nudge.type, reason: deliveredToday === null ? "daily_cap_unread" : "daily_cap" });
       continue;
     }
 
@@ -713,7 +713,7 @@ export async function runSense(
 
   return {
     presenceLevel: settings.presenceLevel,
-    evaluated: candidates.length, failedSources,
+    evaluated: candidates.length, failedSources: countUnread ? [...failedSources, "nudge_log"] : failedSources,
     delivered,
     suppressed,
   };
@@ -753,7 +753,7 @@ export const SENSE_SIGNALS: readonly SenseSignal[] = [
  * an unread row would say "Sense is off, nothing evaluated" when the truth is
  * "we could not read whether it is on", so the run names it.
  */
-export type SenseSource = SenseSignal | "settings";
+export type SenseSource = SenseSignal | "settings" | "nudge_log"; // nudge_log: the day's delivered count (the daily cap) could not be read
 
 export interface SenseEvaluation {
   candidates: CandidateNudge[];
@@ -771,7 +771,7 @@ export type SenseCoverage = "complete" | "partial" | "none";
 export function senseCoverage(failedSources: readonly SenseSource[]): SenseCoverage {
   if (failedSources.length === 0) return "complete";
   if (failedSources.includes("settings")) return "none";
-  return failedSources.length >= SENSE_SIGNALS.length ? "none" : "partial";
+  return failedSources.filter((s) => (SENSE_SIGNALS as readonly string[]).includes(s)).length >= SENSE_SIGNALS.length ? "none" : "partial";
 }
 
 /** A signal source could not be read. Carries the table for the log. */
@@ -813,4 +813,31 @@ function settleSenseSignals(
     );
   });
   return { candidates, failedSources };
+}
+
+// ── Settings: an unread row is never "passive", and is never overwritten ─────
+//
+// census-compass §32 (DV-83). `getSenseSettings` answers the `passive` default
+// over a row it could not read, which is the right SEND posture (nothing goes
+// out) but the wrong ANSWER to "what are my settings?", and the wrong base for
+// a write: `upsertSenseSettings` used to merge the patch into those defaults
+// and upsert the lot, turning every category the traveller had switched off
+// back on. Now a write that needs the current row refuses when it cannot read
+// it; a patch that names the level and every category needs nothing from the
+// row, so it is written exactly as sent. A write the database reports as failed
+// is refused too, instead of answering with settings that were never saved.
+
+/** The settings could not be read (so nothing was written) or could not be saved. */
+export class SenseSettingsUnavailable extends Error {
+  constructor(readonly phase: "read" | "write", readonly detail?: unknown) {
+    super(phase === "read" ? "Sense settings unread; nothing written" : "Sense settings write failed");
+    this.name = "SenseSettingsUnavailable";
+  }
+}
+
+/** True when the patch names the presence level and every category, so the stored row adds nothing. */
+export function senseSettingsPatchComplete(
+  patch: { presenceLevel?: PresenceLevel; categories?: Partial<Record<SenseCategory, boolean>> },
+): boolean {
+  return patch.presenceLevel !== undefined && SENSE_CATEGORIES.every((c) => typeof patch.categories?.[c] === "boolean");
 }

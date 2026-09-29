@@ -22,7 +22,7 @@ import { isCompassEnabled } from "../compass/flags.js";
 import {
   SENSE_CATEGORIES,
   getSenseSettings,
-  upsertSenseSettings,
+  upsertSenseSettings, SenseSettingsUnavailable,
   runSense, senseCoverage, type SenseSource,
   type SenseCategory,
 } from "../compass/CompassSenseEngine.js";
@@ -60,7 +60,7 @@ router.get("/compass/sense/settings", asyncHandler(async (req, res) => {
   const sc = await gate(res);
   if (!sc) return;
 
-  const settings = await getSenseSettings(sc, auth.user.id);
+  const read = { settings: false }; const settings = await getSenseSettings(sc, auth.user.id, read); if (read.settings) { sendSenseSettingsUnavailable(res, "get"); return; } // DV-83: an unread row is not "passive"
   res.json({ compassEnabled: true, settings });
 }));
 
@@ -92,8 +92,8 @@ router.put("/compass/sense/settings", asyncHandler(async (req, res) => {
   const settings = await upsertSenseSettings(sc, auth.user.id, {
     presenceLevel: parsed.data.presenceLevel,
     categories: parsed.data.categories as Partial<Record<SenseCategory, boolean>> | undefined,
-  });
-  res.json({ compassEnabled: true, settings });
+  }).catch((err: unknown) => senseSettingsRefused(res, err));
+  if (!settings) return; res.json({ compassEnabled: true, settings });
 }));
 
 // ── POST /compass/sense/check ─────────────────────────────────────────────────
@@ -175,4 +175,27 @@ function sendSenseUnavailable(res: Response, failedSources: readonly SenseSource
     retryable: true,
     failedSources,
   });
+}
+
+// ── DV-83: settings that could not be read are not "passive" ──────────────
+//
+// GET answers a retryable 503 over an unread row instead of the `passive`
+// default. PUT refuses (503, nothing written) when it needs the current row
+// and cannot read it, or when the database reports its write failed. Healthy
+// bodies are unchanged. census-compass §32.
+const SENSE_SETTINGS_UNAVAILABLE = {
+  get: "Your Compass Sense settings could not be read right now. Please try again shortly.",
+  read: "Your Compass Sense settings could not be read, so nothing was changed. Please try again shortly.",
+  write: "Your Compass Sense settings could not be saved. Please try again shortly.",
+} as const;
+
+function sendSenseSettingsUnavailable(res: Response, why: keyof typeof SENSE_SETTINGS_UNAVAILABLE): void {
+  sendError(res, "degraded_unavailable", SENSE_SETTINGS_UNAVAILABLE[why]);
+}
+
+/** Answers a SenseSettingsUnavailable as a 503 and yields null; anything else is rethrown. */
+function senseSettingsRefused(res: Response, err: unknown): null {
+  if (!(err instanceof SenseSettingsUnavailable)) throw err;
+  sendSenseSettingsUnavailable(res, err.phase);
+  return null;
 }

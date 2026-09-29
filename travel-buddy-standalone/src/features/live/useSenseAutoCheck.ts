@@ -15,13 +15,13 @@
  *     (at most every 2 minutes) — the "move to a place" step of the flow.
  *
  * A check with Sense on Passive evaluates and sends nothing (server rule), so
- * the default costs one small request. Failures are silent HERE on purpose:
- * this hook renders nothing and claims nothing; the Sense panel in Compass
- * preferences is where a check's result, or its failure, is shown.
+ * the default costs one small request. This hook renders nothing and claims
+ * nothing, but a failed or partial check is never recorded as a clean one: the
+ * wait after it is SENSE_RETRY_MIN_INTERVAL_MS, not the full throttle (§32).
  */
 import { useEffect, useRef } from 'react';
 import { AppState } from 'react-native';
-import { runSenseCheck } from './senseNudges.ts';
+import { runSenseCheck, senseCheckIsClean } from './senseNudges.ts';
 
 export const SENSE_FOREGROUND_MIN_INTERVAL_MS = 10 * 60_000;
 export const SENSE_MOVE_MIN_INTERVAL_MS = 2 * 60_000;
@@ -48,15 +48,22 @@ export function useSenseAutoCheck(opts: {
   const lastAt = useRef<number | null>(null);
   const inFlight = useRef(false);
   const lastKey = useRef<string | null>(null);
+  // Whether the LAST check read every source. The throttle below exists so a
+  // clean answer is not asked for again too soon; a partial or failed check is
+  // not that answer, so after one the next trigger may ask again within a minute.
+  const lastClean = useRef(true);
 
   const ask = useRef((minInterval: number) => {});
   ask.current = (minInterval: number) => {
     if (!enabled || inFlight.current) return;
     const t = now();
-    if (lastAt.current !== null && t - lastAt.current < minInterval) return;
+    const wait = lastClean.current ? minInterval : Math.min(minInterval, SENSE_RETRY_MIN_INTERVAL_MS);
+    if (lastAt.current !== null && t - lastAt.current < wait) return;
     lastAt.current = t;
     inFlight.current = true;
-    void run().catch(() => undefined).finally(() => { inFlight.current = false; });
+    void run()
+      .then((r) => { lastClean.current = senseCheckIsClean(r); }, () => { lastClean.current = false; })
+      .finally(() => { inFlight.current = false; });
   };
 
   // Mount / sign-in.
@@ -76,3 +83,6 @@ export function useSenseAutoCheck(opts: {
     return () => sub.remove();
   }, [enabled]);
 }
+
+/** After a failed or partial check, the next trigger may ask again this soon (not the full throttle). */
+export const SENSE_RETRY_MIN_INTERVAL_MS = 60_000;
