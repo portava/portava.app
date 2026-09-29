@@ -18572,6 +18572,29 @@ check:unissued-supabase-writes exit=0
 - **The verifiers' probes**, copied in unchanged and deleted after: server 37 of 37 (v11: V11-CA0..CA2, V11-TS0, V11-HTT0, V11-HTT1, V11-NV0, V11-NV1; v10: V10-HP0..3, V10-SM6, V10-WT1, V10-WT2, V10-TC0, V10-TC1, V10-SC0, V10-SC1, V10-HT0, V10-HT1, V10-CC0, V10-CC7; v9: V9-H0, HC1, HB1, HB2, HW1, TG0–TG2, CC1, MS0, MS1, KS0, KS1, SM28) and client 11 of 11 (V11-TB0..TB4, V10-CH0..2, V9-TT0..2).
 - **Regression: the round-11 verifier's 32 mutations** (V1–V32), re-run from a copy of its runner and pin list (the lane's `r12/v11muts/`): 25 killed, V3 among them; the seven survivors are exactly V4, V8, V9, V10, V21, V28 and V29, the set §109.7 records as equivalent or outside DV-83. The sha256 matched on all 12 mutated files.
 
+## §110 — DV-83 round 13 (lane W11-X2)
+
+### 110.1 Integrator: DV-83 held at W after independent re-verification at `202617ff7`
+
+*Integrator, 2026-09-29. §109 was merged with main (`d63780899`) at `202617ff7` (PR #530's head). An independent verifier then checked that tree: it re-ran every round-11, round-10, round-9, round-8 and round-7 probe unchanged, wrote new ones (`zz-v12-*`, and four guard-reach fixtures), and restored every mutated file byte-identical, checked by sha256. Its report is the round-12 verifier's `dv83-r12-verifier.md`.*
+
+- **Confirmed.** §109.1's two breaks, V3, and every earlier round's breaks are closed in behaviour: the v11, v10, v9, v8 and v7 probes re-run unchanged all pass (58 server, 20 client). 36 of 41 mutations are killed; S9 and H5 are argued equivalent.
+- **Found: four paths that break the criterion's wording, each shown by a probe that fails against this tree (9 red probes).**
+  1. **BK1. The Compass search tools state a failed COMPASS_% flag read as an empty catalog (clause a).** `rankToolCandidates` keeps `runPipeline`'s `results` and drops its `flagsUnreadable` marker, so `search_places`, `search_events` and `get_group_recommendation` answer "No matching …" when every candidate was withheld by the fail-safe flags (V12-SP1, V12-SE1 red; V12-SP0, V12-SE0 the controls) (`artifacts/api-server/src/compass/CompassTools.ts`).
+  2. **BK2. GET /map/search counts events it withheld unchecked as a complete source (clauses a, c).** Every event row read passes per-event gates that fail closed on a failed read — `checkEventEligibility`'s ban read and the friends-only `user_friendships` read — and the source is reported `{ refusal: null }` over them (V12-MS1, V12-MS2 red; V12-MS0 the control) (`artifacts/api-server/src/routes/mapSearch.ts`).
+  3. **BK3. The structured context's circle caps make a partial read a fact (clause a).** The membership read is an unordered `.limit(10)` over rows of any status, the `accepted` filter runs after the limit, and five circles are kept with no word that more exist, so `get_circle_activity` can say "The user is not in any circles." or serve five of six circles as the list (V12-CC1, V12-CC2 red; V12-CC0 the control) (`artifacts/api-server/src/compass/CompassStructuredContext.ts`).
+  4. **BK4. GET /circle/compass-suggestions states failed reads as facts (clause a).** Its per-context reads are `{ data }` alone: a failed presence read is "Enable location sharing" to a traveller who is sharing, and a failed meeting-point read is "No meeting point set yet" (V12-CS1, V12-CS2 red; V12-CS0 the control) (`artifacts/api-server/src/routes/circle.ts`).
+- **Rulings not honest.** D-W11X2-91's "by design" ruling on the structured context's caps (BK3), and §109.4 / §109.10's "the static guard derives and checks every Compass recommendations and trending consumer": a namespace import, a re-export, an awaited dynamic import and a second raw call site in a registered file each escape it (GH1–GH4).
+- **Surviving mutations.** H2, H3 and H4 (the `id` tie-break dropped from the trending fallback window, the post-usage read and the event-usage read) are non-equivalent and sit on DV-83 lines; the verifier's V12-HTT2–4 are green on this tree and red under them (`artifacts/api-server/src/routes/hashtags.ts`).
+- **Upheld.** surface=trip's `partial` over the static tips alone, and the D-W11X2-85 items the report lists.
+- **Next.** A round-13 lane closes the four paths with the verifier's probes as failing-first tests, pins H2–H4, closes GH1–GH4, corrects the rulings, and sweeps the Discovery and Compass read surfaces again. The row moves only after that.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | C | **W** | §109 closes §109.1's two paths, confirmed at `202617ff7` (§110.1). Four paths still present a failed or partial read as empty, complete or as a fact: the Compass search tools over an unread COMPASS_% flag read, GET /map/search's events source over unread per-event gates (`artifacts/api-server/src/routes/mapSearch.ts`), the structured context's capped, unordered circle read (`artifacts/api-server/src/compass/CompassStructuredContext.ts`), and GET /circle/compass-suggestions' unchecked reads. H2–H4 are unpinned (`artifacts/api-server/src/routes/hashtags.ts`). D-W11X2-91's cap ruling and §109's "every consumer" are not honest. |
+
+Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: travel-buddy-standalone/app/discover.tsx — §105.11 names it only as a path seen and not built, left for its owner, and §106 records Find Travelers' failed-search state and generation guard: it is the social people search over services/follows.ts, not a Discovery envelope, and no Discovery row or DV-83 verdict rests on it.

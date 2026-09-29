@@ -4574,6 +4574,8 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/components/__tests__/CompassTripBrief.failedRead.component.test.tsx",
     "artifacts/api-server/src/test/compassCircleActivityUnread.test.ts",
     "artifacts/api-server/src/test/compassToolsUnreadFacts.test.ts",
+    // census-discovery §110 (lane W11-X2, round 13): DV-83 re-graded on the Compass search tools, GET /map/search's events source, the structured context's circle caps and GET /circle/compass-suggestions.
+    "artifacts/api-server/src/routes/circle.ts",  // §110.1 BK4: GET /circle/compass-suggestions reads `{ data }` alone
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //
