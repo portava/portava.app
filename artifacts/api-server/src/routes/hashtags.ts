@@ -218,12 +218,12 @@ router.get('/hashtags/trending', async (req, res) => {
 
   // Fetch engagement for posts using these hashtags in the window
   const htIds = Object.keys(usageByHt);
-  const { data: postUsage } = await sc
+  const { data: postUsage, error: postUsageErr } = await sc
     .from('hashtag_usage')
     .select('hashtag_id, source_id')
     .eq('source_type', 'post')
     .in('hashtag_id', htIds)
-    .gte('created_at', since);
+    .gte('created_at', since); if (postUsageErr) { req.log.error({ err: postUsageErr }, 'hashtags/trending ranking read failed'); sendError(res, 'db_error', 'trending hashtags could not be ranked just now'); return; }  // census-discovery §105 (DV-83, D-W11X2-61): a failed ranking read is not a ranking
 
   const postsByHt: Record<string, string[]> = {};
   for (const row of (postUsage ?? []) as any[]) {
@@ -235,10 +235,10 @@ router.get('/hashtags/trending', async (req, res) => {
   let engagementMap: Record<string, number> = {};
 
   if (allPostIds.length > 0) {
-    const { data: postsData } = await sc
+    const { data: postsData, error: postsDataErr } = await sc
       .from('posts')
       .select('id, like_count, comment_count')
-      .in('id', allPostIds);
+      .in('id', allPostIds); if (postsDataErr) { req.log.error({ err: postsDataErr }, 'hashtags/trending ranking read failed'); sendError(res, 'db_error', 'trending hashtags could not be ranked just now'); return; }  // §105
 
     const postEngMap: Record<string, number> = {};
     for (const p of (postsData ?? []) as any[]) {
@@ -253,16 +253,16 @@ router.get('/hashtags/trending', async (req, res) => {
   // Compute event activity (hashtag_usage rows where source_type='event' in window)
   const eventActMap: Record<string, number> = {};
   try {
-    const { data: evtUsage } = await sc
+    const { data: evtUsage, error: evtUsageErr } = await sc
       .from('hashtag_usage')
       .select('hashtag_id')
       .eq('source_type', 'event')
       .in('hashtag_id', htIds)
-      .gte('created_at', since);
+      .gte('created_at', since); if (evtUsageErr) throw evtUsageErr;  // §105: answered below
     for (const row of (evtUsage ?? []) as any[]) {
       eventActMap[row.hashtag_id] = (eventActMap[row.hashtag_id] ?? 0) + 1;
     }
-  } catch { /* events table may not exist on all deployments */ }
+  } catch (err) { req.log.error({ err: err }, 'hashtags/trending ranking read failed'); sendError(res, 'db_error', 'trending hashtags could not be ranked just now'); return; }  // census-discovery §105 (D-W11X2-61): this reads hashtag_usage, which the route read above — a failure is not "no event activity" (was: an empty catch, 'events table may not exist')
 
   // Compute weighted scores
   const scored = htIds.map((htId) => {

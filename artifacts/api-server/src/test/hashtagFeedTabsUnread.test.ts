@@ -134,3 +134,70 @@ describe("census-discovery §105 (DV-83, D-W11X2-61): GET /hashtags/:slug/feed w
     assert.equal(status, 404); assert.equal(body.error, "not_found");
   });
 });
+
+// ── §105 sweep (D-W11X2-61): GET /hashtags/trending's ranking reads ──
+// The Discover chips are this route's top N. The post-engagement reads and the event-activity
+// read ignored their errors (the round-8 verifier noted it, uncounted), so a failed read
+// silently changed WHICH hashtags were served as "trending", presented as complete.
+const HT = ["h1", "h2", "h3"];
+function trendingClient(failing: string[], throwing: string[] = []) {
+  function builder(table: string) {
+    const eqs: Record<string, unknown> = {};
+    const key = () => (table === "hashtag_usage" && eqs.source_type ? `hashtag_usage:${String(eqs.source_type)}` : table);
+    const answer = (single: boolean) => {
+      if (throwing.includes(key())) throw new Error("socket hang up");
+      if (failing.includes(key())) return { data: null, error: DB_ERR };
+      if (table === "profiles") return { data: single ? { id: VIEWER, account_status: "active" } : [], error: null };
+      if (table === "hashtag_usage" && eqs.source_type === "post") return { data: [{ hashtag_id: "h1", source_id: "p1" }], error: null };
+      if (table === "hashtag_usage" && eqs.source_type === "event") return { data: [{ hashtag_id: "h2" }], error: null };
+      if (table === "hashtag_usage") return { data: HT.flatMap((h) => [1, 2, 3].map((a) => ({ hashtag_id: h, author_id: `a${a}`, city: null }))), error: null };
+      if (table === "posts") return { data: [{ id: "p1", like_count: 50, comment_count: 5 }], error: null };
+      if (table === "hashtags") return { data: HT.map((id) => ({ id, slug: id, name: id, usage_count: 3 })), error: null };
+      return { data: single ? null : [], error: null };
+    };
+    const b: any = new Proxy({}, {
+      get(_t, prop: string) {
+        if (prop === "then") return (f: any, r: any) => { try { return Promise.resolve(answer(false)).then(f, r); } catch (e) { return Promise.reject(e).then(f, r); } };
+        if (prop === "maybeSingle" || prop === "single") return () => { try { return Promise.resolve(answer(true)); } catch (e) { return Promise.reject(e); } };
+        if (prop === "eq") return (c: string, v: unknown) => { eqs[c] = v; return b; };
+        return () => b;
+      },
+    });
+    return b;
+  }
+  return {
+    auth: { getUser: async (t: string) => (t === TOKEN ? { data: { user: { id: VIEWER } }, error: null } : { data: { user: null }, error: { message: "bad token" } }) },
+    from: (t: string) => builder(t),
+    rpc: () => Promise.resolve({ data: null, error: null }),
+  };
+}
+async function trending() {
+  const r = await fetch(`${base}/hashtags/trending?scope=global`, { headers: { Authorization: `Bearer ${TOKEN}` } });
+  return { status: r.status, body: (await r.json()) as any };
+}
+
+describe("census-discovery §105 sweep (DV-83, D-W11X2-61): GET /hashtags/trending's ranking reads", () => {
+  it("HT0 CONTROL: every read healthy → the ranked chips", async () => {
+    _setTestClient(trendingClient([]) as any, true);
+    const { status, body } = await trending();
+    assert.equal(status, 200);
+    assert.equal(body.trending.length, 3);
+    assert.equal(body.trending[0].slug, "h1", "engagement ranks h1 first");
+  });
+
+  for (const read of ["hashtag_usage:post", "posts", "hashtag_usage:event"]) {
+    it(`HT1 the ${read} ranking read fails → a failed read, never a re-ranked list served as the trending chips`, async () => {
+      _setTestClient(trendingClient([read]) as any, true);
+      const { status, body } = await trending();
+      assert.equal(status, 500, JSON.stringify(body));
+      assert.equal(body.error, "db_error");
+    });
+  }
+
+  it("HT2 the event-activity read THROWS → a failed read, never silently unranked", async () => {
+    _setTestClient(trendingClient([], ["hashtag_usage:event"]) as any, true);
+    const { status, body } = await trending();
+    assert.equal(status, 500);
+    assert.equal(body.error, "db_error");
+  });
+});
