@@ -28,7 +28,7 @@ import { initCityTimezonePersistence } from "./compass/CompassGraphEngine.js";
 import { assertRequiredEnv } from "./lib/envValidation";
 import { startWorkerLoop, queryStampWorkerHealth, startHealthMonitorLoop } from "./lib/stamps/generationWorker";
 import { startVisualGenerationWorker } from "./lib/visuals/generationWorker";
-import { startFxRefreshLoop } from "./lib/fxRefreshScheduler";
+import { startFxRefreshLoop } from "./lib/fxRefreshScheduler"; import "./lib/paymentsStartupLog.js"; // payments/identity provider mode: one startup line, booleans only (lib/paymentsMode.ts)
 import { startXXCatalogSweeper } from "./lib/stamps/xxCatalogRepair";
 import { startCorrectionSweep } from "./lib/stamps/countryGeocoder";
 import { runSchemaDriftCheck } from "./lib/schemaDriftCheck";

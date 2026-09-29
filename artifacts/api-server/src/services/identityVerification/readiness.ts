@@ -70,14 +70,14 @@ export interface IdentityProviderStatus {
 /**
  * Probe the configured identity provider. Never throws.
  *
- * The mock provider counts as operational OUTSIDE production only — it is what
+ * The mock provider counts as operational in a LOCAL run only (mockIdentityPermitted) — it is what
  * the test suite and local development run against.
  */
-export function identityProviderStatus(
+function identityProviderStatusBeforeKeyMode(
   env: NodeJS.ProcessEnv = process.env,
 ): IdentityProviderStatus {
   const provider = (env["IDENTITY_PROVIDER"] ?? "mock").toLowerCase();
-  const isProduction = env["NODE_ENV"] === "production";
+  const isProduction = !mockIdentityPermitted(env); // production, a Replit deployment, or no local-run signal
 
   if (!IMPLEMENTED_PROVIDERS.has(provider)) {
     const known = provider === "stripe" || provider === "persona";
@@ -99,7 +99,7 @@ export function identityProviderStatus(
           operational: false,
           provider,
           reason:
-            "IDENTITY_PROVIDER=mock is refused in production by getIdentityProvider(); no real verification can complete.",
+            "IDENTITY_PROVIDER=mock is refused in production and hosted deployments by getIdentityProvider(); no real verification can complete.",
         }
       : { operational: true, provider, reason: "mock provider (non-production)" };
   }
@@ -114,4 +114,48 @@ export function identityProviderStatus(
   }
 
   return { operational: true, provider, reason: `${provider} adapter configured` };
+}
+
+// ── Sandbox-only key guard (appended at the foot so every cited line keeps its number) ──
+//
+// The key-MODE check runs before the certification check above, so an
+// operator whose key is refused is told that first: a live or unrecognised
+// key is a configuration fault that stops every provider call (lib/paymentsMode.ts),
+// whatever IMPLEMENTED_PROVIDERS says. The reason names the refusal and never
+// the key. POST /api/verification/session and the status refresh consult the
+// same `identityKeyRefusal`, so readiness and the routes cannot disagree.
+import {
+  describeRefusal,
+  identityKeyDecision,
+  mockIdentityPermitted,
+  type ProviderKeyDecision,
+} from "../../lib/paymentsMode.js";
+
+/** The configured provider's key decision when it is REFUSED (live/unknown), else null. */
+export function identityKeyRefusal(env: NodeJS.ProcessEnv = process.env): ProviderKeyDecision | null {
+  const d = identityKeyDecision(env);
+  if (!d || d.allowed || d.refusal === "key_absent") return null;
+  return d;
+}
+
+/**
+ * Probe the configured identity provider. Never throws.
+ *
+ * A refused key reports `not operational: live key not allowed` (or
+ * `unrecognised key`) before anything else; otherwise the certification probe
+ * above decides.
+ */
+export function identityProviderStatus(
+  env: NodeJS.ProcessEnv = process.env,
+): IdentityProviderStatus {
+  const refused = identityKeyRefusal(env);
+  if (refused) {
+    const what = refused.refusal === "live_key_not_allowed" ? "live key not allowed" : "unrecognised key";
+    return {
+      operational: false,
+      provider: refused.provider,
+      reason: `not operational: ${what} — ${describeRefusal(refused.refusal ?? "unknown_key_prefix")}; every provider call is refused before it is sent.`,
+    };
+  }
+  return identityProviderStatusBeforeKeyMode(env);
 }
