@@ -16594,6 +16594,66 @@ Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. COR
 
 **Not run:** anything against `portava-ci` or production.
 
+## §106 — People search failure honesty (lane tm-people, testing mode): a failed people search is said with Retry on every surface, and only the latest request writes; no row changes bucket
+
+*Added 2026-09-29 on `lane-tm-people`, from `f10a4ac9f`. Register section TM-P (D-TMP-1..5). Controlled evidence only: local tests with `fetch` or the Supabase client faked. Nothing was applied anywhere. No row changes bucket.*
+
+**What was wrong.** The people search (`GET /users/search`) and the seven client surfaces over it presented a failed read as "nobody matched". Three layers each did it:
+- the route answered five failed reads with `200 {users: []}`;
+- the service read `body.users ?? []`;
+- the screens read `res.data ?? []`.
+
+None had a latest-request guard, so a slow answer for an earlier query overwrote the later one. This is DV-83's principle applied to a surface DV-83 does not grade: `/users/search` is the follows router, not a Discovery envelope.
+
+**Server** (`artifacts/api-server/src/routes/follows.ts`, line-neutral; D-TMP-1):
+- An unreadable block set answers `db_error`: `artifacts/api-server/src/routes/follows.ts:755#if (blockQueryFailed) { sendError(res, "db_error"`.
+- So does an unreadable discovery opt-out set: `artifacts/api-server/src/routes/follows.ts:768#sendError(res, "db_error", "discovery opt-outs could not be read; nothing was searched");`.
+- So does a failed follow-state read: `artifacts/api-server/src/routes/follows.ts:786#if (followerEdgesRes.error || myFollowsRes.error || pendingRequestsRes.error)`.
+- So does a failed name-visibility read: `artifacts/api-server/src/routes/follows.ts:890#const allowedNames = await readNameVisibilitySet(sc`, over `artifacts/api-server/src/lib/publicIdentity.ts:178#export async function readNameVisibilitySet(`.
+- The `disable_profile_search` stop keeps its 200 and carries the refusal envelope: `artifacts/api-server/src/routes/follows.ts:691#sendDiscoveryRefusal(res, { users: [] }, discoveryRefusal("feature_disabled", "profile_search_stopped"`.
+- Every path still serves no row. A healthy body is byte-identical to the pre-fix golden: `artifacts/api-server/src/test/userSearchFailureHonesty.test.ts:186#it("G1.`.
+
+**Client service** (`travel-buddy-standalone/src/services/follows.ts`, in place; D-TMP-2). A refusal, or a 200 with no list, is `ok: false`: `travel-buddy-standalone/src/services/follows.ts:185#if ((body as any)?.refusal) return { ok: false`.
+
+**Surfaces** (D-TMP-3). Each shows a failed state with Retry, keeps a true "none found", and drops answers for a superseded query:
+- Find Travelers: `travel-buddy-standalone/app/discover.tsx:91#if (seq !== searchSeqRef.current) return;`. Its suggestions also no longer turn a failed read into "You've seen everyone for now".
+- Close Friends. A failed lookup is no longer "Not found", and only the exact handle is added (D-TMP-4): `travel-buddy-standalone/app/close-friends.tsx:50#const match = sr.data.find(`.
+- The host dashboard's Invite tab, the two share sheets, the media InvitePanel and Create Event's invite step.
+
+`app/search.tsx` is not edited (D-TMP-5). Its Travelers tab already says a failed or refused read on `main`, and its remaining stale-answer race is fixed by D-W11X2-44 on the open `claude/sensing-completion-20260925` branch.
+
+**Tests seen red first, all through the real follows service with only `fetch` faked:**
+
+| Suite | Seen red first | Green before and after |
+|---|---|---|
+| `userSearchFailureHonesty` | F1–F7, K1–K2 (`artifacts/api-server/src/test/userSearchFailureHonesty.test.ts:214#it("F1.`) | G1–G4 |
+| `discover.searchFailureHonesty` | D1–D4, R1–R4, S1–S3 (`travel-buddy-standalone/app/__tests__/discover.searchFailureHonesty.component.test.tsx:201#it('R1.`) | D5 |
+| `close-friends.lookupFailureHonesty` | C1, C2, C4, C5 | C3 |
+| `HostDashboardPanel.inviteSearchFailureHonesty` | H1, H3, H5 | H2, H4 |
+| `ShareSheets.peopleSearchFailureHonesty` | P1, P2, P4, P5, for each sheet | P3 |
+| `InvitePanel.peopleSearchFailureHonesty` | I1–I5 | — |
+| `create.inviteSearchFailureHonesty` | E1–E4 | — |
+
+H4 was green before the fix because the old code had no failed state for a stale failure to show. It pins the new state, and mutation HD1 kills it.
+
+**Mutations: 35 of 36 killed.** Each was applied alone and restored byte-identical (sha256):
+- server: 7 of 7;
+- service and Find Travelers: 9 of 9;
+- the other surfaces: 19 of 20.
+
+The survivor is the InvitePanel `.catch` arm. It is equivalent under the real service, because `searchUsers` never rejects: I2's network failure arrives through `.then` as `ok: false`.
+
+**Checks.** The api-server and client guard runs are recorded in the lane report.
+
+**Not run:** anything against a live database, `portava-ci` or production.
+
+**Left open:**
+1. `app/search.tsx`'s race on `main`, until the open branch lands.
+2. `GET /users/suggestions` still answers a failed block read with `200 {users: []}`. Find Travelers now says a failed suggestions read only when it arrives as a transport or HTTP failure.
+3. Rent-a-Buddy's buddy search is another lane's surface and was not examined.
+
+**What would turn this red.** A people-search surface rendering "none found" for `ok: false`, or writing an answer after its query changed. The seven suites above fail on either.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/lib/capability/prerequisitesCore.ts — §93.8 names its function-granular gate boundary as why the Compass KNOWN entry was struck; it is the prerequisite checker's own machinery, and no Discovery verdict rests on it.
@@ -16647,3 +16707,10 @@ Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. COR
 - NOT-GRADED: travel-buddy-standalone/src/features/discovery/communityByline.test.ts — §98 names it only as merged from the parallel session. It unit-tests the byline's privacy rule through the identity chain on any Node, and no verdict in this census rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/authSignupStatusNoClient.test.ts — §98.6 names it only as the precedent for discoveryFeedNoServiceClient.test.ts's guard-coverage exemption (clear the Supabase env, then import); it tests the auth signup-status route, and no Discovery verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/authorizationContractGuard.test.ts — §99 names it only as the contract evaluator's self-test, run after the contract's four entries were brought to the applied migrations; it guards shared authorization machinery, and no Discovery verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/routes/follows.ts — §106 records the GET /users/search failure-honesty fix; that route is the follows router's people search, not a Discovery envelope, and no Discovery verdict rests on it (census-passport watches the file).
+- NOT-GRADED: artifacts/api-server/src/lib/publicIdentity.ts — §106 cites only the readNameVisibilitySet export the people search now uses; the display-name rule is census-trust's and census-wall's to grade.
+- NOT-GRADED: artifacts/api-server/src/test/userSearchFailureHonesty.test.ts — §106's server evidence for a surface no Discovery row grades.
+- NOT-GRADED: travel-buddy-standalone/src/services/follows.ts — §106 cites the people-search service line that reads a refusal or a list-less 200 as a failed read; no Discovery verdict rests on the follows service.
+- NOT-GRADED: travel-buddy-standalone/app/discover.tsx — §106 records Find Travelers' failed-search state and generation guard; the screen is the follows people search, and no Discovery row grades it.
+- NOT-GRADED: travel-buddy-standalone/app/close-friends.tsx — §106 cites the exact-handle match (D-TMP-4); Close Friends is not a Discovery surface.
+- NOT-GRADED: travel-buddy-standalone/app/__tests__/discover.searchFailureHonesty.component.test.tsx — §106's client evidence for a surface no Discovery row grades.
