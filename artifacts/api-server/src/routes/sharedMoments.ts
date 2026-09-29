@@ -132,7 +132,7 @@ router.post("/shared-moments/:id/invites", asyncHandler(async (req, res) => {
   }, { onConflict: "moment_id,user_id" });
   if (error) { sendError(res, "db_error", error.message); return; }
   await appendMomentAudit(ctx.sc, params.data.id, ctx.userId, "invited", { userId: parsed.data.userId });
-  res.status(201).json({ ok: true }); recordMediaInviteIfAttributable(ctx.sc, { inviterId: ctx.userId, momentId: params.data.id, originMediaId: parsed.data.originMediaId ?? null });
+  res.status(201).json({ ok: true }); recordMediaInviteIfAttributable(ctx.sc, { inviterId: ctx.userId, momentId: params.data.id, originMediaId: parsed.data.originMediaId ?? null }); void notifyMomentPerson(ctx.sc, { recipientId: parsed.data.userId, actorId: ctx.userId, momentId: params.data.id, eventType: "shared_moment.invited" }); // testing-mode WP-07: the invitee is told
 }));
 
 router.post("/shared-moments/:id/request", asyncHandler(async (req, res) => {
@@ -158,7 +158,7 @@ router.post("/shared-moments/:id/request", asyncHandler(async (req, res) => {
   }, { onConflict: "moment_id,user_id" });
   if (requestError) { sendError(res, "db_error", requestError.message); return; }
   await appendMomentAudit(ctx.sc, row.id, ctx.userId, "join_requested");
-  res.status(201).json({ ok: true, status: "requested" });
+  res.status(201).json({ ok: true, status: "requested" }); void notifyMomentPerson(ctx.sc, { recipientId: row.owner_id, actorId: ctx.userId, momentId: row.id, eventType: "shared_moment.join_requested" }); // testing-mode WP-07: the owner is told
 }));
 
 router.post("/shared-moments/:id/respond", asyncHandler(async (req, res) => {
@@ -348,5 +348,227 @@ router.get("/shared-moments/:id/feed", asyncHandler(async (req, res) => {
     : (!exhausted ? sourceCursor : null);
   res.json({ items: page.map((x) => ({ id: x.id, contributorId: x.contributor_id, caption: x.caption ?? x.posts?.content ?? null, postId: x.post_id ?? null, mediaAssetId: x.media_asset_id ?? null, mediaUrl: x.posts?.media_urls?.[0] ?? null, thumbnailUrl: x.posts?.media_thumbnail_url ?? null, createdAt: x.created_at })), nextCursor: next ? `${next.createdAt}|${next.id}` : null });
 }));
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// Testing-mode WP-07 (flows HM-F17, HM-F18): the READS participation needs.
+//
+// Every write above existed and had a client function, and no person could
+// reach any of them: an invited person could not open the Moment (the detail
+// read is members-only), the owner had no queue of requests or pending
+// contributions to act on, a member had no list of their own sources, and an
+// invitation told nobody. Appended here so no line above moves.
+//
+// Rules held on every read below:
+//   - a block hides a Moment and a person in BOTH directions, and an unreadable
+//     `blocks` fails CLOSED (503), never open;
+//   - a failed read is a 503 / db_error, never an empty list (DV-83);
+//   - a contribution's post is disclosed as media only on the same predicate
+//     the approved feed uses (public, active, published, not scheduled, author
+//     not private) — the owner reviewing a submission is not a wider audience
+//     than the one the feed would give them.
+// ════════════════════════════════════════════════════════════════════════════
+
+const NOTIFY_COPY: Record<"shared_moment.invited" | "shared_moment.join_requested", { title: string; body: string }> = {
+  "shared_moment.invited": { title: "You were invited to a Shared Moment", body: "Open it to accept or decline." },
+  "shared_moment.join_requested": { title: "Someone asked to join your Shared Moment", body: "Open it to review the request." },
+};
+
+/**
+ * Fire-and-forget in-app notification, through NotificationService so the
+ * privacy guard (sender/recipient blocks), the dedupe ledger and the delivery
+ * trail all apply. A failure is logged, never thrown.
+ */
+async function notifyMomentPerson(sc: any, input: {
+  recipientId: string; actorId: string; momentId: string; eventType: keyof typeof NOTIFY_COPY;
+}): Promise<void> {
+  try {
+    const copy = NOTIFY_COPY[input.eventType];
+    const created = await new NotificationService(sc).create({
+      userId: input.recipientId, actorId: input.actorId, senderId: input.actorId, eventType: input.eventType,
+      category: "plans", title: copy.title, body: copy.body, actionUrl: `/shared-moments/${input.momentId}`,
+      sourceType: "shared_moment", sourceId: input.momentId, metadata: { momentId: input.momentId },
+    });
+    if (!created) logger.info({ momentId: input.momentId, eventType: input.eventType }, "shared moments: notification not created (deduped, blocked or failed)");
+  } catch (err) {
+    logger.warn({ err, momentId: input.momentId }, "shared moments: notification threw");
+  }
+}
+
+/** Public-feed predicate for a contribution's post — the same one GET /feed applies. */
+function postIsFeedVisible(post: any, nowMs: number): boolean {
+  return Boolean(post) && post.visibility === "public" && post.status === "active"
+    && (!post.post_status || post.post_status === "published")
+    && (!post.publish_at || new Date(post.publish_at).getTime() <= nowMs);
+}
+
+function previewOf(row: any) {
+  return {
+    id: row.id, title: row.title, description: row.description ?? null, placeId: row.place_id ?? null,
+    placeDayId: row.place_day_id ?? null, tripId: row.trip_id ?? null, joinPolicy: row.join_policy, status: row.status,
+  };
+}
+
+// GET /shared-moments/:id/preview — what a NON-member may see so they can act.
+// Open to: an invitee, a requester, a member, the holder of an offered
+// suggestion, and — for an ACTIVE approval-required Moment — anyone not
+// blocked (that is what "ask to join" means). Everyone else: not_found, the
+// same answer a Moment that does not exist gets.
+router.get("/shared-moments/:id/preview", asyncHandler(async (req, res) => {
+  const ctx = await guard(req, res); if (!ctx) return;
+  const params = idParams.safeParse(req.params); if (!params.success) { sendError(res, "invalid_payload"); return; }
+  const { row, error } = await getMoment(ctx.sc, params.data.id);
+  if (error) { sendError(res, "db_error", error.message); return; }
+  if (!row) { sendError(res, "not_found"); return; }
+  const blocked = await fetchBlockedSet(ctx.sc, ctx.userId);
+  if (blocked === null) { sendError(res, "degraded_unavailable", "This Moment could not be checked right now. Please try again."); return; }
+  if (blocked.has(row.owner_id)) { sendError(res, "not_found"); return; }
+  const { data: membership, error: membershipError } = await ctx.sc.from("shared_moment_memberships")
+    .select("status, role").eq("moment_id", row.id).eq("user_id", ctx.userId).maybeSingle();
+  if (membershipError) { sendError(res, "db_error", membershipError.message); return; }
+  const myStatus: string | null = (membership as any)?.status ?? null;
+  let open = myStatus === "invited" || myStatus === "requested" || myStatus === "accepted"
+    || (row.status === "active" && row.join_policy === "approval_required");
+  if (!open) {
+    const { data: suggestion, error: suggestionError } = await ctx.sc.from("shared_moment_suggestions")
+      .select("id").eq("moment_id", row.id).eq("recipient_id", ctx.userId).eq("status", "offered").limit(1);
+    if (suggestionError) { sendError(res, "db_error", suggestionError.message); return; }
+    open = ((suggestion ?? []) as any[]).length > 0;
+  }
+  if (!open) { sendError(res, "not_found"); return; }
+  res.json({ moment: previewOf(row), myStatus, myRole: myStatus === "accepted" ? (membership as any)?.role ?? null : null });
+}));
+
+// GET /me/shared-moment-invites — the caller's pending invitations.
+router.get("/me/shared-moment-invites", asyncHandler(async (req, res) => {
+  const ctx = await guard(req, res); if (!ctx) return;
+  const { data, error } = await ctx.sc.from("shared_moment_memberships")
+    .select("moment_id, invited_by, updated_at").eq("user_id", ctx.userId).eq("status", "invited")
+    .order("updated_at", { ascending: false });
+  if (error) { sendError(res, "degraded_unavailable", "We could not load your invitations. Please try again."); return; }
+  const blocked = await fetchBlockedSet(ctx.sc, ctx.userId);
+  if (blocked === null) { sendError(res, "degraded_unavailable", "We could not load your invitations. Please try again."); return; }
+  const pending = (data ?? []) as any[];
+  const moments = new Map<string, any>();
+  const ids = [...new Set(pending.map((r) => r.moment_id as string))];
+  if (ids.length > 0) {
+    const { data: rows, error: momentsError } = await ctx.sc.from("shared_moments").select("*").in("id", ids);
+    if (momentsError) { sendError(res, "degraded_unavailable", "We could not load your invitations. Please try again."); return; }
+    for (const m of (rows ?? []) as any[]) moments.set(m.id, m);
+  }
+  const invites = pending
+    .map((r) => ({ r, m: moments.get(r.moment_id) }))
+    .filter(({ r, m }) => m && m.status === "active" && !blocked.has(m.owner_id) && !(r.invited_by && blocked.has(r.invited_by)))
+    .map(({ r, m }) => ({ moment: previewOf(m), invitedBy: r.invited_by ?? null, invitedAt: r.updated_at ?? null }));
+  res.json({ invites });
+}));
+
+// GET /shared-moments/:id/requests — owner/manager: pending join requests.
+router.get("/shared-moments/:id/requests", asyncHandler(async (req, res) => {
+  const ctx = await guard(req, res); if (!ctx) return;
+  const params = idParams.safeParse(req.params); if (!params.success) { sendError(res, "invalid_payload"); return; }
+  if (!(await ownerOrManager(ctx.sc, params.data.id, ctx.userId))) { sendError(res, "forbidden"); return; }
+  const { data, error } = await ctx.sc.from("shared_moment_memberships")
+    .select("user_id, updated_at").eq("moment_id", params.data.id).eq("status", "requested").order("updated_at", { ascending: true });
+  if (error) { sendError(res, "db_error", error.message); return; }
+  const blocked = await fetchBlockedSet(ctx.sc, ctx.userId);
+  if (blocked === null) { sendError(res, "degraded_unavailable", "Join requests could not be checked right now. Please try again."); return; }
+  const pending = ((data ?? []) as any[]).filter((r) => !blocked.has(r.user_id));
+  const ids = pending.map((r) => r.user_id as string);
+  const profiles = new Map<string, any>();
+  if (ids.length > 0) {
+    const { data: profs, error: profError } = await ctx.sc.from("profiles").select("id, handle, name, avatar_url").in("id", ids);
+    if (profError) { sendError(res, "degraded_unavailable", "Join requests could not be loaded right now. Please try again."); return; }
+    for (const p of (profs ?? []) as any[]) profiles.set(p.id, p);
+  }
+  const named = await nameVisibilitySet(ctx.sc, ids);
+  res.json({ requests: pending.map((r) => {
+    const p = profiles.get(r.user_id);
+    return { userId: r.user_id, handle: p?.handle ?? null, name: named.has(r.user_id) ? p?.name ?? null : null, avatarUrl: p?.avatar_url ?? null, requestedAt: r.updated_at ?? null };
+  }) });
+}));
+
+// GET /shared-moments/:id/contributions — PENDING review. Owner/manager: all;
+// a member: only their own ("awaiting approval").
+router.get("/shared-moments/:id/contributions", asyncHandler(async (req, res) => {
+  const ctx = await guard(req, res); if (!ctx) return;
+  const params = idParams.safeParse(req.params); if (!params.success) { sendError(res, "invalid_payload"); return; }
+  const role = await momentRole(ctx.sc, params.data.id, ctx.userId);
+  if (!role) { sendError(res, "forbidden"); return; }
+  const manager = role === "owner" || role === "manager";
+  let db = ctx.sc.from("shared_moment_contributions")
+    .select("id, contributor_id, post_id, media_asset_id, caption, created_at")
+    .eq("moment_id", params.data.id).eq("status", "pending").order("created_at", { ascending: true });
+  if (!manager) db = db.eq("contributor_id", ctx.userId);
+  const { data, error } = await db;
+  if (error) { sendError(res, "db_error", error.message); return; }
+  const blocked = await fetchBlockedSet(ctx.sc, ctx.userId);
+  if (blocked === null) { sendError(res, "degraded_unavailable", "Contributions could not be checked right now. Please try again."); return; }
+  const rows = ((data ?? []) as any[]).filter((r) => !blocked.has(r.contributor_id));
+  const postIds = [...new Set(rows.map((r) => r.post_id).filter(Boolean))] as string[];
+  const posts = new Map<string, any>();
+  if (postIds.length > 0) {
+    const { data: postRows, error: postError } = await ctx.sc.from("posts")
+      .select("id, author_id, content, media_urls, media_thumbnail_url, visibility, status, post_status, publish_at").in("id", postIds);
+    if (postError) { sendError(res, "db_error", postError.message); return; }
+    for (const p of (postRows ?? []) as any[]) posts.set(p.id, p);
+  }
+  const nowMs = Date.now();
+  // A contribution's post is shown only when it passes the feed predicate AND
+  // its author is not private (the viewer's own always pass).
+  const candidates = rows.filter((r) => r.post_id && posts.has(r.post_id)
+    && (r.contributor_id === ctx.userId || postIsFeedVisible(posts.get(r.post_id), nowMs)));
+  const disclosable = new Set((await excludePrivateAuthorPosts(candidates, ctx.userId, ctx.sc, { authorKey: "contributor_id" })).map((r) => r.id));
+  res.json({ contributions: rows.map((r) => {
+    const post = disclosable.has(r.id) ? posts.get(r.post_id) : null;
+    return {
+      id: r.id, contributorId: r.contributor_id, postId: r.post_id ?? null, mediaAssetId: r.media_asset_id ?? null,
+      caption: r.caption ?? post?.content ?? null,
+      mediaUrl: post?.media_urls?.[0] ?? null, thumbnailUrl: post?.media_thumbnail_url ?? null,
+      createdAt: r.created_at, mine: r.contributor_id === ctx.userId,
+    };
+  }) });
+}));
+
+// GET /shared-moments/:id/contributable-posts — the caller's OWN posts that
+// could be contributed: at the Moment's place, or on its trip, newest first.
+router.get("/shared-moments/:id/contributable-posts", asyncHandler(async (req, res) => {
+  const ctx = await guard(req, res); if (!ctx) return;
+  const params = idParams.safeParse(req.params); if (!params.success) { sendError(res, "invalid_payload"); return; }
+  if (!(await momentRole(ctx.sc, params.data.id, ctx.userId))) { sendError(res, "forbidden"); return; }
+  const { row, error } = await getMoment(ctx.sc, params.data.id);
+  if (error || !row) { sendError(res, error ? "db_error" : "not_found", error?.message); return; }
+  let db = ctx.sc.from("posts").select("id, content, media_urls, media_thumbnail_url, created_at")
+    .eq("author_id", ctx.userId).eq("status", "active").order("created_at", { ascending: false }).limit(30);
+  if (row.place_id) db = db.eq("canonical_place_id", row.place_id);
+  else if (row.trip_id) db = db.eq("trip_id", row.trip_id);
+  const { data: posts, error: postsError } = await db;
+  if (postsError) { sendError(res, "db_error", postsError.message); return; }
+  const { data: mine, error: mineError } = await ctx.sc.from("shared_moment_contributions")
+    .select("post_id, status").eq("moment_id", row.id).eq("contributor_id", ctx.userId);
+  if (mineError) { sendError(res, "db_error", mineError.message); return; }
+  const contributed = new Set(((mine ?? []) as any[]).filter((c) => c.status !== "removed").map((c) => c.post_id));
+  res.json({ posts: ((posts ?? []) as any[]).map((p) => ({
+    id: p.id, caption: p.content ?? null, mediaUrl: p.media_urls?.[0] ?? null, thumbnailUrl: p.media_thumbnail_url ?? null,
+    createdAt: p.created_at, contributed: contributed.has(p.id),
+  })) });
+}));
+
+// POST /shared-moments/suggestions/:id/dismiss — the recipient only.
+router.post("/shared-moments/suggestions/:id/dismiss", asyncHandler(async (req, res) => {
+  const ctx = await guard(req, res); if (!ctx) return;
+  const params = idParams.safeParse(req.params); if (!params.success) { sendError(res, "invalid_payload"); return; }
+  const { data, error } = await ctx.sc.from("shared_moment_suggestions")
+    .update({ status: "dismissed", responded_at: new Date().toISOString() })
+    .eq("id", params.data.id).eq("recipient_id", ctx.userId).eq("status", "offered").select("id").maybeSingle();
+  if (error) { sendError(res, "db_error", error.message); return; }
+  if (!data) { sendError(res, "not_found", "Suggestion is not available"); return; }
+  res.json({ ok: true });
+}));
+
+// Imported at the TAIL so no line above moves; ESM hoists them.
+import { logger } from "../lib/logger.js";
+import { nameVisibilitySet } from "../lib/publicIdentity.js";
+import { NotificationService } from "../services/notifications/NotificationService.js";
 
 export default router;

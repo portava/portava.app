@@ -1096,7 +1096,7 @@ function TripMemorySection({
 
   return (
     <View style={tm.wrap}>
-      <Text style={tm.title}>Trip Memory</Text>
+      <View style={tmRecap.row}><Text style={tm.title}>Trip Memory</Text>{memory ? <Pressable testID="trip-open-recap" onPress={() => router.push(`/trip/${tripId}/recap` as any)} accessibilityRole="button" hitSlop={6}><Text style={tmRecap.link}>View trip recap</Text></Pressable> : null}</View>
       {memory ? (
         <Pressable style={tm.card} onPress={() => router.push(`/memory/${memory.id}` as any)}>
           {memory.cover?.mediaUrl && !memoryCoverFailed ? (
@@ -1289,3 +1289,10 @@ export default function TripDetail() {
     </ScreenErrorBoundary>
   );
 }
+
+// Testing mode WP-06 (HM-F15): the "View trip recap" link beside the Trip Memory title.
+// Declared at the TAIL so no line above moves; `const` is read only at render time.
+const tmRecap = StyleSheet.create({
+  row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  link: { ...t.small, color: color.deep, fontWeight: '700' },
+});

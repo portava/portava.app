@@ -6295,6 +6295,99 @@ re-measured in census-map §44. `routes/compass.ts` and
 Totals unchanged. Ten counted files read, zero cited by this census, and the
 one substantive finding handed to the census that owns it.
 
+## §TM — 2026-09-29: testing mode WP-06 / WP-07, the Memory and Shared Moment surfaces a person can now reach (lane tm-memories) — NO VERDICT MOVES
+
+**What this section is.** Testing mode (owner, 2026-09-28) requires every intended flow to work end to end in the hosted testing app. This lane built the client, and the few server routes it lacked, for these flows:
+
+- HM-F09: like a Memory, delete it.
+- HM-F11: timeline, place history and people history.
+- HM-F12: tag consent.
+- HM-F13: save and share.
+- HM-F14: profile memories.
+- HM-F15: trip recap.
+- HM-F17: invite accept, join request and contributions.
+- HM-F18: the suggestion card.
+- HM-F19: recaps on the place screen.
+
+PLAT-F33 (stories) is graded by no census, so it is recorded in `docs/ops/testing-mode-flows.md`. Only its save-to-Highlight edge touches this domain.
+
+**No verdict moves**, and each candidate was checked:
+
+- **H163, H166, H167 and H168** are already C on server evidence (§K and §J). The new screens make them reachable. That does not change what the rows grade.
+- **H138 (`ADD_PERSON`)** stays W. The consent half is now reachable. An owner adding a person *after* creation has no kernel command (see TM-MEM-D4 below), and 2710/2711 remain unapplied.
+- **H53 (shared-experience anchor)** stays N. Shared Moments are not Memories, and `memory_tags` still creates no shared object.
+- **H170 and H200** are untouched: no public projection changed.
+
+Every piece is controlled evidence: component and route tests on fakes, never production.
+
+### §TM.1 Server (commits `95e208dbe`, a predecessor on this lane, and this one)
+
+- **`POST /memories/:id/share`** answered `{ok:true}` for any id and did nothing.
+  - It is now the share **gate**, with the save route's readability rule: owner, block check, §23 `canReadMemory` "single". It answers the Telegraph §5 `MEMORY` reference. Nothing is written.
+  - The line change is neutral at `artifacts/api-server/src/routes/memories.ts:2521#answerMemoryShare`, and the body sits at the foot, `artifacts/api-server/src/routes/memories.ts:3415#answerMemoryShare`.
+  - A refusal is the same `not_found` as a missing Memory, so the gate is not an oracle.
+- **`GET /me/stories`**, at `artifacts/api-server/src/routes/stories.ts:1021#router.get`, lists the owner's own live stories (see the ops doc).
+- **From `95e208dbe`:**
+  - `GET /me/saved-memories`, at `artifacts/api-server/src/routes/memories.ts:3341#router.get`;
+  - the Shared Moment participation reads, at `artifacts/api-server/src/routes/sharedMoments.ts:417#router.get`;
+  - tag notifications that land on `/memory/<id>`.
+
+No migration. No flag changed. No write bypasses the memory kernel: the only Memory write this lane adds a caller for is `PATCH /memories/:id/tags/:userId`, which dispatches §17 `ADD_PERSON` / `REMOVE_PERSON` through `dispatchMemoryCommand`. The client sends an `Idempotency-Key`, at `travel-buddy-standalone/src/services/memorySocial.ts:164#respondToMemoryTag`.
+
+### §TM.2 Client, per flow
+
+- **HM-F09.** The Memory screen's StampButton was seeded from `memory_likes` but wrote an entity STAMP, a different table. It is now controlled by `useMemoryLike` (`travel-buddy-standalone/src/hooks/useMemoryLike.ts:19#useMemoryLike`), which writes `POST|DELETE /memories/:id/like`. The screen passes it as `controlledStamp` at `travel-buddy-standalone/src/features/memories/social/MemorySocialBar.tsx:46#controlledStamp`. A refused delete is now said rather than hidden behind `router.back()`, at `travel-buddy-standalone/app/memory/[id].tsx:116#if`.
+- **HM-F12.** The tagged person approves or removes their own tag, and the owner may remove a participant but is never offered an approve. The section is `travel-buddy-standalone/src/features/memories/social/MemoryParticipantsSection.tsx:77#MemoryParticipantsSection`. A tagged person who may not read the Memory (§23: participation alone grants no access) can still answer their tag from the "not found" screen, because `GET /memories/:id/tags` answers a tagged person: `travel-buddy-standalone/src/features/memories/social/MemoryParticipantsSection.tsx:130#MemoryTagConsentFallback`.
+- **HM-F13.** Save and unsave are offered to non-owners. The saved shelf is `/memory/saved`. Share runs the gate, then posts the `MEMORY` reference into a chosen thread (`POST /threads/:id/share`, resolved per reader at read time), at `travel-buddy-standalone/src/features/memories/social/MemoryShareSheet.tsx:35#MemoryShareSheet`. "Share link" appears only for a public Memory.
+- **HM-F11.** Three routes, `/memory/timeline`, `/memory/place-history` and `/memory/people-history`, share one list shell with loading, error-with-retry and empty states (`travel-buddy-standalone/src/features/memories/social/MemoryRowsScreen.tsx:48#MemoryRowsScreen`). An unbuildable projection (`degraded_unavailable`) is an error, never "no memories". The owner reaches them from the Memory screen. People history is offered only for an APPROVED participant.
+- **HM-F14.** The profile Memories tab keeps the `passport_memories` list and adds the `memories` albums the server lets this viewer see, with cursor paging: `travel-buddy-standalone/src/features/memories/social/ProfileMemoryAlbums.tsx:28#ProfileMemoryAlbums`, mounted line-neutrally at `travel-buddy-standalone/app/passport/[username].tsx:572#ProfileMemoryAlbums`.
+- **HM-F15.** `/trip/:id/recap` is at `travel-buddy-standalone/app/trip/[id]/recap.tsx:32#TripRecapRoute`, linked from the Trip Memory section at `travel-buddy-standalone/app/trip/[id].tsx:1099#trip-open-recap`. "Not on this trip" (`not_found`) is kept apart from "could not build it".
+- **HM-F17.** `/shared-moments/:id` is rebuilt.
+  - A non-member is shown the preview, at `travel-buddy-standalone/app/shared-moments/[id].tsx:54#getSharedMomentPreview`. That means accept or decline an invitation, ask to join, or invitation only: `travel-buddy-standalone/src/features/sharedMoments/SharedMomentJoinPanel.tsx:23#SharedMomentJoinPanel`.
+  - A member contributes one of their OWN posts (`travel-buddy-standalone/src/features/sharedMoments/SharedMomentPanels.tsx:121#ContributePanel`).
+  - The organiser answers join requests (`travel-buddy-standalone/src/features/sharedMoments/SharedMomentPanels.tsx:50#JoinRequestsPanel`) and approves or removes contributions.
+  - A failed read is an error with a retry. The old screen told everyone, including an invitee on a bad connection, "you may need an invitation".
+- **HM-F18.** The place's Moments screen shows your invitations to Moments at this place, and the server's labelled suggestions ("Suggestion — no one is joined or added automatically.") with Open and Dismiss: `travel-buddy-standalone/src/features/sharedMoments/MomentInvitesAndSuggestions.tsx:25#MomentInvitesAndSuggestions`. Its Moments list no longer turns a failed read into "No Shared Moments yet".
+- **HM-F19.** `listPlaceRecaps` answered `[]` for every failure. It now keeps the refusal (`travel-buddy-standalone/src/services/placeRecaps.ts:28#listPlaceRecaps`). The place screen shows your recaps of the place, published first, each opening `/recaps/:id`. That is `travel-buddy-standalone/src/features/placeRecaps/PlaceRecapsSection.tsx:31#PlaceRecapsSection`, mounted line-neutrally at `travel-buddy-standalone/app/place/[id].tsx:424#PlaceRecapsSection`.
+
+### §TM.3 Decisions (no Highlights/Memories decision register exists, so they are recorded here)
+
+- **TM-MEM-D1.** The Memory like is `memory_likes`, the table `GET /memories/:id` counts. The stamp gesture stays and writes there.
+- **TM-MEM-D2.** A Memory share is a Telegraph §5 reference, never a snapshot, and `POST /memories/:id/share` is its readability gate. It stores nothing, because the spec names no share ledger. A link share is offered only for a public, published Memory.
+- **TM-MEM-D3.** Save is offered to non-owners only.
+- **TM-MEM-D4 (NOT BUILT, stated).** Adding a person to an EXISTING Memory is not built. The kernel's `ADD_PERSON` is consent-only by design: `artifacts/api-server/src/services/memory/MemoryDomainService.ts:410#authorizeParticipantCommand`, and 2711's `v_type = 'ADD_PERSON' AND v_tagged IS DISTINCT FROM v_actor` rejection. An owner-side "propose a tag" would be a new kernel command, meaning a redefinition of `memory_kernel_execute` in a migration. That is not a routine client change, and a direct `memory_tags` insert would bypass the kernel. Tags therefore arise where the kernel already creates them: `POST /memories` `taggedUserIds`, and the whole crew on a trip Memory. HM-F12 is testable end to end through a trip Memory: tag, notification, `/memory/<id>`, approve or remove.
+- **TM-MEM-D5 / D6.** Story reply as a DM, and `GET /me/stories` plus `/stories`: see `docs/ops/testing-mode-flows.md`.
+- **TM-MEM-D7.** The place screen shows the caller's OWN recaps at the place, which is what the route serves. It shows every non-removed status, published first, and nothing when there are none or the capability is off.
+- **TM-MEM-D8.** Shared Moment invitations on a place's Moments screen are narrowed to that place. The in-app notification (`/shared-moments/<id>`) reaches the rest.
+- **TM-MEM-D9.** The profile Memories tab shows the Memory albums UNDER the passport entries, not merged with them: they are different tables with different ids.
+
+### §TM.4 Tests: every one seen red first; 45 mutations, 45 killed
+
+- **Server** (node:test, registered on the `test` line):
+  - `artifacts/api-server/src/test/memorySocialSurfaces.test.ts`: plus 8 share-gate cases. Six were red at `95e208dbe`; the other two (owner private, and auth) cover paths the stub also answered.
+  - `artifacts/api-server/src/test/storyOwnActive.test.ts`: 5 cases, 5 red.
+- **Client** (jest):
+  - service suites: `memorySocial` (18), `sharedMomentsParticipation` (10), `placeRecapsList` (5), `storyInteractions` (10);
+  - hook suite: `useMemoryLike` (5);
+  - component and route suites: `memoryDetail.social` (10), `memoryBrowse.routes` (8), `ProfileMemoryAlbums` (3), `tripRecap.route` (3), `StoryViewer.interactions` (8), `stories.route` (5), `sharedMomentDetail.participation` (9), `placeMoments.participation` (4), `PlaceRecapsSection` (4), `testingModeWiring` (4).
+  - The browse routes were written just before their suite; their red evidence is the mutations below (C12, C13).
+- **Restated suite.** `CreateHubSheet.routes` had pinned Story as "Soon". It was restated to route to `/stories` by TM-MEM-D6, seen red, then green.
+- **Mutations.** 45 were applied and each was restored by sha256. 43 were killed first time. Two survived and led to stronger tests: C18 (the recap link's condition) and C36 (the published-first order, whose fixture had been in date order already). Both were then killed.
+
+### §TM.5 Found in passing, not this lane's to fix
+
+HM-F08 is catalogued "built end to end". It is not reachable. The Create hub's Memory entry opens `/memory/edit` with no id, and that screen returns early on `!id` and stays on its spinner. No client calls `createMemory`.
+
+### §TM.6 What would turn this red
+
+- The like writes an entity stamp again (`controlledStamp` dropped).
+- The share gate answers without `canReadMemory`, or answers a snapshot.
+- The consent fallback is unmounted.
+- Any list here renders a failed read as empty.
+- `/me/stories` returns anyone's stories but the caller's.
+- A story reply on an E2EE thread is resent as plaintext.
+- Any of these makes the suites above go red.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/migrations/0067_reviews.sql — Cited once, in the headline's 2026-09-14 attribution restatement, to show that the migration the first headline credited to the Memories scrapbook is a cross-domain review system for trips and bookings. That paragraph moves no verdict, and no row grades reviews.
@@ -6302,3 +6395,24 @@ one substantive finding handed to the census that owns it.
 - NOT-GRADED: 0179_stamp_criteria_engine.sql — §L.2's bare citation resolves onto this stray repo-root copy, a duplicate nobody runs (docs/stray-sql-inventory-and-disposition.md item 2). The seed it means is Passport's src/migrations/0179, named in passing for the flag that holds a latent instance off; no row here rests on that seed.
 - NOT-GRADED: artifacts/api-server/src/test/sensingConsumersRevocationReach.test.ts — §Z.2 names it as the only importer of sessionRevocationReach, to show that census-sensing's S112 is W on false evidence. S112 is a Sensing row, corrected in census-sensing §22, and no row in this census rests on the suite.
 - NOT-GRADED: artifacts/api-server/src/lib/sensingRevocationLineage.ts — §Z.2 notes that it names sessionRevocationReach only in a comment, as part of the S112 finding handed to census-sensing. It is Sensing lane code, and no row in this census grades it.
+- NOT-GRADED: artifacts/api-server/src/routes/sharedMoments.ts — §TM.1 cites the Shared Moment participation reads the testing-mode lane added. Shared Moments are a Live Places object, not a Memory, and no row here grades that router (H53 is about `memory_tags`, and §TM says why it stays N).
+- NOT-GRADED: travel-buddy-standalone/app/memory/[id].tsx — §TM.2 cites the Memory screen's delete-honesty line as client wiring for HM-F09. No row grades a client screen; the rows grade the routes and the kernel it calls.
+- NOT-GRADED: travel-buddy-standalone/app/passport/[username].tsx — §TM.2 cites where the profile Memories tab mounts the Memory albums (HM-F14). The profile screen is census-passport's, and no row here grades it.
+- NOT-GRADED: travel-buddy-standalone/app/trip/[id].tsx — §TM.2 cites the "View trip recap" link. The trip screen is census-trips'; H166 grades the recap route, not this link.
+- NOT-GRADED: travel-buddy-standalone/app/shared-moments/[id].tsx — §TM.2 cites the Shared Moment screen's preview fallback (HM-F17). Shared Moments are not graded by any row in this census.
+- NOT-GRADED: travel-buddy-standalone/src/services/placeRecaps.ts — §TM.2 cites the honest `listPlaceRecaps`. Place recaps are a Live Places object; no row here grades them.
+- NOT-GRADED: travel-buddy-standalone/app/place/[id].tsx — §TM.2 cites where the place screen mounts your recaps (HM-F19). The place screen is census-media's; no row here grades it.
+- NOT-GRADED: artifacts/api-server/src/test/memorySocialSurfaces.test.ts — §TM.4 names the suite that pins the share gate and the saved shelf. It is controlled test evidence for §TM, which moves no verdict.
+- NOT-GRADED: travel-buddy-standalone/src/features/memories/social/MemoryParticipantsSection.tsx — the participant list and tag-consent controls (HM-F12). The kernel authorization it calls is graded; this client is not. §TM cites it as the testing-mode client for a flow; no row in this census grades client code, and §TM moves no verdict.
+- NOT-GRADED: travel-buddy-standalone/src/features/sharedMoments/SharedMomentPanels.tsx — the Shared Moment member panels (HM-F17). Shared Moments are not graded by any row here. §TM cites it as the testing-mode client for a flow; no row in this census grades client code, and §TM moves no verdict.
+- NOT-GRADED: travel-buddy-standalone/src/services/memorySocial.ts — the client for the tag, save, share-gate and owner-projection routes. The routes are graded; this client is not. §TM cites it as the testing-mode client for a flow; no row in this census grades client code, and §TM moves no verdict.
+- NOT-GRADED: travel-buddy-standalone/src/hooks/useMemoryLike.ts — the memory-like controller (HM-F09). No row grades likes. §TM cites it as the testing-mode client for a flow; no row in this census grades client code, and §TM moves no verdict.
+- NOT-GRADED: travel-buddy-standalone/src/features/memories/social/MemorySocialBar.tsx — where the stamp is bound to the memory like (HM-F09/F13). §TM cites it as the testing-mode client for a flow; no row in this census grades client code, and §TM moves no verdict.
+- NOT-GRADED: travel-buddy-standalone/src/features/memories/social/MemoryShareSheet.tsx — the share sheet that posts the Telegraph MEMORY reference (HM-F13). §TM cites it as the testing-mode client for a flow; no row in this census grades client code, and §TM moves no verdict.
+- NOT-GRADED: travel-buddy-standalone/src/features/memories/social/MemoryRowsScreen.tsx — the list shell of the browse screens (HM-F11). The projections behind them are graded (H163/H167/H168); this shell is not. §TM cites it as the testing-mode client for a flow; no row in this census grades client code, and §TM moves no verdict.
+- NOT-GRADED: travel-buddy-standalone/src/features/memories/social/ProfileMemoryAlbums.tsx — the profile Memory albums (HM-F14). The server read it renders is graded by the location-precision rows; this component adds no filtering. §TM cites it as the testing-mode client for a flow; no row in this census grades client code, and §TM moves no verdict.
+- NOT-GRADED: travel-buddy-standalone/app/trip/[id]/recap.tsx — the trip recap screen (HM-F15). H166 grades the route; this screen is its client. §TM cites it as the testing-mode client for a flow; no row in this census grades client code, and §TM moves no verdict.
+- NOT-GRADED: travel-buddy-standalone/src/features/sharedMoments/SharedMomentJoinPanel.tsx — the non-member Shared Moment panel (HM-F17). Not graded here. §TM cites it as the testing-mode client for a flow; no row in this census grades client code, and §TM moves no verdict.
+- NOT-GRADED: travel-buddy-standalone/src/features/sharedMoments/MomentInvitesAndSuggestions.tsx — the invitation and suggestion cards (HM-F17/F18). Not graded here. §TM cites it as the testing-mode client for a flow; no row in this census grades client code, and §TM moves no verdict.
+- NOT-GRADED: travel-buddy-standalone/src/features/placeRecaps/PlaceRecapsSection.tsx — your recaps on the place screen (HM-F19). Place recaps are not graded here. §TM cites it as the testing-mode client for a flow; no row in this census grades client code, and §TM moves no verdict.
+- NOT-GRADED: artifacts/api-server/src/test/storyOwnActive.test.ts — the GET /me/stories suite (PLAT-F33, stories are graded by no census). Controlled evidence for §TM only. §TM cites it as the testing-mode client for a flow; no row in this census grades client code, and §TM moves no verdict.

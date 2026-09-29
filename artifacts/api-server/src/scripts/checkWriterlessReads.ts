@@ -159,11 +159,11 @@ export const KNOWN_WRITERLESS_READS: Record<
       "CreatorActivityScoreService could not source a reach denominator, and why its " +
       "positiveResponse component had to become a count rather than a rate.",
   },
-  shared_moment_suggestions: {
-    readers: 1,
-    classification: "dead-lane",
-    note: "No producer, so the shared-moment suggestions endpoint is permanently empty.",
-  },
+  // shared_moment_suggestions: struck off 2026-09-29 (testing-mode WP-07). The
+  // recipient can now DISMISS a suggestion (routes/sharedMoments.ts, an UPDATE),
+  // so the table has a writer by this check's definition. It still has NO
+  // producer (nothing inserts an offer) — recorded in census-highlights-memories
+  // §AA as undone, because a co-presence clustering producer is a consent call.
 
   // ── LEGACY DECOY — superseded, pending removal ────────────────────────────
   place_profiles: {
