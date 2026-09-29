@@ -273,7 +273,7 @@ export default function ConnectedFeaturesScreen() {
             subtitle="Review and action wrong-place reports"
             onPress={() => router.push('/admin/place-mismatch-reports' as any)}
           />
-          <SettingsDivider />
+          <SettingsDivider /><SettingsRow title="Testing Console" subtitle="Gem review, guides, live scopes, stamps, airports" onPress={() => router.push('/admin/console' as any)} /><SettingsDivider />
           <SettingsRow
             title="Stamp Studio"
             subtitle="Stamp catalog, queue, and reconciler"
