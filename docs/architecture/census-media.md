@@ -8866,6 +8866,11 @@ cited file is watched" was never true to the extent reported.
 - NOT-GRADED: artifacts/api-server/scripts/check-flag-polarity.mjs — the flag-polarity guard, listed in §21.7 among the guard machinery §21 edited when it reclassified MEDIA_WORLD_SHELL_ENABLED as a capability; it measures flag declarations and grades nothing, and the machinery pattern reaches only src/scripts/check*.ts, not scripts/*.mjs.
 - NOT-GRADED: artifacts/api-server/src/test/censusIntegrityQualifiedVerdicts.test.ts — the suite that asserts check:census-integrity exits 0, named in §21.8 to explain why it was red while the headline waited for the integrator's restatement; it tests the census tool, not Media code, and no MD verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/routes/index.ts — the API router registry, listed in §22.7 only among the files §22 edited, to say which censuses' acknowledgements already name it (highlights-memories, telegraph); the §22 and §23.8 scope notes keep it out on purpose because every feature's mount edits it, and no MD row cites it as evidence.
+- NOT-GRADED: artifacts/api-server/src/test/tmAdminConsole.test.ts — the TM-admin lane's server suite, cited in §45.3 for the gem-verify and guide-status honesty cases; no MD verdict rests on it.
+- NOT-GRADED: travel-buddy-standalone/app/admin/__tests__/AdminConsoleScreens.component.test.tsx — §45.3's admin-screen suite; no MD verdict rests on it.
+- NOT-GRADED: travel-buddy-standalone/app/admin/hidden-gems.tsx — §45's admin gem-review screen; built work for PLAT-F39, no MD verdict rests on it.
+- NOT-GRADED: travel-buddy-standalone/app/admin/local-guides.tsx — §45's admin guide-approval screen; built work for PLAT-F38, no MD verdict rests on it.
+- NOT-GRADED: travel-buddy-standalone/app/admin/console.tsx — §45 names the admin Testing Console only as the entry to the two screens; this census grades no behaviour of it.
 
 ### 32.15 The scope-coverage hole, closed: every census watches what it cites
 
@@ -15658,6 +15663,92 @@ them.
 - NOT-GRADED: artifacts/api-server/src/routes/places.ts — cited in §43.5 (4) for the near-duplicate groups endpoint that can carry a withheld post's media; a Places route, recorded, not fixed, no MD verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/placeLiving.test.ts — the Live Places living-page suite, cited in §43.4 for the two cached-payload fixtures that now model a mode-aware cache row; its assertions are unchanged and no MD verdict rests on it.
 
+## 46. Lane tm-followups (WP-17) — MD424 decided: Like and "Stamp It" retired, Stamp and Comments wired; a failed upload is retried from My World; two hidden-gem admin writes checked — 2026-09-29
+
+Branch `lane-tm-followups`, cut from `main` at `978d886bf`. Code in `23f78ab1a` (the hidden-gem
+writes) and `09dd3925a` (the rest). **No MD row moves**; `head_commit` is not re-declared.
+Controlled evidence only (route tests over in-memory clients, component tests). No flag was
+touched, no migration was added, nothing was read from or written to any database. Placed before
+§41 rather than at the foot, so it merges cleanly beside a parallel lane's §45.
+
+### 46.1 MED-F06 — the MD424 decision (routine; taken here)
+
+The flow catalogue asked that media like, "Stamp it" and comments be wired or retired per MD424
+("No Heart/Like as primary hierarchy"). The spec decides it: the viewer's social layer is
+"Stamp · Comment · Share · Save" (§14), and "Heart/Like as primary hierarchy" is on §46.2's
+anti-pattern list. What the tree held:
+
+| Reaction | Client | Server | Decision |
+|---|---|---|---|
+| Like (heart) | `likeMedia` / `unlikeMedia`, no caller | `POST/DELETE /media/:id/like`, a compat wrapper over Stamp "until mobile clients are migrated" (`artifacts/api-server/src/routes/mediaFeed.ts:2223#// Compat wrapper`) | **Retired from the client.** This client already stamps through `/stamps`. The server wrapper stays for older clients; MD386's `C` rests on it. |
+| "Stamp It" | `reactToMediaStampIt`, no caller | `POST /media/:id/react` → `media_stamp_reactions` (`artifacts/api-server/src/routes/mediaFeed.ts:2271#router.post("/media/:id/react"`) | **Retired from the client.** A second, separately counted stamp gesture beside Stamp is two stamps and two counts for one act, against §14's single Stamp and MD408's minimal vanity metrics. The route stays for API callers. |
+| Stamp | `StampButton` in the viewer (`travel-buddy-standalone/app/media-viewer/[id].tsx:303#<StampButton`) and `useWatchStamp` in Watch | `/stamps` | **Wired** (already). |
+| Comments | `MediaCommentSheet` (`travel-buddy-standalone/app/media-viewer/[id].tsx:788#<MediaCommentSheet`) → the post comment endpoints (`travel-buddy-standalone/src/components/media/MediaCommentSheet.tsx:34#postId={mediaId}`) | `GET /media/:id/comments` (`artifacts/api-server/src/routes/mediaFeed.ts:2462#router.get("/media/:id/comments"`) is a thinner read of the same table | **Wired through the post sheet** (threading, edit, report, block handling); the media read is not wired. |
+
+The dead client functions are removed line-neutrally
+(`travel-buddy-standalone/src/services/mediaInteractions.ts:60#// ── Like — RETIRED`,
+`travel-buddy-standalone/src/services/mediaInteractions.ts:130#// ── Stamp It reaction — RETIRED`).
+**MD424 itself stays `W`**: its evidence is the Watch overlay's rail prominence, which §34 built
+behind `MEDIA_WATCH_CONTEXT_OVERLAY_ENABLED` and which waits on owner decision F2. Nothing here
+changes that surface. Residual: the viewer's owner-only "Stamp It" count still renders
+`stampItCount`, which no client in this tree writes any more; removing that display is a surface
+change left with F2.
+
+### 46.2 MED-F25 — a failed upload is found and retried from the client
+
+`POST /media/:id/retry` takes a `media_assets.id`, and no client surface held one: My World's
+Processing bucket is built from posts. And the retry answered 404 `not_found` when its asset read
+or its re-queue write FAILED — an outage told the owner their upload did not exist.
+
+- `GET /media/me/failed-uploads` (`artifacts/api-server/src/routes/mediaActions.ts:613#router.get(`)
+  lists the caller's own failed, un-purged assets, owner-scoped in the query, with
+  `retryAvailable` — the processing-worker flag the retry itself obeys (§30) — so the client never
+  offers a Retry that can only be refused. A failed read is db_error, never an empty list.
+- The retry carries `dbError`
+  (`artifacts/api-server/src/services/media/MediaLifecycleService.ts:375#if (readError) return`,
+  `artifacts/api-server/src/services/media/MediaLifecycleService.ts:390#return error ? { ok: false, alreadyQueued: false, dbError`)
+  and the route answers db_error
+  (`artifacts/api-server/src/routes/mediaActions.ts:600#if (result.dbError)`). Line-neutral: the
+  lines §30 cites (378, 380, 382, 389, 593, 597) are where they were.
+- My World shows the section
+  (`travel-buddy-standalone/src/features/media/screens/MyWorldMediaScreen.tsx:150#{memory ? <MyWorldMemorySection memory={memory} /> : null}<FailedUploadsSection />`,
+  `travel-buddy-standalone/src/features/media/components/FailedUploadsSection.tsx:31#export function FailedUploadsSection`):
+  nothing while loading or when nothing failed; "Couldn't check for failed uploads" with Try again
+  on a failed read; each failed upload with **Retry** when `retryAvailable`, else "kept, not lost";
+  a row leaves only after the server queued it (202); a refusal keeps the row and says why.
+- `POST /media/:id/attachments` (the other half of the catalogue's flow name) is not wired: no
+  client surface creates the §6.1 link, and the flow's blocker names only the retry affordance.
+
+### 46.3 Hidden-gem admin writes (item A2 of this lane)
+
+`markSensitive` and `mergeDuplicate` awaited their UPDATE and dropped the result, so a missing gem
+and a refused write both answered the admin `{ ok: true }`. They now read their row back
+(`artifacts/api-server/src/services/hiddenGems/HiddenGemModerationService.ts:184#.eq("id", gemId).select("id").maybeSingle(); if (error) throw error;`,
+`artifacts/api-server/src/services/hiddenGems/HiddenGemModerationService.ts:208#if (error) throw error; return merged`);
+the routes answer 404 for a missing gem or canonical gem, db_error for a refused write, and 400 for
+a self-merge (`artifacts/api-server/src/routes/hiddenGems.ts:1603#const gemFound = await markSensitive`,
+`artifacts/api-server/src/routes/hiddenGems.ts:1626#const merge = await mergeDuplicate`) — the
+pattern the fixed `recordAdminVerification` follows. Line-neutral in both files.
+
+### 46.4 Tests (seen RED first) and mutations
+
+- `artifacts/api-server/src/test/tmMediaUploadRetry.test.ts:95#describe(` and `:118#describe(` —
+  five of six red before the fix (the control passed).
+- `travel-buddy-standalone/src/features/media/__tests__/failedUploadsSection.component.test.tsx:50#describe(`
+  — five component cases.
+- `travel-buddy-standalone/src/services/__tests__/mediaReactionsRetired.component.test.ts:44#describe(`
+  — red while the three functions existed; its control pins the viewer's Stamp and Comment.
+- `artifacts/api-server/src/test/tmFollowupSafety.test.ts:227#describe(` — the A2 cases, six red.
+- Mutations, each restored by sha256 and each RED: the retry's read `dbError` and write `dbError`
+  removed; the route's dbError branch disabled; the list's owner filter, purge filter and error
+  branch removed; the section's error branch, `retryAvailable` check and refusal notice removed;
+  a like or `fetchCompassFeed`-style export re-added; `markSensitive` returning `true` or not
+  throwing; `mergeDuplicate` skipping the canonical check or not throwing; the self-merge guard off.
+
+- NOT-GRADED: artifacts/api-server/src/test/tmMediaUploadRetry.test.ts — §46.4's route suite; no MD verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/tmFollowupSafety.test.ts — §46.4 cites its A2 cases; no MD verdict rests on it.
+- NOT-GRADED: travel-buddy-standalone/src/services/__tests__/mediaReactionsRetired.component.test.ts — §46.1's retirement test; no MD verdict rests on it.
+
 ## 41. Wave-8 integration — the 49 non-C rows, each split into implementation, activation and external verification — 2026-09-27
 
 Integration owner's section. It records what the wave-8 lanes merged, restates
@@ -15911,3 +16002,67 @@ migration and owner decision these rows wait on is listed in one place:
 `docs/ops/sensing-production-approval-request.md`, section H (H1–H16), with its
 "Decisions the flags cannot take" list and the H-build section on the builds
 and devices this environment cannot reach.
+
+## 45. Lane TM-admin (WP-21) — hidden-gem review and local-guide approval reach an admin screen — 2026-09-29
+
+Branch `lane-tm-admin`, cut from `main` at `18518e982`. No MD row moves; `head_commit` is not
+re-declared. Controlled evidence only (route tests against an in-memory client, component tests).
+No flag was touched, no migration was added, nothing was read from or written to any database.
+
+### 45.1 What was missing
+
+The flow catalogue's PLAT-F39 (admin reviews pending and reported gems) and PLAT-F38 (become a
+local guide) were server-only: the routes existed and were admin-gated (`isAdmin`), but no screen
+called them, so a submitted gem stayed `pending` and a guide applicant stayed `applicant` unless a
+tester had an API client. Two of those routes also answered `{ ok: true }` for work that had not
+happened, which a screen would have repeated to the admin.
+
+### 45.2 What was built
+
+- **Server, two honest answers, line-neutral in the route file.**
+  `recordAdminVerification` now checks its status UPDATE and says whether a gem was found
+  (`artifacts/api-server/src/services/hiddenGems/HiddenGemVerificationService.ts:364#if (updErr) throw updErr;`);
+  the route answers 404 for a gem id that matches nothing and `db_error` for a refused write
+  (`artifacts/api-server/src/routes/hiddenGems.ts:1539#const gemFound = await recordAdminVerification(`).
+  `setGuideStatus` returns the updated row or null and throws on a refused write
+  (`artifacts/api-server/src/services/hiddenGems/LocalGuideService.ts:263#if (error) throw error;`);
+  the route answers 404 for a user with no guide profile and writes an audit log line with the
+  admin id, the guide and the new status, as the live-scope admin routes do
+  (`artifacts/api-server/src/routes/hiddenGems.ts:1688#local guide status set via admin surface`).
+  The gem decision's own audit row (`hidden_gem_verifications`, `method: "admin"`) was already written.
+- **Screens.** `travel-buddy-standalone/app/admin/hidden-gems.tsx:46#export default function AdminHiddenGemsScreen(`
+  (Pending: approve / reject with an optional note; Reported: uphold / dismiss) and
+  `travel-buddy-standalone/app/admin/local-guides.tsx:37#export default function AdminLocalGuidesScreen(`
+  (approve → `active`, decline → `demoted`), reached from the admin Testing Console
+  (`travel-buddy-standalone/app/admin/console.tsx`), itself one row in Settings → Connected features.
+  A row leaves its queue only after the server confirmed the decision; a failed read is an announced
+  error with a retry, never "nothing to review".
+
+### 45.3 Tests, seen red, and mutations
+
+- Server: `artifacts/api-server/src/test/tmAdminConsole.test.ts:171#describe("POST /api/admin/local-guides/:userId/status (PLAT-F38)"`
+  and `artifacts/api-server/src/test/tmAdminConsole.test.ts:209#describe("POST /api/admin/hidden-gems/:id/verify (PLAT-F39)"`. Against the pre-lane
+  code, the guide audit case, the no-profile 404, the refused-write error, the missing-gem 404 and
+  the refused gem write were RED; the admin-only and approve/reject cases were the green controls.
+  Mutations (each restored by sha256, each reddened exactly one case): swallow the guide UPDATE error;
+  drop the guide 404; drop the audit line; swallow the gem UPDATE error; drop the gem 404.
+- Client: `travel-buddy-standalone/app/admin/__tests__/AdminConsoleScreens.component.test.tsx:75#describe('Hidden gem review (PLAT-F39)'`
+  and `travel-buddy-standalone/app/admin/__tests__/AdminConsoleScreens.component.test.tsx:118#describe('Local guides (PLAT-F38)'`. Mutations: a refused decision still removing its
+  row (gems and guides, 1 red each); a failed queue read rendered as empty (2 red).
+
+### 45.4 Decisions (this census has no decision register)
+
+- **Decline is `demoted`.** The profile table allows `applicant | active | suspended | demoted`; an
+  applicant who is declined was never active, and `suspended` reads as a temporary sanction.
+- **Merge and sensitivity marking stay API-only.** `mergeDuplicate` and `markSensitive` still await
+  their UPDATEs unchecked, so a screen over them would report success it cannot know. They are listed
+  with their calls in `docs/ops/testing-mode-flows.md` and recorded as an open item.
+
+### 45.5 What this does not claim, and what would turn it red
+
+- MD115 and MD448 do not move: they grade community confirmation and gem intelligence, and the
+  admin decision path they rest on is unchanged except that its failures are now reported.
+- The loop closes only where `hidden_gems_enabled` and `local_guides_enabled` are on; the admin
+  routes themselves are not flag-gated.
+- Red if: the verify or guide-status route answers ok for a refused write or a missing target; a
+  screen shows an empty queue for a failed read, or drops a row the server refused.

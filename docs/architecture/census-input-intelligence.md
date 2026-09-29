@@ -5176,3 +5176,190 @@ the only lane that could not make the right one."*
 since `a97bfdac0`, so this census went stale again and the file is now named in
 the acknowledgement with a per-file argument. That is the correct price of the
 fix, and the same price census-compass §42 paid for the same reason.
+
+## §34 — Testing mode WP-19 (lane tm-ii): paste, dictation and "meet at" built — 2026-09-29
+
+Flows GII-F08 (paste → review), GII-F09 (dictation) and GII-F10 (Telegraph
+"meet at") were NOT BUILT. They are now built end to end on a branch, proven
+through the real route, gateway and client services with only the network
+faked. **All evidence below is CONTROLLED (fixtures, fake network); none of it
+is production evidence.** No flag, no migration and nothing under payments was
+touched. This census has no decision register of its own, so the decisions are
+recorded here (§34.4).
+
+### §34.1 What was built
+
+**Paste (GII-F08).** `POST /api/input-assistance/extract`
+(`artifacts/api-server/src/routes/inputAssistance.ts:557#/input-assistance/extract`)
+classifies a pasted blob
+(`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:371#export function classifyPaste`:
+coordinates `artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:122#export function parseCoordinates`,
+map links `artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:206#export function parseMapLink`,
+lists and itineraries) and resolves every
+item through the SAME serve typed text uses —
+`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:529#const res = await resolveText(sc, params, item.query`
+calls `generateSuggestionsWithCoverage`, so a pasted "hcmc" meets the same alias
+table, stroke fold, privacy gate and ranking as a typed one. It writes nothing
+and says so on every answer
+(`artifacts/api-server/src/routes/inputAssistance.ts:617#mutated: false,`).
+Each item is `resolved`, `no_match`, `failed` or `unsupported`, plus `partial`;
+a failed source with no rows is `failed`, never `no_match`
+(`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:475#if (rows.length === 0 && refusal)`).
+Coordinates are named by the existing server geocoder through a new variant that
+tells an outage from an answered nothing
+(`artifacts/api-server/src/services/geocodingService.ts:110#export async function reverseGeocodeOutcome`).
+The review screen
+(`travel-buddy-standalone/src/platform/input-assistance/paste/PasteReviewSheet.tsx:55#export function PasteReviewSheet`)
+is mounted by the Trip stop editor
+(`travel-buddy-standalone/src/components/trip/DestinationListEditor.tsx:366#<PasteReviewSheet`),
+pre-ticks only complete answers
+(`travel-buddy-standalone/src/platform/input-assistance/paste/pasteReview.ts:110#export function initialSelection`),
+refuses any answer that does not say `mutated: false`
+(`travel-buddy-standalone/src/platform/input-assistance/paste/pasteReview.ts:74#if (b.mutated !== false) return null;`),
+and persists ONLY on confirm, through the Trip's own endpoint and its own
+co-host check
+(`travel-buddy-standalone/src/platform/input-assistance/paste/persistPastedDestinations.ts:23#export async function persistPastedDestinations`);
+a write that fails stays on screen with Retry.
+
+**A defect the paste work exposed, fixed in the shared gateway.** A wholly
+unreadable `canonical_locations` read returned `[]` at three levels, so every
+city picker rendered an outage as "no such city". It now throws
+(`artifacts/api-server/src/lib/canonicalLocations.ts:733#every((r) => r.error)) throw new CanonicalRegistryUnreadable()`),
+the resolver rethrows it
+(`artifacts/api-server/src/lib/inputAssistance/geoResolver.ts:219#if (e instanceof CanonicalRegistryUnreadable) throw e`),
+and the gateway records the cities source as unreadable on its §80 coverage
+(`artifacts/api-server/src/lib/inputAssistance/gateway.ts:511#noteTypeUnreadable(coverage, 'cities'); return EMPTY_GEO; })`).
+A partial read (one column missing pre-2220) is unchanged, and a readable
+registry serves byte-identical rows (the ten existing gateway/geo suites stay
+green). This closes the TOTAL-failure half of the masquerade census-discovery
+§46.3 reported and left; its partial half (a silently skipped `search_key`
+read) is unchanged.
+
+**A second defect, bigger than this WP: the whole input layer missed `/api`.**
+`EXPO_PUBLIC_API_BASE_URL` is the ORIGIN and every router is mounted under
+`/api`; suggest, policies and telemetry called `${base}/input-assistance/…`, so
+on the hosted testing app they reached the web catch-all and every field
+reported assistance as unavailable. Fixed in place
+(`travel-buddy-standalone/src/platform/input-assistance/services/inputAssistance.ts:71#/api/input-assistance/suggest`,
+`travel-buddy-standalone/src/platform/input-assistance/services/policyClient.ts:63#/api/input-assistance/policies`,
+`travel-buddy-standalone/src/platform/input-assistance/services/telemetryTransport.ts:70#/api/input-assistance/telemetry`),
+pinned by `travel-buddy-standalone/src/platform/input-assistance/services/__tests__/gatewayApiPrefix.component.test.ts`
+(4/4 red before, green after). **Every row in this census graded on a controlled
+client test was unaffected by this — the fetch was always faked — which is why
+nothing caught it; its effect was on the hosted app only.**
+
+**Dictation (GII-F09).** A platform-recognizer seam beside the clip-based
+transcription port: the browser's own `SpeechRecognition` is bound where the
+platform exposes it
+(`travel-buddy-standalone/src/platform/input-assistance/voice/speechRecognizer.ts:126#export function createWebSpeechRecognizer`),
+the native module the owner has not approved has an adapter that imports
+nothing and keeps audio on the device by default
+(`travel-buddy-standalone/src/platform/input-assistance/voice/speechRecognizer.ts:260#requiresOnDeviceRecognition: config.requiresOnDeviceRecognition`),
+and with neither the answer is `unavailable/no_provider` before the microphone
+is asked for. The transcript enters the typed path's own builder and refusals
+(`travel-buddy-standalone/src/platform/input-assistance/voice/voiceIntake.ts:352#return voiceIntakeRequest(outcome.result, opts);`).
+The microphone
+(`travel-buddy-standalone/src/platform/input-assistance/voice/VoiceDictationButton.tsx:25#export function VoiceDictationButton`)
+sits beside the paste box, so dictated stops go through the same extract
+pipeline; on a build without a recognizer it is shown struck through and says
+so when tapped.
+
+**"Meet at" (GII-F10).** In `telegraph_message`, a draft ending in "meet at …"
+is an ACTION takeover in the gateway
+(`artifacts/api-server/src/lib/inputAssistance/gateway.ts:1069#const meetAt = await serveTelegraphMeetAt(`,
+`artifacts/api-server/src/lib/inputAssistance/telegraphActions.ts:159#export async function serveTelegraphMeetAt`):
+share meeting point (the typed place resolved through the place picker's own
+serve), share Trip stop (the viewer's own Trips —
+`artifacts/api-server/src/lib/inputAssistance/telegraphActions.ts:93#.neq('role', 'invited')`),
+share current Place (`artifacts/api-server/src/lib/inputAssistance/telegraphActions.ts:232#requires: 'device_location', draft: null`).
+No Trip stops is an ineligible row with its reason
+(`artifacts/api-server/src/lib/inputAssistance/telegraphActions.ts:222#ineligibleReason: 'You have no upcoming Trip stops to share.'`);
+an unreadable Trip read is a refusal and NO row
+(`artifacts/api-server/src/lib/inputAssistance/telegraphActions.ts:226#failed.push('trip_stops')`).
+The client sends only the fragment
+(`travel-buddy-standalone/src/platform/input-assistance/social/telegraphMeetAt.ts:40#export function meetAtFragment`),
+declares exactly `set_structured_value`
+(`travel-buddy-standalone/src/platform/input-assistance/social/telegraphMeetAt.ts:30#export const TELEGRAPH_COMPOSER_CAPABILITIES`),
+and the bar
+(`travel-buddy-standalone/src/platform/input-assistance/social/MeetAtActionBar.tsx:32#export function MeetAtActionBar`,
+mounted at `travel-buddy-standalone/app/messages/[id].tsx:2444#<MeetAtActionBar draft={input}`)
+opens the §6.2 LOCATION sheet pre-filled
+(`travel-buddy-standalone/src/features/telegraph/composer/TypedComposePrompt.tsx:28#initialLocation?:`)
+— the sender still presses Send, and the sheet still opens on Approximate area
+(`travel-buddy-standalone/src/features/telegraph/composer/TypedComposePrompt.tsx:41#pre-filling the LABEL never pre-selects a finer precision`).
+
+### §34.2 Row moves
+
+| ID | from | **to** | evidence |
+| --- | --- | --- | --- |
+| G154 | N | **C** | Controlled. Every pasted item with text is resolved by `generateSuggestionsWithCoverage` (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:529#const res = await resolveText(sc, params, item.query`); `artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts` shows "danang" resolved by the stroke fold and "hcmc" by the alias table through the real route. |
+| G155 | N | **C** | Controlled. A place name or an address is one item — a comma is deliberately not a separator (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:296#const SEQUENCE_SEPARATORS`); mutation S7 (comma as separator) turns the address test red. |
+| G156 | N | **C** | Controlled. Google (place, dir, @, q), Apple (ll, q), OpenStreetMap (mlat/mlon, #map) and geo: parsers (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:206#export function parseMapLink`); a shortened or unknown link is REPORTED `unsupported` with copy, never dropped (mutation S9 red). |
+| G157 | N | **C** | Controlled. Decimal, hemisphere and DMS pairs (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:122#export function parseCoordinates`), named by `artifacts/api-server/src/services/geocodingService.ts:110#export async function reverseGeocodeOutcome` and then resolved like typed text; a geocoder outage is `failed` (mutations S5, S6 red). |
+| G160 | N | W | Itinerary blocks are PARSED: day headings and time hints are carried to the review screen and kept out of the place query (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:371#export function classifyPaste`). NOT built: §24's "Create 3 Trip stops" with their TIMES — the only mounted target is the Trip's destination list, which has no time column, so "Dinner at 7" is shown as an honest no-match for a city field. |
+| G161 | N | **C** | Controlled. Newline, bullet, numbered, arrow, semicolon and "then" lists split into items (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:371#export function classifyPaste`) and land on the Trip stop editor's review screen (`travel-buddy-standalone/src/components/trip/DestinationListEditor.tsx:366#<PasteReviewSheet`). |
+| G162 | N | **C** | Controlled. The extract route writes nothing (`artifacts/api-server/src/routes/inputAssistance.ts:617#mutated: false,`; the server suite fails on ANY write verb, mutation S8 red), the client refuses an answer that does not say so (`travel-buddy-standalone/src/platform/input-assistance/paste/pasteReview.ts:74#if (b.mutated !== false) return null;`, mutation C4 red), and `travel-buddy-standalone/src/platform/input-assistance/paste/__tests__/pasteReviewFlow.component.test.tsx` asserts zero POSTs to `/destinations` while the review screen is up and only the ticked ones after confirm. |
+| G163 | N | W | Implementation of the ROUTING is complete and controlled-proven: a platform transcript enters `voiceIntakeRequest` (`travel-buddy-standalone/src/platform/input-assistance/voice/voiceIntake.ts:352#return voiceIntakeRequest(outcome.result, opts);`) and the dictated paste reaches `POST /api/input-assistance/extract` exactly as typed text does (`travel-buddy-standalone/src/platform/input-assistance/voice/__tests__/voiceDictation.component.test.tsx`). The hosted testing app is iOS/Android, where no recognizer is installed, so no user can dictate there today. AWAITS OWNER APPROVAL: II-TM-A1 |
+| G133 | N | W | Three of §21's six Telegraph actions: meeting point, Trip stop and location when permitted (`artifacts/api-server/src/lib/inputAssistance/telegraphActions.ts:159#export async function serveTelegraphMeetAt`). Share Place is covered only as a meeting point; Event and media have no candidate. |
+| G362 | N | **C** | Controlled. The §54 chain, clause by clause: "meet at" → `telegraph_message` context → action rows only (§48 declaration `travel-buddy-standalone/src/platform/input-assistance/social/telegraphMeetAt.ts:30#export const TELEGRAPH_COMPOSER_CAPABILITIES`) → the three candidates → eligibility (server for Trip stops, device for current Place) → tap → the structured LOCATION share opens pre-filled in the composer's §6.2 sheet (`travel-buddy-standalone/app/messages/[id].tsx:2444#<MeetAtActionBar draft={input}`). Server `artifacts/api-server/src/test/inputAssistanceTelegraphActions.test.ts`, client `travel-buddy-standalone/src/platform/input-assistance/social/__tests__/meetAtActions.component.test.tsx`. |
+
+`G158` (event links) and `G159` (flight/hotel text) stay **N**: nothing parses
+them. `G135` (Trip actions) and `G303` (`share_entity`) stay **N**: the §54
+candidates ride the existing `set_structured_value`, deliberately (§34.4 D9), so
+`share_entity` still has no producer. `G53`'s step 9 now has a producer in one
+place — the paste resolver's geocoder-named candidate (`source: 'provider'`) —
+which is not enough to move a row about the whole trust order; noted, not moved.
+census-wall **W71 stays W**: the intake it asks about now has a platform
+producer on web builds only.
+
+### §34.3 Headline, restated from the rows
+
+Seven N → C (G154, G155, G156, G157, G161, G162, G362) and three N → W (G160,
+G163, G133) against §33's 287 C / 44 W / 38 N / 4 X.
+
+| Measure | Value |
+| --- | --- |
+| **Denominator — testable requirements** | **373** |
+| BUILT-AND-CORRECT | **294** |
+| BUILT-BUT-WRONG | **47** |
+| NOT-BUILT | **28** |
+| CANNOT-VERIFY | **4** |
+| **CONSTRUCTED%** = (C+W)/373 | **341 / 373 = 91.4 %** |
+| **CORRECT%** (raw) = C/373 | **294 / 373 = 78.8 %** |
+| **THE GAP** = W/373 | **47 / 373 = 12.6 %** |
+| CANNOT-VERIFY share | **4 / 373 = 1.1 %** |
+
+### §34.4 Decisions (routine; decided and implemented)
+
+- **II-TM-D1 — where a paste can land.** Only fields whose value is a place or city (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:47#export const PASTE_CONTEXTS`); anything else is a 400. The first mounted target is the Trip stop editor, in both create (the draft) and edit (the Trip's own endpoint) modes.
+- **II-TM-D2 — a comma is not a list separator.** Addresses contain commas; splitting them turns one place into three wrong ones.
+- **II-TM-D3 — shortened map links are not followed.** Following a redirect from a server on a user-supplied URL is an SSRF and tracking surface; the item says how to get the full link instead.
+- **II-TM-D4 — four item outcomes plus `partial`.** A partial answer is shown but never pre-ticked.
+- **II-TM-D5 — coordinates go through the existing server geocoder**, via an outcome-reporting variant; when the registry has no row for the named city, the geocoder's name is offered as a `source: 'provider'` candidate carrying the exact point.
+- **II-TM-D6 — a wholly unreadable city registry is an outage on the gateway's coverage** for every city picker, not an empty list.
+- **II-TM-D7 — the input layer's client calls carry `/api`.**
+- **II-TM-D8 — dictation is a platform-recognizer seam.** Bound to the browser recognizer where one exists; the native adapter exists but is bound to nothing (II-TM-A1). The microphone is always visible and honest.
+- **II-TM-D9 — §54 candidates ride `set_structured_value`**, whose value is the §6.2 LOCATION draft; no new action type, so no union change on either side. Only the "meet at …" fragment leaves the device. Trip stops are the viewer's own non-invited Trips. Current Place eligibility is decided on the device, and its label is coarse (district, city). A pre-filled share sets the LABEL only; Telegraph §4.3's "Approximate area" default is kept, and an edited label drops the place id.
+- **II-TM-D10 — itinerary times are shown, not persisted**, because the only mounted target has no time column (G160 W).
+
+### §34.5 APPROVAL REQUIRED — II-TM-A1: a native speech recognizer
+
+- **Recommended action.** Approve `expo-speech-recognition` (the release matching Expo SDK 54) as a dependency with its config plugin; add `NSSpeechRecognitionUsageDescription` and widen the `NSMicrophoneUsageDescription` string in `travel-buddy-standalone/app.json` to mention dictation (`RECORD_AUDIO` is already declared); install at bootstrap with `installSpeechRecognizer(createNativeSpeechRecognizer(ExpoSpeechRecognitionModule))` (`travel-buddy-standalone/src/platform/input-assistance/voice/speechRecognizer.ts:209#export function createNativeSpeechRecognizer`), keeping `requiresOnDeviceRecognition: true`. It is a NATIVE module: it needs a new development/store build — an OTA update cannot add it, and Expo Go cannot load it. Cost $0; no key.
+- **What the owner is deciding.** (1) The dependency and the native rebuild. (2) Consent: on-device only (the adapter's default — audio never leaves the phone, but some languages/devices will then report unavailable) versus allowing the OS to send audio to Apple/Google for recognition. (3) Whether the browser recognizer (bound automatically on web builds today — Chrome's sends audio to Google) should stay bound; the hosted testing app ships no web build, so it affects development only.
+- **If approved:** dictation works on the next native build, through the same intake and pipeline proven here; G163 can then move with one device run on record. **If declined:** the microphone stays visible and says voice input is unavailable on native builds; the OS keyboard's own dictation still types into every field like a keyboard. **Recovery:** delete the bootstrap line (and the dependency); the seam falls back to `NO_SPEECH_RECOGNIZER` with no other change.
+
+- NOT-GRADED: travel-buddy-standalone/app.json — named only as where an approved II-TM-A1 would add a permission string; no row in this census grades it.
+
+### §34.6 Tests, red first, and mutations
+
+- Server, `artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts` (13) and `artifacts/api-server/src/test/inputAssistanceTelegraphActions.test.ts` (8): both RED first (module missing), then green; the outage test was RED against the tree before the canonical-registry chain (an unreadable registry answered "resolved: Vietnam" for "Da Nang" with no partial flag, and would have answered `no_match` for a name no country matches).
+- Client, `gatewayApiPrefix.component.test.ts`: 4/4 RED before the prefix fix, green after. The paste flow, dictation and meet-at component suites and the two node suites (`paste/__tests__/pasteReview.test.ts`, `voice/__tests__/speechRecognizer.test.ts`) were written alongside the code they test; **their red state is shown by mutation, not by a pre-code run** — e.g. C2 (the editor does not mount the review screen, i.e. the base tree's behaviour) turns all five flow tests red.
+- Mutations — every one applied, run, watched RED, restored byte-identically by sha256: server S1–S9 (registry throw, resolver rethrow, gateway coverage note, empty+refusal=failed, geocode failed, geocoder non-OK, comma split, a write in the route, short-link refusal) and T1–T6 (Trip read failure, invitation-as-membership, the gateway hook, the ineligible row, the device-only position, time-is-not-place); client C1–C18 (prefix, sheet not mounted, partial pre-ticked ×2, mutated-accepting parser, retry re-sending all, failed write counted saved, unreadable answer as empty, no platform recognizer ×2, availability skipped, intake bypassed, unavailable mic pretending, whole message sent, failure as idle, ineligible tappable, no pre-fill ×2, screen unwired, edited label keeps id, pre-fill selecting a finer precision). 36 of 36 red.
+
+### §34.7 What would turn this red
+
+A paste answer with an empty list for a failed source; any write on the extract
+path; a client that renders a review from an answer without `mutated: false`;
+the "meet at" fragment widened to the whole message; a Trip stop read that
+answers "none" on an error; a microphone that hides itself or returns a
+placeholder transcript; the input layer's client URLs losing `/api` again.

@@ -31,7 +31,7 @@ import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
-import { liveLabelsServable, readLiveClaimEnvelopes } from "../lib/liveClaimRead.js";
+import { liveClaimReadFailed, liveLabelsServable, readLiveClaimEnvelopes } from "../lib/liveClaimRead.js";
 import { buildWallMoments, type WallMoment } from "../lib/wallMoments.js";
 import { readPreviousReadings } from "../lib/wallMomentRead.js";
 import { ATTENTION_RELEVANCE, ATTENTION_WINDOW_MINUTES, routeAttention, type AttentionDecision } from "../lib/attentionEngine.js";
@@ -130,7 +130,7 @@ router.get(
         continue;
       }
       const current = await readLiveClaimEnvelopes(sc, subjectId, { claimTypes: WALL_MOMENT_CLAIM_TYPES, now });
-      if (current.length === 0) {
+      if (liveClaimReadFailed(current)) { subjects.push({ subjectId, refusal: "error", moments: 0 }); continue; } if (current.length === 0) { // TM-live WALL-F13: a FAILED read (census-discovery §94 mark) is a refusal, not "no moments"
         subjects.push({ subjectId, refusal: null, moments: 0 });
         continue;
       }

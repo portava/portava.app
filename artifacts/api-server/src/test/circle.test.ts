@@ -555,6 +555,16 @@ function makeClient(userId: string) {
     from(table: string) {
       return fakeTable(table);
     },
+    // The kill switch now flips through the audited toggle (tm-followups A4);
+    // this simulates toggle_feature_flag_with_audit over the same fake flags.
+    async rpc(name: string, args: any) {
+      if (name !== "toggle_feature_flag_with_audit") return { data: null, error: null };
+      const row = state.featureFlags[args.p_flag];
+      if (!row) return { data: null, error: { message: "Flag not found", code: "P0002" } };
+      const old = row.enabled;
+      row.enabled = args.p_new_enabled;
+      return { data: [{ flag: row.flag, enabled: row.enabled, old_enabled: old }], error: null };
+    },
   };
 }
 

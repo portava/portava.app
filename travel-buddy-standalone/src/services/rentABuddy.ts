@@ -23,7 +23,7 @@ export type { BookingRefusalAction, BookingRefusal } from './rentABuddyBookingEr
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type BuddyStatus = 'pending' | 'active' | 'paused' | 'rejected' | 'suspended';
-export type BookingStatus =
+export type BookingStatus = | 'pending' | 'confirmed' | 'completed_pending_traveler_confirmation' | 'declined' | 'cancelled_by_traveler' | 'cancelled_by_buddy'
   | 'requested' | 'scheduled' | 'in_progress' | 'completed' | 'cancelled' | 'disputed'
   | 'expired' | 'no_show_pending';
 export type ApplicationStatus = 'pending' | 'under_review' | 'approved' | 'rejected';
@@ -250,7 +250,7 @@ async function authHeaders(): Promise<Record<string, string>> {
   };
 }
 
-type ApiResult<T> = { ok: true; data: T } | { ok: false; error: string };
+type ApiResult<T> = { ok: true; data: T } | { ok: false; error: string; /** The server's `gate` field: which gate refused (see rentABuddyGates.ts). */ gate?: string };
 
 async function apiFetch<T>(
   path: string,
@@ -264,7 +264,7 @@ async function apiFetch<T>(
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      return { ok: false, error: (body as any)?.error ?? `HTTP ${res.status}` };
+      return { ok: false, error: (body as any)?.error ?? `HTTP ${res.status}`, ...(typeof (body as any)?.gate === 'string' ? { gate: (body as any).gate as string } : {}) };
     }
     const data = await res.json() as T;
     return { ok: true, data };
@@ -1695,22 +1695,22 @@ export async function getBookingEvents(
   return apiFetch(`/api/rent-a-buddy/bookings/${bookingId}/events`);
 }
 
+/** The check-in types POST /rent-a-buddy/bookings/:id/check-in accepts (its VALID_CHECKIN_TYPES). */
 export type CheckInStatus =
-  | 'arrived'
-  | 'started'
-  | 'could_not_find'
-  | 'unsafe'
-  | 'missed'
-  | 'no_show';
+  | 'arrival' | 'comfort_30min'
+  | 'check_ok'
+  | 'uncomfortable' | 'end_early'
+  | 'contact_support' | 'start_safe_return'
+  | 'emergency_phrase';
 
 export async function submitCheckIn(
   bookingId: string,
-  status: CheckInStatus,
-  broadArea?: string,
-): Promise<ApiResult<{ ok: boolean }>> {
-  return apiFetch(`/api/buddy-bookings/${bookingId}/check-in`, {
+  checkinType: CheckInStatus,
+  response?: string,
+): Promise<ApiResult<{ checkin: { id: string } | null }>> {
+  return apiFetch(`/api/rent-a-buddy/bookings/${bookingId}/check-in`, {
     method: 'POST',
-    body: JSON.stringify({ status, broadArea }),
+    body: JSON.stringify({ checkinType, response: response ?? null }),
   });
 }
 
@@ -1733,4 +1733,106 @@ export async function rebookBooking(
     method: 'POST',
     body: JSON.stringify(payload),
   });
+}
+
+// ── Testing-mode wiring (lane tm-rab, WP-01) ──────────────────────────────────
+//
+// Appended at the foot so the file stays line-neutral for the docs that cite it
+// by line (docs/security/rent-a-buddy-booking-paths.md).
+
+/** A suggested change to a booking (buddy_booking_change_requests), as GET …/change-requests returns it. */
+export interface BookingChangeRequest {
+  id: string;
+  changeField: string;
+  currentValue: Record<string, unknown>;
+  proposedValue: Record<string, unknown>;
+  reason: string | null;
+  status: string;
+  /** True when the viewer raised it — they wait; the other party answers. */
+  requestedByMe: boolean;
+  responseNote: string | null;
+  respondedAt: string | null;
+  createdAt: string;
+}
+
+/** The suggestions raised on a booking (PLAT-F43 "suggest another time"). Party-only on the server. */
+export async function getBookingChangeRequests(
+  bookingId: string,
+): Promise<ApiResult<{ bookingStatus: string; changeRequests: BookingChangeRequest[] }>> {
+  return apiFetch(`/api/rent-a-buddy/bookings/${bookingId}/change-requests`);
+}
+
+/** Accept or decline the other party's suggestion. Accepting applies it to the booking server-side. */
+export async function respondToChangeRequest(
+  bookingId: string,
+  changeRequestId: string,
+  decision: 'accept' | 'decline',
+  responseNote?: string,
+): Promise<ApiResult<{ ok: boolean; decision: string; changeRequestId: string }>> {
+  return apiFetch(`/api/rent-a-buddy/bookings/${bookingId}/respond-change-request`, {
+    method: 'POST',
+    body: JSON.stringify({ changeRequestId, decision, ...(responseNote ? { responseNote } : {}) }),
+  });
+}
+
+/**
+ * The statuses in which a buddy has a session to run: accepted and upcoming,
+ * under way, and completed-awaiting-the-traveller. `confirmed` is legacy-only
+ * on the server (never written now) but existing rows may carry it.
+ */
+export const BUDDY_SESSION_STATUSES = [
+  'scheduled', 'confirmed', 'in_progress', 'completed_pending_traveler_confirmation',
+] as const;
+
+function mapBuddyBookingRow(r: Record<string, any>): BuddyBooking {
+  return {
+    id: r.id,
+    buddyId: r.buddy_id,
+    travelerId: r.traveler_id,
+    packageId: r.package_id ?? null,
+    tripId: r.trip_id ?? null,
+    bookingDate: r.booking_date,
+    startTime: r.start_time ?? null,
+    durationH: Number(r.duration_h ?? 0),
+    groupSize: Number(r.group_size ?? 1),
+    city: r.city,
+    category: r.category,
+    notes: r.notes ?? null,
+    totalUsd: Number(r.total_usd ?? 0),
+    status: r.status,
+    cancelledAt: r.cancelled_at ?? null,
+    confirmedAt: r.confirmed_at ?? null,
+    completedAt: r.completed_at ?? null,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    routePlan: Array.isArray(r.route_plan) ? r.route_plan : [],
+    telegraphThreadId: r.telegraph_thread_id ?? null,
+  };
+}
+
+/**
+ * The buddy's own sessions to run (buddy side of PLAT-F45). Before this, an
+ * accepted booking vanished from every buddy screen — the requests list shows
+ * only bookings awaiting a response — so there was nowhere to press Start.
+ *
+ * One read per status against GET /api/me/buddy-requests (which filters by
+ * status and pages at 50). If ANY of the reads fails the whole list fails: a
+ * partial list shown as complete would hide a session the buddy has to run.
+ */
+export async function listMyBuddySessions(): Promise<ApiResult<BuddyBooking[]>> {
+  const results = await Promise.all(
+    BUDDY_SESSION_STATUSES.map((status) =>
+      apiFetch<{ requests: Array<Record<string, any>> }>(
+        `/api/me/buddy-requests?status=${encodeURIComponent(status)}&limit=50`,
+      ),
+    ),
+  );
+  const out: BuddyBooking[] = [];
+  for (const r of results) {
+    if (!r.ok) return r;
+    for (const row of r.data.requests ?? []) out.push(mapBuddyBookingRow(row));
+  }
+  out.sort((a, b) =>
+    `${a.bookingDate} ${a.startTime ?? ''}`.localeCompare(`${b.bookingDate} ${b.startTime ?? ''}`));
+  return { ok: true, data: out };
 }

@@ -45,10 +45,30 @@ describe('Compass surfaces send tzOffsetMinutes', () => {
     compass._setTestAuthToken('test-token');
   });
 
-  it('feed appends tzOffsetMinutes', async () => {
-    await compass.fetchCompassFeed({ city: 'Lisbon' });
-    assert.equal(calls.length, 1);
-    assertQueryOffset(calls[0].url);
+  // Restated (testing-mode WP-12, COMP-F03): the full GET /compass/feed is
+  // RETIRED from the client. Compass Home (/compass/home, the server-built
+  // projection CPV2-05 asks for) and the per-section feed below are what the
+  // app renders; a whole-feed call had no screen and would be a second
+  // recommendation surface. There is no longer a feed call to carry an offset —
+  // the section call below still does.
+  it('the full feed is retired: no fetchCompassFeed, and no client source calls GET /compass/feed', async () => {
+    assert.equal((compass as Record<string, unknown>).fetchCompassFeed, undefined);
+    const { readFileSync, readdirSync, statSync } = await import('node:fs');
+    const path = await import('node:path');
+    const { join } = path;
+    const root = join(import.meta.dirname, '../../..');
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        if (name === 'node_modules' || name === '__tests__') continue;
+        const full = path.resolve(dir, name);
+        if (statSync(full).isDirectory()) walk(full);
+        else if (/\.(ts|tsx)$/.test(name) && /\/api\/compass\/feed\?/.test(readFileSync(full, 'utf8'))) offenders.push(full);
+      }
+    };
+    walk(join(root, 'src'));
+    walk(join(root, 'app'));
+    assert.deepEqual(offenders, []);
   });
 
   it('feed section appends tzOffsetMinutes', async () => {

@@ -46,7 +46,7 @@ import { z } from "zod";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
-import { liveLabelsServable, resolvePlaceIntelState } from "../lib/liveClaimRead.js";
+import { liveClaimReadFailed, liveLabelsServable, resolvePlaceIntelState } from "../lib/liveClaimRead.js";
 import { confidenceBand, mayCountAsConsensus } from "../lib/intelContracts.js";
 import { sourceCountBucket } from "../lib/liveClaimRead.js";
 import { truthOfEnvelope, truthOfEnvelopes } from "../lib/liveEnvelopeTruth.js";
@@ -172,7 +172,7 @@ router.get("/v1/experiences/:id/live-state", asyncHandler(async (req, res) => {
   // The resolved subject is part of the version: if this id is merged away after
   // a client cached the answer, the survivor's state may coincidentally have the
   // same shape, and a stale 304 would keep serving the wrong subject_id.
-  const stateVersion = `${subjectId}:${resolved.state}:${resolved.claims.length}:${maxObservedMs || "-"}:${earliestValidUntil ?? "-"}`;
+  const stateVersion = `${subjectId}:${resolved.state}:${resolved.claims.length}:${maxObservedMs || "-"}:${earliestValidUntil ?? "-"}${liveClaimReadFailed(resolved.claims) ? ":live_read_failed" : ""}`; // TM-live SEN-F08: a failed read never shares a real answer's ETag
   const etag = etagOf(stateVersion);
   if (notModified(req, res, etag)) return;
   res.set("ETag", etag);
@@ -216,7 +216,7 @@ router.get("/v1/experiences/:id/live-state", asyncHandler(async (req, res) => {
     // and the floor (unknown / unknown) when the set is empty — "no coverage is
     // not quiet" (§2), stated rather than left to the caller to infer.
     truth: truthOfEnvelopes(resolved.claims, nowMs),
-    claims,
+    claims, live_read_failed: liveClaimReadFailed(resolved.claims), // TM-live SEN-F08: the live rung could not be read — `unknown`/`typical` here is not "nothing live"
   });
 }));
 

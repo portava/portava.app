@@ -847,7 +847,7 @@ router.get("/trips/:tripId/daily-brief", async (req, res) => {
       const activeTripForStaleCheck = cachedActiveTripId ?? tripId;
       const lastModified = await getLastModifiedTs(client, activeTripForStaleCheck);
       const isStale = lastModified > cached.builtAt;
-      res.json({ access: "full", brief: { ...cached.brief, isStale, generatedAt: cached.builtAt }, fromCache: true });
+      res.json({ access: "full", brief: await applyDismissals(client, user.id, date, { ...cached.brief, isStale, generatedAt: cached.builtAt }), fromCache: true });
       return;
     }
   }
@@ -869,7 +869,7 @@ router.get("/trips/:tripId/daily-brief", async (req, res) => {
       // DB brief may be stale — warm L1 preserving original generatedAt so
       // subsequent L1 hits compare against the real generation time, not now.
       setCachedBrief(user.id, date, stored.brief, stored.generatedAt);
-      res.json({ access: "full", brief: { ...stored.brief, isStale, generatedAt: stored.generatedAt }, fromCache: true });
+      res.json({ access: "full", brief: await applyDismissals(client, user.id, date, { ...stored.brief, isStale, generatedAt: stored.generatedAt }), fromCache: true });
       return;
     }
   }
@@ -901,7 +901,7 @@ router.get("/trips/:tripId/daily-brief", async (req, res) => {
   setCachedBrief(user.id, date, briefWithMeta);
   await storeBriefInDB(client, user.id, tripId, date, ctx.briefType, briefWithMeta);
 
-  res.json({ access: "full", brief: { ...briefWithMeta, isStale: false, generatedAt: nowMs } });
+  res.json({ access: "full", brief: await applyDismissals(client, user.id, date, { ...briefWithMeta, isStale: false, generatedAt: nowMs }) });
 });
 
 /* ===========================================================================
@@ -955,7 +955,7 @@ router.post("/trips/:tripId/daily-brief/refresh", async (req, res) => {
   setCachedBrief(user.id, date, briefWithMeta);
   await storeBriefInDB(client, user.id, tripId, date, ctx.briefType, briefWithMeta);
 
-  res.json({ access: "full", brief: { ...briefWithMeta, isStale: false, generatedAt: refreshedAt }, refreshed: true });
+  res.json({ access: "full", brief: await applyDismissals(client, user.id, date, { ...briefWithMeta, isStale: false, generatedAt: refreshedAt }), refreshed: true });
 });
 
 /* ===========================================================================
@@ -997,7 +997,7 @@ router.post("/trips/:tripId/daily-brief/dismiss/:recommendationId", async (req, 
   const member = await isAcceptedTripMember(client, tripId, user.id);
   if (!member) { sendError(res, "not_member", "You must be an accepted trip member"); return; }
 
-  // best-effort
+  // recorded, or refused — never reported as dismissed when it was not (TM-live COMP-F14)
   {
     const { error: evtError } = await client.from("user_preference_events").insert({
       user_id:           user.id,
@@ -1007,10 +1007,53 @@ router.post("/trips/:tripId/daily-brief/dismiss/:recommendationId", async (req, 
       trip_id:           tripId,
       created_at:        new Date().toISOString(),
     });
-    if (evtError) briefLogger.warn({ err: evtError, recommendationId }, "dismiss preference event insert failed (best-effort)");
+    if (evtError) { briefLogger.warn({ err: evtError, recommendationId }, "dismiss preference event insert failed"); sendError(res, "degraded_unavailable", "The dismissal could not be recorded"); return; }
   }
 
   res.json({ ok: true, dismissed: recommendationId });
 });
 
 export default router;
+
+/* ===========================================================================
+ * TM-live (WP-11, COMP-F14) — a recorded dismissal stays dismissed.
+ *
+ * The brief is cached per user per day (briefCacheKey, daily_briefs UNIQUE
+ * (user_id, brief_date)), and the dismiss route only ever wrote a
+ * user_preference_events row: the next GET served the dismissed suggestion
+ * again from either cache. Every served brief now passes through here, which
+ * drops the suggestions this user dismissed on that brief day (UTC day of the
+ * dismissal = the brief date; recommendation ids such as `rec_culture` are
+ * reused day to day, so a dismissal is scoped to the day it was made).
+ *
+ * A dismissal read that FAILS is not "nothing dismissed": the brief is served
+ * whole and says so (`dismissalsApplied: false`) so the card can tell the
+ * traveller something they dismissed may reappear (DV-83).
+ * ===========================================================================
+ */
+async function applyDismissals(client: any, userId: string, date: string, brief: any): Promise<any> {
+  const suggestions: any[] = Array.isArray(brief?.suggestions) ? brief.suggestions : [];
+  const ids = suggestions.map((s) => s?.id).filter((id): id is string => typeof id === "string");
+  if (ids.length === 0) return { ...brief, dismissalsApplied: true };
+  const dayStart = `${date}T00:00:00.000Z`;
+  const dayEnd = new Date(Date.parse(dayStart) + 24 * 60 * 60 * 1_000).toISOString();
+  try {
+    const { data, error } = await client
+      .from("user_preference_events")
+      .select("recommendation_id")
+      .eq("user_id", userId)
+      .eq("signal", "dismiss")
+      .in("recommendation_id", ids)
+      .gte("created_at", dayStart)
+      .lt("created_at", dayEnd);
+    if (error) {
+      briefLogger.warn({ err: error }, "dismissal read failed; brief served without its dismissals applied");
+      return { ...brief, dismissalsApplied: false };
+    }
+    const dismissed = new Set(((data ?? []) as any[]).map((r) => String(r.recommendation_id)));
+    return { ...brief, suggestions: suggestions.filter((s) => !dismissed.has(s?.id)), dismissalsApplied: true };
+  } catch (err) {
+    briefLogger.warn({ err }, "dismissal read threw; brief served without its dismissals applied");
+    return { ...brief, dismissalsApplied: false };
+  }
+}

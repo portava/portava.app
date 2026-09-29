@@ -46,13 +46,13 @@ export default function CloseFriendsScreen() {
     // Resolve @handle → UUID if needed
     let userId = raw;
     if (!UUID_RE.test(raw)) {
-      const sr = await searchUsers(raw, 1);
-      if (!sr.ok || !sr.data?.length) {
+      const sr = await searchUsers(raw, 20); if (!sr.ok || !sr.data) { setAdding(false); Alert.alert("Couldn't look up that username", `We couldn't search for "@${raw}" just now, so nothing was checked.`, [{ text: 'Cancel', style: 'cancel' }, { text: 'Retry', onPress: () => { void handleAdd(); } }]); return; } // census-discovery §106 (tm-people): a failed lookup is not "Not found"
+      const match = sr.data.find((u) => (u.username ?? '').toLowerCase() === raw.toLowerCase()); if (!match) { // the search matches %raw% on name and handle — only the exact handle is this person
         setAdding(false);
         Alert.alert('Not found', `No traveler found with username "@${raw}". Make sure you follow them first.`);
         return;
       }
-      userId = sr.data[0].id;
+      userId = match.id;
     }
 
     const res = await addCloseFriend(userId);

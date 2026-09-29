@@ -230,6 +230,527 @@ Client:
   `passport_memories_enabled` is on.
 - **PLAT-F31:** complete as specified by the catalogue.
 
+## TM-admin lane (WP-21) — the admin console
+
+Branch `lane-tm-admin`, cut from `main` at `18518e982`. Controlled evidence only;
+no flag was changed, no migration was added, nothing was applied to any database.
+
+**Where:** sign in as an admin account (`profiles.role = 'admin'`), then
+Settings → **Connected features** → admin section → **Testing Console**
+(`/admin/console`). Every screen below is admin-only on the server (the existing
+`requireAdmin` / `isAdmin` guards); the in-app gate only keeps other people from
+landing on them. Every screen shows a failed read as **Couldn't load …** with
+**Try again**, never as an empty queue, and removes a row only after the server
+confirmed the decision.
+
+### PLAT-F39 — review submitted and reported hidden gems
+
+- **Where:** Testing Console → **Hidden gem review** (`/admin/hidden-gems`).
+- **Steps:** as a tester, submit a gem (it is `pending` and not listed). As the
+  admin, open **Pending**, optionally type a note, tap **Approve** (or **Reject**).
+  **Reported** lists gems with open reports: **Uphold (hide gem)** or **Dismiss reports**.
+- **Expected:** approve → the gem is `active` and appears in Hidden Gems; the
+  submitter is awarded `hidden_gem_explorer` (server side). Reject → `hidden`.
+  A refusal stays on the row as **Not recorded: …**.
+- **Check:** `hidden_gems.status`; a `hidden_gem_verifications` row with
+  `method = 'admin'` and the admin's id.
+- **Changed on the server:** approving a gem id that matches nothing is now 404,
+  and a refused status write is `db_error` (both used to answer `{ ok: true }`).
+- **API-only:** mark sensitive and merge duplicates (their writes are still
+  unchecked on the server, so no screen reports on them):
+
+  ```sh
+  curl -sS -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+    -d '{"sensitivityLevel":"protected"}' "$API/api/admin/hidden-gems/$GEM_ID/sensitive"
+  # sensitivityLevel: public | approximate | reveal_after_save | reveal_after_acceptance | protected
+  curl -sS -H "Authorization: Bearer $TOKEN" "$API/api/admin/hidden-gems/duplicate-candidates"
+  curl -sS -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+    -d "{\"canonicalGemId\":\"$CANONICAL_GEM_ID\"}" "$API/api/admin/hidden-gems/$DUPLICATE_GEM_ID/merge"
+  ```
+
+### PLAT-F38 — approve a local guide
+
+- **Where:** Testing Console → **Local guides** (`/admin/local-guides`).
+- **Steps:** as a tester, Gems → Guide → apply. As the admin, tap **Approve**
+  (or **Decline**) on their application.
+- **Expected:** approve → `local_guide_profiles.status = 'active'` with
+  `verified_at` set, and the tester's guide profile shows
+  (`GET /api/hidden-gems/guides/:userId`). Decline → `demoted`.
+- **Changed on the server:** a user with no guide profile is now 404 and a
+  refused write is `db_error` (both used to answer `{ ok: true }`). Each change
+  writes the log line `local guide status set via admin surface` with the
+  admin id, the user and the status.
+- **API-only:** suspend or reinstate an active guide:
+
+  ```sh
+  curl -sS -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+    -d '{"status":"suspended"}' "$API/api/admin/local-guides/$USER_ID/status"   # active | suspended | demoted
+  ```
+
+### SEN-F06 (admin half) — promote and withdraw a live-label scope
+
+- **Where:** Testing Console → **Live-label scopes** (`/admin/live-scopes`).
+  Needs `intel_live_scope_admin_surface_enabled` (to see the screen's data) and
+  `intel_live_scope_promotion_enabled` (to write); when either is off the
+  server's message is shown as it is.
+- **Steps:** under **Promote a scope**, leave Zone id empty for the zone-less
+  scope (or enter a zone id), enter the claim type, a review horizon (1–90
+  days), why you are promoting it, and the density-gate assessment JSON
+  (`npm run report:intel-funnel`; `{}` is accepted). **Promote**. To withdraw,
+  type a reason on the scope's card and tap **Withdraw**.
+- **Expected:** the notice names the scope key and what happened (`promoted`,
+  `repromoted`, `renewed`, `already active`); the scope is listed as `active`
+  until withdrawn or past its horizon. Recorded in the sensing census §28.
+
+### PASS-F23 — award, revoke and restore a person's stamp
+
+- **Where:** Testing Console → **User stamps** (`/admin/user-stamps`).
+- **Steps:** enter `@handle` or a user id → **Find**. Type a reason (required
+  for every action). Award by definition slug, or **Revoke** / **Restore** a
+  listed stamp.
+- **Expected:** the list is re-read after each action; a revoked stamp stays
+  listed as "— revoked" with its reason, so it can be restored. An award the
+  engine declines shows **Not awarded: <reason>**.
+- **Check:** `stamp_award_events` rows with `status` `awarded` / `revoked` /
+  `restored` and the admin id; `user_stamps.is_revoked`.
+- **New route:** `GET /api/admin/stamps/users/:userId/stamps` (admin-only,
+  logged to `admin_access_log`). Recorded in the passport census §23.
+- **API-only:** campaigns:
+
+  ```sh
+  curl -sS -H "Authorization: Bearer $TOKEN" "$API/api/admin/stamps/campaigns"
+  curl -sS -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+    -d '{"slug":"tm-test-campaign","name":"TM test campaign","isActive":true,"startsAt":"2026-10-01T00:00:00Z","endsAt":"2026-10-31T00:00:00Z"}' \
+    "$API/api/admin/stamps/campaigns"
+  ```
+
+### LAY-F16 — seed the test airport and its caution zones
+
+- **Where:** Testing Console → **Airports** (`/admin/airports`).
+- **Steps:** search for the test airport; if absent, fill **Add an airport**
+  (IATA, name, city, country, country code, latitude, longitude, optional IANA
+  timezone) → **Save airport** (an upsert on the IATA code, so saving an existing
+  code edits it). **Select** it, then add a caution zone (name, type, centre,
+  radius 50–50000 m).
+- **Check:** an `airport_profiles` row for the code; a `geo_zones` row with
+  `is_system = true` and `metadata.iata_code` = the code. Recorded in the
+  layover census §47.
+- **API-only:** verified landside places and curated dwell:
+
+  ```sh
+  curl -sS -H "Authorization: Bearer $TOKEN" "$API/api/admin/airport/verified-places?status=pending&city=Lisbon"
+  curl -sS -X PATCH -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+    -d '{"status":"approved","verified":true}' "$API/api/admin/airport/verified-places/$PLACE_ID"
+  curl -sS -X PUT -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+    -d '{"activityMin":45,"sourceClass":"curator_measured","confidence":"MEDIUM","evidence":"timed visit 2026-09-29"}' \
+    "$API/api/admin/airport/place-dwell/$PLACE_ID"
+  # sourceClass: venue_stated | curator_measured; confidence: LOW | MEDIUM | HIGH; activityMin 5..720
+  ```
+
+### API-only (admin JWT) — the P3 admin surfaces
+
+Decision: none of these closes an in-app test loop, and each has a working,
+admin-gated server route, so they stay API-only for testing. They are listed on
+the Testing Console so their absence reads as a decision. Set up once:
+
+```sh
+API=https://<the hosted testing app's API origin>
+# An admin account's access token, from Supabase password sign-in (anon key, not the service key):
+TOKEN=$(curl -sS "$SUPABASE_URL/auth/v1/token?grant_type=password" -H "apikey: $SUPABASE_ANON_KEY" \
+  -H 'content-type: application/json' -d '{"email":"<admin email>","password":"<password>"}' | jq -r .access_token)
+H=(-H "Authorization: Bearer $TOKEN" -H 'content-type: application/json')
+```
+
+- **COMP-F20 — Compass weights, version, rollback**
+
+  ```sh
+  curl -sS "${H[@]}" "$API/api/admin/compass/dashboard"
+  curl -sS "${H[@]}" -X POST -d '{"name":"tm-test","weights":{"distance":0.3}}' "$API/api/admin/compass/weights"
+  curl -sS "${H[@]}" -X POST -d "{\"weightSetId\":\"$WEIGHT_SET_ID\",\"versionTag\":\"tm-1\"}" "$API/api/admin/compass/version"
+  curl -sS "${H[@]}" -X POST -d '{"reason":"testing rollback"}' "$API/api/admin/compass/rollback"
+  curl -sS "${H[@]}" -X POST -d '{"userType":"traveler","city":"Lisbon"}' "$API/api/admin/compass/testing-sandbox/preview"
+  ```
+
+- **DISC-F22 — creator ledger hold / release / reverse** (needs `creator_attribution_enabled`)
+
+  ```sh
+  curl -sS "${H[@]}" "$API/api/admin/creator-ledger/attributions/$ATTRIBUTION_ID/audit"
+  curl -sS "${H[@]}" -X POST -d '{"reason":"tm hold"}' "$API/api/admin/creator-ledger/attributions/$ATTRIBUTION_ID/hold"
+  curl -sS "${H[@]}" -X POST -d '{"reason":"tm release"}' "$API/api/admin/creator-ledger/attributions/$ATTRIBUTION_ID/release"
+  curl -sS "${H[@]}" -X POST -d "{\"transactionKey\":\"$TRANSACTION_KEY\",\"reason\":\"tm reverse\"}" "$API/api/admin/creator-ledger/transactions/reverse"
+  ```
+
+- **DISC-F23 — Trails curation, merge, archive; trend-integrity review**
+
+  ```sh
+  curl -sS "${H[@]}" -X POST -d '{"to":"archived","reason":"tm archive"}' "$API/api/admin/discovery/trails/$TRAIL_ID/lifecycle"
+  curl -sS "${H[@]}" -X POST -d "{\"intoTrailId\":\"$OTHER_TRAIL_ID\",\"reason\":\"tm merge\"}" "$API/api/admin/discovery/trails/$TRAIL_ID/merge"
+  curl -sS "${H[@]}" -X POST -d "{\"sourceType\":\"place\",\"sourceId\":\"$PLACE_ID\",\"relationship\":\"supporting\",\"reason\":\"tm curate\"}" "$API/api/admin/discovery/trails/$TRAIL_ID/curate"
+  curl -sS "${H[@]}" "$API/api/admin/discovery/trails/$TRAIL_ID/audit"
+  curl -sS "${H[@]}" -X POST -d "{\"subjectKind\":\"trail\",\"subjectId\":\"$TRAIL_ID\",\"verdict\":\"suspect\",\"reason\":\"tm review\"}" "$API/api/admin/discovery/trend-integrity/reviews"
+  ```
+
+- **DISC-F24 — ranking config and metrics**
+
+  ```sh
+  curl -sS "${H[@]}" "$API/api/admin/ranking/config"
+  curl -sS "${H[@]}" -X PUT -d '{"key":"<config key from the GET>","value":0.5}' "$API/api/admin/ranking/config"   # writes ranking_config_audit_log
+  curl -sS "${H[@]}" "$API/api/admin/ranking/metrics"
+  curl -sS "${H[@]}" "$API/api/admin/ranking/suspicious"
+  curl -sS "${H[@]}" "$API/api/admin/ranking/debug-samples"
+  ```
+
+- **MAP-F15 — circle reports, disable a context, kill switch.** The kill switch
+  is also the flag `find_your_circle_disabled` on the existing **Feature Flags**
+  admin screen, which writes it through the audited toggle.
+
+  ```sh
+  curl -sS "${H[@]}" "$API/api/admin/circle/reports"
+  curl -sS "${H[@]}" -X POST -d "{\"contextType\":\"trip\",\"contextId\":\"$TRIP_ID\",\"reason\":\"tm\"}" "$API/api/admin/circle/disable-context"
+  curl -sS "${H[@]}" -X POST -d '{"enabled":true}' "$API/api/admin/circle/kill-switch"    # true = circle OFF for users
+  curl -sS "${H[@]}" -X POST -d '{"enabled":false}' "$API/api/admin/circle/kill-switch"
+  ```
+
+- **SEN-F10 — coverage missions.** These routes are admin-JWT (`requireAdmin`),
+  not an internal secret. There is no contributor-facing mission UI; `accept`
+  names the contributor as `actorId`.
+
+  ```sh
+  curl -sS "${H[@]}" "$API/api/v1/internal/intel/coverage?city=Lisbon"
+  curl -sS "${H[@]}" "$API/api/v1/internal/intel/missions"
+  curl -sS "${H[@]}" -X POST "$API/api/v1/internal/intel/missions" -d '{"specs":[{"ctx":{"qualifiedDemandEvents6h":5,"requiredLiveFamilyMissing":true,"pendingDecisionsAffectedByContradiction":0,"criticalClaimStale":false,"criticalClaimInActivePlan":false,"campaignHasExplicitBudget":false,"campaignHasAcceptanceContract":false},"mission":{"city":"Lisbon","claimFamily":"crowd","trigger":"demand_spike_missing_family","coverageScore":0.2,"question":"How busy is the square now?"}}]}'
+  curl -sS "${H[@]}" -X POST "$API/api/v1/internal/intel/missions/$MISSION_ID/dispatch"
+  curl -sS "${H[@]}" -X POST -d "{\"actorId\":\"$CONTRIBUTOR_USER_ID\"}" "$API/api/v1/internal/intel/missions/$MISSION_ID/accept"
+  curl -sS "${H[@]}" -X POST -d '{"result":"positive"}' "$API/api/v1/internal/intel/missions/$MISSION_ID/complete"   # positive | negative | inconclusive
+  ```
+
+- **SEN-F12 — safety candidates** (needs `intel_safety_candidates_enabled`)
+
+  ```sh
+  curl -sS "${H[@]}" -X POST -d '{}' "$API/api/admin/intel/safety-candidates/scan"
+  curl -sS "${H[@]}" "$API/api/admin/intel/safety-candidates"
+  curl -sS "${H[@]}" -X POST -d "{\"claimId\":\"$CLAIM_ID\",\"action\":\"approve\",\"reason\":\"tm\"}" "$API/api/admin/intel/safety-review"
+  # action: approve | reject | retract | reconfirm | supersede
+  ```
+
+- **PLAT-F21 — notification templates, account notices, delivery health**
+
+  ```sh
+  curl -sS "${H[@]}" "$API/api/admin/notification-templates"
+  curl -sS "${H[@]}" -X POST -d "{\"userId\":\"$USER_ID\",\"subject\":\"TM notice\",\"body\":\"Testing an account notice.\"}" "$API/api/admin/notifications/account-notice"
+  curl -sS "${H[@]}" "$API/api/admin/notification-delivery-attempts?limit=20"
+  curl -sS "${H[@]}" "$API/api/admin/push-retry-health"
+  curl -sS "${H[@]}" -X PUT -d '{"pushNotificationsEnabled":true}' "$API/api/admin/notification-defaults"
+  ```
+
+### Also in this lane: a report needs a reporter who can see the conversation
+
+`POST /api/messages/:id/report`, `POST /api/threads/:id/report` and
+`POST /api/reports` (message/thread targets) now refuse a reporter who is not an
+active member of the conversation (404) instead of filing the report and, with
+`telegraph_report_evidence_enabled` on, snapshotting another thread's messages.
+An unreadable membership check is 503 and files nothing. **Check:** as a
+non-member, reporting a message id from another thread answers 404 and writes no
+`reports` / `telegraph_report_evidence` row. Recorded in the Telegraph census §39.
+
+### Where the area flows of this lane are recorded
+
+- PLAT-F39, PLAT-F38 — `docs/architecture/census-media.md` §45.
+- PASS-F23 — `docs/architecture/census-passport.md` §23.
+- SEN-F06 (admin half) — `docs/architecture/census-sensing.md` §28.
+- LAY-F16 — `docs/architecture/census-layover.md` §47.
+- Report-route membership — `docs/architecture/census-telegraph.md` §39.
+
+## TM-followups lane — safety follow-ups, Compass memory surfaces (WP-12), media small gaps (WP-17)
+
+Branch `lane-tm-followups`, cut from `main` at `978d886bf`. Controlled evidence only; no flag was
+changed, no migration was added, nothing was applied to any database. The area flows are recorded
+in their censuses (listed at the end); the checks below are what a tester can walk.
+
+### Safety and honesty follow-ups (found by other lanes)
+
+- **Moderation report of a message** (`POST /api/moderation/report`, `subjectType: "message"`):
+  a reporter who is not an active member of the message's thread gets **404** and nothing is filed;
+  a `threadId` the reporter is not in is refused the same way; if membership cannot be read the
+  answer is **503** and nothing is filed. Check: no `moderation_reports` row for the refused cases.
+  Same module and rule as PR #537 (`lib/reportTargetAccess.ts`). Recorded in census-telegraph §40.
+- **Hidden-gem admin: mark sensitive / merge duplicate** (`POST /api/admin/hidden-gems/:id/sensitive`,
+  `/merge`): an unknown gem (or unknown canonical gem) is **404**, a refused write is **db_error**,
+  merging a gem into itself is **400**; success still answers `{ ok: true }` and the row changes
+  (`sensitivity_level`, or `status = 'merged'` + `merged_into`). Census-media §46.3.
+- **Stamp revoke / restore** (`POST /api/admin/stamps/:userStampId/revoke|restore`): a database
+  failure or a failed audit write is **db_error**, not 404; a stamp not in the needed state is
+  still 404. Census-passport §24.
+- **Find Your Circle kill switch** (`POST /api/admin/circle/kill-switch`): every flip goes through
+  `toggle_feature_flag_with_audit`, the path the Feature Flags admin uses. Check: a new
+  `feature_flag_audit_log` row for `find_your_circle_disabled` with the admin as
+  `changed_by_user_id`. A missing function is **503** naming migration 0119; a missing flag row
+  (0108 seeds it) is **404**.
+- **Rent-a-Buddy active session → Safe Return check-in switch**: turning it on records a check-in
+  of type `check_ok` / response `ok`. It used to send `safe_return_enabled`, which the
+  `rent_buddy_checkin_type` enum (0047 + 0113) does not have, and swallowed the refusal. Now a
+  refused check-in turns the switch back off with **Safe Return check-in failed**; the route
+  answers **400** for an unknown type and **db_error** (not `ok: true`) for a refused insert.
+  `start_safe_return` was not used: the route counts it as a distress signal and opens a safety
+  event against the other party. Check: a `rent_buddy_safety_checkins` row, and no
+  `rent_buddy_safety_events` row.
+
+### COMP-F16 — Compass remembers (view, forget, correct)
+
+- **Where:** Passport tab → Explore your passport → **Compass remembers** (`/passport/remembers`).
+- **Expected:** each group Portava keeps (About you, Your interests, What Portava figured out,
+  Saved & created, …). **Forget** asks, then removes the item after the server confirms and shows
+  its message. **Correct** (offered only on inferred items the server allows) takes the right
+  value; the wrong one leaves the view. A group the server could not read says **Couldn't load
+  this section** — never "Nothing here." — and if nothing could be read the screen is an error
+  with **Try again**.
+- **Check:** `memory_feedback` rows (`kind = 'forget'`, or `'incorrect'` with `corrected_value`).
+  Without 2213 on the database, derived memory shows as unavailable and Correct is a stated error.
+
+### COMP-F17 — Recaps and On this day
+
+- **Where:** Passport tab → **Recaps & On this day** (`/passport/recaps`), or from Compass
+  remembers.
+- **Expected:** with `memory_recaps` off, both cards say the feature is **not turned on yet**.
+  With it on: On this day lists earlier years' postcards, trips, stamps and shared moments from
+  today's date; the recap shows This month / This year / last year. A source that could not be read
+  is named ("Couldn't load Saved & created …"); a failed request is an error with Try again. If
+  `memory_feedback` cannot be read the recap is refused rather than built without your forgets.
+
+### COMP-F03 — the whole Compass feed
+
+Decided: **retired from the client.** The Compass tab renders Compass Home and the per-section
+feed; `GET /api/compass/feed` stays as an API route with no screen. Census-compass §31.3.
+
+### MED-F06 — media like, Stamp It and comments
+
+Decided (MD424): media **Like** and **"Stamp It"** are retired from the client; **Stamp** (the
+viewer's stamp button) and **Comments** (the viewer's comment button → the post comment sheet) are
+the reactions. Nothing new to walk: stamp and comment from the media viewer as before. Census-media §46.1.
+
+### MED-F25 — retry a failed upload
+
+- **Where:** Media → My World. When an upload's processing failed, a card lists it.
+- **Expected:** **Retry** queues it again and the row leaves (the server answered 202); with the
+  processing worker off (`media_processing_worker_enabled`) the card says retrying is not
+  available and the uploads are kept. A failed check says **Couldn't check for failed uploads**.
+- **Check:** the `media_assets` row goes `failed → queued` (`processing_terminal = false`).
+  Attachments (`POST /api/media/:id/attachments`) are not wired. Census-media §46.2.
+
+### Where the area flows of this lane are recorded
+
+- COMP-F03, COMP-F16, COMP-F17 — `docs/architecture/census-compass.md` §31.
+- MED-F06, MED-F25 (and the hidden-gem writes) — `docs/architecture/census-media.md` §46.
+- Stamp revoke/restore — `docs/architecture/census-passport.md` §24.
+- Moderation report membership — `docs/architecture/census-telegraph.md` §40.
+
+## TM-RAB lane (WP-01) — Rent-a-Buddy: run the booking, refused gates, admin moderation
+
+Branch `lane-tm-rab`, cut from `main` at `18518e982`. Flows: PLAT-F43, PLAT-F45,
+PLAT-F49, PLAT-F50, PLAT-F55, PLAT-F56. No other Rent-a-Buddy flow in
+`flows.json` is marked "needs code" without being payment work (see Decisions).
+
+**No payment code.** Nothing here takes, holds, refunds or pays out money. Where
+a screen mentions money it keeps the existing honest copy: no payment goes
+through the app; traveller and buddy settle directly.
+
+**Every gate stays on the server.** `rent_buddy_enabled`, the KYC / identity
+readiness gate (`rent_buddy_allow_bookings_without_kyc`), the kill switches
+`disable_rab_bookings` / `disable_rent_buddy_booking`,
+`rent_buddy_global_controls.all_bookings_paused`, city rollout, beta access,
+launch controls and user limits decide exactly what they decided before. The
+server now only *names* the gate in the refusal body (`gate`), and the app shows
+a refused gate as its own state: which gate refused, and what unblocks it.
+
+### Preconditions on the testing app (owner / admin, unchanged by this lane)
+
+- `rent_buddy_enabled` ON (owner decision). Off, every Rent-a-Buddy screen shows
+  the gate state "Rent a Buddy is switched off — REFUSED BY rent_buddy_enabled —
+  an admin turns it on in Admin → Feature flags". If the flags cannot be read the
+  app says so and offers "Try again"; it never shows "off" for a failed read.
+- New bookings additionally need the KYC gate open (an operational identity
+  provider, or the owner turning `rent_buddy_allow_bookings_without_kyc` on), no
+  kill switch engaged, the city rolled out (and beta access for beta cities), and
+  a launch control covering the location if any control exists (deny-by-default).
+  Each of these, when it refuses, is shown by name with its unblock.
+
+### PLAT-F43 — the buddy suggests another time; the traveller answers
+
+- **Where:** buddy: Buddy dashboard → Booking requests → "Suggest" (existing
+  sheet), or any accepted booking → Session → "Suggest another time". Traveller:
+  the booking screen `(rent-a-buddy)/booking/[id]` → Session → Suggested changes.
+- **Steps:** as the buddy, suggest a new date and/or start time. As the traveller,
+  open the booking: the suggestion reads e.g. "Start time: 10:00 → 14:00" with the
+  buddy's reason. Tap **Accept** (the booking's date/time is updated server-side)
+  or **Decline**. The side that suggested sees "You suggested this — waiting for
+  the other side".
+- **Server:** `POST /api/rent-a-buddy/bookings/:id/suggest` writes
+  `buddy_booking_change_requests`; the NEW read
+  `GET /api/rent-a-buddy/bookings/:id/change-requests` (party-only, behind
+  `rent_buddy_enabled`) returns them with `requestedByMe`;
+  `POST /api/rent-a-buddy/bookings/:id/respond-change-request` answers.
+- **Check:** `SELECT change_field, proposed_value, status FROM buddy_booking_change_requests WHERE booking_id = :id;`
+  then `SELECT booking_date, start_time FROM rent_buddy_bookings WHERE id = :id;`
+
+### PLAT-F45 — run the booking: start, check-ins, emergency phrase, complete, confirm
+
+- **Buddy:** Buddy dashboard → **My sessions** lists accepted, in-progress and
+  awaiting-confirmation bookings. **Start session** (only from scheduled /
+  confirmed) → `in_progress`. **Complete session** (only from in_progress) →
+  `completed_pending_traveler_confirmation` with a 24 h window. The same
+  controls are on the booking screen's Session panel.
+- **Traveller:** the booking screen → Session: **I've arrived** / **All good**
+  (check-ins, `POST …/check-in` with `arrival` / `check_ok`); when the buddy has
+  completed, **Confirm completion** → `completed` (or **Open a dispute**).
+  In the live session (`(rent-a-buddy)/active`): **End session** now completes
+  the booking on the server first and only then opens the review (it used to
+  navigate without writing anything, so the booking stayed in progress and the
+  review was refused). **I need to check my passport** is the discreet
+  emergency phrase: it records the safety event and opens a private prompt only
+  the traveller sees (I am okay → check-in; End booking now; Share location;
+  Start Safe Return; Contact support; Use emergency button → dials 112).
+- **Server:** `/start`, `/complete`, `/traveler-confirm`, `/check-in`,
+  `/safety/emergency-phrase` (all existing).
+- **Check:** `SELECT status, started_at, completed_at FROM rent_buddy_bookings WHERE id = :id;`
+  `SELECT checkin_type FROM rent_buddy_safety_checkins WHERE booking_id = :id;`
+  `SELECT event_type FROM rent_buddy_safety_events WHERE booking_id = :id;`
+- **Physical:** meeting in person is simulated; GPS is not read by these controls.
+
+### PLAT-F49 — review moderation
+
+- **Where:** Admin → Rent a Buddy → **Review Moderation** (`admin/reviews`).
+- **Steps:** after a completed booking, the traveller reviews (existing
+  `review.tsx`). As admin, the review is under Pending; **Approve** makes it
+  public and recalculates the buddy's rating; **Reject** asks for a reason and
+  keeps it hidden. Approved / Rejected tabs list moderated reviews.
+- **Check:** `SELECT moderation_status, is_public FROM rent_buddy_reviews WHERE id = :id;`
+  `SELECT average_rating, review_count FROM rent_buddy_profiles WHERE user_id = :buddy;`
+
+### PLAT-F50 — the buddy lists and withdraws their own offers
+
+- **Where:** Buddy dashboard → **My offers**.
+- **Steps:** every offer the buddy sent, newest first, with its answer
+  (waiting / accepted / declined / expired / withdrawn). **Withdraw offer** on a
+  pending one. An offer the traveller already accepted cannot be withdrawn: the
+  server refuses it (compare-and-set on `pending`) and the app says "Already
+  answered"; an accepted offer links to its booking.
+- **Check:** `SELECT status FROM rent_buddy_offers WHERE id = :id;`
+
+### PLAT-F55 — launch-controls editor
+
+- **Where:** Admin → Rent a Buddy → **Launch Controls** (`admin/launch-controls`).
+- **Steps:** **New control** for a country code / city / category (blank = any)
+  with bookings open, verified-ID and verified-phone requirements. Per control:
+  switches for Bookings open / Waitlist only / Require verified ID / Require
+  verified phone, and steppers for the minimum and nightlife minimum age. The
+  screen states up front that controls are deny-by-default, and asks for
+  confirmation before creating the first one. Payment fields on the row are not
+  edited here.
+- **Check:** `SELECT * FROM rent_buddy_launch_controls;` then, as a traveller, a
+  booking in an uncovered location is refused with the gate state "No launch
+  control covers this booking — REFUSED BY rent_buddy_launch_controls".
+
+### PLAT-F56 — support reports, risk review, verification override
+
+- **Where:** Admin → Rent a Buddy → **Support Reports**, **Risk Review**.
+- **Support:** tabs Open / In review / Resolved / Closed; **Update status /
+  notes**.
+- **Risk:** tabs Watch / Limited / Under review / Suspended / Normal; **Set risk
+  status** with a required note (Suspended also switches the user's Rent-a-Buddy
+  access off server-side); **Verification…** records a manual ID / phone / age
+  decision — each field is "No change" unless chosen, so saving never revokes a
+  verification by accident.
+- **Check:** `SELECT status, admin_notes FROM rent_buddy_support_reports WHERE id = :id;`
+  `SELECT risk_review_status, verification_status, id_verified FROM rent_buddy_profiles WHERE user_id = :u;`
+  `SELECT action FROM rent_buddy_admin_actions ORDER BY created_at DESC LIMIT 5;`
+
+### What was built
+
+- Server (`artifacts/api-server`):
+  - refusals name the gate: `requireRentBuddyEnabled` → `gate: "rent_buddy_enabled"`;
+    the five kill-switch refusals name the engaged switch via
+    `engagedRabBookingKillSwitch` (`src/lib/featureFlags.ts`). Decisions unchanged.
+  - `GET /rent-a-buddy/bookings/:id/change-requests` (new, appended to
+    `src/routes/rentABuddy.ts`).
+  - offer withdraw is compare-and-set on `pending` (`src/routes/rentABuddyMarketplace.ts`).
+  - admin launch-controls / support / risk-review reads, and launch-control PATCH,
+    risk-status, verification override, review approve / reject, now answer 5xx on
+    a database error instead of an empty list or `ok`.
+  - `check:rent-buddy-contract` lists the 17 routes the new screens depend on.
+- Client (`travel-buddy-standalone`): `src/services/rentABuddyGates.ts`,
+  `src/services/rentABuddyLifecycle.ts`,
+  `src/components/rentabuddy/{RabGateRefusalState,BookingLifecyclePanel,RabAdminScaffold}.tsx`,
+  screens `buddy-dashboard/{sessions,my-offers}.tsx`,
+  `admin/{reviews,support,risk,launch-controls}.tsx`; wiring in `_layout.tsx`,
+  `booking/[id].tsx`, `active.tsx`, `buddy-dashboard/index.tsx`, `admin/index.tsx`;
+  service fixes in `src/services/rentABuddy.ts` (refusals keep `gate`;
+  `submitCheckIn` sent `{status, broadArea}` to a route that reads
+  `{checkinType, response}`), `src/services/rentABuddyAdmin.ts` (reads return
+  `ok:false` instead of `[]`; launch-control writes send the route's camelCase
+  keys) and `src/hooks/useRentABuddyFlag.ts` (tri-state read). Six routes
+  registered in `src/navigation/portavaRoutes.ts` (closing line).
+
+### Decisions (routine; decided and implemented)
+
+1. **Traveller "End session" completes the booking** through `POST /complete`
+   (the server's traveller path goes straight to `completed`); the buddy's
+   completion opens the traveller's 24 h confirmation. Mirrors the server.
+2. **Name the gate, don't re-decide it.** Refusal bodies gain a `gate` field;
+   `feature_disabled` without one is the master switch (its only other source).
+3. **Admin screens stay behind the client's `rent_buddy_enabled` check**, as the
+   existing admin screens are. The server exempts admin routes; the admin turns
+   the flag on in Admin → Feature flags (outside the group) first, and city
+   rollouts keep bookings closed until an admin opens a city.
+4. **Verification override is per-field opt-in** ("No change" default): the risk
+   list does not carry current verification columns.
+5. **Launch-control editor leaves payment fields alone** (`full_payment_required`,
+   `min_deposit_pct`): payment policy waits on the owner.
+6. **PLAT-F51 (packages, add-ons, tips) is not built here**: it prices and
+   records money (add-on totals, tips) and the catalogue files it under
+   payments.md rows 4–6. PLAT-F44 (deposit / refund) and PLAT-F53 (payouts) are
+   payment work. All wait on the owner's payment decision.
+
+### Tests (red first → green) and mutations
+
+- `artifacts/api-server/src/test/rentBuddyTestingModeWiring.test.ts` (registered
+  on the `test` line): **RED 22 of 29 → GREEN 29/29**. Mutations M1–M19 (drop
+  each gate name, blank the kill-switch name, drop the withdraw CAS predicate,
+  unscope / un-guard / mis-attribute the change-request read, swallow each admin
+  read and write error): **all 19 red**, each restored byte-identically (sha256).
+  All 89 api-server suites that import or read the touched route files: 1760/1760.
+- Client node:test: `rentABuddy.gates.test.ts` 32, `rentABuddy.lifecycle.test.ts`
+  15, `useRentABuddyFlag.state.test.ts` 8 — red at HEAD (modules/functions
+  absent: 0/1, 0/1, 0/8) → green.
+- Client jest: `rentABuddy.testingModeWiring.component.test.ts` (16),
+  `BookingLifecyclePanel.component.test.tsx` (9), `rabLayout.gate` (3),
+  `buddySessionsOffers` (9), `rabAdminScreens` (10), `activeSession.lifecycle` (4).
+  Against HEAD sources: 6 suites FAIL, 19 failed / 4 passed (the 4 are
+  pass-through cases that were already true). All green on the branch; every
+  RAB-touching jest suite 272/272.
+- Client mutations CM1–CM15 (gate naming, traveller offered Start, `gate`
+  dropped by `apiFetch`, old check-in body, partial sessions list, admin read back
+  to `[]`, gate shown as a generic Alert, failed suggestions read shown empty,
+  End session without completing, unreadable flag shown as off, verification
+  sending untouched fields, failed sessions read shown empty, Withdraw on answered
+  offers, snake_case launch-control keys): **all 15 red**, restored by sha256
+  (CM15 first survived; its test was strengthened to toggle a field whose column
+  and key differ).
+
+### Not done, and why
+
+- **Payments** (PLAT-F44, PLAT-F51, PLAT-F53): owner decision.
+- **Owner/admin activation on the testing app**: `rent_buddy_enabled`, city
+  rollouts, beta access and the KYC gate are unchanged here; with them closed,
+  every flow above shows the named gate state rather than working end to end.
+- **PLAT-F56 user limits and the sensitive-booking view** have routes and no
+  screen; the brief's scope for this lane was support, risk and verification.
+- **`rent_buddy_requests.country_code`** (PLAT-F50's backfill blocker, migration
+  2212 unproven on travel-buddy) is untouched: posting a request can still fail
+  on the testing database until that migration is applied.
+- The existing Safe Return switch on `active.tsx` posts a check-in type
+  (`safe_return_enabled`) that is not in the `rent_buddy_checkin_type` enum;
+  left as found (out of this lane's flows), noted for the Safety lane.
+
 ## Stories: react, reply, save to a highlight (PLAT-F33, lane tm-memories, 2026-09-29)
 
 **Why here.** No `docs/architecture/census-*.md` grades stories. `census-highlights-memories.md` touches the stories domain only where a story becomes a Highlight. It records that note under its own testing-mode section, which points back here.

@@ -69,7 +69,7 @@ export interface SoftDeleteResult {
 
 export interface RetryProcessingResult {
   ok: boolean;
-  alreadyQueued: boolean; /** census-media §30: set on a refusal that wrote nothing — see retryRefusal at the end of this file. */ notRetryable?: boolean; workerDisabled?: boolean;
+  alreadyQueued: boolean; /** census-media §30: set on a refusal that wrote nothing — see retryRefusal at the end of this file. */ notRetryable?: boolean; workerDisabled?: boolean; /** tm-followups WP-17: the asset read or the re-queue write FAILED — an outage, never "not found". */ dbError?: string;
 }
 
 function token(): string {
@@ -372,7 +372,7 @@ export async function retryMediaProcessing(
   const { data: asset, error: readError } = await sc.from("media_assets")
     .select("id, owner_user_id, processing_status, processing_terminal, purge_status")
     .eq("id", assetId).maybeSingle();
-  if (readError || !asset || asset.owner_user_id !== actorUserId || asset.purge_status === "completed") {
+  if (readError) return { ok: false, alreadyQueued: false, dbError: readError.message }; if (!asset || asset.owner_user_id !== actorUserId || asset.purge_status === "completed") {
     return { ok: false, alreadyQueued: false };
   }
   if (asset.processing_status === "queued" || asset.processing_status === "processing") {
@@ -387,7 +387,7 @@ export async function retryMediaProcessing(
     processing_error: null,
     updated_at: new Date().toISOString(),
   }).eq("id", assetId).eq("owner_user_id", actorUserId).eq("processing_status", "failed").select("id, processing_status").maybeSingle();
-  return error ? { ok: false, alreadyQueued: false } : requeued?.id === assetId && requeued?.processing_status === "queued" ? { ok: true, alreadyQueued: false } : { ok: false, alreadyQueued: false, notRetryable: true };
+  return error ? { ok: false, alreadyQueued: false, dbError: error.message } : requeued?.id === assetId && requeued?.processing_status === "queued" ? { ok: true, alreadyQueued: false } : { ok: false, alreadyQueued: false, notRetryable: true };
 }
 
 // ── census-media §30 (MD338): what an owner's retry may re-queue ─────────────

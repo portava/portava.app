@@ -11,6 +11,11 @@
  * /api/compass/live/check on an interval — the interval is cleared on stop,
  * blur, and unmount, so there is zero background activity after the session
  * ends. Companion, not surveillance.
+ *
+ * A check that could not read something says so (census-compass §32): a
+ * `partial` answer names the Sense sources (or the Sense settings) the tick
+ * could not read — the server sends nothing from those — and a failed check is
+ * an error with Try again, never a silent "nothing happening".
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, ActivityIndicator, StyleSheet } from 'react-native';
@@ -21,10 +26,21 @@ import {
 } from '../../services/compass.ts';
 import type { CompassLiveSession, CompassLiveNudge, CompassLiveSummary } from '../../services/compass.ts';
 import { subscribeNotificationEvents } from '../../services/notificationEvents.ts';
+import { sourceNames } from '../../features/live/senseNudges.ts';
 import { color, space, radius, type as t, shadow, dot} from '../../theme/tokens.ts';
 
 const CHECK_INTERVAL_MS = 60_000;
 const LIVE_EVENT_PREFIX = 'compass.live.';
+
+/** What the last live check could not do: read some sources, or run at all. */
+type LiveCheckIssue = { kind: 'partial'; failedSources: string[] } | { kind: 'failed'; error: string };
+
+function checkIssueLine(issue: LiveCheckIssue): string {
+  if (issue.kind === 'partial') {
+    return `The last live check couldn't read: ${sourceNames(issue.failedSources)}. Nothing was sent from those, so this may not be everything.`;
+  }
+  return `Couldn't run the live check (${issue.error}). Nothing was checked — this is not "nothing happening".`;
+}
 
 /** Append nudges, deduping on type+title so an SSE-driven insert and the same
  *  nudge arriving in a later poll response never render twice. */
@@ -48,6 +64,7 @@ export function CompassLive({
   const [summary, setSummary] = useState<CompassLiveSummary | null>(null);
   const [enabled, setEnabled] = useState(true);
   const [busy, setBusy]       = useState(false);
+  const [checkIssue, setCheckIssue] = useState<LiveCheckIssue | null>(null);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   const activeRef = useRef(false);
 
@@ -58,8 +75,10 @@ export function CompassLive({
   const runCheck = useCallback(async () => {
     if (!activeRef.current) return;
     const r = await checkCompassLive();
-    if (!r.ok || r.compassEnabled === false) return;
-    if (!r.active) { activeRef.current = false; clearTimer(); setSession(null); return; }
+    if (!r.ok) { if (activeRef.current) setCheckIssue({ kind: 'failed', error: r.error ?? 'unknown_error' }); return; }
+    if (r.compassEnabled === false) return;
+    if (!r.active) { activeRef.current = false; clearTimer(); setSession(null); setCheckIssue(null); return; }
+    setCheckIssue(r.failedSources && r.failedSources.length > 0 ? { kind: 'partial', failedSources: r.failedSources } : null);
     if (r.session) setSession(r.session);
     if (r.delivered && r.delivered.length > 0) {
       setNudges((prev) => appendNudges(prev, r.delivered!));
@@ -165,6 +184,7 @@ export function CompassLive({
     setBusy(false);
     setSession(null);
     setNudges([]);
+    setCheckIssue(null);
     if (r.ok && r.summary) setSummary(r.summary);
   }
 
@@ -237,6 +257,15 @@ export function CompassLive({
         </View>
       ))}
 
+      {checkIssue ? (
+        <View style={styles.issue} testID="live-check-issue">
+          <Text style={styles.issueText} testID="live-check-issue-text">{checkIssueLine(checkIssue)}</Text>
+          <Pressable onPress={() => { runCheck().catch(() => {}); }} testID="live-check-retry" accessibilityRole="button">
+            <Text style={styles.issueRetry}>Try again</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
       <Pressable style={styles.stopBtn} onPress={onStop} disabled={busy} testID="live-stop">
         <Square size={13} color="#fff" fill="#fff" />
         <Text style={styles.stopText}>End live session</Text>
@@ -263,4 +292,7 @@ const styles = StyleSheet.create({
   summaryLine: { ...t.small, color: color.ink },
   dismissBtn:  { alignSelf: 'flex-start', paddingVertical: space.xs },
   dismissText: { ...t.small, fontWeight: '700', color: color.mute },
+  issue:       { gap: 2 },
+  issueText:   { ...t.small, color: color.warn },
+  issueRetry:  { ...t.small, fontWeight: '700', color: color.signal },
 });
