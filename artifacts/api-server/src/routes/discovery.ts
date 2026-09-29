@@ -1835,7 +1835,7 @@ router.get("/discovery", async (req, res) => {
             : p,
         )
       : osmPlaces;
-    const forYouA = await forYouCandidatesForServe(category, callerUserId, mergeAndDedup(osmWithDist, dbPlaces), req.log); const merged = forYouA.places;  // census-discovery §79 (C32): with 3455 on, a signed-in for_you candidate set is the one Compass's gates passed — the same set the cold path ranks. Off ⇒ the merge itself, same reference.
+    const forYouA = await forYouCandidatesForServe(category, callerUserId, mergeAndDedup(osmWithDist, dbPlaces), req.log); if (forYouA.source === "compass_unreadable") { sendDiscoveryRefusal(res, emptyDiscoveryPlacesEnvelope(destination ?? null, ctxLabel ?? null), compassGateRefusal()); return; } const merged = forYouA.places;  // census-discovery §79 (C32): with 3455 on, a signed-in for_you candidate set is the one Compass's gates passed — the same set the cold path ranks. Off ⇒ the merge itself, same reference.
     const filtered = applyFilters(merged);
 
     // ── PDE mode (ruling D5=B — "rank every request") ──────────────────────────
@@ -2103,7 +2103,7 @@ router.get("/discovery", async (req, res) => {
 
     // COMPASS_V1_RULE_BASED_ENABLED: for for_you tab, use Compass pipeline scoring
     // instead of the rule-based scoreWithContext to rank OSM places.
-    const forYouM = await forYouCandidatesForServe(category, callerUserId, places, req.log); if (category === "for_you" && callerUserId) {  // §79 (C32): 3455 on ⇒ the Compass-ORDER branch below (serve points 4 and 5) gets no client, so it is not entered; the cold path below ranks forYouM.places
+    const forYouM = await forYouCandidatesForServe(category, callerUserId, places, req.log); if (forYouM.source === "compass_unreadable") { sendDiscoveryRefusal(res, emptyDiscoveryPlacesEnvelope(destination ?? null, ctxLabel ?? null), compassGateRefusal()); return; } if (category === "for_you" && callerUserId) {  // §79 (C32): 3455 on ⇒ the Compass-ORDER branch below (serve points 4 and 5) gets no client, so it is not entered; the cold path below ranks forYouM.places
       const compassSc = forYouM.source === null ? getServiceClient() : null;  // §79 (C32): null ⇔ 3455 on — no Compass ordering, no Cache B
       if (compassSc) {
         try {
@@ -2251,7 +2251,7 @@ router.get("/discovery", async (req, res) => {
             });
             void observeForYouShadow({ engineMode, viewerId: callerUserId, destination, category, radiusKm, page, sortBy, offset, servePoint: DiscoveryServePoint.COMPASS_FRESH_RANK, cacheLevel: "compass_fresh_rank", legacySlice: cSlice, legacyTotal: gateC.places.length, legacyMs: Date.now() - t0, candidates: places, applyFilters, intentMode: parseIntentMode(req.query.intentMode), log: req.log }); return;  // §79 (DC-14): serve point 5 is inside the shadow comparison
           }
-        } catch (err) { /* DV-07 — KEEP the fall-through (a ranker failure degrades to the rule-based path, never a 500) but SAY SO: a degraded serve and a healthy one were indistinguishable from outside the process. */ req.log.warn({ err, destination, category, engineMode: engineMode.mode }, "discovery: compass rank path failed — degrading to the rule-based path"); }
+        } catch (err) { if (err instanceof CompassFlagsUnreadableError) { sendDiscoveryRefusal(res, emptyDiscoveryPlacesEnvelope(destination ?? null, ctxLabel ?? null), compassGateRefusal()); return; }  /* §103 (DV-83, D-W11X2-49): the fail-safe map's withholding is not a ranking to fall back from */ /* DV-07 — KEEP the fall-through (a ranker failure degrades to the rule-based path, never a 500) but SAY SO: a degraded serve and a healthy one were indistinguishable from outside the process. */ req.log.warn({ err, destination, category, engineMode: engineMode.mode }, "discovery: compass rank path failed — degrading to the rule-based path"); }
       }
     }
 
@@ -4363,7 +4363,7 @@ import { liveRankEnabled } from "../lib/discoveryLiveRankRead.js";
 import { suppressWrites } from "../lib/discoveryPde.js";
 
 /** Where a for_you candidate set came from. `null` ⇒ 3455 is off (or the request is not a signed-in for_you): the merge, untouched. */
-type ForYouCandidateSource = "compass_eligible" | "compass_off" | "compass_failed";
+type ForYouCandidateSource = "compass_eligible" | "compass_off" | "compass_failed" | "compass_unreadable";  // §103 (D-W11X2-49): the Compass flags could not be read — the gate withheld everything, and the serve points refuse
 interface ForYouCandidates { places: DiscoveryPlace[]; source: ForYouCandidateSource | null }
 interface WarnLog { warn: (obj: unknown, msg?: string) => void }
 
@@ -4386,7 +4386,7 @@ async function consolidatedForYouCandidates(
     const localHour = localHourFor(nowUtcInstant(), null, await fetchUserTimezone(sc, viewerId));
     const context   = buildCompassContext(profile, defaultSignals(profile, localHour));
     const gate      = await compassEligibleForDiscovery(places.map(discoveryPlaceToCompassItem), profile, context, sc);
-    return { places: places.filter((p) => gate.eligibleIds.has(discoveryPlaceToCompassItem(p).id)), source: "compass_eligible" };
+    if (gate.flagsUnreadable) return { places: [], source: "compass_unreadable" }; return { places: places.filter((p) => gate.eligibleIds.has(discoveryPlaceToCompassItem(p).id)), source: "compass_eligible" };  // §103 (D-W11X2-49): what the fail-safe map withheld is not Compass's answer
   } catch (err) {
     log.warn({ err }, "discovery: compass eligibility failed — the for_you candidates are unfiltered by Compass (the DV-07 degradation)");
     return { places, source: "compass_failed" };
@@ -4707,4 +4707,20 @@ function sendCommunityBody<T extends { items: readonly unknown[] }>(
 function feedPlacesCode(failedCats: readonly string[]): string {
   const others = failedCats.filter((c) => c !== "event_posts" && c !== DISCOVERY_OVERPASS_SOURCE);
   return others.length > 0 && others.every((c) => c === DISCOVERY_AUTHOR_SET_SOURCE) ? "author_set_unreadable" : "feed_places_read_failed";
+}
+
+// ── census-discovery §103 (DV-83, W11-X2 round 7; D-W11X2-49): an unreadable Compass gate ──
+//
+// For a signed-in for_you page, Compass's pipeline is the candidate gate (3455 on) or the
+// ranker (3455 off, COMPASS_V1_RULE_BASED_ENABLED on). When its COMPASS_% flag read FAILS,
+// `fetchCompassFlags` answers the fail-safe map, in which every `_SAFETY_BLOCK` is engaged:
+// every Discovery candidate (a `suggestion`) is withheld. That withholding was served as an
+// empty for_you page, and on the Compass-order path cached in Cache B for its TTL. It is a
+// failed read, not an empty city: the page is refused `nothing`, naming the gate's source.
+// The posture is Compass's own (fail-closed, nothing served un-gated); only the silence goes.
+import { CompassFlagsUnreadableError } from "../compass/CompassFeedBuilder";
+const DISCOVERY_COMPASS_GATE_SOURCE = "compass_flags";
+
+function compassGateRefusal() {
+  return discoveryRefusal("transient_db", "compass_gate_unreadable", "GET /discovery", "nothing", [DISCOVERY_COMPASS_GATE_SOURCE]);
 }

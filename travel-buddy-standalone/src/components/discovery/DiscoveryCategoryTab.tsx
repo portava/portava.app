@@ -3,8 +3,8 @@ import {
   View, Text, FlatList, Pressable, StyleSheet, RefreshControl, Switch, Animated,
 } from 'react-native';
 import { Search } from 'lucide-react-native';
-import type { DiscoveryCategory, DiscoveryContextMode, DiscoveryFilters, DiscoveryPlace } from '../../services/discovery.ts';
-import { getDiscoveryPlaces, getCachedDiscoveryPlaces } from '../../services/discovery.ts'; import { listPartialNotice, listPartialEmptyTitle, LIST_PARTIAL_EMPTY_BODY, listStaleNotice, listMoreFailedNotice } from '../../services/discoveryCoverageNotice.ts'; import { liveClaimsUnchecked, LIVE_UNCHECKED_NOTICE } from './liveUnchecked.ts';  // census-discovery §91 (A07)
+import type { DiscoveryCategory, DiscoveryContextMode, DiscoveryFilters, DiscoveryPlace, DiscoveryAgeFilter } from '../../services/discovery.ts';
+import { getDiscoveryPlaces, getCachedDiscoveryPlaces, type DiscoveryCacheQuery } from '../../services/discovery.ts'; import { discoveryQueryOf, heldForAnotherQuery } from '../../services/discoveryQueryStamp.ts'; import { listPartialNotice, listPartialEmptyTitle, LIST_PARTIAL_EMPTY_BODY, listStaleNotice, listMoreFailedNotice } from '../../services/discoveryCoverageNotice.ts'; import { liveClaimsUnchecked, LIVE_UNCHECKED_NOTICE } from './liveUnchecked.ts';  // census-discovery §91 (A07)
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import PlaceCard from './PlaceCard.tsx';
 import { PlaceSkeletonList } from './PlaceSkeleton.tsx';
@@ -400,18 +400,18 @@ export function DiscoveryCategoryTab({
   // SWR: seed from in-memory client cache so second opens paint instantly.
   const [places, setPlaces]         = useState<DiscoveryPlace[]>(() => {
     if (!destination) return [];
-    return getCachedDiscoveryPlaces(destination, category, 10, 1, intentMode)?.places ?? [];
+    return getCachedDiscoveryPlaces(destination, category, filters.radiusKm, 1, intentMode, categoryTabCacheQuery(filters, contextMode, ageFilter, customMinAge, customMaxAge, lat, lng, userLat, userLng))?.places ?? [];  // §103 (D-W11X2-47): the whole query, as load() sends it
   });
   const [loading, setLoading]       = useState<boolean>(() => {
     if (!destination) return false;
-    return getCachedDiscoveryPlaces(destination, category, 10, 1, intentMode) === null;
+    return getCachedDiscoveryPlaces(destination, category, filters.radiusKm, 1, intentMode, categoryTabCacheQuery(filters, contextMode, ageFilter, customMinAge, customMaxAge, lat, lng, userLat, userLng)) === null;
   });
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError]           = useState<string | null>(null);
   const [page, setPage]             = useState(1);
   const [total, setTotal]           = useState(0);  const [moreRefused, setMoreRefused] = useState(false); const [partial, setPartial] = useState(false);  // DV-83: page ≥ 2 was REFUSED — see load(); §80: a page came back PARTIAL
   const [locationNudge, setLocationNudge] = useState(false); const [liveUnchecked, setLiveUnchecked] = useState(false); const [refreshFailed, setRefreshFailed] = useState(false); const [moreFailed, setMoreFailed] = useState(false);  // census-discovery §91 (A07): the served page's "now" claims were withheld (meta.liveSafety); §100 (DV-83, D-W11X2-22): the last PAGE-1 read failed in transport while places stayed on screen; §101 (DV-83, D-W11X2-30): the last LOAD-MORE (page ≥ 2) failed in transport, and the footer says so
-  const loadingMore                 = useRef(false); const loadIdRef = useRef(0);  // census-discovery §102 (DV-83, D-W11X2-38): the generation of the latest page-1 read — an answer for an older one never writes the screen
+  const loadingMore                 = useRef(false); const loadIdRef = useRef(0); const heldQueryRef = useRef<string | undefined>(undefined);  // §103 (DV-83, D-W11X2-47): the query the rows on screen were read for (undefined: not known)  // census-discovery §102 (DV-83, D-W11X2-38): the generation of the latest page-1 read — an answer for an older one never writes the screen
   const nudgeOpacity                = useRef(new Animated.Value(0)).current;
   const nudgeTimer                  = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Stores the coords that were active when the last fetch fired. */
@@ -497,7 +497,7 @@ export function DiscoveryCategoryTab({
     setRefreshing(false);
     loadingMore.current = false;
 
-    if (!res.ok) {
+    if (!res.ok) { if (nextPage === 1 && heldForAnotherQuery(heldQueryRef.current, res)) { setPlaces([]); setTotal(0); setPartial(false); setLiveUnchecked(false); heldQueryRef.current = undefined; }  // §103 (DV-83, D-W11X2-47): another query's rows are never kept under THIS query's failure — it is the error state
       setError(res.error); setRefreshFailed(nextPage === 1); setMoreFailed(nextPage > 1);  // §100 (D-W11X2-22): a failed page-1 read over places on screen is a failed REFRESH, and is said to be one; §101 (D-W11X2-30): a failed page ≥ 2 is a failed LOAD-MORE, said in the footer
       return;
     }
@@ -518,7 +518,7 @@ export function DiscoveryCategoryTab({
     // replace a page of genuine results already on screen with a failure card.
     if (nextPage === 1 && res.data.refusal?.coverage === 'nothing') {
       setError("We couldn't load places just now — this is on our side, not your filters.");
-      setPlaces([]);
+      setPlaces([]); heldQueryRef.current = undefined;
       setTotal(0); setPartial(false); setLiveUnchecked(false);
       return;
     }
@@ -544,7 +544,7 @@ export function DiscoveryCategoryTab({
     const filtered = applyClientFilters(res.data.places); const pagePartial = res.data.refusal?.coverage === 'partial'; setPartial((prev) => (nextPage === 1 ? pagePartial : prev || pagePartial)); // §80: page 1 decides; a later partial page keeps the line up
     setTotal(res.data.total); setLiveUnchecked((prev) => (nextPage === 1 ? false : prev) || liveClaimsUnchecked(res.data));  // §91 (A07): a new page-1 query restates it; a later page can only add it
     // Replace on page-1 (new query), append on subsequent pages (pagination).
-    setPlaces((prev) => nextPage === 1 ? filtered : [...prev, ...filtered]);
+    setPlaces((prev) => nextPage === 1 ? filtered : [...prev, ...filtered]); if (nextPage === 1) heldQueryRef.current = discoveryQueryOf(res.data);  // §103: these rows are this query's
     setPage(nextPage);
   }, [destination, category, filters, ageFilter, customMinAge, customMaxAge]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -552,13 +552,13 @@ export function DiscoveryCategoryTab({
     // SWR: immediately hydrate with the cache for the active destination/category
     // so city or tab switches never show stale content from the previous query.
     const cachedResult = destination
-      ? getCachedDiscoveryPlaces(destination, category, filters.radiusKm, 1, intentMode)
+      ? getCachedDiscoveryPlaces(destination, category, filters.radiusKm, 1, intentMode, categoryTabCacheQuery(filters, contextMode, ageFilter, customMinAge, customMaxAge, lat, lng, userLat, userLng))  // §103 (D-W11X2-47): the whole query, as load() sends it
       : null;
     if (cachedResult) {
-      setPlaces(cachedResult.places); setPartial(cachedResult.refusal?.coverage === 'partial'); setTotal(cachedResult.total);  // §101 (D-W11X2-29): the cached page's own total, so a failed refresh over it neither calls it the whole set nor blocks load-more
+      setPlaces(cachedResult.places); heldQueryRef.current = discoveryQueryOf(cachedResult); setPartial(cachedResult.refusal?.coverage === 'partial'); setTotal(cachedResult.total);  // §101 (D-W11X2-29): the cached page's own total, so a failed refresh over it neither calls it the whole set nor blocks load-more
       setLoading(false);
     } else {
-      setPlaces([]); setTotal(0);
+      setPlaces([]); setTotal(0); heldQueryRef.current = undefined;
     }
     setPage(1);
     load(1, filters, cachedResult === null); // reset=true (skeleton) only on miss
@@ -858,3 +858,28 @@ const mapCoverage = StyleSheet.create({
   },
   retry: { alignSelf: 'center', marginTop: 0 },  // the list's own retry button (styles.retryBtn / retryText)
 });
+
+/**
+ * census-discovery §103 (DV-83, D-W11X2-47): the rest of the GET /discovery query this
+ * tab sends, for the cache read — built from the same inputs `load()` passes to
+ * `getDiscoveryPlaces`, including the nearest-sort user position it resolves the same
+ * way, so the hydrated page is the page of the query about to be asked.
+ */
+function categoryTabCacheQuery(
+  filters: DiscoveryFilters,
+  contextMode: DiscoveryContextMode | null | undefined,
+  ageFilter: DiscoveryAgeFilter | null | undefined,
+  customMinAge: number | null | undefined,
+  customMaxAge: number | null | undefined,
+  lat: number | null | undefined,
+  lng: number | null | undefined,
+  userLat: number | null | undefined,
+  userLng: number | null | undefined,
+): DiscoveryCacheQuery {
+  const { nearestUserLat, nearestUserLng } = resolveNearestFetchCoords(filters.sortBy, userLat, userLng);
+  return {
+    openNow: filters.openNow, minRating: filters.minRating, sortBy: filters.sortBy ?? null,
+    contextMode, ageFilter, customMinAge, customMaxAge, lat, lng,
+    userLat: nearestUserLat, userLng: nearestUserLng,
+  };
+}

@@ -29,7 +29,7 @@ import { postCompassAnalyticsEvent, reportCompassViewed, COMPASS_ENGINE_VERSION 
 import type { CompassFeedItem } from '../../services/compass.ts';
 import { resolveCompassTitle, formatCompassSubtitle, formatCompassContext, resolveCompassCategory, resolveCompassImageUrl } from '../../utils/compassFormat.ts';
 import { getPlaceCategoryFallback } from '../../utils/placeCategoryFallback.ts';
-import { listStaleNotice } from '../../services/discoveryCoverageNotice.ts';
+import { listStaleNotice } from '../../services/discoveryCoverageNotice.ts'; import { isCompassSectionFailure } from '../../hooks/compass/compassSectionFailure.ts';
 
 /** census-discovery §102 (DV-83, D-W11X2-41): a failed Compass read, said. */
 const COMPASS_PICKS_FAILED = 'Couldn\u2019t load Compass picks just now.';
@@ -332,7 +332,7 @@ export function CompassPicksSection({
 
   // Never render if Compass is disabled
   if (!enabled) return null;
-  if (!compass.compassEnabled && !compass.loading) return null;
+  if (!compass.compassEnabled && !compass.loading && !isCompassSectionFailure(compass.data)) return null;  // census-discovery §103 (DV-83, D-W11X2-50): Compass OFF hides; a failed build or flag read is said below
 
   // Loading skeleton — show while initial load is in progress
   if (compass.loading && !compass.data) {

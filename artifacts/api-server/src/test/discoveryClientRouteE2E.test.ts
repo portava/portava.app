@@ -125,6 +125,8 @@ const FOUR = () => [place("p1", 1), place("p2", 2), place("p3", 3), place("p4", 
 
 /** The page the For You tab asks for, through the shipping client. */
 const loadMiami = () => getDiscoveryPlaces("Miami", "for_you", FILTERS, 1, null, null, null, null, 25.77, -80.19);
+/** census-discovery §103 (DV-83, D-W11X2-47): the rest of the query `loadMiami` sends. The device cache is keyed by the WHOLE query now, so a read names the query it means — restated from the four-argument read, which named a query this suite never fetched (no coordinates). */
+const MIAMI_QUERY = { lat: 25.77, lng: -80.19 };
 
 function install(opts: Parameters<typeof makeTelemetryDb>[0] = {}) {
   db = makeTelemetryDb({ users: USERS, flags: { discovery_serve_log_enabled: { enabled: true } }, ...opts });
@@ -235,10 +237,10 @@ describe("DC-33 — a normal page, route → client", () => {
 
     // Cache hit on the device: painted without a request, and still Alice's.
     const before = seen.length;
-    const cached = getCachedDiscoveryPlaces("Miami", "for_you", 10, 1);
+    const cached = getCachedDiscoveryPlaces("Miami", "for_you", 10, 1, null, MIAMI_QUERY);
     assert.ok(cached, "a healthy page is kept for the next mount");
     assert.deepEqual(idsOf(cached!), idsOf(page));
-    assert.equal(isDiscoveryCacheFresh("Miami", "for_you", 10, 1), true);
+    assert.equal(isDiscoveryCacheFresh("Miami", "for_you", 10, 1, null, MIAMI_QUERY), true);
     assert.equal(seen.length, before, "a device-cache hit makes no request");
   });
 
@@ -296,7 +298,7 @@ describe("DC-33 — a normal page, route → client", () => {
     failNext = (p) => p === "/api/discovery";
     const failed = await loadMiami();
     assert.deepEqual(failed, { ok: false, error: "HTTP 502" }, "a failed read is a failure on the client, never an empty page");
-    assert.deepEqual(idsOf(getCachedDiscoveryPlaces("Miami", "for_you", 10, 1)!), idsOf(first),
+    assert.deepEqual(idsOf(getCachedDiscoveryPlaces("Miami", "for_you", 10, 1, null, MIAMI_QUERY)!), idsOf(first),
       "the failure wrote nothing: the last good page is still what the device holds");
     const second = ok(await loadMiami(), "retry");
     assert.deepEqual(idsOf(second), idsOf(first), "the same request, answered the same way");
@@ -345,7 +347,7 @@ describe("DC-33 / DV-83 — a refusal reaches the client as a refusal, never as 
     assert.equal(page.refusal?.coverage, "partial");
     assert.deepEqual(page.refusal?.failedSources, ["discovery_places"], "the client can name what is missing");
     assert.equal(refusedEverything(page.refusal), false, "partial is not \"nothing\"");
-    assert.ok(getCachedDiscoveryPlaces("Miami", "for_you", 10, 1),
+    assert.ok(getCachedDiscoveryPlaces("Miami", "for_you", 10, 1, null, MIAMI_QUERY),
       "partial IS cached, by the service's documented rule: its items are real exposure");
   });
 
@@ -359,7 +361,7 @@ describe("DC-33 / DV-83 — a refusal reaches the client as a refusal, never as 
     assert.deepEqual(page.places, []);
     assert.equal(page.refusal, undefined, "emptiness the route could vouch for carries no refusal");
     assert.equal(refusedEverything(page.refusal), false);
-    assert.deepEqual(getCachedDiscoveryPlaces("Miami", "for_you", 10, 1)?.places, [], "a real empty answer is kept");
+    assert.deepEqual(getCachedDiscoveryPlaces("Miami", "for_you", 10, 1, null, MIAMI_QUERY)?.places, [], "a real empty answer is kept");
   });
 
   it("R4. the feed the Live-from-events rail reads: a geocoder outage is \"nothing\", and the client drops the session id a refused load has no exposure behind", async () => {
@@ -441,7 +443,7 @@ describe("DC-33 / DSV2-04 — why-now travels with its validity and expires on t
     assert.deepEqual(whyNowPresentation(parseDiscoveryCandidate(unseen.candidate), h - 1), { claims: [], stale: false, expiresAtMs: null },
       "nothing observed: no claim, never an invented one");
 
-    const repaint = getCachedDiscoveryPlaces("Miami", "for_you", 10, 1)!.places.find((p) => p.id === `db/${P1}`)!;
+    const repaint = getCachedDiscoveryPlaces("Miami", "for_you", 10, 1, null, MIAMI_QUERY)!.places.find((p) => p.id === `db/${P1}`)!;
     assert.equal(parseDiscoveryCandidate(repaint.candidate)!.whyNowExpiresAtMs, h,
       "expiry: a page repainted from the device cache is not re-dated, so the claim still expires on schedule");
   });
@@ -465,7 +467,7 @@ describe("DC-33 — permission changes and cross-viewer isolation", () => {
     const d = await postOutcome(TOKEN.alice, { item_id: p2.id, surface: "discovery", outcome: "dismiss", recommendation_id: p2.recommendationId });
     assert.equal(d.status, 200, "the dismissal was accepted and bound to the exposure Alice's client named");
     invalidateDiscoveryCaches();   // what useRankOutcome's reportDismiss does on an accepted dismissal (hooks/useRankOutcome.ts:243)
-    assert.equal(getCachedDiscoveryPlaces("Miami", "for_you", 10, 1), null, "the pre-dismissal page is gone from the device");
+    assert.equal(getCachedDiscoveryPlaces("Miami", "for_you", 10, 1, null, MIAMI_QUERY), null, "the pre-dismissal page is gone from the device");
 
     const aliceAfter = ok(await loadMiami(), "Alice after dismissing");
     assert.deepEqual(idsOf(aliceAfter), ["db/p1", "db/p3", "db/p4"], "the permission change reached Alice's next page through the route");
@@ -473,7 +475,7 @@ describe("DC-33 — permission changes and cross-viewer isolation", () => {
     // The account switches (SessionContext's auth callback), BEFORE Bob's screen reads the cache.
     signedIn = BOB;
     setDiscoveryViewerFromSession(BOB);
-    assert.equal(getCachedDiscoveryPlaces("Miami", "for_you", 10, 1), null, "Bob's first paint is never Alice's page");
+    assert.equal(getCachedDiscoveryPlaces("Miami", "for_you", 10, 1, null, MIAMI_QUERY), null, "Bob's first paint is never Alice's page");
 
     const bob = ok(await loadMiami(), "Bob");
     assert.deepEqual(idsOf(bob), ["db/p1", "db/p2", "db/p3", "db/p4"], "Alice's dismissal is Alice's: Bob is served p2");
@@ -504,7 +506,7 @@ describe("DC-33 — permission changes and cross-viewer isolation", () => {
     release();
 
     assert.deepEqual(await inFlight, { ok: false, error: VIEWER_CHANGED_ERROR }, "an answer fetched AS Alice is never handed to Bob's screen");
-    assert.equal(getCachedDiscoveryPlaces("Miami", "for_you", 10, 1), null, "nor written where Bob's next paint would read it");
+    assert.equal(getCachedDiscoveryPlaces("Miami", "for_you", 10, 1, null, MIAMI_QUERY), null, "nor written where Bob's next paint would read it");
   });
 
   it("X3. the community byline: Alice sees her own name and never a submitter she blocked; Bob sees Alice as @alice, and Alice's name never reaches his client", async () => {

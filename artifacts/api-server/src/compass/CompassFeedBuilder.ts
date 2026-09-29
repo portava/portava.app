@@ -302,7 +302,7 @@ async function preloadFairExposureData(
 // ── Shared pipeline runner ─────────────────────────────────────────────────────
 
 interface FeedPipelineOutput {
-  sectionMap:   Map<SectionName, PipelineResult[]>;
+  sectionMap:   Map<SectionName, PipelineResult[]>; flagsUnreadable?: true;  // census-discovery §103 (D-W11X2-49)
   pipelineMeta: {
     inputCount:    number;
     blockedCount:  number;
@@ -336,7 +336,7 @@ async function runFeedPipeline(
   const enrichedContext: CompassContext = { ...context, placeAffinities };
 
   // ── Phase 2 pipeline ────────────────────────────────────────────────────────
-  const { results, inputCount, blockedCount, rejectedCount, passedCount, liveConstraints } =
+  const { results, inputCount, blockedCount, rejectedCount, passedCount, liveConstraints, flagsUnreadable } =
     await runPipeline(items, profile, enrichedContext, db, _overrides);
 
   // ── Active-user reward boosts ──────────────────────────────────────────────
@@ -562,7 +562,7 @@ async function runFeedPipeline(
   }
 
   return {
-    sectionMap,
+    sectionMap, ...(flagsUnreadable ? { flagsUnreadable } : {}),  // census-discovery §103 (D-W11X2-49)
     pipelineMeta: { inputCount, blockedCount, rejectedCount, passedCount, liveConstraints },
   };
 }
@@ -585,8 +585,8 @@ export async function rankItemsForDiscovery(
   _overrides: FeedBuilderTestOverrides = {},
 ): Promise<PipelineResult[]> {
   // Reuse the internal feed pipeline — stops before section assignment
-  const { results, inputCount: _i, blockedCount: _b, rejectedCount: _r, passedCount: _p } =
-    await runPipeline(items, profile, context, db, _overrides);
+  const { results, inputCount: _i, blockedCount: _b, rejectedCount: _r, passedCount: _p, flagsUnreadable } =
+    await runPipeline(items, profile, context, db, _overrides); if (flagsUnreadable) throw new CompassFlagsUnreadableError();  // census-discovery §103 (DV-83, D-W11X2-49): what the fail-safe map withheld is not a ranking — the caller says so
 
   // Active-user reward boosts
   const authorScores: Map<string, ActiveUserScoreResult> =
@@ -754,9 +754,9 @@ export async function buildSection(
   const filteredItems = ignoredSet.size > 0
     ? items.filter((it) => !ignoredSet.has(String(it.id ?? "")))
     : items;
-  const { sectionMap } = await runFeedPipeline(
+  const { sectionMap, flagsUnreadable } = await runFeedPipeline(
     filteredItems, profile, context, db, _overrides,
-  );
+  ); if (flagsUnreadable) throw new CompassFlagsUnreadableError();  // census-discovery §103 (DV-83, D-W11X2-49): a section the fail-safe map emptied is not "no picks"
 
   // ── Category-weight post-adjustment (mirrors buildFeed) ───────────────────
   const rankWeights = profile.categoryWeights;
@@ -842,7 +842,7 @@ export interface CompassDiscoveryEligibility {
   inputCount: number;
   blockedCount: number;
   rejectedCount: number;
-  liveExcludedCount: number;
+  liveExcludedCount: number; /** census-discovery §103 (D-W11X2-49): true when the gate ran on the fail-safe flag map (the COMPASS_% read failed) — what it withheld was not Compass's answer. */ flagsUnreadable?: boolean;
 }
 
 /**
@@ -875,6 +875,20 @@ export async function compassEligibleForDiscovery(
     inputCount:        summary.inputCount,
     blockedCount:      summary.blockedCount,
     rejectedCount:     summary.rejectedCount,
-    liveExcludedCount: summary.liveExcludedCount,
+    liveExcludedCount: summary.liveExcludedCount, ...(summary.flagsUnreadable ? { flagsUnreadable: true } : {}),
   };
 }
+
+/**
+ * census-discovery §103 (DV-83, D-W11X2-49): thrown by `rankItemsForDiscovery` when the
+ * batch was gated by the fail-safe COMPASS_% map (the flag read FAILED, so every
+ * `_SAFETY_BLOCK` is engaged). The empty or short list that map produces is not
+ * Compass's ranking, and a caller must not serve — or cache — it as one.
+ */
+export class CompassFlagsUnreadableError extends Error {
+  constructor() {
+    super("compass: the COMPASS_% flag read failed; the batch was gated by the fail-safe map");
+    this.name = "CompassFlagsUnreadableError";
+  }
+}
+

@@ -13,9 +13,12 @@
  *   Q1  transport failure for a new query: the previous query's groups are dropped, refused
  *   Q2  a `nothing` refusal for a new query: the same
  *   Q3  in flight for a new query: the previous groups stay (typing never flashes empty)
- *   C1  CONTROL: the same text re-asked (another location) and failing keeps its own groups, refused
+ *   C1  (restated §103, D-W11X2-52) the same text at ANOTHER location, failing: that location's groups were never read — dropped, refused
  *   C2  CONTROL: a partial answer carries its own groups
- *   C3  CONTROL: groups replayed from the cache are this query's, and a failure re-asking the same text keeps them
+ *   C3  (restated §103) groups replayed from the cache are this query's: the same query re-asked after the cache expired, failing, keeps them;
+ *       the same text at another location, failing, does not
+ *   L1  §103: a city change (same coordinates) is another query — no cached groups of the other city, and a failure drops them
+ *   L2  §103 CONTROL: back to the first city is a cache hit for ITS groups (the city is in the cache key, not only the held key)
  *
  * Run with: npx jest src/hooks/__tests__/useSearchSuggestions.heldQuery.component.test.tsx
  */
@@ -76,7 +79,10 @@ describe('useSearchSuggestions — held groups belong to their query (DV-83, §1
     expect(result.current.groups).toHaveLength(1);
   });
 
-  it('C1 CONTROL the same text re-asked (another location) and failing keeps its own groups, refused', async () => {
+  // §103 (D-W11X2-52) RESTATED. This case pinned §102's "same text ⇒ same query" rule: groups read at lat 38.7 were kept
+  // under a failure at lat 40.2 (~170 km away). Those are another location's suggestions drawn under this location's
+  // failure — the verifier's §102.11 possible — so the groups are now dropped. `refused` is asserted exactly as before.
+  it('C1 (restated §103) the same text at ANOTHER location, failing: that location\'s groups are dropped, refused', async () => {
     mockGetSearchSuggestions.mockResolvedValueOnce({ ok: true, groups: [group('g1')] });
     const { result, rerender } = await renderHook(({ lat }: { lat: number }) => useSearchSuggestions('sintra', { lat, lng: -9.1 }), { initialProps: { lat: 38.7 } });
     await waitFor(() => expect(result.current.groups).toHaveLength(1), PAST_DEBOUNCE);
@@ -85,7 +91,7 @@ describe('useSearchSuggestions — held groups belong to their query (DV-83, §1
     await waitFor(() => expect(mockGetSearchSuggestions).toHaveBeenCalledTimes(2), PAST_DEBOUNCE);
     await waitFor(() => expect(result.current.loading).toBe(false), PAST_DEBOUNCE);
     expect(result.current.refused).toBe(true);
-    expect(result.current.groups).toHaveLength(1);
+    expect(result.current.groups).toHaveLength(0);
   });
 
   it('C2 CONTROL a partial answer carries its own groups', async () => {
@@ -98,20 +104,58 @@ describe('useSearchSuggestions — held groups belong to their query (DV-83, §1
     expect(result.current.groups.map((g) => g.items[0]!.id)).toEqual(['g2']);
   });
 
-  it('C3 CONTROL groups replayed from the cache are this query\'s: a failure re-asking the same text keeps them', async () => {
-    mockGetSearchSuggestions.mockResolvedValueOnce({ ok: true, groups: [group('m1')] });
-    const { result, rerender } = await renderHook(({ q, lat }: { q: string; lat: number }) => useSearchSuggestions(q, { lat, lng: -9.1 }), { initialProps: { q: 'mafra', lat: 38.7 } });
+  // §103 (D-W11X2-52) RESTATED. The cache-replay half is kept (G-M4's kill): a replayed page marks its query, so the
+  // same query re-asked after the cache expired and failing keeps it. The location-change half now drops (as C1).
+  it('C3 (restated §103) groups replayed from the cache are this query\'s: the same query, expired and failing, keeps them; another location does not', async () => {
+    const realNow = Date.now;
+    let clock = realNow();
+    Date.now = () => clock;
+    try {
+      mockGetSearchSuggestions.mockResolvedValueOnce({ ok: true, groups: [group('m1')] });
+      const { result, rerender } = await renderHook(({ q, lat }: { q: string; lat: number }) => useSearchSuggestions(q, { lat, lng: -9.1 }), { initialProps: { q: 'mafra', lat: 38.7 } });
+      await waitFor(() => expect(result.current.groups).toHaveLength(1), PAST_DEBOUNCE);
+      mockGetSearchSuggestions.mockResolvedValueOnce({ ok: true, groups: [group('m2')] });
+      await act(async () => { rerender({ q: 'mafrax', lat: 38.7 }); });
+      await waitFor(() => expect(result.current.groups[0]!.items[0]!.id).toBe('m2'), PAST_DEBOUNCE);
+      await act(async () => { rerender({ q: 'mafra', lat: 38.7 }); });
+      expect(result.current.groups[0]!.items[0]!.id).toBe('m1');  // replayed from the cache, no fetch
+      expect(mockGetSearchSuggestions).toHaveBeenCalledTimes(2);
+      clock += 61_000;  // the entry expires; the same rounded position re-asks
+      mockGetSearchSuggestions.mockResolvedValue(NET_FAIL);
+      await act(async () => { rerender({ q: 'mafra', lat: 38.701 }); });
+      await waitFor(() => expect(mockGetSearchSuggestions).toHaveBeenCalledTimes(3), PAST_DEBOUNCE);
+      await waitFor(() => expect(result.current.loading).toBe(false), PAST_DEBOUNCE);
+      expect(result.current.refused).toBe(true);
+      expect(result.current.groups[0]!.items[0]!.id).toBe('m1');
+      await act(async () => { rerender({ q: 'mafra', lat: 40.2 }); });
+      await waitFor(() => expect(mockGetSearchSuggestions).toHaveBeenCalledTimes(4), PAST_DEBOUNCE);
+      await waitFor(() => expect(result.current.groups).toHaveLength(0), PAST_DEBOUNCE);
+      expect(result.current.refused).toBe(true);
+    } finally { Date.now = realNow; }
+  });
+
+  it('L1 §103: a city change at the same coordinates is another query — the other city\'s cached groups are not replayed, and a failure drops them', async () => {
+    mockGetSearchSuggestions.mockResolvedValueOnce({ ok: true, groups: [group('lis')] });
+    const { result, rerender } = await renderHook(({ city }: { city: string }) => useSearchSuggestions('cafe', { lat: 38.7, lng: -9.1, city }), { initialProps: { city: 'Lisbon' } });
     await waitFor(() => expect(result.current.groups).toHaveLength(1), PAST_DEBOUNCE);
-    mockGetSearchSuggestions.mockResolvedValueOnce({ ok: true, groups: [group('m2')] });
-    await act(async () => { rerender({ q: 'mafrax', lat: 38.7 }); });
-    await waitFor(() => expect(result.current.groups[0]!.items[0]!.id).toBe('m2'), PAST_DEBOUNCE);
-    await act(async () => { rerender({ q: 'mafra', lat: 38.7 }); });
-    expect(result.current.groups[0]!.items[0]!.id).toBe('m1');
     mockGetSearchSuggestions.mockResolvedValue(NET_FAIL);
-    await act(async () => { rerender({ q: 'mafra', lat: 40.2 }); });
-    await waitFor(() => expect(mockGetSearchSuggestions).toHaveBeenCalledTimes(3), PAST_DEBOUNCE);
+    await act(async () => { rerender({ city: 'Porto' }); });
+    await waitFor(() => expect(mockGetSearchSuggestions).toHaveBeenCalledTimes(2), PAST_DEBOUNCE);
+    expect(mockGetSearchSuggestions.mock.calls[1]![1]).toEqual(expect.objectContaining({ city: 'Porto' }));
     await waitFor(() => expect(result.current.loading).toBe(false), PAST_DEBOUNCE);
     expect(result.current.refused).toBe(true);
-    expect(result.current.groups).toHaveLength(1);
+    expect(result.current.groups).toHaveLength(0);
+  });
+
+  it('L2 §103 CONTROL: back to the first city is a cache hit for ITS groups (no fetch)', async () => {
+    mockGetSearchSuggestions.mockResolvedValueOnce({ ok: true, groups: [group('lis')] });
+    const { result, rerender } = await renderHook(({ city }: { city: string }) => useSearchSuggestions('cafe', { lat: 38.7, lng: -9.1, city }), { initialProps: { city: 'Lisbon' } });
+    await waitFor(() => expect(result.current.groups).toHaveLength(1), PAST_DEBOUNCE);
+    mockGetSearchSuggestions.mockResolvedValueOnce({ ok: true, groups: [group('opo')] });
+    await act(async () => { rerender({ city: 'Porto' }); });
+    await waitFor(() => expect(result.current.groups[0]!.items[0]!.id).toBe('opo'), PAST_DEBOUNCE);
+    await act(async () => { rerender({ city: 'Lisbon' }); });
+    expect(result.current.groups[0]!.items[0]!.id).toBe('lis');
+    expect(mockGetSearchSuggestions).toHaveBeenCalledTimes(2);
   });
 });

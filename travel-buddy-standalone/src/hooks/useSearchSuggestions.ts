@@ -42,7 +42,7 @@ export function useSearchSuggestions(query: string, opts: UseSearchSuggestionsOp
   const cacheRef = useRef<Map<string, CacheEntry>>(new Map());
   const abortRef = useRef<AbortController | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const seqRef = useRef(0); const heldQueryRef = useRef<string | null>(null);  // census-discovery §102 (DV-83, D-W11X2-42): the text the groups on screen were read for
+  const seqRef = useRef(0); const heldQueryRef = useRef<string | null>(null);  // census-discovery §102 (DV-83, D-W11X2-42): the query the groups on screen were read for — §103 (D-W11X2-52): its whole key (text, rounded coordinates, city)
 
   const trimmed = query.trim().toLowerCase();
   // ~1km coord rounding: tiny GPS drift must not bust the cache key
@@ -62,14 +62,14 @@ export function useSearchSuggestions(query: string, opts: UseSearchSuggestionsOp
       return;
     }
 
-    const key = `${trimmed}|${latKey ?? ''}|${lngKey ?? ''}`;
+    const key = `${trimmed}|${latKey ?? ''}|${lngKey ?? ''}|${city ?? ''}`;  // census-discovery §103 (DV-83, D-W11X2-52): every parameter the request sends — the city too, which the key used to leave out
     const cached = cacheRef.current.get(key);
     if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
       // Refresh LRU position
       cacheRef.current.delete(key);
       cacheRef.current.set(key, cached);
       seqRef.current++;
-      setGroups(cached.groups); heldQueryRef.current = trimmed;
+      setGroups(cached.groups); heldQueryRef.current = key;  // §103: groups belong to the whole query (text AND location), not the text alone
       setLoading(false);
       setRefused(false); setIncomplete(cached.incomplete);
       return;
@@ -113,7 +113,7 @@ export function useSearchSuggestions(query: string, opts: UseSearchSuggestionsOp
           // same stated reason: keep whatever was on screen, never flash empty.
           // Caching this would freeze the outage in for 60s with no further
           // request able to notice the server had recovered.
-          setLoading(false); if (heldQueryRef.current !== trimmed) { setGroups([]); heldQueryRef.current = null; }  // §102 (D-W11X2-42): another query's groups are not this query's answer
+          setLoading(false); if (heldQueryRef.current !== key) { setGroups([]); heldQueryRef.current = null; }  // §102 (D-W11X2-42): another query's groups are not this query's answer; §103 (D-W11X2-52): nor another location's — was: if (heldQueryRef.current !== trimmed) { setGroups([]); heldQueryRef.current = null; }
           return;
         }
         const cache = cacheRef.current;
@@ -123,11 +123,11 @@ export function useSearchSuggestions(query: string, opts: UseSearchSuggestionsOp
           if (oldest == null) break;
           cache.delete(oldest);
         }
-        setGroups(res.groups); heldQueryRef.current = trimmed;
+        setGroups(res.groups); heldQueryRef.current = key;
         setLoading(false);
       } else if (!res.aborted) {
         // Transient error: keep whatever was on screen (never flash empty) — and SAY it, as the refusal arm does (§100, D-W11X2-26): no answer is not "no quick matches"
-        setLoading(false); setRefused(true); setIncomplete(false); if (heldQueryRef.current !== trimmed) { setGroups([]); heldQueryRef.current = null; }  // §102 (D-W11X2-42)
+        setLoading(false); setRefused(true); setIncomplete(false); if (heldQueryRef.current !== key) { setGroups([]); heldQueryRef.current = null; }  // §102 (D-W11X2-42); §103 (D-W11X2-52): keyed by the whole query
       }
     }, DEBOUNCE_MS);
 

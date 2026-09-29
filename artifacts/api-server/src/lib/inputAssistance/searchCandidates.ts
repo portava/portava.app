@@ -44,7 +44,7 @@ import {
   type CanonicalRow,
 } from "../canonicalLocations";
 import type { SensitivityLevel } from "../../services/hiddenGems/HiddenGemPrivacyGuard.js";
-import { nameVisibilitySet } from "../publicIdentity";
+import { nameVisibilitySetOrNull } from "../publicIdentity";
 import { buildListIdentityProjections } from "../../services/passport/PassportConsumerProjections.js";
 // The canonical author-side block rule for a `discovery_places` row. Shared with
 // routes/discovery.ts (which re-exports it) rather than re-implemented here —
@@ -480,7 +480,7 @@ async function buddyLaunchGateActive(sc: any): Promise<boolean> {
  */
 export async function buddiesWithheldByLaunchGate(sc: any): Promise<boolean> {
   if (!(await buddyLaunchGateActive(sc))) return false;
-  return !(await isFlagEnabled(sc, RENT_BUDDY_LAUNCH_FLAG));
+  return !(await rentBuddyLaunchedOrThrow(sc));  // census-discovery §103 (DV-83, D-W11X2-51): still withheld when unread — and now SAID — was: return !(await isFlagEnabled(sc, RENT_BUDDY_LAUNCH_FLAG));
 }
 
 // ── Owner account-status guard ─────────────────────────────────────────────────
@@ -580,7 +580,7 @@ async function searchTravelers(
     // showing their real name. Hidden names must not be searchable/matchable —
     // if the query matched only the (hidden) name, drop the row so searching
     // someone's name cannot reveal it belongs to them.
-    const allowedNames = await nameVisibilitySet(sc, visible.map((p: any) => p.id as string));
+    const allowedNames = await nameVisibilitySetOrNull(sc, visible.map((p: any) => p.id as string)); if (allowedNames === null) throw new DiscoverySearchReadError("profile_privacy_settings", "show_real_name");  // census-discovery §103 (DV-83, D-W11X2-48): C09 FILTERS by this set, so an unread set names its source instead of dropping every name-matched traveler — was: const allowedNames = await nameVisibilitySet(sc, visible.map((p: any) => p.id as string));
     const qLower = q.toLowerCase();
     const nameSafe = visible.filter((p: any) => {
       if (p.id === userId) return true;                 // viewer never redacted
@@ -2604,3 +2604,25 @@ export class DiscoverySearchReadError extends Error {
 // Declared above without `export` because they were route-internal; named here
 // rather than edited in place, so the moved lines stay the route's text.
 export { FAN_SOURCES, searchAll, decodeCursor, encodeCursor };
+
+/**
+ * census-discovery §103 (DV-83, D-W11X2-51): the marketplace launch flag as a READ.
+ *
+ * With the launch gate on, buddies are withheld unless `rent_buddy_enabled` is TRUE.
+ * `isFlagEnabled` answers `false` for a failed read too (the platform reader cannot tell
+ * an error from "off"; `getFlagRow` cannot either — it answers null for both an error and
+ * an absent row), so an unread flag withheld every buddy and the search answered "no
+ * buddies". Withholding stays; the silence goes: a failed read throws the file's named
+ * error, which the route refuses (type=buddies) or names (type=all, suggest).
+ * An ABSENT row is still "not launched" (absence of a launch is not a launch).
+ */
+async function rentBuddyLaunchedOrThrow(sc: any): Promise<boolean> {
+  try {
+    const { data, error } = await sc.from("feature_flags").select("enabled").eq("flag", RENT_BUDDY_LAUNCH_FLAG).maybeSingle();
+    if (error) throw new DiscoverySearchReadError("feature_flags", error);
+    return Boolean((data as any)?.enabled);
+  } catch (err) {
+    throw err instanceof DiscoverySearchReadError ? err : new DiscoverySearchReadError("feature_flags", err);
+  }
+}
+
