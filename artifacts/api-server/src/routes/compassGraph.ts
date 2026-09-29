@@ -21,7 +21,7 @@ import { asyncHandler } from "../lib/asyncHandler.js";
 import {
   rebuildIntelligenceGraph,
   cleanupNonCanonicalCityRows,
-  getCityConfidence,
+  getCityConfidence, type CityConfidenceReadStatus,
   cityConfidenceNote,
 } from "../compass/CompassGraphEngine.js";
 import { getLastRebuildInfo } from "../lib/intelligenceGraphScheduler.js";
@@ -108,7 +108,7 @@ router.get("/compass/city-confidence", asyncHandler(async (req, res) => {
     return;
   }
 
-  const conf = await getCityConfidence(sc, city);
+  const confStatus: CityConfidenceReadStatus = {}; const conf = await getCityConfidence(sc, city, new Date(), confStatus); if (confStatus.unread) { sendError(res, "degraded_unavailable", "city confidence could not be read just now", { reason: "city_confidence_unreadable" }); return; }  // census-discovery §107 (DV-83, D-W11X2-70): a failed read is never the measured "thin — Limited local data" (the client caches that)
   // Aggregates only — never user ids/handles/coordinates.
   res.json({
     city,

@@ -403,7 +403,7 @@ async function fetchCityConfidenceFromNetwork(
     const r = await authedFetch(`/api/compass/city-confidence?city=${encodeURIComponent(city.trim())}`);
     if (!r.ok) return { ok: false, error: `http_${r.status}` };
     const body = await r.json();
-    const data = body as CityConfidence;
+    if ((body as { refusal?: unknown } | null)?.refusal != null) return { ok: false, error: 'refused' }; const data = body as CityConfidence;  // census-discovery §107 (DV-83, D-W11X2-70): a refused read is never cached (memory or AsyncStorage) nor drawn as "Limited local data"
     const at = Date.now();
     _cityConfidenceCache.set(cacheKey, { data, at });
     persistCityConfidence(cacheKey, data, at);

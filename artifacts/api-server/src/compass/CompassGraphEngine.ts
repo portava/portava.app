@@ -1655,19 +1655,19 @@ export async function readPlatformCityCoverage(
 export async function getCityConfidence(
   db: SupabaseClient | null,
   city: string | null,
-  now: Date = new Date(),
+  now: Date = new Date(), status?: CityConfidenceReadStatus,
 ): Promise<CityConfidence | null> {
   const key = canonicalCityKey(city);
   if (!db || !key) return null;
 
-  let local: CityConfidence | null = null;
+  let local: CityConfidence | null = null; let localUnread = false;  // census-discovery §107 (D-W11X2-70)
   try {
-    const { data } = await db
+    const { data, error: localErr } = await db
       .from("compass_city_confidence")
       .select("city, depth_score, tier, signals, computed_at")
       .eq("city", key)
       .maybeSingle();
-    if (data) {
+    if (localErr) localUnread = true; if (data) {
       local = {
         city:       String((data as any).city),
         depthScore: Number((data as any).depth_score ?? 0),
@@ -1677,7 +1677,7 @@ export async function getCityConfidence(
       };
     }
   } catch {
-    local = null; // fail-soft: the platform read below may still answer
+    local = null; localUnread = true; // fail-soft: the platform read below may still answer
   }
 
   const { coverage, readable } = await readPlatformCityCoverage(db, key, now);
@@ -1702,7 +1702,7 @@ export async function getCityConfidence(
       platformCells: coverage.cells,
     };
   }
-  if (!local) return null;
+  if (!local) { if (status && (localUnread || !readable)) status.unread = true; return null; }  // census-discovery §107 (DV-83, D-W11X2-70): null over a failed read is NOT the measured absence — the caller is told
   return {
     ...local,
     source:       "compass_graph",
@@ -2868,3 +2868,12 @@ async function rewriteDecayedWeights(db: SupabaseClient, weights: ReadonlyMap<st
   }
   return { written, failed };
 }
+
+/**
+ * census-discovery §107 (DV-83 round 10, lane W11-X2, D-W11X2-70): why `getCityConfidence` answered
+ * null. `unread` is set when nothing was measured AND a read failed — the Compass row's read (an
+ * error or a throw) or the platform coverage read — so the null is not "neither store has anything".
+ * A platform answer or a Compass row is a measurement and never sets it. Optional and additive: the
+ * prompt-context and ranking-modifier callers pass nothing and keep their neutral default.
+ */
+export interface CityConfidenceReadStatus { unread?: boolean }
