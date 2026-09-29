@@ -1383,22 +1383,22 @@ router.get("/me/meetup-invites", async (req, res) => {
   const { client, user } = ctx;
 
   // Fetch pending invites AND accepted invites whose meetup has since been confirmed
-  const { data: invites } = await client
+  const { data: invites, error: invitesErr } = await client
     .from("meetup_invites")
     .select("id, meetup_id, status, invited_at")
     .eq("user_id", user.id)
     .in("status", ["pending", "going", "maybe"])
     .order("invited_at", { ascending: false });
-
+  if (invitesErr) { req.log.error({ err: invitesErr }, "meetup invites read failed"); sendError(res, "db_error", "Could not load your meetup invites"); return; } // an unreadable inbox is an error, never an empty one
   if (!invites || invites.length === 0) { res.json({ invites: [] }); return; }
 
   const meetupIds = (invites as any[]).map((i) => i.meetup_id as string);
-  const { data: meetups } = await client
+  const { data: meetups, error: inviteMeetupsErr } = await client
     .from("meetups")
     .select("id, title, location_name, approximate_date, time_block, starts_at, creator_id, status")
     .in("id", meetupIds)
     .neq("status", "cancelled");
-
+  if (inviteMeetupsErr) { req.log.error({ err: inviteMeetupsErr }, "meetup invites: meetups read failed"); sendError(res, "db_error", "Could not load your meetup invites"); return; }
   const meetupMap: Record<string, any> = {};
   for (const m of meetups ?? []) meetupMap[m.id] = m;
 
