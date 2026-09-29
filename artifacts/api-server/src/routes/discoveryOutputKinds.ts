@@ -38,7 +38,7 @@ import { Router, type Request, type Response } from "express";
 import { requireUser, sendError } from "../lib/http.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { getServiceClient } from "../lib/supabase.js"; import { exposureForResponse, serveClockOf, servedRecommendationId } from "../lib/discoveryRecommendationRecord.js"; import { logServeUnlessRefused } from "../lib/discoveryRefusal.js"; import { DiscoveryServePoint, type ServedItem } from "../lib/discoveryServeLog.js";  // §94: the serve log
-import { unlessDiscoveryStopped } from "../lib/discoveryStopGate.js";  // census-discovery §104 (DV-83, D-W11X2-56): the flag is read strictly at the foot — this line used to bring in the isFlagEnabled helper from lib/featureFlags
+import { discoveryStopHalt } from "../lib/discoveryStopGate.js";  // census-discovery §104 (DV-83, D-W11X2-56): the flag is read strictly at the foot — this line used to bring in the isFlagEnabled helper from lib/featureFlags
 import { loadPdeViewer } from "../lib/discoveryPde.js";
 import {
   rankTrailsForViewer, rankSharedMomentsForViewer, rankEmergingForViewer, type RankedKind,
@@ -61,7 +61,7 @@ router.get("/v1/discovery/recommendations/:kind", asyncHandler(async (req: Reque
   // Literal at the read site (check:flag-polarity reads call sites).
   const kindsFlag = await outputKindsFlagRead(sc); if (kindsFlag === null) return sendError(res, "degraded_unavailable", "these recommendations could not be checked just now", { reason: "flag_unreadable" }); if (!kindsFlag) {  // census-discovery §104 (DV-83, D-W11X2-56): an UNREAD flag is a failed read, never the off 404 — was: if (!(await isFlagEnabled(sc, "discovery_output_kinds_enabled"))) {
     return sendError(res, "feature_disabled", "these recommendations are not enabled");
-  } if (!(await unlessDiscoveryStopped(sc, true))) return sendError(res, "feature_disabled", "these recommendations are not enabled");  // census-discovery §97: flag ON but the Discovery stop engaged ⇒ exactly the flag-off 404
+  } const stopHalt = await discoveryStopHalt(sc); if (stopHalt === "stop_unreadable") return sendError(res, "degraded_unavailable", "these recommendations could not be checked just now", { reason: "stop_unreadable" }); if (stopHalt !== null) return sendError(res, "feature_disabled", "these recommendations are not enabled");  // census-discovery §97: flag ON but the Discovery stop engaged ⇒ exactly the flag-off 404; §106 (DV-83, D-W11X2-69): an UNREAD stop still serves nothing but says so (503), never the off 404 the rail hides — was: } if (!(await unlessDiscoveryStopped(sc, true))) return sendError(res, "feature_disabled", "these recommendations are not enabled");
 
   const kind = String(req.params["kind"] ?? "");
   if (!isServedKind(kind)) return sendError(res, "feature_disabled", `no recommendations of kind "${kind}"`);

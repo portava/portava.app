@@ -10,6 +10,8 @@
  *   RR1  a 200 with refusal coverage `nothing` → unavailable
  *   RR2  a 200 with refusal coverage `partial` → ok, rows kept, partial: true
  *   RR3  CONTROL: a 200 with no refusal → ok, no `partial` key
+ *   RR4  (§106, CM1) a refusal with a MISSING or UNKNOWN coverage → unavailable, never a complete page
+ *   RR5  (§106, D-W11X2-69) 503 `stop_unreadable` (the Discovery stop could not be read) → unavailable, never `disabled`
  *
  * Run: node --import tsx --test src/services/__tests__/discoveryRecommendationsRefusal.test.ts
  */
@@ -46,5 +48,17 @@ describe('getOutputKindRecommendations branches on refusal coverage (§105)', ()
     answer(200, { kind: 'trails', rankedBy: 'pde', items: [trail], cursor: null });
     const r = await getOutputKindRecommendations('trails');
     assert.deepEqual(r, { ok: true, kind: 'trails', rankedBy: 'pde', items: [trail] });
+  });
+
+  it('RR4 (§106, CM1) a refusal with a missing or unknown coverage is a failed read, never a complete page', async () => {
+    answer(200, { kind: 'trails', rankedBy: 'pde', items: [trail], cursor: null, refusal: { class: 'transient_db', code: 'x', route: 'r' } });
+    assert.deepEqual(await getOutputKindRecommendations('trails'), { ok: false, reason: 'unavailable' });
+    answer(200, { kind: 'trails', rankedBy: 'pde', items: [trail], cursor: null, refusal: { class: 'transient_db', code: 'x', route: 'r', coverage: 'some_future_value' } });
+    assert.deepEqual(await getOutputKindRecommendations('trails'), { ok: false, reason: 'unavailable' });
+  });
+
+  it('RR5 (§106, D-W11X2-69) 503 stop_unreadable is a failed read, never the flag-off `disabled`', async () => {
+    answer(503, { error: 'degraded_unavailable', message: 'these recommendations could not be checked just now', reason: 'stop_unreadable' });
+    assert.deepEqual(await getOutputKindRecommendations('trails'), { ok: false, reason: 'unavailable' });
   });
 });

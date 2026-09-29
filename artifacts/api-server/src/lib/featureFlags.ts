@@ -52,17 +52,17 @@ export async function isFlagEnabled(sc: any, flag: string): Promise<boolean> {
  * error=null, which means "no such stop has been configured". Only a genuine
  * error — the state could not be established — engages it.
  */
-export async function isKillSwitchEngaged(sc: any, flag: string): Promise<boolean> {
+export async function isKillSwitchEngaged(sc: any, flag: string, status?: KillSwitchReadStatus): Promise<boolean> {
   try {
     const { data, error } = await sc
       .from("feature_flags")
       .select("enabled")
       .eq("flag", flag)
       .maybeSingle();
-    if (error) return true; // state unknown → treat as stopped
+    if (error) { if (status) status.unread = true; return true; } // state unknown → treat as stopped (and say so, when asked: census-discovery §106)
     return Boolean((data as any)?.enabled);
   } catch {
-    return true; // state unknown → treat as stopped
+    if (status) status.unread = true; return true; // state unknown → treat as stopped
   }
 }
 
@@ -156,3 +156,12 @@ export function killSwitchStateUnknown(flagSc: unknown): boolean {
 /** What a person is told when the stop's state could not be established. */
 export const KILL_SWITCH_UNKNOWN_MESSAGE =
   "We could not check whether this is available right now. Please try again shortly.";
+
+/**
+ * census-discovery §106 (DV-83 round 10, lane W11-X2, D-W11X2-69): why a stop read ENGAGED.
+ * `unread` is set when the stop's state could not be read (a resolved error or a throw), where
+ * `isKillSwitchEngaged` still answers `true` — the fail-closed posture is unchanged. A caller whose
+ * halt would otherwise be served as "this feature is off" passes this to tell the two apart and
+ * answer a failed read instead. Optional and additive: a caller that passes nothing is unchanged.
+ */
+export interface KillSwitchReadStatus { unread?: boolean }
