@@ -27,7 +27,7 @@ import {
   type CompassSensePresence,
 } from '../src/services/compass';
 import { useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
-import { PlainBottomFiller } from '../src/hooks/useBottomInset';
+import { PlainBottomFiller } from '../src/hooks/useBottomInset'; import { SenseNudgesPanel } from '../src/features/live/SenseNudgesPanel';
 
 // ── Option constants ──────────────────────────────────────────────────────────
 
@@ -176,7 +176,7 @@ const SENSE_CATEGORY_ROWS: { key: string; label: string; sub: string }[] = [
 function SenseSection() {
   const [sense, setSense] = useState<CompassSenseSettings | null>(null);
   const [enabled, setEnabled] = useState(true);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState(false); const [loadFailed, setLoadFailed] = useState(false); const [reloadKey, setReloadKey] = useState(0); // TM-live COMP-F11: a failed settings read is said, with a retry
 
   useEffect(() => {
     let mounted = true;
@@ -184,10 +184,10 @@ function SenseSection() {
       const r = await fetchCompassSenseSettings();
       if (!mounted) return;
       if (r.ok && r.compassEnabled === false) { setEnabled(false); return; }
-      if (r.ok && r.data) setSense(r.data);
+      if (r.ok && r.data) { setSense(r.data); setLoadFailed(false); } else setLoadFailed(true);
     })();
     return () => { mounted = false; };
-  }, []);
+  }, [reloadKey]);
 
   const save = useCallback(async (patch: { presenceLevel?: CompassSensePresence; categories?: Record<string, boolean> }) => {
     if (busy) return;
@@ -197,7 +197,7 @@ function SenseSection() {
     setBusy(false);
   }, [busy]);
 
-  if (!enabled || !sense) return null;
+  if (enabled && !sense && loadFailed) return (<Section title="Compass Sense" Icon={Bell}><Text style={s.fieldSubLabel} testID="sense-settings-failed">Couldn't load your Compass Sense settings. This is not "off" — it could not be read.</Text><Pressable onPress={() => setReloadKey((k) => k + 1)} testID="sense-settings-retry"><Text style={s.fieldLabel}>Try again</Text></Pressable></Section>); if (!enabled || !sense) return null;
 
   return (
     <Section title="Compass Sense" Icon={Bell}>
@@ -234,7 +234,7 @@ function SenseSection() {
             />
           ))}
         </>
-      )}
+      )}<SenseNudgesPanel />
     </Section>
   );
 }

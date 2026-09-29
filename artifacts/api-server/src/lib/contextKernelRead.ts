@@ -30,7 +30,7 @@ import { isEmergingInfluenceEligible, isLiveConstraintEligible } from "../compas
 import { buildCrowdState, envelopeTemporal } from "./crowdState.js";
 import { buildForecastState, type ForecastRefused, type ForecastState } from "./forecastState.js";
 import { truthOfEnvelopes } from "./liveEnvelopeTruth.js";
-import { readLiveClaimEnvelopes, type LiveClaimEnvelope } from "./liveClaimRead.js";
+import { liveClaimReadFailed, readLiveClaimEnvelopes, type LiveClaimEnvelope } from "./liveClaimRead.js";
 import { ATTENTION_BUDGET_PER_WINDOW, ATTENTION_WINDOW_MINUTES } from "./attentionEngine.js";
 import { NotificationPreferenceService } from "../services/notifications/NotificationPreferenceService.js";
 import type { AttentionContext, SubjectWorldContext } from "./contextKernel.js";
@@ -76,7 +76,7 @@ export async function readSubjectWorld(
   const usable = envelopes.filter((e) => isLiveConstraintEligible(e, nowMs) || isEmergingInfluenceEligible(e, nowMs));
   return {
     subjectId,
-    readable: opts.readable,
+    readable: opts.readable && !liveClaimReadFailed(envelopes), // TM-live SEN-F07: a FAILED read (§94 mark) refuses `live_intelligence_unavailable`, never `no_opportunity`
     crowd,
     forecast,
     forecastRefused,

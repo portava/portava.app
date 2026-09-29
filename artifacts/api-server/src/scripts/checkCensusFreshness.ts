@@ -3076,6 +3076,19 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   // paths resolve) and the most client-weighted: its subject is the typing
   // surface, so the hooks ARE the measurement, not evidence about it.
   "census-input-intelligence.md": [
+    // ── ADDED 2026-09-29 by §34 (testing-mode lane tm-ii, WP-19) ─────────────
+    // §34 moves G154–G157, G160–G163, G133 and G362 on these files' evidence:
+    // the two server suites that prove paste and "meet at" through the real
+    // route, the outcome-reporting geocoder paste resolution depends on, the
+    // Trip stop editor that mounts the review screen, and the Telegraph screen
+    // and compose sheet that carry the §54 share. A census that grades on a
+    // file must age when it changes. Coverage back to 100%; floor not lowered.
+    "artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts",
+    "artifacts/api-server/src/test/inputAssistanceTelegraphActions.test.ts",
+    "artifacts/api-server/src/services/geocodingService.ts",
+    "travel-buddy-standalone/src/components/trip/DestinationListEditor.tsx",
+    "travel-buddy-standalone/app/messages/[id].tsx",
+    "travel-buddy-standalone/src/features/telegraph/composer/TypedComposePrompt.tsx",
     // ── ADDED 2026-09-21 by §28/§29, for the two owner decisions ────────────
     // The census's OWN evidence. §28 cites both files as what proves the two
     // decisions: `displayNameManual.test.ts` that `display_name` resolves to

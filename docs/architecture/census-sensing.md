@@ -6115,6 +6115,92 @@ not re-run for this section.
 - The loop still needs corroborated observations in the scope for a label to appear; that half of
   SEN-F06 is a physical-world signal this lane does not simulate.
 
+## §29 — 2026-09-29: the opportunity → session → outcome bridge and the §19 read models reach the place screen, and three consumers stop reading a failed live read as "nothing live" (TM-live lane, SEN-F07 / SEN-F08)
+
+Testing-mode lane `lane-tm-live` (WP-11), branch cut from `main` at `978d886bf`. `head_commit` is
+**NOT** re-declared. Controlled evidence only — route tests over the fake PostgREST and component
+tests with only `fetch` faked. No flag was touched, no migration was added, no database was read.
+
+**No row moves.** S54, S56, S113, S45 and S53 are already C and rest on the server engines, which this
+lane did not change in kind. S92 stays **W** for §27's reason (memory eligibility is still not
+computed from a session's outcome, and `memory_projection` is FALSE); this lane's close does reach the
+existing memory stage (`persistSessionMemory`) but only behind that flag, so its RED WHEN is not met.
+
+### 28.1 The server defect: three consumers ignored the failed-read mark
+
+§94 of census-discovery made liveClaimRead MARK an errored read (`liveClaimReadFailed`) while still
+handing every caller `[]`. Discovery's rank read asks; these did not, so a snapshot outage read as
+"we looked and nothing is live" (Sensing §20 forbids exactly that):
+
+- the context kernel — so `/intel/opportunities` refused `no_opportunity` and the from-opportunity
+  bridge answered 409 `no_opportunity`: now `artifacts/api-server/src/lib/contextKernelRead.ts:79#readable: opts.readable && !liveClaimReadFailed(envelopes)`,
+  which refuses `live_intelligence_unavailable`;
+- the §19 live-state read model — `unknown` after a failed read was indistinguishable from silence:
+  the resolver now carries the mark (`artifacts/api-server/src/lib/liveClaimRead.ts:624#return { state: "unknown", claims: carryLiveClaimReadFailure(live, [])`),
+  the route serves `live_read_failed` (`artifacts/api-server/src/routes/intelReadModels.ts:219#claims, live_read_failed:`),
+  and a failed read no longer shares a real `unknown` answer's ETag;
+- the Compass decision (census-compass §29.3) and the Wall moments (census-wall §18) — same mark.
+
+The value every other caller receives is unchanged: the mark is a WeakSet membership, invisible on
+the wire.
+
+### 28.2 SEN-F08 — live state, typical patterns, neighbourhood pulse
+
+**Tester steps.** Open a canonical place. **Right now** reads `GET /v1/experiences/:id/live-state`;
+**Typically** reads `/typical-patterns` (weekly buckets after the nightly pattern job); a place with a
+neighbourhood shows **<neighbourhood> pulse** from `/v1/neighborhoods/:id/pulse`.
+
+- `travel-buddy-standalone/src/features/live/placeLive.ts:108#export async function fetchLiveState(`,
+  `travel-buddy-standalone/src/features/live/placeLive.ts:118#export async function fetchTypicalPatterns(` and
+  `travel-buddy-standalone/src/features/live/placeLive.ts:127#export async function fetchNeighborhoodPulse(`, rendered by
+  `travel-buddy-standalone/src/features/live/PlaceLivePanel.tsx:56#export function PlaceLivePanel(`.
+- A failed live read says so; a healthy `unknown` says "No current reports here — that isn't the same
+  as quiet"; a typical pattern is labelled "a pattern from past weeks — not what is happening now"
+  (S45's rule, on screen); a withheld pulse is "not a reading of quiet".
+
+**Decision.** The pulse's `no_data` when Live is globally off stays identical to an empty
+neighbourhood — `lib/intelPulse.ts` keeps that on purpose — so the client never says which it was.
+
+### 28.3 SEN-F07 — opportunity → "I'm going" → "how was it?"
+
+**Tester steps.** On a place with a live opportunity, **Going?** shows it ("Worth going now · until
+HH:MM"); **I'm going** opens a session; later, on the same place (or any place — an open session
+elsewhere is shown too), pick an outcome.
+
+- `travel-buddy-standalone/src/features/live/placeLive.ts:166#export async function fetchPlaceOpportunity(`,
+  `travel-buddy-standalone/src/features/live/placeLive.ts:209#export async function startSessionFromOpportunity(` (the server
+  re-derives the opportunity; the client names only the subject) and
+  `travel-buddy-standalone/src/features/live/placeLive.ts:224#export async function closeSession(`.
+- An open-session read the server refused is a failure with Try again, never "no session" — that
+  would offer a second session on the strength of a failed read, the confusion the route's header
+  names. A refused start says which refusal (already open, no opportunity, live unreadable, safety).
+
+**Decisions.** (a) Outcomes offered: better, same, worse, couldn't get in, didn't go (the enum's
+`slightly_better` is not offered, to keep the choice short). (b) The close sends no
+`snapshotId`/`claimId`/`servedAt`, so it is recorded `calibrated: false`: the compass surface's
+projection carries snapshot ids but no claim ids, and the client will not fabricate one.
+
+### 28.4 Tests, red first, and mutations
+
+- Server: `artifacts/api-server/src/test/tmLiveSurfaces.test.ts:148#describe("SEN-F07 opportunities` and
+  `artifacts/api-server/src/test/tmLiveSurfaces.test.ts:165#describe("SEN-F08 GET /v1/experiences/:id/live-state`
+  — red on `main`, green after; mutations M3, M4, M4b reddened them, restored by sha256.
+- Client: `PlaceLivePanel.component.test.tsx`, 13/13 through the real service; mutations P08-1, P08-2,
+  P07-1…4 reddened it, restored by sha256. Red first: the module did not exist and no client called
+  these routes.
+
+### 28.5 What is left, and what needs the hosted deployment
+
+- **Hosted:** `opportunity_engine_enabled`, `experience_session_enabled`,
+  `intel_outcome_attribution_enabled`, `intel_pattern_learning` and `intel_claim_projection_crowd` TRUE
+  on the testing deployment (catalogue target; unchanged here), the Live gate chain, and the Sensing
+  secrets (`SENSING_CONTRIBUTOR_PEPPER`, `INTEL_EVIDENCE_REFERENCE_KEY`) so snapshots exist. Typical
+  patterns need the nightly pattern job to have run. Going to the place needs a GPS mock.
+- **Calibration from the place screen** needs the served claim id on the opportunity projection
+  (a server change to `SURFACE_FIELDS`), after which the close can send it.
+- Red if: a failed live read renders as "no current reports"; an opportunity refused for unreadable
+  live intelligence renders as "no opportunity"; an unreadable open-session read offers "I'm going".
+
 ## Cited, not graded (check:census-scope-coverage)
 
 Declared 2026-09-27 by the coverage-guard fix (census-media §32.14). Each line names a file this census cites and does not grade, and says why. The guard refuses a declaration for any file a verdict row cites.
@@ -6131,3 +6217,8 @@ Declared 2026-09-27 by the coverage-guard fix (census-media §32.14). Each line 
 - NOT-GRADED: travel-buddy-standalone/app/admin/__tests__/AdminConsoleScreens.component.test.tsx — §28.3's admin-screen suite; no verdict rests on it.
 - NOT-GRADED: travel-buddy-standalone/src/services/__tests__/adminConsole.services.component.test.ts — §28.3's service suite; no verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/intelLiveScopeOps.test.ts — named in §28.3 only as the live-scope route suite this section did not re-run; no verdict of §28 rests on it.
+- NOT-GRADED: travel-buddy-standalone/src/features/live/placeLive.ts — §29.2/§29.3's client for the §19 read models and the session bridge, built work for SEN-F07/SEN-F08; S45, S53, S54, S56 and S113 rest on the server engines, not on this file
+- NOT-GRADED: artifacts/api-server/src/test/tmLiveSurfaces.test.ts — §29.4's route suite for the failed-read fixes; controlled evidence for built work, no sensing verdict moves on it
+- NOT-GRADED: travel-buddy-standalone/src/features/live/PlaceLivePanel.tsx — §28's place-screen panel, built work; no sensing row grades a client surface for these read models
+- NOT-GRADED: artifacts/api-server/src/lib/intelPulse.ts — named in §29.2 only for its deliberate `no_data` spelling when Live is off, which this lane left unchanged; no sensing verdict rests on it here
+- NOT-GRADED: travel-buddy-standalone/src/features/live/__tests__/PlaceLivePanel.component.test.tsx — §29.4's suite for the place panel; no verdict rests on it
