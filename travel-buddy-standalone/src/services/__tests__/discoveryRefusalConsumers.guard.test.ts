@@ -68,7 +68,7 @@ const EXPECTED_CARRIERS = [
  * Carriers outside `services/discovery.ts`, pinned by module.
  */
 const EXTRA_CARRIERS: Record<string, string[]> = {
-  'src/platform/input-assistance/services/inputAssistance.ts': ['requestMapSearchPage'],
+  'src/platform/input-assistance/services/inputAssistance.ts': ['requestMapSearchPage'], ...derivedExtraCarriers(),  // census-discovery §109 (D-W11X2-87): GET /compass/recommendations' and GET /hashtags/trending's carriers, derived from their modules (see the file's foot)
 };
 
 /** Hooks that take a carrier's answer and hand a `refused` flag on. Their importers are consumers too. */
@@ -156,11 +156,11 @@ const CONSUMERS: Record<string, Consumer> = {
     partialBranches: ["incomplete: preferGateway ? gateway.refusal?.coverage === 'partial' : legacy.incomplete,"],
   },
   'app/search.tsx': {
-    uses: ['searchUnified', 'useGlobalSearchSuggestions'],
-    branches: ["if (res.data.refusal?.coverage === 'nothing') {", 'refused: suggestRefused,', 'refused={suggestRefused}', '} else setMoreFailed(true);', 'testID="search-more-failed"'],  // §101 (D-W11X2-30): a refused or failed cursor page is said
-    proofs: [{ file: 'app/__tests__/search.refusal.component.test.tsx', mentions: 'refus' }, { file: 'app/__tests__/search.loadMore.component.test.tsx', mentions: 'SP2 page 2 REFUSED' }],
+    uses: ['searchUnified', 'useGlobalSearchSuggestions', 'fetchCompassRecommendations'],  // §109: and the Compass rail
+    branches: ["if (res.data.refusal?.coverage === 'nothing') {", 'refused: suggestRefused,', 'refused={suggestRefused}', '} else setMoreFailed(true);', 'testID="search-more-failed"', 'const rFailed = !cr.ok || !cr.data || compassRecommendationsFailed(cr.data);'],  // §101 (D-W11X2-30): a refused or failed cursor page is said; §109 (D-W11X2-87): the Compass rail's shared predicate
+    proofs: [{ file: 'app/__tests__/search.refusal.component.test.tsx', mentions: 'refus' }, { file: 'app/__tests__/search.loadMore.component.test.tsx', mentions: 'SP2 page 2 REFUSED' }, { file: 'app/__tests__/search.compassRailFailed.component.test.tsx', mentions: 'CR2 the rail read is refused' }],
     partial: 'rows rendered with the "incomplete" notice; the suggestions panel says it too',
-    partialBranches: ['{SEARCH_PARTIAL_NOTICE}', 'incomplete={suggestIncomplete}', "} else { if (res.data.refusal?.coverage === 'partial') {"],  // §101 (D-W11X2-28): a partial cursor page too
+    partialBranches: ['{SEARCH_PARTIAL_NOTICE}', 'incomplete={suggestIncomplete}', "} else { if (res.data.refusal?.coverage === 'partial') {", "cr.data?.refusal?.coverage === 'partial' ? 'partial' : null);"],  // §101 (D-W11X2-28): a partial cursor page too; §109: the Compass rail
   },
   'src/components/map/MapSearchSheet.tsx': {
     uses: ['requestMapSearchPage'],
@@ -170,11 +170,11 @@ const CONSUMERS: Record<string, Consumer> = {
     partialBranches: ["const allPartial = allRefusal?.coverage === 'partial';", 'const NOTICE_PARTIAL = SEARCH_PARTIAL_NOTICE;'],
   },
   'app/map/index.tsx': {
-    uses: ['getDiscoveryPlaces'],
-    branches: ["if (res.ok && (res.data?.refusal?.coverage === 'nothing' || isPartialEmpty(res.data?.refusal, res.data?.places))) {"],
-    proofs: [{ file: 'app/map/__tests__/projectedPlaces.component.test.tsx', mentions: 'a refusal is not a zero-results map' }],
+    uses: ['getDiscoveryPlaces', 'fetchCompassRecommendations'],  // §109: and the trip's Compass alternatives
+    branches: ["if (res.ok && (res.data?.refusal?.coverage === 'nothing' || isPartialEmpty(res.data?.refusal, res.data?.places))) {", 'compassRecommendations: tripCompassRecommendations(compassRes),'],  // §108 (D-W11X2-81)
+    proofs: [{ file: 'app/map/__tests__/projectedPlaces.component.test.tsx', mentions: 'a refusal is not a zero-results map' }, { file: 'app/map/__tests__/tripCompassAlternativesRead.component.test.tsx', mentions: 'TM2 a refused' }],
     partial: 'pins drawn under a "may be incomplete" banner; no places is the retryable error card, never the zero-results state',
-    partialBranches: ['isPartialEmpty(res.data?.refusal, res.data?.places)', 'testID="map-places-partial"'],
+    partialBranches: ['isPartialEmpty(res.data?.refusal, res.data?.places)', 'testID="map-places-partial"', "listPartialNotice('Compass alternatives')"],  // §108: the trip's Compass alternatives
   },
   // Prefetch: the answers are DISCARDED (warmed into the service's own cache,
   // which never holds a `coverage: "nothing"` body — discovery.refusal suite).
@@ -188,12 +188,12 @@ const CONSUMERS: Record<string, Consumer> = {
   // The badge row: the SERVICE omits a refused category (absent key), and the
   // row renders an absent count as no count — never as a dimmed zero.
   'app/(tabs)/discovery.tsx': {
-    uses: ['getDiscoveryCategoryCounts'],
-    branches: ['const isEmpty = !countsLoading && count !== undefined && count === 0;'],
-    proofs: [{ file: 'src/services/__tests__/discovery.refusal.component.test.tsx', mentions: 'OMITS a refused category rather than reporting it as a real zero' }, { file: 'src/services/__tests__/discovery.refusal.component.test.tsx', mentions: 'OMITS a PARTIAL zero' }],
-    partial: 'n/a — a count badge, not a list: census-discovery §100 (D-W11X2-23) — the service omits a failed, refused OR partial category (a partial total counts only the sources that answered), and the badge renders an absent key as no count, never dimmed',
-    partialBranches: [],
-  },
+    uses: ['getDiscoveryCategoryCounts', 'getTrendingHashtags'],  // §109 (D-W11X2-87): and the trending chips
+    branches: ['const isEmpty = !countsLoading && count !== undefined && count === 0;', "if (res.ok && res.data && coverage !== 'failed')", 'testID="discovery-trending-failed"'],  // §108 (D-W11X2-79): a refused trending read is the failed line
+    proofs: [{ file: 'src/services/__tests__/discovery.refusal.component.test.tsx', mentions: 'OMITS a refused category rather than reporting it as a real zero' }, { file: 'src/services/__tests__/discovery.refusal.component.test.tsx', mentions: 'OMITS a PARTIAL zero' }, { file: 'app/(tabs)/__tests__/discovery.trendingPartial.component.test.tsx', mentions: 'TP2 a `nothing` refusal' }],
+    partial: 'the badge: census-discovery §100 (D-W11X2-23) — the service omits a failed, refused OR partial category (a partial total counts only the sources that answered), and the badge renders an absent key as no count, never dimmed; the trending chips (§108, D-W11X2-79): chips kept under "Trending tags may be incomplete right now."',
+    partialBranches: ["setTrendingPartial(coverage === 'partial'); }", 'testID="discovery-trending-partial"'],
+  }, ...compassRecommendationsConsumers(),  // census-discovery §109 (D-W11X2-87): the /compass/recommendations consumers outside the files above (see the file's foot)
 };
 
 // ── Derivation ────────────────────────────────────────────────────────────────
@@ -304,7 +304,7 @@ describe('DV-83 — every refusal-carrying Discovery read has an accounted consu
   const consumers = derivedConsumers(carriers);
 
   it('G1. the carriers derived from services/discovery.ts are exactly the pinned set', () => {
-    assert.deepEqual(carriers, EXPECTED_CARRIERS,
+    assert.deepEqual(carriers, EXPECTED_CARRIERS, 'the set of Discovery reads that can answer with a refusal changed — pin it here AND register every consumer of the new one in CONSUMERS'); assert.deepEqual(derivedExtraCarriers(), expectedExtraCarriers(),  // §109 (D-W11X2-87): and the Compass recommendations and trending carriers
       'the set of Discovery reads that can answer with a refusal changed — pin it here AND register every consumer of the new one in CONSUMERS');
   });
 
@@ -342,9 +342,9 @@ describe('DV-83 — every refusal-carrying Discovery read has an accounted consu
     }
   });
 
-  it('G6. the census count: census-discovery §60 records ELEVEN consumer files — if this moves, so must the census', () => {
-    assert.equal(consumers.size, 11, `measured ${consumers.size}: ${[...consumers.keys()].join(', ')}`);
-    assert.equal(Object.keys(CONSUMERS).length, 11);
+  it('G6. the census count: census-discovery §60 records ELEVEN consumer files, §109 SIXTEEN (D-W11X2-87) — if this moves, so must the census', () => {
+    assert.equal(consumers.size, 16, `measured ${consumers.size}: ${[...consumers.keys()].join(', ')}`);
+    assert.equal(Object.keys(CONSUMERS).length, 16);
   });
 
   it('G7. §80: every consumer that renders a list says "incomplete" — the branch is present; the rest say why not', () => {
@@ -357,7 +357,7 @@ describe('DV-83 — every refusal-carrying Discovery read has an accounted consu
       for (const b of c.partialBranches) assert.ok(src.includes(b), `${file}: the partial branch is gone — expected to find:\n  ${b}`);
     }
     const na = Object.entries(CONSUMERS).filter(([, c]) => c.partialBranches.length === 0).map(([f]) => f).sort();
-    assert.deepEqual(na, ['app/(tabs)/_layout.tsx', 'app/(tabs)/discovery.tsx'],  // §94: the rail left this set once the feed named its own failed source
+    assert.deepEqual(na, ['app/(tabs)/_layout.tsx'],  // §94: the rail left this set once the feed named its own failed source; §109: discovery.tsx left it with the trending chips (D-W11X2-87)
       'the set of consumers the partial rule does not reach changed — say why here, and in census-discovery');
   });
 
@@ -374,8 +374,130 @@ describe('DV-83 — every refusal-carrying Discovery read has an accounted consu
       'src/components/discovery/ForYouTab.tsx', 'src/components/discovery/DiscoveryCategoryTab.tsx', 'src/components/discovery/DiscoveryEventPostsRail.tsx',
       'src/components/search/SearchSuggestionsPanel.tsx', 'src/components/map/MapSearchSheet.tsx',
       'app/search.tsx', 'app/map/index.tsx',
+      'src/components/TripPage.tsx', 'src/components/compass/CompassPassportSuggestions.tsx', 'src/components/compass/CompassBuddyRow.tsx', 'src/components/compass/CompassTravelerRow.tsx',  // §109 (D-W11X2-87)
     ]) {
       assert.match(read(file), /from '[./]+(?:src\/)?services\/discoveryCoverageNotice(?:\.ts)?'/, `${file} does not import the ratified wording`);
     }
   });
+
+  it('G9. §109: every consumer of a Compass recommendations or trending carrier branches through the shared predicate', () => {
+    compassConsumersBranchOnCoverage();
+  });
 });
+
+// ── census-discovery §109 (DV-83 round 12, lane W11-X2, D-W11X2-87): the carriers outside services/discovery.ts ──
+//
+// §109.1 BK1: this guard derived its carriers from services/discovery.ts alone, so the trip page's
+// Compass Brief — a GET /compass/recommendations consumer that never branched on coverage — was
+// invisible to it, and D-W11X2-82's "every consumer reads through the predicate" was a list, not a
+// check. The carriers of GET /compass/recommendations (services/compass.ts) and of GET
+// /hashtags/trending (services/hashtag.ts) are now DERIVED from their modules and pinned (G1); every
+// file that value-imports one must be registered (G2), and G9 checks that each such consumer
+// branches through the shared predicate, so a new consumer that skips it fails here even once
+// registered. Declarations only: they are hoisted, so the registry lines above call them without
+// moving a line another census cites.
+
+/** services/compass.ts: the exported functions that read GET /compass/recommendations, directly or through another. */
+function compassRecommendationsCarriers(): string[] {
+  const fns = exportedFunctions(read('src/services/compass.ts'));
+  const found = new Set<string>();
+  for (const [name, body] of fns) if (body.includes('/api/compass/recommendations')) found.add(name);
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const [name, body] of fns) {
+      if (!found.has(name) && [...found].some((c) => new RegExp(`\\b${c}\\(`).test(body))) { found.add(name); grew = true; }
+    }
+  }
+  return [...found].sort();
+}
+
+/** services/hashtag.ts: the exported functions whose answer declares a `refusal`. */
+function hashtagRefusalCarriers(): string[] {
+  return [...exportedFunctions(read('src/services/hashtag.ts'))].filter(([, body]) => /\brefusal\??:/.test(body)).map(([name]) => name).sort();
+}
+
+function derivedExtraCarriers(): Record<string, string[]> {
+  return { 'src/services/compass.ts': compassRecommendationsCarriers(), 'src/services/hashtag.ts': hashtagRefusalCarriers() };
+}
+
+/** The pin. A change here is a change to DV-83's scope: register the new carrier's consumers too. */
+function expectedExtraCarriers(): Record<string, string[]> {
+  return {
+    'src/services/compass.ts': ['fetchCompassBuddyMatches', 'fetchCompassRecommendations', 'fetchCompassTravelerMatches', 'fetchCompassTripBrief'],
+    'src/services/hashtag.ts': ['getTrendingHashtags'],
+  };
+}
+
+/** Carriers that hand the route's body on as it came: the consumer must branch through the predicate itself. */
+const RAW_COMPASS_CARRIERS = ['fetchCompassRecommendations', 'fetchCompassTripBrief'];
+/** Carriers whose service already reads the body through `compassMatchesFromBody` (ok: false on a failed read, `partial` beside rows). */
+const MATCHES_COMPASS_CARRIERS = ['fetchCompassBuddyMatches', 'fetchCompassTravelerMatches'];
+
+/** The /compass/recommendations consumers that are not also Discovery consumers above. */
+function compassRecommendationsConsumers(): Record<string, Consumer> {
+  return {
+    'src/components/TripPage.tsx': {
+      uses: ['fetchCompassTripBrief'],
+      branches: ['if (cancelled) return; setReadState(tripCompassReadState(res)); setItems(tripCompassRecommendations(res));', "!loading && readState === 'failed' ? (<View style={cb.loadingRow} testID=\"compass-brief-failed\">", '&& readState === null) return null;'],
+      proofs: [{ file: 'src/components/__tests__/CompassTripBrief.failedRead.component.test.tsx', mentions: 'V11-TB1 refused `nothing`' }, { file: 'src/components/__tests__/CompassTripBrief.failedRead.component.test.tsx', mentions: 'V11-TB4 a stale answer' }],
+      partial: 'the rows that were read (the static safety note included) under the shared "may be incomplete" line; a failed or refused read is the failed line with Retry, never the hidden brief',
+      partialBranches: ["readState === 'partial' ? (<Text style={cb.attentionNote} testID=\"compass-brief-partial\">{listPartialNotice('recommendations')}"],
+    },
+    'src/components/map/AskCompassBar.tsx': {
+      uses: ['fetchCompassRecommendations'],
+      branches: ['if (!res.ok || !res.data || compassRecommendationsFailed(res.data)) {'],
+      proofs: [{ file: 'src/components/map/__tests__/AskCompassBar.refusal.component.test.tsx', mentions: 'A1 refused `nothing`' }],
+      partial: 'the rows are handed up as markers, with "Some Compass suggestions couldn\'t load" on the bar',
+      partialBranches: ["if (res.data.refusal?.coverage === 'partial') setErrorMsg(\"Some Compass suggestions couldn't load\");"],
+    },
+    'src/components/compass/CompassPassportSuggestions.tsx': {
+      uses: ['fetchCompassRecommendations'],
+      branches: ["if (!res.ok || !res.data || compassRecommendationsFailed(res.data)) { setReadState('failed'); return; }"],
+      proofs: [{ file: 'src/components/compass/__tests__/CompassPassportSuggestions.refusal.component.test.tsx', mentions: 'PS2 refused `nothing`' }],
+      partial: 'rows kept under the shared "may be incomplete" line',
+      partialBranches: ["if (res.data.refusal?.coverage === 'partial') setReadState('partial');", "listPartialNotice('suggestions')"],
+    },
+    'src/components/compass/CompassBuddyRow.tsx': {
+      uses: ['fetchCompassBuddyMatches'],
+      branches: ["setReadState(!res.ok ? 'failed' : (!res.disabled && res.partial) ? 'partial' : null);", 'if (items.length === 0 && readState === null) return null;'],
+      proofs: [{ file: 'src/components/compass/__tests__/CompassBuddyRow.failedRead.component.test.tsx', mentions: 'BR1b a refused `nothing` read' }],
+      partial: 'picks kept under the shared "may be incomplete" line',
+      partialBranches: ["listPartialNotice('buddies')"],
+    },
+    'src/components/compass/CompassTravelerRow.tsx': {
+      uses: ['fetchCompassTravelerMatches'],
+      branches: ["setReadState(!res.ok ? 'failed' : (!res.disabled && res.partial) ? 'partial' : null);", 'if (items.length === 0 && readState === null) return null;'],
+      proofs: [{ file: 'src/components/compass/__tests__/CompassTravelerRow.failedRead.component.test.tsx', mentions: 'T3 refused `nothing`' }],
+      partial: 'travelers kept under the shared "may be incomplete" line',
+      partialBranches: ["listPartialNotice('travelers')"],
+    },
+  };
+}
+
+/** G9: the branch each derived consumer must take, by the kind of carrier it reads. */
+function compassConsumersBranchOnCoverage(): void {
+  const svc = exportedFunctions(read('src/services/compass.ts'));
+  for (const m of MATCHES_COMPASS_CARRIERS) {
+    assert.match(svc.get(m) ?? '', /\bcompassMatchesFromBody</, `${m} no longer reads the route's body through compassMatchesFromBody — its consumers would see a refusal as ok`);
+  }
+  const consumers = derivedConsumers(derivedCarriers());
+  const seen = { raw: 0, matches: 0, trending: 0 };
+  for (const [file, used] of consumers) {
+    const src = read(file);
+    if (used.some((u) => RAW_COMPASS_CARRIERS.includes(u))) {
+      seen.raw++;
+      assert.match(src, /\b(?:compassRecommendationsFailed|tripCompassRecommendations|tripCompassReadState)\(/,
+        `${file} reads GET /compass/recommendations without the shared predicate: branch through compassRecommendationsFailed (or tripCompassRecommendations / tripCompassReadState), never on \`ok\` alone`);
+    }
+    if (used.some((u) => MATCHES_COMPASS_CARRIERS.includes(u))) {
+      seen.matches++;
+      assert.match(src, /!res\.ok \? 'failed'/, `${file}: a failed Compass matches read must be its own state`);
+      assert.match(src, /\bres\.partial\b/, `${file}: a partial Compass matches read must be said`);
+    }
+    if (used.includes('getTrendingHashtags')) {
+      seen.trending++;
+      assert.match(src, /\.refusal\b/, `${file} reads GET /hashtags/trending without reading its refusal`);
+    }
+  }
+  assert.deepEqual(seen, { raw: 5, matches: 2, trending: 1 }, `the Compass and trending consumers moved: ${JSON.stringify(seen)} — register them, and say so in census-discovery`);
+}

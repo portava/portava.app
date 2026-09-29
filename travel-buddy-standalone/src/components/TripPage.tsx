@@ -12,7 +12,7 @@ import {
   MessageCircle, ShieldCheck, ImagePlus, Info, X, Bell,
 } from 'lucide-react-native';
 import { useTripSavedPlaces } from '../hooks/useTripSavedPlaces.ts';
-import { fetchCompassTripBrief, reportCompassViewed, type CompassRecommendation, type CompassBriefAttention } from '../services/compass.ts';
+import { fetchCompassTripBrief, reportCompassViewed, type CompassRecommendation, type CompassBriefAttention } from '../services/compass.ts'; import { tripCompassRecommendations, tripCompassReadState, type TripCompassRead } from '../features/trips/map/tripCompassRead.ts'; import { listPartialNotice } from '../services/discoveryCoverageNotice.ts';  // census-discovery §109 (D-W11X2-86)
 import { resolveCompassTitle, formatCompassSubtitle } from '../utils/compassFormat.ts';
 import { openTripChat } from '../services/messaging.ts';
 import { createPlanItem } from '../features/trips/planning/tripPlan.ts';
@@ -800,28 +800,28 @@ export function CompassTripBrief({ tripId, city, startDate, endDate }: CompassTr
   const [items, setItems]           = useState<CompassRecommendation[]>([]);
   const [attention, setAttention]   = useState<CompassBriefAttention | null>(null);
   const [loading, setLoading]       = useState(false);
-  const [fetched, setFetched]       = useState(false);
+  const [fetched, setFetched]       = useState(false); const [readState, setReadState] = useState<TripCompassRead>(null); const [retryKey, setRetryKey] = useState(0);  // census-discovery §109 (DV-83, D-W11X2-86): a failed or partial read is said
 
   useEffect(() => {
-    if (!city && !tripId) { setFetched(true); return; }
+    let cancelled = false; setItems([]); setAttention(null); setReadState(null); if (!city && !tripId) { setLoading(false); setFetched(true); return; }  // §109: only the latest request writes; another trip's rows never stay
     setLoading(true);
     fetchCompassTripBrief({ tripId: tripId ?? '', city, startDate, endDate, limit: 6 })
       .then((res) => {
+        if (cancelled) return; setReadState(tripCompassReadState(res)); setItems(tripCompassRecommendations(res));  // §109: branch on coverage — was: if (res.ok && res.data) setItems(res.data.recommendations)
         if (res.ok && res.data) {
-          setItems(res.data.recommendations);
           // Trips §17.2 (TR319): the server's switch reading, shown as it was read.
           setAttention(res.data.attention ?? null);
         }
       })
-      .catch(() => {})
-      .finally(() => { setLoading(false); setFetched(true); });
-  }, [tripId, city, startDate, endDate]);
+      .catch(() => { if (!cancelled) setReadState('failed'); })  // §109: a thrown read is a failed read — was: .catch(() => {})
+      .finally(() => { if (!cancelled) { setLoading(false); setFetched(true); } });
+    return () => { cancelled = true; }; }, [tripId, city, startDate, endDate, retryKey]);
 
   const suppressed = attention?.suppressed === true;
 
   // Hide entirely when loaded with no items (Compass disabled, no results, or
   // no city) — unless the switch withheld them, which is worth a line.
-  if (fetched && items.length === 0 && !loading && !suppressed) return null;
+  if (fetched && items.length === 0 && !loading && !suppressed && readState === null) return null;  // §109: never over a failed or partial read
 
   return (
     <View>
@@ -841,7 +841,7 @@ export function CompassTripBrief({ tripId, city, startDate, endDate }: CompassTr
           Commercial and entertainment suggestions are held back while this trip needs your attention
           {attention?.withheld ? ` (${attention.withheld} held back)` : ''}. Safety and logistics stay.
         </Text>
-      )}
+      )}{!loading && readState === 'failed' ? (<View style={cb.loadingRow} testID="compass-brief-failed"><Text style={cb.loadingText}>{'Couldn\u2019t load the Compass Brief just now.'}</Text><Pressable onPress={() => setRetryKey((k) => k + 1)} testID="compass-brief-retry" accessibilityRole="button"><Text style={[cb.loadingText, { color: color.signal }]}>Retry</Text></Pressable></View>) : null}{!loading && readState === 'partial' ? (<Text style={cb.attentionNote} testID="compass-brief-partial">{listPartialNotice('recommendations')}</Text>) : null}
       {!loading && expanded && items.length > 0 && (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={cb.strip}>
           {items.map((item) => <BriefItemCard key={item.id} item={item} tripId={tripId} />)}
