@@ -15,6 +15,7 @@
  *   TS5      the 100-row answer slice is marked: 101 eligible sharers → 100 served, `truncated: true`
  *   TS6      the boundary: exactly 250 rows in the viewport is a whole read — no marker
  *   TS7      a cut scan stays cut while it is cached: a second request for the same viewport is still marked
+ *   TS8      the row read past the cap only detects the cut: the privacy reads ask for 250 ids, never 251
  *   TSc      CONTROL: a healthy uncut read keeps the body's keys (`travelers`, `generatedAt`) and names `travelers`
  *
  * The fake honours `.order(col, { ascending })` and `.limit(n)`, as PostgREST does; the repo's
@@ -37,7 +38,8 @@ const POS = { lat: 16.06, lng: 108.21 };
 const BBOX = "108.0,15.9,108.4,16.2";
 const agoIso = (ms: number) => new Date(Date.now() - ms).toISOString();
 
-function buildQuery(rowsIn: any[]) {
+const inSizes: Record<string, number[]> = {};
+function buildQuery(rowsIn: any[], table = "") {
   let rows = [...rowsIn];
   let cap: number | null = null;
   const out = () => (cap == null ? rows : rows.slice(0, cap));
@@ -54,7 +56,7 @@ function buildQuery(rowsIn: any[]) {
     lte(c: string, v: any) { rows = rows.filter((r) => r[c] <= v); return q; },
     eq(c: string, v: any) { rows = rows.filter((r) => r[c] === v); return q; },
     neq(c: string, v: any) { rows = rows.filter((r) => r[c] !== v); return q; },
-    in(c: string, vs: any[]) { rows = rows.filter((r) => vs.includes(r[c])); return q; },
+    in(c: string, vs: any[]) { (inSizes[table] ??= []).push(vs.length); rows = rows.filter((r) => vs.includes(r[c])); return q; },
     maybeSingle() { return Promise.resolve({ data: out()[0] ?? null, error: null }); },
     single() { return Promise.resolve({ data: out()[0] ?? null, error: null }); },
     then(res: any, rej?: any) { return Promise.resolve({ data: out(), error: null }).then(res, rej); },
@@ -64,7 +66,7 @@ function buildQuery(rowsIn: any[]) {
 function makeClient(state: Record<string, any[]>) {
   return {
     auth: { getUser: async (t: string) => (t === TOKEN ? { data: { user: { id: USER } }, error: null } : { data: { user: null }, error: { message: "no" } }) },
-    from: (t: string) => buildQuery(state[t] ?? []),
+    from: (t: string) => buildQuery(state[t] ?? [], t),
     rpc: async () => ({ data: [], error: null }),
   };
 }
@@ -181,6 +183,16 @@ describe("§113 (D-W11X2-129): the Discovery map's travelers layer over a cut sc
     const second = await get(travelersUrl);
     assert.equal(second.status, 200);
     assert.equal(second.body.truncated, true, JSON.stringify(second.body).slice(0, 160));
+  });
+
+  it("TS8 the row read past the cap only detects the cut: the privacy reads ask for 250 ids, never 251", async () => {
+    for (const k of Object.keys(inSizes)) delete inSizes[k];
+    _setTestClient(makeClient(world(250, 1)) as any, true);
+    const r = await get(travelersUrl);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.truncated, true);
+    assert.deepEqual(inSizes.location_preferences, [250]);
+    assert.deepEqual(r.body.travelers, []);
   });
 
   it("TSc CONTROL: a healthy uncut read — the body is `travelers` and `generatedAt` only; the gateway and search name the source", async () => {
