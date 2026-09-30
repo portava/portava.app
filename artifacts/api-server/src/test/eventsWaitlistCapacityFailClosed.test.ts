@@ -105,6 +105,17 @@ function world(o: WorldOpts = {}): { spec: FakeClientSpec; client: any; writes: 
     // The double ignores `.or()`. isBlockedBetween asks "(A blocks B) or (B blocks A)"; for a pair A≠B that is
     // exactly "blocker ∈ {A,B} and blocked ∈ {A,B}", which the double can filter.
     if (table === "blocks") b.or = (expr: string) => { const ids = [...new Set([...expr.matchAll(/blocker_id\.eq\.([0-9a-f-]+)/g)].map((m) => m[1]))]; b.in("blocker_id", ids); b.in("blocked_id", ids); return b; };
+    // The double ignores the column list and returns the whole row. For `events` reads with a plain column list,
+    // project to those columns, as PostgREST does — the waitlist accept's gate is only as good as the columns it read.
+    if (table === "events") {
+      let cols: string | null = null; const sel = b.select, ms = b.maybeSingle;
+      b.select = (c?: string, o?: any) => { cols = c ?? null; return sel(c, o); };
+      b.maybeSingle = () => ms().then((r: any) => {
+        if (rec || !r?.data || !cols || !/^[a-z_, ]+$/.test(cols)) return r;
+        const keep = cols.split(",").map((x) => x.trim());
+        return { ...r, data: Object.fromEntries(keep.filter((k) => k in r.data).map((k) => [k, r.data[k]])) };
+      });
+    }
     let rec: WriteRec | null = null;
     for (const kind of ["insert", "upsert", "update", "delete"]) {
       const orig = b[kind];
