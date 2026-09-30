@@ -41,7 +41,7 @@ export function servedDistanceKm(
   return Math.round(haversineKm(center.lat, center.lng, lat, lng) * 10) / 10;
 }
 
-export type VoteRatingAgg = { worthItCount: number; avgRating: number | null; reviewCount: number };
+export type VoteRatingAgg = { worthItCount: number | null; avgRating: number | null; reviewCount: number | null };  // census-discovery §111 (D-W11X2-114): null = that field's read failed or was cut — never a 0
 
 export async function batchFetchVoteAndRatingAggregates(
   sc: any,
@@ -68,8 +68,8 @@ export async function batchFetchVoteAndRatingAggregates(
 
     for (const row of (aggregateReadComplete(votesRes) ? votesRes.data ?? [] : []) as any[]) {  // §110: a cut or failed read states no count, never a low one
       const id = row.entity_id as string;
-      if (!result.has(id)) result.set(id, { worthItCount: 0, avgRating: null, reviewCount: 0 });
-      if (row.vote === "worth_it") result.get(id)!.worthItCount++;
+      if (!result.has(id)) result.set(id, emptyVoteRatingAgg(votesRes, reviewsRes));  // §111 (D-W11X2-114): each field starts from its OWN read
+      if (row.vote === "worth_it") result.get(id)!.worthItCount = (result.get(id)!.worthItCount ?? 0) + 1;
     }
 
     const reviewsByEntity = new Map<string, number[]>();
@@ -79,7 +79,7 @@ export async function batchFetchVoteAndRatingAggregates(
       if (row.rating != null) reviewsByEntity.get(id)!.push(parseFloat(String(row.rating)));
     }
     for (const [id, ratings] of reviewsByEntity) {
-      if (!result.has(id)) result.set(id, { worthItCount: 0, avgRating: null, reviewCount: 0 });
+      if (!result.has(id)) result.set(id, emptyVoteRatingAgg(votesRes, reviewsRes));  // §111 (D-W11X2-114): each field starts from its OWN read
       const entry = result.get(id)!;
       entry.reviewCount = ratings.length;
       if (ratings.length > 0) {
@@ -102,4 +102,20 @@ export function aggregateReadComplete(res: { data?: unknown; error?: unknown; co
   if (res.error) return false;
   const rows = Array.isArray(res.data) ? res.data.length : 0;
   return typeof res.count !== "number" || res.count <= rows;
+}
+
+// ── census-discovery §111 (DV-83 round 14, lane W11-X2, D-W11X2-114): each count comes from its own read ──
+// The entry a place gets is created by whichever loop meets it first, and it was created as
+// `{ worthItCount: 0, avgRating: null, reviewCount: 0 }` — so when the votes read succeeded and the reviews
+// read failed (or the reverse), the failed read's count was served as 0 beside the other's real one. A field
+// now starts at 0 only when its own read was complete (0 is then a fact), and null otherwise.
+export function emptyVoteRatingAgg(
+  votesRes: { data?: unknown; error?: unknown; count?: number | null },
+  reviewsRes: { data?: unknown; error?: unknown; count?: number | null },
+): VoteRatingAgg {
+  return {
+    worthItCount: aggregateReadComplete(votesRes) ? 0 : null,
+    avgRating: null,
+    reviewCount: aggregateReadComplete(reviewsRes) ? 0 : null,
+  };
 }

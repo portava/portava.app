@@ -87,7 +87,7 @@ import {
 import { GEM_CONTRIBUTION_TYPES } from "../lib/hiddenGemState.js";
 import { logDiscoveryServe, DiscoveryServePoint } from "../lib/discoveryServeLog.js";  import { stampServedRecommendations, exposureForResponse, serveClockOf } from "../lib/discoveryRecommendationRecord.js";  // census-discovery §48 — serve point 11's response carries the ids its serve-log rows do
 
-import { isAdmin } from "../lib/requireAdmin.js"; import { discoveryRefusal } from "../lib/discoveryRefusal.js"; import { readFlagState } from "../lib/capability/schemaCapability.js"; import { aggregateReadComplete } from "../lib/discoveryPlaceAggregates.js";  import { layoverGemWindow, gemsUnderLayoverMode, certifiedWindowKeys, LAYOVER_WINDOW_UNREADABLE_MESSAGE } from "../lib/discoveryLayoverGems.js";  // census-discovery §56 (A13/A14): the layover window is the certified snapshot's
+import { isAdmin } from "../lib/requireAdmin.js"; import { discoveryRefusal } from "../lib/discoveryRefusal.js"; import { readFlagState } from "../lib/capability/schemaCapability.js"; import { aggregateReadComplete, emptyVoteRatingAgg } from "../lib/discoveryPlaceAggregates.js";  import { layoverGemWindow, gemsUnderLayoverMode, certifiedWindowKeys, LAYOVER_WINDOW_UNREADABLE_MESSAGE } from "../lib/discoveryLayoverGems.js";  // census-discovery §56 (A13/A14): the layover window is the certified snapshot's
 
 const router = Router();
 
@@ -204,7 +204,7 @@ const contributionSchema = z.object({
 
 // ── Vote + review aggregate batch enrichment (gems) ──────────────────────────
 
-type GemAgg = { worthItCount: number; avgRating: number | null; reviewCount: number };
+type GemAgg = { worthItCount: number | null; avgRating: number | null; reviewCount: number | null };  // census-discovery §111 (D-W11X2-114): null = that field's read failed or was cut
 
 async function batchFetchGemAggregates(
   sc: ReturnType<typeof getServiceClient>,
@@ -228,8 +228,8 @@ async function batchFetchGemAggregates(
     ]);
     for (const row of (aggregateReadComplete(votesRes) ? votesRes.data ?? [] : []) as any[]) {  // §110: a cut or failed read states no count
       const id = row.entity_id as string;
-      if (!result.has(id)) result.set(id, { worthItCount: 0, avgRating: null, reviewCount: 0 });
-      if (row.vote === "worth_it") result.get(id)!.worthItCount++;
+      if (!result.has(id)) result.set(id, emptyVoteRatingAgg(votesRes, reviewsRes));  // §111 (D-W11X2-114)
+      if (row.vote === "worth_it") result.get(id)!.worthItCount = (result.get(id)!.worthItCount ?? 0) + 1;
     }
     const reviewsByGem = new Map<string, number[]>();
     for (const row of (aggregateReadComplete(reviewsRes) ? reviewsRes.data ?? [] : []) as any[]) {
@@ -238,7 +238,7 @@ async function batchFetchGemAggregates(
       if (row.rating != null) reviewsByGem.get(id)!.push(parseFloat(String(row.rating)));
     }
     for (const [id, ratings] of reviewsByGem) {
-      if (!result.has(id)) result.set(id, { worthItCount: 0, avgRating: null, reviewCount: 0 });
+      if (!result.has(id)) result.set(id, emptyVoteRatingAgg(votesRes, reviewsRes));  // §111 (D-W11X2-114)
       const entry = result.get(id)!;
       entry.reviewCount = ratings.length;
       if (ratings.length > 0) {
