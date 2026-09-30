@@ -16,6 +16,8 @@
  *   NM7      the service reads `truncated` off GET /hidden-gems/nearby (and a whole body is not cut)
  *   NM8      the category changes while the first nearby read is in flight → the late first answer is dropped
  *   NM9      the hook: a failed refresh after a good read clears the rows and keeps the error
+ *   NM10     the hook with no position is idle: no rows, not loading, no error, nothing read
+ *   NM11     the hook: a new position shows nothing of the old one while it is read
  *   NMc      CONTROL: without Near Me the city list is read and shown as before
  */
 import React from 'react';
@@ -137,6 +139,24 @@ describe('§113: Gems "Near Me" reads the server near the viewer (D-W11X2-131)',
     await waitFor(() => expect(result.current.gems.length).toBe(1));
     await act(async () => { await result.current.refresh(); });
     expect(result.current.error).toBe('offline');
+    expect(result.current.gems).toEqual([]);
+    expect(result.current.truncated).toBe(false);
+  });
+
+  it('NM10 the hook with no position is idle: no rows, not loading, no error, nothing read', async () => {
+    const { result } = await renderHook(() => useNearbyGems(null));
+    await act(async () => { await new Promise((r) => setTimeout(r, 10)); });
+    expect(result.current).toMatchObject({ gems: [], loading: false, error: null, truncated: false });
+    expect(listNearbyGems).not.toHaveBeenCalled();
+  });
+
+  it('NM11 the hook: a new position shows nothing of the old one while it is read', async () => {
+    listNearbyGems.mockResolvedValueOnce({ gems: [gem('a', 'Lisbon', 38.73, -9.15)], truncated: true }).mockImplementationOnce(() => new Promise(() => {}));
+    const { result, rerender } = await renderHook((p: { c: { lat: number; lng: number } }) => useNearbyGems(p.c), { initialProps: { c: { lat: 38.72, lng: -9.14 } } });
+    await waitFor(() => expect(result.current.gems.length).toBe(1));
+    await rerender({ c: { lat: 41.15, lng: -8.61 } });
+    await act(async () => { await new Promise((r) => setTimeout(r, 10)); });
+    expect(result.current.loading).toBe(true);
     expect(result.current.gems).toEqual([]);
     expect(result.current.truncated).toBe(false);
   });
