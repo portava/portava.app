@@ -518,7 +518,7 @@ function overlayMap(): Map<string, string> {
 }
 function overlayRead(rel: string): string | undefined { return overlayMap().get(rel); }
 function overlayHas(rel: string): boolean { return overlayMap().has(rel); }
-function withOverlay(files: string[]): string[] { return [...new Set([...files, ...[...overlayMap().keys()].filter(walkedRoot)])]; }  // §112 (D-W11X2-126): an overlay file is seen only where the walk reads the disk
+function withOverlay(files: string[]): string[] { return [...new Set([...files, ...[...overlayMap().keys()].filter((k) => walkedRoot(k, files))])]; }  // §112 (D-W11X2-126): an overlay file is seen only where the caller's walk reads the disk
 
 /** Run `fn` with `files` laid over the tree. */
 function withFiles<T>(files: Record<string, string>, fn: () => T): T {
@@ -896,9 +896,10 @@ function clientSources(): string[] {
   return out;
 }
 
-/** The directories the overlay lays files in: those the walk reads. */
-function walkedRoot(rel: string): boolean {
-  return rel.includes('/') ? clientRoots().includes(rel.split('/')[0]!) : /\.(ts|tsx)$/.test(rel);
+/** Whether the caller's walk reads `rel`'s top-level directory (or, for a root file, the app root): the overlay mirrors the walk. */
+function walkedRoot(rel: string, walked: string[]): boolean {
+  const top = (f: string) => (f.includes('/') ? f.split('/')[0]! : '');
+  return walked.some((f) => top(f) === top(rel));
 }
 
 /**
