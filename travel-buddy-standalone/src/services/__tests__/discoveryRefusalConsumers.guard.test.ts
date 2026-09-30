@@ -1385,7 +1385,7 @@ function rootSources(names: string[]): string[] {
 // ── census-discovery §114 (DV-83 round 17, lane W11-X2): the round-16 verifier's fixtures (GH25–GH32) ──────────────
 //
 // The walk skipped `__fixtures__` and `__mocks__`, but Metro's blockList (metro.config.js) excludes only `__tests__/`
-// and `*.test.*` files — and src/data/discovery.ts does `export * from '../__fixtures__/…'`, so src/__fixtures__ IS in
+// and `*.test.*` files — and src/data/discovery.ts re-exports everything from src/__fixtures__, so that directory IS in
 // the bundle (GH28 is that live pattern). The skipped set is now read from Metro's own blockList (metroBlocks), so the
 // walk reads exactly what Metro may bundle. GH29–GH32 are the fixtures under which the guard mutations R3, R5, R6 and
 // R7 survived: each is a case here, so each reading they touch is load-bearing.
@@ -1399,7 +1399,7 @@ const GH16F = {
   handedByAssign: "\n// GH29 (v16 verifier): a registered consumer hands the carrier on by plain assignment (never calls it here).\nconst zzHandGH29 = fetchCompassRecommendations;\nexport const zzHandedGH29 = { load: zzHandGH29 };\n",
   jsxConsumer: "import { fetchCompassRecommendations } from '../services/compass.ts';\nexport async function zzRawRecsGH30() {\n  const res = await fetchCompassRecommendations({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
   iosReexport: "export { fetchCompassRecommendations as zzRecsGH31 } from '../../services/compass.ts';\n",
-  viaIosIndex: "import { zzRecsGH31 } from './zzGH31b';\nexport async function zzRawRecsGH31b(): Promise<number> {\n  const res = await zzRecsGH31({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  viaIosIndex: "import { zzRecsGH31 } from " + "'./zzGH31b';\nexport async function zzRawRecsGH31b(): Promise<number> {\n  const res = await zzRecsGH31({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
   importAlias: "\n// GH32 (v16 verifier): a registered consumer imports the carrier a second time under an alias and hands the alias on.\nimport { fetchCompassRecommendations as zzAliasGH32 } from '../../services/compass.ts';\nexport const zzHandedGH32 = [zzAliasGH32];\n",
 };
 
