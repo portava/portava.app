@@ -694,8 +694,8 @@ router.get(
           if (!read) { producers.meeting_point = { refusal: "read_threw", collected: 0 }; return; }
           if (!read.ok) { producers.meeting_point = { refusal: read.reason, collected: 0 }; return; }
           for (const p of read.points) collected.push(p);
-          producers.meeting_point = { refusal: null, collected: read.points.length };
-          sources.push("meeting_points");
+          producers.meeting_point = { refusal: read.report.capped ? "items_capped" : null, collected: read.points.length };  // census-discovery §113 (D-W11X2-135)
+          if (!read.report.capped) sources.push("meeting_points");
         })(),
       );
     }

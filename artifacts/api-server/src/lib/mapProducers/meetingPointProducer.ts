@@ -207,7 +207,7 @@ export interface MeetingPointReport {
   /** Meetup-sourced items dropped because the meetup itself is cancelled. */
   cancelledMeetups: number;
   /** True when the meetup cross-check could not be read (its items withheld). */
-  meetupReadFailed: boolean;
+  meetupReadFailed: boolean; /** census-discovery §113 (D-W11X2-135): present only when the item scan hit its cap — the layer is not whole */ capped?: true;
 }
 
 export type MeetingPointReadResult =
@@ -291,10 +291,10 @@ export async function readMeetingPoints(
     .lte("lat", bbox.north)
     .gte("lng", bbox.west)
     .lte("lng", bbox.east)
-    .limit(MAX_MEETING_POINT_ROWS);
+    .order("starts_at", { ascending: true }).limit(MAX_MEETING_POINT_ROWS + 1);  // census-discovery §113 (D-W11X2-135): soonest first, one past the cap so a cut is known
   if (error || !Array.isArray(data)) return { ok: false, reason: "items_read_failed" };
-
-  const items = data as MeetingPointItemLike[];
+  if (data.length > MAX_MEETING_POINT_ROWS) report.capped = true;  // the projection's skips run after this cut
+  const items = data.slice(0, MAX_MEETING_POINT_ROWS) as MeetingPointItemLike[];
   report.candidates = items.length;
 
   // A cancelled meetup leaves its plan item standing — cross-check the source.
