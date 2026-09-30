@@ -1177,11 +1177,12 @@ function moduleCandidates(p: string): string[] {
 }
 
 /**
- * One module identity: extension, platform variant and a trailing `/index` folded away, so `x`, `x.tsx`, `x.web.tsx` and
- * `x/index.tsx` are one module. Folding can only make two paths the same module, so it can add a consumer, never lose one.
+ * One module identity: extension and platform variant folded away, so `x.tsx` and `x.web.tsx` are one module (Metro loads
+ * one or the other by platform, and each may re-export differently). A directory's `index` is reached through
+ * moduleCandidates. Folding can only make two paths the same module, so it can add a consumer, never lose one.
  */
 function moduleId(p: string): string {
-  return p.replace(/\.(?:tsx?|jsx?|mjs|cjs)$/, '').replace(/\.(?:native|ios|android|web)$/, '').replace(/\/index$/, '');
+  return p.replace(/\.(?:tsx?|jsx?|mjs|cjs)$/, '').replace(/\.(?:native|ios|android|web)$/, '');
 }
 function sameModule(resolved: string | null, target: string): boolean {
   return resolved !== null && moduleId(resolved) === moduleId(target);
@@ -1281,3 +1282,56 @@ function firstExisting(cands: string[]): string | null {
   if (!disk.has(key)) disk.set(key, cands.find((c) => existsSync(join(ROOT, c)) && statSync(join(ROOT, c)).isFile()) ?? null);
   return disk.get(key)!;
 }
+
+// §113 (D-W11X2-133): the forms that make each reading load-bearing — a baseUrl specifier resolves through the candidates
+// alone, a platform variant through the module identity, and a default import or default export through its own reading.
+const GH15B = {
+  rootConfig: "import { fetchCompassRecommendations } from './src/services/compass.ts';\nexport const zzCfg = fetchCompassRecommendations;\n",
+  jsReexport: "export { fetchCompassRecommendations as zzRecsGH17e } from '../services/compass.ts';\n",
+  viaBaseUrlJs: "import { zzRecsGH17e } from 'src/components/zzGH17e';\nexport async function zzRawRecsGH17e(): Promise<number> {\n  const res = await zzRecsGH17e({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  indexReexport: "export { fetchCompassRecommendations as zzRecsGH18d } from '../../services/compass.ts';\n",
+  viaBaseUrlIndex: "import { zzRecsGH18d } from 'src/components/zzGH18d';\nexport async function zzRawRecsGH18d(): Promise<number> {\n  const res = await zzRecsGH18d({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  platformOnly: "export { fetchCompassRecommendations as zzRecsGH18e } from '../../services/compass.ts';\n",
+  viaBaseUrlPlatform: "import { zzRecsGH18e } from 'src/components/zzGH18e/mod';\nexport async function zzRawRecsGH18e(): Promise<number> {\n  const res = await zzRecsGH18e({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  defaultCarrierFn: "\nexport default async function zzDefaultCarrierGH19c(): Promise<{ refusal?: unknown }> {\n  return withParsedRefusal({} as never) as never;\n}\n",
+  compassOwnDefault: "\nexport default fetchCompassRecommendations;\n",
+  viaCompassDefault: "import zzOwnDefaultGH19e from '../services/compass.ts';\nexport async function zzRawRecsGH19e(): Promise<number> {\n  const res = await zzOwnDefaultGH19e({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  passportDefaultValue: "\nimport zzDefGH20b from '../../services/zzCompassDefaultGH19.ts';\nexport const zzArrGH20b = [zzDefGH20b];\n",
+  passportDefaultCall: "\nimport zzDefGH20c from '../../services/zzCompassDefaultGH19.ts';\nexport async function zzDefCallGH20c(): Promise<number> {\n  const res = await zzDefGH20c({ surface: 'passport', limit: 3 });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  discoveryDefault: "export { getDiscoveryPlaces as default } from './discovery.ts';\n",
+  mapDefaultCall: "\nimport zzPlacesGH23b from '../../src/services/zzDiscoveryDefaultGH23b.ts';\nexport async function zzDefaultSiteGH23b(): Promise<number> {\n  const res = await zzPlacesGH23b('Lisbon', 'food', {} as never, 1);\n  return res.ok ? res.data.places.length : 0;\n}\n",
+};
+
+describe('DV-83 guard reach — the readings made load-bearing (§113, D-W11X2-133)', () => {
+  const PASSPORT = 'src/components/compass/CompassPassportSuggestions.tsx';
+  const MAP = 'app/map/index.tsx';
+  it('G13 GH17c CONTROL: a root build config is not walked, on disk or in memory — it makes no consumer', () => {
+    const u = withFiles({ 'babel.config.js': GH15B.rootConfig }, unregisteredNow);
+    assert.equal(u.has('babel.config.js'), false, JSON.stringify([...u]));
+  });
+  it('G13 GH17e: a .js re-export module reached by a baseUrl specifier is caught at its importer', () => {
+    assert.throws(() => withFiles({ 'src/components/zzGH17e.js': GH15B.jsReexport, 'src/components/zzGH17euse.tsx': GH15B.viaBaseUrlJs }, wholeGuard), /zzGH17euse\.tsx \(fetchCompassRecommendations\)/);
+  });
+  it('G13 GH18d: a directory index reached by a baseUrl specifier is caught at its importer', () => {
+    assert.throws(() => withFiles({ 'src/components/zzGH18d/index.tsx': GH15B.indexReexport, 'src/components/zzGH18duse.tsx': GH15B.viaBaseUrlIndex }, wholeGuard), /zzGH18duse\.tsx \(fetchCompassRecommendations\)/);
+  });
+  it('G13 GH18e: a platform-only module reached by a baseUrl specifier is caught at its importer', () => {
+    assert.throws(() => withFiles({ 'src/components/zzGH18e/mod.web.tsx': GH15B.platformOnly, 'src/components/zzGH18euse.tsx': GH15B.viaBaseUrlPlatform }, wholeGuard), /zzGH18euse\.tsx \(fetchCompassRecommendations\)/);
+  });
+  it('G13 GH19c: a default-exported function of services/discovery.ts that reads a refusal is a carrier', () => {
+    const carriers = withFiles({ [SERVICE]: read(SERVICE) + GH15B.defaultCarrierFn }, () => derivedCarriers());
+    assert.ok(carriers.includes('zzDefaultCarrierGH19c'), JSON.stringify(carriers));
+  });
+  it("G13 GH19e: a carrier module's own default export, taken by a default import, is caught", () => {
+    assert.throws(() => withFiles({ 'src/services/compass.ts': read('src/services/compass.ts') + GH15B.compassOwnDefault, 'src/components/zzGH19e.tsx': GH15B.viaCompassDefault }, wholeGuard), /zzGH19e\.tsx \(fetchCompassRecommendations\)/);
+  });
+  it('G13 GH20b: a default-imported carrier handed on as a value in a registered consumer fails the reference pin', () => {
+    assert.throws(() => withFiles({ 'src/services/zzCompassDefaultGH19.ts': GH15V.defaultReexport, [PASSPORT]: read(PASSPORT) + GH15B.passportDefaultValue }, () => round16Checks()), /non-call reference/);
+  });
+  it('G13 GH20c: G9 alone fails a raw site reached through a default import', () => {
+    assert.throws(() => withFiles({ 'src/services/zzCompassDefaultGH19.ts': GH15V.defaultReexport, [PASSPORT]: read(PASSPORT) + GH15B.passportDefaultCall }, () => compassConsumersBranchOnCoverage()), /call site|without the shared predicate/i);
+  });
+  it('G13 GH23b: a second discovery-carrier site through a default import fails the site pin', () => {
+    assert.throws(() => withFiles({ 'src/services/zzDiscoveryDefaultGH23b.ts': GH15B.discoveryDefault, [MAP]: read(MAP) + GH15B.mapDefaultCall }, () => round15Checks()), /call site was added or removed/);
+  });
+});
