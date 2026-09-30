@@ -355,14 +355,14 @@ const MAX_HISTORY_VERSIONS = 2_000;
 
 interface HistoryRead {
   rows: SnapshotVersionRow[] | null;
-  placesById: Map<string, HistoricalPlaceGeometry>;
+  placesById: Map<string, HistoricalPlaceGeometry>; /** census-discovery §113 (DV-83, D-W11X2-130): the read that failed, when rows is null */ failed?: string[];
 }
 
 /**
  * Read the snapshot versions covering the target instant for the places in the
  * viewport, plus the geometry needed to place them. `rows: null` signals a read
  * FAILURE (place or version read), which projectHistory turns into
- * `available: false` — the honest "we could not read history", distinct from
+ * `available: false` and the route's `history_unreadable` refusal (§113), distinct from
  * "there is no history yet" (rows: []).
  */
 async function readHistory(sc: any, bbox: BBox, target: TemporalTarget): Promise<HistoryRead> {
@@ -381,7 +381,7 @@ async function readHistory(sc: any, bbox: BBox, target: TemporalTarget): Promise
     .gte("longitude", bbox.west)
     .lte("longitude", bbox.east)
     .limit(MAX_HISTORY_PLACES);
-  if (placeErr || !Array.isArray(placeRows)) return { rows: null, placesById };
+  if (placeErr || !Array.isArray(placeRows)) return { rows: null, placesById, failed: ["places"] };
 
   for (const p of placeRows as any[]) {
     const lat = Number(p.latitude);
@@ -402,7 +402,7 @@ async function readHistory(sc: any, bbox: BBox, target: TemporalTarget): Promise
     .lte("observed_at", atIso)
     .gte("expires_at", atIso)
     .limit(MAX_HISTORY_VERSIONS);
-  if (versionErr || !Array.isArray(versionRows)) return { rows: null, placesById };
+  if (versionErr || !Array.isArray(versionRows)) return { rows: null, placesById, failed: ["intel_state_snapshot_versions"] };
 
   return { rows: versionRows as SnapshotVersionRow[], placesById };
 }
@@ -518,7 +518,7 @@ router.get(
     let forecastReport:
       | { events: number | null; itinerary: number; plan: { published: number; withheld: number; refusal: PlanArrivalRefusal | null; refusals: Record<string, string> } }
       | null = null;
-    let historyReport: { available: boolean; covering: number } | null = null;
+    let historyReport: { available: boolean; covering: number } | null = null; let historyUnread: string[] | null = null;  // §113 (D-W11X2-130): the history sources a failed read could not read
 
     if (target.mode === "forecast" && wantKind("prediction")) {
       const [events, itineraryStops, planRead] = await Promise.all([
@@ -560,12 +560,12 @@ router.get(
 
     if (target.mode === "historical" && wantKind("place")) {
       const read = await readHistory(sc, bbox, target).catch(
-        (): HistoryRead => ({ rows: null, placesById: new Map() }),
+        (): HistoryRead => ({ rows: null, placesById: new Map(), failed: ["places", "intel_state_snapshot_versions"] }),
       );
       const history = projectHistory(read.rows, read.placesById, target);
       for (const o of history.objects) collected.push(o);
       if (history.available) sources.push("history");
-      historyReport = { available: history.available, covering: history.covering };
+      historyReport = { available: history.available, covering: history.covering }; if (!history.available) historyUnread = read.failed ?? ["places", "intel_state_snapshot_versions"];  // §113 (D-W11X2-130): a failed read is named, never only `available: false`
     }
 
     // §19 order: shape → drop the unservable → filter kinds → §24 → §31 → rank → page.
@@ -665,7 +665,7 @@ router.get(
     const { page, nextCursor } = paginate(ranked, cursor, limit);
 
     res.json({
-      enabled: true,
+      enabled: true, ...(historyUnread ? { refusal: "history_unreadable", failedSources: historyUnread } : {}),  // census-discovery §113 (DV-83, D-W11X2-130): the past arm names a failed history read
       objects: page,
       viewport: { bbox, zoom, center: { lat, lng }, radiusKm },
       target: {
@@ -690,8 +690,8 @@ router.get(
       // Null unless this was a forecast request. Counts + the accepted_plan
       // refusal, so "no predicted crowds" is never ambiguous with broken wiring.
       forecast: forecastReport,
-      // Null unless this was a historical request. `available: false` is the
-      // honest "no history yet" the client renders instead of an empty map.
+      // Null unless this was a historical request. `available: false` means the
+      // history read FAILED (with `history_unreadable`, §113); "no history yet" is available: true, covering: 0.
       history: historyReport,
       generatedAt,
     });

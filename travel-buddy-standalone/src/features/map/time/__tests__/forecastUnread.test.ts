@@ -22,7 +22,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { forecastLayersUnread } from '../forecastUnread.ts';
+import { forecastLayersUnread, historyUnread, temporalNotice } from '../forecastUnread.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const report = (events: number | null) => ({ events, itinerary: 0, plan: { published: 0, withheld: 0, refusal: null, refusals: {} } });
@@ -44,7 +44,7 @@ describe('forecastLayersUnread (§111, D-W11X2-115)', () => {
     assert.ok(hook.includes('setUnreadForecastLayers(forecastLayersUnread(res.data));'), 'the hook records the unread layers of each answer');
     assert.ok(hook.includes('return { objects, enabled, forecast, history, loading, unreadForecastLayers'), 'and returns them');
     const screen = readFileSync(join(HERE, '../../../../../app/map/index.tsx'), 'utf8');
-    assert.match(screen, /unreadNotice=\{temporal\.failed \? "[^"]+" : temporal\.unreadForecastLayers\.includes\('events'\) \? "[^"]+" : null\}/, 'the map screen says an unread events layer (§112: after a failed read)');
+    assert.match(screen, /unreadNotice=\{temporalNotice\(temporal\)\}/, 'the map screen says an unread events layer (§112: after a failed read; §113: through temporalNotice)'); assert.equal(temporalNotice({ failed: false, loading: false, unreadForecastLayers: ['events'] }), "Events couldn't be checked for this forecast");
   });
 });
 
@@ -65,9 +65,28 @@ describe('forecastLayersUnread over a refused or report-less forecast (§112, D-
   });
   it('FU6 the wiring: the hook records a failed or refused read, and the map screen says it first', () => {
     const hook = readFileSync(join(HERE, '../../../../hooks/useTemporalEntities.ts'), 'utf8');
-    assert.ok(hook.includes('setFailed(res.data.refusal != null);'), 'a refused answer is a failed read');
+    assert.ok(hook.includes('setFailed(res.data.refusal != null || historyUnread(res.data));'), 'a refused answer, or a past answer that read no history (§113), is a failed read');
     assert.ok(hook.includes('return { objects, enabled, forecast, history, loading, unreadForecastLayers, failed };'), 'and the hook returns it');
     const screen = readFileSync(join(HERE, '../../../../../app/map/index.tsx'), 'utf8');
-    assert.match(screen, /unreadNotice=\{temporal\.failed \? "Couldn't load the map for this time" :/, 'the map screen says a failed read');
+    assert.match(screen, /unreadNotice=\{temporalNotice\(temporal\)\}/, 'the map screen says a failed read'); assert.equal(temporalNotice({ failed: true, loading: false, unreadForecastLayers: ['events'] }), "Couldn't load the map for this time");
+  });
+});
+
+describe('historyUnread and temporalNotice (§113, D-W11X2-130)', () => {
+  const past = { at: '2026-09-30T09:00:00.000Z', mode: 'historical' as const };
+  it('FU7 a past answer with available:false, or with no history report, read no history', () => {
+    assert.equal(historyUnread({ enabled: true, history: { available: false, covering: 0 }, target: past }), true);
+    assert.equal(historyUnread({ enabled: true, history: null, target: past }), true);
+  });
+  it('FU7c CONTROL: an empty-but-read past, a forecast target and the flag-off envelope are not unread history', () => {
+    assert.equal(historyUnread({ enabled: true, history: { available: true, covering: 0 }, target: past }), false);
+    assert.equal(historyUnread({ enabled: true, history: null, target: target('forecast') }), false);
+    assert.equal(historyUnread({ enabled: false, history: null, target: null }), false);
+  });
+  it('FU8 the notice: a failed read first, then a read in flight, then an unread forecast layer, else none', () => {
+    assert.equal(temporalNotice({ failed: true, loading: true, unreadForecastLayers: ['events'] }), "Couldn't load the map for this time");
+    assert.equal(temporalNotice({ failed: false, loading: true, unreadForecastLayers: [] }), 'Loading the map for this time…');
+    assert.equal(temporalNotice({ failed: false, loading: false, unreadForecastLayers: ['events'] }), "Events couldn't be checked for this forecast");
+    assert.equal(temporalNotice({ failed: false, loading: false, unreadForecastLayers: [] }), null);
   });
 });

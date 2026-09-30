@@ -17,3 +17,27 @@ export function forecastLayersUnread(
   if (!data.forecast) return [];
   return data.forecast.events === null || !data.sources.includes('events') ? ['events'] : [];
 }
+
+/**
+ * census-discovery §113 (DV-83 round 16, lane W11-X2, D-W11X2-130): a PAST answer that read no history.
+ *
+ * The server's past arm answers a failed `places` or snapshot-versions read `history: { available: false }` and
+ * names `refusal: "history_unreadable"`; a window with genuinely nothing observed is `available: true, covering: 0`.
+ * A historical target answered with no history report, or with `available: false`, read nothing — never "the past
+ * was empty". The flag-off envelope (`enabled: false`) is not a failed read.
+ */
+export function historyUnread(
+  data: Pick<MapTemporalEnvelope, 'enabled' | 'history'> & Partial<Pick<MapTemporalEnvelope, 'target'>>,
+): boolean {
+  return data.enabled && data.target?.mode === 'historical' && (!data.history || data.history.available === false);
+}
+
+/**
+ * The notice the map screen hands the Time Machine (§111, §112, §113): a failed or refused read first, then a read in
+ * flight (the strip is never the honest-empty state while the answer is on its way), then an unread forecast layer.
+ */
+export function temporalNotice(t: { failed: boolean; loading: boolean; unreadForecastLayers: string[] }): string | null {
+  if (t.failed) return "Couldn't load the map for this time";
+  if (t.loading) return 'Loading the map for this time…';
+  return t.unreadForecastLayers.includes('events') ? "Events couldn't be checked for this forecast" : null;
+}

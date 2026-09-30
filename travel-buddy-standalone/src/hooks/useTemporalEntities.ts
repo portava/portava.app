@@ -24,7 +24,7 @@ import {
   fetchMapTemporal,
   type TemporalForecastReport,
   type TemporalHistoryReport,
-} from '../services/mapTemporal.ts'; import { forecastLayersUnread } from '../features/map/time/forecastUnread.ts';  // census-discovery §111 (D-W11X2-115)
+} from '../services/mapTemporal.ts'; import { forecastLayersUnread, historyUnread } from '../features/map/time/forecastUnread.ts';  // census-discovery §111 (D-W11X2-115); §113 (D-W11X2-130)
 import { bboxFromCenter } from '../services/mapProjection.ts';
 import { NOW_OFFSET, offsetKey, offsetsEqual, type TimeOffset } from '../features/map/time/timeMachine.ts';
 
@@ -51,7 +51,7 @@ export interface UseTemporalEntitiesResult {
   enabled: boolean;
   /** Forecast counts + accepted_plan refusal — present only for a future offset. */
   forecast: TemporalForecastReport | null;
-  /** `available:false` is the honest "no history yet" — present only for a past offset. */
+  /** Present only for a past offset. `available:false` is a FAILED history read (§113, D-W11X2-130) — `failed` is set. */
   history: TemporalHistoryReport | null;
   loading: boolean; /** census-discovery §111 (D-W11X2-115): forecast layers the server could not read — say so, never draw their absence */ unreadForecastLayers: string[];
   /**
@@ -111,7 +111,7 @@ export function useTemporalEntities(args: UseTemporalEntitiesArgs): UseTemporalE
           setObjects(res.data.enabled ? res.data.objects : []);
           setForecast(res.data.forecast); setUnreadForecastLayers(forecastLayersUnread(res.data));
           setHistory(res.data.history);
-          setFailed(res.data.refusal != null);
+          setFailed(res.data.refusal != null || historyUnread(res.data));  // §113 (D-W11X2-130): a past answer that read no history is failed, never an empty past
         } else {
           setFailed(true);
         }

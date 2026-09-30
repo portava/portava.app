@@ -178,7 +178,7 @@ import {
 } from '../../src/features/map/compass/compassMapModel.ts';
 import { toTemporalObjects, offsetsEqual } from '../../src/features/map/time/timeMachine.ts';
 import { buildTemporalView } from '../../src/features/map/time/temporalView.ts';
-import { useTemporalEntities } from '../../src/hooks/useTemporalEntities.ts';
+import { useTemporalEntities } from '../../src/hooks/useTemporalEntities.ts'; import { temporalNotice } from '../../src/features/map/time/forecastUnread.ts';  // census-discovery §113 (D-W11X2-130)
 import type { DiscoveryMapViewProps } from '../../src/components/discovery/DiscoveryMapView.tsx';
 import { useFeatureFlags } from '../../src/context/FeatureFlagsContext.tsx';
 
@@ -2837,7 +2837,7 @@ function FullScreenMapScreenInner() {
           offset={timeOffset}
           onChange={setTimeOffset}
           timeline={temporalView.timeline}
-          forecastConfidence={temporalView.forecastConfidence} unreadNotice={temporal.failed ? "Couldn't load the map for this time" : temporal.unreadForecastLayers.includes('events') ? "Events couldn't be checked for this forecast" : null} /* census-discovery §111 (D-W11X2-115); §112 (D-W11X2-122): a failed or refused read is said, never drawn as an empty time */
+          forecastConfidence={temporalView.forecastConfidence} unreadNotice={temporalNotice(temporal)} /* census-discovery §111 (D-W11X2-115); §112 (D-W11X2-122); §113 (D-W11X2-130): a failed, refused or in-flight read is said, never drawn as an empty time */
           bottomInset={insets.bottom + 140}
         />
       ) : null}
