@@ -3103,3 +3103,102 @@ Cited in this section, graded by no row of this census:
 - NOT-GRADED: travel-buddy-standalone/src/services/rentABuddyGates.ts — the client's refusal-to-sentence map; TV-2a's door is graded on the §21 files, which this only mirrors.
 - NOT-GRADED: travel-buddy-standalone/src/services/__tests__/rentABuddy.gates.test.ts — test evidence for the section above, not a graded surface.
 - NOT-GRADED: artifacts/api-server/src/test/rentBuddyTestingModeWiring.test.ts — test evidence for the section above, not a graded surface.
+
+## §30 (safety lane) — 2026-09-30 · The event viewer gates hold when the read that decides them fails. **NO ROW MOVES.**
+
+Safety lane, branch `claude/testing-mode-safety-gates-20260930` cut from `main` at `cd9a11d92`.
+`head_commit` is not re-declared: this records a fix. Controlled evidence only — node:test route suites
+over `failClosedSupabase`, which answers a failed read `{ data: null, error }` exactly as supabase-js does.
+No flag, no migration, nothing applied to any database. The defects were found by the DV-83 round-14
+verifier as S2 and S3 against another branch and re-located on `main`; the sweep in §30.3 is this lane's.
+
+### §30.1 S2 — an unread `events_trust_gates_enabled` switched the age, verified and trust gates off
+
+The flag was read two-state through `isFlagEnabled`, which answers `false` for off, absent AND
+unreadable. For a capability flag `false` is the closed answer; for this flag it is the open one,
+because `false` means "skip the gates". Three sites on `main` did this:
+
+- `GET /events` — an 18+ event was listed to a provider-verified minor;
+- `POST /events/:id/waitlist` — the minor was seated, `201 {"position":1}`;
+- the shared `checkEventEligibility` — every caller admitted the minor: RSVP, `GET /events/:id`, join,
+  both join-request approvals, invite accept, and outside this router `routes/mapSearch.ts`, the call
+  gateway and the media resolver.
+
+All three now read the flag through one three-state helper
+(`artifacts/api-server/src/routes/events.ts:6970#eventTrustGatesRun`, over
+`readFlagState`): `on` runs the gates, `off` and `absent` skip them exactly as before, and
+`unreadable` RUNS them. Running them over an unknown flag can only refuse more — each gate already
+fails closed on its own unread input (the trust seam, the age seam, the verified read). Sites:
+`artifacts/api-server/src/routes/events.ts:712#eventTrustGatesRun(sc)`,
+`artifacts/api-server/src/routes/events.ts:1139#eventTrustGatesRun(sc)`,
+`artifacts/api-server/src/routes/events.ts:3229#eventTrustGatesRun(sc)`. These were the only three reads
+of the flag in the tree.
+
+### §30.2 S3 — a failed banned-role read was "not banned"
+
+`GET /events` and the waitlist join bound no error on their `event_roles` read, so a failed read listed
+an event the viewer is banned from and seated a banned viewer on its waitlist. Both now refuse with the
+repository's retryable envelope, `503 degraded_unavailable`, before anything is listed or written
+(`artifacts/api-server/src/routes/events.ts:1124#rolesErr`,
+`artifacts/api-server/src/routes/events.ts:3225#bannedErrWl`). The list refuses rather than hiding
+every event: the same read decides the staff bypass, and an empty list would state "there are no
+events", the false answer this route already refuses for an unreadable block list and trust profile.
+`checkEventEligibility`'s own ban arm was already closed.
+
+### §30.3 The sweep of `routes/events.ts`
+
+Every gate read in the router was classified by which way a failed read falls:
+
+- **Closed already** (a failed read denies): `isBlocked` (delegates to the fail-closed
+  `isBlockedBetween`); `readBlockExclusions` on the list; `checkEventEligibility`'s staff read (unread →
+  no bypass → the gates run), its ban read, its verified read (unread → "not verified"), and its trust and
+  age seams; `canViewEvent`'s staff, friendship, RSVP, role, circle and trip reads; every
+  `getEventRole` caller (each grants on a positive role only); the list's friendship reads
+  (unread → `friends_only` events hidden); the private-event join gate's join-request, circle and trip
+  reads; the `events_enabled` / `events_waitlist_enabled` / `events_chat_enabled` capability flags
+  (unread → off); `disable_media_uploads` (kill switch, unread → engaged).
+- **Open, fixed here:** the three flag reads (§30.1), the two ban reads (§30.2), and
+  `POST /events/:id/invites/:inviteId/accept`, which ran `checkEventEligibility` only `if (ev && …)` over
+  an event read that bound no error — a failed read skipped the gate and still marked the invite
+  accepted (`200 {"ok":true,"status":"accepted"}`). It now refuses `503 degraded_unavailable` before any
+  write (`artifacts/api-server/src/routes/events.ts:5458#evErr`).
+- **Recorded, not changed (not a gate this lane was asked about):** `getGoingCount` answers an unread
+  RSVP count as 0, so a capacity check can overbook on an outage; the host safety summary answers an
+  unread banned list as `blockedUsers: []`; `POST /events/:id/waitlist/accept` does not re-run the
+  eligibility gates at accept time (a ban removes the waitlist row, but that delete's error is not
+  checked). None is a failed read admitting a viewer past a block, ban, age, verified or trust gate.
+
+### §30.4 Rows
+
+**NO ROW MOVES.** `TV-5b` (age gating) is `W` for its second conjunct — no client names the refusal —
+and that is unchanged; this closes a fail-open under its first conjunct, which §-TV-5b records as BUILT,
+on the one path where the flag could not be read. `A17` (Trust read through its canonical seam) is
+unchanged: no trust read moved, only whether the gate that consumes it runs. Event-level bans are graded
+by no row of this census; they are cited here because they sit in the same gate.
+
+### §30.5 Tests (seen RED first) and mutations
+
+`artifacts/api-server/src/test/eventsGateReadsFailClosed.test.ts`, registered in the api-server `test`
+script. RED on `cd9a11d92`: EG1, EG1b (list, flag unread), EB1 (list, roles unread), WG1 (waitlist, flag
+unread), WB1 (waitlist, ban read unread), RS1 (RSVP through `checkEventEligibility`, flag unread), DT1
+(detail, flag unread), IA1 (invite accept, event unread); GREEN after. CONTROLS green on both trees:
+EG0, EG0b, EB0, WG0, WB0, RS0, IA0. Byte-identity: H1–H3 pin the healthy list body (flag on / off /
+absent) by sha256 with the per-request `sessionId` normalised, H6 the healthy RSVP body, H4, H5 and H7
+the exact waitlist and invite bodies — all captured on `cd9a11d92` before the fix. The verifier's probe
+`zz-v14-eventsListGatesUnread`: EG1, EB1, WG1, WB1 red → green; EG0, EG0b, EB0, WG0, WB0 green throughout.
+
+Mutations, each applied alone and restored byte-identically (sha256 checked after each), all KILLED:
+the helper two-state (EG1, EG1b, WG1, RS1, DT1); the helper running the gates over an ABSENT row (H3,
+H5); each of the three sites back to `isFlagEnabled` (RS1+DT1; EG1+EG1b; WG1); the list's roles error
+ignored, and refused as `forbidden` instead of the degraded envelope (EB1, EB1); the waitlist's ban error
+ignored, and refused as `forbidden` (WB1, WB1); the invite-accept event error ignored (IA1). 10 applied,
+10 killed, 0 survivors.
+
+What would turn this red: an 18+ event listed, waitlisted or RSVP'd to a verified minor when the gate flag
+cannot be read; a banned viewer listed or waitlisted when `event_roles` cannot be read; an invite accepted
+past a gate that did not run.
+
+Cited in this section, graded by no row of this census:
+
+- NOT-GRADED: artifacts/api-server/src/test/eventsGateReadsFailClosed.test.ts — §30.5's controlled evidence for the event gate fixes; no Trust verdict moves on it.
+- NOT-GRADED: artifacts/api-server/src/routes/mapSearch.ts — §30.1 names it only as one caller of the shared `checkEventEligibility` whose gates the flag fix keeps on; map search is not a Trust surface this census grades, and the file was not changed.
