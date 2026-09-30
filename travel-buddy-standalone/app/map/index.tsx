@@ -2837,7 +2837,7 @@ function FullScreenMapScreenInner() {
           offset={timeOffset}
           onChange={setTimeOffset}
           timeline={temporalView.timeline}
-          forecastConfidence={temporalView.forecastConfidence} unreadNotice={temporal.unreadForecastLayers.includes('events') ? "Events couldn't be checked for this forecast" : null} /* census-discovery §111 (D-W11X2-115) */
+          forecastConfidence={temporalView.forecastConfidence} unreadNotice={temporal.failed ? "Couldn't load the map for this time" : temporal.unreadForecastLayers.includes('events') ? "Events couldn't be checked for this forecast" : null} /* census-discovery §111 (D-W11X2-115); §112 (D-W11X2-122): a failed or refused read is said, never drawn as an empty time */
           bottomInset={insets.bottom + 140}
         />
       ) : null}

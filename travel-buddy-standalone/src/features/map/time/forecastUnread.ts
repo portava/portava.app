@@ -9,8 +9,11 @@
 import type { MapTemporalEnvelope } from '../../../services/mapTemporal.ts';
 
 export function forecastLayersUnread(
-  data: Pick<MapTemporalEnvelope, 'sources' | 'forecast'>,
+  data: Pick<MapTemporalEnvelope, 'sources' | 'forecast'> & Partial<Pick<MapTemporalEnvelope, 'target' | 'refusal'>>,
 ): string[] {
+  // census-discovery §112 (DV-83, D-W11X2-121): a forecast target answered without a forecast report, or refused
+  // (the server's `block_set_unreadable` / `protection_unreadable`), read no layer — never "nothing is forecast".
+  if (data.target?.mode === 'forecast' && (!data.forecast || data.refusal != null)) return ['events'];
   if (!data.forecast) return [];
   return data.forecast.events === null || !data.sources.includes('events') ? ['events'] : [];
 }

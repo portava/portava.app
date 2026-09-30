@@ -54,6 +54,11 @@ export interface UseTemporalEntitiesResult {
   /** `available:false` is the honest "no history yet" — present only for a past offset. */
   history: TemporalHistoryReport | null;
   loading: boolean; /** census-discovery §111 (D-W11X2-115): forecast layers the server could not read — say so, never draw their absence */ unreadForecastLayers: string[];
+  /**
+   * census-discovery §112 (DV-83, D-W11X2-122): the last read for this offset failed, or the server refused it.
+   * Nothing from it (or from the previous offset) is drawn; the Time Machine says it could not be loaded.
+   */
+  failed: boolean;
 }
 
 export function useTemporalEntities(args: UseTemporalEntitiesArgs): UseTemporalEntitiesResult {
@@ -64,6 +69,7 @@ export function useTemporalEntities(args: UseTemporalEntitiesArgs): UseTemporalE
   const [forecast, setForecast] = useState<TemporalForecastReport | null>(null); const [unreadForecastLayers, setUnreadForecastLayers] = useState<string[]>([]);
   const [history, setHistory] = useState<TemporalHistoryReport | null>(null);
   const [loading, setLoading] = useState(false);
+  const [failed, setFailed] = useState(false);
 
   const isNow = offsetsEqual(offset, NOW_OFFSET);
   const shouldFetch = active && !isNow && lat != null && lng != null;
@@ -76,12 +82,19 @@ export function useTemporalEntities(args: UseTemporalEntitiesArgs): UseTemporalE
       setForecast(null); setUnreadForecastLayers([]);
       setHistory(null);
       setLoading(false);
+      setFailed(false);
       return;
     }
 
     const controller = new AbortController();
     let cancelled = false;
     setLoading(true);
+    // census-discovery §112 (D-W11X2-122): "[] while loading" — the previous offset's payload is never drawn under
+    // this offset's label while its read is in flight, nor kept when that read fails.
+    setObjects([]);
+    setForecast(null); setUnreadForecastLayers([]);
+    setHistory(null);
+    setFailed(false);
 
     fetchMapTemporal({
       bbox: bboxFromCenter(lat as number, lng as number, radiusKm),
@@ -98,10 +111,14 @@ export function useTemporalEntities(args: UseTemporalEntitiesArgs): UseTemporalE
           setObjects(res.data.enabled ? res.data.objects : []);
           setForecast(res.data.forecast); setUnreadForecastLayers(forecastLayersUnread(res.data));
           setHistory(res.data.history);
+          setFailed(res.data.refusal != null);
+        } else {
+          setFailed(true);
         }
       })
       .catch(() => {
-        /* fail-soft: keep the last successful payload cleared, never crash */
+        // Fail-soft, never crash — but a failed read is said, never drawn as an empty offset (§112, D-W11X2-122).
+        if (!cancelled) setFailed(true);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -115,5 +132,5 @@ export function useTemporalEntities(args: UseTemporalEntitiesArgs): UseTemporalE
     // are rounded into the same viewport bucket the fetch uses.
   }, [shouldFetch, offsetKey(offset), offset, lat, lng, zoom, radiusKm, tz]);
 
-  return { objects, enabled, forecast, history, loading, unreadForecastLayers };
+  return { objects, enabled, forecast, history, loading, unreadForecastLayers, failed };
 }

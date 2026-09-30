@@ -497,7 +497,7 @@ router.get(
     const blockedSet = await fetchBlockedSet(sc, user.id);
     if (blockedSet === null) {
       res.json({
-        enabled: true,
+        enabled: true, refusal: "block_set_unreadable",  // census-discovery §112 (DV-83, D-W11X2-121): a failed blocks read is named, as the NOW gateway names it — never an empty forecast
         objects: [],
         viewport: { bbox, zoom },
         target: { at: new Date(target.at).toISOString(), mode: target.mode },
@@ -506,7 +506,7 @@ router.get(
         sources: [],
         aggregation: null,
         protection: null,
-        forecast: null,
+        forecast: target.mode === "forecast" ? { events: null, itinerary: null, plan: null } : null,  // §112 (D-W11X2-121): no layer read, no count stated
         history: null,
         generatedAt,
       });

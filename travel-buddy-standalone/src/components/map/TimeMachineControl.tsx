@@ -301,7 +301,7 @@ function StatusStrip({
           </Text>
           <Text style={s.statusSub} numberOfLines={1}>
             {`Observed ${atLabel} — not the current state`}
-          </Text>
+          </Text>{unreadNotice ? <Text style={s.statusSub} accessibilityRole="alert">{unreadNotice}</Text> : null /* census-discovery §112 (D-W11X2-122): a failed past read is said too */}
         </View>
         <Clock size={13} color={color.faint} />
       </View>
