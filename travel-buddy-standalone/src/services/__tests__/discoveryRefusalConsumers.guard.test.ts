@@ -201,7 +201,7 @@ const CONSUMERS: Record<string, Consumer> = {
 /** Exported functions of the service, each with its source text up to the next top-level export. */
 function exportedFunctions(src: string): Map<string, string> {
   const out = new Map<string, string>();
-  const re = /^export (?:async )?function (\w+)\s*[<(]/gm;
+  const re = /^export (?:default )?(?:async )?function (\w+)\s*[<(]/gm;  // §113 (D-W11X2-133): a default-exported function too
   const hits = [...src.matchAll(re)];
   hits.forEach((m, i) => {
     const end = i + 1 < hits.length ? hits[i + 1]!.index! : src.length;
@@ -238,7 +238,7 @@ function walk(dir: string, out: string[]): string[] {
     const rel = `${dir}/${entry}`;
     if (entry === 'node_modules' || entry === '__tests__' || entry === '__mocks__' || entry === '__fixtures__') continue;
     if (statSync(join(ROOT, rel)).isDirectory()) walk(rel, out);
-    else if (/\.(ts|tsx)$/.test(entry) && !/\.test\.(ts|tsx)$/.test(entry)) out.push(rel);
+    else if (isClientSource(entry)) out.push(rel);  // §113 (D-W11X2-133): .js/.jsx/.mjs/.cjs too (the app bundles .js)
   }
   return out;
 }
@@ -250,9 +250,9 @@ function resolveSpec(fromFile: string, spec: string): string | null {
   else if (spec.startsWith('@/')) p = spec.slice(2);
   else if (baseUrlModule(spec) !== null) p = baseUrlModule(spec)!; else return null;  // §111 (D-W11X2-116): a baseUrl (".") specifier resolves from the app root
   p = p.split(sep).join('/');
-  for (const cand of [p, `${p}.ts`, `${p}.tsx`, `${p}/index.ts`]) {
-    if (overlayHas(cand) || (existsSync(join(ROOT, cand)) && statSync(join(ROOT, cand)).isFile())) return cand;
-  }
+  const hit = firstExisting(moduleCandidates(p));  // §113 (D-W11X2-133): every extension, platform variant and index Metro resolves
+  if (hit !== null) return hit;
+  // No candidate exists: the specifier's own path stands for the module.
   return p;
 }
 
@@ -264,7 +264,7 @@ function resolveSpec(fromFile: string, spec: string): string | null {
 function valueImports(file: string, src: string, target: string): string[] {
   const names: string[] = [];
   for (const m of stripComments(src).matchAll(/import\s+(type\s+)?(?:\w+\s*,\s*)?\{([^}]*)\}\s*from\s*['"]([^'"]+)['"]/g)) {  // §111 (D-W11X2-116): a comment inside the braces is not part of a name; §112: a default before the braces too
-    if (m[1] || resolveSpec(file, m[3]!) !== target) continue;
+    if (m[1] || !sameModule(resolveSpec(file, m[3]!), target)) continue;  // §113: one module identity (extension, platform variant, index)
     for (const part of m[2]!.split(',')) {
       const t = part.trim();
       if (!t || t.startsWith('type ')) continue;
@@ -272,9 +272,9 @@ function valueImports(file: string, src: string, target: string): string[] {
     }
   }
   for (const m of stripComments(src).matchAll(/(?:\brequire|\bawait\s+import)\(\s*['"`]([^'"`$]+)['"`]\s*\)/g)) {  // §112 (D-W11X2-126): a template-literal specifier too
-    if (resolveSpec(file, m[1]!) === target) names.push('<dynamic>');
+    if (sameModule(resolveSpec(file, m[1]!), target)) names.push('<dynamic>');
   }
-  return [...names.filter((n) => n !== '<dynamic>'), ...requireUses(file, src, target), ...otherImportForms(file, src, target)];  // §110 (D-W11X2-99): a namespace import and every dynamic import, read for the names they use
+  return [...names.filter((n) => n !== '<dynamic>'), ...requireUses(file, src, target), ...otherImportForms(file, src, target), ...defaultImportUses(file, src, target)];  // §113 (D-W11X2-133): a default import too  // §110 (D-W11X2-99): a namespace import and every dynamic import, read for the names they use
 }
 
 function derivedConsumers(carriers: string[]): Map<string, string[]> {
@@ -518,7 +518,7 @@ function overlayMap(): Map<string, string> {
 }
 function overlayRead(rel: string): string | undefined { return overlayMap().get(rel); }
 function overlayHas(rel: string): boolean { return overlayMap().has(rel); }
-function withOverlay(files: string[]): string[] { return [...new Set([...files, ...[...overlayMap().keys()].filter((k) => walkedRoot(k, files))])]; }  // §112 (D-W11X2-126): an overlay file is seen only where the caller's walk reads the disk
+function withOverlay(files: string[]): string[] { return [...new Set([...files, ...[...overlayMap().keys()].filter((k) => walkedRoot(k, files) && isWalkedPath(k))])]; }  // §112 (D-W11X2-126): an overlay file is seen only where the caller's walk reads the disk
 
 /** Run `fn` with `files` laid over the tree. */
 function withFiles<T>(files: Record<string, string>, fn: () => T): T {
@@ -599,12 +599,12 @@ function otherImportForms(file: string, src: string, target: string): string[] {
   const names: string[] = [];
   const membersOf = (binding: string) => [...code.matchAll(new RegExp(`\\b${escapeRe(binding)}\\s*\\.\\s*(\\w+)`, 'g'))].map((m) => m[1]!);
   for (const m of code.matchAll(/import\s+(?:\w+\s*,\s*)?\*\s+as\s+(\w+)\s+from\s*['"]([^'"]+)['"]/g)) {  // §112 (D-W11X2-126): a default before the namespace too
-    if (resolveSpec(file, m[2]!) !== target) continue;
+    if (!sameModule(resolveSpec(file, m[2]!), target)) continue;
     const used = [...membersOf(m[1]!), ...destructuredFrom(code, m[1]!)];  // §111 (D-W11X2-116): a carrier destructured from the namespace is used
     names.push(...(used.length > 0 ? used : ['<dynamic>']));
   }
   for (const m of code.matchAll(/\bimport\(\s*['"`]([^'"`$]+)['"`]\s*\)/g)) {  // §112 (D-W11X2-126): a template-literal specifier too
-    if (resolveSpec(file, m[1]!) !== target) continue;
+    if (!sameModule(resolveSpec(file, m[1]!), target)) continue;
     const before = code.slice(Math.max(0, m.index! - 200), m.index!);
     const after = code.slice(m.index! + m[0].length, m.index! + m[0].length + 300);
     const destructured = /(?:const|let|var)\s*\{([^}]*)\}\s*=\s*(?:await\s+)?\(?\s*(?:await\s+)?$/.exec(before);
@@ -651,7 +651,7 @@ function carrierReexportsUncached(carriers: string[]): Map<string, Map<string, s
         if (!m.has(exported)) { m.set(exported, carrier); out.set(file, m); known.set(file, m); grew = true; }
       };
       for (const m of code.matchAll(/export\s*\{([^}]*)\}\s*from\s*['"]([^'"]+)['"]/g)) {
-        const from = known.get(resolveSpec(file, m[2]!) ?? '');
+        const from = knownModule(known, resolveSpec(file, m[2]!));  // §113: one module identity
         if (!from) continue;
         for (const part of m[1]!.split(',')) {
           const [orig, alias] = part.trim().replace(/^type\s+/, '').split(/\s+as\s+/).map((x) => x.trim());
@@ -659,7 +659,7 @@ function carrierReexportsUncached(carriers: string[]): Map<string, Map<string, s
         }
       }
       for (const [exported, carrier] of localReexports(file, code, known)) add(exported, carrier); for (const m of code.matchAll(/export\s*\*\s*(?:as\s+(\w+)\s*)?from\s*['"]([^'"]+)['"]/g)) {  // §112 (D-W11X2-126): a local re-export (no `from`) too
-        const from = known.get(resolveSpec(file, m[2]!) ?? '');
+        const from = knownModule(known, resolveSpec(file, m[2]!));
         if (!from) continue;
         if (m[1]) add(m[1], '<dynamic>');
         else for (const [name, carrier] of from) add(name, carrier);
@@ -693,7 +693,7 @@ function assertEachRawSiteBranches(file: string, src: string): void {
       else if (orig && reexports.some((n) => RAW_COMPASS_CARRIERS.includes(n.get(orig) ?? ''))) locals.add(orig);
     }
   }
-  for (const a of carrierAliases(code, locals)) locals.add(a); const call = new RegExp(`(?:\\b\\w+\\s*\\.\\s*)?\\b(?:${[...locals].map(escapeRe).join('|')})\\s*(?:\\.\\s*(?:call|apply)\\s*)?\\(`, 'g');  // §111 (D-W11X2-116): a call through an alias or a rename is a site; §112: and through .call / .apply
+  for (const d of defaultImportLocals(file, src, RAW_COMPASS_CARRIERS)) locals.add(d); for (const a of carrierAliases(code, locals)) locals.add(a); const call = new RegExp(`(?:\\b\\w+\\s*\\.\\s*)?\\b(?:${[...locals].map(escapeRe).join('|')})\\s*(?:\\.\\s*(?:call|apply)\\s*)?\\(`, 'g');  // §111 (D-W11X2-116): a call through an alias or a rename is a site; §112: and through .call / .apply
   const sites = [...code.matchAll(call)].map((m) => m.index!).filter((i) => !/\bfunction\s+$/.test(code.slice(Math.max(0, i - 30), i)));
   const predicate = /\b(?:compassRecommendationsFailed|tripCompassRecommendations|tripCompassReadState)\(/;
   sites.forEach((at, k) => {
@@ -704,7 +704,7 @@ function assertEachRawSiteBranches(file: string, src: string): void {
 
 /** A `require()` of `target`: the guard cannot see what is used, so it is `<dynamic>`. */
 function requireUses(file: string, src: string, target: string): string[] {
-  return [...stripComments(src).matchAll(/\brequire\(\s*['"`]([^'"`$]+)['"`]\s*\)/g)].filter((m) => resolveSpec(file, m[1]!) === target).map(() => '<dynamic>');
+  return [...stripComments(src).matchAll(/\brequire\(\s*['"`]([^'"`$]+)['"`]\s*\)/g)].filter((m) => sameModule(resolveSpec(file, m[1]!), target)).map(() => '<dynamic>');
 }
 
 // ── census-discovery §111 (DV-83 round 14, lane W11-X2, D-W11X2-116): the guard's reach, round 13's holes ─────────
@@ -759,9 +759,9 @@ describe("DV-83 guard reach — the round-13 verifier's fixtures (§111, D-W11X2
 /** A baseUrl specifier (tsconfig `baseUrl: "."`): the module under the app root it names, or null (a package). */
 function baseUrlModule(spec: string): string | null {
   if (spec.startsWith('/') || spec.startsWith('@')) return null;
-  for (const cand of [spec, `${spec}.ts`, `${spec}.tsx`, `${spec}/index.ts`]) {
-    if (overlayHas(cand) || (existsSync(join(ROOT, cand)) && statSync(join(ROOT, cand)).isFile())) return spec;
-  }
+  if (firstExisting(moduleCandidates(spec)) !== null) return spec;  // §113 (D-W11X2-133)
+  // A specifier that names no module under the app root is a package.
+  //
   return null;
 }
 
@@ -826,7 +826,7 @@ function wholeGuard(): void {
   assert.deepEqual(unregistered, [], `unregistered consumer(s): ${unregistered.map((f) => `${f} (${consumers.get(f)!.join(', ')})`).join('; ')}`);
   for (const [file, c] of Object.entries(CONSUMERS)) assert.deepEqual(consumers.get(file) ?? [], [...c.uses].sort(), `${file}: registered uses differ from what it imports`);
   compassConsumersBranchOnCoverage();
-  round15Checks();
+  round15Checks(); round16Checks();  // §113 (D-W11X2-133): and every non-call reference to a carrier is pinned
 }
 
 describe("DV-83 guard reach — the round-14 verifier's fixtures (§112, D-W11X2-126)", () => {
@@ -892,7 +892,7 @@ function clientRoots(): string[] {
 function clientSources(): string[] {
   const out: string[] = [];
   for (const r of clientRoots()) walk(r, out);
-  for (const e of readdirSync(ROOT)) if (/\.(ts|tsx)$/.test(e) && !/\.test\.(ts|tsx)$/.test(e) && statSync(join(ROOT, e)).isFile()) out.push(e);
+  for (const e of readdirSync(ROOT)) if (isWalkedPath(e) && statSync(join(ROOT, e)).isFile()) out.push(e);  // §113 (D-W11X2-133): .js too; the root build configs are named as unbundled
   return out;
 }
 
@@ -909,7 +909,7 @@ function walkedRoot(rel: string, walked: string[]): boolean {
 function localReexports(file: string, code: string, known: Map<string, Map<string, string>>): Array<[string, string]> {
   const locals = new Map<string, string>();
   for (const m of code.matchAll(/import\s+(?:type\s+)?(?:\w+\s*,\s*)?\{([^}]*)\}\s*from\s*['"]([^'"]+)['"]/g)) {
-    const from = known.get(resolveSpec(file, m[2]!) ?? '');
+    const from = knownModule(known, resolveSpec(file, m[2]!));  // §113
     if (!from) continue;
     for (const part of m[1]!.split(',')) {
       const [orig, alias] = part.trim().split(/\s+as\s+/).map((x) => x.trim());
@@ -917,7 +917,7 @@ function localReexports(file: string, code: string, known: Map<string, Map<strin
     }
   }
   for (const m of code.matchAll(/import\s+(?:\w+\s*,\s*)?\*\s+as\s+(\w+)\s+from\s*['"]([^'"]+)['"]/g)) {
-    const from = known.get(resolveSpec(file, m[2]!) ?? '');
+    const from = knownModule(known, resolveSpec(file, m[2]!));
     if (from) for (const [name, carrier] of from) locals.set(`${m[1]}.${name}`, carrier);
   }
   const out: Array<[string, string]> = [];
@@ -931,6 +931,7 @@ function localReexports(file: string, code: string, known: Map<string, Map<strin
     const ref = m[2]!.replace(/\s+/g, '');
     if (locals.has(ref)) out.push([m[1]!, locals.get(ref)!]);
   }
+  for (const m of code.matchAll(/export\s+default\s+(\w+(?:\s*\.\s*\w+)?)\s*[;\n]/g)) { const ref = m[1]!.replace(/\s+/g, ''); if (locals.has(ref)) out.push(['default', locals.get(ref)!]); }  // §113 (D-W11X2-133): `export default carrier`
   return out;
 }
 
@@ -960,7 +961,7 @@ function carrierSiteCounts(file: string, src: string, uses: string[]): Record<st
       if (orig && alias && locals.has(orig)) locals.add(alias);
     }
   }
-  for (const a of carrierAliases(code, locals)) locals.add(a);
+  for (const d of defaultImportLocals(file, src, [...locals])) locals.add(d); for (const a of carrierAliases(code, locals)) locals.add(a);  // §113: a default import's local name too
   const counts: Record<string, number> = {};
   const call = new RegExp(`(?:\\b\\w+\\s*\\.\\s*)?\\b(${[...locals].map(escapeRe).join('|')})\\s*(?:\\.\\s*(?:call|apply)\\s*)?\\(`, 'g');
   for (const m of code.matchAll(call)) {
@@ -1066,3 +1067,217 @@ describe('DV-83 guard reach — the forms next to them (§112, D-W11X2-126)', ()
     assert.throws(() => withFiles({ [PASSPORT]: read(PASSPORT) + GH14N.defaultPlusNamedSite }, () => compassConsumersBranchOnCoverage()), /call site|without the shared predicate/i);
   });
 });
+
+// ── census-discovery §113 (DV-83 round 16, lane W11-X2, D-W11X2-133): the guard's reach, round 15's holes ─────────────
+//
+// The round-15 verifier made seven consumers the guard could not see (GH17–GH23): a raw consumer in a `.js` source (the
+// walk read .ts/.tsx only), a re-export through a directory's `index.tsx` (resolution tried `/index.ts` only), a default
+// re-export taken by a plain default import (only braces and namespaces were read), and — in registered consumers — a
+// second raw site through an array element, an optional call `carrier?.()`, `.then(carrier)` and `Reflect.apply`. Each
+// escaped because the guard enumerated FORMS. The fix is structural where it can be: one source predicate shared by the
+// walk and the overlay; one module identity for every resolution (extension, platform variant and `index` folded); and,
+// in every registered consumer, every reference to a carrier that is not a direct call is counted and pinned
+// (`REGISTERED_REFS`), so a new way of reaching a carrier fails whatever its shape. The fixtures are the verifier's,
+// verbatim, through the WHOLE guard. Declarations only, at the file's foot, so no line another census cites moves.
+const GH15V = {
+  jsConsumer: "// GH17 (v15 verifier): a raw consumer in a .js source under a walked root (the tree bundles .js: hooks/useColors.js, components/KeyboardAwareScrollViewCompat.js). walk() reads only .ts/.tsx.\nimport { fetchCompassRecommendations } from '../src/services/compass.ts';\nexport async function zzRawRecsGH17() {\n  const res = await fetchCompassRecommendations({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  indexReexport: "// GH18 (v15 verifier): a re-export module that is a directory's index.tsx (Metro resolves './zzGH18' to it; resolveSpec tries only /index.ts).\nexport { fetchCompassRecommendations as zzRecsGH18 } from '../../services/compass.ts';\n",
+  viaIndex: "// GH18 (v15 verifier): ... and a raw consumer imports the carrier through the directory.\nimport { zzRecsGH18 } from " + "'./zzGH18';\nexport async function zzRawRecsGH18(): Promise<number> {\n  const res = await zzRecsGH18({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  defaultReexport: "// GH19 (v15 verifier): a re-export module that re-exports the carrier as its DEFAULT export ...\nexport { fetchCompassRecommendations as default } from './compass.ts';\n",
+  viaDefault: "// GH19 (v15 verifier): ... and a raw consumer takes it through a plain default import (valueImports reads only braces or a namespace).\nimport zzRecsGH19 from '../services/zzCompassDefaultGH19.ts';\nexport async function zzRawRecsGH19(): Promise<number> {\n  const res = await zzRecsGH19({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  arrayAlias: "\n// GH20 (v15 verifier): a second raw site in a registered consumer, through an array element (no alias form G9 or the site pin reads).\nconst zzLoadersGH20 = [fetchCompassRecommendations];\nexport async function zzArrayAliasGH20(): Promise<number> {\n  const res = await zzLoadersGH20[0]({ surface: 'passport', limit: 3 });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  optionalCall: "\n// GH21 (v15 verifier): a second raw site in a registered consumer, called with optional-call syntax.\nexport async function zzOptionalCallGH21(): Promise<number> {\n  const res = await fetchCompassRecommendations?.({ surface: 'passport', limit: 3 });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  callbackSite: "\n// GH22 (v15 verifier): a second raw site in a registered consumer, the carrier handed to .then as the callback.\nexport async function zzCallbackGH22(): Promise<number> {\n  const res = await Promise.resolve({ surface: 'passport' as const, limit: 3 }).then(fetchCompassRecommendations);\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  reflectApply: "\n// GH23 (v15 verifier): a second site of a services/discovery.ts carrier in a registered consumer, through Reflect.apply (the site pin counts only name( / .call( / .apply().\nexport async function zzReflectGH23(): Promise<number> {\n  const res = await Reflect.apply(getDiscoveryPlaces, undefined, ['Lisbon', 'food', {} as never, 1]);\n  return res.ok ? res.data.places.length : 0;\n}\n",
+};
+
+/** §113: the forms next to the verifier's, each pinning one reading the fixes add. */
+const GH15N = {
+  localDefault: "import { fetchCompassRecommendations } from './compass.ts';\nexport default fetchCompassRecommendations;\n",
+  viaLocalDefault: "import zzRecsGH19b from '../services/zzCompassLocalDefaultGH19b.ts';\nexport async function zzRawRecsGH19b(): Promise<number> {\n  const res = await zzRecsGH19b({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  platformPlain: "export const zzPlainGH18b = 1;\n",
+  platformWeb: "export { fetchCompassRecommendations as zzRecsGH18b } from '../../services/compass.ts';\n",
+  viaPlatform: "import { zzRecsGH18b } from " + "'./zzGH18b/mod';\nexport async function zzRawRecsGH18b(): Promise<number> {\n  const res = await zzRecsGH18b({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  typeRef: "\nexport type ZzRecsResultGH21c = Awaited<ReturnType<typeof fetchCompassRecommendations>>;\n",
+  jsxUnbundledConfig: "const zzScripts = require('./scripts/zzGH17c.js');\nmodule.exports = zzScripts;\n",
+};
+
+describe("DV-83 guard reach — the round-15 verifier's fixtures (§113, D-W11X2-133)", () => {
+  const PASSPORT = 'src/components/compass/CompassPassportSuggestions.tsx';
+  const MAP = 'app/map/index.tsx';
+  it('G13 GH17: a raw consumer in a .js source is caught', () => {
+    assert.throws(() => withFiles({ 'hooks/zzGH17.js': GH15V.jsConsumer }, wholeGuard), /unregistered consumer\(s\): hooks\/zzGH17\.js \(fetchCompassRecommendations\)/);
+  });
+  it('G13 GH17b: the walk reads the .js sources the app bundles, and the root build configs are named as unbundled', () => {
+    const sources = clientSources();
+    for (const f of ['hooks/useColors.js', 'components/KeyboardAwareScrollViewCompat.js', 'constants/colors.js']) assert.ok(sources.includes(f), `${f} is not walked`);
+    for (const f of ['babel.config.js', 'metro.config.js', 'jest.config.js']) assert.equal(sources.includes(f), false, `${f} is a build config, not a bundled source`);
+  });
+  it('G13 GH18: a re-export through a directory index.tsx is caught at its importer', () => {
+    assert.throws(() => withFiles({ 'src/components/zzGH18/index.tsx': GH15V.indexReexport, 'src/components/zzGH18use.tsx': GH15V.viaIndex }, wholeGuard), /zzGH18use\.tsx \(fetchCompassRecommendations\)/);
+  });
+  it('G13 GH18b: a re-export in a platform variant (mod.web.tsx beside a plain mod.tsx) is caught at its importer', () => {
+    assert.throws(() => withFiles({ 'src/components/zzGH18b/mod.tsx': GH15N.platformPlain, 'src/components/zzGH18b/mod.web.tsx': GH15N.platformWeb, 'src/components/zzGH18buse.tsx': GH15N.viaPlatform }, wholeGuard), /zzGH18buse\.tsx \(fetchCompassRecommendations\)/);
+  });
+  it('G13 GH19: a default re-export taken by a plain default import is caught', () => {
+    assert.throws(() => withFiles({ 'src/services/zzCompassDefaultGH19.ts': GH15V.defaultReexport, 'src/components/zzGH19.tsx': GH15V.viaDefault }, wholeGuard), /zzGH19\.tsx \(fetchCompassRecommendations\)/);
+  });
+  it('G13 GH19b: a local `export default carrier` taken by a default import is caught', () => {
+    assert.throws(() => withFiles({ 'src/services/zzCompassLocalDefaultGH19b.ts': GH15N.localDefault, 'src/components/zzGH19b.tsx': GH15N.viaLocalDefault }, wholeGuard), /zzGH19b\.tsx \(fetchCompassRecommendations\)/);
+  });
+  it('G13 GH20: a second raw site through an array element fails', () => {
+    assert.throws(() => withFiles({ [PASSPORT]: read(PASSPORT) + GH15V.arrayAlias }, wholeGuard), /non-call reference|call site|shared predicate/i);
+  });
+  it('G13 GH21: a second raw site through an optional call fails', () => {
+    assert.throws(() => withFiles({ [PASSPORT]: read(PASSPORT) + GH15V.optionalCall }, wholeGuard), /non-call reference|call site|shared predicate/i);
+  });
+  it('G13 GH22: the carrier handed to .then as the callback fails', () => {
+    assert.throws(() => withFiles({ [PASSPORT]: read(PASSPORT) + GH15V.callbackSite }, wholeGuard), /non-call reference|call site|shared predicate/i);
+  });
+  it('G13 GH23: a second discovery-carrier site through Reflect.apply fails', () => {
+    assert.throws(() => withFiles({ [MAP]: read(MAP) + GH15V.reflectApply }, wholeGuard), /non-call reference|call site/i);
+  });
+  it('G13 GH21c CONTROL: a type read through `typeof carrier` in a registered file is not a reference that reads it', () => {
+    assert.doesNotThrow(() => withFiles({ [PASSPORT]: read(PASSPORT) + GH15N.typeRef }, wholeGuard));
+  });
+  it('G13 the tree as it is: every registered consumer reaches its carriers only by direct calls (REGISTERED_REFS)', () => {
+    assert.doesNotThrow(() => wholeGuard());
+  });
+});
+
+/** §113 (D-W11X2-133): a source file the app can bundle — every script extension Metro reads, tests aside. The walk and the overlay share it. */
+function isClientSource(name: string): boolean {
+  return /\.(ts|tsx|js|jsx|mjs|cjs)$/.test(name) && !/\.test\.(ts|tsx|js|jsx|mjs|cjs)$/.test(name);
+}
+
+/** The app root's own files the bundle never loads, each with why: they run in the build and test tools, not in the app. */
+function clientRootFilesNotBundled(): Record<string, string> {
+  return {
+    'babel.config.js': 'the Babel config, read by the bundler at build time',
+    'metro.config.js': 'the Metro config, read by the bundler at build time',
+    'jest.config.js': 'the jest config for the component suites',
+    'jest.web.config.js': 'the jest config for the web suites',
+  };
+}
+
+/** Whether the walk reads `rel`: a client source, and — at the app root — not a named build config. */
+function isWalkedPath(rel: string): boolean {
+  const name = rel.slice(rel.lastIndexOf('/') + 1);
+  return isClientSource(name) && (rel.includes('/') || !(rel in clientRootFilesNotBundled()));
+}
+
+/** What Metro may resolve a specifier path to: the path, every source extension and platform variant, then the same under `index`. */
+function moduleCandidates(p: string): string[] {
+  const exts = ['ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs'];
+  const platforms = ['', '.native', '.ios', '.android', '.web'];
+  const out = [p];
+  for (const pl of platforms) for (const e of exts) out.push(`${p}${pl}.${e}`);
+  for (const pl of platforms) for (const e of exts) out.push(`${p}/index${pl}.${e}`);
+  return out;
+}
+
+/**
+ * One module identity: extension, platform variant and a trailing `/index` folded away, so `x`, `x.tsx`, `x.web.tsx` and
+ * `x/index.tsx` are one module. Folding can only make two paths the same module, so it can add a consumer, never lose one.
+ */
+function moduleId(p: string): string {
+  return p.replace(/\.(?:tsx?|jsx?|mjs|cjs)$/, '').replace(/\.(?:native|ios|android|web)$/, '').replace(/\/index$/, '');
+}
+function sameModule(resolved: string | null, target: string): boolean {
+  return resolved !== null && moduleId(resolved) === moduleId(target);
+}
+function knownModule<T>(known: Map<string, T>, resolved: string | null): T | undefined {
+  if (resolved === null) return undefined;
+  const direct = known.get(resolved);
+  if (direct !== undefined) return direct;
+  const id = moduleId(resolved);
+  for (const [k, v] of known) if (moduleId(k) === id) return v;
+  return undefined;
+}
+
+/** The default imports in `src`: `import X from '…'` and `import X, { … } | * as ns from '…'` (not `import type`). */
+function defaultImports(src: string): Array<{ local: string; spec: string }> {
+  return [...stripComments(src).matchAll(/import\s+(?!type\b)(\w+)\s*(?:,\s*(?:\{[^}]*\}|\*\s*as\s+\w+)\s*)?from\s*['"]([^'"]+)['"]/g)].map((m) => ({ local: m[1]!, spec: m[2]! }));
+}
+
+/** The name a carrier module's own source exports as its default: `export default x`, `export { x as default }` or `export default function x`. */
+function ownDefaultExport(module: string): string | null {
+  let code: string;
+  try { code = stripComments(read(module)); } catch { return null; }
+  const m = /export\s+default\s+(?:async\s+)?(?:function\s+)?(\w+)/.exec(code) ?? /export\s*\{[^}]*?\b(\w+)\s+as\s+default\b[^}]*\}(?!\s*from)/.exec(code);
+  return m ? m[1]! : null;
+}
+
+/** §113: the name `file` takes from `target` through a default import — the module's own default, or `default` (a re-export module maps it). */
+function defaultImportUses(file: string, src: string, target: string): string[] {
+  // Both names: a carrier module's own default is read by its name, a re-export module's by `default` (each derivation keeps the one it knows).
+  return defaultImports(src).filter((d) => sameModule(resolveSpec(file, d.spec), target)).flatMap(() => [...new Set([ownDefaultExport(target) ?? 'default', 'default'])]);
+}
+
+/** §113: the local names of default imports that bind one of `wanted` (a carrier module's default, or a re-export module's). */
+function defaultImportLocals(file: string, src: string, wanted: string[]): string[] {
+  const carriers = derivedCarriers();
+  const out: string[] = [];
+  for (const d of defaultImports(src)) {
+    const resolved = resolveSpec(file, d.spec);
+    const own = [...carrierModules(carriers).keys()].find((k) => sameModule(resolved, k));
+    const carrier = own ? ownDefaultExport(own) : knownModule(carrierReexports(carriers), resolved)?.get('default') ?? null;
+    if (carrier && wanted.includes(carrier)) out.push(d.local);
+  }
+  return out;
+}
+
+/**
+ * §113 (D-W11X2-133): every reference to a carrier in `file` that is NOT a direct call — handed on as a value, stored in an
+ * array or an object, called optionally, applied through `Reflect`, aliased. The per-site checks see a call; a carrier
+ * reached any other way reads its answer somewhere they do not look. A type read (`typeof carrier`) is not a reference that
+ * reads it, and neither is the carrier's own declaration.
+ */
+function carrierNonCallRefs(file: string, src: string, uses: string[]): string[] {
+  const code = stripComments(src).replace(/^\s*(?:import|export)\b[^;]*\bfrom\s*['"][^'"]+['"];?/gm, '');
+  const locals = new Set<string>(uses.filter((u) => u !== '<dynamic>'));
+  for (const m of stripComments(src).matchAll(/import\s+(?:\w+\s*,\s*)?\{([^}]*)\}\s*from\s*['"][^'"]+['"]/g)) {
+    for (const part of m[1]!.split(',')) {
+      const [orig, alias] = part.trim().split(/\s+as\s+/).map((x) => x.trim());
+      if (orig && alias && locals.has(orig)) locals.add(alias);
+    }
+  }
+  for (const d of defaultImportLocals(file, src, [...locals])) locals.add(d);
+  const refs: string[] = [];
+  for (const name of locals) {
+    for (const m of code.matchAll(new RegExp(`(?<![\\w$])${escapeRe(name)}(?![\\w$])`, 'g'))) {
+      const at = m.index!;
+      const before = code.slice(Math.max(0, at - 30), at);
+      const after = code.slice(at + name.length, at + name.length + 60);
+      if (/^\s*\(/.test(after) || /^\s*<[^<>()]*>\s*\(/.test(after)) continue;  // a direct (or generic) call
+      if (/\b(?:function|typeof)\s+$/.test(before)) continue;                   // its declaration, or a type read
+      refs.push(`${name}: …${code.slice(Math.max(0, at - 24), at + name.length + 24).replace(/\s+/g, ' ')}…`);
+    }
+  }
+  return refs.sort();
+}
+
+/** The non-call references each registered consumer makes today, by carrier, pinned. Empty: every consumer calls its carriers directly. */
+function registeredRefs(): Record<string, Record<string, number>> {
+  return {};
+}
+
+/** §113's own per-tree check: every non-call reference to a carrier in a registered consumer is pinned. */
+function round16Checks(): void {
+  for (const [file, c] of Object.entries(CONSUMERS)) {
+    const refs = carrierNonCallRefs(file, read(file), c.uses);
+    const counts: Record<string, number> = {};
+    for (const r of refs) { const n = r.slice(0, r.indexOf(':')); counts[n] = (counts[n] ?? 0) + 1; }
+    assert.deepEqual(counts, registeredRefs()[file] ?? {}, `${file}: a carrier is reached by a non-call reference (${refs.join(' | ')}) — handed on, stored, aliased or called indirectly it escapes the per-site checks; call it directly where its coverage is branched on, or register the reference in registeredRefs() with the branch (G4) and the suite (G5) that prove it`);
+  }
+}
+
+/** §113: the first candidate that exists — in the overlay (never cached), or on disk (cached: the tree does not change during a run). */
+function firstExisting(cands: string[]): string | null {
+  for (const c of cands) if (overlayHas(c)) return c;
+  const cache = firstExisting as unknown as { disk?: Map<string, string | null> };
+  const disk = (cache.disk ??= new Map());
+  const key = cands[0]!;
+  if (!disk.has(key)) disk.set(key, cands.find((c) => existsSync(join(ROOT, c)) && statSync(join(ROOT, c)).isFile()) ?? null);
+  return disk.get(key)!;
+}
