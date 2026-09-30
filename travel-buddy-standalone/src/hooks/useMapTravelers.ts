@@ -9,7 +9,9 @@
  *   - Re-fetches early only when the map centre moves significantly
  *     (> ~1/3 of the query radius), so panning within a city reuses data.
  *   - Keeps the last good result on transient errors — markers never flash
- *     out of existence because one poll failed.
+ *     out of existence because one poll failed — and SAYS the refresh failed
+ *     (`error`), so kept markers are never shown as fresh (census-discovery
+ *     §112, D-W11X2-127). Only the latest request writes the layer.
  *
  * Privacy note: coordinates in MapTraveler are ALREADY coarsened by the
  * server (city centroid or ~2km grid). The client never sees precise
@@ -32,7 +34,7 @@ export interface UseMapTravelersResult {
   travelers: MapTraveler[];
   /** True only before the FIRST successful load — later polls are silent. */
   loading: boolean;
-  /** Set when the latest poll failed AND we have no data to show. */
+  /** Set when the latest read failed — beside the kept rows, if any (census-discovery §112, D-W11X2-127). */
   error: string | null;
   refresh: () => void;
 }
@@ -50,18 +52,19 @@ export function useMapTravelers(opts: {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const inFlight = useRef(false);
+  const latest = useRef(0);
   const hasLoaded = useRef(false);
   const lastFetchAt = useRef(0);
   const lastCenter = useRef<{ lat: number; lng: number } | null>(null);
   const appActive = useRef(AppState.currentState === 'active' || AppState.currentState === 'unknown');
 
   const doFetch = useCallback(async (fLat: number, fLng: number) => {
-    if (inFlight.current) return;
-    inFlight.current = true;
+    // census-discovery §112 (DV-83, D-W11X2-127): a request id, not an in-flight drop — a move while a read is in
+    // flight reads the new centre, and the older answer is discarded when it lands.
+    const req = ++latest.current;
     if (!hasLoaded.current) setLoading(true);
     const res = await getMapTravelers(fLat, fLng, radiusKm);
-    inFlight.current = false;
+    if (req !== latest.current) return;
     lastFetchAt.current = Date.now();
     lastCenter.current = { lat: fLat, lng: fLng };
     if (res.ok) {
@@ -70,9 +73,9 @@ export function useMapTravelers(opts: {
       // Dedup by id defensively — one marker per user, always.
       const seen = new Set<string>();
       setTravelers(res.data.filter((t) => (seen.has(t.id) ? false : (seen.add(t.id), true))));
-    } else if (!hasLoaded.current) {
-      setError(res.error);
-    } // else: keep last good data silently
+    } else {
+      setError(res.error);  // §112 (D-W11X2-127): kept rows stay, and the failed refresh is said beside them
+    }
     setLoading(false);
   }, [radiusKm]);
 
