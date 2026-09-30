@@ -11,17 +11,17 @@
  * Check whether a single feature flag is enabled.
  * Returns false on any error (fail-closed).
  */
-export async function isFlagEnabled(sc: any, flag: string): Promise<boolean> {
+export async function isFlagEnabled(sc: any, flag: string, status?: KillSwitchReadStatus): Promise<boolean> {  // census-discovery §116 (B15): `status`, as isKillSwitchEngaged has, says an unread flag
   try {
     const { data, error } = await sc
       .from("feature_flags")
       .select("enabled")
       .eq("flag", flag)
       .maybeSingle();
-    if (error) return false;
+    if (error) { if (status) status.unread = true; return false; }
     return Boolean((data as any)?.enabled);
   } catch {
-    return false;
+    if (status) status.unread = true; return false;
   }
 }
 
