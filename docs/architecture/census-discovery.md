@@ -19300,6 +19300,31 @@ The code is final at `53ec96888`; the census commit changes only this file, the 
 - **The verifiers' probes**, copied in, run and deleted: the v7–v15 server probes pass 138 of 138; the v7–v14 client probes and the v16 probes (V16-NU0–NU4, V16-MS0, MS1, V16-FP0–FP3) pass, and the adapted `zz-v16a-*` pass; V15-TH4 and V15-NM0, copied in unchanged, still fail as §113.4 and §113.5 recorded (they encode the old implementation).
 - **Guards:** all 24 of the integrator's `int-guards.sh` exit 0.
 
+## §115 — DV-83 round 18 (lane W11-X2)
+
+### 115.1 Integrator: DV-83 held at W after independent re-verification at `e04a52d6b`
+
+*Integrator, 2026-09-30. §114 is round 17 at `e04a52d6b` (PR #530's head). An independent verifier checked that tree: it re-ran every round-15 to round-7 probe unchanged (138 of 138 server; the v7–v14 client suites), the v16 probes and their adapted `zz-v16a-*` versions, wrote new ones (`zz-v17-*`, and guard-reach fixtures GH33–GH40 placed on disk one at a time), applied 58 mutations of its own, and restored every mutated file byte-identical, checked by sha256. Its report is the round-17 verifier's `dv83-r17-verifier.md`.*
+
+- **Confirmed.** §114.1's two breaks (B5, B6), GH0–GH32 with GH31b, and every earlier round's breaks are closed in behaviour. 55 of its 58 mutations are killed by the lane's pins; R6 is harmless (it drops only a `node_modules` block the walk already skips); H9 stays equivalent (D-W11X2-143, upheld).
+- **Found: seven paths that break the criterion's wording, each shown by probes that fail against this tree (19 red probes, each group with a green control).**
+  1. **B9 (safety-relevant display fail-open). An unread `map_projection_enabled` is served as the flag-off body by both gateways** (`artifacts/api-server/src/routes/mapProjection.ts`, `artifacts/api-server/src/routes/mapProjectionTemporal.ts`: `isFlagEnabled`, false on error). The NOW map rolls back to the legacy fetchers and says nothing, so the safety layer, which only the gateway serves, is gone unsaid; the Time Machine draws the offset empty (GF1, GF2, V17-NC5 red; GF0, NC5c the controls).
+  2. **B7. The NOW gateway names `places` over a read cut at its 1000-row cap**; at zoom 6–11 the rows aggregate to one zone and no `nextCursor` is sent (GC1, V17-NC1).
+  3. **B8. It names `saved` (newest 500), `memories` (300) and `buddies` over a cut read or an unread `rent_buddy_enabled`** (`artifacts/api-server/src/lib/buddyMapRead.ts` answers `{ok:true, pins:[]}`) (GC2–GC4, V17-NC2–NC4).
+  4. **B10. The Time Machine's accepted-plan layer answers a failed `map_crowd_flow_enabled` read as `flag_off` and a failed consent read as "read, nothing predicted"** (TPU1, TPU2). D-W11X2-140's `flag_off` off-state is not honest.
+  5. **B11. A live-claim read that FAILED says "No live activity has been observed here"**: the route's reader drops the `liveClaimReadFailed` mark (LF1, LF2).
+  6. **B12. The NOW map's rollback path draws a cut buddy page and a full events page as whole layers** (`travel-buddy-standalone/src/hooks/useMapEntities.ts`; GET /events sends no cut signal and ignores `nearLat`) (V17-LC1, LC2).
+  7. **B13. The Hidden Gems map says "No hidden gems on the map yet" over a gateway that failed or refused** (`travel-buddy-standalone/src/features/media/state/mediaMapStore.ts`) (V17-MG1, MG2).
+- **Rulings not honest.** D-W11X2-139's premise (`sources` is named only over a whole read) is false (B7, B8, B9); D-W11X2-140's `flag_off` off-state is not honest (B10); D-W11X2-141 is honest for GH25–GH32 only; D-W11X2-142 is honest for SW1, for SW2 on gems only, for SW3 over a gateway that answered and for SW4 over the cap and a throw.
+- **The guard's reach.** GH33, GH34, GH36, GH37 and GH38 escape it (a `/*` or `//` inside a string, `import{…}from` with no whitespace, a namespace import spread into an object, a string-literal import name). No live file uses these shapes today. Two guard mutations survive, each non-equivalent (R3, R8; fixtures GH39, GH40).
+- **Next.** A round-18 lane closes B7–B13 with the verifier's probes as failing-first tests, catches GH33–GH40, corrects the rulings, and sweeps every named layer and every client empty state again. The row moves only after that.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | C | **W** | §114 closes §114.1's two paths, confirmed at `e04a52d6b` (§115.1). Seven paths still present a failed or cut read as complete or empty: an unread gateway flag served as off, safety-relevant (`artifacts/api-server/src/routes/mapProjection.ts`, `artifacts/api-server/src/routes/mapProjectionTemporal.ts`); cut or flag-unread layers named in `sources` (`artifacts/api-server/src/lib/buddyMapRead.ts`); the Time Machine plan layer's failed reads; a failed live-claim read; the rollback path's buddy and event pages (`travel-buddy-standalone/src/hooks/useMapEntities.ts`); and the Hidden Gems map over a failed gateway (`travel-buddy-standalone/src/features/media/state/mediaMapStore.ts`). GH33, GH34, GH36, GH37 and GH38 escape the guard, and R3 and R8 survive it. D-W11X2-139's premise and -140's `flag_off` are not honest; D-W11X2-141 and -142 are honest in part. |
+
+Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/lib/calls/callGatewayAdapter.ts — §113.8 names it for N1, outside DV-83: census-telegraph §40 records the call gateway's unread-gate outcome, and no Discovery verdict rests on it.

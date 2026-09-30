@@ -4646,6 +4646,8 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // census-discovery §114 (lane W11-X2, round 17): the files §114 grades.
     "travel-buddy-standalone/src/hooks/useMapEntities.ts",  // §114 grades the NOW map's unread and cut layers (B5)
     "travel-buddy-standalone/src/data/discovery.ts",  // §114 names its `export *` from src/__fixtures__, which puts that directory in the bundle (GH28)
+    // census-discovery §115 (lane W11-X2, round 18): the files §115 grades.
+    "artifacts/api-server/src/lib/buddyMapRead.ts",  // §115 grades the buddy layer's flag read (B8)
     "travel-buddy-standalone/src/hooks/__tests__/useMapEntities.unreadOptional.component.test.tsx",
     "travel-buddy-standalone/src/hooks/__tests__/useMapEntities.legacyGemsCut.component.test.tsx",
     "travel-buddy-standalone/app/map/__tests__/mapScreen.unreadLayers.component.test.tsx",
