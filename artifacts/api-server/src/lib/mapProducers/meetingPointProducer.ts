@@ -294,7 +294,7 @@ export async function readMeetingPoints(
     .order("starts_at", { ascending: true }).limit(MAX_MEETING_POINT_ROWS + 1);  // census-discovery §113 (D-W11X2-135): soonest first, one past the cap so a cut is known
   if (error || !Array.isArray(data)) return { ok: false, reason: "items_read_failed" };
   if (data.length > MAX_MEETING_POINT_ROWS) report.capped = true;  // the projection's skips run after this cut
-  const items = data.slice(0, MAX_MEETING_POINT_ROWS) as MeetingPointItemLike[];
+  const items = data as MeetingPointItemLike[];
   report.candidates = items.length;
 
   // A cancelled meetup leaves its plan item standing — cross-check the source.

@@ -262,9 +262,9 @@ async function loadFlowZones(sc: any, nowMs: number): Promise<FlowZone[] | null>
     .from("geo_zones")
     .select("id, name, zone_type, center_lat, center_lng, radius_meters, polygon_geojson")
     .in("zone_type", FLOW_ZONE_TYPES as string[])
-    .order("id", { ascending: true }).limit(MAX_FLOW_ZONE_ROWS + 1);  // census-discovery §113 (D-W11X2-135): one past the cap so a cut is known
+    .limit(MAX_FLOW_ZONE_ROWS + 1);  // census-discovery §113 (D-W11X2-135): one past the cap so a cut is known
   if (error || !Array.isArray(data)) return null;
-  const zones = parseFlowZones(data.slice(0, MAX_FLOW_ZONE_ROWS) as any[]); if (data.length > MAX_FLOW_ZONE_ROWS) CAPPED.add(zones);  // §113: the viewport is chosen AFTER this cut
+  const zones = parseFlowZones(data as any[]); if (data.length > MAX_FLOW_ZONE_ROWS) CAPPED.add(zones);  // §113: the viewport is chosen AFTER this cut
   _flowZoneCache = { zones, at: nowMs };
   return zones;
 }
@@ -297,9 +297,9 @@ async function loadCityZones(sc: any, nowMs: number): Promise<CityGeographyParse
     .from("geo_zones")
     .select("id, name, zone_type, center_lat, center_lng, radius_meters, polygon_geojson")
     .eq("zone_type", "city")
-    .order("id", { ascending: true }).limit(MAX_CITY_ZONE_ROWS + 1);  // §113 (D-W11X2-135)
+    .limit(MAX_CITY_ZONE_ROWS + 1);  // §113 (D-W11X2-135)
   if (error || !Array.isArray(data)) return null;
-  const parsed = parseCityGeographies(data.slice(0, MAX_CITY_ZONE_ROWS) as any[]); if (data.length > MAX_CITY_ZONE_ROWS) CAPPED.add(parsed);  // §113: the viewport is chosen AFTER this cut
+  const parsed = parseCityGeographies(data as any[]); if (data.length > MAX_CITY_ZONE_ROWS) CAPPED.add(parsed);  // §113: the viewport is chosen AFTER this cut
   _cityZoneCache = { parsed, at: nowMs };
   return parsed;
 }
@@ -329,9 +329,9 @@ async function loadViewportPlaces(sc: any, bbox: BBox): Promise<any[] | null> {
     .lte("latitude", bbox.north)
     .gte("longitude", bbox.west)
     .lte("longitude", bbox.east)
-    .order("id", { ascending: true }).limit(MAX_INDEXED_PLACES + 1);  // §113 (D-W11X2-135)
+    .limit(MAX_INDEXED_PLACES + 1);  // §113 (D-W11X2-135)
   if (error || !Array.isArray(data)) return null;
-  const rows = data.slice(0, MAX_INDEXED_PLACES) as any[]; if (data.length > MAX_INDEXED_PLACES) CAPPED.add(rows); return rows;  // §113: a cut index is marked
+  const rows = data as any[]; if (data.length > MAX_INDEXED_PLACES) CAPPED.add(rows); return rows;  // §113: a cut index is marked
 }
 
 /**

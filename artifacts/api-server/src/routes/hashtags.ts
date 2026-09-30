@@ -366,7 +366,7 @@ router.get('/hashtags/:slug', async (req, res) => {
       .eq('hashtag_id', htRow.id)
       .not('city', 'is', null)
       .gte('created_at', new Date(nowMs - 30 * 24 * 60 * 60 * 1000).toISOString())
-      .order('created_at', { ascending: false }).limit(201),  // census-discovery §113 (D-W11X2-137): one past the cap
+      .limit(201),  // census-discovery §113 (D-W11X2-137): one past the cap
   ]);
 
   // Tally city counts and pick the winner

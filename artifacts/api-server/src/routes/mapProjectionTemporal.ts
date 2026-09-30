@@ -143,9 +143,9 @@ async function loadFlowZones(sc: any, nowMs: number): Promise<FlowZone[] | null>
     .from("geo_zones")
     .select("id, name, zone_type, center_lat, center_lng, radius_meters, polygon_geojson")
     .in("zone_type", FLOW_ZONE_TYPES as string[])
-    .order("id", { ascending: true }).limit(MAX_FLOW_ZONE_ROWS + 1);  // §113 (D-W11X2-136): one past the cap so a cut is known
+    .limit(MAX_FLOW_ZONE_ROWS + 1);  // §113 (D-W11X2-136): one past the cap so a cut is known
   if (error || !Array.isArray(data)) return null;
-  const zones = parseFlowZones(data.slice(0, MAX_FLOW_ZONE_ROWS) as any[]); if (data.length > MAX_FLOW_ZONE_ROWS) TEMPORAL_CAPPED.add(zones);  // the viewport is chosen AFTER this cut
+  const zones = parseFlowZones(data as any[]); if (data.length > MAX_FLOW_ZONE_ROWS) TEMPORAL_CAPPED.add(zones);  // the viewport is chosen AFTER this cut
   _flowZoneCache = { zones, at: nowMs };
   return zones;
 }
@@ -245,7 +245,7 @@ async function readPlanArrivals(
       .select("id, trip_id, accepted_by_user_id, accepted_at, status")
       .eq("status", "active")
       .not("accepted_at", "is", null)
-      .order("id", { ascending: true }).limit(MAX_ACCEPTED_PLANS + 1);  // §113 (D-W11X2-136)
+      .limit(MAX_ACCEPTED_PLANS + 1);  // §113 (D-W11X2-136)
     if (planErr || !Array.isArray(planRows)) return empty("read_failed", zones.length); if (planRows.length > MAX_ACCEPTED_PLANS) return empty("plans_capped", zones.length);  // a cut cohort is never stated
 
     const plans = (planRows as any[]).filter(
@@ -277,7 +277,7 @@ async function readPlanArrivals(
       .select("id, route_plan_id, structured_location, planned_arrival_time, planned_departure_time")
       .in("route_plan_id", planIds)
       .not("planned_arrival_time", "is", null)
-      .order("id", { ascending: true }).limit(2_001);  // §113 (D-W11X2-136)
+      .limit(2_001);  // §113 (D-W11X2-136)
     if (stopErr || !Array.isArray(stopRows)) return empty("read_failed", zones.length); if (stopRows.length > 2_000) return empty("stops_capped", zones.length);
 
     const arrivals: PlanArrival[] = [];
@@ -380,10 +380,10 @@ async function readHistory(sc: any, bbox: BBox, target: TemporalTarget): Promise
     .lte("latitude", bbox.north)
     .gte("longitude", bbox.west)
     .lte("longitude", bbox.east)
-    .order("id", { ascending: true }).limit(MAX_HISTORY_PLACES + 1);  // §113 (D-W11X2-136): one past the cap so a cut is known
+    .limit(MAX_HISTORY_PLACES + 1);  // §113 (D-W11X2-136): one past the cap so a cut is known
   if (placeErr || !Array.isArray(placeRows)) return { rows: null, placesById, failed: ["places"] };
   const placesCut = placeRows.length > MAX_HISTORY_PLACES;
-  for (const p of placeRows.slice(0, MAX_HISTORY_PLACES) as any[]) {
+  for (const p of placeRows as any[]) {
     const lat = Number(p.latitude);
     const lng = Number(p.longitude);
     if (Number.isFinite(lat) && Number.isFinite(lng)) {
@@ -401,10 +401,10 @@ async function readHistory(sc: any, bbox: BBox, target: TemporalTarget): Promise
     .eq("privacy_eligible", true)
     .lte("observed_at", atIso)
     .gte("expires_at", atIso)
-    .order("observed_at", { ascending: false }).limit(MAX_HISTORY_VERSIONS + 1);  // §113 (D-W11X2-136)
+    .limit(MAX_HISTORY_VERSIONS + 1);  // §113 (D-W11X2-136)
   if (versionErr || !Array.isArray(versionRows)) return { rows: null, placesById, failed: ["intel_state_snapshot_versions"] };
   const cut = placesCut || versionRows.length > MAX_HISTORY_VERSIONS;
-  return { rows: versionRows.slice(0, MAX_HISTORY_VERSIONS) as SnapshotVersionRow[], placesById, ...(cut ? { truncated: true as const } : {}) };
+  return { rows: versionRows as SnapshotVersionRow[], placesById, ...(cut ? { truncated: true as const } : {}) };
 }
 
 // ── The route ─────────────────────────────────────────────────────────────────

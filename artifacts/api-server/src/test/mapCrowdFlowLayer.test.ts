@@ -957,9 +957,9 @@ describe("§113: the crowd-flow zone model and place index over a cut read (D-W1
   const farZones = (n: number) => Array.from({ length: n }, (_v: unknown, i: number) => zoneRow({ id: `zone-far-${String(i).padStart(4, "0")}`, name: `Far ${i}`, lat: 10 + i * 0.001, lng: 100 }));
   const otherPlaces = (n: number) => Array.from({ length: n }, (_v: unknown, i: number) => placeRow(`place-other-${String(i).padStart(4, "0")}`, { lat: 16.12, lng: 108.33 }));
 
-  it("CFC1 2000 zones elsewhere ahead of the viewport's → never `no_zone_model`; the refusal names the cut", async () => {
+  it("CFC1 2001 zones elsewhere ahead of the viewport's → never `no_zone_model`; the refusal names the cut", async () => {
     const now = Date.now();
-    const r = await projection(flowState(now, { geo_zones: [...farZones(2000), ...zoneRows()] }));
+    const r = await projection(flowState(now, { geo_zones: [...farZones(2001), ...zoneRows()] }));
     assert.equal(r.status, 200);
     assert.notEqual(r.body.crowdFlow.refusal, "no_zone_model", JSON.stringify(r.body.crowdFlow));
     assert.equal(r.body.crowdFlow.refusal, "zone_model_capped");
