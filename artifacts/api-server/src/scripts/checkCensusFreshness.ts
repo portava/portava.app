@@ -4623,6 +4623,26 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/services/mapTemporal.ts",  // §112 grades the envelope's refusal and nullable report (D-W11X2-121)
     "travel-buddy-standalone/src/components/layover/LayoverDiscoveryCard.tsx",  // §112 corrects its comment on useLayoverGems (D-W11X2-123)
     "artifacts/api-server/src/lib/mapTravelers.ts",  // §112.12 names its unmarked caps as seen and left (census-map M144)
+    // census-discovery §113 (lane W11-X2, round 16): the round's suites and the files §113 grades.
+    "artifacts/api-server/src/test/mapTravelersScanCap.test.ts",
+    "artifacts/api-server/src/test/mapTemporalHistoryUnread.test.ts",
+    "artifacts/api-server/src/test/hiddenGemsScanCap.test.ts",
+    "artifacts/api-server/src/test/nearbyEventsScanCap.test.ts",
+    "artifacts/api-server/src/test/discoverySweepR16.test.ts",
+    "travel-buddy-standalone/src/hooks/__tests__/useMapTravelers.capped.component.test.tsx",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryMapView.travelersCapped.component.test.tsx",
+    "travel-buddy-standalone/src/hooks/__tests__/useTemporalEntities.historyUnread.component.test.tsx",
+    "travel-buddy-standalone/app/gems/__tests__/gemsNearMe.component.test.tsx",
+    "travel-buddy-standalone/app/__tests__/hashtag.followUnknown.component.test.tsx",
+    "travel-buddy-standalone/src/components/__tests__/TagPreviewSheet.followUnknown.component.test.tsx",
+    "artifacts/api-server/src/routes/mapTravelers.ts",  // §113 grades GET /map/travelers' cut mark (D-W11X2-129)
+    "artifacts/api-server/src/services/hiddenGems/HiddenGemDiscoveryService.ts",  // §113 grades the discovery scan's cut mark (D-W11X2-131)
+    "travel-buddy-standalone/src/services/hiddenGems.ts",  // §113 grades the Near Me service (D-W11X2-131)
+    "travel-buddy-standalone/src/services/mapTravelers.ts",  // §113 grades the travelers service's cut mark (D-W11X2-129)
+    "travel-buddy-standalone/src/features/map/time/forecastUnread.ts",  // §113 grades historyUnread and temporalNotice (D-W11X2-130, -136)
+    "travel-buddy-standalone/app/hashtag/[slug].tsx",  // §113 grades the hashtag page's unknown follow state (D-W11X2-137)
+    "travel-buddy-standalone/src/components/TagPreviewSheet.tsx",  // §113 grades the preview sheet's unknown follow state (D-W11X2-137)
+    "travel-buddy-standalone/src/services/hashtag.ts",  // §113 grades the nullable follow state (D-W11X2-137)
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

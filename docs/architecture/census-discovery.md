@@ -18858,7 +18858,7 @@ Each count starts at 0 only when its own read was complete, and null otherwise (
 
 | ID | from | **to** | evidence |
 |---|---|---|---|
-| DV-83 | W | **C** | **§111.1's eight breaks are closed, each with its verifier probe red first; X6, X8, X9, X17, X34, X37 and X41 are killed; the guard's reach holes GH5–GH9 are closed; the sweep closed five more paths; 111 mutations: 110 killed, 1 equivalent (SF2); the round-13 verifier's 42: 41 killed, X18 equivalent. CONTROLLED EVIDENCE ONLY — this row still awaits independent re-verification.** **A gem state from a failed read is not served** (`artifacts/api-server/src/services/hiddenGems/HiddenGemContributionService.ts:310#out.set(id, withUnreadSources(`; V13-GM1, GM1b–GM6, WL1, WL2). **An unread flag is never "off"** (`artifacts/api-server/src/routes/hiddenGems.ts:412#if (!gemFlagOn(res, await readFlagState(sc, "hidden_gems_enabled")))`; V13-GF1, GF1b, GF3, CF1). **A capped bookings read is said** (`artifacts/api-server/src/compass/CompassStructuredContext.ts:247#if (rows.length > BOOKINGS_SHOWN) markUnread(result, "bookingsTruncated");`; V13-BK1, BK2, BK3) and **a failed circle read keeps the member sentence** (`artifacts/api-server/src/compass/CompassStructuredContext.ts:396#if (u.circleMembers) out.push(`; V13-CU1, CU2). **Each count from its own read** (`artifacts/api-server/src/lib/discoveryPlaceAggregates.ts:117#worthItCount: aggregateReadComplete(votesRes) ? 0 : null,`; V13-AM1, AM2, AM3–AM6). **The forecast names only what it read** (`artifacts/api-server/src/routes/mapProjectionTemporal.ts:543#if (events !== null && nearbyEventsWithheldUnchecked(events) === 0) sources.push("events");`; V13-TF1, TF2, TF1b, TF2b, TF3, FU1, FU2, TMU1). **The guard sees every consumer form found** (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts:729#it('G11 GH5`). **The event gates are three-state** (`artifacts/api-server/src/lib/blockGuard.ts`; V13-MB1, MB2, ST1, ED1, FG1, FG2, CV1, CV2) and **the cut tool reads are never "none"** (V13-SP1, SE1, GP1, GE1). **Sweep:** the presence walk, `find_your_circle_enabled`, the Circle screen's 503, `check_trip_conflicts`' plan, GET /events/:id's visibility read. |
+| DV-83 | W | **C** | **§111.1's eight breaks are closed, each with its verifier probe red first; X6, X8, X9, X17, X34, X37 and X41 are killed; the guard's reach holes GH5–GH9 are closed; the sweep closed five more paths; 111 mutations: 110 killed, 1 equivalent (SF2); the round-13 verifier's 42: 41 killed, X18 equivalent. CONTROLLED EVIDENCE ONLY — this row still awaits independent re-verification.** **A gem state from a failed read is not served** (`artifacts/api-server/src/services/hiddenGems/HiddenGemContributionService.ts:310#out.set(id, withUnreadSources(`; V13-GM1, GM1b–GM6, WL1, WL2). **An unread flag is never "off"** (`artifacts/api-server/src/routes/hiddenGems.ts:412#if (!gemFlagOn(res, await readFlagState(sc, "hidden_gems_enabled")))`; V13-GF1, GF1b, GF3, CF1). **A capped bookings read is said** (`artifacts/api-server/src/compass/CompassStructuredContext.ts:247#if (rows.length > BOOKINGS_SHOWN) markUnread(result, "bookingsTruncated");`; V13-BK1, BK2, BK3) and **a failed circle read keeps the member sentence** (`artifacts/api-server/src/compass/CompassStructuredContext.ts:396#if (u.circleMembers) out.push(`; V13-CU1, CU2). **Each count from its own read** (`artifacts/api-server/src/lib/discoveryPlaceAggregates.ts:117#worthItCount: aggregateReadComplete(votesRes) ? 0 : null,`; V13-AM1, AM2, AM3–AM6). **The forecast names only what it read** (`artifacts/api-server/src/routes/mapProjectionTemporal.ts:543#if (events !== null && nearbyEventsWithheldUnchecked(events) === 0`; V13-TF1, TF2, TF1b, TF2b, TF3, FU1, FU2, TMU1). **The guard sees every consumer form found** (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts:729#it('G11 GH5`). **The event gates are three-state** (`artifacts/api-server/src/lib/blockGuard.ts`; V13-MB1, MB2, ST1, ED1, FG1, FG2, CV1, CV2) and **the cut tool reads are never "none"** (V13-SP1, SE1, GP1, GE1). **Sweep:** the presence walk, `find_your_circle_enabled`, the Circle screen's 503, `check_trip_conflicts`' plan, GET /events/:id's visibility read. |
 
 **Headline.** DV-83 moves W → C. `check:census-integrity` counts **C 101 / W 85 / N 2 / X 0** over 188: CONSTRUCTED 186 / 188 = **98.9 %**, CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged. The move is on controlled evidence and awaits independent re-verification.
 
@@ -19079,8 +19079,116 @@ S1–S3, which §112 handed to the safety lane, are fixed on main (census-compas
 
 Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
 
+### 113.2 Round 16: what this lane did
+
+*Written 2026-09-30 by lane W11-X2 (round 16) on `disc-w11-x2-r16`, from `49464f498` (PR #530's head: round 15 with main `b99787c81`) and §113.1. It closes §113.1's four breaks, each with the verifier's probe copied in as a failing-first test; closes the guard's seven reach holes GH17–GH23 with the verifier's fixtures, structurally where it can; pins the two findings outside DV-83 (N1, V9); corrects the three rulings the verifier found not honest (D-W11X2-122, -126, -128); and sweeps every `.limit(` on a Discovery, map, gems or Compass read path again. The sweep found and closed ten more paths (S1–S10).*
+
+*No migration and no new flag. Each change alters output only when a read failed, was refused, or was cut at a cap; with every read healthy, whole and within its cap, every served body is byte-identical (the `truncated`, `refusal`, `failedSources`, `capped` and `*Capped` keys appear only over a failed or cut read: V15-TS0, TSc, V15-TH0, THc, NB0, LSc, MPc, V15-NE0, NE8, SNc, MPCc, CFCc, WICc, THc, DV1c, HTc, CGc). Two behaviours change for healthy reads, by decision: GET /map/search and the NOW gateway read events that are not yet over (a forward window, D-W11X2-132), so an event that ended is no longer served; and Gems "Near Me" reads GET /hidden-gems/nearby. Every edit in a cited file is line-neutral: lines are changed in place, and new code is appended at a file's foot.*
+
+*All evidence is controlled: the real routes over fake clients, jest over the real hooks and screens, and the static guard over an in-memory overlay and over fixtures placed on disk. None of it is production evidence, and no client build carrying the change has shipped.*
+
+### 113.3 The Discovery map's travelers layer (§113.1 B1; D-W11X2-129)
+
+The scan reads freshest-first and one row past its cap; the extra row only detects the cut. `listMapTravelersRead` answers `{ travelers, truncated }` (a cut scan, or an answer sliced to 100), kept while cached. GET /map/travelers sends `truncated: true`, the NOW gateway does not name `travelers` over a cut, /map/search reports `travelers_capped`, and the Discovery map says "Couldn't check every traveler here" or "N travelers · showing some" (`artifacts/api-server/src/lib/mapTravelers.ts`, `routes/mapTravelers.ts`, `routes/mapProjection.ts`, `routes/mapSearch.ts`, `travel-buddy-standalone/src/hooks/useMapTravelers.ts`, `src/components/discovery/DiscoveryMapView.tsx`; V15-TS1, TS2, TS3–TS5, TC1–TC3, TV3–TV5 red first). **D-W11X2-128's understatement is corrected.**
+
+### 113.4 The Time Machine's past arm (§113.1 B2; D-W11X2-130)
+
+A failed history read is `refusal: "history_unreadable"` with `failedSources`; the hook treats a historical answer with no history report, or `available: false`, as failed; and the map passes `temporalNotice(temporal)`, which says a read in flight ("Loading the map for this time…") instead of the honest-empty strip (`artifacts/api-server/src/routes/mapProjectionTemporal.ts`, `travel-buddy-standalone/src/features/map/time/forecastUnread.ts`, `src/hooks/useTemporalEntities.ts`, `app/map/index.tsx`; V15-TH1, TH1b, TH1c, V15-TH3, V15-TH4 (adapted), TH3b, TH5, TH6 red first). **D-W11X2-122 is corrected.** The verifier's V15-TH4, copied in unchanged, stays red: its `notice` is a copy of the old map expression, which never reads `loading`.
+
+### 113.5 Gems "Near Me" and the discovery scan (§113.1 B3; D-W11X2-131)
+
+Near Me reads GET /hidden-gems/nearby with the viewer's position, 50 km and the category; `discoverGems` reads freshest-first and one past its cap and answers `{ ranked, truncated }`, sent as `truncated: true` on /hidden-gems and /nearby, `gems_capped` on /map/search, and not naming `gems` on the NOW gateway. The Discover tab says a cut empty answer ("Couldn't check every gem near you"), a cut list ("Showing some gems near you") and a whole empty one ("No hidden gems near you") apart (`artifacts/api-server/src/services/hiddenGems/HiddenGemDiscoveryService.ts`, `routes/hiddenGems.ts`, `travel-buddy-standalone/src/services/hiddenGems.ts`, `src/hooks/useHiddenGems.ts`, `app/gems/index.tsx`; NB1–NB3, LS1, MP1, MS1, V15-NM1, NM2–NM6 red first). The verifier's V15-NM0, copied in unchanged, fails: it mocks only `listGems`, the data path Near Me no longer uses.
+
+### 113.6 The map's nearby events (§113.1 B4; D-W11X2-132)
+
+`loadNearbyEvents` reads soonest-first and one past its cap, and marks a cut beside its answer. The NOW gateway and map search read a forward window, and the forecast its target's window; a cut is never a complete source, a stated count or "no adjacent event" (`artifacts/api-server/src/routes/mapSearch.ts`, `routes/mapProjection.ts`, `routes/mapProjectionTemporal.ts`; V15-NE1, V15-NE2, NE3–NE7, NE9 red first).
+
+### 113.7 The guard's reach (GH17–GH23; D-W11X2-133)
+
+One source predicate for the walk, the root files and the overlay; one module identity for every resolution; default imports and default re-exports read; and, in every registered consumer, every non-call reference to a carrier counted and pinned (`registeredRefs()`, empty), so a carrier reached any way but a direct call fails whatever the form (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts`, G13; the cited lines kept in place, new code at the foot). **D-W11X2-126 is corrected.** The walk and the overlay share one list of skipped directories as well, and the overlay reads the app root, so an in-memory fixture is seen exactly where a file on disk would be (GH17f, GH17i, found by the guard's own mutation run, GR4; `fecf06f1c`). The guard now takes 194 s (it took 92 s); resolution results on disk are cached for the run.
+
+### 113.8 Outside DV-83: the call gateway and the waitlist sweeper (N1, V9; D-W11X2-134)
+
+- **N1 (census-telegraph §40).** An unread event gate, and a failed events, RSVP or thrown read, is `degraded_unavailable` (503, retryable), never `age_ineligible` or "for attendees"; a failed staff-role read still admits an attendee. The call screen says "Calling couldn't be checked right now" (`artifacts/api-server/src/lib/calls/callGatewayAdapter.ts`, `lib/calls/callPermissionEngine.ts`, `travel-buddy-standalone/src/context/CallContext.tsx`; V15-CG1, CG1b–CG6, CD1 red first).
+- **V9 (census-trust §30.11).** SW3b pins the sweeper's unreadable-eligibility skip: no seat is counted stranded over a read that failed.
+
+### 113.9 The sweep (S1–S10; D-W11X2-135 … D-W11X2-138)
+
+Every `.limit(` on a Discovery, map, gems or Compass read path this lane could reach was read against the round's classes (an unordered cap, a filter after the cut, a slice with no marker), and the read surfaces again for an ignored `error`, a catch that answers empty, an unread flag treated as off, a cached refusal, a stale response, a failed read turned into a value and a loading state drawn as empty.
+
+- **Closed:** the map's safety notices (S1) and meeting points (S2); the Time Machine's cut history (S3), accepted plans and stops (S4), and the itinerary's count over a failed or cut read (S5); the NOW gateway's zone model, city geography and place index, with `no_zone_model` no longer said over a cut model (S6); the ranking's trail keys (S7); GET /hashtags/:slug's follow state and top city, the hashtag page and preview sheet (S8); the hashtag suggestions (S9); and follow / unfollow's 404 over a failed read (S10) — D-W11X2-135, -136, -137.
+- **Swept and sound; seen and left for their owners** — D-W11X2-138 lists both.
+
+### 113.10 Tests, seen red, and mutations
+
+**Seen red first**, run against the code before each fix (logs in the lane's `r16/red/` scratch directory; where the fix was already written, the test was run over HEAD's version of the source, restored by sha256):
+
+| Area | Red | Controls, green |
+|---|---|---|
+| B1 the travelers layer (server) | V15-TS1, TS2, TS3, TS4, TS5 | V15-TS0, TS6, TSc |
+| B1 the travelers layer (client) | TC1–TC3, TV3–TV5 | TCc, TVc2 |
+| B2 the past arm (server) | V15-TH1, TH1b, TH1c | V15-TH0, THc |
+| B2 the past arm (client) | V15-TH3, V15-TH4 (adapted), TH3b, TH5, TH6 | V15-TH2, TH2c |
+| B3 the discovery scan (server) | NB1–NB3, LS1, MP1, MS1 | NB0, NB4, LSc, MPc |
+| B3 Near Me (client) | V15-NM1, NM2–NM6 | V15-NM0 (adapted), NMc |
+| B4 nearby events | V15-NE1, V15-NE2, NE3–NE7, NE9 | V15-NE0, V15-NE2c, NE8 |
+| The guard's reach (G13, whole guard) | GH18–GH23 in memory; GH17 on disk; after the GR run, GH17f, GH17h, GH17i | GH21c, GH17c, GH17g, the tree's own pass |
+| N1 the call gateway | V15-CG1, CG1b–CG6, CD1 | V15-CG0, CGc, CDc |
+| Sweep S1, S2 | SN1–SN3, MPC1, MPC2 | SNc, MPCc |
+| Sweep S6 | CFC1–CFC3, WIC1 | CFCc, WICc |
+| Sweep S3–S5 | TZ1, TP1, TP2, TI1–TI3, TH1, TH2, FU9, TH7 | THc |
+| Sweep S7–S10 | DV1, HT1–HT6, HF1, HF2, TP1 | DV1c, HTc, HFc, TPc |
+
+**Written against the fixed code**, each shown to bite by the mutation that removes the line it pins: TS7, TS8 (the cached cut; the cap on the privacy reads), NB5, NM7–NM11, NE10–NE13, CG5b, SW3b (with SW3c), HF3, TP2, and G13 GH17b, GH18b, GH19b, GH21c and, making each reading load-bearing (`db446cda6`), GH17c (the control: a root build config is not walked), GH17e, GH18d, GH18e (a `.js` module, a directory index and a platform-only module, each reached by a baseUrl specifier), GH19c, GH19e (a default-exported carrier; a carrier module's own default), GH20b, GH20c and GH23b (a default import handed on as a value, at a raw site, and as a second discovery site), and, after the guard's mutation run (`fecf06f1c`), GH17g, GH18f and GH19f (GH17f, GH17h and GH17i were red first). **On disk**, the verifier's runner placed each of GH0–GH23 alone in the tree and removed it: all 24 are killed, the unfixtured tree passes (fail 0), and every touched registered file was restored with a matching sha256.
+
+**Mutations.** Each was applied alone, its pin suites were run, and the file was restored byte-identically; the sha256 matched the committed file (`git show HEAD:`) before and after every application. Runner and logs: the lane's `r16/muts/` scratch directory (`run.py`, `defs.py`, `logs/`, `summary.txt`).
+
+- **171 mutations:** travelers T1–T21; the past arm H1–H4, H5b, H6, H7, H9–H14 (H5 and H8 retired with the redundant code they touched); gems G1–G23; events E1–E18; the call gateway and the sweeper N1–N7, V9; the sweep's server W1–W47 and client X1–X8; the guard GR1–GR33 with GR2b and GR23b (GR26 retired with the lookahead it touched; GR23's line became `rootSources`, mutated as GR23b).
+- **Result: 171 killed, 0 equivalent, 0 non-equivalent survivors** on DV-83 lines and on the N1 and V9 lines. **Survivors on a first run, each closed:** T12 (the scan slice; TS8 pins the privacy reads' cap), G17 and G23 (NM10, NM11), E18 (NE13), W47 (HT6), and H5 and H8, which pinned nothing because the code they touched was redundant — the duplicate failed-sources default and the `enabled` conjunct were removed (`e9dcbd92b`) and the re-run's H5b is killed. **V9**, the round-15 verifier's survivor, is killed by SW3b. **The guard's own run** found GR4, GR20, GR23, GR25 and GR26 surviving: GR4 was a real gap (§113.7; GH17f and GH17i red first), GR23's root filter became one tested reading, `rootSources` (GH17h red first), GR20 and GR25 are pinned (GH18f, a barrel over a platform variant; GH19f, a braced own default), and GR26's `(?!type)` lookahead could never change a match and is removed (`fecf06f1c`); the re-run of GR4, GR20, GR25 and the new GR2b, GR23b, GR28–GR33 killed all eleven.
+- *Naming.* This round's series are T, H, G, E, N, V, W, X and GR; the verifier's are its own.
+
+### 113.11 Checks
+
+- **Line-neutral in every cited file** (the map routes, `lib/mapTravelers.ts`, `routes/hiddenGems.ts`, `routes/hashtags.ts`, the discovery service, the producers, the call gateway, `app/map/index.tsx`, `services/hiddenGems.ts`, and the guard's cited lines), so every anchored citation still lands on its text: `check:doc-citations`, `check:citation-targets` and `check:citation-symbols` are clean. Four files gained a line where no line is cited (`app/gems/index.tsx` is restructured; `CallContext.tsx`, `useHiddenGems.ts` and the guard's foot gain code).
+- **Scope.** This round's suites and the touched sources join this census's `CENSUS_SCOPE` or are named NOT-GRADED below; the acknowledgement for every census that counts a changed file carries a §113 paragraph with its "why it cannot move a verdict".
+- **Suites.** The new api-server suites are on the `test` line (`check:test-registration`); the new client suites are jest component suites, none on KNOWN_BROKEN; `check-test-mocks` and `check-import-extensions` are clean.
+- **Allowlist.** No `UNCHECKED_READS_ALLOWLIST.json` entry names a site this round bound (the call gateway's entries are `eventStaffRole`'s, unchanged), so none is deleted; the checker reports no stale entry.
+- **Write-path select sites.** No write-path `.select()` argument changed; the write-path-columns replica prints OK.
+
+### 113.12 DV-83, restated
+
+§113.1's four breaks are closed, each with the verifier's probe red first and green now (two of its probes, copied in unchanged, encode the old implementation: V15-TH4 mirrors the old notice expression and V15-NM0 mocks the old Near Me data path; each is adapted to the real code and green). The guard's seven reach holes are closed, on disk and in memory. The three rulings the verifier found not honest are corrected (D-W11X2-122, -126, -128). The sweep closed ten more paths. Every clause of DV-83's criterion holds on every path this lane examined:
+
+1. **Producers send the refusal envelope or a named failure.** A cut scan is `truncated`, `*_capped` or a refusal on every Discovery, map and gems route that capped a read; a failed history read is `history_unreadable`.
+2. **Nothing refused or partial is cached as complete.** The travelers' candidate cache keeps the cut mark; no other change writes a cache.
+3. **Nothing refused is rendered as empty, as complete, or over the wrong rows.** The Discovery map, the Gems Near Me tab, the Time Machine and the hashtag page say a cut or failed read; no new hook holds an older query's rows.
+4. **A Compass tool never states a failed or partial read to the model as a fact.** Unchanged this round (round 14's evidence stands); `/compass/ask`'s followed-hashtag context states no absence.
+5. **Consumers branch on coverage**, and the static guard reads every bundled script, every module form, every import form, and pins every carrier reference that is not a direct call (G13).
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§113.1's four breaks are closed, each with its verifier probe red first; the guard's reach holes GH17–GH23 are closed on disk and in memory; the sweep closed ten more paths; 171 mutations: 171 killed, 0 equivalent. CONTROLLED EVIDENCE ONLY — this row awaits independent re-verification.** **A cut travelers scan is said** (`artifacts/api-server/src/lib/mapTravelers.ts`; V15-TS1, TS2–TS5) **and read by the map** (`travel-buddy-standalone/src/components/discovery/DiscoveryMapView.tsx`; TV3–TV5). **A failed history read is named, and an in-flight read said** (`artifacts/api-server/src/routes/mapProjectionTemporal.ts`; V15-TH1; `travel-buddy-standalone/src/features/map/time/forecastUnread.ts`; V15-TH3, TH4, TH5, TH6). **Near Me reads the server near the viewer, and a cut gem scan is said** (`travel-buddy-standalone/app/gems/index.tsx`; V15-NM1, NM2–NM6; `artifacts/api-server/src/services/hiddenGems/HiddenGemDiscoveryService.ts`; NB1–NB3). **The map's events read a window, and a cut is never complete** (`artifacts/api-server/src/routes/mapSearch.ts`; V15-NE1, NE2, NE3–NE7). **The guard pins every non-call carrier reference** (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts`; G13). **Sweep:** the map's producers and geography (`artifacts/api-server/src/routes/mapProjection.ts`; SN1–SN3, MPC1, CFC1–CFC3, WIC1), the temporal gateway's caps (TZ1, TP1, TP2, TI1–TI3, TH1, TH2) and the hashtag routes (`artifacts/api-server/src/routes/hashtags.ts`; HT1–HT6). |
+
+**Headline.** DV-83 moves W → C. `check:census-integrity` counts **C 101 / W 85 / N 2 / X 0** over 188: CONSTRUCTED 186 / 188 = **98.9 %**, CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged. The move is on controlled evidence and awaits independent re-verification.
+
+### 113.13 Left open, and what would turn this red
+
+- **Outside DV-83, handed on.** N1 is census-telegraph's (§40 records it); V9 is census-trust's (§30.11). Neither moves a row there.
+- **Seen and not built (other owners; D-W11X2-138).** The centroid lookup's per-fold cap, the hashtag feed's author-profile read, the suggestions' unlimited city-usage read, two dead gem helpers, and the admin duplicate scan.
+- **Product effect, stated.** Where a global table outgrows a cap (flow zones or cities above 2000, accepted plans above 500), the affected layer is now said to be cut or refused instead of served as whole; raising a cap, or scoping the read, is the owner's call (census-map).
+- **What would turn DV-83 red again:**
+  - a capped Discovery, map or gems read answered as empty or whole with no marker (V15-TS1, NB1, V15-NE1, SN1, CFC1, TP1, TH1);
+  - a failed history read answered without its refusal, or a client that draws it, or a read in flight, as an empty past (V15-TH1, V15-TH3, TH6);
+  - Near Me answered from a page instead of the viewer's position (NM2);
+  - a failed follow read answered "not following" (HT1, HF1);
+  - a consumer of a refusal-carrying carrier the guard cannot see, or a carrier reached by an unregistered non-call reference (G13);
+  - any path §112.12 lists.
+
 ## Cited, not graded (check:census-scope-coverage)
 
+- NOT-GRADED: artifacts/api-server/src/lib/calls/callGatewayAdapter.ts — §113.8 names it for N1, outside DV-83: census-telegraph §40 records the call gateway's unread-gate outcome, and no Discovery verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/lib/calls/callPermissionEngine.ts — §113.8 names it only because its gateway type gained the `degraded_unavailable` reason for N1 (census-telegraph §40); no Discovery verdict rests on it.
+- NOT-GRADED: travel-buddy-standalone/src/context/CallContext.tsx — §113.8 names its call-screen copy for N1 (census-telegraph §40); no Discovery verdict rests on it.
 - NOT-GRADED: travel-buddy-standalone/app/discover.tsx — §105.11 names it only as a path seen and not built, left for its owner, and §106 records Find Travelers' failed-search state and generation guard: it is the social people search over services/follows.ts, not a Discovery envelope, and no Discovery row or DV-83 verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/services/airport/__tests__/layoverSurfaceErrorBinding.test.ts — §104.8 names it only as the integrator's whole-repo scan, run on the final commit; no DV-83 verdict rests on its content.
 - NOT-GRADED: artifacts/api-server/src/lib/capability/prerequisitesCore.ts — §93.8 names its function-granular gate boundary as why the Compass KNOWN entry was struck; it is the prerequisite checker's own machinery, and no Discovery verdict rests on it.

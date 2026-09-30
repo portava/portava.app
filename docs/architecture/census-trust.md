@@ -3312,3 +3312,12 @@ Cited in this section, graded by no row of this census:
 - NOT-GRADED: artifacts/api-server/src/lib/eventWaitlistSweeper.ts — §30.6 names it as the second promoter the eligibility gate now covers; waitlist seating is graded by no row of this census.
 - NOT-GRADED: artifacts/api-server/src/test/eventWaitlistSweeper.test.ts — §30.10 names it only because its double was taught the new eligibility reads; no Trust verdict moves on it.
 - NOT-GRADED: docs/architecture/mobile-reachability-ledger.json — §30.9 cites its `DEAD ENDPOINT` classification of the safety summary as a reachability fact; it is a generated ledger, not a Trust surface.
+
+### §30.11 The sweeper's unreadable-eligibility skip is pinned (round-16 note, census-discovery §113, D-W11X2-134)
+
+**NO ROW MOVES.** The round-15 Discovery verifier's mutation V9 — deleting `if (pick.unavailable) continue;` in
+`artifacts/api-server/src/lib/eventWaitlistSweeper.ts` — survived every suite: the pass then counted a freed seat as
+stranded ("queue exhausted") over an eligibility nobody could read, a failed read reported as an ops count. §30.10's
+"0 survivors" did not cover it. `eventsWaitlistCapacityFailClosed.test.ts` SW3b now asserts `stranded === 0` and nobody
+promoted when the head's eligibility is unreadable, with the control SW3c (every waitlister readable and banned → the
+seat IS stranded). Applied alone and restored by sha256, V9 is killed by SW3b. No source line changed.
