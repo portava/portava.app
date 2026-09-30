@@ -10,6 +10,7 @@
  *   GL1  a cut list with nothing in it → "Couldn't check every gem here", never "No hidden gems found"
  *   GL2  a cut list with rows → the rows, and "Showing some gems"
  *   GL3  the service marks a list the server said was cut (and not a whole one)
+ *   GL5  the hook: a new query shows no old cut mark while it is read
  *   GL4  the hook: a refresh to a whole list clears the mark
  */
 import React from 'react';
@@ -82,5 +83,15 @@ describe('§114 SW1: the Gems Discover list says a cut list', () => {
     listGems.mockResolvedValue([gem('a')]);
     await act(async () => { await hook.result.current.refresh(); });
     await waitFor(() => expect(hook.result.current.truncated).toBe(false));
+  });
+
+  it('GL5 the hook: a new query shows no old cut mark while it is read', async () => {
+    listGems.mockImplementationOnce(async () => markGemListCut([gem('a')]));
+    const hook = await renderHook((p: { city: string }) => useGemList({ city: p.city }), { initialProps: { city: 'Lisbon' } });
+    await waitFor(() => expect(hook.result.current.truncated).toBe(true));
+    listGems.mockImplementation(() => new Promise(() => {}));
+    await hook.rerender({ city: 'Porto' });
+    await waitFor(() => expect(hook.result.current.loading).toBe(true));
+    expect(hook.result.current.truncated).toBe(false);
   });
 });
