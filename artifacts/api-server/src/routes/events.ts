@@ -1013,7 +1013,7 @@ router.get("/events", async (req, res) => {
   const category = (req.query.category as string) ?? null;
 
   const dateFrom = (req.query.dateFrom as string) ?? null;
-  const dateTo   = (req.query.dateTo as string) ?? null;
+  const dateTo   = (req.query.dateTo as string) ?? null; const near = eventsNearFilter(req.query);  // census-discovery §115 (DV-83, B12): nearLat/nearLng/nearRadiusKm are honoured, never ignored
 
   // Fetch a larger candidate pool so the ranker has meaningful diversity to
   // work with — the final page slice happens after rankCandidates().
@@ -1035,12 +1035,12 @@ router.get("/events", async (req, res) => {
     .in("state", state === "all" ? BROWSE_STATES : [state])
     .in("visibility", ["public", "friends_only"])
     .order("starts_at", { ascending: true, nullsFirst: false })
-    .limit(RANK_POOL_SIZE);
+    .limit(RANK_POOL_SIZE + 1);  // census-discovery §115 (B12): one row past the pool, so a pool cut at its cap is known (the pool itself is unchanged)
 
   if (city)     query = query.ilike("city", `%${city}%`);
   if (category) query = query.eq("category", category);
   if (dateFrom) query = query.gte("starts_at", dateFrom);
-  if (dateTo)   query = query.lte("starts_at", dateTo);
+  if (dateTo)   query = query.lte("starts_at", dateTo); if (near) query = query.gte("location_lat", near.south).lte("location_lat", near.north).gte("location_lng", near.west).lte("location_lng", near.east);  // §115 (B12)
 
   const { data: events, error } = await query;
 
@@ -1051,7 +1051,7 @@ router.get("/events", async (req, res) => {
   // staff bypass, ban, and trust/age/verified gates) but with a fixed number of
   // queries regardless of page size — important now that city is optional and
   // the default feed can return a full unfiltered page.
-  const rows = (events as any[]) ?? [];
+  const poolCut = ((events as any[]) ?? []).length > RANK_POOL_SIZE; const rows = ((events as any[]) ?? []).slice(0, RANK_POOL_SIZE).filter((e: any) => !near || withinEventsNear(e, near));  // census-discovery §115 (B12): the pool as before; a cut pool is said
   const otherHostIds = [...new Set(rows.map((e: any) => e.host_id as string))].filter((h) => h !== user.id);
 
   // Blocks in either direction. Both queries discarded `error`, so an
@@ -1076,14 +1076,14 @@ router.get("/events", async (req, res) => {
     rows.filter((e: any) => e.visibility === "friends_only" && e.host_id !== user.id)
         .map((e: any) => e.host_id as string),
   )];
-  const friendHosts = new Set<string>();
+  const friendHosts = new Set<string>(); let friendsUnread = false;  // census-discovery §115 (B12): a friends-only event withheld over a failed friendships read is said
   if (friendsOnlyHosts.length > 0) {
     const [f1, f2] = await Promise.all([
       sc.from("user_friendships").select("user_b").eq("user_a", user.id).in("user_b", friendsOnlyHosts),
       sc.from("user_friendships").select("user_a").eq("user_b", user.id).in("user_a", friendsOnlyHosts),
     ]);
     for (const f of (((f1 as any).data as any[]) ?? [])) friendHosts.add(f.user_b as string);
-    for (const f of (((f2 as any).data as any[]) ?? [])) friendHosts.add(f.user_a as string);
+    for (const f of (((f2 as any).data as any[]) ?? [])) friendHosts.add(f.user_a as string); if ((f1 as any).error || (f2 as any).error) friendsUnread = true;
   }
 
   // Viewer's roles across the listed events (staff bypass / banned)
@@ -1333,7 +1333,7 @@ router.get("/events", async (req, res) => {
     })),
     page,
     limit,
-    sessionId,
+    sessionId, ...(poolCut || friendsUnread || rankedEvents.length > offset + limit ? { truncated: true as const } : {}),  // census-discovery §115 (DV-83, B12): an answer that is not the whole list says so; a whole one is byte-identical
   });
 });
 
@@ -7081,4 +7081,31 @@ function safetySummaryFailedSources(req: any, eventId: string, reads: Record<str
   if (failed.length === 0) return {};
   req.log?.error?.({ eventId, failed }, "safety summary: lists unreadable — reported as null, not empty");
   return { failedSources: failed };
+}
+
+// ── census-discovery §115 (DV-83 round 18, lane W11-X2; the round-17 verifier's B12) ─────────────────────────────────
+//
+// GET /events ignored `nearLat` / `nearLng` / `nearRadiusKm`, so the NOW map's rollback path drew page one of events
+// from anywhere as its nearby layer. A request carrying both coordinates is filtered to located events within the
+// radius (a bbox in the query, the great-circle distance after it); one without them is unchanged.
+
+interface EventsNear { lat: number; lng: number; radiusKm: number; west: number; south: number; east: number; north: number }
+
+function eventsNearFilter(q: Record<string, unknown>): EventsNear | null {
+  const lat = Number(q.nearLat); const lng = Number(q.nearLng);
+  if (q.nearLat == null || q.nearLng == null || !Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+  const r = Number(q.nearRadiusKm);
+  const radiusKm = Number.isFinite(r) && r > 0 ? Math.min(r, 500) : 25;
+  const dLat = radiusKm / 111.32;
+  const dLng = radiusKm / (111.32 * Math.max(0.2, Math.cos((lat * Math.PI) / 180)));
+  return { lat, lng, radiusKm, west: lng - dLng, south: lat - dLat, east: lng + dLng, north: lat + dLat };
+}
+
+function withinEventsNear(e: { location_lat?: unknown; location_lng?: unknown }, near: EventsNear): boolean {
+  const lat = typeof e.location_lat === "number" ? e.location_lat : Number.NaN;
+  const lng = typeof e.location_lng === "number" ? e.location_lng : Number.NaN;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const a = Math.sin(toRad(lat - near.lat) / 2) ** 2 + Math.cos(toRad(near.lat)) * Math.cos(toRad(lat)) * Math.sin(toRad(lng - near.lng) / 2) ** 2;
+  return 2 * 6371 * Math.asin(Math.min(1, Math.sqrt(a))) <= near.radiusKm;
 }

@@ -234,7 +234,7 @@ export interface ListEventsParams {
 
 export async function listEvents(
   params: ListEventsParams = {},
-): Promise<ApiResult<{ events: EventListItem[]; page: number; limit: number }>> {
+): Promise<ApiResult<{ events: EventListItem[]; page: number; limit: number; /** census-discovery §115 (B12): the list is not whole */ truncated?: boolean }>> {
   const qs = new URLSearchParams();
   if (params.state)           qs.set('state', params.state);
   if (params.city)            qs.set('city', params.city);

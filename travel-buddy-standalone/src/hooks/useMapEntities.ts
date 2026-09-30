@@ -79,7 +79,7 @@ import type { MapObject, MapObjectKind } from '../types/mapObjects.ts';
 import { compareByRenderingPriority } from '../types/mapObjects.ts';
 import { searchBuddies } from '../services/rentABuddy.ts';
 import { listEvents } from '../services/events.ts';
-import { listGems } from '../services/hiddenGems.ts'; import { gemListCut, markGemListCut } from '../services/gemListCut.ts';  // census-discovery §114 (sweep SW2)
+import { listGems } from '../services/hiddenGems.ts'; import { gemListCut, markGemListCut } from '../services/gemListCut.ts'; import { buddyPageCut, eventsPageCut, layerPageCut, markLayerPageCut } from '../features/map/layers/layerPageCut.ts';  // census-discovery §114 (sweep SW2); §115 (B12)
 import { listMyTrips } from '../services/trips.ts';
 import { listVisibleCircleLocations } from '../services/map.ts';
 // Typed so the projector call sites are checked too: an untyped row is how
@@ -290,7 +290,7 @@ async function fetchBuddies(
     const obj = projectBuddy(buddy);
     if (obj) out.push(obj);
   }
-  return out;
+  return buddyPageCut(result.data) ? markLayerPageCut(out) : out;  // census-discovery §115 (B12): page one of `total` is not the whole layer
 }
 
 async function fetchEvents(lat: number, lng: number, now: number): Promise<MapObject[]> {
@@ -314,7 +314,7 @@ async function fetchEvents(lat: number, lng: number, now: number): Promise<MapOb
     const obj = projectEventLocal(ev, now);
     if (obj) out.push(obj);
   }
-  return out;
+  return eventsPageCut(result.data) ? markLayerPageCut(out) : out;  // census-discovery §115 (B12): a cut or full page is not the whole layer
 }
 
 async function fetchGems(city: string): Promise<MapObject[]> {
@@ -855,7 +855,7 @@ export function useMapEntities(opts: {
       // 'mixed' is unreachable now that the gateway serves every layer this
       // hook can show: when it answers, no per-layer fetcher runs at all.
       setSource(usedGateway ? 'gateway' : 'legacy');
-      setUnreadLayers(unread); setTruncated(usedGateway ? gatewayCut : settled.some((r) => r.objects !== null && gemListCut(r.objects)));  // §114 (SW2): the rollback path's cut gem page too
+      setUnreadLayers(unread); setTruncated(usedGateway ? gatewayCut : settled.some((r) => r.objects !== null && (gemListCut(r.objects) || layerPageCut(r.objects))));  // §114 (SW2): the rollback path's cut gem page too; §115 (B12): and a cut buddy or events page
       setLiveEnrichment(enrichment);
       setError(null);
       hasLoaded.current = true;
