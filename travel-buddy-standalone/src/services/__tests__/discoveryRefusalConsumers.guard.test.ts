@@ -236,7 +236,7 @@ function walk(dir: string, out: string[]): string[] {
   if (!existsSync(join(ROOT, dir))) return out;
   for (const entry of readdirSync(join(ROOT, dir))) {
     const rel = `${dir}/${entry}`;
-    if (entry === 'node_modules' || entry === '__tests__' || entry === '__mocks__' || entry === '__fixtures__') continue;
+    if (walkSkipsDir(entry)) continue;  // §113 (D-W11X2-133): one list of skipped directories, shared with the overlay (isWalkedPath)
     if (statSync(join(ROOT, rel)).isDirectory()) walk(rel, out);
     else if (isClientSource(entry)) out.push(rel);  // §113 (D-W11X2-133): .js/.jsx/.mjs/.cjs too (the app bundles .js)
   }
@@ -888,18 +888,18 @@ function clientRoots(): string[] {
   return readdirSync(ROOT).filter((e) => !e.startsWith('.') && !(e in clientNotBundled()) && statSync(join(ROOT, e)).isDirectory()).sort();
 }
 
-/** Every client source the app can bundle: each client root walked, and the .ts/.tsx files at the app root. */
+/** Every client source the app can bundle: each client root walked, and the bundled scripts at the app root (rootSources). */
 function clientSources(): string[] {
   const out: string[] = [];
   for (const r of clientRoots()) walk(r, out);
-  for (const e of readdirSync(ROOT)) if (isWalkedPath(e) && statSync(join(ROOT, e)).isFile()) out.push(e);  // §113 (D-W11X2-133): .js too; the root build configs are named as unbundled
+  for (const e of rootSources(readdirSync(ROOT).filter((n) => statSync(join(ROOT, n)).isFile()))) out.push(e);  // §113 (D-W11X2-133): .js too; the root build configs are named as unbundled
   return out;
 }
 
 /** Whether the caller's walk reads `rel`'s top-level directory (or, for a root file, the app root): the overlay mirrors the walk. */
 function walkedRoot(rel: string, walked: string[]): boolean {
   const top = (f: string) => (f.includes('/') ? f.split('/')[0]! : '');
-  return walked.some((f) => top(f) === top(rel));
+  return top(rel) === '' || walked.some((f) => top(f) === top(rel));  // §113 (D-W11X2-133): the app root is always read (clientSources), even with no bundled file there today
 }
 
 /**
@@ -1163,7 +1163,7 @@ function clientRootFilesNotBundled(): Record<string, string> {
 /** Whether the walk reads `rel`: a client source, and — at the app root — not a named build config. */
 function isWalkedPath(rel: string): boolean {
   const name = rel.slice(rel.lastIndexOf('/') + 1);
-  return isClientSource(name) && (rel.includes('/') || !(rel in clientRootFilesNotBundled()));
+  return isClientSource(name) && !rel.split('/').slice(0, -1).some(walkSkipsDir) && (rel.includes('/') || !(rel in clientRootFilesNotBundled()));
 }
 
 /** What Metro may resolve a specifier path to: the path, every source extension and platform variant, then the same under `index`. */
@@ -1196,9 +1196,9 @@ function knownModule<T>(known: Map<string, T>, resolved: string | null): T | und
   return undefined;
 }
 
-/** The default imports in `src`: `import X from '…'` and `import X, { … } | * as ns from '…'` (not `import type`). */
+/** The default imports in `src`: `import X from '…'` and `import X, { … } | * as ns from '…'` (`import type X` never matches: `type` is followed by a name, not `from`). */
 function defaultImports(src: string): Array<{ local: string; spec: string }> {
-  return [...stripComments(src).matchAll(/import\s+(?!type\b)(\w+)\s*(?:,\s*(?:\{[^}]*\}|\*\s*as\s+\w+)\s*)?from\s*['"]([^'"]+)['"]/g)].map((m) => ({ local: m[1]!, spec: m[2]! }));
+  return [...stripComments(src).matchAll(/import\s+(\w+)\s*(?:,\s*(?:\{[^}]*\}|\*\s*as\s+\w+)\s*)?from\s*['"]([^'"]+)['"]/g)].map((m) => ({ local: m[1]!, spec: m[2]! }));
 }
 
 /** The name a carrier module's own source exports as its default: `export default x`, `export { x as default }` or `export default function x`. */
@@ -1335,3 +1335,49 @@ describe('DV-83 guard reach — the readings made load-bearing (§113, D-W11X2-1
     assert.throws(() => withFiles({ 'src/services/zzDiscoveryDefaultGH23b.ts': GH15B.discoveryDefault, [MAP]: read(MAP) + GH15B.mapDefaultCall }, () => round15Checks()), /call site was added or removed/);
   });
 });
+
+// §113 (D-W11X2-133): the overlay mirrors the walk's skipped directories too — a file under __tests__, __mocks__ or
+// __fixtures__ is never walked on disk, so a fixture placed there must not be seen in memory (GR4 found the overlay did).
+const GH15D = {
+  nested: GH.named.replace("'../services/compass.ts'", "'../../services/compass.ts'"),
+  platformPlain: "export const zzPlainGH18f = 1;\n",
+  platformWeb: "export { fetchCompassRecommendations as zzRecsGH18f } from '../../services/compass.ts';\n",
+  rootConsumer: GH.named.replace("'../services/compass.ts'", "'./src/services/compass.ts'"),
+  ownDefaultBraces: "\nexport { fetchCompassRecommendations as default };\n",
+  viaOwnDefaultBraces: "import zzOwnDefaultGH19f from " + "'../services/compass.ts';\nexport async function zzRawRecsGH19f(): Promise<number> {\n  const res = await zzOwnDefaultGH19f({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  barrel: "export { zzRecsGH18f } from " + "'./zzGH18f/mod';\n",
+  viaBarrel: "import { zzRecsGH18f } from " + "'./zzGH18fbarrel';\nexport async function zzRawRecsGH18f(): Promise<number> {\n  const res = await zzRecsGH18f({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+};
+
+describe('DV-83 guard reach — the overlay mirrors the walk\'s skipped directories (§113, D-W11X2-133)', () => {
+  it('G13 GH17f CONTROL: a raw consumer under __tests__, __mocks__ or __fixtures__, or named .test, is not walked, on disk or in memory', () => {
+    const files = { 'src/components/__tests__/zzGH17f.tsx': GH15D.nested, 'src/components/__mocks__/zzGH17f.tsx': GH15D.nested, 'src/components/__fixtures__/zzGH17f.tsx': GH15D.nested, 'src/components/zzGH17f.test.tsx': GH.named };
+    const u = withFiles(files, unregisteredNow);
+    for (const f of Object.keys(files)) assert.equal(u.has(f), false, `${f} is seen in memory, but the walk never reads it on disk`);
+  });
+  it('G13 GH17g: the same raw consumer one directory down, outside those, is caught (the fixture bites)', () => {
+    assert.ok(withFiles({ 'src/components/zzGH17g/deep.tsx': GH15D.nested }, unregisteredNow).has('src/components/zzGH17g/deep.tsx'));
+  });
+  it('G13 GH17h: the app root\'s bundled sources are its script files less the named build configs', () => {
+    assert.deepEqual(rootSources(['index.js', 'App.tsx', 'babel.config.js', 'metro.config.js', 'jest.config.js', 'jest.web.config.js', 'README.md', 'app.json', 'App.test.tsx']), ['index.js', 'App.tsx']);
+  });
+  it('G13 GH17i: a raw consumer at the app root is seen in memory, as the walk would read it on disk', () => {
+    assert.ok(withFiles({ 'index.js': GH15D.rootConsumer }, unregisteredNow).has('index.js'));
+  });
+  it("G13 GH19f: a carrier module's own `export { carrier as default }`, taken by a default import, is caught", () => {
+    assert.throws(() => withFiles({ 'src/services/compass.ts': read('src/services/compass.ts') + GH15D.ownDefaultBraces, 'src/components/zzGH19f.tsx': GH15D.viaOwnDefaultBraces }, wholeGuard), /zzGH19f\.tsx \(fetchCompassRecommendations\)/);
+  });
+  it('G13 GH18f: a barrel re-exporting from a platform variant (mod.web.tsx beside a plain mod.tsx) is caught at the barrel\'s importer', () => {
+    assert.throws(() => withFiles({ 'src/components/zzGH18f/mod.tsx': GH15D.platformPlain, 'src/components/zzGH18f/mod.web.tsx': GH15D.platformWeb, 'src/components/zzGH18fbarrel.ts': GH15D.barrel, 'src/components/zzGH18fuse.tsx': GH15D.viaBarrel }, wholeGuard), /zzGH18fuse\.tsx \(fetchCompassRecommendations\)/);
+  });
+});
+
+/** §113: a directory the walk never enters. The walk and the overlay share it. */
+function walkSkipsDir(name: string): boolean {
+  return name === 'node_modules' || name === '__tests__' || name === '__mocks__' || name === '__fixtures__';
+}
+
+/** §113: the files at the app root the walk reads — every bundled script, less the named build configs (isWalkedPath). */
+function rootSources(names: string[]): string[] {
+  return names.filter((n) => isWalkedPath(n));
+}
