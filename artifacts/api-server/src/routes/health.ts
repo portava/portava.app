@@ -24,7 +24,7 @@ import { getLiveShareSweepStatus } from "../server/trips/projectionWorkers/tripC
 import { getNotificationMaintenanceStatus } from "../lib/notificationMaintenanceScheduler.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { sweepExpiredStories } from "./stories.js";
-import { getStoryRetentionStatus } from "../lib/storyRetentionScheduler.js";
+import { getStoryRetentionStatus } from "../lib/storyRetentionScheduler.js"; import { getDiscoveryServeLogRetentionStatus } from "../lib/discoveryServeLogRetentionScheduler.js"; // census-discovery §120
 
 const router: IRouter = Router();
 
@@ -384,7 +384,7 @@ function schedulerReports(): JobReport[] {
     detail: seen.lastOutcome ? `last outcome: ${seen.lastOutcome}` : undefined,
   });
 
-  return reports;
+  const serveLog = getDiscoveryServeLogRetentionStatus(); reports.push({ job: "discoveryServeLogRetention", status: classify({ lastRunAt: serveLog.lastAttemptAt, lastSuccessAt: serveLog.lastSuccessAt, consecutiveFailures: serveLog.consecutiveFailures, requiresSuccess: true }), lastRunAt: serveLog.lastAttemptAt, lastSuccessAt: serveLog.lastSuccessAt, consecutiveFailures: serveLog.consecutiveFailures, detail: [serveLog.lastFailures.length > 0 ? `last failures: ${serveLog.lastFailures.join("; ")}` : null, serveLog.lastReport ? `last pass: deleted ${serveLog.lastReport.deleted} in ${serveLog.lastReport.batches} batch(es), cutoff ${serveLog.lastReport.cutoff ?? "unknown"}${serveLog.lastReport.backlogRemains ? ", backlog remains" : ""}` : null].filter(Boolean).join(" | ") || undefined }); /* census-discovery §120: the owner's 30-day TESTING retention for public.recommendations (3501); like storyRetention it must SUCCEED to read healthy, and a failed or disabled purge is failing. On this line so no cited line of this file moves. */ return reports;
 }
 
 router.get("/healthz/schedulers", (_req, res) => {

@@ -16654,10 +16654,75 @@ The survivor is the InvitePanel `.catch` arm. It is equivalent under the real se
 
 **What would turn this red.** A people-search surface rendering "none found" for `ok: false`, or writing an answer after its query changed. The seven suites above fail on either.
 
+## §120 — Serve-log retention (lane W11-R, testing only): the owner's 30-day retention for `public.recommendations`, delivered with the logging; no row changes bucket
+
+*Added 2026-09-30 on `claude/discovery-serve-log-retention-20260930`, from `b99787c81`. Evidence: the local PostgreSQL 16 harness (`scripts/local-db`, the whole chain through 3501), plus node:test suites. Nothing was applied to the testing database by this lane. portava-ci receives 3501 through CI's own apply when the PR merges.*
+
+**The decision, recorded as the owner's and scoped as the owner scoped it.** The owner approved migration 3376 for the testing database (`ajrurzioarfkagpuxfnb`), with `discovery_serve_log_enabled` kept ON and a **30-day testing retention** for these recommendation logs. In the owner's words:
+
+> "Implement and schedule cleanup using the appropriate record timestamp. Verify that expired records are deleted, newer records remain, and cleanup does not break dependent features or database relationships. Deliver logging and cleanup together rather than leaving records to accumulate indefinitely or disabling the feature. Verify signed-in and anonymous test requests, including empty results, and confirm the cleanup job actually runs. This decision covers recommendation logs in testing only. It does not set retention for financial records or other data."
+
+This section therefore sets no retention for `rank_events`, creator attribution, earnings or any other table. 3376's header note, "exact retention must be decided with privacy/legal review", still governs a real production launch. The policy text is in `docs/ops/retention-policy.md`, under "Discovery serve log".
+
+**What was built.**
+- **3501, the schema half.**
+  - An index on the retention clock: `artifacts/api-server/src/migrations/3501_discovery_recommendations_retention.sql:152#CREATE INDEX IF NOT EXISTS recommendations_created_at`.
+  - The configurable value is a seeded row, not a constant. Its shape follows 3475's `discovery_trend_snapshot_retention_enabled`: `artifacts/api-server/src/migrations/3501_discovery_recommendations_retention.sql:163#retention_scope` (`keep_days` 30, `retention_scope` testing).
+  - The horizon is computed in one place and shared by the purge and the reports: `artifacts/api-server/src/migrations/3501_discovery_recommendations_retention.sql:197#RETURN now() - make_interval(days => v_keep::integer);`.
+  - The purge deletes a bounded batch, oldest first, and says whether more remain: `artifacts/api-server/src/migrations/3501_discovery_recommendations_retention.sql:246#WHERE r.created_at < v_cutoff`.
+  - It is SECURITY DEFINER with `search_path = ''`. EXECUTE is revoked from PUBLIC, anon and authenticated, and granted to service_role only: `artifacts/api-server/src/migrations/3501_discovery_recommendations_retention.sql:266#GRANT EXECUTE ON FUNCTION public.purge_expired_discovery_recommendations(integer) TO service_role;`. It takes no timestamp argument, so a caller cannot move the horizon.
+  - Rollback: `db/rollback/2026-09-30-3501-discovery-recommendations-retention-rollback.sql`. It refuses while serve logging is ON.
+- **The scheduler.** pg_cron is not installed in the testing database (measured 2026-09-30), so the job runs in the API.
+  - Cadence: hourly, `artifacts/api-server/src/lib/discoveryServeLogRetentionScheduler.ts:56#export const RETENTION_INTERVAL_MS = 60 * 60 * 1_000;`.
+  - Bounds: 1,000 rows per statement and at most 25 statements per tick (`artifacts/api-server/src/lib/discoveryServeLogRetentionScheduler.ts:65#export const MAX_BATCHES_PER_TICK = 25;`).
+  - Started from the API entry, line-neutral: `artifacts/api-server/src/index.ts:247#startDiscoveryServeLogRetentionScheduler();`.
+  - Reported at `GET /api/healthz/schedulers` as `discoveryServeLogRetention`, line-neutral: `artifacts/api-server/src/routes/health.ts:387#job: "discoveryServeLogRetention"`.
+  - A failed purge is reported, not swallowed: `artifacts/api-server/src/lib/discoveryServeLogRetentionScheduler.ts:179#failed after ${report.batches} batch(es)`. A flag that is OFF or unreadable also counts as a failure (`artifacts/api-server/src/lib/discoveryServeLogRetentionScheduler.ts:174#is OFF — expired serve-log rows are being kept`), because the owner ruled out logging without cleanup.
+
+**The timestamp is `created_at`, and why.** Both columns record the serve to within milliseconds on every row the writer produces. The difference is who sets them:
+- `created_at` is assigned by the database. The writer's door (`record_discovery_serve_request`) never names it, and service_role holds no UPDATE, so no caller can move a row's retention.
+- `served_at` is a value the API passes in `p_row`. A skewed or future `served_at` would exempt a row from the purge, and a far-past one would delete a row as soon as it landed.
+
+A row is expired when `created_at < now() - keep_days`. A row exactly 30 days old is kept.
+
+**The dependent-row policy: nothing that refers to a purged row is deleted or rewritten.** This was measured over every migration and `src/` reference to `recommendations`, `serveId` and `recommendation_id`:
+1. **No foreign key references `public.recommendations`.** The purge re-checks this on every call and refuses, deleting nothing, if one appears. A future FK therefore forces this rule to be revisited; it cannot be silently cascaded into.
+2. **`rank_events` keeps its `features.serveId` verbatim.** It is neither cascaded nor set to NULL. `rank_events` is not serve-log data under this rule: the same row carries the outcome (the outcome route moves impression → tap/save on that row), 3420's receipts, and the exposure that creator attribution binds to. Setting `serveId` to NULL would rewrite history and lose the per-request grouping the trace report still uses. The reference simply resolves to no row once it is past the horizon.
+3. **Creator attribution and financial records cannot be reached.** `creator_attributions.recommendation_id` (3386) names a `rank_events` exposure id (per item), never a `recommendations.id` (per request). The 3386 trigger and `lib/creatorServedRecommendation.ts` both bind against `rank_events`. The purge deletes from one table, and no FK or trigger leads from that table to `rank_events`, `creator_attributions` or `creator_earning_entries`. The link is protected by that scope. The runtime FK refusal re-asserts it, and D5 below proves it.
+4. **The readers that resolve the reference now know about the horizon.** For a window that starts before the horizon, the trace and outcome reports read the per-request rows as unobserved and say why: `artifacts/api-server/src/lib/discoveryTraceRead.ts:126#if (horizon.breach) {`. Without this, every exposure whose request row had been purged would be counted as "naming no request row", a defect the data does not have.
+
+**Tests, seen red first.**
+
+| Suite | What it pins | Red first |
+|---|---|---|
+| `discoveryServeLogRetention.db.test.ts` (real PostgreSQL) | D1 an expired row is deleted and a newer one remains, as service_role, which cannot DELETE directly (`artifacts/api-server/src/test/db/discoveryServeLogRetention.db.test.ts:103#test("D1.`). D2 the exact boundary. D3 bounded batches, oldest first. D4 the real writer logs a signed-in, an anonymous and an empty serve (DV-06, DV-40), and the scheduler's real tick keeps them while new, purges them once expired, and writes `job_health`. D5 the dependents are untouched and 3386 still admits a new attribution naming the same exposure. D6 the refusals delete nothing, and OFF makes the tick fail. D7 no client role can execute either function. D8 the report horizon | 0/7 with 3501 rolled back on the harness (every case cancelled: the purge does not exist); 7/7 with 3501 applied |
+| `discoveryServeLogRetention.test.ts` | S1–S8: batch size and the stop rule; the per-tick bound; a failed purge gives 503 and a clean pass clears it; every other non-purge is a failure; `job_health` success only on success; the timers really fire; the entry starts the job; the job is on `/healthz/schedulers` | S3, S6b and S7 were red before the health and entry wiring (S4 was red until an explicit `null` client meant "no client") |
+| `discoveryTraceRead.test.ts` R6 | the report horizon, and an unreadable horizon is an error, not a guess | red on the unchanged reader |
+| `healthSchedulers.test.ts` | the exact job set now includes `discoveryServeLogRetention` | red until the set was updated |
+
+The existing writer tests `discoveryTelemetryWriters.test.ts` W1 (signed-in), W3 (anonymous) and W4 (empty) still pass unchanged. D4 repeats them against the real table.
+
+**Mutations.** Each was applied alone and restored byte-identical (sha256 checked).
+- TypeScript: 13 of 13 killed, covering the stop rule, the batch cap, a swallowed RPC error, OFF not being a failure, the failure counter, success written on failure, a `disabled` answer accepted, a negative count admitted, an unbounded batch size, the entry call, the health entry, the ignored horizon, and a guessed horizon.
+- SQL, on the harness, with 3501 rolled back and the mutant applied each time: 11 of 11 killed by the D suite. The mutants were `<=` at the boundary, `served_at` as the clock, no `LIMIT`, newest first, no FK refusal, `disabled` ignored, the horizon a day short, the keep_days check removed, client EXECUTE granted, the batch-size bound removed, and `more` always false. Three of them (the clock, the horizon and the grant) are also refused by 3501's own postconditions at apply time.
+
+**Row movement.** None. This is operations work under DV-06/DV-40's already-built per-request record; no requirement changes bucket.
+
+**What would turn this red.**
+- A purge on `served_at`, `<=` at the boundary, an unbounded or newest-first batch, a missing FK refusal, or a disabled row that is still purged. The D suite fails on each.
+- A scheduler that swallows a failure, loops without a bound, or is not started or not reported. The S suite fails on each.
+
+**Left open.**
+1. The job runs in the testing environment only once the hosted API is redeployed from a commit that contains it. Publishing to Replit is the owner's action, and the deployed API commit is unverified. Until then, `/api/healthz/schedulers` on the hosted API will not list `discoveryServeLogRetention`.
+2. 3501 reaches the testing database only after 3376 and 3491, in chain order, applied by the lane that applies that chain.
+3. A real production launch needs its own retention decision for this table.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/lib/capability/prerequisitesCore.ts — §93.8 names its function-granular gate boundary as why the Compass KNOWN entry was struck; it is the prerequisite checker's own machinery, and no Discovery verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/flagSchemaPrerequisites.test.ts — §93.5 cites it only as the checker's own suite, run after the KNOWN entry was struck; no Discovery verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/routes/health.ts — §120 cites it only as where the serve-log retention job is REPORTED (`/healthz/schedulers`); the aggregate is shared scheduler machinery, and no Discovery verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/healthSchedulers.test.ts — §120 cites it only as the aggregate's own suite, whose exact job set now names `discoveryServeLogRetention`; no Discovery verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/helpers/supabaseConformance.ts — §86.13 cites it only as the file that registers `fakeTrailRulesDb` as a contract Subject; it is shared test machinery (the Supabase contract harness), and no Discovery verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/supabaseContract.test.ts — §86.13 cites it only as the suite that measures `fakeTrailRulesDb` against the real client; shared test machinery, and no Discovery verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/services/airport/AirportProfileService.ts — §80.14 names `searchAirports` as a third caller of `safeOrIlikeValue` whose query changes with the helper; census-layover grades the airport service (with an argued acknowledgement), and no Discovery verdict rests on it.

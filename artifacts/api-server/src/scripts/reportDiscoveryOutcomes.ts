@@ -43,6 +43,8 @@ if (!read.ok) {
   console.error("Refusing to report a partial corpus as outcomes.");
   process.exit(1);
 }
+// census-discovery §120: a window reaching past 3501's retention horizon reads the per-request rows as UNOBSERVED; say why.
+if (read.corpus.serveRequestsUnobserved) console.error(`report:discovery-outcomes: per-request rows UNOBSERVED — ${read.corpus.serveRequestsUnobserved}`);
 // §82 (W10-O): the enrichment (creator, reports, later dismissals). A failed read leaves the four items UNOBSERVED, said, never 0.
 const enr = readOutcomeEnrichment(dbUrl, window);
 if (!enr.ok) console.error(`report:discovery-outcomes: ${enr.error} — regret, report rate, creator diversity and new-creator discovery are UNOBSERVED`);
