@@ -17,6 +17,11 @@
  *   FG1  an age-gated event, the `events_trust_gates_enabled` read fails → the gates run; the refusal is unread (was: gates skipped)
  *   FG2  GET /events/:id, the same → degraded_unavailable
  *   FGc  CONTROL: the gate flag read fails on an event with no gate → served, complete
+ *   CV1  GET /events/:id, a friends-only event, the friendship read fails → degraded_unavailable (was: the locked private wall)
+ *   CV2  the same, the RSVP read fails → degraded_unavailable
+ *   CV3  an invite-only event, the RSVP read fails → degraded_unavailable
+ *   CV4  a cancelled event, the staff-role read fails → degraded_unavailable (staff may view it); CV4c its control
+ *   CVc  CONTROL: a non-friend, every read healthy → the locked preview
  *   FGe  CONTROL: the gate flag off → the age-gated event is served
  *   FGd  CONTROL: the gate flag on, an age-gated event, no date of birth → withheld as a verdict
  */
@@ -165,5 +170,36 @@ describe("v13: the per-event block and staff reads, over a failed read", () => {
     use(client({ events: [ev("e12", { age_min: 18 })], gateFlagOff: true }));
     const { body } = await search();
     assert.equal(JSON.stringify(body.sources?.event), '{"refusal":null,"collected":1}', JSON.stringify(body.sources));
+  });
+  it("CV1 GET /events/:id on a friends-only event, the friendship read fails → degraded_unavailable, never the private wall", async () => {
+    use(client({ events: [ev(EID, { visibility: "friends_only" })], failIf: (t) => t === "user_friendships" }));
+    const { status, body } = await get(`/events/${EID}`);
+    assert.equal(body.error, "degraded_unavailable", `a failed friendship read was answered as a locked, private event: ${status} ${JSON.stringify(body)}`);
+  });
+  it("CV2 GET /events/:id on a friends-only event of a non-friend, the RSVP read fails → degraded_unavailable", async () => {
+    use(client({ events: [ev(EID, { visibility: "friends_only" })], failIf: (t) => t === "event_rsvps" }));
+    const { body } = await get(`/events/${EID}`);
+    assert.equal(body.error, "degraded_unavailable", JSON.stringify(body));
+  });
+  it("CVc CONTROL: a friends-only event of a non-friend, every read healthy → the locked preview", async () => {
+    use(client({ events: [ev(EID, { visibility: "friends_only" })] }));
+    const { status, body } = await get(`/events/${EID}`);
+    assert.equal(status, 200, JSON.stringify(body));
+    assert.equal(body.locked, true, JSON.stringify(body));
+  });
+  it("CV3 GET /events/:id on an invite-only event, the RSVP read fails → degraded_unavailable, never the private wall", async () => {
+    use(client({ events: [ev(EID, { visibility: "invite_only" })], failIf: (t) => t === "event_rsvps" }));
+    const { body } = await get(`/events/${EID}`);
+    assert.equal(body.error, "degraded_unavailable", JSON.stringify(body));
+  });
+  it("CV4 GET /events/:id on a cancelled event, the staff-role read fails → degraded_unavailable, never 'not found'", async () => {
+    use(client({ events: [ev(EID, { state: "cancelled" })], failIf: (t, _s, calls) => t === "event_roles" && !calls.includes("in") }));
+    const { status, body } = await get(`/events/${EID}`);
+    assert.equal(body.error, "degraded_unavailable", `${status} ${JSON.stringify(body)}`);
+  });
+  it("CV4c CONTROL: a cancelled event, every read healthy → 404 as before", async () => {
+    use(client({ events: [ev(EID, { state: "cancelled" })] }));
+    const { status } = await get(`/events/${EID}`);
+    assert.equal(status, 404);
   });
 });

@@ -2423,7 +2423,7 @@ router.get("/events/:id", async (req, res) => {
   // private-wall screen instead of a generic "not found" error.
   // Public events that the viewer still cannot access (e.g. eligibility gate)
   // remain a 404 to avoid probing event existence.
-  if (!await canViewEvent(sc, ev as any, user.id)) {
+  const viewRead = { unread: false }; if (!await canViewEvent(sc, ev as any, user.id, viewRead)) { if (viewRead.unread) { sendError(res, "degraded_unavailable", EVENT_ACCESS_UNAVAILABLE_DETAIL); return; }  // census-discovery §111 (DV-83, D-W11X2-109): a failed visibility read is not the private wall
     const evVis = (ev as any).visibility as string | null ?? "public";
     if (evVis !== "public") {
       // Non-public event: return locked sentinel — no title/venue/dates exposed.
@@ -4315,15 +4315,15 @@ async function isTripEventMember(sc: any, tripId: string, userId: string): Promi
   return true;
 }
 
-async function canViewEvent(sc: any, ev: any, userId: string): Promise<boolean> {
+async function canViewEvent(sc: any, ev: any, userId: string, unreadOut?: { unread: boolean }): Promise<boolean> {  // census-discovery §111 (D-W11X2-109): `unreadOut` learns that a `false` rests on a failed read
   if (ev.host_id === userId) return true;
 
   // Staff (cohost/moderator) always have access
-  const { data: staffRole } = await sc
+  const { data: staffRole, error: staffRoleErr } = await sc
     .from("event_roles").select("role")
     .eq("event_id", ev.id).eq("user_id", userId)
     .maybeSingle();
-  if (staffRole && ["co_host", "moderator"].includes((staffRole as any).role)) return true;
+  if (staffRole && ["co_host", "moderator"].includes((staffRole as any).role)) return true; if (staffRoleErr && unreadOut) unreadOut.unread = true;  // census-discovery §111 (DV-83, D-W11X2-109): a read that could have made this true failed
 
   // A non-live event (draft/cancelled/archived) is visible only to its host and
   // staff (both already returned true above) — regardless of visibility. Without
@@ -4333,18 +4333,18 @@ async function canViewEvent(sc: any, ev: any, userId: string): Promise<boolean> 
 
   if (ev.visibility === "public") return true;
   if (ev.visibility === "friends_only") {
-    const { data: friendship } = await sc
+    const { data: friendship, error: friendshipErr } = await sc
       .from("user_friendships")
       .select("user_a")
       .or(`and(user_a.eq.${userId},user_b.eq.${ev.host_id}),and(user_b.eq.${userId},user_a.eq.${ev.host_id})`)
       .maybeSingle();
-    if (friendship) return true;
+    if (friendship) return true; if (friendshipErr && unreadOut) unreadOut.unread = true;  // census-discovery §111 (DV-83, D-W11X2-109): a read that could have made this true failed
     // friends_only: also allow existing attendees/role holders to see the event
     const [rsvp, role] = await Promise.all([
       sc.from("event_rsvps").select("status").eq("event_id", ev.id).eq("user_id", userId).maybeSingle(),
       sc.from("event_roles").select("role").eq("event_id", ev.id).eq("user_id", userId).maybeSingle(),
     ]);
-    return !!(rsvp as any).data || !!(role as any).data;
+    if (unreadOut && ((rsvp as any).error || (role as any).error)) unreadOut.unread = true; return !!(rsvp as any).data || !!(role as any).data;
   }
   if (ev.visibility === "circle") {
     // Must be a member of the linked circle
@@ -4361,7 +4361,7 @@ async function canViewEvent(sc: any, ev: any, userId: string): Promise<boolean> 
     sc.from("event_rsvps").select("status").eq("event_id", ev.id).eq("user_id", userId).maybeSingle(),
     sc.from("event_roles").select("role").eq("event_id", ev.id).eq("user_id", userId).maybeSingle(),
   ]);
-  return !!(rsvp as any).data || !!(role as any).data;
+  if (unreadOut && ((rsvp as any).error || (role as any).error)) unreadOut.unread = true; return !!(rsvp as any).data || !!(role as any).data;
 }
 
 async function createEventChatThread(sc: any, eventId: string, title: string, hostId: string): Promise<string | null> {
