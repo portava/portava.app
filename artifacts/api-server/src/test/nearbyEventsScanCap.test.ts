@@ -20,6 +20,7 @@
  *   NE10     the forecast's window has an upper bound: 60 events that start after the target do not cut its read
  *   NE11     (mapInferredCause) the §10 cause over a cut scan reports eventsReadFailed
  *   NE12     the forward window keeps a live event with no end that started within the assumed duration
+ *   NE13     the forecast window keeps an event with no end that starts inside the target window
  */
 import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
@@ -177,5 +178,9 @@ describe("§113 (D-W11X2-132): loadNearbyEvents over a cut scan", () => {
     assert.equal(s.body.results.length, 1, JSON.stringify(s.body.sources));
     const g = await call([live], NOW);
     assert.equal((g.body.objects ?? []).length, 1);
+  });
+  it("NE13 the forecast window keeps an event with no end that starts inside the target window", async () => {
+    const { body } = await call([ev(80 * 60_000, null)], FORECAST);
+    assert.equal(body.forecast.events, 1, JSON.stringify(body.forecast));
   });
 });
