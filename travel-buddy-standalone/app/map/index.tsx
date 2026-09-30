@@ -178,7 +178,7 @@ import {
 } from '../../src/features/map/compass/compassMapModel.ts';
 import { toTemporalObjects, offsetsEqual } from '../../src/features/map/time/timeMachine.ts';
 import { buildTemporalView } from '../../src/features/map/time/temporalView.ts';
-import { useTemporalEntities } from '../../src/hooks/useTemporalEntities.ts'; import { temporalNotice } from '../../src/features/map/time/forecastUnread.ts';  // census-discovery §113 (D-W11X2-130)
+import { useTemporalEntities } from '../../src/hooks/useTemporalEntities.ts'; import { temporalNotice } from '../../src/features/map/time/forecastUnread.ts'; import { MapUnreadLayersBanner } from '../../src/components/map/MapUnreadLayersBanner.tsx';  // census-discovery §113 (D-W11X2-130); §114 (B5): the unread-layers notice
 import type { DiscoveryMapViewProps } from '../../src/components/discovery/DiscoveryMapView.tsx';
 import { useFeatureFlags } from '../../src/context/FeatureFlagsContext.tsx';
 
@@ -1005,7 +1005,7 @@ function FullScreenMapScreenInner() {
     liveEnrichment,
     staleness,
     source: entitiesSource,
-    stage: entitiesStage,
+    stage: entitiesStage, unreadLayers: mapUnreadLayers, truncated: mapTruncated,  // census-discovery §114 (DV-83, B5): a layer the gateway did not read, and a page of several, are said
   } = useMapEntities({
     enabledLayers: mode === 'passport' ? [] : enabledLayers,
     city: mode === 'passport' ? null : title,
@@ -2674,7 +2674,7 @@ function FullScreenMapScreenInner() {
           </Text>
         </View>
       ) : null}
-      {legacyPlacesActive && placesPartial && places.length > 0 ? (<View style={[s.cityBanner, showCityLocationBanner ? { top: 26 } : null]} pointerEvents="none" testID="map-places-partial"><AlertTriangle size={12} color="#fff" /><Text style={s.cityBannerText}>{listPartialNotice('places')}</Text></View>) : null}{tripId && compassAltRead ? (<View style={[s.cityBanner, { top: 52 }]} pointerEvents="none" testID={`map-compass-alternatives-${compassAltRead}`}><AlertTriangle size={12} color="#fff" /><Text style={s.cityBannerText}>{compassAltRead === 'failed' ? 'Couldn\u2019t load Compass alternatives just now.' : listPartialNotice('Compass alternatives')}</Text></View>) : null}
+      {legacyPlacesActive && placesPartial && places.length > 0 ? (<View style={[s.cityBanner, showCityLocationBanner ? { top: 26 } : null]} pointerEvents="none" testID="map-places-partial"><AlertTriangle size={12} color="#fff" /><Text style={s.cityBannerText}>{listPartialNotice('places')}</Text></View>) : null}{tripId && compassAltRead ? (<View style={[s.cityBanner, { top: 52 }]} pointerEvents="none" testID={`map-compass-alternatives-${compassAltRead}`}><AlertTriangle size={12} color="#fff" /><Text style={s.cityBannerText}>{compassAltRead === 'failed' ? 'Couldn\u2019t load Compass alternatives just now.' : listPartialNotice('Compass alternatives')}</Text></View>) : null}{mode !== 'passport' ? <MapUnreadLayersBanner unread={mapUnreadLayers ?? []} truncated={mapTruncated === true} top={(showCityLocationBanner ? 26 : 0) + (legacyPlacesActive && placesPartial && places.length > 0 ? 26 : 0)} /> : null /* census-discovery §114 (DV-83, B5): never an unread or cut layer drawn as an empty one; safety first */}
       {/* Passport mode banner */}
       {mode === 'passport' ? (
         <View style={s.modeBanner} pointerEvents="none">
