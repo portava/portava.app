@@ -197,7 +197,7 @@ export interface SafetyNoticeReport {
   /** Current, privacy-eligible safety snapshots read. */
   snapshots: number;
   /** Snapshots whose place is outside the viewport, inactive, merged or unplaceable. */
-  unplaced: number;
+  unplaced: number; /** census-discovery §113 (D-W11X2-135): present only when the snapshot scan hit its cap — the layer is not whole */ capped?: true;
 }
 
 export type SafetyNoticeReadResult =
@@ -225,11 +225,11 @@ export async function readSafetyNotices(
     .eq("privacy_eligible", true)
     .gt("expires_at", nowIso)
     .contains("value", { level: SAFETY_CLAIM_LEVEL })
-    .limit(MAX_SAFETY_SNAPSHOT_ROWS);
+    .order("observed_at", { ascending: false }).limit(MAX_SAFETY_SNAPSHOT_ROWS + 1);  // census-discovery §113 (D-W11X2-135): freshest first, one past the cap so a cut is known
   if (error || !Array.isArray(data)) return { ok: false, reason: "snapshot_read_failed" };
-
-  const rows = (data as SafetySnapshotLike[]).filter((r) => isSafetyClaim(r) && r.privacy_eligible === true);
-  const report: SafetyNoticeReport = { snapshots: rows.length, unplaced: 0 };
+  const capped = data.length > MAX_SAFETY_SNAPSHOT_ROWS;  // the viewport is applied after this cut
+  const rows = (data.slice(0, MAX_SAFETY_SNAPSHOT_ROWS) as SafetySnapshotLike[]).filter((r) => isSafetyClaim(r) && r.privacy_eligible === true);
+  const report: SafetyNoticeReport = { snapshots: rows.length, unplaced: 0, ...(capped ? { capped: true as const } : {}) };
   if (rows.length === 0) return { ok: true, notices: [], report };
 
   const subjectIds = [...new Set(rows.map((r) => String(r.subject_id)))];

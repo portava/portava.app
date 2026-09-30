@@ -727,8 +727,8 @@ router.get(
           if (!read) { producers.safety_notice = { refusal: "read_threw", collected: 0 }; return; }
           if (!read.ok) { producers.safety_notice = { refusal: read.reason, collected: 0 }; return; }
           for (const n of read.notices) collected.push(n);
-          producers.safety_notice = { refusal: null, collected: read.notices.length };
-          sources.push("safety");
+          producers.safety_notice = { refusal: read.report.capped ? "snapshots_capped" : null, collected: read.notices.length };  // census-discovery §113 (D-W11X2-135)
+          if (!read.report.capped) sources.push("safety");
         })(),
       );
     }
