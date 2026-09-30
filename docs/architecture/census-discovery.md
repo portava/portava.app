@@ -19436,6 +19436,29 @@ The code is final at `d1f04405f` (the api-server suites and the on-disk guard ru
 - **The verifiers' probes**, copied in, run and deleted: the v7–v15 and v17 server probes pass 158 of 158 (`zz-v17-gatewayFlagUnread`, `gatewayCutLayersNamed`, `temporalPlanUnread` and `liveUnreadFailedRead` among them, unchanged); of the 20 client probe suites (62 tests), 56 pass — V17-NC1, V17-LC1, LC2, V17-MG1 and MG2 unchanged among them — and 6 fail as recorded: V15-TH4 and V15-NM0 still encode the old implementation (§113.4, §113.5; their adapted `zz-v16a-*` versions pass), and V17-NC2–NC5 hand the client the bodies the gateway sent before §115 (`saved`, `memories` and `buddies` named over a cut or an unread flag; an unread gateway flag as the flag-off body), which it no longer sends; their adapted versions over the fixed bodies (`useMapEntities.gatewayCutNamed` NC2–NC5) pass.
 - **Guards:** all 24 of the integrator's `int-guards.sh` exit 0 on the census commit.
 
+## §116 — DV-83 round 19 (lane W11-X2)
+
+### 116.1 Integrator: DV-83 held at W after independent re-verification at `03a4a4378`
+
+*Integrator, 2026-09-30. §115 is round 18 at `03a4a4378` (PR #530's head). An independent verifier checked that tree: it re-ran every round-17 to round-7 probe unchanged (158 of 158 server; the v7–v17 client suites, with V17-NC2–NC5 adapted over the fixed bodies), placed GH0–GH40 and GH31b on disk one at a time (all 42 killed), wrote new probes (`zz-v18-*`) and guard-reach fixtures (GH41–GH44, GHX5, GHX6), applied 62 mutations of its own, and restored every mutated file byte-identical, checked by sha256. Its report is the round-18 verifier's `dv83-r18-verifier.md`.*
+
+- **Confirmed.** §115.1's seven breaks (B7–B13), GH0–GH40 with GH31b, and every earlier round's breaks are closed in behaviour. 58 of its 62 mutations are killed by the lane's pins; Z21 (the lane's X19) is equivalent, which upholds D-W11X2-152. None of the new breaks is safety-relevant or an authorization fail-open.
+- **Found: five paths that break the criterion's wording, each shown by probes that fail against this tree (8 red probes, each group with a green control).**
+  1. **B14. GET /events serves a failed `event_rsvps` read as a measured `goingCount: 0`**, discarding the cached count, in the list and in GET /events/city/:city (`artifacts/api-server/src/routes/events.ts`; EV2 red; EV0, EV0b, EV0c the controls).
+  2. **B15. The NOW gateway reads the Live-label gates three-state once, but each subject re-reads them two-state**; a failed re-read is an unmarked `[]`, said as "No live activity has been observed here" (`artifacts/api-server/src/routes/mapProjection.ts`, `artifacts/api-server/src/lib/liveClaimRead.ts`; LT1 red; LT0, LT0b the controls).
+  3. **B16. The NOW map's rollback path with no city neither reads nor names the gems and buddies layers** (`travel-buddy-standalone/src/hooks/useMapEntities.ts`): the Gems tab's "View on map", `/map?entry=compass` and the Wall's "See live" reach it with no city (RC1, RC2 red; RC0 the control; SC1 the reach).
+  4. **B17. The map screen hands its title to the hook as the city** (`travel-buddy-standalone/app/map/index.tsx`), so a Compass place card's venue name is read as a city and an empty gem layer is drawn whole (RC3 red; SC2 the reach).
+  5. **B18. GET /events' near filter drops in-radius events across the antimeridian and near the poles, and says nothing**: its longitude box does not wrap and `cos(lat)` is clamped at 0.2 (`artifacts/api-server/src/routes/events.ts`; EA1, EP1 red; EA0, EP0 the controls).
+- **Rulings not honest.** D-W11X2-147 is honest for a marked failed read and the route's own gate read, not for the per-subject re-read (B15); D-W11X2-148 is honest in part (not at the antimeridian or a pole, not on the rollback path with no city or a venue name, and the events tab's Near Me, which now gets near events, was not disclosed); D-W11X2-150 is honest for GH33–GH40, but the dynamic-import and `require` reading is still a regex over the canonical text.
+- **The guard's reach.** GH41–GH44 escape it (`await import (x)` and `require (x)` with a space, an escaped character in the specifier, `import /*c*/ (x)`). No live file uses these shapes today. Guard mutation X6 (a block comment removed to `''`) survives and is non-equivalent (fixture GHX6). Z27 and Z28 (GET /events' radius clamp and default) survive and are non-equivalent (NR1, NR2).
+- **Next.** A round-19 lane closes B14–B18 with the verifier's probes as failing-first tests, reads `import()` and `require()` from the syntax tree, registers NR1, NR2 and GHX6, corrects the rulings, and sweeps once more. The row moves only after that.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | C | **W** | §115 closes §115.1's seven paths, confirmed at `03a4a4378` (§116.1). Five paths still present a failed read as a measured value or empty: a failed RSVP count served as 0 and a near filter that drops events at the antimeridian and the poles (`artifacts/api-server/src/routes/events.ts`); a per-subject Live-label gate re-read that fails, unmarked (`artifacts/api-server/src/routes/mapProjection.ts`, `artifacts/api-server/src/lib/liveClaimRead.ts`); the rollback path's gems and buddies layers unread and unsaid with no city (`travel-buddy-standalone/src/hooks/useMapEntities.ts`) or read over a venue name (`travel-buddy-standalone/app/map/index.tsx`). GH41–GH44 escape the guard, and X6, Z27 and Z28 survive it. D-W11X2-147, -148 and -150 are honest in part. |
+
+Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/lib/calls/callGatewayAdapter.ts — §113.8 names it for N1, outside DV-83: census-telegraph §40 records the call gateway's unread-gate outcome, and no Discovery verdict rests on it.
