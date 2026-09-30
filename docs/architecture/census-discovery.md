@@ -16654,6 +16654,142 @@ The survivor is the InvitePanel `.catch` arm. It is equivalent under the real se
 
 **What would turn this red.** A people-search surface rendering "none found" for `ok: false`, or writing an answer after its query changed. The seven suites above fail on either.
 
+## §107 — Creator ledger on synthetic accounts, and C-11 held open (lane creator-ledger-isolated): erasure is refused until the owner decides, both answers are built and rehearsed in their own databases, and no row changes bucket
+
+*Added 2026-09-30 on `claude/creator-ledger-isolated-20260930`, from `b99787c81`, under the owner's decision of 2026-09-30: implement and test the ledger on isolated synthetic accounts, apply only what imposes no undecided erasure policy on real accounts or records, and keep the real-money retention policy a separate open decision. Controlled evidence only: the local PostgreSQL 16 harness (CI's "kernel SQL executed on a throwaway database" job) and two throwaway clones of it. This lane applied nothing to `portava-ci` or `travel-buddy`, turned no flag on, and published no rule. No row changes bucket.*
+
+### 107.1 What was wrong
+
+- **2901 could not erase a buddy with an earning.** Its `beneficiary_user_id … ON DELETE SET NULL` runs as an UPDATE, which `rbee_no_update` refuses (§52.2 item 3).
+- **3387 answered C-11 by default.** Its cascades delete a creator's whole creator ledger when the profile is deleted. That is "delete on erasure", which the owner has not chosen.
+- **A traveller's erasure deleted the buddy's earnings (found here).** `rent_buddy_bookings.traveler_id` and `rent_buddy_earnings_entries.booking_id` both cascade. Hard-deleting a traveller therefore removes the booking and, with it, the buddy's earning entries.
+- **L15 pinned the default as correct.** It asserted that deleting the profile cascades the ledger away.
+
+### 107.2 What was built
+
+| change | where |
+| --- | --- |
+| The chain: 2901's key becomes CASCADE, so erasure reaches the ledger as a DELETE and not as a refused UPDATE | `artifacts/api-server/src/migrations/3510_creator_ledger_erasure_policy_undecided.sql:120#ADD CONSTRAINT rbee_beneficiary_fk FOREIGN KEY (beneficiary_user_id)` |
+| The chain: a ROW-level BEFORE DELETE guard on all four ledgers refuses every deletion, by any path, with SQLSTATE CL451 | `artifacts/api-server/src/migrations/3510_creator_ledger_erasure_policy_undecided.sql:130#CREATE OR REPLACE FUNCTION public.creator_ledger_erasure_policy_undecided()`, `artifacts/api-server/src/migrations/3510_creator_ledger_erasure_policy_undecided.sql:150#CREATE TRIGGER rbee_erasure_policy_undecided` |
+| 3510 proves its refusal at apply time with a probe row that is always rolled back | `artifacts/api-server/src/migrations/3510_creator_ledger_erasure_policy_undecided.sql:257#a ledger row was deleted while C-11 is undecided` |
+| 3510's rollback refuses while any ledger row exists: removing the guard then would choose "delete" | `db/rollback/2026-09-30-3510-creator-ledger-erasure-policy-undecided-rollback.sql:40#ROLLBACK REFUSED (3510): % holds % row(s)` |
+| HELD answer A, delete on erasure. A ledger row is deleted only in its own beneficiary's erasure, as whole transactions; a counterparty's erasure is refused; service_role loses DELETE; an audited SECURITY DEFINER door serves the tombstone flow | `reconciliation-staging/3511_creator_ledger_erasure_delete_on_erasure.sql:133#CREATE OR REPLACE FUNCTION public.creator_ledger_delete_on_erasure_only()`, `reconciliation-staging/3511_creator_ledger_erasure_delete_on_erasure.sql:220#CREATE OR REPLACE FUNCTION public.creator_ledger_erase_beneficiary(` |
+| HELD answer B, retain pseudonymised. Rows are never deleted. An audited SECURITY DEFINER door replaces the person's id with one random pseudonym in every column of the four ledgers and aborts if the id survives anywhere. The only UPDATE the ledger now accepts is that exact substitution. A pseudonymised record is frozen | `reconciliation-staging/3512_creator_ledger_erasure_retain_pseudonymised.sql:317#CREATE OR REPLACE FUNCTION public.creator_ledger_remove_identity(`, `reconciliation-staging/3512_creator_ledger_erasure_retain_pseudonymised.sql:210#creator_ledger_identity_removal_changes_more_than_identity`, `reconciliation-staging/3512_creator_ledger_erasure_retain_pseudonymised.sql:266#creator_ledger_subject_pseudonymised` |
+| The synthetic-account suite: the ledger end to end, then C-11 three ways, in three databases | `artifacts/api-server/src/test/db/creatorLedgerErasurePolicy.db.test.ts:315#F1. earnings are recorded as balanced double entry` |
+
+The two answers live in `reconciliation-staging/`, which `check:frozen-dir` allowlists for "proposals awaiting owner review/apply". Each refuses to apply beside the other, and each rollback re-installs 3510's guard with 3510's function body verbatim (`artifacts/api-server/src/test/creatorLedgerErasurePolicyShape.test.ts:72#E3. the answers exclude each other`). The owner's answer promotes one of them into the chain after 3510, with its rollback; the other is deleted.
+
+### 107.3 Why 3510 imposes no erasure policy
+
+3510's only effect is that no ledger row can be deleted. It deletes nothing, rewrites nothing and changes no grant:
+- **A person with no ledger row is unaffected.** The guard is row-level, so it never fires for them (G4). A statement-level trigger would have made them undeletable (2292).
+- **A person with ledger rows keeps them unchanged**, identity included, until the owner chooses (G1, G2, G3).
+- **The app's own erasure never reaches the guard.** `AccountDeletionService` keeps an anonymised tombstone profile, never deletes a `profiles` row, and names no ledger table. Wiring the chosen answer into it is the integration step after the decision.
+- **No real record exists to refuse.** On every database this lane could read, the four tables hold 0 rows, `creator_attribution_enabled` and `rent_buddy_enabled` are FALSE, and booking creation is hard-blocked.
+
+**Safe for the shared testing database (`travel-buddy`, `ajrurzioarfkagpuxfnb`), in this order and in ONE run:** 2901, 2920, 2921, 2922, 2930, 3385, 3386, 3387, then **3510**.
+- 3510 must be in the same run. Without it, 2901's SET NULL and 3387's cascade are live for as long as the gap lasts. No row can exist in that gap (the tables are created empty by the same run and every writer is off), but the run should stop, not continue, if 3510 fails.
+- **3511 and 3512 are not safe**: each is an answer to C-11.
+- **This lane wrote nothing there.** The ordered apply is the applying lane's.
+
+### 107.4 Answer B is PSEUDONYMISED, NOT ANONYMOUS — measured, not assumed
+
+After `creator_ledger_remove_identity`, no column of any of the four ledgers holds the person's id, in any case (B2 scans every column of every row). The rows are still linkable to the person, so they remain personal data (B3 pins each route):
+1. **The booking.** `booking_id`, and a Travel Partner attribution's `subject_id`, join to `rent_buddy_bookings.buddy_id`, then to `rent_buddy_profiles.user_id`, which is the person. The tombstone keeps the same profile id, and neither Rent-a-Buddy table is erased.
+2. **The pseudonym itself.** It is one stable key per person, so re-identifying one row re-identifies every row.
+3. **Free text.** A handle typed into a hold reason survives; the scrub removes the id only.
+4. **The recommendation.** `recommendation_id` still joins to the viewer's `rank_events` exposure.
+5. **Quasi-identifiers.** Amounts and timestamps match the counterparty's own records.
+6. **Outside the ledger.** The receipt's day and actor correlate with `account_deletion_requests`, and backups keep the rows as they were.
+
+The receipt names neither the person nor the pseudonym and carries no row count (E4). Anonymity would at least need the booking and subject links cut, free text removed and amounts coarsened. None of that is built, and none is claimed.
+
+### 107.5 Tests, seen red, and the mutations
+
+| suite | tests | red before 3510 / the answers existed |
+| --- | ---: | --- |
+| `creatorLedgerErasurePolicy.db.test.ts` (F, G, A, B, S, R) | 32 | G1, G2, G3, G5 and G6 red with 3510 rolled back on the harness; B1–B8 and S1 red too (3512 requires 3510). The A fixture applies 3510 itself, so it has no before-state |
+| `creatorLedgerErasurePolicyShape.test.ts` (E) | 4 | red while a held answer is absent or diverges |
+| `creatorLedgerLifecycle.db.test.ts` L15 | 1 | CHANGED. It asserted the cascade, which was the undecided answer. It now asserts the refusal, and it was red with 3510 rolled back |
+
+- **F1–F7 exercise shipped code.** They were green before, and are not presented as red-first. Earnings (F1), refunds as a negation appended once on both ledgers (F2), attribution to a served recommendation (F3), hold and release (F4), recompute (F5), folds and summaries (F6) and the payout boundary (F7) all run through the real services on synthetic accounts: ids `c11e5e00…`, handles `c11syn_…`, test-fixture rule versions `…/v951` and `…/v952`.
+- **No network primitive was reached** (F7).
+- **S1** asserts, in each of the three databases, that no ledger row names a non-synthetic account.
+- The suites that deleted ledger rows in cleanup now purge their own synthetic rows as the harness superuser (`artifacts/api-server/src/test/db/localDb.ts:148#export function creatorLedgerPurgeSql(`). 3510 refuses service_role and the superuser alike (G3), so only `session_replication_role = replica` removes them.
+
+**Mutations: 20 of 21 killed.** Each was applied alone, and each file was restored and sha256-checked byte-identical (21 of 21). The DB-state mutations were restored by re-applying the migration.
+- **3510:**
+  - the guard made to return (G1–G3, L15);
+  - 2901's SET NULL kept (killed by 3510's own postcondition at apply);
+  - the rbee trigger dropped from the database (G2, G3, G6).
+- **3511:**
+  - the rule never refusing (A2, A3, A5, A7);
+  - the declared subject ignored (A3);
+  - the whole-transaction trigger emptied (A7);
+  - the reversal key left NO ACTION (A7);
+  - the door skipping attributions (A3);
+  - service_role keeping DELETE (A1–A7).
+- **3512:**
+  - no text scrub (B2–B4, B6–B8);
+  - no identity move (B2–B4, B6–B8);
+  - the substitution check off (B5);
+  - not frozen (B4);
+  - the retention guard returning (B1, B6);
+  - an actor allowed to be the subject (B8).
+- **Reversal:**
+  - `buildReversal` not negating (F2);
+  - the reversal plan not negating (F1–F7 and every fixture: the flows cannot complete);
+  - the plan reversing twice (F2);
+  - 3387's negation check removed (F2);
+  - 2901's one-reversal index dropped (F2).
+
+**The survivor is equivalent, and says so.** It is 3512's final residual scan (`reconciliation-staging/3512_creator_ledger_erasure_retain_pseudonymised.sql:369#still carry the subject''s id; nothing was changed`). The substitution replaces every case-insensitive occurrence of the id in the row's JSON text before the scan runs, so the scan cannot find anything today. It is kept as the backstop for a future column type the substitution does not reach.
+
+### 107.6 Row statements — no bucket changes
+
+| ID | was | now | evidence |
+|---|---|---|---|
+| DV-56 | W | **W** | The Travel Partner producer attributes a completed synthetic booking to its buddy, on the harness (F3). Unchanged otherwise (§92.2). AWAITS OWNER APPROVAL: W10D-B0, W10D-B10. |
+| DV-57 | W | **W** | Earnings are recorded as balanced double entry with no settlement on both ledgers, on synthetic accounts (`artifacts/api-server/src/test/db/creatorLedgerErasurePolicy.db.test.ts:315#F1. earnings are recorded as balanced double entry`). The C-11 fix now exists: 3510 in the chain, 3511/3512 held. IMPLEMENTATION-COMPLETE; awaits: P2 + 3510 applied to production + a producer of earnings (W10D-B7) + one production earning. |
+| DV-58 | W | **W** | Unchanged: F5 recomputes under a newer TEST-FIXTURE version. IMPLEMENTATION-COMPLETE; awaits: P2 + 3510 applied to production + a published percentage (W10D-B1). |
+| DV-59 | W | **W** | A hold refuses the booking, and the hold and its release are audited with actor and reason (F4). IMPLEMENTATION-COMPLETE; awaits: P2 + 3510 applied to production. |
+| DV-60 | W | **W** | Unchanged (F5). IMPLEMENTATION-COMPLETE; awaits: P2 + 3510 applied to production. |
+| DV-63 | W | **W** | Every erasure path is now audited or refused. A's erasures leave a receipt naming no subject; B's identity removals leave a receipt naming neither the person nor the pseudonym; while C-11 is open, nothing is erased. IMPLEMENTATION-COMPLETE; awaits: P2 + 3510 applied to production; W10D-B0 for the erasure half. |
+| DV-64 | W | **W** | The canonical view reconciles both ways after either answer (A3, F6). IMPLEMENTATION-COMPLETE; awaits: P2 + 3510 applied to production + one production earning. |
+| DV-65 | W | **W** | Under A no erasure leaves a half-transaction (A3, A7). Under B every retained row still reconstructs, with the same folds (B2). IMPLEMENTATION-COMPLETE; awaits: as DV-64. |
+| DV-66 | W | **W** | Unchanged. B's substitution is the only UPDATE the ledgers accept, and it cannot change an amount (B5). IMPLEMENTATION-COMPLETE; awaits: as DV-64. |
+| DV-67 | W | **W** | The bound recommendation is stored and carried through a recompute (F3). IMPLEMENTATION-COMPLETE; awaits: as DV-64 + a production caller that passes a recommendation (`11` §7). |
+| DV-68 | W | **W** | A refund is an exact negation appended once, on BOTH ledgers. For 2901 only the once is enforced by the database: 2901 has no negation trigger, so the negation is pinned by F2 alone. IMPLEMENTATION-COMPLETE; awaits: as DV-64. |
+| DV-69 | W | **W** | Unchanged: `none` is the only provider, and it answers `payouts_disabled` with no network reached (F7). AWAITS OWNER APPROVAL: W10D-B6. |
+| DC-23 | W | **W** | Unchanged. The creator's summary equals an independent SQL fold (F6). Payout eligibility is still the owner's (`07` §4). AWAITS OWNER APPROVAL: W10D-B5. |
+
+DV-61 and DV-62 are not affected by §107.
+
+### 107.7 Integration blockers, exact
+
+1. **Running these flows on `travel-buddy` is blocked.** That would need, together:
+   - `creator_attribution_enabled` ON there, which starts the real attribution scheduler over real bookings (`index.ts` starts it at boot);
+   - synthetic ledger rows in the same tables as real ones;
+   - a way to remove those rows afterwards. After 3510 only a superuser can remove them, with `session_replication_role = replica`, and Supabase's `service_role` cannot.
+
+   So the flows ran in an isolated throwaway database, as the owner's decision allows. The migrations in §107.3 are the part that is safe there.
+2. **`portava-ci` gets 3510 through CI's own path, only after merge.** Its live-DB job dry-runs on a PR and applies only on `main` (`apply-migrations`, then `certify:migrations`). 3510 therefore reaches `portava-ci` at the first `main` run after this merge. Its probe runs there against a real profile, inside a block that always rolls back.
+3. **The application's erasure does not call either answer.** Once one is promoted, `AccountDeletionService` needs one step that calls it. That step must not be added before then: on production today it would name a function that does not exist.
+4. **Hard-deleting a buddy with bookings stays impossible** under either answer. `rent_buddy_bookings.buddy_id` is NO ACTION (Rent-a-Buddy's schema, pre-existing).
+
+### 107.8 The open owner decision
+
+**C-11 / W10D-B0 (question 22(a)).** When a person's account is erased, are their creator and Rent-a-Buddy earning records:
+- **(A) deleted**, as whole transactions, with the erasure of their beneficiary only (`reconciliation-staging/3511_…`); or
+- **(B) retained for a statutory period**, with the direct identity replaced by a random pseudonym (`reconciliation-staging/3512_…`)? These records are pseudonymised, not anonymous (§107.4).
+
+If B, **how long** is the period? No spec gives a value (`04` §11), and 3512 builds no purge for it. Until the owner answers, 3510 refuses every deletion and nothing is imposed. The real-money retention policy is not decided by anything in this section.
+
+**What would turn this red:**
+- 3511 or 3512 reaching `src/migrations/` without the owner's answer (E1).
+- 3510 deleting or rewriting a row (E2, G1–G6).
+- Either answer diverging from 3510's guard on rollback (E3).
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/lib/capability/prerequisitesCore.ts — §93.8 names its function-granular gate boundary as why the Compass KNOWN entry was struck; it is the prerequisite checker's own machinery, and no Discovery verdict rests on it.
