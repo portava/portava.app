@@ -814,11 +814,11 @@ export function useMapEntities(opts: {
         if (enabledLayers.includes('events') && effectiveLat != null && effectiveLng != null) {
           attempt('events', fetchEvents(effectiveLat, effectiveLng, now));
         }
-        if (enabledLayers.includes('gems') && city) {
-          attempt('gems', fetchGems(city));
+        if (enabledLayers.includes('gems')) {  // census-discovery §116 (DV-83, B16): a layer that cannot be read without a city is said unread, never drawn empty
+          attempt('gems', city ? fetchGems(city) : layerNeedsCity('gems'));
         }
-        if (enabledLayers.includes('buddies') && city) {
-          attempt('buddies', fetchBuddies(city, effectiveLat, effectiveLng));
+        if (enabledLayers.includes('buddies')) {  // §116 (B16)
+          attempt('buddies', city ? fetchBuddies(city, effectiveLat, effectiveLng) : layerNeedsCity('buddies'));
         }
         if (enabledLayers.includes('trips')) {
           attempt('trips', fetchTrips());
@@ -991,4 +991,14 @@ export function unreadOnGateway(enabled: ToggleableEntityType[], optional: strin
 /** The safety layer first (a hazard read that failed is said before anything else), the rest in request order. */
 export function safetyFirst(layers: string[]): MapUnreadLayer[] {
   return [...layers.filter((l) => l === 'safety'), ...layers.filter((l) => l !== 'safety')] as MapUnreadLayer[];
+}
+
+// ── census-discovery §116 (DV-83 round 19, lane W11-X2; the round-18 verifier's B16) ─────────────────────────────────
+//
+// The rollback path reads gems and buddies by city. With no city it skipped both, so an enabled layer was neither read
+// nor named in `unreadLayers`, and the map drew it as empty. Such a layer is now attempted as a read that failed:
+// `attempt` names it unread. Neither has a positional read — the gem list is by city only, and the buddy search's
+// position only ranks the whole population — so neither is read by coordinates instead.
+function layerNeedsCity(layer: 'gems' | 'buddies'): Promise<MapObject[]> {
+  return Promise.reject(new Error(`${layer} layer: no city to read it by`));
 }

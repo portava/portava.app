@@ -6,7 +6,7 @@
  *   lat         — initial camera latitude (city/destination)
  *   lng         — initial camera longitude
  *   zoom        — initial zoom level (default 11)
- *   title       — label shown in the top control bar
+ *   title       — label shown in the top control bar, never read as a city; `city` is the city (census-discovery §116 B17)
  *
  * On web, renders a static "not available" placeholder with a Back button.
  * When location permission is denied, shows an inline prompt card.
@@ -823,7 +823,7 @@ function FullScreenMapScreenInner() {
   const paramLat = parseCoord(params.lat);
   const paramLng = parseCoord(params.lng);
   const paramZoom = parseZoom(params.zoom);
-  const title = firstParam(params.title);
+  const title = firstParam(params.title); const cityParam = firstParam(params.city);  // census-discovery §116 (DV-83, B17): the display title is never a city; only a `city` param is
   const entityTypes = firstParam(params.entityTypes) ?? '';
   const category = parseCategory(params.category);
   /** focusId: if set, carousel + camera will snap to the matching entity on first load. */
@@ -918,7 +918,7 @@ function FullScreenMapScreenInner() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Entity data fetch ───────────────────────────────────────────────────────
-  // `title` is used as the city name — passed in from Discovery / Trips entry points.
+  // The `city` param is the city name (§116 B17: the display `title`, a Compass card's venue name, never is).
   // In passport mode the hook still runs but its output is discarded in favour of
   // ── §16 layer preferences (tri-state; separate from the legacy boolean set) ──
   //
@@ -1008,7 +1008,7 @@ function FullScreenMapScreenInner() {
     stage: entitiesStage, unreadLayers: mapUnreadLayers, truncated: mapTruncated,  // census-discovery §114 (DV-83, B5): a layer the gateway did not read, and a page of several, are said
   } = useMapEntities({
     enabledLayers: mode === 'passport' ? [] : enabledLayers,
-    city: mode === 'passport' ? null : title,
+    city: mode === 'passport' ? null : (cityParam ?? null),
     lat: fallbackLat,
     lng: fallbackLng,
     zoom: cameraZoom ?? paramZoom,
@@ -1078,7 +1078,7 @@ function FullScreenMapScreenInner() {
     setPlacesRetryCount((n) => n + 1);
   }, []);
 
-  const destination = title; // city name string, e.g. "Cebu City"
+  const destination = cityParam; // city name string, e.g. "Cebu City" — census-discovery §116 (B17): the city param, never the title
 
   // Whether the places layer has been requested and a destination is available.
   const placesLayerActive =
@@ -1180,7 +1180,7 @@ function FullScreenMapScreenInner() {
   // PROPOSAL the user must accept; acceptance persists through the Trips write
   // path (`persistOptimizeAcceptance`), never a silent rewrite.
   const tripId = firstParam(params.tripId);
-  const tripCity = title;
+  const tripCity = cityParam;  // §116 (B17)
   const [composedTrip, setComposedTrip] = useState<ComposedTripMap | null>(null);
   const [proposal, setProposal] = useState<OptimizeProposal | null>(null); const compassAltRead: TripCompassRead = (composedTrip as (ComposedTripMap & { compassRead?: TripCompassRead }) | null)?.compassRead ?? null;  // census-discovery §108 (DV-83, D-W11X2-81): the trip's Compass read, said — carried on the composed trip, so only the latest build writes it
 
@@ -2723,7 +2723,7 @@ function FullScreenMapScreenInner() {
 
           {/* Ask Compass search bar */}
           <AskCompassBar
-            city={title ?? ''}
+            city={cityParam ?? ''}
             userLat={userLat}
             userLng={userLng}
             bottomInset={insets.bottom}
@@ -3235,7 +3235,7 @@ function FullScreenMapScreenInner() {
         onClose={() => dispatchMapEvent({ type: 'CLOSE_OVERLAY', overlay: 'SEARCH' })}
         lat={userLat ?? fallbackLat}
         lng={userLng ?? fallbackLng}
-        city={title}
+        city={cityParam}
         onSelect={(result, frame) => {
           dispatchMapEvent({ type: 'CLOSE_OVERLAY', overlay: 'SEARCH' });
           const cam = cameraRef.current;
