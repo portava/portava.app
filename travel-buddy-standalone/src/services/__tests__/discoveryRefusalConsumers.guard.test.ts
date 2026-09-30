@@ -248,7 +248,7 @@ function resolveSpec(fromFile: string, spec: string): string | null {
   let p: string;
   if (spec.startsWith('.')) p = join(dirname(fromFile), spec);
   else if (spec.startsWith('@/')) p = spec.slice(2);
-  else return null;
+  else if (baseUrlModule(spec) !== null) p = baseUrlModule(spec)!; else return null;  // §111 (D-W11X2-116): a baseUrl (".") specifier resolves from the app root
   p = p.split(sep).join('/');
   for (const cand of [p, `${p}.ts`, `${p}.tsx`, `${p}/index.ts`]) {
     if (overlayHas(cand) || (existsSync(join(ROOT, cand)) && statSync(join(ROOT, cand)).isFile())) return cand;
@@ -263,7 +263,7 @@ function resolveSpec(fromFile: string, spec: string): string | null {
  */
 function valueImports(file: string, src: string, target: string): string[] {
   const names: string[] = [];
-  for (const m of src.matchAll(/import\s+(type\s+)?\{([^}]*)\}\s*from\s*['"]([^'"]+)['"]/g)) {
+  for (const m of stripComments(src).matchAll(/import\s+(type\s+)?\{([^}]*)\}\s*from\s*['"]([^'"]+)['"]/g)) {  // §111 (D-W11X2-116): a comment inside the braces is not part of a name
     if (m[1] || resolveSpec(file, m[3]!) !== target) continue;
     for (const part of m[2]!.split(',')) {
       const t = part.trim();
@@ -271,7 +271,7 @@ function valueImports(file: string, src: string, target: string): string[] {
       names.push(t.split(/\s+as\s+/)[0]!.trim());
     }
   }
-  for (const m of src.matchAll(/(?:\brequire|\bawait\s+import)\(\s*['"]([^'"]+)['"]\s*\)/g)) {
+  for (const m of stripComments(src).matchAll(/(?:\brequire|\bawait\s+import)\(\s*['"]([^'"]+)['"]\s*\)/g)) {
     if (resolveSpec(file, m[1]!) === target) names.push('<dynamic>');
   }
   return [...names.filter((n) => n !== '<dynamic>'), ...requireUses(file, src, target), ...otherImportForms(file, src, target)];  // §110 (D-W11X2-99): a namespace import and every dynamic import, read for the names they use
@@ -600,7 +600,7 @@ function otherImportForms(file: string, src: string, target: string): string[] {
   const membersOf = (binding: string) => [...code.matchAll(new RegExp(`\\b${escapeRe(binding)}\\s*\\.\\s*(\\w+)`, 'g'))].map((m) => m[1]!);
   for (const m of code.matchAll(/import\s+\*\s+as\s+(\w+)\s+from\s*['"]([^'"]+)['"]/g)) {
     if (resolveSpec(file, m[2]!) !== target) continue;
-    const used = membersOf(m[1]!);
+    const used = [...membersOf(m[1]!), ...destructuredFrom(code, m[1]!)];  // §111 (D-W11X2-116): a carrier destructured from the namespace is used
     names.push(...(used.length > 0 ? used : ['<dynamic>']));
   }
   for (const m of code.matchAll(/\bimport\(\s*['"]([^'"]+)['"]\s*\)/g)) {
@@ -693,7 +693,7 @@ function assertEachRawSiteBranches(file: string, src: string): void {
       else if (orig && reexports.some((n) => RAW_COMPASS_CARRIERS.includes(n.get(orig) ?? ''))) locals.add(orig);
     }
   }
-  const call = new RegExp(`(?:\\b\\w+\\s*\\.\\s*)?\\b(?:${[...locals].map(escapeRe).join('|')})\\s*\\(`, 'g');
+  for (const a of carrierAliases(code, locals)) locals.add(a); const call = new RegExp(`(?:\\b\\w+\\s*\\.\\s*)?\\b(?:${[...locals].map(escapeRe).join('|')})\\s*\\(`, 'g');  // §111 (D-W11X2-116): a call through an alias or a rename is a site
   const sites = [...code.matchAll(call)].map((m) => m.index!).filter((i) => !/\bfunction\s+$/.test(code.slice(Math.max(0, i - 30), i)));
   const predicate = /\b(?:compassRecommendationsFailed|tripCompassRecommendations|tripCompassReadState)\(/;
   sites.forEach((at, k) => {
@@ -705,4 +705,90 @@ function assertEachRawSiteBranches(file: string, src: string): void {
 /** A `require()` of `target`: the guard cannot see what is used, so it is `<dynamic>`. */
 function requireUses(file: string, src: string, target: string): string[] {
   return [...stripComments(src).matchAll(/\brequire\(\s*['"]([^'"]+)['"]\s*\)/g)].filter((m) => resolveSpec(file, m[1]!) === target).map(() => '<dynamic>');
+}
+
+// ── census-discovery §111 (DV-83 round 14, lane W11-X2, D-W11X2-116): the guard's reach, round 13's holes ─────────
+//
+// The round-13 verifier made five raw consumers the derivation or G9 could not see (GH5–GH9): a named import with
+// a line comment inside its braces (a form the tree uses), a baseUrl specifier (tsconfig `baseUrl: "."`), a carrier
+// destructured from a namespace import, and — in two registered files — a second raw site called through a local
+// alias and through a RENAMED dynamic destructure. D-W11X2-99's "sees every import form and every raw call site" was
+// not honest. The fixtures run through the same derivation and G9 over the in-memory overlay; declarations only, at
+// the file's foot, so no line another census cites moves.
+const GH13 = {
+  braceComment: "import {\n  // Compass picks for the passport rail\n  fetchCompassRecommendations,\n} from '../services/compass.ts';\nexport async function zzRawRecsGH5(): Promise<number> {\n  const res = await fetchCompassRecommendations({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  baseUrl: "import { fetchCompassRecommendations } from 'src/services/compass';\nexport async function zzRawRecsGH6(): Promise<number> {\n  const res = await fetchCompassRecommendations({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  nsDestructure: "import * as compass from '../services/compass.ts';\nconst { fetchCompassRecommendations } = compass;\nexport async function zzRawRecsGH7(): Promise<number> {\n  void compass.fetchCompassWhy;\n  const res = await fetchCompassRecommendations({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  aliasSite: "\n// GH8 (v13 verifier): a second raw site in a registered consumer, called through a local alias.\nexport async function zzAliasSiteGH8(): Promise<number> {\n  const load = fetchCompassRecommendations;\n  const res = await load({ surface: 'passport', limit: 3 });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  dynRename: "\n// GH9 (v13 verifier): a second raw site in a registered consumer, through a RENAMED dynamic destructure.\nexport async function zzDynRenameGH9(): Promise<number> {\n  const { fetchCompassRecommendations: recs } = await import('../../services/compass.ts');\n  const res = await recs({ surface: 'map', limit: 3 });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  aliasBranches: "\nexport async function zzAliasBranches(): Promise<number> {\n  const load = fetchCompassRecommendations;\n  const res = await load({ surface: 'passport', limit: 3 });\n  if (!res.ok || !res.data || compassRecommendationsFailed(res.data)) return -1;\n  return res.data.recommendations.length;\n}\n",
+  packageSpec: "import { useState } from 'react';\nexport function zzPkg(): number { const [n] = useState(0); return n; }\n",
+};
+
+describe("DV-83 guard reach — the round-13 verifier's fixtures (§111, D-W11X2-116)", () => {
+  it('G11 GH5: a named import with a line comment inside its braces is caught', () => {
+    const u = withFiles({ 'src/components/zzGH5b.tsx': GH13.braceComment }, unregisteredNow);
+    assert.deepEqual(u.get('src/components/zzGH5b.tsx'), ['fetchCompassRecommendations'], JSON.stringify([...u]));
+  });
+  it('G11 GH6: an import through a baseUrl specifier is caught', () => {
+    const u = withFiles({ 'src/components/zzGH6b.tsx': GH13.baseUrl }, unregisteredNow);
+    assert.deepEqual(u.get('src/components/zzGH6b.tsx'), ['fetchCompassRecommendations'], JSON.stringify([...u]));
+  });
+  it('G11 GH6c CONTROL: a package specifier resolves to nothing and makes no consumer', () => {
+    const u = withFiles({ 'src/components/zzGH6c.tsx': GH13.packageSpec }, unregisteredNow);
+    assert.equal(u.has('src/components/zzGH6c.tsx'), false, JSON.stringify([...u]));
+  });
+  it('G11 GH7: a carrier destructured from a namespace import is caught', () => {
+    const u = withFiles({ 'src/components/zzGH7b.tsx': GH13.nsDestructure }, unregisteredNow);
+    assert.deepEqual(u.get('src/components/zzGH7b.tsx'), ['fetchCompassRecommendations'], JSON.stringify([...u]));
+  });
+  it('G11 GH8: a second raw site called through a local alias fails G9', () => {
+    const file = 'src/components/compass/CompassPassportSuggestions.tsx';
+    assert.throws(() => withFiles({ [file]: read(file) + GH13.aliasSite }, () => compassConsumersBranchOnCoverage()), /call site|without the shared predicate/i);
+  });
+  it('G11 GH9: a second raw site through a renamed dynamic destructure fails G9', () => {
+    const file = 'src/components/map/AskCompassBar.tsx';
+    assert.throws(() => withFiles({ [file]: read(file) + GH13.dynRename }, () => compassConsumersBranchOnCoverage()), /call site|without the shared predicate/i);
+  });
+  it('G11 GH8c CONTROL: an aliased site that branches through the predicate passes G9', () => {
+    const file = 'src/components/compass/CompassPassportSuggestions.tsx';
+    assert.doesNotThrow(() => withFiles({ [file]: read(file) + GH13.aliasBranches }, () => compassConsumersBranchOnCoverage()));
+  });
+});
+
+/** A baseUrl specifier (tsconfig `baseUrl: "."`): the module under the app root it names, or null (a package). */
+function baseUrlModule(spec: string): string | null {
+  if (spec.startsWith('/') || spec.startsWith('@')) return null;
+  for (const cand of [spec, `${spec}.ts`, `${spec}.tsx`, `${spec}/index.ts`]) {
+    if (overlayHas(cand) || (existsSync(join(ROOT, cand)) && statSync(join(ROOT, cand)).isFile())) return spec;
+  }
+  return null;
+}
+
+/** The keys destructured from `binding`: `const { a, b: c } = binding` → a, b. */
+function destructuredFrom(code: string, binding: string): string[] {
+  return [...code.matchAll(new RegExp(`(?:const|let|var)\\s*\\{([^}]*)\\}\\s*=\\s*${escapeRe(binding)}\\b(?!\\s*\\.)`, 'g'))].flatMap((m) => patternKeys(m[1]!));
+}
+
+/**
+ * The local names a raw carrier is reached through besides its own: `const x = carrier`, `const x = ns.carrier`,
+ * and a renamed destructure `{ carrier: x } = …` (of a namespace, a dynamic import or anything else), followed to
+ * a fixpoint so an alias of an alias is one too.
+ */
+function carrierAliases(code: string, names: Set<string>): string[] {
+  const found = new Set<string>(names);
+  for (let grew = true; grew;) {
+    grew = false;
+    const add = (x: string | undefined) => { if (x && /^\w+$/.test(x) && !found.has(x)) { found.add(x); grew = true; } };
+    for (const n of [...found]) {
+      for (const m of code.matchAll(new RegExp(`(?:const|let|var)\\s+(\\w+)\\s*=\\s*(?:await\\s+)?(?:\\w+\\s*\\.\\s*)?${escapeRe(n)}\\b(?!\\s*[.(])`, 'g'))) add(m[1]);
+      for (const m of code.matchAll(/(?:const|let|var)\s*\{([^}]*)\}\s*=/g)) {
+        for (const part of m[1]!.split(',')) {
+          const [key, alias] = part.split(':').map((x) => x.trim());
+          if (key === n && alias) add(alias);
+        }
+      }
+    }
+  }
+  return [...found].filter((x) => !names.has(x));
 }
