@@ -29,7 +29,7 @@ import assert from "node:assert/strict";
 import { executeCompassTool } from "../compass/CompassTools.js";
 import { buildStructuredCompassContext, formatStructuredContextLines } from "../compass/CompassStructuredContext.js";
 import type { CompassProfile } from "../compass/types.js";
-import { compassWorld, VIEWER, type Call } from "./helpers/compassReadWorld.js";
+import { compassWorld, VIEWER, DB_ERR, type Call } from "./helpers/compassReadWorld.js";
 
 const profile = { userId: VIEWER, blockedUserIds: [], blockerUserIds: [], mutedUserIds: [] } as unknown as CompassProfile;
 const owner = (i: number) => `c${String(i).padStart(7, "0")}-0000-4000-a000-000000000000`;
@@ -143,5 +143,64 @@ describe("get_group_recommendation over its bounded circle reads (§110, D-W11X2
     const r = await run(world([], { owned: 1, members: (os) => Array.from({ length: 101 }, (_, i) => ({ user_id: os[0], other_id: member(i) })) }), { circleName: "Own 0" });
     assert.deepEqual(r.candidates, [], JSON.stringify(r));
     assert.match(String(r.info), /part of the group/i, JSON.stringify(r));
+  });
+});
+
+// ── census-discovery §111 (DV-83 round 14, lane W11-X2): the round-13 verifier's kills for X6, X8, X9, X17 ──
+// Each was green at e11fc09b0 and red under its mutation: the member-partial line in `circleListBoundsInfo`
+// (X6), the owned- and joined-circle caps in the group recommendation (X8, X9), and `capRows` on the member
+// read (X17). Copied in unchanged but for renamed helpers.
+const lowOwnerCK = (i: number) => `aa${String(i).padStart(6, "0")}-0000-4000-a000-000000000000`;   // sorts before VIEWER (ab…)
+const memberCK = (i: number) => `d${String(i).padStart(7, "0")}-0000-4000-a000-000000000000`;
+const limitOfCK = (calls: Call[]) => { const c = calls.find(([k]) => k === "limit"); return c ? Number(c[1][0]) : Infinity; };
+const inOfCK = (calls: Call[], col: string) => (calls.find(([k, a]) => k === "in" && a[0] === col)?.[1][1] ?? null) as string[] | null;
+const eqValCK = (calls: Call[], col: string) => calls.find(([k, a]) => k === "eq" && a[0] === col)?.[1][1];
+const byUserOtherCK = (a: any, b: any) => (a.user_id < b.user_id ? -1 : a.user_id > b.user_id ? 1 : a.other_id < b.other_id ? -1 : a.other_id > b.other_id ? 1 : 0);
+
+function worldCK(o: { owned?: number; joinedOwners?: string[]; circlesPerOwner?: number; membersOf?: (owner: string) => number; memberReadFails?: boolean }) {
+  return compassWorld({
+    answer: (t, calls) => {
+      if (t === "circle_memberships" && eqValCK(calls, "other_id") === VIEWER) return { data: (o.joinedOwners ?? []).map((u) => ({ user_id: u, other_id: VIEWER, status: "pending" })).slice(0, limitOfCK(calls)), error: null };
+      if (t === "circles" && eqValCK(calls, "owner_id") === VIEWER) return { data: Array.from({ length: o.owned ?? 0 }, (_, i) => ({ id: `own-${String(i).padStart(3, "0")}`, name: `Own ${i}`, owner_id: VIEWER })).slice(0, limitOfCK(calls)), error: null };
+      const owners = t === "circles" ? inOfCK(calls, "owner_id") : null;
+      if (owners) return { data: owners.flatMap((ow, i) => Array.from({ length: o.circlesPerOwner ?? 1 }, (_, k) => ({ id: `j-${String(i).padStart(3, "0")}-${k}`, name: `Joined ${i}.${k}`, owner_id: ow }))).slice(0, limitOfCK(calls)), error: null };
+      const memberOwners = t === "circle_memberships" ? inOfCK(calls, "user_id") : null;
+      if (memberOwners) {
+        if (o.memberReadFails) return { data: null, error: DB_ERR };
+        const rows = memberOwners.flatMap((ow) => Array.from({ length: o.membersOf?.(ow) ?? 0 }, (_, i) => ({ user_id: ow, other_id: memberCK(i), status: "pending" })));
+        return { data: rows.sort(byUserOtherCK).slice(0, limitOfCK(calls)), error: null };
+      }
+      const single = t === "circle_memberships" ? eqValCK(calls, "user_id") : undefined;
+      if (single) return { data: [], error: null };
+      const ids = t === "profiles" ? inOfCK(calls, "id") : null;
+      if (ids) return { data: ids.map((id) => ({ id, handle: `h${id.slice(1, 8)}` })), error: null };
+      return undefined;
+    },
+  });
+}
+const circleToolCK = async (w: ReturnType<typeof compassWorld>) => (await executeCompassTool(w.client as any, VIEWER, profile, "get_circle_activity", {})) as { circles: any[]; info?: string };
+const groupToolCK = async (w: ReturnType<typeof compassWorld>, circleName: string) => (await executeCompassTool(w.client as any, VIEWER, profile, "get_group_recommendation", { circleName })) as Record<string, any>;
+const NOT_MEMBER_CK = "The user is not a member of a circle by that name.";
+const saidCK = (r: Record<string, any>) => String(r.info ?? r.error ?? "");
+
+describe("v13: kills for the circle-bound survivors", () => {
+  it("V13-CK6 11 owned circles and a failed member read → the member lists are said unread", async () => {
+    const r = await circleToolCK(worldCK({ owned: 11, memberReadFails: true }));
+    assert.equal(r.circles.length, 5, JSON.stringify(r));
+    assert.match(String(r.info), /member lists could not be read|could not be read in full/i, JSON.stringify(r));
+  });
+  it("V13-CK8 40 owned circles, the named one past the cap → never 'not a member'", async () => {
+    const r = await groupToolCK(worldCK({ owned: 40 }), "Own 33");
+    assert.notEqual(saidCK(r), NOT_MEMBER_CK, JSON.stringify(r));
+  });
+  it("V13-CK9 50 joined circles over 25 owners, the named one past the cap → never 'not a member'", async () => {
+    const r = await groupToolCK(worldCK({ joinedOwners: Array.from({ length: 25 }, (_, i) => lowOwnerCK(i + 1)), circlesPerOwner: 2 }), "Joined 20.1");
+    assert.notEqual(saidCK(r), NOT_MEMBER_CK, JSON.stringify(r));
+  });
+  it("V13-CK17 the member read cut at 200 on a shown circle whose handles fit → the member lists are said shortened", async () => {
+    const owners = Array.from({ length: 10 }, (_, i) => lowOwnerCK(i + 1));
+    const r = await circleToolCK(worldCK({ owned: 1, joinedOwners: owners, membersOf: (ow) => (ow === VIEWER ? 3 : owners.indexOf(ow) < 4 ? 2 : 40) }));
+    assert.equal(r.circles.length, 5, JSON.stringify(r));
+    assert.match(String(r.info), /member lists/i, JSON.stringify(r));
   });
 });

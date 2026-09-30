@@ -33,7 +33,7 @@ const TRIP = "a1000000-0000-4000-a000-0000000000c9";
 const TOKEN = "tok-v12-circle";
 const ERR = { code: "57014", message: "canceling statement due to statement timeout" };
 
-function client(fail: { meetingPoint?: boolean; callerPresence?: boolean; allPresence?: boolean; tripMembers?: boolean; host?: boolean; noMeetingPoint?: boolean }) {
+function client(fail: { meetingPoint?: boolean; callerPresence?: boolean; allPresence?: boolean; tripMembers?: boolean; host?: boolean; noMeetingPoint?: boolean; alone?: boolean }) {
   const b = (table: string): any => {
     const calls: Array<[string, unknown[]]> = [];
     const eq = (col: string) => calls.find(([k, a]) => k === "eq" && a[0] === col)?.[1][1];
@@ -44,6 +44,7 @@ function client(fail: { meetingPoint?: boolean; callerPresence?: boolean; allPre
       if (table === "trips") return { data: { title: "Lisbon crew", destination_city: "Lisbon", owner_id: VIEWER }, error: null };
       if (table === "circle_presence" && single) return fail.callerPresence ? { data: null, error: ERR } : { data: { status: "active", is_stale: false }, error: null };
       if (table === "circle_presence" && fail.allPresence) return { data: null, error: ERR };
+      if (table === "circle_presence" && fail.alone) return { data: [{ user_id: VIEWER, status: "active", is_stale: false }], error: null };  // §111: only the caller active
       if (table === "circle_presence") return { data: [{ user_id: VIEWER, status: "active", is_stale: false }, { user_id: OTHER, status: "active", is_stale: false }], error: null };
       if (table === "circle_meeting_points") return fail.meetingPoint ? { data: null, error: ERR } : { data: fail.noMeetingPoint ? null : { id: "mp1" }, error: null };
       void eq;
@@ -113,5 +114,16 @@ describe("GET /circle/compass-suggestions names what it could not read (§110, D
   it("CSb CONTROL: a healthy body carries no refusal key — byte-identical", async () => {
     const { body } = await cards({ noMeetingPoint: true });
     assert.equal(JSON.stringify(body), '{"cards":[{"cardType":"circle_active","contextType":"trip","contextId":"a1000000-0000-4000-a000-0000000000c9","contextTitle":"Lisbon crew","metadata":{"activeCount":1}},{"cardType":"set_meeting_point","contextType":"trip","contextId":"a1000000-0000-4000-a000-0000000000c9","contextTitle":"Lisbon crew","metadata":{}}]}');
+  });
+});
+
+// ── census-discovery §111 (DV-83 round 14, lane W11-X2): the round-13 verifier's kill for X34 ──
+// X34 dropped `contextsRead > 0 ||` from the coverage: a context read in full that makes no card, beside a
+// failed meeting-point read, must be `partial` (a context WAS read), never `nothing`.
+describe("v13b: circle suggestions coverage over a read context (§111)", () => {
+  it("V13-SK34 a context read in full, no card, the meeting-point read fails → partial, never nothing", async () => {
+    const { body } = await cards({ alone: true, meetingPoint: true });
+    assert.deepEqual(body.cards, [], JSON.stringify(body));
+    assert.equal(body.refusal?.coverage, "partial", JSON.stringify(body));
   });
 });
