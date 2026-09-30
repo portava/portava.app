@@ -15,6 +15,7 @@
  *   LT0b  CONTROL: the gate read fails every time → "Live activity couldn't be checked for this place"
  *   LT1   the route's gate read succeeds, the per-subject gate read FAILS → the same, never "No live activity observed"
  *   LT2   readLiveClaims, each of the five gates unreadable → `[]`, marked failed
+ *   LT2t  readLiveClaims, a gate read that THROWS (rejects) → `[]`, marked failed (isFlagEnabled's catch arm)
  *   LT2c  CONTROL: readLiveClaims, each gate read and closed → `[]`, NOT marked (the feature is off)
  *   LT3   liveLabelGatesRead is "open" exactly when liveLabelsServable is true, over every gate on, off or unreadable
  */
@@ -117,6 +118,23 @@ describe("census-discovery §116 (B15): the Live-label gate re-read per subject 
       assert.equal(liveClaimReadFailed(claims), false, `a closed ${gate} marked as a failed read`);
     });
   }
+  it("LT2t readLiveClaims, intel_limited_live's read THROWS → [] marked failed", async () => {
+    const client: any = makeFakeMapDb(world(), { token: TOKEN, userId: VIEWER });
+    const from = client.from;
+    client.from = (t: string) => {
+      const q = from(t);
+      if (t !== "feature_flags") return q;
+      const eq = q.eq;
+      q.eq = (col: string, val: unknown) => {
+        if (col === "flag" && val === "intel_limited_live") { const boom: any = { select: () => boom, eq: () => boom, limit: () => boom, maybeSingle: () => Promise.reject(new Error("socket hang up")) }; return boom; }
+        return eq(col, val);
+      };
+      return q;
+    };
+    const claims = await readLiveClaims(client, P1);
+    assert.deepEqual(claims, []);
+    assert.equal(liveClaimReadFailed(claims), true, "a gate read that threw answered as no claim");
+  });
   it("LT2o CONTROL: readLiveClaims, every gate open → the promoted claim, not marked", async () => {
     const client: any = makeFakeMapDb(world(), { token: TOKEN, userId: VIEWER });
     const claims = await readLiveClaims(client, P1);

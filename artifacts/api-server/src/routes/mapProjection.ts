@@ -875,8 +875,8 @@ router.get(
           // question worth answering for this layer. CROWD_FLOW_FLAG is still
           // imported and pinned by CROWD_FLOW_FLAG_PIN below, so the literal
           // and the constant cannot drift apart silently.
-          if (!(await isFlagEnabled(sc, "map_crowd_flow_enabled"))) {
-            report.refusal = "flag_off";
+          const flowFlag = await readFlagState(sc, "map_crowd_flow_enabled"); if (flowFlag !== "on") {  // census-discovery §116 (DV-83, sweep SW15): read three-state, as the Time Machine reads it (§115 B10)
+            report.refusal = flowFlag === "unreadable" ? "flag_unreadable" : "flag_off";  // an unread flag is not the layer being off
             return;
           }
 
