@@ -134,6 +134,7 @@ describe('§114 SW3: the Media Map says a gateway answer that is not whole', () 
   it('MP4 the rule: a requested kind not named, or a nextCursor, is partial; a whole answer is not', () => {
     const { mediaMapGatewayPartial } = jest.requireActual('../state/mediaMapStore.ts');
     expect(mediaMapGatewayPartial({ sources: ['places'], nextCursor: null }, ['place'])).toBe(false);
+    expect(mediaMapGatewayPartial({ sources: ['places', 'gems'], nextCursor: null }, ['place', 'hidden_gem'])).toBe(false);
     expect(mediaMapGatewayPartial({ sources: ['places'], nextCursor: null }, ['place', 'hidden_gem'])).toBe(true);
     expect(mediaMapGatewayPartial({ sources: ['places', 'gems'], nextCursor: '200' }, ['place', 'hidden_gem'])).toBe(true);
     expect(mediaMapGatewayPartial({ sources: [], nextCursor: null }, ['place'])).toBe(true);
