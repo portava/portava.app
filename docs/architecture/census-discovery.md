@@ -19040,7 +19040,16 @@ The walk reads every top-level directory the app bundles (every directory not na
 
 ### 112.13 Results at the final code commit
 
-RESULTS-PENDING
+The code is final at `2011c7cf2`; the census commit `cec71d11c` changes only this census, census-compass (§34.1's correction), the register, `CENSUS_STALENESS_ACKNOWLEDGED.json` and `CENSUS_SCOPE`, and the guards below were run on it. This paragraph is the only change after them.
+
+- **`int-guards.sh /home/user/wt-v8`**: all 24 exit 0 (typecheck, typecheck:tests, check:test-registration, check:census-integrity, check:doc-citations, check:citation-targets, check:citation-symbols, check:census-freshness, check:census-scope-coverage, check:census-row-move-labels, check:migration-prefixes, check:production-drift, check:writerless-reads, check:schema-references, check:enum-literals, check:flag-polarity, check:discovery-query-paths, check:route-auth-gate, check:api-prefix, check:async-handlers, check:frozen-dir, check:telegraph-inventory, check:guard-coverage, check:unissued-supabase-writes).
+- **api-server node:test** (Node v24.21.0, `SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy`), 420 files in ten chunks, the longest 288 s: every `src/test/discovery*`, `compass*`, `trail*`, `hashtag*`, `circle*`, `map*`, `event*`, `hiddenGem*`, `wall*` and `trust*` suite on the `test` line (§112's two new suites among them), the touched `blockGateFailClosedGuards` and `eventsFailClosedAuthorization`, and `securityCheckSuite`, `uncheckedSupabaseReads`, `entryWiringNotCommentedOut` and `layoverSurfaceErrorBinding`; the suites that import the CI Supabase guard are left out. Result: `ℹ tests 7602 · ℹ pass 7602 · ℹ fail 0 · ℹ cancelled 0`.
+  - Alone: `securityCheckSuite` 17/17, `uncheckedSupabaseReads` 69/69, `entryWiringNotCommentedOut` 4/4, `layoverSurfaceErrorBinding` 5/5.
+  - `checkUncheckedSupabaseReads`: "no NEW in-scope read ignores its .error … 129 in scope (1 benign, 128 ledgered known defects: 0 FAIL-OPEN / 124 FAIL-CLOSED / 4 UNCLASSIFIED)", no stale allowlist entry.
+  - The write-path-columns replica (`uacheck.mts`): `OK (117 tracked)`.
+- **Client.** `pnpm run -s check:all`: `✔ ALL CHECKS PASSED` (node suites `ℹ tests 7534 · ℹ pass 7534 · ℹ fail 0`; component suites `833 passed, 833 total · 5338 passed, 5338 total`; web suites `4 passed, 12 tests`; `typecheck:tests` 173 against a baseline of 173). `node scripts/check-route-registry.mjs`: "OK. All 232 screen file(s) are represented in PORTAVA_ROUTES and all 9 layout file(s) are represented in PORTAVA_LAYOUT_FILES."
+- **The verifiers' probes**, copied in unchanged and deleted after (v14, v13 with finish/, v12, v11, v10, v9; the safety lane's MU*, EG*, WG*, EB* and WB* probes left out): server 93 of 93 in 29 files, V14-TB0/TB1, V14-TC0/TC1 and V14-AM0–AM2 among them; client 17 of 17 in five suites (V14-TM0–TM2, V14-GL0–GL2, V11-TB*, V10-CH*, V9-TT*). The first joint client run reported one failure that did not recur; three further joint runs were 17 of 17.
+- **The guard-hole fixtures on disk** (the verifier's runner, copied): GH0–GH15 each placed alone and removed, all sixteen killed; the unfixtured tree passes; every touched registered file restored with a matching sha256.
 
 ## Cited, not graded (check:census-scope-coverage)
 
