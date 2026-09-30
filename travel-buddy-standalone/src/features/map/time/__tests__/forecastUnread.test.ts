@@ -14,8 +14,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { forecastLayersUnread } from '../forecastUnread.ts';
 
+const HERE = dirname(fileURLToPath(import.meta.url));
 const report = (events: number | null) => ({ events, itinerary: 0, plan: { published: 0, withheld: 0, refusal: null, refusals: {} } });
 
 describe('forecastLayersUnread (§111, D-W11X2-115)', () => {
@@ -31,10 +34,10 @@ describe('forecastLayersUnread (§111, D-W11X2-115)', () => {
     assert.deepEqual(forecastLayersUnread({ sources: [], forecast: null }), []);
   });
   it('FU3 the wiring: the hook keeps forecastLayersUnread(res.data), and the map screen passes it to the Time Machine as its notice', () => {
-    const hook = readFileSync(new URL('../../../../hooks/useTemporalEntities.ts', import.meta.url), 'utf8');
+    const hook = readFileSync(join(HERE, '../../../../hooks/useTemporalEntities.ts'), 'utf8');
     assert.ok(hook.includes('setUnreadForecastLayers(forecastLayersUnread(res.data));'), 'the hook records the unread layers of each answer');
     assert.ok(hook.includes('return { objects, enabled, forecast, history, loading, unreadForecastLayers };'), 'and returns them');
-    const screen = readFileSync(new URL('../../../../../app/map/index.tsx', import.meta.url), 'utf8');
+    const screen = readFileSync(join(HERE, '../../../../../app/map/index.tsx'), 'utf8');
     assert.match(screen, /unreadNotice=\{temporal\.unreadForecastLayers\.includes\('events'\) \? "[^"]+" : null\}/, 'the map screen says an unread events layer');
   });
 });
