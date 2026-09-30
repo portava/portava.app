@@ -72,7 +72,7 @@ describe('§112: the Time Machine over a refused or failed read (D-W11X2-121, D-
 
   it("TM3 a refused forecast (block_set_unreadable, events: null) → events unread, and the read is failed", async () => {
     const { result } = await run([() => Promise.resolve({ ok: true, data: envelope({ refusal: 'block_set_unreadable', forecast: { events: null, itinerary: null, plan: null } }) })]);
-    expect(result.current.unreadForecastLayers).toEqual(['events']);
+    expect(result.current.unreadForecastLayers).toEqual(['events', 'accepted_plan', 'itinerary']);  // §114 (B6): a refused forecast read none of its layers
     expect((result.current as any).failed).toBe(true);
     expect(result.current.objects).toEqual([]);
   });

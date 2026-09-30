@@ -58,7 +58,7 @@ export interface UseTemporalEntitiesResult {
    * census-discovery §112 (DV-83, D-W11X2-122): the last read for this offset failed, or the server refused it.
    * Nothing from it (or from the previous offset) is drawn; the Time Machine says it could not be loaded.
    */
-  failed: boolean;
+  failed: boolean; /** census-discovery §114 (DV-83, B6): the answer was page one of several (`nextCursor` set) — the time is not whole; say so */ pageCut: boolean;
 }
 
 export function useTemporalEntities(args: UseTemporalEntitiesArgs): UseTemporalEntitiesResult {
@@ -66,7 +66,7 @@ export function useTemporalEntities(args: UseTemporalEntitiesArgs): UseTemporalE
 
   const [objects, setObjects] = useState<MapObject[]>([]);
   const [enabled, setEnabled] = useState(false);
-  const [forecast, setForecast] = useState<TemporalForecastReport | null>(null); const [unreadForecastLayers, setUnreadForecastLayers] = useState<string[]>([]);
+  const [forecast, setForecast] = useState<TemporalForecastReport | null>(null); const [unreadForecastLayers, setUnreadForecastLayers] = useState<string[]>([]); const [pageCut, setPageCut] = useState(false);  // §114 (B6)
   const [history, setHistory] = useState<TemporalHistoryReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -79,7 +79,7 @@ export function useTemporalEntities(args: UseTemporalEntitiesArgs): UseTemporalE
       // Idle: drop the previous offset's payload so it can never show under NOW
       // or a closed mode.
       setObjects([]);
-      setForecast(null); setUnreadForecastLayers([]);
+      setForecast(null); setUnreadForecastLayers([]); setPageCut(false);
       setHistory(null);
       setLoading(false);
       setFailed(false);
@@ -92,7 +92,7 @@ export function useTemporalEntities(args: UseTemporalEntitiesArgs): UseTemporalE
     // census-discovery §112 (D-W11X2-122): "[] while loading" — the previous offset's payload is never drawn under
     // this offset's label while its read is in flight, nor kept when that read fails.
     setObjects([]);
-    setForecast(null); setUnreadForecastLayers([]);
+    setForecast(null); setUnreadForecastLayers([]); setPageCut(false);
     setHistory(null);
     setFailed(false);
 
@@ -110,7 +110,7 @@ export function useTemporalEntities(args: UseTemporalEntitiesArgs): UseTemporalE
           setEnabled(res.data.enabled);
           setObjects(res.data.enabled ? res.data.objects : []);
           setForecast(res.data.forecast); setUnreadForecastLayers(forecastLayersUnread(res.data));
-          setHistory(res.data.history);
+          setHistory(res.data.history); setPageCut(res.data.enabled && res.data.nextCursor != null);  // §114 (B6): page one of several is said, never drawn as the whole time
           setFailed(res.data.refusal != null || historyUnread(res.data));  // §113 (D-W11X2-130): a past answer that read no history is failed, never an empty past
         } else {
           setFailed(true);
@@ -132,5 +132,5 @@ export function useTemporalEntities(args: UseTemporalEntitiesArgs): UseTemporalE
     // are rounded into the same viewport bucket the fetch uses.
   }, [shouldFetch, offsetKey(offset), offset, lat, lng, zoom, radiusKm, tz]);
 
-  return { objects, enabled, forecast, history, loading, unreadForecastLayers, failed };
+  return { objects, enabled, forecast, history, loading, unreadForecastLayers, failed, pageCut };
 }
