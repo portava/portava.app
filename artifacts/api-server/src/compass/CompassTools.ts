@@ -713,9 +713,9 @@ async function refreshHiddenUsers(
     }
     const base =
       profile ?? ({ userId, blockedUserIds: [], blockerUserIds: [], mutedUserIds: [] } as unknown as CompassProfile);
-    return { ...base, blockedUserIds, blockerUserIds, mutedUserIds };
+    const refreshed = { ...base, blockedUserIds, blockerUserIds, mutedUserIds }; return profile ? refreshed : markSynthesized(refreshed);  // census-compass §34 (census-discovery §111, D-W11X2-105): fails closed: a profile made of the block lists alone is never ranked on
   } catch (err) {
-    if (!profile) throw err; // no snapshot to fall back to: closed, not empty
+    if (!profile) throw new HiddenUsersUnreadableError(err); // no snapshot to fall back to: closed, not empty — census-compass §34 (D-W11X2-105): a named refusal the dispatcher says, not "Tool execution failed"
     return profile; // fail safe to the snapshot — never widen visibility
   }
 }
@@ -760,7 +760,7 @@ async function rankToolCandidates(
   items: CompassItem[],
   circleMemoryTags?: Set<string>,
 ): Promise<Map<string, ToolRankEntry> | null> {
-  if (!profile || items.length === 0) return null;
+  if (items.length === 0) return null; if (!profile || isSynthesizedProfile(profile)) return uncheckedRanking();  // census-compass §34 (census-discovery §111, D-W11X2-105): fails closed: no profile is never "unranked: offer the raw list"
   try {
     const p = normalizeProfileForRanking(profile);
     const context = buildCompassContext(p, defaultSignals(p));
@@ -780,7 +780,7 @@ async function rankToolCandidates(
     });
     return map;
   } catch {
-    return null;
+    return uncheckedRanking();  // census-compass §34 (census-discovery §111, D-W11X2-105): fails closed: a thrown pipeline never skips the safety gate
   }
 }
 
@@ -1018,7 +1018,7 @@ async function toolSearchPlaces(
   const withheldDetail = safeHeld.withheld > 0 ? safeHeld.detail : held.detail;
   return safeHeld.kept.length > 0
     ? { candidates: safeHeld.kept, ranked: ranking !== null, attention: wire, safetyAttention: safetyWire }
-    : { candidates: [], attention: wire, safetyAttention: safetyWire, info: rankingFlagsUnread(ranking) ? TOOL_FLAGS_UNREAD_INFO : withheldTotal > 0 ? `No candidates offered: ${withheldDetail}` : "No matching places found in the catalog." };  // §110 (D-W11X2-92)
+    : { candidates: [], attention: wire, safetyAttention: safetyWire, info: rankingUnchecked(ranking) ? TOOL_SAFETY_UNCHECKED_INFO : rankingFlagsUnread(ranking) ? TOOL_FLAGS_UNREAD_INFO : withheldTotal > 0 ? `No candidates offered: ${withheldDetail}` : "No matching places found in the catalog." };  // §110 (D-W11X2-92)
 }
 
 async function toolSearchEvents(
@@ -1099,7 +1099,7 @@ async function toolSearchEvents(
   const withheldDetail = safeHeld.withheld > 0 ? safeHeld.detail : held.detail;
   return safeHeld.kept.length > 0
     ? { candidates: safeHeld.kept, ranked: ranking !== null, attention: wire, safetyAttention: safetyWire }
-    : { candidates: [], attention: wire, safetyAttention: safetyWire, info: rankingFlagsUnread(ranking) ? TOOL_FLAGS_UNREAD_INFO : withheldTotal > 0 ? `No candidates offered: ${withheldDetail}` : ((data ?? []) as any[]).length >= limit * 2 ? cappedReadInfo(limit * 2, "upcoming public events") : "No matching upcoming public events found." };  // §110 (D-W11X2-92, D-W11X2-102): an unread flag read, or a read cut at its cap, is not "none"
+    : { candidates: [], attention: wire, safetyAttention: safetyWire, info: rankingUnchecked(ranking) ? TOOL_SAFETY_UNCHECKED_INFO : rankingFlagsUnread(ranking) ? TOOL_FLAGS_UNREAD_INFO : withheldTotal > 0 ? `No candidates offered: ${withheldDetail}` : ((data ?? []) as any[]).length >= limit * 2 ? cappedReadInfo(limit * 2, "upcoming public events") : "No matching upcoming public events found." };  // §110 (D-W11X2-92, D-W11X2-102): an unread flag read, or a read cut at its cap, is not "none"
 }
 
 async function toolGetPlaceDetails(sc: SupabaseClient, args: Record<string, unknown>): Promise<unknown> {
@@ -2118,7 +2118,7 @@ async function toolGroupRecommendation(
   const agg = aggregateGroupPreferences(members);
   const viewerProfile: CompassProfile =
     profile ?? ({ userId, blockedUserIds: [], blockerUserIds: [], mutedUserIds: [] } as unknown as CompassProfile);
-  const groupProfile = buildGroupRankingProfile(viewerProfile, agg, blockUnionIds);
+  const groupProfile = buildGroupRankingProfile(viewerProfile, agg, blockUnionIds); if (isSynthesizedProfile(viewerProfile)) markSynthesized(groupProfile);  // census-compass §34 (census-discovery §111, D-W11X2-105): fails closed: a group profile built on a synthesised viewer is never ranked on
   const excluded = new Set<string>([...hidden, ...blockUnionIds]);
 
   // Phase 6 circle memories → group ranking. Membership-gated inside the
@@ -2132,7 +2132,7 @@ async function toolGroupRecommendation(
     : (viewerProfile.currentCity ?? null);
 
   let candidates: any[] = [];
-  let groupConstraintsApplied: string[] = []; let flagsUnread = false; let readCapped = 0;  // census-discovery §110 (D-W11X2-92, D-W11X2-102)
+  let groupConstraintsApplied: string[] = []; let flagsUnread = false; let unchecked = false; let readCapped = 0;  // census-discovery §110 (D-W11X2-92, D-W11X2-102)
 
   if (kind === "events") {
     const cutoff = new Date(Date.now() - 2 * 3600_000).toISOString();
@@ -2170,7 +2170,7 @@ async function toolGroupRecommendation(
       eventStartsAt: e.starts_at ?? null,
       authorId:      e.host_id ? String(e.host_id) : undefined,
     } as CompassItem));
-    const ranking = await rankToolCandidates(sc, groupProfile, rankItems, circleMemoryTags); flagsUnread = rankingFlagsUnread(ranking);
+    const ranking = await rankToolCandidates(sc, groupProfile, rankItems, circleMemoryTags); flagsUnread = rankingFlagsUnread(ranking); unchecked = rankingUnchecked(ranking);
     candidates = applyToolRanking(
       visible.map((e) => ({
         id:          e.id,
@@ -2201,7 +2201,7 @@ async function toolGroupRecommendation(
       qualityScore: typeof p.rating === "number" ? p.rating * 2 : undefined,
       savedCount:   Number(p.saved_count ?? 0),
     } as CompassItem));
-    const ranking = await rankToolCandidates(sc, groupProfile, rankItems, circleMemoryTags); flagsUnread = rankingFlagsUnread(ranking);
+    const ranking = await rankToolCandidates(sc, groupProfile, rankItems, circleMemoryTags); flagsUnread = rankingFlagsUnread(ranking); unchecked = rankingUnchecked(ranking);
     candidates = applyToolRanking(
       rows.map((p) => ({
         ...p,
@@ -2235,7 +2235,7 @@ async function toolGroupRecommendation(
         candidates: [],
         group: { label: group.groupLabel, size: agg.size, memberHandles },
         groupConstraintsApplied: [...new Set(groupConstraintsApplied)],
-        info: flagsUnread ? TOOL_FLAGS_UNREAD_INFO : readCapped > 0 ? cappedReadInfo(readCapped, "events for the whole group") : "No candidates satisfy the whole group's constraints right now.",  // §110 (D-W11X2-92): an unread flag read is not "no candidates"
+        info: unchecked ? TOOL_SAFETY_UNCHECKED_INFO : flagsUnread ? TOOL_FLAGS_UNREAD_INFO : readCapped > 0 ? cappedReadInfo(readCapped, "events for the whole group") : "No candidates satisfy the whole group's constraints right now.",  // §110 (D-W11X2-92): an unread flag read is not "no candidates"
       };
 }
 
@@ -2352,7 +2352,7 @@ export async function executeCompassTool(
       // Phase 9 social tools below) — a just-blocked host must not surface.
       case "search_events":        raw = await toolSearchEvents(sc, userId, await refreshHiddenUsers(sc, userId, profile), args); break;
       case "get_place_details":    raw = await toolGetPlaceDetails(sc, args); break;
-      case "get_circle_activity":  raw = await toolGetCircleActivity(sc, profile, userId); break;
+      case "get_circle_activity":  raw = await toolGetCircleActivity(sc, profile ?? await refreshHiddenUsers(sc, userId, null), userId); break;  // census-compass §34 (census-discovery §111, D-W11X2-105): fails closed: the hidden set is read, never empty for a null profile
       case "check_trip_conflicts": raw = await toolCheckTripConflicts(sc, userId, args); break;
       case "get_freedom_windows":  raw = await toolGetFreedomWindows(sc, userId, args); break;
       case "get_route_chain":      raw = await toolGetRouteChain(sc, userId, args); break;
@@ -2413,7 +2413,7 @@ export async function executeCompassTool(
     //
     // ONLY that class. An unexpected throw is still "Tool execution failed",
     // because calling a real crash temporary would be the opposite error.
-    if (err instanceof TripAccessUnavailableError) {
+    if (err instanceof HiddenUsersUnreadableError) return { unchecked: true, info: HIDDEN_USERS_UNREAD_INFO }; if (err instanceof TripAccessUnavailableError) {
       return {
         error:
           "That trip's records are unreadable right now — this is temporary and is NOT a statement " +
@@ -2509,4 +2509,44 @@ function circleListBoundsInfo(u: StructuredContextUnread | undefined): { info?: 
 /** The answer when a capped read had no survivor: only the first `n` were checked. */
 function cappedReadInfo(n: number, what: string): string {
   return `None of the first ${n} matching ${what} Compass checked could be offered; there may be more it did not read. Say none could be shown from what was checked, not that there are none.`;
+}
+
+// ── census-compass §34 (census-discovery §111, DV-83 round 14, lane W11-X2, D-W11X2-105): no tool offers a candidate that skipped block/mute filtering or the safety gate ──
+//
+// At /compass/ask a failed `blocks` or `user_mutes` read makes `getCompassProfile` throw (it fails
+// closed), and the route hands `null` to every tool. `rankToolCandidates` answered `null` for a null
+// profile and for a thrown pipeline, and `applyToolRanking` reads `null` as "unranked: offer the raw
+// list" — so the search tools offered rows no safety gate had seen; `get_circle_activity` filtered on an
+// EMPTY hidden set; and `refreshHiddenUsers` built a profile from the block lists alone, which the
+// pipeline ranked on with an invented safe-return state and age. Each is now an EMPTY ranking marked
+// `unchecked` (nothing is offered, and the tool says it could not check), a read hidden set, or a
+// named refusal.
+
+const TOOL_SAFETY_UNCHECKED_INFO = "Compass could not check the user's profile, block and mute lists or its safety gate right now (a read failed), so nothing was offered. Say the results could not be checked; do not say there are none.";
+const HIDDEN_USERS_UNREAD_INFO = "The user's block and mute lists could not be read right now, so Compass could not check who may be shown and nothing involving other people was offered. Say it could not be checked; do not say there is nobody or nothing.";
+
+/** Profiles made up from the block and mute lists alone (the ask-time profile could not be read). */
+const SYNTHESIZED_PROFILES = new WeakSet<object>();
+function markSynthesized<T extends object>(profile: T): T {
+  SYNTHESIZED_PROFILES.add(profile);
+  return profile;
+}
+function isSynthesizedProfile(profile: CompassProfile | null): boolean {
+  return profile !== null && SYNTHESIZED_PROFILES.has(profile);
+}
+
+/** An empty ranking (every candidate withheld) that says the profile or the pipeline could not be read. */
+function uncheckedRanking(): Map<string, ToolRankEntry> {
+  return Object.assign(new Map<string, ToolRankEntry>(), { unchecked: true as const });
+}
+function rankingUnchecked(ranking: Map<string, ToolRankEntry> | null): boolean {
+  return ranking !== null && (ranking as { unchecked?: boolean }).unchecked === true;
+}
+
+/** `refreshHiddenUsers` could not read the lists and had no snapshot: the dispatcher says so. */
+class HiddenUsersUnreadableError extends Error {
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : "hidden-user lists unavailable and no snapshot to fall back to");
+    this.name = "HiddenUsersUnreadableError";
+  }
 }

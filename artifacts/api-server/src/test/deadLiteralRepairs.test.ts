@@ -93,7 +93,7 @@ describe("Compass chat can return an event again (CompassTools.toolSearchEvents)
         event("e-archived", "archived", "Beach Cleanup Archived"),
       ],
     });
-    const res: any = await executeCompassTool(sc as any, HOST, null, "search_events", {
+    const res: any = await executeCompassTool(sc as any, HOST, { userId: HOST, blockedUserIds: [], blockerUserIds: [], mutedUserIds: [] } as any /* census-compass §34: a tool ranks only over a read profile */, "search_events", {
       query: "Beach Cleanup",
     });
     const ids = (res.candidates as any[]).map((c) => c.id);
