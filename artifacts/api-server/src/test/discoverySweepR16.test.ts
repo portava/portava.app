@@ -8,6 +8,7 @@
  *   HT2  GET /hashtags/:slug: the 30-day usage tally is cut at its cap → topCity is not stated (null)
  *   HT3  GET /hashtags/:slug: the usage read fails → topCity null, failedSources names it
  *   HT4  GET /hashtags/suggestions: the follow read fails → isFollowing null on every suggestion, failedSources named
+ *   HT6  GET /hashtags/suggestions?city=…: the city-usage read fails → failedSources names it (the city boost was not read)
  *   HT5  POST and DELETE /hashtags/:slug/follow: the hashtag read fails → 503 degraded_unavailable, never 404 "not found"
  *   HTc  CONTROL: healthy reads → the bodies keep their keys (no failedSources), isFollowing true/false, topCity stated
  */
@@ -117,6 +118,13 @@ describe("§113 (D-W11X2-137): the hashtag routes over a failed or cut read", ()
     assert.equal(r.body.suggestions.length, 1);
     assert.equal(r.body.suggestions[0].isFollowing, null);
     assert.deepEqual(r.body.failedSources, ["user_hashtag_follows"]);
+  });
+  it("HT6 GET /hashtags/suggestions with a city, the city-usage read fails → failedSources names it", async () => {
+    use(world({ user_hashtag_follows: [] }), ["hashtag_usage"]);
+    const r = await call("GET", "/api/hashtags/suggestions?q=ja&city=Lisbon");
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.deepEqual(r.body.failedSources, ["hashtag_usage"]);
+    assert.equal(r.body.suggestions[0].isFollowing, false);
   });
   it("HT5 follow and unfollow, the hashtag read fails → 503 degraded_unavailable, never 404", async () => {
     use(world(), ["hashtags"]);
