@@ -3166,7 +3166,8 @@ Every gate read in the router was classified by which way a failed read falls:
   RSVP count as 0, so a capacity check can overbook on an outage; the host safety summary answers an
   unread banned list as `blockedUsers: []`; `POST /events/:id/waitlist/accept` does not re-run the
   eligibility gates at accept time (a ban removes the waitlist row, but that delete's error is not
-  checked). None is a failed read admitting a viewer past a block, ban, age, verified or trust gate.
+  checked). None is a failed read admitting a viewer past a block, ban, age, verified or trust gate. All four
+  are closed below, in §30.6–§30.9.
 
 ### §30.4 Rows
 
@@ -3198,7 +3199,116 @@ What would turn this red: an 18+ event listed, waitlisted or RSVP'd to a verifie
 cannot be read; a banned viewer listed or waitlisted when `event_roles` cannot be read; an invite accepted
 past a gate that did not run.
 
+### §30.6 Waitlist seating runs the join gate — at the offer and at accept
+
+Found by this lane's sweep (§30.3) and closed in the same branch. A waitlisted user reached a seat
+through three paths, none of which ran `checkEventEligibility` (block, ban, verified, trust, age):
+`POST /events/:id/waitlist/accept`, the route's `promoteNextWaitlisted` (called when a seat frees:
+RSVP cancel, leave, attendee removal, an expired or refused offer) and the hourly
+`lib/eventWaitlistSweeper.ts`. A user eligible when they queued need not be eligible now — banned since,
+blocked by the host, an age signal since verified — and on the pre-fix tree each such user was offered
+the seat and seated on accept (`200 {"status":"going"}`).
+
+- **Accept** runs the gate after the visibility re-check
+  (`artifacts/api-server/src/routes/events.ts:3333#checkEventEligibility`). A refusal writes nothing:
+  the gate's own `403`, or `503 degraded_unavailable` when a gate input could not be read
+  (`artifacts/api-server/src/routes/events.ts:7042#sendEligibilityRefusal`). The accept's event read now
+  names the gate columns and binds its error (`artifacts/api-server/src/routes/events.ts:3316#evCapErr`;
+  a failed read was `404 "Event not found"`, now `503`).
+- **Both promoters** offer the seat to the first ELIGIBLE user in queue order through one helper
+  (`artifacts/api-server/src/routes/events.ts:6995#eligibleWaitlisted`; the route's call is
+  `artifacts/api-server/src/routes/events.ts:627#pickEligibleWaitlisted`, the sweeper's
+  `artifacts/api-server/src/lib/eventWaitlistSweeper.ts:255#eligibleWaitlisted`). An ineligible user is
+  skipped and their row LEFT: a refusal can come from the fail-closed block read, and deleting over an
+  outage would drop an innocent user from the queue for good. An unreadable event, or an unreadable
+  verdict, offers nobody at or behind that user — skipping them would jump the queue over someone the
+  gate could not judge; the sweeper counts that event `unreadable`.
+- To tell "could not read" from "refused", `checkEventEligibility`'s refusals over an unread input carry
+  `unavailable: true` (`artifacts/api-server/src/routes/events.ts:669#unavailable`): the ban read, the
+  trust seam, the age seam, and the verified read, which bound no error and read a failure as "not
+  verified" (`artifacts/api-server/src/routes/events.ts:715#profileErr`; its
+  `UNCHECKED_READS_ALLOWLIST.json` entry is deleted). The other callers still send `errorCode`/`message`,
+  so no other route's answer changes. The block read still folds a failure into "blocked"
+  (`isBlockedBetween`); at accept that is a `403`, not a `503` — closed, but not told apart.
+
+### §30.7 A ban's waitlist delete is checked
+
+Two routes ban: `POST /events/:id/roles {role:"banned"}` and `POST /events/:id/block-user/:userId`. Both
+deleted the banned user's waitlist row without binding the error and answered `{ok:true}` over a delete
+that failed. Both now bind it and answer `503 degraded_unavailable` ("the ban was recorded, but their
+waitlist place could not be removed"); the ban itself is still written, so the leftover row cannot be
+offered or accepted (§30.6)
+(`artifacts/api-server/src/routes/events.ts:3699#banWlDelErr`,
+`artifacts/api-server/src/routes/events.ts:6168#wlDelErrBu`). `block-user`'s ban upsert was unchecked too —
+`{ok:true}` over a ban that was not written — and now refuses `db_error` before anything is removed
+(`artifacts/api-server/src/routes/events.ts:6165#banErrBu`), as the roles route already did.
+
+### §30.8 An unreadable going-count admits nobody
+
+`getGoingCount` answered a failed `event_rsvps` read as 0. It now answers `null`
+(`artifacts/api-server/src/routes/events.ts:348#null`), and every consumer was classified:
+
+- **Capacity checks refuse `503 degraded_unavailable`, writing nothing:** join
+  (`artifacts/api-server/src/routes/events.ts:3077#sendCapacityUnavailable`), waitlist accept (row and
+  offer left; `artifacts/api-server/src/routes/events.ts:3335#sendCapacityUnavailable`), and both
+  join-request approvals (`artifacts/api-server/src/routes/events.ts:3608#sendCapacityUnavailable`,
+  `artifacts/api-server/src/routes/events.ts:5273#sendCapacityUnavailable`). The approvals have already
+  marked the request approved; the refusal says no seat was given and a retry seats them.
+- **`syncEventState` holds the state it has** (`artifacts/api-server/src/routes/events.ts:560#going`). A
+  count of 0 reopened a full event to walk-ins; an unknown count now writes no transition either way.
+- **No `going_count` write stamps an unread count**: the nine `update({ going_count })` sites are
+  conditional on a read count, and the three combined updates send `going_count: undefined`, which
+  supabase-js drops from the JSON body.
+
+Residual, not changed: `POST /events/:id/rsvp` and invite accept admit on the event's stored `state`, not
+on a count; with the reopen arm closed, that state is the one the last READABLE count produced.
+`waitlist_count` beside the ban's count write still reads an unread waitlist as 0 (the §30.3 class that
+`recountEventWaitlist` already handles elsewhere); it decides no admission.
+
+### §30.9 The host safety summary does not show an empty list over a failed read
+
+`GET /events/:id/safety-summary` answered each unread list as `[]` — for the banned list, "nobody is
+banned". Each list (`reports`, `noShows`, `blockedUsers`) is now `null` when its read failed, and a
+`failedSources` array names them (`artifacts/api-server/src/routes/events.ts:6240#blockedUsers`,
+`artifacts/api-server/src/routes/events.ts:7063#safetySummaryFailedSources`). The healthy body is
+byte-identical — no `failedSources` key. No client consumes this route: a search of every tracked file
+(the Expo app, `travel-buddy-standalone`, `lib/`, `packages/`) finds none, and
+`docs/architecture/mobile-reachability-ledger.json` classifies it `DEAD ENDPOINT`. There is no screen to
+make honest; a future one must render `null` + `failedSources` as "could not be loaded", not as empty.
+
+### §30.10 Rows, tests and mutations for §30.6–§30.9
+
+**NO ROW MOVES.** Waitlist seating, bans, capacity and the safety summary are graded by no row of this
+census; `TV-5b` and `A17` are unchanged for the reasons in §30.4 — this runs the existing gate on two more
+paths, it moves no trust or age read.
+
+`artifacts/api-server/src/test/eventsWaitlistCapacityFailClosed.test.ts`, registered. RED on the pre-fix
+source (38): WA1–WA6, PR1–PR7, SW1–SW4, BD1, BU1, BU2, JN1, WA7, AP1, AQ1, SY1, GC1 ×11 (one per
+`going_count` write site), SS1, SS2. GREEN on both (23): WA0, PR0, SW0, BD0, BU0, JN0, JN0b, WA7b, AP0,
+AQ0, SY0, GC0 ×11, SS0. Healthy bodies pinned exactly: accept, cancel, ban, block-user, join, both
+approvals, and the summary with `generatedAt` normalised. `eventWaitlistSweeper.test.ts`'s
+table-agnostic double answers the new eligibility reads as an all-eligible world; its 16 cases are
+unchanged and green.
+
+Mutations, each applied alone and restored byte-identically (sha256 checked after each): 44 applied, 44
+killed, 0 survivors — the accept gate, its 503 arm, its event-read error and its gate columns; the
+promoter's head check, unreadable stop, call site and window; the helper's unavailable stop and `want`;
+the four `unavailable` markers; both ban deletes and the block-user ban write; `getGoingCount`'s null,
+`syncEventState`'s hold, the four capacity guards, all nine conditional writes and three `?? undefined`
+writes; the summary's three `null` arms and `failedSources` both ways; and the sweeper's gate, event-read
+error, unavailable count and window. The gate-columns mutation first survived — the double returned
+whole rows whatever `.select()` named — and the test world now projects plain column lists on `events`.
+
+What would turn this red: a banned, blocked, under-age or unverified waitlister offered or seated; an
+offer made past a user whose eligibility could not be read; `{ok:true}` over a failed ban delete; a
+seat given, a full event reopened or `going_count` stamped over an unread count; `[]` for a safety list
+that could not be read.
+
 Cited in this section, graded by no row of this census:
 
 - NOT-GRADED: artifacts/api-server/src/test/eventsGateReadsFailClosed.test.ts — §30.5's controlled evidence for the event gate fixes; no Trust verdict moves on it.
 - NOT-GRADED: artifacts/api-server/src/routes/mapSearch.ts — §30.1 names it only as one caller of the shared `checkEventEligibility` whose gates the flag fix keeps on; map search is not a Trust surface this census grades, and the file was not changed.
+- NOT-GRADED: artifacts/api-server/src/test/eventsWaitlistCapacityFailClosed.test.ts — §30.10's controlled evidence for the waitlist, ban-delete, capacity and safety-summary fixes; no Trust verdict moves on it.
+- NOT-GRADED: artifacts/api-server/src/lib/eventWaitlistSweeper.ts — §30.6 names it as the second promoter the eligibility gate now covers; waitlist seating is graded by no row of this census.
+- NOT-GRADED: artifacts/api-server/src/test/eventWaitlistSweeper.test.ts — §30.10 names it only because its double was taught the new eligibility reads; no Trust verdict moves on it.
+- NOT-GRADED: docs/architecture/mobile-reachability-ledger.json — §30.9 cites its `DEAD ENDPOINT` classification of the safety summary as a reachability fact; it is a generated ledger, not a Trust surface.
