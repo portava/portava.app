@@ -183,14 +183,14 @@ describe("census-trust §30.6–§30.9: waitlist seating, ban delete, capacity a
     assert.equal(r.status, 200, r.text); assert.equal(r.text, `{"status":"going","eventId":"${EVENT}"}`);
     assert.equal(rsvpWrites(w.writes).length, 1);
   });
-  for (const [name, opts, why] of [
+  for (const [name, opts, why] of <Array<[string, WorldOpts, string]>>[
     ["WA1", { banned: [W1] }, "banned from the event"],
     ["WA2", { blockedWithHost: [W1] }, "blocked by the host"],
     ["WA3", { minors: [W1], ev: { age_min: 18 } }, "a verified minor, 18+ event"],
     ["WA4", { unverified: [W1], ev: { verified_only: true } }, "unverified, verified-only event"],
-  ] as const) {
+  ]) {
     it(`${name} accept, the user is ${why} → refused 403, no RSVP written`, async () => {
-      const w = world({ ...heldOffer, ...(opts as WorldOpts) }); const r = await accept();
+      const w = world({ ...heldOffer, ...opts }); const r = await accept();
       assert.equal(rsvpWrites(w.writes).length, 0, `an ineligible waitlister was seated at accept: ${r.status} ${r.text}`);
       assert.equal(r.status, 403, r.text);
     });
@@ -214,13 +214,13 @@ describe("census-trust §30.6–§30.9: waitlist seating, ban delete, capacity a
     const w = world(queue); const r = await cancel();
     assert.equal(r.status, 200); assert.equal(r.text, '{"ok":true}'); assert.deepEqual(offeredTo(w.writes), [W1]);
   });
-  for (const [name, opts, why] of [
+  for (const [name, opts, why] of <Array<[string, WorldOpts, string]>>[
     ["PR1", { banned: [W1] }, "banned"],
     ["PR2", { minors: [W1], ev: { age_min: 18 } }, "a verified minor on an 18+ event"],
     ["PR3", { blockedWithHost: [W1] }, "blocked by the host"],
-  ] as const) {
+  ]) {
     it(`${name} head of the queue is ${why} → not offered; the next eligible user is`, async () => {
-      const w = world({ ...queue, ...(opts as WorldOpts) }); const r = await cancel();
+      const w = world({ ...queue, ...opts }); const r = await cancel();
       assert.equal(r.status, 200, r.text);
       assert.deepEqual(offeredTo(w.writes), [W2], `offered to ${JSON.stringify(offeredTo(w.writes))}`);
     });
