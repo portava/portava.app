@@ -33,6 +33,7 @@ const OTHER  = "22222222-2222-4222-8222-222222222222";
 const TOKEN  = "ev-gates-token";
 const EVENT  = "66666666-6666-4666-8666-666666666666";
 const EVENT2 = "77777777-7777-4777-8777-777777777777";
+const INVITE = "88888888-8888-4888-8888-888888888888";
 const ERR = { message: "canceling statement due to statement timeout", code: "57014" };
 
 type Flag = "on" | "off" | "absent";
@@ -67,6 +68,7 @@ function world(o: WorldOpts = {}): FakeClientSpec {
       events: [eventRow(EVENT, { state: o.state ?? "open", age_min: o.ageMin === undefined ? 18 : o.ageMin }), ...(o.extraEvents ?? [])],
       event_roles: o.banned ? [{ event_id: EVENT, user_id: VIEWER, role: "banned" }] : [],
       event_rsvps: [], event_waitlist: [], blocks: [],
+      event_invites: [{ id: INVITE, event_id: EVENT, invitee_id: VIEWER, inviter_id: OTHER, status: "pending" }],
       profiles: [{ id: VIEWER, date_of_birth: "1990-06-15", location_country: "US", verified: true }, { id: OTHER, handle: "host", name: "Host" }],
       identity_verifications: [{ user_id: VIEWER, is_over_18: o.minor === false, created_at: "2026-08-01T00:00:00.000Z" }],
     },
@@ -81,6 +83,8 @@ function world(o: WorldOpts = {}): FakeClientSpec {
 const flagFails = (c: FakeReadContext) => (c.table === "feature_flags" && c.eq("flag") === "events_trust_gates_enabled" ? ERR : null);
 const rolesFail = (c: FakeReadContext) => (c.table === "event_roles" ? ERR : null);
 const bannedReadFails = (c: FakeReadContext) => (c.table === "event_roles" && c.eq("role") === "banned" ? ERR : null);
+const eventsReadFails = (c: FakeReadContext) => (c.table === "events" && c.eq("id") === EVENT ? ERR : null);
+const updates = (s: FakeClientSpec, t: string) => (s.updated?.[t] ?? []).length;
 const writes = (s: FakeClientSpec, t: string) => (s.inserted?.[t] ?? []).length;
 const pin = (body: string) => createHash("sha256").update(body.replace(/"sessionId":"[0-9a-f-]{36}"/g, '"sessionId":"S"')).digest("hex");
 
@@ -161,6 +165,22 @@ describe("census-trust §30: events viewer gates fail closed on a failed read", 
   it("DT1 GET /events/:id, the gate flag read FAILS → the 18+ event is not served to the minor", async () => {
     world({ failOn: flagFails }); const r = await req("GET", `/events/${EVENT}`);
     assert.equal(r.status, 404, `an unread gate flag served an 18+ event to a minor: ${r.status} ${r.text.slice(0, 300)}`);
+  });
+
+  // ── POST /events/:id/invites/:inviteId/accept (sweep: the events read decides whether the gate runs) ──
+  it("IA0 CONTROL: invite accept, healthy reads, minor, 18+ event → refused 403, the invite is not marked accepted", async () => {
+    const s = world({}); const r = await req("POST", `/events/${EVENT}/invites/${INVITE}/accept`, {});
+    assert.equal(r.status, 403, r.text); assert.equal(updates(s, "event_invites"), 0);
+  });
+  it("IA1 invite accept, the events read FAILS → refused 503 degraded_unavailable, the invite is not marked accepted", async () => {
+    const s = world({ failOn: eventsReadFails }); const r = await req("POST", `/events/${EVENT}/invites/${INVITE}/accept`, {});
+    assert.equal(updates(s, "event_invites"), 0, `a failed event read skipped the eligibility gate and accepted the invite: ${r.status} ${r.text}`);
+    assert.equal(r.status, 503, r.text); assert.equal(JSON.parse(r.text).error, "degraded_unavailable");
+  });
+  it("H7 healthy invite accept, adult viewer → 200 {\"ok\":true,\"status\":\"accepted\"}, invite marked, RSVP written (as on main)", async () => {
+    const s = world({ minor: false }); const r = await req("POST", `/events/${EVENT}/invites/${INVITE}/accept`, {});
+    assert.equal(r.status, 200); assert.equal(r.text, '{"ok":true,"status":"accepted"}');
+    assert.equal(updates(s, "event_invites"), 1); assert.ok(writes(s, "event_rsvps") >= 1);
   });
 
   // ── Healthy answers unchanged (flag on / off / absent) ────────────────────

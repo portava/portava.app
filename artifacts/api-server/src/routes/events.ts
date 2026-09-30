@@ -5455,7 +5455,7 @@ router.post("/events/:id/invites/:inviteId/accept", async (req, res) => {
 
   // Check eligibility BEFORE marking the invite as accepted — rejected users must
   // not receive an "accepted" outcome even if a previous invite exists.
-  const { data: ev } = await sc.from("events").select("*").eq("id", id).maybeSingle();
+  const { data: ev, error: evErr } = await sc.from("events").select("*").eq("id", id).maybeSingle(); if (evErr) { req.log?.error({ err: evErr, eventId: id }, "invite accept: event read failed — refusing"); sendError(res, "degraded_unavailable", "We could not check this event right now. Please try again shortly."); return; }  // census-trust §30: a failed read skipped the eligibility gate below and still marked the invite accepted
   if (ev && ["open","full","waitlist"].includes((ev as any).state)) {
     const elig = await checkEventEligibility(sc, ev as any, user.id);
     if (!elig.ok) {
