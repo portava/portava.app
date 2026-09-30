@@ -225,9 +225,9 @@ export async function buildStructuredCompassContext(
       .select("buddy_id, city, booking_date, start_time, duration_h, status")
       .eq("traveler_id", userId)
       .in("status", ["confirmed", "in_progress"])
-      .limit(5);
+      .order("booking_date", { ascending: true }).order("start_time", { ascending: true }).order("id", { ascending: true }).limit(BOOKINGS_READ_CAP + 1);  // census-discovery §111 (D-W11X2-112): ordered, one past the cap
 
-    if (bookingsErr) markUnread(result, "bookings"); const rows = ((bookings ?? []) as any[])
+    if (bookingsErr) markUnread(result, "bookings"); const rows = capBookings(result, (bookings ?? []) as any[])
       .map((r) => stripCoordinateFields(r))
       .filter((r: any) => !hidden.has(r.buddy_id as string));
 
@@ -244,7 +244,7 @@ export async function buildStructuredCompassContext(
       }
     }
 
-    result.activeBookings = rows.slice(0, 3).map((r: any) => ({
+    if (rows.length > BOOKINGS_SHOWN) markUnread(result, "bookingsTruncated"); result.activeBookings = rows.slice(0, BOOKINGS_SHOWN).map((r: any) => ({  // §111 (D-W11X2-112): a shortened list is said
       city:        String(r.city ?? ""),
       date:        String(r.booking_date ?? ""),
       startTime:   r.start_time != null ? String(r.start_time) : null,
@@ -380,7 +380,7 @@ export interface StructuredContextUnread {
   /** The circles were read, but their member or handle read failed: member lists may be incomplete. */
   circleMembers?: true;
   bookings?: true;
-  stamps?: true; /** §110 (D-W11X2-95/97): the circle list or member lists are longer than read or shown; the bookings' buddy handles could not be read */ circlesTruncated?: true; circleMembersTruncated?: true; bookingBuddies?: true;
+  stamps?: true; /** §110 (D-W11X2-95/97): the circle list or member lists are longer than read or shown; the bookings' buddy handles could not be read */ circlesTruncated?: true; circleMembersTruncated?: true; bookingBuddies?: true; /** §111 (D-W11X2-112): more bookings than read or shown */ bookingsTruncated?: true;
 }
 
 function markUnread(ctx: StructuredCompassContext, section: keyof StructuredContextUnread): void {
@@ -393,7 +393,7 @@ function unreadContextLines(ctx: StructuredCompassContext): string[] {
   if (!u) return [];
   const out: string[] = [];
   if (u.circles) out.push("Circle membership could not be read right now: do not say the user is in no circles, or that the circles listed are all of them.");
-  else if (u.circleMembers) out.push("Circle member lists could not be read in full right now: do not say a circle has no other members.");
+  if (u.circleMembers) out.push("Circle member lists could not be read in full right now: do not say a circle has no other members.");  // census-discovery §111 (D-W11X2-113): said beside a failed circle read too — was `else if`
   if (u.bookings) out.push("Active buddy bookings could not be read right now: do not say the user has no bookings.");
   if (u.stamps) out.push("Passport history could not be read right now: do not say the user has no stamps.");
   out.push(...boundedContextLines(u)); return out;
@@ -430,6 +430,19 @@ function boundedContextLines(u: StructuredContextUnread): string[] {
   const out: string[] = [];
   if (u.circlesTruncated && !u.circles) out.push("These are not all of the user's circles (there are more than Compass reads at once): do not say they are all of them, or that the user is in no other circle.");
   if (u.circleMembersTruncated && !u.circleMembers) out.push("Circle member lists are shortened: do not say a circle has only the members listed.");
-  if (u.bookingBuddies) out.push("The buddies on these bookings could not be read right now: do not say a booking has no buddy.");
+  if (u.bookingsTruncated) out.push("These are not all of the user's active buddy bookings (there are more than listed): do not say they are all of them."); if (u.bookingBuddies) out.push("The buddies on these bookings could not be read right now: do not say a booking has no buddy.");
   return out;
 }
+
+// ── census-discovery §111 (DV-83 round 14, lane W11-X2, D-W11X2-112): a capped bookings read is said ──
+// The bookings read was an unordered `.limit(5)`, hidden buddies were dropped after it and three were kept,
+// with nothing marking the cut (§111.1 B5; D-W11X2-95's class, fixed for circles only). It is now ordered and
+// reads one past its cap; a longer read, or more visible bookings than shown, marks `bookingsTruncated`.
+const BOOKINGS_READ_CAP = 5;
+const BOOKINGS_SHOWN = 3;
+function capBookings<T>(ctx: StructuredCompassContext, rows: T[]): T[] {
+  if (rows.length <= BOOKINGS_READ_CAP) return rows;
+  markUnread(ctx, "bookingsTruncated");
+  return rows.slice(0, BOOKINGS_READ_CAP);
+}
+

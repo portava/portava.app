@@ -1155,7 +1155,7 @@ async function toolGetCircleActivity(
     profile ?? ({ userId, blockedUserIds: [], blockerUserIds: [], mutedUserIds: [] } as unknown as CompassProfile);
   const structured = await buildStructuredCompassContext(sc, effProfile); const circlesUnread = structured.unread?.circles === true, membersUnread = structured.unread?.circleMembers === true;  // census-discovery §109 (DV-83, D-W11X2-88): a failed circle read is never "not in any circles"
   return structured.circles.length > 0
-    ? { circles: structured.circles, ...(circlesUnread ? { info: CIRCLES_PARTIAL_INFO } : membersUnread ? { info: CIRCLE_MEMBERS_PARTIAL_INFO } : {}), ...circleListBoundsInfo(structured.unread) }  // census-discovery §110 (D-W11X2-95): a longer list than read or shown is said
+    ? { circles: structured.circles, ...(circlesUnread ? { info: circlesPartialInfo(structured.unread) } : membersUnread ? { info: CIRCLE_MEMBERS_PARTIAL_INFO } : {}), ...circleListBoundsInfo(structured.unread) }  // census-discovery §110 (D-W11X2-95): a longer list than read or shown is said
     : circlesUnread ? { circles: [], info: CIRCLES_UNREAD_INFO } : structured.unread?.circlesTruncated ? { circles: [], info: CIRCLES_TRUNCATED_EMPTY_INFO } : { circles: [], info: "The user is not in any circles." };  // §110: "not in any circles" only over a complete read
 }
 
@@ -2549,4 +2549,13 @@ class HiddenUsersUnreadableError extends Error {
     super(cause instanceof Error ? cause.message : "hidden-user lists unavailable and no snapshot to fall back to");
     this.name = "HiddenUsersUnreadableError";
   }
+}
+
+// ── census-discovery §111 (DV-83 round 14, lane W11-X2, D-W11X2-113): a failed circle-list read never hides the member-list sentence ──
+// With `u.circles` set, `get_circle_activity` said only that the LIST may be incomplete, and
+// `circleListBoundsInfo` adds nothing then, so an owned circle served with no handles over a failed member
+// read (or eight of nine) reached the model with nothing saying its members were unread or shortened.
+function circlesPartialInfo(u: StructuredContextUnread | undefined): string {
+  const members = u?.circleMembers ? CIRCLE_MEMBERS_PARTIAL_INFO : u?.circleMembersTruncated ? CIRCLE_MEMBERS_TRUNCATED_INFO : null;
+  return members ? `${CIRCLES_PARTIAL_INFO} ${members}` : CIRCLES_PARTIAL_INFO;
 }
