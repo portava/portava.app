@@ -190,7 +190,7 @@ import { logger } from "../lib/logger.js";
 import { detectAndStoreLanguage, invalidateContentTranslations } from "../services/contentTranslation.js";
 import { nameVisibilitySet, sanitizeIdentity } from "../lib/publicIdentity.js";
 import { isFlagEnabled, isKillSwitchEngaged } from "../lib/featureFlags.js";
-import { isBlockedBetween } from "../lib/blockGuard.js";
+import { isBlockedBetween, readBlockBetween } from "../lib/blockGuard.js"; import { readFlagState } from "../lib/capability/schemaCapability.js";  // census-discovery §111 (DV-83, D-W11X2-107)
 import {
   decideEventTransition,
   eventTransitionRefusalMessage,
@@ -671,24 +671,24 @@ type EligibilityFail = { ok: false; errorCode: string; message: string; /** cens
 export async function checkEventEligibility(
   sc: any,
   ev: any,            // full events row (must include host_id, age_min, age_max, trust_score_min, verified_only)
-  userId: string,
+  userId: string, rerun?: "staff" | "flag",  // census-discovery §111 (D-W11X2-107): set only on the re-check after an unread staff read or gate flag
 ): Promise<EligibilityOk | EligibilityFail> {
   // Event host always has full access — bypass all viewer gates
   if (userId === ev.host_id) return { ok: true };
 
   // Check if user is a co_host or moderator — they also bypass viewer gates
-  const { data: staffRole } = await sc
+  const { data: staffRole, error: staffErr } = rerun ? { data: null, error: null } : await sc
     .from("event_roles")
     .select("role")
     .eq("event_id", ev.id)
     .eq("user_id", userId)
     .in("role", ["co_host", "moderator"])
     .maybeSingle();
-  if (staffRole) return { ok: true };
+  if (staffRole) return { ok: true }; if (staffErr) return eligibilityUnread(await checkEventEligibility(sc, ev, userId, "staff"));  // census-discovery §111 (DV-83, D-W11X2-107): a staff role would have bypassed every gate below, so a refusal over an unread staff read is not a verdict
 
   // Block check
-  if (await isBlocked(sc, userId, ev.host_id)) {
-    return { ok: false, errorCode: "forbidden", message: "Cannot join this event" };
+  const blockRead = await readBlockBetween(sc, userId, ev.host_id); if (blockRead.blocked) {  // census-discovery §111 (DV-83, D-W11X2-107): three-state
+    return blockRead.unread ? { ok: false, errorCode: "forbidden", message: EVENT_ACCESS_UNAVAILABLE_MESSAGE, unread: true } : { ok: false, errorCode: "forbidden", message: "Cannot join this event" };
   }
   // Ban check. FAIL CLOSED, for the same reason as the trust_profiles read
   // below: supabase-js RESOLVES on a database error, so discarding `error` here
@@ -709,7 +709,7 @@ export async function checkEventEligibility(
   if (bannedRole) return { ok: false, errorCode: "forbidden", message: "You are banned from this event" };
 
   // Trust / age / verified gates
-  const trustGatesEnabled = await isFlagEnabled(sc, "events_trust_gates_enabled");
+  const trustGatesFlag = rerun === "flag" ? "on" : await readFlagState(sc, "events_trust_gates_enabled"); if (trustGatesFlag === "unreadable") return eligibilityUnread(await checkEventEligibility(sc, ev, userId, "flag")); const trustGatesEnabled = trustGatesFlag === "on";  // census-discovery §111 (DV-83, D-W11X2-107): an unread gate flag is not "gates off" — the gates run, and what they refuse is unread
   if (trustGatesEnabled) {
     if (ev.verified_only) {
       const { data: profile, error: verifiedErr } = await sc.from("profiles").select("verified").eq("id", userId).maybeSingle(); if (verifiedErr) return { ok: false, errorCode: "forbidden", message: "Verification check is temporarily unavailable for this event", unread: true };  // §110 (D-W11X2-93): a failed read is not "not verified"
@@ -2412,7 +2412,7 @@ router.get("/events/:id", async (req, res) => {
 
   // Block check FIRST — blocking overrides all other relationships.
   // A blocked user must never access even the minimal preview.
-  if (await isBlocked(sc, user.id, (ev as any).host_id)) {
+  const detailBlock = await readBlockBetween(sc, user.id, (ev as any).host_id); if (detailBlock.unread) { sendError(res, "degraded_unavailable", EVENT_ACCESS_UNAVAILABLE_DETAIL); return; } if (detailBlock.blocked) {  // census-discovery §111 (DV-83, D-W11X2-108): a failed block read is not "not found"
     sendError(res, "not_found", "Event not found or access denied"); return;
   }
 
@@ -6952,3 +6952,20 @@ async function withAuthorIdentity(sc: any, rows: any[], viewerId: string): Promi
   const map = await publicIdentityMap(sc, rows.map((r) => r.author_id as string), viewerId);
   return rows.map((r) => ({ ...r, author: map[r.author_id] ?? null }));
 }
+
+// ── census-discovery §111 (DV-83 round 14, lane W11-X2, D-W11X2-107, D-W11X2-108): an eligibility refusal over a read that failed is not a verdict ──
+//
+// `checkEventEligibility`'s block check was two-state (`isBlockedBetween` answers `true` on a failed read),
+// its staff-role read bound no error, and its `events_trust_gates_enabled` read answered "gates off" on a
+// failed read. So an event was withheld over a FAILED read as a verdict ("Cannot join this event", "verified
+// users only"), and an unread gate flag skipped the viewer gates. The block read is now three-state; after an
+// unread staff read or gate flag the gates are run again as if staff were absent and the flag on, and
+// whatever they refuse is marked `unread` (the caller says it could not check; it states nothing).
+const EVENT_ACCESS_UNAVAILABLE_MESSAGE = "Event access check is temporarily unavailable";
+const EVENT_ACCESS_UNAVAILABLE_DETAIL = "We could not check this event's access right now. Please try again shortly.";
+
+/** A refusal given without a read the verdict depends on: kept (fail-closed), and marked as not a verdict. */
+function eligibilityUnread(result: EligibilityOk | EligibilityFail): EligibilityOk | EligibilityFail {
+  return result.ok ? result : { ok: false, errorCode: result.errorCode, message: EVENT_ACCESS_UNAVAILABLE_MESSAGE, unread: true };
+}
+
