@@ -24,7 +24,7 @@ import {
   fetchMapTemporal,
   type TemporalForecastReport,
   type TemporalHistoryReport,
-} from '../services/mapTemporal.ts';
+} from '../services/mapTemporal.ts'; import { forecastLayersUnread } from '../features/map/time/forecastUnread.ts';  // census-discovery §111 (D-W11X2-115)
 import { bboxFromCenter } from '../services/mapProjection.ts';
 import { NOW_OFFSET, offsetKey, offsetsEqual, type TimeOffset } from '../features/map/time/timeMachine.ts';
 
@@ -53,7 +53,7 @@ export interface UseTemporalEntitiesResult {
   forecast: TemporalForecastReport | null;
   /** `available:false` is the honest "no history yet" — present only for a past offset. */
   history: TemporalHistoryReport | null;
-  loading: boolean;
+  loading: boolean; /** census-discovery §111 (D-W11X2-115): forecast layers the server could not read — say so, never draw their absence */ unreadForecastLayers: string[];
 }
 
 export function useTemporalEntities(args: UseTemporalEntitiesArgs): UseTemporalEntitiesResult {
@@ -61,7 +61,7 @@ export function useTemporalEntities(args: UseTemporalEntitiesArgs): UseTemporalE
 
   const [objects, setObjects] = useState<MapObject[]>([]);
   const [enabled, setEnabled] = useState(false);
-  const [forecast, setForecast] = useState<TemporalForecastReport | null>(null);
+  const [forecast, setForecast] = useState<TemporalForecastReport | null>(null); const [unreadForecastLayers, setUnreadForecastLayers] = useState<string[]>([]);
   const [history, setHistory] = useState<TemporalHistoryReport | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -73,7 +73,7 @@ export function useTemporalEntities(args: UseTemporalEntitiesArgs): UseTemporalE
       // Idle: drop the previous offset's payload so it can never show under NOW
       // or a closed mode.
       setObjects([]);
-      setForecast(null);
+      setForecast(null); setUnreadForecastLayers([]);
       setHistory(null);
       setLoading(false);
       return;
@@ -96,7 +96,7 @@ export function useTemporalEntities(args: UseTemporalEntitiesArgs): UseTemporalE
         if (res.ok) {
           setEnabled(res.data.enabled);
           setObjects(res.data.enabled ? res.data.objects : []);
-          setForecast(res.data.forecast);
+          setForecast(res.data.forecast); setUnreadForecastLayers(forecastLayersUnread(res.data));
           setHistory(res.data.history);
         }
       })
@@ -115,5 +115,5 @@ export function useTemporalEntities(args: UseTemporalEntitiesArgs): UseTemporalE
     // are rounded into the same viewport bucket the fetch uses.
   }, [shouldFetch, offsetKey(offset), offset, lat, lng, zoom, radiusKm, tz]);
 
-  return { objects, enabled, forecast, history, loading };
+  return { objects, enabled, forecast, history, loading, unreadForecastLayers };
 }

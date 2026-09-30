@@ -2837,7 +2837,7 @@ function FullScreenMapScreenInner() {
           offset={timeOffset}
           onChange={setTimeOffset}
           timeline={temporalView.timeline}
-          forecastConfidence={temporalView.forecastConfidence}
+          forecastConfidence={temporalView.forecastConfidence} unreadNotice={temporal.unreadForecastLayers.includes('events') ? "Events couldn't be checked for this forecast" : null} /* census-discovery §111 (D-W11X2-115) */
           bottomInset={insets.bottom + 140}
         />
       ) : null}

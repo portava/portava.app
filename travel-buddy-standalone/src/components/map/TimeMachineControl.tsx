@@ -134,7 +134,7 @@ export interface TimeMachineControlProps {
   bottomInset?: number;
   style?: StyleProp<ViewStyle>;
   /** Set false to hide the Yesterday/Tonight/Tomorrow/Last Friday row. */
-  showNamedControls?: boolean;
+  showNamedControls?: boolean; /** census-discovery §111 (D-W11X2-115): said in forecast mode when a forecast layer could not be read */ unreadNotice?: string | null;
 }
 
 export function TimeMachineControl({
@@ -146,7 +146,7 @@ export function TimeMachineControl({
   tz,
   bottomInset = 0,
   style,
-  showNamedControls = true,
+  showNamedControls = true, unreadNotice = null,
 }: TimeMachineControlProps) {
   const resolved = useMemo(() => resolveOffset(offset, now ?? new Date(), tz), [offset, now, tz]);
   const mode = resolved.mode;
@@ -208,7 +208,7 @@ export function TimeMachineControl({
         skin={skin}
         atLabel={formatClock(resolved.at, tz)}
         offsetTitle={resolved.label}
-        forecastConfidence={forecastConfidence ?? undefined}
+        forecastConfidence={forecastConfidence ?? undefined} unreadNotice={unreadNotice}
       />
 
       {timeline && <CityTimeline timeline={timeline} tz={tz} style={s.timeline} />}
@@ -269,13 +269,13 @@ function StatusStrip({
   skin,
   atLabel,
   offsetTitle,
-  forecastConfidence,
+  forecastConfidence, unreadNotice,
 }: {
   mode: TemporalMode;
   skin: ModeSkin;
   atLabel: string;
   offsetTitle: string;
-  forecastConfidence?: ConfidenceState;
+  forecastConfidence?: ConfidenceState; unreadNotice?: string | null;
 }) {
   if (mode === 'now') {
     return (
@@ -328,7 +328,7 @@ function StatusStrip({
         </Text>
         <Text style={s.statusSub} numberOfLines={1}>
           {`Predicted for ${atLabel} — not observed`}
-        </Text>
+        </Text>{unreadNotice ? <Text style={s.statusSub} accessibilityRole="alert">{unreadNotice}</Text> : null}
       </View>
     </View>
   );

@@ -44,7 +44,7 @@ export interface TemporalTargetInfo {
 
 /** The forecast report — counts + the accepted_plan refusal, never ambiguous. */
 export interface TemporalForecastReport {
-  events: number;
+  events: number | null;  // census-discovery §111 (D-W11X2-115): null = the events read failed
   itinerary: number;
   plan: {
     published: number;

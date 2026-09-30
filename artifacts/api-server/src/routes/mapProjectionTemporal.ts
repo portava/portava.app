@@ -48,7 +48,7 @@ import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { checkRateLimit } from "../lib/rateLimit.js";
 import { fetchBlockedSet } from "../lib/blocks.js";
-import { loadNearbyEvents } from "./mapSearch.js";
+import { loadNearbyEvents, nearbyEventsWithheldUnchecked } from "./mapSearch.js";
 import { applyProtection, type ProtectedZone } from "../lib/protectedLocations.js";
 import { aggregateForViewport, bboxContains, type BBox } from "../lib/mapAggregation.js";
 import { deriveGroupKey, type GroupIdentity } from "../lib/intelGroupKey.js";
@@ -516,13 +516,13 @@ router.get(
     const collected: (MapObject | null)[] = [];
     const sources: string[] = [];
     let forecastReport:
-      | { events: number; itinerary: number; plan: { published: number; withheld: number; refusal: PlanArrivalRefusal | null; refusals: Record<string, string> } }
+      | { events: number | null; itinerary: number; plan: { published: number; withheld: number; refusal: PlanArrivalRefusal | null; refusals: Record<string, string> } }
       | null = null;
     let historyReport: { available: boolean; covering: number } | null = null;
 
     if (target.mode === "forecast" && wantKind("prediction")) {
       const [events, itineraryStops, planRead] = await Promise.all([
-        loadNearbyEvents(sc, user.id, lat, lng, radiusKm, blockedSet).catch(() => [] as any[]),
+        loadNearbyEvents(sc, user.id, lat, lng, radiusKm, blockedSet).catch(() => null),  // census-discovery §111 (DV-83, D-W11X2-115): a failed read is null, never []
         loadViewerItineraryStops(sc, user.id).catch(() => null),
         readPlanArrivals(sc, target, nowMs, bbox).catch(
           (): PlanArrivalReadResult => ({ arrivals: [], refusal: "read_failed", zones: 0 }),
@@ -540,14 +540,14 @@ router.get(
       );
       for (const o of forecast.objects) collected.push(o);
 
-      sources.push("events");
+      if (events !== null && nearbyEventsWithheldUnchecked(events) === 0) sources.push("events");  // §111 (D-W11X2-115): named only over a read that succeeded and withheld nothing unchecked — was unconditional
       if (itineraryStops !== null) sources.push("itinerary");
       // A refusal means we never assembled a cohort, so the layer must not claim
       // an empty answer it did not obtain.
       if (planRead.refusal === null) sources.push("accepted_plan");
 
       forecastReport = {
-        events: forecast.events,
+        events: events === null ? null : forecast.events,  // §111 (D-W11X2-115): no count over a failed read
         itinerary: forecast.itinerary,
         plan: {
           published: forecast.plan.published,
