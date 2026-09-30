@@ -1040,7 +1040,7 @@ router.get("/events", async (req, res) => {
   if (city)     query = query.ilike("city", `%${city}%`);
   if (category) query = query.eq("category", category);
   if (dateFrom) query = query.gte("starts_at", dateFrom);
-  if (dateTo)   query = query.lte("starts_at", dateTo); if (near) query = query.gte("location_lat", near.south).lte("location_lat", near.north).gte("location_lng", near.west).lte("location_lng", near.east);  // §115 (B12)
+  if (dateTo)   query = query.lte("starts_at", dateTo); if (near) query = eventsNearQuery(query, near);  // §115 (B12); census-discovery §116 (B18): the box wraps the antimeridian and opens over a pole
 
   const { data: events, error } = await query;
 
@@ -1097,8 +1097,8 @@ router.get("/events", async (req, res) => {
   // — otherwise the Pulse card and the detail screen can show two different
   // numbers for the same event. Overwrite the cached column with a live
   // per-event count before ranking/formatting.
-  if (allEventIds.length > 0) {
-    const { data: liveGoingRows } = await sc
+  let goingUnread = false; if (allEventIds.length > 0) {  // census-discovery §116 (DV-83, B14): a failed live count is named, never served as 0
+    const { data: liveGoingRows, error: liveGoingErr } = await sc
       .from("event_rsvps")
       .select("event_id")
       .in("event_id", allEventIds)
@@ -1108,7 +1108,7 @@ router.get("/events", async (req, res) => {
       const eid = r.event_id as string;
       liveGoingCounts.set(eid, (liveGoingCounts.get(eid) ?? 0) + 1);
     }
-    for (const ev of rows) {
+    if (liveGoingErr || !Array.isArray(liveGoingRows)) goingUnread = true; else for (const ev of rows) {  // §116 (B14): the cached going_count stays
       (ev as any).going_count = liveGoingCounts.get(ev.id as string) ?? 0;
     }
   }
@@ -1333,7 +1333,7 @@ router.get("/events", async (req, res) => {
     })),
     page,
     limit,
-    sessionId, ...(poolCut || friendsUnread || rankedEvents.length > offset + limit ? { truncated: true as const } : {}),  // census-discovery §115 (DV-83, B12): an answer that is not the whole list says so; a whole one is byte-identical
+    sessionId, ...(poolCut || friendsUnread || rankedEvents.length > offset + limit ? { truncated: true as const } : {}), ...(goingUnread ? { failedSources: ["event_rsvps"] } : {}),  // census-discovery §115 (DV-83, B12): an answer that is not the whole list says so; a whole one is byte-identical; §116 (B14): a failed count read is named
   });
 });
 
@@ -1411,8 +1411,8 @@ router.get("/events/city/:city", async (req, res) => {
   // BUG AY fix: same cached-vs-live going_count drift as the main list
   // endpoint — recompute from event_rsvps so this alias never disagrees
   // with the detail screen either.
-  if (cityEventIds.length > 0) {
-    const { data: liveGoingRows } = await sc
+  let cityGoingUnread = false; if (cityEventIds.length > 0) {  // census-discovery §116 (DV-83, B14): the same on the city alias
+    const { data: liveGoingRows, error: liveGoingErr } = await sc
       .from("event_rsvps")
       .select("event_id")
       .in("event_id", cityEventIds)
@@ -1422,7 +1422,7 @@ router.get("/events/city/:city", async (req, res) => {
       const eid = (r as any).event_id as string;
       liveGoingCounts.set(eid, (liveGoingCounts.get(eid) ?? 0) + 1);
     }
-    for (const ev of filtered) {
+    if (liveGoingErr || !Array.isArray(liveGoingRows)) cityGoingUnread = true; else for (const ev of filtered) {  // §116 (B14): the cached going_count stays
       (ev as any).going_count = liveGoingCounts.get(ev.id as string) ?? 0;
     }
   }
@@ -1434,7 +1434,7 @@ router.get("/events/city/:city", async (req, res) => {
       myWaitlistPosition: cityWaitlistPositionMap[e.id] ?? null,
     })),
     page,
-    limit,
+    limit, ...(cityGoingUnread ? { failedSources: ["event_rsvps"] } : {}),  // §116 (B14)
   });
 });
 
@@ -2450,16 +2450,16 @@ router.get("/events/:id", async (req, res) => {
     sc.from("event_join_requests").select("status").eq("event_id", id).eq("user_id", user.id).maybeSingle(),
   ]);
 
-  const goingData = (goingResult as any).data ?? [];
+  const goingFailed = Boolean((goingResult as any).error); const goingData = (goingResult as any).data ?? [];  // census-discovery §116 (DV-83, sweep SW10): a failed count read is named, never a measured 0
   const counts = {
-    going:      goingData.filter((r: any) => r.status === "going").length,
-    maybe:      goingData.filter((r: any) => r.status === "maybe").length,
+    going:      goingFailed ? ((ev as any).going_count ?? null) : goingData.filter((r: any) => r.status === "going").length,
+    maybe:      goingFailed ? null : goingData.filter((r: any) => r.status === "maybe").length,
     interested: 0,
     cant_go:    0,
   };
 
   // Full RSVP counts
-  const { data: allRsvps } = await sc.from("event_rsvps").select("status").eq("event_id", id);
+  const { data: allRsvps, error: allRsvpsErr } = await sc.from("event_rsvps").select("status").eq("event_id", id); if (allRsvpsErr) { (counts as any).interested = null; (counts as any).cant_go = null; }  // §116 (SW10)
   for (const r of (allRsvps as any[]) ?? []) {
     if (r.status === "interested") counts.interested++;
     if (r.status === "cant_go") counts.cant_go++;
@@ -2483,11 +2483,11 @@ router.get("/events/:id", async (req, res) => {
     goingProfiles = ((gp as any[]) ?? []).map((p) => sanitizeIdentity(p, allowedGoing, user.id));
   }
 
-  const { data: waitlistData } = await sc
+  const { data: waitlistData, error: waitlistErr } = await sc
     .from("event_waitlist")
     .select("user_id")
     .eq("event_id", id);
-  const waitlistCount = ((waitlistData as any[]) ?? []).length;
+  const waitlistCount = waitlistErr ? ((ev as any).waitlist_count ?? null) : ((waitlistData as any[]) ?? []).length;  // §116 (SW10): the cached count over a failed read
 
   const hpRaw = (hostResult as any).data;
   const hostAllowed = await nameVisibilitySet(sc, [(ev as any).host_id]);
@@ -2507,7 +2507,7 @@ router.get("/events/:id", async (req, res) => {
     ...toAuthorizedEventView(ev as any, user.id, { goingRsvp: isParticipant }),
     host,
     counts,
-    waitlistCount,
+    waitlistCount, ...(goingFailed || allRsvpsErr || waitlistErr ? { failedSources: [...(goingFailed || allRsvpsErr ? ["event_rsvps"] : []), ...(waitlistErr ? ["event_waitlist"] : [])] } : {}),  // §116 (SW10)
     myRsvp: (rsvpResult as any).data?.status ?? null,
     myJoinRequestStatus: (joinReqResult as any).data?.status ?? null,
     myWaitlistPosition: (waitlistResult as any).data?.position ?? null,
@@ -3351,10 +3351,10 @@ router.post("/events/:id/waitlist/accept", async (req, res) => {
   await sc.from("event_waitlist").delete().eq("event_id", id).eq("user_id", user.id);
   await syncEventState(sc, id);
   const goingNow = await getGoingCount(sc, id);
-  const { data: wlAfterAccept } = await sc.from("event_waitlist").select("user_id").eq("event_id", id);
+  const { data: wlAfterAccept, error: wlAfterAcceptErr } = await sc.from("event_waitlist").select("user_id").eq("event_id", id);
   await sc.from("events").update({
     going_count: goingNow ?? undefined,  // census-trust §30.8: unread → the column is left alone (JSON drops undefined), never 0
-    waitlist_count: ((wlAfterAccept as any[]) ?? []).length,
+    waitlist_count: wlAfterAcceptErr ? undefined : ((wlAfterAccept as any[]) ?? []).length,  // census-discovery §116 (sweep SW11): unread → the column is left alone, never 0
   }).eq("id", id);
   await syncAttendee(sc, id, user.id, "going");
 
@@ -3434,10 +3434,10 @@ router.delete("/events/:id/waitlist", async (req, res) => {
 
   await sc.from("event_waitlist").delete().eq("event_id", id).eq("user_id", user.id);
   // Recompute waitlist_count so UI stays accurate
-  const { data: wlRemaining } = await sc.from("event_waitlist").select("user_id").eq("event_id", id);
+  const { data: wlRemaining, error: wlRemainingErr } = await sc.from("event_waitlist").select("user_id").eq("event_id", id);
   await sc
     .from("events")
-    .update({ waitlist_count: ((wlRemaining as any[]) ?? []).length, updated_at: new Date().toISOString() })
+    .update({ waitlist_count: wlRemainingErr ? undefined : ((wlRemaining as any[]) ?? []).length, updated_at: new Date().toISOString() })  // §116 (SW11): unread → left alone, never 0
     .eq("id", id);
   res.json({ ok: true });
 });
@@ -3699,10 +3699,10 @@ router.post("/events/:id/roles", async (req, res) => {
     ({ error: banWlDelErr } = await sc.from("event_waitlist").delete().eq("event_id", id).eq("user_id", targetId)); if (banWlDelErr) req.log?.error({ err: banWlDelErr, eventId: id, targetId }, "ban: waitlist row could not be removed");
     await syncEventState(sc, id);
     const going = await getGoingCount(sc, id);
-    const { data: wlAfterBan } = await sc.from("event_waitlist").select("user_id").eq("event_id", id);
+    const { data: wlAfterBan, error: wlAfterBanErr } = await sc.from("event_waitlist").select("user_id").eq("event_id", id);
     await sc.from("events").update({
       going_count: going ?? undefined,  // census-trust §30.8: unread → the column is left alone, never 0
-      waitlist_count: ((wlAfterBan as any[]) ?? []).length,
+      waitlist_count: wlAfterBanErr ? undefined : ((wlAfterBan as any[]) ?? []).length,  // §116 (SW11): unread → left alone, never 0
     }).eq("id", id);
     await syncAttendee(sc, id, targetId, null);
 
@@ -4538,14 +4538,14 @@ router.post("/events/:id/reviews", async (req, res) => {
   }
 
   // Recompute average rating
-  const { data: allRatings } = await sc
+  const { data: allRatings, error: allRatingsErr } = await sc
     .from("event_reviews")
     .select("rating")
     .eq("event_id", id);
   const avg = allRatings && (allRatings as any[]).length > 0
     ? Math.round(((allRatings as any[]).reduce((s: number, r: any) => s + r.rating, 0) / (allRatings as any[]).length) * 10) / 10
     : parsed.data.rating;
-  await sc.from("events").update({ avg_rating: avg, review_count: ((allRatings as any[]) ?? []).length }).eq("id", id);
+  if (!allRatingsErr) await sc.from("events").update({ avg_rating: avg, review_count: ((allRatings as any[]) ?? []).length }).eq("id", id);  // §116 (SW11): a failed ratings read writes neither the count nor the average
 
   res.status(201).json({
     id:        (review as any).id,
@@ -6169,8 +6169,8 @@ router.post("/events/:id/block-user/:userId", async (req, res) => {
 
   await syncEventState(sc, id);
   const going = await getGoingCount(sc, id);
-  const { data: wlAfter } = await sc.from("event_waitlist").select("user_id").eq("event_id", id);
-  await sc.from("events").update({ going_count: going ?? undefined, waitlist_count: ((wlAfter as any[]) ?? []).length }).eq("id", id);
+  const { data: wlAfter, error: wlAfterErr } = await sc.from("event_waitlist").select("user_id").eq("event_id", id);
+  await sc.from("events").update({ going_count: going ?? undefined, waitlist_count: wlAfterErr ? undefined : ((wlAfter as any[]) ?? []).length }).eq("id", id);  // §116 (SW11): unread → left alone, never 0
   await syncAttendee(sc, id, userId, null);
 
   await logEventActivity(sc, id, user.id, "user_blocked", { targetUserId: userId });
@@ -7096,8 +7096,8 @@ function eventsNearFilter(q: Record<string, unknown>): EventsNear | null {
   if (q.nearLat == null || q.nearLng == null || !Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
   const r = Number(q.nearRadiusKm);
   const radiusKm = Number.isFinite(r) && r > 0 ? Math.min(r, 500) : 25;
-  const dLat = radiusKm / 111.32;
-  const dLng = radiusKm / (111.32 * Math.max(0.2, Math.cos((lat * Math.PI) / 180)));
+  const dLat = eventsNearDLat(radiusKm);  // census-discovery §116 (B18): the distance filter's own earth, so the box is never narrower than the radius
+  const dLng = eventsNearDLng(lat, radiusKm);  // §116 (B18): exact and unclamped; 180 (every longitude) when the circle holds a pole
   return { lat, lng, radiusKm, west: lng - dLng, south: lat - dLat, east: lng + dLng, north: lat + dLat };
 }
 
@@ -7108,4 +7108,34 @@ function withinEventsNear(e: { location_lat?: unknown; location_lng?: unknown },
   const toRad = (d: number) => (d * Math.PI) / 180;
   const a = Math.sin(toRad(lat - near.lat) / 2) ** 2 + Math.cos(toRad(near.lat)) * Math.cos(toRad(lat)) * Math.sin(toRad(lng - near.lng) / 2) ** 2;
   return 2 * 6371 * Math.asin(Math.min(1, Math.sqrt(a))) <= near.radiusKm;
+}
+
+// ── census-discovery §116 (DV-83 round 19, lane W11-X2; the round-18 verifier's B18) ─────────────────────────────────
+//
+// The near box was built as lng ± dLng with no wrap at the 180th meridian, with cos(lat) clamped at 0.2 (narrower than
+// the radius above ~78.5°), and at 111.32 km per degree while withinEventsNear measures on a 6371 km earth (111.19 km
+// per degree) — so events inside the radius were dropped in the query, unsaid. The box is now the exact extent of the
+// circle on the distance filter's own sphere, padded by BOX_PAD_DEG; it opens to every longitude when the circle holds a
+// pole, and a box that crosses the antimeridian is queried as two longitude ranges. withinEventsNear still decides.
+
+const EVENTS_NEAR_EARTH_KM = 6371;
+const BOX_PAD_DEG = 1e-6;
+
+function eventsNearDLat(radiusKm: number): number {
+  return (radiusKm / EVENTS_NEAR_EARTH_KM) * (180 / Math.PI) + BOX_PAD_DEG;
+}
+
+function eventsNearDLng(lat: number, radiusKm: number): number {
+  const ang = radiusKm / EVENTS_NEAR_EARTH_KM;
+  const phi = (Math.abs(lat) * Math.PI) / 180;
+  if (phi + ang >= Math.PI / 2) return 180;
+  return Math.asin(Math.min(1, Math.sin(ang) / Math.cos(phi))) * (180 / Math.PI) + BOX_PAD_DEG;
+}
+
+function eventsNearQuery(query: any, near: EventsNear): any {
+  const q = query.gte("location_lat", near.south).lte("location_lat", near.north);
+  if (near.east - near.west >= 360) return q;
+  if (near.west < -180) return q.or(`and(location_lng.gte.${near.west + 360},location_lng.lte.180),and(location_lng.gte.-180,location_lng.lte.${near.east})`);
+  if (near.east > 180) return q.or(`and(location_lng.gte.${near.west},location_lng.lte.180),and(location_lng.gte.-180,location_lng.lte.${near.east - 360})`);
+  return q.gte("location_lng", near.west).lte("location_lng", near.east);
 }
