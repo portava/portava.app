@@ -4643,6 +4643,9 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/app/hashtag/[slug].tsx",  // §113 grades the hashtag page's unknown follow state (D-W11X2-137)
     "travel-buddy-standalone/src/components/TagPreviewSheet.tsx",  // §113 grades the preview sheet's unknown follow state (D-W11X2-137)
     "travel-buddy-standalone/src/services/hashtag.ts",  // §113 grades the nullable follow state (D-W11X2-137)
+    // census-discovery §114 (lane W11-X2, round 17): the files §114 grades.
+    "travel-buddy-standalone/src/hooks/useMapEntities.ts",  // §114 grades the NOW map's unread and cut layers (B5)
+    "travel-buddy-standalone/src/data/discovery.ts",  // §114 names its `export *` from src/__fixtures__, which puts that directory in the bundle (GH28)
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

@@ -19184,6 +19184,26 @@ Every `.limit(` on a Discovery, map, gems or Compass read path this lane could r
   - a consumer of a refusal-carrying carrier the guard cannot see, or a carrier reached by an unregistered non-call reference (G13);
   - any path §112.12 lists.
 
+## §114 — DV-83 round 17 (lane W11-X2)
+
+### 114.1 Integrator: DV-83 held at W after independent re-verification at `1b4aa20fe`
+
+*Integrator, 2026-09-30. §113 is round 16 at `1b4aa20fe` (PR #530's head before the test-only TS8 fixture fix `678dc251e`). An independent verifier checked that tree: it re-ran every round-15 to round-7 probe unchanged (138 server, the v7–v14 client suites), wrote new ones (`zz-v16-*`, the adapted `zz-v16a-*`, and guard-reach fixtures GH24–GH32 placed on disk one at a time), applied 67 mutations of its own, and restored every mutated file byte-identical, checked by sha256. Its report is the round-16 verifier's `dv83-r16-verifier.md`.*
+
+- **Confirmed.** §113.1's four breaks (B1–B4), GH0–GH23, N1, V9 and every earlier round's breaks are closed in behaviour: the v15 to v7 probes re-run unchanged all pass, and the two v15 probes the lane said encode the old implementation (V15-TH4, V15-NM0) are green once adapted to the real code. 62 of its 67 mutations are killed by the lane's pins; H9 (`placesCut && placeIds.length === 0` in the temporal history read) is equivalent.
+- **Found: two paths that break the criterion's wording, each shown by probes that fail against this tree (9 red probes).** Both are server truth that never reaches the user.
+  1. **B5. The NOW map never says a layer the gateway did not read (clause c; safety-relevant display fail-open).** `app/map/index.tsx` never reads `useMapEntities`' `unreadLayers`; the hook computes it over the five toggleable layers only, never checks the §16 optional layers (safety notices, meeting points, crowd flow, the city layers) against `sources` (`GATEWAY_SOURCE_FOR_OPTIONAL_LAYER` is unread), and asks for `limit: 200` and drops `nextCursor`. A failed or cut safety-notice read shows the map with no hazard notice and nothing said (V16-NU1–NU4, V16-MS1 red; NU0, MS0 the controls).
+  2. **B6. The Time Machine's forecast draws a refused accepted-plan layer, an unread itinerary and a cut page as a whole forecast (clause c).** `forecastLayersUnread` reads `events` only; `temporalNotice` never reads `forecast.plan.refusal` or `forecast.itinerary`; `useTemporalEntities` asks for `limit: 200` and drops `nextCursor` (V16-FP1–FP3 red; FP0 the control).
+- **Rulings not honest.** D-W11X2-93's "the client already says a layer it did not name could not be read" is not honest (B5); D-W11X2-133 and §113.12 clause 5 ("reads every bundled script") and D-W11X2-135/-136 ("said to be cut or refused") are honest only in part.
+- **The guard's reach.** GH25, GH27 and GH28 escape it: the walk skips `__fixtures__` and `__mocks__`, but Metro's blockList excludes only `__tests__` and `*.test.*`, and `travel-buddy-standalone/src/data/discovery.ts` does `export * from '../__fixtures__/…'`, so that directory is bundled. Four guard mutations survive, each non-equivalent (R3, R5, R6, R7; fixtures GH29, GH30, GH31b, GH32).
+- **Next.** A round-17 lane closes B5 and B6 with the verifier's probes as failing-first tests, walks what Metro bundles, adds GH29–GH32 as G13 cases, corrects the rulings, and sweeps every client consumer of a gateway or temporal answer again for a marker the screen never says. The row moves only after that.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | C | **W** | §113 closes §113.1's four paths, confirmed at `1b4aa20fe` (§114.1). Two paths still present a failed or cut read as complete: the NOW map's layers over a gateway answer that does not name them (`travel-buddy-standalone/src/hooks/useMapEntities.ts`, `travel-buddy-standalone/app/map/index.tsx`) and the Time Machine's forecast over a refused plan layer, an unread itinerary or a cut page (`travel-buddy-standalone/src/features/map/time/forecastUnread.ts`). GH25, GH27 and GH28 escape the guard, and R3, R5, R6 and R7 survive it. D-W11X2-93 is not honest; D-W11X2-133, -135 and -136 are honest in part. |
+
+Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/lib/calls/callGatewayAdapter.ts — §113.8 names it for N1, outside DV-83: census-telegraph §40 records the call gateway's unread-gate outcome, and no Discovery verdict rests on it.
