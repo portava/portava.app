@@ -1211,11 +1211,11 @@ async function toolCheckTripConflicts(
     .gte("day_date", startDate)
     .lte("day_date", endDate)
     .is("removed_at", null)
-    .limit(20);
+    .order("day_date", { ascending: true }).limit(PLANNED_ITEMS_READ_CAP + 1);  // census-discovery §111 (D-W11X2-119): ordered, one past the cap
   // Unbound before, like the three selection reads above: an unreadable plan
   // became an empty `plannedItems`, which reads as "those days are free".
   if (itemsErr) itemsUnread = true;
-  else for (const i of (items ?? []) as any[]) {
+  else for (const i of ((items ?? []) as any[]).slice(0, PLANNED_ITEMS_READ_CAP)) {
     conflictItems.push({ tripId: i.trip_id, title: wrapUgc(String(i.title ?? "")), dayDate: i.day_date });
   }
 
@@ -1227,7 +1227,7 @@ async function toolCheckTripConflicts(
       destination_city: t.destinationCity, start_date: t.startDate, end_date: t.endDate, status: t.status,
     })),
     plannedItems: conflictItems,
-    ...(itemsUnread ? { info: "The overlapping trips are real, but their planned items could not be read — the empty list is unread, not empty." } : {}),
+    ...(itemsUnread ? { info: "The overlapping trips are real, but their planned items could not be read — the empty list is unread, not empty." } : ((items ?? []) as any[]).length > PLANNED_ITEMS_READ_CAP ? { info: PLANNED_ITEMS_CUT_INFO } : {}),  // §111 (D-W11X2-119)
   };
 }
 
@@ -1739,16 +1739,16 @@ async function toolWhosAround(
   profile: CompassProfile | null,
   userId: string,
 ): Promise<unknown> {
-  const { people, contextsChecked, unread } = await getWhosAround(sc, userId, hiddenUserIds(profile)); if (unread && people.length === 0) return { people: [], info: WHOS_AROUND_UNREAD_INFO };  // census-discovery §107 (DV-83, D-W11X2-73): a failed presence read is neither "no active trips" nor "nobody is sharing"
+  const { people, contextsChecked, unread, truncated } = await getWhosAround(sc, userId, hiddenUserIds(profile)); if (unread && people.length === 0) return { people: [], info: WHOS_AROUND_UNREAD_INFO };  // census-discovery §107 (DV-83, D-W11X2-73): a failed presence read is neither "no active trips" nor "nobody is sharing"
   if (contextsChecked === 0) {
     return { people: [], info: "The user has no active trips or upcoming events with a circle to check." };
   }
   return people.length > 0
     ? {
         people,
-        info: unread ? WHOS_AROUND_PARTIAL_INFO : "Only people who opted in to sharing appear, at the granularity they chose. Location is approximate only — never precise.",  // census-discovery §108 (DV-83, D-W11X2-76): a read failed, so the list may be incomplete
+        info: unread ? WHOS_AROUND_PARTIAL_INFO : truncated ? WHOS_AROUND_CUT_INFO : "Only people who opted in to sharing appear, at the granularity they chose. Location is approximate only — never precise.",  // census-discovery §108 (DV-83, D-W11X2-76): a read failed, so the list may be incomplete
       }
-    : { people: [], info: "Nobody in the user's circles is sharing their presence right now." };
+    : { people: [], info: truncated ? WHOS_AROUND_CUT_EMPTY_INFO : "Nobody in the user's circles is sharing their presence right now." };  // census-discovery §111 (DV-83, D-W11X2-117): "nobody" only over a walk that was not cut
 }
 
 /**
@@ -1765,7 +1765,7 @@ async function toolMeetupOpportunities(
   profile: CompassProfile | null,
   userId: string,
 ): Promise<unknown> {
-  const { opportunities, contextsChecked, withheldForPrivacy, unread } =
+  const { opportunities, contextsChecked, withheldForPrivacy, unread, truncated } =
     await getMeetupOpportunities(sc, userId, hiddenUserIds(profile));
   if (unread && opportunities.length === 0) return { opportunities: [], withheldForPrivacy, info: MEETUP_UNREAD_INFO }; if (contextsChecked === 0) {  // census-discovery §108 (DV-83, D-W11X2-83): a failed read is neither "no trips", "nobody sharing" nor "not shared both ways"
     return { opportunities: [], withheldForPrivacy: 0, info: "The user has no active trips or upcoming events with a circle to check." };
@@ -1777,13 +1777,13 @@ async function toolMeetupOpportunities(
       info:
         withheldForPrivacy > 0
           ? "Nobody can be offered as a meetup right now — a meetup needs BOTH people to be sharing presence with each other. Say that availability isn't shared both ways; never say who, and never guess why."
-          : "Nobody in the user's circles is sharing a current presence to build a meetup on.",
+          : truncated ? MEETUP_CUT_EMPTY_INFO : "Nobody in the user's circles is sharing a current presence to build a meetup on.",  // census-discovery §111 (DV-83, D-W11X2-117)
     };
   }
   return {
     opportunities,
     withheldForPrivacy,
-    info: unread ? MEETUP_PARTIAL_INFO : "Each occasion exists only because both people are sharing presence with each other. Location is approximate only — repeat the `where` string exactly and never propose a place the result did not name.",  // §108: a read failed, so the list may be incomplete
+    info: unread ? MEETUP_PARTIAL_INFO : truncated ? MEETUP_CUT_INFO : "Each occasion exists only because both people are sharing presence with each other. Location is approximate only — repeat the `where` string exactly and never propose a place the result did not name.",  // §108: a read failed, so the list may be incomplete
   };
 }
 
@@ -2559,3 +2559,14 @@ function circlesPartialInfo(u: StructuredContextUnread | undefined): string {
   const members = u?.circleMembers ? CIRCLE_MEMBERS_PARTIAL_INFO : u?.circleMembersTruncated ? CIRCLE_MEMBERS_TRUNCATED_INFO : null;
   return members ? `${CIRCLES_PARTIAL_INFO} ${members}` : CIRCLES_PARTIAL_INFO;
 }
+
+// ── census-discovery §111 (DV-83 round 14, lane W11-X2, D-W11X2-117, D-W11X2-119): a cut walk or a capped list is said ──
+// The presence walk checks three trips, three going events, five contexts, twenty members per context and twenty
+// people (CompassSocialEngine marks every cut `truncated`); "nobody is sharing" is said only over a walk that was
+// not cut. `check_trip_conflicts`' planned items were an unordered `.limit(20)` served as the plan.
+const WHOS_AROUND_CUT_EMPTY_INFO = "Compass checked only some of the user's trips and circles (it reads a few at a time), and nobody there is sharing their presence. Say nobody could be found in the circles checked; do not say nobody is around.";
+const WHOS_AROUND_CUT_INFO = "Only people who opted in to sharing appear, at the granularity they chose. Location is approximate only — never precise. Compass checked only some of the user's trips and circles, so this is not everyone who may be around: say so.";
+const MEETUP_CUT_EMPTY_INFO = "Compass checked only some of the user's trips and circles (it reads a few at a time), and nobody there is sharing a current presence to build a meetup on. Say none could be found in the circles checked; do not say there is nobody.";
+const MEETUP_CUT_INFO = "Each occasion exists only because both people are sharing presence with each other. Location is approximate only — repeat the `where` string exactly and never propose a place the result did not name. Compass checked only some of the user's trips and circles, so these are not all the occasions: say so.";
+const PLANNED_ITEMS_READ_CAP = 20;
+const PLANNED_ITEMS_CUT_INFO = "These are not all of the planned items on the overlapping trips in that range (there are more than Compass reads at once): do not say these are all of them, or that a day without one listed is free.";

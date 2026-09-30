@@ -17,6 +17,7 @@
  *   FG1  an age-gated event, the `events_trust_gates_enabled` read fails → the gates run; the refusal is unread (was: gates skipped)
  *   FG2  GET /events/:id, the same → degraded_unavailable
  *   FGc  CONTROL: the gate flag read fails on an event with no gate → served, complete
+ *   BN1  the ban read fails, the staff read succeeds → unread (the round-13 X29, which the staff re-check now masks elsewhere)
  *   CV1  GET /events/:id, a friends-only event, the friendship read fails → degraded_unavailable (was: the locked private wall)
  *   CV2  the same, the RSVP read fails → degraded_unavailable
  *   CV3  an invite-only event, the RSVP read fails → degraded_unavailable
@@ -202,4 +203,10 @@ describe("v13: the per-event block and staff reads, over a failed read", () => {
     const { status } = await get(`/events/${EID}`);
     assert.equal(status, 404);
   });
+  it("BN1 the ban read fails while the staff read succeeds → the ban arm itself marks the refusal unread (X29)", async () => {
+    use(client({ events: [ev("e13")], failIf: (t, _s, calls) => t === "event_roles" && !calls.includes("in") }));
+    const { body } = await search();
+    assert.notEqual(body.sources?.event?.refusal, null, `a failed ban read withheld the event as a verdict: ${JSON.stringify(body.sources)}`);
+  });
 });
+

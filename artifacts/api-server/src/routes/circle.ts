@@ -21,7 +21,7 @@ import { requireUser, sendError, safeSecretEquals, type ApiErrorCode } from "../
 import { requireAdmin } from "../lib/requireAdmin.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
-import { isFlagEnabled } from "../lib/featureFlags.js"; import { discoveryRefusal } from "../lib/discoveryRefusal.js";
+import { isFlagEnabled } from "../lib/featureFlags.js"; import { discoveryRefusal } from "../lib/discoveryRefusal.js"; import { readFlagState } from "../lib/capability/schemaCapability.js";
 import {
   canViewCirclePresence,
   canViewCirclePresenceBatch,
@@ -85,7 +85,7 @@ function validateContextId(res: any, id: string): boolean {
 
 /** Require the find_your_circle_enabled flag (NOT the kill-switch). */
 async function requireFeatureEnabled(res: any, sc: any): Promise<boolean> {
-  const enabled = await isFlagEnabled(sc, "find_your_circle_enabled");
+  const flagState = await readFlagState(sc, "find_your_circle_enabled"); if (flagState === "unreadable") { sendError(res, "degraded_unavailable", "Find Your Circle could not be checked right now. Please try again shortly.", { reason: "flag_unreadable" }); return false; } const enabled = flagState === "on";  // census-discovery §111 (DV-83, D-W11X2-118): an unread flag is a failed read, never "not available yet"
   if (!enabled) {
     sendError(res, "feature_disabled", "Find Your Circle is not available yet");
     return false;

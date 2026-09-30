@@ -374,7 +374,7 @@ async function activeContexts(sc: SupabaseClient, userId: string, unread?: Prese
         .select("id, title, destination_city, status")
         .in("id", tripIds)
         .in("status", ["active", "upcoming"]);
-      if (tripsErr) markPresenceUnread(unread); for (const t of ((trips ?? []) as any[]).slice(0, 3)) {
+      if (tripsErr) markPresenceUnread(unread); if (((trips ?? []) as any[]).length > 3) markPresenceCut(unread); for (const t of ((trips ?? []) as any[]).slice(0, 3)) {  // census-discovery §111 (DV-83, D-W11X2-117): a cut walk is said
         out.push({ type: "trip", id: t.id, title: String(t.title ?? t.destination_city ?? "Trip") });
       }
     }
@@ -394,13 +394,13 @@ async function activeContexts(sc: SupabaseClient, userId: string, unread?: Prese
         .in("id", eventIds)
         .gte("starts_at", cutoff)
         .order("starts_at", { ascending: true })
-        .limit(3);
-      if (eventsErr) markPresenceUnread(unread); for (const e of (events ?? []) as any[]) {
+        .limit(4);  // §111 (D-W11X2-117): one past the three checked, so a longer list is known
+      if (eventsErr) markPresenceUnread(unread); if (((events ?? []) as any[]).length > 3) markPresenceCut(unread); for (const e of ((events ?? []) as any[]).slice(0, 3)) {
         out.push({ type: "event", id: e.id, title: String(e.title ?? "Event") });
       }
     }
   } catch { markPresenceUnread(unread); /* non-fatal — but said: census-discovery §107 (D-W11X2-67) */ }
-  return out.slice(0, 5);
+  if (out.length > 5) markPresenceCut(unread); return out.slice(0, 5);  // census-discovery §111 (DV-83, D-W11X2-117): a cut walk is said
 }
 
 async function contextMemberIds(
@@ -437,9 +437,9 @@ export async function getWhosAround(
   sc: SupabaseClient,
   viewerId: string,
   hidden: Set<string>,
-): Promise<{ people: WhosAroundEntry[]; contextsChecked: number; /** census-discovery §107 (DV-83, D-W11X2-67): a presence read failed, so an empty `people` is not "nobody is around" */ unread?: true }> {
+): Promise<{ people: WhosAroundEntry[]; contextsChecked: number; /** census-discovery §107 (DV-83, D-W11X2-67): a presence read failed, so an empty `people` is not "nobody is around" */ unread?: true; /** §111 (D-W11X2-117): the walk checked only some contexts, members or people */ truncated?: true }> {
   const unread: PresenceUnread = { v: false }; const { found, contextsChecked } = await collectPresence(sc, viewerId, hidden, unread);
-  return { people: found.map((f) => f.entry).slice(0, 20), contextsChecked, ...(unread.v ? { unread: true as const } : {}) };
+  if (found.length > 20) markPresenceCut(unread); return { people: found.map((f) => f.entry).slice(0, 20), contextsChecked, ...(unread.v ? { unread: true as const } : {}), ...(unread.cut ? { truncated: true as const } : {}) };
 }
 
 /**
@@ -488,7 +488,7 @@ async function collectPresence(
     } catch { markPresenceUnread(unread); continue; }
     const targets = memberIds
       .filter((id) => id !== viewerId && !hidden.has(id) && !seenUsers.has(id))
-      .slice(0, 20);
+      .slice(0, 21); if (targets.length > 20) { markPresenceCut(unread); targets.length = 20; }  // census-discovery §111 (DV-83, D-W11X2-117): a cut walk is said
     if (targets.length === 0) continue;
 
     // Batched gate: one query per table for the whole context, same rules as
@@ -687,7 +687,7 @@ export async function getMeetupOpportunities(
   viewerId: string,
   hidden: Set<string>,
   opts: { nowMs?: number } = {},
-): Promise<{ opportunities: MeetupOpportunity[]; contextsChecked: number; withheldForPrivacy: number; /** census-discovery §108 (DV-83, D-W11X2-83): a read on the walk or the reciprocity check failed */ unread?: true }> {
+): Promise<{ opportunities: MeetupOpportunity[]; contextsChecked: number; withheldForPrivacy: number; /** census-discovery §108 (DV-83, D-W11X2-83): a read on the walk or the reciprocity check failed */ unread?: true; /** §111 (D-W11X2-117) */ truncated?: true }> {
   const unread: PresenceUnread = { v: false }; const { found, contextsChecked } = await collectPresence(sc, viewerId, hidden, unread);  // §108: the meetup walk says a failed read, as getWhosAround does
   const nowMs = opts.nowMs ?? Date.now();
 
@@ -728,7 +728,7 @@ export async function getMeetupOpportunities(
     }
   }
 
-  return { opportunities: opportunities.slice(0, 20), contextsChecked, withheldForPrivacy, ...(unread.v ? { unread: true as const } : {}) };
+  if (opportunities.length > 20) markPresenceCut(unread); return { opportunities: opportunities.slice(0, 20), contextsChecked, withheldForPrivacy, ...(unread.v ? { unread: true as const } : {}), ...(unread.cut ? { truncated: true as const } : {}) };
 }
 
 // ── Relationship gate for compatibility lookups ───────────────────────────────
@@ -823,6 +823,13 @@ export async function sharesSocialContext(
 // left `people` short or empty. GET /compass/home then said "ok — nobody is around". The walk
 // is unchanged in every privacy respect (the same reads, the same gate, fail-closed per
 // target); it now also SAYS that a read failed, so a caller can tell the two apart.
-export interface PresenceUnread { v: boolean }
+export interface PresenceUnread { v: boolean; /** census-discovery §111 (D-W11X2-117): a cap dropped a context, a member or a person */ cut?: boolean }
 function markPresenceUnread(unread: PresenceUnread | undefined): void { if (unread) unread.v = true; }
 function presenceDeniedUnread(reason: string | undefined): boolean { return reason === "unavailable" || reason === "kill_switch"; }
+
+// ── census-discovery §111 (DV-83 round 14, lane W11-X2, D-W11X2-117): the presence walk says where it stopped ──
+// The walk keeps three trips (of an unordered read), three going events, five contexts, twenty members per
+// context and twenty people; a cut at any of them was silent, so "nobody is sharing" was said over contexts
+// never checked. Marked here; `get_whos_around` and `get_meetup_opportunities` say it.
+function markPresenceCut(unread: PresenceUnread | undefined): void { if (unread) unread.cut = true; }
+
