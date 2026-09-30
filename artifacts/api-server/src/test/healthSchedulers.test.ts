@@ -65,7 +65,7 @@ const EXPECTED_JOBS = [
   // in the aggregate, because decision 4 requires the job's last attempt, last
   // success, backlog and failures to be visible — a purge job that silently
   // stopped being reported is exactly the failure that list exists to catch.
-  "storyRetention",
+  "storyRetention", "discoveryServeLogRetention", // census-discovery §120 (3501): the serve-log retention must be as visible as the story one
 ].sort();
 
 // ── HTTP plumbing ────────────────────────────────────────────────────────────
@@ -171,7 +171,7 @@ describe("never_ran is distinguished, and does NOT alarm", () => {
     for (const name of ["inviteSlotReconciler", "zombieTokenSweeper", "eventWaitlistSweeper",
                         "rentBuddyRequestSweeper", "inviteSlotSweeper", "tripCrewLiveShareScheduler",
                         "notificationMaintenanceScheduler", "dailyBriefCleanup", "suggestionSeenCleanup",
-                        "storyRetention"]) {
+                        "storyRetention", "discoveryServeLogRetention"]) {
       assert.equal(byJob.get(name)?.status, "never_ran", `${name} has not run and must say so`);
       assert.equal(byJob.get(name)?.lastRunAt, null);
     }
