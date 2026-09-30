@@ -262,9 +262,9 @@ async function loadFlowZones(sc: any, nowMs: number): Promise<FlowZone[] | null>
     .from("geo_zones")
     .select("id, name, zone_type, center_lat, center_lng, radius_meters, polygon_geojson")
     .in("zone_type", FLOW_ZONE_TYPES as string[])
-    .limit(MAX_FLOW_ZONE_ROWS);
+    .order("id", { ascending: true }).limit(MAX_FLOW_ZONE_ROWS + 1);  // census-discovery §113 (D-W11X2-135): one past the cap so a cut is known
   if (error || !Array.isArray(data)) return null;
-  const zones = parseFlowZones(data as any[]);
+  const zones = parseFlowZones(data.slice(0, MAX_FLOW_ZONE_ROWS) as any[]); if (data.length > MAX_FLOW_ZONE_ROWS) CAPPED.add(zones);  // §113: the viewport is chosen AFTER this cut
   _flowZoneCache = { zones, at: nowMs };
   return zones;
 }
@@ -297,9 +297,9 @@ async function loadCityZones(sc: any, nowMs: number): Promise<CityGeographyParse
     .from("geo_zones")
     .select("id, name, zone_type, center_lat, center_lng, radius_meters, polygon_geojson")
     .eq("zone_type", "city")
-    .limit(MAX_CITY_ZONE_ROWS);
+    .order("id", { ascending: true }).limit(MAX_CITY_ZONE_ROWS + 1);  // §113 (D-W11X2-135)
   if (error || !Array.isArray(data)) return null;
-  const parsed = parseCityGeographies(data as any[]);
+  const parsed = parseCityGeographies(data.slice(0, MAX_CITY_ZONE_ROWS) as any[]); if (data.length > MAX_CITY_ZONE_ROWS) CAPPED.add(parsed);  // §113: the viewport is chosen AFTER this cut
   _cityZoneCache = { parsed, at: nowMs };
   return parsed;
 }
@@ -329,9 +329,9 @@ async function loadViewportPlaces(sc: any, bbox: BBox): Promise<any[] | null> {
     .lte("latitude", bbox.north)
     .gte("longitude", bbox.west)
     .lte("longitude", bbox.east)
-    .limit(MAX_INDEXED_PLACES);
+    .order("id", { ascending: true }).limit(MAX_INDEXED_PLACES + 1);  // §113 (D-W11X2-135)
   if (error || !Array.isArray(data)) return null;
-  return data as any[];
+  const rows = data.slice(0, MAX_INDEXED_PLACES) as any[]; if (data.length > MAX_INDEXED_PLACES) CAPPED.add(rows); return rows;  // §113: a cut index is marked
 }
 
 /**
@@ -376,7 +376,7 @@ interface CrowdFlowReport {
     zones: number;
     ambiguousNames: number;
     indexedPlaces: number;
-    placeIndexFailed: boolean;
+    placeIndexFailed: boolean; /** census-discovery §113 (D-W11X2-135): present only when the zone model / the place index was cut at its cap */ zonesCapped?: true; placeIndexCapped?: true;
   };
   transitions: number;
   published: number;
@@ -431,7 +431,7 @@ interface ProducerReports {
  */
 interface WorldIntelligenceReport {
   refusal: WorldIntelligenceRefusal | null;
-  cityModelGeography: { cities: number; ambiguousKeys: number; unusable: number } | null;
+  cityModelGeography: { cities: number; ambiguousKeys: number; unusable: number; /** §113: present only when cut at its cap */ capped?: true } | null;
   worldPulse: WorldPulseReport | null;
   travelerFlow: TravelerFlowReport | null;
   cityModels: CityModelReport | null;
@@ -892,7 +892,7 @@ router.get(
             // Without a zone model the producer refuses rather than falling
             // back to a coordinate, which is the behaviour we want; say so
             // rather than reporting an empty layer.
-            report.refusal = "no_zone_model";
+            report.refusal = CAPPED.has(allZones) ? "zone_model_capped" : "no_zone_model";  // §113 (D-W11X2-135): a cut model is not an absent one
             return;
           }
 
@@ -906,7 +906,7 @@ router.get(
             // silently shrinks the layer. "0 places indexed because the read
             // failed" and "0 places indexed because there are none here" are
             // different facts and are reported as different facts.
-            placeIndexFailed: placeRows === null,
+            placeIndexFailed: placeRows === null, ...(CAPPED.has(allZones) ? { zonesCapped: true as const } : {}), ...(placeRows !== null && CAPPED.has(placeRows) ? { placeIndexCapped: true as const } : {}),  // §113
           };
 
           // §10 "inferred cause". The hypotheses are proposed from the events
@@ -954,7 +954,7 @@ router.get(
 
           // A refusal means we never looked, so the layer must not appear in
           // `sources` claiming an empty answer it did not obtain.
-          if (produced.refusal === null) sources.push("crowd_flow");
+          if (produced.refusal === null && !report.zoneModel.zonesCapped && !report.zoneModel.placeIndexCapped) sources.push("crowd_flow");  // §113 (D-W11X2-135): not over a cut model
         })(),
       );
     }
@@ -1126,13 +1126,13 @@ router.get(
           report.cityModelGeography = {
             cities: cityParse.cities.length,
             ambiguousKeys: cityParse.ambiguousKeys,
-            unusable: cityParse.unusable,
+            unusable: cityParse.unusable, ...(CAPPED.has(cityParse) ? { capped: true as const } : {}),  // census-discovery §113 (D-W11X2-135)
           };
           // The city model is grown by one viewport on each side, exactly as
           // §10's flow zones are, so a city→city edge whose MIDPOINT is on
           // screen still has both endpoints in the model.
           const near = expandBbox(bbox);
-          const viewportCities = cityParse.cities.filter((c) =>
+          const cityCut = CAPPED.has(cityParse); const viewportCities = cityParse.cities.filter((c) =>  // §113: a cut geography names no city layer
             bboxContains(near, c.centroid.lat, c.centroid.lng),
           );
 
@@ -1171,7 +1171,7 @@ router.get(
               for (const e of flow.edges) produced.push(e);
               // A refusal means we never looked, so the layer must not appear
               // in `sources` claiming an empty answer it did not obtain.
-              if (flow.report.refusal === null) sources.push("traveler_flow");
+              if (flow.report.refusal === null && !cityCut) sources.push("traveler_flow");
             }
           }
 
@@ -1199,7 +1199,7 @@ router.get(
             } else {
               report.cityModels = read.report;
               for (const m of read.models) produced.push(m);
-              sources.push("city_models");
+              if (!cityCut) sources.push("city_models");
             }
           }
 
@@ -1224,7 +1224,7 @@ router.get(
             } else {
               report.personalCities = read.report;
               for (const p of read.pins) produced.push(p);
-              sources.push("personal_cities");
+              if (!cityCut) sources.push("personal_cities");
             }
           }
 
@@ -1503,3 +1503,7 @@ export default router;
 const DISCOVERY_CANDIDATE_FLAG_PIN: "discovery_candidate_projection_enabled" =
   DISCOVERY_CANDIDATE_PROJECTION_FLAG;
 void DISCOVERY_CANDIDATE_FLAG_PIN;
+
+// census-discovery §113 (DV-83 round 16, D-W11X2-135): the geography and place reads that hit their cap. A mark beside the
+// value (so a cached value stays marked, and a whole read's value and every body built from it are unchanged).
+const CAPPED = new WeakSet<object>();

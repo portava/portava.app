@@ -1612,3 +1612,23 @@ describe("the §24 gate itself runs over Phase 7 output, not only the pre-filter
     assert.ok(body.worldIntelligence.withheldForProtection >= 1);
   });
 });
+
+// ── census-discovery §113 (DV-83 round 16 sweep, D-W11X2-135): the city geography cut at its cap ─────────────────
+//
+// loadCityZones read MAX_CITY_ZONE_ROWS (2000) city zones WORLDWIDE with no order and kept the viewport's AFTER the
+// cut; the traveler-flow, city-model and personal-city layers were then named as read over a geography that was cut.
+describe("§113: Phase 7 over a city geography cut at its cap (D-W11X2-135)", () => {
+  const farCities = (n: number) => Array.from({ length: n }, (_v: unknown, i: number) => cityRow({ id: `city-far-${String(i).padStart(4, "0")}`, name: `Far ${i}`, lat: -40 - i * 0.001, lng: -70 }));
+  it("WIC1 2000 cities elsewhere with the viewport's three → the geography says it was cut, and no city layer is named", async () => {
+    const now = Date.now();
+    const { body } = await projection(worldState(now, { geo_zones: [...[CITY_A, CITY_B, CITY_C].map(cityRow), ...farCities(2000)] }));
+    assert.equal(body.worldIntelligence.cityModelGeography.capped, true, JSON.stringify(body.worldIntelligence.cityModelGeography));
+    for (const s of ["traveler_flow", "city_models", "personal_cities"]) assert.equal(body.sources.includes(s), false, `${s} named over a cut geography: ${JSON.stringify(body.sources)}`);
+  });
+  it("WICc CONTROL: 1997 cities elsewhere with the viewport's three (2000) → whole: no mark, the city layers named", async () => {
+    const now = Date.now();
+    const { body } = await projection(worldState(now, { geo_zones: [...[CITY_A, CITY_B, CITY_C].map(cityRow), ...farCities(1997)] }));
+    assert.equal("capped" in body.worldIntelligence.cityModelGeography, false);
+    for (const s of ["city_models", "personal_cities"]) assert.ok(body.sources.includes(s), `${s} ${JSON.stringify(body.sources)}`);
+  });
+});

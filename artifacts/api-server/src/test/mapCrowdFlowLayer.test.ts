@@ -947,3 +947,44 @@ describe("no actor, no party token, no coordinate, no trajectory", () => {
     }
   });
 });
+
+// ── census-discovery §113 (DV-83 round 16 sweep, D-W11X2-135): the zone model and the place index cut at their caps ──
+//
+// loadFlowZones read MAX_FLOW_ZONE_ROWS (2000) flow zones WORLDWIDE with no order and kept the viewport's AFTER the
+// cut; with more zones elsewhere, the viewport's were never read, and the layer said `no_zone_model` — an absence. The
+// viewport place index (1000 rows, no order) cut the same way and the layer was still named as read.
+describe("§113: the crowd-flow zone model and place index over a cut read (D-W11X2-135)", () => {
+  const farZones = (n: number) => Array.from({ length: n }, (_v: unknown, i: number) => zoneRow({ id: `zone-far-${String(i).padStart(4, "0")}`, name: `Far ${i}`, lat: 10 + i * 0.001, lng: 100 }));
+  const otherPlaces = (n: number) => Array.from({ length: n }, (_v: unknown, i: number) => placeRow(`place-other-${String(i).padStart(4, "0")}`, { lat: 16.12, lng: 108.33 }));
+
+  it("CFC1 2000 zones elsewhere ahead of the viewport's → never `no_zone_model`; the refusal names the cut", async () => {
+    const now = Date.now();
+    const r = await projection(flowState(now, { geo_zones: [...farZones(2000), ...zoneRows()] }));
+    assert.equal(r.status, 200);
+    assert.notEqual(r.body.crowdFlow.refusal, "no_zone_model", JSON.stringify(r.body.crowdFlow));
+    assert.equal(r.body.crowdFlow.refusal, "zone_model_capped");
+    assert.equal(r.body.sources.includes("crowd_flow"), false);
+  });
+  it("CFC2 the viewport's zones first, 2000 more elsewhere → the flow publishes, but the layer is not named as whole", async () => {
+    const now = Date.now();
+    const r = await projection(flowState(now, { geo_zones: [...zoneRows(), ...farZones(2000)] }));
+    assert.equal(r.status, 200);
+    assert.equal(r.body.crowdFlow.zoneModel.zonesCapped, true, JSON.stringify(r.body.crowdFlow.zoneModel));
+    assert.equal(r.body.sources.includes("crowd_flow"), false, JSON.stringify(r.body.sources));
+  });
+  it("CFC3 1000 other places in the viewport ahead of the origin → the place index says it was cut, and the layer is not named", async () => {
+    const now = Date.now();
+    const r = await projection(flowState(now, { places: [...otherPlaces(1000), placeRow(ORIGIN_PLACE_ID, PLACE_POINT)] }));
+    assert.equal(r.status, 200);
+    assert.equal(r.body.crowdFlow.zoneModel.placeIndexCapped, true, JSON.stringify(r.body.crowdFlow.zoneModel));
+    assert.equal(r.body.sources.includes("crowd_flow"), false, JSON.stringify(r.body.sources));
+  });
+  it("CFCc CONTROL: 1998 zones elsewhere with the viewport's two (2000) and 999 other places with the origin (1000) → whole, named", async () => {
+    const now = Date.now();
+    const r = await projection(flowState(now, { geo_zones: [...zoneRows(), ...farZones(1998)], places: [...otherPlaces(999), placeRow(ORIGIN_PLACE_ID, PLACE_POINT)] }));
+    assert.equal(r.status, 200);
+    assert.equal("zonesCapped" in r.body.crowdFlow.zoneModel, false);
+    assert.equal("placeIndexCapped" in r.body.crowdFlow.zoneModel, false);
+    assert.ok(r.body.sources.includes("crowd_flow"), JSON.stringify({ s: r.body.sources, rep: r.body.crowdFlow }));
+  });
+});
