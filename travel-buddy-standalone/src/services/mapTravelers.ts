@@ -37,7 +37,7 @@ export async function getMapTravelers(
   lat: number,
   lng: number,
   radiusKm = 50,
-): Promise<{ ok: true; data: MapTraveler[] } | { ok: false; error: string }> {
+): Promise<{ ok: true; data: MapTraveler[]; /** §113 (D-W11X2-129): the server cut its scan or slice — not the whole viewport */ truncated: boolean } | { ok: false; error: string }> {
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'Not configured' };
   const token = await freshToken();
   if (!token) return { ok: false, error: 'Not authenticated' };
@@ -56,8 +56,8 @@ export async function getMapTravelers(
       const body = await res.json().catch(() => ({}));
       return { ok: false, error: (body as any).message ?? `Request failed (${res.status})` };
     }
-    const body = (await res.json()) as { travelers?: MapTraveler[] };
-    return { ok: true, data: Array.isArray(body.travelers) ? body.travelers : [] };
+    const body = (await res.json()) as { travelers?: MapTraveler[]; truncated?: boolean };
+    return { ok: true, data: Array.isArray(body.travelers) ? body.travelers : [], truncated: body.truncated === true };
   } catch (e: any) {
     return { ok: false, error: e?.message ?? 'Network error' };
   }

@@ -19,7 +19,7 @@ import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js"; import { readFlagState } from "../lib/capability/schemaCapability.js";  // census-discovery §107 (D-W11X2-71)
 import { fetchBlockedSet } from "../lib/blocks.js";
-import { listMapTravelers } from "../lib/mapTravelers.js";
+import { listMapTravelersRead } from "../lib/mapTravelers.js";
 import { findNearbyGems } from "../services/hiddenGems/HiddenGemDiscoveryService.js";
 import { applyGemPrivacyBatch } from "../services/hiddenGems/HiddenGemPrivacyGuard.js";
 import { checkEventEligibility } from "./events.js";
@@ -224,11 +224,11 @@ router.get("/map/search", asyncHandler(async (req, res) => {
     // function now returns null for a failed read, a failed privacy query, or
     // an unknown block state — so a null here is a genuine refusal and not
     // merely "nothing was thrown".
-    const travelers = await listMapTravelers(sc, { viewerId: user.id, lat, lng, radiusKm, blockedSet })
+    const read = await listMapTravelersRead(sc, { viewerId: user.id, lat, lng, radiusKm, blockedSet })
       .catch(() => null);
-    if (travelers === null) { sources.traveler = { refusal: "travelers_unreadable", collected: 0 }; return; }
-    for (const t of travelers) results.push(normalizeTraveler(t));
-    sources.traveler = { refusal: null, collected: travelers.length };
+    if (read === null) { sources.traveler = { refusal: "travelers_unreadable", collected: 0 }; return; }
+    for (const t of read.travelers) results.push(normalizeTraveler(t));
+    sources.traveler = { refusal: read.truncated ? "travelers_capped" : null, collected: read.travelers.length };  // §113 (DV-83, D-W11X2-129): a cut scan is not a complete source
   })());
 
   if (want("gem")) tasks.push((async () => {

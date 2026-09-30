@@ -112,7 +112,7 @@ import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { checkRateLimit } from "../lib/rateLimit.js";
 import { fetchBlockedSet } from "../lib/blocks.js";
-import { listMapTravelers } from "../lib/mapTravelers.js";
+import { listMapTravelersRead } from "../lib/mapTravelers.js";
 import { readCircleLocations } from "../lib/circleLocationsRead.js";
 import { readBuddyMapPins } from "../lib/buddyMapRead.js";
 import { readTripStopLayer, type TripLayerReport } from "../lib/mapProjectionTripRead.js";
@@ -597,16 +597,16 @@ router.get(
           // is what drives `unreadLayers` in useMapEntities — so a failed read
           // reported as a successful empty one is the exact defect every other
           // layer in this route was already fixed for.
-          const travelers = await listMapTravelers(sc, {
+          const read = await listMapTravelersRead(sc, {
             viewerId: user.id,
             lat,
             lng,
             radiusKm,
             blockedSet,
           }).catch(() => null);
-          if (travelers === null) return;
-          for (const t of travelers) collected.push(projectTraveler(t));
-          sources.push("travelers");
+          if (read === null) return;
+          for (const t of read.travelers) collected.push(projectTraveler(t));
+          if (!read.truncated) sources.push("travelers");  // census-discovery §113 (DV-83, D-W11X2-129): a cut scan or slice is not named as read — the client says the layer is not whole
         })(),
       );
     }

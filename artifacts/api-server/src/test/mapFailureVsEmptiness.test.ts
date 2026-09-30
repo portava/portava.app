@@ -49,7 +49,7 @@ import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import mapProjectionRouter, { _clearProtectedZoneCache } from "../routes/mapProjection.js";
 import mapTravelersRouter from "../routes/mapTravelers.js";
-import { listMapTravelers, _clearMapTravelersCache } from "../lib/mapTravelers.js";
+import { listMapTravelersRead, _clearMapTravelersCache } from "../lib/mapTravelers.js"; const listMapTravelers = async (...a: Parameters<typeof listMapTravelersRead>) => { const r = await listMapTravelersRead(...a); return r === null ? null : r.travelers; };  // §113: the rows alone, as before
 
 // ── ids and geography ─────────────────────────────────────────────────────────
 

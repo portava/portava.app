@@ -16,7 +16,7 @@ import { Router } from "express";
 import { requireUser, sendError } from "../lib/http";
 import { checkRateLimit } from "../lib/rateLimit";
 import { getServiceClient } from "../lib/supabase";
-import { listMapTravelers } from "../lib/mapTravelers";
+import { listMapTravelersRead } from "../lib/mapTravelers";
 import { fetchBlockedSet } from "../lib/blocks";
 
 const router = Router();
@@ -51,7 +51,7 @@ router.get("/map/travelers", async (req, res) => {
 
   try {
     const blockedSet = await fetchBlockedSet(db, user.id);
-    const travelers = await listMapTravelers(db, {
+    const read = await listMapTravelersRead(db, {
       viewerId: user.id,
       lat,
       lng,
@@ -62,11 +62,11 @@ router.get("/map/travelers", async (req, res) => {
     // Serving it as `travelers: []` would tell the client the area is empty on
     // the strength of a database error — the defect listMapTravelers' failure
     // channel exists to end. A 5xx is the honest answer.
-    if (travelers === null) {
+    if (read === null) {
       sendError(res, "db_error", "Could not load map travelers");
       return;
     }
-    res.json({ travelers, generatedAt: new Date().toISOString() });
+    res.json({ travelers: read.travelers, generatedAt: new Date().toISOString(), ...(read.truncated ? { truncated: true } : {}) });  // census-discovery §113 (DV-83, D-W11X2-129): a cut scan or slice is said, never served as the whole viewport
   } catch (err) {
     req.log.error({ err }, "map/travelers failed");
     sendError(res, "db_error", "Could not load map travelers", { exposeDetail: true });

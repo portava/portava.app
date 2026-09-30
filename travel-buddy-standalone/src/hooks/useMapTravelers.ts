@@ -35,7 +35,7 @@ export interface UseMapTravelersResult {
   /** True only before the FIRST successful load — later polls are silent. */
   loading: boolean;
   /** Set when the latest read failed — beside the kept rows, if any (census-discovery §112, D-W11X2-127). */
-  error: string | null;
+  error: string | null; /** The last good read was cut by the server (census-discovery §113, D-W11X2-129): not every traveler here is shown. */ truncated: boolean;
   refresh: () => void;
 }
 
@@ -50,7 +50,7 @@ export function useMapTravelers(opts: {
 
   const [travelers, setTravelers] = useState<MapTraveler[]>([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null); const [truncated, setTruncated] = useState(false);
 
   const latest = useRef(0);
   const hasLoaded = useRef(false);
@@ -69,7 +69,7 @@ export function useMapTravelers(opts: {
     lastCenter.current = { lat: fLat, lng: fLng };
     if (res.ok) {
       hasLoaded.current = true;
-      setError(null);
+      setError(null); setTruncated(res.truncated === true);  // §113 (D-W11X2-129): a cut read is said, and a whole one clears it
       // Dedup by id defensively — one marker per user, always.
       const seen = new Set<string>();
       setTravelers(res.data.filter((t) => (seen.has(t.id) ? false : (seen.add(t.id), true))));
@@ -114,5 +114,5 @@ export function useMapTravelers(opts: {
     return () => clearInterval(timer);
   }, [enabled, lat, lng, radiusKm, doFetch]);
 
-  return { travelers, loading: loading && !hasLoaded.current, error, refresh };
+  return { travelers, loading: loading && !hasLoaded.current, error, truncated, refresh };
 }

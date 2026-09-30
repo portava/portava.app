@@ -403,7 +403,7 @@ export function DiscoveryMapView({
     return () => { if (emptyHintTimer.current) clearTimeout(emptyHintTimer.current); };
   }, []);
 
-  const { travelers, loading: travelersLoading, error: travelersError } = useMapTravelers({  // census-discovery §112 (DV-83, D-W11X2-127): a failed read is said
+  const { travelers, loading: travelersLoading, error: travelersError, truncated: travelersTruncated } = useMapTravelers({  // census-discovery §112 (DV-83, D-W11X2-127): a failed read is said
     lat: mapCenter ? mapCenter[1] : vp ? vp.center[1] : null,
     lng: mapCenter ? mapCenter[0] : vp ? vp.center[0] : null,
     radiusKm: 50,
@@ -736,14 +736,14 @@ export function DiscoveryMapView({
           <View style={s.badge}>
             <Users size={10} color="#fff" />
             <Text style={s.badgeText}>
-              {travelers.length} {travelers.length === 1 ? 'traveler' : 'travelers'}{travelersError ? ' · couldn’t refresh' : ''}
+              {travelers.length} {travelers.length === 1 ? 'traveler' : 'travelers'}{travelersTruncated ? ' · showing some' : ''}{travelersError ? ' · couldn’t refresh' : ''}
             </Text>
           </View>
         )}
-        {travelersOn && !travelersLoading && travelers.length === 0 && (emptyHint || !!travelersError) && (  /* §112 (D-W11X2-127): a failed read stays said */
+        {travelersOn && !travelersLoading && travelers.length === 0 && (emptyHint || !!travelersError || travelersTruncated) && (  /* §112 (D-W11X2-127): a failed read stays said */
           <View style={s.badge}>
             <Users size={10} color="#fff" />
-            <Text style={s.badgeText}>{travelersError ? "Couldn't load travelers" : 'No travelers sharing here yet'}</Text>
+            <Text style={s.badgeText}>{travelersError ? "Couldn't load travelers" : travelersTruncated ? "Couldn't check every traveler here" : 'No travelers sharing here yet'}</Text>
           </View>
         )}
       </View>
