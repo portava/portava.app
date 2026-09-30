@@ -189,7 +189,7 @@ import { getServiceClient } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
 import { detectAndStoreLanguage, invalidateContentTranslations } from "../services/contentTranslation.js";
 import { nameVisibilitySet, sanitizeIdentity } from "../lib/publicIdentity.js";
-import { isFlagEnabled, isKillSwitchEngaged } from "../lib/featureFlags.js";
+import { isFlagEnabled, isKillSwitchEngaged } from "../lib/featureFlags.js"; import { readFlagState } from "../lib/capability/schemaCapability.js";  // census-trust §30: eventTrustGatesRun
 import { isBlockedBetween } from "../lib/blockGuard.js";
 import {
   decideEventTransition,
@@ -709,7 +709,7 @@ export async function checkEventEligibility(
   if (bannedRole) return { ok: false, errorCode: "forbidden", message: "You are banned from this event" };
 
   // Trust / age / verified gates
-  const trustGatesEnabled = await isFlagEnabled(sc, "events_trust_gates_enabled");
+  const trustGatesEnabled = await eventTrustGatesRun(sc);  // census-trust §30: an UNREAD flag keeps the gates on (was two-state: unread = "gates off")
   if (trustGatesEnabled) {
     if (ev.verified_only) {
       const { data: profile } = await sc.from("profiles").select("verified").eq("id", userId).maybeSingle();
@@ -1116,12 +1116,12 @@ router.get("/events", async (req, res) => {
   const staffEvents  = new Set<string>();
   const bannedEvents = new Set<string>();
   if (allEventIds.length > 0) {
-    const { data: roles } = await sc
+    const { data: roles, error: rolesErr } = await sc
       .from("event_roles")
       .select("event_id, role")
       .eq("user_id", user.id)
       .in("event_id", allEventIds)
-      .in("role", ["co_host", "moderator", "banned"]);
+      .in("role", ["co_host", "moderator", "banned"]); if (rolesErr) { req.log?.error({ err: rolesErr }, "list events: event_roles unreadable — refusing"); sendError(res, "degraded_unavailable", "Event visibility could not be checked. Please try again."); return; }  // census-trust §30: a failed read is not "banned from nothing"
     for (const r of ((roles as any[]) ?? [])) {
       if ((r as any).role === "banned") bannedEvents.add((r as any).event_id as string);
       else staffEvents.add((r as any).event_id as string);
@@ -1136,7 +1136,7 @@ router.get("/events", async (req, res) => {
   let viewerAge: number | null = null;
   let viewerTrust = 50;
   if (needsGates) {
-    trustGatesEnabled = await isFlagEnabled(sc, "events_trust_gates_enabled");
+    trustGatesEnabled = await eventTrustGatesRun(sc);  // census-trust §30: an UNREAD flag keeps the gates on
     if (trustGatesEnabled) {
       // THE EIGHTH GATE, and it was already here. The brief for this change
       // named seven; this file carries a third age gate — the one that decides
@@ -3216,17 +3216,17 @@ router.post("/events/:id/waitlist", async (req, res) => {
   if (await isBlocked(sc, user.id, (ev as any).host_id)) {
     sendError(res, "forbidden", "Cannot join waitlist for this event"); return;
   }
-  const { data: bannedRoleWl } = await sc
+  const { data: bannedRoleWl, error: bannedErrWl } = await sc
     .from("event_roles")
     .select("role")
     .eq("event_id", id)
     .eq("user_id", user.id)
     .eq("role", "banned")
-    .maybeSingle();
+    .maybeSingle(); if (bannedErrWl) { req.log?.error({ err: bannedErrWl, eventId: id }, "waitlist join: banned-role read failed — refusing"); sendError(res, "degraded_unavailable", "Event access could not be checked. Please try again shortly."); return; }  // census-trust §30: a failed read is not "not banned"
   if (bannedRoleWl) { sendError(res, "forbidden", "You are banned from this event"); return; }
 
   // Trust / age / verified gates (same rules as RSVP)
-  const trustGatesEnabledWl = await isFlagEnabled(sc, "events_trust_gates_enabled");
+  const trustGatesEnabledWl = await eventTrustGatesRun(sc);  // census-trust §30: an UNREAD flag keeps the gates on
   if (trustGatesEnabledWl) {
     if ((ev as any).verified_only) {
       const { data: profileWl } = await sc.from("profiles").select("verified").eq("id", user.id).maybeSingle();
@@ -6951,4 +6951,23 @@ async function withCohostIdentity(sc: any, rows: any[], viewerId: string): Promi
 async function withAuthorIdentity(sc: any, rows: any[], viewerId: string): Promise<any[]> {
   const map = await publicIdentityMap(sc, rows.map((r) => r.author_id as string), viewerId);
   return rows.map((r) => ({ ...r, author: map[r.author_id] ?? null }));
+}
+
+/**
+ * census-trust §30 — do the viewer gates (verified / trust / age) run?
+ *
+ * `events_trust_gates_enabled` was read through `isFlagEnabled`, which answers
+ * `false` for an off flag, an absent row AND a read that failed. For a
+ * capability flag that is the closed answer; for THIS flag it is the open one:
+ * `false` means "skip the gates", so a failed flag read listed 18+ events to
+ * verified minors, seated them on waitlists and let them RSVP.
+ *
+ * Read three-state instead. `on` runs the gates, `off` and `absent` skip them
+ * exactly as before (healthy answers unchanged), and `unreadable` RUNS them:
+ * the gates themselves fail closed on their own unread inputs, so running them
+ * over an unknown flag can only refuse more, never admit more.
+ */
+async function eventTrustGatesRun(sc: any): Promise<boolean> {
+  const state = await readFlagState(sc, "events_trust_gates_enabled");
+  return state === "on" || state === "unreadable";
 }
