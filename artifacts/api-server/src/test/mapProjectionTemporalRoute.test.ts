@@ -104,8 +104,8 @@ function buildQuery(spec: TableSpec) {
         .split(",")
         .map((p) => p.trim().match(/^(\w+)\.(\w+)\.(.*)$/))
         .filter(Boolean)
-        .map((m) => ({ col: (m as RegExpMatchArray)[1], val: (m as RegExpMatchArray)[3] }));
-      rows = rows.filter((r) => parts.some(({ col, val }) => String(r[col]) === val));
+        .map((m) => ({ col: (m as RegExpMatchArray)[1], op: (m as RegExpMatchArray)[2], val: (m as RegExpMatchArray)[3] }));
+      rows = rows.filter((r) => parts.some(({ col, op, val }) => (op === "gte" ? r[col] != null && String(r[col]) >= val : op === "lte" ? r[col] != null && String(r[col]) <= val : String(r[col]) === val)));  // census-discovery §113: the events window's gte terms, as PostgREST reads them
       return q;
     },
     maybeSingle() {

@@ -30,7 +30,7 @@ import {
 import {
   logDiscoveryServe, DiscoveryServePoint, searchTypeToItemKind,
 } from "../lib/discoveryServeLog.js";  import { stampServedRecommendations, exposureForResponse, serveClockOf } from "../lib/discoveryRecommendationRecord.js";  // census-discovery §48 — serve point 12's response carries the ids its serve-log rows do
-import { buildCommandsFromIntent } from "../lib/mapCommands.js";
+import { buildCommandsFromIntent } from "../lib/mapCommands.js"; import { EVENT_CAUSE_DEFAULT_DURATION_MINUTES } from "../lib/mapProducers/eventContextProducer.js";  // census-discovery §113 (D-W11X2-132): the forward window's assumed duration
 import { forwardGeocode } from "../lib/geocodeForward.js";
 
 const router = Router();
@@ -69,7 +69,7 @@ const router = Router();
  */
 export interface NearbyEventsWindow {
   nowIso: string;
-  startsBeforeIso: string;
+  startsBeforeIso?: string;  // census-discovery §113 (D-W11X2-132): omitted = no upper bound (the NOW gateway and map search read every event not yet over)
   openEndedStartsAfterIso: string;
 }
 
@@ -93,15 +93,15 @@ export async function loadNearbyEvents(
     .gte("location_lng", lng - lngDelta).lte("location_lng", lng + lngDelta);
   const w = opts.window;
   if (w) {
-    q = q
-      .lte("starts_at", w.startsBeforeIso)
+    // census-discovery §113 (D-W11X2-132): the upper bound on the start is optional (a forward window has none).
+    q = (w.startsBeforeIso ? q.lte("starts_at", w.startsBeforeIso) : q)
       .or(`ends_at.gte.${w.nowIso},starts_at.gte.${w.openEndedStartsAfterIso}`);
   }
-  const { data, error } = await q.limit(Math.max(1, Math.min(opts.limit ?? 60, 60)));
+  const scanCap = Math.max(1, Math.min(opts.limit ?? 60, 60)); const { data: scanned, error } = await q.order("starts_at", { ascending: true }).limit(scanCap + 1);  // §113 (DV-83, D-W11X2-132): soonest first, and one row past the cap so a cut scan is known
   // A read FAILURE is not an empty neighbourhood: return null so a caller that
   // needs the distinction (the §10 inferred-cause path reports eventsReadFailed)
   // can tell them apart. Callers that don't care coalesce null to [].
-  if (error || !Array.isArray(data)) return null;
+  if (error || !Array.isArray(scanned)) return null; const scanCut = scanned.length > scanCap; const data = scanned.slice(0, scanCap);  // §113: the per-row gates and every caller's filters run after this cut
   const out: any[] = []; let withheldUnchecked = 0;  // census-discovery §110 (DV-83, D-W11X2-93): rows a gate withheld because its read FAILED
   for (const ev of data as any[]) {
     if (blockedSet.has(ev.host_id)) continue;
@@ -125,7 +125,7 @@ export async function loadNearbyEvents(
     }
     out.push(ev);
   }
-  if (withheldUnchecked > 0) WITHHELD_UNCHECKED.set(out, withheldUnchecked); return out;
+  if (withheldUnchecked > 0) WITHHELD_UNCHECKED.set(out, withheldUnchecked); if (scanCut) SCAN_CUT.add(out); return out;
 }
 
 /**
@@ -246,10 +246,10 @@ router.get("/map/search", asyncHandler(async (req, res) => {
 
   if (want("event")) tasks.push((async () => {
     // The one source that DOES carry the distinction. null is a read failure.
-    const events = await loadNearbyEvents(sc, user.id, lat, lng, radiusKm, blockedSet).catch(() => null);
+    const events = await loadNearbyEvents(sc, user.id, lat, lng, radiusKm, blockedSet, { window: forwardEventsWindow(Date.now()) }).catch(() => null);  // §113 (D-W11X2-132): events not yet over
     if (events === null) { sources.event = { refusal: "events_unreadable", collected: 0 }; return; }
     for (const ev of events) results.push(normalizeEvent(ev));
-    const unchecked = nearbyEventsWithheldUnchecked(events); sources.event = unchecked > 0 ? { refusal: "event_gates_unreadable", collected: events.length, withheldUnchecked: unchecked } : { refusal: null, collected: events.length };  // §110 (DV-83, D-W11X2-93): rows withheld unchecked are not a complete source
+    const unchecked = nearbyEventsWithheldUnchecked(events); sources.event = unchecked > 0 ? { refusal: "event_gates_unreadable", collected: events.length, withheldUnchecked: unchecked } : nearbyEventsScanCut(events) ? { refusal: "events_capped", collected: events.length } : { refusal: null, collected: events.length };  // §110 (DV-83, D-W11X2-93): rows withheld unchecked are not a complete source
   })());
 
   await Promise.all(tasks);
@@ -330,4 +330,40 @@ const WITHHELD_UNCHECKED = new WeakMap<object, number>();
 /** How many rows `loadNearbyEvents` withheld because a gate could not be read (0 when none, or for any other array). */
 export function nearbyEventsWithheldUnchecked(rows: unknown): number {
   return rows && typeof rows === "object" ? (WITHHELD_UNCHECKED.get(rows as object) ?? 0) : 0;
+}
+
+// ── census-discovery §113 (DV-83 round 16, lane W11-X2, D-W11X2-132): a scan cut at its cap ──
+//
+// `loadNearbyEvents` reads its rows soonest-first and one past its cap. When the extra row came back, the scan was
+// CUT: the per-row gates and every caller's filters (the query, the forecast window, the live check) ran over the
+// first `scanCap` rows only, so no caller may state the answer as complete. The mark rides beside the array, as the
+// withheld count does, so a healthy array and every body built from it are unchanged.
+const SCAN_CUT = new WeakSet<object>();
+
+/** Whether `loadNearbyEvents` cut its scan at the cap for this answer (false for any other value). */
+export function nearbyEventsScanCut(rows: unknown): boolean {
+  return !!rows && typeof rows === "object" && SCAN_CUT.has(rows as object);
+}
+
+/**
+ * The window for a caller that shows what is on or ahead (GET /map/search, the NOW gateway): an event whose end is
+ * not yet past, or — with no usable end — one that started within the assumed duration. No upper bound on the start.
+ */
+export function forwardEventsWindow(nowMs: number): NearbyEventsWindow {
+  return {
+    nowIso: new Date(nowMs).toISOString(),
+    openEndedStartsAfterIso: new Date(nowMs - EVENT_CAUSE_DEFAULT_DURATION_MINUTES * 60_000).toISOString(),
+  };
+}
+
+/**
+ * The window for the temporal forecast: a superset of `projectEventForecast`'s rule (the event's
+ * [starts, ends-or-starts] interval overlaps the target's [windowStart, windowEnd]).
+ */
+export function forecastEventsWindow(target: { windowStart: number; windowEnd: number }): NearbyEventsWindow {
+  return {
+    nowIso: new Date(target.windowStart).toISOString(),
+    startsBeforeIso: new Date(target.windowEnd).toISOString(),
+    openEndedStartsAfterIso: new Date(target.windowStart).toISOString(),
+  };
 }

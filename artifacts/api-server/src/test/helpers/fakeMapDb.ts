@@ -206,7 +206,7 @@ function buildQuery(spec: TableSpec) {
         return (r: any) => {
           const hits = parts.map((m) => {
             const [, col, op, val] = m;
-            if (op === "eq") return String(r[col]) === val;
+            if (op === "eq") return String(r[col]) === val; if (op === "gte" || op === "lte") return r[col] != null && (op === "gte" ? String(r[col]) >= val : String(r[col]) <= val);  // census-discovery §113: the events window (ISO timestamps compare as text)
             if (op === "in") return parseInList(val).includes(String(r[col]));
             throw new Error(`fakeMapDb: unsupported or() operator ${op}`);
           });
