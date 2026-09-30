@@ -143,9 +143,9 @@ async function loadFlowZones(sc: any, nowMs: number): Promise<FlowZone[] | null>
     .from("geo_zones")
     .select("id, name, zone_type, center_lat, center_lng, radius_meters, polygon_geojson")
     .in("zone_type", FLOW_ZONE_TYPES as string[])
-    .limit(MAX_FLOW_ZONE_ROWS);
+    .order("id", { ascending: true }).limit(MAX_FLOW_ZONE_ROWS + 1);  // §113 (D-W11X2-136): one past the cap so a cut is known
   if (error || !Array.isArray(data)) return null;
-  const zones = parseFlowZones(data as any[]);
+  const zones = parseFlowZones(data.slice(0, MAX_FLOW_ZONE_ROWS) as any[]); if (data.length > MAX_FLOW_ZONE_ROWS) TEMPORAL_CAPPED.add(zones);  // the viewport is chosen AFTER this cut
   _flowZoneCache = { zones, at: nowMs };
   return zones;
 }
@@ -181,7 +181,7 @@ export type PlanArrivalRefusal =
   | "no_group_key_secret"
   | "zone_read_failed"
   | "no_zone_model"
-  | "read_failed";
+  | "read_failed" | "zone_model_capped" | "plans_capped" | "stops_capped";  // census-discovery §113 (D-W11X2-136): a read cut at its cap is not a whole one
 
 interface PlanArrivalReadResult {
   arrivals: PlanArrival[];
@@ -233,7 +233,7 @@ async function readPlanArrivals(
   if (allZones === null) return empty("zone_read_failed");
   const near = expandBbox(bbox);
   const zones = allZones.filter((z) => bboxContains(near, z.centroid.lat, z.centroid.lng));
-  if (zones.length === 0) return empty("no_zone_model");
+  if (TEMPORAL_CAPPED.has(allZones)) return empty("zone_model_capped", zones.length); if (zones.length === 0) return empty("no_zone_model");  // §113: a cut model is not an absent one
   const model = buildFlowZoneModel(zones);
 
   try {
@@ -245,8 +245,8 @@ async function readPlanArrivals(
       .select("id, trip_id, accepted_by_user_id, accepted_at, status")
       .eq("status", "active")
       .not("accepted_at", "is", null)
-      .limit(MAX_ACCEPTED_PLANS);
-    if (planErr || !Array.isArray(planRows)) return empty("read_failed", zones.length);
+      .order("id", { ascending: true }).limit(MAX_ACCEPTED_PLANS + 1);  // §113 (D-W11X2-136)
+    if (planErr || !Array.isArray(planRows)) return empty("read_failed", zones.length); if (planRows.length > MAX_ACCEPTED_PLANS) return empty("plans_capped", zones.length);  // a cut cohort is never stated
 
     const plans = (planRows as any[]).filter(
       (p) => p && p.accepted_by_user_id && p.accepted_at && p.status === "active",
@@ -277,8 +277,8 @@ async function readPlanArrivals(
       .select("id, route_plan_id, structured_location, planned_arrival_time, planned_departure_time")
       .in("route_plan_id", planIds)
       .not("planned_arrival_time", "is", null)
-      .limit(2_000);
-    if (stopErr || !Array.isArray(stopRows)) return empty("read_failed", zones.length);
+      .order("id", { ascending: true }).limit(2_001);  // §113 (D-W11X2-136)
+    if (stopErr || !Array.isArray(stopRows)) return empty("read_failed", zones.length); if (stopRows.length > 2_000) return empty("stops_capped", zones.length);
 
     const arrivals: PlanArrival[] = [];
     for (const stop of stopRows as any[]) {
@@ -333,8 +333,8 @@ async function loadViewerItineraryStops(sc: any, viewerId: string): Promise<any[
     .select("id")
     .eq("owner_user_id", viewerId)
     .in("status", ["draft", "active"])
-    .limit(200);
-  if (planErr || !Array.isArray(planRows)) return null;
+    .limit(201);  // §113 (D-W11X2-136): one past, so a cut list is unread rather than a count
+  if (planErr || !Array.isArray(planRows) || planRows.length > 200) return null;
   const planIds = (planRows as any[]).map((p) => String(p.id));
   if (planIds.length === 0) return [];
 
@@ -343,8 +343,8 @@ async function loadViewerItineraryStops(sc: any, viewerId: string): Promise<any[
     .select("id, title, structured_location, planned_arrival_time, planned_departure_time")
     .in("route_plan_id", planIds)
     .not("planned_arrival_time", "is", null)
-    .limit(500);
-  if (stopErr || !Array.isArray(stops)) return null;
+    .limit(501);  // §113
+  if (stopErr || !Array.isArray(stops) || stops.length > 500) return null;
   return stops as any[];
 }
 
@@ -355,7 +355,7 @@ const MAX_HISTORY_VERSIONS = 2_000;
 
 interface HistoryRead {
   rows: SnapshotVersionRow[] | null;
-  placesById: Map<string, HistoricalPlaceGeometry>; /** census-discovery §113 (DV-83, D-W11X2-130): the read that failed, when rows is null */ failed?: string[];
+  placesById: Map<string, HistoricalPlaceGeometry>; /** census-discovery §113 (DV-83, D-W11X2-130): the read that failed, when rows is null */ failed?: string[]; /** §113 (D-W11X2-136): a read cut at its cap */ truncated?: true;
 }
 
 /**
@@ -380,10 +380,10 @@ async function readHistory(sc: any, bbox: BBox, target: TemporalTarget): Promise
     .lte("latitude", bbox.north)
     .gte("longitude", bbox.west)
     .lte("longitude", bbox.east)
-    .limit(MAX_HISTORY_PLACES);
+    .order("id", { ascending: true }).limit(MAX_HISTORY_PLACES + 1);  // §113 (D-W11X2-136): one past the cap so a cut is known
   if (placeErr || !Array.isArray(placeRows)) return { rows: null, placesById, failed: ["places"] };
-
-  for (const p of placeRows as any[]) {
+  const placesCut = placeRows.length > MAX_HISTORY_PLACES;
+  for (const p of placeRows.slice(0, MAX_HISTORY_PLACES) as any[]) {
     const lat = Number(p.latitude);
     const lng = Number(p.longitude);
     if (Number.isFinite(lat) && Number.isFinite(lng)) {
@@ -391,7 +391,7 @@ async function readHistory(sc: any, bbox: BBox, target: TemporalTarget): Promise
     }
   }
   const placeIds = [...placesById.keys()];
-  if (placeIds.length === 0) return { rows: [], placesById };
+  if (placeIds.length === 0) return { rows: [], placesById, ...(placesCut ? { truncated: true as const } : {}) };
 
   const atIso = new Date(target.at).toISOString();
   const { data: versionRows, error: versionErr } = await sc
@@ -401,10 +401,10 @@ async function readHistory(sc: any, bbox: BBox, target: TemporalTarget): Promise
     .eq("privacy_eligible", true)
     .lte("observed_at", atIso)
     .gte("expires_at", atIso)
-    .limit(MAX_HISTORY_VERSIONS);
+    .order("observed_at", { ascending: false }).limit(MAX_HISTORY_VERSIONS + 1);  // §113 (D-W11X2-136)
   if (versionErr || !Array.isArray(versionRows)) return { rows: null, placesById, failed: ["intel_state_snapshot_versions"] };
-
-  return { rows: versionRows as SnapshotVersionRow[], placesById };
+  const cut = placesCut || versionRows.length > MAX_HISTORY_VERSIONS;
+  return { rows: versionRows.slice(0, MAX_HISTORY_VERSIONS) as SnapshotVersionRow[], placesById, ...(cut ? { truncated: true as const } : {}) };
 }
 
 // ── The route ─────────────────────────────────────────────────────────────────
@@ -516,9 +516,9 @@ router.get(
     const collected: (MapObject | null)[] = [];
     const sources: string[] = [];
     let forecastReport:
-      | { events: number | null; itinerary: number; plan: { published: number; withheld: number; refusal: PlanArrivalRefusal | null; refusals: Record<string, string> } }
+      | { events: number | null; itinerary: number | null; plan: { published: number; withheld: number; refusal: PlanArrivalRefusal | null; refusals: Record<string, string> } }
       | null = null;
-    let historyReport: { available: boolean; covering: number } | null = null; let historyUnread: string[] | null = null;  // §113 (D-W11X2-130): the history sources a failed read could not read
+    let historyReport: { available: boolean; covering: number; truncated?: true } | null = null; let historyUnread: string[] | null = null;  // §113 (D-W11X2-130): the history sources a failed read could not read
 
     if (target.mode === "forecast" && wantKind("prediction")) {
       const [events, itineraryStops, planRead] = await Promise.all([
@@ -548,7 +548,7 @@ router.get(
 
       forecastReport = {
         events: events === null || nearbyEventsScanCut(events) ? null : forecast.events,  // §113 (D-W11X2-132): no count over a cut scan either  // §111 (D-W11X2-115): no count over a failed read
-        itinerary: forecast.itinerary,
+        itinerary: itineraryStops === null ? null : forecast.itinerary,  // §113 (D-W11X2-136): no count over a failed or cut read
         plan: {
           published: forecast.plan.published,
           withheld: forecast.plan.withheld,
@@ -564,8 +564,8 @@ router.get(
       );
       const history = projectHistory(read.rows, read.placesById, target);
       for (const o of history.objects) collected.push(o);
-      if (history.available) sources.push("history");
-      historyReport = { available: history.available, covering: history.covering }; if (!history.available) historyUnread = read.failed ?? ["places", "intel_state_snapshot_versions"];  // §113 (D-W11X2-130): a failed read is named, never only `available: false`
+      if (history.available && !read.truncated) sources.push("history");  // §113 (D-W11X2-136): a cut history is not named as read
+      historyReport = { available: history.available, covering: history.covering, ...(read.truncated ? { truncated: true as const } : {}) }; if (!history.available) historyUnread = read.failed ?? ["places", "intel_state_snapshot_versions"];  // §113 (D-W11X2-130): a failed read is named, never only `available: false`
     }
 
     // §19 order: shape → drop the unservable → filter kinds → §24 → §31 → rank → page.
@@ -699,3 +699,7 @@ router.get(
 );
 
 export default router;
+
+// census-discovery §113 (DV-83 round 16, D-W11X2-136): a flow-zone model cut at its cap — a mark beside the (cached)
+// value, so a whole read's value is unchanged.
+const TEMPORAL_CAPPED = new WeakSet<object>();

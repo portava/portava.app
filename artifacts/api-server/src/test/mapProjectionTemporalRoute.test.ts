@@ -812,3 +812,75 @@ describe("M280 — Phase 5 holds when M10's positive arm holds", () => {
     assert.equal(past.body.forecast, null, "the historical arm reports history, not forecast");
   });
 });
+
+// ── census-discovery §113 (DV-83 round 16 sweep, D-W11X2-136): the temporal gateway's reads cut at their caps ───────
+//
+// Every capped read here was unordered and stated whole: the flow-zone model (2000 worldwide, the viewport chosen after
+// the cut), the accepted plans (500 worldwide) and their stops (2000), the viewer's own plans (200) and stops (500), and
+// the history's places (1000) and versions (2000). And a failed itinerary read still stated `itinerary: 0`.
+describe("§113: the temporal gateway over reads cut at their caps (D-W11X2-136)", () => {
+  const crowdOn = [{ flag: "map_projection_enabled", enabled: true }, { flag: "map_crowd_flow_enabled", enabled: true }];
+  const farZones = (n: number) => Array.from({ length: n }, (_v: unknown, i: number) => zoneRow({ id: `tm-far-${String(i).padStart(4, "0")}`, name: `Far ${i}`, lat: 10 + i * 0.001, lng: 100 }));
+  const HIST_PLACE = { id: "tm-place-a", name: "An Thuong", latitude: 16.05, longitude: 108.2, status: "active", merged_into_place_id: null };
+
+  it("TZ1 2000 zones elsewhere ahead of the viewport's → the plan read says the model was cut, never `no_zone_model`", async () => {
+    const now = Date.now();
+    const res = await temporal(baseState(now, { feature_flags: crowdOn, geo_zones: [...farZones(2000), zoneRow(ZONE_A)], ...planCohort(now, 15, 60) }), `bbox=${BBOX}&offsetMinutes=60`);
+    assert.equal(res.body.forecast.plan.refusal, "zone_model_capped", JSON.stringify(res.body.forecast.plan));
+    assert.ok(!res.body.sources.includes("accepted_plan"));
+  });
+  it("TP1 501 accepted plans (the read takes 500) → plans_capped, never a stated empty cohort", async () => {
+    const now = Date.now();
+    const cohort = planCohort(now, 15, 60);
+    const others = Array.from({ length: 486 }, (_v: unknown, i: number) => ({ id: `tm-other-${i}`, trip_id: null, accepted_by_user_id: `tm-other-actor-${i}`, accepted_at: isoAgo(now, 15 * MIN), status: "active" }));
+    const res = await temporal(baseState(now, { feature_flags: crowdOn, ...cohort, route_plans: [...others, ...cohort.route_plans] }), `bbox=${BBOX}&offsetMinutes=60`);
+    assert.equal(res.body.forecast.plan.refusal, "plans_capped", JSON.stringify(res.body.forecast.plan));
+    assert.ok(!res.body.sources.includes("accepted_plan"));
+  });
+  it("TP2 2001 stops for the cohort's plans (the read takes 2000) → stops_capped", async () => {
+    const now = Date.now();
+    const cohort = planCohort(now, 15, 60);
+    const extra = Array.from({ length: 1986 }, (_v: unknown, i: number) => ({ id: `tm-extra-stop-${i}`, route_plan_id: "tm-plan-1", structured_location: { label: "x", ...STOP_POINT }, planned_arrival_time: new Date(now + 600 * MIN).toISOString(), planned_departure_time: null }));
+    const res = await temporal(baseState(now, { feature_flags: crowdOn, ...cohort, route_stops: [...extra, ...cohort.route_stops] }), `bbox=${BBOX}&offsetMinutes=60`);
+    assert.equal(res.body.forecast.plan.refusal, "stops_capped", JSON.stringify(res.body.forecast.plan));
+  });
+  it("TI1 the viewer's itinerary read fails → no itinerary count is stated", async () => {
+    const now = Date.now();
+    const res = await temporal(baseState(now, { route_plans: { error: { message: "boom" } } }), `bbox=${BBOX}&offsetMinutes=60`);
+    assert.equal(res.body.forecast.itinerary, null, JSON.stringify(res.body.forecast));
+    assert.ok(!res.body.sources.includes("itinerary"));
+  });
+  it("TI2 201 of the viewer's own plans (the read takes 200) → the itinerary is unread, never a count", async () => {
+    const now = Date.now();
+    const plans = Array.from({ length: 201 }, (_v: unknown, i: number) => ({ id: `tm-my-${i}`, owner_user_id: USER, status: "draft", trip_id: null, accepted_at: null, accepted_by_user_id: null }));
+    const res = await temporal(baseState(now, { route_plans: plans, route_stops: [] }), `bbox=${BBOX}&offsetMinutes=60`);
+    assert.equal(res.body.forecast.itinerary, null, JSON.stringify(res.body.forecast));
+    assert.ok(!res.body.sources.includes("itinerary"));
+  });
+  it("TI3 501 stops on the viewer's plans (the read takes 500) → the itinerary is unread", async () => {
+    const now = Date.now();
+    const stops = Array.from({ length: 501 }, (_v: unknown, i: number) => ({ id: `tm-s-${i}`, route_plan_id: "tm-my-plan", title: "x", structured_location: { label: "x", lat: 16.05, lng: 108.2 }, planned_arrival_time: new Date(now + (600 + i) * MIN).toISOString(), planned_departure_time: null }));
+    const res = await temporal(baseState(now, { route_plans: [{ id: "tm-my-plan", owner_user_id: USER, status: "active", trip_id: null, accepted_at: null, accepted_by_user_id: null }], route_stops: stops }), `bbox=${BBOX}&offsetMinutes=60`);
+    assert.equal(res.body.forecast.itinerary, null, JSON.stringify(res.body.forecast));
+  });
+  it("TH1 1001 places in the viewport (the history read takes 1000) → the history says it was cut, and is not named", async () => {
+    const now = Date.now();
+    const places = Array.from({ length: 1001 }, (_v: unknown, i: number) => ({ ...HIST_PLACE, id: `tm-hp-${i}` }));
+    const res = await temporal(baseState(now, { places, intel_state_snapshot_versions: [] }), `bbox=${BBOX}&offsetMinutes=-1440`);
+    assert.equal(res.body.history.truncated, true, JSON.stringify(res.body.history));
+    assert.ok(!res.body.sources.includes("history"));
+  });
+  it("TH2 2001 snapshot versions (the read takes 2000) → the history says it was cut", async () => {
+    const now = Date.now(); const at = now - 1440 * MIN;
+    const versions = Array.from({ length: 2001 }, (_v: unknown, i: number) => ({ subject_id: "tm-place-a", claim_type: `crowd.level.${i}`, value: { level: "busy" }, confidence_band: "strong", privacy_eligible: true, observed_at: new Date(at - 30 * MIN).toISOString(), expires_at: new Date(at + 30 * MIN).toISOString() }));
+    const res = await temporal(baseState(now, { places: [HIST_PLACE], intel_state_snapshot_versions: versions }), `bbox=${BBOX}&offsetMinutes=-1440`);
+    assert.equal(res.body.history.truncated, true, JSON.stringify(res.body.history));
+  });
+  it("THc CONTROL: 1000 places and 2000 versions → a whole history: no mark, named", async () => {
+    const now = Date.now();
+    const places = Array.from({ length: 1000 }, (_v: unknown, i: number) => ({ ...HIST_PLACE, id: `tm-hp-${i}` }));
+    const res = await temporal(baseState(now, { places, intel_state_snapshot_versions: [] }), `bbox=${BBOX}&offsetMinutes=-1440`);
+    assert.equal("truncated" in res.body.history, false);
+    assert.ok(res.body.sources.includes("history"));
+  });
+});
