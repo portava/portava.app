@@ -82,7 +82,7 @@ router.get('/hashtags/suggestions', async (req, res) => {
   const candidateIds = allCandidates.map((h: any) => h.id);
 
   // Fetch which ones the caller follows
-  const { data: followed } = await sc
+  const { data: followed, error: followedErr } = await sc  // §113 (D-W11X2-137)
     .from('user_hashtag_follows')
     .select('hashtag_id')
     .eq('user_id', user.id)
@@ -92,17 +92,17 @@ router.get('/hashtags/suggestions', async (req, res) => {
 
   // Fetch city-trending scores (usage in last 48h for user's city)
   const since = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
-  let cityTrendSet = new Set<string>();
+  let cityTrendSet = new Set<string>(); let cityUsageFailed = false;
 
   if (city) {
-    const { data: cityUsage } = await sc
+    const { data: cityUsage, error: cityUsageErr } = await sc
       .from('hashtag_usage')
       .select('hashtag_id')
       .in('hashtag_id', candidateIds)
       .eq('city', city)
       .gte('created_at', since);
 
-    const cityCountMap: Record<string, number> = {};
+    const cityCountMap: Record<string, number> = {}; if (cityUsageErr) cityUsageFailed = true;
     for (const row of (cityUsage ?? []) as any[]) {
       cityCountMap[row.hashtag_id] = (cityCountMap[row.hashtag_id] ?? 0) + 1;
     }
@@ -128,8 +128,8 @@ router.get('/hashtags/suggestions', async (req, res) => {
       slug: h.slug,
       name: h.name,
       usageCount: h.usage_count,
-      isFollowing: followedSet.has(h.id),
-    })),
+      isFollowing: followedErr ? null : followedSet.has(h.id),
+    })), ...(followedErr || cityUsageFailed ? { failedSources: [...(followedErr ? ['user_hashtag_follows'] : []), ...(cityUsageFailed ? ['hashtag_usage'] : [])] } : {}),
   });
 });
 
@@ -366,12 +366,12 @@ router.get('/hashtags/:slug', async (req, res) => {
       .eq('hashtag_id', htRow.id)
       .not('city', 'is', null)
       .gte('created_at', new Date(nowMs - 30 * 24 * 60 * 60 * 1000).toISOString())
-      .limit(200),
+      .order('created_at', { ascending: false }).limit(201),  // census-discovery §113 (D-W11X2-137): one past the cap
   ]);
 
   // Tally city counts and pick the winner
-  let topCity: string | null = null;
-  if (cityRes.data && cityRes.data.length > 0) {
+  let topCity: string | null = null; const tallyCut = Array.isArray(cityRes.data) && cityRes.data.length > 200;  // §113: "the most" is not stated over a cut tally
+  if (!tallyCut && cityRes.data && cityRes.data.length > 0) {
     const cityCount: Record<string, number> = {};
     for (const row of cityRes.data as any[]) {
       if (row.city) cityCount[row.city] = (cityCount[row.city] ?? 0) + 1;
@@ -385,9 +385,9 @@ router.get('/hashtags/:slug', async (req, res) => {
     slug: htRow.slug,
     name: htRow.name,
     usageCount: htRow.usage_count,
-    isFollowing: followRes.data !== null,
+    isFollowing: followRes.error ? null : followRes.data !== null,  // §113 (D-W11X2-137): a failed read is not "not following"
     topCity,
-    createdAt: htRow.created_at,
+    createdAt: htRow.created_at, ...(followRes.error || cityRes.error ? { failedSources: [...(followRes.error ? ['user_hashtag_follows'] : []), ...(cityRes.error ? ['hashtag_usage'] : [])] } : {}),
   });
 });
 
@@ -403,12 +403,12 @@ router.post('/hashtags/:slug/follow', async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
-  const { data: ht } = await sc
+  const { data: ht, error: htErr } = await sc
     .from('hashtags')
     .select('id, is_blocked')
     .eq('slug', slug)
     .maybeSingle();
-
+  if (htErr) { sendError(res, 'degraded_unavailable', 'We could not check that hashtag right now'); return; }  // census-discovery §113 (D-W11X2-137): never "not found" over a failed read
   if (!ht || (ht as any).is_blocked) { sendError(res, 'not_found', 'Hashtag not found'); return; }
 
   const { error } = await sc
@@ -436,12 +436,12 @@ router.delete('/hashtags/:slug/follow', async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
-  const { data: ht } = await sc
+  const { data: ht, error: htErr } = await sc
     .from('hashtags')
     .select('id')
     .eq('slug', slug)
     .maybeSingle();
-
+  if (htErr) { sendError(res, 'degraded_unavailable', 'We could not check that hashtag right now'); return; }  // §113 (D-W11X2-137)
   if (!ht) { sendError(res, 'not_found', 'Hashtag not found'); return; }
 
   const { error } = await sc
