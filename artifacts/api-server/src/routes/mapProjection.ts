@@ -121,7 +121,7 @@ import { DISCOVERY_CANDIDATE_PROJECTION_FLAG, readDiscoveryCandidatesForViewer }
 import { foldDiscoveryCandidates, refusedDiscoveryCandidates, selectDiscoveryCandidateRows, type DiscoveryCandidateReport } from "../lib/mapDiscoveryCandidates.js";
 import { findNearbyGems } from "../services/hiddenGems/HiddenGemDiscoveryService.js";
 import { applyGemPrivacyBatch } from "../services/hiddenGems/HiddenGemPrivacyGuard.js";
-import { readLiveClaims, toLiveClaimEnvelope } from "../lib/liveClaimRead.js";
+import { readLiveClaims, toLiveClaimEnvelope, liveClaimReadFailed } from "../lib/liveClaimRead.js";  // census-discovery §115 (B11)
 import { loadNearbyEvents, nearbyEventsWithheldUnchecked, nearbyEventsScanCut, forwardEventsWindow } from "./mapSearch.js";  // §113 (D-W11X2-132)
 import { aggregateForViewport, bboxContains, deriveCrowdFlow, type BBox } from "../lib/mapAggregation.js";
 import { applyProtection, type ProtectedZone } from "../lib/protectedLocations.js";
@@ -987,7 +987,7 @@ router.get(
         // envelope ever diverges again this line, and the pin in lib/mapProjection,
         // both go red.
         const claims = await readLiveClaims(sc, subjectId);
-        return claims.map(toLiveClaimEnvelope);
+        if (liveClaimReadFailed(claims)) throw new Error("live_claims_unread"); return claims.map(toLiveClaimEnvelope);  // census-discovery §115 (DV-83, B11): a FAILED read (marked, not thrown) is unread (SW4's throw arm), never "no claim"
       },
       {
         now: nowMs,
