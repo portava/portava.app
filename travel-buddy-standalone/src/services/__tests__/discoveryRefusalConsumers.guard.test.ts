@@ -1147,7 +1147,7 @@ describe("DV-83 guard reach — the round-15 verifier's fixtures (§113, D-W11X2
 
 /** §113 (D-W11X2-133): a source file the app can bundle — every script extension Metro reads, tests aside. The walk and the overlay share it. */
 function isClientSource(name: string): boolean {
-  return /\.(ts|tsx|js|jsx|mjs|cjs)$/.test(name) && !/\.test\.(ts|tsx|js|jsx|mjs|cjs)$/.test(name);
+  return /\.(ts|tsx|js|jsx|mjs|cjs)$/.test(name) && !metroBlocks(`/${name}`);  // §114: a test file is what Metro's blockList says it is
 }
 
 /** The app root's own files the bundle never loads, each with why: they run in the build and test tools, not in the app. */
@@ -1350,10 +1350,10 @@ const GH15D = {
 };
 
 describe('DV-83 guard reach — the overlay mirrors the walk\'s skipped directories (§113, D-W11X2-133)', () => {
-  it('G13 GH17f CONTROL: a raw consumer under __tests__, __mocks__ or __fixtures__, or named .test, is not walked, on disk or in memory', () => {
-    const files = { 'src/components/__tests__/zzGH17f.tsx': GH15D.nested, 'src/components/__mocks__/zzGH17f.tsx': GH15D.nested, 'src/components/__fixtures__/zzGH17f.tsx': GH15D.nested, 'src/components/zzGH17f.test.tsx': GH.named };
-    const u = withFiles(files, unregisteredNow);
-    for (const f of Object.keys(files)) assert.equal(u.has(f), false, `${f} is seen in memory, but the walk never reads it on disk`);
+  it('G13 GH17f CONTROL: a raw consumer under __tests__, or named .test, is not walked, on disk or in memory; one under __mocks__ or __fixtures__ IS, as Metro bundles it (§114, GH25/GH27/GH28)', () => {
+    const files = { 'src/components/__tests__/zzGH17f.tsx': GH15D.nested, 'src/components/zzGH17f.test.tsx': GH.named }; const bundled = { 'src/components/__mocks__/zzGH17f.tsx': GH15D.nested, 'src/components/__fixtures__/zzGH17f.tsx': GH15D.nested };
+    const u = withFiles({ ...files, ...bundled }, unregisteredNow);
+    for (const f of Object.keys(files)) assert.equal(u.has(f), false, `${f} is seen in memory, but Metro never bundles it`); for (const f of Object.keys(bundled)) assert.equal(u.has(f), true, `${f} is not seen, but Metro's blockList does not exclude it (§114)`);
   });
   it('G13 GH17g: the same raw consumer one directory down, outside those, is caught (the fixture bites)', () => {
     assert.ok(withFiles({ 'src/components/zzGH17g/deep.tsx': GH15D.nested }, unregisteredNow).has('src/components/zzGH17g/deep.tsx'));
@@ -1374,10 +1374,90 @@ describe('DV-83 guard reach — the overlay mirrors the walk\'s skipped director
 
 /** §113: a directory the walk never enters. The walk and the overlay share it. */
 function walkSkipsDir(name: string): boolean {
-  return name === 'node_modules' || name === '__tests__' || name === '__mocks__' || name === '__fixtures__';
+  return name === 'node_modules' || metroBlocks(`/${name}/`);  // §114: exactly the directories Metro's blockList excludes — __mocks__ and __fixtures__ are bundled (GH25, GH27, GH28)
 }
 
 /** §113: the files at the app root the walk reads — every bundled script, less the named build configs (isWalkedPath). */
 function rootSources(names: string[]): string[] {
   return names.filter((n) => isWalkedPath(n));
+}
+
+// ── census-discovery §114 (DV-83 round 17, lane W11-X2): the round-16 verifier's fixtures (GH25–GH32) ──────────────
+//
+// The walk skipped `__fixtures__` and `__mocks__`, but Metro's blockList (metro.config.js) excludes only `__tests__/`
+// and `*.test.*` files — and src/data/discovery.ts does `export * from '../__fixtures__/…'`, so src/__fixtures__ IS in
+// the bundle (GH28 is that live pattern). The skipped set is now read from Metro's own blockList (metroBlocks), so the
+// walk reads exactly what Metro may bundle. GH29–GH32 are the fixtures under which the guard mutations R3, R5, R6 and
+// R7 survived: each is a case here, so each reading they touch is load-bearing.
+const GH16F = {
+  fixturesBarrel: "export { fetchCompassRecommendations as zzRecsGH25 } from '../../services/compass.ts';\n",
+  viaFixtures: "import { zzRecsGH25 } from './__fixtures__/zzGH25.ts';\nexport async function zzRawRecsGH25(): Promise<number> {\n  const res = await zzRecsGH25({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  mocksConsumer: "import { fetchCompassRecommendations } from '../../services/compass.ts';\nexport async function zzRawRecsGH27(): Promise<number> {\n  const res = await fetchCompassRecommendations({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  viaMocks: "import { zzRawRecsGH27 } from './__mocks__/zzGH27.tsx';\nexport const zzUseGH27 = () => zzRawRecsGH27();\n",
+  fixturesConsumer: "import { getDiscoveryPlaces } from '../services/discovery.ts';\nexport async function zzFixturePlacesGH28(): Promise<number> {\n  const res = await getDiscoveryPlaces('Lisbon', 'food', {} as never, 1);\n  return res.ok ? res.data.places.length : 0;\n}\n",
+  dataReexport: "export * from '../__fixtures__/zzGH28.ts';\n",
+  handedByAssign: "\n// GH29 (v16 verifier): a registered consumer hands the carrier on by plain assignment (never calls it here).\nconst zzHandGH29 = fetchCompassRecommendations;\nexport const zzHandedGH29 = { load: zzHandGH29 };\n",
+  jsxConsumer: "import { fetchCompassRecommendations } from '../services/compass.ts';\nexport async function zzRawRecsGH30() {\n  const res = await fetchCompassRecommendations({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  iosReexport: "export { fetchCompassRecommendations as zzRecsGH31 } from '../../services/compass.ts';\n",
+  viaIosIndex: "import { zzRecsGH31 } from './zzGH31b';\nexport async function zzRawRecsGH31b(): Promise<number> {\n  const res = await zzRecsGH31({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  importAlias: "\n// GH32 (v16 verifier): a registered consumer imports the carrier a second time under an alias and hands the alias on.\nimport { fetchCompassRecommendations as zzAliasGH32 } from '../../services/compass.ts';\nexport const zzHandedGH32 = [zzAliasGH32];\n",
+};
+
+describe("DV-83 guard reach — the round-16 verifier's fixtures (§114)", () => {
+  const PASSPORT = 'src/components/compass/CompassPassportSuggestions.tsx';
+  it('G13 GH25: a re-export module under __fixtures__ is read, and its importer is caught', () => {
+    assert.throws(() => withFiles({ 'src/components/__fixtures__/zzGH25.ts': GH16F.fixturesBarrel, 'src/components/zzGH25use.tsx': GH16F.viaFixtures }, wholeGuard), /zzGH25use\.tsx \(fetchCompassRecommendations\)/);
+  });
+  it('G13 GH27: a raw consumer under __mocks__, imported by live code, is caught', () => {
+    assert.throws(() => withFiles({ 'src/components/__mocks__/zzGH27.tsx': GH16F.mocksConsumer, 'src/components/zzGH27use.tsx': GH16F.viaMocks }, wholeGuard), /__mocks__\/zzGH27\.tsx \(fetchCompassRecommendations\)/);
+  });
+  it('G13 GH28: a raw consumer in src/__fixtures__, re-exported by src/data/ through `export *` (the live pattern), is caught', () => {
+    assert.throws(() => withFiles({ 'src/__fixtures__/zzGH28.ts': GH16F.fixturesConsumer, 'src/data/zzGH28.ts': GH16F.dataReexport }, wholeGuard), /src\/__fixtures__\/zzGH28\.ts \(getDiscoveryPlaces\)/);
+  });
+  it('G13 GH28b: the live tree — src/__fixtures__ and src/__mocks__ are walked, as Metro bundles them', () => {
+    const sources = clientSources();
+    for (const f of ['src/__fixtures__/discovery.ts', 'src/__fixtures__/events.ts', 'src/__mocks__/expo-router.tsx']) assert.ok(sources.includes(f), `${f} is not walked`);
+    assert.equal(sources.some((f) => f.includes('/__tests__/') || /\.test\.(tsx?|jsx?)$/.test(f)), false, 'a test is walked');
+  });
+  it("G13 GH17j: the skipped set is Metro's own blockList, read from metro.config.js", () => {
+    assert.deepEqual(['node_modules', '__tests__', '__mocks__', '__fixtures__', 'components'].map(walkSkipsDir), [true, true, false, false, false]);
+    assert.deepEqual(['a.tsx', 'a.test.tsx', 'a.component.test.tsx', 'a.test.js', 'a.jsx'].map(isClientSource), [true, false, false, false, true]);
+    const metro = read('metro.config.js');
+    const blocked = metro.replace(String.raw`  /\/__tests__\/.*/,`, String.raw`  /\/__tests__\/.*/,
+  /\/__fixtures__\/.*/,`);
+    assert.notEqual(blocked, metro, 'the fixture edits the blockList');
+    assert.equal(withFiles({ 'metro.config.js': blocked }, () => walkSkipsDir('__fixtures__')), true, 'a directory Metro blocks is skipped');
+  });
+  it('G13 GH29: a carrier handed on by plain assignment in a registered consumer fails the reference pin (R3)', () => {
+    assert.throws(() => withFiles({ [PASSPORT]: read(PASSPORT) + GH16F.handedByAssign }, wholeGuard), /non-call reference/);
+  });
+  it('G13 GH30: a raw consumer in a .jsx source is caught (R5)', () => {
+    assert.throws(() => withFiles({ 'src/components/zzGH30.jsx': GH16F.jsxConsumer }, wholeGuard), /zzGH30\.jsx \(fetchCompassRecommendations\)/);
+  });
+  it('G13 GH31b: a re-export that exists only as a directory index.ios.tsx is caught at its importer (R6)', () => {
+    assert.throws(() => withFiles({ 'src/components/zzGH31b/index.ios.tsx': GH16F.iosReexport, 'src/components/zzGH31buse.tsx': GH16F.viaIosIndex }, wholeGuard), /zzGH31buse\.tsx \(fetchCompassRecommendations\)/);
+  });
+  it('G13 GH32: a carrier imported again under an alias and handed on fails the reference pin (R7)', () => {
+    assert.throws(() => withFiles({ [PASSPORT]: read(PASSPORT) + GH16F.importAlias }, wholeGuard), /non-call reference/);
+  });
+});
+
+/**
+ * §114: Metro's blockList, read from metro.config.js itself — the walk and the overlay skip exactly what Metro never
+ * bundles, and a change to the blockList changes the walk with it. Read from the overlay when a case lays one over the
+ * config (GH17j); otherwise read once for the run.
+ */
+function metroBlockList(): RegExp[] {
+  const cache = metroBlockList as unknown as { disk?: RegExp[] };
+  const overlaid = overlayHas('metro.config.js');
+  if (!overlaid && cache.disk) return cache.disk;
+  const body = /blockList\s*=\s*\[([\s\S]*?)\];/.exec(read('metro.config.js'))?.[1];
+  assert.ok(body !== undefined, 'metro.config.js declares no resolver.blockList: the guard cannot tell what Metro bundles');
+  const list = [...body.matchAll(/^\s*\/(.+)\/([a-z]*),?\s*$/gm)].map((m) => new RegExp(m[1]!, m[2]));
+  assert.ok(list.length > 0, 'metro.config.js\'s blockList holds no regular expression the guard can read');
+  if (!overlaid) cache.disk = list;
+  return list;
+}
+function metroBlocks(path: string): boolean {
+  return metroBlockList().some((re) => re.test(path));
 }

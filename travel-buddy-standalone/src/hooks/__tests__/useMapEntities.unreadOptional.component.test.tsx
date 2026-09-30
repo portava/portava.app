@@ -19,6 +19,7 @@
  *   NU8  the gateway's read FAILED (a transport failure) or was REFUSED (`enabled: false` with `protection_unreadable`):
  *        the legacy fetchers cannot serve the optional layers, so each requested one is named — never an absent hazard
  *   NU8c CONTROL: the flag is off (`enabled: false`, no refusal) → the optional layers are off, not unread
+ *   NU9  every layer switched off after a cut answer → the signal is cleared
  *   NUc  CONTROL: every requested layer named and no nextCursor → nothing unread, not truncated; a layer NOT requested
  *        is never reported unread
  */
@@ -144,5 +145,15 @@ describe('§114 B5: the NOW map hook names every requested layer the gateway did
     const { result } = await load([], { safety: true, crowdFlow: true });
     await waitFor(() => expect(result.current.stage).not.toBe('cached_geography'));
     expect(result.current.unreadLayers).toEqual([]);
+  });
+
+  it('NU9 every layer switched off after a cut answer → nothing unread and not truncated (no stale notice)', async () => {
+    fetchMapProjection.mockResolvedValue(env(['events'], {}, { nextCursor: '200' }));
+    const hook = await renderHook((p: { layers: any[]; safety: boolean }) => useMapEntities({ enabledLayers: p.layers, ...CENTER, safety: p.safety }), { initialProps: { layers: ['events'], safety: true } });
+    await waitFor(() => expect(hook.result.current.truncated).toBe(true));
+    expect(hook.result.current.unreadLayers).toEqual(['safety']);
+    await hook.rerender({ layers: [], safety: false });
+    await waitFor(() => expect(hook.result.current.truncated).toBe(false));
+    expect(hook.result.current.unreadLayers).toEqual([]);
   });
 });

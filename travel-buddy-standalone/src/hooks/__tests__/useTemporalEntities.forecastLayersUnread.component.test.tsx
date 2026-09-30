@@ -16,6 +16,7 @@
  *   FP5  the itinerary named as read but reported null, or reported but not named → unread either way
  *   FP6  several unread layers are each said, the cut first
  *   FP7  a past answer that is page one of several → "Only part of this time could be loaded"
+ *   FP8  a cut answer's mark is dropped at NOW and while the next offset's read is in flight
  *   FP4c CONTROL: the plan layer's genuine off-states (flag_off, no_group_key_secret, no_zone_model) are not unread
  */
 import { renderHook, waitFor } from '@testing-library/react-native';
@@ -107,5 +108,21 @@ describe('§114 B6: the Time Machine forecast says a refused plan layer, an unre
       const t = await settle(envelope({ sources: ['events', 'itinerary'], forecast: { events: 0, itinerary: 0, plan: plan(refusal) } }));
       expect([refusal, t.unreadForecastLayers, temporalNotice(t)]).toEqual([refusal, [], null]);
     }
+  });
+
+  it('FP8 after a cut answer, the Time Machine back at NOW, or a new offset in flight, holds no stale cut', async () => {
+    mockAnswers.push(() => Promise.resolve({ ok: true, data: envelope({ nextCursor: '200' }) }));
+    const hook = await renderHook((p: { offset: any }) => useTemporalEntities({ lat: 38.72, lng: -9.14, offset: p.offset, active: true }), { initialProps: { offset: SOON } });
+    await waitFor(() => expect(hook.result.current.pageCut).toBe(true));
+    let release: (v: unknown) => void = () => {};
+    mockAnswers.push(() => new Promise((res) => { release = res; }));
+    await hook.rerender({ offset: { kind: 'relative', minutes: 120 } });
+    await waitFor(() => expect(hook.result.current.loading).toBe(true));
+    expect(hook.result.current.pageCut).toBe(false);
+    release({ ok: true, data: envelope({ nextCursor: '200' }) });
+    await waitFor(() => expect(hook.result.current.pageCut).toBe(true));
+    await hook.rerender({ offset: { kind: 'now' } });
+    await waitFor(() => expect(hook.result.current.pageCut).toBe(false));
+    expect(temporalNotice(hook.result.current)).toBeNull();
   });
 });

@@ -840,7 +840,7 @@ export function useMapEntities(opts: {
       // The legacy path's half of the same signal.
       const unread: MapUnreadLayer[] = usedGateway
         ? gatewayUnread
-        : safetyFirst([...gatewayUnread, ...settled.filter((r) => r.objects === null).map((r) => r.layer)]);
+        : [...gatewayUnread, ...settled.filter((r) => r.objects === null).map((r) => r.layer)];  // §114 (B5): gatewayUnread is safety first already
       // A settle superseded this fetch while the legacy transports were in
       // flight — discard so the newer viewport's answer is the one that paints.
       if (!current()) return;
@@ -984,7 +984,7 @@ export function optionalLayersRequested(o: {
 /** Every requested layer — pin or optional — whose `sources` name the gateway did not push, safety first. */
 export function unreadOnGateway(enabled: ToggleableEntityType[], optional: string[], sources: string[]): MapUnreadLayer[] {
   const pins = enabled.filter((l) => !sources.includes(GATEWAY_SOURCE_FOR_LAYER[l]));
-  const extra = optional.filter((k) => !sources.includes(GATEWAY_SOURCE_FOR_OPTIONAL_LAYER[k] ?? k));
+  const extra = optional.filter((k) => !sources.includes(GATEWAY_SOURCE_FOR_OPTIONAL_LAYER[k]!));
   return safetyFirst([...pins, ...extra]);
 }
 
