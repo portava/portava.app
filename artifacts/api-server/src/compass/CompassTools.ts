@@ -2352,7 +2352,7 @@ export async function executeCompassTool(
       // Phase 9 social tools below) — a just-blocked host must not surface.
       case "search_events":        raw = await toolSearchEvents(sc, userId, await refreshHiddenUsers(sc, userId, profile), args); break;
       case "get_place_details":    raw = await toolGetPlaceDetails(sc, args); break;
-      case "get_circle_activity":  raw = await toolGetCircleActivity(sc, profile ?? await refreshHiddenUsers(sc, userId, null), userId); break;  // census-compass §34 (census-discovery §111, D-W11X2-105): fails closed: the hidden set is read, never empty for a null profile
+      case "get_circle_activity":  raw = await toolGetCircleActivity(sc, profile ?? await refreshHiddenUsers(sc, userId, null), userId); break;  // census-compass §34 and §35 (census-discovery §111, D-W11X2-105): with NO profile (the ask route's profile read failed) it named muted and blocked members from an EMPTY hidden set; it now reads the set, and an unreadable one throws (closed)
       case "check_trip_conflicts": raw = await toolCheckTripConflicts(sc, userId, args); break;
       case "get_freedom_windows":  raw = await toolGetFreedomWindows(sc, userId, args); break;
       case "get_route_chain":      raw = await toolGetRouteChain(sc, userId, args); break;

@@ -4237,6 +4237,92 @@ catch answers the same `unchecked` ranking.
 this red: a Compass tool that offers a candidate, or a member, over a turn whose profile or block and mute lists could not
 be read (PU1–PU7, PR1, PR2).
 
+## §35 — 2026-09-30: a muted author never reaches the fallback feed, and a failed mute read serves no user content (safety lane, S1) — NO VERDICT MOVES
+
+Safety lane, branch `claude/testing-mode-safety-gates-20260930` cut from `main` at `cd9a11d92`.
+`head_commit` is **NOT** re-declared: this records a fix. Controlled evidence only — node:test route and
+tool suites over a fake PostgREST client that answers a failed read the way supabase-js does
+(`{ data: null, error }`). No flag, no migration, no client file. §33 and §34 are held by another
+branch and are not written here; where §34 (on that branch) says the fallback feed "already degrades …
+when its block list cannot be read", this section is the other half of that sentence.
+
+### 35.1 The defect (found by the DV-83 round-14 verifier as S1, re-located on `main`)
+
+`getCompassProfile` fails CLOSED on an unreadable `user_mutes`: it throws. Four routes catch that throw
+and serve `buildFallbackFeed` instead — `GET /compass/feed`'s build-error catch
+(`artifacts/api-server/src/routes/compass.ts:613#buildFallbackFeed(sc, user.id, profile, "build_error")`),
+`GET /compass/feed/section/:section`'s (`artifacts/api-server/src/routes/compass.ts:774#section_build_error`),
+and the two `COMPASS_FALLBACK_MODE_ENABLED` paths (`:520`, `:650`). The fallback read `blocks` and never
+`user_mutes`, and its safety profile carried `mutedUserIds: []`, so the safety filter's mute rule
+(`artifacts/api-server/src/compass/CompassSafetyFilter.ts:160#profile.mutedUserIds.includes(authorId)`)
+could not fire there. Two consequences:
+
+- a failed mute read served the muted author's posts, events, city-guide entries and threads — the
+  protection switched itself off on exactly the degraded path that exists because it failed closed;
+- with fallback mode on, the same happened over a HEALTHY read: the fallback ignored mutes outright.
+
+### 35.2 The fix
+
+- The fallback reads the mute list beside the block list and fails closed on it
+  (`artifacts/api-server/src/compass/CompassFallbackFeedBuilder.ts:646#loadMutedIds(db, userId)`,
+  `artifacts/api-server/src/compass/CompassFallbackFeedBuilder.ts:746#loadMutedIds`), and hands the
+  ids to the safety profile (`artifacts/api-server/src/compass/CompassFallbackFeedBuilder.ts:117#[...mutedIds]`).
+- An unreadable mute list degrades exactly as an unreadable block list already did: the static safety
+  tools only, `safeItems: []`, and a reason that names the list —
+  `+mute_list_unavailable` (`artifacts/api-server/src/compass/CompassFallbackFeedBuilder.ts:655#mute_list_unavailable`);
+  an unreadable block list still says `+block_list_unavailable`.
+- All edits are line-neutral; the loader and its error class are appended at the file's foot.
+
+### 35.3 The sweep: every other path that builds a Compass profile or feed without mutes
+
+| path | on `main` | now |
+| --- | --- | --- |
+| `/compass/feed`, `/compass/feed/section` normal build | `getCompassProfile` reads mutes, fails closed; the catch is §35.1 | unchanged; the catch is fixed |
+| fallback-mode paths (`:520`, `:650`) | mutes ignored over any read | fixed (§35.2) |
+| `GET /compass` (`:423`), `/compass/frontload` (`:831`) | a thrown profile read fails the request | unchanged — closed |
+| `/compass/recommendations` (`:3609`) | the outer catch answers `recommendations: []` | unchanged — closed (empty, stated as nothing) |
+| `/compass/telegraph` cards (`:4785`) | `cards: []` when the profile is null | unchanged — closed |
+| `/compass/ask` pipeline items and structured context (`:1555`, `:1601`) | a thrown profile read drops the section (`catch {}`), and `guardProfile` stays null | unchanged; the null reaches the tool loop (`:1946`) |
+| ask tools `search_events`, `get_whos_around`, `get_meetup_opportunities`, `get_travel_compatibility`, `get_group_recommendation` | `refreshHiddenUsers` throws with no snapshot | unchanged — closed |
+| ask tool `get_circle_activity` | **handed the null profile straight through**: `toolGetCircleActivity` built an EMPTY hidden set and `buildStructuredCompassContext` named muted AND blocked circle members by handle | **fixed**: with no profile it reads the set through `refreshHiddenUsers`, which throws (closed) when it cannot (`artifacts/api-server/src/compass/CompassTools.ts:2355#toolGetCircleActivity(sc,`) |
+| ask tool `search_places` | catalog rows carry no author, so no mute applies; the unranked-list question is §34's (other branch) | not touched |
+| `CompassNotificationEngine` minimal profile (`mutedUserIds: []`) | mutes are never consulted for a Compass push, over a healthy read too — not a failed-read fail-open | not touched; whether a mute suppresses a Compass push is an owner question |
+| `CompassTestingSandbox` | admin sandbox over synthetic users, not a viewer's feed | not touched |
+
+### 35.4 Rows
+
+**NO VERDICT MOVES.** `CR-04` (block/mute filtering over all private context, `C`) and `CTG-02` (no
+subsystem rediscovers a blocked relationship, `C`) cite `refreshHiddenUsers` "per social call";
+`get_circle_activity` was the social tool that did not go through it when handed no profile, a hole
+under both `C`s on the ask route's degraded path. With the fix both hold as stated; the evidence below is
+added to them, not substituted. `CGR-03` ("runs `runSafetyFilter` over every item") stays `C`: its
+criterion is that the degraded feed is the user's own rows and not template copy, which the mute fix does
+not touch. `CC-08`'s sentence *"Unreachable from `/compass/ask` today … loads the profile without a
+`.catch`"* is false on this tree — the ask route catches the profile read and passes `guardProfile`
+null into the tool loop — and its verdict is unaffected: the throw it grades is exactly what keeps the
+five social tools closed on that path.
+
+### 35.5 Tests (seen RED first) and mutations
+
+`artifacts/api-server/src/test/compassFallbackMutes.test.ts`, registered in the api-server `test` script.
+RED on `cd9a11d92`: MU1, MU2 (failed mute read, feed and section), FM1, FM1b (fallback mode, healthy
+mute ignored), FM2 (fallback mode, failed mute read), AC1, AC2 (`get_circle_activity` with no profile);
+GREEN after. CONTROLS green on both trees: MU0, MU0b, FM0, FB2 (a failed block read still says
+`block_list_unavailable`), AC0, AC0b. Byte-identity: H1 and H2 pin the healthy fallback-mode feed and
+section bodies by sha256, captured on `cd9a11d92` before the fix. The verifier's own probes
+`zz-v14-feedMuteFailOpen` (run over PR #530's `compassReadWorld` helper, then removed): MU1, MU2
+red → green; MU0, MU0b green throughout.
+
+Mutations, each applied alone and restored byte-identically (sha256 checked after each), all KILLED:
+safety profile back to `mutedUserIds: []` (FM1, FM1b); `mutedIds` not passed (FM1, FM1b); the mute
+read's error ignored (MU1, MU2, FM2); mute list not loaded (MU1, MU2, FM1, FM1b, FM2); mute rows dropped
+(FM1, FM1b); reason always `block_list_unavailable` (MU1, FM2); reason always `mute_list_unavailable`
+(FB2); `get_circle_activity` handed the raw null profile (AC1, AC2). 8 applied, 8 killed, 0 survivors.
+
+What would turn this red: a fallback that serves any user-authored item when either hidden list is
+unread; a fallback that serves a muted author over a healthy read; an ask tool that names a circle member
+from an empty hidden set.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/routes/verification.ts — §18.4 cites line 257 only to report that census-trust §14.6's TV-1a sentence is false at HEAD. The route is Trust's subject, graded in census-trust as TV-1a, and no Compass row rests on it.
@@ -4272,3 +4358,4 @@ be read (PU1–PU7, PR1, PR2).
 - NOT-GRADED: artifacts/api-server/src/routes/friends.ts — §33.1 cites its circle-invite accept only as one of the two writers of `circle_memberships`, to show it never sets `status`; no census-compass row grades the friends routes.
 - NOT-GRADED: artifacts/api-server/src/routes/requests.ts — §33.1 cites its circle-invite accept only as the second writer of `circle_memberships`, for the same fact; no census-compass row grades the requests routes.
 - NOT-GRADED: artifacts/api-server/baseline/20260819_baseline_structure.sql — §33.1 cites the `circle_memberships` CREATE TABLE only for the column's default and the absence of a CHECK on it; the baseline is the schema of record, not a surface this census grades.
+- NOT-GRADED: artifacts/api-server/src/test/compassFallbackMutes.test.ts — §35.5's controlled evidence for the fallback mute fix and the `get_circle_activity` null-profile fix; no Compass verdict moves on it, and CR-04/CTG-02 keep the evidence they already cite.
