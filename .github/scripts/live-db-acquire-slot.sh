@@ -249,12 +249,20 @@ emit() {
 # above is setup, not waiting. Starting it earlier meant a slow first API call
 # could consume the whole budget and time the job out before it had asked the
 # question even once — a starvation report about nothing.
+#
+# The same promise holds inside the loop: the deadline is only checked once the
+# question HAS been asked. `date +%s` has one-second resolution, so a second
+# boundary falling between START and the first NOW made ELAPSED=1 before any
+# poll, and a 1-second budget then timed out a run that held the slot without
+# ever looking. The first poll always runs; every later timeout is unchanged
+# (exit 75, certifies nothing).
 START="$(date +%s)"
+ASKED=0
 
 while :; do
   NOW="$(date +%s)"
   ELAPSED=$(( NOW - START ))
-  if [ "$ELAPSED" -ge "$TIMEOUT" ]; then
+  if [ "$ASKED" -eq 1 ] && [ "$ELAPSED" -ge "$TIMEOUT" ]; then
     if [ "$ROLE" = "verify" ]; then
       echo "::error::live-db slot: this job waited ${ELAPSED}s and could NOT prove that run ${GITHUB_RUN_ID} attempt ${ATTEMPT} holds the shared database. It has certified NOTHING and is failing rather than running against a database another run is mutating. If this is a partial re-run (\`gh run rerun --failed\`), re-run the whole workflow instead — a re-run does not re-execute the queue job, so the attempt starts at the BACK of the queue."
     else
@@ -275,6 +283,7 @@ while :; do
   # hold nothing. Runs newer than this one are left unannotated (`held` by
   # default): they cannot block us, so spending an API call on them is waste.
   RUNS="$(annotate_claims "$RAW_RUNS")"
+  ASKED=1
 
   DECISION="$(printf '%s\n' "$RUNS" | bash "$DECIDE" 2>&1)"
   RC=$?

@@ -475,13 +475,26 @@ describe("CI architecture — a re-run cannot inherit somebody else's slot", () 
     role: string;
     runId: string;
     listing: string | null;
-    /** Long enough that at least one poll is logged before the deadline; the
-     *  loop checks the clock BEFORE polling, so a 1s budget can expire on the
-     *  first iteration and print no `holder=` line at all. */
+    /** Long enough that more than one poll is logged before the deadline. The
+     *  script always polls once before it may time out, so even a 1s budget
+     *  prints one `holder=` line. */
     timeoutSeconds?: number;
+    /** Stub `date` so every call advances one second: every call crosses a
+     *  second boundary, the case a real 1-second-resolution clock hits only
+     *  occasionally. */
+    tickingClock?: boolean;
   }) => {
     const dir = mkdtempSync(join(tmpdir(), "portava-slot-"));
     writeFileSync(join(dir, "listing.txt"), opts.listing ?? "");
+    if (opts.tickingClock) {
+      const clock = JSON.stringify(join(dir, "clock"));
+      writeFileSync(
+        join(dir, "date"),
+        "#!/usr/bin/env bash\n" +
+          `n=$(cat ${clock} 2>/dev/null || echo 1000); echo $((n + 1)) > ${clock}; echo "$n"\n`,
+        { mode: 0o755 },
+      );
+    }
     writeFileSync(
       join(dir, "gh"),
       "#!/usr/bin/env bash\n" +
@@ -541,6 +554,32 @@ describe("CI architecture — a re-run cannot inherit somebody else's slot", () 
     });
     assert.equal(r.code, 0, `the oldest active run must be let through. Got ${r.code}:\n${r.out}`);
     assert.match(r.out, /ACQUIRED/);
+  });
+
+  it("EXECUTES ask-before-timeout: a second boundary before the first poll never times out the slot holder", () => {
+    // The CI failure this pins: START and the first NOW straddled a second
+    // boundary, ELAPSED was already 1 >= a 1s budget, and the oldest active run
+    // exited 75 without ever asking. With a clock that ticks on every call the
+    // boundary is crossed every time.
+    const r = runSlotScript({
+      role: "verify",
+      runId: "33967153487",
+      listing: "2026-09-05T13:17:42Z 33967089832\n2026-09-05T12:49:56Z 33967153487\n",
+      tickingClock: true,
+    });
+    assert.equal(r.code, 0, `the slot holder must be let through after its first poll. Got ${r.code}:\n${r.out}`);
+    assert.match(r.out, /ACQUIRED/);
+
+    // Still fail-closed: a contended verify on the same ticking clock polls
+    // once, names the holder, and then times out with 75.
+    const contended = runSlotScript({
+      role: "verify",
+      runId: "33967089832",
+      listing: "2026-09-05T13:17:42Z 33967089832\n2026-09-05T12:49:56Z 33967153487\n",
+      tickingClock: true,
+    });
+    assert.equal(contended.code, 75, `a contended verify must still exit 75. Got ${contended.code}:\n${contended.out}`);
+    assert.match(contended.out, /holder=33967153487/, "it must have asked once before timing out");
   });
 
   it("refuses an unknown role rather than defaulting to something permissive", () => {
