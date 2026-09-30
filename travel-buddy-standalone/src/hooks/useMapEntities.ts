@@ -79,7 +79,7 @@ import type { MapObject, MapObjectKind } from '../types/mapObjects.ts';
 import { compareByRenderingPriority } from '../types/mapObjects.ts';
 import { searchBuddies } from '../services/rentABuddy.ts';
 import { listEvents } from '../services/events.ts';
-import { listGems } from '../services/hiddenGems.ts';
+import { listGems } from '../services/hiddenGems.ts'; import { gemListCut, markGemListCut } from '../services/gemListCut.ts';  // census-discovery §114 (sweep SW2)
 import { listMyTrips } from '../services/trips.ts';
 import { listVisibleCircleLocations } from '../services/map.ts';
 // Typed so the projector call sites are checked too: an untyped row is how
@@ -324,7 +324,7 @@ async function fetchGems(city: string): Promise<MapObject[]> {
     const obj = projectGemLocal(gem);
     if (obj) out.push(obj);
   }
-  return out;
+  return gemListCut(gems) ? markGemListCut(out) : out;  // census-discovery §114 (sweep SW2): a gem page the server cut stays marked
 }
 
 async function fetchTrips(): Promise<MapObject[]> {
@@ -855,7 +855,7 @@ export function useMapEntities(opts: {
       // 'mixed' is unreachable now that the gateway serves every layer this
       // hook can show: when it answers, no per-layer fetcher runs at all.
       setSource(usedGateway ? 'gateway' : 'legacy');
-      setUnreadLayers(unread); setTruncated(usedGateway && gatewayCut);
+      setUnreadLayers(unread); setTruncated(usedGateway ? gatewayCut : settled.some((r) => r.objects !== null && gemListCut(r.objects)));  // §114 (SW2): the rollback path's cut gem page too
       setLiveEnrichment(enrichment);
       setError(null);
       hasLoaded.current = true;
