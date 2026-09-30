@@ -271,10 +271,10 @@ function valueImports(file: string, src: string, target: string): string[] {
       names.push(t.split(/\s+as\s+/)[0]!.trim());
     }
   }
-  for (const m of stripComments(src).matchAll(/(?:\brequire|\bawait\s+import)\(\s*['"`]([^'"`$]+)['"`]\s*\)/g)) {  // §112 (D-W11X2-126): a template-literal specifier too
-    if (sameModule(resolveSpec(file, m[1]!), target)) names.push('<dynamic>');
-  }
-  return [...names.filter((n) => n !== '<dynamic>'), ...requireUses(file, src, target), ...otherImportForms(file, src, target), ...defaultImportUses(file, src, target)];  // §113 (D-W11X2-133): a default import too  // §110 (D-W11X2-99): a namespace import and every dynamic import, read for the names they use
+  // census-discovery §116 (GH41–GH44): a require() or import() of `target` is read from the syntax tree (moduleLoads, at the
+  // file's foot) by requireUses and otherImportForms below. The regex over the text that stood here pushed a '<dynamic>' the
+  // return's filter dropped, so it read nothing; both are gone.
+  return [...names, ...requireUses(file, src, target), ...otherImportForms(file, src, target), ...defaultImportUses(file, src, target)];  // §113 (D-W11X2-133): a default import too  // §110 (D-W11X2-99): a namespace import and every dynamic import, read for the names they use
 }
 
 function derivedConsumers(carriers: string[]): Map<string, string[]> {
@@ -603,21 +603,21 @@ function otherImportForms(file: string, src: string, target: string): string[] {
     const used = [...membersOf(m[1]!), ...destructuredFrom(code, m[1]!)];  // §111 (D-W11X2-116): a carrier destructured from the namespace is used
     names.push(...(used.length > 0 ? used : ['<dynamic>']), ...(namespaceHandedOn(src, m[1]!) ? ['<dynamic>'] : []));  // §115 (GH36): a namespace used other than as `ns.member` (spread, passed, stored) hands every member on
   }
-  for (const m of code.matchAll(/\bimport\(\s*['"`]([^'"`$]+)['"`]\s*\)/g)) {  // §112 (D-W11X2-126): a template-literal specifier too
-    if (!sameModule(resolveSpec(file, m[1]!), target)) continue;
-    const before = code.slice(Math.max(0, m.index! - 200), m.index!);
-    const after = code.slice(m.index! + m[0].length, m.index! + m[0].length + 300);
-    const destructured = /(?:const|let|var)\s*\{([^}]*)\}\s*=\s*(?:await\s+)?\(?\s*(?:await\s+)?$/.exec(before);
-    const bound = /(?:const|let|var)\s+(\w+)\s*=\s*(?:await\s+)?$/.exec(before);
-    const member = /^\s*\)?\s*\.\s*(\w+)/.exec(after);
-    const thenArg = /^\s*\.then\(\s*(?:async\s*)?\(?\s*(?:\{([^}]*)\}|(\w+))/.exec(after);
-    const found = destructured ? patternKeys(destructured[1]!)
-      : bound ? membersOf(bound[1]!)
-      : thenArg ? (thenArg[1] !== undefined ? patternKeys(thenArg[1]) : membersOf(thenArg[2]!))
-      : member && member[1] !== 'then' ? [member[1]!]
-      : [];
+  for (const d of moduleLoads(src)) {  // census-discovery §116 (GH41–GH44): every import() from the syntax tree, whatever its spacing, comments or escapes
+    if (d.kind !== 'import' || d.spec === null || !sameModule(resolveSpec(file, d.spec), target)) continue;
+    let top: ts.Node = d.call;
+    while (ts.isParenthesizedExpression(top.parent) || ts.isAwaitExpression(top.parent)) top = top.parent;
+    const p = top.parent;
+    const keys = (b: ts.BindingName) => (ts.isObjectBindingPattern(b) ? b.elements.filter((e) => !e.dotDotDotToken).map((e) => { const k = e.propertyName ?? e.name; return ts.isIdentifier(k) ? ts.idText(k) : ts.isStringLiteral(k) ? k.text : ''; }).filter((k) => /^\w+$/.test(k)) : null);
+    const destructured = ts.isVariableDeclaration(p) && p.initializer === top ? keys(p.name) : null;
+    const bound = ts.isVariableDeclaration(p) && p.initializer === top && ts.isIdentifier(p.name) ? ts.idText(p.name) : null;
+    const member = ts.isPropertyAccessExpression(p) && p.expression === top ? ts.idText(p.name) : null;
+    const cb = member === 'then' && ts.isCallExpression(p.parent) && p.parent.expression === p ? p.parent.arguments[0] : undefined;
+    const param = cb && (ts.isArrowFunction(cb) || ts.isFunctionExpression(cb)) ? cb.parameters[0]?.name : undefined;
+    const found = destructured ?? (bound ? membersOf(bound) : param ? (keys(param) ?? (ts.isIdentifier(param) ? membersOf(ts.idText(param)) : [])) : member && member !== 'then' ? [member] : []);
     names.push(...(found.length > 0 ? found : ['<dynamic>']));
   }
+  // (§116: the three text windows that read the import's surroundings are the syntax tree's parents above.)
   return names;
 }
 
@@ -704,7 +704,7 @@ function assertEachRawSiteBranches(file: string, src: string): void {
 
 /** A `require()` of `target`: the guard cannot see what is used, so it is `<dynamic>`. */
 function requireUses(file: string, src: string, target: string): string[] {
-  return [...stripComments(src).matchAll(/\brequire\(\s*['"`]([^'"`$]+)['"`]\s*\)/g)].filter((m) => sameModule(resolveSpec(file, m[1]!), target)).map(() => '<dynamic>');
+  return moduleLoads(src).filter((d) => d.kind === 'require' && d.spec !== null && sameModule(resolveSpec(file, d.spec), target)).map(() => '<dynamic>');  // census-discovery §116 (GH43): from the syntax tree, `require (x)` too
 }
 
 // ── census-discovery §111 (DV-83 round 14, lane W11-X2, D-W11X2-116): the guard's reach, round 13's holes ─────────
@@ -939,10 +939,10 @@ function localReexports(file: string, code: string, known: Map<string, Map<strin
 function computedSpecifiers(): string[] {
   const out: string[] = [];
   for (const file of withOverlay(clientSources())) {
-    const code = stripComments(read(file));
-    for (const m of code.matchAll(/(?<![\w.$])(?:import|require)\(\s*([^)]*)\)/g)) {
-      const arg = m[1]!.trim();
-      if (!/^(['"])[^'"]*\1$/.test(arg) && !/^`[^`$]*`$/.test(arg)) out.push(`${file}: ${m[0].slice(0, 80)}`);
+    const loads = moduleLoads(read(file));  // census-discovery §116 (GH41–GH44): import() and require() from the syntax tree, so `import (x)` and `require (x)` are seen too
+    for (const d of loads) {
+      if (d.spec !== null) continue;  // a literal specifier: the parser's value, escapes and all
+      out.push(`${file}: ${d.text.slice(0, 80)}`);
     }
   }
   return out;
@@ -1010,8 +1010,8 @@ describe('DV-83 guard reach — the roots and the pins (§112, D-W11X2-126)', ()
     assert.ok(sources.includes('components/ErrorBoundary.tsx') && sources.includes('hooks/useColors.ts'), 'the root components/ and hooks/ are walked');
     const reach: string[] = [];
     for (const file of sources) {
-      for (const m of stripComments(read(file)).matchAll(/(?:\bfrom\s*|\bimport\(\s*|\brequire\(\s*)['"`]([^'"`$]+)['"`]/g)) {
-        const target = resolveSpec(file, m[1]!);
+      for (const spec of [...[...stripComments(read(file)).matchAll(/\bfrom\s*['"`]([^'"`$]+)['"`]/g)].map((m) => m[1]!), ...moduleLoads(read(file)).flatMap((d) => (d.spec === null ? [] : [d.spec]))]) {  // census-discovery §116 (GH41–GH44): import() and require() from the syntax tree
+        const target = resolveSpec(file, spec);
         const code = !/\.(?:webp|png|jpe?g|gif|svg|ttf|otf|mp3|wav|mp4|json|lottie)$/i.test(target ?? '');  // an image or a font is not a module that can read a carrier
         if (target && code && target.split('/')[0]! in clientNotBundled() && target.split('/')[0] !== 'node_modules') reach.push(`${file} → ${target}`);
       }
@@ -1664,4 +1664,85 @@ function namespaceHandedOn(src: string, ns: string): boolean {
   };
   visit(sf);
   return handed;
+}
+
+// ── census-discovery §116 (DV-83 round 19, lane W11-X2): the round-18 verifier's fixtures (GH41–GH44, GHX6) ───────────
+//
+// §115 read declarations through the parser, but `import()` and `require()` were still found by regular expressions over
+// the canonical text (`\bimport\(`, `\brequire\(`, `\bawait\s+import\(`): whitespace or a comment before the parenthesis
+// (GH41, GH43, GH44 — Metro bundles all three) and an escaped character in the specifier (GH42: the string's VALUE is the
+// module, its spelling is not) escaped them. They are now read from the syntax tree (`moduleLoads`): a call whose callee
+// is the `import` keyword or the identifier `require`, its specifier the literal's value as the parser unescaped it (null
+// when computed). X6 (a block comment removed to '' instead of one space) survived because nothing pinned that a block
+// comment SEPARATES two tokens: GHX6 is the verifier's fixture, GHX6b a registered consumer's alias whose `const` and name
+// only a space keeps apart, GHX6c the canonical form itself.
+const GH18V = {
+  spaceParen: "export async function zzRawRecsGH41(): Promise<number> {\n  const { fetchCompassRecommendations } = await import ('../services/compass.ts');\n  const res = await fetchCompassRecommendations({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  escapedSpec: "export async function zzRawRecsGH42(): Promise<number> {\n  const { fetchCompassRecommendations } = await import('../services/compass\\u002ets');\n  const res = await fetchCompassRecommendations({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  requireSpace: "export function zzRawRecsGH43(): Promise<number> {\n  const { fetchCompassRecommendations } = require ('../services/compass.ts');\n  return fetchCompassRecommendations({ surface: 'passport' }).then((res: any) => (res.ok && res.data ? res.data.recommendations.length : 0));\n}\n",
+  commentParen: "export async function zzRawRecsGH44(): Promise<number> {\n  const m = await import /* lazy */ ('../services/compass.ts');\n  const res = await m.fetchCompassRecommendations({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  computedSpace: "const zzSpecGH41b = '../services/compass.ts';\nexport async function zzRawRecsGH41b(): Promise<number> {\n  const m = await import (zzSpecGH41b);\n  return (await m.fetchCompassRecommendations({ surface: 'passport' })).ok ? 1 : 0;\n}\n",
+  gluedComment: "export async function zzRawRecsGHX6(): Promise<number> {\n  const { fetchCompassRecommendations } = await/**/import('../services/compass.ts');\n  const res = await fetchCompassRecommendations({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  gluedAlias: "\nexport async function zzAliasSiteGHX6b(): Promise<number> {\n  const/**/zzLoadX6 = fetchCompassRecommendations;\n  const res = await zzLoadX6({ surface: 'passport', limit: 3 });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  otherCalls: "export const zzA = obj.require('../services/compass.ts');\nexport const zzB = requireX('../services/compass.ts');\nexport type ZzT = typeof import('../services/compass.ts');\n",
+};
+
+describe("DV-83 guard reach — the round-18 verifier's fixtures (§116)", () => {
+  it('G13 GH41: `await import (x)`, whitespace before the parenthesis, is caught', () => {
+    assert.throws(() => withFiles({ 'src/components/zzGH41.tsx': GH18V.spaceParen }, wholeGuard), /zzGH41\.tsx \(fetchCompassRecommendations\)/);
+  });
+  it('G13 GH41b: a COMPUTED specifier after `import (`, whitespace before the parenthesis, is refused', () => {
+    assert.throws(() => withFiles({ 'src/components/zzGH41b.tsx': GH18V.computedSpace }, wholeGuard), /zzGH41b\.tsx|computed specifier/);
+  });
+  it('G13 GH42: an escaped character in a dynamic-import specifier (its value is the module) is caught', () => {
+    assert.throws(() => withFiles({ 'src/components/zzGH42.tsx': GH18V.escapedSpec }, wholeGuard), /zzGH42\.tsx \(fetchCompassRecommendations\)/);
+  });
+  it('G13 GH43: `require (x)`, whitespace before the parenthesis, is caught', () => {
+    assert.throws(() => withFiles({ 'src/components/zzGH43.tsx': GH18V.requireSpace }, wholeGuard), /zzGH43\.tsx \(<dynamic>\)/);
+  });
+  it('G13 GH44: `import /* c */ (x)`, a comment before the parenthesis, is caught', () => {
+    assert.throws(() => withFiles({ 'src/components/zzGH44.tsx': GH18V.commentParen }, wholeGuard), /zzGH44\.tsx \(fetchCompassRecommendations\)/);
+  });
+  it('G13 GHX6: `await/**/import(x)`, `await` and `import` apart only by a block comment, is caught', () => {
+    assert.throws(() => withFiles({ 'src/components/zzGHX6.tsx': GH18V.gluedComment }, wholeGuard), /zzGHX6\.tsx \(fetchCompassRecommendations\)/);
+  });
+  it('G13 GHX6b: a second raw site through an alias declared `const/**/name = carrier` fails G9 (a block comment separates tokens)', () => {
+    const file = 'src/components/compass/CompassPassportSuggestions.tsx';
+    assert.throws(() => withFiles({ [file]: read(file) + GH18V.gluedAlias }, () => compassConsumersBranchOnCoverage()), /call site|without the shared predicate/i);
+  });
+  it('G13 GHX6c: the canonical form keeps a block comment between two tokens as one space', () => {
+    assert.equal(canonicalSource('const/**/x = 1;'), 'const x = 1;');
+    assert.equal(canonicalSource('await/* c */import(y);'), 'await import(y);');
+  });
+  it('G13 GH41c: a member `.require(…)`, another function named like it and a type-only `import(…)` load nothing (the regexes read the first and last as loads)', () => {
+    assert.equal(withFiles({ 'src/components/zzGH41c.tsx': GH18V.otherCalls }, () => unregisteredNow().has('src/components/zzGH41c.tsx')), false);
+  });
+});
+
+/**
+ * §116 (GH41–GH44): every `import()` and `require()` in `src`, read from the syntax tree — a call whose callee is the
+ * `import` keyword or the identifier `require` (however it is spelled, spaced or commented), and `import x = require(…)`.
+ * `spec` is the literal's value as the parser unescaped it, and null for a computed specifier. A type-only
+ * `typeof import(…)` loads nothing, and neither does a member `.require(…)`. Memoised by the text.
+ */
+interface ModuleLoad { kind: 'import' | 'require'; spec: string | null; call: ts.Node; text: string }
+function moduleLoads(src: string): ModuleLoad[] {
+  const memo = moduleLoads as unknown as { cache?: Map<string, ModuleLoad[]> };
+  const cache = (memo.cache ??= new Map());
+  const hit = cache.get(src);
+  if (hit !== undefined) return hit;
+  const sf = parsedSource(src);
+  const out: ModuleLoad[] = [];
+  const literal = (a: ts.Expression | undefined) => (a && (ts.isStringLiteral(a) || ts.isNoSubstitutionTemplateLiteral(a)) ? a.text : null);
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node)) {
+      const e = node.expression;
+      const kind = e.kind === ts.SyntaxKind.ImportKeyword ? 'import' : ts.isIdentifier(e) && ts.idText(e) === 'require' ? 'require' : null;
+      if (kind) out.push({ kind, spec: literal(node.arguments[0]), call: node, text: node.getText(sf) });
+    } else if (ts.isExternalModuleReference(node)) out.push({ kind: 'require', spec: literal(node.expression), call: node, text: node.getText(sf) });
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  cache.set(src, out);
+  return out;
 }
