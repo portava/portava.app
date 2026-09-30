@@ -40,7 +40,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
 import { join, dirname, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath } from 'node:url'; import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'; import { tmpdir } from 'node:os'; import ts from 'typescript';  // census-discovery §115 (GH33–GH40): the source is read through the TypeScript parser; GH40 walks a temporary tree
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');   // travel-buddy-standalone/
 const SERVICE = 'src/services/discovery.ts';
@@ -232,12 +232,12 @@ function derivedCarriers(): string[] {
   return carriers.sort();
 }
 
-function walk(dir: string, out: string[]): string[] {
-  if (!existsSync(join(ROOT, dir))) return out;
-  for (const entry of readdirSync(join(ROOT, dir))) {
+function walk(dir: string, out: string[], root: string = ROOT): string[] {  // §115 (GH40, R8): `root` lets G13 walk a temporary tree
+  if (!existsSync(join(root, dir))) return out;
+  for (const entry of readdirSync(join(root, dir))) {
     const rel = `${dir}/${entry}`;
     if (walkSkipsDir(entry)) continue;  // §113 (D-W11X2-133): one list of skipped directories, shared with the overlay (isWalkedPath)
-    if (statSync(join(ROOT, rel)).isDirectory()) walk(rel, out);
+    if (statSync(join(root, rel)).isDirectory()) walk(rel, out, root);
     else if (isClientSource(entry)) out.push(rel);  // §113 (D-W11X2-133): .js/.jsx/.mjs/.cjs too (the app bundles .js)
   }
   return out;
@@ -581,9 +581,9 @@ describe("DV-83 guard reach — the round-12 verifier's fixtures (§110, D-W11X2
   });
 });
 
-/** Source with comments removed (a carrier named in a comment is not a use). */
+/** Source with comments removed (a carrier named in a comment is not a use), read by the TypeScript parser (§115). */
 function stripComments(src: string): string {
-  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:\\'"`])\/\/.*$/gm, '$1');
+  return canonicalSource(src);  // census-discovery §115 (GH33, GH34, GH37, GH38): comments are the parser's, never a `/*` or `//` inside a string; imports and exports are printed in one canonical form
 }
 function escapeRe(x: string): string { return x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 /** The keys of a destructuring pattern: `{ a, b: c }` → a, b. */
@@ -601,7 +601,7 @@ function otherImportForms(file: string, src: string, target: string): string[] {
   for (const m of code.matchAll(/import\s+(?:\w+\s*,\s*)?\*\s+as\s+(\w+)\s+from\s*['"]([^'"]+)['"]/g)) {  // §112 (D-W11X2-126): a default before the namespace too
     if (!sameModule(resolveSpec(file, m[2]!), target)) continue;
     const used = [...membersOf(m[1]!), ...destructuredFrom(code, m[1]!)];  // §111 (D-W11X2-116): a carrier destructured from the namespace is used
-    names.push(...(used.length > 0 ? used : ['<dynamic>']));
+    names.push(...(used.length > 0 ? used : ['<dynamic>']), ...(namespaceHandedOn(src, m[1]!) ? ['<dynamic>'] : []));  // §115 (GH36): a namespace used other than as `ns.member` (spread, passed, stored) hands every member on
   }
   for (const m of code.matchAll(/\bimport\(\s*['"`]([^'"`$]+)['"`]\s*\)/g)) {  // §112 (D-W11X2-126): a template-literal specifier too
     if (!sameModule(resolveSpec(file, m[1]!), target)) continue;
@@ -1460,4 +1460,198 @@ function metroBlockList(): RegExp[] {
 }
 function metroBlocks(path: string): boolean {
   return metroBlockList().some((re) => re.test(path));
+}
+
+// ── census-discovery §115 (DV-83 round 18, lane W11-X2): the round-17 verifier's fixtures (GH33–GH40) ──────────────
+//
+// The guard read source with regular expressions over text whose comments a regex had stripped. A `/*` inside a string
+// (`'image/*'`, GH33) opened a "comment" that ate code to the next `*/`, and a `//` inside a string cut the rest of its
+// line (GH38); `import{x}from'…'` with no whitespace (GH34) and an ES2022 string-literal import name (GH37) matched no
+// import regex; and a namespace import spread into an object (GH36) named no member. The source is now read through the
+// TypeScript parser (`canonicalSource`): comments are the ones the parser finds between tokens, never text inside a
+// string, template or JSX; every import and export declaration is printed in one canonical form (names unquoted, one
+// space between tokens), and an identifier spelled with a unicode escape is printed as the name it binds — so every
+// reading below it sees the module structure, not its spelling. A namespace used other than as `ns.member` is
+// `<dynamic>` (namespaceHandedOn). GH39 and GH40 are the verifier's fixtures under which R3 and R8 survived: a raw
+// consumer in a `.test.mjs` file (Metro's blockList does not block `.mjs`) and a raw consumer under `__tests__` with
+// that rule removed from the blockList, which `walk()` must then read (it asks walkSkipsDir, not a list of its own).
+const GH17V = {
+  mimeGlob: "// GH33: a `/*` inside a string.\nexport const ACCEPT_GH33 = 'image/*';\nexport async function zzRawRecsGH33(): Promise<number> {\n  const { fetchCompassRecommendations } = await import('../services/compass.ts');\n  const res = await fetchCompassRecommendations({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n/** The count of recommendations, raw. */\nexport const zzGH33 = 1;\n",
+  noSpace: "import{fetchCompassRecommendations}from'../services/compass.ts';\nexport async function zzRawRecsGH34(): Promise<number> {\n  const res = await fetchCompassRecommendations({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  nsSpread: "import * as C from '../services/compass.ts';\nconst api = { ...C };\nexport const zzKeyGH36 = C.CITY_CONFIDENCE_STORAGE_KEY;\nexport async function zzRawRecsGH36(): Promise<number> {\n  const res = await api.fetchCompassRecommendations({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  stringName: "import { 'fetchCompassRecommendations' as zzRecsGH37 } from '../services/compass.ts';\nexport async function zzRawRecsGH37(): Promise<number> {\n  const res = await zzRecsGH37({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  slashInString: "const SEP_GH38 = 'a//b'; import { fetchCompassRecommendations } from '../services/compass.ts';\nexport async function zzRawRecsGH38(): Promise<number> {\n  const res = await fetchCompassRecommendations({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length + SEP_GH38.length : 0;\n}\n",
+  escapedName: "import { fetchCompassRecomm\\u0065ndations } from '../services/compass.ts';\nexport async function zzRawRecsGH35b(): Promise<number> {\n  const res = await fetchCompassRecomm\\u0065ndations({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  nsMemberOnly: "import * as C from '../services/compass.ts';\nexport const zzKeyGH36c = C.CITY_CONFIDENCE_STORAGE_KEY;\nexport type ZzGH36c = typeof C;\n",
+  commentOnly: "// import { fetchCompassRecommendations } from '../services/compass.ts';\n/* await fetchCompassRecommendations({ surface: 'passport' }); */\nexport const zzGH33c = '/* not a comment */ // nor this';\n",
+  testMjsConsumer: "import { fetchCompassRecommendations } from '../services/compass.ts';\nexport async function zzRawRecsGH39() {\n  const res = await fetchCompassRecommendations({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  viaTestMjs: "import { zzRawRecsGH39 } from './zzGH39.test.mjs';\nexport const zzUseGH39 = () => zzRawRecsGH39();\n",
+  testsDirConsumer: "import { fetchCompassRecommendations } from '../../services/compass.ts';\nexport async function zzRawRecsGH40(): Promise<number> {\n  const res = await fetchCompassRecommendations({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+};
+
+describe("DV-83 guard reach — the round-17 verifier's fixtures (§115)", () => {
+  it("G13 GH33: a `/*` inside a string ('image/*') does not hide the dynamic import after it", () => {
+    assert.throws(() => withFiles({ 'src/components/zzGH33.tsx': GH17V.mimeGlob }, wholeGuard), /zzGH33\.tsx \(fetchCompassRecommendations\)/);
+  });
+  it('G13 GH34: `import{…}from\'…\'` with no whitespace is caught', () => {
+    assert.throws(() => withFiles({ 'src/components/zzGH34.tsx': GH17V.noSpace }, wholeGuard), /zzGH34\.tsx \(fetchCompassRecommendations\)/);
+  });
+  it('G13 GH35b: an imported name spelled with a unicode escape INSIDE the braces is caught, under the name it binds (the verifier\'s GH35 escaped it elsewhere, and was killed)', () => {
+    assert.throws(() => withFiles({ 'src/components/zzGH35b.tsx': GH17V.escapedName }, wholeGuard), /zzGH35b\.tsx \(fetchCompassRecommendations\)/);
+  });
+  it('G13 GH36: a namespace import spread into an object (its carrier called through the copy) is caught', () => {
+    assert.throws(() => withFiles({ 'src/components/zzGH36.tsx': GH17V.nsSpread }, wholeGuard), /zzGH36\.tsx \(.*<dynamic>.*\)/);
+  });
+  it('G13 GH36c CONTROL: a namespace read only for a non-carrier member (and as a type) makes no consumer', () => {
+    assert.equal(withFiles({ 'src/components/zzGH36c.tsx': GH17V.nsMemberOnly }, () => unregisteredNow().has('src/components/zzGH36c.tsx')), false);
+  });
+  it('G13 GH37: an ES2022 string-literal import name is caught', () => {
+    assert.throws(() => withFiles({ 'src/components/zzGH37.tsx': GH17V.stringName }, wholeGuard), /zzGH37\.tsx \(fetchCompassRecommendations\)/);
+  });
+  it('G13 GH38: a `//` inside a string on the import\'s line does not hide the import', () => {
+    assert.throws(() => withFiles({ 'src/components/zzGH38.tsx': GH17V.slashInString }, wholeGuard), /zzGH38\.tsx \(fetchCompassRecommendations\)/);
+  });
+  it('G13 GH33c CONTROL: a carrier named only in comments makes no consumer, and comment-like text in a string stays text', () => {
+    assert.equal(withFiles({ 'src/components/zzGH33c.tsx': GH17V.commentOnly }, () => unregisteredNow().has('src/components/zzGH33c.tsx')), false);
+    assert.match(canonicalSource(GH17V.commentOnly), /'\/\* not a comment \*\/ \/\/ nor this'/);
+    assert.doesNotMatch(canonicalSource(GH17V.commentOnly), /fetchCompassRecommendations/);
+  });
+  it('G13 GH33d: the canonical form — comments dropped, imports and exports printed one way, strings and JSX text kept', () => {
+    const src = "import{a as b,'c' as d}from\"./x.ts\";export{e as 'f'}from'./y.ts';\nconst u = '/*'; const k = <T>{/* gone */}//x{'//'}</T>; // gone\nconst r = /\\/\\*/; const t = `//${u}/*`; /* gone */ export * as ns from './z.ts';\n";
+    const out = canonicalSource(src);
+    assert.match(out, /^import \{ a as b, c as d \} from '\.\/x\.ts';export \{ e as f \} from '\.\/y\.ts';/);
+    assert.match(out, /const u = '\/\*';/);
+    assert.match(out, /<T>\{ *\}\/\/x\{'\/\/'\}<\/T>;/);
+    assert.match(out, /const r = \/\\\/\\\*\/;/);
+    assert.match(out, /const t = `\/\/\$\{u\}\/\*`;/);
+    assert.match(out, /export \* as ns from '\.\/z\.ts';/);
+    assert.doesNotMatch(out, /gone/);
+  });
+  it('G13 GH39: a raw consumer in a `.test.mjs` file Metro bundles (its blockList does not block .mjs) is caught (R3)', () => {
+    assert.equal(isClientSource('a.test.mjs'), true, "Metro's blockList does not block .test.mjs, so the walk reads it");
+    assert.equal(isClientSource('a.test.tsx'), false);
+    assert.throws(() => withFiles({ 'src/components/zzGH39.test.mjs': GH17V.testMjsConsumer, 'src/components/zzGH39use.tsx': GH17V.viaTestMjs }, wholeGuard), /zzGH39\.test\.mjs \(fetchCompassRecommendations\)/);
+  });
+  it("G13 GH40: walk() follows Metro's blockList — with the __tests__ rule removed, a consumer under __tests__ is walked (R8)", () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'dv83-gh40-'));
+    try {
+      mkdirSync(join(tmp, 'src', 'components', '__tests__'), { recursive: true });
+      mkdirSync(join(tmp, 'src', 'components', 'node_modules'), { recursive: true });
+      writeFileSync(join(tmp, 'src', 'components', '__tests__', 'zzGH40.tsx'), GH17V.testsDirConsumer);
+      writeFileSync(join(tmp, 'src', 'components', 'node_modules', 'zzPkg.ts'), 'export const x = 1;\n');
+      writeFileSync(join(tmp, 'src', 'components', 'zzGH40use.tsx'), "import { zzRawRecsGH40 } from './__tests__/zzGH40.tsx';\n");
+      assert.deepEqual(walk('src', [], tmp).sort(), ['src/components/zzGH40use.tsx'], 'CONTROL: with the blockList as it is, __tests__ is not walked');
+      const metro = read('metro.config.js');
+      const unblocked = metro.replace(String.raw`  /\/__tests__\/.*/,` + '\n', '');
+      assert.notEqual(unblocked, metro, 'the fixture edits the blockList');
+      const walked = withFiles({ 'metro.config.js': unblocked }, () => walk('src', [], tmp).sort());
+      assert.deepEqual(walked, ['src/components/__tests__/zzGH40.tsx', 'src/components/zzGH40use.tsx'], 'a directory Metro no longer blocks is walked');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+/**
+ * §115: `src` as the guard reads it — parsed by TypeScript, comments removed (the ranges the parser finds between
+ * tokens; JSX text, strings, templates and regular expressions are tokens, never comments), every import and export
+ * declaration printed in one canonical form, and every identifier spelled with an escape printed as the name it binds.
+ * Memoised by the text (the walk reads each file many times).
+ */
+function canonicalSource(src: string): string {
+  const memo = canonicalSource as unknown as { cache?: Map<string, string> };
+  const cache = (memo.cache ??= new Map());
+  const hit = cache.get(src);
+  if (hit !== undefined) return hit;
+  const sf = parsedSource(src);
+  const decls: Array<[number, number, string]> = [];
+  for (const st of sf.statements) {
+    const printed = canonicalDeclaration(st);
+    if (printed !== null) decls.push([st.getStart(sf), st.end, printed]);
+  }
+  const inDecl = (at: number) => decls.some(([s, e]) => at >= s && at < e);
+  const edits: Array<[number, number, string]> = [...decls];
+  const seen = new Set<number>();
+  const visit = (node: ts.Node): void => {
+    if (node.kind === ts.SyntaxKind.JsxText) return;
+    const kids = node.getChildren(sf);
+    if (kids.length > 0) { for (const k of kids) visit(k); return; }
+    for (const c of [...(ts.getTrailingCommentRanges(sf.text, node.pos) ?? []), ...(ts.getLeadingCommentRanges(sf.text, node.pos) ?? [])]) {  // a comment on the previous token's line is its "trailing" one
+      if (seen.has(c.pos) || inDecl(c.pos)) continue;
+      seen.add(c.pos);
+      edits.push([c.pos, c.end, c.kind === ts.SyntaxKind.MultiLineCommentTrivia ? ' ' : '']);
+    }
+    if (ts.isIdentifier(node) && !inDecl(node.getStart(sf)) && node.getText(sf) !== ts.idText(node)) edits.push([node.getStart(sf), node.end, ts.idText(node)]);
+  };
+  visit(sf);
+  let out = src;
+  for (const [s, e, text] of edits.sort((a, b) => b[0] - a[0])) out = out.slice(0, s) + text + out.slice(e);
+  cache.set(src, out);
+  return out;
+}
+
+/** The parse of `src`: as TSX, or as TS when that parses with fewer errors (a `<T>(x) =>` or a `<T>x` cast). */
+function parsedSource(src: string): ts.SourceFile {
+  const memo = parsedSource as unknown as { cache?: Map<string, ts.SourceFile> };
+  const cache = (memo.cache ??= new Map());
+  const hit = cache.get(src);
+  if (hit !== undefined) return hit;
+  const errors = (f: ts.SourceFile) => ((f as unknown as { parseDiagnostics?: unknown[] }).parseDiagnostics ?? []).length;
+  let sf = ts.createSourceFile('guard.tsx', src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  if (errors(sf) > 0) {
+    const asTs = ts.createSourceFile('guard.ts', src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    if (errors(asTs) < errors(sf)) sf = asTs;
+  }
+  cache.set(src, sf);
+  return sf;
+}
+
+/** An import or export declaration in its one canonical form (null for any other statement). */
+function canonicalDeclaration(st: ts.Statement): string | null {
+  const name = (n: ts.ModuleExportName) => (ts.isIdentifier(n) ? ts.idText(n) : /^[A-Za-z_$][\w$]*$/.test(n.text) ? n.text : JSON.stringify(n.text));
+  const spec = (m: ts.Expression | undefined) => (m && ts.isStringLiteral(m) ? `'${m.text.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'` : null);
+  const element = (e: ts.ImportSpecifier | ts.ExportSpecifier) => `${e.isTypeOnly ? 'type ' : ''}${e.propertyName ? `${name(e.propertyName)} as ` : ''}${name(e.name)}`;
+  if (ts.isImportDeclaration(st)) {
+    const from = spec(st.moduleSpecifier);
+    if (from === null) return null;
+    const c = st.importClause;
+    if (!c) return `import ${from};`;
+    const parts: string[] = [];
+    if (c.name) parts.push(ts.idText(c.name));
+    const nb = c.namedBindings;
+    if (nb && ts.isNamespaceImport(nb)) parts.push(`* as ${ts.idText(nb.name)}`);
+    else if (nb) parts.push(`{ ${nb.elements.map(element).join(', ')} }`);
+    return `import ${c.isTypeOnly ? 'type ' : ''}${parts.join(', ')} from ${from};`;
+  }
+  if (ts.isExportDeclaration(st)) {
+    const from = st.moduleSpecifier ? spec(st.moduleSpecifier) : '';
+    if (from === null) return null;
+    const ec = st.exportClause;
+    const body = !ec ? '*' : ts.isNamespaceExport(ec) ? `* as ${name(ec.name)}` : `{ ${ec.elements.map(element).join(', ')} }`;
+    return `export ${st.isTypeOnly ? 'type ' : ''}${body}${from ? ` from ${from}` : ''};`;
+  }
+  return null;
+}
+
+/**
+ * §115 (GH36): whether the namespace binding `ns` is used other than to read a member (`ns.x`), to be destructured
+ * (`const { x } = ns`) or as a type (`typeof ns`, `ns.T`) — spread, passed, stored or re-exported, which hands on every
+ * member the guard then cannot see. A declaration of the same name is not a use.
+ */
+function namespaceHandedOn(src: string, ns: string): boolean {
+  const sf = parsedSource(src);
+  let handed = false;
+  const visit = (node: ts.Node): void => {
+    if (handed) return;
+    if (ts.isIdentifier(node) && ts.idText(node) === ns) {
+      const p = node.parent;
+      const declares = (ts.isNamespaceImport(p) || ts.isImportSpecifier(p) || ts.isImportClause(p) || ts.isVariableDeclaration(p) || ts.isParameter(p) || ts.isBindingElement(p) || ts.isFunctionDeclaration(p) || ts.isClassDeclaration(p) || ts.isPropertyAssignment(p) || ts.isPropertyDeclaration(p) || ts.isMethodDeclaration(p) || ts.isPropertySignature(p) || ts.isJsxAttribute(p) || ts.isLabeledStatement(p)) && (p as { name?: ts.Node }).name === node;
+      const member = (ts.isPropertyAccessExpression(p) && (p.expression === node || p.name === node)) || ts.isQualifiedName(p) || ts.isTypeQueryNode(p);
+      const destructured = ts.isVariableDeclaration(p) && p.initializer === node && ts.isObjectBindingPattern(p.name);
+      if (!declares && !member && !destructured) handed = true;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return handed;
 }
