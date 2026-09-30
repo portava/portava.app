@@ -36,7 +36,6 @@ const USER = "viewer-user-id";
 const SHARER = "sharer-user-id";
 const POS = { lat: 16.06, lng: 108.21 };
 const BBOX = "108.0,15.9,108.4,16.2";
-const agoIso = (ms: number) => new Date(Date.now() - ms).toISOString();
 
 const inSizes: Record<string, number[]> = {};
 function buildQuery(rowsIn: any[], table = "") {
@@ -79,7 +78,8 @@ const prof = (id: string) => ({ id, handle: id.slice(0, 8), name: id, display_na
 function world(off: number, on: number, offAgeMs = 60_000, onAgeMs = 60_000) {
   const offIds = Array.from({ length: off }, (_, i) => `off-user-${String(i).padStart(4, "0")}`);
   const onIds = on === 1 ? [SHARER] : Array.from({ length: on }, (_, i) => `on-user-${String(i).padStart(4, "0")}`);
-  const loc = (user_id: string, age: number) => ({ user_id, lat: POS.lat, lng: POS.lng, city: "Da Nang", country: "VN", last_known_at: agoIso(age) });
+  const t0 = Date.now();  // one clock reading per world: rows of equal age are equal, so a tick between rows cannot reorder them
+  const loc = (user_id: string, age: number) => ({ user_id, lat: POS.lat, lng: POS.lng, city: "Da Nang", country: "VN", last_known_at: new Date(t0 - age).toISOString() });
   return {
     feature_flags: [{ flag: "map_projection_enabled", enabled: true }, { flag: "map_search_enabled", enabled: true }],
     blocks: [], protected_zones: [], profile_privacy_settings: [], user_privacy_settings: [], canonical_locations: [], hidden_gems: [], events: [],
@@ -187,7 +187,7 @@ describe("§113 (D-W11X2-129): the Discovery map's travelers layer over a cut sc
 
   it("TS8 the row read past the cap only detects the cut: the privacy reads ask for 250 ids, never 251", async () => {
     for (const k of Object.keys(inSizes)) delete inSizes[k];
-    _setTestClient(makeClient(world(250, 1)) as any, true);
+    _setTestClient(makeClient(world(250, 1, 60_000, 120_000)) as any, true);  // the sharer is strictly the oldest, so freshest-first puts it at row 251, the one read only to detect the cut
     const r = await get(travelersUrl);
     assert.equal(r.status, 200);
     assert.equal(r.body.truncated, true);
