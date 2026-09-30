@@ -13,6 +13,9 @@
  *   NM4      the nearby read fails → the error with a Retry, never the empty state
  *   NM5      a cut nearby read with rows → the rows, and "Showing some gems near you"
  *   NM6      a whole, empty nearby read → "No hidden gems near you" (the honest empty, said for Near Me)
+ *   NM7      the service reads `truncated` off GET /hidden-gems/nearby (and a whole body is not cut)
+ *   NM8      the category changes while the first nearby read is in flight → the late first answer is dropped
+ *   NM9      the hook: a failed refresh after a good read clears the rows and keeps the error
  *   NMc      CONTROL: without Near Me the city list is read and shown as before
  */
 import React from 'react';
@@ -28,7 +31,9 @@ jest.mock('../../../src/services/hiddenGems', () => ({
   listGems: jest.fn(async () => []), getSavedGems: jest.fn(async () => []), getLayoverGems: jest.fn(async () => []),
   listNearbyGems: jest.fn(async () => ({ gems: [], truncated: false })),
 }));
+import { renderHook } from '@testing-library/react-native';
 import GemsScreen from '../index.tsx';
+import { useNearbyGems } from '../../../src/hooks/useHiddenGems';
 import * as svc from '../../../src/services/hiddenGems';
 
 const listGems = svc.listGems as jest.Mock;
@@ -97,6 +102,43 @@ describe('§113: Gems "Near Me" reads the server near the viewer (D-W11X2-131)',
     await nearMe();
     expect(screen.getByText('No hidden gems near you')).toBeTruthy();
     expect(screen.queryByText("Couldn't check every gem near you")).toBeNull();
+  });
+
+  it('NM7 the service reads `truncated` off GET /hidden-gems/nearby, and a whole body is not cut', async () => {
+    const real = jest.requireActual('../../../src/services/hiddenGems') as typeof svc;
+    const fetchBefore = global.fetch;
+    const raw = { id: 'g1', name: 'Gem g1', category: 'food', city: 'Lisbon', latitude: 38.73, longitude: -9.15 };
+    try {
+      global.fetch = jest.fn(async () => ({ ok: true, status: 200, json: async () => ({ ok: true, gems: [raw], truncated: true }) })) as any;
+      const cut = await (real as any).listNearbyGems(38.72, -9.14, 50, 'food');
+      expect(cut.truncated).toBe(true);
+      expect(cut.gems.map((g: any) => g.id)).toEqual(['g1']);
+      expect(String((global.fetch as jest.Mock).mock.calls[0][0])).toMatch(/\/api\/hidden-gems\/nearby\?lat=38\.72&lng=-9\.14&radiusKm=50&limit=50&category=food$/);
+      global.fetch = jest.fn(async () => ({ ok: true, status: 200, json: async () => ({ ok: true, gems: [raw] }) })) as any;
+      expect((await (real as any).listNearbyGems(38.72, -9.14, 50)).truncated).toBe(false);
+    } finally { global.fetch = fetchBefore; }
+  });
+
+  it('NM8 the category changes while the first nearby read is in flight → the late first answer is dropped', async () => {
+    let first: (v: any) => void = () => {};
+    listNearbyGems.mockImplementation((_la: number, _ln: number, _r: number, cat?: string) =>
+      cat === 'food' ? Promise.resolve({ gems: [gem('b', 'Lisbon', 38.73, -9.15)], truncated: false }) : new Promise((r) => { first = r; }));
+    await nearMe();
+    await act(async () => { fireEvent.press(screen.getByText('Food')); });
+    await waitFor(() => expect(screen.getByText('Gem b')).toBeTruthy());
+    await act(async () => { first({ gems: [gem('a', 'Lisbon', 38.73, -9.15)], truncated: false }); await new Promise((r) => setTimeout(r, 20)); });
+    expect(screen.queryByText('Gem a')).toBeNull();
+    expect(screen.getByText('Gem b')).toBeTruthy();
+  });
+
+  it('NM9 the hook: a failed refresh after a good read clears the rows and keeps the error', async () => {
+    listNearbyGems.mockResolvedValueOnce({ gems: [gem('a', 'Lisbon', 38.73, -9.15)], truncated: true }).mockRejectedValueOnce(new Error('offline'));
+    const { result } = await renderHook(() => useNearbyGems({ lat: 38.72, lng: -9.14 }));
+    await waitFor(() => expect(result.current.gems.length).toBe(1));
+    await act(async () => { await result.current.refresh(); });
+    expect(result.current.error).toBe('offline');
+    expect(result.current.gems).toEqual([]);
+    expect(result.current.truncated).toBe(false);
   });
 
   it('NMc CONTROL: without Near Me the city list is read and shown as before', async () => {

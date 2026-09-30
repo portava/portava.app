@@ -12,6 +12,7 @@
  *   NB2  the scan is ordered freshest-first: the freshest near gem behind 200 older corner gems is served (and cut)
  *   NB3  60 gems in the circle, limit 50 → 50 served, truncated
  *   NB4  the boundary: exactly 150 rows in the box, 1 near → whole, no marker
+ *   NB5  the row read past the cap only detects the cut: a near gem that is row 151 of 151 is not served
  *   LS1  GET /hidden-gems, 130 gems, the default page of 40 → 40 served, truncated
  *   LSc  CONTROL: GET /hidden-gems over 5 gems → no `truncated` key (the body is unchanged)
  *   MP1  the NOW gateway over a cut gem scan → `gems` is not named as read
@@ -142,6 +143,14 @@ describe("§113 (D-W11X2-131): the Hidden Gems discovery scan over a cut read", 
     const r = await get(nearbyUrl);
     assert.deepEqual(ids(r.body), [g.id]);
     assert.equal("truncated" in r.body, false);
+  });
+
+  it("NB5 the row read past the cap only detects the cut: a near gem that is row 151 is not served, and the cut is said", async () => {
+    use([...Array.from({ length: 150 }, () => corner(60_000)), near(HOUR)]);
+    const r = await get(nearbyUrl);
+    assert.equal(r.status, 200);
+    assert.deepEqual(ids(r.body), []);
+    assert.equal(r.body.truncated, true);
   });
 
   it("LS1 GET /hidden-gems: 130 gems, the default page of 40 → 40 served, truncated", async () => {
