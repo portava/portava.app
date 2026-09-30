@@ -1,8 +1,12 @@
 /**
  * useHiddenGems — React hooks for the Hidden Gems feature.
  * All hooks poll/cache via useState + useEffect; no external state library needed.
+ *
+ * census-discovery §112 (DV-83 round 15, D-W11X2-123, D-W11X2-124): every read hook keeps only the answer to its
+ * LATEST request (a request id), never shows a previous query's rows while a new one is read, and keeps a failed
+ * read as an error — never as an empty list.
  */
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   listGems,
   getGem,
@@ -26,16 +30,21 @@ export function useGemList(opts: ListGemsOptions = {}) {
   const [error, setError]     = useState<string | null>(null);
 
   const key = JSON.stringify(opts);
+  const latest = useRef(0);
+  const shownKey = useRef<string | null>(null);
 
   const refresh = useCallback(async () => {
+    const req = ++latest.current;
+    if (shownKey.current !== key) { shownKey.current = key; setGems([]); }
     setLoading(true);
     setError(null);
     try {
-      setGems(await listGems(opts));
+      const next = await listGems(opts);
+      if (req === latest.current) setGems(next);
     } catch (e: any) {
-      setError(e.message ?? 'Failed to load gems');
+      if (req === latest.current) setError(e.message ?? 'Failed to load gems');
     } finally {
-      setLoading(false);
+      if (req === latest.current) setLoading(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
@@ -53,20 +62,26 @@ export function useGemDetail(gemId: string, tripId?: string) {
   const [guideProfile, setGuideProfile] = useState<GuideProfile | null>(null);
   const [loading, setLoading]         = useState(true);
   const [error, setError]             = useState<string | null>(null);
+  const latest = useRef(0);
+  const shownKey = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     if (!gemId) return;
+    const req = ++latest.current;
+    const key = `${gemId}|${tripId ?? ''}`;
+    if (shownKey.current !== key) { shownKey.current = key; setGem(null); setSavedByMe(false); setGuideProfile(null); }
     setLoading(true);
     setError(null);
     try {
       const data = await getGem(gemId, tripId);
+      if (req !== latest.current) return;
       setGem(data.gem);
       setSavedByMe(data.savedByMe);
       setGuideProfile(data.guideProfile);
     } catch (e: any) {
-      setError(e.message ?? 'Failed to load gem');
+      if (req === latest.current) setError(e.message ?? 'Failed to load gem');
     } finally {
-      setLoading(false);
+      if (req === latest.current) setLoading(false);
     }
   }, [gemId, tripId]);
 
@@ -96,13 +111,15 @@ export function useSavedGems() {
   const [gems, setGems]       = useState<HiddenGem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState<string | null>(null);
+  const latest = useRef(0);
 
   const refresh = useCallback(async () => {
+    const req = ++latest.current;
     setLoading(true);
     setError(null);
-    try { setGems(await getSavedGems()); }
-    catch (e: any) { setError(e.message ?? 'Failed to load saved gems'); }
-    finally { setLoading(false); }
+    try { const next = await getSavedGems(); if (req === latest.current) setGems(next); }
+    catch (e: any) { if (req === latest.current) setError(e.message ?? 'Failed to load saved gems'); }
+    finally { if (req === latest.current) setLoading(false); }
   }, []);
 
   useEffect(() => { refresh(); }, [refresh]);
@@ -116,14 +133,18 @@ export function useTripCityGems(tripId: string) {
   const [gems, setGems]       = useState<HiddenGem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState<string | null>(null);
+  const latest = useRef(0);
+  const shownKey = useRef<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!tripId) return;
+    const req = ++latest.current;
+    if (shownKey.current !== tripId) { shownKey.current = tripId; setGems([]); }
     setLoading(true);
     setError(null);
-    try { setGems(await getTripcityGems(tripId)); }
-    catch (e: any) { setError(e.message ?? 'Failed to load trip gems'); }
-    finally { setLoading(false); }
+    try { const next = await getTripcityGems(tripId); if (req === latest.current) setGems(next); }
+    catch (e: any) { if (req === latest.current) setError(e.message ?? 'Failed to load trip gems'); }
+    finally { if (req === latest.current) setLoading(false); }
   }, [tripId]);
 
   useEffect(() => { refresh(); }, [refresh]);
@@ -136,17 +157,25 @@ export function useTripCityGems(tripId: string) {
 export function useLayoverGems(availableMinutes: number, city?: string) {
   const [gems, setGems]       = useState<HiddenGem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError]     = useState<string | null>(null);
+  const latest = useRef(0);
 
-  useEffect(() => {
+  const refresh = useCallback(async () => {
     if (!availableMinutes) return;
+    const req = ++latest.current;
     setLoading(true);
-    getLayoverGems(availableMinutes, city)
-      .then(setGems)
-      .catch(() => setGems([]))
-      .finally(() => setLoading(false));
+    setError(null);
+    try { const next = await getLayoverGems(availableMinutes, city); if (req === latest.current) setGems(next); }
+    catch (e: any) {
+      // census-discovery §112 (D-W11X2-123): a failed read is an error the screen says, never "no quick gems nearby".
+      if (req === latest.current) { setGems([]); setError(e?.message ?? 'Failed to load layover gems'); }
+    }
+    finally { if (req === latest.current) setLoading(false); }
   }, [availableMinutes, city]);
 
-  return { gems, loading };
+  useEffect(() => { refresh(); }, [refresh]);
+
+  return { gems, loading, error, refresh };
 }
 
 // ── useGemCheckin ──────────────────────────────────────────────────────────────

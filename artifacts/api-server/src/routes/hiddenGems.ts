@@ -652,13 +652,13 @@ router.get("/hidden-gems/trip-city/:tripId", async (req, res) => {
   const tripId = req.params.tripId;
 
   // Load trip destination
-  const { data: trip } = await client
+  const { data: trip, error: tripErr } = await client
     .from("trips")
     .select("id, destination_city")
     .eq("id", tripId)
     .maybeSingle();
 
-  if (!trip) {
+  if (tripErr) { sendError(res, "degraded_unavailable", "We could not check that trip right now. Please try again shortly."); return; } if (!trip) {  // census-discovery §112 (DV-83, D-W11X2-125): a failed read is not "Trip not found"
     sendError(res, "not_found", "Trip not found");
     return;
   }

@@ -312,7 +312,7 @@ function LayoverTab() {
   const router = useRouter();
   const navBarScrollHandler = useNavBarScrollHandler();
   const [selected, setSelected] = useState(120);
-  const { gems, loading } = useLayoverGems(selected);
+  const { gems, loading, error, refresh } = useLayoverGems(selected);
 
   return (
     <View style={{ flex: 1 }}>
@@ -335,6 +335,14 @@ function LayoverTab() {
 
       {loading ? (
         <View style={styles.center}><ActivityIndicator color="#4C8BF5" /></View>
+      ) : error ? (
+        // census-discovery §112 (DV-83, D-W11X2-123): a failed read is said, with a Retry — never "No quick gems nearby".
+        <View style={styles.center}>
+          <Text style={styles.errorText}>{error}</Text>
+          <TouchableOpacity onPress={refresh} style={styles.retryBtn}>
+            <Text style={styles.retryText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
       ) : gems.length === 0 ? (
         <View style={styles.center}>
           <Ionicons name="airplane-outline" size={48} color="#8A9BB5" />

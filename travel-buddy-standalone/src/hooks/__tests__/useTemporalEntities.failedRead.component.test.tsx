@@ -11,9 +11,11 @@
 import { renderHook, waitFor } from '@testing-library/react-native';
 
 const mockAnswers: Array<() => Promise<any>> = [];
+// NOTE: exhaustive on purpose — the hook imports only fetchMapTemporal from here, and the real module pulls in the app's auth client.
 jest.mock('../../services/mapTemporal.ts', () => ({
   fetchMapTemporal: jest.fn(() => (mockAnswers.shift() ?? (() => Promise.resolve({ ok: false, error: 'none' })))()),
 }));
+// NOTE: exhaustive on purpose — the hook imports only bboxFromCenter from here (the round-14 verifier's probe, copied in).
 jest.mock('../../services/mapProjection.ts', () => ({
   bboxFromCenter: () => ({ west: 0, south: 0, east: 1, north: 1 }),
 }));

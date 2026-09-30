@@ -22,8 +22,8 @@
  * A FAILED READ IS NEVER AN EMPTY RESULT. `services/layover.getLayoverDiscovery`
  * answers a discriminated union precisely so that this component cannot
  * collapse the four; the only other layover-gem reader on this tree,
- * `useHiddenGems.useLayoverGems`, does `.catch(() => setGems([]))`, which turns
- * an offline device into an empty city. Nothing here does that.
+ * `useHiddenGems.useLayoverGems`, keeps a failed read as an error with a Retry
+ * (census-discovery §112, D-W11X2-123). Nothing here collapses them either.
  *
  * ── THIS CARD DECIDES NO FEASIBILITY ─────────────────────────────────────────
  * `availableMinutes` arrives as a prop and is the server's certified
