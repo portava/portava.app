@@ -17,6 +17,9 @@
  *   NE7      /map/search over a cut scan → the event source is `events_capped`
  *   NE8      the boundary: exactly 60 events in the window → a whole read, refusal null, `events` named
  *   NE9      the NOW gateway and search read a forward window: an event that ended last week is not served
+ *   NE10     the forecast's window has an upper bound: 60 events that start after the target do not cut its read
+ *   NE11     (mapInferredCause) the §10 cause over a cut scan reports eventsReadFailed
+ *   NE12     the forward window keeps a live event with no end that started within the assumed duration
  */
 import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
@@ -161,5 +164,18 @@ describe("§113 (D-W11X2-132): loadNearbyEvents over a cut scan", () => {
     assert.equal(s.body.sources.event.refusal, null);
     const g = await call([old], NOW);
     assert.equal((g.body.objects ?? []).length, 0, JSON.stringify(g.body.objects));
+  });
+  it("NE10 the forecast window's upper bound: 60 events starting after the target do not cut the forecast's read", async () => {
+    const later = Array.from({ length: 60 }, (_, i) => ev(6 * H + i * 60_000, 8 * H));
+    const { body } = await call([upcoming(), ...later], FORECAST);
+    assert.equal(body.forecast.events, 1, JSON.stringify(body.forecast));
+    assert.ok(body.sources.includes("events"), JSON.stringify(body.sources));
+  });
+  it("NE12 the forward window keeps a live event with no end that started within the assumed duration", async () => {
+    const live = ev(-1 * H, null, { title: "Open mic" });
+    const s = await call([live], search("open"));
+    assert.equal(s.body.results.length, 1, JSON.stringify(s.body.sources));
+    const g = await call([live], NOW);
+    assert.equal((g.body.objects ?? []).length, 1);
   });
 });
