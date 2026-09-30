@@ -18,7 +18,7 @@ import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 
 import mapProjectionRouter, { _clearProtectedZoneCache, _clearFlowZoneCache } from "../routes/mapProjection.js";
-import { startRouterApp, type FakeState, type ProjectionApp } from "./helpers/fakeMapDb.js";
+import { startRouterApp, makeFakeMapDb, mountRouterApp, type FakeState, type ProjectionApp } from "./helpers/fakeMapDb.js";
 import { _clearPromotedScopeCache } from "../lib/liveClaimRead.js";
 import { _resetRateLimit } from "../lib/rateLimit.js";
 import { mapQuickSignal } from "../lib/quickSignal.js";
@@ -84,3 +84,49 @@ describe("census-discovery §115 (B11): a live state whose read FAILED (not thre
     assert.equal(r.obj.liveUnread, true, `a failed live read served as no claim: ${r.seen}`);
   });
 });
+
+// ── census-discovery §115 (DV-83 round 18, sweep SW7): the Live-label gates read two-state ─────────────────────────
+//
+// readLiveClaims opens only when liveLabelsServable's flag chain, kill switch and pilot switch allow it, and answers
+// an unmarked [] when they do not — so a gate flag whose READ failed was "no claim" too, and the sheet said "No live
+// activity has been observed here". The NOW gateway now reads the same gates three-state once per request (never
+// changing liveLabelsServable, which Compass shares): an unread gate marks every enriched object liveUnread; a gate
+// read and closed is the Live feature being off, which stays "no claim".
+describe("census-discovery §115 (SW7): an unread Live-label gate is unread on the NOW map", () => {
+  for (const flag of ["intel_live_label_crowd", "intel_claim_projection_crowd", "intel_capture_quick_signal", "intel_limited_live", "disable_intel_live_labels"]) {
+    it(`LG1 the ${flag} read FAILS → liveUnread`, async () => {
+      const r = await place1FailingFlag(world(), flag);
+      assert.ok(r.obj, r.seen);
+      assert.equal(r.obj.liveUnread, true, `an unread live gate served as no claim: ${r.seen}`);
+    });
+  }
+  it("LG0 CONTROL: a gate read and closed (intel_limited_live off) → no claim, no liveUnread (the feature is off)", async () => {
+    const r = await place1(world({ feature_flags: LIVE_LABELS_ON.map((f) => (f.flag === "intel_limited_live" ? { ...f, enabled: false } : f)) }));
+    assert.ok(r.obj, r.seen);
+    assert.equal(r.obj.liveUnread, undefined, r.seen);
+  });
+});
+
+/** place1 over a client whose read of ONE flag row fails (a statement timeout). */
+async function place1FailingFlag(state: FakeState, failFlag: string) {
+  const client: any = makeFakeMapDb(state, { token: TOKEN, userId: VIEWER });
+  const from = client.from;
+  client.from = (t: string) => {
+    const q = from(t);
+    if (t !== "feature_flags") return q;
+    const eq = q.eq;
+    q.eq = (col: string, val: unknown) => {
+      if (col === "flag" && val === failFlag) {
+        const fail: any = { select: () => fail, eq: () => fail, limit: () => fail, maybeSingle: () => Promise.resolve({ data: null, error: { code: "57014", message: "statement timeout" } }), single: () => fail.maybeSingle(), then: (r: any, j: any) => fail.maybeSingle().then(r, j) };
+        return fail;
+      }
+      return eq(col, val);
+    };
+    return q;
+  };
+  app = await mountRouterApp(mapProjectionRouter, client, { token: TOKEN, userId: VIEWER });
+  const r = await app.projection(`${DISTRICT}&kinds=place`);
+  const objects = ((r.body as { objects?: PlaceObject[] }).objects ?? []);
+  const obj = objects.find((o) => o.kind === "place") ?? null;
+  return { obj, seen: JSON.stringify({ status: r.status, liveUnread: obj?.liveUnread ?? null, activity: obj?.activity ?? null }) };
+}

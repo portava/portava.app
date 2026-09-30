@@ -10,6 +10,7 @@
  *   LC2b     the fixed GET /events body: `truncated: true` → said
  *   LC1c     CONTROL: buddies 50 of total 50 → whole
  *   LC3      an unread gateway flag (B9) rolls back, names the safety layer, and a cut buddy page is said as well
+ *   LC4      (sweep SW8) a buddy search refused over an unread block set → the buddies layer is unread
  */
 import { renderHook, waitFor } from '@testing-library/react-native';
 import { useMapEntities } from '../useMapEntities.ts';
@@ -99,6 +100,12 @@ describe('census-discovery §115 (B12): the NOW map rollback path over a page of
     const r = await load(['buddies']);
     expect(r.truncated).toBe(false);
     expect(r.unreadLayers).toEqual([]);
+  });
+  it('LC4 (sweep SW8) the buddy search refused over an unread block set (an empty 200 naming block_set_unreadable) → buddies unread, never an empty layer', async () => {
+    searchBuddies.mockResolvedValue({ ok: true, data: { buddies: [], total: 0, page: 1, perPage: 50, refusal: 'block_set_unreadable' } });
+    const r = await load(['buddies']);
+    expect(r.source).toBe('legacy');
+    expect(r.unreadLayers).toEqual(['buddies']);
   });
   it('LC3 the flag-unreadable refusal (B9) rolls back AND names the optional layers; a cut buddy page is said too', async () => {
     fetchMapProjection.mockResolvedValue({ ok: true, data: { enabled: false, refusal: 'flag_unreadable', objects: [], viewport: null, total: 0, nextCursor: null, sources: [], liveEnrichment: null, generatedAt: '2026-09-30T12:00:00.000Z' } });

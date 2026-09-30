@@ -338,3 +338,25 @@ describe("POST /api/rent-a-buddy/search — blocked buddies", () => {
     assert.equal(res.body.error, "invalid_payload");
   });
 });
+
+// census-discovery §115 (DV-83 round 18, sweep SW8): the fail-closed empty answer says it is one. The NOW map's rollback
+// path reads its buddies layer through this route; `{ buddies: [], total: 0 }` over an unread block set was drawn as a
+// whole, empty layer ("no buddies here"). The answer is still an empty 200 (nobody exposed), and now names
+// `refusal: "block_set_unreadable"`; a readable answer carries no `refusal` key at all.
+describe("§115 SW8: the block-unread empty answer is a refusal, not an empty marketplace", () => {
+  it("SB1 the block set cannot be read → an empty 200 that names block_set_unreadable", async () => {
+    _setTestClient(makeClient(state({ blocks: { error: { message: "blocks down" } } })) as any, true);
+    const res = await search({ perPage: 100, lat: 16.05, lng: 108.2 });
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body.buddies, []);
+    assert.equal(res.body.refusal, "block_set_unreadable");
+  });
+  it("SB0 CONTROL: a readable block set (none, or some) → no refusal key", async () => {
+    for (const blocks of [[], [{ blocker_id: VIEWER, blocked_id: "u-a" }]]) {
+      _setTestClient(makeClient(state({ blocks })) as any, true);
+      const res = await search({ perPage: 100 });
+      assert.equal(res.status, 200);
+      assert.equal("refusal" in res.body, false, JSON.stringify(Object.keys(res.body)));
+    }
+  });
+});

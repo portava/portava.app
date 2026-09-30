@@ -283,7 +283,7 @@ async function fetchBuddies(
       : ({} as Record<string, never>);
 
   const result = await searchBuddies({ city, perPage: 50, ...coordParams });
-  if (!result.ok || !result.data) throw new Error('buddies layer unreadable');
+  if (!result.ok || !result.data || result.data.refusal != null) throw new Error('buddies layer unreadable');  // census-discovery §115 (sweep SW8): a refused (fail-closed) answer is unread, never empty
 
   const out: MapObject[] = [];
   for (const buddy of result.data.buddies) {

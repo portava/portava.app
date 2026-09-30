@@ -109,7 +109,7 @@ import { Router } from "express";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
-import { isFlagEnabled } from "../lib/featureFlags.js"; import { readFlagState } from "../lib/capability/schemaCapability.js";  // census-discovery §115 (B9)
+import { isFlagEnabled, isKillSwitchEngaged, type KillSwitchReadStatus } from "../lib/featureFlags.js"; import { readFlagState } from "../lib/capability/schemaCapability.js";  // census-discovery §115 (B9, SW7)
 import { checkRateLimit } from "../lib/rateLimit.js";
 import { fetchBlockedSet } from "../lib/blocks.js";
 import { listMapTravelersRead } from "../lib/mapTravelers.js";
@@ -975,7 +975,7 @@ router.get(
 
     // Attach already-computed live claims. Bounded and REPORTED — a capped
     // enrichment must never read as "no live intelligence here".
-    const enrichment = await enrichWithLiveClaims(
+    const liveGatesUnread = await liveLabelGatesUnread(sc); const enrichment = await enrichWithLiveClaims(  // census-discovery §115 (DV-83, sweep SW7): the Live-label gates, read three-state once
       objects,
       async (subjectId) => {
         // NO CAST. The previous `as unknown as LiveClaimLike[]` here is what let
@@ -987,7 +987,7 @@ router.get(
         // envelope ever diverges again this line, and the pin in lib/mapProjection,
         // both go red.
         const claims = await readLiveClaims(sc, subjectId);
-        if (liveClaimReadFailed(claims)) throw new Error("live_claims_unread"); return claims.map(toLiveClaimEnvelope);  // census-discovery §115 (DV-83, B11): a FAILED read (marked, not thrown) is unread (SW4's throw arm), never "no claim"
+        if (liveGatesUnread || liveClaimReadFailed(claims)) throw new Error("live_claims_unread"); return claims.map(toLiveClaimEnvelope);  // census-discovery §115 (DV-83, B11): a FAILED read (marked, not thrown) is unread (SW4's throw arm), never "no claim"
       },
       {
         now: nowMs,
@@ -1199,7 +1199,7 @@ router.get(
             } else {
               report.cityModels = read.report;
               for (const m of read.models) produced.push(m);
-              if (!cityCut) sources.push("city_models");
+              if (!cityCut && !read.report.capped) sources.push("city_models");  // census-discovery §115 (DV-83, sweep SW5): nor over models read for only part of the viewport's cities
             }
           }
 
@@ -1224,7 +1224,7 @@ router.get(
             } else {
               report.personalCities = read.report;
               for (const p of read.pins) produced.push(p);
-              if (!cityCut) sources.push("personal_cities");
+              if (!cityCut && !read.report.capped) sources.push("personal_cities");  // census-discovery §115 (DV-83, sweep SW5): nor over a cut stamp read or fold
             }
           }
 
@@ -1507,3 +1507,22 @@ void DISCOVERY_CANDIDATE_FLAG_PIN;
 // census-discovery §113 (DV-83 round 16, D-W11X2-135): the geography and place reads that hit their cap. A mark beside the
 // value (so a cached value stays marked, and a whole read's value and every body built from it are unchanged).
 const CAPPED = new WeakSet<object>();
+
+// ── census-discovery §115 (DV-83 round 18, lane W11-X2; sweep SW7): the Live-label gates, read three-state ─────────────
+//
+// readLiveClaims opens only when lib/liveClaimRead.liveLabelsServable's flag chain, kill switch and pilot switch allow
+// it, and answers an UNMARKED [] when they do not — so a gate whose read FAILED reached the place sheet as "No live
+// activity has been observed here". liveLabelsServable is shared with Compass and keeps its two-state answer; this
+// route reads the same gates three-state once per request, and an unread gate marks every enriched object `liveUnread`.
+// A gate read and closed is the Live feature being off, and stays "no claim".
+async function liveLabelGatesUnread(sc: any): Promise<boolean> {
+  const flags = await Promise.all([
+    readFlagState(sc, "intel_live_label_crowd"),
+    readFlagState(sc, "intel_claim_projection_crowd"),
+    readFlagState(sc, "intel_capture_quick_signal"),
+    readFlagState(sc, "intel_limited_live"),
+  ]);
+  const stop: KillSwitchReadStatus = {};
+  await isKillSwitchEngaged(sc, "disable_intel_live_labels", stop);
+  return flags.includes("unreadable") || stop.unread === true;
+}

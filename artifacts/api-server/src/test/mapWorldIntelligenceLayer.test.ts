@@ -73,7 +73,7 @@ import {
   TRAVELER_FLOW_WINDOW_DAYS,
   deriveTravelerFlowEdges,
 } from "../lib/mapProducers/travelerFlowProducer.js";
-import { WITHHELD_RATHER_THAN_COARSENED_KINDS } from "../lib/mapProjection.js";
+import { WITHHELD_RATHER_THAN_COARSENED_KINDS, parseCityGeographies } from "../lib/mapProjection.js"; import { MAX_CITY_MODEL_ROWS } from "../lib/mapProducers/cityModelProducer.js"; import { MAX_PERSONAL_STAMP_ROWS, MAX_PERSONAL_CITIES, derivePersonalCities } from "../lib/mapProducers/personalCityProducer.js";  // §115 (SW5)
 import {
   AMBIENT_PRESENCE_KINDS,
   COARSEN_UNSAFE_KINDS,
@@ -1630,5 +1630,42 @@ describe("§113: Phase 7 over a city geography cut at its cap (D-W11X2-135)", ()
     const { body } = await projection(worldState(now, { geo_zones: [...[CITY_A, CITY_B, CITY_C].map(cityRow), ...farCities(1997)] }));
     assert.equal("capped" in body.worldIntelligence.cityModelGeography, false);
     for (const s of ["city_models", "personal_cities"]) assert.ok(body.sources.includes(s), `${s} ${JSON.stringify(body.sources)}`);
+  });
+});
+
+// ── census-discovery §115 (DV-83 round 18, lane W11-X2; sweep SW5): a cut city-model or personal-city read ─────────
+//
+// The gateway named `city_models` and `personal_cities` over a geography it had read whole, but not over the producers'
+// OWN cuts: readCityModels reads models for at most MAX_CITY_MODEL_ROWS viewport cities (`report.capped`), and
+// readPersonalCityPins reads the newest MAX_PERSONAL_STAMP_ROWS stamps and folds at most MAX_PERSONAL_CITIES cities
+// (alphabetically, before the viewport filter) — so a city in view could be dropped with the layer named as whole.
+describe("§115 SW5: a city-model or personal-city read cut at its cap is not named", () => {
+  const manyCities = (n: number) => Array.from({ length: n }, (_v: unknown, i: number) => cityRow({ id: `city-near-${String(i).padStart(4, "0")}`, name: `Near ${String(i).padStart(4, "0")}`, lat: 10 + (i % 50) * 0.2, lng: 100 + Math.floor(i / 50) * 0.5 }));
+  it("SW5a CONTROL: a whole answer names city_models and personal_cities, and neither report is capped", async () => {
+    const { body } = await projection(worldState(Date.now()));
+    for (const s of ["city_models", "personal_cities"]) assert.ok(body.sources.includes(s), `${s} ${JSON.stringify(body.sources)}`);
+    assert.equal(body.worldIntelligence.cityModels.capped, false);
+    assert.equal(body.worldIntelligence.personalCities.capped, false);
+  });
+  it("SW5b more viewport cities than MAX_CITY_MODEL_ROWS → city_models not named (its report says capped)", async () => {
+    const { body } = await projection(worldState(Date.now(), { geo_zones: [...[CITY_A, CITY_B, CITY_C].map(cityRow), ...manyCities(MAX_CITY_MODEL_ROWS)] }));
+    assert.equal(body.worldIntelligence.cityModels.capped, true, JSON.stringify(body.worldIntelligence.cityModels));
+    assert.equal(body.sources.includes("city_models"), false, `city_models named over a cut read: ${JSON.stringify(body.sources)}`);
+  });
+  it("SW5c the stamp read fills MAX_PERSONAL_STAMP_ROWS → personal_cities not named", async () => {
+    const stamps = Array.from({ length: MAX_PERSONAL_STAMP_ROWS }, (_v: unknown, i: number) => stampRow(`sx${i}`, USER, CITY_A.name, new Date(Date.parse("2026-01-01T00:00:00.000Z") + i * 60_000).toISOString()));
+    const { body } = await projection(worldState(Date.now(), { passport_stamps: stamps }));
+    assert.equal(body.worldIntelligence.personalCities.capped, true);
+    assert.equal(body.sources.includes("personal_cities"), false, `personal_cities named over a cut read: ${JSON.stringify(body.sources)}`);
+  });
+  it("SW5d the viewer's stamps name more than MAX_PERSONAL_CITIES cities → the fold is cut: capped (a city in view may be past it)", () => {
+    const { cities } = parseCityGeographies(manyCities(MAX_PERSONAL_CITIES + 1));
+    assert.equal(cities.length, MAX_PERSONAL_CITIES + 1);
+    const stamps = cities.map((c, i) => stampRow(`sy${i}`, USER, c.label, "2026-02-01T00:00:00.000Z"));
+    const world = { bbox: { west: -180, south: -90, east: 180, north: 90 } };
+    const cut = derivePersonalCities(stamps, cities, world);
+    assert.equal(cut.report.capped, true, "cities past the fold were never considered");
+    const whole = derivePersonalCities(stamps.slice(1), cities, world);
+    assert.equal(whole.report.capped, false);
   });
 });

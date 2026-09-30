@@ -219,7 +219,7 @@ export interface BuddySearchResult {
   buddies: BuddyProfile[];
   total: number;
   page: number;
-  perPage: number;
+  perPage: number; /** census-discovery §115 (DV-83, sweep SW8): the server could not read the viewer's block set — the empty list is fail-closed, not "no buddies" */ refusal?: string | null;
 }
 
 export interface BuddyDashboardSummary {
