@@ -219,6 +219,14 @@ describe("census-trust §30.6–§30.9: waitlist seating, ban delete, capacity a
     assert.equal(r.status, 200, r.text);
     assert.deepEqual(offeredTo(w.writes), [], `promoted over an unread eligibility: ${JSON.stringify(offeredTo(w.writes))}`);
   });
+  it("PR6 head's VERIFIED read fails on a verified-only event → nobody is offered (a failed read is not \"unverified\")", async () => {
+    const w = world({ ...queue, ev: { verified_only: true }, failOn: ageUnreadableFor(W1) }); await cancel();
+    assert.deepEqual(offeredTo(w.writes), [], `promoted over an unread verified flag: ${JSON.stringify(offeredTo(w.writes))}`);
+  });
+  it("PR7 head's BAN read fails → nobody is offered (a failed read is not a verdict on the user)", async () => {
+    const w = world({ ...queue, failOn: (c) => (c.table === "event_roles" && c.eq("role") === "banned" && c.eq("user_id") === W1 ? ERR : null) }); await cancel();
+    assert.deepEqual(offeredTo(w.writes), [], `promoted over an unread ban: ${JSON.stringify(offeredTo(w.writes))}`);
+  });
   it("PR5 the event read FAILS → nobody is offered the seat", async () => {
     const w = world({ ...queue, failOn: eventReadFails }); await cancel();
     assert.deepEqual(offeredTo(w.writes), [], `promoted without an event to check against: ${JSON.stringify(offeredTo(w.writes))}`);
@@ -340,7 +348,7 @@ describe("census-trust §30.6–§30.9: waitlist seating, ban delete, capacity a
     const r = await cancel(); assert.equal(r.status, 200, r.text);
     const ups = eventsUpdates(w.writes);
     assert.ok(!ups.some((p) => p?.state === "open"), `an unread count reopened a full event: ${JSON.stringify(ups)}`);
-    assert.ok(!ups.some((p) => p && "going_count" in p), `an unread count was persisted as going_count: ${JSON.stringify(ups)}`);
+    assert.ok(!ups.some((p) => p?.going_count !== undefined), `an unread count was persisted as going_count: ${JSON.stringify(ups)}`);
   });
   it("SY0 CONTROL: a seat frees on a FULL event, count readable → reopened and going_count stamped (as before)", async () => {
     const w = world({ ev: { state: "full" }, rsvps: [{ event_id: EVENT, user_id: VIEWER, status: "going" }],
@@ -349,6 +357,36 @@ describe("census-trust §30.6–§30.9: waitlist seating, ban delete, capacity a
     const ups = eventsUpdates(w.writes);
     assert.ok(ups.some((p) => p?.state === "open"), JSON.stringify(ups)); assert.ok(ups.some((p) => p?.going_count === 1), JSON.stringify(ups));
   });
+
+  // Every going_count write site: reached with a readable count (CONTROL: a number is written), and with an
+  // unreadable one nothing is stamped (the pre-fix tree wrote 0 over the real count).
+  const INVITE = "88888888-8888-4888-8888-888888888888";
+  const unlimited = { state: "open", max_attendees: null };
+  const sites: Array<[string, WorldOpts, () => Promise<{ status: number; text: string }>]> = [
+    ["rsvp",        { ev: { state: "open" } },                                      () => req("t-w1", "POST", `/events/${EVENT}/rsvp`, { status: "going" })],
+    ["join",        { ev: unlimited },                                               () => req("t-w1", "POST", `/events/${EVENT}/join`, {})],
+    ["leave",       { ev: { state: "open" }, rsvps: [{ event_id: EVENT, user_id: VIEWER, status: "going" }] }, () => req("t-viewer", "POST", `/events/${EVENT}/leave`, {})],
+    ["wl-accept",   { ev: unlimited, ...heldOffer },                                 () => accept()],
+    ["req-approve", { ev: unlimited, extra: jr },                                    () => legacyApprove()],
+    ["jr-approve",  { ev: unlimited, extra: jr },                                    () => approve()],
+    ["ban",         { rsvps: [{ event_id: EVENT, user_id: W1, status: "going" }] }, () => ban()],
+    ["status",      { ev: { state: "open" } },                                       () => req("t-host", "PATCH", `/events/${EVENT}/attendees/${W1}/status`, { status: "going" })],
+    ["remove",      { ev: { state: "open" }, rsvps: [{ event_id: EVENT, user_id: W1, status: "going" }] }, () => req("t-host", "DELETE", `/events/${EVENT}/attendees/${W1}`)],
+    ["invite",      { ev: { state: "open" }, extra: { event_invites: [{ id: INVITE, event_id: EVENT, invitee_id: W1, inviter_id: HOST, status: "pending" }] } },
+                    () => req("t-w1", "POST", `/events/${EVENT}/invites/${INVITE}/accept`, {})],
+    ["block-user",  { rsvps: [{ event_id: EVENT, user_id: W1, status: "going" }] }, () => blockUser()],
+  ];
+  for (const [name, opts, call] of sites) {
+    it(`GC0-${name} CONTROL: count readable → going_count written as a number`, async () => {
+      const w = world(opts); const r = await call();
+      assert.ok(eventsUpdates(w.writes).some((p) => typeof p?.going_count === "number"), `${r.status} ${r.text} ${JSON.stringify(eventsUpdates(w.writes))}`);
+    });
+    it(`GC1-${name} the going-count read FAILS → no going_count is stamped`, async () => {
+      const w = world({ ...opts, failOn: goingCountFails }); const r = await call();
+      const ups = eventsUpdates(w.writes);
+      assert.ok(!ups.some((p) => p?.going_count !== undefined), `an unread count was persisted as going_count (${r.status}): ${JSON.stringify(ups)}`);
+    });
+  }
 
   // ── §30.9 the host safety summary ────────────────────────────────────────────
   const summary = () => req("t-host", "GET", `/events/${EVENT}/safety-summary`);
