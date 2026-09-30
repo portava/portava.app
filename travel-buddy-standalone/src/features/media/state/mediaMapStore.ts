@@ -332,7 +332,7 @@ export function mediaMapReducer(state: MediaMapState, action: MediaMapAction): M
       }
       const clusters = action.clusters.data;
       const hasGems = !!action.expectGems && mapObjects.some((o) => gemIdOfMapObject(o) != null);
-      const empty = clusters.length === 0 && !hasGems && !positionsPartial;  // §114 (SW3): a map that could not read its layers is not an empty one
+      const empty = clusters.length === 0 && !hasGems && !positionsPartial && (!action.expectGems || (positions.ok && positions.enabled));  // §114 (SW3): a map that could not read its layers is not an empty one; §115 (B13): a gem map is empty only over a gateway that answered with its flag on
       return {
         ...state,
         status: empty ? 'empty' : 'ready',
