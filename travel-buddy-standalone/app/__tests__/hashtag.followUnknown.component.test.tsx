@@ -5,6 +5,7 @@
  *
  *   HF1  isFollowing null → "Can't check follow", never "Follow" or "Following"
  *   HF2  tapping it follows (idempotent server-side) and then says "Following"
+ *   HF3  after a toggle the follow state is known: follow, then unfollow → "Follow"
  *   HFc  CONTROL: false → "Follow"; true → "Following"
  */
 import React from 'react';
@@ -38,18 +39,19 @@ jest.mock('../../src/components/SaveButton', () => ({ SaveButton: () => null }))
 
 const mockGetHashtag = jest.fn();
 const mockGetFeed = jest.fn();
-const mockFollow = jest.fn();
+const mockFollow = jest.fn(); const mockUnfollow = jest.fn();
 jest.mock('../../src/services/hashtag', () => ({
   ...jest.requireActual('../../src/services/hashtag'),
   getHashtag: (...a: unknown[]) => mockGetHashtag(...(a as [])),
   getHashtagFeed: (...a: unknown[]) => mockGetFeed(...(a as [])),
   followHashtag: (...a: unknown[]) => mockFollow(...(a as [])),
+  unfollowHashtag: (...a: unknown[]) => mockUnfollow(...(a as [])),
 }));
 
 const META = { id: 'ht-1', slug: 'romejazz', name: 'romejazz', usageCount: 3, isFollowing: false, topCity: null, createdAt: '2026-09-01T00:00:00Z' };
 const page = (tab: string) => ({ ok: true, data: { items: [], posts: [], hasMore: false, nextCursor: null, tab, scope: 'global' } });
 
-beforeEach(() => { jest.clearAllMocks(); mockGetFeed.mockImplementation(async (_s: string, tab: string) => page(tab)); mockFollow.mockResolvedValue({ ok: true }); });
+beforeEach(() => { jest.clearAllMocks(); mockGetFeed.mockImplementation(async (_s: string, tab: string) => page(tab)); mockFollow.mockResolvedValue({ ok: true }); mockUnfollow.mockResolvedValue({ ok: true }); });
 
 describe('hashtag page — the follow state over a failed read (§113, D-W11X2-137)', () => {
   it("HF1 isFollowing null → \"Can't check follow\", never Follow or Following", async () => {
@@ -66,6 +68,15 @@ describe('hashtag page — the follow state over a failed read (§113, D-W11X2-1
     await act(async () => { fireEvent.press(view.getByText("Can't check follow")); });
     expect(mockFollow).toHaveBeenCalledWith('romejazz');
     await waitFor(() => expect(view.queryByText('Following')).not.toBeNull());
+  });
+  it('HF3 follow, then unfollow → "Follow" (the state is known after a toggle)', async () => {
+    mockGetHashtag.mockResolvedValue({ ok: true, data: { ...META, isFollowing: null } });
+    const view = await render(<HashtagFeedScreen />);
+    await waitFor(() => expect(view.queryByText("Can't check follow")).not.toBeNull());
+    await act(async () => { fireEvent.press(view.getByText("Can't check follow")); });
+    await waitFor(() => expect(view.queryByText('Following')).not.toBeNull());
+    await act(async () => { fireEvent.press(view.getByText('Following')); });
+    await waitFor(() => expect(view.queryByText('Follow')).not.toBeNull());
   });
   it('HFc CONTROL: false → Follow; true → Following', async () => {
     mockGetHashtag.mockResolvedValue({ ok: true, data: META });

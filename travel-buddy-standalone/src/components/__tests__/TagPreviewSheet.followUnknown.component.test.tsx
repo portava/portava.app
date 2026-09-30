@@ -3,10 +3,11 @@
  * read as "Follow". GET /hashtags/:slug answers `isFollowing: null` over a failed read.
  *
  *   TP1  isFollowing null → "Can't check follow", never "Follow"
+ *   TP2  follow, then unfollow → "Follow" (the state is known after a toggle)
  *   TPc  CONTROL: false → "Follow"
  */
 import React from 'react';
-import { render, waitFor } from '@testing-library/react-native';
+import { render, waitFor, fireEvent, act } from '@testing-library/react-native';
 
 jest.mock('react-native-safe-area-context', () => ({
   ...jest.requireActual('react-native-safe-area-context'),
@@ -16,6 +17,8 @@ const mockGetHashtag = jest.fn();
 jest.mock('../../services/hashtag.ts', () => ({
   ...jest.requireActual('../../services/hashtag.ts'),
   getHashtag: (...a: unknown[]) => mockGetHashtag(...(a as [])),
+  followHashtag: async () => ({ ok: true }),
+  unfollowHashtag: async () => ({ ok: true }),
 }));
 
 import { TagPreviewSheet } from '../TagPreviewSheet.tsx';
@@ -29,6 +32,15 @@ describe('TagPreviewSheet — the follow state over a failed read (§113, D-W11X
     const view = await render(sheet());
     await waitFor(() => expect(view.queryByText("Can't check follow")).not.toBeNull());
     expect(view.queryByText('Follow')).toBeNull();
+  });
+  it('TP2 follow, then unfollow → "Follow"', async () => {
+    mockGetHashtag.mockResolvedValue({ ok: true, data: { ...META, isFollowing: null } });
+    const view = await render(sheet());
+    await waitFor(() => expect(view.queryByText("Can't check follow")).not.toBeNull());
+    await act(async () => { fireEvent.press(view.getByText("Can't check follow")); });
+    await waitFor(() => expect(view.queryByText('Following')).not.toBeNull());
+    await act(async () => { fireEvent.press(view.getByText('Following')); });
+    await waitFor(() => expect(view.queryByText('Follow')).not.toBeNull());
   });
   it('TPc CONTROL: false → "Follow"', async () => {
     mockGetHashtag.mockResolvedValue({ ok: true, data: META });
