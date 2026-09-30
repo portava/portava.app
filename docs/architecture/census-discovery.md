@@ -19163,7 +19163,7 @@ Every `.limit(` on a Discovery, map, gems or Compass read path this lane could r
 2. **Nothing refused or partial is cached as complete.** The travelers' candidate cache keeps the cut mark; no other change writes a cache.
 3. **Nothing refused is rendered as empty, as complete, or over the wrong rows.** The Discovery map, the Gems Near Me tab, the Time Machine and the hashtag page say a cut or failed read; no new hook holds an older query's rows.
 4. **A Compass tool never states a failed or partial read to the model as a fact.** Unchanged this round (round 14's evidence stands); `/compass/ask`'s followed-hashtag context states no absence.
-5. **Consumers branch on coverage**, and the static guard reads every bundled script, every module form, every import form, and pins every carrier reference that is not a direct call (G13).
+5. **Consumers branch on coverage**, and the static guard reads every bundled script, every module form, every import form, and pins every carrier reference that is not a direct call (G13). *(Corrected in §114.4, D-W11X2-141: the walk skipped `__fixtures__` and `__mocks__`, which Metro bundles; it now skips exactly what Metro's blockList excludes.)*
 
 | ID | from | **to** | evidence |
 |---|---|---|---|
@@ -19175,7 +19175,7 @@ Every `.limit(` on a Discovery, map, gems or Compass read path this lane could r
 
 - **Outside DV-83, handed on.** N1 is census-telegraph's (§40 records it); V9 is census-trust's (§30.11). Neither moves a row there.
 - **Seen and not built (other owners; D-W11X2-138).** The centroid lookup's per-fold cap, the hashtag feed's author-profile read, the suggestions' unlimited city-usage read, two dead gem helpers, and the admin duplicate scan.
-- **Product effect, stated.** Where a global table outgrows a cap (flow zones or cities above 2000, accepted plans above 500), the affected layer is now said to be cut or refused instead of served as whole; raising a cap, or scoping the read, is the owner's call (census-map).
+- **Product effect, stated.** Where a global table outgrows a cap (flow zones or cities above 2000, accepted plans above 500), the affected layer is now said to be cut or refused instead of served as whole *(corrected in §114.3, D-W11X2-139, -140: said in the JSON only, until §114 made the NOW map and the Time Machine say it)*; raising a cap, or scoping the read, is the owner's call (census-map).
 - **What would turn DV-83 red again:**
   - a capped Discovery, map or gems read answered as empty or whole with no marker (V15-TS1, NB1, V15-NE1, SN1, CFC1, TP1, TH1);
   - a failed history read answered without its refusal, or a client that draws it, or a read in flight, as an empty past (V15-TH1, V15-TH3, TH6);
@@ -19203,6 +19203,102 @@ Every `.limit(` on a Discovery, map, gems or Compass read path this lane could r
 | DV-83 | C | **W** | §113 closes §113.1's four paths, confirmed at `1b4aa20fe` (§114.1). Two paths still present a failed or cut read as complete: the NOW map's layers over a gateway answer that does not name them (`travel-buddy-standalone/src/hooks/useMapEntities.ts`, `travel-buddy-standalone/app/map/index.tsx`) and the Time Machine's forecast over a refused plan layer, an unread itinerary or a cut page (`travel-buddy-standalone/src/features/map/time/forecastUnread.ts`). GH25, GH27 and GH28 escape the guard, and R3, R5, R6 and R7 survive it. D-W11X2-93 is not honest; D-W11X2-133, -135 and -136 are honest in part. |
 
 Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
+
+### 114.2 Round 17: what this lane did
+
+*Written 2026-09-30 by lane W11-X2 (round 17) on `disc-w11-x2-r17`, from `678dc251e` (PR #530's head: round 16 with the test-only TS8 fixture fix) and §114.1. It closes §114.1's two breaks, each with the verifier's probes copied in as failing-first tests; walks what Metro bundles, read from Metro's own blockList, so GH25, GH27 and GH28 are caught; adds the verifier's GH29–GH32 as G13 cases, so R3, R5, R6 and R7 are killed; corrects the rulings the verifier found not honest or honest in part (D-W11X2-93, -133, -135, -136, §113.12 clause 5, §113.13's product note); and sweeps every client consumer of a gateway or temporal answer for a marker the screen never says. The sweep found and closed four more paths (SW1–SW4).*
+
+*No migration and no new flag. Every change alters what is said only when a read failed, was refused, was cut at its cap or answered one page of several; with every read healthy and whole, the screens and every served body are unchanged (the controls V16-NU0, NUc, NU8c, V16-MS0, V16-FP0, FP4c, GL0, DG0, LG0, MP0, LE0, LU0). The one server change (SW4) adds `liveUnread: true` only to an object whose live claims were not read. Every edit in a cited file is line-neutral: lines are changed in place, and new code is appended at a file's foot or lives in a new module.*
+
+*All evidence is controlled: jest over the real hooks and screens, the real `enrichWithLiveClaims` over an injected reader, and the static guard over an in-memory overlay and over fixtures placed on disk. None of it is production evidence, and no client build carrying the change has shipped.*
+
+### 114.3 The NOW map and the Time Machine say what the server did not read (§114.1 B5, B6; D-W11X2-139, -140)
+
+- **B5, the NOW map (safety-relevant).** `useMapEntities` compares every requested layer with `sources` — the five pins and the §16 optional layers, by the name the route pushes (`GATEWAY_SOURCE_FOR_OPTIONAL_LAYER`, now read) — and lists safety first; a gateway read that failed or was refused names the optional layers it alone serves; an answer carrying `nextCursor` is reported `truncated` (page one holds the highest §31 tiers, safety first; the page is said, not followed). `app/map/index.tsx` reads both and draws `MapUnreadLayersBanner`: "Safety notices couldn't be checked here — hazards may not be shown" first, as an alert, then "Couldn't load … here", then "Showing only part of this area — zoom in to see everything" (`travel-buddy-standalone/src/hooks/useMapEntities.ts`, `travel-buddy-standalone/app/map/index.tsx`, `src/components/map/MapUnreadLayersBanner.tsx`, `src/features/map/layers/unreadLayersNotice.ts`; V16-NU1–NU4, NU5–NU8, V16-MS1, MS2–MS4 red first). **D-W11X2-93 is corrected.**
+- **B6, the Time Machine.** `forecastLayersUnread` reports `accepted_plan` for any plan refusal but the three off-states (`flag_off`, `no_group_key_secret`, `no_zone_model`), `itinerary` when it is null or not named, and all three over a refused forecast; the hook reports `pageCut` over `nextCursor`; `temporalNotice` says each, the cut first (`travel-buddy-standalone/src/features/map/time/forecastUnread.ts`, `src/hooks/useTemporalEntities.ts`; V16-FP1–FP3, FP4–FP7, FU10–FU12 red first). **D-W11X2-136 and §113.13's "said to be cut or refused" are corrected**, and so is D-W11X2-135's "said to be cut", which held only in the JSON until B5.
+
+### 114.4 The guard walks what Metro bundles (GH25–GH32; D-W11X2-141)
+
+`walkSkipsDir` and `isClientSource` ask `metroBlocks`, which reads the blockList's regular expressions from `metro.config.js`, so the walk and the overlay skip exactly what Metro never bundles (`__tests__/` and `*.test.*` today) and follow the config when it changes; `__fixtures__` and `__mocks__` are walked. The widened walk finds no consumer, so nothing was registered or allowlisted. GH17f now pins that those directories are walked; GH25, GH27, GH28, GH28b and GH17j were red first; the verifier's GH29, GH30, GH31b and GH32 are G13 cases (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts`; the cited lines kept in place, new code at the foot). **D-W11X2-133 and §113.12 clause 5 are corrected.**
+
+### 114.5 The sweep (SW1–SW4; D-W11X2-142, -143)
+
+Every client consumer of a gateway or temporal answer that carries `sources`, `refusal`, `truncated`, a `*_capped` source or `nextCursor` was read for whether the screen says it, and every `limit:` for a dropped `nextCursor`:
+
+- **SW1.** GET /hidden-gems' `truncated` reached no screen: `listGems` marks a cut list beside the array (`travel-buddy-standalone/src/services/gemListCut.ts`), and the Gems Discover list and the destination page say it, never "No hidden gems found" or the all-empty state over it (`src/hooks/useHiddenGems.ts`, `app/gems/index.tsx`, `travel-buddy-standalone/app/destination/[slug].tsx`).
+- **SW2.** The NOW map's rollback path keeps a cut gem page's mark and reports `truncated` (`src/hooks/useMapEntities.ts`).
+- **SW3.** The Media Map dropped the gateway's `sources` and `nextCursor`, and a gem map whose gem read failed said it was empty; it now says "Some of this map could not be read" and is never empty over it (`travel-buddy-standalone/src/features/media/hooks/useMediaMap.ts`, `src/features/media/state/mediaMapStore.ts`, `src/features/media/screens/MediaMapScreen.tsx`).
+- **SW4.** The gateway's live-claim cap was reported only as an aggregate nothing renders, and the place sheet said "No live activity has been observed here" for a place nobody read; each object past the cap, or whose read threw, carries `liveUnread`, and the sheet says "Live activity couldn't be checked for this place" (`artifacts/api-server/src/lib/mapProjection.ts`, `lib/mapObjects.ts`, `travel-buddy-standalone/src/features/map/place/livePlaceModel.ts`, `src/types/mapObjects.ts`).
+- **Swept and sound; seen and left for their owners** — D-W11X2-143 lists both. **H9** is agreed equivalent (D-W11X2-143).
+
+### 114.6 Tests, seen red, and mutations
+
+**Seen red first**, run against the code before each fix (logs in the lane's `r17/red/` scratch directory; where the fix was already written, the test was run over HEAD's version of the source, restored by sha256):
+
+| Area | Red | Controls, green |
+|---|---|---|
+| B5 the NOW map hook | V16-NU1–NU4, NU5–NU8 | V16-NU0, NUc, NU8c |
+| B5 the NOW map screen | V16-MS1, MS2–MS4 | V16-MS0, MS5 |
+| B6 the Time Machine (hook) | V16-FP1–FP3, FP4–FP7 | V16-FP0, FP4c |
+| B6 the Time Machine (rule) | FU10–FU12 | FU1–FU9 as before |
+| The guard's reach (G13) | GH17f (flipped), GH25, GH27, GH28, GH28b, GH17j | GH17g, the tree's own pass |
+| SW1 the gem list | GL1–GL4, DG1, DG2 | GL0, DG0 |
+| SW2 the rollback gems page | LG1 | LG0 |
+| SW3 the Media Map | MP1–MP4 | MP0 |
+| SW4 the live state | LE1, LE2, LU1 | LE0, LU0 |
+
+**Written against the fixed code**, each shown to bite by the mutation that removes the line it pins: NU9, MS6, FP8, FU13, GL5, and MP4's whole-gem-map case; and the verifier's guard fixtures GH29, GH30, GH31b and GH32 as G13 cases. Four existing assertions were brought to the stricter answer, never a weaker one: `forecastUnread` FU2 (its fixture now names the itinerary), FU4 and FU5, and `useTemporalEntities.failedRead` TM3 (a refused forecast read none of its three layers). **On disk**, the verifier's runner placed each of GH0–GH32 alone in the tree and removed it: see §114.10.
+
+**Mutations.** Each was applied alone, its pin suites were run, and the file was restored byte-identically; the sha256 matched the committed file (`git show HEAD:`) before and after every application. Runner and logs: the lane's `r17/muts/` scratch directory (`run.py`, `run2.py`, `defs.py`, `defs2.py`, `summary.txt`, `summary2.txt`).
+
+- **66 mutations:** the NOW map hook M1–M16 with M4b (M4 re-stated on SW2's line); the screen and its wording S1–S9; the Time Machine T1–T13; the guard R3, R5, R6, R7 (the verifier's four survivors, re-run), R8b (the skip of `__fixtures__` and `__mocks__` restored), R9–R12 (Metro's blockList read as empty, the overlay ignored, the test-file rule dropped, `node_modules` no longer skipped); the sweep G1–G7 (SW1), P1–P8 (SW3), L1–L3 (SW4) and M15, M16 (SW2).
+- **Result: 66 killed, 0 equivalent, 0 non-equivalent survivors** on DV-83 lines and on guard lines. **Survivors on a first run, each closed:** S9 (the order of the layers line and the cut line; MS6), T13 (a forecast report whose plan is null; FU13) and P8 (the gems source name; MP4's whole-gem-map case). **R3, R5, R6 and R7**, the round-16 verifier's survivors, are killed by GH29, GH30 (and GH17j), GH31b and GH32. **H9** (the verifier's) is agreed equivalent (D-W11X2-143).
+- *Naming.* This round's series are M, S, T, R, G, P and L; the verifier's are its own.
+
+### 114.7 Checks
+
+- **Line-neutral in every cited file** (`app/map/index.tsx`, `useMapEntities.ts`, `services/mapProjection.ts`, `services/hiddenGems.ts`, `lib/mapProjection.ts`, `lib/mapObjects.ts`, `types/mapObjects.ts`, `livePlaceModel.ts`, the Media Map's hook, store and screen, `useTemporalEntities.ts`, `forecastUnread.ts`, and the guard's cited lines), so every anchored citation still lands on its text: `check:doc-citations`, `check:citation-targets` and `check:citation-symbols` are clean. New code is at a file's foot or in a new module (`MapUnreadLayersBanner.tsx`, `unreadLayersNotice.ts`, `gemListCut.ts`); `useHiddenGems.ts`, `app/gems/index.tsx` and `travel-buddy-standalone/app/destination/[slug].tsx`, which no citation anchors, gain lines.
+- **Scope.** This round's suites and the touched sources join this census's `CENSUS_SCOPE`; the acknowledgement for every census that counts a changed file (discovery, map, media, sensing, input-intelligence) carries a §114 paragraph with its "why it cannot move a verdict".
+- **Suites.** The new api-server suite is on the `test` line (`check:test-registration`); the new client suites are jest component suites and node suites, none on KNOWN_BROKEN; `check-test-mocks` and `lint:orphan-tests` are clean.
+- **Allowlist.** No `UNCHECKED_READS_ALLOWLIST.json` entry changes; the checker reports no new site and no stale entry. The write-path-columns replica prints OK.
+
+### 114.8 DV-83, restated
+
+§114.1's two breaks are closed, each with the verifier's probes red first and green now (the verifier's `zz-v16-*` probes, copied in unchanged, pass; its V15-TH4 and V15-NM0 still encode the old implementation, as §113 recorded, and their adapted `zz-v16a-*` versions pass). The guard's three reach holes are caught on disk and in memory, and its four surviving mutations are killed. The rulings the verifier found not honest or honest in part are corrected (D-W11X2-93, -133, -135, -136; §113.12 clause 5 and §113.13's product note, marked in place). The sweep closed four more paths. Every clause of DV-83's criterion holds on every path this lane examined:
+
+1. **Producers send the refusal envelope or a named failure.** Unchanged in kind; one more: an object whose live claims were not read carries `liveUnread`.
+2. **Nothing refused or partial is cached as complete.** No change writes a cache; the NOW map's write-through stores only place intelligence, and a `liveUnread` object stays marked.
+3. **Nothing refused is rendered as empty, as complete, or over the wrong rows.** The NOW map says every layer the gateway did not read, safety first, and a page of several; the Time Machine says a refused plan layer, an unread itinerary and a page of several; the Gems list, the destination page and the Media Map say a cut or partial read; the place sheet never says "none observed" over a live state nobody read. Every new cut mark is cleared with the read it belongs to (NU7, NU9, FP8, GL4, GL5).
+4. **A Compass tool never states a failed or partial read to the model as a fact.** Unchanged this round (round 14's evidence stands).
+5. **Consumers branch on coverage**, and the static guard walks exactly what Metro's blockList bundles, read from `metro.config.js`, and pins every carrier reference that is not a direct call (G13).
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§114.1's two breaks are closed, each with its verifier probes red first; GH25, GH27 and GH28 are caught on disk and in memory, and R3, R5, R6 and R7 are killed; the sweep closed four more paths; 66 mutations: 66 killed, 0 equivalent (H9, the verifier's, agreed equivalent). CONTROLLED EVIDENCE ONLY — this row awaits independent re-verification.** **The NOW map says every layer the gateway did not read, safety first, and a page of several** (`travel-buddy-standalone/src/hooks/useMapEntities.ts`, `travel-buddy-standalone/app/map/index.tsx`, `travel-buddy-standalone/src/components/map/MapUnreadLayersBanner.tsx`; V16-NU1–NU4, NU5–NU8, V16-MS1, MS2–MS4). **The Time Machine says a refused plan layer, an unread itinerary and a page of several** (`travel-buddy-standalone/src/features/map/time/forecastUnread.ts`; V16-FP1–FP3, FP4–FP7, FU10–FU12). **The guard walks what Metro bundles** (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts`; G13 GH25–GH32, GH17j). **Sweep:** the cut gem list (`travel-buddy-standalone/src/services/gemListCut.ts`; GL1–GL4, DG1, DG2, LG1), the Media Map's gateway read (`travel-buddy-standalone/src/features/media/state/mediaMapStore.ts`; MP1–MP4) and the live state nobody read (`artifacts/api-server/src/lib/mapProjection.ts`, `travel-buddy-standalone/src/features/map/place/livePlaceModel.ts`; LE1, LE2, LU1). |
+
+**Headline.** DV-83 moves W → C. `check:census-integrity` counts **C 101 / W 85 / N 2 / X 0** over 188: CONSTRUCTED 186 / 188 = **98.9 %**, CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged. The move is on controlled evidence and awaits independent re-verification.
+
+### 114.9 Left open, and what would turn this red
+
+- **Seen and not built (other owners; D-W11X2-143).** Cursor-paged feeds outside Discovery (media feed, memories, collections, shared moments, engagement likers) are census-media's and census-highlights-memories'; the guide page's "contributed gems" shows the first 40 with no "more" and states no absence.
+- **Product effect, stated.** In a dense viewport the NOW gateway reads live claims for 25 objects, so most place sheets there now say "Live activity couldn't be checked for this place" rather than "No live activity has been observed here"; widening the enrichment bound, or ranking before it, is census-map's call. A NOW map answer longer than 200 objects now says "Showing only part of this area — zoom in to see everything".
+- **What would turn DV-83 red again:**
+  - a requested layer the gateway did not name, or a `nextCursor`, drawn without a word — above all the safety layer (V16-NU1, NU4, V16-MS1, MS2);
+  - a refused plan layer, an unread itinerary or a page of several drawn as a whole forecast (V16-FP1–FP3);
+  - a consumer in a directory Metro bundles that the guard does not walk, or a guard reading no test depends on (G13 GH25–GH32, GH17j);
+  - a cut gem list, a partial Media Map or an unread live state stated as empty or absent (GL1, DG1, MP2, LU1);
+  - any path §113.13 lists.
+
+### 114.10 Results at the final code commit
+
+The code is final at `53ec96888`; the census commit changes only this file, the decision register, `checkCensusFreshness.ts`' scope and the staleness acknowledgements. Node 24.21.0.
+
+- **api-server** (`node --import tsx/esm --test`, `SUPABASE_URL=http://127.0.0.1:9`): every `discovery*`, `compass*`, `trail*`, `hashtag*`, `map*`, `event*`, `hidden*`, `call*` and `gems*` suite (the touched `mapProjection`, `mapObjectsContract`, `mapProjectPlace` and the new `mapLiveEnrichmentUnread` among them), with `securityCheckSuite`, `uncheckedSupabaseReads`, `entryWiringNotCommentedOut` and `layoverSurfaceErrorBinding`: 361 files in 16 chunks, each under 5 minutes, `tests 6939 · pass 6939 · fail 0 · cancelled 0`. Seven live-DB suites that import `ciSupabaseGuard` are not run (the guard refuses them without live credentials; this lane writes to no database).
+- `checkUncheckedSupabaseReads`: no new in-scope read ignores its `.error`. The write-path-columns replica: `OK (117 tracked)`.
+- **Client:** `pnpm run -s check:all` passes on the final code — node tests `tests 7584 · pass 7584 · fail 0`; jest component suites 847 of 847 (5421 tests); the web config 4 of 4 (12 tests); typecheck, typecheck:tests and the lints clean. `check-route-registry`: OK.
+- **The guard on disk.** The verifier's runner placed each of GH0–GH32 alone in the tree and removed it: the unfixtured tree passes (fail 0), and all 34 fixtures (GH0–GH32 with GH31b) are killed; every touched registered file was restored with a matching sha256.
+- **The verifiers' probes**, copied in, run and deleted: the v7–v15 server probes pass 138 of 138; the v7–v14 client probes and the v16 probes (V16-NU0–NU4, V16-MS0, MS1, V16-FP0–FP3) pass, and the adapted `zz-v16a-*` pass; V15-TH4 and V15-NM0, copied in unchanged, still fail as §113.4 and §113.5 recorded (they encode the old implementation).
+- **Guards:** all 24 of the integrator's `int-guards.sh` exit 0.
 
 ## Cited, not graded (check:census-scope-coverage)
 

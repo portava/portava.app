@@ -4646,6 +4646,28 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // census-discovery §114 (lane W11-X2, round 17): the files §114 grades.
     "travel-buddy-standalone/src/hooks/useMapEntities.ts",  // §114 grades the NOW map's unread and cut layers (B5)
     "travel-buddy-standalone/src/data/discovery.ts",  // §114 names its `export *` from src/__fixtures__, which puts that directory in the bundle (GH28)
+    "travel-buddy-standalone/src/hooks/__tests__/useMapEntities.unreadOptional.component.test.tsx",
+    "travel-buddy-standalone/src/hooks/__tests__/useMapEntities.legacyGemsCut.component.test.tsx",
+    "travel-buddy-standalone/app/map/__tests__/mapScreen.unreadLayers.component.test.tsx",
+    "travel-buddy-standalone/src/hooks/__tests__/useTemporalEntities.forecastLayersUnread.component.test.tsx",
+    "travel-buddy-standalone/app/gems/__tests__/gemsListCapped.component.test.tsx",
+    "travel-buddy-standalone/app/destination/__tests__/destination.gemsCapped.component.test.tsx",
+    "travel-buddy-standalone/src/features/media/__tests__/MediaMapScreen.gatewayPartial.component.test.tsx",
+    "travel-buddy-standalone/src/features/map/place/__tests__/livePlaceModel.liveUnread.test.ts",
+    "artifacts/api-server/src/test/mapLiveEnrichmentUnread.test.ts",
+    "travel-buddy-standalone/src/components/map/MapUnreadLayersBanner.tsx",  // §114 grades the NOW map's unread-layers notice (B5)
+    "travel-buddy-standalone/src/features/map/layers/unreadLayersNotice.ts",  // §114 grades its wording, safety first (B5)
+    "travel-buddy-standalone/src/services/gemListCut.ts",  // §114 grades the cut mark beside a gem list (SW1, SW2)
+    "travel-buddy-standalone/app/destination/[slug].tsx",  // §114 grades the destination page's cut gem list (SW1)
+    "travel-buddy-standalone/src/features/media/hooks/useMediaMap.ts",  // §114 grades the Media Map's gateway read (SW3)
+    "travel-buddy-standalone/src/features/media/state/mediaMapStore.ts",  // §114 grades mediaMapGatewayPartial and the partial state (SW3)
+    "travel-buddy-standalone/src/features/media/screens/MediaMapScreen.tsx",  // §114 grades the partial notice (SW3)
+    "travel-buddy-standalone/src/features/map/place/livePlaceModel.ts",  // §114 grades the unread live state's wording (SW4)
+    "artifacts/api-server/src/lib/mapObjects.ts",  // §114 grades the liveUnread field (SW4)
+    "artifacts/api-server/src/lib/mapProjection.ts",  // §114 grades enrichWithLiveClaims' liveUnread mark (SW4)
+    "travel-buddy-standalone/src/types/mapObjects.ts",  // §114 grades the client's liveUnread field (SW4)
+    "travel-buddy-standalone/src/services/mapProjection.ts",  // §114 grades the envelope's optional refusal (B5)
+    "travel-buddy-standalone/metro.config.js",  // §114: the guard reads its blockList for what Metro bundles (D-W11X2-141)
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //
