@@ -90,3 +90,10 @@ describe('historyUnread and temporalNotice (§113, D-W11X2-130)', () => {
     assert.equal(temporalNotice({ failed: false, loading: false, unreadForecastLayers: [] }), null);
   });
 });
+
+describe('temporalNotice over a history cut at its cap (§113, D-W11X2-136)', () => {
+  it('FU9 a past answer whose history was cut → "Only part of this time could be loaded"; a whole one → no notice', () => {
+    assert.equal(temporalNotice({ failed: false, loading: false, unreadForecastLayers: [], history: { available: true, covering: 3, truncated: true } }), 'Only part of this time could be loaded');
+    assert.equal(temporalNotice({ failed: false, loading: false, unreadForecastLayers: [], history: { available: true, covering: 3 } }), null);
+  });
+});

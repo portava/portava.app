@@ -213,7 +213,7 @@ export default function HashtagFeedScreen() {
   // "removed or blocked" — only a 404 is. `metaReload` is the failed state's "Try again".
   const [metaFailed, setMetaFailed] = useState(false);
   const [metaReload, setMetaReload] = useState(0);
-  const [following, setFollowing] = useState(false);
+  const [following, setFollowing] = useState(false); const [followUnknown, setFollowUnknown] = useState(false);  // census-discovery §113 (D-W11X2-137): a failed follow read
   const [followBusy, setFollowBusy] = useState(false);
   const [reportBusy, setReportBusy] = useState(false);
 
@@ -236,7 +236,7 @@ export default function HashtagFeedScreen() {
       setMetaLoading(false);
       if (res.ok && res.data) {
         setMeta(res.data);
-        setFollowing(res.data.isFollowing);
+        setFollowing(res.data.isFollowing === true); setFollowUnknown(res.data.isFollowing == null);  // §113: null = the server could not read it — never "not following"
       } else {
         setUnavailable(true);
         setMetaFailed(res.status !== 404);
@@ -327,7 +327,7 @@ export default function HashtagFeedScreen() {
     setFollowBusy(true);
     const res = following ? await unfollowHashtag(slug) : await followHashtag(slug);
     if (res.ok) {
-      setFollowing((v) => !v);
+      setFollowing((v) => !v); setFollowUnknown(false);
       setMeta((prev) =>
         prev
           ? { ...prev, usageCount: prev.usageCount }
@@ -416,7 +416,7 @@ export default function HashtagFeedScreen() {
           {followBusy
             ? <ActivityIndicator size="small" color={following ? color.deep : color.onInk} />
             : <Text style={[s.followBtnText, following && s.followBtnTextActive]}>
-                {following ? 'Following' : 'Follow'}
+                {following ? 'Following' : followUnknown ? "Can't check follow" : 'Follow'}
               </Text>
           }
         </Pressable>

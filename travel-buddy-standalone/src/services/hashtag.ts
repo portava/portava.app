@@ -96,7 +96,7 @@ export interface HashtagMeta {
   slug: string;
   name: string;
   usageCount: number;
-  isFollowing: boolean;
+  isFollowing: boolean | null;  // census-discovery §113 (D-W11X2-137): null = the follow read failed; `topCity` is null over a cut or failed tally too
   /** Most-active city for this hashtag in the last 30 days (null if no geo-tagged usage). */
   topCity: string | null;
   createdAt: string;

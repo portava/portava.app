@@ -7,6 +7,7 @@
  *   TH3b the server's `history_unreadable` refusal → failed, and the notice says so
  *   TH5  a historical target answered with no history report (an older server) → failed, never an empty past
  *   TH6  an in-flight PAST read → the loading notice, not the empty strip; the answer then replaces it
+ *   TH7  a past answer whose history the server cut at its cap → the map says only part of it could be loaded
  *   TH2c CONTROL: the flag-off envelope (`enabled: false`) is not a failed past; a healthy past with rows → no notice
  */
 import { renderHook, waitFor } from '@testing-library/react-native';
@@ -81,6 +82,14 @@ describe('§113: the Time Machine past arm over a failed or in-flight history re
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(notice(result.current)).toBeNull();
     expect(result.current.objects.length).toBe(1);
+  });
+
+  it('TH7 a past answer whose history was cut → "Only part of this time could be loaded"', async () => {
+    mockAnswers.push(() => Promise.resolve({ ok: true, data: envelope({ objects: [OBS], total: 1, sources: [], history: { available: true, covering: 1, truncated: true } }) }));
+    const { result } = await renderHook(() => useTemporalEntities({ lat: 38.72, lng: -9.14, offset: PAST, active: true }));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.failed).toBe(false);
+    expect(notice(result.current)).toBe('Only part of this time could be loaded');
   });
 
   it('TH2c CONTROL: the flag-off envelope is not a failed past; a healthy past with rows → no notice', async () => {

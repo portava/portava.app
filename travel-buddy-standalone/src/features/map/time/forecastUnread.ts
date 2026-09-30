@@ -36,8 +36,9 @@ export function historyUnread(
  * The notice the map screen hands the Time Machine (§111, §112, §113): a failed or refused read first, then a read in
  * flight (the strip is never the honest-empty state while the answer is on its way), then an unread forecast layer.
  */
-export function temporalNotice(t: { failed: boolean; loading: boolean; unreadForecastLayers: string[] }): string | null {
+export function temporalNotice(t: { failed: boolean; loading: boolean; unreadForecastLayers: string[]; history?: Pick<MapTemporalEnvelope, 'history'>['history'] }): string | null {
   if (t.failed) return "Couldn't load the map for this time";
   if (t.loading) return 'Loading the map for this time…';
+  if (t.history?.truncated) return 'Only part of this time could be loaded';  // §113 (D-W11X2-136): a past read cut at its cap
   return t.unreadForecastLayers.includes('events') ? "Events couldn't be checked for this forecast" : null;
 }

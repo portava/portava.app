@@ -57,7 +57,7 @@ export interface TemporalForecastReport {
 /** The history report — `available:false` is a FAILED history read (census-discovery §113); "no history yet" is available: true, covering: 0. */
 export interface TemporalHistoryReport {
   available: boolean;
-  covering: number;
+  covering: number; /** census-discovery §113 (D-W11X2-136): present only when the history read was cut at its cap */ truncated?: true;
 }
 
 export interface MapTemporalEnvelope {
