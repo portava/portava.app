@@ -7,8 +7,8 @@
  * trend to show" whenever it had no band — both over a map whose layers the gateway did not read, or cut, and over a
  * temporal read that failed. Each now says the map could not be read whole instead.
  *
- *   EC1  the carousel, no entities, the map not whole → "Couldn’t load everything here", never "No results nearby"
- *   EC0  CONTROL: no entities, the map whole → "No results nearby"
+ *   CA1  the carousel, no entities, the map not whole → "Couldn’t load everything here", never "No results nearby"
+ *   CA0  CONTROL: no entities, the map whole → "No results nearby"
  *   TL1  the city timeline, no band, not whole → "City trend couldn’t be checked here"
  *   TL0  CONTROL: no band, whole → "No city trend to show" (and "Not enough confirmed signal…" when objects qualified)
  *   TL2  TimeMachineControl hands `timelineNotWhole` to the timeline
@@ -45,12 +45,12 @@ async function carousel(layersNotWhole: boolean) {
 }
 
 describe('census-discovery §115 (SW9): the NOW map never says "nothing here" over a map it did not read whole', () => {
-  it('EC1 the carousel with no entities over a map not read whole → says so, never "No results nearby"', async () => {
+  it('CA1 the carousel with no entities over a map not read whole → says so, never "No results nearby"', async () => {
     await carousel(true);
     expect(screen.queryByText('No results nearby')).toBeNull();
     expect(screen.getByText('Couldn’t load everything here')).toBeTruthy();
   });
-  it('EC0 CONTROL: no entities over a whole map → "No results nearby"', async () => {
+  it('CA0 CONTROL: no entities over a whole map → "No results nearby"', async () => {
     await carousel(false);
     expect(screen.getByText('No results nearby')).toBeTruthy();
     expect(screen.queryByText('Couldn’t load everything here')).toBeNull();
