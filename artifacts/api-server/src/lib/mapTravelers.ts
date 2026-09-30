@@ -27,7 +27,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "./database.types";
-import { normalizeLocationName } from "./canonicalLocations";
+import { normalizeLocationName } from "./canonicalLocations"; import { nearBox, applyNearBox } from "./nearBox.js";  // census-discovery §116 (sweep SW13)
 // Spec §21/§35: the map does not rebuild identity — it REQUESTS the Passport's
 // map-presence projection. That projection is batch-only by construction (the
 // per-user consumer-variant path is ~34 reads per target and this is a polling
@@ -248,25 +248,25 @@ async function loadCandidates(
   radiusKm: number,
 ): Promise<CandidateRead | null> {
   const cutoff = new Date(Date.now() - FRESH_MAX_MS).toISOString();
-  const dLat = radiusKm / 111.32;
-  const dLng = radiusKm / (111.32 * Math.max(0.2, Math.cos((lat * Math.PI) / 180)));
+  const box = nearBox(lat, lng, radiusKm);  // census-discovery §116 (DV-83, sweep SW13): the circle's exact box (lib/nearBox)
+
 
   // last_known_at is written together with lat/lng on every position fix
   // (see routes/location.ts) — it is the honest "how fresh is this position"
   // signal. Rows without it are excluded (fail-closed).
-  // NOTE: the bbox is a naive min/max range — viewports straddling the
-  // antimeridian (±180°) will miss travelers on the far side. Accepted:
-  // queries are city-scale (≤100km) and no launch market sits on the line.
-  const { data: locsRaw, error: locErr } = await db
+  // The box wraps: a circle across the antimeridian (±180°) is read as two
+  // longitude ranges, and one that holds a pole as every longitude (§116: the
+  // naive min/max range missed the far side, and was clamped near the poles).
+  const { data: locsRaw, error: locErr } = await applyNearBox(db
     .from("user_location_state")
     .select("user_id, lat, lng, city, country, last_known_at")
     .gte("last_known_at", cutoff)
     .not("lat", "is", null)
-    .not("lng", "is", null)
-    .gte("lat", lat - dLat)
-    .lte("lat", lat + dLat)
-    .gte("lng", lng - dLng)
-    .lte("lng", lng + dLng)
+    .not("lng", "is", null), box, "lat", "lng")
+    // (§116 SW13: the latitude band and the longitude range(s) are the box's, applied above;
+    // they were lat ± r/111.32 and lng ± r/(111.32·max(0.2, cos lat)), which did not wrap
+    // and were narrower than the circle above ~78.5°, so a traveler inside the radius was
+    // never scanned.)
     .order("last_known_at", { ascending: false }).limit(SCAN_LIMIT + 1);  // census-discovery §113 (DV-83, D-W11X2-129): freshest first, and one row past the cap so a cut scan is known
   // A failed read and an empty viewport are different answers. A null payload
   // WITHOUT an error is also a failed read, not an empty viewport: the rows

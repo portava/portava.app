@@ -31,7 +31,7 @@ import {
   logDiscoveryServe, DiscoveryServePoint, searchTypeToItemKind,
 } from "../lib/discoveryServeLog.js";  import { stampServedRecommendations, exposureForResponse, serveClockOf } from "../lib/discoveryRecommendationRecord.js";  // census-discovery §48 — serve point 12's response carries the ids its serve-log rows do
 import { buildCommandsFromIntent } from "../lib/mapCommands.js"; import { EVENT_CAUSE_DEFAULT_DURATION_MINUTES } from "../lib/mapProducers/eventContextProducer.js";  // census-discovery §113 (D-W11X2-132): the forward window's assumed duration
-import { forwardGeocode } from "../lib/geocodeForward.js";
+import { forwardGeocode } from "../lib/geocodeForward.js"; import { nearBox, applyNearBox } from "../lib/nearBox.js";  // census-discovery §116 (sweep SW13)
 
 const router = Router();
 
@@ -78,9 +78,9 @@ export async function loadNearbyEvents(
   sc: any, viewerId: string, lat: number, lng: number, radiusKm: number, blockedSet: Set<string>,
   opts: { window?: NearbyEventsWindow; limit?: number } = {},
 ): Promise<any[] | null> {
-  const latDelta = radiusKm / 111;
-  const lngDelta = radiusKm / (111 * Math.max(0.2, Math.cos((lat * Math.PI) / 180)));
-  let q = sc
+  const box = nearBox(lat, lng, radiusKm);  // census-discovery §116 (DV-83, sweep SW13): the circle's exact box (lib/nearBox) — wrapped at the antimeridian,
+  // every longitude over a pole; it was lat ± r/111, lng ± r/(111·max(0.2, cos lat)), which dropped events inside the radius.
+  let q = applyNearBox(sc
     .from("events")
     // `ends_at` is what projectEvent turns into the object's `expiresAt`, and
     // `expiresAt` is what stops a started event rendering as LIVE forever
@@ -88,9 +88,9 @@ export async function loadNearbyEvents(
     // from this list, so every gateway-served event had expiresAt undefined.
     .select("id, host_id, title, location_name, location_lat, location_lng, show_exact_location, starts_at, ends_at, cover_url, visibility, state, age_min, age_max, trust_score_min, verified_only")
     .not("state", "in", '("draft","cancelled","archived")')
-    .in("visibility", ["public", "friends_only"])
-    .gte("location_lat", lat - latDelta).lte("location_lat", lat + latDelta)
-    .gte("location_lng", lng - lngDelta).lte("location_lng", lng + lngDelta);
+    .in("visibility", ["public", "friends_only"]), box, "location_lat", "location_lng");
+  // (§116 SW13: the two lines of bounds that stood here are the box's, applied above.)
+
   const w = opts.window;
   if (w) {
     // census-discovery §113 (D-W11X2-132): the upper bound on the start is optional (a forward window has none).

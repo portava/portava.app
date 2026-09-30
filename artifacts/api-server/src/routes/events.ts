@@ -219,7 +219,7 @@ import {
 } from "../services/trust/TrustEventService.js";
 import { rankCandidates } from "../lib/portavaRank.js";
 import type { RankCandidate, ViewerContext } from "../lib/portavaRank.js";
-import { logImpression } from "../lib/rankLog.js";
+import { logImpression } from "../lib/rankLog.js"; import { nearBox, applyNearBox } from "../lib/nearBox.js";  // census-discovery §116 (sweep SW13)
 import { getDisplayTrustScores, getTrustProfileResult } from "../services/trust/TrustScoreService.js";
 import {
   toPrivateEventPreview,
@@ -1457,23 +1457,23 @@ router.get("/events/nearby", async (req, res) => {
     sendError(res, "invalid_payload", "lat and lng query params are required"); return;
   }
 
-  // ~1 degree latitude ≈ 111 km; longitude offset varies by lat
-  const latDelta = radiusKm / 111;
-  const lngDelta = radiusKm / (111 * Math.cos((lat * Math.PI) / 180));
+  // The query box around the point: lib/nearBox (census-discovery §116, DV-83 sweep SW13).
+  const box = nearBox(lat, lng, radiusKm);
+
 
   const page   = Math.max(1, parseInt((req.query.page as string) ?? "1"));
   const limit  = Math.min(50, Math.max(1, parseInt((req.query.limit as string) ?? "20")));
   const offset = (page - 1) * limit;
 
-  const { data: events, error } = await sc
+  const { data: events, error } = await applyNearBox(sc
     .from("events")
     .select("*")
     .not("state", "in", '("draft","cancelled","archived")')
-    .in("visibility", ["public","friends_only"])
-    .gte("location_lat", lat - latDelta)
-    .lte("location_lat", lat + latDelta)
-    .gte("location_lng", lng - lngDelta)
-    .lte("location_lng", lng + lngDelta)
+    .in("visibility", ["public","friends_only"]), box, "location_lat", "location_lng")
+    // census-discovery §116 (sweep SW13): the circle's exact box replaces the four bounds that stood here — lat ± r/111 and
+    // lng ± r/(111·cos lat), which did not wrap at the antimeridian: two longitude ranges across it now, and every
+    // longitude when the circle holds a pole. The box still only prefilters: this route lists what falls in it, as
+    // before.
     .order("starts_at", { ascending: true, nullsFirst: false })
     .range(offset, offset + limit - 1);
 

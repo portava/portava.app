@@ -18,25 +18,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { scoreGemForRanking } from "../../lib/hiddenGemState.js";
-
-/**
- * Lat/lng bounding box for a radius around a point (mirrors lib/mapTravelers).
- * A generous superset of the true circle — the haversine pass below still makes
- * the exact circular cut, so a slightly-too-wide box never changes results,
- * it only bounds how many rows the DB returns.
- */
-function radiusBoundingBox(lat: number, lng: number, radiusKm: number): {
-  minLat: number; maxLat: number; minLng: number; maxLng: number;
-} {
-  const dLat = radiusKm / 111.32;
-  const dLng = radiusKm / (111.32 * Math.max(0.2, Math.cos((lat * Math.PI) / 180)));
-  return {
-    minLat: Number((lat - dLat).toFixed(5)),
-    maxLat: Number((lat + dLat).toFixed(5)),
-    minLng: Number((lng - dLng).toFixed(5)),
-    maxLng: Number((lng + dLng).toFixed(5)),
-  };
-}
+import { nearBox, nearBoxTerms } from "../../lib/nearBox.js";
 
 /**
  * Compute a single gem's discovery score (higher = better rank).
@@ -119,11 +101,11 @@ export async function discoverGems(
     .eq("status", "active");
 
   if (proximityBounded) {
-    const b = radiusBoundingBox(opts.userLat!, opts.userLng!, opts.radiusKm!);
-    q = q.or(
-      `and(latitude.gte.${b.minLat},latitude.lte.${b.maxLat},longitude.gte.${b.minLng},longitude.lte.${b.maxLng}),` +
-      `and(approx_latitude.gte.${b.minLat},approx_latitude.lte.${b.maxLat},approx_longitude.gte.${b.minLng},approx_longitude.lte.${b.maxLng})`,
-    );
+    // census-discovery §116 (DV-83, sweep SW13): the circle's exact box (lib/nearBox), on the exact and the approximate
+    // coordinates alike — two longitude ranges across the antimeridian, every longitude over a pole. It was a box clamped
+    // at cos(lat) 0.2 that did not wrap, so gems inside the radius were dropped before the haversine pass below.
+    const box = nearBox(opts.userLat!, opts.userLng!, opts.radiusKm!);
+    q = q.or([...nearBoxTerms(box, "latitude", "longitude"), ...nearBoxTerms(box, "approx_latitude", "approx_longitude")].join(","));
   }
 
   const scanCap = Math.min((opts.limit ?? 60) * 3, 300); q = q.order("updated_at", { ascending: false }).limit(scanCap + 1); // over-fetch for client-side ranking — census-discovery §113 (DV-83, D-W11X2-131): freshest first, and one row past the cap so a cut scan is known
