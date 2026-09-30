@@ -109,7 +109,7 @@ import { Router } from "express";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
-import { isFlagEnabled } from "../lib/featureFlags.js";
+import { isFlagEnabled } from "../lib/featureFlags.js"; import { readFlagState } from "../lib/capability/schemaCapability.js";  // census-discovery §115 (B9)
 import { checkRateLimit } from "../lib/rateLimit.js";
 import { fetchBlockedSet } from "../lib/blocks.js";
 import { listMapTravelersRead } from "../lib/mapTravelers.js";
@@ -469,9 +469,9 @@ router.get(
     // Fail-soft: an unknown or disabled flag yields an explicitly empty,
     // explicitly disabled envelope — the client keeps its legacy per-layer path
     // rather than rendering a blank map.
-    if (!(await isFlagEnabled(sc, "map_projection_enabled"))) {
+    const projectionFlag = await readFlagState(sc, "map_projection_enabled"); if (projectionFlag !== "on") {  // census-discovery §115 (DV-83, B9): an UNREAD flag is a refusal the client says (safety first), never the flag-off body
       res.json({
-        enabled: false,
+        enabled: false, ...(projectionFlag === "unreadable" ? { refusal: "flag_unreadable" } : {}),
         objects: [],
         viewport: null,
         total: 0,
@@ -710,8 +710,8 @@ router.get(
           if (!read) { producers.memory = { refusal: "read_threw", collected: 0 }; return; }
           if (!read.ok) { producers.memory = { refusal: read.reason, collected: 0 }; return; }
           for (const p of read.pins) collected.push(p);
-          producers.memory = { refusal: null, collected: read.pins.length };
-          sources.push("memories");
+          producers.memory = { refusal: read.report.capped > 0 ? "subjects_capped" : null, collected: read.pins.length };  // census-discovery §115 (DV-83, B8): a cut read is reported
+          if (!(read.report.capped > 0)) sources.push("memories");  // §115 (B8): never named over subjects past the cap
         })(),
       );
     }
@@ -741,8 +741,8 @@ router.get(
           if (!read) { producers.saved_place = { refusal: "read_threw", collected: 0 }; return; }
           if (!read.ok) { producers.saved_place = { refusal: read.reason, collected: 0 }; return; }
           for (const p of read.pins) collected.push(p);
-          producers.saved_place = { refusal: null, collected: read.pins.length };
-          sources.push("saved");
+          producers.saved_place = { refusal: read.report.capped ? "saves_capped" : null, collected: read.pins.length };  // census-discovery §115 (DV-83, B8): a cut read is reported
+          if (!read.report.capped) sources.push("saved");  // §115 (B8): never named over saves past the cap
         })(),
       );
     }
@@ -781,7 +781,7 @@ router.get(
           // buddies here" and "we could not tell".
           if (!read || !read.ok) return;
           for (const b of read.pins) collected.push(projectBuddy(b));
-          sources.push("buddies");
+          if (!read.capped) sources.push("buddies");  // census-discovery §115 (DV-83, B8): never named over a cut scan (an unread flag is ok:false above)
         })(),
       );
     }
@@ -834,7 +834,7 @@ router.get(
             collected.push(obj);
           }
           placesReport.report = { rows: read.rows.length, projected, truncated: read.truncated };
-          sources.push("places");
+          if (!read.truncated) sources.push("places");  // census-discovery §115 (DV-83, B7): a read cut at MAX_PLACE_ROWS is never named whole
         })(),
       );
     }

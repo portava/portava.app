@@ -59,7 +59,7 @@
  * caller can tell "no buddies here" from "we could not tell".
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { isFlagEnabled } from "./featureFlags.js";
+import { readFlagState } from "./capability/schemaCapability.js";  // census-discovery §115 (DV-83, B8): the buddy flag is read three-state
 import { haversineKm } from "./canonicalLocations.js";
 
 // ── Field exposure — the single definition ────────────────────────────────────
@@ -166,17 +166,17 @@ export function hasMeetupBase(r: Record<string, unknown>): boolean {
 export type BuddyMapPin = NonNullable<ReturnType<typeof mapBuddyPublicProfile>>;
 
 /** Which read failed, so the caller can log it and leave the layer unreported. */
-export type BuddyMapReadStage = "profiles";
+export type BuddyMapReadStage = "profiles" | "flag" | "blocks";  // §115 (B8): an unread flag or block set is a failed read, never an empty marketplace
 
 export type BuddyMapPinsResult =
-  | { ok: true; pins: BuddyMapPin[] }
+  | { ok: true; pins: BuddyMapPin[]; /** census-discovery §115 (B8): the bbox scan or the pin cap cut the read — the layer is not whole */ capped?: true }
   | { ok: false; stage: BuddyMapReadStage; message: string };
 
 export interface BuddyMapPinsOptions {
   lat: number;
   lng: number;
   radiusKm: number;
-  /** null = block state unknown → fail-closed empty result. */
+  /** null = block state unknown → a failed read (`ok: false`, stage `blocks`), never an empty result (§115). */
   blockedSet: Set<string> | null;
   /** Hard cap on emitted pins. */
   maxPins?: number;
@@ -197,14 +197,14 @@ export async function readBuddyMapPins(
 ): Promise<BuddyMapPinsResult> {
   // 1. The marketplace's own feature gate. `isFlagEnabled` is the shared
   //    fail-closed reader of the SAME `rent_buddy_enabled` row that
-  //    requireRentBuddyEnabled reads; an absent row, a disabled row or an
-  //    unreadable table all mean "no buddies", which is what the route's 403
-  //    means on the wire.
-  if (!(await isFlagEnabled(sc, "rent_buddy_enabled"))) return { ok: true, pins: [] };
+  //    requireRentBuddyEnabled reads; an absent or disabled row means "no
+  //    buddies" (the route's 403). An UNREADABLE row is a failed read (§115, B8):
+  //    it exposes nobody and is never named as a whole, empty layer.
+  const buddyFlag = await readFlagState(sc, "rent_buddy_enabled"); if (buddyFlag === "unreadable") return { ok: false, stage: "flag", message: "rent_buddy_enabled could not be read" }; if (buddyFlag !== "on") return { ok: true, pins: [] };
 
   // 2. Fail-closed blocks. Unknown block state → nobody, never "no blocks".
   const blocked = opts.blockedSet;
-  if (blocked === null) return { ok: true, pins: [] };
+  if (blocked === null) return { ok: false, stage: "blocks", message: "block state unknown" };  // §115: exposes nobody, and is not an empty marketplace
 
   // 4. Viewport prefilter. A naive min/max bbox, exactly like lib/mapTravelers'
   //    candidate scan — and with the same accepted limitation: a viewport
@@ -234,10 +234,10 @@ export async function readBuddyMapPins(
   if (error) return { ok: false, stage: "profiles", message: error.message };
 
   const maxPins = opts.maxPins ?? MAX_BUDDY_PINS;
-  const pins: BuddyMapPin[] = [];
+  const pins: BuddyMapPin[] = []; let capped = (data ?? []).length >= BUDDY_SCAN_LIMIT;  // census-discovery §115 (B8): a scan that filled its cap was cut
 
   for (const raw of (data ?? []) as any[]) {
-    if (pins.length >= maxPins) break;
+    if (pins.length >= maxPins) { capped = true; break; }  // §115 (B8): rows past the pin cap were never read
     // A buddy the viewer blocked in either direction is not on their map. The
     // marketplace search has no block filter at all (see the note below); this
     // is an ADDITIONAL narrowing the map layer applies, matching every other
@@ -262,7 +262,7 @@ export async function readBuddyMapPins(
     if (pin) pins.push(pin);
   }
 
-  return { ok: true, pins };
+  return capped ? { ok: true, pins, capped: true } : { ok: true, pins };
 }
 
 /**

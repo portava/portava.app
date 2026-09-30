@@ -60,7 +60,7 @@ export interface MapProjectionEnvelope {
    * present the result as a complete live picture.
    */
   liveEnrichment: { considered: number; enriched: number; skipped: number } | null;
-  generatedAt: string; /** census-discovery §114 (B5): a gateway that could not read what it must (`block_set_unreadable`, `protection_unreadable`) answers `enabled: false` with this named */ refusal?: string | null;
+  generatedAt: string; /** census-discovery §114 (B5): a gateway that could not read what it must (`block_set_unreadable`, `protection_unreadable`) answers `enabled: false` with this named */ refusal?: string | null; /** census-discovery §115 (B7): the places read was cut at its cap (`truncated`) — the layer is not whole */ places?: { truncated?: boolean } | null;
 }
 
 export type MapProjectionResult =

@@ -785,7 +785,7 @@ export function useMapEntities(opts: {
         // as an empty world.
         if (res.ok && res.data.enabled) {
           gatewayObjects = res.data.objects;
-          gatewaySources = res.data.sources; gatewayCut = res.data.nextCursor != null;  // §114 (B5): page one of several is never drawn as whole
+          gatewaySources = res.data.sources; gatewayCut = res.data.nextCursor != null || res.data.places?.truncated === true;  // §114 (B5): page one of several is never drawn as whole; §115 (B7): nor a places read cut at its cap
           enrichment = res.data.liveEnrichment;
         } else gatewayFailed = !res.ok || res.data.refusal != null;  // §114 (B5): a failed or refused gateway read is not the flag being off — the optional layers, which only it serves, went unread
       }

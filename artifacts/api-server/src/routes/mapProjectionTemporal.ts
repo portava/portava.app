@@ -45,7 +45,7 @@ import { Router } from "express";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
-import { isFlagEnabled } from "../lib/featureFlags.js";
+import { isFlagEnabled } from "../lib/featureFlags.js"; import { readFlagState } from "../lib/capability/schemaCapability.js";  // census-discovery §115 (B9, B10)
 import { checkRateLimit } from "../lib/rateLimit.js";
 import { fetchBlockedSet } from "../lib/blocks.js";
 import { loadNearbyEvents, nearbyEventsWithheldUnchecked, nearbyEventsScanCut, forecastEventsWindow } from "./mapSearch.js";  // §113 (D-W11X2-132)
@@ -180,7 +180,7 @@ export type PlanArrivalRefusal =
   | "flag_off"
   | "no_group_key_secret"
   | "zone_read_failed"
-  | "no_zone_model"
+  | "no_zone_model" | "flag_unreadable"  // census-discovery §115 (DV-83, B10): an UNREAD crowd-flow flag is a failed read, never the off-state `flag_off`
   | "read_failed" | "zone_model_capped" | "plans_capped" | "stops_capped";  // census-discovery §113 (D-W11X2-136): a read cut at its cap is not a whole one
 
 interface PlanArrivalReadResult {
@@ -218,7 +218,7 @@ async function readPlanArrivals(
 
   // A LITERAL, not a constant: check:flag-polarity resolves flag arguments
   // statically. The same flag §10 crowd flow rides, for the same reason.
-  if (!(await isFlagEnabled(sc, "map_crowd_flow_enabled"))) return empty("flag_off");
+  const crowdFlowFlag = await readFlagState(sc, "map_crowd_flow_enabled"); if (crowdFlowFlag === "unreadable") return empty("flag_unreadable"); if (crowdFlowFlag !== "on") return empty("flag_off");  // §115 (B10): `flag_off` only for a flag read and off
 
   // Probe the group-key derivation with the real function rather than re-reading
   // the env here — lib/intelGroupKey is the one authority on what a valid secret
@@ -254,7 +254,7 @@ async function readPlanArrivals(
     if (plans.length === 0) return empty(null, zones.length);
 
     // Consent, per accepter — enabled AND not withdrawn. A consent-read FAILURE
-    // leaves the set EMPTY (it can shrink a cohort, never inflate one).
+    // refuses the layer (`read_failed`): an unread cohort is never "nothing predicted" (§115, B10).
     const actorIds = [...new Set(plans.map((p) => String(p.accepted_by_user_id)))];
     let consented = new Set<string>();
     const { data: consentRows, error: consentErr } = await sc
@@ -263,7 +263,7 @@ async function readPlanArrivals(
       .in("user_id", actorIds)
       .eq("enabled", true)
       .is("withdrawn_at", null);
-    if (!consentErr && Array.isArray(consentRows)) {
+    if (consentErr || !Array.isArray(consentRows)) return empty("read_failed", zones.length); {  // census-discovery §115 (DV-83, B10): a failed consent read used to leave the set EMPTY and name the layer
       consented = new Set((consentRows as any[]).map((r) => String(r.user_id)));
     }
     const consentedPlans = plans.filter((p) => consented.has(String(p.accepted_by_user_id)));
@@ -426,9 +426,9 @@ router.get(
     const nowMs = Date.now();
     const generatedAt = new Date(nowMs).toISOString();
 
-    if (!(await isFlagEnabled(sc, "map_projection_enabled"))) {
+    const projectionFlag = await readFlagState(sc, "map_projection_enabled"); if (projectionFlag !== "on") {  // census-discovery §115 (DV-83, B9): an UNREAD flag is a refusal the Time Machine says, never the flag-off body
       res.json({
-        enabled: false,
+        enabled: false, ...(projectionFlag === "unreadable" ? { refusal: "flag_unreadable" } : {}),
         objects: [],
         viewport: null,
         target: null,
