@@ -392,7 +392,7 @@ export async function buildGemLiveCandidates(
       const subject = placeId ? byPlace.get(placeId) : undefined;
       if (!placeId || !subject) continue;
       if (PROTECTED_GEM_SENSITIVITY.has(String(row.sensitivity_level ?? "public"))) continue; // §20
-      const projection = await deriveGemProjection(sc, row, now.getTime());
+      const projection = await deriveGemProjection(sc, row, now.getTime()); if (projection.unreadSources) continue;  // census-discovery §111 (DV-83, D-W11X2-110): no gem state is claimed from a failed aggregate read
       const phrase = GEM_STATE_PHRASE[projection.gemState];
       // §20: current gem state appears ONLY when fresh + qualified — the strip
       // shows only the confirmed/discovering states, never "still_hidden" etc.

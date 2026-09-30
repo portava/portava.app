@@ -82,12 +82,12 @@ import {
 import {
   recordGemContribution,
   batchDeriveGemProjections,
-  deriveGemProjection,
+  deriveGemProjection, gemProjectionsUnreadSources,
 } from "../services/hiddenGems/HiddenGemContributionService.js";
 import { GEM_CONTRIBUTION_TYPES } from "../lib/hiddenGemState.js";
 import { logDiscoveryServe, DiscoveryServePoint } from "../lib/discoveryServeLog.js";  import { stampServedRecommendations, exposureForResponse, serveClockOf } from "../lib/discoveryRecommendationRecord.js";  // census-discovery §48 — serve point 11's response carries the ids its serve-log rows do
 
-import { isAdmin } from "../lib/requireAdmin.js"; import { aggregateReadComplete } from "../lib/discoveryPlaceAggregates.js";  import { layoverGemWindow, gemsUnderLayoverMode, certifiedWindowKeys, LAYOVER_WINDOW_UNREADABLE_MESSAGE } from "../lib/discoveryLayoverGems.js";  // census-discovery §56 (A13/A14): the layover window is the certified snapshot's
+import { isAdmin } from "../lib/requireAdmin.js"; import { discoveryRefusal } from "../lib/discoveryRefusal.js"; import { readFlagState } from "../lib/capability/schemaCapability.js"; import { aggregateReadComplete } from "../lib/discoveryPlaceAggregates.js";  import { layoverGemWindow, gemsUnderLayoverMode, certifiedWindowKeys, LAYOVER_WINDOW_UNREADABLE_MESSAGE } from "../lib/discoveryLayoverGems.js";  // census-discovery §56 (A13/A14): the layover window is the certified snapshot's
 
 const router = Router();
 
@@ -272,7 +272,7 @@ router.post("/hidden-gems", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
 
-  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+  if (!await gemFlagOn(res, sc, "hidden_gems_enabled")) { if (res.headersSent) return;  // census-discovery §111 (DV-83, D-W11X2-111): an unread flag is 503 flag_unreadable, never feature_disabled
     sendError(res, "feature_disabled"); return;
   }
 
@@ -409,7 +409,7 @@ router.post("/hidden-gems", async (req, res) => {
 router.get("/hidden-gems", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
-  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+  if (!await gemFlagOn(res, sc, "hidden_gems_enabled")) { if (res.headersSent) return;  // census-discovery §111 (DV-83, D-W11X2-111): an unread flag is 503 flag_unreadable, never feature_disabled
     sendError(res, "feature_disabled"); return;
   }
 
@@ -541,10 +541,10 @@ router.get("/hidden-gems", async (req, res) => {
       const a = agg3.get(g.id);
       const p = projections3.get(g.id);
       const base = a ? { ...g, worthItCount: a.worthItCount, avgRating: a.avgRating, reviewCount: a.reviewCount } : { ...g };
-      if (p) { base.gemState = p.gemState; base.gemConfidence = p.gemConfidence; }
+      if (p && !p.unreadSources) { base.gemState = p.gemState; base.gemConfidence = p.gemConfidence; }
       return base;
     });
-    res.json({ gems: stampServedRecommendations(enriched3, exposureForResponse(res, callerId ?? null)), total: enriched3.length, ...certifiedWindowKeys(layoverWindow, gatedGems.summary) });  // §48 DV-40 — every served gem carries its exposure id, anonymous included
+    res.json({ gems: stampServedRecommendations(enriched3, exposureForResponse(res, callerId ?? null)), total: enriched3.length, ...certifiedWindowKeys(layoverWindow, gatedGems.summary), ...gemStateRefusal(projections3.values(), "GET /hidden-gems") });  // §48 DV-40 — every served gem carries its exposure id, anonymous included
 
     // Serve point 11 — this route ranks (discoverGems: verification weight +
     // saves + visits + vibe-tag match) and served its results to users while
@@ -583,7 +583,7 @@ router.get("/hidden-gems/saved", async (req, res) => {
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
-  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+  if (!await gemFlagOn(res, sc, "hidden_gems_enabled")) { if (res.headersSent) return;  // census-discovery §111 (DV-83, D-W11X2-111): an unread flag is 503 flag_unreadable, never feature_disabled
     sendError(res, "feature_disabled"); return;
   }
 
@@ -607,10 +607,10 @@ router.get("/hidden-gems/saved", async (req, res) => {
 router.get("/hidden-gems/layover-safe", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
-  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+  if (!await gemFlagOn(res, sc, "hidden_gems_enabled")) { if (res.headersSent) return;  // census-discovery §111 (DV-83, D-W11X2-111): an unread flag is 503 flag_unreadable, never feature_disabled
     sendError(res, "feature_disabled"); return;
   }
-  if (!await isFlagEnabled(sc, "hidden_gems_layover_enabled")) {
+  if (!await gemFlagOn(res, sc, "hidden_gems_layover_enabled")) { if (res.headersSent) return;  // census-discovery §111 (DV-83, D-W11X2-111): an unread flag is 503 flag_unreadable, never feature_disabled
     sendError(res, "feature_disabled"); return;
   }
 
@@ -645,7 +645,7 @@ router.get("/hidden-gems/trip-city/:tripId", async (req, res) => {
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
-  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+  if (!await gemFlagOn(res, sc, "hidden_gems_enabled")) { if (res.headersSent) return;  // census-discovery §111 (DV-83, D-W11X2-111): an unread flag is 503 flag_unreadable, never feature_disabled
     sendError(res, "feature_disabled"); return;
   }
 
@@ -702,7 +702,7 @@ router.get("/hidden-gems/nearby", async (req, res) => {
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
-  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+  if (!await gemFlagOn(res, sc, "hidden_gems_enabled")) { if (res.headersSent) return;  // census-discovery §111 (DV-83, D-W11X2-111): an unread flag is 503 flag_unreadable, never feature_disabled
     sendError(res, "feature_disabled"); return;
   }
 
@@ -726,12 +726,12 @@ router.get("/hidden-gems/nearby", async (req, res) => {
         return {
           ...safe,
           distanceKm,
-          ...(p ? { gemState: p.gemState, gemConfidence: p.gemConfidence } : {}),
+          ...(p && !p.unreadSources ? { gemState: p.gemState, gemConfidence: p.gemConfidence } : {}),
         };
       }),
     );
 
-    res.json({ ok: true, gems: stampServedRecommendations(gems, exposureForResponse(res, user.id)) });  // §48 DV-40 — every served gem carries its exposure id
+    res.json({ ok: true, gems: stampServedRecommendations(gems, exposureForResponse(res, user.id)), ...gemStateRefusal(projections.values(), "GET /hidden-gems/nearby") });  // §48 DV-40 — every served gem carries its exposure id
 
     // Serve point 11 — same reasoning as GET /hidden-gems above; the `route`
     // field is what separates the two in the corpus. findNearbyGems ranks by
@@ -754,7 +754,7 @@ router.get("/hidden-gems/nearby", async (req, res) => {
 router.get("/hidden-gems/:id", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
-  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+  if (!await gemFlagOn(res, sc, "hidden_gems_enabled")) { if (res.headersSent) return;  // census-discovery §111 (DV-83, D-W11X2-111): an unread flag is 503 flag_unreadable, never feature_disabled
     sendError(res, "feature_disabled"); return;
   }
 
@@ -782,8 +782,8 @@ router.get("/hidden-gems/:id", async (req, res) => {
     // gem's existing signals + structured contributions (never stored). Reads no
     // coordinate values beyond presence, so it is privacy-neutral.
     const projection = await deriveGemProjection(sc, gem);
-    (safe as any).gemState = projection.gemState;
-    (safe as any).gemConfidence = projection.gemConfidence; (safe as any).visitOutcomes = await import("../services/hiddenGems/HiddenGemOutcomeService.js").then((m) => m.readGemOutcomeSummary(sc, String((gem as any).id))).catch(() => ({ determined: false, reason: "unreadable" })); // §16.1 OUTCOME: verified visits linked to what the visitor reported (census-media §21)
+    if (!projection.unreadSources) (safe as any).gemState = projection.gemState; else (safe as any).gemStateUnread = projection.unreadSources;  // census-discovery §111 (DV-83, D-W11X2-110): no state from a failed read
+    if (!projection.unreadSources) (safe as any).gemConfidence = projection.gemConfidence; (safe as any).visitOutcomes = await import("../services/hiddenGems/HiddenGemOutcomeService.js").then((m) => m.readGemOutcomeSummary(sc, String((gem as any).id))).catch(() => ({ determined: false, reason: "unreadable" })); // §16.1 OUTCOME: verified visits linked to what the visitor reported (census-media §21)
 
     // Attach guide profile if gem has guide_verified_by
     let guideProfile: any = null;
@@ -818,7 +818,7 @@ router.patch("/hidden-gems/:id", async (req, res) => {
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
-  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+  if (!await gemFlagOn(res, sc, "hidden_gems_enabled")) { if (res.headersSent) return;  // census-discovery §111 (DV-83, D-W11X2-111): an unread flag is 503 flag_unreadable, never feature_disabled
     sendError(res, "feature_disabled"); return;
   }
 
@@ -888,7 +888,7 @@ router.post("/hidden-gems/:id/save", async (req, res) => {
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
-  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+  if (!await gemFlagOn(res, sc, "hidden_gems_enabled")) { if (res.headersSent) return;  // census-discovery §111 (DV-83, D-W11X2-111): an unread flag is 503 flag_unreadable, never feature_disabled
     sendError(res, "feature_disabled"); return;
   }
 
@@ -917,7 +917,7 @@ router.delete("/hidden-gems/:id/save", async (req, res) => {
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
-  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+  if (!await gemFlagOn(res, sc, "hidden_gems_enabled")) { if (res.headersSent) return;  // census-discovery §111 (DV-83, D-W11X2-111): an unread flag is 503 flag_unreadable, never feature_disabled
     sendError(res, "feature_disabled"); return;
   }
 
@@ -938,10 +938,10 @@ router.post("/hidden-gems/:id/verify-visit", async (req, res) => {
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
-  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+  if (!await gemFlagOn(res, sc, "hidden_gems_enabled")) { if (res.headersSent) return;  // census-discovery §111 (DV-83, D-W11X2-111): an unread flag is 503 flag_unreadable, never feature_disabled
     sendError(res, "feature_disabled"); return;
   }
-  if (!await isFlagEnabled(sc, "hidden_gem_verification_enabled")) {
+  if (!await gemFlagOn(res, sc, "hidden_gem_verification_enabled")) { if (res.headersSent) return;  // census-discovery §111 (DV-83, D-W11X2-111): an unread flag is 503 flag_unreadable, never feature_disabled
     sendError(res, "feature_disabled"); return;
   }
 
@@ -1092,7 +1092,7 @@ router.post("/hidden-gems/:id/report", async (req, res) => {
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
-  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+  if (!await gemFlagOn(res, sc, "hidden_gems_enabled")) { if (res.headersSent) return;  // census-discovery §111 (DV-83, D-W11X2-111): an unread flag is 503 flag_unreadable, never feature_disabled
     sendError(res, "feature_disabled"); return;
   }
 
@@ -1123,7 +1123,7 @@ router.post("/hidden-gems/:id/contribute", async (req, res) => {
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
-  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+  if (!await gemFlagOn(res, sc, "hidden_gems_enabled")) { if (res.headersSent) return;  // census-discovery §111 (DV-83, D-W11X2-111): an unread flag is 503 flag_unreadable, never feature_disabled
     sendError(res, "feature_disabled"); return;
   }
 
@@ -1151,8 +1151,8 @@ router.post("/hidden-gems/:id/contribute", async (req, res) => {
       ok: true,
       contributionId: result.contributionId,
       alreadyObserved: result.alreadyObserved,
-      gemState: projection?.gemState ?? null,
-      gemConfidence: projection?.gemConfidence ?? null,
+      gemState: (projection && !projection.unreadSources ? projection.gemState : null), ...(projection?.unreadSources ? { gemStateUnread: projection.unreadSources } : {}),
+      gemConfidence: (projection && !projection.unreadSources ? projection.gemConfidence : null),
     });
   } catch (err: any) {
     sendError(res, "db_error", err.message);
@@ -1168,7 +1168,7 @@ router.post("/hidden-gems/:id/share-telegraph", async (req, res) => {
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
-  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+  if (!await gemFlagOn(res, sc, "hidden_gems_enabled")) { if (res.headersSent) return;  // census-discovery §111 (DV-83, D-W11X2-111): an unread flag is 503 flag_unreadable, never feature_disabled
     sendError(res, "feature_disabled"); return;
   }
 
@@ -1252,7 +1252,7 @@ router.post("/hidden-gems/:id/plan", async (req, res) => {
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
-  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+  if (!await gemFlagOn(res, sc, "hidden_gems_enabled")) { if (res.headersSent) return;  // census-discovery §111 (DV-83, D-W11X2-111): an unread flag is 503 flag_unreadable, never feature_disabled
     sendError(res, "feature_disabled"); return;
   }
 
@@ -1379,7 +1379,7 @@ router.post("/hidden-gems/:id/plan", async (req, res) => {
 router.get("/hidden-gems/guides/:userId", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
-  if (!await isFlagEnabled(sc, "local_guides_enabled")) {
+  if (!await gemFlagOn(res, sc, "local_guides_enabled")) { if (res.headersSent) return;  // census-discovery §111 (DV-83, D-W11X2-111): an unread flag is 503 flag_unreadable, never feature_disabled
     sendError(res, "feature_disabled"); return;
   }
 
@@ -1402,7 +1402,7 @@ router.post("/hidden-gems/guides/apply", async (req, res) => {
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
-  if (!await isFlagEnabled(sc, "local_guides_enabled")) {
+  if (!await gemFlagOn(res, sc, "local_guides_enabled")) { if (res.headersSent) return;  // census-discovery §111 (DV-83, D-W11X2-111): an unread flag is 503 flag_unreadable, never feature_disabled
     sendError(res, "feature_disabled"); return;
   }
 
@@ -1692,3 +1692,23 @@ router.post("/admin/local-guides/:userId/status", async (req, res) => {
 });
 
 export default router;
+
+// ── census-discovery §111 (DV-83 round 14, lane W11-X2, D-W11X2-110, D-W11X2-111) ──
+//
+// D-W11X2-111: every gate here read its flag with the local `isFlagEnabled`, which answers `false` for a
+// failed read, so an unread `hidden_gems_enabled` was `404 feature_disabled` — the feature stated as OFF over
+// a read that never happened (the class D-W11X2-56 and D-W11X2-71 closed at other serve points). The gate now
+// reads the flag's four states and answers an unreadable one 503 `degraded_unavailable` / `flag_unreadable`.
+async function gemFlagOn(res: import("express").Response, sc: any, flag: string): Promise<boolean> {
+  const state = await readFlagState(sc, flag);
+  if (state === "unreadable") { sendError(res, "degraded_unavailable", "Hidden gems could not be checked right now. Please try again shortly.", { reason: "flag_unreadable" }); return false; }
+  return state === "on";
+}
+
+// D-W11X2-110: a gem whose aggregate reads failed is served without a state or confidence (the client
+// draws none), and the body says which reads failed — `partial`, because the gems themselves were read.
+function gemStateRefusal(projections: Iterable<{ unreadSources?: string[] } | undefined>, route: string): { refusal?: ReturnType<typeof discoveryRefusal> } {
+  const failed = gemProjectionsUnreadSources(projections as Iterable<any>);
+  return failed.length > 0 ? { refusal: discoveryRefusal("transient_db", "gem_state_unread", route, "partial", failed) } : {};
+}
+

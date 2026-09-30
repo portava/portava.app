@@ -627,7 +627,7 @@ async function readHiddenGemCandidate(
     // Cost: three extra reads for one gem on this path. Worth stating plainly —
     // but the path it replaces performed one read that always failed, so this is
     // three queries where there were previously zero useful ones.
-    const projection = await deriveGemProjection(sc, row, now.getTime());
+    const projection = await deriveGemProjection(sc, row, now.getTime()); if (projection.unreadSources) return null;  // census-discovery §111 (DV-83, D-W11X2-110): no thread states a gem state derived from a failed aggregate read
     const state = projection.gemState;
     const confidence = projection.gemConfidence.score;
 
