@@ -423,7 +423,7 @@ export interface MapObject<T = unknown> {
   expiresAt?: string;
   freshness?: FreshnessState;
   confidence?: ConfidenceState;
-  activity?: ActivityLevel;
+  activity?: ActivityLevel; /** census-discovery §114 (DV-83, sweep SW4): this object's live claims were not read — past the enrichment cap, or the read failed — never "none observed" */ liveUnread?: true;
   trend?: TrendState;
   /**
    * OPTIONAL, and the optionality is load-bearing twice over.

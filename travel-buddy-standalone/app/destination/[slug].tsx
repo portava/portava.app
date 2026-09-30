@@ -20,6 +20,7 @@ import { CachedImage } from '../../src/components/CachedImage';
 import { router, useLocalSearchParams } from 'expo-router';
 import { ChevronLeft, MapPin, Gem, CalendarDays, Compass } from 'lucide-react-native';
 import { listGems, type HiddenGem } from '../../src/services/hiddenGems';
+import { gemListCut } from '../../src/services/gemListCut';  // census-discovery §114 (sweep SW1b)
 import { listEvents, type EventListItem } from '../../src/services/events';
 import { getPulseData, type PulsePost } from '../../src/services/pulse';
 import { color, space, radius, type as t, aspect, avatar } from '../../src/theme/tokens';
@@ -28,7 +29,7 @@ import { CityConfidenceBadge } from '../../src/components/compass/CityConfidence
 import { TripFsqPlacesSection } from '../../src/components/trip/TripFsqPlacesSection';
 import { toFsqCityKey } from '../../src/utils/fsqCityKey';
 
-type SectionState<T> = { status: 'loading' | 'ready' | 'error'; items: T[] };
+type SectionState<T> = { status: 'loading' | 'ready' | 'error'; items: T[]; /** census-discovery §114 (sweep SW1b): the server cut the list */ cut?: boolean };
 
 function fmtEventDate(iso: string | null): string {
   if (!iso) return '';
@@ -53,7 +54,7 @@ export default function Destination() {
     setGems({ status: 'loading', items: [] });
     try {
       const items = await listGems({ city: cityName, limit: 10 });
-      setGems({ status: 'ready', items: items ?? [] });
+      setGems({ status: 'ready', items: items ?? [], cut: gemListCut(items) });
     } catch {
       setGems({ status: 'error', items: [] });
     }
@@ -93,7 +94,7 @@ export default function Destination() {
   const anyLoading = gems.status === 'loading' || events.status === 'loading' || posts.status === 'loading';
   const allEmpty =
     !anyLoading &&
-    gems.items.length === 0 && events.items.length === 0 && posts.items.length === 0 &&
+    gems.items.length === 0 && !gems.cut && events.items.length === 0 && posts.items.length === 0 &&  // §114 (SW1b): a cut gem read is not "no gems"
     gems.status !== 'error' && events.status !== 'error' && posts.status !== 'error';
 
   const SectionError = ({ onRetry }: { onRetry: () => void }) => (
@@ -163,6 +164,12 @@ export default function Destination() {
                 </Pressable>
               ))}
             </ScrollView>
+            {gems.cut ? <Text style={s.sectionErrorText}>Showing some gems</Text> : null}
+          </View>
+        ) : gems.cut ? (
+          <View style={s.section}>
+            <Text style={s.sectionTitle}>Hidden Gems</Text>
+            <Text style={s.sectionErrorText}>Couldn't check every gem in {cityName}</Text>
           </View>
         ) : null}
 

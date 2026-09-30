@@ -398,7 +398,7 @@ export function buildLivePlaceView(
   const freshness: FreshnessState = obj.freshness ?? 'unknown';
   let liveState: LiveStateSection | null;
   if (!obj.activity) {
-    liveState = absent('live_state', 'No live activity has been observed here');
+    liveState = absent('live_state', obj.liveUnread ? "Live activity couldn't be checked for this place" : 'No live activity has been observed here');  // census-discovery §114 (DV-83, sweep SW4): a live state nobody read is not "none observed"
   } else if (freshness === 'stale' || freshness === 'unknown') {
     // A reading we can no longer stand behind is not a live state. §37: "Do not
     // let stale claims remain visually live." It stays available through the

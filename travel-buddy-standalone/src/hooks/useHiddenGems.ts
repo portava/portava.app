@@ -21,13 +21,14 @@ import {
   type ListGemsOptions,
   type GuideProfile,
 } from '../services/hiddenGems.ts';
+import { gemListCut } from '../services/gemListCut.ts';  // census-discovery §114 (sweep SW1)
 
 // ── useGemList ─────────────────────────────────────────────────────────────────
 
 export function useGemList(opts: ListGemsOptions = {}) {
   const [gems, setGems]       = useState<HiddenGem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError]     = useState<string | null>(null);
+  const [error, setError]     = useState<string | null>(null); const [truncated, setTruncated] = useState(false);  // census-discovery §114 (sweep SW1): the server cut the list
 
   const key = JSON.stringify(opts);
   const latest = useRef(0);
@@ -35,12 +36,12 @@ export function useGemList(opts: ListGemsOptions = {}) {
 
   const refresh = useCallback(async () => {
     const req = ++latest.current;
-    if (shownKey.current !== key) { shownKey.current = key; setGems([]); }
+    if (shownKey.current !== key) { shownKey.current = key; setGems([]); setTruncated(false); }
     setLoading(true);
     setError(null);
     try {
       const next = await listGems(opts);
-      if (req === latest.current) setGems(next);
+      if (req === latest.current) { setGems(next); setTruncated(gemListCut(next)); }
     } catch (e: any) {
       if (req === latest.current) setError(e.message ?? 'Failed to load gems');
     } finally {
@@ -51,7 +52,7 @@ export function useGemList(opts: ListGemsOptions = {}) {
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  return { gems, loading, error, refresh };
+  return { gems, loading, error, refresh, truncated };
 }
 
 // ── useGemDetail ───────────────────────────────────────────────────────────────

@@ -277,7 +277,7 @@ export interface MediaMapState {
   status: MediaMapStatus;
   clusters: MediaMapCluster[];
   mapObjects: MapObject[];
-  positionsUnavailable: PositionsUnavailableReason;
+  positionsUnavailable: PositionsUnavailableReason; /** census-discovery §114 (sweep SW3) */ positionsPartial?: boolean;
   selectedPlaceId: string | null;
   layers: Record<MediaMapLayer, boolean>;
   totalPerspectives: number;
@@ -295,7 +295,7 @@ export const INITIAL_MEDIA_MAP_STATE: MediaMapState = {
 
 /** The canonical-Map half of a load, in the shape the reducer needs. */
 export type MapPositionsResult =
-  | { ok: true; enabled: boolean; objects: MapObject[] }
+  | { ok: true; enabled: boolean; objects: MapObject[]; /** census-discovery §114 (sweep SW3): the gateway did not read a requested layer, or answered one page of several */ partial?: boolean }
   | { ok: false; reason: 'no_location' | 'map_failed' };
 
 export type MediaMapAction =
@@ -316,7 +316,7 @@ export function mediaMapReducer(state: MediaMapState, action: MediaMapAction): M
       return { ...state, status: 'loading' };
     case 'load_result': {
       const positions = action.positions;
-      const mapObjects = positions.ok && positions.enabled ? positions.objects : [];
+      const mapObjects = positions.ok && positions.enabled ? positions.objects : []; const positionsPartial = positions.ok && positions.enabled && positions.partial === true;  // §114 (SW3)
       const positionsUnavailable: PositionsUnavailableReason = positions.ok
         ? positions.enabled
           ? null
@@ -326,19 +326,19 @@ export function mediaMapReducer(state: MediaMapState, action: MediaMapAction): M
         // The counts could not be read. That is an error, not an empty map —
         // unless the call is gem-only and the Map still answered.
         if (action.expectGems && mapObjects.length > 0) {
-          return { ...state, status: 'ready', clusters: [], mapObjects, positionsUnavailable, totalPerspectives: 0 };
+          return { ...state, status: 'ready', clusters: [], mapObjects, positionsUnavailable, positionsPartial, totalPerspectives: 0 };
         }
-        return { ...state, status: 'error', clusters: [], mapObjects, positionsUnavailable, totalPerspectives: 0 };
+        return { ...state, status: 'error', clusters: [], mapObjects, positionsUnavailable, positionsPartial, totalPerspectives: 0 };
       }
       const clusters = action.clusters.data;
       const hasGems = !!action.expectGems && mapObjects.some((o) => gemIdOfMapObject(o) != null);
-      const empty = clusters.length === 0 && !hasGems;
+      const empty = clusters.length === 0 && !hasGems && !positionsPartial;  // §114 (SW3): a map that could not read its layers is not an empty one
       return {
         ...state,
         status: empty ? 'empty' : 'ready',
         clusters,
         mapObjects,
-        positionsUnavailable,
+        positionsUnavailable, positionsPartial,
         totalPerspectives: clusters.reduce((s, c) => s + c.perspectiveCount, 0),
       };
     }
@@ -355,7 +355,7 @@ export interface MediaMapModel {
   positioned: PositionedCluster[];
   unpositioned: MediaMapCluster[];
   gemZones: GemZone[];
-  positionsUnavailable: PositionsUnavailableReason;
+  positionsUnavailable: PositionsUnavailableReason; /** census-discovery §114 (sweep SW3) */ positionsPartial: boolean;
   selected: MediaMapCluster | null;
 }
 
@@ -371,7 +371,7 @@ export function selectMediaMapModel(
     positioned: join.positioned,
     unpositioned: join.unpositioned,
     gemZones,
-    positionsUnavailable: state.positionsUnavailable,
+    positionsUnavailable: state.positionsUnavailable, positionsPartial: state.positionsPartial === true,
     selected: state.clusters.find((c) => c.placeId === state.selectedPlaceId) ?? null,
   };
 }
@@ -389,3 +389,18 @@ export function positionsUnavailableCopy(reason: PositionsUnavailableReason): st
       return null;
   }
 }
+
+// ── census-discovery §114 (DV-83 round 17, lane W11-X2; sweep SW3): a gateway answer that is not whole ─────────────
+//
+// The NOW gateway names a layer in `sources` only over a read that succeeded and was not cut, and carries `nextCursor`
+// when its answer is one page of several. The Media Map asks it for `place` (and `hidden_gem`) objects; a requested
+// kind it did not name, or a page of several, means the positions (and gem zones) drawn are not all there are — said,
+// never drawn as an empty or whole map. `sources` is always an array from the service; a missing one is not named.
+const MEDIA_MAP_KIND_SOURCE: Record<string, string> = { place: 'places', hidden_gem: 'gems' };
+
+export function mediaMapGatewayPartial(data: { sources?: string[]; nextCursor?: string | null }, kinds: readonly string[]): boolean {
+  const named = data.sources ?? [];
+  return data.nextCursor != null || kinds.some((k) => !named.includes(MEDIA_MAP_KIND_SOURCE[k] ?? k));
+}
+
+export const MEDIA_MAP_PARTIAL_COPY = 'Some of this map could not be read \u2014 places and gems here may be missing.';

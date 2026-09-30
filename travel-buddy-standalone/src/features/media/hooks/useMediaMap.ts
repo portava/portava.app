@@ -19,7 +19,7 @@ import type { MapObjectKind } from '../../../types/mapObjects.ts';
 import type { ProjectionResult } from '../types/media.ts';
 import {
   INITIAL_MEDIA_MAP_STATE,
-  mediaMapReducer,
+  mediaMapReducer, mediaMapGatewayPartial,
   type MapPositionsResult,
   type MediaMapCluster,
   type MediaMapLayer,
@@ -75,7 +75,7 @@ export function useMediaMap({ loadClusters, center, includeGems = false, deps = 
             signal: controller.signal,
           }).then(
             (r): MapPositionsResult =>
-              r.ok ? { ok: true, enabled: r.data.enabled, objects: r.data.objects } : { ok: false, reason: 'map_failed' },
+              r.ok ? { ok: true, enabled: r.data.enabled, objects: r.data.objects, partial: r.data.enabled && mediaMapGatewayPartial(r.data, kinds) } : { ok: false, reason: 'map_failed' },  // census-discovery §114 (DV-83, sweep SW3): a layer the gateway did not read, or a page of several, is said
           );
 
     void Promise.all([

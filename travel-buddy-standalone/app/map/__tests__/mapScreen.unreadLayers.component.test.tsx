@@ -12,6 +12,7 @@
  *   MS2  the safety layer unread → "Safety notices couldn't be checked here", as an alert
  *   MS3  safety and events unread → the safety line comes first, then the layers that could not be loaded
  *   MS4  the answer is page one of several → "Showing only part of this area"
+ *   MS6  safety, another layer and a cut together → in that order
  *   MS5  passport mode (nothing requested from the gateway) draws no unread notice
  * The harness is app/map/__tests__/projectedPlaces.component.test.tsx's (as the verifier's probe used it).
  */
@@ -286,5 +287,10 @@ describe('§114 B5: the NOW map screen says a layer it could not read', () => {
     mockParams.mode = 'passport';
     const s = await snapshot(['safety']);
     expect(s.banner).toBe(false);
+  });
+
+  it('MS6 safety, another layer and a page cut together → safety, then the layers, then the cut', async () => {
+    const s = await snapshot(['events', 'safety'], true);
+    expect(s.lines.map((l) => l.text)).toEqual(["Safety notices couldn\u2019t be checked here \u2014 hazards may not be shown", "Couldn\u2019t load events here", 'Showing only part of this area \u2014 zoom in to see everything']);
   });
 });

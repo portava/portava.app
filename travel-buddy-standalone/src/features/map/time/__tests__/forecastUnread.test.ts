@@ -129,3 +129,9 @@ describe('forecastLayersUnread and temporalNotice over the plan and itinerary la
     assert.equal(temporalNotice({ failed: false, loading: false, unreadForecastLayers: [], pageCut: false }), null);
   });
 });
+
+describe('forecastLayersUnread over a forecast report with no plan report (§114)', () => {
+  it('FU13 a forecast report whose plan is null read no plan layer (the type: "null = nothing was read") → accepted_plan unread', () => {
+    assert.deepEqual(forecastLayersUnread({ sources: ['events', 'itinerary'], forecast: { events: 0, itinerary: 0, plan: null } }), ['accepted_plan']);
+  });
+});

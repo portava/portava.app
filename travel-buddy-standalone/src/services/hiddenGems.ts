@@ -5,7 +5,7 @@
  * Pattern: same as tripCrewLocation.ts / passportStamps.ts.
  */
 import { supabase } from '../lib/supabase.ts';
-import { freshToken as freshApiToken } from './apiToken.ts';
+import { freshToken as freshApiToken } from './apiToken.ts'; import { markGemListCut } from './gemListCut.ts';  // census-discovery §114 (sweep)
 import { normalizeGuideProfile, normalizeGemVisitOutcomes, type GemVisitOutcomes } from './hiddenGemsMappers.ts';
 import type {
   GemState,
@@ -204,8 +204,8 @@ export async function listGems(opts: ListGemsOptions = {}): Promise<HiddenGem[]>
   if (opts.limit)             params.set('limit', String(opts.limit));
 
   const qs = params.toString();
-  const data = await apiFetch<{ gems: any[] }>(`/api/hidden-gems${qs ? `?${qs}` : ''}`);
-  return (data.gems ?? []).map(mapGem);
+  const data = await apiFetch<{ gems: any[]; truncated?: boolean }>(`/api/hidden-gems${qs ? `?${qs}` : ''}`);
+  const out = (data.gems ?? []).map(mapGem); return data.truncated === true ? markGemListCut(out) : out;  // census-discovery §114 (DV-83, sweep): a cut list is marked beside the array (services/gemListCut.ts)
 }
 
 /** Get a single gem by ID. */

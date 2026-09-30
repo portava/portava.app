@@ -139,7 +139,7 @@ function DiscoverTab({ viewMode = 'list' }: { viewMode?: 'list' | 'map' }) {
   const near = useNearbyGems(nearMe ? myCoords : null, category === 'all' ? undefined : category);
   const nearMeOn = nearMe && myCoords != null;
   const { gems, loading, error, refresh } = nearMeOn ? near : list;
-  const nearMeCut = nearMeOn && near.truncated;
+  const nearMeCut = nearMeOn && near.truncated; const listCut = !nearMeOn && list.truncated;  // census-discovery §114 (DV-83, sweep SW1): the server cut the city list
 
   // Real "Near Me": fetch device GPS on demand, then filter/sort by distance.
   const handleNearMe = useCallback(async () => {
@@ -225,8 +225,8 @@ function DiscoverTab({ viewMode = 'list' }: { viewMode?: 'list' | 'map' }) {
         ) : gems.length === 0 ? (
           <View style={styles.center}>
             <Ionicons name="diamond-outline" size={48} color="#8A9BB5" />
-            <Text style={styles.emptyTitle}>{nearMeCut ? "Couldn't check every gem near you" : nearMeOn ? 'No hidden gems near you' : 'No hidden gems found'}</Text>
-            <Text style={styles.emptySubtitle}>{nearMeCut ? 'Try again, or search a city' : nearMeOn ? 'Try a different category' : 'Try a different city or category'}</Text>
+            <Text style={styles.emptyTitle}>{nearMeCut ? "Couldn't check every gem near you" : listCut ? "Couldn't check every gem here" : nearMeOn ? 'No hidden gems near you' : 'No hidden gems found'}</Text>
+            <Text style={styles.emptySubtitle}>{nearMeCut || listCut ? 'Try again, or search a city' : nearMeOn ? 'Try a different category' : 'Try a different city or category'}</Text>
           </View>
         ) : (
           <FlatList
@@ -238,7 +238,7 @@ function DiscoverTab({ viewMode = 'list' }: { viewMode?: 'list' | 'map' }) {
             contentContainerStyle={styles.list}
             refreshControl={<RefreshControl refreshing={loading} onRefresh={refresh} />}
             ItemSeparatorComponent={() => <View style={styles.sep} />}
-            ListHeaderComponent={nearMeCut ? <Text style={styles.emptySubtitle}>Showing some gems near you</Text> : null}
+            ListHeaderComponent={nearMeCut ? <Text style={styles.emptySubtitle}>Showing some gems near you</Text> : listCut ? <Text style={styles.emptySubtitle}>Showing some gems</Text> : null}
             onScroll={navBarScrollHandler}
             scrollEventThrottle={16}
             ListFooterComponent={<NavBarFiller />}
