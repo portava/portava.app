@@ -10,6 +10,8 @@
  *   GL6  useGemDetail: gem A answers after gem B → B is held; B's own read failing never shows A
  *   GL7  useTripCityGems: trip A answers after trip B → B's gems are held
  *   GL8  useSavedGems: the first of two refreshes answers last → the second's gems are held
+ *   GL9a–e every hook: an older request that FAILS while a newer one is in flight writes no error and ends no loading
+ *   GL10 useTripCityGems: a new trip shows nothing of the old one while it is read
  *   GLc  CONTROL: a healthy Layover read draws its gems with no error
  */
 import React from 'react';
@@ -146,5 +148,54 @@ describe('§112: the Hidden Gems hooks and the Layover tab (D-W11X2-123, D-W11X2
     await waitFor(() => expect(screen.getByText('Gem l9')).toBeTruthy());
     expect(screen.queryByText('Retry')).toBeNull();
     expect(screen.queryByText('No quick gems nearby')).toBeNull();
+  });
+});
+
+describe('§112: an older failure never writes over a newer request (D-W11X2-124)', () => {
+  const lateOlderFailure = async (setup: (o: Promise<any>, n: Promise<any>) => void, hook: (p: any) => any, props: any, next: any, answer: any) => {
+    const older = deferred(); const newer = deferred();
+    setup(older.promise, newer.promise);
+    const r = await renderHook(hook, { initialProps: props });
+    await r.rerender(next);
+    await act(async () => { older.reject(new Error('older failed')); await new Promise((x) => setTimeout(x, 10)); });
+    expect(r.result.current.error).toBeNull();
+    expect(r.result.current.loading).toBe(true);
+    await act(async () => { newer.resolve(answer); await new Promise((x) => setTimeout(x, 10)); });
+    expect(r.result.current.loading).toBe(false);
+  };
+  it('GL9a useGemList: a late older failure writes no error and ends no loading', async () => {
+    await lateOlderFailure((o, n) => (listGems as jest.Mock).mockImplementation((x: any) => (x.city === 'A' ? o : n)), (p) => useGemList({ city: p.k }), { k: 'A' }, { k: 'B' }, [gem('b1', 'B')]);
+  });
+  it('GL9b useGemDetail: a late older failure writes no error and ends no loading', async () => {
+    await lateOlderFailure((o, n) => (getGem as jest.Mock).mockImplementation((id: string) => (id === 'A' ? o : n)), (p) => useGemDetail(p.k), { k: 'A' }, { k: 'B' }, { gem: gem('B', 'B'), savedByMe: false, guideProfile: null });
+  });
+  it('GL9c useTripCityGems: a late older failure writes no error and ends no loading', async () => {
+    await lateOlderFailure((o, n) => (getTripcityGems as jest.Mock).mockImplementation((t: string) => (t === 'A' ? o : n)), (p) => useTripCityGems(p.k), { k: 'A' }, { k: 'B' }, [gem('b1', 'B')]);
+  });
+  it('GL9d useLayoverGems: a late older failure writes no error and ends no loading', async () => {
+    await lateOlderFailure((o, n) => (getLayoverGems as jest.Mock).mockImplementation((m: number) => (m === 60 ? o : n)), (p) => useLayoverGems(p.k), { k: 60 }, { k: 120 }, [gem('b1', 'B')]);
+  });
+  it('GL9e useSavedGems: a late older failure writes no error and ends no loading', async () => {
+    const first = deferred(); const second = deferred();
+    (getSavedGems as jest.Mock).mockImplementationOnce(() => first.promise).mockImplementationOnce(() => second.promise);
+    const saved = await renderHook(() => useSavedGems());
+    await act(async () => { void saved.result.current.refresh(); });
+    await act(async () => { first.reject(new Error('older failed')); await new Promise((x) => setTimeout(x, 10)); });
+    expect(saved.result.current.error).toBeNull();
+    expect(saved.result.current.loading).toBe(true);
+    await act(async () => { second.resolve([gem('s2', 'B')]); await new Promise((x) => setTimeout(x, 10)); });
+    expect(saved.result.current.loading).toBe(false);
+  });
+
+  it('GL10 useTripCityGems: a new trip shows nothing of the old one while it is read', async () => {
+    const b = deferred();
+    (getTripcityGems as jest.Mock).mockImplementation((t: string) => (t === 'tA' ? Promise.resolve([gem('a1', 'Lisbon')]) : b.promise));
+    const { result, rerender } = await renderHook((p: { t: string }) => useTripCityGems(p.t), { initialProps: { t: 'tA' } });
+    await waitFor(() => expect(result.current.gems.map((g: any) => g.id)).toEqual(['a1']));
+    await rerender({ t: 'tB' });
+    await waitFor(() => expect(result.current.loading).toBe(true));
+    expect(result.current.gems).toEqual([]);
+    await act(async () => { b.resolve([gem('b1', 'Porto')]); await new Promise((x) => setTimeout(x, 10)); });
+    expect(result.current.gems.map((g: any) => g.id)).toEqual(['b1']);
   });
 });

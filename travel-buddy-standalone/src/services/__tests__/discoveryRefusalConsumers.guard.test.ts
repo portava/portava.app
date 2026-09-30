@@ -263,7 +263,7 @@ function resolveSpec(fromFile: string, spec: string): string | null {
  */
 function valueImports(file: string, src: string, target: string): string[] {
   const names: string[] = [];
-  for (const m of stripComments(src).matchAll(/import\s+(type\s+)?\{([^}]*)\}\s*from\s*['"]([^'"]+)['"]/g)) {  // §111 (D-W11X2-116): a comment inside the braces is not part of a name
+  for (const m of stripComments(src).matchAll(/import\s+(type\s+)?(?:\w+\s*,\s*)?\{([^}]*)\}\s*from\s*['"]([^'"]+)['"]/g)) {  // §111 (D-W11X2-116): a comment inside the braces is not part of a name; §112: a default before the braces too
     if (m[1] || resolveSpec(file, m[3]!) !== target) continue;
     for (const part of m[2]!.split(',')) {
       const t = part.trim();
@@ -271,7 +271,7 @@ function valueImports(file: string, src: string, target: string): string[] {
       names.push(t.split(/\s+as\s+/)[0]!.trim());
     }
   }
-  for (const m of stripComments(src).matchAll(/(?:\brequire|\bawait\s+import)\(\s*['"]([^'"]+)['"]\s*\)/g)) {
+  for (const m of stripComments(src).matchAll(/(?:\brequire|\bawait\s+import)\(\s*['"`]([^'"`$]+)['"`]\s*\)/g)) {  // §112 (D-W11X2-126): a template-literal specifier too
     if (resolveSpec(file, m[1]!) === target) names.push('<dynamic>');
   }
   return [...names.filter((n) => n !== '<dynamic>'), ...requireUses(file, src, target), ...otherImportForms(file, src, target)];  // §110 (D-W11X2-99): a namespace import and every dynamic import, read for the names they use
@@ -279,7 +279,7 @@ function valueImports(file: string, src: string, target: string): string[] {
 
 function derivedConsumers(carriers: string[]): Map<string, string[]> {
   const found = new Map<string, string[]>();
-  for (const file of withOverlay([...walk('src', []), ...walk('app', [])])) {
+  for (const file of withOverlay(clientSources())) {  // §112 (D-W11X2-126): every client source root the app bundles, not src/ and app/ alone
     if (file === SERVICE) continue;
     const src = read(file);
     const used = new Set<string>();
@@ -518,7 +518,7 @@ function overlayMap(): Map<string, string> {
 }
 function overlayRead(rel: string): string | undefined { return overlayMap().get(rel); }
 function overlayHas(rel: string): boolean { return overlayMap().has(rel); }
-function withOverlay(files: string[]): string[] { return [...new Set([...files, ...overlayMap().keys()])]; }
+function withOverlay(files: string[]): string[] { return [...new Set([...files, ...[...overlayMap().keys()].filter(walkedRoot)])]; }  // §112 (D-W11X2-126): an overlay file is seen only where the walk reads the disk
 
 /** Run `fn` with `files` laid over the tree. */
 function withFiles<T>(files: Record<string, string>, fn: () => T): T {
@@ -598,12 +598,12 @@ function otherImportForms(file: string, src: string, target: string): string[] {
   const code = stripComments(src);
   const names: string[] = [];
   const membersOf = (binding: string) => [...code.matchAll(new RegExp(`\\b${escapeRe(binding)}\\s*\\.\\s*(\\w+)`, 'g'))].map((m) => m[1]!);
-  for (const m of code.matchAll(/import\s+\*\s+as\s+(\w+)\s+from\s*['"]([^'"]+)['"]/g)) {
+  for (const m of code.matchAll(/import\s+(?:\w+\s*,\s*)?\*\s+as\s+(\w+)\s+from\s*['"]([^'"]+)['"]/g)) {  // §112 (D-W11X2-126): a default before the namespace too
     if (resolveSpec(file, m[2]!) !== target) continue;
     const used = [...membersOf(m[1]!), ...destructuredFrom(code, m[1]!)];  // §111 (D-W11X2-116): a carrier destructured from the namespace is used
     names.push(...(used.length > 0 ? used : ['<dynamic>']));
   }
-  for (const m of code.matchAll(/\bimport\(\s*['"]([^'"]+)['"]\s*\)/g)) {
+  for (const m of code.matchAll(/\bimport\(\s*['"`]([^'"`$]+)['"`]\s*\)/g)) {  // §112 (D-W11X2-126): a template-literal specifier too
     if (resolveSpec(file, m[1]!) !== target) continue;
     const before = code.slice(Math.max(0, m.index! - 200), m.index!);
     const after = code.slice(m.index! + m[0].length, m.index! + m[0].length + 300);
@@ -641,7 +641,7 @@ function carrierReexports(carriers: string[]): Map<string, Map<string, string>> 
 function carrierReexportsUncached(carriers: string[]): Map<string, Map<string, string>> {
   const known = carrierModules(carriers);
   const out = new Map<string, Map<string, string>>();
-  const files = withOverlay([...walk('src', []), ...walk('app', [])]).map((f) => [f, stripComments(read(f))] as const);
+  const files = withOverlay(clientSources()).map((f) => [f, stripComments(read(f))] as const);  // §112 (D-W11X2-126)
   for (let grew = true; grew;) {
     grew = false;
     for (const [file, code] of files) {
@@ -658,7 +658,7 @@ function carrierReexportsUncached(carriers: string[]): Map<string, Map<string, s
           if (orig && from.has(orig) && !/^type\s/.test(part.trim())) add(alias ?? orig, from.get(orig)!);
         }
       }
-      for (const m of code.matchAll(/export\s*\*\s*(?:as\s+(\w+)\s*)?from\s*['"]([^'"]+)['"]/g)) {
+      for (const [exported, carrier] of localReexports(file, code, known)) add(exported, carrier); for (const m of code.matchAll(/export\s*\*\s*(?:as\s+(\w+)\s*)?from\s*['"]([^'"]+)['"]/g)) {  // §112 (D-W11X2-126): a local re-export (no `from`) too
         const from = known.get(resolveSpec(file, m[2]!) ?? '');
         if (!from) continue;
         if (m[1]) add(m[1], '<dynamic>');
@@ -686,14 +686,14 @@ function reexportedCarrierUses(file: string, src: string, carriers: string[]): s
 function assertEachRawSiteBranches(file: string, src: string): void {
   const code = stripComments(src).replace(/^\s*(?:import|export)\b[^;]*\bfrom\s*['"][^'"]+['"];?/gm, '');
   const locals = new Set<string>(RAW_COMPASS_CARRIERS); const reexports = [...carrierReexports(derivedCarriers()).values()];
-  for (const m of stripComments(src).matchAll(/import\s+\{([^}]*)\}\s*from\s*['"][^'"]+['"]/g)) {
+  for (const m of stripComments(src).matchAll(/import\s+(?:\w+\s*,\s*)?\{([^}]*)\}\s*from\s*['"][^'"]+['"]/g)) {  // §112 (D-W11X2-126)
     for (const part of m[1]!.split(',')) {
       const [orig, alias] = part.trim().split(/\s+as\s+/).map((x) => x.trim());
       if (alias && orig && (RAW_COMPASS_CARRIERS.includes(orig) || reexports.some((n) => RAW_COMPASS_CARRIERS.includes(n.get(orig) ?? '')))) locals.add(alias);
       else if (orig && reexports.some((n) => RAW_COMPASS_CARRIERS.includes(n.get(orig) ?? ''))) locals.add(orig);
     }
   }
-  for (const a of carrierAliases(code, locals)) locals.add(a); const call = new RegExp(`(?:\\b\\w+\\s*\\.\\s*)?\\b(?:${[...locals].map(escapeRe).join('|')})\\s*\\(`, 'g');  // §111 (D-W11X2-116): a call through an alias or a rename is a site
+  for (const a of carrierAliases(code, locals)) locals.add(a); const call = new RegExp(`(?:\\b\\w+\\s*\\.\\s*)?\\b(?:${[...locals].map(escapeRe).join('|')})\\s*(?:\\.\\s*(?:call|apply)\\s*)?\\(`, 'g');  // §111 (D-W11X2-116): a call through an alias or a rename is a site; §112: and through .call / .apply
   const sites = [...code.matchAll(call)].map((m) => m.index!).filter((i) => !/\bfunction\s+$/.test(code.slice(Math.max(0, i - 30), i)));
   const predicate = /\b(?:compassRecommendationsFailed|tripCompassRecommendations|tripCompassReadState)\(/;
   sites.forEach((at, k) => {
@@ -704,7 +704,7 @@ function assertEachRawSiteBranches(file: string, src: string): void {
 
 /** A `require()` of `target`: the guard cannot see what is used, so it is `<dynamic>`. */
 function requireUses(file: string, src: string, target: string): string[] {
-  return [...stripComments(src).matchAll(/\brequire\(\s*['"]([^'"]+)['"]\s*\)/g)].filter((m) => resolveSpec(file, m[1]!) === target).map(() => '<dynamic>');
+  return [...stripComments(src).matchAll(/\brequire\(\s*['"`]([^'"`$]+)['"`]\s*\)/g)].filter((m) => resolveSpec(file, m[1]!) === target).map(() => '<dynamic>');
 }
 
 // ── census-discovery §111 (DV-83 round 14, lane W11-X2, D-W11X2-116): the guard's reach, round 13's holes ─────────
@@ -782,6 +782,9 @@ function carrierAliases(code: string, names: Set<string>): string[] {
     const add = (x: string | undefined) => { if (x && /^\w+$/.test(x) && !found.has(x)) { found.add(x); grew = true; } };
     for (const n of [...found]) {
       for (const m of code.matchAll(new RegExp(`(?:const|let|var)\\s+(\\w+)\\s*=\\s*(?:await\\s+)?(?:\\w+\\s*\\.\\s*)?${escapeRe(n)}\\b(?!\\s*[.(])`, 'g'))) add(m[1]);
+      // §112 (D-W11X2-126): an object property that holds the carrier (`{ key: carrier }`, called `obj.key(…)`), and a bound copy.
+      for (const m of code.matchAll(new RegExp(`[{,]\\s*(\\w+)\\s*:\\s*(?:\\w+\\s*\\.\\s*)?${escapeRe(n)}\\b(?!\\s*[.(:])`, 'g'))) add(m[1]);
+      for (const m of code.matchAll(new RegExp(`(?:const|let|var)\\s+(\\w+)\\s*=\\s*(?:\\w+\\s*\\.\\s*)?${escapeRe(n)}\\s*\\.\\s*bind\\s*\\(`, 'g'))) add(m[1]);
       for (const m of code.matchAll(/(?:const|let|var)\s*\{([^}]*)\}\s*=/g)) {
         for (const part of m[1]!.split(',')) {
           const [key, alias] = part.split(':').map((x) => x.trim());
@@ -792,3 +795,273 @@ function carrierAliases(code: string, names: Set<string>): string[] {
   }
   return [...found].filter((x) => !names.has(x));
 }
+
+// ── census-discovery §112 (DV-83 round 15, lane W11-X2, D-W11X2-126): the guard's reach, round 14's holes ──────────
+//
+// The round-14 verifier made six consumers the guard could not see (GH10–GH15): a raw consumer in the app's ROOT
+// components/ directory (the walk read only src/ and app/), a template-literal dynamic import, a local re-export from a
+// registered file, a second raw site called through `.call` and through an object-property alias, and a second call site
+// of a services/discovery.ts carrier in a registered file (G4 checks a branch per FILE; G9's per-site check reached only
+// the Compass carriers). D-W11X2-116's reach was not the whole of it. The fixtures are the verifier's, verbatim; each runs
+// through the WHOLE guard (every derivation and every per-site check) over the in-memory overlay, which lays a file only
+// where the walk reads the disk. Declarations only, at the file's foot, so no line another census cites moves.
+const GH14V = {
+  rootComponents: "// GH10 (v14 verifier): a raw consumer in the app's ROOT components/ directory (live code: app/_layout.tsx imports '@/components/ErrorBoundary'); the guard walks only src/ and app/.\nimport { fetchCompassRecommendations } from '../src/services/compass.ts';\nexport async function zzRawRecsGH10(): Promise<number> {\n  const res = await fetchCompassRecommendations({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  backtickDynamic: "// GH11 (v14 verifier): an awaited dynamic import whose specifier is a template literal (no substitution).\nexport async function zzRawRecsGH11(): Promise<number> {\n  const { fetchCompassRecommendations } = await import(`../services/compass.ts`);\n  const res = await fetchCompassRecommendations({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  localReexport: "\n// GH12 (v14 verifier): a registered consumer re-exports the carrier LOCALLY (no `from`) ...\nexport { fetchCompassRecommendations as zzRecsGH12 };\n",
+  viaLocal: "// GH12 (v14 verifier): ... and a new raw consumer imports it from there.\nimport { zzRecsGH12 } from './compass/CompassPassportSuggestions.tsx';\nexport async function zzRawRecsGH12(): Promise<number> {\n  const res = await zzRecsGH12({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  callSite: "\n// GH13 (v14 verifier): a second raw site in a registered consumer, called through Function.prototype.call.\nexport async function zzCallSiteGH13(): Promise<number> {\n  const res = await fetchCompassRecommendations.call(undefined, { surface: 'passport', limit: 3 });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  applySite: "\n// GH13b: the same site through Function.prototype.apply.\nexport async function zzApplySiteGH13(): Promise<number> {\n  const res = await fetchCompassRecommendations.apply(undefined, [{ surface: 'passport', limit: 3 }]);\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  objectAlias: "\n// GH14 (v14 verifier): a second raw site in a registered consumer, through an object-property alias.\nconst zzApiGH14 = { fetchPicks: fetchCompassRecommendations };\nexport async function zzObjectAliasGH14(): Promise<number> {\n  const res = await zzApiGH14.fetchPicks({ surface: 'passport', limit: 3 });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  objectAliasBranches: "\nconst zzApiGH14c = { fetchPicks: fetchCompassRecommendations };\nexport async function zzObjectAliasBranches(): Promise<number> {\n  const res = await zzApiGH14c.fetchPicks({ surface: 'passport', limit: 3 });\n  if (!res.ok || !res.data || compassRecommendationsFailed(res.data)) return -1;\n  return res.data.recommendations.length;\n}\n",
+  discoverySecondSite: "\n// GH15 (v14 verifier): a second raw site of a services/discovery.ts carrier in a registered consumer (G4 checks branches per FILE; G9's per-site check covers only the Compass carriers).\nexport async function zzDiscoverySecondSiteGH15(): Promise<number> {\n  const res = await getDiscoveryPlaces('Lisbon', 'food', {} as never, 1);\n  return res.ok ? res.data.places.length : 0;\n}\n",
+  defaultPlusNamed: "import React, { fetchCompassRecommendations } from '../services/compass.ts';\nexport async function zzRawRecsGH16(): Promise<number> {\n  void React;\n  const res = await fetchCompassRecommendations({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  computedSpecifier: "const which = 'compass';\nexport async function zzComputedGH11b(): Promise<number> {\n  const m = await import(`../services/${which}.ts`);\n  const res = await m.fetchCompassRecommendations({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+};
+
+/** Every per-tree check of this file, as one: G2's registration, G3's uses, G9's per-site predicate, and §112's own. */
+function wholeGuard(): void {
+  const consumers = derivedConsumers(derivedCarriers());
+  const unregistered = [...consumers.keys()].filter((f) => !(f in CONSUMERS));
+  assert.deepEqual(unregistered, [], `unregistered consumer(s): ${unregistered.map((f) => `${f} (${consumers.get(f)!.join(', ')})`).join('; ')}`);
+  for (const [file, c] of Object.entries(CONSUMERS)) assert.deepEqual(consumers.get(file) ?? [], [...c.uses].sort(), `${file}: registered uses differ from what it imports`);
+  compassConsumersBranchOnCoverage();
+  round15Checks();
+}
+
+describe("DV-83 guard reach — the round-14 verifier's fixtures (§112, D-W11X2-126)", () => {
+  const PASSPORT = 'src/components/compass/CompassPassportSuggestions.tsx';
+  it('G12 the tree as it is passes the whole guard', () => {
+    assert.doesNotThrow(() => wholeGuard());
+  });
+  it('G12 GH10: a raw consumer in the root components/ directory is caught', () => {
+    assert.throws(() => withFiles({ 'components/zzGH10.tsx': GH14V.rootComponents }, wholeGuard), /unregistered consumer\(s\): components\/zzGH10\.tsx \(fetchCompassRecommendations\)/);
+  });
+  it('G12 GH11: a template-literal dynamic import is caught', () => {
+    assert.throws(() => withFiles({ 'src/components/zzGH11.tsx': GH14V.backtickDynamic }, wholeGuard), /zzGH11\.tsx \(fetchCompassRecommendations\)/);
+  });
+  it('G12 GH11b: a dynamic import whose specifier is computed fails — the guard cannot tell what it loads', () => {
+    assert.throws(() => withFiles({ 'src/components/zzGH11b.tsx': GH14V.computedSpecifier }, wholeGuard), /zzGH11b\.tsx/);
+  });
+  it('G12 GH12: a local re-export from a registered file is caught at its importer', () => {
+    assert.throws(() => withFiles({ [PASSPORT]: read(PASSPORT) + GH14V.localReexport, 'src/components/zzGH12.tsx': GH14V.viaLocal }, wholeGuard), /zzGH12\.tsx \(fetchCompassRecommendations\)/);
+  });
+  it('G12 GH13: a second raw site called through .call (or .apply) fails G9', () => {
+    assert.throws(() => withFiles({ [PASSPORT]: read(PASSPORT) + GH14V.callSite }, wholeGuard), /call site|without the shared predicate/i);
+    assert.throws(() => withFiles({ [PASSPORT]: read(PASSPORT) + GH14V.applySite }, wholeGuard), /call site|without the shared predicate/i);
+  });
+  it('G12 GH14: a second raw site through an object-property alias fails G9', () => {
+    assert.throws(() => withFiles({ [PASSPORT]: read(PASSPORT) + GH14V.objectAlias }, wholeGuard), /call site|without the shared predicate/i);
+  });
+  it('G12 GH14c CONTROL: an object-property alias site that branches through the predicate passes G9', () => {
+    assert.doesNotThrow(() => withFiles({ [PASSPORT]: read(PASSPORT) + GH14V.objectAliasBranches }, () => compassConsumersBranchOnCoverage()));
+  });
+  it('G12 GH15: a second call site of a services/discovery.ts carrier in a registered file fails', () => {
+    const file = 'app/map/index.tsx';
+    assert.throws(() => withFiles({ [file]: read(file) + GH14V.discoverySecondSite }, wholeGuard), /call site/i);
+  });
+  it('G12 GH16: a default-plus-named import of a carrier is caught', () => {
+    assert.throws(() => withFiles({ 'src/components/zzGH16.tsx': GH14V.defaultPlusNamed }, wholeGuard), /zzGH16\.tsx \(fetchCompassRecommendations\)/);
+  });
+});
+
+/**
+ * Top-level entries of the app that the bundle never loads, each with why (a function: hoisted, as the suite above runs at load). Every OTHER top-level directory is walked,
+ * so a new source root is seen by default; `G12 GH10b` checks that no walked source imports from one of these.
+ */
+function clientNotBundled(): Record<string, string> {
+  return {
+  node_modules: 'installed packages',
+  scripts: 'Node build and check scripts run by pnpm; the app never imports them',
+  server: 'the Node share server (server/serve.js), run by the host beside the bundle',
+  e2e: 'Maestro flows',
+  plugins: 'Expo config plugins, run at build time',
+  docs: 'documentation',
+  migrations: 'SQL',
+  assets: 'images, fonts and sounds',
+  __mocks__: 'jest module mocks',
+  };
+}
+
+/** The top-level directories the app bundles: every directory not named in clientNotBundled() (dot-directories aside). */
+function clientRoots(): string[] {
+  return readdirSync(ROOT).filter((e) => !e.startsWith('.') && !(e in clientNotBundled()) && statSync(join(ROOT, e)).isDirectory()).sort();
+}
+
+/** Every client source the app can bundle: each client root walked, and the .ts/.tsx files at the app root. */
+function clientSources(): string[] {
+  const out: string[] = [];
+  for (const r of clientRoots()) walk(r, out);
+  for (const e of readdirSync(ROOT)) if (/\.(ts|tsx)$/.test(e) && !/\.test\.(ts|tsx)$/.test(e) && statSync(join(ROOT, e)).isFile()) out.push(e);
+  return out;
+}
+
+/** The directories the overlay lays files in: those the walk reads. */
+function walkedRoot(rel: string): boolean {
+  return rel.includes('/') ? clientRoots().includes(rel.split('/')[0]!) : /\.(ts|tsx)$/.test(rel);
+}
+
+/**
+ * A local re-export from `file` (no `from`): `export { carrier as x }`, `export const x = carrier` (or `ns.carrier`),
+ * where the local name is a carrier `file` imports from a known carrier or re-export module.
+ */
+function localReexports(file: string, code: string, known: Map<string, Map<string, string>>): Array<[string, string]> {
+  const locals = new Map<string, string>();
+  for (const m of code.matchAll(/import\s+(?:type\s+)?(?:\w+\s*,\s*)?\{([^}]*)\}\s*from\s*['"]([^'"]+)['"]/g)) {
+    const from = known.get(resolveSpec(file, m[2]!) ?? '');
+    if (!from) continue;
+    for (const part of m[1]!.split(',')) {
+      const [orig, alias] = part.trim().split(/\s+as\s+/).map((x) => x.trim());
+      if (orig && from.has(orig) && !/^type\s/.test(part.trim())) locals.set(alias ?? orig, from.get(orig)!);
+    }
+  }
+  for (const m of code.matchAll(/import\s+(?:\w+\s*,\s*)?\*\s+as\s+(\w+)\s+from\s*['"]([^'"]+)['"]/g)) {
+    const from = known.get(resolveSpec(file, m[2]!) ?? '');
+    if (from) for (const [name, carrier] of from) locals.set(`${m[1]}.${name}`, carrier);
+  }
+  const out: Array<[string, string]> = [];
+  for (const m of code.matchAll(/export\s*\{([^}]*)\}(?!\s*from)/g)) {
+    for (const part of m[1]!.split(',')) {
+      const [orig, alias] = part.trim().split(/\s+as\s+/).map((x) => x.trim());
+      if (orig && locals.has(orig)) out.push([alias ?? orig, locals.get(orig)!]);
+    }
+  }
+  for (const m of code.matchAll(/export\s+(?:const|let|var)\s+(\w+)\s*=\s*(\w+(?:\s*\.\s*\w+)?)\s*[;\n]/g)) {
+    const ref = m[2]!.replace(/\s+/g, '');
+    if (locals.has(ref)) out.push([m[1]!, locals.get(ref)!]);
+  }
+  return out;
+}
+
+/** Client sources that load a module by a COMPUTED specifier (`import(x)`, a template with a substitution): the guard cannot tell what they load. */
+function computedSpecifiers(): string[] {
+  const out: string[] = [];
+  for (const file of withOverlay(clientSources())) {
+    const code = stripComments(read(file));
+    for (const m of code.matchAll(/(?<![\w.$])(?:import|require)\(\s*([^)]*)\)/g)) {
+      const arg = m[1]!.trim();
+      if (!/^(['"])[^'"]*\1$/.test(arg) && !/^`[^`$]*`$/.test(arg)) out.push(`${file}: ${m[0].slice(0, 80)}`);
+    }
+  }
+  return out;
+}
+
+/**
+ * The call sites of each carrier a registered consumer uses — direct, through a namespace, an alias, a rename, an
+ * object property, `.call` or `.apply` — counted per carrier (an alias's sites under its own name).
+ */
+function carrierSiteCounts(file: string, src: string, uses: string[]): Record<string, number> {
+  const code = stripComments(src).replace(/^\s*(?:import|export)\b[^;]*\bfrom\s*['"][^'"]+['"];?/gm, '');
+  const locals = new Set<string>(uses.filter((u) => u !== '<dynamic>'));
+  for (const m of stripComments(src).matchAll(/import\s+(?:\w+\s*,\s*)?\{([^}]*)\}\s*from\s*['"][^'"]+['"]/g)) {
+    for (const part of m[1]!.split(',')) {
+      const [orig, alias] = part.trim().split(/\s+as\s+/).map((x) => x.trim());
+      if (orig && alias && locals.has(orig)) locals.add(alias);
+    }
+  }
+  for (const a of carrierAliases(code, locals)) locals.add(a);
+  const counts: Record<string, number> = {};
+  const call = new RegExp(`(?:\\b\\w+\\s*\\.\\s*)?\\b(${[...locals].map(escapeRe).join('|')})\\s*(?:\\.\\s*(?:call|apply)\\s*)?\\(`, 'g');
+  for (const m of code.matchAll(call)) {
+    if (/\bfunction\s+$/.test(code.slice(Math.max(0, m.index! - 30), m.index!))) continue;
+    counts[m[1]!] = (counts[m[1]!] ?? 0) + 1;
+  }
+  return counts;
+}
+
+/**
+ * The call sites each registered consumer makes today, pinned. G4 finds a consumer's branch once per FILE, so a new
+ * call site — a second read of a carrier in a file that already branches once — must be registered here, beside the
+ * branch fragment (G4) and the suite (G5) that cover it. G9 checks each Compass raw site's predicate on its own.
+ */
+const REGISTERED_SITES: Record<string, Record<string, number>> = {
+  'src/components/discovery/ForYouTab.tsx': { getCachedDiscoveryPlaces: 5, getDiscoveryPlaces: 1, getSavedPlaceIds: 1, useCommunityDiscovery: 1 },
+  'src/components/discovery/DiscoveryCategoryTab.tsx': { getCachedDiscoveryPlaces: 3, getDiscoveryPlaces: 1 },
+  'src/components/discovery/DiscoveryEventPostsRail.tsx': { getDiscoveryFeed: 1 },
+  'src/hooks/useCommunityDiscovery.ts': { getCommunityPlaces: 1 },
+  'src/hooks/useSearchSuggestions.ts': { getSearchSuggestions: 1 },
+  'src/hooks/useGlobalSearchSuggestions.ts': { useSearchSuggestions: 1 },
+  'app/search.tsx': { searchUnified: 1, useGlobalSearchSuggestions: 1, fetchCompassRecommendations: 1 },
+  'src/components/map/MapSearchSheet.tsx': { requestMapSearchPage: 1 },
+  'app/map/index.tsx': { getDiscoveryPlaces: 1, fetchCompassRecommendations: 1 },
+  'app/(tabs)/_layout.tsx': { getDiscoveryCategoryCountsBatch: 1, getDiscoveryPlaces: 1 },
+  'app/(tabs)/discovery.tsx': { getDiscoveryCategoryCounts: 1, getTrendingHashtags: 1 },
+  'src/components/TripPage.tsx': { fetchCompassTripBrief: 1 },
+  'src/components/map/AskCompassBar.tsx': { fetchCompassRecommendations: 1 },
+  'src/components/compass/CompassPassportSuggestions.tsx': { fetchCompassRecommendations: 1 },
+  'src/components/compass/CompassBuddyRow.tsx': { fetchCompassBuddyMatches: 1 },
+  'src/components/compass/CompassTravelerRow.tsx': { fetchCompassTravelerMatches: 1 },
+};
+
+/** §112's own per-tree checks: no computed specifier, and every carrier call site in a registered consumer is pinned. */
+function round15Checks(): void {
+  assert.deepEqual(computedSpecifiers(), [], 'a client source loads a module by a computed specifier — the guard cannot tell whether it reads a refusal-carrying Discovery carrier; use a literal specifier');
+  for (const [file, c] of Object.entries(CONSUMERS)) {
+    assert.deepEqual(carrierSiteCounts(file, read(file), c.uses), REGISTERED_SITES[file] ?? {}, `${file}: a carrier call site was added or removed — every call site of a refusal-carrying read must branch on its coverage; register the new site in REGISTERED_SITES with the branch (G4) and the suite (G5) that prove it`);
+  }
+}
+
+describe('DV-83 guard reach — the roots and the pins (§112, D-W11X2-126)', () => {
+  it('G12 GH10b: the client roots are every top-level directory not named as unbundled, and no walked source imports from an unbundled one', () => {
+    assert.deepEqual(clientRoots(), ['app', 'components', 'constants', 'hooks', 'src', 'vendor']);
+    const sources = clientSources();
+    assert.ok(sources.includes('components/ErrorBoundary.tsx') && sources.includes('hooks/useColors.ts'), 'the root components/ and hooks/ are walked');
+    const reach: string[] = [];
+    for (const file of sources) {
+      for (const m of stripComments(read(file)).matchAll(/(?:\bfrom\s*|\bimport\(\s*|\brequire\(\s*)['"`]([^'"`$]+)['"`]/g)) {
+        const target = resolveSpec(file, m[1]!);
+        const code = !/\.(?:webp|png|jpe?g|gif|svg|ttf|otf|mp3|wav|mp4|json|lottie)$/i.test(target ?? '');  // an image or a font is not a module that can read a carrier
+        if (target && code && target.split('/')[0]! in clientNotBundled() && target.split('/')[0] !== 'node_modules') reach.push(`${file} → ${target}`);
+      }
+    }
+    assert.deepEqual(reach, [], 'a bundled source imports from a directory this guard does not walk');
+  });
+  it('G12 GH15c CONTROL: a registered file with its sites unchanged passes the pin; one site fewer fails it', () => {
+    const file = 'app/(tabs)/discovery.tsx';
+    assert.doesNotThrow(() => round15Checks());
+    assert.throws(() => withFiles({ [file]: read(file).replace(/getDiscoveryCategoryCounts\(/, 'void (') }, () => round15Checks()), /call site was added or removed/);
+  });
+});
+
+// §112 (D-W11X2-126): the forms next to the verifier's, each pinning one reading the fixes above added.
+const GH14N = {
+  unbundled: "import { fetchCompassRecommendations } from '../src/services/compass.ts';\nexport async function zzUnbundledGH10c(): Promise<number> {\n  const res = await fetchCompassRecommendations({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  exportConst: "\nexport const zzRecsGH12b = fetchCompassRecommendations;\n",
+  viaExportConst: "import { zzRecsGH12b } from './compass/CompassPassportSuggestions.tsx';\nexport async function zzRawRecsGH12b(): Promise<number> {\n  const res = await zzRecsGH12b({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  nsExport: "\nimport * as zzNsGH12c from '../../services/compass.ts';\nexport const zzNsRecsGH12c = zzNsGH12c.fetchCompassRecommendations;\n",
+  viaNsExport: "import { zzNsRecsGH12c } from './compass/CompassPassportSuggestions.tsx';\nexport async function zzRawRecsGH12c(): Promise<number> {\n  const res = await zzNsRecsGH12c({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  boundSite: "\nexport async function zzBoundGH13c(): Promise<number> {\n  const zzBound = fetchCompassRecommendations.bind(null);\n  const res = await zzBound({ surface: 'passport', limit: 3 });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  discoveryCallSite: "\nexport async function zzCallGH15b(): Promise<number> {\n  const res = await getDiscoveryPlaces.call(undefined, 'Lisbon', 'food', {} as never, 1);\n  return res.ok ? res.data.places.length : 0;\n}\n",
+  discoveryAliasSite: "\nconst zzLoadGH15c = getDiscoveryPlaces;\nexport async function zzAliasGH15c(): Promise<number> {\n  const res = await zzLoadGH15c('Lisbon', 'food', {} as never, 1);\n  return res.ok ? res.data.places.length : 0;\n}\n",
+  defaultPlusNamespace: "import React, * as zzCompassGH16b from '../services/compass.ts';\nexport async function zzRawRecsGH16b(): Promise<number> {\n  void React;\n  const res = await zzCompassGH16b.fetchCompassRecommendations({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  defaultPlusNamedSite: "\nimport zzDefaultGH16c, { fetchCompassRecommendations as zzRecsGH16c } from '../../services/compass.ts';\nexport async function zzSiteGH16c(): Promise<number> {\n  void zzDefaultGH16c;\n  const res = await zzRecsGH16c({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+};
+
+describe('DV-83 guard reach — the forms next to them (§112, D-W11X2-126)', () => {
+  const PASSPORT = 'src/components/compass/CompassPassportSuggestions.tsx';
+  const MAP = 'app/map/index.tsx';
+  it('G12 GH10c CONTROL: a raw consumer in an unbundled directory (scripts/) is not walked and makes no consumer', () => {
+    const u = withFiles({ 'scripts/zzGH10c.ts': GH14N.unbundled }, unregisteredNow);
+    assert.equal(u.has('scripts/zzGH10c.ts'), false, JSON.stringify([...u]));
+  });
+  it('G12 GH12b: an `export const x = carrier` re-export from a registered file is caught at its importer', () => {
+    assert.throws(() => withFiles({ [PASSPORT]: read(PASSPORT) + GH14N.exportConst, 'src/components/zzGH12b.tsx': GH14N.viaExportConst }, wholeGuard), /zzGH12b\.tsx \(fetchCompassRecommendations\)/);
+  });
+  it('G12 GH12c: a re-export of a namespace member from a registered file is caught at its importer', () => {
+    assert.throws(() => withFiles({ [PASSPORT]: read(PASSPORT) + GH14N.nsExport, 'src/components/zzGH12c.tsx': GH14N.viaNsExport }, wholeGuard), /zzGH12c\.tsx \(fetchCompassRecommendations\)/);
+  });
+  it('G12 GH13b: G9 alone fails a second raw site called through .call, and one through a bound copy', () => {
+    assert.throws(() => withFiles({ [PASSPORT]: read(PASSPORT) + GH14V.callSite }, () => compassConsumersBranchOnCoverage()), /call site|without the shared predicate/i);
+    assert.throws(() => withFiles({ [PASSPORT]: read(PASSPORT) + GH14N.boundSite }, () => compassConsumersBranchOnCoverage()), /call site|without the shared predicate/i);
+  });
+  it('G12 GH15b: a second discovery-carrier site through .call, or through an alias, fails the site pin', () => {
+    assert.throws(() => withFiles({ [MAP]: read(MAP) + GH14N.discoveryCallSite }, () => round15Checks()), /call site was added or removed/);
+    assert.throws(() => withFiles({ [MAP]: read(MAP) + GH14N.discoveryAliasSite }, () => round15Checks()), /call site was added or removed/);
+  });
+  it('G12 GH16b: a default-plus-namespace import of a carrier module is caught', () => {
+    assert.throws(() => withFiles({ 'src/components/zzGH16b.tsx': GH14N.defaultPlusNamespace }, wholeGuard), /zzGH16b\.tsx \(fetchCompassRecommendations\)/);
+  });
+  it('G12 GH16c: G9 alone fails a raw site reached through a default-plus-named, renamed import', () => {
+    assert.throws(() => withFiles({ [PASSPORT]: read(PASSPORT) + GH14N.defaultPlusNamedSite }, () => compassConsumersBranchOnCoverage()), /call site|without the shared predicate/i);
+  });
+});

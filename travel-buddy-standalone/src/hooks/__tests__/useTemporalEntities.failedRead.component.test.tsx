@@ -6,6 +6,8 @@
  *   TM3  a refused forecast (the server's `block_set_unreadable`, `forecast.events: null`) → events unread, failed
  *   TM4  a failed read (`!res.ok`) → `failed` is true and nothing is drawn; a rejection → the same
  *   TM5  a fetch that is still in flight shows nothing from the previous offset (the hook's "[] while loading")
+ *   TM6  after a failed read, the next offset's read in flight is not "failed" (it is loading)
+ *   TM7  after a failed read, going back to NOW clears `failed`
  *   TMc  CONTROL: a healthy answer after a failed one clears `failed`; the flag-off envelope is not a failure
  */
 import { renderHook, waitFor } from '@testing-library/react-native';
@@ -110,5 +112,28 @@ describe('§112: the Time Machine over a refused or failed read (D-W11X2-121, D-
     const off = await run([() => Promise.resolve({ ok: true, data: envelope({ enabled: false, target: null }) })]);
     expect((off.result.current as any).failed).toBe(false);
     expect(off.result.current.unreadForecastLayers).toEqual([]);
+  });
+});
+
+describe('§112: the failed state belongs to one read (D-W11X2-122)', () => {
+  beforeEach(() => { mockAnswers.length = 0; });
+  it("TM6 after a failed read, the next offset's read in flight is not failed", async () => {
+    let releaseB: (v: unknown) => void = () => {};
+    mockAnswers.push(() => Promise.resolve({ ok: false, error: 'Request failed (503)' }));
+    mockAnswers.push(() => new Promise((r) => { releaseB = r; }));
+    const { result, rerender } = await renderHook((p: { off: any }) => useTemporalEntities({ lat: 14.5, lng: 120.9, offset: p.off, active: true }), { initialProps: { off: OFF_A as any } });
+    await waitFor(() => expect((result.current as any).failed).toBe(true));
+    await rerender({ off: OFF_B as any });
+    await waitFor(() => expect(result.current.loading).toBe(true));
+    expect((result.current as any).failed).toBe(false);
+    releaseB({ ok: true, data: envelope({ sources: ['events', 'itinerary', 'accepted_plan'], forecast: report(0) }) });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+  });
+  it('TM7 after a failed read, going back to NOW clears failed', async () => {
+    mockAnswers.push(() => Promise.resolve({ ok: false, error: 'Request failed (503)' }));
+    const { result, rerender } = await renderHook((p: { off: any }) => useTemporalEntities({ lat: 14.5, lng: 120.9, offset: p.off, active: true }), { initialProps: { off: OFF_A as any } });
+    await waitFor(() => expect((result.current as any).failed).toBe(true));
+    await rerender({ off: { kind: 'now' } as any });
+    await waitFor(() => expect((result.current as any).failed).toBe(false));
   });
 });
