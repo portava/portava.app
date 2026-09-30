@@ -4165,6 +4165,71 @@ sites) are killed (census-discovery §110.9).
 **MOVES NOTHING.** No census-compass row grades the circle tools' membership predicate. What would turn this red: a Compass reader that
 filters `circle_memberships` on `status` again while no writer sets it (CM1–CM3).
 
+## §34 — 2026-09-30: no Compass tool offers a candidate that skipped block/mute filtering or the safety gate; a check meant to fail closed no longer fails open (lane W11-X2, round 14) — MOVES NOTHING
+
+Lane W11-X2 (round 14), branch `disc-w11-x2-r14` from `e11fc09b0`. `head_commit` is **NOT** re-declared: this records a
+safety finding and its fix. The round-13 DV-83 verifier found it by code reading beside its breaks (census-discovery
+§111.1) and upheld it as outside DV-83: nothing here is a failed read stated as a fact — it is a failed read that turned a
+fail-closed check into a fail-open one. Register: census-discovery's D-W11X2-105 (Compass has no register of its own).
+census-trust does not grade Compass's block, mute or safety-gate enforcement (its only Compass item is the `verified`
+badge flag, §14.7 item 4), so nothing is recorded there. Controlled evidence only — node:test over the real tools and the
+real /compass/ask route, over fake clients.
+
+### 34.1 The finding
+
+- **The trigger.** `getCompassProfile` throws when a `blocks` or `user_mutes` read fails — deliberately ("refuse to build
+  the profile rather than serve one that can leak", `artifacts/api-server/src/compass/CompassProfileService.ts`).
+- **The route.** /compass/ask catches that throw around its structured-context block, leaves `guardProfile` null, and
+  hands the null to the tool loop, so every tool call of that turn runs with no profile
+  (`artifacts/api-server/src/routes/compass.ts`).
+- **The tools, before this change.**
+  - `rankToolCandidates` answered `null` for a null profile and for a pipeline that threw, and `applyToolRanking` reads
+    `null` as "unranked: offer the raw list". `search_places` therefore offered catalog rows no COMPASS_% safety gate
+    had seen (`ranked: false`), over a turn whose block read had just failed (PR1).
+  - `get_circle_activity` built its filter from an EMPTY hidden set when the profile was null, so a member the viewer
+    had blocked was served by handle (PU4, PU5).
+  - `refreshHiddenUsers` over a null profile re-read the lists and, when they read, SYNTHESISED a profile from them
+    alone; `search_events` and `get_group_recommendation` then ranked on it, with the pipeline's safe-return hold
+    (`safeReturnActive`) and age read off a profile that carried neither (PU2, PU3, PR2).
+  - When that re-read failed too, the tool answered "Tool execution failed.", which tells the model nothing it can say
+    (PU6).
+- **Every other caller of the pipeline was checked.** `buildFeed`, `buildSection`, `rankItemsForDiscovery` and
+  `compassEligibleForDiscovery` take a profile the caller already built (a thrown profile read fails the request); the
+  testing sandbox passes no client. None has an unranked fallback. Discovery's `consolidatedForYouCandidates` degrades a
+  thrown Compass gate to every candidate (`compass_failed`) — the DV-07 degradation, which serves the same catalog places
+  the Compass-off path serves, with no author to block; recorded, not changed. The fallback feed
+  (`buildFallbackFeed`) already degrades to the static safety tools when its block list cannot be read.
+
+### 34.2 The change
+
+- **No profile, no ranking — never the raw list.** `rankToolCandidates` answers an EMPTY ranking marked `unchecked` for
+  a null profile, for a profile synthesised from the lists alone, and for a pipeline that threw; nothing is offered,
+  and `search_places`, `search_events` and `get_group_recommendation` say "Compass could not check the user's profile,
+  block and mute lists or its safety gate right now (a read failed), so nothing was offered … do not say there are
+  none" (`artifacts/api-server/src/compass/CompassTools.ts`, the `rankToolCandidates` lines in place; the helpers at the
+  foot).
+- **The hidden set is read, never empty.** `get_circle_activity` re-reads the block and mute lists when it has no
+  profile, as the social tools already did.
+- **An unreadable hidden set is a named refusal.** `refreshHiddenUsers` throws `HiddenUsersUnreadableError`; the
+  dispatcher answers it `{ unchecked: true, info: "The user's block and mute lists could not be read right now, so
+  Compass could not check who may be shown and nothing involving other people was offered …" }`.
+- **Healthy turns are unchanged.** With the profile read, every tool ranks and answers exactly as before (PUc, PRc).
+
+**Tests, red first.** `artifacts/api-server/src/test/compassAskProfileUnreadFailClosed.test.ts`: PU1–PU7 over the tools
+and PR1, PR2 over the real /compass/ask route (a scripted model calls the tool; the tool result it is handed is
+asserted) were red before and green after; PUc and PRc were green throughout. Two suites that called a search tool with a
+null profile to test something else (`compass-live-intel`'s confidence labels, `deadLiteralRepairs`' enum literal)
+now pass a profile, and `compassCensusGates`' no-snapshot case asserts the new refusal sentence instead of "Tool
+execution failed." (still closed: no people).
+
+**Mutations.** SF1–SF12, each applied alone and restored byte-identically (sha256): 11 killed; SF2 (dropping `!profile
+||` from the null check) is equivalent — a null profile throws inside `normalizeProfileForRanking`, and the now-closed
+catch answers the same `unchecked` ranking.
+
+**MOVES NOTHING.** No census-compass row grades the tools' fail-closed behaviour over an unread profile. What would turn
+this red: a Compass tool that offers a candidate, or a member, over a turn whose profile or block and mute lists could not
+be read (PU1–PU7, PR1, PR2).
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/routes/verification.ts — §18.4 cites line 257 only to report that census-trust §14.6's TV-1a sentence is false at HEAD. The route is Trust's subject, graded in census-trust as TV-1a, and no Compass row rests on it.

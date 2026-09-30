@@ -2902,6 +2902,8 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/lib/contextKernel.ts",
     // census-compass §33 (lane W11-X2, round 13): the membership predicate's evidence — joins written by the real writers.
     "artifacts/api-server/src/test/compassCircleMembershipPredicate.test.ts",
+    // census-compass §34 (lane W11-X2, round 14): the tools fail closed over an unread profile — the safety evidence.
+    "artifacts/api-server/src/test/compassAskProfileUnreadFailClosed.test.ts",
     "artifacts/api-server/src/lib/opportunityEngine.ts",
     "artifacts/api-server/src/routes/opportunities.ts",
     "artifacts/api-server/src/compass/",
@@ -4591,6 +4593,20 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/discoveryAggregatesTruncated.test.ts",
     "travel-buddy-standalone/src/components/__tests__/CircleCompassSuggestions.refusal.component.test.tsx",
     "artifacts/api-server/src/compass/CompassFeedBuilder.ts",  // §110 grades buildFeed's flagsUnreadable (D-W11X2-100)
+    // census-discovery §111 (lane W11-X2, round 14): the round's suites and the files §111 grades.
+    "artifacts/api-server/src/test/eventGatesThreeState.test.ts",
+    "artifacts/api-server/src/test/hiddenGemsProjectionUnread.test.ts",
+    "artifacts/api-server/src/test/compassStructuredContextRound14.test.ts",
+    "artifacts/api-server/src/test/mapTemporalForecastEventsUnread.test.ts",
+    "artifacts/api-server/src/test/compassPresenceWalkBounds.test.ts",
+    "artifacts/api-server/src/test/circleFlagUnread.test.ts",
+    "artifacts/api-server/src/test/compassAskProfileUnreadFailClosed.test.ts",
+    "travel-buddy-standalone/src/components/map/__tests__/TimeMachineControl.forecastUnread.component.test.tsx",
+    "travel-buddy-standalone/src/features/map/time/__tests__/forecastUnread.test.ts",
+    "travel-buddy-standalone/app/__tests__/circlePresence.unreadFlag.component.test.tsx",
+    "travel-buddy-standalone/src/features/map/time/forecastUnread.ts",  // §111 grades the client's unread forecast layer (D-W11X2-115)
+    "artifacts/api-server/src/routes/mapProjectionTemporal.ts",  // §111 grades the forecast's events source (D-W11X2-115)
+    "artifacts/api-server/src/lib/blockGuard.ts",  // §111 grades readBlockBetween (D-W11X2-107)
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //
