@@ -61,7 +61,7 @@ export interface CallContextGateway {
    * reason string when ineligible, null when eligible.
    */
   eventRoomIneligibility(eventId: string, userId: string):
-    Promise<null | 'not_event_eligible' | 'age_ineligible' | 'trust_ineligible'>;
+    Promise<null | 'not_event_eligible' | 'age_ineligible' | 'trust_ineligible' | 'degraded_unavailable'>;  // census-discovery §113 (D-W11X2-134): a read that failed
   /**
    * Event staff role from the canonical event tables: 'host' for the event's
    * host, 'cohost' for co_host/moderator rows, null otherwise. Drives the

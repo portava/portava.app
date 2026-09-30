@@ -557,7 +557,7 @@ export function CallProvider({
 }
 
 /** Map stable server deny reasons to honest, human copy (spec §13). */
-function friendlyStartError(reason: string | undefined): string {
+export function friendlyStartError(reason: string | undefined): string {  // census-discovery §113: exported for its copy test
   switch (reason) {
     case 'callee_calls_disabled':
     case 'callee_video_disabled':
@@ -581,6 +581,7 @@ function friendlyStartError(reason: string | undefined): string {
       return 'Calling is unavailable right now.';
     case 'not_event_host':
       return 'Only the event host can start the voice room.';
+    case 'degraded_unavailable': return "Calling couldn't be checked right now. Try again in a moment.";  // §113 (D-W11X2-134): the gateway could not read a gate — never a verdict
     case 'not_event_eligible':
       return 'This voice room is for event attendees.';
     case 'age_ineligible':

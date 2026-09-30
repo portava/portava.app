@@ -200,13 +200,13 @@ export function makeCallGateway(sc: SupabaseClient): CallContextGateway {
 
     async eventRoomIneligibility(eventId, userId) {
       try {
-        const { data: ev } = await sc.from("events").select("*").eq("id", eventId).maybeSingle();
-        if (!ev) return "not_event_eligible";
+        const { data: ev, error: evErr } = await sc.from("events").select("*").eq("id", eventId).maybeSingle();
+        if (evErr) return "degraded_unavailable"; if (!ev) return "not_event_eligible";  // census-discovery §113 (D-W11X2-134): a failed read is "could not check", never "for attendees"
 
         // Delegate to the canonical event participation gates (block/ban/
         // verified/trust/age). Map the failure onto the engine's stable reasons.
         const elig = await checkEventEligibility(sc, ev as any, userId);
-        if (!elig.ok) {
+        if (!elig.ok) { if (elig.unread) return "degraded_unavailable";  // §113 (D-W11X2-134): an unread gate is not the viewer's age, trust or attendance
           const m = elig.message.toLowerCase();
           if (m.includes("trust score")) return "trust_ineligible";
           if (m.includes("age") || m.includes("at least") || m.includes("up to")) return "age_ineligible";
@@ -216,26 +216,26 @@ export function makeCallGateway(sc: SupabaseClient): CallContextGateway {
         // Attendance: host and staff always eligible; everyone else must have
         // an RSVP (going/maybe) on the event.
         if (userId === (ev as any).host_id) return null;
-        const { data: staff } = await sc
+        const { data: staff, error: staffErr } = await sc
           .from("event_roles")
           .select("role")
           .eq("event_id", eventId)
           .eq("user_id", userId)
           .in("role", ["co_host", "moderator"])
           .maybeSingle();
-        if (staff) return null;
-        const { data: rsvp } = await sc
+        if (staff) return null;  // §113 (D-W11X2-134): a failed staff read is weighed after the RSVP — an attendee is admitted either way
+        const { data: rsvp, error: rsvpErr } = await sc
           .from("event_rsvps")
           .select("status")
           .eq("event_id", eventId)
           .eq("user_id", userId)
           .maybeSingle();
-        const s = (rsvp as any)?.status;
-        return s === "going" || s === "maybe" ? null : "not_event_eligible";
+        if (rsvpErr) return "degraded_unavailable"; const s = (rsvp as any)?.status;
+        return s === "going" || s === "maybe" ? null : staffErr ? "degraded_unavailable" : "not_event_eligible";
       } catch (err) {
         // Fail closed: a DB outage must never silently grant event room access.
         console.warn("[callGateway] eventRoomIneligibility failed — failing closed", err);
-        return "not_event_eligible";
+        return "degraded_unavailable";  // §113 (D-W11X2-134): still denied — and said as "could not check"
       }
     },
 
