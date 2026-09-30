@@ -18742,6 +18742,33 @@ check:unissued-supabase-writes exit=0
 - **The verifiers' probes**, copied in unchanged and deleted after: server 53 of 53 (v12: V12-SP0/SP1/SE0/SE1, V12-MS0..2, V12-CC0..2, V12-CS0..2, V12-HTT2..4; v11: V11-CA0..CA2, V11-TS0, V11-HTT0/HTT1, V11-NV0/NV1; v10: V10-HP0..3, V10-SM6, V10-WT1, V10-WT2, V10-TC0, V10-TC1, V10-SC0, V10-SC1, V10-HT0, V10-HT1, V10-CC0, V10-CC7; v9: V9-H0, HC1, HB1, HB2, HW1, TG0–TG2, CC1, MS0, MS1, KS0, KS1, SM28) and client 11 of 11 (V11-TB0..TB4, V10-CH0..2, V9-TT0..2). On the first joint run V9-TT0 failed once with testing-library's "`render` function has not been called" on a cold jest cache; it passed alone and on the rerun of all three, 11 of 11.
 - **Regression: the round-12 verifier's 46 mutations**, re-run from a copy of its runner and pin list: 43 killed; the three survivors are exactly S9, H5 and H5p (equivalent, D-W11X2-98). The sha256 matched on every application, and `git status` was clean of source changes after both runs.
 
+## §111 — DV-83 round 14 (lane W11-X2)
+
+### 111.1 Integrator: DV-83 held at W after independent re-verification at `e11fc09b0`
+
+*Integrator, 2026-09-30. §110 is PR #530's head at `e11fc09b0` (it already contains main `d63780899`). An independent verifier checked that tree: it re-ran every round-12, round-11, round-10, round-9, round-8 and round-7 probe unchanged, wrote new ones (`zz-v13-*`, `zz-v13b-*`, and five guard-reach fixtures GH5–GH9), and restored every mutated file byte-identical, checked by sha256. Its report is the round-13 verifier's `dv83-r13-verifier.md`.*
+
+- **Confirmed.** §110.1's four breaks, H2–H4, GH1–GH4 and every earlier round's breaks are closed in behaviour: the v12, v11, v10, v9, v8 and v7 probes re-run unchanged all pass (74 server, 20 client). 34 of 42 of the verifier's own mutations are killed by the lane's pins; X18 and round 13's W8 are argued equivalent.
+- **Found: eight paths that break the criterion's wording, each shown by a probe that fails against this tree (17 red probes).**
+  1. **B1. The Compass search tools still say "none" over a read cut by a cap or a slice (clause a).** D-W11X2-102 reached two of six sites: `search_places` and the group recommendation's places branch test no cap, and `search_events` and the group events branch test the cap before a `.slice(0, limit)` that drops unchecked rows (V13-SP1, V13-SE1, V13-GP1, V13-GE1 red; V13-CT0 the control).
+  2. **B2. `checkEventEligibility` withholds an event over a failed block read or a failed staff-role read without marking it unread (clauses a, c)**, so GET /map/search's events source is complete over rows it never checked (V13-MB1, V13-MB2, V13-ST1 red; V13-MB0, V13-ST0 the controls).
+  3. **B3. GET /events/:id answers a failed route-level block read as 404 "not found" (clause a)** (V13-ED1 red; V13-ED0 the control).
+  4. **B4. GET /hidden-gems serves a gem state and confidence derived from failed aggregate reads, and answers an unread `hidden_gems_enabled` flag as `404 feature_disabled` (clause a)** (V13-GM1, V13-GF1 red; V13-GM0 the control).
+  5. **B5. The structured context serves three of an unordered `.limit(5)` bookings read as the list (clause a)** (V13-BK1 red; V13-BK0 the control).
+  6. **B6. A failed circle-list read hides the member-list sentence in the tool and the prompt (clause a)**; round 12's S9 was a correcting mutation, not an equivalent one (V13-CU1, V13-CU2 red; V13-CU0 the control).
+  7. **B7. The served vote and review counts state 0 over a failed read when the sibling read succeeded (clause a)** (V13-AM1, V13-AM2 red; V13-AM0 the control).
+  8. **B8. The temporal forecast names `events` as read over a failed or gated events read (clauses a, c)** (V13-TF1, V13-TF2 red; V13-TF0 the control).
+- **Rulings not honest.** D-W11X2-93's "argued, not built" staff-role and block rulings (B2), D-W11X2-98's "S9 equivalent" (B6), D-W11X2-99's "sees every import form and every raw call site" (GH5–GH9), D-W11X2-101 (B3), D-W11X2-102 (B1), D-W11X2-103's "states no count" (B7), and D-W11X2-104's deferral of the temporal forecast (B8).
+- **Surviving mutations.** X6, X8, X9, X17, X34, X37 and X41 are non-equivalent, sit on DV-83 lines, and are unpinned in the lane's suites; each is red under a verifier probe that is green at `e11fc09b0` (V13-CK6/8/9/17, V13-AK37/41, V13-SK34).
+- **Outside DV-83, severe (census-compass, census-trust).** At /compass/ask a failed block or mute read makes `getCompassProfile` throw; the route then passes a null profile to every tool, and `rankToolCandidates`' unranked fallback skips block and mute filtering and the COMPASS_% safety gate: a check meant to fail closed fails open. Evidence by code reading.
+- **Next.** A round-14 lane makes that path fail closed first, closes B1–B8 with the verifier's probes as failing-first tests, pins the seven survivors, closes GH5–GH9, corrects the rulings, and sweeps the Discovery and Compass read surfaces again. The row moves only after that.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | C | **W** | §110 closes §110.1's four paths, confirmed at `e11fc09b0` (§111.1). Eight paths still present a failed or partial read as empty, complete or as a fact: the Compass search tools over a read cut by a cap or a slice, `checkEventEligibility`'s two-state block and staff reads, GET /events/:id's route-level block read, GET /hidden-gems' gem projection and flag gate, the structured context's capped bookings read (`artifacts/api-server/src/compass/CompassStructuredContext.ts`), the circle-list and member-list sentences, the served vote and review counts, and the temporal forecast's events source. X6, X8, X9, X17, X34, X37 and X41 are unpinned; GH5–GH9 escape the guard. D-W11X2-93, -98, -99, -101, -102, -103 and -104 are not honest in part. |
+
+Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: travel-buddy-standalone/app/discover.tsx — §105.11 names it only as a path seen and not built, left for its owner, and §106 records Find Travelers' failed-search state and generation guard: it is the social people search over services/follows.ts, not a Discovery envelope, and no Discovery row or DV-83 verdict rests on it.
