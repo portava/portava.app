@@ -134,7 +134,7 @@ export interface TimeMachineControlProps {
   bottomInset?: number;
   style?: StyleProp<ViewStyle>;
   /** Set false to hide the Yesterday/Tonight/Tomorrow/Last Friday row. */
-  showNamedControls?: boolean; /** census-discovery §111 (D-W11X2-115): said in forecast mode when a forecast layer could not be read */ unreadNotice?: string | null;
+  showNamedControls?: boolean; /** census-discovery §111 (D-W11X2-115): said in forecast mode when a forecast layer could not be read */ unreadNotice?: string | null; /** census-discovery §115 (DV-83, sweep SW9): the read behind the city timeline was not whole */ timelineNotWhole?: boolean;
 }
 
 export function TimeMachineControl({
@@ -146,7 +146,7 @@ export function TimeMachineControl({
   tz,
   bottomInset = 0,
   style,
-  showNamedControls = true, unreadNotice = null,
+  showNamedControls = true, unreadNotice = null, timelineNotWhole = false,
 }: TimeMachineControlProps) {
   const resolved = useMemo(() => resolveOffset(offset, now ?? new Date(), tz), [offset, now, tz]);
   const mode = resolved.mode;
@@ -211,7 +211,7 @@ export function TimeMachineControl({
         forecastConfidence={forecastConfidence ?? undefined} unreadNotice={unreadNotice}
       />
 
-      {timeline && <CityTimeline timeline={timeline} tz={tz} style={s.timeline} />}
+      {timeline && <CityTimeline timeline={timeline} tz={tz} style={s.timeline} notWhole={timelineNotWhole} />}
     </View>
   );
 }

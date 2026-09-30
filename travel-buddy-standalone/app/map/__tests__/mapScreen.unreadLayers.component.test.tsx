@@ -294,3 +294,33 @@ describe('§114 B5: the NOW map screen says a layer it could not read', () => {
     expect(s.lines.map((l) => l.text)).toEqual(["Safety notices couldn\u2019t be checked here \u2014 hazards may not be shown", "Couldn\u2019t load events here", 'Showing only part of this area \u2014 zoom in to see everything']);
   });
 });
+
+// census-discovery §115 (DV-83 round 18, sweep SW9): the screen hands the carousel whether the map was read whole, so its
+// "No results nearby" is never drawn over layers the gateway did not read, or a page of several.
+describe('§115 SW9: the carousel is told when the map is not whole', () => {
+  it('MS7 an unread layer, or a page cut → layersNotWhole; every layer read → not', async () => {
+    const whole = await snapshot([]);
+    expect(JSON.parse(whole.carouselProps).layersNotWhole).toBe(false);
+    const unread = await snapshot(['events']);
+    expect(JSON.parse(unread.carouselProps).layersNotWhole).toBe(true);
+    const cut = await snapshot([], true);
+    expect(JSON.parse(cut.carouselProps).layersNotWhole).toBe(true);
+  });
+});
+
+// census-discovery §115 (sweep SW9): the Time Machine's city timeline is told when the read behind it was not whole. The
+// producer probe answers enabled (so the control mounts at NOW) and the control is a stub that keeps its props.
+// NOTE: intentionally exhaustive — the screen reads only this hook from the module; enabled so TIME_MACHINE is offered.
+jest.mock('../../../src/hooks/useTemporalProducerProbe', () => ({ useTemporalProducerProbe: () => ({ ok: true, data: { enabled: true } }) }));
+// NOTE: intentionally exhaustive — a stub that records the props the screen hands the control.
+jest.mock('../../../src/components/map/TimeMachineControl', () => ({ TimeMachineControl: (p: Record<string, unknown>) => { (global as any).__timeMachineProps = p; return null; } }));
+describe('§115 SW9: the city timeline is told when the NOW map is not whole', () => {
+  it('MS8 an unread layer, or a page cut → timelineNotWhole at NOW; every layer read → not', async () => {
+    await snapshot([]);
+    expect((global as any).__timeMachineProps?.timelineNotWhole).toBe(false);
+    await snapshot(['safety']);
+    expect((global as any).__timeMachineProps?.timelineNotWhole).toBe(true);
+    await snapshot([], true);
+    expect((global as any).__timeMachineProps?.timelineNotWhole).toBe(true);
+  });
+});

@@ -2656,7 +2656,7 @@ function FullScreenMapScreenInner() {
         onPassportRetry={mode === 'passport' ? handlePassportRetry : undefined}
         placesLoading={legacyPlacesActive ? placesLoading : undefined}
         placesError={legacyPlacesActive ? placesError : undefined}
-        placesEmpty={legacyPlacesActive ? placesEmpty : undefined}
+        placesEmpty={legacyPlacesActive ? placesEmpty : undefined} layersNotWhole={(mapUnreadLayers ?? []).length > 0 || mapTruncated === true} /* census-discovery §115 (DV-83, sweep SW9) */
         onPlacesRetry={legacyPlacesActive ? handlePlacesRetry : undefined}
         style={[
           s.carousel,
@@ -2837,7 +2837,7 @@ function FullScreenMapScreenInner() {
           offset={timeOffset}
           onChange={setTimeOffset}
           timeline={temporalView.timeline}
-          forecastConfidence={temporalView.forecastConfidence} unreadNotice={temporalNotice(temporal)} /* census-discovery §111 (D-W11X2-115); §112 (D-W11X2-122); §113 (D-W11X2-130): a failed, refused or in-flight read is said, never drawn as an empty time */
+          forecastConfidence={temporalView.forecastConfidence} unreadNotice={temporalNotice(temporal)} timelineNotWhole={atTemporalOffset ? temporalNotice(temporal) != null : (mapUnreadLayers ?? []).length > 0 || mapTruncated === true} /* §115 (SW9): an empty city timeline over a read that was not whole says so;  census-discovery §111 (D-W11X2-115); §112 (D-W11X2-122); §113 (D-W11X2-130): a failed, refused or in-flight read is said, never drawn as an empty time */
           bottomInset={insets.bottom + 140}
         />
       ) : null}
