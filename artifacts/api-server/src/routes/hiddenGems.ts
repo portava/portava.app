@@ -522,7 +522,7 @@ router.get("/hidden-gems", async (req, res) => {
   try {
     // Use weighted discovery ranking (verif weight + saves + visits + vibe-tag match)
     const { discoverGems } = await import("../services/hiddenGems/HiddenGemDiscoveryService.js");
-    const ranked = await discoverGems(sc, {
+    const { ranked, truncated: listCut } = await discoverGems(sc, {  // census-discovery §113 (DV-83, D-W11X2-131): a cut scan or page is said
       city: opts.city,
       neighborhood: opts.neighborhood,
       category: opts.category,
@@ -544,7 +544,7 @@ router.get("/hidden-gems", async (req, res) => {
       if (p && !p.unreadSources) { base.gemState = p.gemState; base.gemConfidence = p.gemConfidence; }
       return base;
     });
-    res.json({ gems: stampServedRecommendations(enriched3, exposureForResponse(res, callerId ?? null)), total: enriched3.length, ...certifiedWindowKeys(layoverWindow, gatedGems.summary), ...gemStateRefusal(projections3.values(), "GET /hidden-gems") });  // §48 DV-40 — every served gem carries its exposure id, anonymous included
+    res.json({ gems: stampServedRecommendations(enriched3, exposureForResponse(res, callerId ?? null)), total: enriched3.length, ...certifiedWindowKeys(layoverWindow, gatedGems.summary), ...gemStateRefusal(projections3.values(), "GET /hidden-gems"), ...(listCut ? { truncated: true } : {}) });  // §48 DV-40 — every served gem carries its exposure id, anonymous included
 
     // Serve point 11 — this route ranks (discoverGems: verification weight +
     // saves + visits + vibe-tag match) and served its results to users while
@@ -713,7 +713,7 @@ router.get("/hidden-gems/nearby", async (req, res) => {
   }
 
   try {
-    const ranked = await findNearbyGems(sc, parsed.data.lat, parsed.data.lng, parsed.data.radiusKm, {
+    const { ranked, truncated: nearbyCut } = await findNearbyGems(sc, parsed.data.lat, parsed.data.lng, parsed.data.radiusKm, {  // §113 (D-W11X2-131)
       category: parsed.data.category,
       limit: parsed.data.limit,
     });
@@ -731,7 +731,7 @@ router.get("/hidden-gems/nearby", async (req, res) => {
       }),
     );
 
-    res.json({ ok: true, gems: stampServedRecommendations(gems, exposureForResponse(res, user.id)), ...gemStateRefusal(projections.values(), "GET /hidden-gems/nearby") });  // §48 DV-40 — every served gem carries its exposure id
+    res.json({ ok: true, gems: stampServedRecommendations(gems, exposureForResponse(res, user.id)), ...gemStateRefusal(projections.values(), "GET /hidden-gems/nearby"), ...(nearbyCut ? { truncated: true } : {}) });  // §113 (D-W11X2-131): a cut scan is never "no gems near you"  // §48 DV-40 — every served gem carries its exposure id
 
     // Serve point 11 — same reasoning as GET /hidden-gems above; the `route`
     // field is what separates the two in the corpus. findNearbyGems ranks by

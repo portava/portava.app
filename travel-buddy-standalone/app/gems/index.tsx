@@ -4,7 +4,7 @@
  *
  * Tab bar: Discover · Saved · Layover
  */
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
   TextInput, ActivityIndicator, RefreshControl, ScrollView,
@@ -13,7 +13,7 @@ import {
 import { CachedImage } from '../../src/components/CachedImage';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { useGemList, useSavedGems, useLayoverGems } from '../../src/hooks/useHiddenGems';
+import { useGemList, useSavedGems, useLayoverGems, useNearbyGems } from '../../src/hooks/useHiddenGems';
 import { getCurrentGps } from '../../src/services/location';
 import { verificationBadge, sensitivityLabel, type HiddenGem, type GemCategory } from '../../src/services/hiddenGems';
 import { GemStateBadge } from '../../src/components/gems/GemStateBadge';
@@ -129,10 +129,17 @@ function DiscoverTab({ viewMode = 'list' }: { viewMode?: 'list' | 'map' }) {
   const [nearMe, setNearMe]       = useState(false);
   const [myCoords, setMyCoords]   = useState<{ lat: number; lng: number } | null>(null);
 
-  const { gems: allGems, loading, error, refresh } = useGemList({
+  const list = useGemList({
     city:     appliedCity || undefined,
     category: category === 'all' ? undefined : category,
   });
+  // census-discovery §113 (DV-83, D-W11X2-131): "Near Me" asks the server for gems near the viewer. It used to
+  // filter, on the device, the default page the list above holds (the server's first 40 gems, ranked from a capped
+  // scan of every active gem), and said "No hidden gems found" when none of those 40 was near.
+  const near = useNearbyGems(nearMe ? myCoords : null, category === 'all' ? undefined : category);
+  const nearMeOn = nearMe && myCoords != null;
+  const { gems, loading, error, refresh } = nearMeOn ? near : list;
+  const nearMeCut = nearMeOn && near.truncated;
 
   // Real "Near Me": fetch device GPS on demand, then filter/sort by distance.
   const handleNearMe = useCallback(async () => {
@@ -146,19 +153,6 @@ function DiscoverTab({ viewMode = 'list' }: { viewMode?: 'list' | 'map' }) {
     setNearMe(true);
   }, [nearMe]);
 
-  const gems = useMemo(() => {
-    if (!nearMe || !myCoords) return allGems;
-    const distKm = (lat: number, lng: number) => {
-      const dLat = (lat - myCoords.lat) * Math.PI / 180;
-      const dLng = (lng - myCoords.lng) * Math.PI / 180;
-      const a = Math.sin(dLat / 2) ** 2
-        + Math.cos(myCoords.lat * Math.PI / 180) * Math.cos(lat * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
-      return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    };
-    return allGems
-      .filter((g) => g.lat != null && g.lng != null && distKm(g.lat, g.lng) <= 50)
-      .sort((a, b) => distKm(a.lat!, a.lng!) - distKm(b.lat!, b.lng!));
-  }, [allGems, nearMe, myCoords]);
 
   const applySearch = useCallback(() => { setApplied(city.trim()); }, [city]);
 
@@ -231,8 +225,8 @@ function DiscoverTab({ viewMode = 'list' }: { viewMode?: 'list' | 'map' }) {
         ) : gems.length === 0 ? (
           <View style={styles.center}>
             <Ionicons name="diamond-outline" size={48} color="#8A9BB5" />
-            <Text style={styles.emptyTitle}>No hidden gems found</Text>
-            <Text style={styles.emptySubtitle}>Try a different city or category</Text>
+            <Text style={styles.emptyTitle}>{nearMeCut ? "Couldn't check every gem near you" : nearMeOn ? 'No hidden gems near you' : 'No hidden gems found'}</Text>
+            <Text style={styles.emptySubtitle}>{nearMeCut ? 'Try again, or search a city' : nearMeOn ? 'Try a different category' : 'Try a different city or category'}</Text>
           </View>
         ) : (
           <FlatList
@@ -244,6 +238,7 @@ function DiscoverTab({ viewMode = 'list' }: { viewMode?: 'list' | 'map' }) {
             contentContainerStyle={styles.list}
             refreshControl={<RefreshControl refreshing={loading} onRefresh={refresh} />}
             ItemSeparatorComponent={() => <View style={styles.sep} />}
+            ListHeaderComponent={nearMeCut ? <Text style={styles.emptySubtitle}>Showing some gems near you</Text> : null}
             onScroll={navBarScrollHandler}
             scrollEventThrottle={16}
             ListFooterComponent={<NavBarFiller />}

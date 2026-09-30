@@ -233,7 +233,7 @@ router.get("/map/search", asyncHandler(async (req, res) => {
 
   if (want("gem")) tasks.push((async () => {
     // Same gap as travelers: findNearbyGems returns a bare array.
-    const ranked = await findNearbyGems(sc, lat, lng, radiusKm, { limit: 60 }).catch(() => null);
+    const found = await findNearbyGems(sc, lat, lng, radiusKm, { limit: 60 }).catch(() => null); const ranked = found === null ? null : found.ranked;  // §113 (D-W11X2-131)
     if (ranked === null) { sources.gem = { refusal: "gems_threw", collected: 0 }; return; }
     const notBlocked = ranked.filter((r: any) => !r.gem?.submitted_by || !blockedSet.has(r.gem.submitted_by));
     const safe = await applyGemPrivacyBatch(notBlocked.map((r: any) => r.gem), sc, user.id).catch(() => null);
@@ -241,7 +241,7 @@ router.get("/map/search", asyncHandler(async (req, res) => {
     // a privacy-filter outage from reading as a quiet neighbourhood.
     if (safe === null) { sources.gem = { refusal: "gem_privacy_unavailable", collected: 0 }; return; }
     safe.forEach((g: any, i: number) => results.push(normalizeGem(g, notBlocked[i]?.distanceKm ?? null)));
-    sources.gem = { refusal: null, collected: safe.length };
+    sources.gem = { refusal: found!.truncated ? "gems_capped" : null, collected: safe.length };  // §113 (DV-83, D-W11X2-131): a cut gem scan is not a complete source
   })());
 
   if (want("event")) tasks.push((async () => {

@@ -16,7 +16,7 @@ import {
   verifyGemVisit,
   reportGem,
   getTripcityGems,
-  getLayoverGems,
+  getLayoverGems, listNearbyGems, type GemCategory,  // listNearbyGems: census-discovery §113 (D-W11X2-131)
   type HiddenGem,
   type ListGemsOptions,
   type GuideProfile,
@@ -220,4 +220,44 @@ export function useGemReport() {
   }, []);
 
   return { report, loading, done };
+}
+
+// ── useNearbyGems ──────────────────────────────────────────────────────────────
+
+/**
+ * Gems near the viewer, read from the server (census-discovery §113, DV-83, D-W11X2-131). Idle (no rows, not
+ * loading) until there is a position. Like the hooks above it keeps only its latest request's answer, clears the
+ * previous position's or category's rows when the query changes, and keeps a failed read as an error. `truncated`
+ * says the server cut its scan or its list: the screen must never say "none" over it.
+ */
+export function useNearbyGems(coords: { lat: number; lng: number } | null, category?: GemCategory, radiusKm = 50) {
+  const [gems, setGems]           = useState<HiddenGem[]>([]);
+  const [truncated, setTruncated] = useState(false);
+  const [loading, setLoading]     = useState(false);
+  const [error, setError]         = useState<string | null>(null);
+
+  const key = coords ? `${coords.lat}:${coords.lng}:${category ?? ''}:${radiusKm}` : null;
+  const latest = useRef(0);
+  const shownKey = useRef<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    const req = ++latest.current;
+    if (shownKey.current !== key) { shownKey.current = key; setGems([]); setTruncated(false); }
+    if (!coords) { setLoading(false); setError(null); return; }
+    setLoading(true);
+    setError(null);
+    try {
+      const next = await listNearbyGems(coords.lat, coords.lng, radiusKm, category);
+      if (req === latest.current) { setGems(next.gems); setTruncated(next.truncated); }
+    } catch (e: any) {
+      if (req === latest.current) { setGems([]); setTruncated(false); setError(e?.message ?? 'Failed to load gems near you'); }
+    } finally {
+      if (req === latest.current) setLoading(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  return { gems, truncated, loading, error, refresh };
 }

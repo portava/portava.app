@@ -619,7 +619,7 @@ router.get(
           // yield [] and still push "gems", so a viewer whose gem privacy could
           // not be resolved was told, authoritatively, that there are no gems
           // here — and the client then did not fall back.
-          const ranked = await findNearbyGems(sc, lat, lng, radiusKm, { limit: 100 }).catch(() => null);
+          const found = await findNearbyGems(sc, lat, lng, radiusKm, { limit: 100 }).catch(() => null); const ranked = found === null ? null : found.ranked;  // census-discovery §113 (D-W11X2-131)
           if (ranked === null) return;
           const notBlocked = ranked.filter(
             (r: any) => !r.gem?.submitted_by || !blockedSet.has(r.gem.submitted_by),
@@ -633,7 +633,7 @@ router.get(
           safe.forEach((g: any, i: number) =>
             collected.push(projectGem(g, notBlocked[i]?.distanceKm ?? null)),
           );
-          sources.push("gems");
+          if (!found!.truncated) sources.push("gems");  // §113 (DV-83, D-W11X2-131): a cut gem scan is not named as read
         })(),
       );
     }

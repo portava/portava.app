@@ -464,3 +464,20 @@ export function verificationBadge(level: GemVerificationLevel): string {
 // ── §16.1 OUTCOME (census-media §21) — pure helpers live in hiddenGemsMappers
 // (no react-native), so node tests and the gem page share one definition.
 export { normalizeGemVisitOutcomes, gemVisitOutcomeSentence, type GemVisitOutcomes } from './hiddenGemsMappers.ts';
+
+/**
+ * Gems near a point (GET /hidden-gems/nearby), and whether the server CUT the answer (census-discovery §113, DV-83,
+ * D-W11X2-131): its scan hit a cap or the list was sliced to `limit`. A cut answer is never "no gems near you".
+ */
+export async function listNearbyGems(
+  lat: number,
+  lng: number,
+  radiusKm: number,
+  category?: GemCategory,
+  limit = 50,
+): Promise<{ gems: HiddenGem[]; truncated: boolean }> {
+  const params = new URLSearchParams({ lat: String(lat), lng: String(lng), radiusKm: String(radiusKm), limit: String(limit) });
+  if (category) params.set('category', category);
+  const data = await apiFetch<{ gems: any[]; truncated?: boolean }>(`/api/hidden-gems/nearby?${params}`);
+  return { gems: (data.gems ?? []).map(mapGem), truncated: data.truncated === true };
+}

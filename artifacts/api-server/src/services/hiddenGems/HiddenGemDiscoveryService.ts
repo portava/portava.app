@@ -80,7 +80,7 @@ export interface RankedGem {
 export async function discoverGems(
   db: SupabaseClient,
   opts: DiscoverGemsOptions = {},
-): Promise<RankedGem[]> {
+): Promise<GemDiscovery> {
   // Proximity path: bound the fetch to a lat/lng box so we don't pull the whole
   // active table and radius-filter in JS. Without this, a global /nearby query
   // fetched up to 300 status-only rows in unspecified order — which could BOTH
@@ -126,7 +126,7 @@ export async function discoverGems(
     );
   }
 
-  q = q.limit(Math.min((opts.limit ?? 60) * 3, 300)); // over-fetch for client-side ranking
+  const scanCap = Math.min((opts.limit ?? 60) * 3, 300); q = q.order("updated_at", { ascending: false }).limit(scanCap + 1); // over-fetch for client-side ranking — census-discovery §113 (DV-83, D-W11X2-131): freshest first, and one row past the cap so a cut scan is known
 
   if (opts.city)     q = q.ilike("city", opts.city);
   if (opts.neighborhood) q = q.ilike("neighborhood", opts.neighborhood);
@@ -139,7 +139,7 @@ export async function discoverGems(
   const { data, error } = await q;
   if (error) throw error;
 
-  const gems = data ?? [];
+  const scanCut = (data ?? []).length > scanCap; const gems = (data ?? []).slice(0, scanCap);  // §113: the radius filter and the slice run after this cut, so the cut is carried to the answer
   const vibeTags = opts.vibeTags ?? [];
 
   // Score + optional proximity filter
@@ -156,7 +156,7 @@ export async function discoverGems(
   ranked.sort((a, b) => b.score - a.score);
 
   const start = opts.offset ?? 0;
-  return ranked.slice(start, start + (opts.limit ?? 40));
+  return { ranked: ranked.slice(start, start + (opts.limit ?? 40)), truncated: scanCut || ranked.length > start + (opts.limit ?? 40) };  // §113 (D-W11X2-131): a cut scan or a sliced list is said
 }
 
 /**
@@ -170,7 +170,7 @@ export async function findNearbyGems(
   lng: number,
   radiusKm: number,
   opts: Pick<DiscoverGemsOptions, "city" | "category" | "limit"> = {},
-): Promise<RankedGem[]> {
+): Promise<GemDiscovery> {
   return discoverGems(db, {
     ...opts,
     userLat: lat,
@@ -189,7 +189,7 @@ export async function getPersonalisedRecommendations(
   userId: string,
   city?: string,
   limit = 20,
-): Promise<RankedGem[]> {
+): Promise<GemDiscovery> {
   // Collect user's vibe-tag preferences from saved/visited gems
   const { data: savedRows } = await db
     .from("hidden_gem_saves")
@@ -208,4 +208,14 @@ export async function getPersonalisedRecommendations(
     vibeTags: Array.from(preferredTags),
     limit,
   });
+}
+
+/**
+ * A discovery answer (census-discovery §113, DV-83, D-W11X2-131): the ranked page, and whether it is CUT — the
+ * scan hit its cap (the radius filter runs after the scan, so a gem beyond the cap is never seen) or the ranked list
+ * was sliced to `limit`. A cut answer is served, but no caller may state it as the whole answer.
+ */
+export interface GemDiscovery {
+  ranked: RankedGem[];
+  truncated: boolean;
 }
