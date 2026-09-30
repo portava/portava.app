@@ -4648,6 +4648,14 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/data/discovery.ts",  // §114 names its `export *` from src/__fixtures__, which puts that directory in the bundle (GH28)
     // census-discovery §115 (lane W11-X2, round 18): the files §115 grades.
     "artifacts/api-server/src/lib/buddyMapRead.ts",  // §115 grades the buddy layer's flag read (B8)
+    "artifacts/api-server/src/routes/events.ts",  // §115 grades GET /events' cut signal and near* filter (B12)
+    "artifacts/api-server/src/lib/circleLocationsRead.ts",  // §115 grades the circle reader's unread stop and block set (SW6)
+    "artifacts/api-server/src/lib/mapProducers/personalCityProducer.ts",  // §115 grades the personal-city fold's cut (SW5)
+    "travel-buddy-standalone/src/features/map/layers/layerPageCut.ts",  // §115 grades the rollback path's page-cut mark (B12)
+    "travel-buddy-standalone/src/components/map/CityTimeline.tsx",  // §115 grades the city timeline's not-whole state (SW9)
+    "travel-buddy-standalone/src/services/map.ts",  // §115 grades the rollback friends read (SW6)
+    "travel-buddy-standalone/src/services/events.ts",  // §115 grades the events list type's `truncated` (B12)
+    "travel-buddy-standalone/src/services/rentABuddy.ts",  // §115 grades the buddy search type's `refusal` (SW8)
     "travel-buddy-standalone/src/hooks/__tests__/useMapEntities.unreadOptional.component.test.tsx",
     "travel-buddy-standalone/src/hooks/__tests__/useMapEntities.legacyGemsCut.component.test.tsx",
     "travel-buddy-standalone/app/map/__tests__/mapScreen.unreadLayers.component.test.tsx",
