@@ -1527,6 +1527,16 @@ describe("DV-83 guard reach — the round-17 verifier's fixtures (§115)", () =>
     assert.match(out, /export \* as ns from '\.\/z\.ts';/);
     assert.doesNotMatch(out, /gone/);
   });
+  it('G13 GH33e: a `.ts` file the TSX grammar misreads (a `<T>x` cast) is parsed as TS, so its imports and comments are still read', () => {
+    const out = canonicalSource("const n = <number>value; /* gone */\nimport { a } from './x.ts';\n");
+    assert.match(out, /import \{ a \} from '\.\/x\.ts';/);
+    assert.doesNotMatch(out, /gone/);
+  });
+  it('G13 GH35c: a second raw site in a registered consumer, its carrier spelled with a unicode escape, fails', () => {
+    const PASSPORT = 'src/components/compass/CompassPassportSuggestions.tsx';
+    const site = "\nexport async function zzSecondEscGH35c(): Promise<number> {\n  const res = await fetchCompassRecomm\\u0065ndations({ surface: 'passport', limit: 3 });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n";
+    assert.throws(() => withFiles({ [PASSPORT]: read(PASSPORT) + site }, wholeGuard), /call site|every site|predicate|sites/i);
+  });
   it('G13 GH39: a raw consumer in a `.test.mjs` file Metro bundles (its blockList does not block .mjs) is caught (R3)', () => {
     assert.equal(isClientSource('a.test.mjs'), true, "Metro's blockList does not block .test.mjs, so the walk reads it");
     assert.equal(isClientSource('a.test.tsx'), false);

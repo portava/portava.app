@@ -1658,6 +1658,13 @@ describe("§115 SW5: a city-model or personal-city read cut at its cap is not na
     assert.equal(body.worldIntelligence.personalCities.capped, true);
     assert.equal(body.sources.includes("personal_cities"), false, `personal_cities named over a cut read: ${JSON.stringify(body.sources)}`);
   });
+  it("SW5e the served read: the viewer's stamps name more than MAX_PERSONAL_CITIES viewport cities (well under the row cap) → personal_cities not named", async () => {
+    const cities = manyCities(MAX_PERSONAL_CITIES + 1);
+    const stamps = cities.map((c: any, i: number) => stampRow(`sz${i}`, USER, c.name, "2026-02-01T00:00:00.000Z"));
+    const { body } = await projection(worldState(Date.now(), { geo_zones: cities, passport_stamps: stamps }));
+    assert.equal(body.worldIntelligence.personalCities.capped, true, JSON.stringify(body.worldIntelligence.personalCities));
+    assert.equal(body.sources.includes("personal_cities"), false, `personal_cities named over a cut fold: ${JSON.stringify(body.sources)}`);
+  });
   it("SW5d the viewer's stamps name more than MAX_PERSONAL_CITIES cities → the fold is cut: capped (a city in view may be past it)", () => {
     const { cities } = parseCityGeographies(manyCities(MAX_PERSONAL_CITIES + 1));
     assert.equal(cities.length, MAX_PERSONAL_CITIES + 1);
