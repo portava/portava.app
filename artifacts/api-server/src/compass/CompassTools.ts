@@ -1739,7 +1739,7 @@ async function toolWhosAround(
   profile: CompassProfile | null,
   userId: string,
 ): Promise<unknown> {
-  const { people, contextsChecked, unread, truncated } = await getWhosAround(sc, userId, hiddenUserIds(profile)); if (unread && people.length === 0) return { people: [], info: WHOS_AROUND_UNREAD_INFO };  // census-discovery §107 (DV-83, D-W11X2-73): a failed presence read is neither "no active trips" nor "nobody is sharing"
+  const whosRead = await getWhosAround(sc, userId, hiddenUserIds(profile)); const truncated = whosRead.truncated; const { people, contextsChecked, unread } = whosRead; if (unread && people.length === 0) return { people: [], info: WHOS_AROUND_UNREAD_INFO };  // census-discovery §107 (DV-83, D-W11X2-73): a failed presence read is neither "no active trips" nor "nobody is sharing"
   if (contextsChecked === 0) {
     return { people: [], info: "The user has no active trips or upcoming events with a circle to check." };
   }
