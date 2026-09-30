@@ -1018,7 +1018,7 @@ async function toolSearchPlaces(
   const withheldDetail = safeHeld.withheld > 0 ? safeHeld.detail : held.detail;
   return safeHeld.kept.length > 0
     ? { candidates: safeHeld.kept, ranked: ranking !== null, attention: wire, safetyAttention: safetyWire }
-    : { candidates: [], attention: wire, safetyAttention: safetyWire, info: rankingUnchecked(ranking) ? TOOL_SAFETY_UNCHECKED_INFO : rankingFlagsUnread(ranking) ? TOOL_FLAGS_UNREAD_INFO : withheldTotal > 0 ? `No candidates offered: ${withheldDetail}` : "No matching places found in the catalog." };  // §110 (D-W11X2-92)
+    : { candidates: [], attention: wire, safetyAttention: safetyWire, info: rankingUnchecked(ranking) ? TOOL_SAFETY_UNCHECKED_INFO : rankingFlagsUnread(ranking) ? TOOL_FLAGS_UNREAD_INFO : withheldTotal > 0 ? `No candidates offered: ${withheldDetail}` : rows.length >= limit ? cappedReadInfo(limit, "places in the catalog") : "No matching places found in the catalog." };  // §110 (D-W11X2-92)
 }
 
 async function toolSearchEvents(
@@ -1099,7 +1099,7 @@ async function toolSearchEvents(
   const withheldDetail = safeHeld.withheld > 0 ? safeHeld.detail : held.detail;
   return safeHeld.kept.length > 0
     ? { candidates: safeHeld.kept, ranked: ranking !== null, attention: wire, safetyAttention: safetyWire }
-    : { candidates: [], attention: wire, safetyAttention: safetyWire, info: rankingUnchecked(ranking) ? TOOL_SAFETY_UNCHECKED_INFO : rankingFlagsUnread(ranking) ? TOOL_FLAGS_UNREAD_INFO : withheldTotal > 0 ? `No candidates offered: ${withheldDetail}` : ((data ?? []) as any[]).length >= limit * 2 ? cappedReadInfo(limit * 2, "upcoming public events") : "No matching upcoming public events found." };  // §110 (D-W11X2-92, D-W11X2-102): an unread flag read, or a read cut at its cap, is not "none"
+    : { candidates: [], attention: wire, safetyAttention: safetyWire, info: rankingUnchecked(ranking) ? TOOL_SAFETY_UNCHECKED_INFO : rankingFlagsUnread(ranking) ? TOOL_FLAGS_UNREAD_INFO : withheldTotal > 0 ? `No candidates offered: ${withheldDetail}` : ((data ?? []) as any[]).filter((e) => !hidden.has(e.host_id as string)).length > limit ? cappedReadInfo(limit, "upcoming public events") : ((data ?? []) as any[]).length >= limit * 2 ? cappedReadInfo(limit * 2, "upcoming public events") : "No matching upcoming public events found." };  // §110 (D-W11X2-92, D-W11X2-102): an unread flag read, or a read cut at its cap, is not "none"
 }
 
 async function toolGetPlaceDetails(sc: SupabaseClient, args: Record<string, unknown>): Promise<unknown> {
@@ -2161,7 +2161,7 @@ async function toolGroupRecommendation(
       if (!fit.ok) { if (fit.reason) groupConstraintsApplied.push(fit.reason); continue; }
       constrained.push(e);
     }
-    const visible = constrained.slice(0, limit);
+    const visible = constrained.slice(0, limit); if (constrained.length > limit) readCapped = limit;  // census-discovery §111 (DV-83, D-W11X2-106): a read cut by its cap, or rows a slice dropped, are never "none"
     const rankItems: CompassItem[] = visible.map((e) => ({
       id:            String(e.id),
       type:          "event",
@@ -2192,7 +2192,7 @@ async function toolGroupRecommendation(
     if (city) q = q.ilike("city", sqlPattern(city));
     const { data, error } = await q.limit(limit);
     if (error) return { candidates: [], info: "Place search unavailable right now." };
-    const rows = (data ?? []) as any[];
+    const rows = (data ?? []) as any[]; if (rows.length >= limit) readCapped = limit;  // census-discovery §111 (DV-83, D-W11X2-106): a read cut by its cap, or rows a slice dropped, are never "none"
     const rankItems: CompassItem[] = rows.map((p) => ({
       id:           String(p.id),
       type:         "suggestion",
@@ -2235,7 +2235,7 @@ async function toolGroupRecommendation(
         candidates: [],
         group: { label: group.groupLabel, size: agg.size, memberHandles },
         groupConstraintsApplied: [...new Set(groupConstraintsApplied)],
-        info: unchecked ? TOOL_SAFETY_UNCHECKED_INFO : flagsUnread ? TOOL_FLAGS_UNREAD_INFO : readCapped > 0 ? cappedReadInfo(readCapped, "events for the whole group") : "No candidates satisfy the whole group's constraints right now.",  // §110 (D-W11X2-92): an unread flag read is not "no candidates"
+        info: unchecked ? TOOL_SAFETY_UNCHECKED_INFO : flagsUnread ? TOOL_FLAGS_UNREAD_INFO : readCapped > 0 ? cappedReadInfo(readCapped, kind === "events" ? "events for the whole group" : "places for the whole group") : "No candidates satisfy the whole group's constraints right now.",  // §110 (D-W11X2-92): an unread flag read is not "no candidates"
       };
 }
 
