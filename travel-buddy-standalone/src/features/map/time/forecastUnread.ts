@@ -24,12 +24,12 @@ export function forecastLayersUnread(
  * The server's past arm answers a failed `places` or snapshot-versions read `history: { available: false }` and
  * names `refusal: "history_unreadable"`; a window with genuinely nothing observed is `available: true, covering: 0`.
  * A historical target answered with no history report, or with `available: false`, read nothing — never "the past
- * was empty". The flag-off envelope (`enabled: false`) is not a failed read.
+ * was empty". The flag-off envelope (`enabled: false`) carries no target, so it is not a failed read.
  */
 export function historyUnread(
-  data: Pick<MapTemporalEnvelope, 'enabled' | 'history'> & Partial<Pick<MapTemporalEnvelope, 'target'>>,
+  data: Pick<MapTemporalEnvelope, 'history'> & Partial<Pick<MapTemporalEnvelope, 'target'>>,
 ): boolean {
-  return data.enabled && data.target?.mode === 'historical' && (!data.history || data.history.available === false);
+  return data.target?.mode === 'historical' && (!data.history || data.history.available === false);
 }
 
 /**

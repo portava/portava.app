@@ -560,7 +560,7 @@ router.get(
 
     if (target.mode === "historical" && wantKind("place")) {
       const read = await readHistory(sc, bbox, target).catch(
-        (): HistoryRead => ({ rows: null, placesById: new Map(), failed: ["places", "intel_state_snapshot_versions"] }),
+        (): HistoryRead => ({ rows: null, placesById: new Map() }),
       );
       const history = projectHistory(read.rows, read.placesById, target);
       for (const o of history.objects) collected.push(o);

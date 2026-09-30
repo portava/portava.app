@@ -75,13 +75,13 @@ describe('forecastLayersUnread over a refused or report-less forecast (§112, D-
 describe('historyUnread and temporalNotice (§113, D-W11X2-130)', () => {
   const past = { at: '2026-09-30T09:00:00.000Z', mode: 'historical' as const };
   it('FU7 a past answer with available:false, or with no history report, read no history', () => {
-    assert.equal(historyUnread({ enabled: true, history: { available: false, covering: 0 }, target: past }), true);
-    assert.equal(historyUnread({ enabled: true, history: null, target: past }), true);
+    assert.equal(historyUnread({ history: { available: false, covering: 0 }, target: past }), true);
+    assert.equal(historyUnread({ history: null, target: past }), true);
   });
   it('FU7c CONTROL: an empty-but-read past, a forecast target and the flag-off envelope are not unread history', () => {
-    assert.equal(historyUnread({ enabled: true, history: { available: true, covering: 0 }, target: past }), false);
-    assert.equal(historyUnread({ enabled: true, history: null, target: target('forecast') }), false);
-    assert.equal(historyUnread({ enabled: false, history: null, target: null }), false);
+    assert.equal(historyUnread({ history: { available: true, covering: 0 }, target: past }), false);
+    assert.equal(historyUnread({ history: null, target: target('forecast') }), false);
+    assert.equal(historyUnread({ history: null, target: null }), false);
   });
   it('FU8 the notice: a failed read first, then a read in flight, then an unread forecast layer, else none', () => {
     assert.equal(temporalNotice({ failed: true, loading: true, unreadForecastLayers: ['events'] }), "Couldn't load the map for this time");
