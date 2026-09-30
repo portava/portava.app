@@ -18922,6 +18922,30 @@ check:unissued-supabase-writes exit=0
 - **The guard-hole fixtures**, placed alone in the tree and removed (the verifier's `run-guard-holes.sh`): GH0, GH5, GH6, GH7 each make G2 and G6 fail; GH8 and GH9 each make G9 fail; the two registered files were restored and their sha256 matched.
 - **Regression: the round-13 verifier's 42 mutations** and its 8 kill re-applications (§111.10): 48 killed, X18 and X18k equivalent. The sha256 matched on every application, and `git status` was clean of source changes after every run.
 
+## §112 — DV-83 round 15 (lane W11-X2)
+
+### 112.1 Integrator: DV-83 held at W after independent re-verification at `76e515539`
+
+*Integrator, 2026-09-30. §111 is PR #530's head at `76e515539`. An independent verifier checked that tree: it re-ran every round-13, round-12, round-11, round-10, round-9, round-8 and round-7 probe unchanged, wrote new ones (`zz-v14-*` and six guard-reach fixtures GH10–GH15), applied 38 mutations of its own, and restored every mutated file byte-identical, checked by sha256. Its report is the round-14 verifier's `dv83-r14-verifier.md`.*
+
+- **Confirmed.** §111.1's eight breaks, GH0–GH9 and every earlier round's breaks are closed in behaviour: the v13 to v7 probes re-run unchanged all pass (107 server, 20 client). The safety fix at /compass/ask holds (round 14's PU1–PU7, PR1, PR2, and the verifier's AM0–AM2 over eight tools). 37 of its 38 mutations are killed by the lane's pins; SF2 is equivalent, confirmed.
+- **Found: five paths that break the criterion's wording, each shown by a probe that fails against this tree (6 red probes).**
+  1. **B1. The temporal gateway answers a failed blocks read as an enabled, empty forecast (clauses a, c)**: 200 `{ enabled: true, sources: [], forecast: null }` with no refusal, and the client's `forecastLayersUnread` reports nothing unread, so the Time Machine draws the honest-empty state (V14-TB1, V14-TM1 red; V14-TB0, TM0 the controls).
+  2. **B2. After a failed read the Time Machine keeps the previous offset's objects and forecast (clause c)** — a failed read drawn over the wrong rows (V14-TM2 red).
+  3. **B3. The Gems screen's Layover tab says "No quick gems nearby" over a failed read (clause c)** (V14-GL1 red; V14-GL0 the control).
+  4. **B4. `useGemList` has no stale-response guard (clause c)**: a late answer for one city is held under another city's query (V14-GL2 red).
+  5. **B5. GET /hidden-gems/trip-city/:tripId answers a failed trips read `404 "Trip not found"` (clause a)** (V14-TC1 red; V14-TC0 the control).
+- **Rulings not honest.** D-W11X2-115's client leg ("the client says a forecast layer it was not sent could not be read") (B1) and D-W11X2-111's "every screen that reads them shows its error state … never an empty or 'off' one" (B3).
+- **The guard's reach.** GH10–GH15 escape it: a consumer in the app's root `components/`, a template-literal dynamic import, a local re-export from a registered file, a second raw site called through `.call` or through an object-property alias, and a second call site of a `services/discovery.ts` carrier in a registered file. No production consumer uses these forms.
+- **Outside DV-83, safety (census-compass, census-trust).** S1: a failed `user_mutes` read sends /compass/feed and /feed/section to the fallback feed, which never reads mutes, so a muted author's post is served; census-compass §34.1's "the fallback feed already degrades … when its block list cannot be read" does not cover mutes. S2: GET /events and POST /events/:id/waitlist read `events_trust_gates_enabled` two-state, so an unread flag skips the viewer gates. S3: the same two routes bind no error on the banned-role read. The three are handed to the safety lane; they are not DV-83 breaks.
+- **Next.** A round-15 lane closes B1–B5 with the verifier's probes as failing-first tests, closes GH10–GH15 with its fixtures, corrects the two rulings, and sweeps the client hooks and the Hidden Gems routes again. The row moves only after that.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | C | **W** | §111 closes §111.1's eight paths, confirmed at `76e515539` (§112.1). Five paths still present a failed read as empty or over the wrong rows: the temporal gateway's failed blocks read (`artifacts/api-server/src/routes/mapProjectionTemporal.ts`) and the client that reads it, the Time Machine's previous offset kept after a failed read, the Gems Layover tab's empty state over a failed read, `useGemList`'s stale response, and GET /hidden-gems/trip-city's failed trips read. GH10–GH15 escape the guard. D-W11X2-111 and -115 are not honest in part. |
+
+Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: travel-buddy-standalone/app/discover.tsx — §105.11 names it only as a path seen and not built, left for its owner, and §106 records Find Travelers' failed-search state and generation guard: it is the social people search over services/follows.ts, not a Discovery envelope, and no Discovery row or DV-83 verdict rests on it.
