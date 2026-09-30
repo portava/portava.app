@@ -4607,6 +4607,22 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/features/map/time/forecastUnread.ts",  // §111 grades the client's unread forecast layer (D-W11X2-115)
     "artifacts/api-server/src/routes/mapProjectionTemporal.ts",  // §111 grades the forecast's events source (D-W11X2-115)
     "artifacts/api-server/src/lib/blockGuard.ts",  // §111 grades readBlockBetween (D-W11X2-107)
+    // census-discovery §112 (lane W11-X2, round 15): the round's suites and the files §112 grades.
+    "artifacts/api-server/src/test/mapTemporalBlocksUnread.test.ts",
+    "artifacts/api-server/src/test/hiddenGemsTripCityUnread.test.ts",
+    "travel-buddy-standalone/src/hooks/__tests__/useTemporalEntities.failedRead.component.test.tsx",
+    "travel-buddy-standalone/app/gems/__tests__/gemsFailedRead.component.test.tsx",
+    "travel-buddy-standalone/src/hooks/__tests__/useMapTravelers.failedRead.component.test.tsx",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryMapView.travelersFailedRead.component.test.tsx",
+    "travel-buddy-standalone/src/hooks/useTemporalEntities.ts",  // §112 grades the Time Machine's failed state (D-W11X2-122)
+    "travel-buddy-standalone/src/hooks/useHiddenGems.ts",  // §112 grades the Hidden Gems hooks' request ids and the Layover error (D-W11X2-123, -124)
+    "travel-buddy-standalone/app/gems/index.tsx",  // §112 grades the Layover tab's error state (D-W11X2-123)
+    "travel-buddy-standalone/src/hooks/useMapTravelers.ts",  // §112 grades the travelers layer's failed read (D-W11X2-127)
+    "travel-buddy-standalone/src/components/map/TimeMachineControl.tsx",  // §112 grades the historical strip's notice (D-W11X2-122)
+    "travel-buddy-standalone/src/components/discovery/DiscoveryMapView.tsx",  // §112 grades the travelers badge over a failed read (D-W11X2-127)
+    "travel-buddy-standalone/src/services/mapTemporal.ts",  // §112 grades the envelope's refusal and nullable report (D-W11X2-121)
+    "travel-buddy-standalone/src/components/layover/LayoverDiscoveryCard.tsx",  // §112 corrects its comment on useLayoverGems (D-W11X2-123)
+    "artifacts/api-server/src/lib/mapTravelers.ts",  // §112.12 names its unmarked caps as seen and left (census-map M144)
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

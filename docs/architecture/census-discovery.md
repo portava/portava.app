@@ -18946,6 +18946,102 @@ check:unissued-supabase-writes exit=0
 
 Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
 
+### 112.2 Round 15: what this lane did
+
+*Written 2026-09-30 by lane W11-X2 (round 15) on `disc-w11-x2-r15`, from `e6e80a8dd` (PR #530's head: round 14 and the merged CI slot fix #546) and §112.1. It closes §112.1's five breaks, each with the verifier's probe copied in as a failing-first test; closes the guard's six reach holes with the verifier's fixtures as failing-first tests (and a seventh it found, GH16); corrects the two rulings the verifier found not honest; and sweeps the client hooks that read a Discovery, Compass, Hidden Gems or map surface, and the Hidden Gems routes, again. The sweep closed one more path (the Discovery map's travelers layer).*
+
+*Outside DV-83, the verifier's three safety findings S1–S3 are NOT fixed here: they are the safety lane's (branch `claude/testing-mode-safety-gates-20260930`, on main; census-compass §35, census-trust §30), and merge in from main. This lane did not edit `CompassFallbackFeedBuilder.ts` or the GET /events list and waitlist handlers. census-compass §34.1's overstatement is corrected in its text (D-W11X2-128).*
+
+*No migration and no new flag. Each change alters output only when a read failed, was refused, or was overtaken by a newer read; with every read healthy and current, every served byte and every rendered screen is unchanged (V14-TB0, TBc, V14-TM0, TMc, FU4c, TMUc, V14-GL0, GLc, V14-TC0, TCc, TRc, TVc). Every edit in a cited file is line-neutral: lines are changed in place, and new code is appended at a file's foot.*
+
+*All evidence is controlled: the real routes over fake clients, jest over the real hooks and screens, and the static guard over an in-memory overlay and over fixtures placed on disk. None of it is production evidence, and no client build carrying the change has shipped.*
+
+### 112.3 The temporal gateway's failed blocks read (§112.1 B1; D-W11X2-121)
+
+The branch that answers a failed `blocks` read now names `refusal: "block_set_unreadable"`, as the NOW gateway does, and a forecast target carries `forecast: { events: null, itinerary: null, plan: null }`, so no layer is named as read and no count is stated. It keeps `enabled: true`, because on this route `enabled: false` means the producer is off and closes the Time Machine; the producer is on, and the refusal is the fact. The client's `forecastLayersUnread` reports `events` for a forecast target answered with no forecast report or with any refusal (`artifacts/api-server/src/routes/mapProjectionTemporal.ts`, `travel-buddy-standalone/src/features/map/time/forecastUnread.ts`; V14-TB1, TB2–TB4, V14-TM1, FU4, FU5 red first; V14-TB0, TBc, V14-TM0, FU4c controls). **D-W11X2-115's client leg is corrected.**
+
+### 112.4 The Time Machine's kept offset (§112.1 B2; D-W11X2-122)
+
+`useTemporalEntities` clears its objects, forecast, history and unread layers when a fetch starts ("[] while loading", its own contract) and exposes `failed` for a `!ok` answer, a rejection or a refused answer. The map screen hands "Couldn't load the map for this time" to the Time Machine ahead of the unread-layer notice, and the historical status strip says a notice as the forecast strip does (`travel-buddy-standalone/src/hooks/useTemporalEntities.ts`, `app/map/index.tsx`, `src/components/map/TimeMachineControl.tsx`; V14-TM2, TM3–TM7, FU6, TMU2 red first; TMc control).
+
+### 112.5 The Gems Layover tab and the Hidden Gems hooks (§112.1 B3, B4; D-W11X2-123, -124)
+
+`useLayoverGems` keeps an error and a refresh instead of `.catch(() => setGems([]))`, and the Layover tab renders the error with Retry, never "No quick gems nearby". `useGemList`, `useGemDetail`, `useSavedGems`, `useTripCityGems` and `useLayoverGems` carry a request id, so only the latest request writes rows, error and loading; the keyed hooks clear the previous query's rows when the query changes (`travel-buddy-standalone/src/hooks/useHiddenGems.ts`, `app/gems/index.tsx`; V14-GL1, GL2, GL3–GL8, GL9a–e, GL10 red first; V14-GL0, GLc controls). **D-W11X2-111's client leg is corrected.**
+
+### 112.6 GET /hidden-gems/trip-city (§112.1 B5; D-W11X2-125)
+
+The trips read binds its error; a failed read is `503 degraded_unavailable`, and a trip the viewer cannot read is still 404 (`artifacts/api-server/src/routes/hiddenGems.ts`, line-neutral; V14-TC1, TC2 red first; V14-TC0, TCc controls).
+
+### 112.7 The guard's reach (GH10–GH16; D-W11X2-126)
+
+The walk reads every top-level directory the app bundles (every directory not named, with its reason, as unbundled) and the root's own sources; a no-substitution template literal is a literal specifier and a computed specifier fails; a local re-export (`export { carrier as x }`, `export const x = carrier`, or of a namespace member) makes its importers consumers; G9 sees `.call`, `.apply`, an object property holding the carrier and a bound copy; a default import before the braces or before a namespace is read (GH16, found while closing the others); and every carrier call site in a registered consumer is counted and pinned (`REGISTERED_SITES`), so a second site of a `services/discovery.ts` carrier must be registered beside the branch and suite that cover it. The overlay lays a fixture only where the walk reads the disk (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts`, G12; the cited lines kept in place, new code at the foot). **D-W11X2-116 is corrected.**
+
+### 112.8 The sweep (D-W11X2-127, D-W11X2-128)
+
+- **Closed: the Discovery map's travelers layer** (D-W11X2-127). GET /map/travelers answers a failed read 5xx, but `useMapTravelers` kept a failed refresh silently and the map said "No travelers sharing here yet" over a failed first read; an in-flight flag dropped a move's read and stored the older centre's answer. The hook sets `error` on every failed read and carries a request id; the map says "Couldn't load travelers" and "· couldn't refresh" beside a kept count (`travel-buddy-standalone/src/hooks/useMapTravelers.ts`, `src/components/discovery/DiscoveryMapView.tsx`, line-neutral; TR2, TR3, TV1, TV2 red first; TR1, TRc, TVc controls).
+- **Swept and sound; seen and left for their owners** — D-W11X2-128 lists both. The Hidden Gems routes have no remaining unbound read that answers 404 or an empty list.
+
+### 112.9 Tests, seen red, and mutations
+
+**Seen red first**, run against the code before each fix (logs in the lane's `r15/red/` scratch directory; where the fix was already written, the test was run over HEAD's version of the source, restored by sha256):
+
+| Area | Red | Controls, green |
+|---|---|---|
+| The temporal gateway's failed blocks read (server) | V14-TB1, TB2, TB3, TB4 | V14-TB0, TBc |
+| The client's reading of it, and the Time Machine | V14-TM1, V14-TM2, TM3, TM4, TM5, FU4, FU5, FU6, TMU2 | V14-TM0, TMc, FU4c, TMUc |
+| The Layover tab and the Hidden Gems hooks | V14-GL1, V14-GL2, GL3–GL8 | V14-GL0, GLc |
+| GET /hidden-gems/trip-city | V14-TC1, TC2 | V14-TC0, TCc |
+| The guard's reach (G12, through the whole guard) | GH10, GH11, GH11b, GH12, GH13, GH14, GH15, GH16 | GH14c, the tree's own pass |
+| Sweep: the travelers layer | TR2, TR3, TV1, TV2 | TR1, TRc, TVc |
+
+**Written against the fixed code**, each shown to bite by the mutation that removes the line it pins: TM6, TM7 (the failed state belongs to one read), GL9a–e and GL10 (an older failure writes nothing; a new trip shows nothing of the old one), G12 GH10b (the roots and the unbundled directories), GH10c, GH12b, GH12c, GH13b, GH15b, GH15c, GH16b and GH16c (the readings the fixes added). **On disk**, the verifier's own runner placed each of GH0–GH15 alone in the tree and removed it: all sixteen are killed, the unfixtured tree passes (fail 0), and every touched registered file was restored with a matching sha256.
+
+**Mutations.** Each was applied alone, its pin suites were run, and the file was restored byte-identically; the sha256 matched on every application, re-runs included. Runner and logs: the lane's `r15/muts/` scratch directory (`run.py`, `defs.py`, `logs/`).
+
+- **69 mutations:** the temporal gateway and trip-city route S1–S8; the client's forecast reading, the Time Machine hook, the map screen and the control C1–C11, C13–C15; the Hidden Gems hooks and the Layover tab G1–G23; the travelers layer T1–T6; the guard GR1–GR18.
+- **Result: 68 killed, 1 equivalent.** **GR2** (reverting the template-literal reading in `valueImports`' dynamic-import loop) is equivalent: that loop's only output is `<dynamic>`, which the function's return filters away; the reading that counts is `otherImportForms`' (GR3, killed) and `requireUses`'. **Re-applications:** C1 and C5 were each also run under a second pin (C1j, killed; C12, which survives the node `forecastUnread` suite alone and is C5, killed by the hook suite). S8's first form broke the healthy control (a double await) and was replaced by a clean one, killed. GR1 survived its first run — the in-memory overlay added a fixture whatever the caller walked — and is killed once the overlay mirrors the caller's walk (`2011c7cf2`); GR10 and GR18 were re-run with it, killed, and every other GR mutation was re-run over the final guard.
+- *Naming.* This round's series are S, C, G, T and GR; the verifier's Y-series is its own.
+
+### 112.10 Checks
+
+- **Line-neutral in every cited file** (`routes/mapProjectionTemporal.ts`, `routes/hiddenGems.ts`, `services/mapTemporal.ts`, `app/map/index.tsx`, `components/map/TimeMachineControl.tsx`, `components/discovery/DiscoveryMapView.tsx`, `components/layover/LayoverDiscoveryCard.tsx`, and the guard's cited lines), so every anchored citation still lands on its text: `check:doc-citations`, `check:citation-targets` and `check:citation-symbols` are clean.
+- **Scope.** This round's suites and `useTemporalEntities.ts`, `useHiddenGems.ts`, `app/gems/index.tsx`, `useMapTravelers.ts`, `TimeMachineControl.tsx`, `DiscoveryMapView.tsx`, `services/mapTemporal.ts`, `LayoverDiscoveryCard.tsx` and `lib/mapTravelers.ts` (cited in §112.12) join this census's `CENSUS_SCOPE`. The acknowledgement for every census that counts a changed file (census-discovery, census-layover) carries a §112 paragraph with its "why it cannot move a verdict". One NOT-GRADED line is added, for `CompassFallbackFeedBuilder.ts` (S1's subject, the safety lane's), which no scope watches.
+- **Suites.** The two new api-server suites are on the `test` line (`check:test-registration`); the new client suites are five jest component suites, none on KNOWN_BROKEN; `check-test-mocks` is clean (each exhaustive mock carries its NOTE).
+- **Allowlist.** No `UNCHECKED_READS_ALLOWLIST.json` entry names the trip-city read (the checker's scope does not reach it), so none is deleted; the checker reports no stale entry.
+- **Write-path select sites.** No write-path `.select()` argument changed; the write-path-columns replica prints OK.
+
+### 112.11 DV-83, restated
+
+§112.1's five breaks are closed, each with the verifier's probe red first and green now. The guard's six reach holes are closed with the verifier's fixtures red first, and a seventh (GH16) with this lane's. The two rulings the verifier found not honest are corrected (D-W11X2-111's and D-W11X2-115's client legs). The sweep closed one more path. Every clause of DV-83's criterion holds on every path this lane examined:
+
+1. **Producers send the refusal envelope or a named failure.** The temporal gateway names `block_set_unreadable` and states no forecast count over a failed blocks read; GET /hidden-gems/trip-city answers a failed trips read 503.
+2. **Nothing refused or partial is cached as complete.** No change here writes a cache; none of the fixed bodies is cached.
+3. **Nothing refused is rendered as empty, as complete, or over the wrong rows.** The Time Machine says a refused or failed read and draws nothing from the previous offset; the Layover tab says a failed read with Retry; no Hidden Gems hook holds an older query's rows; the Discovery map says a failed travelers read and a failed refresh.
+4. **A Compass tool never states a failed or partial read to the model as a fact.** Unchanged this round (round 14's evidence stands, confirmed by the verifier's AM0–AM2).
+5. **Consumers branch on coverage**, and the static guard now reads every bundled root and every import and call-site form found, and pins every carrier call site in a registered consumer (G12).
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§112.1's five breaks are closed, each with its verifier probe red first; the guard's reach holes GH10–GH15 (and GH16) are closed; the sweep closed the travelers layer; 69 mutations: 68 killed, 1 equivalent (GR2). CONTROLLED EVIDENCE ONLY — this row awaits independent re-verification.** **A failed blocks read is named** (`artifacts/api-server/src/routes/mapProjectionTemporal.ts`; V14-TB1, TB2–TB4) **and read by the client** (`travel-buddy-standalone/src/features/map/time/forecastUnread.ts`; V14-TM1, FU4, FU5). **The Time Machine never draws a failed or previous offset** (`travel-buddy-standalone/src/hooks/useTemporalEntities.ts`; V14-TM2, TM3–TM7). **The Layover tab says a failed read, and no Hidden Gems hook holds a stale answer** (`travel-buddy-standalone/src/hooks/useHiddenGems.ts`; V14-GL1, GL2, GL3–GL10). **A failed trips read is not "Trip not found"** (`artifacts/api-server/src/routes/hiddenGems.ts`; V14-TC1, TC2). **The guard sees every consumer form found** (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts`; G12). **Sweep:** the Discovery map's travelers layer (`travel-buddy-standalone/src/hooks/useMapTravelers.ts`; TR2, TR3, TV1, TV2). |
+
+**Headline.** DV-83 moves W → C. `check:census-integrity` counts **C 101 / W 85 / N 2 / X 0** over 188: CONSTRUCTED 186 / 188 = **98.9 %**, CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged. The move is on controlled evidence and awaits independent re-verification.
+
+### 112.12 Left open, and what would turn this red
+
+- **Outside DV-83, handed to the safety lane (D-W11X2-128).** S1 (the Compass fallback feed ignores mutes over a failed mute read), S2 (GET /events' and the waitlist's two-state `events_trust_gates_enabled` read) and S3 (their unbound banned-role reads). Not fixed here; the fixes come from main. census-compass §34.1's overstatement is corrected in its text.
+- **Seen and not built (other owners; D-W11X2-128).** GET /hidden-gems/:id's `savedByMe`, POST /hidden-gems' canonical-place check and the share-to-thread membership read (each fails closed); `lib/mapTravelers.ts`' unmarked caps (census-map M144); the trip map's plan and saved reads, `useTripCrewMap`, the Passport map tab's nearby users and the reminders screen; the dead `getCompassGemContext`.
+- **What would turn DV-83 red again:**
+  - a temporal answer that names no refusal over a failed blocks read, or a client that draws a refused forecast as empty (V14-TB1, TB2, V14-TM1, FU4, FU5);
+  - a Time Machine, Hidden Gems or travelers hook that keeps an older or failed read's rows under a newer query (V14-TM2, TM5, V14-GL2, GL4–GL10, TR3);
+  - a Hidden Gems screen or the travelers layer that says "none" over a failed read (V14-GL1, GL3, TV1);
+  - a failed trips read answered "Trip not found" (V14-TC1, TC2);
+  - a consumer of a refusal-carrying carrier the guard cannot see, or a new carrier call site that is not registered (G12);
+  - any path §111.13 lists.
+
+### 112.13 Results at the final code commit
+
+RESULTS-PENDING
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: travel-buddy-standalone/app/discover.tsx — §105.11 names it only as a path seen and not built, left for its owner, and §106 records Find Travelers' failed-search state and generation guard: it is the social people search over services/follows.ts, not a Discovery envelope, and no Discovery row or DV-83 verdict rests on it.
@@ -19006,3 +19102,4 @@ Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. COR
 - NOT-GRADED: travel-buddy-standalone/src/services/follows.ts — §106 cites the people-search service line that reads a refusal or a list-less 200 as a failed read; no Discovery verdict rests on the follows service.
 - NOT-GRADED: travel-buddy-standalone/app/close-friends.tsx — §106 cites the exact-handle match (D-TMP-4); Close Friends is not a Discovery surface.
 - NOT-GRADED: travel-buddy-standalone/app/__tests__/discover.searchFailureHonesty.component.test.tsx — §106's client evidence for a surface no Discovery row grades.
+- NOT-GRADED: artifacts/api-server/src/compass/CompassFallbackFeedBuilder.ts — §112.1 and §112.2 name it only as the subject of the round-14 verifier's S1 (the fallback feed ignores mutes), handed to the safety lane (census-compass §35) and not edited here; no Discovery verdict rests on it.

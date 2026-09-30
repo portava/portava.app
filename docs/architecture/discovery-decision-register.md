@@ -2973,3 +2973,71 @@ No APPROVAL REQUIRED entry is added. Arming the stop (D-W10-O-3) and gate 2 (D-W
   - The events list routes (`/events/city/:city`, `/nearby`, `/search`, `/circles`, `/near-trip/:tripId`, `/following`) drop a row over a failed per-row block read and state no coverage; GET /events' feed and POST /events/:id/waitlist read `events_trust_gates_enabled` through `isFlagEnabled` (an unread flag skips the viewer gates there — the fail-open this round closed in `checkEventEligibility`). No census grades those routes (census-discovery NOT-GRADED §64.2); for the events owner and census-trust.
   - The Wall's `wall_enabled` gates read the flag two-state (census-wall).
   - The media world's and the call gateway's reading of an unread eligibility check (census-media, census-telegraph; D-W11X2-104, upheld by the verifier).
+
+## W11-X2 round 15 — DV-83's §112.1 paths: the temporal gateway's failed blocks read, the Time Machine's kept offset, the Gems Layover tab, the Hidden Gems hooks' stale answers, GET /hidden-gems/trip-city, the guard's reach, and a sweep (census §112)
+
+### D-W11X2-121 — the temporal gateway names a failed blocks read, and the client reads it; D-W11X2-115's client leg corrected (§112.1 B1)
+
+- **Corrected.** D-W11X2-115 said "the client says a forecast layer it was not sent could not be read". It did not: with `fetchBlockedSet` null, routes/mapProjectionTemporal.ts answered 200 `{ enabled: true, objects: [], sources: [], forecast: null }` with no refusal, and `forecastLayersUnread` returned `[]` for any answer without a forecast report, so the Time Machine drew the honest-empty "Forecast · confidence unavailable" over a read that never ran.
+- **Options.** (a) `enabled: false`, as the NOW gateway answers. Rejected for this route: `enabled: false` is the temporal service's "the producer is off" (the client keeps the Time Machine closed on it), and the producer is on; the refusal is the fact. (b) Keep `enabled: true` and name the refusal, with a forecast report that reads nothing. Chosen.
+- **Decision.** The branch sends `refusal: "block_set_unreadable"` (the NOW gateway's name) and, for a forecast target, `forecast: { events: null, itinerary: null, plan: null }`: no layer is named as read and no count is stated. The client's `forecastLayersUnread` reports `events` for a forecast target answered with no report or with any refusal (`block_set_unreadable`, `protection_unreadable`); the flag-off envelope (no target) and a historical answer report nothing. `TemporalForecastReport.itinerary` and `.plan` are nullable; no client code reads them.
+- **Tests.** `mapTemporalBlocksUnread` (the verifier's V14-TB1 and this lane's TB2–TB4 red first; V14-TB0, TBc controls) and the client's `forecastUnread` (FU4, FU5 red first; FU4c).
+
+### D-W11X2-122 — the Time Machine never draws a failed, refused or in-flight read as an empty or previous offset (§112.1 B2)
+
+- **The finding.** `useTemporalEntities` set its state only on `res.ok`; a `!ok` answer or a rejection kept the previous offset's objects and forecast, drawn by the map under the new offset's label. Its own contract was "[] while idle / loading / disabled".
+- **Decision.** The hook clears objects, forecast, history and the unread layers when a fetch starts, and exposes `failed`: true on `!ok`, on a rejection, and on an answer that names a refusal. The map screen passes "Couldn't load the map for this time" to the Time Machine ahead of the unread-layer notice, and the historical status strip now says a notice as the forecast strip does.
+- **Tests.** `useTemporalEntities.failedRead` (the verifier's V14-TM1, TM2 and TM3–TM5 red first; V14-TM0, TMc), `forecastUnread` FU6 (the wiring) and `TimeMachineControl.forecastUnread` TMU2 (red first).
+
+### D-W11X2-123 — the Gems Layover tab says a failed read, with a Retry; D-W11X2-111's client leg corrected (§112.1 B3)
+
+- **Corrected.** D-W11X2-111 said every screen that reads the Hidden Gems routes shows its error state, never an empty one. `useLayoverGems` did `.catch(() => setGems([]))`, and the Layover tab said "No quick gems nearby — Try a longer window" over a 503 `flag_unreadable`, the layover-window 503 or a network failure.
+- **Decision.** `useLayoverGems` keeps an `error` and a `refresh`; a failed read clears its rows and sets the error. The Layover tab renders the error with Retry, as the Discover tab does. `LayoverDiscoveryCard`'s comment that named the old catch is corrected (line-neutral).
+- **Tests.** `gemsFailedRead` (the verifier's V14-GL1 and GL3 red first; V14-GL0, GLc controls).
+
+### D-W11X2-124 — every Hidden Gems read hook keeps only its latest answer (§112.1 B4)
+
+- **The finding.** `useGemList` set whatever `listGems` answered last, so a slow answer for one city was held under another city's query; the sibling hooks had the same shape: `useGemDetail` (gem id), `useTripCityGems` (trip id), `useSavedGems` (two refreshes) and `useLayoverGems` (the window).
+- **Decision.** Each carries a request id and writes only its latest request's answer, error and loading. The keyed hooks (`useGemList`, `useGemDetail`, `useTripCityGems`) clear the previous query's rows when the query changes, so a new query never shows the old one's rows while it is read or after it fails.
+- **Tests.** `gemsFailedRead` (the verifier's V14-GL2 and GL4–GL8 red first).
+
+### D-W11X2-125 — GET /hidden-gems/trip-city answers a failed trips read 503, never "Trip not found" (§112.1 B5)
+
+- **The finding.** The route read the trip `const { data: trip }` and bound no error: the class D-W11X2-97 closed on the sibling GET /hidden-gems?tripId.
+- **Decision.** The error is bound, and a failed read is `503 degraded_unavailable` ("We could not check that trip right now"); a trip the viewer cannot read (no row, no error) is still `404`. Line-neutral.
+- **Tests.** `hiddenGemsTripCityUnread` (the verifier's V14-TC1 and TC2 red first; V14-TC0, TCc).
+
+### D-W11X2-126 — the consumer guard sees GH10–GH15, and pins every carrier call site; D-W11X2-116 corrected
+
+- **Corrected.** D-W11X2-116's reach was not the whole of it: a consumer in the app's root `components/`, a template-literal dynamic import, a local re-export from a registered file, a second raw site called through `.call` or an object-property alias, and a second call site of a `services/discovery.ts` carrier in a registered file each escaped.
+- **Decision.**
+  - The walk covers every top-level directory the app bundles: every directory not named, with its reason, as unbundled (`scripts`, `server`, `e2e`, `plugins`, `docs`, `migrations`, `assets`, `__mocks__`), plus the root's own sources. G12 GH10b checks that no walked source imports from an unbundled directory.
+  - A no-substitution template literal is a literal specifier; a computed specifier anywhere in the client fails (the guard cannot tell what it loads).
+  - A local re-export (`export { carrier as x }` or `export const x = carrier`) makes its file a re-export module, so its importers are consumers.
+  - G9's per-site check sees `.call` and `.apply`, an object property that holds the carrier, and a bound copy.
+  - Found while closing these (GH16): a default import before the braces (`import X, { carrier } from`) escaped the named-import reading; it is read now.
+  - Every call site of a carrier in a registered consumer is counted and pinned (`REGISTERED_SITES`). G4 finds a branch once per FILE, so a new site must be registered beside the branch and suite that cover it.
+  - The overlay lays a fixture only where the walk reads the disk, so an in-memory fixture sees what a file on disk would.
+- **Tests.** The guard's G12: GH10, GH11, GH11b, GH12, GH13, GH14, GH15 and GH16 red first through the whole guard (`wholeGuard`); GH14c and GH15c controls; GH10b and the tree's own pass written against the fixed code. The verifier's on-disk runner (GH0–GH15, each fixture placed alone and removed, sha256-restored) kills all sixteen.
+
+### D-W11X2-127 — the sweep: the Discovery map's travelers layer says a failed read and a failed refresh
+
+- **The finding.** GET /map/travelers answers a failed read 5xx (never `[]`), but `useMapTravelers` kept a failed refresh silently ("keep last good data silently") and the Discovery map showed "No travelers sharing here yet" for four seconds over a failed first read; a move while a read was in flight was dropped by an in-flight flag, and the older centre's answer was stored.
+- **Decision.** The hook sets `error` on every failed read, beside the kept rows, and replaces the in-flight drop with a request id. `DiscoveryMapView` says "Couldn't load travelers" (never the empty hint) and "· couldn't refresh" beside a kept count. Line-neutral in the cited file.
+- **Tests.** `useMapTravelers.failedRead` (TR2, TR3 red first; TR1, TRc) and `DiscoveryMapView.travelersFailedRead` (TV1, TV2 red first; TVc).
+
+### D-W11X2-128 — recorded: the verifier's upheld rulings, the safety hand-off, census-compass §34.1, the sound paths, and what is left for other owners
+
+- **Upheld by the round-14 verifier (recorded, not re-argued).**
+  - The safety fix at /compass/ask (D-W11X2-105) holds by behaviour: blocks and mutes unreadable, eight tools, nothing unchecked offered.
+  - SF2 is equivalent (the null profile throws inside `normalizeProfileForRanking` and the closed catch answers the same ranking); the `res.headersSent` removal is equivalent at the wire; the `rerun ?` recursion argument holds.
+  - The events list routes' per-row two-state block check drops the row (fails closed; NOT-GRADED §64.2). The Wall's `wall_enabled` gates fail closed, deferred to census-wall. The media world and the call gateway fail closed. Compass Home's circle-activity section hides when empty and states no absence. GET /compass/decision reads its flag two-state on a dark route (noted, not a break).
+- **Handed to the safety lane (S1–S3).** Not fixed here, and not DV-83 breaks: S1, a failed `user_mutes` read sends /compass/feed and /feed/section to the fallback feed, which never reads mutes; S2, GET /events and POST /events/:id/waitlist read `events_trust_gates_enabled` two-state; S3, the same two routes bind no error on the banned-role read. The safety lane works on main (branch `claude/testing-mode-safety-gates-20260930`) under census-compass §35 and census-trust §30; the fixes merge in from main.
+- **census-compass §34.1 overstated its coverage.** It said the fallback feed "already degrades to the static safety tools when its block list cannot be read", beside "a thrown profile read fails the request", in a paragraph about mutes as well as blocks. For MUTES that was not true: the fallback feed reads only `blocks`, and `buildSafeProfile` sets no muted ids, so a failed mute read serves muted authors' posts (S1). §34.1's text is corrected in place to say so; the code fix is the safety lane's.
+- **Swept and sound (client hooks).** `useCommunityDiscovery`, `useSearchSuggestions`, `useGlobalSearchSuggestions`, `useCompassWhyExplanation` and `useCompassFeed` carry request ids or scope checks (earlier rounds); `useGemsFeed`, `useCityPulse`, `usePulseFeed` and `useTemporalProducerProbe` guard their answers; `useCompassFrontload` sets nothing over a failure (the context stays unset; Compass UI hides); `usePopularCities`' failure keeps the static city chips shown while loading, which state no count and no absence. `app/gems/guide.tsx` hides the contributed-gems section when its list is empty or unread and states no absence.
+- **Swept and sound (Hidden Gems routes).** Every route read that answers 404 or an empty list binds its error or reads through a service that throws (`getGem`, `listGems`, `getGuideProfile`); the trip-city read was the last (D-W11X2-125).
+- **Seen, not built; left for their owners.**
+  - GET /hidden-gems/:id's `savedByMe` read binds no error, so a failed read is the outline bookmark (the viewer's own bookmark state, not a Discovery result; tapping it is idempotent). POST /hidden-gems' canonical-place check answers a failed read 422 "could not be verified", and the share-to-thread membership read answers a failed read 403 (census-telegraph). All fail closed.
+  - `lib/mapTravelers.ts` caps its scan at 250 and its answer at 100 with no marker, so the travelers badge can count a cut layer (census-map M144; three callers: /map/travelers, /map/search, the NOW gateway).
+  - The trip map's plan and saved reads (`app/map/index.tsx`, `buildComposedTrip`) and `useTripCrewMap` (Trips); the Passport map tab's nearby users (`MapTab`, census-passport); `app/reminders/new.tsx` (reminders).
+  - `services/hiddenGems/CompassHiddenGemService.getCompassGemContext` reads its flag and rows with no error bound; it has no caller in the tree.

@@ -4194,11 +4194,18 @@ real /compass/ask route, over fake clients.
   - When that re-read failed too, the tool answered "Tool execution failed.", which tells the model nothing it can say
     (PU6).
 - **Every other caller of the pipeline was checked.** `buildFeed`, `buildSection`, `rankItemsForDiscovery` and
-  `compassEligibleForDiscovery` take a profile the caller already built (a thrown profile read fails the request); the
+  `compassEligibleForDiscovery` take a profile the caller already built (a thrown profile read fails the request — **not
+  at GET /compass/feed and /feed/section, which catch it and serve the fallback feed; see the correction below**); the
   testing sandbox passes no client. None has an unranked fallback. Discovery's `consolidatedForYouCandidates` degrades a
   thrown Compass gate to every candidate (`compass_failed`) — the DV-07 degradation, which serves the same catalog places
   the Compass-off path serves, with no author to block; recorded, not changed. The fallback feed
   (`buildFallbackFeed`) already degrades to the static safety tools when its block list cannot be read.
+- **Correction (census-discovery §112.1, register D-W11X2-128; the round-14 verifier's S1).** The two sentences above
+  overstated this section's coverage. They are true of BLOCKS only. The fallback feed reads `blocks` and never
+  `user_mutes`, and `buildSafeProfile` carries no muted ids, so when a failed mute read makes `getCompassProfile` throw,
+  GET /compass/feed and /feed/section catch it and serve the fallback feed with a muted author's content in it (and the
+  fallback-mode path ignores mutes over healthy reads). This section's fix did not reach that path. The code fix is the
+  safety lane's (census-compass §35, on main); this lane changed nothing in `CompassFallbackFeedBuilder.ts`.
 
 ### 34.2 The change
 
