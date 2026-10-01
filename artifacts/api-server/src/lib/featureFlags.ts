@@ -17,8 +17,8 @@ export async function isFlagEnabled(sc: any, flag: string, status?: KillSwitchRe
       .from("feature_flags")
       .select("enabled")
       .eq("flag", flag)
-      .maybeSingle();
-    if (error) { if (status) status.unread = true; return false; }
+      .maybeSingle(); if (error && status) status.unread = true;  // census-discovery §116 (B15): the unread mark, before the fail-closed answer below
+    if (error) return false;
     return Boolean((data as any)?.enabled);
   } catch {
     if (status) status.unread = true; return false;
