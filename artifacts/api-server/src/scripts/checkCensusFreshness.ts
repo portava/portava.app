@@ -4656,6 +4656,9 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/services/map.ts",  // §115 grades the rollback friends read (SW6)
     "travel-buddy-standalone/src/services/events.ts",  // §115 grades the events list type's `truncated` (B12)
     "travel-buddy-standalone/src/services/rentABuddy.ts",  // §115 grades the buddy search type's `refusal` (SW8)
+    // census-discovery §116 (lane W11-X2, round 19): the files §116 grades.
+    "artifacts/api-server/src/lib/nearBox.ts",  // §116 grades the near box every near read uses (B18, SW13)
+    "travel-buddy-standalone/src/features/map/layers/viewportBoxClamped.ts",  // §116 grades the clipped-viewport mark (SW14)
     "travel-buddy-standalone/src/hooks/__tests__/useMapEntities.unreadOptional.component.test.tsx",
     "travel-buddy-standalone/src/hooks/__tests__/useMapEntities.legacyGemsCut.component.test.tsx",
     "travel-buddy-standalone/app/map/__tests__/mapScreen.unreadLayers.component.test.tsx",

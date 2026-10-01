@@ -19459,6 +19459,116 @@ The code is final at `d1f04405f` (the api-server suites and the on-disk guard ru
 
 Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
 
+### 116.2 Round 19: what this lane did
+
+*Written 2026-10-01 by lane W11-X2 (round 19) on `disc-w11-x2-r19`, from `03a4a4378` (PR #530's head: round 18) and §116.1. It closes §116.1's five breaks (B14–B18), each with the verifier's probes adapted into registered tests and seen red first; registers the verifier's NR1 and NR2 (Z27, Z28) and GHX6 (X6); makes the consumer guard read `import()` and `require()` from the syntax tree, so GH41–GH44 are caught and the regex path is gone; corrects D-W11X2-147, -148 and -150 in D-W11X2-153 to -158; and sweeps once more. The sweep found and closed six more paths (SW10–SW15).*
+
+*No migration and no new flag. Every change alters what is said only when a read failed, was cut, or covered part of the area asked about; with every read healthy and whole, the screens and every served body are unchanged (controls EV0c, EV0d, EA0, EP0, EB0, DT0, WS0, WS2c–WS5c, LT0, LT0b, LT2c, LT2o, RC0, RC0b, SC0, SC1, NS1c, NS3c, NS5c, NS7c, NP0, VE0, TE0, MV0, CF0, CF0b, GH33c, GH36c). Server bodies gain keys only on the failed arm: `failedSources` on GET /events, its city alias and GET /events/:id, and `crowdFlow.refusal: "flag_unreadable"`. Two behaviours change on a healthy read, both to keep rows the query dropped: every near read keeps the rows inside its radius across the antimeridian, near a pole and at the radius's edge (B18, SW13), and the map screen reads a `city` parameter rather than its title (B17). Every edit in a cited file is line-neutral: lines are changed in place, and new code is appended at a file's foot or lives in a new module (`lib/nearBox.ts`, `features/map/layers/viewportBoxClamped.ts`).*
+
+*All evidence is controlled: node suites over the real routes and PostgREST-shaped doubles, jest over the real hooks, components and screen, and the static guard over an in-memory overlay and fixtures placed on disk. None of it is production evidence, and no client build carrying the change has shipped.*
+
+### 116.3 GET /events' counts and near filter (§116.1 B14, B18; D-W11X2-153, -155)
+
+- **B14.** GET /events and GET /events/city/:city read the live `event_rsvps` count's `error`: a failed read keeps the cached `going_count` and is named in `failedSources: ["event_rsvps"]`, never served as 0 (`artifacts/api-server/src/routes/events.ts`; EV2, EV2b red first).
+- **B18.** The near box is the circle's exact extent on the 6371 km sphere `withinEventsNear` measures on: two longitude ranges across the antimeridian, every longitude over a pole, and no narrower than the radius anywhere (the 111.32 km degree dropped events just inside it, EB1). NR1–NR4b pin the radius clamp and default (EA1–EA3, EP1–EP3, EB1 red first). **D-W11X2-148 is corrected**, and the events tab's Near Me, which also got near events in round 18, is disclosed.
+
+### 116.4 The Live-label gates at every reader (§116.1 B15; D-W11X2-154)
+
+`readLiveClaims` reads the gates three-state itself (`liveLabelGatesRead`, the same reads in the same order as `liveLabelsServable`; `isFlagEnabled` takes an optional status). An unread gate answers the marked `failedLiveClaimRead()`, so a subject whose re-read failed is "Live activity couldn't be checked for this place" (`artifacts/api-server/src/lib/liveClaimRead.ts`, `artifacts/api-server/src/lib/featureFlags.ts`; LT1, LT2 ×5, LT2t red first; LT3 pins the helper to `liveLabelsServable` over all 243 gate states). `liveLabelsServable` is unchanged for Compass. **D-W11X2-147 is corrected.**
+
+### 116.5 The rollback path with no city, and the map screen's city (§116.1 B16, B17; D-W11X2-155)
+
+- **B16.** An enabled gems or buddies layer with no city is attempted as a read that failed, so it is named in `unreadLayers` (`travel-buddy-standalone/src/hooks/useMapEntities.ts`; RC1–RC3 red first).
+- **B17.** The hook, the legacy places layer, the trip map's Compass alternatives, the Ask Compass bar and the search sheet read a `city` query parameter; `title` stays the header's label (`travel-buddy-standalone/app/map/index.tsx`; SC2–SC5b red first).
+
+### 116.6 The guard reads `import()` and `require()` from the syntax tree (GH41–GH44, X6; D-W11X2-156)
+
+`moduleLoads` reads every call whose callee is the `import` keyword or the identifier `require`, and `import x = require(…)`, with the specifier's parsed value. `requireUses`, `otherImportForms`, `computedSpecifiers` and G12's reach (`unbundledReach`) read it, so the regular expressions over the text are gone (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts`; the cited lines kept in place, new code at the foot). G13 GH41, GH41b, GH42, GH43, GH44 and GH41c were red over HEAD's guard code; GHX6 (the verifier's), GHX6b and GHX6c kill X6; GH43b, GH43c and GH41r pin the new readings. The whole guard: 104 of 104 (92 at round 18, 12 new). **D-W11X2-150 is corrected.**
+
+### 116.7 The sweep (SW10–SW15; D-W11X2-153, -157, -158)
+
+Every count read on a Discovery, map, events, gems or travelers surface; every gate a route read three-state and something re-read; every screen that hands a title or a name to a reader; and every geographic box on those surfaces were read again:
+
+- **SW10.** GET /events/:id served `counts` and `waitlistCount` as 0 over a failed read; it serves the cached count or `null`, and names the read (`artifacts/api-server/src/routes/events.ts`).
+- **SW11.** Five write paths stamped `waitlist_count` (accept, leave, ban, block-user) or `review_count` and `avg_rating` from a recount that failed; they write nothing over a failed read.
+- **SW12.** With no position the NOW map named neither the gateway's optional layers nor the events layer; both are named.
+- **SW13.** GET /events/nearby, the hidden-gem proximity read, the travelers scan and `loadNearbyEvents` built B18's box; they use `artifacts/api-server/src/lib/nearBox.ts` (`artifacts/api-server/src/services/hiddenGems/HiddenGemDiscoveryService.ts`, `artifacts/api-server/src/lib/mapTravelers.ts`, `artifacts/api-server/src/routes/mapSearch.ts`).
+- **SW14.** The NOW map, the Time Machine and the media map said nothing over a viewport `bboxFromCenter` clipped at the antimeridian or a pole; each says it (`travel-buddy-standalone/src/features/map/layers/viewportBoxClamped.ts`, `travel-buddy-standalone/src/hooks/useTemporalEntities.ts`, `travel-buddy-standalone/src/features/media/hooks/useMediaMap.ts`).
+- **SW15.** The NOW gateway's crowd-flow report said `flag_off` over an unread flag; it says `flag_unreadable` (`artifacts/api-server/src/routes/mapProjection.ts`). D-W11X2-152's "operator-facing" reading of that label is corrected.
+- **Swept and sound; seen and left for their owners** — D-W11X2-158 lists both.
+
+### 116.8 Tests, seen red, and mutations
+
+**Seen red first**, run against the code before each fix (logs in the lane's `r19/red/` scratch directory; B15's cases over the code with the helper present and line 349 unchanged; B17's and the guard's over HEAD's file, restored by sha256):
+
+| Area | Red | Controls, green |
+|---|---|---|
+| B14 the RSVP count | EV2, EV2b | EV0c, EV0d |
+| B18 the near box | EA1–EA3, EP1–EP3, EB1 | EA0, EP0, EB0; NR1–NR4b |
+| B15 the Live-label gates | LT1, LT2 ×5 | LT0, LT0b, LT2c ×5, LT2o, LT3 |
+| B16 no city | RC1–RC3 | RC0, RC0b |
+| B17 the city param | SC2–SC5b | SC0, SC1 |
+| The guard's reach (G13) | GH41, GH41b, GH42, GH43, GH44, GH41c | GHX6, GHX6b, GHX6c, the tree's own pass |
+| SW10, SW11 the counts | DT1–DT3, WS1–WS5 | DT0, WS0, WS2c, WS3c, WS4c, WS5c |
+| SW12 no position | NP1 | NP0 |
+| SW13 the near reads | NS1–NS8 | NS1c, NS3c, NS5c, NS7c |
+| SW14 the clipped viewport | VE1, VE2, TE1, TE2, MV1, MV2 | VE0, TE0, MV0 |
+| SW15 the crowd-flow label | CF1 | CF0, CF0b |
+
+**Written against the fixed code**, each shown to bite by a mutation that removes what it pins: NR1–NR4b (Z27, Z28, X13, X14), LT2t (X29), NB1–NB5 (X36–X43), VB1 (Y11, Y12), GH43b (G4), GH43c (G2), GH41r (G10), GHX6b and GHX6c (G11, the verifier's X6). Two existing fixtures were brought to the new contract, never a weaker one: `projectedPlaces` and `map.placeTap` arm their places layer with the `city` param it now reads.
+
+**Mutations.** Each was applied alone to the committed file, its pin group run (the server groups: the events, live-gate, near-box and crowd-flow suites; the client groups: the hook suites and the screen suite; the guard group: the §115 and §116 G13 cases, and the whole guard where that group let one through), and the file restored byte-identically; the sha256 matched the pre-image and `git show HEAD:` after every application. Runner and logs: the lane's `r19/muts/` scratch directory (`run.py`, `defs.json`, `run.out`).
+
+- **83 mutations:** B14 X1–X5; B18 X6–X12 with the verifier's Z27 and Z28 and X13, X14; SW10 X15–X19; SW11 X20–X24; B15 X25–X33; SW15 X34, X35; SW13 X36–X50 (the lib and the four sites); B16, SW12 and SW14 Y1–Y12; B17 Y13–Y18; the guard G1–G13 (G11 is the verifier's X6).
+- **Result: 80 killed, 3 equivalent (X5, X12, X41; D-W11X2-158), 0 non-equivalent survivors** on DV-83 lines and on guard lines. **Survivors on a first run, each closed:** X33 (`liveLabelGatesRead`'s null-client answer; LT3b) and X40 (`nearBox`'s earth, which NB1 measured with the module's own constant; NB1 now draws its circle on the filters' 6371 km sphere); G5 and G12 survived the guard group alone and are killed by the whole guard (GH11, GH3b). **The verifier's survivors:** Z27 and Z28 are killed by NR1 and NR2; X6 (G11) by GHX6b and GHX6c. **Z21** stays equivalent, as upheld.
+- *Naming.* This round's series are X (server), Y (client) and G (guard); Z27 and Z28 keep the verifier's names.
+
+### 116.9 Checks
+
+- **Line-neutral in every cited file** (`routes/events.ts`, `routes/mapProjection.ts`, `routes/mapSearch.ts`, `lib/liveClaimRead.ts`, `lib/featureFlags.ts`, `lib/mapTravelers.ts`, `useMapEntities.ts`, `useTemporalEntities.ts`, `useMediaMap.ts`, `app/map/index.tsx`, and the guard's cited lines), so every anchored citation still lands on its text: `check:doc-citations`, `check:citation-targets` and `check:citation-symbols` are clean. New code is at a file's foot or in a new module. `HiddenGemDiscoveryService.ts`, which no citation anchors, lost its local box function.
+- **Scope.** This round's touched sources join this census's `CENSUS_SCOPE`; the acknowledgement for every census the freshness check named (discovery, map, media) carries a §116 paragraph with its "why it cannot move a verdict".
+- **Suites.** The new api-server suites are on the `test` line (`check:test-registration`); the new client suites are jest component suites, none on KNOWN_BROKEN.
+- **Allowlist.** No `UNCHECKED_READS_ALLOWLIST.json` entry changes; `checkUncheckedSupabaseReads` reports no new in-scope read that ignores its `.error`.
+
+### 116.10 DV-83, restated
+
+§116.1's five breaks are closed, each with the verifier's probes adapted into registered tests, red first and green now. The guard's four reach holes are caught in memory and on disk, and the three surviving mutations are killed. D-W11X2-147, -148 and -150 are corrected in D-W11X2-153 to -158. The sweep closed six more paths. Every clause of DV-83's criterion holds on every path this lane examined:
+
+1. **Producers send the refusal envelope or a named failure.** More of them now: GET /events, its city alias and the event screen name a failed count in `failedSources`; the NOW crowd-flow report says `flag_unreadable`; `readLiveClaims` marks an unread gate.
+2. **Nothing refused or partial is cached as complete.** No change writes a cache; a failed recount no longer writes a cached counter.
+3. **Nothing refused is rendered as empty, as complete, or over the wrong rows.** A failed count is never 0; a failed gate re-read is "couldn't be checked"; a layer that cannot be read without a city or a position is named; no reader takes a venue name for a city; every near read keeps the rows inside its radius; a viewport clipped at the line or a pole is said.
+4. **A Compass tool never states a failed or partial read to the model as a fact.** Unchanged this round; `liveLabelsServable` is unchanged.
+5. **Consumers branch on coverage**, and the static guard reads every module load from the syntax tree.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§116.1's five breaks are closed, each with its verifier probes adapted and red first; GH41–GH44 are caught on disk and in memory, and X6, Z27 and Z28 are killed (GHX6b, GHX6c; NR1, NR2); the sweep closed six more paths; 83 mutations: 80 killed, 3 equivalent (X5, X12, X41, argued in §116.8). CONTROLLED EVIDENCE ONLY — this row awaits independent re-verification.** **A failed RSVP count is named, never 0, and the near filter keeps every event in its radius** (`artifacts/api-server/src/routes/events.ts`; EV2, EV2b, EA1–EA3, EP1–EP3, EB1). **The Live-label gates are three-state at every claim read** (`artifacts/api-server/src/lib/liveClaimRead.ts`; LT1, LT2). **The rollback path names a layer it cannot read without a city, and the screen reads a city parameter** (`travel-buddy-standalone/src/hooks/useMapEntities.ts`, `travel-buddy-standalone/app/map/index.tsx`; RC1–RC3, SC2–SC5b). **The guard reads `import()` and `require()` from the syntax tree** (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts`; G13 GH41–GH44). **Sweep:** the event counts and stamps, the NOW map with no position or a clipped viewport, the near reads (`artifacts/api-server/src/lib/nearBox.ts`) and the crowd-flow label (SW10–SW15). |
+
+**Headline.** DV-83 moves W → C. `check:census-integrity` counts **C 101 / W 85 / N 2 / X 0** over 188: CONSTRUCTED 186 / 188 = **98.9 %**, CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged. The move is on controlled evidence and awaits independent re-verification.
+
+### 116.11 Left open, and what would turn this red
+
+- **Seen and not built (other owners; D-W11X2-158).** GET /events/nearby (no client caller) still withholds a friends-only event over a failed friendship read unsaid; places dedup's longitude window, the media feed's near boxes and the airport search box keep their unwrapped boxes; the round-18 list (D-W11X2-152) stands.
+- **Product effect, stated.** A map opened from a Compass card, the Gems tab or the Wall over a failed gateway now says "Couldn't load hidden gems / buddies here" instead of an empty layer; the legacy places layer, the trip map's Compass alternatives, the Ask Compass bar and the search sheet no longer receive a venue name as a city, and receive no city until an entry passes one. Near reads across the antimeridian, near a pole and at a radius's edge return rows they used to drop. A map near the antimeridian or above ~78.5° says "Showing only part of this area". With no position yet, the NOW map names the layers it could not ask for.
+- **What would turn DV-83 red again:**
+  - a failed count served as a measured one (EV2, EV2b, DT1–DT3) or stamped into a counter (WS1–WS5);
+  - a gate re-read that fails said as "no live activity" (LT1, LT2);
+  - a layer that cannot be read without a city or a position drawn empty (RC1–RC3, NP1), or a title read as a city (SC2–SC5b);
+  - a near read that drops rows inside its radius (EA1–EA3, EP1–EP3, EB1, NS1–NS8), or a clipped viewport drawn whole (VE1, VE2, TE1, TE2, MV1, MV2);
+  - a module load the guard cannot see (G13 GH41–GH44);
+  - any path §115.11 lists.
+
+### 116.12 Results at the final code commit
+
+The code is final at `a79807bfe` (the api-server suites, the mutations, the probes and the on-disk guard runs ran at `a628ef56d`; `a79807bfe` adds the map screen's `city` to its params type and two mock NOTE comments, and the client checks ran on it); the census commit changes only this file, the decision register, `checkCensusFreshness.ts`' scope and the staleness acknowledgements. Node 24.21.0.
+
+- **api-server** (`node --import tsx/esm --test`, `SUPABASE_URL=http://127.0.0.1:9`): every `discovery*`, `compass*`, `trail*`, `hashtag*`, `map*`, `event*`, `hidden*`, `call*` and `gems*` suite, the touched suites (`nearBox*`, the travelers, `wall*`, `liveClaim*`, the flag and census suites, `buddy*`, `circle*`, `rentABuddy*`), with `securityCheckSuite`, `uncheckedSupabaseReads`, `entryWiringNotCommentedOut` and `layoverSurfaceErrorBinding`: 477 files in 18 chunks, each under 5 minutes (the longest 283 s), `tests 8633 · pass 8633 · fail 0 · cancelled 0`. The live-DB suites that import `ciSupabaseGuard` are not run (the guard refuses them without live credentials; this lane writes to no database).
+- `checkUncheckedSupabaseReads`: no new in-scope read ignores its `.error`. The write-path-columns replica: `OK (117 tracked)`.
+- **Client:** `pnpm run -s check:all` passes on the final code — node tests `tests 7612 · pass 7612 · fail 0`; jest component suites 858 of 858 (5485 tests); the web config 4 of 4 (12 tests); typecheck, typecheck:tests (173 diagnostics, the baseline) and the lints clean. `check-route-registry`: OK (232 screens, 9 layouts).
+- **The guard on disk.** The verifier's runners placed each of GH0–GH44 (GH31b included; GH39 and GH40 as before; GH41–GH44 as their own files) and GHX5 and GHX6 alone in the tree and ran the whole guard: the unfixtured tree passes (fail 0), and all 48 fixtures are killed; every touched registered file and `metro.config.js` was restored with a matching sha256.
+- **The verifiers' probes**, copied in, run and deleted: the v7–v17 server probes and the v18 server probes (EV, EA/EP, NR, LT, unchanged) pass 172 of 173 — the one failure is `zz-v18-dumpBodies`, the verifier's helper whose ✖ prints the bodies by design. Of the 21 client probe suites (71 tests), 62 pass — V18-RC1, RC2, SC1 and the adapted v18a NC2a–NC5a among them — and 9 fail as expected: V15-TH4, V15-NM0 and V17-NC2–NC5 as §113 and §115 recorded, and three v18 probes that pin the contract §116 changed: V18-SC0 and SC2 assert that the screen hands the hook its title as the city (the defect B17 removes), and V18-RC3 hands the hook a venue name it cannot tell from a city; their adapted versions (`mapScreen.cityParam` SC0–SC5b, `useMapEntities.rollbackNoCity` RC3) pass.
+- **Guards:** all 24 of the integrator's `int-guards.sh` exit 0 on the census commit.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/lib/calls/callGatewayAdapter.ts — §113.8 names it for N1, outside DV-83: census-telegraph §40 records the call gateway's unread-gate outcome, and no Discovery verdict rests on it.
