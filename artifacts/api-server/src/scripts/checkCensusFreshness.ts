@@ -4659,6 +4659,9 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // census-discovery §116 (lane W11-X2, round 19): the files §116 grades.
     "artifacts/api-server/src/lib/nearBox.ts",  // §116 grades the near box every near read uses (B18, SW13)
     "travel-buddy-standalone/src/features/map/layers/viewportBoxClamped.ts",  // §116 grades the clipped-viewport mark (SW14)
+    // census-discovery §117 (lane W11-X2, round 20): the files §117 grades.
+    "artifacts/api-server/src/lib/privacy/eventSerializers.ts",  // §117 grades the list's served waitlist count (B20)
+    "travel-buddy-standalone/src/components/HostDashboardPanel.tsx",  // §117 grades the attendees tab over a failed read (B19)
     "travel-buddy-standalone/src/hooks/__tests__/useMapEntities.unreadOptional.component.test.tsx",
     "travel-buddy-standalone/src/hooks/__tests__/useMapEntities.legacyGemsCut.component.test.tsx",
     "travel-buddy-standalone/app/map/__tests__/mapScreen.unreadLayers.component.test.tsx",
