@@ -79,7 +79,7 @@ import type { MapObject, MapObjectKind } from '../types/mapObjects.ts';
 import { compareByRenderingPriority } from '../types/mapObjects.ts';
 import { searchBuddies } from '../services/rentABuddy.ts';
 import { listEvents } from '../services/events.ts';
-import { listGems } from '../services/hiddenGems.ts'; import { gemListCut, markGemListCut } from '../services/gemListCut.ts'; import { buddyPageCut, eventsPageCut, layerPageCut, markLayerPageCut } from '../features/map/layers/layerPageCut.ts';  // census-discovery §114 (sweep SW2); §115 (B12)
+import { listGems } from '../services/hiddenGems.ts'; import { gemListCut, markGemListCut } from '../services/gemListCut.ts'; import { buddyPageCut, eventsPageCut, layerPageCut, markLayerPageCut } from '../features/map/layers/layerPageCut.ts'; import { viewportBoxClamped } from '../features/map/layers/viewportBoxClamped.ts';  // census-discovery §114 (sweep SW2); §115 (B12); §116 (SW14)
 import { listMyTrips } from '../services/trips.ts';
 import { listVisibleCircleLocations } from '../services/map.ts';
 // Typed so the projector call sites are checked too: an untyped row is how
@@ -785,10 +785,10 @@ export function useMapEntities(opts: {
         // as an empty world.
         if (res.ok && res.data.enabled) {
           gatewayObjects = res.data.objects;
-          gatewaySources = res.data.sources; gatewayCut = res.data.nextCursor != null || res.data.places?.truncated === true;  // §114 (B5): page one of several is never drawn as whole; §115 (B7): nor a places read cut at its cap
+          gatewaySources = res.data.sources; gatewayCut = res.data.nextCursor != null || res.data.places?.truncated === true || viewportBoxClamped(effectiveLat, effectiveLng, radiusKm);  // §114 (B5): page one of several is never drawn as whole; §115 (B7): nor a places read cut at its cap; §116 (SW14): nor a viewport box clamped at ±180° or a pole
           enrichment = res.data.liveEnrichment;
         } else gatewayFailed = !res.ok || res.data.refusal != null;  // §114 (B5): a failed or refused gateway read is not the flag being off — the optional layers, which only it serves, went unread
-      }
+      } else gatewayFailed = wantedKinds.length > 0;  // census-discovery §116 (DV-83, sweep SW12): with no position the gateway was never asked — the optional layers only it serves are unread, not empty
 
       // ── 2. Roll back to the per-layer fetchers, or not at all ─────────────
       // See the header: when the gateway answered it owns EVERY layer, because
@@ -811,8 +811,8 @@ export function useMapEntities(opts: {
       ));
 
       if (!usedGateway) {
-        if (enabledLayers.includes('events') && effectiveLat != null && effectiveLng != null) {
-          attempt('events', fetchEvents(effectiveLat, effectiveLng, now));
+        if (enabledLayers.includes('events')) {  // §116 (SW12): with no position the events layer is said unread, never drawn empty
+          attempt('events', effectiveLat != null && effectiveLng != null ? fetchEvents(effectiveLat, effectiveLng, now) : layerNeedsPosition());
         }
         if (enabledLayers.includes('gems')) {  // census-discovery §116 (DV-83, B16): a layer that cannot be read without a city is said unread, never drawn empty
           attempt('gems', city ? fetchGems(city) : layerNeedsCity('gems'));
@@ -1001,4 +1001,10 @@ export function safetyFirst(layers: string[]): MapUnreadLayer[] {
 // position only ranks the whole population — so neither is read by coordinates instead.
 function layerNeedsCity(layer: 'gems' | 'buddies'): Promise<MapObject[]> {
   return Promise.reject(new Error(`${layer} layer: no city to read it by`));
+}
+
+// census-discovery §116 (DV-83 round 19; sweep SW12): the events layer is read by position. With none (no parameter,
+// GPS, last-known or home location yet) it was skipped unsaid; it is now attempted as a read that failed, and named.
+function layerNeedsPosition(): Promise<MapObject[]> {
+  return Promise.reject(new Error('events layer: no position to read it by'));
 }

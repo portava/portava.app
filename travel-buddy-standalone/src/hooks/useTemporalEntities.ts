@@ -25,7 +25,7 @@ import {
   type TemporalForecastReport,
   type TemporalHistoryReport,
 } from '../services/mapTemporal.ts'; import { forecastLayersUnread, historyUnread } from '../features/map/time/forecastUnread.ts';  // census-discovery §111 (D-W11X2-115); §113 (D-W11X2-130)
-import { bboxFromCenter } from '../services/mapProjection.ts';
+import { bboxFromCenter } from '../services/mapProjection.ts'; import { viewportBoxClamped } from '../features/map/layers/viewportBoxClamped.ts';  // census-discovery §116 (SW14)
 import { NOW_OFFSET, offsetKey, offsetsEqual, type TimeOffset } from '../features/map/time/timeMachine.ts';
 
 /** Matches useMapEntities' DEFAULT_VIEWPORT_RADIUS_KM, so both viewports agree. */
@@ -110,7 +110,7 @@ export function useTemporalEntities(args: UseTemporalEntitiesArgs): UseTemporalE
           setEnabled(res.data.enabled);
           setObjects(res.data.enabled ? res.data.objects : []);
           setForecast(res.data.forecast); setUnreadForecastLayers(forecastLayersUnread(res.data));
-          setHistory(res.data.history); setPageCut(res.data.nextCursor != null);  // §114 (B6): page one of several is said, never drawn as the whole time
+          setHistory(res.data.history); setPageCut(res.data.nextCursor != null || viewportBoxClamped(lat as number, lng as number, radiusKm));  // §114 (B6): page one of several is said, never drawn as the whole time; §116 (SW14): nor a viewport box clamped at ±180° or a pole
           setFailed(res.data.refusal != null || historyUnread(res.data));  // §113 (D-W11X2-130): a past answer that read no history is failed, never an empty past
         } else {
           setFailed(true);

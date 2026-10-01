@@ -14,7 +14,7 @@
  * placed. Cancels in flight on unmount / reload; never throws.
  */
 import { useCallback, useEffect, useReducer, useRef } from 'react';
-import { fetchMapProjection, bboxFromCenter } from '../../../services/mapProjection.ts';
+import { fetchMapProjection, bboxFromCenter } from '../../../services/mapProjection.ts'; import { viewportBoxClamped } from '../../map/layers/viewportBoxClamped.ts';  // census-discovery §116 (SW14)
 import type { MapObjectKind } from '../../../types/mapObjects.ts';
 import type { ProjectionResult } from '../types/media.ts';
 import {
@@ -75,7 +75,7 @@ export function useMediaMap({ loadClusters, center, includeGems = false, deps = 
             signal: controller.signal,
           }).then(
             (r): MapPositionsResult =>
-              r.ok ? { ok: true, enabled: r.data.enabled, objects: r.data.objects, partial: r.data.enabled && mediaMapGatewayPartial(r.data, kinds) } : { ok: false, reason: 'map_failed' },  // census-discovery §114 (DV-83, sweep SW3): a layer the gateway did not read, or a page of several, is said
+              r.ok ? { ok: true, enabled: r.data.enabled, objects: r.data.objects, partial: r.data.enabled && (mediaMapGatewayPartial(r.data, kinds) || viewportBoxClamped(lat as number, lng as number, MEDIA_MAP_RADIUS_KM)) } : { ok: false, reason: 'map_failed' },  // census-discovery §114 (DV-83, sweep SW3): a layer the gateway did not read, or a page of several, is said; §116 (SW14): so is a viewport box clamped at ±180° or a pole
           );
 
     void Promise.all([
