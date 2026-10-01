@@ -1008,15 +1008,7 @@ describe('DV-83 guard reach — the roots and the pins (§112, D-W11X2-126)', ()
     assert.deepEqual(clientRoots(), ['app', 'components', 'constants', 'hooks', 'src', 'vendor']);
     const sources = clientSources();
     assert.ok(sources.includes('components/ErrorBoundary.tsx') && sources.includes('hooks/useColors.ts'), 'the root components/ and hooks/ are walked');
-    const reach: string[] = [];
-    for (const file of sources) {
-      for (const spec of [...[...stripComments(read(file)).matchAll(/\bfrom\s*['"`]([^'"`$]+)['"`]/g)].map((m) => m[1]!), ...moduleLoads(read(file)).flatMap((d) => (d.spec === null ? [] : [d.spec]))]) {  // census-discovery §116 (GH41–GH44): import() and require() from the syntax tree
-        const target = resolveSpec(file, spec);
-        const code = !/\.(?:webp|png|jpe?g|gif|svg|ttf|otf|mp3|wav|mp4|json|lottie)$/i.test(target ?? '');  // an image or a font is not a module that can read a carrier
-        if (target && code && target.split('/')[0]! in clientNotBundled() && target.split('/')[0] !== 'node_modules') reach.push(`${file} → ${target}`);
-      }
-    }
-    assert.deepEqual(reach, [], 'a bundled source imports from a directory this guard does not walk');
+    assert.deepEqual(unbundledReach(sources), [], 'a bundled source imports from a directory this guard does not walk');  // census-discovery §116: the loop is unbundledReach, at the foot
   });
   it('G12 GH15c CONTROL: a registered file with its sites unchanged passes the pin; one site fewer fails it', () => {
     const file = 'app/(tabs)/discovery.tsx';
@@ -1684,6 +1676,9 @@ const GH18V = {
   computedSpace: "const zzSpecGH41b = '../services/compass.ts';\nexport async function zzRawRecsGH41b(): Promise<number> {\n  const m = await import (zzSpecGH41b);\n  return (await m.fetchCompassRecommendations({ surface: 'passport' })).ok ? 1 : 0;\n}\n",
   gluedComment: "export async function zzRawRecsGHX6(): Promise<number> {\n  const { fetchCompassRecommendations } = await/**/import('../services/compass.ts');\n  const res = await fetchCompassRecommendations({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
   gluedAlias: "\nexport async function zzAliasSiteGHX6b(): Promise<number> {\n  const/**/zzLoadX6 = fetchCompassRecommendations;\n  const res = await zzLoadX6({ surface: 'passport', limit: 3 });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  importEquals: "import zzCompassGH43b = require('../services/compass.ts');\nexport const zzRecsGH43b = () => zzCompassGH43b.fetchCompassRecommendations({ surface: 'passport' });\n",
+  escapedRequire: "export function zzRawRecsGH43c(): Promise<number> {\n  const { fetchCompassRecommendations } = \\u0072equire('../services/compass.ts');\n  return fetchCompassRecommendations({ surface: 'passport' }).then((res: any) => (res.ok ? 1 : 0));\n}\n",
+  unbundledReach: "export const zzLoadGH41r = () => import ('../../scripts/zzGH41r.js');\n",
   otherCalls: "export const zzA = obj.require('../services/compass.ts');\nexport const zzB = requireX('../services/compass.ts');\nexport type ZzT = typeof import('../services/compass.ts');\n",
 };
 
@@ -1713,6 +1708,15 @@ describe("DV-83 guard reach — the round-18 verifier's fixtures (§116)", () =>
   it('G13 GHX6c: the canonical form keeps a block comment between two tokens as one space', () => {
     assert.equal(canonicalSource('const/**/x = 1;'), 'const x = 1;');
     assert.equal(canonicalSource('await/* c */import(y);'), 'await import(y);');
+  });
+  it('G13 GH43b: `import x = require(…)` of a carrier module is caught', () => {
+    assert.throws(() => withFiles({ 'src/components/zzGH43b.tsx': GH18V.importEquals }, wholeGuard), /zzGH43b\.tsx \(<dynamic>\)/);
+  });
+  it('G13 GH43c: `require` spelled with a unicode escape is the same call, and is caught', () => {
+    assert.throws(() => withFiles({ 'src/components/zzGH43c.tsx': GH18V.escapedRequire }, wholeGuard), /zzGH43c\.tsx \(<dynamic>\)/);
+  });
+  it('G13 GH41r: `import (x)` into a directory the guard does not walk is seen by the reach check', () => {
+    assert.deepEqual(withFiles({ 'src/components/zzGH41r.tsx': GH18V.unbundledReach }, () => unbundledReach(withOverlay(clientSources())).filter((r) => r.includes('zzGH41r'))), ['src/components/zzGH41r.tsx → scripts/zzGH41r.js']);
   });
   it('G13 GH41c: a member `.require(…)`, another function named like it and a type-only `import(…)` load nothing (the regexes read the first and last as loads)', () => {
     assert.equal(withFiles({ 'src/components/zzGH41c.tsx': GH18V.otherCalls }, () => unregisteredNow().has('src/components/zzGH41c.tsx')), false);
@@ -1745,4 +1749,17 @@ function moduleLoads(src: string): ModuleLoad[] {
   visit(sf);
   cache.set(src, out);
   return out;
+}
+
+/** §116: the imports from `files` into a directory the guard does not walk — static `from`, and `import()` / `require()` read from the syntax tree (GH41–GH44). */
+function unbundledReach(files: string[]): string[] {
+  const reach: string[] = [];
+  for (const file of files) {
+    for (const spec of [...[...stripComments(read(file)).matchAll(/\bfrom\s*['"`]([^'"`$]+)['"`]/g)].map((m) => m[1]!), ...moduleLoads(read(file)).flatMap((d) => (d.spec === null ? [] : [d.spec]))]) {
+      const target = resolveSpec(file, spec);
+      const code = !/\.(?:webp|png|jpe?g|gif|svg|ttf|otf|mp3|wav|mp4|json|lottie)$/i.test(target ?? '');  // an image or a font is not a module that can read a carrier
+      if (target && code && target.split('/')[0]! in clientNotBundled() && target.split('/')[0] !== 'node_modules') reach.push(`${file} → ${target}`);
+    }
+  }
+  return reach;
 }
