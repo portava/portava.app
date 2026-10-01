@@ -744,7 +744,7 @@ function FullScreenMapScreenInner() {
     lat?: string;
     lng?: string;
     zoom?: string;
-    title?: string;
+    title?: string; city?: string;  // census-discovery §116 (B17): the city readers take, apart from the display title
     category?: string;
     focusId?: string;
     mode?: string;

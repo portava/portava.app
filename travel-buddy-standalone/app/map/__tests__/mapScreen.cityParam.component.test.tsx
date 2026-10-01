@@ -101,7 +101,9 @@ jest.mock('../../../src/services/passportStamps', () => ({
 jest.mock('../../../src/components/map/MapTopControls', () => ({ MapTopControls: () => null }));
 // The Compass bar and the search sheet are stubs that record the city they are handed (§116 B17: a query parameter).
 const mockSeen: { askCity?: unknown; searchCity?: unknown } = {};
+// NOTE: intentional stub — records the city the Ask Compass bar is handed; the bar itself is not exercised.
 jest.mock('../../../src/components/map/AskCompassBar', () => ({ AskCompassBar: (p: { city: unknown }) => { mockSeen.askCity = p.city; return null; } }));
+// NOTE: intentional stub — records the city the search sheet is handed; the sheet itself is not exercised.
 jest.mock('../../../src/components/map/MapSearchSheet', () => ({ MapSearchSheet: (p: { city: unknown }) => { mockSeen.searchCity = p.city; return null; } }));
 jest.mock('../../../src/services/compass', () => ({ ...jest.requireActual('../../../src/services/compass'), fetchCompassRecommendations: jest.fn().mockResolvedValue({ ok: false, error: 'offline' }) }));
 // map_search_enabled gates whether AskCompassBar renders at all; on, so the city it is handed can be read.
