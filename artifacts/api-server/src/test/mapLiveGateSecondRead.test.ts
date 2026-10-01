@@ -18,6 +18,7 @@
  *   LT2t  readLiveClaims, a gate read that THROWS (rejects) → `[]`, marked failed (isFlagEnabled's catch arm)
  *   LT2c  CONTROL: readLiveClaims, each gate read and closed → `[]`, NOT marked (the feature is off)
  *   LT3   liveLabelGatesRead is "open" exactly when liveLabelsServable is true, over every gate on, off or unreadable
+ *   LT3b  liveLabelGatesRead with no client is "closed", as liveLabelsServable is false (nothing was read, nothing failed)
  */
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -165,5 +166,9 @@ describe("census-discovery §116 (B15): the Live-label gate re-read per subject 
     };
     await walk(0, []);
     assert.equal(combos, 3 ** GATES.length);
+  });
+  it("LT3b liveLabelGatesRead with no client → closed (as liveLabelsServable answers false): nothing was read, nothing failed", async () => {
+    assert.equal(await liveLabelsServable(null), false);
+    assert.equal(await liveLabelGatesRead(null), "closed");
   });
 });

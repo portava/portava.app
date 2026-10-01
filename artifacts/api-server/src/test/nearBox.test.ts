@@ -13,13 +13,15 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { nearBox, applyNearBox, nearBoxTerms, NEAR_EARTH_KM } from "../lib/nearBox.js";
+import { nearBox, applyNearBox, nearBoxTerms } from "../lib/nearBox.js";
 
 const rad = (d: number) => (d * Math.PI) / 180;
 const deg = (r: number) => (r * 180) / Math.PI;
-/** The point `km` from (lat, lng) along `bearing` on the 6371 km sphere, its longitude normalised to [-180, 180). */
+/** The sphere the distance filters measure on (withinEventsNear, the haversines in hiddenGemState and mapTravelers): a literal, not the module's constant, so the box is held to it. */
+const FILTER_EARTH_KM = 6371;
+/** The point `km` from (lat, lng) along `bearing` on that sphere, its longitude normalised to [-180, 180). */
 function destination(lat: number, lng: number, km: number, bearing: number): { lat: number; lng: number } {
-  const d = km / NEAR_EARTH_KM; const p1 = rad(lat); const l1 = rad(lng); const b = rad(bearing);
+  const d = km / FILTER_EARTH_KM; const p1 = rad(lat); const l1 = rad(lng); const b = rad(bearing);
   const p2 = Math.asin(Math.sin(p1) * Math.cos(d) + Math.cos(p1) * Math.sin(d) * Math.cos(b));
   const l2 = l1 + Math.atan2(Math.sin(b) * Math.sin(d) * Math.cos(p1), Math.cos(d) - Math.sin(p1) * Math.sin(p2));
   return { lat: deg(p2), lng: ((deg(l2) + 540) % 360) - 180 };
