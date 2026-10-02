@@ -109,5 +109,11 @@ _incoming/
 # Claude Code config + credentials (persisted here because ~ is ephemeral on Replit)
 .claude-home/
 
+# Agent worktrees. Each is a full second checkout of this repo, so without this
+# rule `git add -A` from the repo root stages a duplicate of the whole tree.
+# This clone is protected only by an uncommitted .git/info/exclude entry, which
+# no other clone has — hence the committed rule.
+.claude/worktrees/
+
 # scripts/local-db/up.sh writes the throwaway database URL here
 .env.local-db
