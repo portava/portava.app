@@ -3780,3 +3780,62 @@ So every migration changed here is unapplied everywhere.
     cd artifacts/api-server
     grep -c 'DO \$pre\$' src/migrations/336[2-5]_*.sql src/migrations/342[12]_*.sql   # 1 each
     grep -c 'schema_migration_ledger' ../../db/rollback/2026-09-2?-33[3-5][0-9]-*-rollback.sql   # >= 2 each
+
+## 2026-10-02 — the permanent-Highlights pair (3502 then 2975): rollbacks written, order and recovery rehearsed, NOT applied anywhere
+
+Both files are on `main` and neither is in production's ledger or in
+`supabase_migrations.schema_migrations` (re-read read-only the same day).
+Neither had a rollback file until now. Both now do:
+
+    db/rollback/2026-10-02-3502-highlights-permanent-visibility-owner-first-rollback.sql
+    db/rollback/2026-10-02-2975-highlights-permanent-lifetime-rollback.sql
+
+**The apply order is 3502 then 2975, and the reversal order is the opposite.**
+Reversing 3502 first restores the top-level `(expires_at > now())` conjunct while
+NULL expiries still exist, which is the state in which a PERMANENT Highlight is
+selectable by nobody. 3502's rollback **refuses** while any NULL expiry remains
+rather than relying on the operator having read this line.
+
+**Rehearsed on the local harness against production's own policy text.** The two
+SELECT quals were read read-only from production and installed verbatim on the
+local database, which then matched production byte-for-byte with `expires_at`
+NOT NULL, 5 policies and 0 RESTRICTIVE. On that database:
+
+- **The hazard is real, not argued.** 2975 applied alone: a PERMANENT Highlight
+  (NULL expiry) returned **0 rows to its owner, 0 to another signed-in user and 0
+  to anon**, while an ordinary 24-hour Highlight stayed visible. Evaluating
+  production's own qual text directly against the row returns NULL, which
+  PostgreSQL treats as a refusal.
+- **3502 applies cleanly to that exact shape**: both policies restructured
+  (532→558 and 448→478 characters), its 6-case truth table and its postconditions
+  passing, and the resulting quals are identical to what a full chain replay
+  produces.
+- **After 3502 then 2975**: the owner sees the permanent Highlight, a stranger
+  sees it only at `public` visibility, explicit deletion (`deleted_at`) hides it
+  from its owner too, and an archived permanent Highlight stays visible to its
+  owner — which is what `GET /highlights/archived` has always intended and what
+  production's current RLS silently contradicts.
+- **Both rollbacks return the quals to production's text byte-for-byte**, remove
+  their own ledger rows (2 → 0 with rows present), and are no-ops on re-run. The
+  pair re-applies afterwards.
+
+**One behaviour change to expect that is not about permanence.** 3502 moves the
+expiry test out of the top level, so an owner's own **expired** Highlight becomes
+visible to the owner through RLS, where production refuses it today (measured:
+`false` before, `true` after). Of the fifteen `highlights` reads in
+`routes/highlights.ts`, three filter expiry explicitly and the rest are by-id
+ownership checks before a mutation — except `GET /highlights/archived`, which is
+owner-only and deliberately does not filter expiry. So this change fixes that
+route rather than widening any feed.
+
+**One cost of the 2975 reversal, named rather than discovered during one.** It
+gives every permanent Highlight a 24-hour expiry. A row left claiming
+`lifetime_class = 'PERMANENT'` while carrying an expiry is graded `invalid` by
+`services/highlights/highlightLifecycle.ts`, so the rollback reclassifies those
+rows to `DAY` in the same transaction and says how many it touched.
+
+### Re-establish independently
+
+    cd artifacts/api-server
+    grep -c 'schema_migration_ledger' ../../db/rollback/2026-10-02-*-rollback.sql   # >= 2 each
+    grep -n 'REFUSING' ../../db/rollback/2026-10-02-3502-*-rollback.sql             # the NULL-expiry guard
