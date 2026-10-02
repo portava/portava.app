@@ -30,7 +30,7 @@
  *   L12 DV-68  reversal is an exact negation, once
  *   L13 DC-23  the creator's own reads; cross-creator denial; flag off
  *   L14 DV-65/66  every balance reconstructs from entries; no stored total exists
- *   L15 account erasure reaches a creator's whole ledger
+ *   L15 account erasure of a creator with a ledger is REFUSED while C-11 is undecided (3510)
  *   L16 a view that predates 3385 makes the creator's read refuse, not under-report
  *   R1  the flag row was never turned on
  */
@@ -39,7 +39,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { HAVE_DB, LOCAL_DB_URL, exec, rows, scalar, seedUser } from "./localDb.js";
+import { HAVE_DB, LOCAL_DB_URL, creatorLedgerPurgeSql, exec, psql, rows, scalar, seedUser } from "./localDb.js";
 import { creatorPsqlClient, lit } from "./creatorLedgerPsqlClient.js";
 import {
   bookCreatorEarningUnderRule,
@@ -155,10 +155,9 @@ describe("the creator ledger, end to end (census-discovery §52)", { skip: !HAVE
     // Superuser cleanup of THIS suite's rows. Account erasure is itself under
     // test in L15; here the profiles go last so their cascades clean the rest.
     exec(
-      `DELETE FROM public.creator_ledger_audit_events WHERE attribution_id IN (SELECT id FROM public.creator_attributions WHERE beneficiary_user_id IN (${users.map(lit).join(",")}));\n` +
-      `DELETE FROM public.creator_earning_entries WHERE attribution_id IN (SELECT id FROM public.creator_attributions WHERE beneficiary_user_id IN (${users.map(lit).join(",")}));\n` +
-      `DELETE FROM public.creator_attributions WHERE beneficiary_user_id IN (${users.map(lit).join(",")});\n` +
-      `DELETE FROM public.rent_buddy_earnings_entries WHERE booking_id IN (${(bookings.length ? bookings : [randomUUID()]).map(lit).join(",")});\n` +
+      // 3510 refuses every ledger DELETE while C-11 is open; the harness purge
+      // (superuser, replica mode) removes this suite's own synthetic rows.
+      `${creatorLedgerPurgeSql(users, bookings)}\n` +
       `DELETE FROM public.rent_buddy_bookings WHERE id IN (${(bookings.length ? bookings : [randomUUID()]).map(lit).join(",")});\n` +
       `DELETE FROM public.rent_buddy_profiles WHERE user_id IN (${users.map(lit).join(",")});\n` +
       `DELETE FROM public.intel_reward_ledger WHERE actor_id IN (${users.map(lit).join(",")});\n` +
@@ -573,7 +572,12 @@ describe("the creator ledger, end to end (census-discovery §52)", { skip: !HAVE
   });
 
   // ── L15 — erasure ─────────────────────────────────────────────────────────
-  test("L15. account erasure reaches a creator's whole ledger: chains, entries, reversals and audit rows", async () => {
+  // CHANGED by census-discovery §107. This test used to assert that deleting
+  // the profile CASCADES the creator's whole ledger away — i.e. it pinned
+  // "delete on erasure", the answer to C-11 the owner has not given. 3510
+  // refuses instead, and the two answers are each tested in their own fixture
+  // database (creatorLedgerErasurePolicy.db.test.ts, fixtures A and B).
+  test("L15. account erasure of a creator with a ledger is REFUSED while C-11 is undecided: chains, entries, reversals and audit rows all survive, unchanged", async () => {
     const doomed = seedUser("p10doomed");
     users.push(doomed);
     const { id } = await recordedTravelPartner(doomed, 10_000);
@@ -582,12 +586,19 @@ describe("the creator ledger, end to end (census-discovery §52)", { skip: !HAVE
     assert.equal((await releaseCreatorHold(on(), { attributionId: id, reason: "cleared", actor: ADMIN })).ok, true);
     const tk = entriesOf([id]).find((e) => e.entry_reason === "platform_fee")!.transaction_key;
     assert.equal((await reverseCreatorTransaction(on(), { transactionKey: tk, reason: "refund", actor: ADMIN })).ok, true);
-    // As the deletion service does: as service_role, on profiles.
-    exec(`SET LOCAL ROLE service_role;\nDELETE FROM public.profiles WHERE id = '${doomed}';`, { single: true });
-    assert.equal(scalar(`SELECT count(*) FROM public.creator_attributions WHERE beneficiary_user_id = '${doomed}'`), "0");
-    assert.equal(scalar(`SELECT count(*) FROM public.creator_earning_entries WHERE attribution_id = '${id}'`), "0");
-    assert.equal(scalar(`SELECT count(*) FROM public.creator_ledger_audit_events WHERE attribution_id = '${id}'`), "0");
-    exec(`DELETE FROM auth.users WHERE id = '${doomed}';`);
+    const snapshot = () => rows(
+      `SELECT 'a' AS t, to_jsonb(a)::text AS r FROM public.creator_attributions a WHERE beneficiary_user_id = '${doomed}' UNION ALL ` +
+      `SELECT 'e', to_jsonb(e)::text FROM public.creator_earning_entries e WHERE attribution_id IN (SELECT id FROM public.creator_attributions WHERE beneficiary_user_id = '${doomed}') UNION ALL ` +
+      `SELECT 'u', to_jsonb(u)::text FROM public.creator_ledger_audit_events u WHERE attribution_id IN (SELECT id FROM public.creator_attributions WHERE beneficiary_user_id = '${doomed}') ORDER BY 1, 2`);
+    const before = snapshot();
+    assert.ok(before.length >= 8, `the creator must have chains, entries and audit rows (${before.length})`);
+    // As the deletion service would: as service_role, on profiles.
+    const r = psql(`\\set VERBOSITY verbose\nSET LOCAL ROLE service_role;\nDELETE FROM public.profiles WHERE id = '${doomed}';`, { single: true });
+    assert.notEqual(r.status, 0, "the erasure must be refused");
+    assert.match(r.stderr, /CL451/);
+    assert.match(r.stderr, /creator_ledger_erasure_policy_undecided/);
+    assert.deepEqual(snapshot(), before, "nothing of the ledger changed");
+    assert.equal(scalar(`SELECT count(*) FROM public.profiles WHERE id = '${doomed}'`), "1", "the profile is untouched too");
   });
 
   test("L16. on a database whose view predates 3385, the creator's read REFUSES rather than under-reporting", async () => {

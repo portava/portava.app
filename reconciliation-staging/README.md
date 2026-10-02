@@ -199,3 +199,21 @@ Per `RECONCILIATION-PACKET.md` §7's closing note: most of the packet's
 baseline, the extended freeze guard (§5 Step 1), or the inverse auditor
 (§5 Step 5). Those remain separate, larger pieces of work the packet
 describes but does not ask this session to build.
+
+## C-11 answers — held here until the owner chooses (added 2026-09-30, census-discovery §107)
+
+Not reconciliation proposals: the two mutually exclusive answers to owner
+question C-11 / W10D-B0 (what happens to a person's creator and Rent-a-Buddy
+earning records when their account is erased). The canonical chain carries
+`3510_creator_ledger_erasure_policy_undecided.sql`, which refuses every ledger
+deletion until one of these is chosen. Each refuses to apply beside the other.
+
+| file | answer | rollback |
+|---|---|---|
+| `3511_creator_ledger_erasure_delete_on_erasure.sql` | delete on the beneficiary's erasure, whole transactions | `2026-09-30-3511-…-rollback.sql` |
+| `3512_creator_ledger_erasure_retain_pseudonymised.sql` | retain; identity replaced by a random pseudonym (pseudonymised, NOT anonymous) | `2026-09-30-3512-…-rollback.sql` |
+
+The chosen file moves unchanged into `artifacts/api-server/src/migrations/` at
+the next free prefix after 3510 (renumber only if its number was taken), its
+rollback into `db/rollback/`, and the other is deleted. Both are rehearsed only in
+throwaway clones of the local harness (`src/test/db/creatorLedgerErasurePolicy.db.test.ts`).

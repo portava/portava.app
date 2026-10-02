@@ -3467,7 +3467,7 @@ lands on an output of real code: the real `messagingRouter`, the real
 `requireSafeReturnRecipient`, the real event bus, the real `syncTripChatMembers`.
 What is replaced is PostgREST, by
 `test/telegraphCertificationHarness.ts:223#export function makeFakeClient` — and it is replaced rather than
-mocked away for a specific reason stated at `:36`: supabase-js RESOLVES on a
+mocked away for a specific reason stated at `:15`: supabase-js RESOLVES on a
 database error, and that is the shape that turns a dropped `.error` into
 fail-open authorization, so a fake that threw instead would make those bugs
 untestable.
