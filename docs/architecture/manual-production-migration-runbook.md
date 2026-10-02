@@ -34,9 +34,34 @@ Everything else in scope is **unapplied**.
    sensing_anon_contributions. Neither table exists in production.
    A REVOKE against an absent relation is an ERROR, so 2333 as
    originally written would have ABORTED and landed nothing.
+
+3502 ──> 2975                   (Highlights visibility) — ADDED 2026-10-02
+   RUNS BACKWARDS AGAINST ITS OWN NUMBERS, and nothing mechanical
+   enforces it: a lexicographic replay of the chain applies 2975
+   first, because no prefix below 2975 was available for the policy
+   change. 2975 makes highlights.expires_at NULLABLE for PERMANENT
+   Highlights and alters no RLS policy. Production's two PERMISSIVE
+   SELECT policies both carry (expires_at > now()) as a TOP-LEVEL AND
+   conjunct ahead of the owner disjunct, and on production's own
+   planner ((true) AND (NULL > now()) AND (true)) IS TRUE is FALSE,
+   with no RESTRICTIVE policy to admit the row. So 2975 applied alone
+   makes every PERMANENT Highlight insertable, updatable and
+   SELECTABLE BY NOBODY, its own owner included — a write-only record,
+   for as long as the window stays open.
 ```
 
-Everything else is independent and may be applied in any order.
+**BOTH FILES ARE ON `main` AND NEITHER IS APPLIED TO PRODUCTION.** Measured at
+`e39624c66` on 2026-10-02: `src/migrations/2975_highlights_permanent_lifetime.sql`
+and `src/migrations/3502_highlights_permanent_visibility_owner_first.sql` are
+both tracked on `main` (3502 landed with PR #554), and production's
+`schema_migration_ledger` carries neither. So the hazard above is not a
+reservation about future work — it is live for the next person who replays this
+chain in file order, and that person is whoever applies 2975. Neither migration
+is in the Story-retention/unsend rollout's sequence.
+
+Everything else is independent and may be applied in any order — **except as the
+3502 → 2975 entry above states.** That blanket sentence predates it and is not a
+licence to replay the chain in file order.
 
 ---
 

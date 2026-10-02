@@ -115,6 +115,38 @@ function refuseUnlessMember(res: any, membership: ThreadMembership, deniedMessag
   return true;
 }
 
+/**
+ * Retire a suggestion card that the caller has just acted on.
+ *
+ * Returns whether the retirement actually landed. All three action handlers
+ * discarded this result, and the card is what the client renders: an un-retired
+ * card stays on screen offering to do the thing that has already been done, so
+ * the next tap adds a second plan item, a second meetup or a second poll.
+ *
+ * It is deliberately NOT a refusal. By the time this runs, the action's own
+ * primary write is already committed, and answering 500 would make a retrying
+ * client repeat that write — the duplicate this exists to prevent. So the
+ * handlers stay 200 and report `suggestionRetired` instead, which is a fact the
+ * client can act on rather than a silence it cannot see.
+ */
+async function markSuggestionActed(
+  client: any,
+  suggestionId: string,
+  userId: string,
+): Promise<boolean> {
+  const { error } = await client
+    .from("telegraph_chat_suggestions")
+    .update({ status: "acted", acted_on_at: new Date().toISOString() })
+    .eq("id", suggestionId)
+    .eq("user_id", userId);
+  if (error) {
+    chatLogger.error({ err: error, suggestionId, userId },
+      "suggestion acted-retirement failed — the card stays on screen and a repeat tap would duplicate the action");
+    return false;
+  }
+  return true;
+}
+
 // ── GET /api/threads/:threadId/telegraph/suggestions ─────────────────────────
 
 router.get("/threads/:threadId/telegraph/suggestions", async (req, res) => {
@@ -170,7 +202,24 @@ router.get("/threads/:threadId/telegraph/suggestions", async (req, res) => {
               time_context: c.time_context ?? null,
               status: "shown",
             }));
-            await client.from("telegraph_chat_suggestions").insert(rows);
+            // The cards just built are surfaced ONLY by the re-read below, so a
+            // failed insert resolves (supabase-js does not throw) and the
+            // handler goes on to answer `{ suggestions: [] }` 200 — "you have
+            // none" — about cards it had just decided to show. That is the same
+            // defect the re-read's own error branch closes 20 lines down, on the
+            // write limb instead of the read limb, so it gets the same answer:
+            // `degraded_unavailable`, the only code `lib/http.ts`
+            // RETRYABLE_CODES marks retryable.
+            const { error: insertErr } = await client
+              .from("telegraph_chat_suggestions")
+              .insert(rows);
+            if (insertErr) {
+              chatLogger.error({ err: insertErr, threadId, userId: user.id },
+                "telegraph suggestion insert failed — refusing rather than answering that there are none");
+              sendError(res, "degraded_unavailable",
+                "We could not load Telegraph suggestions right now. Please try again shortly.");
+              return;
+            }
           }
         }
       }
@@ -232,6 +281,20 @@ router.post(
     if (suggestionErr) {
       chatLogger.error({ err: suggestionErr, suggestionId, threadId },
         "dismiss preference read failed — no preference event will be written, and that is a failure, not an absent suggestion");
+    }
+
+    // PostgREST does not treat a zero-row UPDATE as an error, so the update
+    // below cannot tell "dismissed" from "there was nothing of yours to
+    // dismiss" — and this handler answered `{ ok: true }` for a suggestion that
+    // does not exist, or belongs to someone else, where all three sibling
+    // actions answer `not_found`. The read above is scoped to the SAME three
+    // columns the update is (id, user_id, thread_id), so when it SUCCEEDED and
+    // found nothing, nothing was there. A FAILED read is deliberately not
+    // refused here — that is what the comment above it says, and the whole
+    // point of binding its error was to stop an outage reading as absence.
+    if (!suggestionErr && !suggestion) {
+      sendError(res, "not_found", "Suggestion not found");
+      return;
     }
 
     const { error } = await client
@@ -401,13 +464,9 @@ router.post(
     }
 
     // Mark suggestion as acted
-    await client
-      .from("telegraph_chat_suggestions")
-      .update({ status: "acted", acted_on_at: new Date().toISOString() })
-      .eq("id", suggestionId)
-      .eq("user_id", user.id);
+    const suggestionRetired = await markSuggestionActed(client, suggestionId, user.id);
 
-    res.status(200).json({ ok: true, planItem });
+    res.status(200).json({ ok: true, planItem, suggestionRetired });
   },
 );
 
@@ -457,13 +516,9 @@ router.post(
     };
 
     // Mark as acted
-    await client
-      .from("telegraph_chat_suggestions")
-      .update({ status: "acted", acted_on_at: new Date().toISOString() })
-      .eq("id", suggestionId)
-      .eq("user_id", user.id);
+    const suggestionRetired = await markSuggestionActed(client, suggestionId, user.id);
 
-    res.status(200).json({ ok: true, prefill });
+    res.status(200).json({ ok: true, prefill, suggestionRetired });
   },
 );
 
@@ -569,13 +624,9 @@ router.post(
     }
 
     // Mark suggestion as acted
-    await client
-      .from("telegraph_chat_suggestions")
-      .update({ status: "acted", acted_on_at: new Date().toISOString() })
-      .eq("id", suggestionId)
-      .eq("user_id", user.id);
+    const suggestionRetired = await markSuggestionActed(client, suggestionId, user.id);
 
-    res.status(200).json({ ok: true, messageId: (msg as any).id, options });
+    res.status(200).json({ ok: true, messageId: (msg as any).id, options, suggestionRetired });
   },
 );
 
