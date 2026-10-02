@@ -219,7 +219,7 @@ import {
 } from "../services/trust/TrustEventService.js";
 import { rankCandidates } from "../lib/portavaRank.js";
 import type { RankCandidate, ViewerContext } from "../lib/portavaRank.js";
-import { logImpression } from "../lib/rankLog.js"; import { nearBox, applyNearBox } from "../lib/nearBox.js";  // census-discovery §116 (sweep SW13)
+import { logImpression } from "../lib/rankLog.js"; import { nearBox, applyNearBox } from "../lib/nearBox.js"; import { readGoingRsvpsForEvents, readEventRsvps, readEventWaitlist } from "../lib/eventRowReads.js";  // census-discovery §116 (sweep SW13); §117 (B21)
 import { getDisplayTrustScores, getTrustProfileResult } from "../services/trust/TrustScoreService.js";
 import {
   toPrivateEventPreview,
@@ -340,11 +340,11 @@ async function isBlocked(sc: any, userA: string, userB: string): Promise<boolean
 
 /** Get going_count for event — `null` when event_rsvps cannot be read (census-trust §30.8: was 0, so every capacity check admitted) */
 async function getGoingCount(sc: any, eventId: string): Promise<number | null> {
-  const { data, error } = await sc
-    .from("event_rsvps")
-    .select("user_id")
-    .eq("event_id", eventId)
-    .eq("status", "going");
+  const { data, error } = await readEventRsvps(
+    sc,
+    eventId,
+    { status: "going" },
+  );  // census-discovery §117 (DV-83, B21): read whole — a read cut at db-max-rows is null here, never a cut count
   return error ? null : ((data as any[]) ?? []).length;
 }
 
@@ -485,7 +485,7 @@ function sendWaitlistUnavailable(req: any, res: any, eventId: string, where: str
  * count alone.
  */
 async function recountEventWaitlist(sc: any, eventId: string, req: any, extra?: Record<string, unknown>): Promise<void> {
-  const { data: rows, error } = await sc.from("event_waitlist").select("user_id").eq("event_id", eventId);
+  const { data: rows, error } = await readEventWaitlist(sc, eventId);  // census-discovery §117 (B21): read whole
   if (error) {
     req.log?.warn({ err: error, eventId }, "waitlist recount failed; leaving events.waitlist_count unchanged");
     return;
@@ -1098,11 +1098,11 @@ router.get("/events", async (req, res) => {
   // numbers for the same event. Overwrite the cached column with a live
   // per-event count before ranking/formatting.
   let goingUnread = false; if (allEventIds.length > 0) {  // census-discovery §116 (DV-83, B14): a failed live count is named, never served as 0
-    const { data: liveGoingRows, error: liveGoingErr } = await sc
-      .from("event_rsvps")
-      .select("event_id")
-      .in("event_id", allEventIds)
-      .eq("status", "going");
+    const { data: liveGoingRows, error: liveGoingErr } = await readGoingRsvpsForEvents(
+      sc,
+      allEventIds,
+    );  // census-discovery §117 (DV-83, B21): read whole — a read cut at db-max-rows is an error here, so the cached
+        // going_count stays and the read is named, never a cut 0 that is served and ranked
     const liveGoingCounts = new Map<string, number>();
     for (const r of ((liveGoingRows as any[]) ?? [])) {
       const eid = r.event_id as string;
@@ -1412,11 +1412,11 @@ router.get("/events/city/:city", async (req, res) => {
   // endpoint — recompute from event_rsvps so this alias never disagrees
   // with the detail screen either.
   let cityGoingUnread = false; if (cityEventIds.length > 0) {  // census-discovery §116 (DV-83, B14): the same on the city alias
-    const { data: liveGoingRows, error: liveGoingErr } = await sc
-      .from("event_rsvps")
-      .select("event_id")
-      .in("event_id", cityEventIds)
-      .eq("status", "going");
+    const { data: liveGoingRows, error: liveGoingErr } = await readGoingRsvpsForEvents(
+      sc,
+      cityEventIds,
+    );  // census-discovery §117 (DV-83, B21): read whole, the same on the city alias
+        // (a cut read keeps the cached going_count and is named)
     const liveGoingCounts = new Map<string, number>();
     for (const r of ((liveGoingRows as any[]) ?? [])) {
       const eid = (r as any).event_id as string;
@@ -2445,7 +2445,7 @@ router.get("/events/:id", async (req, res) => {
     sc.from("event_waitlist").select("position, offer_expires_at").eq("event_id", id).eq("user_id", user.id).maybeSingle(),
     sc.from("event_roles").select("role").eq("event_id", id).eq("user_id", user.id).maybeSingle(),
     sc.from("event_attendee_states").select("*").eq("event_id", id).eq("user_id", user.id).maybeSingle(),
-    sc.from("event_rsvps").select("user_id, status").eq("event_id", id).in("status", ["going", "maybe"]),
+    readEventRsvps(sc, id, { statuses: ["going", "maybe"] }),  // census-discovery §117 (B21): read whole, never cut at db-max-rows
     sc.from("profiles").select("id, handle, name, avatar_url").eq("id", (ev as any).host_id).maybeSingle(),
     sc.from("event_join_requests").select("status").eq("event_id", id).eq("user_id", user.id).maybeSingle(),
   ]); if ([rsvpResult, waitlistResult, roleResult, attendeeResult, joinReqResult].some((r: any) => Boolean(r?.error))) { req.log?.error({ eventId: id }, "event detail: the viewer's own state unreadable — refusing"); sendError(res, "degraded_unavailable", "Your RSVP and place at this event could not be checked. Please try again."); return; }  // census-discovery §117 (DV-83, B19): a failed own-state read is never "not RSVP'd"
@@ -2459,7 +2459,7 @@ router.get("/events/:id", async (req, res) => {
   };
 
   // Full RSVP counts
-  const { data: allRsvps, error: allRsvpsErr } = await sc.from("event_rsvps").select("status").eq("event_id", id); if (allRsvpsErr) { (counts as any).interested = null; (counts as any).cant_go = null; }  // §116 (SW10)
+  const { data: allRsvps, error: allRsvpsErr } = await readEventRsvps(sc, id); if (allRsvpsErr) { (counts as any).interested = null; (counts as any).cant_go = null; }  // §116 (SW10)
   for (const r of (allRsvps as any[]) ?? []) {
     if (r.status === "interested") counts.interested++;
     if (r.status === "cant_go") counts.cant_go++;
@@ -2483,10 +2483,10 @@ router.get("/events/:id", async (req, res) => {
     goingProfiles = ((gp as any[]) ?? []).map((p) => sanitizeIdentity(p, allowedGoing, user.id));
   }
 
-  const { data: waitlistData, error: waitlistErr } = await sc
-    .from("event_waitlist")
-    .select("user_id")
-    .eq("event_id", id);
+  const { data: waitlistData, error: waitlistErr } = await readEventWaitlist(
+    sc,
+    id,
+  );  // census-discovery §117 (B21): read whole, never cut at db-max-rows
   const waitlistCount = waitlistErr ? ((ev as any).waitlist_count ?? null) : ((waitlistData as any[]) ?? []).length;  // §116 (SW10): the cached count over a failed read
 
   const hpRaw = (hostResult as any).data; if ((hostResult as any).error) profilesFailed = true;  // §117 (B19): host null over a failed read is named
@@ -3351,7 +3351,7 @@ router.post("/events/:id/waitlist/accept", async (req, res) => {
   await sc.from("event_waitlist").delete().eq("event_id", id).eq("user_id", user.id);
   await syncEventState(sc, id);
   const goingNow = await getGoingCount(sc, id);
-  const { data: wlAfterAccept, error: wlAfterAcceptErr } = await sc.from("event_waitlist").select("user_id").eq("event_id", id);
+  const { data: wlAfterAccept, error: wlAfterAcceptErr } = await readEventWaitlist(sc, id);  // §117 (B21): read whole
   await sc.from("events").update({
     going_count: goingNow ?? undefined,  // census-trust §30.8: unread → the column is left alone (JSON drops undefined), never 0
     waitlist_count: wlAfterAcceptErr ? undefined : ((wlAfterAccept as any[]) ?? []).length,  // census-discovery §116 (sweep SW11): unread → the column is left alone, never 0
@@ -3434,7 +3434,7 @@ router.delete("/events/:id/waitlist", async (req, res) => {
 
   await sc.from("event_waitlist").delete().eq("event_id", id).eq("user_id", user.id);
   // Recompute waitlist_count so UI stays accurate
-  const { data: wlRemaining, error: wlRemainingErr } = await sc.from("event_waitlist").select("user_id").eq("event_id", id);
+  const { data: wlRemaining, error: wlRemainingErr } = await readEventWaitlist(sc, id);  // §117 (B21): read whole
   await sc
     .from("events")
     .update({ waitlist_count: wlRemainingErr ? undefined : ((wlRemaining as any[]) ?? []).length, updated_at: new Date().toISOString() })  // §116 (SW11): unread → left alone, never 0
@@ -3699,7 +3699,7 @@ router.post("/events/:id/roles", async (req, res) => {
     ({ error: banWlDelErr } = await sc.from("event_waitlist").delete().eq("event_id", id).eq("user_id", targetId)); if (banWlDelErr) req.log?.error({ err: banWlDelErr, eventId: id, targetId }, "ban: waitlist row could not be removed");
     await syncEventState(sc, id);
     const going = await getGoingCount(sc, id);
-    const { data: wlAfterBan, error: wlAfterBanErr } = await sc.from("event_waitlist").select("user_id").eq("event_id", id);
+    const { data: wlAfterBan, error: wlAfterBanErr } = await readEventWaitlist(sc, id);  // §117 (B21): read whole
     await sc.from("events").update({
       going_count: going ?? undefined,  // census-trust §30.8: unread → the column is left alone, never 0
       waitlist_count: wlAfterBanErr ? undefined : ((wlAfterBan as any[]) ?? []).length,  // §116 (SW11): unread → left alone, never 0
@@ -6169,7 +6169,7 @@ router.post("/events/:id/block-user/:userId", async (req, res) => {
 
   await syncEventState(sc, id);
   const going = await getGoingCount(sc, id);
-  const { data: wlAfter, error: wlAfterErr } = await sc.from("event_waitlist").select("user_id").eq("event_id", id);
+  const { data: wlAfter, error: wlAfterErr } = await readEventWaitlist(sc, id);  // §117 (B21): read whole
   await sc.from("events").update({ going_count: going ?? undefined, waitlist_count: wlAfterErr ? undefined : ((wlAfter as any[]) ?? []).length }).eq("id", id);  // §116 (SW11): unread → left alone, never 0
   await syncAttendee(sc, id, userId, null);
 

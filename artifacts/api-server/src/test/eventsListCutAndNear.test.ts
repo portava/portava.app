@@ -48,7 +48,7 @@ function makeClient(tables: Tables) {
       is: (c: string, v: unknown) => { rows = rows.filter((r) => (v === null ? r[c] == null : r[c] === v)); return q; },
       not: (c: string) => { rows = rows.filter((r) => r[c] != null); return q; },
       or: () => q,
-      order: () => q,
+      order: () => q, range: (a: number, b: number) => { rows = rows.slice(a, b + 1); return q; },  // census-discovery §117 (B21): the paged reads, as PostgREST answers them
       limit: (n: number) => { limit = n; return q; },
       maybeSingle: () => Promise.resolve(spec.error ? { data: null, error: spec.error } : { data: rows[0] ?? null, error: null }),
       single: () => Promise.resolve(spec.error ? { data: null, error: spec.error } : { data: rows[0] ?? null, error: rows[0] ? null : { message: "No rows" } }),
