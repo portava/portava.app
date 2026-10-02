@@ -1737,10 +1737,10 @@ function moduleLoads(src: string): ModuleLoad[] {
   if (hit !== undefined) return hit;
   const sf = parsedSource(src);
   const out: ModuleLoad[] = [];
-  const literal = (a: ts.Expression | undefined) => (a && (ts.isStringLiteral(a) || ts.isNoSubstitutionTemplateLiteral(a)) ? a.text : null);
+  const literal = (w: ts.Expression | undefined) => { const a = w && unwrapOuter(w); return a && (ts.isStringLiteral(a) || ts.isNoSubstitutionTemplateLiteral(a)) ? a.text : null; };  // census-discovery §117 (GH48): `import(('x'))` is the literal
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node)) {
-      const e = node.expression;
+      const e = unwrapOuter(node.expression);  // census-discovery §117 (GH45–GH47, GH49): `(require)`, `require!`, `(require as T)`, `(require satisfies T)` are require
       const kind = e.kind === ts.SyntaxKind.ImportKeyword ? 'import' : ts.isIdentifier(e) && ts.idText(e) === 'require' ? 'require' : null;
       if (kind) out.push({ kind, spec: literal(node.arguments[0]), call: node, text: node.getText(sf) });
     } else if (ts.isExternalModuleReference(node)) out.push({ kind: 'require', spec: literal(node.expression), call: node, text: node.getText(sf) });
@@ -1762,4 +1762,62 @@ function unbundledReach(files: string[]): string[] {
     }
   }
   return reach;
+}
+
+// ── census-discovery §117 (DV-83 round 20, lane W11-X2): the round-19 verifier's fixtures (GH45–GH49) ────────────────
+//
+// §116 read `require(…)` only when the callee WAS the identifier: `(require)(x)`, `require!(x)`, `(require as T)(x)` and
+// `(require satisfies T)(x)` put a parenthesis, a non-null assertion or a type assertion around it, which Babel strips —
+// so Metro bundles a plain `require(x)` the guard could not see (GH45–GH47, GH49). `import(('x'))` was refused as a
+// computed specifier, though its value is a literal (GH48). `moduleLoads` now looks through those wrappers on the callee
+// and on the specifier (`unwrapOuter`). GH50 pins the wrappers nested; GH45c pins that a wrapped member `.require` still
+// loads nothing.
+const GH19V = {
+  parenRequire: "export function zzRawRecsGH45(): Promise<number> {\n  const { fetchCompassRecommendations } = (require)('../services/compass.ts');\n  return fetchCompassRecommendations({ surface: 'passport' }).then((res: any) => (res.ok && res.data ? res.data.recommendations.length : 0));\n}\n",
+  nonNullRequire: "export function zzRawRecsGH46(): Promise<number> {\n  const { fetchCompassRecommendations } = require!('../services/compass.ts');\n  return fetchCompassRecommendations({ surface: 'passport' }).then((res: any) => (res.ok && res.data ? res.data.recommendations.length : 0));\n}\n",
+  asRequire: "export function zzRawRecsGH47(): Promise<number> {\n  const { fetchCompassRecommendations } = (require as NodeRequire)('../services/compass.ts');\n  return fetchCompassRecommendations({ surface: 'passport' }).then((res: any) => (res.ok && res.data ? res.data.recommendations.length : 0));\n}\n",
+  parenSpec: "export async function zzRawRecsGH48(): Promise<number> {\n  const { fetchCompassRecommendations } = await import(('../services/compass.ts'));\n  const res = await fetchCompassRecommendations({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  satisfiesRequire: "export function zzRawRecsGH49(): Promise<number> {\n  const { fetchCompassRecommendations } = (require satisfies NodeRequire)('../services/compass.ts');\n  return fetchCompassRecommendations({ surface: 'passport' }).then((res: any) => (res.ok && res.data ? res.data.recommendations.length : 0));\n}\n",
+  nested: "export function zzRawRecsGH50(): Promise<number> {\n  const { fetchCompassRecommendations } = ((require as any)! satisfies unknown as NodeRequire)((('../services/compass.ts') as string));\n  return fetchCompassRecommendations({ surface: 'passport' }).then((res: any) => (res.ok ? 1 : 0));\n}\n",
+  wrappedMember: "export const zzA45c = (obj.require as any)('../services/compass.ts');\nexport const zzB45c = (requireX)!('../services/compass.ts');\n",
+};
+
+describe("DV-83 guard reach — the round-19 verifier's fixtures (§117)", () => {
+  it('G13 GH45: `(require)(x)`, a parenthesized callee, is caught', () => {
+    assert.throws(() => withFiles({ 'src/components/zzGH45.tsx': GH19V.parenRequire }, wholeGuard), /zzGH45\.tsx \(<dynamic>\)/);
+  });
+  it('G13 GH46: `require!(x)`, a non-null-asserted callee, is caught', () => {
+    assert.throws(() => withFiles({ 'src/components/zzGH46.tsx': GH19V.nonNullRequire }, wholeGuard), /zzGH46\.tsx \(<dynamic>\)/);
+  });
+  it('G13 GH47: `(require as NodeRequire)(x)`, a type-asserted callee, is caught', () => {
+    assert.throws(() => withFiles({ 'src/components/zzGH47.tsx': GH19V.asRequire }, wholeGuard), /zzGH47\.tsx \(<dynamic>\)/);
+  });
+  it('G13 GH48: `import((x))`, a parenthesized literal specifier, is read as that literal (not refused as computed)', () => {
+    assert.throws(() => withFiles({ 'src/components/zzGH48.tsx': GH19V.parenSpec }, wholeGuard), /zzGH48\.tsx \(fetchCompassRecommendations\)/);
+    assert.deepEqual(moduleLoads(GH19V.parenSpec).map((d) => [d.kind, d.spec]), [['import', '../services/compass.ts']]);
+  });
+  it('G13 GH49: `(require satisfies NodeRequire)(x)` is caught', () => {
+    assert.throws(() => withFiles({ 'src/components/zzGH49.tsx': GH19V.satisfiesRequire }, wholeGuard), /zzGH49\.tsx \(<dynamic>\)/);
+  });
+  it('G13 GH50: the wrappers nested, on the callee and on the specifier, are looked through', () => {
+    assert.deepEqual(moduleLoads(GH19V.nested).map((d) => [d.kind, d.spec]), [['require', '../services/compass.ts']]);
+    assert.throws(() => withFiles({ 'src/components/zzGH50.tsx': GH19V.nested }, wholeGuard), /zzGH50\.tsx \(<dynamic>\)/);
+  });
+  it('G13 GH45c: a wrapped member `.require` and a wrapped other function load nothing', () => {
+    assert.deepEqual(moduleLoads(GH19V.wrappedMember), []);
+    assert.equal(withFiles({ 'src/components/zzGH45c.tsx': GH19V.wrappedMember }, () => unregisteredNow().has('src/components/zzGH45c.tsx')), false);
+  });
+});
+
+/**
+ * §117 (GH45–GH49): the expression under every parenthesis, non-null assertion and type assertion (`as`, `<T>x`,
+ * `satisfies`) and instantiation expression around it — the wrappers Babel strips before Metro collects a dependency.
+ * TypeScript's own `skipOuterExpressions` does this, but it is not in TypeScript 5.9's public typings, so the guard does
+ * not lean on it; this is the same walk over the same kinds.
+ */
+function unwrapOuter(e: ts.Expression): ts.Expression {
+  for (;;) {
+    if (ts.isParenthesizedExpression(e) || ts.isNonNullExpression(e) || ts.isAsExpression(e) || ts.isSatisfiesExpression(e) || ts.isTypeAssertionExpression(e) || ts.isExpressionWithTypeArguments(e) || ts.isPartiallyEmittedExpression(e)) e = e.expression;
+    else return e;
+  }
 }
