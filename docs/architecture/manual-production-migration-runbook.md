@@ -34,9 +34,33 @@ Everything else in scope is **unapplied**.
    sensing_anon_contributions. Neither table exists in production.
    A REVOKE against an absent relation is an ERROR, so 2333 as
    originally written would have ABORTED and landed nothing.
+
+3502 ──> 2975                   (Highlights visibility) — ADDED 2026-10-02
+   RUNS BACKWARDS AGAINST ITS OWN NUMBERS, and nothing mechanical
+   enforces it: a lexicographic replay of the chain applies 2975
+   first, because no prefix below 2975 was available for the policy
+   change. 2975 makes highlights.expires_at NULLABLE for PERMANENT
+   Highlights and alters no RLS policy. Production's two PERMISSIVE
+   SELECT policies both carry (expires_at > now()) as a TOP-LEVEL AND
+   conjunct ahead of the owner disjunct, and on production's own
+   planner ((true) AND (NULL > now()) AND (true)) IS TRUE is FALSE,
+   with no RESTRICTIVE policy to admit the row. So 2975 applied alone
+   makes every PERMANENT Highlight insertable, updatable and
+   SELECTABLE BY NOBODY, its own owner included — a write-only record,
+   for as long as the window stays open.
 ```
 
-Everything else is independent and may be applied in any order.
+**The 3502 ordering is a RESERVATION, not yet a fact.** As of 2026-10-02 19:50
+the policy migration is not on `main` — `main`'s 35xx band holds only 3500, and
+3501 is taken by open PR #549 (`3501_discovery_recommendations_retention.sql`,
+verified from the PR's own file list). The prefix is claimed and the file is
+built but unpushed. Until it lands, the hazard above is live for anyone who
+applies 2975, and 2975 is itself unapplied on production. Neither is in the
+Story-retention/unsend rollout's sequence.
+
+Everything else is independent and may be applied in any order — **except as the
+3502 → 2975 entry above states.** That blanket sentence predates it and is not a
+licence to replay the chain in file order.
 
 ---
 
