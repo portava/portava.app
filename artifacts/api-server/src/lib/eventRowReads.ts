@@ -36,3 +36,30 @@ export function readEventWaitlist(sc: any, eventId: string): Promise<PagedRead<{
   return readAllPages((from, to) => sc.from("event_waitlist").select("user_id", { count: "exact" })
     .eq("event_id", eventId).order("user_id").range(from, to));
 }
+
+/**
+ * census-discovery §117 (DV-83 round 20, B20): recount `going_count` and/or `waitlist_count` live for these event rows,
+ * writing the live counts onto the rows a list is about to serve. A read that failed or was cut leaves that column as
+ * cached on every row, and its table is answered so the list names it (`failedSources`); `[]` when every read asked for
+ * answered whole. The cached counters are written by many paths, any of which can leave them stale (round 19's SW11
+ * leaves a counter alone over a failed recount, by design), so a list that serves them recounts them.
+ */
+export async function liveEventCounters(sc: any, rows: any[], which: { going?: boolean; waitlist?: boolean } = { going: true, waitlist: true }): Promise<string[]> {
+  const ids = [...new Set(rows.map((r) => r?.id).filter((x): x is string => typeof x === "string"))];
+  if (ids.length === 0) return [];
+  const [going, waitlist] = await Promise.all([
+    which.going ? readGoingRsvpsForEvents(sc, ids) : null,
+    which.waitlist ? readWaitlistForEvents(sc, ids) : null,
+  ]);
+  const failed: string[] = [];
+  const apply = (read: PagedRead<{ event_id: string }> | null, table: string, column: string) => {
+    if (!read) return;
+    if (read.error || !Array.isArray(read.data)) { failed.push(table); return; }
+    const counts = new Map<string, number>();
+    for (const r of read.data) counts.set(r.event_id, (counts.get(r.event_id) ?? 0) + 1);
+    for (const row of rows) if (row && typeof row.id === "string") row[column] = counts.get(row.id) ?? 0;
+  };
+  apply(going, "event_rsvps", "going_count");
+  apply(waitlist, "event_waitlist", "waitlist_count");
+  return failed;
+}

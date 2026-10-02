@@ -219,7 +219,7 @@ import {
 } from "../services/trust/TrustEventService.js";
 import { rankCandidates } from "../lib/portavaRank.js";
 import type { RankCandidate, ViewerContext } from "../lib/portavaRank.js";
-import { logImpression } from "../lib/rankLog.js"; import { nearBox, applyNearBox } from "../lib/nearBox.js"; import { readGoingRsvpsForEvents, readEventRsvps, readEventWaitlist } from "../lib/eventRowReads.js";  // census-discovery §116 (sweep SW13); §117 (B21)
+import { logImpression } from "../lib/rankLog.js"; import { nearBox, applyNearBox } from "../lib/nearBox.js"; import { readGoingRsvpsForEvents, readEventRsvps, readEventWaitlist, liveEventCounters } from "../lib/eventRowReads.js";  // census-discovery §116 (sweep SW13); §117 (B21)
 import { getDisplayTrustScores, getTrustProfileResult } from "../services/trust/TrustScoreService.js";
 import {
   toPrivateEventPreview,
@@ -1097,7 +1097,7 @@ router.get("/events", async (req, res) => {
   // — otherwise the Pulse card and the detail screen can show two different
   // numbers for the same event. Overwrite the cached column with a live
   // per-event count before ranking/formatting.
-  let goingUnread = false; if (allEventIds.length > 0) {  // census-discovery §116 (DV-83, B14): a failed live count is named, never served as 0
+  let goingUnread = false; const waitlistUnread = await liveEventCounters(sc, rows, { waitlist: true }); if (allEventIds.length > 0) {  // census-discovery §116 (DV-83, B14): a failed live count is named, never served as 0; §117 (B20): the waitlist is recounted live too
     const { data: liveGoingRows, error: liveGoingErr } = await readGoingRsvpsForEvents(
       sc,
       allEventIds,
@@ -1333,7 +1333,7 @@ router.get("/events", async (req, res) => {
     })),
     page,
     limit,
-    sessionId, ...(poolCut || friendsUnread || rankedEvents.length > offset + limit ? { truncated: true as const } : {}), ...(goingUnread ? { failedSources: ["event_rsvps"] } : {}),  // census-discovery §115 (DV-83, B12): an answer that is not the whole list says so; a whole one is byte-identical; §116 (B14): a failed count read is named
+    sessionId, ...(poolCut || friendsUnread || rankedEvents.length > offset + limit ? { truncated: true as const } : {}), ...(goingUnread || waitlistUnread.length > 0 ? { failedSources: [...(goingUnread ? ["event_rsvps"] : []), ...waitlistUnread] } : {}),  // census-discovery §115 (DV-83, B12): an answer that is not the whole list says so; a whole one is byte-identical; §116 (B14): a failed count read is named
   });
 });
 
@@ -1411,7 +1411,7 @@ router.get("/events/city/:city", async (req, res) => {
   // BUG AY fix: same cached-vs-live going_count drift as the main list
   // endpoint — recompute from event_rsvps so this alias never disagrees
   // with the detail screen either.
-  let cityGoingUnread = false; if (cityEventIds.length > 0) {  // census-discovery §116 (DV-83, B14): the same on the city alias
+  let cityGoingUnread = false; const cityWaitlistUnread = await liveEventCounters(sc, filtered, { waitlist: true }); if (cityEventIds.length > 0) {  // census-discovery §116 (DV-83, B14): the same on the city alias; §117 (B20): and the waitlist
     const { data: liveGoingRows, error: liveGoingErr } = await readGoingRsvpsForEvents(
       sc,
       cityEventIds,
@@ -1434,7 +1434,7 @@ router.get("/events/city/:city", async (req, res) => {
       myWaitlistPosition: cityWaitlistPositionMap[e.id] ?? null,
     })),
     page,
-    limit, ...(cityGoingUnread ? { failedSources: ["event_rsvps"] } : {}),  // §116 (B14)
+    limit, ...(cityGoingUnread || cityWaitlistUnread.length > 0 ? { failedSources: [...(cityGoingUnread ? ["event_rsvps"] : []), ...cityWaitlistUnread] } : {}),  // §116 (B14); §117 (B20)
   });
 });
 
@@ -1495,7 +1495,7 @@ router.get("/events/nearby", async (req, res) => {
     filtered.push(ev);
   }
 
-  const nearbyEventIds = filtered.map((e: any) => e.id as string);
+  const nearbyEventIds = filtered.map((e: any) => e.id as string); const nearbyCountsUnread = await liveEventCounters(sc, filtered);  // census-discovery §117 (DV-83, B20): both cached counters recounted live; a failed read keeps the cached one, named
   let nearbyRsvpMap: Record<string, string> = {};
   let nearbyWaitlistPositionMap: Record<string, number> = {};
   if (nearbyEventIds.length > 0) {
@@ -1518,7 +1518,7 @@ router.get("/events/nearby", async (req, res) => {
       myWaitlistPosition: nearbyWaitlistPositionMap[e.id] ?? null,
     })),
     page,
-    limit,
+    limit, ...(nearbyCountsUnread.length > 0 ? { failedSources: nearbyCountsUnread } : {}),  // §117 (B20)
   });
 });
 
