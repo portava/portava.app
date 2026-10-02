@@ -128,7 +128,7 @@ function HashtagRow({
         </Text>
       </View>
       <View style={[styles.chip, styles.hashtagChip]}>
-        <Text style={[styles.chipText, { color: color.signal }]}>Hashtag</Text>
+        <Text style={[styles.chipText, { color: color.signalStrong }]}>Hashtag</Text>
       </View>
     </Pressable>
   );

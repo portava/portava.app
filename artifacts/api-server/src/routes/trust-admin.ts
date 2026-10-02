@@ -38,7 +38,7 @@ import { ALL_CATEGORIES, getTrustProfileResult, recalculateTrustScore } from "..
 import type { TrustCategory } from "../services/trust/TrustEventService.js";
 import { listRestrictionsForAudit } from "../services/trust/TrustRestrictionService.js";
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
-import { getActiveCaps, getCapForUser } from "../services/trust/TrustCapService.js";
+import { getActiveCapsResult, getCapForUser } from "../services/trust/TrustCapService.js";
 import type { RestrictionType } from "../services/trust/TrustRestrictionService.js";
 
 import { requireAdmin } from "../lib/requireAdmin.js";
@@ -181,7 +181,7 @@ router.get("/admin/trust/users/:userId", async (req, res) => {
   const { userId } = req.params;
   if (!UUID.test(userId)) { sendError(res, "invalid_payload", "Invalid userId"); return; }
 
-  const [profileRead, caps, restrictionsRes, eventsRes, reviewsRes] = await Promise.all([
+  const [profileRead, capsRead, restrictionsRes, eventsRes, reviewsRes] = await Promise.all([
     // getTrustProfileResult, not getTrustProfile. The lossy wrapper returns null
     // for "this user has no profile" and for "trust_profiles could not be read"
     // alike, and this dossier is the screen a moderator decides on — the same
@@ -190,7 +190,10 @@ router.get("/admin/trust/users/:userId", async (req, res) => {
     // fact about the database, and a moderator must not be shown the first when
     // the truth is the second.
     getTrustProfileResult(sc, userId),
-    getActiveCaps(sc, userId),
+    // Result form, not the array: an admin deciding whether a ceiling still
+    // holds this account down must not read a failed trust_caps query as "no
+    // ceilings". Same reason as the profile read above. See getActiveCapsResult.
+    getActiveCapsResult(sc, userId),
     // Through the service's audit read (census-trust C15/A17): route code names
     // no trust table. Mapped back into { data, error } so the refusal below is
     // unchanged — an unreadable EXCLUSION table must never render as a clean
@@ -249,7 +252,9 @@ router.get("/admin/trust/users/:userId", async (req, res) => {
   res.json({
     userId,
     profile:      profileRead.state === "ok" ? profileRead.profile : null,
-    caps,
+    caps:            capsRead.state === "ok" ? capsRead.caps : [],
+    /** True when `caps` is empty because the read failed, not because there are none. */
+    capsUnavailable: capsRead.state !== "ok",
     restrictions: (restrictionsRes.data as any[]) ?? [],
     events:       (eventsRes.data as any[]) ?? [],
     openReviews:  (reviewsRes.data as any[]) ?? [],

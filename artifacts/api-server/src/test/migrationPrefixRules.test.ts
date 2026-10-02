@@ -48,17 +48,39 @@ describe("validatePrefixBand — reserved buffer 2096-2099", () => {
   });
 });
 
-describe("validatePrefixBand — new-format range 2100-2999", () => {
+describe("validatePrefixBand — new-format ranges 2100-2999 and 3000-3999", () => {
   it("accepts prefixes across the valid range", () => {
     for (const n of [2100, 2150, 2500, 2999]) {
       assert.equal(validatePrefixBand(`${n}_ok.sql`), null, `${n} should be valid`);
     }
   });
 
-  it("rejects a 4-digit prefix at or above 3000 (outside the reserved future range)", () => {
-    const v = validatePrefixBand("3000_too_far.sql");
+  it("accepts 3000-3999, added 2026-09-23 because 2100-2999 ran out", () => {
+    // This assertion used to say the opposite, and it changed on purpose. Main
+    // held prefixes up to 2997 and unmerged branches held 2998 and 2999, so
+    // there was no number a new migration could take without planting a
+    // collision. A dated prefix is not the alternative: apply order is plain
+    // lexicographic and "20260923_…" sorts below "2810_…", so a dated file
+    // authored today would run before the migrations it depends on.
+    for (const n of [3000, 3001, 3500, 3999]) {
+      assert.equal(validatePrefixBand(`${n}_ok.sql`), null, `${n} should now be valid`);
+    }
+  });
+
+  it("3000-3999 still cannot be confused with a dated prefix, and still sorts after 2xxx", () => {
+    // The invariant this module exists for, now carried by the FIRST digit
+    // rather than the second: no YYYYMMDD in this millennium begins with "3".
+    assert.ok("3000_x.sql" > "2999_x.sql", "a 3xxx prefix must sort after every 2xxx one");
+    assert.ok("3000_x.sql".slice(0, 4) >= "2100", "a 3xxx prefix must still read as post-cutover");
+    assert.ok("20260923_x.sql" < "2810_x.sql",
+      "this is why a dated prefix is not the escape hatch for a dependent migration");
+  });
+
+  it("rejects a 4-digit prefix at or above 4000, which is not allocated", () => {
+    const v = validatePrefixBand("4000_too_far.sql");
     assert.ok(v);
-    assert.match(v!.reason, /2100-2999/);
+    assert.match(v!.reason, /3000-3999/);
+    assert.match(v!.reason, /not allocated yet/);
   });
 
   it("rejects a prefix whose second digit is 0 (would collide in spirit with the 20xx dated shape)", () => {
@@ -98,12 +120,13 @@ describe("validateAllPrefixBands", () => {
       "20260815_close_memories.sql",
       "2097_sneaks_into_the_buffer.sql",
       "2100_valid_new_format.sql",
-      "3000_out_of_range.sql",
+      "3000_valid_new_format.sql",
+      "4000_out_of_range.sql",
     ];
     const violations = validateAllPrefixBands(files);
     assert.deepEqual(
       violations.map((v) => v.file).sort(),
-      ["2097_sneaks_into_the_buffer.sql", "3000_out_of_range.sql"].sort(),
+      ["2097_sneaks_into_the_buffer.sql", "4000_out_of_range.sql"].sort(),
     );
   });
 

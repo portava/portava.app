@@ -35,7 +35,7 @@ import {
 import { MediaModeSelector } from '../../src/components/media/MediaModeSelector';
 import { WatchFeed } from '../../src/components/media/WatchFeed';
 import { GridFeed } from '../../src/components/media/GridFeed';
-import { GemsFeed } from '../../src/components/media/GemsFeed';
+import { GemsFeed } from '../../src/components/media/GemsFeed'; import { MediaWorldTabSurface } from '../../src/features/media/screens/MediaWorldTabSurface.tsx'; import { resolveMediaSurfaceDecisions } from '../../src/features/media/state/mediaSurfaceFlags.ts';
 import { MediaQuickCreateSheet } from '../../src/components/media/MediaQuickCreateSheet';
 import { mediaEvents } from '../../src/lib/mediaEvents';
 import { color, shadow, avatar } from '../../src/theme/tokens';
@@ -51,7 +51,7 @@ interface ModeItem {
   flagKey: string;
 }
 
-const ALL_MODES: ModeItem[] = [
+const ALL_MODES: ModeItem[] = [{ key: 'world', label: 'World', flagKey: 'MEDIA_TAB_WORLD_DEFAULT_ENABLED' }, // census-media §34 (F1): first, so the tab opens on it whenever it is listed, and listed only while MEDIA_WORLD_SHELL_ENABLED is on too (both filters below read it through resolveMediaSurfaceDecisions). Off (the seed): filtered out, and the tab is exactly as before.
   { key: 'watch', label: 'Watch', flagKey: 'MEDIA_VIEW_MODE_FULLSCREEN_ENABLED' },
   { key: 'grid',  label: 'Grid',  flagKey: 'MEDIA_VIEW_MODE_GRID_ENABLED' },
   { key: 'gems',  label: 'Gems',  flagKey: 'MEDIA_VIEW_MODE_HIDDEN_GEMS_ENABLED' },
@@ -69,7 +69,7 @@ function MediaScreenInner() {
 
   // Filter out modes disabled by feature flags.
   const enabledModes = useMemo(
-    () => ALL_MODES.filter(({ flagKey }) => isEnabled(flagKey)),
+    () => ALL_MODES.filter(({ key, flagKey }) => (key === 'world' ? resolveMediaSurfaceDecisions(isEnabled).worldDefault : isEnabled(flagKey))),
     [isEnabled],
   );
 
@@ -106,7 +106,7 @@ function MediaScreenInner() {
     <View style={[styles.screen, { backgroundColor: screenBg }]}>
       {/* ── Mode content (fills remaining space) ────────────────────── */}
       <View style={styles.content}>
-        {selectedMode === 'watch' && <WatchFeed />}
+        {selectedMode === 'watch' && <WatchFeed />}{selectedMode === 'world' && <MediaWorldTabSurface modeSwitcher={enabledModes.length > 1 ? <MediaModeSelector modes={enabledModes} selectedMode={selectedMode} onSelect={setMode} /> : null} />}
         {selectedMode === 'grid'  && (
           <View style={{ flex: 1, paddingTop: insets.top + GRID_SELECTOR_CLEARANCE }}>
             <GridFeed />
@@ -124,15 +124,15 @@ function MediaScreenInner() {
       </View>
 
       {/* ── Overlay header for immersive modes (Watch / Gems) ───────── */}
-      {isImmersive && (
+      {isImmersive && selectedMode !== 'world' && (
         <AppHeader
-          variant="overlay"
+          variant="overlay" overlayTint="rgba(17,17,15,0.58)"
           title={selectedMode === 'watch' ? 'Watch' : 'Gems'}
         />
       )}
 
       {/* ── Mode selector — overlaid at the top, inside safe area ───── */}
-      {enabledModes.length > 1 && (
+      {enabledModes.length > 1 && selectedMode !== 'world' && (
         <View
           style={[styles.selectorOverlay, { top: isImmersive ? getOverlayHeaderTotalHeight(insets.top) + 4 : insets.top + 8 }]}
           pointerEvents="box-none"
@@ -187,7 +187,7 @@ function MediaScreenInner() {
           this tab's default behaviour is completely unchanged when the flag
           is absent (fail-soft isEnabled → false). Additive: the Watch/Grid/
           Gems surface below is untouched. */}
-      {isEnabled('MEDIA_WORLD_SHELL_ENABLED') && (
+      {isEnabled('MEDIA_WORLD_SHELL_ENABLED') && !enabledModes.some(({ key }) => key === 'world') && (
         <Pressable
           style={[
             styles.worldEntryBtn,
@@ -227,7 +227,7 @@ export default function MediaScreen() {
       flagsLoading
         ? ['watch', 'grid', 'gems']
         : ALL_MODES
-            .filter(({ flagKey }) => isEnabled(flagKey))
+            .filter(({ key, flagKey }) => (key === 'world' ? resolveMediaSurfaceDecisions(isEnabled).worldDefault : isEnabled(flagKey)))
             .map(({ key }) => key),
     [isEnabled, flagsLoading],
   );
@@ -239,7 +239,7 @@ export default function MediaScreen() {
     <MediaStoreProvider
       defaultMode={defaultMode}
       enabledModes={enabledModes}
-      flagsLoading={flagsLoading}
+      flagsLoading={flagsLoading} openOnDefault={defaultMode === 'world'}
     >
       <MediaScreenInner />
     </MediaStoreProvider>
@@ -276,7 +276,7 @@ const styles = StyleSheet.create({
   },
   fabGems: {
     // Gem-mode FAB uses the gem green accent instead of signal red.
-    backgroundColor: '#10B981',
+    backgroundColor: '#0C875E', // census-media §31.12: #10B981 x 0.73; the white gem icon on it clears 3:1 (on #10B981, 2.54)
   },
   // World shell entry pill — top-left, subtle; additive (flag-gated).
   worldEntryBtn: {
@@ -288,7 +288,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 7,
     borderRadius: 999,
-    backgroundColor: 'rgba(17,17,15,0.45)',
+    backgroundColor: 'rgba(17,17,15,0.58)', // census-media §31.12: the least alpha at which "World" clears 4.5:1 over a white frame; was 0.45
     zIndex: 20,
   },
   worldEntryBtnLight: {

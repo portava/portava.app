@@ -10,7 +10,7 @@
  * exactly as before. The idempotent backfill script
  * (scripts/backfill-media-assets.ts) links pre-existing media.
  *
- * THE FLAG IS NOT OFF. MEASURED 2026-09-07 (do not infer this from 0191's seed):
+ * THE FLAG IS NOT OFF. MEASURED 2026-09-07 (do not infer this from 0191's seed): [SUPERSEDED. Re-measured read-only 2026-09-26: production reads FALSE (set 2026-09-25 15:39 UTC) and 2470's four columns are present, so the writer is off BY THE FLAG, not refused by the schema; census-media §23.2. The 09-07 text below is kept as the record it was.]
  *
  *   travel-buddy  ajrurzioarfkagpuxfnb  (production)  media_canonical_enabled = TRUE
  *   portava-ci    hwokxgbmezheskbzskfr  (CI)          NO ROW AT ALL -> false
@@ -49,7 +49,7 @@ import {
   appendEdit,
   normalizeProvenance,
   computeIntelligenceEligibility,
-  type AppendEditOptions,
+  type AppendEditOptions, type MediaSourceType, MEDIA_SOURCE_UNDECLARED,
 } from "./media/mediaEvidenceEligibility.js";
 import {
   probeCanonicalAssetSchema,
@@ -133,13 +133,13 @@ export interface RecordAssetInput {
   height?: number | null;
   thumbnailPath?: string | null;
   thumbnailUrl?: string | null;
-  /** provenance: 'user' | 'official' | 'provider' | 'community' | ... */
-  sourceType?: string;
+  /** §6 source, or MEDIA_SOURCE_UNDECLARED where the spec does not settle it. Every production call states it (census-media §35, MD37; src/test/mediaAssetSourceDeclared.test.ts). */
+  sourceType?: MediaSourceType;
   processingStatus?: string;
   /** §6 capturedAt (may precede uploadedAt); feeds provenance + eligibility. */
   capturedAt?: string | null;
   /** True when the asset carries a trustworthy location binding (§10). */
-  hasLocation?: boolean;
+  hasLocation?: boolean; /** census-media §37.8 (MD269): `limited` = born HELD, set only while the §36 stage (3356) is on. Absent ⇒ the column default, and the insert payload is byte-identical to before. */ moderationStatus?: "limited";
 }
 
 // ── Schema skew: the §6 columns that are NOT everywhere ──────────────────────
@@ -359,7 +359,7 @@ export async function recordMediaAssetDetailed(
     // so eligibility is driven purely by source + capture. This is a PURE
     // computation; it runs only on the flag-on write path.
     const provenance = initProvenance({
-      sourceType: input.sourceType ?? "user",
+      sourceType: input.sourceType ?? MEDIA_SOURCE_UNDECLARED,
       capturedAt: input.capturedAt ?? null,
       hasLocation: input.hasLocation ?? false,
     });
@@ -383,10 +383,10 @@ export async function recordMediaAssetDetailed(
       height: input.height ?? null,
       thumbnail_path: input.thumbnailPath ?? null,
       thumbnail_url: input.thumbnailUrl ?? null,
-      source_type: input.sourceType ?? "user",
+      source_type: input.sourceType ?? MEDIA_SOURCE_UNDECLARED,
       captured_at: input.capturedAt ?? null,
       provenance,
-      intelligence_eligibility: intelligenceEligibility,
+      intelligence_eligibility: intelligenceEligibility, ...(input.moderationStatus ? { moderation_status: input.moderationStatus } : {}), // §37.8: one write, born held; no key at all when absent
       // Default to 'processing' (not 'ready') when dimensions are absent —
       // a video upload has null width/height at upload time, and the DB
       // constraint (2089) rejects ready rows with null dimensions. Callers
@@ -458,7 +458,7 @@ async function writeDegraded(
   input: RecordAssetInput,
   schemaState: CanonicalSchemaState,
 ): Promise<RecordAssetResult> {
-  const dropped: string[] = [];
+  const dropped: string[] = []; if ("moderation_status" in row) { delete row.moderation_status; dropped.push("moderation_status"); } // §37.8: a pre-2250 CHECK admits no §36 hold, and MediaModerationService refuses that schema too
   for (const col of CANONICAL_ASSET_COLUMNS_ADDED_BY_2250) {
     if (col in row) {
       delete row[col];
@@ -598,7 +598,7 @@ export interface RecordMediaEditResult {
   /** Whether the lineage/eligibility update was persisted. */
   recorded: boolean;
   /** The recomputed live-evidence verdict after this edit. */
-  evidenceEligible: boolean;
+  evidenceEligible: boolean; /** §6 version: a concurrent writer won the compare-and-set, NOTHING was written — re-read and retry (recordMediaEditWithRetry). */ conflict?: boolean;
 }
 
 /**
@@ -642,7 +642,7 @@ export async function recordMediaEdit(
 
     const { data, error } = await sc
       .from("media_assets")
-      .select("source_type, provenance, captured_at")
+      .select("source_type, provenance, captured_at, version")
       .eq("id", assetId)
       .maybeSingle();
     if (error || !data) return null;
@@ -650,7 +650,7 @@ export async function recordMediaEdit(
     const row = data as {
       source_type?: string | null;
       provenance?: unknown;
-      captured_at?: string | null;
+      captured_at?: string | null; version?: number | null;
     };
     const current =
       normalizeProvenance(row.provenance) ??
@@ -662,19 +662,19 @@ export async function recordMediaEdit(
       sourceType: nextProvenance.sourceType,
       capturedAt: nextProvenance.capturedAt,
       editHistory: nextProvenance.editHistory,
-      hasLocation: nextProvenance.hasLocation,
+      hasLocation: nextProvenance.hasLocation, locationBasis: nextProvenance.locationBasis ?? null,
     });
-
-    const { error: upErr } = await sc
-      .from("media_assets")
-      .update({
-        provenance: nextProvenance,
-        intelligence_eligibility: eligibility,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", assetId);
-    if (upErr) return { recorded: false, evidenceEligible: eligibility.eligible };
-    return { recorded: true, evidenceEligible: eligibility.eligible };
+    // §6 `version` (census-media §20, MD38): COMPARE-AND-SET, not last-write-wins.
+    // Two concurrent edits used to read the same lineage and the second update
+    // silently dropped the first from the §35 record. See casUpdateMediaAsset:
+    // the update matches only the version read above and writes the next one.
+    const written = await casUpdateMediaAsset(sc, assetId, row.version, {
+      provenance: nextProvenance,
+      intelligence_eligibility: eligibility,
+      updated_at: new Date().toISOString(),
+    });
+    if (written === "conflict") return { recorded: false, evidenceEligible: eligibility.eligible, conflict: true };
+    return { recorded: written === "written", evidenceEligible: eligibility.eligible };
   } catch {
     return null;
   }
@@ -793,8 +793,8 @@ export interface RecordEntityMediaInput {
   entityId: string;
   position?: number;
   isCover?: boolean;
-  /** §6 sourceType; defaults to the legacy 'user' when omitted. */
-  sourceType?: string;
+  /** §6 sourceType, or MEDIA_SOURCE_UNDECLARED where the spec does not settle it. Every production call states it (census-media §35, MD37). */
+  sourceType?: MediaSourceType;
 }
 
 /**
@@ -829,13 +829,21 @@ export async function recordEntityMedia(
     if (!ref) return NONE; // external / unresolvable URL — never fabricated
 
     let assetId: string | null = null;
-    const { data: existing } = await sc
+    const { data: existing, error: existingErr } = await sc
       .from("media_assets")
-      .select("id")
+      .select("id, owner_user_id")
       .eq("storage_bucket", ref.bucket)
       .eq("storage_path", ref.path)
       .maybeSingle();
+    // An unreadable lookup is not "no asset": creating one here could fork the
+    // file's identity into a second row for the same storage key. Refuse.
+    if (existingErr) return NONE;
     if ((existing as any)?.id) {
+      // §6.1 fan-out is ONE OWNER'S asset in many of that owner's objects. A
+      // storage key someone else owns is not this caller's to attach: the
+      // readers already refuse cross-owner publication (lib/mediaAccess 3a/3b,
+      // the Wall's quick-media loader), and the writer now refuses to create it.
+      if ((existing as any).owner_user_id !== input.ownerUserId) return NONE;
       assetId = (existing as any).id as string;
     } else {
       const mediaType: "image" | "video" = /\.(mp4|mov|m4v|webm)(\?|$)/i.test(input.publicUrl)
@@ -850,7 +858,7 @@ export async function recordEntityMedia(
         mimeType: mediaType === "video" ? "video/mp4" : "image/jpeg",
         // Size/dimensions are unknown at entity-creation time (the upload path
         // measured them); honest zero, staged 'processing' so it is not served
-        // as ready until a dimension sweep fills it in.
+        // as ready until a dimension sweep fills it in. That sweep is the dimension sweep in lib/media/mediaProcessingWorker (census-media §32), behind media_processing_worker_enabled: it measures the stored object and completes this row with its size and dimensions, or fails it.
         sizeBytes: 0,
         sourceType: input.sourceType,
         processingStatus: "processing",
@@ -952,3 +960,144 @@ export function resolveDisplayMedia(
     fallbackCategory: opts.fallbackCategory,
   };
 }
+
+// ── §6 version: the compare-and-set every read-modify-write goes through ────
+
+/** What a versioned update did. */
+export type CasOutcome = "written" | "conflict" | "failed";
+
+/**
+ * casUpdateMediaAsset — update one `media_assets` row ONLY IF it is still at
+ * `expectedVersion`, writing `expectedVersion + 1` (census-media §20, MD38).
+ *
+ * `version INTEGER NOT NULL DEFAULT 1` has existed since 0191 and nothing
+ * incremented or compared it, so the §6 "versioned aggregate" was a constant.
+ * Two halves now make it one:
+ *
+ *   • migration 3320's BEFORE UPDATE trigger sets NEW.version = OLD.version + 1
+ *     on EVERY update, whoever issues it (the processing lifecycle, the upsert
+ *     path, a transcode completion) — so the version moves with the row even for
+ *     writers that never read it;
+ *   • this function is the COMPARE half for writers that read-modify-write: the
+ *     update is filtered on the version it read, and a race it lost matches zero
+ *     rows. PostgREST reports a zero-row UPDATE as success (`error: null`), so the
+ *     row is `.select()`ed back and counted — "no error" is not proof of a write.
+ *
+ * The explicit `version: expected + 1` in the patch is what the trigger would
+ * set anyway; it is written too so the increment survives on a database where
+ * 3320 has not been applied. Fail-closed: a row with no readable version is
+ * `failed`, never written blind.
+ */
+export async function casUpdateMediaAsset(
+  sc: SupabaseClient,
+  assetId: string,
+  expectedVersion: unknown,
+  patch: Record<string, unknown>,
+): Promise<CasOutcome> {
+  if (typeof expectedVersion !== "number" || !Number.isInteger(expectedVersion)) return "failed";
+  try {
+    const { data, error } = await sc
+      .from("media_assets")
+      .update({ ...patch, version: expectedVersion + 1 })
+      .eq("id", assetId)
+      .eq("version", expectedVersion)
+      .select("id, version");
+    if (error) return "failed";
+    return Array.isArray(data) && data.length === 1 ? "written" : "conflict";
+  } catch {
+    return "failed";
+  }
+}
+
+/** How many times a lost compare-and-set is re-read and re-applied. */
+export const MEDIA_EDIT_MAX_ATTEMPTS = 3;
+
+/**
+ * recordMediaEdit, retried on a lost compare-and-set. Each retry RE-READS the
+ * lineage and re-appends, so an edit that raced another is recorded AFTER it —
+ * both survive, which is the property the version exists for. Gives up after
+ * MEDIA_EDIT_MAX_ATTEMPTS and reports the conflict rather than overwriting.
+ */
+export async function recordMediaEditWithRetry(
+  sc: SupabaseClient,
+  assetId: string,
+  op: string,
+  opts: AppendEditOptions = {},
+): Promise<RecordMediaEditResult | null> {
+  let last: RecordMediaEditResult | null = null;
+  for (let attempt = 0; attempt < MEDIA_EDIT_MAX_ATTEMPTS; attempt++) {
+    last = await recordMediaEdit(sc, assetId, op, opts);
+    if (!last || !last.conflict) return last;
+  }
+  return last;
+}
+
+// ── §6.1 the post → asset attachment (one asset, many objects) ───────────────
+
+export interface RecordPostMediaInput {
+  postId: string;
+  authorId: string;
+  /** The post's media URLs, in order. External URLs are ignored, never guessed at. */
+  mediaUrls: readonly string[];
+}
+
+/**
+ * recordPostMediaAttachments — link a new post to the canonical asset of each
+ * storage-backed file it carries (§6.1 entity_type='post'), at position = its
+ * index, cover = the first.
+ *
+ * WHY (census-media §20, MD44). The upload path records the asset, the postcard
+ * path attaches that SAME asset to the auto-created postcard (routes/postcards.ts
+ * recordEntityMedia 'postcard'), and memories and gems attach theirs — but the
+ * post itself, the object the file was uploaded for, had no attachment. So the
+ * one place a file is most often used was the one place the "one asset, many
+ * objects" model did not reach, and the canonical read (mediaCanonicalRead,
+ * entity_type='post') could never find a post's asset. This is that link.
+ *
+ * It creates NO new file and, where the upload already recorded one, NO new
+ * asset: `recordEntityMedia` reuses the row at the same (bucket, path), and
+ * refuses a storage key the author does not own.
+ *
+ * GATED TWICE, SO IT CANNOT WRITE WHERE THE CANONICAL WRITER CANNOT:
+ *   1. `media_canonical_enabled` (read inside recordEntityMedia);
+ *   2. the schema-capability probe must say `present` — the same guard the
+ *      asset writer runs. Production today is flag TRUE / schema MISSING
+ *      (migration 2250/2470 unapplied, owner decision MEDIA_CANONICAL_FLAG), so
+ *      this writes nothing there until the owner applies the columns, at which
+ *      point it resumes together with the asset writer — never before it.
+ *
+ * Fire-and-forget safe: never throws, returns how many links were written.
+ */
+export async function recordPostMediaAttachments(
+  sc: SupabaseClient,
+  input: RecordPostMediaInput,
+): Promise<number> {
+  try {
+    const urls = (input.mediaUrls ?? []).filter((u) => typeof u === "string" && u.trim().length > 0);
+    if (urls.length === 0 || !input.postId || !input.authorId) return 0;
+    if (!(await isFlagEnabled(sc, "media_canonical_enabled"))) return 0;
+    const schema = await probeCanonicalAssetSchema(sc);
+    if (schema.state !== "present") return 0;
+    let linked = 0;
+    for (let i = 0; i < urls.length; i++) {
+      const r = await recordEntityMedia(sc, {
+        ownerUserId: input.authorId,
+        publicUrl: urls[i]!,
+        entityType: "post",
+        entityId: input.postId,
+        position: i,
+        isCover: i === 0, sourceType: MEDIA_SOURCE_UNDECLARED, // census-media §35 MD37: a post's file is an upload, whose §6 source was never declared
+      });
+      if (r.attachmentId) linked++;
+    }
+    return linked;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * census-media §35 (MD37). Re-exported so every writer's call site imports the
+ * named undeclared source from the module it already imports the writer from.
+ */
+export { MEDIA_SOURCE_UNDECLARED };

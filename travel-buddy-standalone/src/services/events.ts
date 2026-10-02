@@ -426,7 +426,7 @@ export async function markNoShow(
 
 export async function convertEventToMemory(
   eventId: string,
-): Promise<ApiResult<{ memoryId: string }>> {
+): Promise<ApiResult<{ memoryId: string; alreadySaved?: boolean }>> {
   return apiCall(`/api/events/${eventId}/memory`, { method: 'POST' });
 }
 
@@ -800,3 +800,158 @@ export async function addEventToTrip(
     body: JSON.stringify({ tripId }),
   });
 }
+
+// ── Testing-mode wiring (WP-05) ───────────────────────────────────────────────
+// Appended at the foot: the reachability ledger cites lines above by number.
+
+// ── Attendance (host / co-host / moderator) ──────────────────────────────────
+
+export interface EventAttendanceRow {
+  userId: string;
+  handle: string | null;
+  displayName: string | null;
+  avatarUrl: string | null;
+  rsvpStatus: 'going';
+  checkedInAt: string | null;
+  confirmedAt: string | null;
+  noShowAt: string | null;
+}
+
+export async function getEventAttendees(
+  eventId: string,
+): Promise<ApiResult<{ attendees: EventAttendanceRow[] }>> {
+  return apiCall(`/api/events/${eventId}/attendees`);
+}
+
+// ── Lifecycle through the sanctioned routes ──────────────────────────────────
+// PATCH { state } skips what these routes do: the cancel route charges the
+// host's trust and notifies attendees; the complete route awards attendance
+// trust, stamps and review prompts. The host dashboard calls these.
+
+export async function cancelEventWithReason(
+  eventId: string,
+  reason?: string,
+): Promise<ApiResult<{ ok: boolean }>> {
+  return apiCall(`/api/events/${eventId}/cancel`, {
+    method: 'POST',
+    body: JSON.stringify(reason && reason.trim() ? { reason: reason.trim() } : {}),
+  });
+}
+
+export async function completeEvent(eventId: string): Promise<ApiResult<{ ok: boolean }>> {
+  return apiCall(`/api/events/${eventId}/complete`, { method: 'POST' });
+}
+
+// ── Co-hosts ─────────────────────────────────────────────────────────────────
+
+export interface EventCohost {
+  user_id: string;
+  permissions: { manage_rsvps?: boolean; manage_chat?: boolean; post_updates?: boolean } | null;
+  added_by: string | null;
+  added_at: string | null;
+  handle: string | null;
+  displayName: string | null;
+  avatarUrl: string | null;
+}
+
+export async function getEventCohosts(eventId: string): Promise<ApiResult<{ cohosts: EventCohost[] }>> {
+  return apiCall(`/api/events/${eventId}/cohosts`);
+}
+
+export async function addEventCohost(
+  eventId: string,
+  userId: string,
+): Promise<ApiResult<{ ok: boolean; userId: string }>> {
+  return apiCall(`/api/events/${eventId}/cohosts`, { method: 'POST', body: JSON.stringify({ userId }) });
+}
+
+export async function removeEventCohost(eventId: string, userId: string): Promise<ApiResult<{ ok: boolean }>> {
+  return apiCall(`/api/events/${eventId}/cohosts/${userId}`, { method: 'DELETE' });
+}
+
+// ── Posts, photos and updates (participants only) ────────────────────────────
+
+export interface EventAuthor {
+  id: string;
+  handle: string | null;
+  displayName: string | null;
+  avatarUrl: string | null;
+}
+
+export interface EventPost {
+  id: string;
+  body: string;
+  mediaUrls: string[];
+  pinned: boolean;
+  createdAt: string;
+  author: EventAuthor | null;
+}
+
+export async function getEventPosts(eventId: string): Promise<ApiResult<{ posts: EventPost[] }>> {
+  return apiCall(`/api/events/${eventId}/posts`);
+}
+
+export async function createEventPost(
+  eventId: string,
+  body: string,
+  mediaUrls: string[] = [],
+): Promise<ApiResult<{ id: string }>> {
+  return apiCall(`/api/events/${eventId}/posts`, { method: 'POST', body: JSON.stringify({ body, mediaUrls }) });
+}
+
+/** Raw `event_media` row, as GET /api/events/:id/media returns it. */
+export interface EventMediaItem {
+  id: string;
+  uploader_id: string;
+  media_url: string;
+  media_type: 'image' | 'video';
+  caption: string | null;
+  created_at: string;
+}
+
+export async function getEventMedia(eventId: string): Promise<ApiResult<{ media: EventMediaItem[] }>> {
+  return apiCall(`/api/events/${eventId}/media`);
+}
+
+export async function addEventMedia(
+  eventId: string,
+  mediaUrl: string,
+  mediaType: 'image' | 'video' = 'image',
+  caption?: string,
+): Promise<ApiResult<EventMediaItem>> {
+  return apiCall(`/api/events/${eventId}/media`, {
+    method: 'POST',
+    body: JSON.stringify({ mediaUrl, mediaType, ...(caption ? { caption } : {}) }),
+  });
+}
+
+/** Raw `event_updates` row plus the author's public identity. */
+export interface EventComment {
+  id: string;
+  author_id: string;
+  body: string;
+  pinned: boolean;
+  created_at: string;
+  author: EventAuthor | null;
+}
+
+export async function getEventComments(eventId: string): Promise<ApiResult<{ updates: EventComment[] }>> {
+  return apiCall(`/api/events/${eventId}/comments`);
+}
+
+export async function postEventComment(eventId: string, body: string): Promise<ApiResult<EventComment>> {
+  return apiCall(`/api/events/${eventId}/comments`, { method: 'POST', body: JSON.stringify({ body }) });
+}
+
+// ── Shared links ─────────────────────────────────────────────────────────────
+
+/** GET /api/events/share-link/:token/preview — the event a share token opens. */
+export async function previewSharedEvent(
+  token: string,
+): Promise<ApiResult<{ event: EventSummary; shareToken: string }>> {
+  const r = await apiCall<{ event: EventSummary; shareToken: string }>(
+    `/api/events/share-link/${encodeURIComponent(token)}/preview`,
+  );
+  return r.ok && r.data?.event ? { ok: true, data: { ...r.data, event: normalizeEventSummary(r.data.event) } } : r;
+}
+

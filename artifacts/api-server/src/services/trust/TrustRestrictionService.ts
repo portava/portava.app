@@ -317,34 +317,129 @@ export async function listRestrictionsForAudit(
 }
 
 /**
+ * Max restrictions lifted in ONE sweep.
+ *
+ * Bounded for the same reason the user-recalculation loop is bounded: an
+ * unbounded statement against a table that only grows is a latent outage, and a
+ * partial sweep that SAYS it is partial is worth more than a whole one that
+ * times out and lifts nothing. The remainder is not dropped — it rolls to the
+ * next pass, and the pass runs every six hours.
+ */
+export const RESTRICTION_EXPIRY_BATCH = 500;
+
+/**
+ * What one sweep did. Three outcomes the caller must be able to tell apart,
+ * because the old `Promise<number>` collapsed two of them into the number 0.
+ */
+export interface ExpireRestrictionsResult {
+  /** How many restrictions this pass actually lifted. */
+  expired: number;
+  /**
+   * The batch cap was reached, so there may be more still due. Never read a
+   * truncated sweep as full coverage.
+   */
+  truncated: boolean;
+  /**
+   * A read or a write errored, so this pass CANNOT SAY what is still due.
+   * Distinct from `expired: 0`, which means the sweep worked and found nothing.
+   */
+  failed: boolean;
+}
+
+/**
  * Expire restrictions whose expires_at has passed.
  *
- * Called from lib/trustMaintenanceScheduler on every pass. This function
- * existed with the comment "call from cleanup job" and no caller: every
- * read-side consumer (getRestrictionState, interactionPermissions) already
- * filters on `expires_at`, so an expired restriction was never ENFORCED past
- * its date — but its row stayed `lifted_at IS NULL`, so the admin user view
- * (routes/admin.ts, routes/trust-admin.ts) listed it as active indefinitely.
- * The row now agrees with the enforcement.
+ * TWO DEFECTS THIS REPLACES, both of the same family.
  *
- * Reads `error`: postgrest-js resolves `{ data, error }` rather than rejecting,
- * so the previous `const { data }` turned any failed update into a silent 0.
+ * 1. IT HAD NO CALLER. Repo-wide, the identifier appeared exactly once — its own
+ *    definition. Not the maintenance scheduler, not a route, not a startup job,
+ *    no pg_cron, no trigger, not even a test. Its own docstring said "call from
+ *    cleanup job"; the cleanup job that was later built picked up the two
+ *    SIBLING time-based lifts (expireOldCaps, clearExpiredProbation) and missed
+ *    this one.
+ *
+ *    HOW FAR THAT REACHED, stated precisely rather than at its worst: every
+ *    read-side consumer (getRestrictionState, interactionPermissions) already
+ *    filters on `expires_at`, so an expired restriction was never ENFORCED past
+ *    its date. What stayed wrong is the ROW — `lifted_at IS NULL` forever — so
+ *    the admin user views (routes/admin.ts, routes/trust-admin.ts) listed a
+ *    lapsed sanction as active indefinitely. The row now agrees with the
+ *    enforcement. It is called from lib/trustMaintenanceScheduler every pass.
+ *
+ * 2. IT SWALLOWED ITS OWN FAILURE. The old body destructured `const { data }`
+ *    and discarded `error`, then returned `data?.length ?? 0`. supabase-js
+ *    RETURNS errors rather than throwing, so a permissions failure, a schema
+ *    drift or a timeout all produced the number 0 — identical to a clean sweep
+ *    with nothing to do. A broken sweep and an idle one were the same
+ *    observation, forever.
+ *
+ * Now: select-then-update in bounded batches, `error` read on BOTH halves, and a
+ * result that separates "nothing to do" from "could not tell".
+ *
+ * Shape: select the due set (bounded, oldest term first) and then lift exactly
+ * those ids. Two statements rather than one because the cap has to be applied
+ * to a SELECT — PostgREST has no LIMIT on an UPDATE — and because the count of
+ * what was lifted then comes from the write's own `.select("id")` rather than
+ * from an assumption.
+ *
+ * NO STARVATION. The due-set read filters `lifted_at IS NULL`, so every row
+ * this pass lifts leaves the due set; and it is ordered by `expires_at`
+ * ascending, so the longest-overdue rows are taken first and nothing can be
+ * overtaken indefinitely by newer arrivals. Repeated passes therefore drain the
+ * backlog: whatever a bounded pass leaves behind is the head of the next one.
  */
-export async function expireOldRestrictions(db: SupabaseClient): Promise<number> {
+export async function expireOldRestrictions(
+  db: SupabaseClient,
+  limit: number = RESTRICTION_EXPIRY_BATCH,
+): Promise<ExpireRestrictionsResult> {
+  const nowIso = new Date().toISOString();
+
+  let due: any[];
   try {
     const { data, error } = await db
       .from("trust_restrictions")
-      .update({ lifted_at: new Date().toISOString() })
-      .lt("expires_at", new Date().toISOString())
+      .select("id")
+      .is("lifted_at", null)
+      .lt("expires_at", nowIso)
+      .order("expires_at", { ascending: true })
+      .limit(limit);
+    if (error) {
+      trustRestrictionLogger.warn({ err: error }, "expireOldRestrictions: due-set read failed");
+      return { expired: 0, truncated: false, failed: true };
+    }
+    due = (data as any[]) ?? [];
+  } catch (err) {
+    trustRestrictionLogger.warn({ err }, "expireOldRestrictions: due-set read threw");
+    return { expired: 0, truncated: false, failed: true };
+  }
+
+  if (due.length === 0) return { expired: 0, truncated: false, failed: false };
+
+  const ids = due.map((r) => String(r?.id ?? "")).filter(Boolean);
+  // `>= limit` rather than `> limit`: a full batch is indistinguishable from a
+  // full batch plus more, so a sweep that fills its cap reports truncation even
+  // when it happened to drain the table exactly. Over-reporting "there may be
+  // more" is the safe direction — the next pass confirms it with expired: 0.
+  const truncated = ids.length >= limit;
+
+  try {
+    const { data, error } = await db
+      .from("trust_restrictions")
+      .update({ lifted_at: nowIso })
+      .in("id", ids)
+      // Re-assert the predicate the read used. A concurrent pass may have
+      // lifted some of these between the read and this write, and lifting
+      // twice would overwrite the FIRST lifted_at with a later instant —
+      // moving the recorded moment a sanction ended. Do not remove this.
       .is("lifted_at", null)
       .select("id");
     if (error) {
-      trustRestrictionLogger.warn({ err: error }, "expireOldRestrictions failed (non-fatal)");
-      return 0;
+      trustRestrictionLogger.warn({ err: error, due: ids.length }, "expireOldRestrictions: lift failed");
+      return { expired: 0, truncated: false, failed: true };
     }
-    return (data as any[])?.length ?? 0;
+    return { expired: ((data as any[]) ?? []).length, truncated, failed: false };
   } catch (err) {
-    trustRestrictionLogger.warn({ err }, "expireOldRestrictions threw (non-fatal)");
-    return 0;
+    trustRestrictionLogger.warn({ err, due: ids.length }, "expireOldRestrictions: lift threw");
+    return { expired: 0, truncated: false, failed: true };
   }
 }

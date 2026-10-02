@@ -11,14 +11,14 @@
  *   §24    "Duplicate events — unique dedup key / source event id"
  *   App A  FLIGHT_MOVED_EARLIER, FLIGHT_DELAY_CREATED_OPPORTUNITY
  *
- * ── THE HONEST HEADER ────────────────────────────────────────────────────────
- * NOTHING PRODUCES A LAYOVER EVENT. There is no flight feed, no airport feed,
- * no webhook, no ingest route, and `layover_external_events`
- * (`src/migrations/2860_layover_airport_truth_and_events.sql`) is written and
- * NOT applied. This module is called by nothing outside
- * `src/test/layoverEventReplanner.test.ts`. Every claim below is about what the
- * pipeline does when an event is handed to it, and the census records that
- * separately from whether one ever is.
+ * ── THE HONEST HEADER, CORRECTED 2026-09-22 ─────────────────────────────────
+ * NO FEED PRODUCES A LAYOVER EVENT YET: no flight feed, no airport feed, no
+ * webhook. What HAS changed is the two claims this header used to make. The
+ * store `layover_external_events` (2860) IS APPLIED to production — it is in
+ * production-applied-migrations.json and all twelve of its columns are in the
+ * capture named by lib/capability/snapshots/current.ts — and an ingest route
+ * exists (`routes/layoverEvents.ts`, behind a flag 2981 seeds FALSE) whose
+ * consumer reaches `handleEvent` through a port. The census records both.
  *
  * That is also why the whole pipeline is PURE. `handleEvent` takes the sessions
  * and the airport it is to consider, returns a decision, and writes nothing:
@@ -41,7 +41,7 @@ import {
   type FeasibilitySession,
   type LayoverFeasibilityRecord,
 } from "./LayoverFeasibility.js";
-import type { LayoverReasonCode, LiveConditions } from "./LayoverSafetyEngine.js";
+import type { LayoverReasonCode, LiveConditions } from "./LayoverSafetyEngine.js"; import type { EntryEligibility } from "./layoverEntryGate.js";
 import {
   nextDisruptionState,
   type DisruptionEvent,
@@ -589,7 +589,7 @@ export interface ActionUniverse {
  * bound can refuse a plan but can never certify one (census L47).
  */
 export function candidateFits(record: LayoverFeasibilityRecord, c: ReplanCandidate): boolean {
-  if (candidateIsUnmeasured(c)) return false;
+  if (candidateIsUnmeasured(c)) return false; if (!c.insideAirport && record.verdict === "no") return false; // §65: a certified `no` (a refused border, or no time) fits no LANDSIDE candidate
   const round = c.insideAirport ? 0 : c.travelTimeMin! + returnLegMin(c);
   return round + c.activityTimeMin! <= record.envelope.usableMinutes;
 }
@@ -870,10 +870,10 @@ export interface ReplanOutcome {
   disruptionState: DisruptionState;
   /**
    * ALWAYS FALSE ON THIS TREE. §11.1 step 4 asks for a new immutable snapshot;
-   * `after` IS an immutable certified record, and there is nowhere to put it —
-   * `layover_certified_computations` (2700) and `layover_external_events`
-   * (2860) are both written and unapplied. Reported rather than assumed so a
-   * caller cannot mistake a returned record for a persisted one.
+   * `after` IS an immutable certified record and there is nowhere to put it:
+   * `layover_certified_computations` (2700) is written and unapplied. NOT
+   * `layover_external_events` (2860), which this comment used to name and which
+   * IS applied — but that table stores events, not snapshots. Reported, never assumed.
    */
   snapshotPersisted: false;
   snapshotUnavailableReason: "no_snapshot_storage";
@@ -905,7 +905,7 @@ export function handleEvent(
     candidates: Record<string, ReplanCandidate[]>;
     heldRecommendations?: Record<string, Array<{ id: string; inputHash: string }>>;
     liveConditions?: Record<string, LiveConditions | null>;
-    disruptionStates?: Record<string, DisruptionState>;
+    disruptionStates?: Record<string, DisruptionState>; /** Each session owner's corridor (`resolveLayoverEntry`), keyed by session id — census-discovery §65. Absent = unresolved. */ entries?: Record<string, EntryEligibility | null>;
     nowMs: number;
   },
 ): HandleEventResult {
@@ -929,12 +929,12 @@ export function handleEvent(
 
     const before = certifySessionFeasibility(ctx.airport, session.session, {
       nowMs: ctx.nowMs,
-      liveConditions: priorLive,
+      liveConditions: priorLive, entry: ctx.entries?.[id] ?? null,
     });
     const applied = applyEventToInputs(event, session.session, priorLive);
     const after = certifySessionFeasibility(ctx.airport, applied.session, {
       nowMs: ctx.nowMs,
-      liveConditions: applied.live,
+      liveConditions: applied.live, entry: ctx.entries?.[id] ?? null,
     });
 
     const candidates = ctx.candidates[id] ?? [];

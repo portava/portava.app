@@ -16,7 +16,7 @@ import { TelegraphSendIcon } from '../icons/TelegraphSendIcon.tsx';
 import { DiscoveryShareSheet } from '../DiscoveryShareSheet.tsx';
 import type { DiscoverySharePayload } from '../DiscoveryShareSheet.tsx';
 import type { DiscoveryPlace } from '../../services/discovery.ts';
-import { getDiscoveryPlaces, getSavedPlaceIds, getCachedDiscoveryPlaces } from '../../services/discovery.ts';
+import { getDiscoveryPlaces, getSavedPlaceIds, getCachedDiscoveryPlaces } from '../../services/discovery.ts'; import { listPartialNotice, listPartialEmptyTitle, LIST_PARTIAL_EMPTY_BODY } from '../../services/discoveryCoverageNotice.ts'; import { liveClaimsUnchecked, LIVE_UNCHECKED_NOTICE } from './liveUnchecked.ts';  // census-discovery §91 (A07)
 import { PlaceSkeletonList } from './PlaceSkeleton.tsx';
 import PlaceCard from './PlaceCard.tsx';
 import { PlaceDetailSheet } from './PlaceDetailSheet.tsx';
@@ -34,8 +34,8 @@ import { CompassWhySheet } from '../compass/CompassWhySheet.tsx';
 import { postCompassFrontloadEvent, postCompassContext } from '../../services/compass.ts';
 import { CompassPicksSection } from '../compass/CompassPicksSection.tsx';
 import { CompassTravelerRow } from '../compass/CompassTravelerRow.tsx';
-import { CompassOnboardingCard } from '../compass/CompassOnboardingCard.tsx';
-import { DiscoveryEventPostsRail } from './DiscoveryEventPostsRail.tsx';
+import { CompassOnboardingCard } from '../compass/CompassOnboardingCard.tsx'; import { DiscoveryOutputKindsRail } from './DiscoveryOutputKindsRail.tsx';  // census-discovery §94 (DC-01): the three output kinds, behind the server's own FALSE flag
+import { DiscoveryEventPostsRail } from './DiscoveryEventPostsRail.tsx'; import { useFeatureFlags } from '../../context/FeatureFlagsContext.tsx';  // census-discovery §79 — the 3455 capability read, declared on this line so the cited lines below do not move
 
 // ── Main component ────────────────────────────────────────────────────────────
 
@@ -44,6 +44,12 @@ interface ForYouTabProps {
   onAddToPlan: (item: { id: string; name: string; category: string; address?: string | null }) => void;
   onAddToRoute?: (draft: RouteStopDraft) => void;
   contextMode?: import('../../services/discovery.ts').DiscoveryContextMode | null;
+  /**
+   * Sensing §8 intent mode the user chose (census-discovery §71), sent as
+   * `?intentMode=` on GET /discovery. Null / absent ⇒ not sent. The screen
+   * remounts this tab when it changes (its `key`), so it is fixed per instance.
+   */
+  intentMode?: import('../../services/discovery.ts').DiscoveryIntentMode | null;
   lat?: number | null;
   lng?: number | null;
   userLat?: number | null;
@@ -82,17 +88,17 @@ function compassItemToPlace(item: import('../../services/compass.ts').CompassFee
   };
 }
 
-export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode, lat, lng, userLat, userLng, fallbackZoom, viewMode = 'list', sortBy, listTopInset, bottomInset, onRefresh }: ForYouTabProps) {
-  const { isAuthed }            = useSession();
+export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode, intentMode, lat, lng, userLat, userLng, fallbackZoom, viewMode = 'list', sortBy, listTopInset, bottomInset, onRefresh }: ForYouTabProps) {
+  const { isAuthed }            = useSession(); const forYouPde = useFeatureFlags().isEnabled('discovery_for_you_pde_enabled') && isAuthed;  // census-discovery §79 (C32/A05), migration 3455 seeded FALSE: ON ⇒ GET /discovery's for_you page IS the one-pipeline page (Compass's gates, PDE's order, the chosen intent mode), so the Compass feed must not replace it with a second ordering that carries no mode. Unknown ⇒ off (fail-soft) = today's tab.
   // SWR: seed from in-memory client cache so second opens paint instantly.
   const [items, setItems]       = useState<ForYouItem[]>(() => {
     if (!destination) return [];
-    const cached = getCachedDiscoveryPlaces(destination, 'for_you', 25, 1);
+    const cached = getCachedDiscoveryPlaces(destination, 'for_you', 25, 1, intentMode);
     return cached?.places.slice(0, 15).map((p) => ({ kind: 'osm' as const, place: p })) ?? [];
   });
   const [loading, setLoading]   = useState<boolean>(() => {
     if (!destination) return false;
-    return getCachedDiscoveryPlaces(destination, 'for_you', 25, 1) === null;
+    return getCachedDiscoveryPlaces(destination, 'for_you', 25, 1, intentMode) === null;
   });
   const [refreshing, setRefreshing] = useState(false);
   // 'refused' is a FOURTH state and not a flavour of 'none'.
@@ -103,10 +109,10 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
   // 'none' here is exactly the consumer-side collapse the sentence forbids —
   // the user is told "there is nothing in Lisbon" when the truth is "we never
   // managed to look".
-  const [source, setSource]     = useState<'compass' | 'osm' | 'none' | 'refused'>('none');
+  const [source, setSource]     = useState<'compass' | 'osm' | 'none' | 'refused'>('none'); const [osmPartial, setOsmPartial] = useState(false); const [railRefreshKey, setRailRefreshKey] = useState(0); // §80 (DV-83): the OSM lane answered PARTIAL
   // The saved-places read is a separate surface with a separate failure: your
   // bookmarks are not the place list, and one can fail while the other works.
-  const [savedIdsUnavailable, setSavedIdsUnavailable] = useState(false);
+  const [savedIdsUnavailable, setSavedIdsUnavailable] = useState(false); const [liveUnchecked, setLiveUnchecked] = useState(false);  // census-discovery §91 (A07): the GET /discovery page's "now" claims were withheld (meta.liveSafety)
   const [detail, setDetail]     = useState<DiscoveryPlace | null>(null);
   const [shareItem, setShareItem] = useState<ForYouItem | null>(null);
 
@@ -145,7 +151,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
   }, [citySwitcherInput]);
 
   // Compass feed — runs in background alongside OSM/Telegraph
-  const compass = useCompassFeed({ section: 'for_you', city: destination, enabled: isAuthed });
+  const compass = useCompassFeed({ section: 'for_you', city: destination, enabled: isAuthed && !forYouPde });
 
   // Pre-populate the module-level savedPlaceIds set so returning users see
   // filled bookmarks for places they saved in previous sessions.
@@ -219,7 +225,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
   // to Compass source — runs independently of load() so it never wipes existing
   // OSM/Telegraph content; only upgrades when Compass data is present and enabled.
   useEffect(() => {
-    if (!compass.data || !compass.compassEnabled) return;
+    if (forYouPde || !compass.data || !compass.compassEnabled) return;  // §79: a cached Compass feed (useCompassFeed seeds one on mount) must not supersede the one-pipeline page either
     const compassItems = (compass.data.sections ?? []).flatMap((s) => s.items ?? []);
     const safeItems = compass.data.safeItems ?? [];
     const all = compassItems.length > 0 ? compassItems : safeItems;
@@ -229,7 +235,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
       setLoading(false);
       setRefreshing(false);
     }
-  }, [compass.data, compass.compassEnabled]);
+  }, [compass.data, compass.compassEnabled, forYouPde]);
 
   // load() always fetches OSM + Telegraph as the reliable baseline.
   // The Compass useEffect above upgrades items asynchronously when Compass
@@ -250,7 +256,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
     // Fire OSM as baseline. Compass upgrades items via its own useEffect when enabled.
     const osmPromise = getDiscoveryPlaces(
       destination, 'for_you',
-      { radiusKm: 25, openNow: false, minRating: null, sortBy: sortBy ?? null },
+      { radiusKm: 25, openNow: false, minRating: null, sortBy: sortBy ?? null, ...(intentMode ? { intentMode } : {}) },
       1, contextMode, null, null, null, lat, lng, nearestUserLat, nearestUserLng,
     );
 
@@ -258,26 +264,26 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
     osmPromise.then((osm) => {
       if (stale()) return;
       setLoading(false);
-      setRefreshing(false);
+      setRefreshing(false); setLiveUnchecked(osm.ok && liveClaimsUnchecked(osm.data));  // §91 (A07)
       setItems((prev) => {
         // Don't overwrite if Compass has already upgraded the feed.
         if (prev.some((i) => i.kind === 'compass')) return prev;
         if (osm.ok && osm.data.places.length > 0) {
-          setSource('osm');
+          setSource('osm'); setOsmPartial(osm.data.refusal?.coverage === 'partial');
           return osm.data.places.slice(0, 15).map((p) => ({ kind: 'osm' as const, place: p }));
         }
         // An empty list with a `coverage: "nothing"` refusal beside it is not an
         // empty city — see the `source` declaration above. A `partial` refusal
         // is NOT routed here: some of what it carries is real, and the branch
         // above has already rendered it.
-        setSource(osm.ok && osm.data.refusal?.coverage === 'nothing' ? 'refused' : 'none');
+        setSource(osm.ok && osm.data.refusal?.coverage === 'nothing' ? 'refused' : 'none'); setOsmPartial(osm.ok && osm.data.refusal?.coverage === 'partial');
         return [];
       });
     }).catch(() => {
       if (!stale()) { setLoading(false); setRefreshing(false); }
     });
 
-  }, [destination, isAuthed, sortBy, lat, lng, userLat, userLng, contextMode]);
+  }, [destination, isAuthed, sortBy, lat, lng, userLat, userLng, contextMode, intentMode]);
 
   // Reset state and start loading when destination, auth, or sort/coord changes.
   // load() identity changes when any dependency changes, so this effect fires
@@ -292,13 +298,13 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
     // active we keep the current items and just refresh the OSM baseline in the
     // background (load() won't overwrite Compass items — see the guard in load()).
     const compassActive = Boolean(
-      compass?.compassEnabled && compass?.data &&
+      !forYouPde && compass?.compassEnabled && compass?.data &&
       (((compass.data.sections ?? []).some((s: any) => (s.items ?? []).length > 0)) ||
         (compass.data.safeItems ?? []).length > 0),
     );
     if (!compassActive) {
       const cachedResult = destination
-        ? getCachedDiscoveryPlaces(destination, 'for_you', 25, 1)
+        ? getCachedDiscoveryPlaces(destination, 'for_you', 25, 1, intentMode)
         : null;
       if (cachedResult) {
         setItems(cachedResult.places.slice(0, 15).map((p) => ({ kind: 'osm' as const, place: p })));
@@ -306,7 +312,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
       } else {
         setItems([]);
       }
-      setSource('none');
+      setSource('none'); setOsmPartial(false);
       load(cachedResult !== null); // isRefresh=true when cache hit → no skeleton
     } else {
       load(true); // keep personalized items; refresh OSM baseline without a skeleton
@@ -314,7 +320,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
   }, [load]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleRefresh = () => {
-    setRefreshing(true);
+    setRefreshing(true); setRailRefreshKey((k) => k + 1);  // census-discovery §94.10: a pull asks the Live-from-events rail again, as its refused copy promises
     load(true);
     onRefresh?.();
   };
@@ -375,7 +381,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
             {source === 'compass'
               ? 'Compass picks · personalised for you'
               : source === 'osm'
-              ? (isAuthed ? 'Popular spots' : 'Popular spots · sign in for personalised picks')
+              ? (forYouPde ? 'Picked for you' : isAuthed ? 'Popular spots' : 'Popular spots · sign in for personalised picks')
               : 'Curated picks'}
           </Text>
         </View>
@@ -387,14 +393,14 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
             bookmark icons it explains are ON those cards. Small and quiet on
             purpose: nothing was lost, one read did not come back, and whatever
             the last good read wrote is still what the cards show. */}
-        {savedIdsUnavailable && (
+        {source === 'osm' && osmPartial && (<View style={styles.notice} testID="for-you-partial"><Text style={styles.noticeText}>{listPartialNotice('places')}</Text></View>)}{savedIdsUnavailable && (
           <View style={styles.notice} testID="for-you-saved-unavailable">
             <Text style={styles.noticeText}>
               Couldn't check your saved places just now. Your saves are safe — pull to refresh.
             </Text>
           </View>
         )}
-
+        {liveUnchecked && items.length > 0 && !items.some((i) => i.kind === 'compass') ? <View style={styles.notice} testID="for-you-live-unchecked"><Text style={styles.noticeText}>{LIVE_UNCHECKED_NOTICE}</Text></View> : null}{/* §91 (A07): only over the GET /discovery page it describes, never over the Compass feed */}
         {items.filter((item) => !dismissed.has(item.place.id)).map((item) => {
           const isShowMore = showMoreIds.has(item.place.id);
           return (
@@ -463,7 +469,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
           );
         })}
 
-        {source === 'none' && (
+        {source === 'none' && osmPartial && (<View style={styles.empty} testID="for-you-partial-empty"><Sparkles size={28} color={color.faint} /><Text style={styles.emptyTitle}>{listPartialEmptyTitle('places')}</Text><Text style={styles.emptyDesc}>{LIST_PARTIAL_EMPTY_BODY}</Text></View>)}{source === 'none' && !osmPartial && (
           <View style={styles.empty}>
             <Sparkles size={28} color={color.faint} />
             <Text style={styles.emptyTitle}>No recommendations yet</Text>
@@ -496,7 +502,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
         {isAuthed && <CompassOnboardingCard />}
 
         {/* ── Live from events — serve point 7 (GET /discovery/feed) ── */}
-        <DiscoveryEventPostsRail destination={destination} lat={lat} lng={lng} />
+        <DiscoveryEventPostsRail destination={destination} lat={lat} lng={lng} refreshKey={railRefreshKey} />{(['trails', 'shared_moments', 'emerging_discoveries'] as const).map((k) => <DiscoveryOutputKindsRail key={k} kind={k} destination={destination} enabled={isAuthed} refreshKey={railRefreshKey} />)}
 
         {/* ── Compass Picks section — horizontal card strip ── */}
         <CompassPicksSection
@@ -536,7 +542,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
           </View>
         )}
 
-        {community.gems.length > 0 && (
+        {community.incomplete && !community.refused && (<View style={styles.notice} testID="for-you-community-partial"><Text style={styles.noticeText}>{listPartialNotice('traveler places')}</Text></View>)}{community.gems.length > 0 && (
           <View style={styles.communitySection}>
             <HiddenGemsSection gems={community.gems} onAddToRoute={onAddToRoute} />
           </View>

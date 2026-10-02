@@ -14,6 +14,13 @@
  *   • Live Accuracy — how often current observations are corroborated
  *     = corroborated / corroboration-opportunities.
  *
+ * A FOURTH §25 dimension is computed from a SEPARATE input:
+ *
+ *   • Trip Expertise — relevant journey history = a saturating function of the
+ *     contributor's COMPLETED, PUBLIC trips (to the city in scope when one is
+ *     given). It takes `ContributorJourneySignals`, not the intel signals, so
+ *     journey history and observation history cannot be mixed into one number.
+ *
  * THE POPULARITY BOUNDARY IS STRUCTURAL, NOT A CHECK.
  * ---------------------------------------------------
  * `ContributorIntelSignals` has NO field for followers, stamps, likes, shares,
@@ -45,6 +52,25 @@ export interface ContributorIntelSignals {
   corroborationOpportunities: number;
 }
 
+/**
+ * §25 Trip Expertise input — relevant journey history. NO social field, like
+ * the intel signals, and deliberately a separate parameter so the two kinds of
+ * evidence stay separate.
+ *
+ * ONLY PUBLIC JOURNEYS COUNT. The assembler counts trips whose owner made them
+ * `visibility = 'public'` AND left `show_destination_city` on, so a reputation
+ * any authenticated caller can read never encodes a journey its owner kept
+ * private — whichever client the caller happened to pass.
+ */
+export interface ContributorJourneySignals {
+  /** Completed, public trips (owned or accepted member). */
+  completedTrips: number;
+  /** Of those, trips whose destination is the city in scope. */
+  completedTripsInScope?: number;
+  /** True when a city scope applied — then only in-scope trips are relevant. */
+  scoped?: boolean;
+}
+
 export interface ContributorReputation {
   /** 0..1 — usefulness / historical acceptance of structured observations. */
   contributorReliability: number;
@@ -52,6 +78,8 @@ export interface ContributorReputation {
   placeExpertise: number;
   /** 0..1 — how often the contributor's current observations are corroborated. */
   liveAccuracy: number;
+  /** 0..1 — §25 Trip Expertise: relevant, PUBLIC journey history. */
+  tripExpertise: number;
   /**
    * Explicit, machine-readable statement of what these numbers are and are NOT.
    * Consumers render "intelligence trust", never social popularity, from this.
@@ -102,21 +130,41 @@ export function liveAccuracy(corroborated: number, opportunities: number): numbe
 }
 
 /**
- * Compute the three intelligence-trust dimensions from intel signals ALONE.
- * There is deliberately no social input; popularity cannot reach this function.
+ * Trip expertise saturates: three completed trips to the city in scope is full
+ * expertise there; without a scope, ten completed trips is. A single trip is
+ * thin experience, not expertise — the same shape as placeExpertise.
  */
-export function computeContributorReputation(s: ContributorIntelSignals): ContributorReputation {
+export const TRIP_EXPERTISE_SCOPED_SATURATION = 3;
+export const TRIP_EXPERTISE_GLOBAL_SATURATION = 10;
+export function tripExpertise(j: ContributorJourneySignals | undefined): number {
+  if (!j) return 0;
+  const n = j.scoped ? nonNeg(j.completedTripsInScope) : nonNeg(j.completedTrips);
+  const sat = j.scoped ? TRIP_EXPERTISE_SCOPED_SATURATION : TRIP_EXPERTISE_GLOBAL_SATURATION;
+  return clamp01(Math.min(n, sat) / sat);
+}
+
+/**
+ * Compute the three intelligence-trust dimensions from intel signals ALONE, and
+ * §25 Trip Expertise from journey signals ALONE. There is deliberately no
+ * social input; popularity cannot reach this function.
+ */
+export function computeContributorReputation(
+  s: ContributorIntelSignals,
+  journey?: ContributorJourneySignals,
+): ContributorReputation {
   const total = nonNeg(s.totalObservations);
   const opportunities = nonNeg(s.corroborationOpportunities);
   const placeAccepted = nonNeg(s.placeAcceptedObservations);
+  const trips = tripExpertise(journey);
   return {
     contributorReliability: contributorReliability(s.acceptedObservations, s.totalObservations),
     placeExpertise: placeExpertise(placeAccepted),
     liveAccuracy: liveAccuracy(s.corroboratedObservations, s.corroborationOpportunities),
+    tripExpertise: trips,
     basis: "intelligence_trust",
-    // Empty when there is no intel signal at all: no observations AND no
-    // corroboration opportunities. Pre-launch (no contributors/coverage) this is
-    // the normal, graceful state.
-    isEmpty: total === 0 && opportunities === 0 && placeAccepted === 0,
+    // Empty when there is no signal at all: no observations, no corroboration
+    // opportunities and no relevant public journey. Pre-launch (no
+    // contributors/coverage) this is the normal, graceful state.
+    isEmpty: total === 0 && opportunities === 0 && placeAccepted === 0 && trips === 0,
   };
 }

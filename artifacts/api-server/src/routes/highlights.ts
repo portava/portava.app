@@ -13,6 +13,7 @@ import {
 } from "../lib/highlightPermissions";
 import {
   readResurfacingSuppressionsForOwners,
+  controlSetter,
   isSuppressed,
   unenforceableControls,
   FEED_ENFORCEABLE_CONTROLS,
@@ -41,6 +42,7 @@ import { executeRevocation } from "../services/highlights/highlightRevocation.js
 import {
   readProjectionInputs,
   filterProjectable,
+  consentEnforcement,
 } from "../services/highlights/highlightPublicProjection.js";
 import { probeHighlightObject } from "../services/highlights/highlightSchemaAvailability.js";
 import {
@@ -51,9 +53,25 @@ import {
   describeHighlightLifecycle,
   type HighlightLifetimeClass,
 } from "../services/highlights/highlightLifecycle.js";
-import { pinnedFirst } from "../services/highlights/highlightRanking.js";
+import { pinnedFirst, rankHighlightRows } from "../services/highlights/highlightRanking.js";
+import {
+  verifyMemorySources,
+  linkHighlightSources,
+  readHighlightSources,
+  sourceStoreReady,
+  MAX_HIGHLIGHT_SOURCES,
+  type SourceLinkFailure,
+} from "../services/highlights/highlightSources.js";
 import { canMessage } from "../lib/messagingPermissions";
 import { isFlagEnabled } from "../lib/featureFlags";
+import {
+  readMemoryCommandEnvelope,
+  sendMemoryCommandRejection, isMemoryKernelEnabled, COMMAND_EVENT,
+} from "../lib/memoryCommandBus.js";
+import {
+  dispatchMemoryCommand,
+  type CommandOutcome,
+} from "../services/memory/MemoryDomainService.js";
 import { nameVisibilitySet, presentedName } from "../lib/publicIdentity";
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -247,9 +265,22 @@ function describeLifetimeFields(row: any, classProjected: boolean): Record<strin
 function applyResurfacingControls<T extends { id: string; owner_id: string }>(
   rows: T[],
   set: ResurfacingSuppressions,
+  viewerSet: ResurfacingSuppressions,
   log: { error: (obj: unknown, msg: string) => void } | undefined,
   where: string,
 ): T[] {
+  // The VIEWER's own set is read with the same three postures and the same
+  // fail-closed rule. It is separate from the owners' set because the two
+  // answer different questions — see `controlSetter` — and merging them is
+  // what let one user's control govern every user's feed (census H89).
+  if (viewerSet.state === "unreadable") {
+    log?.error(
+      { reason: viewerSet.reason, where },
+      "highlights: §11 viewer resurfacing controls unreadable — suppressing every candidate rather than " +
+        "resurfacing someone this viewer asked not to see",
+    );
+    return [];
+  }
   if (set.state === "absent") {
     log?.error(
       { reason: set.reason, where },
@@ -277,8 +308,12 @@ function applyResurfacingControls<T extends { id: string; owner_id: string }>(
 
   return rows.filter((h) => {
     for (const c of FEED_ENFORCEABLE_CONTROLS) {
+      // WHOSE row governs this control. `feedSubjectScope` says which id to
+      // match; `controlSetter` says whose stored rows to match it against, and
+      // until it existed both were taken from the owners' set.
+      const from = controlSetter(c) === "viewer" ? viewerSet : set;
       const subject = feedSubjectScope(c) === "highlight" ? h.id : h.owner_id;
-      if (isSuppressed(set, c, subject)) return false;
+      if (isSuppressed(from, c, subject)) return false;
     }
     return true;
   });
@@ -614,6 +649,48 @@ const KNOWN_FILTER_IDS = [
   'noir', 'safari', 'vivid', 'sunset', 'arctic', 'velvet',
 ] as const;
 
+/**
+ * §12 / §3.6 — one place that maps a source-link refusal onto a status.
+ *
+ * The five failures are five different things and each gets its own answer:
+ * "2722 is not on this database" (404 feature_disabled) is not "the database
+ * is unreachable" (503, retryable) is not "that Memory is not yours" (403) is
+ * not "your request is malformed" (400) is not "we wrote nothing and do not
+ * know why" (503). Collapsing any pair would make one of them silently
+ * retryable or silently permanent — the same reason
+ * services/highlights/highlightControlWrites.ts returns a discriminated
+ * refusal rather than a boolean.
+ */
+function sendSourceLinkFailure(
+  res: any,
+  req: any,
+  reason: SourceLinkFailure,
+  detail: string,
+  where: string,
+): void {
+  switch (reason) {
+    case "invalid":
+      sendError(res, "invalid_payload", detail);
+      return;
+    case "source_not_owned":
+      // "Not yours" and "not there" are the same answer here too: the
+      // alternative is an oracle for whether an arbitrary UUID is a Memory.
+      sendError(res, "forbidden", "One or more source memories are not available.");
+      return;
+    case "not_deployed":
+      req.log.error({ detail, where }, "highlights: highlight_sources is not deployed — migration 2722 is not applied on this database");
+      sendError(res, "feature_disabled", "Highlight sources are not available on this deployment yet.");
+      return;
+    case "write_unconfirmed":
+      req.log.error({ detail, where }, "highlights: highlight_sources write affected fewer rows than it sent — refusing rather than reporting a partial provenance");
+      sendError(res, "degraded_unavailable", "We could not record what this highlight is built from. Please try again.");
+      return;
+    default:
+      req.log.error({ detail, where }, "highlights: highlight_sources unavailable");
+      sendError(res, "degraded_unavailable", "We could not record what this highlight is built from. Please try again.");
+  }
+}
+
 const createHighlightSchema = z.object({
   mediaUrl: z.string().min(1, "media_url is required"),
   mediaType: z.string().min(1),
@@ -641,6 +718,22 @@ const createHighlightSchema = z.object({
    * what `highlightLifecycle.ts`'s header refuses to do.
    */
   lifetimeClass: z.enum(HIGHLIGHT_LIFETIME_CLASSES).optional(),
+  /**
+   * §12 / §3.6 — the Memories this Highlight projects.
+   *
+   * OPTIONAL, and absent means absent. §12 says a Highlight IS a projection
+   * over Memories, so a required field would be the truer shape — and making
+   * it required would break every Stories-style create this route already
+   * serves, which is a product migration (census H93) rather than a wiring
+   * gap. What absent must NOT mean is "invent a provenance": a Highlight with
+   * no source is stored with no link rows and reads back `sourceMemoryIds: []`.
+   *
+   * Only MEMORY sources are accepted. `highlight_sources.source_type` admits
+   * 'EPISODE' because 2722's CHECK does, and `memory_episodes` (census H23)
+   * has no CREATE TABLE in this tree, so an EPISODE id could not be verified
+   * against anything — see services/highlights/highlightSources.ts.
+   */
+  sourceMemoryIds: z.array(z.string().uuid()).max(MAX_HIGHLIGHT_SOURCES).optional(),
 });
 
 /* ============================================================================
@@ -675,10 +768,47 @@ router.post("/highlights", async (req, res) => {
   // constrains NULL to mean exactly that. Every other class keeps the expiry the
   // caller chose — §12 gives the classes behaviour, not durations, and bucketing
   // `expiresInHours` into them would be invented policy.
+  /* ──────────────────────────────────────────────────────────────────────────
+   * §12 / §3.6 — verify the provenance BEFORE the Highlight exists.
+   *
+   * supabase-js has no transactions, so the Highlight insert and the
+   * `highlight_sources` insert cannot be one commit. The ordering below is
+   * what makes that survivable: everything that can be decided WITHOUT writing
+   * is decided first — every source id is checked against `memories`, and
+   * `linkHighlightSources` probes the link table — so the only remaining
+   * failure is a transient write error on the link itself, which is
+   * compensated below by soft-deleting the Highlight that would otherwise
+   * stand claiming a provenance it does not have.
+   *
+   * A Highlight with a WRONG source is worse than no Highlight: it is the
+   * claim §21 revocation walks, so a bad link makes a stranger's deletion
+   * reach this row, or this owner's deletion miss it.
+   * ────────────────────────────────────────────────────────────────────────*/
+  const requestedSources = d.sourceMemoryIds ?? [];
+  if (requestedSources.length > 0) {
+    const ready = await sourceStoreReady(client);
+    if (!ready.ok) {
+      sendSourceLinkFailure(res, req, ready.reason, ready.detail, "POST /highlights source store probe");
+      return;
+    }
+    const verified = await verifyMemorySources(client, user.id, requestedSources);
+    if (!verified.ok) {
+      sendSourceLinkFailure(res, req, verified.reason, verified.detail, "POST /highlights");
+      return;
+    }
+  }
+
+  // ONE clock read for this handler. The expiry below and the compensating
+  // soft-delete further down are both derived from it: `splitClockGuard`
+  // refuses a function that calls `Date.now()` and no-arg `new Date()`, and it
+  // is right to — two reads are two different instants, and an expiry computed
+  // from one while the row it belongs to is stamped from the other is a
+  // Highlight whose lifetime does not match its own record.
+  const nowMs = Date.now();
   const permanent = d.lifetimeClass === "PERMANENT";
   const expiresAt = permanent
     ? null
-    : new Date(Date.now() + d.expiresInHours * 60 * 60 * 1000).toISOString();
+    : new Date(nowMs + d.expiresInHours * 60 * 60 * 1000).toISOString();
 
   const { data, error } = await client
     .from("highlights")
@@ -747,8 +877,54 @@ router.post("/highlights", async (req, res) => {
     return;
   }
 
+  /* ──────────────────────────────────────────────────────────────────────────
+   * The link write, and its compensation.
+   *
+   * `linkHighlightSources` is all-or-nothing and reports a partial write as
+   * `write_unconfirmed`, so there is no branch here in which SOME of the
+   * sources are stored and the caller is told all of them were. If it refuses,
+   * the Highlight this request just created is soft-deleted and the request
+   * fails: a Highlight standing with a provenance it does not have is the one
+   * outcome this pass exists to prevent.
+   *
+   * The compensating delete is best-effort and is LOGGED when it fails,
+   * because the alternative — reporting 201 — would leave the caller believing
+   * a link exists. A Highlight that survives a failed compensation is
+   * sourceless, which is the same state every Highlight on production is
+   * already in; it is not a false provenance.
+   * ────────────────────────────────────────────────────────────────────────*/
+  const createdId = String((data as any)?.id ?? "");
+  let storedSourceIds: string[] = [];
+  if (requestedSources.length > 0) {
+    const linked = await linkHighlightSources(client, {
+      highlightId: createdId,
+      sourceIds: requestedSources,
+    });
+    if (!linked.ok) {
+      const undo = await client
+        .from("highlights")
+        .update({ deleted_at: new Date(nowMs).toISOString() })
+        .eq("id", createdId)
+        .eq("owner_id", user.id)
+        .select("id");
+      if (undo.error || !Array.isArray(undo.data) || undo.data.length === 0) {
+        req.log.error(
+          { highlightId: createdId, ownerId: user.id, linkDetail: linked.detail, undoError: undo.error?.message ?? null },
+          "highlights: source link failed AND the compensating delete did not confirm — a sourceless Highlight may be live",
+        );
+      }
+      sendSourceLinkFailure(res, req, linked.reason, linked.detail, "POST /highlights source link");
+      return;
+    }
+    storedSourceIds = linked.value.map((s) => s.sourceId);
+  }
+
   res.status(201).json({
     ...(data as any),
+    // §12: what this Highlight projects. `[]` is a real answer — see
+    // services/highlights/highlightSources.ts on why sourceless is reported
+    // rather than invented.
+    sourceMemoryIds: storedSourceIds,
     viewCount: 0,
     likeCount: 0,
     viewedByMe: false,
@@ -940,6 +1116,10 @@ router.get("/highlights/active", async (req, res) => {
   const { user } = auth;
 
   const limit = Math.min(Number(req.query.limit ?? 50), 100);
+  // ONE clock read for this request. It cuts expired rows out of the query
+  // below AND measures §12 recency, so the page cannot contain a row the query
+  // judged live and the ranker judges expired. See splitClockGuard.
+  const rankedAt = new Date(Date.now());
   const filterUserId = typeof req.query.userId === "string" && UUID.test(req.query.userId) ? req.query.userId : null;
   const filterCity = typeof req.query.city === "string" ? req.query.city : null;
   const filterTripId = typeof req.query.tripId === "string" && UUID.test(req.query.tripId) ? req.query.tripId : null;
@@ -1000,7 +1180,7 @@ router.get("/highlights/active", async (req, res) => {
     .select(activeProjection.columns)
     .is("deleted_at", null)
     .is("archived_at", null) // §21 Archive — see GET /users/:id/highlights
-    .or(NOT_EXPIRED())
+    .or(NOT_EXPIRED(rankedAt))
     .in("visibility", ["public", "travelers_nearby", "circle_only", "trip_only"])
     .order("created_at", { ascending: false })
     .limit(limit * 5); // over-fetch to account for permission filtering
@@ -1067,20 +1247,56 @@ router.get("/highlights/active", async (req, res) => {
   // survivable and exactly why it was dangerous: change the query and the two
   // silently disagree. canViewHighlight re-checks expiry, deletion and (new)
   // archive itself, so the guarantee no longer depends on the SELECT.
-  const visible = unblocked.filter((h: any) =>
+  const permitted = unblocked.filter((h: any) =>
     canViewHighlight(user.id, h as HighlightRecord, {
       viewerFollowsOwner: followingSet.has(h.owner_id as string),
       sharesTrip: sharesTripSet.has(h.owner_id as string),
     }),
-  ).slice(0, limit);
+  );
+
+  /* ------------------------------------------------------------------------
+   * §12 RANKING — and this is the caller census H99 and H101 say the model
+   * does not have.
+   *
+   * H99: "`rankHighlights` — §12's seven factors — has NO caller in
+   * `src/routes/` or `src/services/` outside its own module. Only `pinnedFirst`
+   * is wired." H101: "`DIVERSITY_DIMENSIONS` … Unreachable." H100 adds the
+   * third half: "there is also no automatic ranking on that surface to
+   * outrank — it is `ORDER BY created_at`."
+   *
+   * RANK THEN CUT, and the order of those two words is the design. Ranking
+   * AFTER `.slice(0, limit)` would reorder a page that `created_at DESC` had
+   * already chosen, so §12's top-ranked Highlight could have been discarded
+   * before the ranker ever saw it — a page that LOOKS considered and is not,
+   * which is precisely what highlightRanking.ts's own header warns against.
+   *
+   * WHAT THIS SURFACE CAN AND CANNOT DO is published on the wire below rather
+   * than assumed by the client: one of §12's six factors is measurable here
+   * (recency, from `created_at`) and two of its four diversity dimensions are
+   * keyable (person, venue). `trip` needs a column `public.highlights` does not
+   * have — the same one HIDE_TRIP needs, census H90 — and `activity` has no
+   * taxonomy at all.
+   *
+   * `rankedAt` is derived from ONE clock read, shared with the expiry cut in
+   * the query above. Two independent reads would let this page contain a row
+   * the query judged live and the ranker judges expired — the split
+   * `splitClockGuard` refuses, for this reason rather than for tidiness.
+   * ---------------------------------------------------------------------- */
+  const ranking = rankHighlightRows(permitted as any[], rankedAt);
+  const visible = ranking.ordered.slice(0, limit);
 
   // §11 — this feed is PROACTIVE resurfacing, so the owner's resurfacing
   // controls apply to it. Read for the owners on the page, one query.
-  const suppressed = await readResurfacingSuppressionsForOwners(
-    sc,
-    visible.map((h: any) => h.owner_id as string),
+  // TWO reads, because there are two setters. The owners' set carries the
+  // controls they set about their own records; the viewer's set carries the
+  // person-scoped controls THEY set about other people. See `controlSetter`.
+  const [suppressed, viewerSuppressed] = await Promise.all([
+    readResurfacingSuppressionsForOwners(sc, visible.map((h: any) => h.owner_id as string)),
+    readResurfacingSuppressionsForOwners(sc, [user.id]),
+  ]);
+  const surviving = applyResurfacingControls(
+    visible as any[], suppressed, viewerSuppressed, req.log, "GET /highlights/active",
   );
-  const surviving = applyResurfacingControls(visible as any[], suppressed, req.log, "GET /highlights/active");
 
   if (surviving.length === 0) {
     res.status(200).json({ highlights: [] });
@@ -1091,7 +1307,7 @@ router.get("/highlights/active", async (req, res) => {
   // The policy read doubles as the location-precision read below.
   const policies = await readProjectionPolicies(sc, surviving.map((h: any) => h.id as string));
   const consented = filterProjectable(
-    surviving as any[], user.id, "proactive_resurfacing", { controls: suppressed, policies }, req.log, "GET /highlights/active",
+    surviving as any[], user.id, "proactive_resurfacing", { controls: suppressed, viewerControls: viewerSuppressed, policies }, req.log, "GET /highlights/active",
   );
 
   if (consented.length === 0) {
@@ -1137,7 +1353,24 @@ router.get("/highlights/active", async (req, res) => {
     ...describeLifetimeFields(h, activeProjection.classProjected),
   }));
 
-  res.status(200).json({ highlights: result });
+  // §12's CEILING, on the wire — the same posture `consentEnforcement` takes
+  // for §10 and `unenforceableControls` for §11: the limit is a fact the server
+  // knows, so the server says it rather than letting a client infer that a page
+  // headed "ranked" was ranked on all six factors and all four dimensions.
+  res.status(200).json({
+    highlights: result,
+    ranking: {
+      factorsMeasured: ranking.factorsMeasured,
+      factorsUnmeasured: ranking.factorsUnmeasured,
+      diversityApplied: ranking.diversityApplied,
+      diversityUnresolvable: ranking.diversityUnresolvable,
+      pinnedCount: ranking.pinnedCount,
+      note:
+        "§12 ordering: pinned first, then recency, then a diversity pass. An unmeasured factor is " +
+        "excluded from the score rather than scored zero, and an unresolvable dimension is not " +
+        "constrained at all — `trip` needs a column public.highlights does not carry.",
+    },
+  });
 });
 
 /* ============================================================================
@@ -1168,6 +1401,65 @@ router.get("/highlights/active", async (req, res) => {
  * `describeHighlightLifecycle` DERIVES PINNED from the column, which is the
  * same answer without the claim.
  * ============================================================================ */
+/* ============================================================================
+ * §17 COMMAND BOUNDARY — the plumbing the three Highlight commands share.
+ *
+ * §17: "All canonical writes should cross an explicit command boundary for
+ * authorization, invariants, idempotency, audit, and downstream event
+ * generation", and "canonical mutation and event-outbox insert occur in one
+ * database transaction".
+ *
+ * WHAT WAS MEASURED, AND WHY THIS IS NOT JUST FOUR STRINGS IN A UNION.
+ * census-highlights-memories.md H142: "§17's requirement is the COMMAND
+ * BOUNDARY, and PIN_HIGHLIGHT is still absent from MEMORY_COMMAND_TYPES — no
+ * idempotency key, no receipt, no audit row, no outbox insert." Adding the
+ * names to the union would have closed the census row and changed nothing a
+ * user or an operator could observe. The four artifacts are what the row asks
+ * for, and they are written by public.highlight_kernel_execute (migration
+ * 2993) inside ONE transaction with the column change — never from here.
+ * supabase-js has no transactions, and a fire-and-forget
+ * `void client.from("memory_event_outbox").insert(...)` issues ZERO HTTP
+ * requests while reading as an emit; src/test/memoryOutbox.test.ts asserts
+ * statically that no such line exists.
+ *
+ * FLAG-OFF BEHAVIOUR IS BYTE-IDENTICAL. `memory_kernel_enabled` is FALSE on
+ * production and `isFlagEnabled` is fail-closed, so every `legacy` closure
+ * below is the direct write that shipped before this lane, moved verbatim —
+ * including its PGRST204 `feature_disabled` answer and its one-answer 404.
+ * What the flag-off path gains is the §24 audit LINE (durable:false); what it
+ * does not gain is a row, and the log says which.
+ * ============================================================================ */
+
+/** §19's Idempotency-Key, or a 400. Absent header => a fresh, non-idempotent key. */
+function highlightIdempotencyKey(req: any, res: any): string | null {
+  const env = readMemoryCommandEnvelope(req);
+  if (!env.ok) { sendError(res, "invalid_payload", env.message); return null; }
+  return env.idempotencyKey;
+}
+
+/**
+ * Render a non-success outcome.
+ *
+ * A `rejection` is command-shaped and carries a §24 reason code;
+ * `sendMemoryCommandRejection` owns that mapping, and it answers 404
+ * "Highlight not found" for BOTH HIGHLIGHT_NOT_FOUND and
+ * HIGHLIGHT_AUTH_NOT_OWNER — the one answer these handlers have always given
+ * to "not yours, not there, or already deleted". An `http` error keeps the
+ * exact code and message the handler used before this lane.
+ */
+function sendHighlightCommandFailure(
+  req: any,
+  res: any,
+  outcome: Extract<CommandOutcome<unknown>, { ok: false }>,
+): void {
+  if ("rejection" in outcome) {
+    sendMemoryCommandRejection(res, outcome.rejection, req.log);
+    return;
+  }
+  const e = outcome.http;
+  sendError(res, e.code as any, e.message, e.exposeDetail ? { exposeDetail: true } : undefined);
+}
+
 router.post("/highlights/:id/pin", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
@@ -1176,31 +1468,49 @@ router.post("/highlights/:id/pin", async (req, res) => {
   const { id } = req.params;
   if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid highlight id"); return; }
 
-  const { data: updated, error } = await client
-    .from("highlights")
-    .update({ pinned_at: new Date().toISOString() })
-    .eq("id", id)
-    .eq("owner_id", user.id)
-    .is("deleted_at", null)
-    .select("id, pinned_at");
+  const idempotencyKey = highlightIdempotencyKey(req, res);
+  if (idempotencyKey === null) return;
 
-  if (error) {
-    if (String((error as any)?.code ?? "") === "PGRST204") {
-      req.log.error({ err: error, highlightId: id }, "highlights: pinned_at column is absent — migration 2723 is not applied on this database");
-      sendError(res, "feature_disabled", "Pinning is not available on this deployment yet.");
-      return;
-    }
-    req.log.error({ err: error, highlightId: id }, "highlights: pin failed");
-    sendError(res, "db_error", error.message);
-    return;
-  }
-  // Zero rows: not yours, not there, or already deleted — one answer to this
-  // caller, for the same reason the archive handlers give one.
-  if (!updated || (updated as any[]).length === 0) {
-    sendError(res, "not_found", "Highlight not found");
-    return;
-  }
-  res.status(200).json({ id, pinnedAt: (updated as any[])[0].pinned_at });
+  const outcome = await dispatchMemoryCommand<{ id: string; pinnedAt: string | null }>({
+    sc: client,
+    commandType: "PIN_HIGHLIGHT",
+    memoryId: null,
+    highlightId: id,
+    actorUserId: user.id,
+    idempotencyKey,
+    payload: {},
+    fromKernelResult: (r: any) => ({ id, pinnedAt: r?.pinned_at ?? null }),
+    legacy: async () => {
+      // ONE clock read, bound and derived from. Mixing Date.now() with a
+      // no-arg `new Date()` in one function is a split clock.
+      const nowMs = Date.now();
+      const { data: updated, error } = await client
+        .from("highlights")
+        .update({ pinned_at: new Date(nowMs).toISOString() })
+        .eq("id", id)
+        .eq("owner_id", user.id)
+        .is("deleted_at", null)
+        .select("id, pinned_at");
+
+      if (error) {
+        if (String((error as any)?.code ?? "") === "PGRST204") {
+          req.log.error({ err: error, highlightId: id }, "highlights: pinned_at column is absent — migration 2723 is not applied on this database");
+          return { ok: false, http: { code: "feature_disabled", message: "Pinning is not available on this deployment yet." } };
+        }
+        req.log.error({ err: error, highlightId: id }, "highlights: pin failed");
+        return { ok: false, http: { code: "db_error", message: error.message } };
+      }
+      // Zero rows: not yours, not there, or already deleted — one answer to
+      // this caller, for the same reason the archive handlers give one.
+      if (!updated || (updated as any[]).length === 0) {
+        return { ok: false, http: { code: "not_found", message: "Highlight not found" } };
+      }
+      return { ok: true, body: { id, pinnedAt: (updated as any[])[0].pinned_at } };
+    },
+  });
+
+  if (!outcome.ok) { sendHighlightCommandFailure(req, res, outcome); return; }
+  res.status(200).json(outcome.body);
 });
 
 /** §17 UNPIN_HIGHLIGHT. A pin a user cannot undo is a trap, not curation. */
@@ -1212,28 +1522,47 @@ router.delete("/highlights/:id/pin", async (req, res) => {
   const { id } = req.params;
   if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid highlight id"); return; }
 
-  const { data: updated, error } = await client
-    .from("highlights")
-    .update({ pinned_at: null })
-    .eq("id", id)
-    .eq("owner_id", user.id)
-    .is("deleted_at", null)
-    .select("id");
+  const idempotencyKey = highlightIdempotencyKey(req, res);
+  if (idempotencyKey === null) return;
 
-  if (error) {
-    if (String((error as any)?.code ?? "") === "PGRST204") {
-      sendError(res, "feature_disabled", "Pinning is not available on this deployment yet.");
-      return;
-    }
-    req.log.error({ err: error, highlightId: id }, "highlights: unpin failed");
-    sendError(res, "db_error", error.message);
-    return;
-  }
-  if (!updated || (updated as any[]).length === 0) {
-    sendError(res, "not_found", "Highlight not found");
-    return;
-  }
-  res.status(200).json({ id, pinnedAt: null });
+  const outcome = await dispatchMemoryCommand<{ id: string; pinnedAt: null }>({
+    sc: client,
+    commandType: "UNPIN_HIGHLIGHT",
+    memoryId: null,
+    highlightId: id,
+    actorUserId: user.id,
+    idempotencyKey,
+    payload: {},
+    // §17 lists no `highlight.unpinned`, so this emits highlight.pinned and
+    // the event payload carries `command_type` and the resulting `pinned`
+    // state — see COMMAND_EVENT in lib/memoryCommandBus.ts and the
+    // ADD_MEDIA/REMOVE_MEDIA precedent it follows.
+    fromKernelResult: () => ({ id, pinnedAt: null }),
+    legacy: async () => {
+      const { data: updated, error } = await client
+        .from("highlights")
+        .update({ pinned_at: null })
+        .eq("id", id)
+        .eq("owner_id", user.id)
+        .is("deleted_at", null)
+        .select("id");
+
+      if (error) {
+        if (String((error as any)?.code ?? "") === "PGRST204") {
+          return { ok: false, http: { code: "feature_disabled", message: "Pinning is not available on this deployment yet." } };
+        }
+        req.log.error({ err: error, highlightId: id }, "highlights: unpin failed");
+        return { ok: false, http: { code: "db_error", message: error.message } };
+      }
+      if (!updated || (updated as any[]).length === 0) {
+        return { ok: false, http: { code: "not_found", message: "Highlight not found" } };
+      }
+      return { ok: true, body: { id, pinnedAt: null } };
+    },
+  });
+
+  if (!outcome.ok) { sendHighlightCommandFailure(req, res, outcome); return; }
+  res.status(200).json(outcome.body);
 });
 
 /* ============================================================================
@@ -1468,6 +1797,13 @@ router.get("/highlights/:id/projection-policy", async (req, res) => {
     locationPrecisionLadder: LOCATION_PRECISION_LADDER,
     personVisibilityLadder: PERSON_VISIBILITY_LADDER,
     consentDimensions: MEMORY_CONSENT_DIMENSIONS,
+    // WHICH of those five actually bite, derived from the gate that reads them
+    // (services/highlights/highlightPublicProjection.ts) rather than listed
+    // here. Same purpose as `unenforceableOnFeed` on the §11 controls route:
+    // publishing five dimensions without saying that three are read by nothing
+    // leaves a client choosing between three dead switches and a hard-coded
+    // copy of a server vocabulary. Census H75's ceiling, on the wire.
+    consentEnforcement: consentEnforcement(),
   });
 });
 
@@ -1524,6 +1860,57 @@ router.put("/highlights/:id/projection-policy", async (req, res) => {
     personVisibility: saved.value.personVisibility,
     consent: saved.value.consent,
   });
+});
+
+/* ============================================================================
+ * GET /highlights/:id/sources — §12 / §3.6, what this Highlight projects.
+ *
+ * OWNER-ONLY, and that is migration 2722's own decision rather than this
+ * route's, quoted from its RLS block: "knowing WHICH Memory a Highlight
+ * projects is provenance about the owner's private history, and §23 makes
+ * owner-only the default for that. A viewer who may see the Highlight still
+ * sees the Highlight; they do not learn what it was built from."
+ *
+ * Routes hold the SERVICE client, which bypasses RLS, so that policy is not
+ * what enforces this here — the ownership pre-read below is. A non-owner and a
+ * Highlight that does not exist get the SAME answer, because the alternative
+ * turns this into an oracle for whether a given UUID is somebody's Highlight.
+ *
+ * An empty list is a real answer. Every Highlight on production predates the
+ * writer in services/highlights/highlightSources.ts and is genuinely
+ * sourceless; reporting that is §22's "unknowns remain null/unresolved". An
+ * UNREADABLE table is not an empty list and refuses (§28.11).
+ * ============================================================================ */
+router.get("/highlights/:id/sources", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const { id } = req.params;
+  if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid highlight id"); return; }
+
+  const { data: existing, error: existingErr } = await client
+    .from("highlights")
+    .select("id, owner_id")
+    .eq("id", id)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (existingErr) {
+    req.log.error({ err: existingErr, highlightId: id }, "highlights: sources pre-read failed");
+    sendError(res, "degraded_unavailable", "We could not load this highlight right now. Please try again.");
+    return;
+  }
+  if (!existing || (existing as any).owner_id !== user.id) {
+    sendError(res, "not_found", "Highlight not found");
+    return;
+  }
+
+  const read = await readHighlightSources(client, id);
+  if (!read.ok) {
+    sendSourceLinkFailure(res, req, read.reason, read.detail, "GET /highlights/:id/sources");
+    return;
+  }
+  res.status(200).json({ highlightId: id, sources: read.value });
 });
 
 /* ============================================================================
@@ -1674,55 +2061,116 @@ router.post("/highlights/:id/archive", async (req, res) => {
   const { id } = req.params;
   if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid highlight id"); return; }
 
-  const { data: updated, error } = await client
-    .from("highlights")
-    .update({ archived_at: new Date().toISOString() })
-    .eq("id", id)
-    .eq("owner_id", user.id)
-    .is("deleted_at", null)
-    .select("id, archived_at");
+  const idempotencyKey = highlightIdempotencyKey(req, res);
+  if (idempotencyKey === null) return;
 
-  if (error) {
-    req.log.error({ err: error, highlightId: id }, "highlights: archive failed");
-    sendError(res, "db_error", error.message);
-    return;
-  }
-  if (!updated || (updated as any[]).length === 0) {
-    // Zero rows: not yours, not there, or already deleted. Not distinguishable
-    // without a second read, and each of the three is a 404 to this caller.
-    sendError(res, "not_found", "Highlight not found");
-    return;
-  }
-  res.status(200).json({ id, archivedAt: (updated as any[])[0].archived_at });
+  // §17 HIDE_HIGHLIGHT. `archived_at` is the REVERSIBLE hide and `deleted_at`
+  // is terminal; §21 requires them to stay different operations, so this
+  // command writes only the first and DELETE /highlights/:id is untouched.
+  const outcome = await dispatchMemoryCommand<{ id: string; archivedAt: string | null }>({
+    sc: client,
+    commandType: "HIDE_HIGHLIGHT",
+    memoryId: null,
+    highlightId: id,
+    actorUserId: user.id,
+    idempotencyKey,
+    payload: {},
+    fromKernelResult: (r: any) => ({ id, archivedAt: r?.archived_at ?? null }),
+    legacy: async () => {
+      const nowMs = Date.now();
+      const { data: updated, error } = await client
+        .from("highlights")
+        .update({ archived_at: new Date(nowMs).toISOString() })
+        .eq("id", id)
+        .eq("owner_id", user.id)
+        .is("deleted_at", null)
+        .select("id, archived_at");
+
+      if (error) {
+        req.log.error({ err: error, highlightId: id }, "highlights: archive failed");
+        return { ok: false, http: { code: "db_error", message: error.message } };
+      }
+      if (!updated || (updated as any[]).length === 0) {
+        // Zero rows: not yours, not there, or already deleted. Not
+        // distinguishable without a second read, and each of the three is a
+        // 404 to this caller.
+        return { ok: false, http: { code: "not_found", message: "Highlight not found" } };
+      }
+      return { ok: true, body: { id, archivedAt: (updated as any[])[0].archived_at } };
+    },
+  });
+
+  if (!outcome.ok) { sendHighlightCommandFailure(req, res, outcome); return; }
+  res.status(200).json(outcome.body);
 });
 
-/** §21 Archive is reversible. This is the half that makes it so. */
+/**
+ * §21 Archive is reversible. This is the half that makes it so.
+ *
+ * STILL NOT A COMMAND — and the reason CHANGED on 2026-09-22. It is no longer
+ * "§17 names no inverse": `UNHIDE_HIGHLIGHT` IS declared now, as an EXT on the
+ * `UPDATE_MEMORY` precedent, mapped to `highlight.hidden` and given a §25 replay
+ * effect. The blocker is one step down: migration 2993's applier admits exactly
+ * PIN/UNPIN/HIDE and rejects anything else BY NAME, so dispatching the command
+ * today would leave un-hide working while the kernel is off — as it is on
+ * production — and FAILING the moment it is turned on. 2993 must admit the type
+ * first. census-highlights-memories.md §W.3 records the order; the invariant is
+ * executable in src/test/highlightsApiUnhideBoundary.test.ts.
+ */
 router.delete("/highlights/:id/archive", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { client, user } = auth;
-
   const { id } = req.params;
   if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid highlight id"); return; }
 
-  const { data: updated, error } = await client
-    .from("highlights")
-    .update({ archived_at: null })
-    .eq("id", id)
-    .eq("owner_id", user.id)
-    .is("deleted_at", null)
-    .select("id");
+  // §19 envelope parity with the three sibling writes — and now honoured, not merely validated: this issues a command, so there is a receipt to honour.
+  const idempotencyKey = highlightIdempotencyKey(req, res);
+  if (idempotencyKey === null) return;
 
-  if (error) {
-    req.log.error({ err: error, highlightId: id }, "highlights: unarchive failed");
-    sendError(res, "db_error", error.message);
-    return;
-  }
-  if (!updated || (updated as any[]).length === 0) {
-    sendError(res, "not_found", "Highlight not found");
-    return;
-  }
-  res.status(200).json({ id, archivedAt: null });
+  // §17 UNHIDE_HIGHLIGHT — WIRED 2026-09-23, and the wait is the point. The
+  // command has been declared in the vocabulary since 2026-09-22, but 2993's
+  // applier refused it BY NAME, so dispatching it would have broken un-archive
+  // for every owner the moment `memory_kernel_enabled` went true. 3001 admits
+  // it (rehearsed on a throwaway database: archived_at cleared, one
+  // `highlight.hidden` event carrying `command_type: UNHIDE_HIGHLIGHT`, an
+  // outbox row, and a replay of the same key answering duplicate). The
+  // sequencing rule census-highlights-memories §W.3 set — "2993 must admit
+  // UNHIDE_HIGHLIGHT before any route dispatches it" — is satisfied, so this is
+  // the dispatch it was waiting for. The shape is HIDE's exactly, including the
+  // `legacy` arm, which is what keeps this correct while the flag is FALSE.
+  const outcome = await dispatchMemoryCommand<{ id: string; archivedAt: string | null }>({
+    sc: client,
+    commandType: "UNHIDE_HIGHLIGHT",
+    memoryId: null,
+    highlightId: id,
+    actorUserId: user.id,
+    idempotencyKey,
+    payload: {},
+    fromKernelResult: () => ({ id, archivedAt: null }),
+    legacy: async () => {
+      const { data: updated, error } = await client
+        .from("highlights")
+        .update({ archived_at: null })
+        .eq("id", id)
+        .eq("owner_id", user.id)
+        .is("deleted_at", null)
+        .select("id");
+
+      if (error) {
+        req.log.error({ err: error, highlightId: id }, "highlights: unarchive failed");
+        return { ok: false, http: { code: "db_error", message: error.message } };
+      }
+      if (!updated || (updated as any[]).length === 0) {
+        // Same three-into-one 404 the hide half gives, for the same reason.
+        return { ok: false, http: { code: "not_found", message: "Highlight not found" } };
+      }
+      return { ok: true, body: { id, archivedAt: null } };
+    },
+  });
+
+  if (!outcome.ok) { sendHighlightCommandFailure(req, res, outcome); return; }
+  res.status(200).json(outcome.body);
 });
 
 /* ============================================================================
@@ -1759,7 +2207,7 @@ router.get("/highlights/archived", async (req, res) => {
     return;
   }
 
-  res.status(200).json({ highlights: (rows ?? []) as any[] });
+  res.status(200).json({ highlights: (rows ?? []).map((h: any) => ({ ...h, ...describeLifetimeFields(h, archivedProjection.classProjected) })) });
 });
 
 /* ============================================================================
@@ -2340,17 +2788,19 @@ router.get("/highlights/following-feed", async (req, res) => {
   // computed from a page whose length no longer means "full". Suppress, then
   // cut, then derive the cursor — the same reason the visibility filter runs
   // before the slice above.
-  const suppressed = await readResurfacingSuppressionsForOwners(
-    sc,
-    permitted.map((h: any) => h.owner_id as string),
+  const [suppressed, viewerSuppressed] = await Promise.all([
+    readResurfacingSuppressionsForOwners(sc, permitted.map((h: any) => h.owner_id as string)),
+    readResurfacingSuppressionsForOwners(sc, [user.id]),
+  ]);
+  const surviving = applyResurfacingControls(
+    permitted as any[], suppressed, viewerSuppressed, req.log, "GET /highlights/following-feed",
   );
-  const surviving = applyResurfacingControls(permitted as any[], suppressed, req.log, "GET /highlights/following-feed");
 
   // 5c. §10 consent, ALSO before the page is cut, for the same reason. The
   // policy read is over the pre-slice set and is reused for the location clamp.
   const policies = await readProjectionPolicies(sc, surviving.map((h: any) => h.id as string));
   const consented = filterProjectable(
-    surviving as any[], user.id, "proactive_resurfacing", { controls: suppressed, policies }, req.log, "GET /highlights/following-feed",
+    surviving as any[], user.id, "proactive_resurfacing", { controls: suppressed, viewerControls: viewerSuppressed, policies }, req.log, "GET /highlights/following-feed",
   );
 
   const visible = feedLimit != null ? consented.slice(0, feedLimit) : consented;
@@ -2412,7 +2862,7 @@ router.get("/highlights/following-feed", async (req, res) => {
       viewCount: viewCountMap[h.id] ?? 0,
       likeCount: likeCountMap[h.id] ?? 0,
       viewedByMe: viewedSet.has(h.id),
-      likedByMe: likedSet.has(h.id),
+      likedByMe: likedSet.has(h.id), ...describeLifetimeFields(h, feedProjection.classProjected),
     });
   }
 

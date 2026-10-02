@@ -27,7 +27,7 @@
  * (re-asserted by 2470) and 0191 lay down.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { logger } from "../../lib/logger.js";
+import { logger } from "../../lib/logger.js"; import { isFlagEnabled } from "../../lib/featureFlags.js";
 
 /** The subset of the request logger this service needs. */
 export interface LifecycleLogger {
@@ -69,7 +69,7 @@ export interface SoftDeleteResult {
 
 export interface RetryProcessingResult {
   ok: boolean;
-  alreadyQueued: boolean;
+  alreadyQueued: boolean; /** census-media §30: set on a refusal that wrote nothing — see retryRefusal at the end of this file. */ notRetryable?: boolean; workerDisabled?: boolean; /** tm-followups WP-17: the asset read or the re-queue write FAILED — an outage, never "not found". */ dbError?: string;
 }
 
 function token(): string {
@@ -372,13 +372,13 @@ export async function retryMediaProcessing(
   const { data: asset, error: readError } = await sc.from("media_assets")
     .select("id, owner_user_id, processing_status, processing_terminal, purge_status")
     .eq("id", assetId).maybeSingle();
-  if (readError || !asset || asset.owner_user_id !== actorUserId || asset.purge_status === "completed") {
+  if (readError) return { ok: false, alreadyQueued: false, dbError: readError.message }; if (!asset || asset.owner_user_id !== actorUserId || asset.purge_status === "completed") {
     return { ok: false, alreadyQueued: false };
   }
   if (asset.processing_status === "queued" || asset.processing_status === "processing") {
     return { ok: true, alreadyQueued: true };
-  }
-  const { error } = await sc.from("media_assets").update({
+  } const refusal = await retryRefusal(sc, asset.processing_status); if (refusal) return refusal; // census-media §30: only a FAILED run is re-queued, and only while a worker will claim it
+  const { data: requeued, error } = await sc.from("media_assets").update({
     processing_status: "queued",
     processing_terminal: false,
     processing_next_retry_at: new Date().toISOString(),
@@ -386,6 +386,82 @@ export async function retryMediaProcessing(
     processing_lease_token: null,
     processing_error: null,
     updated_at: new Date().toISOString(),
-  }).eq("id", assetId).eq("owner_user_id", actorUserId);
-  return { ok: !error, alreadyQueued: false };
+  }).eq("id", assetId).eq("owner_user_id", actorUserId).eq("processing_status", "failed").select("id, processing_status").maybeSingle();
+  return error ? { ok: false, alreadyQueued: false, dbError: error.message } : requeued?.id === assetId && requeued?.processing_status === "queued" ? { ok: true, alreadyQueued: false } : { ok: false, alreadyQueued: false, notRetryable: true };
+}
+
+// ── census-media §30 (MD338): what an owner's retry may re-queue ─────────────
+//
+// Appended at the end, and the lines of retryMediaProcessing that call it were
+// extended in place, because the census cites this file by line.
+//
+// THE DEFECT. The retry used to refuse only `queued` and `processing`, so a
+// `ready` asset was re-queued too — and every canonical reader serves `ready`
+// only (`services/wall/WallCandidateLoaders.ts`, `services/intel/PresenceVerifier.ts`),
+// so one POST took the owner's asset off every read path. Nothing claimed
+// queued work either, so it stayed off them.
+//
+// THE RULE NOW. Only `failed` is retryable: it is the one value this file writes
+// for a run that did not produce a ready asset (`failMediaProcessing` writes it,
+// terminal or not; `recoverStaleMediaProcessing` writes it when a lease lapses).
+// `ready` has nothing to retry; `removed` is an owner deletion; `rejected` and
+// `expired` are not processing outcomes an owner can undo. `queued` and
+// `processing` are still answered as `alreadyQueued`, unchanged. The UPDATE is
+// also conditional on `processing_status = 'failed'` and reads its row back
+// (invariant 1 above), so an asset that became `ready` between the read and the
+// write is not re-queued by a lost race either.
+//
+// AND ONLY WHILE SOMETHING WILL CLAIM IT. A failed asset re-queued while the
+// processing worker (`lib/media/mediaProcessingWorker.ts`) is off would be
+// parked in `queued` for good — the second half of the same defect. So the
+// retry reads the worker's own flag and refuses, writing nothing, while it is
+// off, absent or unreadable (isFlagEnabled is fail-closed).
+
+/** The worker's capability flag. Seeded FALSE by migration 3338. */
+export const MEDIA_PROCESSING_WORKER_FLAG = "media_processing_worker_enabled";
+
+/**
+ * Is the processing worker allowed to run? One reader, shared by the worker's
+ * pass and by the retry, so "the worker is on" and "a retry may queue work for
+ * it" cannot disagree. Fail-closed: absent, false or unreadable ⇒ false.
+ */
+export async function isMediaProcessingWorkerEnabled(sc: SupabaseClient): Promise<boolean> {
+  return isFlagEnabled(sc, MEDIA_PROCESSING_WORKER_FLAG);
+}
+
+/** Why a retry of an owner's own, non-queued asset writes nothing — or null to proceed. */
+async function retryRefusal(sc: SupabaseClient, processingStatus: unknown): Promise<RetryProcessingResult | null> {
+  if (processingStatus !== "failed") return { ok: false, alreadyQueued: false, notRetryable: true };
+  if (!(await isMediaProcessingWorkerEnabled(sc))) return { ok: false, alreadyQueued: false, workerDisabled: true };
+  return null;
+}
+
+// ── census-media §32.13: the measured size, written where the lifecycle is ────
+//
+// Appended at the end, because the census cites this file by line.
+//
+// The processing worker (`lib/media/mediaProcessingWorker.ts`) replaces an
+// honest zero `size_bytes` with the stored object's measured size before the
+// asset can be completed `ready`. That write used to live in the worker itself,
+// which made a file named "worker" a writer of `media_assets` — canonical
+// storage, not a projection — and `check:projection-consumers` rightly refused
+// it. It is a lease-conditioned lifecycle write like every other in this file,
+// so it lives here and keeps invariant 1: conditional on the asset id, the lease
+// token the caller holds AND the zero it read (so a recorded size, which every
+// upload-route row has, is never overwritten), and read back, because a
+// zero-row UPDATE is `error: null` too.
+
+/**
+ * Record the stored object's measured size over an honest zero, while `claim`
+ * still holds the lease. True only when exactly this asset's row came back: a
+ * write error, a lost lease or a size someone else already recorded are all false,
+ * and the caller fails the attempt retryably rather than completing it.
+ */
+export async function recordMeasuredMediaSize(sc: SupabaseClient, claim: ProcessingClaim, sizeBytes: number): Promise<boolean> {
+  if (!(Number.isInteger(sizeBytes) && sizeBytes > 0)) return false;
+  const { data, error } = await sc.from("media_assets").update({ size_bytes: sizeBytes })
+    .eq("id", claim.assetId).eq("processing_lease_token", claim.leaseToken).eq("size_bytes", 0)
+    .select("id, size_bytes");
+  if (error || !Array.isArray(data) || data.length !== 1) return false;
+  return data[0]?.id === claim.assetId && Number(data[0]?.size_bytes) === sizeBytes;
 }

@@ -110,10 +110,27 @@ run_check "check:guard-coverage" pnpm run check:guard-coverage
 # decorative architecture: the same defect check:projection-consumers catches for
 # data pipes (a producer, a table, no consumer), one level up. It was not
 # hypothetical — check:unchecked-supabase-reads, the fail-open ledger and the
-# largest guard here, is reached by NOTHING: its mutation suite spawns it only
-# with UNCHECKED_READS_SRC_ROOT / UNCHECKED_READS_ALLOWLIST pointed at scratch
-# trees, so a new unchecked .error added to the real tree fails no check anywhere
-# and the 306 -> 0 burn-down it records is protected by nothing.
+# largest guard here, WAS reached by nothing: every spawn in its mutation suite
+# pointed at a scratch tree through UNCHECKED_READS_SRC_ROOT /
+# UNCHECKED_READS_ALLOWLIST, so a new unchecked .error added to the real tree
+# failed no check anywhere and the 306 -> 0 burn-down it records was protected by
+# nothing.
+#
+# PAST TENSE SINCE 2026-09-22, AND IT WAS PRESENT TENSE FOR TOO LONG. That guard
+# now carries a real-tree control — uncheckedSupabaseReads.test.ts, "CLI against
+# the REAL tree and the REAL allowlist" — which spawns the checker with NO seam
+# override, asserts exit 0, and then asserts NON-VACUITY: hundreds of files
+# scanned, thousands of read sites judged, enforced scope non-empty. That test is
+# in package.json's npm test manifest, so it runs in CI. src/scripts/guardRegistry.ts
+# records the move out of MANUAL and why it could only happen once the
+# write-precondition tier's 91 findings were FIXED rather than ledgered.
+#
+# Neither check:unchecked-supabase-reads nor check:projection-consumers has a
+# package.json script, and that is the design rather than a gap: both declare
+# reach: { kind: "test-control" } and are spawned from their own suites against
+# the real tree. Do not "fix" their absence from this file by adding run_check
+# lines — a second invocation path would have to be kept reachable too, which is
+# the problem this comment is about.
 #
 # Every check*.ts / check*.mjs on disk must DECLARE how it is reached
 # (src/scripts/guardRegistry.ts) and this verifies the declaration: check:all
@@ -334,6 +351,10 @@ run_check "check:deletion-coverage" pnpm run check:deletion-coverage
 run_check "check:data-rights" pnpm run check:data-rights
 run_check "check:location-purposes" pnpm run check:location-purposes
 run_check "check:silent-supabase-writes" pnpm run check:silent-supabase-writes
+# check:silent-supabase-reads — the READ half of the same language fact. Runs
+# beside its sibling deliberately: a fix that moves a silent write into a silent
+# read should not be able to turn one of these green while the other stays red.
+run_check "check:silent-supabase-reads" pnpm run check:silent-supabase-reads
 # check:unissued-supabase-writes — the third member of this family, and the one
 # no test could have caught. check:unchecked-supabase-reads catches a read whose
 # error is discarded; check:silent-supabase-writes catches a write whose error is
@@ -434,6 +455,11 @@ run_check "check:telegraph-slos" pnpm run check:telegraph-slos
 # artifact both exists and cannot rot.
 run_check "check:telegraph-inventory" pnpm run check:telegraph-inventory
 
+# check:discovery-query-paths — census-discovery DC-15. `10` §4: every new query
+# path needs expected cardinality, index rationale and EXPLAIN verification.
+# docs/discovery/query-paths.md carries them; this fails when a migration creates
+# a Discovery table or index with no registry row there, or a row goes stale.
+run_check "check:discovery-query-paths" pnpm run check:discovery-query-paths
 run_gate  "check:rank-events-surfaces" pnpm run check:rank-events-surfaces
 
 echo ""

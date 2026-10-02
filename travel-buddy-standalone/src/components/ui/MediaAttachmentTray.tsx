@@ -611,7 +611,7 @@ const s = StyleSheet.create({
   progressBar: {
     width: '90%',
     height: 3,
-    backgroundColor: 'rgba(255,255,255,0.35)',
+    backgroundColor: 'rgba(17,17,15,0.4)', // was rgba(255,255,255,0.35): the white fill read 2.5:1 on it over a bright photo (census-media §33.13)
     borderRadius: 2,
     overflow: 'hidden',
   },
@@ -694,7 +694,7 @@ const s = StyleSheet.create({
   errorText: {
     width: THUMB_SIZE,
     fontSize: 10,
-    color: color.signal,
+    color: color.signalStrong,
     fontWeight: '600',
   },
   reorderRow: {

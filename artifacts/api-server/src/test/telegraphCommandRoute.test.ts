@@ -17,9 +17,15 @@
  *   - Dropping the §7.4 seen check: the "a recipient read it" test fails. An
  *     unsend after somebody has read the message is a claim the product cannot
  *     honour.
- *   - Reading `last_read_at` as "not seen" when the roster read FAILED: the
- *     degraded test fails. "We could not check whether anyone saw it" is not
- *     "nobody saw it".
+ *   - Reading a FAILED unsend call as permission: the degraded tests fail. "We
+ *     could not check whether anyone saw it" is not "nobody saw it", and that
+ *     now covers three shapes of not-knowing — the call erroring, an outcome
+ *     this build has never heard of, and an answer that is not an object.
+ *   - Going back to a read-then-write instead of calling
+ *     `telegraph_unsend_message_before_seen`: the locking-function test fails.
+ *     Deciding in Node and writing afterwards cannot close §7.4's race,
+ *     however carefully it is written, because supabase-js issues each
+ *     statement in its own implicit transaction.
  *   - Removing the kernel-flag gate: the disabled test fails, and on a database
  *     without migration 2810 the route would answer 42703 rather than a refusal
  *     a client can render.
@@ -36,11 +42,13 @@ import express from "express";
 
 import { _setTestClient } from "../lib/http.js";
 import commandRouter from "../server/telegraph/commandRoute.js";
+import { makeUnsendFunctionFake } from "./telegraphUnsendFunctionFake.js";
 import {
   TELEGRAPH_COMMANDS,
   ISSUABLE_COMMANDS,
   LEGACY_PATH_COMMANDS,
   UNIMPLEMENTED_COMMANDS,
+  unimplementedCommandsFrom,
 } from "../domain/telegraph/commands/telegraphCommands.js";
 
 const ALICE = "aaaaaaaa-0000-4000-8000-000000000001";
@@ -60,8 +68,25 @@ interface State {
   kernelFlag?: boolean;
   /** Bob's last_read_at in THREAD. */
   bobLastRead?: string | null;
-  rosterError?: boolean;
+  /** The route's own membership gate cannot be read. */
+  membershipError?: boolean;
   aliceLeft?: boolean;
+  /** The unsend function itself fails. The roster read used to be the way in. */
+  rpcError?: boolean;
+  /** The function answers with an outcome this build has never heard of. */
+  rpcUnknownOutcome?: boolean;
+  /** The function answers with something that is not an object at all. */
+  rpcShapeless?: boolean;
+  /** An error arrives WITH a success-looking payload. */
+  rpcErrorWithPayload?: boolean;
+  /** Pin the unsent_at the model writes, so a test can assert on it. */
+  /**
+   * Pin the unsent_at the model writes, so a test can assert on it.
+   *
+   * A function gives every write a DIFFERENT value, which is the only way an
+   * assertion that a timestamp did not move can actually see a re-stamp.
+   */
+  unsendAt?: string | (() => string);
 }
 
 function makeClient(state: State = {}) {
@@ -91,17 +116,34 @@ function makeClient(state: State = {}) {
 
     const rowsNow = () => (db[table] ?? []).filter((r) => preds.every((f) => f(r)));
     const injected = () => {
-      // The roster read is select(user_id,last_read_at).eq(thread).is(left_at).neq(user)
-      // — three filters. The caller's own membership lookup is two eq's.
-      if (table === "message_thread_members" && state.rosterError && nFilters === 3) {
-        return { message: "roster read blew up" };
+      // The caller's own membership lookup, two eq's, which the command route
+      // still does for itself before dispatching. The roster read that used to
+      // be injected here at three filters has moved inside
+      // telegraph_unsend_message_before_seen; `rpcError` is where that failure
+      // is injected now.
+      if (table === "message_thread_members" && state.membershipError && nFilters === 2) {
+        return { message: "membership read blew up" };
       }
       return null;
     };
 
     const target: any = {
       select() { return proxy; },
-      insert(row: any) { pending = { op: "insert", payload: row }; return proxy; },
+      /**
+       * INSERT lands in the fake's own table and is returned by `single()`.
+       *
+       * It used to record the write and return nothing, which was enough while
+       * no command on this endpoint inserted. CREATE_COORDINATION_SESSION does,
+       * and it reads its own row back — so a fake that returned some OTHER row
+       * from `messages` would have let the idempotency tests pass against a
+       * message the command never wrote.
+       */
+      insert(row: any) {
+        const stored = { id: `ins-${((db[table] ??= []).length) + 1}`, ...row };
+        pending = { op: "insert", payload: stored };
+        db[table]!.push(stored);
+        return proxy;
+      },
       upsert(row: any) {
         pending = { op: "upsert", payload: row };
         const list = Array.isArray(row) ? row : [row];
@@ -124,7 +166,12 @@ function makeClient(state: State = {}) {
       maybeSingle() {
         const err = injected();
         if (err) return Promise.resolve({ data: null, error: err });
-        return Promise.resolve({ data: rowsNow()[0] ?? null, error: null });
+        return Promise.resolve({ data: pending?.op === "insert" ? pending.payload : rowsNow()[0] ?? null, error: null });
+      },
+      single() {
+        const err = injected();
+        if (err) return Promise.resolve({ data: null, error: err });
+        return Promise.resolve({ data: pending?.op === "insert" ? pending.payload : rowsNow()[0] ?? null, error: null });
       },
       then(resolve: (v: any) => void, reject?: (e: any) => void) {
         const err = injected();
@@ -153,11 +200,26 @@ function makeClient(state: State = {}) {
     return proxy;
   }
 
+  const rpc = makeUnsendFunctionFake(
+    () => ({
+      messages: db["messages"] as any[],
+      message_thread_members: db["message_thread_members"] as any[],
+    }),
+    {
+      rpcError: state.rpcError,
+      unknownOutcome: state.rpcUnknownOutcome,
+      shapeless: state.rpcShapeless,
+      errorWithSuccessPayload: state.rpcErrorWithPayload,
+      unsentAt: state.unsendAt,
+      onWrite: (id, at) => writes.push({ table: "messages", op: "rpc_unsend", payload: { id, unsentAt: at } }),
+    },
+  );
+
   return {
     _db: db,
     _writes: writes,
     from,
-    rpc: async () => ({ data: null, error: { message: "rpc not modelled" } }),
+    rpc,
     auth: { getUser: async (token: string) => ({ data: { user: { id: token } }, error: null }) },
   } as any;
 }
@@ -253,11 +315,39 @@ describe("POST /telegraph/commands — the door", () => {
     assert.match(String(body.message), /POST \/api\/threads\/:threadId\/messages/);
   });
 
-  it("answers 501 for a §13.1 command nothing implements", async () => {
+  it("CREATE_COORDINATION_SESSION is ISSUABLE, and refuses without an idempotency key", async () => {
+    // It answered 501 "nothing in this repository implements it" while the §9
+    // session entity existed, which is the same wrong-direction refusal
+    // SET_COORDINATION_STATUS used to give. It is now issued here — and it
+    // still refuses a call with no idempotency key, with a 400, because a
+    // generated key would make every retry a new evening.
     _setTestClient(makeClient(), true);
     const { status, body } = await post({ type: "CREATE_COORDINATION_SESSION", conversationId: THREAD, params: {} });
-    assert.equal(status, 501);
-    assert.equal(body.error, "not_implemented");
+    assert.equal(status, 400);
+    assert.match(String(body.message), /idempotencyKey is required/);
+  });
+
+  it("UNIMPLEMENTED_COMMANDS is empty, so the 501 branch has no §13.1 occupant", () => {
+    // Recorded rather than deleted: the branch is the shape of the answer for
+    // the next §13.1 command that arrives unbuilt, and the exhaustiveness test
+    // above is what keeps a command from falling through to "unknown" instead.
+    assert.deepEqual([...UNIMPLEMENTED_COMMANDS], []);
+  });
+
+  it("the 501 rule still holds: a §13.1 command with no home is unimplemented", () => {
+    // Kept from the lane that DERIVED this list. `UNIMPLEMENTED_COMMANDS` is
+    // empty today, so the route's 501 branch is unreachable in fact; the rule
+    // that feeds it is still checked, against a hypothetical nineteenth
+    // command. Without this, emptying the list would have silently taken the
+    // branch's only coverage with it.
+    const derived = unimplementedCommandsFrom(
+      [...TELEGRAPH_COMMANDS, "TELEPORT_USER"],
+      ISSUABLE_COMMANDS,
+      LEGACY_PATH_COMMANDS,
+    );
+    assert.deepEqual(derived, ["TELEPORT_USER"],
+      "a spec-named command with neither an issuable slot nor a legacy home must be reported " +
+      "unimplemented, so the door answers 501 rather than 'you made that up'");
   });
 
   it("answers 400 for a command nobody has heard of", async () => {
@@ -310,13 +400,166 @@ describe("Telegraph §7.4 UNSEND_MESSAGE", () => {
     assert.equal(client._db.messages.find((m: any) => m.id === M_SEEN).unsent_at, null);
   });
 
-  it("an UNREADABLE roster refuses — 'we could not check' is not 'nobody saw it'", async () => {
-    const client = makeClient({ rosterError: true });
+  it("a FAILED unsend call refuses — 'we could not check' is not 'nobody saw it'", async () => {
+    // The guarantee is the one this test always asserted. What changed is where
+    // the failure can come from: the roster read is inside
+    // telegraph_unsend_message_before_seen now, so the whole call failing is
+    // the way "we could not check" arrives. The reason code moves with it, from
+    // MEMBERSHIP_UNREADABLE to THREAD_UNREADABLE, because the route can no
+    // longer tell which read inside the function gave way — and claiming it can
+    // would be the invention this lane exists to remove.
+    const client = makeClient({ rpcError: true });
     _setTestClient(client, true);
     const { status, body } = await post({ type: "UNSEND_MESSAGE", conversationId: THREAD, params: { messageId: M_MINE } });
     assert.equal(status, 409);
-    assert.equal(body.reason, "TELEGRAPH_DEGRADED_MEMBERSHIP_UNREADABLE");
+    assert.equal(body.reason, "TELEGRAPH_DEGRADED_THREAD_UNREADABLE");
     assert.equal(client._db.messages.find((m: any) => m.id === M_MINE).unsent_at, null);
+  });
+
+  it("an outcome this build has never heard of is a FAILURE, not a success", async () => {
+    // A later migration could add an outcome. Reading it as "not a refusal, so
+    // it must have worked" is how a silent unsend-after-seen would ship.
+    const client = makeClient({ rpcUnknownOutcome: true });
+    _setTestClient(client, true);
+    const { status, body } = await post({ type: "UNSEND_MESSAGE", conversationId: THREAD, params: { messageId: M_MINE } });
+    assert.equal(status, 409);
+    assert.equal(body.reason, "TELEGRAPH_DEGRADED_THREAD_UNREADABLE");
+    assert.equal(client._db.messages.find((m: any) => m.id === M_MINE).unsent_at, null);
+  });
+
+  it("an ERROR is read even when the payload looks like a success", async () => {
+    // Without this case the `error` check is untested: an ordinary failure
+    // answers data:null, which the shape check rejects on its own, so a caller
+    // that never looked at `error` would still refuse and look correct. PR #472
+    // recorded the same trap when its own M4 mutation survived.
+    const client = makeClient({ rpcErrorWithPayload: true });
+    _setTestClient(client, true);
+    const { status, body } = await post({ type: "UNSEND_MESSAGE", conversationId: THREAD, params: { messageId: M_MINE } });
+    assert.equal(status, 409);
+    assert.equal(body.reason, "TELEGRAPH_DEGRADED_THREAD_UNREADABLE");
+    assert.equal(client._db.messages.find((m: any) => m.id === M_MINE).unsent_at, null);
+  });
+
+  it("an answer that is not an object at all is a FAILURE too", async () => {
+    const client = makeClient({ rpcShapeless: true });
+    _setTestClient(client, true);
+    const { status, body } = await post({ type: "UNSEND_MESSAGE", conversationId: THREAD, params: { messageId: M_MINE } });
+    assert.equal(status, 409);
+    assert.equal(body.reason, "TELEGRAPH_DEGRADED_THREAD_UNREADABLE");
+    assert.equal(client._db.messages.find((m: any) => m.id === M_MINE).unsent_at, null);
+  });
+
+  it("the unsend goes through the LOCKING function, not a read-then-write", async () => {
+    // The route used to select the message, select the roster, and update. If
+    // it ever goes back to that, this fails: the write it makes must be the
+    // function's, and there must be no direct update of `messages` beside it.
+    const client = makeClient({ unsendAt: "2026-05-04T12:00:00.000Z" });
+    _setTestClient(client, true);
+    const { status } = await post({ type: "UNSEND_MESSAGE", conversationId: THREAD, params: { messageId: M_MINE } });
+    assert.equal(status, 200);
+    const messageWrites = client._writes.filter((w: any) => w.table === "messages");
+    assert.deepEqual(messageWrites.map((w: any) => w.op), ["rpc_unsend"]);
+    const row = client._db.messages.find((m: any) => m.id === M_MINE);
+    assert.equal(row.unsent_at, "2026-05-04T12:00:00.000Z");
+    assert.equal(row.lifecycle_state, "unsent", "3000 exists so lifecycle_state cannot say 'sent'");
+    assert.equal(row.deleted_at, "2026-05-04T12:00:00.000Z", "suppression is deleted_at in 81 readers");
+    assert.equal(row.body, "");
+  });
+
+  it("a REPEAT unsend says already_unsent, not already_deleted", async () => {
+    // The function sets both columns, so an already-unsent row carries both.
+    // Testing deleted first would report every repeat unsend as a delete.
+    const client = makeClient();
+    _setTestClient(client, true);
+    assert.equal((await post({ type: "UNSEND_MESSAGE", conversationId: THREAD, params: { messageId: M_MINE } })).status, 200);
+    const { status, body } = await post({ type: "UNSEND_MESSAGE", conversationId: THREAD, params: { messageId: M_MINE } });
+    assert.equal(status, 409);
+    assert.equal(body.reason, "TELEGRAPH_LIFECYCLE_ALREADY_UNSENT");
+  });
+
+  it("TWO unsends in flight at once produce ONE write and one refusal", async () => {
+    // Chelsi named concurrent unsend as a verification for #472. This is what a
+    // route test can honestly show and what it cannot.
+    //
+    // It CANNOT show the lock works: there is nothing to serialise in a
+    // single-threaded fake, and the model says so in its own header. The lock
+    // is exercised where SQL can be, by the `api-server · kernel SQL executed
+    // on a throwaway database` job, and its ORDER is asserted against the
+    // migration text in telegraphUnsendFunctionFake.test.ts.
+    //
+    // What it DOES show is the route's half of the contract, which is the half
+    // that was wrong before: two requests that overlap must not both be treated
+    // as successes. The old read-then-write route would have read an unsent-at
+    // of null twice and written twice. This one asks the function twice and
+    // takes two different answers, because the decision is not the route's.
+    let stamp = 0;
+    const client = makeClient({
+      unsendAt: () => `2026-05-04T12:${String(stamp++).padStart(2, "0")}:00.000Z`,
+    });
+    _setTestClient(client, true);
+
+    const both = await Promise.all([
+      post({ type: "UNSEND_MESSAGE", conversationId: THREAD, params: { messageId: M_MINE } }),
+      post({ type: "UNSEND_MESSAGE", conversationId: THREAD, params: { messageId: M_MINE } }),
+    ]);
+
+    const statuses = both.map((r) => r.status).sort();
+    assert.deepEqual(statuses, [200, 409], "exactly one winner, exactly one refusal");
+    const loser = both.find((r) => r.status === 409)!;
+    assert.equal(loser.body.reason, "TELEGRAPH_LIFECYCLE_ALREADY_UNSENT");
+
+    const writes = client._writes.filter((w: any) => w.table === "messages");
+    assert.deepEqual(
+      writes.map((w: any) => w.op),
+      ["rpc_unsend"],
+      "the losing request must not write — a second write is a second unsent_at",
+    );
+    assert.equal(
+      client._db.messages.find((m: any) => m.id === M_MINE).unsent_at,
+      "2026-05-04T12:00:00.000Z",
+      "the winner's timestamp must survive, not be overwritten by the loser",
+    );
+    assert.equal(stamp, 1, "the stamp was drawn twice, so a second write happened");
+  });
+
+  it("a RETRY of a request that already succeeded is refused, not re-run", async () => {
+    // The other verification Chelsi named. A client whose connection dropped
+    // after the server committed will send the same request again, and it must
+    // not get a second unsend with a later timestamp: `unsentAt` is what the
+    // recipient's client uses to order the retraction, and moving it moves the
+    // retraction.
+    //
+    // This is the repeat-unsend case with the part that matters asserted — the
+    // TIMESTAMP, not just the reason code. A build that answered the retry with
+    // a fresh success would pass the reason-code test if the reason code were
+    // all that was checked.
+    // A SEQUENCE, not a constant. With a constant this test was measured GREEN
+    // under a model that re-stamped `unsent_at` on the already-unsent path: it
+    // rewrote the same value, and "the timestamp did not move" was true for the
+    // wrong reason. Every write now gets a distinguishable minute.
+    let stamp = 0;
+    const client = makeClient({
+      unsendAt: () => `2026-05-04T12:${String(stamp++).padStart(2, "0")}:00.000Z`,
+    });
+    _setTestClient(client, true);
+
+    const first = await post({ type: "UNSEND_MESSAGE", conversationId: THREAD, params: { messageId: M_MINE } });
+    assert.equal(first.status, 200);
+    const firstAt = first.body.data.unsentAt;
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const retry = await post({ type: "UNSEND_MESSAGE", conversationId: THREAD, params: { messageId: M_MINE } });
+      assert.equal(retry.status, 409, `retry ${attempt} was not refused`);
+      assert.equal(retry.body.reason, "TELEGRAPH_LIFECYCLE_ALREADY_UNSENT");
+    }
+
+    assert.equal(
+      client._db.messages.find((m: any) => m.id === M_MINE).unsent_at,
+      firstAt,
+      "a retry moved unsent_at, which moves the retraction on every recipient's client",
+    );
+    const writes = client._writes.filter((w: any) => w.table === "messages");
+    assert.deepEqual(writes.map((w: any) => w.op), ["rpc_unsend"], "one write for four requests");
   });
 
   it("refuses someone else's message", async () => {
@@ -617,5 +860,24 @@ describe("§30A.11 — the recheck, and the compensate that makes it safe", () =
     const r = await confirm(cmd.proposedActions[0].id, cmd.commandId);
     assert.equal(r.status, 403);
     assert.equal((c._rows.user_preference_events ?? []).length, 0);
+  });
+});
+
+describe("the route's own gate, which the function does not replace", () => {
+  it("an unreadable membership gate refuses BEFORE the unsend function is reached", async () => {
+    // The outer gate is what stops a stranger probing which message ids exist.
+    // It reads message_thread_members itself, and that read failing is a
+    // different fact from the unsend function failing: this one must not even
+    // ask.
+    const client = makeClient({ membershipError: true });
+    _setTestClient(client, true);
+    const { status, body } = await post({ type: "UNSEND_MESSAGE", conversationId: THREAD, params: { messageId: M_MINE } });
+    assert.equal(status, 503);
+    assert.equal(body.error, "degraded_unavailable");
+    assert.deepEqual(
+      client._writes.filter((w: any) => w.op === "rpc_unsend"),
+      [],
+      "the unsend function must not be called when membership could not be established",
+    );
   });
 });

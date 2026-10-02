@@ -107,7 +107,7 @@ function setupHook(overrides: Partial<ReturnType<typeof useTripSavedPlaces>> = {
     // `error` is part of the hook's contract: `places: []` alone means the list
     // is empty, and it may not be used to mean the read did not answer. A
     // fixture that omits it describes a shape the hook never returns.
-    error: null,
+    error: null, syncLabel: null, // WP-10 (census-trips §77): null = the list shown is the whole trip list
     toggle,
     clearAll,
     remove,

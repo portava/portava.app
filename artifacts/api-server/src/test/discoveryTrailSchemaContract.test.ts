@@ -34,6 +34,7 @@ import {
   TRAIL_LIFECYCLE_STATES, TRAIL_CONTENT_STATES, TRAIL_EDGE_TYPES,
   TRAIL_SIGNALS, TRAIL_RELATIONSHIPS, TRAIL_CONTENT_SOURCES, TRAIL_SOURCE_TYPES,
   MAX_PRIMARY_TRAILS, MAX_SUPPORTING_TRAILS, MAX_SIGNALS,
+  isTrailLifecycleTransitionAllowed, isTrailContentTransitionAllowed,
 } from "../lib/discoveryTrailObject.js";
 
 const MIGRATION = resolve(
@@ -142,5 +143,100 @@ describe("migration 2910 does not re-open what the ruling closed", () => {
         `a Trail table grants a write privilege: GRANT ${privileges} …`);
     }
     assert.match(sql, /authenticated must not write public\.%/);
+  });
+});
+
+// ── 3380 / 3381 — the later migrations that restate a Trail rule (§51) ──────
+//
+// 3380 REPLACES 2910's label-cap function, so the budgets the database enforces
+// now live in 3380's text, and the 2910 assertions above describe a body that is
+// no longer installed wherever 3380 is applied. 3381 writes §7's transition
+// relation a SECOND time, in SQL. Both are pinned to the TypeScript here, as
+// text, so the ordinary credential-free suite catches a drift the harness suite
+// (src/test/db/trailsConstraints.db.test.ts T5/C2) would only catch where a
+// database runs.
+
+const MIGRATIONS_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../migrations");
+const sql3380 = readFileSync(resolve(MIGRATIONS_DIR, "3380_content_trails_label_cap_serialised.sql"), "utf8");
+const sql3381 = readFileSync(resolve(MIGRATIONS_DIR, "3381_trail_lifecycle_transitions.sql"), "utf8");
+const rollback3380 = readFileSync(resolve(MIGRATIONS_DIR,
+  "../../../../db/rollback/2026-09-27-3380-content-trails-label-cap-serialised-rollback.sql"), "utf8");
+
+/** The `$fn$ … $fn$` body of the named function in a migration's text. */
+function fnBody(text: string, name: string): string {
+  const at = text.indexOf(`CREATE OR REPLACE FUNCTION public.${name}()`);
+  assert.notEqual(at, -1, `no CREATE OR REPLACE FUNCTION public.${name}()`);
+  const open = text.indexOf("$fn$", at);
+  const close = text.indexOf("$fn$", open + 4);
+  return text.slice(open + 4, close);
+}
+
+/** `(OLD.col = 'a' AND NEW.col IN ('b', 'c'))` clauses → from → sorted tos. */
+function relationOf(body: string, col: string): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  const re = new RegExp(`OLD\\.${col} = '([a-z_]+)'\\s+AND NEW\\.${col} IN \\(([^)]*)\\)`, "g");
+  for (const m of body.matchAll(re)) {
+    out[m[1]!] = [...m[2]!.matchAll(/'([a-z_]+)'/g)].map((x) => x[1]!).sort();
+  }
+  return out;
+}
+
+/** The TypeScript relation, read through its own predicate over every pair. */
+function tsRelation<S extends string>(states: readonly S[], allowed: (a: S, b: S) => boolean): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  for (const from of states) {
+    const tos = states.filter((to) => to !== from && allowed(from, to));
+    if (tos.length > 0) out[from] = [...tos].sort();
+  }
+  return out;
+}
+
+describe("3380 ↔ §4's three label caps, and the lock that makes them hold under concurrency", () => {
+  it("3380's budgets are the three TS constants", () => {
+    const body = fnBody(sql3380, "content_trails_label_cap");
+    const caps = Object.fromEntries(
+      [...body.matchAll(/WHEN '(primary|supporting|signal)'\s+THEN (\d+)/g)].map((m) => [m[1], Number(m[2])]),
+    );
+    assert.deepEqual(caps, { primary: MAX_PRIMARY_TRAILS, supporting: MAX_SUPPORTING_TRAILS, signal: MAX_SIGNALS });
+  });
+
+  it("the per-content advisory lock is taken BEFORE the count, or it serialises nothing", () => {
+    const body = fnBody(sql3380, "content_trails_label_cap");
+    const lock = body.indexOf("pg_advisory_xact_lock");
+    const count = body.indexOf("SELECT count(*) INTO held");
+    assert.ok(lock !== -1 && count !== -1 && lock < count, "the lock must precede the count");
+    assert.match(body, /NEW\.source_type \|\| ':' \|\| NEW\.source_id/, "keyed on the CONTENT, the unit §4 budgets");
+  });
+
+  it("the one budget §4 fixes at ONE is also a partial UNIQUE index", () => {
+    assert.match(sql3380,
+      /CREATE UNIQUE INDEX IF NOT EXISTS uq_content_trails_one_primary\s+ON public\.content_trails \(source_type, source_id\) WHERE relationship = 'primary';/);
+    assert.equal(MAX_PRIMARY_TRAILS, 1);
+  });
+
+  it("the rollback restores 2910's function body byte-for-byte", () => {
+    assert.equal(fnBody(rollback3380, "content_trails_label_cap"), fnBody(sql, "content_trails_label_cap"));
+  });
+});
+
+describe("3381 ↔ §7's transition relations in lib/discoveryTrailObject", () => {
+  it("the Trail lifecycle relation is the TypeScript one, pair for pair", () => {
+    assert.deepEqual(
+      relationOf(fnBody(sql3381, "trails_lifecycle_transition"), "lifecycle_status"),
+      tsRelation(TRAIL_LIFECYCLE_STATES, isTrailLifecycleTransitionAllowed),
+    );
+  });
+
+  it("the in-Trail content relation is the TypeScript one, pair for pair", () => {
+    assert.deepEqual(
+      relationOf(fnBody(sql3381, "content_trails_state_transition"), "content_state"),
+      tsRelation(TRAIL_CONTENT_STATES, isTrailContentTransitionAllowed),
+    );
+  });
+
+  it("archived has NO outgoing clause — terminal in SQL as in TypeScript", () => {
+    const rel = relationOf(fnBody(sql3381, "trails_lifecycle_transition"), "lifecycle_status");
+    assert.equal(rel.archived, undefined);
+    assert.ok(Object.keys(rel).length === 4, "the four non-terminal states each have a clause");
   });
 });

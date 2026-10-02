@@ -466,6 +466,45 @@ const ALLOWLIST = new Set([
   "grant:portava_featured.anon.select",
   "grant:portava_featured.authenticated.select",
 
+  // 3360_intel_evidence_sealed_reference.sql creates
+  // intel_evidence_rekey_reference(uuid, text, text), and
+  // 3361_intel_evidence_sealed_reference_validate.sql DROPS it. The drop is the
+  // design: the function exists only to lift the append-only guard while
+  // pre-seal plaintext references are re-sealed, and 3361 refuses to apply
+  // until none is left, then validates the CHECK and removes the function
+  // (3361's own header and postcondition). The auditor reads each migration's
+  // claims independently, so after 3361 it would report 3360's function
+  // missing forever. Same shape as the intel_append_only_stmt entry above
+  // (created by 2130, dropped by 2137). 3360's other claims are still audited.
+  // Found by the W10-D rehearsal (docs/ops/discovery-portava-ci-apply-plan.md,
+  // F1); landed by W10-F (census-discovery §87).
+  //
+  // Delete this entry if 3361 ever stops dropping the function.
+  "function:intel_evidence_rekey_reference",
+
+  // Table-level SELECT to anon/authenticated on posts (2148), passport_postcards
+  // (2151) and post_media (2158): those files granted it, and
+  // 3362_posts_client_column_grants.sql and
+  // 3363_place_copies_client_column_grants.sql deliberately take it back and
+  // grant SELECT on the non-place COLUMNS instead, so a client role can no
+  // longer read a withheld location. Their preconditions require exactly the
+  // table-level grant these claims name; their postconditions assert that no
+  // client role holds it afterwards. The auditor reads table grants from
+  // information_schema.role_table_grants, which carries no column grant, so
+  // after 3362/3363 it would report these six missing. The claims are
+  // superseded by later migrations in the same corpus, as 2160's are by 2332
+  // above. Found by running audit:schema itself on the W10-F harness after the
+  // apply (census-discovery §87, F5); W10-D's rehearsal had checked only the
+  // objects CI named, so it could not see a claim that turns red after.
+  //
+  // Delete these six if 3362 or 3363 is ever reversed, in the same change.
+  "grant:posts.anon.select",
+  "grant:posts.authenticated.select",
+  "grant:passport_postcards.anon.select",
+  "grant:passport_postcards.authenticated.select",
+  "grant:post_media.anon.select",
+  "grant:post_media.authenticated.select",
+
 ]);
 
 // ── Environment ───────────────────────────────────────────────────────────────

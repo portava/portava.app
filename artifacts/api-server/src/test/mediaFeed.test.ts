@@ -144,7 +144,7 @@ function makeClient(state: FakeState = {}) {
         table === "post_reactions"       ? state.postReactions ?? [] :
         table === "follow_requests"      ? state.followRequests ?? [] :
         table === "rank_events"          ? state.rankEvents ?? [] :
-        table === "compass_user_preferences" ? state.compassPrefs ?? [] :
+        table === "compass_user_preferences" ? state.compassPrefs ?? [] : table === "hidden_gems" ? (state as any).hiddenGems ?? [] :
         [];
       let filtered = src.filter((r: any) => filters.every((f) => f(r)));
       if (orderSpecs.length > 0) {
@@ -2064,5 +2064,46 @@ describe("hydrateMediaGridItem — relay URL resolution for poster images", () =
       PUBLIC_URL,
       "posterUrl must fall back to public_url when storage_path is absent",
     );
+  });
+});
+
+// census-media §28.13 — DELETE /media/:id must not tell a stranger which ids exist. It used to
+// answer a non-owner 403 and a missing id 404, so any signed-in caller could probe for post and
+// Hidden Gem ids (census-media §30.11 item 5).
+describe("census-media §28.13 — DELETE /media/:id answers a stranger as it answers a missing id", () => {
+  let server: http.Server;
+  let base: string;
+  before(async () => { ({ server, base } = await startServer(makeApp())); });
+  after(() => { server.close(); });
+
+  it("a stranger's delete of someone else's post gets the missing-id answer and writes nothing", async () => {
+    const client = makeClient({ posts: [makePost({ id: POST_1, author_id: CREATOR_A })] });
+    _setTestClient(client, true);
+    const stranger = await jsonFetch(base, `/media/${POST_1}`, { method: "DELETE" });
+    _setTestClient(makeClient({ posts: [] }), true);
+    const missing = await jsonFetch(base, `/media/${POST_2}`, { method: "DELETE" });
+    assert.equal(stranger.status, missing.status, "a stranger must not be able to tell an existing post from a missing one");
+    assert.deepEqual(stranger.body, missing.body);
+    assert.equal(stranger.status, 404);
+    assert.equal((client._updated as any[]).length, 0, "a refused delete writes nothing");
+  });
+
+  it("the same holds for a Hidden Gem id", async () => {
+    const client = makeClient({ hiddenGems: [{ id: POST_3, submitted_by: CREATOR_B }] } as any);
+    _setTestClient(client, true);
+    const r = await jsonFetch(base, `/media/${POST_3}`, { method: "DELETE" });
+    assert.equal(r.status, 404);
+    assert.equal(r.body?.error, "not_found");
+    assert.equal((client._updated as any[]).length, 0);
+  });
+
+  it("CONTROL: the owner still deletes their own post", async () => {
+    const client = makeClient({ posts: [makePost({ id: POST_1, author_id: VIEWER_ID })] });
+    _setTestClient(client, true);
+    const r = await jsonFetch(base, `/media/${POST_1}`, { method: "DELETE" });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    const upd = (client._updated as any[]).filter((u) => u.table === "posts");
+    assert.equal(upd.length, 1);
+    assert.equal(upd[0].data.status, "deleted");
   });
 });

@@ -39,6 +39,7 @@ import {
 } from "../lib/discoveryModifiers.js";
 import { scoreCandidate } from "../lib/portavaRank.js";
 import { TRAIL_AFFINITY_MAX_CONTRIBUTION } from "../lib/discoveryTrailAffinity.js";
+import { canonicalTrailSlug } from "../lib/discoveryTrailObject.js";
 
 const USER = "11111111-1111-4111-8111-111111111111";
 const OTHER = "11111111-1111-4111-8111-111111111112";
@@ -99,6 +100,10 @@ function makeDb(
     trails: [], content_trails: [], trail_edges: [], trail_follows: [],
     trail_reports: [], trail_health_snapshots: [], rank_events: [],
     feature_flags: [],
+    // census-discovery §61: attach now requires the content to EXIST. The
+    // place ids these stories attach are canonical `places` rows here, one of
+    // the two tables a place member may name.
+    places: [PLACE_A, PLACE_B, PLACE_E2E].map((id) => ({ id })),
     ...seed,
   };
   const missing = new Set(missingTables);
@@ -109,6 +114,7 @@ function makeDb(
     const filters: Array<(r: Row) => boolean> = [];
     let selectCols: string | null = null;
     let limitN: number | null = null;
+    let rangeAZ: [number, number] | null = null;
     const store = () => (tables[table] ??= []);
     const missingError = () => {
       if (missingStyle === "postgres") {
@@ -132,6 +138,7 @@ function makeDb(
 
     const rows = () => {
       let out = store().filter((r) => filters.every((f) => f(r)));
+      if (rangeAZ) out = out.slice(rangeAZ[0], rangeAZ[1] + 1);
       if (limitN !== null) out = out.slice(0, limitN);
       return out;
     };
@@ -150,6 +157,11 @@ function makeDb(
       in(c: string, v: any[]) { filters.push((r) => v.includes(r[c])); return b; },
       is(c: string, v: any) { filters.push((r) => (r[c] ?? null) === v); return b; },
       gt(c: string, v: any) { filters.push((r) => String(r[c] ?? "") > String(v)); return b; },
+      // The Trails `rank_events` read pages under a total order, exactly as the
+      // momentum loader does (TrailService.readMemberEvents). Without these two
+      // the read throws into its catch and every denominator reads as unknown.
+      gte(c: string, v: any) { filters.push((r) => String(r[c] ?? "") >= String(v)); return b; },
+      range(a: number, z: number) { rangeAZ = [a, z]; return b; },
       ilike(c: string, pattern: string) {
         const needle = pattern.replace(/%/g, "").toLowerCase();
         filters.push((r) => String(r[c] ?? "").toLowerCase().includes(needle));
@@ -199,13 +211,19 @@ function makeDb(
         return d;
       },
       update(patch: Row) {
+        // `.select()` after an update is PostgREST's return=representation: the
+        // rows the UPDATE actually matched. The lifecycle writer is a
+        // compare-and-set and reads that count, so the fake has to return it.
+        let representation = false;
         const u: any = {
           eq(c: string, v: any) { filters.push((r) => r[c] === v); return u; },
+          select() { representation = true; return u; },
           then(res: any) {
             if (broken()) return Promise.resolve(err()).then(res);
-            for (const r of rows()) Object.assign(r, patch);
+            const hit = rows();
+            for (const r of hit) Object.assign(r, patch);
             writes.push({ table, op: "update", rows: patch });
-            return Promise.resolve({ data: null, error: null }).then(res);
+            return Promise.resolve({ data: representation ? hit.map((r) => ({ ...r })) : null, error: null }).then(res);
           },
         };
         return u;
@@ -225,7 +243,36 @@ function makeDb(
         : { data: { user: null }, error: { message: "invalid token" } };
     },
   };
-  return { from, auth, _tables: tables, _writes: writes };
+
+  /**
+   * `public.trail_propose` (migration 3415), faked at its LAST step only: the
+   * service's TypeScript pre-check has already judged the proposal against this
+   * fake's catalogue, so the fake admits what reaches it unless the slug is
+   * taken (23505, as the UNIQUE index answers). The decision itself — the
+   * per-token lock, the checks re-run in SQL, the parent's waiver — is proven
+   * on the real schema in db/trailsProposalRace.db.test.ts and is deliberately
+   * not re-implemented here, where it could only agree with itself.
+   */
+  async function rpc(name: string, args: Row) {
+    if (name !== "trail_propose") throw new Error(`fake rpc: ${name} is not modelled`);
+    if (missing.has("rpc:trail_propose")) {
+      return { data: null, error: { code: "PGRST202", message: "Could not find the function public.trail_propose in the schema cache" } };
+    }
+    const slug = canonicalTrailSlug(args.p_title);
+    if (tables.trails!.some((t) => t.slug === slug)) {
+      return { data: null, error: { code: "23505", message: "duplicate key value violates unique constraint \"trails_slug_unique\"" } };
+    }
+    const at = new Date().toISOString();
+    const row: Row = {
+      id: generatedUuid("trails", tables.trails!.length), slug, title: args.p_title, description: args.p_description,
+      destination: args.p_destination, place_scope: null, parent_trail_id: args.p_parent_trail_id,
+      lifecycle_status: "proposed", created_by: args.p_created_by, created_at: at, updated_at: at,
+    };
+    tables.trails!.push(row);
+    writes.push({ table: "trails", op: "insert", rows: [row] });
+    return { data: { outcome: "created", trail: row }, error: null };
+  }
+  return { from, rpc, auth, _tables: tables, _writes: writes };
 }
 
 const trail = (id: string, over: Row = {}): Row => ({
@@ -601,6 +648,35 @@ describe("DC-21 — trending by Trail, and `11` §4's 'never return internal raw
     assert.equal(typeof r.body.trending, "boolean");
     assert.ok(Array.isArray(r.body.items));
     assert.ok(!JSON.stringify(r.body).includes("momentum"), "`11` §4: no internal raw score to a client");
+  });
+
+  // H-P8-1 (census §58.4, applied in §61). The route reads `rank_events` twice:
+  // the Discovery-surface item read (the order and the provenance) and then the
+  // all-surfaces Trail read (the boolean). When ONLY the second fails, the
+  // answer is unknown — and it used to be served as `trending: false` beside a
+  // valid provenance, a failure reading as a measured "not trending".
+  it("H-P8-1: when only the all-surfaces read fails, `trending` is null (unknown), not false", async () => {
+    const seed = SEED();
+    seed.rank_events = [{ item_id: PLACE_A, outcome: "save", served_at: iso(3_600_000), outcome_at: iso(3_600_000) }];
+    const db = withDb(seed, [], "postgres", ["rank_events_second_read"]);
+    const realFrom = db.from;
+    let rankReads = 0;
+    db.from = (table: string) =>
+      table === "rank_events" && ++rankReads === 2 ? realFrom("rank_events_second_read") : realFrom(table);
+    const r = await call("GET", `/v1/discovery/trails/${T_DARK}/trending`, USER);
+    assert.equal(rankReads, 2, "both reads were issued");
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.trending, null, "an unread Trail momentum is unknown, never a measured false");
+    assert.notEqual(r.body.readingProvenance, null, "the item read succeeded, so the order still has its provenance");
+  });
+
+  it("H-P8-1 control: both reads succeed over no events, so `trending` is a MEASURED false, not null", async () => {
+    const seed = SEED();
+    seed.rank_events = [];
+    withDb(seed);
+    const r = await call("GET", `/v1/discovery/trails/${T_DARK}/trending`, USER);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.trending, false, "a read that succeeded and found nothing is a measured zero");
   });
 });
 
@@ -1243,5 +1319,39 @@ describe("§11 — a failed trail_reports read is unmeasured health, not a clean
     const clean = await getTrail(withDb(seed()) as any, T_DARK);
     assert.ok(broken.healthScale < clean.healthScale,
       "a clean report_rate is evidence; a failed read has none and must not be scored as if it did");
+  });
+});
+
+// ── census-discovery §61: DC-03's fail-closed creation, DC-20's source check ──
+
+describe("§61 — creation fails closed without 3415, and attach names content that exists", () => {
+  it("POST /v1/discovery/trails is 503 and writes NOTHING when trail_propose is absent — never an unserialised insert", async () => {
+    const db = withDb({ ...SEED(), trails: [] }, ["rpc:trail_propose"]);
+    const r = await call("POST", "/v1/discovery/trails", USER, { title: "Kyoto Hidden Temples", destination: "Kyoto" });
+    assert.equal(r.status, 503);
+    assert.equal(r.body.error, "degraded_unavailable");
+    assert.deepEqual(db._writes, []);
+  });
+
+  it("an attach whose source cannot be READ is 503 degraded_unavailable, retryable, and writes nothing", async () => {
+    const db = withDb(SEED(), [], "postgres", ["places"]);
+    const r = await call("POST", `/v1/discovery/trails/${T_ROOF}/content`, USER, {
+      labels: [{ sourceType: "place", sourceId: PLACE_B, relationship: "supporting" }],
+    });
+    assert.equal(r.status, 503);
+    assert.equal(r.body.error, "degraded_unavailable");
+    assert.equal(r.body.retryable, true);
+    assert.equal(db._writes.filter((w) => w.table === "content_trails").length, 0);
+  });
+
+  it("an attach of content that does not exist is 409 `content_refused`, naming the label, and writes nothing", async () => {
+    const db = withDb();
+    const r = await call("POST", `/v1/discovery/trails/${T_ROOF}/suggestions`, USER, {
+      labels: [{ sourceType: "place", sourceId: MISSING, relationship: "supporting" }],
+    });
+    assert.equal(r.status, 409);
+    assert.equal(r.body.error, "content_refused");
+    assert.deepEqual(r.body.contentRefusals, [{ sourceType: "place", sourceId: MISSING, reason: "unknown_content" }]);
+    assert.equal(db._writes.filter((w) => w.table === "content_trails").length, 0);
   });
 });

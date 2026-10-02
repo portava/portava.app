@@ -62,7 +62,15 @@ export interface UnsendSuccess {
   recipientCount: number;
   lifecycleState: null;
   lifecycleStateUnavailableReason: string;
-  /** Present only in the compensation-failed case. */
+  /**
+   * Both are now ALWAYS `false` on a success and on a `seen_by_recipient`
+   * refusal, and they used to be present only when the compensation scheme had
+   * something to report — including `null`, when its re-read failed and it
+   * could not say. The server resolves the race with a row lock now, so there
+   * is no window to detect and nothing to put back. They stay optional here so
+   * a client built against an older server still parses, and no code should
+   * start branching on them: there is nothing left for them to distinguish.
+   */
   raceDetected?: boolean;
   compensated?: boolean;
   message?: string;

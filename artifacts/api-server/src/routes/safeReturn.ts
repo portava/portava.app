@@ -891,8 +891,8 @@ router.post("/me/safe-return/sessions/:id/live-share/start", async (req, res) =>
   if (!share) {
     sendError(res, "db_error", "Failed to start live share", { exposeDetail: true }); return;
   }
-
-  res.status(201).json({
+  const recipientNotice = await noticeLiveShareRecipient(db, req, { shareId: share.id, sharerId: user.id, recipientUserId: (contact as any).contact_user_id ?? null, expiresAt: share.expiresAt ?? null });
+  res.status(201).json({ recipientNotified: recipientNotice.notified, ...(recipientNotice.reason ? { recipientNoticeReason: recipientNotice.reason } : {}),
     ok: true,
     share: {
       id: share.id,
@@ -1224,3 +1224,21 @@ router.get("/me/safe-return/contacts/:userId/passport", async (req, res) => {
 });
 
 export default router;
+
+// ── Live share recipient notice (WP-04, lane tm-events) ───────────────────────
+// Appended at the foot so the census-cited lines above keep their numbers; the
+// service is imported lazily for the same reason (the import block is cited).
+async function noticeLiveShareRecipient(
+  db: any,
+  req: any,
+  input: { shareId: string; sharerId: string; recipientUserId: string | null; expiresAt: string | null },
+): Promise<{ notified: boolean; reason?: string }> {
+  try {
+    const { notifyLiveShareRecipient } = await import("../services/safeReturn/SafeReturnLiveShareNotifier.js");
+    return await notifyLiveShareRecipient(db, input);
+  } catch (err) {
+    // The share itself started; say the contact may not know, never that they do.
+    req.log?.error({ err, shareId: input.shareId }, "safe-return live-share: recipient notice failed");
+    return { notified: false, reason: "notice_failed" };
+  }
+}

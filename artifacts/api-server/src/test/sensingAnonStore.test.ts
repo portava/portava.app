@@ -386,6 +386,15 @@ const PERMITTED_REFERRERS = new Map<string, string>([
       "revoke. Pure; no route, no flag, no publisher.",
   ],
   [
+    join("lib", "sensingWindowAggregate.ts"),
+    'the per-WINDOW half of "cohort/coverage aggregation" (census-sensing S42/S52): joins a run of ' +
+      "adjacent cohort reads into arrival/departure rates, coverage and dwell, and hands them to " +
+      "lib/vibeInference. It holds contributor tokens only to DIFFERENCE them between adjacent " +
+      "buckets and returns numbers — no token, set or per-person field appears on its result, which " +
+      "is asserted on the serialised value. A bucket the privacy gate refused contributes nothing, " +
+      "so a rate is never computed over a sub-k cohort. Pure; no route, no flag, no publisher.",
+  ],
+  [
     join("lib", "sensingDifferencingGate.ts"),
     'the anti-differencing rule over "cohort/coverage aggregation" outputs (a type import): a ' +
       "re-publication must move by a whole independent party or not at all. Pure; keeps no token.",
@@ -395,6 +404,44 @@ const PERMITTED_REFERRERS = new Map<string, string>([
     'the §19 PresenceObservation built from "cohort/coverage aggregation": takes the aggregate\'s ' +
       "decision (a type import) and carries truth class / confidence / freshness / coverage. " +
       "Reads no store, publishes nothing, names no contributor.",
+  ],
+  [
+    // THE ENTRY THE OLD TRIPWIRE EXISTED TO MAKE IMPOSSIBLE. See the block
+    // comment above `describe("exactly one writer ...")` below for why it is
+    // here and what retired the assertion that forbade it.
+    join("routes", "sensingIngest.ts"),
+    'the ONE transport for "privacy-reduced sensor contributions": POST ' +
+      "/v1/sensing/contributions, authenticated by the opaque contribution credential (2480) and by " +
+      "nothing else. No requireUser, no optionalUser, no actor_id, no location_snapshots. It walks " +
+      "the existing eligibility/session/budget ladder rather than around it, and it reads no " +
+      "aggregate — surface and share are scopes SENSING_ANON_POLICY_V1 does not grant.",
+  ],
+  [
+    join("routes", "sensingSession.ts"),
+    "the ELIGIBILITY route (§3) that issues the opaque credential the ingest authenticates. It WRITES " +
+      "2480's session table, never this store: from the store modules it takes exactly the pure " +
+      "rotation-epoch function and the pepper posture (so it refuses when the ingest would), which the " +
+      "route-level case below pins import by import. It names neither this table nor any writer.",
+  ],
+  [
+    // ADDED 2026-09-26 (census-sensing §26.3): the PUBLISHER, §21.4's blocker #2.
+    join("lib", "sensingPublicationScheduler.ts"),
+    'the one production reader of "cohort/coverage aggregation" that RECORDS: on its own clock, per ' +
+      "live cohort, readSensingCohort → aggregateSensingCohort → publishThroughDifferencingGate into " +
+      "3110's publication store. It refuses FIRST on the `surface` purpose scope (ungranted; checked " +
+      "before it obtains a client), then on sensing_publication_enabled (3313, seeded FALSE), then " +
+      "on the schema. A cohort the k-gate withholds never reaches the gate or the store; counts only " +
+      "in logs. Not a transport: nothing enters the store through it.",
+  ],
+  [
+    // ADDED 2026-09-26 (census-sensing §26.3): the CONSUMER now imports the store's PURE key
+    // functions, and nothing else from it.
+    join("compass", "CompassSensingPresenceProducer.ts"),
+    "decision #9's consumer. It imports sensingCohortKey / sensingTimeBucket / SENSING_REDUCTION_VERSION " +
+      "— pure functions of (zone, bucket, version), shared with the writer so the turn's zone refs " +
+      "name the KEY the publisher recorded — and reads ONLY the publication store (3110), never the " +
+      "contribution table; sensingPublicationScheduler.test.ts asserts the contribution store is " +
+      "untouched by it. Its first gate is the `surface` scope, which SENSING_ANON_POLICY_V1 does not grant.",
   ],
 ]);
 
@@ -498,16 +545,6 @@ describe("the store is reachable only from the callers the ruling names", () => 
     }
   });
 
-  it("no route touches the store — a transport is an owner decision, not an implementation detail", () => {
-    const routes = walk(join(SRC, "routes"));
-    assert.ok(routes.length > 100, "premise: the route tree was found");
-    const offenders = routes.filter((f) => {
-      const text = readFileSync(f, "utf8");
-      return /sensingAnonStore|sensingCoverageAggregate|sensingAnonService/.test(text) || text.includes(TABLE);
-    });
-    assert.deepEqual(offenders, [], "an HTTP surface for the anonymous sensing store needs an owner decision first");
-  });
-
   it("only allowlisted files name the table", () => {
     const namers = walk(SRC)
       .filter(
@@ -526,18 +563,228 @@ describe("the store is reachable only from the callers the ruling names", () => 
     }
   });
 
-  it("no feature flag was invented for this store", () => {
-    // 2315 seeds none, and seeding one is an owner decision (sensing-input-gap
-    // §3.2). The TTL sweep is gated on the table existing instead.
+  it("no feature flag governs the STORE, and any flag a reader hangs from is seeded OFF by a migration in this tree", () => {
+    // THIS TRIPWIRE FIRED ON 2026-09-26 AND WAS RE-AIMED, NOT RELAXED. It used
+    // to assert that NO allowlisted caller read a flag at all, with the note
+    // "2315 seeds none, and seeding one is an owner decision". The ruling it
+    // cites says something narrower and more useful (sensing-input-gap §3.1,
+    // the note under the table): the four items inside the ruling are "gated
+    // on process, not on the ruling", and "any flag they hang from would be a
+    // NEW SEEDED-OFF ROW" — the standing shape everywhere in this tree, where
+    // seeding OFF is implementation and FLIPPING is the owner's act (§3.2's
+    // last row; 3004's own header for decision #9). The publisher
+    // (lib/sensingPublicationScheduler, census-sensing §26.3) is exactly that
+    // shape: it hangs from sensing_publication_enabled, which 3313 seeds
+    // FALSE and refuses to seed ON, and it checks the `surface` purpose scope
+    // BEFORE it reads the flag, so the flag cannot substitute for consent.
+    //
+    // What this case still refuses, and must: (1) the store's own contract
+    // module, its service and its TTL sweep reading ANY flag — the sweep is
+    // gated on the table existing instead, so a flag can only add a way to
+    // retain expired personal data; (2) a reader hanging from a flag that no
+    // migration in this tree seeds — a phantom that "cannot be turned on
+    // without shipping a migration first" (3004's words); (3) a seed whose
+    // value is not FALSE.
     assert.doesNotMatch(CODE, /feature_flags/i);
+    const FLAG_FREE = [join("lib", "sensingAnonService.ts"), join("lib", "sensingRetentionScheduler.ts")];
+    for (const f of FLAG_FREE) {
+      assert.ok(!/isFlagEnabled|feature_flags/.test(readFileSync(join(SRC, f), "utf8")), `${f} must not read a flag: the store's own path is gated on schema, never on a switch`);
+    }
+    const seededOff = new Set<string>();
+    for (const m of readdirSync(join(SRC, "migrations"))) {
+      if (!m.endsWith(".sql")) continue;
+      const sql = readFileSync(join(SRC, "migrations", m), "utf8");
+      for (const hit of sql.matchAll(/\(\s*'([a-z0-9_]+)'\s*,\s*(true|false)\b/gi)) {
+        if (hit[2].toLowerCase() === "false") seededOff.add(hit[1]);
+      }
+    }
     for (const f of PERMITTED_REFERRERS.keys()) {
       const text = readFileSync(join(SRC, f), "utf8");
-      assert.ok(!/isFlagEnabled|feature_flags/.test(text), `${f} reads a feature flag that nothing seeds`);
+      const reads = [...text.matchAll(/isFlagEnabled\([^,]+,\s*([A-Z_]+|"[a-z0-9_]+")\s*\)/g)].map((m) => m[1]);
+      for (const r of reads) {
+        const name = r.startsWith('"')
+          ? r.slice(1, -1)
+          : (text.match(new RegExp(`export const ${r}\\s*=\\s*"([a-z0-9_]+)"`)) ?? [])[1];
+        assert.ok(name, `${f} reads a flag through ${r}, which this case cannot resolve to a literal name`);
+        assert.ok(seededOff.has(name), `${f} reads ${name}, which no migration in this tree seeds FALSE — a phantom flag`);
+      }
     }
   });
 
   it("the contract module both reads and writes the table, so it is not a writerless read", () => {
     assert.match(STORE_TS, new RegExp(`from\\(SENSING_TABLE\\)[\\s\\S]{0,80}\\.insert\\(`));
     assert.match(STORE_TS, new RegExp(`from\\(SENSING_TABLE\\)[\\s\\S]{0,200}\\.select\\(`));
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE ASSERTION THAT USED TO LIVE HERE, WHY IT IS GONE, AND WHAT REPLACED IT
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Until this change the suite above ended with:
+//
+//     it("no route touches the store — a transport is an owner decision, not an
+//        implementation detail", ...)
+//
+// asserting that NO file under src/routes/ so much as mentions the anonymous
+// sensing store. It was a tripwire on an OWNER DECISION, not on a coding
+// mistake. The decision it was waiting for is named in
+// docs/architecture/sensing-input-gap.md §3.2 and was encoded as
+// `SENSING_AUTH_POSTURE`, which shipped `undecided` and made
+// `sensingEligibility` refuse every caller with `posture_undecided`. While that
+// was true, a route could admit nobody, so building one could only be an
+// accident — and the tripwire made the accident loud.
+//
+// THAT DECISION HAS BEEN TAKEN. census-sensing.md §11 — "2026-09-16: the owner
+// decided the posture" — records it: the owner chose Option B STAGED, and
+// lib/sensingAuthPosture.ts:82 now reads `anonymous_capable`. The same section
+// records that 2315, 2340 and 2480 were applied to production that day (visible
+// independently of the prose in src/lib/capability/production-applied-migrations
+// .json at version 20260916174227, and in the 2026-09-22 production schema
+// capture, which lists sensing_anon_contributions with 2315's exact columns).
+// §11's own list of what still blocks Sensing then puts this first:
+//
+//     "No ingest route. Eligibility returning `true` admits nobody while
+//      nothing calls it."
+//
+// So the assertion was retired BY THAT DECISION, and by nothing else. It is not
+// deleted to get a build green: deleting it is what it existed to prevent, and
+// an absence would let a SECOND transport appear silently, which is a strictly
+// worse state than the one it guarded.
+//
+// WHAT REPLACES IT IS A STRONGER PROPERTY, NOT A WEAKER ONE. "No route" was a
+// count of zero. This is a count of exactly ONE, plus everything that makes
+// that one route the thing the decision actually authorised:
+//
+//   * exactly one file under src/routes/ reaches the store, and it is the
+//     registered ingest route — a second one is red, and so is zero, which
+//     would mean the writer was deleted or renamed without this list moving;
+//   * it is reached ONLY through the opaque credential: no requireUser, no
+//     optionalUser, no actor_id, no location_snapshots, no profiles read;
+//   * it is MOUNTED in routes/index.ts, because a route that is not registered
+//     is not a writer, it is a file;
+//   * it fails closed on SENSING_CONTRIBUTOR_PEPPER by name, with no fallback;
+//   * it walks the existing session/budget ladder instead of a second copy of
+//     it, and it returns no aggregate — `surface` and `share` are scopes
+//     SENSING_ANON_POLICY_V1 does not grant.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("exactly one writer, reached only through the opaque credential", () => {
+  function walkRoutes(dir: string, out: string[] = []): string[] {
+    for (const entry of readdirSync(dir)) {
+      if (entry === "node_modules" || entry === "generated" || entry === "dist") continue;
+      const full = join(dir, entry);
+      if (statSync(full).isDirectory()) walkRoutes(full, out);
+      else if (/\.(ts|tsx|mts|mjs|js)$/.test(entry)) out.push(full);
+    }
+    return out;
+  }
+
+  const WRITER = join("routes", "sensingIngest.ts");
+  const ISSUER = join("routes", "sensingSession.ts");
+  const WRITER_TS = readFileSync(join(SRC, WRITER), "utf8");
+  const WRITER_CODE = stripTsComments(WRITER_TS);
+  const INDEX_TS = readFileSync(join(SRC, "routes", "index.ts"), "utf8");
+
+  it("exactly ONE route WRITES the store — the registered ingest; the one other route importing a store module is the issuer, taking pure helpers only", () => {
+    const routes = walkRoutes(join(SRC, "routes"));
+    assert.ok(routes.length > 100, "premise: the route tree was found");
+    const rel = (f: string) => f.slice(SRC.length + 1);
+    const reachers = routes
+      .filter((f) => {
+        const text = readFileSync(f, "utf8");
+        return /sensingAnonStore|sensingCoverageAggregate|sensingAnonService/.test(text) || text.includes(TABLE);
+      })
+      .map(rel)
+      .sort();
+    assert.deepEqual(
+      reachers,
+      [ISSUER, WRITER].sort(),
+      "a route outside the ingest and its issuer imports the anonymous store — a second transport is a change to what census-sensing §11 authorised",
+    );
+    // WRITING means naming the table or calling a writer. Only the ingest does.
+    const writers = routes
+      .filter((f) => {
+        const code = stripTsComments(readFileSync(f, "utf8"));
+        return code.includes(TABLE) || /recordAnonSensingContribution|recordSensingContribution|revokeSensingContributions|revokeAnonSensingContributions/.test(code);
+      })
+      .map(rel);
+    assert.deepEqual(writers, [WRITER], "the anonymous sensing store must have exactly one HTTP writer");
+    // And the issuer's imports from the store modules are exactly the pure helpers it needs.
+    const issuer = stripTsComments(readFileSync(join(SRC, ISSUER), "utf8"));
+    const taken = [...issuer.matchAll(/import\s*\{([^}]*)\}\s*from\s*"\.\.\/lib\/(?:sensingAnonStore|sensingAnonService|sensingCoverageAggregate)\.js"/g)]
+      .flatMap((m) => m[1]!.split(",").map((x) => x.trim()).filter(Boolean))
+      .sort();
+    assert.deepEqual(taken, ["SENSING_PEPPER_ENV", "rotationEpochFor", "sensingPepperPosture"]);
+  });
+
+  it("the writer is MOUNTED — a route that is not registered is a file, not a writer", () => {
+    assert.match(INDEX_TS, /import sensingIngestRouter from "\.\/sensingIngest\.js";/);
+    assert.match(INDEX_TS, /router\.use\(sensingIngestRouter\);/);
+  });
+
+  it("it authenticates a CREDENTIAL, never a user session", () => {
+    // The whole anonymity claim. requireUser/optionalUser would put an
+    // authenticated profile on the request, and the identity would then be one
+    // careless line away from the storage key — which is exactly what
+    // routes/intel.ts is and what this path must not become.
+    assert.doesNotMatch(WRITER_CODE, /requireUser|optionalUser|requireTripMember|requireAdmin/);
+    assert.match(WRITER_CODE, /deriveSensingCredentialHash/, "the bearer is matched by its HMAC, not stored in the clear");
+    assert.match(WRITER_CODE, /authorization|x-sensing-credential/i);
+  });
+
+  it("it reads and writes no actor_id, and never touches location_snapshots", () => {
+    // S21's server half and S32's condition, asserted against the source rather
+    // than inferred: the reduced features are accepted WITHOUT a lookup keyed on
+    // an actor, and the social-location store is not consulted at all.
+    assert.doesNotMatch(WRITER_CODE, /actor_id/, "an actor id on the anonymous ingest path is an identity");
+    assert.doesNotMatch(WRITER_CODE, /location_snapshots/, "reading location_snapshots by actor would rejoin social location to crowd intelligence");
+    assert.doesNotMatch(WRITER_CODE, /\bprofiles\b/, "the anonymous path reads no profile");
+    for (const forbidden of ["user_id", "profile_id", "account_id", "device_id", "installation_id"]) {
+      assert.doesNotMatch(WRITER_CODE, new RegExp(`(^|[^a-z_])${forbidden}\\b`, "i"), `${forbidden} is an identity`);
+    }
+  });
+
+  it("it selects the session row BY COLUMN NAME, so a later identity column is not read by accident", () => {
+    // 2481 would add `issued_to_profile_id` to the session table. It must not be
+    // applied under this posture (lib/sensingAuthPosture), but a `select("*")`
+    // here would read it if it ever were.
+    assert.doesNotMatch(WRITER_CODE, /\.select\(\s*"\*"/);
+    assert.match(WRITER_CODE, /credential_hash, policy_version, purpose_scopes/);
+    assert.doesNotMatch(WRITER_CODE, /issued_to_profile_id/);
+  });
+
+  it("it fails closed on the dedicated pepper, BY NAME, with no fallback", () => {
+    // SENSING_CONTRIBUTOR_PEPPER is an operator secret set in no environment
+    // here. Without this the store's chain would key every contributor token on
+    // SESSION_SECRET, and rotating that makes prior rows unrevokable.
+    assert.match(WRITER_CODE, /sensingPepperPosture\(\)/);
+    assert.match(WRITER_CODE, /SENSING_PEPPER_ENV/);
+    assert.doesNotMatch(WRITER_CODE, /INTEL_GROUP_KEY_SECRET|SESSION_SECRET/, "the route must not reach around the gate to a fallback secret");
+    // The refusal must come before any database work.
+    const pepperAt = WRITER_CODE.indexOf("sensingPepperPosture()");
+    const clientAt = WRITER_CODE.indexOf("getServiceClient()");
+    assert.ok(pepperAt >= 0 && clientAt > pepperAt, "the pepper is checked before a client is built");
+  });
+
+  it("it walks the EXISTING ladder rather than a second copy of it", () => {
+    assert.match(WRITER_CODE, /admitWithSensingSession/, "session validity + policy admission is the session module's");
+    assert.match(WRITER_CODE, /consumeSensingSessionRpc/, "the budget is 2480's atomic SQL decrement");
+    assert.match(WRITER_CODE, /recordAnonSensingContribution/, "the write is the service-role binding's");
+    // No re-implemented threshold, scope vocabulary or time bound.
+    assert.doesNotMatch(WRITER_CODE, /minUniqueActors|minIndependentGroups|72 \* 60 \* 60|"collect"|"aggregate"/);
+  });
+
+  it("budget is consumed only after a NON-duplicate write, so a replay costs nothing", () => {
+    // 2340's replay key makes a duplicate a no-op. If the budget were spent
+    // first, replaying your own contribution would drain your own budget, and an
+    // honest retry is indistinguishable from a replay.
+    assert.match(WRITER_CODE, /if \(!written\.duplicate\)[\s\S]{0,200}consumeSensingSessionRpc/);
+  });
+
+  it("it returns no aggregate, no count and no cohort size", () => {
+    // collect / retain / aggregate are granted; infer / personalize / surface /
+    // share are not. Handing a contributing device a number about its cohort
+    // would be `surface`.
+    assert.doesNotMatch(WRITER_CODE, /aggregateSensingCohort|assessSensingCohortCoverage|readSensingCohort|distinctActors/);
   });
 });

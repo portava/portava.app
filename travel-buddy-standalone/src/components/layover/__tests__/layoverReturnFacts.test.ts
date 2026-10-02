@@ -20,6 +20,8 @@ import type { LayoverCertification, LayoverOfflineBundle } from '../../../servic
 import {
   bundleFreshness,
   describeAbortEffects,
+  describeCrewMeetingPoint,
+  describeCrewNotification,
   describeDeadline,
   postureHeadline,
   statusCapabilityNote,
@@ -216,4 +218,111 @@ test('the status-capability note only speaks when the status was not applied', (
   assert.equal(statusCapabilityNote('flag_off', true), null);
   assert.match(statusCapabilityNote('flag_off', false) ?? '', /stays open/);
   assert.match(statusCapabilityNote('flag_on_readers_not_widened', false) ?? '', /stays open/);
+});
+
+// ── §16 L154 — the CACHED crew meeting point ─────────────────────────────────
+//
+// WHAT WOULD TURN THIS RED. `crewMeetingPoint` was typed
+// `OfflineCapability<never>` on this side of the wire, so `value` could only
+// ever be `null` and no amount of server work could put a label on screen. The
+// first case below does not compile against that type — which is the point:
+// the type WAS the defect, not a missing branch.
+//
+// The second and third cases are the ones that stop the fix becoming a lie.
+// A capability the server marked unavailable must not render as a blank line
+// or as "no meeting point" stated as a fact about the crew; it says the label
+// is not in the bundle and names the server's own reason word.
+
+test('a cached meeting point is surfaced verbatim — the server’s label, not a derived one', () => {
+  const withPoint: LayoverOfflineBundle = {
+    ...BUNDLE,
+    crewMeetingPoint: { available: true, value: 'Gate D4 Starbucks', reason: null },
+  };
+  const m = describeCrewMeetingPoint(withPoint);
+  assert.equal(m.label, 'Gate D4 Starbucks');
+  assert.equal(m.reason, null);
+  assert.match(m.sentence, /Gate D4 Starbucks/);
+});
+
+test('an unavailable meeting point names the server’s reason and claims nothing about the crew', () => {
+  const m = describeCrewMeetingPoint(BUNDLE);
+  assert.equal(m.label, null);
+  assert.equal(m.reason, 'no_crew_storage');
+  assert.ok(m.sentence.length > 0, 'an unavailable capability still gets a sentence');
+  // It must not assert that the crew HAS no meeting point — only that none is
+  // cached here. The two are different facts and the bundle only knows one.
+  assert.doesNotMatch(m.sentence, /crew has no meeting point/i);
+});
+
+test('an available capability carrying a blank label is no label, not an empty meeting point', () => {
+  const blank: LayoverOfflineBundle = {
+    ...BUNDLE,
+    crewMeetingPoint: { available: true, value: '   ', reason: null },
+  };
+  const m = describeCrewMeetingPoint(blank);
+  assert.equal(m.label, null);
+  assert.ok(m.sentence.length > 0);
+});
+
+test('no bundle at all is not a meeting point of ""', () => {
+  const m = describeCrewMeetingPoint(null);
+  assert.equal(m.label, null);
+  assert.equal(m.reason, null);
+  assert.ok(m.sentence.length > 0);
+});
+
+// ── §15.1 L144 — whether the crew was told ───────────────────────────────────
+//
+// WHAT WOULD TURN THIS RED. `crewNotifyUnavailableReason` was typed
+// `'no_crew_storage' | null`, so the only reason this client could hold was the
+// one that has been FALSE since crew storage landed on 2026-09-16. Case 2 uses
+// a reason outside that pair and does not compile against the old type.
+//
+// `describeAbortEffects` deliberately still drops `crew_notify_unavailable`
+// (two tests above pin that) — the EFFECT is a marker, the FIELD is the value,
+// and this reads the field.
+
+test('a crew that WAS told is reported to the traveller, with the server’s count', () => {
+  const line = describeCrewNotification({
+    crewNotified: ['u-2', 'u-3'],
+    crewNotifyUnavailableReason: null,
+  });
+  assert.ok(line);
+  assert.match(line, /2/);
+  assert.match(line, /crew/i);
+});
+
+test('a crew that was NOT told says so, for a reason the old type could not hold', () => {
+  const line = describeCrewNotification({
+    crewNotified: [],
+    crewNotifyUnavailableReason: 'not_in_a_crew',
+  });
+  assert.ok(line);
+  assert.match(line, /not/i);
+});
+
+test('an unrecognised reason is reported as "not told" and NEVER as a raw code', () => {
+  const line = describeCrewNotification({
+    crewNotified: [],
+    crewNotifyUnavailableReason: 'some_reason_this_client_predates',
+  });
+  assert.ok(line);
+  assert.doesNotMatch(line, /some_reason_this_client_predates/);
+  assert.match(line, /not/i);
+});
+
+test('nothing to report is reported as nothing — no empty sentence', () => {
+  assert.equal(
+    describeCrewNotification({ crewNotified: [], crewNotifyUnavailableReason: null }),
+    null,
+  );
+});
+
+test('one crewmate is singular', () => {
+  const line = describeCrewNotification({
+    crewNotified: ['u-2'],
+    crewNotifyUnavailableReason: null,
+  });
+  assert.ok(line);
+  assert.doesNotMatch(line, /people/i);
 });

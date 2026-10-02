@@ -454,7 +454,7 @@ export function GlobalPlacePicker({
               value={query}
               onChangeText={setQuery}
               placeholder={placeholder ?? (cityMode ? 'Search cities…' : 'Search cities, hotels, landmarks…')}
-              placeholderTextColor={color.faint}
+              placeholderTextColor={color.mute}
               autoCapitalize="words"
               returnKeyType="search"
               onSubmitEditing={submitSearch}
@@ -529,11 +529,11 @@ export function GlobalPlacePicker({
                   <Pressable style={s.row} onPress={useGPS} disabled={gpsState === 'loading' || resolvingId != null}>
                     <View style={[s.iconCircle, { backgroundColor: `${color.signal}20` }]}>
                       {gpsState === 'loading'
-                        ? <ActivityIndicator size="small" color={color.signal} />
+                        ? <ActivityIndicator size="small" color={color.signalStrong} />
                         : <Navigation size={16} color={color.signal} />}
                     </View>
                     <View style={s.rowText}>
-                      <Text style={[s.rowName, { color: color.signal }]}>Use my current location</Text>
+                      <Text style={[s.rowName, { color: color.signalStrong }]}>Use my current location</Text>
                       <Text style={s.rowSub}>GPS · updates automatically</Text>
                     </View>
                   </Pressable>
@@ -544,7 +544,7 @@ export function GlobalPlacePicker({
                   <Pressable style={s.row} onPress={commitFreeText} disabled={resolvingId != null}>
                     <View style={[s.iconCircle, { backgroundColor: `${color.signal}15` }]}>
                       {resolvingId != null
-                        ? <ActivityIndicator size="small" color={color.signal} />
+                        ? <ActivityIndicator size="small" color={color.signalStrong} />
                         : <MapPin size={16} color={color.signal} />}
                     </View>
                     <View style={s.rowText}>
@@ -668,5 +668,5 @@ const s = StyleSheet.create({
     paddingHorizontal: space.md, paddingVertical: 6,
     borderRadius: radius.pill, borderWidth: 1, borderColor: color.signal,
   },
-  retryText: { ...t.small, color: color.signal, fontWeight: '700' },
+  retryText: { ...t.small, color: color.signalStrong, fontWeight: '700' },
 });

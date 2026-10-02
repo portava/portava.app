@@ -44,8 +44,8 @@
  * number, and two equally-close candidates are exactly the case §19 says must
  * not be guessed.
  */
-import { applyAliases } from '../../routes/discoverySearchHelpers';
-import { sanitizeQuery } from '../../routes/discoverySearch';
+import { applyAliases } from './searchQueryHelpers';
+import { sanitizeQuery } from './searchCandidates';
 import { searchKey } from '../canonicalLocations';
 import type { InputContext, InputSuggestion } from './types';
 
@@ -206,7 +206,7 @@ export function transliterate(raw: string): string {
  * query, which is why they are in the same class.
  */
 const EMOJI_RE =
-  /[\p{Extended_Pictographic}\p{Emoji_Presentation}\u{1F1E6}-\u{1F1FF}\u{1F3FB}-\u{1F3FF}\u{FE0F}\u{FE0E}\u{20E3}\u{200D}]/gu;
+  /[\p{Extended_Pictographic}\p{Emoji_Presentation}\u{1F1E6}-\u{1F1FF}\u{1F3FB}-\u{1F3FF}\u{FE0F}\u{FE0E}\u{20E3}\u{200D}\u{E0020}-\u{E007F}]/gu; // §80: + the TAG block (subdivision flags)
 
 /** True when the string contains at least one emoji codepoint. */
 export function containsEmoji(s: string): boolean {
@@ -224,7 +224,7 @@ export function containsEmoji(s: string): boolean {
  */
 export function stripEmoji(s: string): string {
   if (!s) return s;
-  return s.replace(EMOJI_RE, ' ').replace(/\s+/g, ' ').trim();
+  return s.replace(KEYCAP_RE, ' ').replace(IN_WORD_EMOJI_RE, '').replace(EMOJI_RE, ' ').replace(/\s+/g, ' ').trim(); // §80: keycaps whole; in-word emoji joins
 }
 
 /**
@@ -555,14 +555,14 @@ export function normalizeQuery(text: string, opts: NormalizeOptions): Normalized
   const sigil: '@' | '#' | null = raw.startsWith('@') ? '@' : raw.startsWith('#') ? '#' : null;
   const body = sigil ? raw.slice(1) : raw;
 
-  const romanized = transliterate(body);
-  const transliteratedFrom = romanized !== body ? body : null;
+  const wantsStrip = stripsEmoji(opts.context); // round 4 (D-W10-S1-1): strip BEFORE transliterating,
+  const hadEmoji = containsEmoji(body); // so an in-word emoji cannot split the word the dictionary looks up
+  const deEmoji = wantsStrip && hadEmoji ? stripEmoji(body) : body;
 
-  const wantsStrip = stripsEmoji(opts.context);
-  const hadEmoji = containsEmoji(romanized);
-  const deEmoji = wantsStrip && hadEmoji ? stripEmoji(romanized) : romanized;
+  const romanized = transliterate(deEmoji);
+  const transliteratedFrom = romanized !== deEmoji ? deEmoji : null;
 
-  const aliased = applyAliases(deEmoji);
+  const aliased = applyAliases(romanized);
 
   // Typo correction never runs on a handle: `@jon` and `@jos` are two people,
   // and "correcting" one into the other is the worst possible outcome for a
@@ -631,3 +631,19 @@ export function buildTypoCorrectionRow(
     policyVersion,
   };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// census-discovery §80 follow-up (register D-W10-S1-1, "The follow-up"). Kept
+// at the foot so the lines census-input-intelligence cites above do not move.
+//
+// KEYCAPS. "1️⃣" is `1` + VS16 + U+20E3. Removing only the marks left the base
+// `1` in the key ("1️⃣ bar" searched "1 bar"), and "*️⃣*️⃣" left "* *", which
+// was searched — and `*` is PostgREST's like-wildcard. The whole sequence goes.
+//
+// IN-WORD EMOJI. An emoji between two LOWERCASE letters sits inside one word
+// ("caf☕e"), so it is removed without a gap and the word is searched whole
+// ("cafe"). Everywhere else it separates: between words, at an edge, and before
+// an UPPERCASE letter, which starts a new word ("Sky🔥Bar" searches "Sky Bar").
+// ─────────────────────────────────────────────────────────────────────────────
+const KEYCAP_RE = /[0-9#*]\u{FE0F}?\u{20E3}/gu; const SPACELESS = '[\\p{Script=Thai}\\p{Script=Lao}\\p{Script=Khmer}\\p{Script=Myanmar}\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}\\u{30FC}]';
+const IN_WORD_EMOJI_RE = new RegExp(`(?<=\\p{Ll})(?:${EMOJI_RE.source})+(?=\\p{Ll})|(?<=${SPACELESS})(?:${EMOJI_RE.source})+(?=${SPACELESS})`, 'gu'); // round 4 (D-W10-S1-1): cased scripts join on lowercase both sides; scripts written without spaces join between their own letters; everything else separates

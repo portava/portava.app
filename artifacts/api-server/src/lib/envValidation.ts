@@ -41,7 +41,7 @@ const OPTIONAL_KEYS = [
   //     routine security action that would make every prior row unrevokable.
   // The effect of listing it here is a named boot warning naming exactly the key
   // an operator has to provision, instead of a silent fallback nobody sees.
-  "SENSING_CONTRIBUTOR_PEPPER",
+  "SENSING_CONTRIBUTOR_PEPPER", "INTEL_EVIDENCE_REFERENCE_KEY", // the second seals intel_evidence.reference (lib/intelEvidenceCapture): optional for the same reason, refused where it bites (no key, no evidence stored), and no fallback
 ] as const;
 
 export interface EnvValidationResult {

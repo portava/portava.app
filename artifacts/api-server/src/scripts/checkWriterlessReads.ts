@@ -138,13 +138,6 @@ export const KNOWN_WRITERLESS_READS: Record<
       "refuses to advance without a circleId, and points at a create screen that does not " +
       "exist. Needs a product ruling — delete the readers, or build the create path.",
   },
-  post_event_links: {
-    readers: 2,
-    classification: "dead-lane",
-    note:
-      "Nothing links a post to an event, so Discovery's 'Live from events' path and the event " +
-      "hero-media rail can never return a row.",
-  },
   compass_user_profiles: {
     readers: 1,
     classification: "dead-lane",
@@ -166,11 +159,11 @@ export const KNOWN_WRITERLESS_READS: Record<
       "CreatorActivityScoreService could not source a reach denominator, and why its " +
       "positiveResponse component had to become a count rather than a rate.",
   },
-  shared_moment_suggestions: {
-    readers: 1,
-    classification: "dead-lane",
-    note: "No producer, so the shared-moment suggestions endpoint is permanently empty.",
-  },
+  // shared_moment_suggestions: struck off 2026-09-29 (testing-mode WP-07). The
+  // recipient can now DISMISS a suggestion (routes/sharedMoments.ts, an UPDATE),
+  // so the table has a writer by this check's definition. It still has NO
+  // producer (nothing inserts an offer) — recorded in census-highlights-memories
+  // §AA as undone, because a co-presence clustering producer is a consent call.
 
   // ── LEGACY DECOY — superseded, pending removal ────────────────────────────
   place_profiles: {
@@ -219,13 +212,15 @@ export const KNOWN_WRITERLESS_READS: Record<
       "as venue reference data, not personal location. Populated out of band.",
   },
   canonical_locations: {
-    readers: 5,
+    readers: 8,
     classification: "external-seed",
     note:
       "Canonical city/region reference rows, also in REFERENCE_LOCATION_TABLES. Populated out " +
       "of band rather than by application code. FIVE readers since 2026-09-21, each a literal " +
       "`.from(\"canonical_locations\")` and each a plain reference lookup, never a write: " +
-      "lib/mapTravelers.ts, lib/inputAssistance/personalization.ts, routes/discoverySearch.ts, " +
+      "lib/mapTravelers.ts, lib/inputAssistance/personalization.ts, lib/inputAssistance/searchCandidates.ts " +
+      "(canonicalCentroids; it was routes/discoverySearch.ts until census-discovery §70 moved the searchers, " +
+      "the same one read site, so the count does not change), " +
       "lib/inputAssistance/taskContext.ts (which resolves a cityId to a display name for an " +
       "assistance task's context and fails soft to no city constraint), and — the one that " +
       "moved this count from 4 — `resolveVenueBindings` in lib/inputAssistance/gateway.ts. " +
@@ -240,7 +235,7 @@ export const KNOWN_WRITERLESS_READS: Record<
       "and nothing else, and it fails CLOSED: a failed read suppresses the binding entirely " +
       "rather than emitting one with a null country, because §17 prefills dependent fields " +
       "from that value and an outage rendered as `country: null` would write 'this venue is " +
-      "in no country' into a field the user can see.",
+      "in no country' into a field the user can see. EIGHT since 2026-09-27 (census-discovery §46, B01): lib/discoverySearchCanonical.ts adds THREE literal SELECT sites — the suggest Cities reader's prefix and contains reads over the stored fold `search_key`, and the centroid widening's one batched `.in('search_key', …)` — each a read of reference rows and nothing else; the suggest reads refuse on a failed read (D11) and the centroid read fails soft to an unplaced row.",
   },
 };
 

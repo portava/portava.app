@@ -149,9 +149,9 @@ export function getIdentityProvider(): IdentityVerificationProvider {
   const name = (process.env.IDENTITY_PROVIDER ?? 'mock').toLowerCase();
 
   if (name === 'mock') {
-    if (process.env.NODE_ENV === 'production') {
+    if (!mockIdentityPermitted(process.env)) { // production, a Replit deployment, or no local-run signal
       throw new Error(
-        'IDENTITY_PROVIDER=mock is not allowed in production. Configure stripe or persona.',
+        'IDENTITY_PROVIDER=mock is not allowed in production or a hosted deployment (a local run needs NODE_ENV=development|test). Configure stripe or persona.',
       );
     }
     return mockProvider;
@@ -161,3 +161,7 @@ export function getIdentityProvider(): IdentityVerificationProvider {
 
   throw new Error(`Unknown IDENTITY_PROVIDER: ${name}`);
 }
+
+// Sandbox/deployment guard (appended at the foot so every line the censuses cite
+// keeps its number). ES imports are hoisted, so this binds before any code above runs.
+import { mockIdentityPermitted } from '../../lib/paymentsMode.js';

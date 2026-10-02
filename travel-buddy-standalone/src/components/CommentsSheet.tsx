@@ -107,6 +107,8 @@ interface Props {
   postId: string;
   onClose: () => void;
   onCountChange: (n: number) => void;
+  /** Called once per comment or reply the server accepted (never on a refusal). */
+  onCommentPosted?: () => void;
 }
 
 // ── Utility ───────────────────────────────────────────────────────────────────
@@ -274,7 +276,7 @@ function ReplyRow({
   return (
     <>
       <View style={s.replyRow}>
-        <CornerDownRight size={12} color={color.faint} style={s.replyIcon} />
+        <CornerDownRight size={12} color={color.mute} style={s.replyIcon} />
         <CommentAvatar uri={reply.author.avatarUrl} name={primaryIdentityText({ name: reply.author.name, handle: reply.author.handle })} size={24} />
         <View style={s.commentBody}>
           <View style={s.commentMeta}>
@@ -318,13 +320,13 @@ function ReplyRow({
               tags={reply.tags}
               hashtagUsages={reply.hashtagUsages}
               currentUserId={currentUserId ?? undefined}
-              style={s.commentText}
+              style={s.commentText} mentionColor={color.signalStrong}
             />
           )}
         </View>
         <View style={s.commentActions}>
           <Pressable hitSlop={likeHitSlop} onPress={handleLike} disabled={liking} style={s.likeBtn}>
-            <StampIcon size={12} active={likedByMe} color={likedByMe ? color.signal : color.faint} />
+            <StampIcon size={12} active={likedByMe} color={likedByMe ? color.signal : color.mute} />
           </Pressable>
           {likeCount > 0 && (
             <Pressable onPress={() => setLikerReplyId(reply.id)} hitSlop={5} style={s.likeCountBtn}>
@@ -338,7 +340,7 @@ function ReplyRow({
               onPress={() => { setEditText(reply.body); setIsEditing(true); }}
               style={s.deleteBtn}
             >
-              <Pencil size={12} color={color.faint} />
+              <Pencil size={12} color={color.mute} />
             </Pressable>
           )}
           {reply.canDelete && (
@@ -352,7 +354,7 @@ function ReplyRow({
               }
               style={s.deleteBtn}
             >
-              <Trash2 size={12} color={color.faint} />
+              <Trash2 size={12} color={color.mute} />
             </Pressable>
           )}
         </View>
@@ -543,7 +545,7 @@ function CommentItem({
                   tags={comment.tags}
                   hashtagUsages={comment.hashtagUsages}
                   currentUserId={currentUserId ?? undefined}
-                  style={s.commentText}
+                  style={s.commentText} mentionColor={color.signalStrong}
                 />
                 <TranslationToggle tx={commentTx} />
                 <View style={s.commentInlineButtons}>
@@ -561,7 +563,7 @@ function CommentItem({
           </View>
           <View style={s.commentActions}>
             <Pressable hitSlop={likeHitSlop} onPress={handleLike} disabled={liking} style={s.likeBtn}>
-              <StampIcon size={13} active={likedByMe} color={likedByMe ? color.signal : color.faint} />
+              <StampIcon size={13} active={likedByMe} color={likedByMe ? color.signal : color.mute} />
             </Pressable>
             {likeCount > 0 && (
               <Pressable onPress={() => setLikerCommentId(comment.id)} hitSlop={5} style={s.likeCountBtn}>
@@ -579,7 +581,7 @@ function CommentItem({
                 }
                 style={s.deleteBtn}
               >
-                <Trash2 size={13} color={color.faint} />
+                <Trash2 size={13} color={color.mute} />
               </Pressable>
             )}
           </View>
@@ -850,7 +852,7 @@ export function CommentsSection({ postId, onCountChange, onInputFocus }: Section
                   Replying to {replyingTo.authorName}
                 </Text>
                 <Pressable onPress={() => setReplyingTo(null)} hitSlop={8}>
-                  <X size={14} color={color.faint} />
+                  <X size={14} color={color.mute} />
                 </Pressable>
               </View>
             )}
@@ -870,7 +872,7 @@ export function CommentsSection({ postId, onCountChange, onInputFocus }: Section
                   value={text}
                   onChangeText={setText}
                   placeholder={inputPlaceholder}
-                  placeholderTextColor={color.faint}
+                  placeholderTextColor={color.mute}
                   multiline
                   maxLength={1000}
                   returnKeyType="default"
@@ -924,7 +926,7 @@ export function CommentsSection({ postId, onCountChange, onInputFocus }: Section
 
 // ── CommentsSheet — peek-to-full animated bottom sheet ────────────────────────
 
-export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props) {
+export function CommentsSheet({ visible, postId, onClose, onCountChange, onCommentPosted }: Props) {
   const { height: SCREEN_H, width: SCREEN_W } = useWindowDimensions();
   const insets = useSafeAreaInsets();
 
@@ -1162,6 +1164,7 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
             }));
             setRepliesLoaded((prev) => new Set(prev).add(parentId));
             setRepliesOpen((prev) => new Set(prev).add(parentId));
+            onCommentPosted?.();
           } else if (result && 'error' in result) {
             if (result.error === 'comments_disabled') {
               setCommentsDisabled(true);
@@ -1176,6 +1179,7 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
           const result = await addComment(postId, t);
           if (result && 'comment' in result) {
             setText('');
+            onCommentPosted?.();
             // Mark that a successful submit has raced any in-flight load so
             // load()'s setComments won't overwrite the optimistic state.
             submittedSinceLoadRef.current = true;
@@ -1196,7 +1200,7 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
     } finally {
       setSubmitting(false);
     }
-  }, [text, postId, replyingTo, onCountChange]);
+  }, [text, postId, replyingTo, onCountChange, onCommentPosted]);
 
   const handleDelete = useCallback(
     async (commentId: string) => {
@@ -1377,7 +1381,7 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
                 Replying to {replyingTo.authorName}
               </Text>
               <Pressable onPress={() => setReplyingTo(null)} hitSlop={8}>
-                <X size={14} color={color.faint} />
+                <X size={14} color={color.mute} />
               </Pressable>
             </View>
           )}
@@ -1399,7 +1403,7 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
                 value={text}
                 onChangeText={setText}
                 placeholder={inputPlaceholder}
-                placeholderTextColor={color.faint}
+                placeholderTextColor={color.mute}
                 multiline
                 maxLength={1000}
                 returnKeyType="default"
@@ -1454,7 +1458,7 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
 const sec = StyleSheet.create({
   wrap: { gap: space.md },
   center: { alignItems: 'center', paddingVertical: space.xl },
-  empty: { fontSize: 14, color: color.faint, textAlign: 'center' },
+  empty: { fontSize: 14, color: color.mute, textAlign: 'center' },
   list: { gap: space.lg },
 });
 
@@ -1507,7 +1511,7 @@ const s = StyleSheet.create({
     gap: space.lg,
   },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: space.xxxl },
-  empty: { fontSize: 14, color: color.faint, textAlign: 'center', paddingHorizontal: space.xl },
+  empty: { fontSize: 14, color: color.mute, textAlign: 'center', paddingHorizontal: space.xl },
 
   // ── Shared comment / reply / input styles ─────────────────────────────────────
   disabledBanner: {
@@ -1516,7 +1520,7 @@ const s = StyleSheet.create({
     paddingHorizontal: space.lg,
     alignItems: 'center',
   },
-  disabledText: { fontSize: 13, color: color.mute, fontStyle: 'italic' },
+  disabledText: { fontSize: 13, color: color.muteStrong, fontStyle: 'italic' },
   replyContext: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1527,7 +1531,7 @@ const s = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: color.haze,
   },
-  replyContextText: { fontSize: 12, color: color.faint, fontStyle: 'italic', flex: 1, marginRight: space.sm },
+  replyContextText: { fontSize: 12, color: color.mute, fontStyle: 'italic', flex: 1, marginRight: space.sm },
   commentRow: { flexDirection: 'row', gap: space.sm, alignItems: 'flex-start' },
   replyRow: { flexDirection: 'row', gap: space.sm, alignItems: 'flex-start', paddingLeft: space.md, marginTop: space.xs },
   replyIcon: { marginTop: 6 },
@@ -1535,17 +1539,17 @@ const s = StyleSheet.create({
   commentMeta: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   commentAuthorRow: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   commentAuthor: { fontSize: 13, fontWeight: '700', color: color.ink },
-  commentTime: { fontSize: 11, color: color.faint },
+  commentTime: { fontSize: 11, color: color.mute },
   commentText: { fontSize: 14, color: color.ink, lineHeight: 20 },
   replyBtn: { alignSelf: 'flex-start', marginTop: 3 },
-  replyBtnText: { fontSize: 12, fontWeight: '600', color: color.faint },
+  replyBtnText: { fontSize: 12, fontWeight: '600', color: color.mute },
   commentActions: { flexDirection: 'column', alignItems: 'center', gap: 6, paddingTop: 2 },
   likeBtn: { alignItems: 'center', gap: 2, paddingHorizontal: 4 },
   likeCountBtn: { alignItems: 'center', paddingHorizontal: 4 },
-  likeCount: { fontSize: 10, fontWeight: '700', color: color.faint },
-  likeCountActive: { color: color.signal },
+  likeCount: { fontSize: 10, fontWeight: '700', color: color.mute },
+  likeCountActive: { color: color.signalStrong },
   deleteBtn: { paddingLeft: space.xs },
-  editedLabel: { fontSize: 10, color: color.faint, fontStyle: 'italic' },
+  editedLabel: { fontSize: 10, color: color.mute, fontStyle: 'italic' },
   commentInlineButtons: { flexDirection: 'row', gap: space.md, alignItems: 'center', marginTop: 3 },
   inlineEditWrap: { marginTop: 4, gap: 6 },
   inlineEditInput: {
@@ -1570,13 +1574,13 @@ const s = StyleSheet.create({
     minWidth: 56,
     alignItems: 'center',
   },
-  inlineEditBtnSave: { backgroundColor: color.signal, borderColor: color.signal },
+  inlineEditBtnSave: { backgroundColor: color.signalStrong, borderColor: color.signalStrong },
   inlineEditBtnSaveText: { fontSize: 12, fontWeight: '700', color: color.onInk },
   inlineEditBtnText: { fontSize: 12, fontWeight: '600', color: color.mute },
   repliesToggle: { marginLeft: 44, paddingVertical: 4, alignSelf: 'flex-start' },
   repliesToggleText: { fontSize: 12, fontWeight: '600', color: color.deep },
   repliesContainer: { marginLeft: space.sm, gap: space.md, marginTop: space.xs },
-  repliesEmptyText: { marginLeft: 44, fontSize: 12, color: color.faint },
+  repliesEmptyText: { marginLeft: 44, fontSize: 12, color: color.mute },
   inputRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',

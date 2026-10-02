@@ -50,7 +50,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isFlagEnabled } from "../featureFlags.js";
-import { isEvidenceEligible, type EvidenceAssetInput } from "./mediaEvidenceEligibility.js";
+import { isEvidenceEligible, isOperationalEvidenceAt, type EvidenceAssetInput } from "./mediaEvidenceEligibility.js";
 
 /** The master gate for the whole seam. */
 export const MEDIA_EVIDENCE_FLAG = "media_evidence_enabled";
@@ -147,11 +147,11 @@ export async function linkMediaEvidence(
     actor_id: actorId,
     media_asset_id: asset.id,
     evidence_kind: evidenceKindFor(asset.media_type),
-    // A storage KEY only (never coordinates — EXIF/GPS is stripped upstream and
-    // this table must not become a second location store). The typed
-    // media_asset_id is the authoritative link; `reference` mirrors the legacy
-    // free-form pointer for display readers that predate the FK.
-    reference: asset.storage_path ?? null,
+    // NO storage key (census-map §45). `media_assets.storage_path` begins with the
+    // owner's ACCOUNT id, and 3002 tokenises every contributor id in this table; no
+    // reader of this column needs it (the typed media_asset_id is the link, and the
+    // bytes go at deletion via media_assets). media_asset_id still joins to an owner: MD65 Q3.
+    reference: null,
   };
 
   const { data, error } = await sc
@@ -257,8 +257,12 @@ export async function observationsHaveEligibleMediaEvidence(
       .in("id", mediaIds);
     if (aErr) return false;
 
+    // §10/§11: eligible AND still operational. A current claim's evidence may
+    // not rest on a photograph whose operational lifetime (capture + 24 h,
+    // mediaEvidenceEligibility.INTELLIGENCE_OPERATIONAL_WINDOW_MS) has passed —
+    // it is a picture of a past "now", however clean its lineage.
     for (const a of (assets as EvidenceMediaAsset[]) ?? []) {
-      if (isEvidenceEligible({ ...a, now })) return true;
+      if (isOperationalEvidenceAt(a, now)) return true;
     }
     return false;
   } catch {

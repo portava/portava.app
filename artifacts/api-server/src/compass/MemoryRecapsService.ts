@@ -49,7 +49,9 @@ import {
   loadSuppressions,
   isSuppressed,
   mapDerivedRow,
+  readErr,
   type RememberItem,
+  type RememberReadFailures,
 } from "./PassportRemembersService.js";
 
 /** Master certification gate. Off ⇒ every read is inert and does zero work. */
@@ -142,6 +144,8 @@ export interface Recap {
   sections: Array<{ group: string; label: string; items: RecapItemView[] }>;
   totals: { included: number } & RecapExclusions;
   notes: string[];
+  /** Sections whose read failed, so the recap may be missing them. Never folded into "nothing here" (tm-followups WP-12). */
+  unavailable: string[];
 }
 
 export interface OnThisDay {
@@ -154,6 +158,8 @@ export interface OnThisDay {
   items: RecapItemView[];
   totals: { included: number } & RecapExclusions;
   notes: string[];
+  /** Sources whose read failed, so an anniversary may be missing. */
+  unavailable: string[];
 }
 
 export interface RecapRequest {
@@ -168,6 +174,8 @@ export interface RecapRequest {
   milestone?: string;
   /** Injected reference time (request time in the route; fixed in tests). */
   now: Date;
+  /** Told of each source read that failed (the route logs it). */
+  onReadFailure?: (source: string, reason: string) => void;
 }
 
 const INERT_NOTES = [
@@ -213,23 +221,35 @@ function isResurfaceable(item: RememberItem, allowed: Set<string>): boolean {
  * something the user said they are not interested in.
  */
 async function loadRecapSuppressions(client: SupabaseClient, userId: string) {
-  const base = await loadSuppressions(client, userId);
-  try {
-    const { data, error } = await client
-      .from("memory_feedback")
-      .select("kind, subject_type, subject_id, projection_id")
-      .eq("user_id", userId);
-    if (!error && Array.isArray(data)) {
-      for (const row of data as Array<Record<string, unknown>>) {
-        if (String(row.kind ?? "") !== "not_interested") continue;
-        if (row.subject_id != null) base.keys.add(`${row.subject_type ?? ""}::${row.subject_id ?? ""}`);
-        if (row.projection_id != null) base.projectionIds.add(String(row.projection_id));
-      }
+  // A recap RESURFACES memory. Built over an unread suppression set it would
+  // resurface exactly what the owner forgot or said they were not interested
+  // in, so an unreadable set refuses the recap instead (tm-followups WP-12;
+  // this used to be fail-available).
+  const failures: RememberReadFailures = new Map();
+  const base = await loadSuppressions(client, userId, failures);
+  const baseFailure = failures.get("suppressions");
+  if (baseFailure) throw new RecapSuppressionsUnreadableError(baseFailure);
+  const { data, error } = await client
+    .from("memory_feedback")
+    .select("kind, subject_type, subject_id, projection_id")
+    .eq("user_id", userId);
+  if (error) throw new RecapSuppressionsUnreadableError(readErr(error));
+  if (Array.isArray(data)) {
+    for (const row of data as Array<Record<string, unknown>>) {
+      if (String(row.kind ?? "") !== "not_interested") continue;
+      if (row.subject_id != null) base.keys.add(`${row.subject_type ?? ""}::${row.subject_id ?? ""}`);
+      if (row.projection_id != null) base.projectionIds.add(String(row.projection_id));
     }
-  } catch {
-    // Fail-available on the ADD-ON only: the §12 base suppression already loaded.
   }
   return base;
+}
+
+/** memory_feedback could not be read, so no recap is built (a db_error, never a partial recap). */
+export class RecapSuppressionsUnreadableError extends Error {
+  constructor(reason: string) {
+    super(`memory_feedback unreadable — recap refused rather than built without the owner's forgets (${reason})`);
+    this.name = "RecapSuppressionsUnreadableError";
+  }
 }
 
 // ── Derived memory through the §12 core, windowed ────────────────────────────
@@ -238,13 +258,15 @@ async function buildWindowedDerived(
   userId: string,
   from: string | null,
   to: string | null,
+  failures?: RememberReadFailures,
 ): Promise<RememberItem[]> {
   const { data, error } = await client.rpc("memory_recaps_for_user", {
     p_user_id: userId,
     p_from: from,
     p_to: to,
   });
-  if (error || !Array.isArray(data)) return [];
+  if (error) { failures?.set("derived_memory", readErr(error)); return []; }
+  if (!Array.isArray(data)) return [];
   const out: RememberItem[] = [];
   for (const r of data as Array<Record<string, unknown>>) {
     const item = mapDerivedRow(r); // SAME mapper + deny gate as §12
@@ -290,14 +312,16 @@ async function resolveTripWindow(
   userId: string,
   tripId: string,
 ): Promise<{ from: string | null; to: string | null; label: string } | null> {
-  try {
+  {
     const { data, error } = await client
       .from("trips")
       .select("id, title, destination_city, start_date, end_date, created_at, status")
       .eq("id", tripId)
       .eq("owner_id", userId) // OWNERSHIP: a borrowed trip id resolves to nothing
       .maybeSingle();
-    if (error || !data) return null;
+    // A failed read is an error, never "Trip not found." (tm-followups WP-12).
+    if (error) throw new Error(`trips read failed — cannot resolve the recap window (${readErr(error)})`);
+    if (!data) return null;
     const r = data as Record<string, unknown>;
     const start = isoLike(r.start_date) ?? isoLike(r.created_at);
     const end = isoLike(r.end_date);
@@ -316,8 +340,6 @@ async function resolveTripWindow(
     }
     const label = String(r.title ?? r.destination_city ?? "Trip");
     return { from, to, label };
-  } catch {
-    return null;
   }
 }
 
@@ -345,6 +367,7 @@ function inertRecap(userId: string, kind: RecapKind): Recap {
     sections: [],
     totals: { included: 0, ineligibleOrSuppressed: 0, notResurfaceable: 0 },
     notes: INERT_NOTES,
+    unavailable: [],
   };
 }
 
@@ -358,6 +381,7 @@ function inertOnThisDay(userId: string, month: number, day: number): OnThisDay {
     items: [],
     totals: { included: 0, ineligibleOrSuppressed: 0, notResurfaceable: 0 },
     notes: INERT_NOTES,
+    unavailable: [],
   };
 }
 
@@ -405,11 +429,13 @@ export async function generateRecap(
 
   // Assemble from the §12 building blocks — derived (windowed, via the core) and
   // source content (via the §12 builders, with their exact deny + consent gates).
+  const failures: RememberReadFailures = new Map();
   const [derived, saved, moments] = await Promise.all([
-    buildWindowedDerived(client, userId, from, to),
-    buildSavedContent(client, userId),
-    buildSharedMoments(client, userId),
+    buildWindowedDerived(client, userId, from, to, failures),
+    buildSavedContent(client, userId, failures),
+    buildSharedMoments(client, userId, failures),
   ]);
+  for (const [source, reason] of failures) req.onReadFailure?.(source, reason);
 
   let ineligibleOrSuppressed = 0;
   let notResurfaceable = 0;
@@ -449,7 +475,8 @@ export async function generateRecap(
     enabled: true,
     sections,
     totals: { included, ineligibleOrSuppressed, notResurfaceable },
-    notes: RECAP_NOTES,
+    notes: failures.size > 0 ? [...RECAP_NOTES, UNAVAILABLE_NOTE] : RECAP_NOTES,
+    unavailable: [...failures.keys()],
   };
 }
 
@@ -461,7 +488,7 @@ export async function generateRecap(
 export async function buildOnThisDay(
   client: SupabaseClient,
   userId: string,
-  opts: { now: Date },
+  opts: { now: Date; onReadFailure?: (source: string, reason: string) => void },
 ): Promise<OnThisDay> {
   const todayM = opts.now.getUTCMonth() + 1;
   const todayD = opts.now.getUTCDate();
@@ -471,10 +498,12 @@ export async function buildOnThisDay(
   if (!userId) return inertOnThisDay(userId, todayM, todayD);
 
   const suppressions = await loadRecapSuppressions(client, userId);
+  const failures: RememberReadFailures = new Map();
   const [saved, moments] = await Promise.all([
-    buildSavedContent(client, userId),
-    buildSharedMoments(client, userId),
+    buildSavedContent(client, userId, failures),
+    buildSharedMoments(client, userId, failures),
   ]);
+  for (const [source, reason] of failures) opts.onReadFailure?.(source, reason);
 
   let ineligibleOrSuppressed = 0;
   let notResurfaceable = 0;
@@ -500,9 +529,13 @@ export async function buildOnThisDay(
     enabled: true,
     items,
     totals: { included: items.length, ineligibleOrSuppressed, notResurfaceable },
-    notes: RECAP_NOTES,
+    notes: failures.size > 0 ? [...RECAP_NOTES, UNAVAILABLE_NOTE] : RECAP_NOTES,
+    unavailable: [...failures.keys()],
   };
 }
+
+const UNAVAILABLE_NOTE =
+  "Some of your memories could not be loaded right now, so this may be incomplete. Those sources are listed as unavailable.";
 
 // ── Notifications — opt-in only, defaults OFF (scheduler DEFERRED) ────────────
 

@@ -303,3 +303,12 @@ export function stripVideoLocationMetadata(buf: Buffer, sniffed: SniffResult): V
 
   return { ok: true, buffer: buf, stripped };
 }
+
+// The OTHER thing a video container says about itself — duration and display
+// dimensions — is read by lib/videoProbe.ts (§37 "Duration metadata"). It is
+// re-exported here so the two upload transports, which already import this
+// module for the location scrub, get both container readings from one import
+// line (and no cited line in either route moves). Appended at the bottom for
+// the same reason.
+export { probeVideoContainer, probedDurationSeconds, resolveStoredDuration } from "./videoProbe.js";
+export type { VideoProbe } from "./videoProbe.js";

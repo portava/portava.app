@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Alert, ActivityIndicator } from 'react-native';
 import { MapPin, Users, LogOut, Shield, AlertTriangle } from 'lucide-react-native';
-import { postCheckIn } from '../../services/circle.ts';
+import { postCheckIn, postNeedHelp } from '../../services/circle.ts';
 import { color, type as t } from '../../theme/tokens.ts';
 
 export type CheckinType = 'arrived' | 'with_group' | 'leaving' | 'safe';
@@ -50,11 +50,47 @@ interface Props {
   contextId: string;
   disabled?: boolean;
   onCheckInComplete: (checkinType: CheckinType) => void;
+  /** Opens Safe Return (emergency contacts). */
   onNeedHelp: () => void;
+  /**
+   * True when the viewer HOSTS this trip/event. The circle need-help alert
+   * goes to the host only (routes/circle.ts), so a host pressing it would
+   * alert nobody — the option is not offered to them.
+   */
+  isHost?: boolean;
+  /** Called after the host alert was accepted by the server. */
+  onHostAlerted?: () => void;
 }
 
-export function CheckInActions({ contextType, contextId, disabled, onCheckInComplete, onNeedHelp }: Props) {
+export function CheckInActions({ contextType, contextId, disabled, onCheckInComplete, onNeedHelp, isHost = false, onHostAlerted }: Props) {
   const [loading, setLoading] = useState<CheckinType | null>(null);
+  const [alerting, setAlerting] = useState(false);
+
+  // TM-social MAP-F08 — POST /circle/contexts/:type/:id/need-help. The copy
+  // says exactly what the server does: one alert to the HOST, no location, no
+  // broadcast to members. A refusal is shown as a refusal, never as "sent".
+  async function alertHost() {
+    if (alerting) return;
+    setAlerting(true);
+    try {
+      const res = await postNeedHelp(contextType, contextId);
+      if (res.ok) {
+        onHostAlerted?.();
+        Alert.alert(
+          'Alert sent to the host',
+          `The ${contextType === 'trip' ? 'trip' : 'event'} host has been alerted that you need help. Your location was not shared. If you are in danger, contact local emergency services.`,
+        );
+      } else if (res.status === 429) {
+        Alert.alert('Alert not sent', 'You have sent several alerts in a short time. Wait a moment, or open Safe Return to reach your emergency contacts.');
+      } else if (res.status === 403) {
+        Alert.alert('Alert not sent', 'You are not a member of this circle, so the host could not be alerted.');
+      } else {
+        Alert.alert('Alert not sent', 'The host could not be alerted. Check your connection and try again, or open Safe Return.');
+      }
+    } finally {
+      setAlerting(false);
+    }
+  }
 
   async function handleCheckIn(type: CheckinType) {
     if (loading || disabled) return;
@@ -74,12 +110,24 @@ export function CheckInActions({ contextType, contextId, disabled, onCheckInComp
   }
 
   function handleNeedHelp() {
+    if (isHost) {
+      Alert.alert(
+        'I need help',
+        'Safe Return notifies your emergency contacts — not your Circle members. Your location stays private.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Open Safe Return', onPress: onNeedHelp, style: 'destructive' },
+        ],
+      );
+      return;
+    }
     Alert.alert(
       'I need help',
-      'Safe Return notifies your emergency contacts — not your Circle members. Your location stays private.',
+      `Alert the host of this ${contextType} that you need help (your location is not shared), or open Safe Return to notify your emergency contacts.`,
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Open Safe Return', onPress: onNeedHelp, style: 'destructive' },
+        { text: 'Alert the host', onPress: () => { void alertHost(); }, style: 'destructive' },
+        { text: 'Open Safe Return', onPress: onNeedHelp },
       ],
     );
   }
@@ -110,9 +158,16 @@ export function CheckInActions({ contextType, contextId, disabled, onCheckInComp
           </Pressable>
         ))}
       </View>
-      <Pressable style={s.helpBtn} onPress={handleNeedHelp} disabled={Boolean(disabled)}>
-        <AlertTriangle size={14} color="#B71C1C" />
-        <Text style={s.helpText}>I need help</Text>
+      <Pressable
+        style={s.helpBtn}
+        onPress={handleNeedHelp}
+        disabled={Boolean(disabled) || alerting}
+        accessibilityRole="button"
+        accessibilityLabel="I need help"
+        testID="circle-need-help"
+      >
+        {alerting ? <ActivityIndicator size="small" color="#B71C1C" /> : <AlertTriangle size={14} color="#B71C1C" />}
+        <Text style={s.helpText}>{alerting ? 'Alerting the host…' : 'I need help'}</Text>
       </Pressable>
     </View>
   );

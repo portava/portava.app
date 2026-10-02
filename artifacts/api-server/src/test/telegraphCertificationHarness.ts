@@ -19,8 +19,10 @@
  *     authorization, and a fake that threw instead would make those bugs
  *     untestable.
  *   - `.or()` is really parsed, including the `and(...)` groups the block guard
- *     builds, because "the filter silently stopped matching" is one of the two
- *     failure modes that resolver documents.
+ *     builds and the `col.gte.<instant>` terms the §14.3 window builds, because
+ *     "the filter silently stopped matching" is one of the two failure modes
+ *     that resolver documents — and an unparsed term makes the WHOLE group
+ *     match nothing, which reads as a correct deny.
  *   - `.maybeSingle()` returns the first row and never raises on multiples;
  *     `.single()` behaves the same. The mutual-block case that made the real
  *     `.maybeSingle()` raise is exercised through `.limit(1)` in the guard
@@ -36,6 +38,20 @@ import { createServer, type Server } from "node:http";
 export interface InjectedError {
   message: string;
   code?: string;
+  /**
+   * Restrict the injected error to these operations on that table. Absent
+   * means EVERY operation, which is what every existing fixture relies on.
+   *
+   * Needed because a handler can read a table and then write it for two
+   * different decisions, and failing the whole table makes the read deny first
+   * — so the write's own guard is never reached and a case that claims to test
+   * it asserts nothing. `telegraphChatOutageHonesty.test.ts` says so in its own
+   * header: its dismiss case was omitted because "the harness cannot fail one
+   * operation on a table without failing the UPDATE beside it". This is that
+   * capability. `afterOps` counts operations per table regardless of this, so
+   * the two compose.
+   */
+  ops?: Array<"select" | "insert" | "update" | "upsert" | "delete">;
   /**
    * Inject the error only from the Nth operation on that table onwards
    * (1-based, counted per table across the whole client's life).
@@ -81,6 +97,13 @@ export interface Observed {
   upserts: Array<{ table: string; rows: any[] }>;
   deletes: Array<{ table: string }>;
   gte: Array<{ table: string; col: string; val: any }>;
+  /**
+   * Every `or=` group this client was handed, per table. The §14.3 window is
+   * now carried this way (`created_at.gte.<bound>,sender_id.eq.<viewer>`), so
+   * "the bound is in the QUERY, not in a post-filter pagination walks past" is
+   * asserted against THIS rather than against `gte`.
+   */
+  or: Array<{ table: string; expr: string }>;
 }
 
 type Predicate = (row: any) => boolean;
@@ -98,6 +121,34 @@ function termPredicate(term: string): Predicate | null {
       return (r) => String(r[col]) !== String(val);
     case "is":
       return (r) => (val === null ? r[col] == null : r[col] === val);
+    // The §14.3 window's comparison arms. `applyHistoryWindow` now sends the
+    // bound as `created_at.gte.<iso>` INSIDE an `or()` group (beside
+    // `sender_id.eq.<viewer>`, Q6's own-message exception), and without these
+    // arms the term parsed as null — so the whole `or()` matched NOTHING and
+    // the window half of the clause silently vanished. Compared as INSTANTS,
+    // the same way this fake's top-level `.gte`/`.lte` already compare them, so
+    // the two spellings of the boundary instant agree here as they do in
+    // `withinWindow`.
+    case "gte":
+      return (r) => Date.parse(r?.[col]) >= Date.parse(String(val));
+    case "gt":
+      return (r) => Date.parse(r?.[col]) > Date.parse(String(val));
+    case "lte":
+      return (r) => Date.parse(r?.[col]) <= Date.parse(String(val));
+    case "lt":
+      return (r) => Date.parse(r?.[col]) < Date.parse(String(val));
+    case "in": {
+      // `col.in.("a","b")` — the shape lib/mediaAccess builds to ask whether a
+      // message carries one of an object's URL spellings. Without this arm the
+      // term parsed as null, the whole `or()` matched NOTHING, and that branch
+      // was untestable through this harness: every case came back "denied",
+      // which is the same answer a correct deny gives.
+      const quoted = raw.match(/"((?:[^"\\]|\\.)*)"/g);
+      const vals = quoted
+        ? quoted.map((q) => q.slice(1, -1).replace(/\\"/g, '"'))
+        : raw.replace(/^\(|\)$/g, "").split(",").map((v) => v.trim());
+      return (r) => vals.includes(String(r[col]));
+    }
     default:
       return null;
   }
@@ -166,6 +217,9 @@ export function resetFakeIds(): void {
   idCounter = 0;
 }
 
+/** The PostgREST operations the fake distinguishes. */
+type Mode = "select" | "insert" | "update" | "upsert" | "delete";
+
 export function makeFakeClient(
   seed: Record<string, any[]>,
   opts: FakeDbOptions = {},
@@ -180,13 +234,15 @@ export function makeFakeClient(
     upserts: [],
     deletes: [],
     gte: [],
+    or: [],
   };
 
   const opCounts: Record<string, number> = {};
 
-  function injected(table: string): InjectedError | null {
+  function injected(table: string, mode: Mode): InjectedError | null {
     const e = opts.errors?.[table];
     if (!e) return null;
+    if (e.ops !== undefined && !e.ops.includes(mode)) return null;
     if (e.afterOps === undefined) return e;
     return (opCounts[table] ?? 0) >= e.afterOps ? e : null;
   }
@@ -196,7 +252,7 @@ export function makeFakeClient(
     let _limit: number | null = null;
     let _order: { col: string; asc: boolean } | null = null;
     let _head = false;
-    let mode: "select" | "insert" | "update" | "upsert" | "delete" = "select";
+    let mode: Mode = "select";
     let pendingRows: any[] = [];
     let pendingPatch: any = null;
 
@@ -251,7 +307,7 @@ export function makeFakeClient(
     };
 
     const settle = (): { data: any; error: any; count: number | null } => {
-      const err = injected(table);
+      const err = injected(table, mode);
       opCounts[table] = (opCounts[table] ?? 0) + 1;
       if (err) return { data: null, error: err, count: null };
       if (mode === "select") {
@@ -306,7 +362,7 @@ export function makeFakeClient(
         if (op === "is") filters.push((r) => (val === null ? r?.[col] != null : r?.[col] !== val));
         return proxy;
       },
-      or(expr: string) { filters.push(orPredicate(expr)); return proxy; },
+      or(expr: string) { observed.or.push({ table, expr }); filters.push(orPredicate(expr)); return proxy; },
       lt(col: string, val: any) { filters.push((r) => Date.parse(r?.[col]) < Date.parse(val)); return proxy; },
       lte(col: string, val: any) { filters.push((r) => Date.parse(r?.[col]) <= Date.parse(val)); return proxy; },
       gt(col: string, val: any) { filters.push((r) => Date.parse(r?.[col]) > Date.parse(val)); return proxy; },

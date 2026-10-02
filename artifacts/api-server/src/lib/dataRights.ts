@@ -183,7 +183,7 @@ export const FIELD_RIGHTS: readonly FieldRight[] = [
   { table: "intel_evidence", column: "actor_id", ownership: "restricted_no_redistribution", personal: true, reason: "Identifies the contributor." },
   { table: "intel_evidence", column: "evidence_kind", ownership: "portava_owned", personal: false, reason: "Portava's evidence taxonomy." },
   { table: "intel_evidence", column: "reference", ownership: "restricted_no_redistribution", personal: true,
-    reason: "A storage key. Handing it out is handing out the artifact, and the object may carry more than the claim did." },
+    reason: "A storage key, SEALED to its observation (lib/intelEvidenceCapture; a pre-3360 row may hold it plain). Opened, it names the contributor's account and hands out the artifact, and the object may carry more than the claim did." },
   { table: "intel_evidence", column: "expires_at", ownership: "portava_owned", personal: false,
     reason: "Portava's retention deadline for the artifact. Internal scheduling; it says when evidence goes, not what it contains." },
   { table: "intel_evidence", column: "detail", ownership: "contributor_licensed", personal: true,
@@ -279,6 +279,16 @@ export const INTERNAL_COLUMNS: readonly string[] = [
   "last_attribution_id",
   "last_attribution_at",
   "last_updated_at",
+  // 3311 forward provenance on intel_state_snapshots (and _versions): the
+  // intel_observations.id values a projection READ — a pointer array into the
+  // pipeline exactly like input_claim_versions above. Never an API field:
+  // lib/liveClaimRead names its columns and does not name this one. Read only
+  // by services/accountDeletion/sensingRevocationReach (which snapshots rest
+  // on erased evidence) and the erasure recompute that rewrites or retracts
+  // them. An id names no contributor (actor_id is a rotating token since 3002
+  // and the row is gone after an erasure), and it is still not redistributed:
+  // possession of a pointer is not a right to hand it out.
+  "input_observation_ids",
 ];
 
 /** The intel tables this registry covers. */

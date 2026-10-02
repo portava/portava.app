@@ -38,17 +38,17 @@
  *       against this file's memory of the list.
  *   P3. With `discovery_serve_log_enabled` absent the route writes nothing, so
  *       nothing here is a production behaviour change.
- *   G1. THE OPEN HALF, asserted rather than described: the same request in
- *       `pde` mode writes its impressions through `lib/rankLog.logImpression`,
- *       and those rows carry NO `recommendationId`, NO `modelVersion` and NO
- *       `reasonCodes`. This is census-discovery DV-40's remaining gap. It is
- *       asserted as the CURRENT state on purpose: when `lib/rankLog.ts` gains
- *       the mint (the cross-lane request filed with this pass), G1 goes RED and
- *       must be INVERTED into the same assertion as P1. A row that quietly
- *       started carrying an id would otherwise close a census row with nobody
- *       noticing, and one that quietly stopped would open one the same way.
- *   G2. The same asymmetry in the flag: the four minting serve points are gated
- *       on `discovery_serve_log_enabled`; the two ranked ones write regardless.
+ *   G1. THE HALF THAT WAS OPEN — INVERTED in census-discovery §48, exactly as
+ *       this note said it must be. It used to assert that the same request in
+ *       `pde` mode wrote rows with NO `recommendationId`, NO `modelVersion` and
+ *       NO `reasonCodes` (DV-40's remaining gap). `lib/rankLog.logImpression`
+ *       now stamps them for Discovery rows, from the SAME exposure the route
+ *       stamped its response with, so G1 now asserts what P1 asserts — and
+ *       more: the id on each row IS the id the response carried for that
+ *       position. G1 went RED on the §48 change first, as designed.
+ *   G2. The same asymmetry in the flag, still true: the four minting serve
+ *       points are gated on `discovery_serve_log_enabled`; the two ranked ones
+ *       write regardless — now WITH their id.
  *
  * Run: SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy \
  *      node --import tsx --test src/test/discoveryRouteRecommendationPropagation.test.ts
@@ -405,7 +405,7 @@ describe("04 §10.6 — recommendation_id propagates through GET /discovery (ser
 
 // ── G1 / G2 — the open half of DV-40, asserted rather than described ──────────
 
-describe("04 §5 — the two RANKED serve points do not mint (census-discovery DV-40's open half)", () => {
+describe("04 §5 — the two RANKED serve points mint the id their response carries (DV-40's formerly open half, §48)", () => {
   let server: Server;
   let url: string;
 
@@ -424,12 +424,14 @@ describe("04 §5 — the two RANKED serve points do not mint (census-discovery D
     await new Promise<void>((r) => server.close(() => r()));
   });
 
-  it("G1. a pde-ranked cache-A serve writes rows with NO recommendation_id, model version or reason codes", async () => {
+  it("G1. a pde-ranked cache-A serve writes rows carrying the response's recommendation_id, a model version and reason codes", async () => {
     const f = fakeClient({ mode: "pde", serveLog: true });
     _setTestServiceClient(f.client);
     _injectTestCacheEntry(KEY, freshCandidates());
 
-    const served = await fetchDiscovery(url);
+    const res = await fetch(`${url}/discovery?destination=Miami&lat=25.77&lng=-80.19`, { headers: { authorization: `Bearer ${TOKEN}` } });
+    const body = (await res.json()) as { places: Array<{ id: string; recommendationId?: string }> };
+    const served = body.places.map((p) => p.id);
     assert.equal(served.length, 4, "precondition: the same four places were served");
     assert.notEqual(
       served[0], "db/p1",
@@ -447,15 +449,19 @@ describe("04 §5 — the two RANKED serve points do not mint (census-discovery D
       "precondition: this is the ranked-in-request branch",
     );
 
-    // THE GAP. Invert these three into P1's assertions the moment
-    // lib/rankLog.logImpression mints an exposure id.
+    // THE GAP, CLOSED (§48) — inverted into P1's assertions, and one stronger:
+    // each row's id is the id the RESPONSE carried at that row's position.
+    const ids = rows.map((r: any) => r.features?.recommendationId);
+    assert.equal(new Set(ids).size, rows.length, "one id per exposure");
     for (const row of rows) {
+      assert.equal(typeof row.features?.recommendationId, "string", "04 §5: every served item has a recommendation_id");
+      assert.equal(row.recommendation_id, row.features?.recommendationId, "2891's column and the jsonb carry ONE token");
       assert.equal(
-        row.features?.recommendationId, undefined,
-        "DV-40 open half: if this now HAS an id, rankLog gained the mint — invert G1 into P1 and re-grade DV-40",
+        row.features?.recommendationId, body.places[row.position]?.recommendationId,
+        "the id on the row is the id the client holds — an outcome against it lands HERE",
       );
-      assert.equal(row.features?.modelVersion, undefined, "DV-40 open half: no model_version either");
-      assert.equal(row.features?.reasonCodes, undefined, "DV-40 open half: no reason codes either");
+      assert.equal(typeof row.features?.modelVersion, "string", "the ranker that ordered the page is named");
+      assert.ok(Array.isArray(row.features?.reasonCodes), "reason codes present, possibly empty, never missing");
     }
   });
 
@@ -471,6 +477,6 @@ describe("04 §5 — the two RANKED serve points do not mint (census-discovery D
       "lib/rankLog.logImpression carries no flag: with the serve-log flag OFF these rows still land, " +
       "so 'discovery_serve_log_enabled' does not describe all six serve points",
     );
-    assert.equal(rows[0].features?.recommendationId, undefined, "and still without an id");
+    assert.equal(typeof rows[0].features?.recommendationId, "string", "and, since §48, WITH its id");
   });
 });

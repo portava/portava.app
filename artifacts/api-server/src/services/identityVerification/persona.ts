@@ -229,7 +229,7 @@ function apiKey(env: NodeJS.ProcessEnv = process.env): string {
       "Persona is selected (IDENTITY_PROVIDER=persona) but PERSONA_API_KEY is not set.",
     );
   }
-  return key;
+  assertProviderKeyAllowed("persona", key, env); return key; // production/unknown refused BEFORE any fetch (lib/paymentsMode.ts)
 }
 
 async function personaCall(
@@ -237,10 +237,10 @@ async function personaCall(
   body: unknown | null,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<unknown> {
-  const res = await fetch(`${PERSONA_API_BASE}${path}`, {
+  const authorization = `Bearer ${apiKey(env)}`; const res = await fetch(`${PERSONA_API_BASE}${path}`, {
     method: body === null ? "GET" : "POST",
     headers: {
-      Authorization: `Bearer ${apiKey(env)}`,
+      Authorization: authorization,
       "Persona-Version": PERSONA_API_VERSION,
       Accept: "application/json",
       ...(body === null ? {} : { "Content-Type": "application/json" }),
@@ -314,3 +314,7 @@ export async function personaRequestDeletion(
 ): Promise<void> {
   await personaCall(`/inquiries/${encodeURIComponent(redactionHandle)}/redact`, {}, env);
 }
+
+// Sandbox-only guard (appended at the foot so every line the censuses cite keeps
+// its number). ES imports are hoisted, so this binds before any code above runs.
+import { assertProviderKeyAllowed } from "../../lib/paymentsMode.js";

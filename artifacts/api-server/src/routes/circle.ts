@@ -29,7 +29,14 @@ import {
   CURRENT_CONSENT_VERSION,
   type ContextType,
 } from "../lib/circleAccessGuard.js";
-import { shapePresence, type CircleProfileSnippet } from "../lib/circleResponseShaper.js";
+import {
+  shapePresence,
+  revokeCirclePresence,
+  revokeCircleContext,
+  revokeAllCirclePresence,
+  revokeEveryCirclePresence,
+  type CircleProfileSnippet,
+} from "../lib/circleResponseShaper.js";
 import { checkRateLimit } from "../lib/rateLimit.js";
 import { NotificationService } from "../services/notifications/NotificationService.js";
 import { NotificationRouter as NotifRouter } from "../services/notifications/NotificationRouter.js";
@@ -667,6 +674,9 @@ router.post("/circle/pause-all", async (req, res) => {
 
   if (error) { sendError(res, "db_error", error.message); return; }
 
+  // Owner decision A: every context's retained estimate for this member.
+  revokeAllCirclePresence(user.id);
+
   void writeAuditEvent(sc, { actorUserId: user.id, eventType: "sharing_paused" });
 
   // Notify members of all active contexts that this user paused Circle (fire-and-forget).
@@ -890,6 +900,7 @@ router.get("/circle/contexts/:type/:id/members", async (req, res) => {
         guardResult.presenceRow ?? null,
         guardResult.visibilityMode ?? "status_only",
         guardResult.isStale ?? false,
+        { type, id },
       ),
     );
   }
@@ -1038,7 +1049,7 @@ router.get("/circle/contexts/:type/:id/my-presence", async (req, res) => {
   // to "status_only" which passes all label fields through shapePresence unchanged.
   const visibilityMode = "status_only";
 
-  const shaped = shapePresence(snippet, effectivePresence, visibilityMode, isStale);
+  const shaped = shapePresence(snippet, effectivePresence, visibilityMode, isStale, { type, id });
   // Override: viewer always has full access to their own row
   shaped.canMessage = false;
   shaped.canViewProfile = true;
@@ -1328,6 +1339,10 @@ router.post("/circle/contexts/:type/:id/pause", async (req, res) => {
     );
 
   if (error) { sendError(res, "db_error", error.message); return; }
+
+  // Owner decision A: the fusion store's retained estimate for this member in
+  // this context goes with the pause, not with its TTL.
+  revokeCirclePresence(user.id, type, id);
 
   void writeAuditEvent(sc, {
     actorUserId: user.id,
@@ -1785,7 +1800,7 @@ router.post("/circle/contexts/:type/:id/need-help", async (req, res) => {
       // than re-levelled, because raising it would re-level all eleven.
       req.log?.error?.(
         { err, contextType: type, contextId: id, userId: user.id },
-        "need-help host alert FAILED — the emergency alert reached NOBODY, and the caller was told their circle was notified",
+        "need-help host alert FAILED — the emergency alert reached NOBODY, and the caller was told their host is being alerted",
       );
     }
   })();
@@ -1793,7 +1808,7 @@ router.post("/circle/contexts/:type/:id/need-help", async (req, res) => {
   // IMPORTANT: response MUST NOT expose needs_help bool, GPS, or emergency details.
   res.status(200).json({
     acknowledged: true,
-    message:      "Your circle has been notified. Stay safe.",
+    message:      "We're alerting your host. Only the host is notified, not the rest of your circle. Stay safe.", // TM-create: the block above alerts the HOST only
   });
 });
 
@@ -2020,6 +2035,9 @@ router.post("/circle/pause-on-session-end", async (req, res) => {
 
   if (updateErr) { sendError(res, "db_error", updateErr.message); return; }
 
+  // Owner decision A: the store's copies go with the rows' status.
+  revokeAllCirclePresence(user.id);
+
   // Audit one entry per affected context (fire-and-forget).
   for (const row of presenceRows as any[]) {
     void writeAuditEvent(sc, {
@@ -2121,6 +2139,9 @@ router.post("/admin/circle/disable-context", async (req, res) => {
     if (disableErr) { sendError(res, "db_error", disableErr.message); return; }
   }
 
+  // Owner decision A: a disabled context's retained estimates go with it.
+  revokeCircleContext(contextType, contextId);
+
   void writeAuditEvent(sc, {
     actorUserId:  adminUserId,
     contextType,
@@ -2146,19 +2167,23 @@ router.post("/admin/circle/kill-switch", async (req, res) => {
   }
 
   // enabled=true means the kill switch is ACTIVE (feature is DISABLED for users)
-  const { error } = await sc
-    .from("feature_flags")
-    .upsert(
-      {
-        flag:        "find_your_circle_disabled",
-        enabled,
-        description: "Emergency kill switch — disables all Find Your Circle endpoints",
-        updated_at:  new Date().toISOString(),
-      },
-      { onConflict: "flag" },
-    );
+  // tm-followups A4: through the audited toggle (migration 0119), the path
+  // PATCH /admin/feature-flags/:flag uses, so every flip leaves a
+  // feature_flag_audit_log row. 0108 seeds the flag row; it is not invented here.
+  const { data: toggled, error } = await sc.rpc("toggle_feature_flag_with_audit", {
+    p_flag:          "find_your_circle_disabled",
+    p_new_enabled:   enabled,
+    p_changed_by_id: adminUserId,
+  });
+  if (error?.code === "42883") { req.log?.error?.({ pgCode: error.code }, "toggle_feature_flag_with_audit missing — apply migration 0119"); res.status(503).json({ error: "server_not_configured", message: "toggle_feature_flag_with_audit function is missing — apply migration 0119 to the database" }); return; }
+  if (error && (error.code === "P0002" || error.message?.includes("Flag not found"))) { sendError(res, "not_found", "Flag 'find_your_circle_disabled' not found"); return; }
+  if (error) { req.log?.error?.({ err: error }, "circle kill-switch toggle failed"); sendError(res, "db_error", error.message); return; }
+  const toggledRow = Array.isArray(toggled) ? toggled[0] : toggled;
+  if (!toggledRow) { sendError(res, "not_found", "Flag 'find_your_circle_disabled' not found"); return; }
 
-  if (error) { sendError(res, "db_error", error.message); return; }
+  // Owner decision A: engaging the kill switch empties the store of every
+  // circle estimate, so a fused read cannot outlive the feature by a TTL.
+  if (enabled) revokeEveryCirclePresence();
 
   void writeAuditEvent(sc, {
     actorUserId: adminUserId,
@@ -2211,18 +2236,22 @@ router.post("/circle/internal/cleanup-presence", async (req, res) => {
   // 2. Delete hard-expired presence rows
   const { data: expiredRows } = await sc
     .from("circle_presence")
-    .select("id, expires_at")
+    .select("id, expires_at, user_id, context_type, context_id")
     .not("expires_at", "is", null);
 
-  const expiredIds = ((expiredRows ?? []) as any[])
-    .filter((r) => r.expires_at && new Date(r.expires_at as string) < now)
-    .map((r) => r.id as string);
+  const expired = ((expiredRows ?? []) as any[])
+    .filter((r) => r.expires_at && new Date(r.expires_at as string) < now);
+  const expiredIds = expired.map((r) => r.id as string);
 
   let deleted = 0;
   if (expiredIds.length > 0) {
     const { error: expireDelErr } = await sc.from("circle_presence").delete().in("id", expiredIds);
     if (expireDelErr) { sendError(res, "db_error", expireDelErr.message); return; }
     deleted = expiredIds.length;
+    // Owner decision A: the store's copy of each expired row goes with it.
+    for (const r of expired) {
+      revokeCirclePresence(String(r.user_id ?? ""), String(r.context_type ?? ""), String(r.context_id ?? ""));
+    }
   }
 
   // 3. Trip-ended expiry — trips ended more than 24h ago
@@ -2243,6 +2272,7 @@ router.post("/circle/internal/cleanup-presence", async (req, res) => {
       .in("context_id", endedTripIds);
     if (tripDelErr) { sendError(res, "db_error", tripDelErr.message); return; }
     tripDeleted = endedTripIds.length;
+    for (const tid of endedTripIds) revokeCircleContext("trip", tid);
   }
 
   // 4. Event-ended expiry — events ended more than 2h ago
@@ -2263,6 +2293,7 @@ router.post("/circle/internal/cleanup-presence", async (req, res) => {
       .in("context_id", endedEventIds);
     if (eventDelErr) { sendError(res, "db_error", eventDelErr.message); return; }
     eventDeleted = endedEventIds.length;
+    for (const eid of endedEventIds) revokeCircleContext("event", eid);
   }
 
   res.status(200).json({

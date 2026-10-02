@@ -802,8 +802,8 @@ describe("GET /api/users/:username/posts — profile tab", () => {
   it("returns posts for a public profile", async () => {
     const state = baseState();
     state.posts = [
-      { id: "p1", author_id: ALICE, content: "hello", media_urls: [], post_status: "published", created_at: "2025-01-02T00:00:00Z" },
-      { id: "p2", author_id: ALICE, content: "world", media_urls: [], post_status: "published", created_at: "2025-01-01T00:00:00Z" },
+      { id: "p1", author_id: ALICE, content: "hello", media_urls: [], post_status: "published", visibility: "public", status: "active", deleted_at: null, created_at: "2025-01-02T00:00:00Z" },
+      { id: "p2", author_id: ALICE, content: "world", media_urls: [], post_status: "published", visibility: "public", status: "active", deleted_at: null, created_at: "2025-01-01T00:00:00Z" },
     ];
     setup(state);
     const r = await req("/users/alice_user/posts");
@@ -855,7 +855,7 @@ describe("GET /api/users/:username/posts — profile tab", () => {
   it("owner can see own posts even when show_posts=false", async () => {
     const state = baseState();
     state.posts = [
-      { id: "p1", author_id: ME, content: "my post", media_urls: [], post_status: "published", created_at: "2025-01-01T00:00:00Z" },
+      { id: "p1", author_id: ME, content: "my post", media_urls: [], post_status: "published", visibility: "public", status: "active", deleted_at: null, created_at: "2025-01-01T00:00:00Z" },
     ];
     state.profile_privacy_settings = [{ user_id: ME, profile_visibility: "public", show_posts: false }];
     setup(state);

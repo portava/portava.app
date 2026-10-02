@@ -107,14 +107,14 @@ export type DerivedStoreWindow =
  * one. The same four facts `DiscoveryRankProvenance` carries about a RANK, said
  * about a COMPUTATION.
  *
- * The version pair is deliberately NOT a second vocabulary: both fields are the
- * constants above. A momentum reading and a ranked page that claimed different
- * versions of the same pipeline would be worse than neither claiming one.
+ * §68 (DC-17): the version pair is the STORE'S OWN, never the ranker's. Each
+ * store names the kernel that computed it (see `DerivedStoreVersions` at the
+ * foot), because a reading stamped with the Compass pair moved with nothing.
  */
 export interface DerivedStoreProvenance {
-  /** `06` §5 model_version — DISCOVERY_MODEL_VERSION. */
+  /** `06` §5 model_version — the computing store's own model version (§68). */
   modelVersion: string;
-  /** `06` §5 feature_version — DISCOVERY_FEATURE_VERSION. */
+  /** `06` §5 feature_version — the computing store's own feature version (§68). */
   featureVersion: string;
   /** The event window the numbers were computed over. */
   window: DerivedStoreWindow;
@@ -127,17 +127,17 @@ export interface DerivedStoreProvenance {
 }
 
 /**
- * Stamp one computation. The versions are filled from the constants above so a
- * caller cannot mint its own pair, and the window is copied rather than held by
- * reference so a later mutation of the caller's bounds cannot rewrite history.
+ * Stamp one computation. The versions are REQUIRED, so no store can fall back to
+ * the ranker's pair by omission (§68), and the window is copied rather than held
+ * by reference so a later mutation of the caller's bounds cannot rewrite history.
  */
 export function derivedStoreProvenance(
   window: DerivedStoreWindow,
-  computedAt: number,
+  computedAt: number, versions: DerivedStoreVersions,
 ): DerivedStoreProvenance {
   return {
-    modelVersion:   DISCOVERY_MODEL_VERSION,
-    featureVersion: DISCOVERY_FEATURE_VERSION,
+    modelVersion:   versions.modelVersion,
+    featureVersion: versions.featureVersion,
     window: { ...window },
     computedAt,
   };
@@ -155,7 +155,7 @@ export type DiscoveryCandidateSource =
   /** queryOverpassDeduped — the OSM directory read around the destination (`06` §2 "nearby places"). */
   | "osm_directory"
   /** The row reached the ranker without either retrieval claiming it. Recorded, not guessed. */
-  | "unknown";
+  | "unknown" | PdeCandidateSource;  // census-discovery §85 (DC-12): the PDE path's attributions — the caller's pool and the per-viewer retrievals (lib/discoveryCandidates/candidateSources.ts)
 
 export interface DiscoveryRankProvenance {
   /** `06` §5 model_version. */
@@ -362,4 +362,182 @@ export function buildRankProvenance(
     });
   }
   return out;
+}
+
+// ── census-discovery §48 (DV-40): the model the PDE path serves under ─────────
+//
+// `DISCOVERY_MODEL_VERSION` above names the COMPASS discovery pipeline. Two
+// `GET /discovery` serve paths do not run it: the cache-A PDE cohort and the
+// cold fetch rank through `lib/discoveryPde.ts` → `lib/portavaRank.ts`. Before
+// §48 those rows carried no `modelVersion` at all; stamping them with the
+// Compass constant would have been a false record of which model ordered the
+// page. Declared here, at the foot, because this module's constants above are
+// cited by line.
+
+/**
+ * The PDE / portavaRank ranking shape. Bump when `portavaRank.scoreCandidate`'s
+ * feature set or weighting changes in a way that makes two pages
+ * non-comparable — the same rule as `DISCOVERY_MODEL_VERSION`, for the other
+ * ranker.
+ */
+export const DISCOVERY_PDE_MODEL_VERSION = "portava-rank-pde-2026-09";
+
+// ── census-discovery §68 (DC-17, lane P21): a derived store's OWN versions ────
+//
+// Before §68, `derivedStoreProvenance` stamped every momentum and trend reading
+// with `DISCOVERY_MODEL_VERSION` / `DISCOVERY_FEATURE_VERSION` — the COMPASS
+// ranker's pair. Neither kernel is the Compass pipeline, so a change to the
+// momentum saturation, a trend threshold or an event weight moved neither
+// string: the record named a model that did not compute the number (§54.2 (b),
+// routed there as H3). Each store now passes its own pair, declared beside the
+// arithmetic it versions. Declared at the foot so no cited line above moves.
+
+/** The version pair one derived store stamps on its own output. */
+export interface DerivedStoreVersions {
+  /** Bump when the store's arithmetic (windows, rates, thresholds, clamps) changes. */
+  modelVersion: string;
+  /** Bump when what one event contributes (which rows, what weight) changes. */
+  featureVersion: string;
+}
+
+// ── census-discovery §75 (DC-17, lane P33, H-P21-2): the PDE feature vector's provenance ──
+//
+// §48 stamped `modelVersion` on every PDE-ranked Discovery row and nothing else
+// of `10` §5's four facts: no feature version, no window, and only the SERVE
+// clock (`served_at`), which is not when the vector was computed — and the
+// momentum input inside it can be up to MOMENTUM_CACHE_TTL_MS older again (§68.2).
+// Declared at the foot so no cited line above moves.
+
+/**
+ * The feature SET `portavaRank.scoreCandidate` emits on the PDE path: which
+ * signals exist, what each measures and how each is weighted before it reaches
+ * the score. Bump when a feature is added, removed, or its definition or weight
+ * changes. Pinned against the ranker's key list by a test, so adding a feature
+ * without a bump fails.
+ */
+export const DISCOVERY_PDE_FEATURE_VERSION = "portava-rank-features-v1";
+
+/** The provenance one PDE `rankForViewer` run stamps on every row it scored. */
+export interface PdeFeatureProvenance {
+  /** `06` §5 feature_version — DISCOVERY_PDE_FEATURE_VERSION. */
+  featureVersion: string;
+  /** Epoch ms the ranker ran (the clock read immediately before `rankCandidates`). Never the serve clock. */
+  rankedAt: number;
+  /**
+   * The corpus the vector could have read. Its inputs are the viewer's history
+   * and the candidates' aggregates, which have no oldest event — the same
+   * `unbounded_start` reading `rankSourceWindow` gives the Compass rank (§38.5).
+   */
+  sourceWindow: DerivedStoreWindow;
+  /**
+   * The momentum INPUT's own record: its window, versions and computation clock,
+   * which can be older than `rankedAt` by up to the momentum cache's TTL.
+   * `undefined` when momentum was not an input (the modifiers were off);
+   * `null` when it was an input but its reading's record was not available.
+   */
+  momentum?: DerivedStoreProvenance | null;
+}
+
+/**
+ * One rank's provenance, from the clock the caller already read for it. The
+ * window is derived from that one clock so the two cannot drift.
+ */
+export function pdeFeatureProvenance(rankedAt: number, momentum?: DerivedStoreProvenance | null): PdeFeatureProvenance {
+  return {
+    featureVersion: DISCOVERY_PDE_FEATURE_VERSION,
+    rankedAt,
+    sourceWindow: rankSourceWindow(rankedAt),
+    ...(momentum === undefined ? {} : { momentum }),
+  };
+}
+
+/**
+ * Scored candidate → the provenance of the rank that scored it. A WeakMap, so
+ * the record rides with the exact objects `rankForViewer` returned, whichever
+ * route logs them, WITHOUT a field on the candidate: the served projection and
+ * the feature vector are byte-for-byte what they were, and a candidate no PDE
+ * run scored (Compass, pulse, a fixture) simply has no entry.
+ */
+const PDE_FEATURE_PROVENANCE = new WeakMap<object, PdeFeatureProvenance>();
+
+/** Record that these scored candidates came from the rank `p` describes. */
+export function stampPdeFeatureProvenance(scored: ReadonlyArray<object>, p: PdeFeatureProvenance): void {
+  for (const s of scored) PDE_FEATURE_PROVENANCE.set(s, p);
+}
+
+/** The provenance of the rank that scored this candidate, or undefined when no PDE run did. */
+export function pdeFeatureProvenanceOf(scored: object): PdeFeatureProvenance | undefined {
+  return PDE_FEATURE_PROVENANCE.get(scored);
+}
+
+/**
+ * The `rank_events.features` keys a PDE-scored Discovery row carries (§75,
+ * H-P21-2), each classified `record_metadata` in DISCOVERY_FEATURE_KEY_CLASSES
+ * (lib/discoveryRecommendationRecord.ts). No key at all when no PDE run scored
+ * the candidate, so every other writer's rows are exactly what they were.
+ * `momentumProvenance` is absent when momentum was not an input, as §63's graph
+ * keys are absent with the modifiers off.
+ */
+export const PDE_FEATURE_PROVENANCE_KEYS = ["featureVersion", "rankedAt", "sourceWindow", "momentumProvenance"] as const;
+
+export function pdeFeatureProvenanceFeatures(scored: object): Record<string, unknown> {
+  const p = pdeFeatureProvenanceOf(scored);
+  if (!p) return {};
+  return {
+    featureVersion: p.featureVersion,
+    rankedAt:       p.rankedAt,
+    sourceWindow:   { kind: p.sourceWindow.kind, startMs: p.sourceWindow.startMs, endMs: p.sourceWindow.endMs }, ...pdeItemPipelineFeatures(scored),  // §85: candidate sources, the exploration reserve, the graph reading's provenance — no key at all with every §85 flag off
+    ...(p.momentum === undefined ? {} : {
+      momentumProvenance: p.momentum === null ? null : {
+        modelVersion:   p.momentum.modelVersion,
+        featureVersion: p.momentum.featureVersion,
+        computedAt:     p.momentum.computedAt,
+        window:         { kind: p.momentum.window.kind, startMs: p.momentum.window.startMs, endMs: p.momentum.window.endMs },
+      },
+    }),
+  };
+}
+
+// ── census-discovery §85 (lane W10-R3): what the §85 stages record per scored row ──
+//
+// Beside `PDE_FEATURE_PROVENANCE`, for the same reason: the record rides with
+// the scored object `rankForViewer` returned, so the served projection and the
+// feature vector stay byte-for-byte what they were. It is written only by a §85
+// stage that is ON, so with every §85 flag off no row carries a key from it.
+// Declared at the foot so no cited line above moves.
+
+import type { PdeCandidateSource } from "./discoveryCandidates/candidateSources.js";
+
+/** Per-row facts the §85 stages recorded. Every field is absent unless its stage ran. */
+export interface PdeItemPipelineRecord {
+  /** `06` §5 candidate source — every retrieval that named this row, `caller_pool` for the route's reads. */
+  candidateSources?: PdeCandidateSource[];
+  /** DV-53: the reserved-inventory bucket this row was placed for, when it was. */
+  explorationReserve?: string;
+  /** H-P21-4: the graph reading's own record (lib/discoveryCandidates/graphReadingProvenance.ts). */
+  graphReadingProvenance?: Record<string, unknown>;
+}
+
+const PDE_ITEM_PIPELINE = new WeakMap<object, PdeItemPipelineRecord>();
+
+/** Merge `r` into the record this scored row carries. */
+export function stampPdeItemPipeline(scored: object, r: PdeItemPipelineRecord): void {
+  PDE_ITEM_PIPELINE.set(scored, { ...(PDE_ITEM_PIPELINE.get(scored) ?? {}), ...r });
+}
+
+export function pdeItemPipelineOf(scored: object): PdeItemPipelineRecord | undefined {
+  return PDE_ITEM_PIPELINE.get(scored);
+}
+
+/** The `rank_events.features` keys a §85 stage may add, each classified `record_metadata`. */
+export const PDE_ITEM_PIPELINE_KEYS = ["candidateSources", "explorationReserve", "graphReadingProvenance"] as const;
+
+export function pdeItemPipelineFeatures(scored: object): Record<string, unknown> {
+  const r = PDE_ITEM_PIPELINE.get(scored);
+  if (!r) return {};
+  return {
+    ...(r.candidateSources ? { candidateSources: [...r.candidateSources] } : {}),
+    ...(r.explorationReserve ? { explorationReserve: r.explorationReserve } : {}),
+    ...(r.graphReadingProvenance ? { graphReadingProvenance: { ...r.graphReadingProvenance } } : {}),
+  };
 }

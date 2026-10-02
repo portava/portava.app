@@ -26,7 +26,7 @@ import {
   ArrowLeft, Zap, Send, Users, Globe, Check, CalendarClock, ArrowRight,
   CheckCircle, MoreVertical, Info, VolumeX, Languages, Paperclip, Compass,
   Bot, Reply, Copy, Trash2, Flag, CheckCheck, AlertCircle, Search, BookmarkPlus,
-  RefreshCw, Clock, ChevronDown, X, Phone, Video, Lock, Sparkles,
+  RefreshCw, Clock, ChevronDown, X, Phone, Video, Lock, Sparkles, Pencil, History,
 } from 'lucide-react-native';
 import { resolveCircleCardNav } from '../../src/lib/circleCardNavigation.ts';
 import { useCallState, useCallActions } from '../../src/context/CallContext';
@@ -75,13 +75,13 @@ import {
 import { headerSubtitle } from '../../src/features/telegraph/header/headerAxes.ts';
 import { useConversationHeader } from '../../src/features/telegraph/header/useConversationHeader.ts';
 import { ComposerPlusMenu } from '../../src/features/telegraph/composer/ComposerPlusMenu.tsx'; import { VoiceRecorderSheet } from '../../src/features/telegraph/voice/VoiceRecorderSheet.tsx'; // one line: census-telegraph cites this file at :253, :270, :844, :869, :1624, :1831, :1947, :1958, :2089, :2094, :2114, :2172, :2227, :2269 and :2376.
-import { TypedComposePrompt, type TypedComposeKind } from '../../src/features/telegraph/composer/TypedComposePrompt.tsx';
+import { TypedComposePrompt, type TypedComposeKind } from '../../src/features/telegraph/composer/TypedComposePrompt.tsx'; import { MeetAtActionBar } from '../../src/platform/input-assistance/social/MeetAtActionBar.tsx'; import type { TelegraphLocationDraft } from '../../src/platform/input-assistance/social/telegraphMeetAt.ts'; // §54 GII-F10; one line: this file is cited by line
 import { sendTypedMessage, type SendableKind } from '../../src/features/telegraph/kinds/kindsApi.ts';
 import { TelegraphRecommendationCard } from '../../src/components/TelegraphRecommendationCard';
 import type { TelegraphSuggestion, MeetupPrefill } from '../../src/services/telegraphChat';
 import { blockUser } from '../../src/services/blocks';
 import { sendFeedback } from '../../src/services/intelligence';
-import { ReportSheet } from '../../src/components/ReportSheet';
+import { MessageReportSheet } from '../../src/features/telegraph/messageActions/MessageReportSheet.tsx'; import { ThreadActionSheets } from '../../src/features/telegraph/messageActions/ThreadActionSheets.tsx'; import { canEditMessage, canViewEditHistory } from '../../src/features/telegraph/messageActions/messageActionRules.ts'; import { CancelRequestButton } from '../../src/features/telegraph/requests/CancelRequestButton.tsx'; // WP-08, one line: see ThreadActionSheets for why
 import { TripWishlistPicker, type AddToTripPayload } from '../../src/components/discovery/TripWishlistPicker';
 import { TranslationSettingsSheet } from '../../src/components/TranslationSettingsSheet';
 import { MentionInput, type MentionInputHandle } from '../../src/components/MentionInput';
@@ -171,7 +171,7 @@ function LongPressActionSheet({
   onDeleteForMe,
   onReply,
   onSave,
-  onUnsent,
+  onUnsent, onEdit, onHistory, canEdit = false, blockLabel, onBlockSender,
   receipt,
 }: {
   message: Message | null;
@@ -186,7 +186,7 @@ function LongPressActionSheet({
   onDeleteForMe: (id: string) => Promise<void>;
   onReply: (msg: Message) => void;
   onSave: (msg: Message) => void;
-  onUnsent: (id: string) => void;
+  onUnsent: (id: string) => void; onEdit?: (msg: Message) => void; onHistory?: (msg: Message) => void; canEdit?: boolean; blockLabel?: string; onBlockSender?: () => void;
 }) {
   const plainInsetForSheets = usePlainBottomInset();
   const [showReport, setShowReport] = useState(false);
@@ -208,7 +208,7 @@ function LongPressActionSheet({
             // settings; a menu item that only explained that was a dead end.
             ['reply',     'Reply',         Reply        ],
             ['copy',      'Copy text',     Copy         ],
-            ['save',      'Save message',  BookmarkPlus ],
+            ['save',      'Save message',  BookmarkPlus ], ...(canEdit ? [['edit', 'Edit', Pencil]] : []), ...(threadId && canViewEditHistory(message) ? [['history', 'Edit history', History]] : []),
             ...(!mine ? [['report', 'Report', Flag]] : []),
           ] as [string, string, React.ComponentType<{ size: number; color: string }>][]).map(([key, label, Icon]) => (
             <Pressable
@@ -228,7 +228,7 @@ function LongPressActionSheet({
                   onSave(message);
                 } else {
                   onClose();
-                  Alert.alert(label, 'This feature is coming soon.');
+                  if (key === 'edit') onEdit?.(message); else if (key === 'history') onHistory?.(message); else Alert.alert(label, 'This feature is coming soon.');
                 }
               }}
             >
@@ -320,14 +320,14 @@ function LongPressActionSheet({
 
       {/* Unified report sheet for non-mine messages */}
       {!mine && (
-        <ReportSheet
+        <MessageReportSheet
           visible={showReport}
           onClose={() => { setShowReport(false); onClose(); }}
-          subjectType="message"
-          subjectId={message.id}
-          subjectUserId={message.senderId}
-          threadId={threadId}
-          onReported={() => { setShowReport(false); onClose(); }}
+          // §22: the Telegraph route snapshots the message before answering (WP-08 TM-TEL-D4).
+          messageId={message.id}
+          blockLabel={blockLabel}
+          onBlock={onBlockSender}
+          // The report sheet owns its own sent / failed states.
         />
       )}
     </>
@@ -1460,7 +1460,7 @@ export default function TelegraphThread() {
   // PENDING outgoing message request to this person. We check the server so
   // that normal friends/followers who simply haven't replied yet are never
   // blocked. The status clears automatically once the recipient accepts.
-  const { pending: hasOutgoingRequest } = useOutgoingRequestStatus(
+  const { pending: hasOutgoingRequest, requestId: outgoingRequestId, reload: reloadOutgoingRequest } = useOutgoingRequestStatus(
     isDirect ? (otherUserId ?? null) : null,
   );
   const isWaitingForReply = isDirect && hasOutgoingRequest === true;
@@ -1570,7 +1570,7 @@ export default function TelegraphThread() {
   // minimally; messages get priority."
   const [railCollapsed, setRailCollapsed] = useState(false);
   // Telegraph §6.4: the content drawer. Its entry point used to be dead code.
-  const [showContentDrawer, setShowContentDrawer] = useState(false);
+  const [showContentDrawer, setShowContentDrawer] = useState(false); const [editingMsg, setEditingMsg] = useState<Message | null>(null); const [historyMsg, setHistoryMsg] = useState<Message | null>(null); const [showAsk, setShowAsk] = useState(false); // WP-08
   /**
    * Telegraph §10.3 — the end-of-night recap. `useThreadRecap` performs the
    * READ; the affordance below appears only when the server found a COMPLETED
@@ -1583,7 +1583,7 @@ export default function TelegraphThread() {
   const telegraphHeader = useConversationHeader(id ?? null);
   // Telegraph §6.1: the composer's + menu, and the two typed-compose sheets.
   const [showPlusMenu, setShowPlusMenu] = useState(false);
-  const [typedCompose, setTypedCompose] = useState<TypedComposeKind | null>(null); const [showVoiceRecorder, setShowVoiceRecorder] = useState(false); // §6.2 VOICE — the sheet the + menu's Voice entry opens. Shares a line because census-telegraph cites every line below it.
+  const [typedCompose, setTypedCompose] = useState<TypedComposeKind | null>(null); const [locationDraft, setLocationDraft] = useState<TelegraphLocationDraft | null>(null); const [showVoiceRecorder, setShowVoiceRecorder] = useState(false); // §6.2 VOICE — the sheet the + menu's Voice entry opens. Shares a line because census-telegraph cites every line below it.
 
   // Send button springs in/out with input content
   const hasInput = input.trim().length > 0 || mediaPicker.media !== null;
@@ -2276,7 +2276,7 @@ export default function TelegraphThread() {
           <Clock size={14} color="#92400E" />
           <Text style={styles.waitingBannerText}>
             Waiting for reply — your message is in their requests.
-          </Text>
+          </Text>{outgoingRequestId ? <CancelRequestButton requestId={outgoingRequestId} onCancelled={() => { void reloadOutgoingRequest(); }} /> : null}
         </View>
       )}
 
@@ -2396,11 +2396,11 @@ export default function TelegraphThread() {
       />
 
       <TypedComposePrompt
-        kind={typedCompose}
+        kind={typedCompose} initialLocation={locationDraft}
         authorId={userId ?? null}
-        onCancel={() => setTypedCompose(null)}
+        onCancel={() => { setTypedCompose(null); setLocationDraft(null); }}
         onSubmit={async (kind: SendableKind, payload: unknown) => {
-          setTypedCompose(null);
+          setTypedCompose(null); setLocationDraft(null);
           if (!id) return;
           const res = await sendTypedMessage(id, kind, payload);
           if (!res.ok) {
@@ -2411,10 +2411,10 @@ export default function TelegraphThread() {
         }}
       />
 
-      <ContentDrawerSheet
+      <ThreadActionSheets threadId={id ?? ''} editing={editingMsg} onCloseEdit={() => setEditingMsg(null)} onEdited={() => { void reload(); }} history={historyMsg} onCloseHistory={() => setHistoryMsg(null)} askVisible={showAsk} onCloseAsk={() => setShowAsk(false)} /><ContentDrawerSheet
         visible={showContentDrawer}
         threadId={id ?? ''}
-        onClose={() => setShowContentDrawer(false)}
+        onClose={() => setShowContentDrawer(false)} onAsk={() => { setShowContentDrawer(false); setShowAsk(true); }}
       />
 
       {/* §10.3: the recap is a READ that already happened. `initialRecap`
@@ -2441,7 +2441,7 @@ export default function TelegraphThread() {
         }}
       />
 
-      <View style={[styles.compose, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+      <MeetAtActionBar draft={input} onPick={(d) => { setLocationDraft(d); setTypedCompose('LOCATION'); }} /><View style={[styles.compose, { paddingBottom: Math.max(insets.bottom, 8) }]}>
         {/* Media attachment button */}
         <Pressable
           style={styles.composeIconBtn}
@@ -2595,11 +2595,11 @@ export default function TelegraphThread() {
         onSave={(msg) => {
           if (!id) return;
           saveMessage(id, msg.id).then((r) => {
-            if (r.ok) Alert.alert('Saved', 'Message saved to your collection.');
+            if (r.ok) Alert.alert('Saved', 'Message saved to your collection.', [{ text: 'OK' }, { text: 'View saved', onPress: () => router.push('/messages/saved' as never) }]);
             else Alert.alert('Error', r.message ?? 'Could not save message.');
           });
         }}
-        onUnsent={() => { void reload(); }}
+        onUnsent={() => { void reload(); }} onEdit={(m) => setEditingMsg(m)} onHistory={(m) => setHistoryMsg(m)} canEdit={canEditMessage(actionMsg, actionMsgMine, isE2ee)} blockLabel={isDirect && otherUserId ? 'Block this person' : undefined} onBlockSender={isDirect && otherUserId ? () => { void (async () => { setBlockingUser(true); await blockUser(otherUserId); setBlockingUser(false); router.replace('/messages'); })(); } : undefined}
         receipt={actionMsgReceipt}
       />
 

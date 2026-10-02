@@ -21,6 +21,12 @@ export type ExperienceState =
 
 export interface MediaExperienceProjection {
   id: string;
+  /**
+   * Which canonical object this experience IS (the server's `kind`). Drives the
+   * §14 entry context (Event → other Event perspectives; Trip → Trip media).
+   * Optional so older fixtures without it still map; null ⇒ unknown.
+   */
+  kind?: 'event' | 'trip' | null;
   title: string;
   placeIds: string[];
   eventId?: string | null;

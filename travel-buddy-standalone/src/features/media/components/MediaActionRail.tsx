@@ -16,9 +16,9 @@
  *   • I Want This → POST/DELETE /media/:id/intent — a want SIGNAL, a distinct
  *     affordance from like/save (§15.1); optimistic toggle with degrade.
  *   • Do This Experience → GET /media/experiences/:id/plan, then route into the
- *     trip-plan flow PROPOSE-ONLY (the user confirms; never auto-added, §15.2).
+ *     trip-plan flow PROPOSE-ONLY (the user confirms; never auto-added, §15.2). §21: timed plan + trip choice.
  */
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, Modal, Pressable, StyleSheet, ScrollView, ActivityIndicator, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -39,16 +39,16 @@ import {
   ChevronRight,
   type LucideIcon,
 } from 'lucide-react-native';
-
 import { color, space, radius, type as t, icon as iconToken } from '../../../theme/tokens.ts';
 import { closeThenNavigate } from '../../../lib/deferredNavigate.ts';
 import { usePlanPicker } from '../../../components/PlanPickerController.tsx';
 import { saveMedia, reportMedia } from '../../../services/mediaInteractions.ts';
-import { fetchExperiencePlan, resolveMediaActionExecution } from '../services/mediaActions.ts';
-import type { MediaAction, MediaActionId, MediaEntityKind } from '../types/mediaActions.ts';
+import { fetchExperiencePlan, resolveMediaActionExecution, fetchCompiledExperiencePlan } from '../services/mediaActions.ts';
+import type { CompiledExperiencePlan, LinkableEventRef, MediaAction, MediaActionId, MediaEntityKind } from '../types/mediaActions.ts';
 import { useMediaActions } from '../hooks/useMediaActions.ts';
 import { useMediaAnalytics } from '../../../hooks/useMediaAnalytics.ts';
-import { emitMediaNorthStar } from '../telemetry/mediaTelemetry.ts';
+import { emitMediaNorthStar, emitMediaSignal, emitsNorthStarOnTap } from '../telemetry/mediaTelemetry.ts';
+import { TripChoicePanel, InvitePanel, ContributePanel, EventLinkPanel, TelegraphObjectShareSheet, SECTION21_ACTION_ICONS, openRailDirections, saveRailRoute } from './MediaActionPanels.tsx';
 
 // ── Icon + tone per action ────────────────────────────────────────────────────
 
@@ -65,7 +65,7 @@ const ACTION_ICON: Record<MediaActionId, LucideIcon> = {
   meet_here: Users,
   i_want_this: Target,
   share_telegraph: Send,
-  report: Flag,
+  report: Flag, ...SECTION21_ACTION_ICONS,
 };
 
 function iconFor(id: string): LucideIcon {
@@ -85,7 +85,7 @@ export interface MediaActionRailProps {
 export function MediaActionRail({ mediaId, visible, onClose }: MediaActionRailProps) {
   const insets = useSafeAreaInsets();
   const planPicker = usePlanPicker();
-  const { status, actions, entityRefs, wanted, wantPending, toggleWant } = useMediaActions(
+  const { status, actions, entityRefs, wanted, wantPending, toggleWant, reload } = useMediaActions(
     mediaId,
     visible,
   );
@@ -94,6 +94,20 @@ export function MediaActionRail({ mediaId, visible, onClose }: MediaActionRailPr
   const { record } = useMediaAnalytics();
   // Per-action async guard (Do This Experience fetches its plan before routing).
   const [busyId, setBusyId] = useState<string | null>(null);
+  // census-media §21 — an in-rail step that needs one more choice before
+  // anything is written, an honest one-line outcome, and the Telegraph share
+  // sheet for an object reference.
+  const [panel, setPanel] = useState<RailPanel | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [shareObject, setShareObject] = useState<{ objectType: 'POST'; objectId: string } | null>(null);
+
+  // A closed rail forgets its step, so reopening starts at the action list.
+  useEffect(() => {
+    if (!visible) {
+      setPanel(null);
+      setNotice(null);
+    }
+  }, [visible]);
 
   const runAction = useCallback(
     (action: MediaAction) => {
@@ -106,7 +120,7 @@ export function MediaActionRail({ mediaId, visible, onClose }: MediaActionRailPr
       // actions) and never throws, so it cannot affect the action below.
       const entityIdOf = (kind: MediaEntityKind): string | undefined =>
         entityRefs.find((r) => r.kind === kind)?.id;
-      emitMediaNorthStar(record, action.id, {
+      const northStarCtx = {
         mediaId: mediaId ?? undefined,
         entityKind: entityRefs.find((r) => r.kind === 'place')
           ? 'place'
@@ -114,7 +128,11 @@ export function MediaActionRail({ mediaId, visible, onClose }: MediaActionRailPr
         placeId: entityIdOf('place'),
         tripId: entityIdOf('trip'),
         surface: 'action_rail',
-      });
+      };
+      // An action whose outcome can fail (Go There) records only once it
+      // happened — in its case below, on success — never on the tap.
+      if (emitsNorthStarOnTap(action.id)) emitMediaNorthStar(record, action.id, northStarCtx);
+      setNotice(null);
 
       switch (exec.kind) {
         case 'navigate':
@@ -177,6 +195,76 @@ export function MediaActionRail({ mediaId, visible, onClose }: MediaActionRailPr
           return;
         }
 
+        // ── census-media §21 ──────────────────────────────────────────────
+        case 'directions': {
+          // Go There — the Places page's own directionsUrl (Places owns place
+          // identity, §48). Directions STARTED is the maps app opening; a place
+          // with no directions says so instead of opening nothing.
+          if (busyId) return;
+          setBusyId(action.id);
+          void openRailDirections(exec.placeId, () => {
+            emitMediaNorthStar(record, action.id, northStarCtx);
+            emitMediaSignal(record, 'directions_tap', {
+              mediaId,
+              placeId: exec.placeId,
+              surface: 'action_rail',
+              actionId: action.id,
+            });
+          }).then((outcome) => {
+            setBusyId(null);
+            if (outcome === 'opened') onClose();
+            else setNotice(outcome === 'no_directions' ? 'No directions are available for this place.' : 'Couldn’t open directions.');
+          });
+          return;
+        }
+
+        case 'telegraph_share':
+          // Share through Telegraph — Telegraph §5's own contract: a reference
+          // into a thread the user picks, resolved per reader at read time.
+          setShareObject({ objectType: exec.objectType, objectId: exec.objectId });
+          return;
+
+        case 'compiled_plan': {
+          // Do This Experience, executable (§15.2): fetch the timed plan, then
+          // the user picks the trip. Nothing is written before that choice.
+          if (busyId) return;
+          setBusyId(action.id);
+          void fetchCompiledExperiencePlan(exec.experienceId, { source: exec.source }).then((r) => {
+            setBusyId(null);
+            if (!r.ok || !r.data) {
+              setNotice('This experience has no plan you can add right now.');
+              return;
+            }
+            setPanel({ kind: 'trip_choice', plan: r.data });
+          });
+          return;
+        }
+
+        case 'save_route': {
+          // Save Route (§23.1) — the rail is coordinate-free, so each stop is
+          // completed through the canonical place record before POST /route-plans.
+          if (busyId) return;
+          setBusyId(action.id);
+          void saveRailRoute({ title: exec.title, stops: exec.stops, mediaId: exec.mediaId }).then((res) => {
+            setBusyId(null);
+            if (res.ok) closeThenNavigate(onClose, `/route/${encodeURIComponent(res.routeId)}`);
+            else setNotice(res.reason === 'create_failed' ? 'Couldn’t save this route.' : 'Not enough of these places can be located to make a route.');
+          });
+          return;
+        }
+
+        case 'invite':
+          setPanel({ kind: 'invite', momentId: exec.momentId, mediaId: exec.mediaId });
+          return;
+
+        case 'contribute_gem':
+          setPanel({ kind: 'contribute', gemId: exec.gemId, mediaId: exec.mediaId });
+          return;
+
+        case 'link_event':
+          setPanel({ kind: 'link_event', mediaId: exec.mediaId, candidates: exec.candidates });
+          return;
+
         case 'unsupported':
         default:
           return;
@@ -220,7 +308,30 @@ export function MediaActionRail({ mediaId, visible, onClose }: MediaActionRailPr
           showsVerticalScrollIndicator={false}
           bounces={false}
         >
-          {status === 'loading' ? (
+          {notice ? <Text style={s.notice}>{notice}</Text> : null}
+          {panel?.kind === 'trip_choice' ? (
+            <TripChoicePanel
+              plan={panel.plan}
+              onBack={() => setPanel(null)}
+              onApplied={(tripId) => closeThenNavigate(onClose, `/trip/${encodeURIComponent(tripId)}`)}
+            />
+          ) : panel?.kind === 'invite' ? (
+            <InvitePanel momentId={panel.momentId} mediaId={panel.mediaId} onBack={() => setPanel(null)} />
+          ) : panel?.kind === 'contribute' ? (
+            <ContributePanel gemId={panel.gemId} mediaId={panel.mediaId} onBack={() => setPanel(null)} />
+          ) : panel?.kind === 'link_event' ? (
+            <EventLinkPanel
+              mediaId={panel.mediaId}
+              candidates={panel.candidates}
+              onBack={() => setPanel(null)}
+              onLinked={() => {
+                // The link is what makes View Event reachable: re-read the rail.
+                setPanel(null);
+                setNotice('Linked to the event.');
+                reload();
+              }}
+            />
+          ) : status === 'loading' ? (
             <View style={s.centered}>
               <ActivityIndicator size="small" color={color.mute} />
             </View>
@@ -248,9 +359,9 @@ export function MediaActionRail({ mediaId, visible, onClose }: MediaActionRailPr
                   <View style={[s.rowIcon, active && s.rowIconActive]}>
                     <Icon
                       size={iconToken.s20}
-                      color={active ? color.signal : color.ink}
+                      color={active ? ACTIVE_ON_PAPER : color.ink}
                       strokeWidth={1.8}
-                      fill={active ? color.signal : 'transparent'}
+                      fill={active ? ACTIVE_ON_PAPER : 'transparent'}
                     />
                   </View>
                   <Text style={[s.rowLabel, active && s.rowLabelActive]} numberOfLines={1}>
@@ -267,13 +378,24 @@ export function MediaActionRail({ mediaId, visible, onClose }: MediaActionRailPr
           )}
         </ScrollView>
       </View>
+
+      {mediaId && shareObject ? (
+        <TelegraphObjectShareSheet mediaId={mediaId} object={shareObject} onClose={() => setShareObject(null)} />
+      ) : null}
     </Modal>
   );
 }
 
+/** A step inside the rail that needs one more choice before anything is written (census-media §21). */
+type RailPanel =
+  | { kind: 'trip_choice'; plan: CompiledExperiencePlan }
+  | { kind: 'invite'; momentId: string; mediaId: string | null }
+  | { kind: 'contribute'; gemId: string; mediaId: string | null }
+  | { kind: 'link_event'; mediaId: string; candidates: LinkableEventRef[] };
+
 // ── Styles ────────────────────────────────────────────────────────────────────
 
-const SHEET_RADIUS = 20;
+const SHEET_RADIUS = 20; const ACTIVE_ON_PAPER = '#C43B23'; // census-media §31: `signal` (#FF4D2E) scaled to 0.77, the lightest same-hue shade that reads 4.5:1 on the active row's tint (`signal` is 2.85:1 there); on this line so nothing below moves
 
 const s = StyleSheet.create({
   backdrop: {
@@ -332,6 +454,12 @@ const s = StyleSheet.create({
     paddingVertical: space.xl,
     alignItems: 'center',
   },
+  notice: {
+    ...t.body,
+    color: color.mute,
+    fontSize: 13,
+    paddingVertical: space.xs,
+  },
   empty: {
     ...t.body,
     color: color.mute,
@@ -363,7 +491,7 @@ const s = StyleSheet.create({
     flex: 1,
   },
   rowLabelActive: {
-    color: color.signal,
+    color: ACTIVE_ON_PAPER,
     fontWeight: '700',
   },
 });

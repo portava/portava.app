@@ -54,10 +54,10 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Sourced from .replit (`modules = ["nodejs-24", ...]`) and
-  # docs/eas-runbook.md's required-tools table. The repo has NO `engines`
-  # field, NO .nvmrc and NO .tool-versions, so nothing in-repo enforces this.
-  # See docs/ci/README.md § "Node version is inferred, not enforced".
+  # Sourced from .replit (`modules = ["nodejs-24", ...]`) and the EAS runbook's
+  # tools table. No `engines`/.nvmrc enforces it; api-server's
+  # nodeRuntimePin.test.ts fails if any workflow or the running Node disagrees
+  # with .replit. See docs/ci/README.md § "Runtime environment".
   NODE_VERSION: '24'
 
 jobs:
@@ -753,6 +753,14 @@ jobs:
         run: |
           set -euo pipefail
           pnpm install --frozen-lockfile
+
+      # census-discovery DC-15, placed in this job (after the install, and below every
+      # line this workflow is cited at): a migration that creates a Discovery table or
+      # index must register it in docs/discovery/query-paths.md — cardinality, index
+      # rationale, EXPLAIN (`10` §4). Static; it reads files and needs no database.
+      - name: 'check:discovery-query-paths'
+        shell: bash
+        run: bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server check:discovery-query-paths
 
       - name: Restore baseline, replay the chain, run the database suites
         shell: bash

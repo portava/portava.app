@@ -8,7 +8,7 @@
  *   'pick'     — media picker + preview + caption/location/visibility form
  *   'uploading' — progress bar, cancel button
  */
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, Modal, Pressable, StyleSheet,
   ActivityIndicator, Alert, Image, ScrollView, PanResponder,
@@ -30,6 +30,9 @@ import {
   type UploadCancelRef,
 } from '../services/postcards.ts';
 import { validateMedia } from '../services/media.ts';
+import { readFileBlob, uploadVideoPoster } from '../services/media/uploadHttp.ts';
+import { normalizePickedAsset, prepareImageForUpload } from '../services/media/mediaProcessing.ts';
+import { isResumableMediaUploadEnabled } from '../services/media/uploadTransportFlag.ts';
 import { color, space, radius, type as t, shadow, avatar } from '../theme/tokens.ts';
 import { KeyboardSafeView } from './ui/KeyboardSafeView.tsx';
 import { useMediaPicker } from '../hooks/useMediaPicker.ts';
@@ -99,6 +102,12 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
   const [error, setError] = useState<string | null>(null);
   const cancelRef = useRef<UploadCancelRef>({});
   const abortedRef = useRef(false);
+  // §37 background upload (uploadTransportFlag; ships OFF): the job id this
+  // composer is watching, and its queue subscription. Closing the composer
+  // unsubscribes — it does NOT cancel: the queue owns the upload.
+  const queuedJobRef = useRef<string | null>(null);
+  const queueUnsubRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => queueUnsubRef.current?.(), []);
   const { pickMedia } = useMediaPicker();
 
   async function pickPostcardMedia() {
@@ -176,6 +185,14 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
   }
 
   function handleClose() {
+    if (phase === 'uploading' && queuedJobRef.current) {
+      const jobId = queuedJobRef.current;
+      Alert.alert('Upload in progress', 'Your postcard keeps uploading if you close this.', [
+        { text: 'Continue in background', style: 'cancel', onPress: () => { stopWatchingQueue(); reset(); onClose(); } },
+        { text: 'Cancel upload', style: 'destructive', onPress: () => { void cancelQueuedJob(jobId); reset(); onClose(); } },
+      ]);
+      return;
+    }
     if (phase === 'uploading') {
       Alert.alert('Cancel upload?', 'Your upload is in progress. Cancel it?', [
         { text: 'Keep uploading', style: 'cancel' },
@@ -261,6 +278,18 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
     setProgress(0);
     abortedRef.current = false;
 
+    // §40 mediaProcessing — a photo OUTSIDE the server's envelope (longest edge
+    // over 4096 px, or over 15 MB) is resized on this device, so it neither
+    // travels whole only to be resampled nor is refused on arrival. A photo
+    // inside the envelope, and every video, is uploaded untouched.
+    const upload = await withinServerEnvelope(asset);
+    if (!upload) return;
+
+    if (isResumableMediaUploadEnabled()) {
+      await postThroughQueue(upload);
+      return;
+    }
+
     // Structured canonical location via the shared Place → payload mapping
     // (same one the Memory composer uses): city/country strings for display
     // and stamps, place-level coordinates, placeId for the provider
@@ -289,8 +318,8 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
     const postId = postRes.data.id;
 
     const urlRes = await getUploadUrl(postId, {
-      mimeType: asset.mimeType,
-      fileSizeBytes: asset.fileSizeBytes > 0 ? asset.fileSizeBytes : 1,
+      mimeType: upload.mimeType,
+      fileSizeBytes: upload.fileSizeBytes > 0 ? upload.fileSizeBytes : 1,
     });
 
     if (!urlRes.ok || abortedRef.current) {
@@ -306,8 +335,8 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
 
     const uploadRes = await uploadToSignedUrl(
       uploadUrl,
-      asset.uri,
-      asset.mimeType,
+      upload.uri,
+      upload.mimeType,
       (p) => setProgress(p),
       cancelRef.current,
     );
@@ -321,14 +350,24 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
       return;
     }
 
+    // §37 "Thumbnail generation": a video postcard gets a real poster frame,
+    // extracted on this device and stored by the server beside the video (the
+    // server has no decoder). Fail-soft — a video without one still posts.
+    const thumbnailPath = upload.isVideo ? await uploadVideoPoster(postId, mediaId, upload.uri) : null;
+    if (abortedRef.current) {
+      void discardPostcardShell(postId);
+      return;
+    }
+
     const completeRes = await completeUpload(postId, mediaId, {
-      mimeType: asset.mimeType,
-      fileSizeBytes: asset.fileSizeBytes > 0 ? asset.fileSizeBytes : 1,
-      durationSeconds: asset.durationSeconds,
-      width: asset.width,
-      height: asset.height,
+      mimeType: upload.mimeType,
+      fileSizeBytes: upload.fileSizeBytes > 0 ? upload.fileSizeBytes : 1,
+      durationSeconds: upload.durationSeconds,
+      width: upload.width,
+      height: upload.height,
+      thumbnailPath: thumbnailPath ?? undefined,
       stampOverlay:
-        stampOverlay && !asset.isVideo ? completePayloadFromDraft(stampOverlay) : undefined,
+        stampOverlay && !upload.isVideo ? completePayloadFromDraft(stampOverlay) : undefined,
     });
 
     if (!completeRes.ok) {
@@ -352,6 +391,103 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
     if (overlayWarning) {
       Alert.alert('Posted without stamp', overlayWarning);
     }
+  }
+
+  /** The picked asset, brought inside the server's envelope — or null (error already shown). */
+  async function withinServerEnvelope(picked: PickedAsset): Promise<PickedAsset | null> {
+    if (picked.isVideo) return (await compressVideoForUpload(picked)).video; // §37 MD282: the SAME asset unless a compressor module is in the binary AND its switch is on (both absent today)
+    const prepared = await prepareImageForUpload(
+      normalizePickedAsset({
+        uri: picked.uri,
+        mimeType: picked.mimeType,
+        fileName: picked.fileName,
+        fileSize: picked.fileSizeBytes > 0 ? picked.fileSizeBytes : null,
+        width: picked.width ?? null,
+        height: picked.height ?? null,
+        type: 'image',
+      }),
+    );
+    if (!prepared.ok) {
+      setError(prepared.message);
+      setPhase('pick');
+      return null;
+    }
+    if (!prepared.resized) return picked;
+    // The re-encoded size is what the slot is reserved for — read it, never guess.
+    const resizedBytes = await readFileBlob(prepared.asset.uri).then((b) => b.size, () => 0);
+    return {
+      ...picked,
+      uri: prepared.asset.uri,
+      mimeType: prepared.asset.mimeType,
+      fileName: prepared.asset.fileName,
+      fileSizeBytes: resizedBytes,
+      width: prepared.asset.width ?? undefined,
+      height: prepared.asset.height ?? undefined,
+    };
+  }
+
+  function stopWatchingQueue() {
+    queueUnsubRef.current?.();
+    queueUnsubRef.current = null;
+    queuedJobRef.current = null;
+  }
+
+  async function cancelQueuedJob(jobId: string) {
+    stopWatchingQueue();
+    const { getPostcardUploadQueue } = await import('../services/media/postcardUploadQueue.ts');
+    (await getPostcardUploadQueue()).cancel(jobId);
+  }
+
+  /**
+   * §37 background upload: the upload is handed to the app-level queue, which
+   * persists it before the first request and resumes it after a closed screen,
+   * a backgrounded app or a relaunch. This composer only WATCHES the job.
+   */
+  async function postThroughQueue(upload: PickedAsset) {
+    const { getPostcardUploadQueue } = await import('../services/media/postcardUploadQueue.ts');
+    const queue = await getPostcardUploadQueue();
+    const job = await queue.enqueue({
+      asset: normalizePickedAsset({
+        uri: upload.uri,
+        mimeType: upload.mimeType,
+        fileName: upload.fileName,
+        fileSize: upload.fileSizeBytes > 0 ? upload.fileSizeBytes : null,
+        width: upload.width ?? null,
+        height: upload.height ?? null,
+        type: upload.isVideo ? 'video' : 'image',
+        duration: upload.durationSeconds != null ? upload.durationSeconds * 1000 : null,
+      }),
+      caption: caption.trim() || undefined,
+      visibility,
+      location: { ...placeToLocationFields(place) },
+      addToPassport: true,
+      stampOverlay: stampOverlay && !upload.isVideo ? completePayloadFromDraft(stampOverlay) : undefined,
+    });
+    if (!job) {
+      setError('Please sign in to continue');
+      setPhase('pick');
+      return;
+    }
+    queuedJobRef.current = job.id;
+    queueUnsubRef.current?.();
+    queueUnsubRef.current = queue.subscribe((e) => {
+      if (e.job.id !== job.id) return;
+      if (typeof e.progress === 'number') setProgress(e.progress);
+      if (e.job.stage === 'done') {
+        stopWatchingQueue();
+        const warning =
+          e.job.result?.stampOverlayApplied === false ? stampOverlayErrorMessage(e.job.result.stampOverlayError) : null;
+        reset();
+        onSuccess();
+        if (warning) Alert.alert('Posted without stamp', warning);
+      } else if (e.job.stage === 'failed') {
+        stopWatchingQueue();
+        setError(e.job.lastError ?? 'Upload failed');
+        setPhase('pick');
+      } else if (e.job.retryable) {
+        setError('Waiting for a connection — your upload will continue.');
+      }
+    });
   }
 
   const visLabel = VISIBILITIES.find((v) => v.key === visibility)?.label ?? 'Public';
@@ -629,6 +765,7 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
               onPress={() => {
                 abortedRef.current = true;
                 cancelRef.current.cancel?.();
+                if (queuedJobRef.current) void cancelQueuedJob(queuedJobRef.current);
                 reset();
               }}
             >
@@ -822,3 +959,7 @@ const s = StyleSheet.create({
   },
   stampHint: { ...t.small, color: color.faint },
 });
+
+// §37 MD282 (census-media §37): device video compression seam. Imported at the TAIL so the
+// lines census-media cites in this file do not move; ESM hoists imports.
+import { compressVideoForUpload } from '../services/media/videoCompression.ts';

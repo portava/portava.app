@@ -363,7 +363,7 @@ describe("flag OFF (the seed) — searchTrips issues the legacy read, byte-ident
       const { status, body } = await search("trips");
       assert.equal(status, 200);
       assertExpectedTrips(body);
-      assert.deepEqual(body.results.find((r: any) => r.id === T_PUB), PINNED_CARD);
+      assert.deepEqual(sansExposure(body.results).find((r: any) => r.id === T_PUB), PINNED_CARD);
 
       const reads = tripsReads();
       assert.equal(reads.length, 1, "one trips read and only one");
@@ -457,7 +457,7 @@ describe("capability READY (flag ON + trips.version present) — the projection 
     setup(baseState(true));
     const on = await search("trips");
     assert.equal(on.status, 200);
-    assert.deepEqual(on.body, off.body, "flag ON serves exactly what flag OFF serves for these fixtures");
+    assert.deepEqual({ ...on.body, results: sansExposure(on.body.results) }, { ...off.body, results: sansExposure(off.body.results) }, "flag ON serves exactly what flag OFF serves for these fixtures");
 
     assert.equal(probeReads().length, 1, "the schema was probed before the projection was trusted");
     assert.deepEqual(readDiscoveryTripSourceDecisions(), [
@@ -485,7 +485,7 @@ describe("capability READY (flag ON + trips.version present) — the projection 
     setup(baseState(true));
     const on = await search("plans", "belem");
     assert.equal(on.status, 200);
-    assert.deepEqual(on.body, off.body);
+    assert.deepEqual({ ...on.body, results: sansExposure(on.body.results) }, { ...off.body, results: sansExposure(off.body.results) });
 
     const reads = tripsReads();
     assert.equal(reads.length, 1);
@@ -782,3 +782,13 @@ describe("lib/discoveryTripProjectionConsumer — the units", () => {
     });
   });
 });
+
+/**
+ * A served list without its per-exposure `recommendationId`. DV-40 (census-discovery
+ * §46) stamps every served item with an id minted for THAT request, so two
+ * requests — flag ON and flag OFF — never share one; everything else must still
+ * match byte for byte, which is what these comparisons are about.
+ */
+function sansExposure(rows: any[]): any[] {
+  return (rows ?? []).map(({ recommendationId: _rid, ...rest }: any) => rest);
+}

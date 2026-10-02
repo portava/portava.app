@@ -32,7 +32,7 @@ export type LocationPrivacyMode =
   | 'city_only'
   | 'delayed_until_exit'
   | 'delayed_until_time'
-  | 'trusted_circle_only';
+  | 'trusted_circle_only' | 'neighborhood_only'; // spec §34 "Show neighborhood only" (migration 3350; the server refuses it until media_neighborhood_only_mode_enabled — census-media §36)
 
 export interface PostAuthor {
   id: string;

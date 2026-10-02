@@ -38,9 +38,23 @@
  * when a type has none rather than substituting a default, because an earning
  * booked under an invented version cannot be recomputed (`07` §10).
  *
- * Writers: none yet in the request path — see the module header on seams.
+ * ── WHAT CALLS IT (census-discovery §52) ───────────────────────────────────
+ * `services/creators/CreatorAttributionProducers.ts` (the Travel Partner
+ * producer, driven by `lib/creatorAttributionScheduler.ts`), and
+ * `services/creators/CreatorLedgerOperations.ts` (holds, releases,
+ * recomputations and reversals, reached from `routes/adminCreatorLedger.ts`).
+ * Every one of them is behind the same flag, still seeded FALSE by 2922.
+ *
+ * ── A RECOMMENDATION IS BOUND, NEVER TAKEN (3386) ──────────────────────────
+ * An attribution may carry the served Discovery recommendation that led to it
+ * (`08` §4). The id arrives as a CLAIM; `resolveServedRecommendation` binds it
+ * to the converting viewer's own `rank_events` exposure through
+ * `lib/creatorServedRecommendation.ts`, and `recordCreatorAttribution` accepts
+ * only the bound form.
+ *
  * Readers of what it writes: `lib/creatorTypeAttribution.ts` (the pure model),
- *                            `lib/creatorLedgerRows.ts` (the row mapping).
+ *                            `lib/creatorLedgerRows.ts` (the row mapping),
+ *                            `services/creators/CreatorLedgerReader.ts`.
  */
 import { isFlagEnabled } from "../../lib/featureFlags.js";
 import {
@@ -63,8 +77,36 @@ import {
   toCreatorAttributionRow,
   toCreatorEarningEntryRow,
 } from "../../lib/creatorLedgerRows.js";
+import {
+  bindServedRecommendation,
+  checkRecommendationClaimShape,
+  type BoundRecommendation,
+  type RecommendationBindingRefusal,
+  type RecommendationClaim,
+} from "../../lib/creatorServedRecommendation.js";
+import { evaluateCreatorRule, type RuleEvaluationRefusal } from "../../lib/creatorRuleEvaluation.js";
+import { indexChains, type AttributionRow, type EarningEntryRow } from "../../lib/creatorLedgerStatus.js";
+import {
+  attributionModelFromRow,
+  planHold,
+  resolveHead,
+  type DoorPayload,
+  type LedgerActor,
+  type PlanRefusal,
+} from "../../lib/creatorLedgerPlans.js";
+import type { RevenueSource } from "../../lib/creatorLedgerEntries.js";
 
 export const CREATOR_ATTRIBUTION_FLAG = "creator_attribution_enabled";
+
+/**
+ * The ONE read of the creator-ledger gate for every module outside this file
+ * (operations, reader, producer), so the flag is read through a single
+ * resolvable call site — `check:flag-polarity` resolves a const within its own
+ * file only — and fail-closed exactly as `isFlagEnabled` is.
+ */
+export async function creatorLedgerEnabled(sc: any): Promise<boolean> {
+  return isFlagEnabled(sc, CREATOR_ATTRIBUTION_FLAG);
+}
 
 /**
  * The three table names, and why every `.from()` below spells its LITERAL
@@ -92,14 +134,51 @@ export type CreatorServiceRefusal =
   | "no_active_rule_version"
   | "refused_by_model"
   | "not_found"
-  | "db_error";
+  | "db_error"
+  // ── 3386/3387, each a refusal the database makes and names ──────────────
+  /** A hold or booking raced another change to the same attribution; re-read and retry. */
+  | "stale_head"
+  /** A key replayed with DIFFERENT content (SQLSTATE CL409). Never a success. */
+  | "conflicting_replay"
+  /** Booking against a superseded attribution (held, released or recomputed). */
+  | "attribution_not_current"
+  | "attribution_held"
+  /** A version older than the one in force, or one that is not published. */
+  | "stale_rule_version"
+  | "unpublished_rule_version"
+  /** The booking's earning is already in rent_buddy_earnings_entries (one earning, one ledger). */
+  | "booked_in_subsystem_ledger"
+  | "transaction_unbalanced"
+  | "recommendation_not_served"
+  | RecommendationBindingRefusal
+  | RuleEvaluationRefusal
+  | PlanRefusal;
 
 export type CreatorServiceResult<T> =
   | { ok: true; value: T; replayed?: true }
   | { ok: false; reason: CreatorServiceRefusal; detail?: string };
 
-const fail = (reason: CreatorServiceRefusal, detail?: string): CreatorServiceResult<never> =>
+export const fail = (reason: CreatorServiceRefusal, detail?: string): CreatorServiceResult<never> =>
   ({ ok: false, reason, detail });
+
+/**
+ * The refusals 3386/3387's triggers raise, by the token each message carries.
+ * A trigger's refusal is a DECISION the database made about the ledger, and
+ * reporting it as `db_error` would tell a caller to retry something that will
+ * never succeed.
+ */
+const TRIGGER_REFUSALS: ReadonlyArray<[RegExp, CreatorServiceRefusal]> = [
+  [/conflicting_replay/, "conflicting_replay"],
+  [/attribution_not_current/, "attribution_not_current"],
+  [/attribution_held/, "attribution_held"],
+  [/stale_rule_version/, "stale_rule_version"],
+  [/is not a published .* rule/, "unpublished_rule_version"],
+  [/booked_in_subsystem_ledger/, "booked_in_subsystem_ledger"],
+  [/transaction_unbalanced/, "transaction_unbalanced"],
+  [/names no served exposure/, "recommendation_not_served"],
+  [/recompute_while_held/, "recompute_while_held"],
+  [/ca_one_supersede_per_row/, "stale_head"],
+];
 
 /**
  * PostgREST returns a missing relation as an error rather than throwing, and
@@ -107,10 +186,16 @@ const fail = (reason: CreatorServiceRefusal, detail?: string): CreatorServiceRes
  * it from a genuine fault is what lets an unapplied deployment DEGRADE rather
  * than look broken — the same posture `services/trails/TrailService.ts` takes.
  */
-function classifyDbError(error: any): CreatorServiceResult<never> {
+export function classifyDbError(error: any): CreatorServiceResult<never> {
   const code = String(error?.code ?? "");
   const message = String(error?.message ?? error ?? "");
-  if (code === "42P01" || /does not exist|could not find the table/i.test(message)) {
+  const text = `${message} ${String(error?.details ?? "")}`;
+  for (const [re, reason] of TRIGGER_REFUSALS) if (re.test(text)) return fail(reason, message);
+  if (code === "CL409") return fail("conflicting_replay", message);
+  // Narrow on purpose: 2921's own trigger says "attribution % does not exist"
+  // about a ROW, and that is a refused write, not an unapplied migration.
+  if (code === "42P01" || code === "42883" || code === "PGRST202" ||
+      /relation "[^"]+" does not exist|function \S+ does not exist|could not find the (table|function)/i.test(message)) {
     return fail("degraded_unavailable", `${ATTRIBUTIONS}/${EARNING_ENTRIES} are not applied here: ${message}`);
   }
   return fail("db_error", message);
@@ -198,6 +283,43 @@ export async function resolveAllActiveRuleVersions(
 export interface RecordAttributionInput extends Omit<AttributionInput, "ruleVersion"> {
   /** Optional: omit to use the version in force for the type (the normal path). */
   ruleVersion?: string;
+  /**
+   * 3386: the served recommendation this action is linked to — ONLY in the
+   * bound form `resolveServedRecommendation` returns. There is no string field:
+   * a client-quoted id cannot reach the column by any typed path.
+   */
+  recommendation?: BoundRecommendation | null;
+}
+
+// ── 3386 — the served recommendation, bound to the converting viewer ────────
+
+/**
+ * Bind a claimed recommendation id to the converting viewer's OWN exposure.
+ *
+ * `claim.viewerUserId` must come from the authenticated session; the id is what
+ * the client quoted. The read is filtered on (user_id = viewer, recommendation_id
+ * = id), so another viewer's id reads nothing, and `bindServedRecommendation`
+ * re-checks the owner anyway. Refusals never say whether the id belongs to
+ * somebody else.
+ */
+export async function resolveServedRecommendation(
+  sc: any,
+  claim: RecommendationClaim,
+): Promise<CreatorServiceResult<BoundRecommendation>> {
+  if (!(await isFlagEnabled(sc, CREATOR_ATTRIBUTION_FLAG))) return fail("disabled");
+  const shape = checkRecommendationClaimShape(claim);
+  if (shape && !shape.ok) return fail(shape.reason, shape.detail);
+  const { data, error } = await sc
+    .from("rank_events")
+    .select("id, user_id, item_id, surface, served_at, recommendation_id")
+    .eq("user_id", claim.viewerUserId)
+    .eq("recommendation_id", String(claim.recommendationId))
+    .neq("outcome", "analytics")
+    .order("served_at", { ascending: false })
+    .limit(1);
+  if (error) return classifyDbError(error);
+  const bound = bindServedRecommendation(claim, Array.isArray(data) ? data[0] ?? null : null);
+  return bound.ok ? { ok: true, value: bound.value } : fail(bound.reason, bound.detail);
 }
 
 /**
@@ -224,10 +346,23 @@ export async function recordCreatorAttribution(
     ruleVersion = active.value.ruleVersion;
   }
 
-  const model = buildAttribution({ ...input, ruleVersion });
+  const { recommendation, ...modelInput } = input;
+  const model = buildAttribution({ ...modelInput, ruleVersion });
   if (model.status !== "built") return fail("refused_by_model", `${model.reason}: ${model.detail}`);
 
-  const row = toCreatorAttributionRow(model.attribution);
+  const base = toCreatorAttributionRow(model.attribution);
+  const rec = recommendation ?? null;
+  // A SEAM's natural key has no event in it, so two recommendations of the same
+  // Trail to the same contributor would collapse into one row; the bound id
+  // separates them. A recorded event's key already names the event, and a
+  // second recommendation claimed for it is a conflict, not a new row.
+  const key = rec && model.attribution.basis === "seam_no_producer"
+    ? `${base.idempotency_key}@rec:${rec.recommendationId}`
+    : base.idempotency_key;
+  // recommendation_id is spread in only when there is one, so a write with no
+  // recommendation is byte-identical to what it was before 3386 and still
+  // succeeds on a database where 3386 is not applied.
+  const row = rec ? { ...base, idempotency_key: key, recommendation_id: rec.recommendationId } : { ...base, idempotency_key: key };
   const { data, error } = await sc.from("creator_attributions").insert(row).select().single();
   if (!error) return { ok: true, value: { id: String(data.id), attribution: model.attribution, row: data } };
 
@@ -236,11 +371,187 @@ export async function recordCreatorAttribution(
       .from("creator_attributions").select().eq("idempotency_key", row.idempotency_key).maybeSingle();
     if (replayErr) return classifyDbError(replayErr);
     if (existing) {
-      return { ok: true, value: { id: String(existing.id), attribution: model.attribution, row: existing }, replayed: true };
+      // A REPLAY IS ONLY A REPLAY IF IT SAYS THE SAME THING. Same key with a
+      // different recommendation, beneficiary or figures is a second claim about
+      // one event, and answering it `replayed` would silently discard it. The
+      // rule version is NOT compared: it is resolved server-side from the clock,
+      // and a replay arriving after a re-pricing is still the same event,
+      // recorded under the version in force when it first arrived.
+      const differs =
+        (existing.recommendation_id ?? null) !== (rec?.recommendationId ?? null) ||
+        String(existing.beneficiary_user_id) !== String(row.beneficiary_user_id) ||
+        Number(existing.gross_revenue_minor) !== Number(row.gross_revenue_minor) ||
+        Number(existing.provisional_share_minor) !== Number(row.provisional_share_minor) ||
+        Boolean(existing.fraud_hold) !== Boolean(row.fraud_hold);
+      if (differs) {
+        return fail("conflicting_replay", `attribution key ${row.idempotency_key} is already recorded with different content`);
+      }
+      return {
+        ok: true,
+        value: { id: String(existing.id), attribution: attributionModelFromRow(existing as AttributionRow), row: existing },
+        replayed: true,
+      };
     }
     return fail("db_error", "attribution replay lookup found nothing after a 23505");
   }
   return classifyDbError(error);
+}
+
+// ── `07` §8/§10 — figures from a PUBLISHED rule version, never a literal ────
+
+/** A published version's params, read by (type, version). */
+async function readRuleParams(
+  sc: any,
+  creatorType: CreatorType,
+  ruleVersion: string,
+): Promise<CreatorServiceResult<Record<string, unknown>>> {
+  const { data, error } = await sc
+    .from("creator_rule_versions")
+    .select("creator_type, rule_version, params, effective_from")
+    .eq("creator_type", creatorType)
+    .eq("rule_version", ruleVersion)
+    .maybeSingle();
+  if (error) return classifyDbError(error);
+  if (!data) return fail("unpublished_rule_version", `${creatorType} has no published version ${ruleVersion}`);
+  return { ok: true, value: (data.params ?? {}) as Record<string, unknown> };
+}
+
+export interface AttributionUnderRuleInput
+  extends Omit<RecordAttributionInput, "ruleVersion" | "provisionalShareMinor"> {
+  revenueSource?: RevenueSource | null;
+}
+
+/**
+ * Record an attribution whose provisional share is COMPUTED from the version in
+ * force — `07` §8's "store … rule version, provisional share" with the
+ * percentage read from `creator_rule_versions.params`, never from code. A
+ * version whose params publish no percentage (every seeded one: 2920 seeds
+ * `{}`) refuses with `rule_params_incomplete` and records nothing.
+ */
+export async function recordCreatorAttributionUnderRule(
+  sc: any,
+  input: AttributionUnderRuleInput,
+): Promise<CreatorServiceResult<{ id: string; attribution: CreatorAttribution; row: any }>> {
+  if (!(await isFlagEnabled(sc, CREATOR_ATTRIBUTION_FLAG))) return fail("disabled");
+  if (!isCreatorType(input.creatorType)) return fail("unknown_creator_type", String(input.creatorType));
+  const active = await resolveActiveRuleVersion(sc, input.creatorType);
+  if (!active.ok) return active;
+  const figures = evaluateCreatorRule(active.value.params, {
+    grossRevenueMinor: input.grossRevenueMinor, weight: input.weight, revenueSource: input.revenueSource,
+  });
+  if (!figures.ok) return fail(figures.reason, figures.detail);
+  const { revenueSource: _rs, ...rest } = input;
+  return recordCreatorAttribution(sc, {
+    ...rest,
+    ruleVersion: active.value.ruleVersion,
+    provisionalShareMinor: figures.value.creatorShareMinor,
+  });
+}
+
+/**
+ * Book the earning of ONE persisted attribution under ITS OWN rule version.
+ *
+ * The figures are re-evaluated from that version's published params over the
+ * attribution's recorded gross, and must reproduce the provisional share the
+ * attribution recorded; if they do not, the attribution was not computed by the
+ * rule it names and nothing is booked. The database then refuses a superseded
+ * or held attribution, a stale version, an unbalanced transaction and a booking
+ * already in `rent_buddy_earnings_entries` (3387), independently of this code.
+ */
+export async function bookCreatorEarningUnderRule(
+  sc: any,
+  attributionRowId: string,
+  opts: { revenueSource?: RevenueSource | null } = {},
+): Promise<CreatorServiceResult<RecordedCreatorEarning>> {
+  if (!(await isFlagEnabled(sc, CREATOR_ATTRIBUTION_FLAG))) return fail("disabled");
+  const { data: row, error } = await sc.from("creator_attributions").select().eq("id", attributionRowId).maybeSingle();
+  if (error) return classifyDbError(error);
+  if (!row) return fail("not_found", attributionRowId);
+  const a = row as AttributionRow;
+  if (!isCreatorType(a.creator_type)) return fail("unknown_creator_type", String(a.creator_type));
+  const params = await readRuleParams(sc, a.creator_type, a.rule_version);
+  if (!params.ok) return params;
+  const figures = evaluateCreatorRule(params.value, {
+    grossRevenueMinor: Number(a.gross_revenue_minor), weight: Number(a.weight),
+    revenueSource: opts.revenueSource ?? null, currency: String(a.currency).trim(),
+  });
+  if (!figures.ok) return fail(figures.reason, figures.detail);
+  if (figures.value.creatorShareMinor !== Number(a.provisional_share_minor)) {
+    return fail(
+      "refused_by_model",
+      `attribution ${a.id} records a provisional share of ${a.provisional_share_minor} but ${a.rule_version} computes ` +
+        `${figures.value.creatorShareMinor}; it was not computed by the rule it names`,
+    );
+  }
+  return recordCreatorEarning(sc, String(a.id), attributionModelFromRow(a), figures.value);
+}
+
+// ── The one-transaction door (3387) ─────────────────────────────────────────
+
+export interface LedgerAppendResult {
+  attribution_id: string | null;
+  attribution_inserted: boolean;
+  entries_inserted: number;
+  entries_replayed: number;
+  audit_id: string | null;
+  audit_inserted: boolean;
+}
+
+/**
+ * Send one payload through `public.creator_ledger_append`. One call is one
+ * transaction: every row lands or none does. Every refusal the database makes
+ * is mapped to its name by `classifyDbError`.
+ */
+export async function appendToLedger(sc: any, payload: DoorPayload): Promise<CreatorServiceResult<LedgerAppendResult>> {
+  if (typeof sc?.rpc !== "function") return fail("degraded_unavailable", "this client cannot call creator_ledger_append");
+  const { data, error } = await sc.rpc("creator_ledger_append", { p: payload });
+  if (error) return classifyDbError(error);
+  const r = (typeof data === "string" ? JSON.parse(data) : data) as LedgerAppendResult | null;
+  if (!r || typeof r !== "object") return fail("db_error", "creator_ledger_append returned nothing");
+  // A replay is a call that appended NOTHING: every key was already recorded
+  // with this content (a differing one would have raised CL409 above).
+  const replayed = !r.attribution_inserted && r.entries_inserted === 0 && !r.audit_inserted;
+  return replayed ? { ok: true, value: r, replayed: true } : { ok: true, value: r };
+}
+
+/**
+ * Every attribution row that can share a chain with `attributionId`: the same
+ * type, subject and beneficiary. A supersession keeps all three (3387's
+ * `ca_supersession_is_lawful`), so the chain is always inside this set.
+ */
+export async function readAttributionChain(
+  sc: any,
+  attributionId: string,
+): Promise<CreatorServiceResult<AttributionRow[]>> {
+  const { data: row, error } = await sc.from("creator_attributions").select().eq("id", attributionId).maybeSingle();
+  if (error) return classifyDbError(error);
+  if (!row) return fail("not_found", attributionId);
+  const { data, error: e2 } = await sc
+    .from("creator_attributions")
+    .select()
+    .eq("creator_type", row.creator_type)
+    .eq("subject_id", row.subject_id)
+    .eq("beneficiary_user_id", row.beneficiary_user_id)
+    .limit(10_000);
+  if (e2) return classifyDbError(e2);
+  const rows = (Array.isArray(data) ? data : []) as AttributionRow[];
+  const chain = indexChains(rows).chainOf(attributionId);
+  return { ok: true, value: chain };
+}
+
+/** Every entry booked against any row of `attributionIds`, reversals included. */
+export async function readEntriesFor(
+  sc: any,
+  attributionIds: readonly string[],
+): Promise<CreatorServiceResult<EarningEntryRow[]>> {
+  if (attributionIds.length === 0) return { ok: true, value: [] };
+  const { data, error } = await sc
+    .from("creator_earning_entries")
+    .select()
+    .in("attribution_id", [...attributionIds])
+    .limit(100_000);
+  if (error) return classifyDbError(error);
+  return { ok: true, value: (Array.isArray(data) ? data : []) as EarningEntryRow[] };
 }
 
 // ── `07` §10 property 2 — earnings recorded WITHOUT PAYING ──────────────────
@@ -356,16 +667,24 @@ export async function recordCreatorEarning(
  * UPDATE trigger blocks the rest, so a hold cannot silently rewrite the
  * evidence the detection produced (`07` §9).
  *
- * `originalRowId` is the PERSISTED uuid of the attribution being held, which is
- * what `supersedes_id` FKs to. The pure model's `supersedesId` is a derived
- * natural key and is deliberately NOT written into that column: they are two
- * different identifiers and conflating them would produce a dangling FK.
+ * ── WHAT CHANGED (census-discovery §52) ─────────────────────────────────────
+ * This used to INSERT the hold row directly, with `supersedes_id` defaulting to
+ * NULL. A hold with no `originalRowId` was therefore a new, UNLINKED held row —
+ * the attribution it meant to hold stayed un-held and earnable, and the hold
+ * held nothing. And no hold was audited: nobody could say who placed it.
+ *
+ * Now `originalRowId` is REQUIRED (a hold on nothing is refused), the hold is
+ * placed on the HEAD of that row's chain, and it goes through 3387's
+ * `creator_ledger_append` together with its audit row, in one transaction.
+ * The pure model still rules first, so an unexplained or duplicate hold is
+ * refused before anything is read.
  */
 export async function holdCreatorAttribution(
   sc: any,
   original: CreatorAttribution,
   reason: string,
   originalRowId: string | null = null,
+  actor: LedgerActor = { kind: "system", userId: null },
 ): Promise<CreatorServiceResult<{ id: string; attribution: CreatorAttribution }>> {
   if (!(await isFlagEnabled(sc, CREATOR_ATTRIBUTION_FLAG))) return fail("disabled");
 
@@ -373,11 +692,20 @@ export async function holdCreatorAttribution(
   // duplicate hold. Re-checking it here would be a second place to drift.
   const held = holdAttribution(original, reason);
   if (held.status !== "built") return fail("refused_by_model", `${held.reason}: ${held.detail}`);
+  if (!originalRowId) {
+    return fail("not_found", "a hold must name the persisted attribution it holds; a hold on no row holds nothing");
+  }
 
-  const row = { ...toCreatorAttributionRow(held.attribution), supersedes_id: originalRowId };
-  const { data, error } = await sc.from("creator_attributions").insert(row).select().single();
-  if (error) return classifyDbError(error);
-  return { ok: true, value: { id: String(data.id), attribution: held.attribution } };
+  const chain = await readAttributionChain(sc, originalRowId);
+  if (!chain.ok) return chain;
+  const head = resolveHead(chain.value, originalRowId);
+  if (!head.ok) return fail(head.reason, head.detail);
+  const plan = planHold(head.head, reason, actor);
+  if (!plan.ok) return fail(plan.reason, plan.detail);
+  const appended = await appendToLedger(sc, plan.payload);
+  if (!appended.ok) return appended;
+  const heldRow = { ...head.head, ...plan.payload.attribution!, id: String(appended.value.attribution_id) } as AttributionRow;
+  return { ok: true, value: { id: String(appended.value.attribution_id), attribution: attributionModelFromRow(heldRow) } };
 }
 
 // ── Coverage read ───────────────────────────────────────────────────────────

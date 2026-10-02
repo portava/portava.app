@@ -53,7 +53,31 @@ SELECT t.typname FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
 SELECT flag, enabled FROM public.feature_flags;
 
 -- the watermark
-SELECT max(version) FROM supabase_migrations.schema_migrations;
+--
+-- DO NOT USE `SELECT max(version) FROM supabase_migrations.schema_migrations`.
+-- It is what this file used to say, and on production it answers '2272' — a
+-- PRE-cutover serial, months behind. That column is TEXT holding two formats at
+-- once, bare serials ('2272') and 14-digit timestamps ('20260921101005'), and
+-- under en_US.UTF-8 a timestamp sorts BELOW a four-digit serial (the third
+-- character decides it, '0' against '9'). So max() over the mixed column returns
+-- the largest SERIAL, not the newest migration. On portava-ci the same query is
+-- correct, because that column happens to be single-format — which is exactly
+-- why rehearsing it there can never catch this.
+--
+-- Compare like with like: take the newest of each format and let the caller see
+-- that the column is mixed.
+SELECT
+  max(version) FILTER (WHERE version ~ '^[0-9]{14}$') AS newest_timestamp_version,
+  max((version)::bigint) FILTER (WHERE version ~ '^[0-9]{1,6}$') AS newest_serial_version,
+  count(*) FILTER (WHERE version ~ '^[0-9]{14}$')     AS timestamp_rows,
+  count(*) FILTER (WHERE version ~ '^[0-9]{1,6}$')    AS serial_rows,
+  count(*)                                            AS total_rows
+FROM supabase_migrations.schema_migrations;
+
+-- And note what NEITHER watermark establishes: this table is not an inventory.
+-- A migration can be live in the database with no row here and no row in
+-- public.schema_migration_ledger either. See docs/migrations.md,
+-- "An applied migration file is a historical artifact".
 ```
 
 Then set `capturedAt`, `productionMigrationWatermark`, and the three

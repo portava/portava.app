@@ -33,7 +33,7 @@ import { requireAdmin } from "../lib/requireAdmin.js";
 import { resolveStoragePath } from "../lib/storagePath.js";
 import { resolveContentOwnerDetailed, type ContentOwnerOutcome } from "../lib/contentOwner.js";
 import { logModerationAction, auditReportAction } from "../lib/moderationAudit.js";
-import { affectedRows } from "../lib/affectedRows.js";
+import { affectedRows } from "../lib/affectedRows.js"; import { applyCanonicalModerationDecision, type CanonicalModerationOutcome } from "../services/media/MediaModerationService.js";
 
 const router = Router();
 
@@ -678,7 +678,7 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
    * lookup refuses before any bytes are removed (see that branch).
    */
   type AuditOutcome = "recorded" | "skipped_no_owner" | "skipped_owner_lookup_failed" | "not_applicable";
-  let auditOutcome: AuditOutcome = "not_applicable";
+  let auditOutcome: AuditOutcome = "not_applicable"; let canonicalOutcome: CanonicalModerationOutcome | null = null; let postcardSync: PostcardModerationSync | null = null; // census-media §37.9
 
   /**
    * Resolve the owner and say, out loud, which of the four outcomes happened.
@@ -753,7 +753,7 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
     // despite already selecting storage_path/storage_bucket for its listings.
     const { data: row, error: readErr } = await sc
       .from("post_media")
-      .select("id, user_id, storage_path, storage_bucket, thumbnail_storage_path")
+      .select("id, user_id, storage_path, storage_bucket, thumbnail_storage_path, post_id, processing_status, moderation_status, public_url") // census-media §37.9: the file as it was, for the postcard step (was: .select("id, user_id, storage_path, storage_bucket, thumbnail_storage_path"))
       .eq("id", id)
       .maybeSingle();
 
@@ -835,10 +835,10 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
       }
     }
 
-    const { error: delErr } = await sc.from("post_media").delete().eq("id", id);
+    const { data: deletedRows, error: delErr } = await sc.from("post_media").delete().eq("id", id).select("post_id, user_id, processing_status, moderation_status, public_url"); // census-media §37.10 item 4: RETURNING — the row as the delete found it, whatever another moderator did after the read above (was: const { error: delErr } = await sc.from("post_media").delete().eq("id", id);)
     if (delErr) { sendError(res, "db_error", delErr.message); return; }
-
-    res.json({ ok: true, id, action, target, deleted: true, objectsRemoved: paths.length });
+    const postcardDel = await syncPostcardAfterModeration(sc, { postId: (row as any).post_id, ownerUserId: (row as any).user_id ?? ownerId, before: ((deletedRows as any[] | null)?.[0] ?? row) as any, after: null }, req); // census-media §37.9: a removed file that counted leaves the count, and the passport cover (§37.10: decided from the deleted row itself)
+    res.json({ ok: true, id, action, target, deleted: true, objectsRemoved: paths.length, postcard: postcardDel, canonical: await applyCanonicalModerationDecision(sc, { bucket, path: ref.kind === "path" ? ref.path : null, decision: "remove" }) });
     return;
 
   } else if (target === "post_media") {
@@ -846,19 +846,19 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
       action === "approve" ? "approved" :
       action === "reject"  ? "rejected" :
       "flagged";
-
-    const { data: updated, error } = await sc
+    const priorPm = await readPostMediaBeforeModeration(sc, id); // census-media §37.9: the file as it was, so a decision that changes whether it counts re-runs the postcard step
+    let { data: updated, error } = await withPriorModerationStatus(priorPm, sc // census-media §37.10 item 4: a compare-and-set on the status the read above saw (was: const { data: updated, error } = await sc)
       .from("post_media")
       .update({ moderation_status: newStatus })
-      .eq("id", id)
-      .select("id");
-
-    if (error) { sendError(res, "db_error", error.message); return; }
+      .eq("id", id))
+      .select("id, storage_bucket, storage_path, post_id, user_id"); // census-media §37.9: the post and uploader for the postcard step (was: .select("id, storage_bucket, storage_path");)
+    let priorAtWrite = priorPm, casConflict = false; if (priorPm && !error && affectedRows(updated) === 0) ({ updated, error, before: priorAtWrite, conflict: casConflict } = await retryModerationCas(sc, id, newStatus)); // census-media §37.10 item 4: the status moved (or the row went) since the read — read it again and retry, bounded
+    if (casConflict) { sendError(res, "conflict", "This file's moderation state kept changing while you decided. Reload it and decide again."); return; } if (error) { sendError(res, "db_error", error.message); return; }
     if (!updated || (updated as any[]).length === 0) {
       res.status(404).json({ error: "not_found", message: "Media item not found" });
       return;
     }
-
+    const pmAfter = (updated as any[])[0] ?? {}; postcardSync = await syncPostcardAfterModeration(sc, { postId: pmAfter.post_id ?? priorPm?.post_id, ownerUserId: pmAfter.user_id ?? priorPm?.user_id, before: priorAtWrite, after: newStatus, recheckMediaId: id }, req); // census-media §37.10 item 4: the before-state the write replaced, and a re-read after the step (was: before: priorPm, after: newStatus) — §37.9: releasing a held file counts it (and may create the passport postcard); holding a counted one uncounts it — the same step /complete runs
     // Audit against the media OWNER (fail-closed), same as the delete branch.
     const { ownerId } = await resolveOwnerLoudly("post_media");
     if (ownerId) {
@@ -868,6 +868,25 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
       );
       if (!audit.ok) { sendError(res, "db_error", `Audit write failed: ${audit.error}`, { exposeDetail: true }); return; }
       auditOutcome = "recorded";
+    }
+
+    // §36 (census-media §20, MD351/MD274): carry the decision to the FILE's
+    // canonical record, through the one module that owns the state machine.
+    // The legacy post_media value above is unchanged; this is the second store
+    // that used to keep serving what the first one had just rejected. Reported,
+    // never swallowed — and at error level when a RESTRICTIVE decision failed
+    // to land, because that is the two stores disagreeing in the unsafe direction.
+    const pm = (updated as any[])[0] ?? {};
+    canonicalOutcome = await applyCanonicalModerationDecision(sc, {
+      bucket: pm.storage_bucket,
+      path: pm.storage_path,
+      decision: action === "approve" ? "approve" : action === "reject" ? "reject" : "flag",
+    });
+    if (action !== "approve" && (canonicalOutcome === "failed" || canonicalOutcome === "conflict")) {
+      req.log.error(
+        { id, action, canonicalOutcome, adminUserId: userId },
+        "admin media moderate: post_media moderated and audited, but the canonical asset did NOT follow — it may still be served from media_assets",
+      );
     }
 
   } else if (target === "hidden_gem") {
@@ -964,7 +983,80 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
   // `audit` is additive and is the whole point of the change above: an operator
   // who moderates content is told whether the action left an accountable record,
   // instead of getting an unqualified `ok: true` for an action with no audit row.
-  res.json({ ok: true, id, action, target, audit: auditOutcome });
+  res.json({ ok: true, id, action, target, audit: auditOutcome, ...(canonicalOutcome ? { canonical: canonicalOutcome } : {}), ...(postcardSync ? { postcard: postcardSync } : {}) }); // census-media §37.9: `postcard` says whether the decision re-ran the postcard step
 }));
 
 export default router;
+
+// ── census-media §37.9: a moderation decision re-runs the postcard step ──────
+//
+// The post_media branches of POST /admin/media/:id/moderate are the only paths
+// that change a post_media row's moderation_status after /complete wrote it
+// (MediaModerationService moves media_assets, the canonical store, not
+// post_media; the vendor stages decide the /complete value before it is
+// written). They now hand the file's before-state and its new status to
+// syncPostcardAfterModeration (routes/postcards.ts), which re-runs the one
+// postcard step /complete runs when — and only when — the file's countability
+// changed. The count rule stays in refreshMediaCounts alone.
+
+/** The post_media row as it was before a decision; null when it could not be read (the step then runs, because a recount converges whatever the prior state). */
+async function readPostMediaBeforeModeration(sc: any, id: string): Promise<{ post_id?: string | null; user_id?: string | null; processing_status?: unknown; moderation_status?: unknown; public_url?: unknown } | null> {
+  try {
+    const { data, error } = await sc.from("post_media").select("post_id, user_id, processing_status, moderation_status, public_url").eq("id", id).maybeSingle();
+    return error || !data ? null : (data as any);
+  } catch {
+    return null;
+  }
+}
+import { syncPostcardAfterModeration, type PostcardModerationSync } from "./postcards.js";
+
+// ── census-media §37.10 item 4: two moderators deciding the same file ────────
+//
+// The status write is a compare-and-set on the status the before-state read
+// saw, so the "did its countability change" decision is made from the state the
+// write actually replaced. A write that matches nothing means the status moved
+// (or the row went) after the read: the row is read again and the write retried,
+// at most MODERATION_CAS_RETRIES more times, then the decision is refused as a
+// conflict rather than made from a state nobody can vouch for. The recount's own
+// read-then-write window is closed by the step's re-read (routes/postcards.ts).
+
+const MODERATION_CAS_RETRIES = 2;
+const MODERATION_UPDATE_RETURNING = "id, storage_bucket, storage_path, post_id, user_id";
+type PriorPostMedia = { post_id?: string | null; user_id?: string | null; processing_status?: unknown; moderation_status?: unknown; public_url?: unknown };
+
+/** Narrow an update to the prior status (a null prior status matches IS NULL); with no prior, the update is left as it was. */
+function withPriorModerationStatus(prior: PriorPostMedia | null, q: any): any {
+  if (!prior) return q;
+  return prior.moderation_status == null ? q.is("moderation_status", null) : q.eq("moderation_status", String(prior.moderation_status));
+}
+
+/** The row now: `gone` when it no longer exists; `row: null` without `gone` when it could not be read. */
+async function readPostMediaStateNow(sc: any, id: string): Promise<{ row: PriorPostMedia | null; gone: boolean }> {
+  try {
+    const { data, error } = await sc.from("post_media").select("post_id, user_id, processing_status, moderation_status, public_url").eq("id", id).maybeSingle();
+    if (error) return { row: null, gone: false };
+    return data ? { row: data as PriorPostMedia, gone: false } : { row: null, gone: true };
+  } catch {
+    return { row: null, gone: false };
+  }
+}
+
+async function retryModerationCas(
+  sc: any,
+  id: string,
+  newStatus: string,
+): Promise<{ updated: any[] | null; error: any; before: PriorPostMedia | null; conflict: boolean }> {
+  for (let attempt = 0; attempt < MODERATION_CAS_RETRIES; attempt++) {
+    const now = await readPostMediaStateNow(sc, id);
+    if (now.gone) return { updated: [], error: null, before: null, conflict: false };
+    if (!now.row) {
+      // Unreadable: the write goes through unconditionally, as before §37.10,
+      // and the postcard step runs from an unknown prior (a recount converges).
+      const { data, error } = await sc.from("post_media").update({ moderation_status: newStatus }).eq("id", id).select(MODERATION_UPDATE_RETURNING);
+      return { updated: (data as any[] | null) ?? null, error, before: null, conflict: false };
+    }
+    const { data, error } = await withPriorModerationStatus(now.row, sc.from("post_media").update({ moderation_status: newStatus }).eq("id", id)).select(MODERATION_UPDATE_RETURNING);
+    if (error || affectedRows(data) > 0) return { updated: (data as any[] | null) ?? null, error, before: now.row, conflict: false };
+  }
+  return { updated: [], error: null, before: null, conflict: true };
+}

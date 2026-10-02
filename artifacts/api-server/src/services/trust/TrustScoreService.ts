@@ -23,6 +23,55 @@ import { logger as rootLogger } from "../../lib/logger.js";
 const logger = rootLogger.child({ service: "TrustScoreService" });
 
 /**
+ * A trust INPUT could not be read. Deliberately distinct from "the input is
+ * empty", because the two used to be the same observation and the difference
+ * decides whether a number may be written at all.
+ *
+ * ── WHY THIS IS AN EXCEPTION AND NOT A FLAG ─────────────────────────────────
+ * `recalculateTrustScore` does not merely return a score, it PERSISTS one to
+ * `trust_profiles` — the row that every display surface reads (getDisplayTrustScore,
+ * lib/trustScore.computeTrustScore, TrustPrivacyGuard) and that
+ * PassportProjectionService maps through LEVEL_RANK into capability grants. A
+ * returned `degraded: true` would have been invisible: every production call site
+ * discards the return value (`.catch(() => {})` in TrustAdminService and
+ * routes/trust-admin.ts, `.then(() => {})` in the settings fan-out, and the
+ * scheduler ignores it too). An exception is the only signal those call sites
+ * already act on — the maintenance scheduler counts it as `recalcFailures` and
+ * logs it, which is exactly the accounting this condition needs.
+ *
+ * The rule it enforces: WHEN AN INPUT CANNOT BE READ, WRITE NOTHING. A stale row
+ * is a known-old measurement; a row computed from inputs that failed to load is
+ * a fabricated one wearing a fresh `last_recalculated_at`.
+ */
+export class TrustInputUnavailableError extends Error {
+  /** Which input failed — 'settings' | 'events' | 'caps'. */
+  readonly input: TrustScoreInput;
+  /**
+   * The message keeps the `trust_<input> read failed` wording the three throw
+   * sites already used, because that is what callers and tests read it by. The
+   * CLASS is the addition: `input` says which read failed without parsing prose,
+   * and `instanceof` lets a caller separate "could not read" from any other
+   * throw. Anything catching a plain Error is unaffected.
+   */
+  constructor(input: TrustScoreInput, detail: string, userId?: string) {
+    super(
+      `recalculateTrustScore: trust_${input} read failed` +
+      (userId ? ` for ${userId}` : "") +
+      ` — ${detail} (refusing to persist a score)`,
+    );
+    this.name = "TrustInputUnavailableError";
+    this.input = input;
+  }
+}
+
+export type TrustScoreInput = "settings" | "events" | "caps";
+
+/** Message text out of a PostgREST error object, for the exception detail. */
+function describeDbError(error: any): string {
+  return String(error?.message ?? error?.code ?? "db_error");
+}
+
+/**
  * The public trust levels, as a RUNTIME vocabulary.
  *
  * The union used to exist only in the type system, so nothing could ask at
@@ -96,13 +145,18 @@ async function loadSettings(db: SupabaseClient): Promise<Settings> {
     const { data, error } = await db.from("trust_settings").select("*").eq("id", 1).maybeSingle();
     if (error) {
       // A failed read is NOT "use the defaults". The defaults are what the
-      // engine ships with; the row is what an admin has set. Scoring against
-      // the wrong weights and persisting the result is a wrong score written
-      // silently — so the recalculation aborts and the existing profile stands.
-      throw new Error(`recalculateTrustScore: trust_settings read failed — ${error.message ?? error.code ?? "db_error"}`);
+      // engine ships with; the row is what an admin has set. The weights and
+      // the six level thresholds are what turn nine category numbers into
+      // `overall_score` and `public_level`, and `public_level` is a capability
+      // grant — so scoring against the wrong weights and persisting the result
+      // publishes a score computed under rules nobody chose, silently. The
+      // recalculation aborts and the existing profile stands.
+      logger.warn({ err: error }, "loadSettings failed — refusing to score");
+      throw new TrustInputUnavailableError("settings", describeDbError(error));
     }
-    // No row at all is a legitimate state (the seed migration not yet run):
-    // there is nothing to disagree with, so the defaults apply.
+    // A missing row IS a legitimate "use the defaults" (the seed migration not
+    // yet run): trust_settings is a singleton whose columns all carry the same
+    // defaults this object holds, so there is nothing to disagree with.
     if (!data) return DEFAULT_SETTINGS;
     const d = data as any;
     // Fall back to the default ONLY when the stored value is null/absent/NaN —
@@ -149,14 +203,33 @@ async function loadEvents(db: SupabaseClient, userId: string): Promise<any[]> {
     .in("status", ["applied", "confirmed"])
     .gt("created_at", since);
   if (error) {
-    // Vacuity is failure. supabase-js resolves on a database error, and this
-    // used to turn that into "no events": recalculateTrustScore then wrote
-    // every category back to the neutral 50 and — since 2371 — recorded
-    // evidence_count = 0, which means MEASURED AND EMPTY. A transient read
-    // failure would have erased a user's standing and stamped it as measured.
-    // The recalculation now aborts; the previous profile stays as it was, and
-    // the scheduler counts the failure and retries next pass.
-    throw new Error(`recalculateTrustScore: trust_events read failed for ${userId} — ${error.message ?? error.code ?? "db_error"}`);
+    // THE MOST DANGEROUS OF THE THREE. Returning [] here did not produce "no
+    // score" — it produced a CONFIDENT one. computeCategoryScore returns the
+    // neutral 50 for a category with no events, the caller loops over the fixed
+    // nine ALL_CATEGORIES, and the nine weights sum to exactly 1.000, so an empty
+    // event list scores exactly 50.00 and `scoreToLevel` promotes it to
+    // `reliable_traveler` (level_reliable is 50, compared with >=).
+    //
+    // That number was then UPSERTED over whatever was already there. So one
+    // transient trust_events read failure rewrote a real, earned profile —
+    // a city_trusted 92 or a capped 35 alike — to a fabricated 50/reliable, with
+    // a fresh `last_recalculated_at` asserting it had just been measured. The
+    // maintenance scheduler runs this every 6 hours over every dirty and stale
+    // user, so a table-wide read failure would have flattened the whole
+    // population to 50 and, via PassportProjectionService's LEVEL_RANK mapping,
+    // handed canHostTrip / canUseCrewLocation / canContributeLiveIntel to every
+    // account that had previously been below reliable.
+    //
+    // Since migration 2371 it is worse still: the fabricated row also records
+    // evidence_count = 0, which means MEASURED AND EMPTY — the read failure is
+    // stamped as a measurement.
+    //
+    // A user who genuinely has no events is a DIFFERENT case and is still
+    // handled downstream — it reaches the caller as an empty array, not as this.
+    // The recalculation aborts; the previous profile stays as it was, and the
+    // scheduler counts the failure and retries next pass.
+    logger.warn({ err: error, userId }, "loadEvents failed — refusing to score");
+    throw new TrustInputUnavailableError("events", describeDbError(error), userId);
   }
   return (data as any[]) ?? [];
 }
@@ -174,11 +247,18 @@ async function loadCaps(
     .is("lifted_at", null)
     .or(`expires_at.is.null,expires_at.gt.${now}`);
   if (error) {
-    // Same rule as loadEvents. "No caps" on a failed read would persist an
-    // UNCAPPED score for a user who has a live ceiling — the one mechanism
-    // that makes a confirmed serious finding survive a good record, removed by
-    // a transient error. Abort instead; the capped profile stands.
-    throw new Error(`recalculateTrustScore: trust_caps read failed for ${userId} — ${error.message ?? error.code ?? "db_error"}`);
+    // Caps are the ONLY thing that makes a serious finding survive a good
+    // record: the ceiling clamps a category from above no matter how much
+    // positive history surrounds it (see computeCategoryScore's note). Treating
+    // an unreadable trust_caps as "no caps" therefore did not just lose
+    // information — it computed the UNCLAMPED score and persisted it, laundering
+    // a `fake_gps_confirmed` ceiling of 35 or a permanent `behavior_confirmed`
+    // ceiling of 40 out of the profile, and re-granting the capabilities the
+    // ceiling existed to withhold. Failing the whole recalculation is the only
+    // safe direction: a stale capped row beats a fresh uncapped one.
+    // Abort instead; the capped profile stands.
+    logger.warn({ err: error, userId }, "loadCaps failed — refusing to score");
+    throw new TrustInputUnavailableError("caps", describeDbError(error), userId);
   }
   const caps: Record<string, number> = {};
   for (const row of (data as any[]) ?? []) {
@@ -225,14 +305,36 @@ const EARN_CONFIDENCE_WEIGHT = 5;
  * TrustCapService.applyEventCaps), which clamps the category from above no
  * matter how much positive history surrounds it. The ceiling — not the delta —
  * is what makes a severe finding survive an otherwise glowing record.
+ *
+ * ── Q1, OWNER DECISION 2026-09-22: NO EVENTS IS `null`, NOT 50 ──────────────
+ *
+ * This used to `return 50` for a category with no events, under the comment
+ * "neutral default". That 50 was a FABRICATED MEASUREMENT: it is the same value
+ * a genuinely measured neutral category holds, so once written it could never
+ * again be told apart from one. Because `recalculateTrustScore` weighted all
+ * nine categories with weights summing to 1.000, the consequences were not
+ * subtle — a user with ZERO events scored exactly 50.00 and was promoted to
+ * `reliable_traveler`, and a user with ONE negative event was dragged back
+ * toward 50 by the eight fabricated neutrals around it.
+ *
+ * `null` now means NOT SCORED and is the only honest answer when there is no
+ * evidence. It is NOT zero: a caller that coerces it (`Number(null)` is 0, and
+ * `Number.isFinite(0)` is true) turns "we have not measured you" into the worst
+ * measurement available. Every consumer in this repo was swept for that exact
+ * coercion; see the null-handling notes on `shapeProfile`,
+ * `PassportProjectionService.buildDomainTrust` and `lib/trustScore`.
+ *
+ * Migration 2999 makes the ten columns nullable so this value can be persisted.
+ * The engine must not write NULL against a database without it — see that
+ * file's "ENABLEMENT PRECONDITION".
  */
 function computeCategoryScore(
   events: any[],
   category: string,
   halfLifeDays: number,
-): number {
+): number | null {
   const relevant = events.filter((e) => e.category === category);
-  if (relevant.length === 0) return 50; // neutral default
+  if (relevant.length === 0) return null; // NOT SCORED — see the docblock above
 
   let weightedSum = 0;
   let totalWeight = 0;
@@ -263,12 +365,122 @@ function scoreToLevel(score: number, s: Settings): PublicTrustLevel {
   return "new_traveler";
 }
 
+/**
+ * THE AGGREGATION RULE (Q1, owner decision 2026-09-22).
+ *
+ * "Unmeasured categories must not contribute an invented 50." So the weighted
+ * mean is RENORMALISED over the categories actually present: each present
+ * category keeps its configured weight, and the sum is divided by the total
+ * weight of the present categories rather than by the 1.000 that all nine
+ * would contribute. A user measured on two categories is scored on those two.
+ *
+ * WHY RENORMALISE RATHER THAN DIVIDE BY 1.000
+ * -------------------------------------------
+ * Dividing by the full 1.000 while omitting the absent categories is the same
+ * fabrication wearing a different hat: it silently treats every unmeasured
+ * category as a ZERO, which is strictly worse than the 50 this decision
+ * removes. Renormalising is the only option that lets the measured evidence
+ * speak at its own scale.
+ *
+ * WHAT RENORMALISATION COSTS, STATED RATHER THAN DISCOVERED
+ * ---------------------------------------------------------
+ * A single measured category now DETERMINES the overall score, where before it
+ * contributed only its weight. That is the point in the direction the decision
+ * cares about — one negative event is no longer diluted by eight
+ * non-measurements — but it is symmetric, so a single POSITIVE category also
+ * moves the overall further than it used to. Two existing mechanisms bound
+ * that, and neither is weakened here:
+ *
+ *   * `EARN_CONFIDENCE_WEIGHT` already ramps positive movement per category,
+ *     so one positive event yields 56 rather than 80, while negative movement
+ *     applies at full strength immediately. The asymmetry survives
+ *     renormalisation untouched because it lives inside `computeCategoryScore`.
+ *   * `evidence_weight`/`evidence_count` (migration 2371) already travel with
+ *     the profile and already band into `passportTrustConfidence`. "How much is
+ *     behind this number" is therefore ALREADY a first-class, separately
+ *     presented signal, which is why no new evidence gate is invented here.
+ *
+ * NO NEW PROMOTION THRESHOLD IS INTRODUCED. The decision authorises removing
+ * fabricated neutrals; inventing a minimum-evidence bar for promotion would be
+ * a different product rule and an owner decision of its own. What DOES change
+ * is that promotion can no longer happen on no evidence at all, because a user
+ * with nothing measured now has no score to be promoted from.
+ *
+ * `null` in, `null` out: with NO category present there is nothing to average
+ * and the overall score is NOT SCORED.
+ */
+export function aggregateOverall(
+  categories: Readonly<Record<string, number | null>>,
+  weights: Readonly<Record<string, number>>,
+): number | null {
+  let weightedSum = 0;
+  let presentWeight = 0;
+
+  for (const cat of ALL_CATEGORIES) {
+    const v = categories[cat];
+    // Explicitly reject null/undefined BEFORE any numeric coercion. `Number(null)`
+    // is 0 and `Number.isFinite(0)` is true, so the obvious one-liner would fold
+    // every unscored category in as a hard ZERO — the fabricated measurement
+    // this decision exists to remove, in its worst form.
+    if (v === null || v === undefined) continue;
+    const n = Number(v);
+    if (!Number.isFinite(n)) continue;
+    const w = Number(weights[cat]);
+    if (!Number.isFinite(w) || w <= 0) continue;
+    weightedSum += n * w;
+    presentWeight += w;
+  }
+
+  // Not one measured category: NOT SCORED. Note this is reached both when the
+  // user has no events and when every configured weight is zero — in either
+  // case there is no measurement to report, which is the same answer.
+  if (presentWeight <= 0) return null;
+  return Math.round((weightedSum / presentWeight) * 100) / 100;
+}
+
+/**
+ * The public level for an overall score that may be NOT SCORED.
+ *
+ * A NULL overall must NOT be run through `scoreToLevel`: numeric comparison
+ * would coerce it to 0 and answer `new_traveler` by accident — the right label
+ * reached by a wrong route, which is the kind of correctness that stops being
+ * correct the moment a threshold moves.
+ *
+ * `new_traveler` is returned DELIBERATELY and for a different reason: it is
+ * already the vocabulary this codebase uses for a person nobody has measured
+ * (`TrustPrivacyGuard.publicTrustLabel` renders it "New Traveler", which is
+ * what an ABSENT profile has always displayed), and it is the column's own
+ * DEFAULT. It is a statement that there is no standing to show, not a
+ * measurement of a low one. `public_level` stays NOT NULL in migration 2999
+ * precisely because this answer exists.
+ */
+export function levelForOverall(overall: number | null, s: Settings): PublicTrustLevel {
+  if (overall === null) return "new_traveler";
+  return scoreToLevel(overall, s);
+}
+
 export interface TrustScoreResult {
   userId: string;
-  overall_score: number;
+  /**
+   * The renormalised weighted mean over the categories actually present, or
+   * `null` = NOT SCORED when none is (Q1, owner decision 2026-09-22). See
+   * `aggregateOverall`.
+   *
+   * `null` IS NOT ZERO and is not 50. A consumer that coerces it — `Number(null)`
+   * is 0, and `Number.isFinite(0)` is true — publishes the lowest measurement
+   * available as a fact about a person nobody measured.
+   */
+  overall_score: number | null;
   public_level: PublicTrustLevel;
-  categories: Record<TrustCategory, number>;
+  /** Per category: the measured score, or `null` = NOT SCORED (no events in it). */
+  categories: Record<TrustCategory, number | null>;
   capsApplied: string[];
+  /**
+   * False when the user had NO qualifying trust events, in which case nothing was
+   * persisted and the numbers above are arithmetic only — never a measurement.
+   * See the persist block for why an unscored user must have no row at all.
+   */
+  persisted: boolean;
   /**
    * How much evidence stands behind the scores (Passport §9 "Trust Confidence",
    * §10 "an 82 with high evidence is not equivalent to an 82 with little").
@@ -309,34 +521,149 @@ export async function recalculateTrustScore(
   ]);
 
   const halfLife = settings.decay_half_life_days;
-  const categories: Record<string, number> = {};
+  const categories: Record<string, number | null> = {};
   const capsApplied: string[] = [];
 
   for (const cat of ALL_CATEGORIES) {
-    let score = computeCategoryScore(events, cat, halfLife);
-    // Apply cap ceiling
-    if (caps[cat] !== undefined && score > caps[cat]) {
-      score = caps[cat];
+    const score = computeCategoryScore(events, cat, halfLife);
+    // NOT SCORED stays NOT SCORED. A cap is a CEILING on a measurement, and
+    // there is nothing here to put a ceiling on: applying one would manufacture
+    // a score for a category with no evidence — and, because ceilings are low
+    // by construction, it would manufacture a BAD one. A cap on an unmeasured
+    // category takes effect the moment that category is first measured, which
+    // is the correct time for it to bite.
+    if (score === null) {
+      categories[cat] = null;
+      continue;
+    }
+    let capped = score;
+    if (caps[cat] !== undefined && capped > caps[cat]) {
+      capped = caps[cat];
       capsApplied.push(cat);
     }
-    categories[cat] = Math.round(score * 100) / 100;
+    categories[cat] = Math.round(capped * 100) / 100;
   }
 
-  // Weighted overall score
-  const overall = Math.round(
-    (categories.plan_attendance  * settings.weight_plan_attendance +
-     categories.host_quality     * settings.weight_host_quality +
-     categories.communication    * settings.weight_communication +
-     categories.respect_safety   * settings.weight_respect_safety +
-     categories.location_honesty * settings.weight_location_honesty +
-     categories.content_quality  * settings.weight_content_quality +
-     categories.community_value  * settings.weight_community_value +
-     categories.guide_accuracy   * settings.weight_guide_accuracy +
-     categories.passport_authenticity * settings.weight_passport_auth) * 100
-  ) / 100;
+  // Renormalised over the categories actually present — see `aggregateOverall`
+  // for the rule and for what it deliberately does not do.
+  const overall = aggregateOverall(categories, {
+    plan_attendance:       settings.weight_plan_attendance,
+    host_quality:          settings.weight_host_quality,
+    communication:         settings.weight_communication,
+    respect_safety:        settings.weight_respect_safety,
+    location_honesty:      settings.weight_location_honesty,
+    content_quality:       settings.weight_content_quality,
+    community_value:       settings.weight_community_value,
+    guide_accuracy:        settings.weight_guide_accuracy,
+    passport_authenticity: settings.weight_passport_auth,
+  });
 
-  const public_level = scoreToLevel(overall, settings);
+  const public_level = levelForOverall(overall, settings);
   const evidence = measureEvidence(events, halfLife);
+
+  // ── NO EVIDENCE IS NOT NEUTRAL EARNED TRUST ────────────────────────────────
+  //
+  // computeCategoryScore returns 50 for a category with no events, the loop above
+  // walks the fixed nine ALL_CATEGORIES rather than the categories actually
+  // present, and the nine weights sum to exactly 1.000 — so a user with zero
+  // events scores exactly 50.00. `level_reliable` is 50 and scoreToLevel compares
+  // with >=, so that user is promoted to `reliable_traveler`, rung 3 of 6.
+  //
+  // That is not a cosmetic badge. PassportProjectionService maps public_level
+  // through LEVEL_RANK into capability grants, so persisting this row hands
+  // canHostTrip, canUseCrewLocation and canContributeLiveIntel to a user who has
+  // done nothing. On the first enable of `trust_engine_enabled` — against a
+  // trust_events table that is empty because the ingest lane was off — that would
+  // be every user in the system at once.
+  //
+  // The canonical way to say "no earned trust" already exists and is honoured
+  // everywhere else: ABSENCE OF A ROW. getDisplayTrustScore returns null for a
+  // user with no profile (documented at its own definition), lib/trustScore
+  // types the score as `number | null` explicitly "rather than a fabricated
+  // number", TrustPrivacyGuard falls back to the `new_traveler` label, and the
+  // client already branches on that via hasScore. Writing a fabricated row is
+  // what DESTROYS that representation.
+  //
+  // So: compute, but do not persist. The result is returned with
+  // persisted:false so a caller can tell arithmetic from measurement.
+  //
+  // KNOWN LIMIT, deliberately not papered over: a user who HAS a row and whose
+  // events have since been removed keeps their last evidence-derived row. It is
+  // stale, but it is not fabricated, and clearing it would need a decision about
+  // whether an erased-evidence user should read null or a floor. Recorded as a
+  // contract gap rather than guessed at. The related per-category gap is the
+  // same shape: trust_profiles' nine category columns and overall_score are all
+  // `numeric(5,2) NOT NULL DEFAULT 50.00`, so there is no way to persist "this
+  // one category is unscored" — a user with evidence in one category still
+  // carries eight fabricated 50s into the weighted overall.
+  // SCOPE: only a user who has NEVER been scored. A user who already HAS a row
+  // and whose events have since decayed out is refreshed as before — that case
+  // is deliberately pinned by trustAsymmetryAndMaintenance.test.ts ("refreshes a
+  // stale profile even with no new events"), and it is a different problem: a
+  // stale 60 really is wrong, and leaving it would be its own defect. Narrowing
+  // here fixes the dangerous case — every user at once on first enable — without
+  // silently reversing a decision someone already made and tested.
+  //
+  // A TRUST_CAPS ROW IS ALSO EVIDENCE, and is excluded from the skip. A cap is
+  // deliberate recorded state about this specific user — a moderation ceiling
+  // or an admin's ruling — not the untouched population this block exists to
+  // protect, and a ceiling can only ever pull a score DOWN (trust_caps has no
+  // floor column), so keeping a capped user's row promotes nobody. It matters
+  // because `main` made the admin cap lane read its result back off
+  // trust_profiles and throw when the read is not `ok`
+  // (TrustAdminService.adminOverrideScore and confirmOverrideRemoved), so that
+  // an override can never be reported or audited as applied without being
+  // observed. Skipping the persist for a capped user would turn every such
+  // override — and every lift of one — into a hard failure: a different defect,
+  // not this one's fix. LIFTED caps count too: the lift path recalculates after
+  // the ceiling is gone, and the user is still one an admin has deliberately
+  // touched.
+  if (events.length === 0) {
+    const { data: existing, error: existingError } = await db
+      .from("trust_profiles")
+      .select("user_id")
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (existingError) {
+      // Same rule as the trust_caps read below, and the same rule main's
+      // loaders now follow: supabase-js RESOLVES on a DB error, so an unread
+      // `error` here makes an unreachable table look like "this user has never
+      // been scored". That answer decides to write nothing AND reports
+      // `persisted: false` to callers that discard the result, so the outage
+      // would be invisible — every recalculation silently a no-op. A throw is
+      // the signal the call sites already act on: every production caller
+      // discards the return value, and the maintenance scheduler counts a throw
+      // as `recalcFailures`. A `degraded` field would be read by none of them.
+      throw new Error(
+        `recalculateTrustScore: trust_profiles existence read failed for ${userId} — ${(existingError as any).message ?? (existingError as any).code ?? "db_error"}`,
+      );
+    }
+    const { data: capRows, error: capRowsError } = await db
+      .from("trust_caps")
+      .select("id")
+      .eq("user_id", userId)
+      .limit(1);
+    if (capRowsError) {
+      // Same rule as loadCaps: "no caps" on a failed read is a guess, and here
+      // it would decide to write nothing at all. Refuse instead.
+      throw new Error(
+        `recalculateTrustScore: trust_caps history read failed for ${userId} — ${(capRowsError as any).message ?? (capRowsError as any).code ?? "db_error"}`,
+      );
+    }
+    const everCapped = ((capRows as any[]) ?? []).length > 0;
+    if (!existing && !everCapped) {
+      return {
+        userId,
+        overall_score: overall,
+        public_level,
+        categories: categories as Record<TrustCategory, number>,
+        capsApplied,
+        persisted: false,
+        evidenceWeight: evidence.weight,
+        evidenceCount: evidence.count,
+      };
+    }
+  }
 
   // Persist (non-fatal — return computed result even if persist fails)
   {
@@ -383,8 +710,12 @@ export async function recalculateTrustScore(
     userId,
     overall_score: overall,
     public_level,
-    categories: categories as Record<TrustCategory, number>,
+    // `number | null` — the cast said `number` until Q1 and would now be a
+    // lie the compiler accepts (it is assignable either way), hiding the very
+    // nullability this return exists to carry.
+    categories: categories as Record<TrustCategory, number | null>,
     capsApplied,
+    persisted: true,
     evidenceWeight: evidence.weight,
     evidenceCount: evidence.count,
   };
@@ -570,25 +901,39 @@ function shapeProfile(userId: string, data: unknown): TrustScoreResult {
       const n = Number(v);
       return Number.isFinite(n) ? n : null;
     };
+    // Q1: every score now passes through `num`, which answers `null` for a
+    // NULL column and for an unparseable one alike. Two reasons it is not
+    // optional:
+    //
+    //   1. A NULL score must arrive as `null`, never as 0. These fields used to
+    //      be handed through RAW, so a nullable column (migration 2999) would
+    //      have delivered a literal `null` into a field typed `number` — and
+    //      every downstream `Number(x)` turns that into a hard ZERO.
+    //   2. PostgREST returns numeric(5,2) as a STRING ("50.00"). The raw
+    //      passthrough therefore already put strings behind a `number` type;
+    //      comparisons like `s >= 60` in TrustPrivacyGuard happened to work on
+    //      them by coercion, which is luck rather than a contract.
     return {
       userId,
-      overall_score: d.overall_score,
+      overall_score: num(d.overall_score),
       public_level:  d.public_level,
       capsApplied:   [],
+      // A row exists, so by definition this IS persisted state.
+      persisted:     true,
       // NULL (pre-2371 row, or a database without the columns) stays null:
       // "not measured" is a different answer from "measured, nothing there".
       evidenceWeight: num(d.evidence_weight),
       evidenceCount:  num(d.evidence_count),
       categories: {
-        plan_attendance:       d.plan_attendance,
-        host_quality:          d.host_quality,
-        communication:         d.communication,
-        respect_safety:        d.respect_safety,
-        location_honesty:      d.location_honesty,
-        content_quality:       d.content_quality,
-        community_value:       d.community_value,
-        guide_accuracy:        d.guide_accuracy,
-        passport_authenticity: d.passport_authenticity,
+        plan_attendance:       num(d.plan_attendance),
+        host_quality:          num(d.host_quality),
+        communication:         num(d.communication),
+        respect_safety:        num(d.respect_safety),
+        location_honesty:      num(d.location_honesty),
+        content_quality:       num(d.content_quality),
+        community_value:       num(d.community_value),
+        guide_accuracy:        num(d.guide_accuracy),
+        passport_authenticity: num(d.passport_authenticity),
       },
     };
   }

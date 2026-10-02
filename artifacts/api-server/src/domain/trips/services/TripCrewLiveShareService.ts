@@ -8,6 +8,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../../../lib/logger.js";
 import { CrewMapUnavailableError } from "./TripCrewLocationService.js";
+import { presenceFusion } from "../../../presence/fusion/store.js";
 
 const logger = rootLogger.child({ service: "TripCrewLiveShareService" });
 
@@ -140,12 +141,22 @@ export async function startLiveShare(
 
 /**
  * Stop the caller's active live share session for a trip.
+ *
+ * REVOKES THE FUSION STORE'S COPY FIRST (owner decision A). The store retains
+ * the member's last admitted crew estimate under the scope
+ * `{ trip_crew, tripId }` for up to its TTL; stopping the share is the consent
+ * withdrawal that scope exists to honour, so the estimate goes before the row
+ * is closed — a concurrent fused read between the two must already see
+ * nothing. The count is returned so a caller (and a test) can see the effect
+ * rather than infer it.
  */
 export async function stopLiveShare(
   db: SupabaseClient,
   tripId: string,
   userId: string,
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; revokedEstimates?: number }> {
+  const revokedEstimates = presenceFusion.revokeSubjectInScope(userId, { kind: "trip_crew", id: tripId });
+
   const { error } = await db
     .from("trip_crew_location_sessions")
     .update({ status: "stopped", stopped_at: new Date().toISOString() })
@@ -159,7 +170,7 @@ export async function stopLiveShare(
   }
 
   await logEvent(db, tripId, userId, "live_share_stopped");
-  return { ok: true };
+  return { ok: true, revokedEstimates };
 }
 
 /**

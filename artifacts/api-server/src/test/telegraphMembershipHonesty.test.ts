@@ -507,3 +507,107 @@ describe("§20.7 — an unreadable table must not send a person with an invite t
     assert.equal(r.body?.error, "degraded_unavailable", JSON.stringify(r.body));
   });
 });
+
+/*
+ * ── A DEPARTED MEMBER IS NOT A MEMBER, AND THREE GATES IN THIS FILE DISAGREE ──
+ *
+ * Leaving a thread does NOT delete the row: `POST /threads/:id/leave` sets
+ * `left_at` and keeps it (`routes/messaging.ts`, the leave handler's
+ * `.update({ left_at: now })`). Departure is recorded, not erased — which is
+ * right, and which means every membership gate has to say `.is('left_at', null)`
+ * or it matches the person who walked out.
+ *
+ * Most gates in this file do. Three do not, and all three guard a STATE CHANGE:
+ *   PATCH  /threads/:threadId/messages/:messageId   — edit a message
+ *   POST   /messages/:messageId/translate/retry     — re-run a translation
+ *   POST   /threads/:threadId/e2ee                  — change the thread's encryption state
+ *
+ * RLS DOES NOT SAVE THEM, which is worth writing down because it is the obvious
+ * hope. Two of the three use the caller's own client, and 2402's `mtm_select` is
+ * `((auth.uid() = user_id) OR authz.is_active_thread_member(thread_id))` — the
+ * FIRST disjunct lets anyone read their own membership row whatever `left_at`
+ * says. The third uses the service client, which is BYPASSRLS outright.
+ *
+ * EVERY CASE IS PAIRED. A suite that only asserted "a departed member gets 403"
+ * would pass against a route that refuses everybody, so each case is run twice
+ * against the same fixture with only `left_at` changed.
+ */
+describe("§14.2 — a departed member may not change a thread they have left", () => {
+  const DEPARTED_AT = "2026-09-01T00:00:00.000Z";
+
+  /** The same store, with A's DM membership closed. B stays active. */
+  function departed(): Record<string, any[]> {
+    const base = store();
+    return {
+      ...base,
+      message_thread_members: base.message_thread_members.map((m: any) =>
+        m.thread_id === DM && m.user_id === A ? { ...m, left_at: DEPARTED_AT } : m,
+      ),
+    };
+  }
+
+  const GATES = [
+    { what: "PATCH /threads/:id/messages/:id — editing a message in a thread you left",
+      method: "PATCH" as const, path: `/threads/${DM}/messages/${MSG}`, body: { body: "edited after leaving" } },
+    { what: "POST /messages/:id/translate/retry — retrying a translation in a thread you left",
+      method: "POST" as const, path: `/messages/${MSG}/translate/retry`, body: undefined },
+    { what: "POST /threads/:id/e2ee — changing the encryption state of a thread you left",
+      method: "POST" as const, path: `/threads/${DM}/e2ee`, body: undefined },
+  ];
+
+  /**
+   * The assertion is NOT a hardcoded 403. These three routes do not agree on
+   * what a non-member is told: the two message routes send `forbidden`, and
+   * `POST /threads/:id/e2ee` sends `not_found` so a stranger cannot enumerate
+   * threads by reading the refusal. Pinning one status would have made this
+   * suite a statement about the routes' vocabulary rather than about access,
+   * and it would go red the day either route changes its refusal for reasons
+   * that have nothing to do with membership.
+   *
+   * So each gate MEASURES its own non-member refusal first, from C — the actor
+   * with no row at all — and the departed case asserts A gets exactly that:
+   * same status, same error code. A member who has left is a non-member, and
+   * the property under test is that the route cannot tell the two apart.
+   */
+  for (const g of GATES) {
+    describe(g.what, () => {
+      it("BASELINE — a genuine non-member is refused (this is the refusal the departed case must match)", async () => {
+        use(store());
+        const r = await req(messagingHarness.base, g.method, g.path, C, g.body);
+        assert.ok(
+          r.status >= 400 && r.status < 500,
+          `a user with no membership row reached this route: ${r.status} ${JSON.stringify(r.body)}`,
+        );
+      });
+
+      it("CONTROL — an ACTIVE member is NOT given the non-member refusal", async () => {
+        use(store());
+        const stranger = await req(messagingHarness.base, g.method, g.path, C, g.body);
+        use(store());
+        const r = await req(messagingHarness.base, g.method, g.path, A, g.body);
+        assert.notEqual(
+          `${r.status}/${r.body?.error}`,
+          `${stranger.status}/${stranger.body?.error}`,
+          `the fixture never reaches past the membership gate — an active member is ` +
+            `refused exactly like a stranger, so the departed case below proves nothing: ` +
+            JSON.stringify(r.body),
+        );
+      });
+
+      it("a DEPARTED member is refused exactly as a non-member is", async () => {
+        use(store());
+        const stranger = await req(messagingHarness.base, g.method, g.path, C, g.body);
+        use(departed());
+        const r = await req(messagingHarness.base, g.method, g.path, A, g.body);
+        assert.equal(
+          `${r.status}/${r.body?.error}`,
+          `${stranger.status}/${stranger.body?.error}`,
+          `a member who has left the thread was not refused the way a non-member is. ` +
+            `Leaving KEEPS the row and stamps left_at, so a membership read matching only ` +
+            `on (thread_id, user_id) matches the departed row and hands them a state ` +
+            `change in a thread they walked out of: ${JSON.stringify(r.body)}`,
+        );
+      });
+    });
+  }
+});

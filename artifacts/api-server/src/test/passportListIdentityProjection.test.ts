@@ -207,7 +207,8 @@ describe("§3 — both bulk lists actually route through it", () => {
   const read = (rel: string): string => readFileSync(new URL(rel, import.meta.url), "utf8");
 
   it("3a — the Discovery search list and the Compass traveler list each route identity through a projection", () => {
-    assert.match(read("../routes/discoverySearch.ts"), /buildListIdentityProjections\(/);
+    // census-discovery §70: searchTravelers moved to the search platform module.
+    assert.match(read("../lib/inputAssistance/searchCandidates.ts"), /buildListIdentityProjections\(/);
     // census-compass CP-02 (2026-09-20): the Compass traveler list moved OFF the
     // batch list projection and onto the stricter per-person consumer one. The
     // batch variant takes identity ROWS (display_name / avatar_url / …) and the
@@ -232,14 +233,14 @@ describe("§3 — both bulk lists actually route through it", () => {
     // pattern only tolerated ONE dot. A guard that cannot see the copy it was
     // written to forbid is worse than none.
     const inline = /display_name\s*\?\?\s*(?:[\w.]+\.)?name\b/;
-    for (const f of ["../routes/discoverySearch.ts", "../routes/compass.ts"]) {
+    for (const f of ["../routes/discoverySearch.ts", "../lib/inputAssistance/searchCandidates.ts", "../routes/compass.ts"]) {
       assert.ok(!inline.test(read(f)), `${f} still resolves the display name inline`);
     }
     assert.match(read("../lib/publicIdentity.ts"), inline, "the canonical rule must still be somewhere");
   });
 
   it("3c — neither list gates the avatar inline any more", () => {
-    for (const f of ["../routes/discoverySearch.ts", "../routes/compass.ts"]) {
+    for (const f of ["../routes/discoverySearch.ts", "../lib/inputAssistance/searchCandidates.ts", "../routes/compass.ts"]) {
       assert.ok(
         !/show_profile_picture_publicly\s*!==\s*false/.test(read(f)),
         `${f} still applies the picture opt-out itself`,

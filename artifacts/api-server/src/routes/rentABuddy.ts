@@ -18,7 +18,7 @@
 import { Router } from "express";
 import { requireUser, optionalUser, sendError, safeSecretEquals } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
-import { isFlagEnabled, isKillSwitchEngaged } from "../lib/featureFlags.js";
+import { isFlagEnabled, isKillSwitchEngaged, engagedRabBookingKillSwitch } from "../lib/featureFlags.js";
 import { recordTrustEvent } from "../services/trust/TrustEventService.js";
 import { computeTrustScore } from "../lib/trustScore.js";
 // §21/§33: the buddy card requests its Passport consumer projection (identity,
@@ -299,7 +299,7 @@ async function checkRentBuddyEnabled(sc: any): Promise<boolean> {
 export async function requireRentBuddyEnabled(sc: any, res: any): Promise<boolean> {
   const enabled = await checkRentBuddyEnabled(sc);
   if (!enabled) {
-    res.status(403).json({ error: "feature_disabled", message: "Rent a Buddy is not available yet." });
+    res.status(403).json({ error: "feature_disabled", gate: "rent_buddy_enabled", message: "Rent a Buddy is not available yet." });
     return false;
   }
   return true;
@@ -1767,7 +1767,7 @@ export async function enforceBookingCreationGates(opts: {
   if (applyKillSwitch) {
     if (await isKillSwitchEngaged(serviceClient, 'disable_rent_buddy_booking')
         || await isKillSwitchEngaged(serviceClient, 'disable_rab_bookings')) {
-      res.status(404).json({ error: 'feature_disabled', message: 'Rent-a-Buddy bookings are temporarily disabled' });
+      res.status(404).json({ error: 'feature_disabled', gate: await engagedRabBookingKillSwitch(serviceClient), message: 'Rent-a-Buddy bookings are temporarily disabled' });
       return false;
     }
   }
@@ -2002,7 +2002,7 @@ router.post("/rent-a-buddy/bookings", async (req, res) => {
   // was an orphan with no reader, so that admin toggle was a silent no-op). Fail-CLOSED on DB error.
   if (await isKillSwitchEngaged(serviceClient, 'disable_rent_buddy_booking')
       || await isKillSwitchEngaged(serviceClient, 'disable_rab_bookings')) {
-    return res.status(404).json({ error: 'feature_disabled', message: 'Rent-a-Buddy bookings are temporarily disabled' });
+    return res.status(404).json({ error: 'feature_disabled', gate: await engagedRabBookingKillSwitch(serviceClient), message: 'Rent-a-Buddy bookings are temporarily disabled' });
   }
 
   const rolloutAccess = await checkRentBuddyAccess({
@@ -4195,7 +4195,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/safety/checkin", async (req, res)
 
   const { bookingId } = req.params;
   const { checkinType, response: checkinResponse } = req.body ?? {};
-  if (!checkinType) return res.status(400).json({ error: "invalid_payload", message: "checkinType required." });
+  if (!checkinType) return res.status(400).json({ error: "invalid_payload", message: "checkinType required." });  if (!RENT_BUDDY_CHECKIN_TYPES.includes(checkinType)) return res.status(400).json({ error: "invalid_payload", message: "checkinType is not a known check-in type." });  // tm-followups: the enum refuses anything else, and that refusal was discarded below
 
   const { data: booking } = await serviceClient
     .from("rent_buddy_bookings")
@@ -4207,12 +4207,12 @@ router.post("/rent-a-buddy/bookings/:bookingId/safety/checkin", async (req, res)
   const party = await requireBookingParty(serviceClient, booking, auth.user.id, res);
   if (!party) return;
 
-  await serviceClient.from("rent_buddy_safety_checkins").insert({
+  const { error: checkinErr } = await serviceClient.from("rent_buddy_safety_checkins").insert({
     booking_id: bookingId,
     user_id: auth.user.id,
     checkin_type: checkinType,
     response: checkinResponse ?? null,
-  });
+  }); if (checkinErr) { req.log?.error?.({ err: checkinErr, bookingId, checkinType }, "rent_buddy_safety_checkins insert failed"); return res.status(500).json({ error: "db_error", message: "Could not record the check-in." }); }  // never ok:true over a check-in that did not land
 
   const distressResponses = ["uncomfortable", "end_early", "contact_support", "start_safe_return"];
   if (distressResponses.includes(checkinResponse ?? "") || distressResponses.includes(checkinType)) {
@@ -5540,11 +5540,11 @@ router.post("/rent-a-buddy/admin/reviews/:reviewId/approve", async (req, res) =>
     .maybeSingle();
   if (!review) return res.status(404).json({ error: "not_found" });
 
-  await serviceClient
+  const { error: approveErr } = await serviceClient
     .from("rent_buddy_reviews")
     .update({ is_public: true, moderation_status: "approved", updated_at: new Date().toISOString() })
     .eq("id", reviewId);
-
+  if (approveErr) return sendError(res, "db_error", approveErr.message);
   // Recalculate average_rating and review_count on the buddy's profile using
   // only approved (public) reviews where the reviewer is the traveler role
   const revieweeId = (review as any).reviewee_id as string;
@@ -5601,11 +5601,11 @@ router.post("/rent-a-buddy/admin/reviews/:reviewId/reject", async (req, res) => 
     .maybeSingle();
   if (!review) return res.status(404).json({ error: "not_found" });
 
-  await serviceClient
+  const { error: rejectErr } = await serviceClient
     .from("rent_buddy_reviews")
     .update({ is_public: false, moderation_status: "rejected", updated_at: new Date().toISOString() })
     .eq("id", reviewId);
-
+  if (rejectErr) return sendError(res, "db_error", rejectErr.message);
   // Recalculate buddy rating after rejection — the rejected review may have been public
   const rejectedRevieweeId = (review as any).reviewee_id as string;
   const { data: remainingRows } = await serviceClient
@@ -6416,11 +6416,11 @@ router.get("/rent-a-buddy/admin/launch-controls", async (req, res) => {
   if (!admin) return;
   const { sc: serviceClient } = admin;
 
-  const { data } = await serviceClient
+  const { data, error } = await serviceClient
     .from("rent_buddy_launch_controls")
     .select("*")
     .order("category");
-
+  if (error) return sendError(res, "db_error", error.message);
   return res.json({ controls: data ?? [] });
 });
 
@@ -6488,8 +6488,8 @@ router.patch("/rent-a-buddy/admin/launch-controls/:controlId", async (req, res) 
   if (b.fullPaymentRequired !== undefined)     patch.full_payment_required    = b.fullPaymentRequired;
   if (b.notes !== undefined)                   patch.notes                    = b.notes;
 
-  await serviceClient.from("rent_buddy_launch_controls").update(patch).eq("id", controlId);
-
+  const { error: lcPatchErr } = await serviceClient.from("rent_buddy_launch_controls").update(patch).eq("id", controlId);
+  if (lcPatchErr) return sendError(res, "db_error", lcPatchErr.message);
   await serviceClient.from("rent_buddy_admin_access_logs").insert({
     admin_id: userId, resource: "launch_control", resource_id: controlId,
     reason: `Patched launch control`,
@@ -6770,8 +6770,8 @@ router.get("/rent-a-buddy/admin/support/reports", async (req, res) => {
     .range((page - 1) * limit, page * limit - 1);
 
   if (status) query = query.eq("status", status);
-
-  const { data, count } = await query;
+  const { data, count, error } = await query;
+  if (error) return sendError(res, "db_error", error.message);
   return res.json({ reports: data ?? [], total: count ?? 0 });
 });
 
@@ -6828,13 +6828,13 @@ router.get("/rent-a-buddy/admin/risk-review", async (req, res) => {
   const limit = 50;
   const status = (req.query.status as string) ?? "watch";
 
-  const { data, count } = await serviceClient
+  const { data, count, error } = await serviceClient
     .from("rent_buddy_profiles")
     .select("id, user_id, display_name, city, risk_review_status, risk_review_note, risk_reviewed_at", { count: "exact" })
     .eq("risk_review_status", status)
     .order("risk_reviewed_at", { ascending: false })
     .range((page - 1) * limit, page * limit - 1);
-
+  if (error) return sendError(res, "db_error", error.message);
   return res.json({ profiles: data ?? [], total: count ?? 0 });
 });
 
@@ -6851,12 +6851,12 @@ router.post("/rent-a-buddy/admin/users/:userId/risk-status", async (req, res) =>
     return res.status(400).json({ error: "invalid_payload", message: `status must be one of: ${VALID_STATUSES.join(", ")}` });
   }
 
-  await serviceClient.from("rent_buddy_profiles").update({
+  const { error: riskErr } = await serviceClient.from("rent_buddy_profiles").update({
     risk_review_status: status,
     risk_review_note: note ?? null,
     risk_reviewed_at: new Date().toISOString(),
   }).eq("user_id", userId);
-
+  if (riskErr) return sendError(res, "db_error", riskErr.message);
   if (status === "suspended") {
     await serviceClient.from("rent_buddy_user_limits").upsert(
       { user_id: userId, rent_buddy_disabled: true, reason: `Risk status: ${status}`, updated_at: new Date().toISOString() },
@@ -7261,8 +7261,8 @@ router.patch("/rent-a-buddy/admin/users/:userId/verification", async (req, res) 
     return res.status(400).json({ error: "invalid_payload", message: "No verification fields provided." });
   }
 
-  await serviceClient.from("rent_buddy_profiles").update(patch).eq("user_id", userId);
-
+  const { error: verifyErr } = await serviceClient.from("rent_buddy_profiles").update(patch).eq("user_id", userId);
+  if (verifyErr) return sendError(res, "db_error", verifyErr.message);
   await serviceClient.from("rent_buddy_admin_actions").insert({
     admin_id: adminId,
     target_type: "user",
@@ -8139,5 +8139,67 @@ router.post("/rent-a-buddy/bookings/:bookingId/rebook", async (req, res) => {
   return res.status(201).json({ bookingId: (newBooking as any)?.id, booking: newBooking });
 });
 
+// ── Change requests for a booking (read) ──────────────────────────────────────
+// GET /api/rent-a-buddy/bookings/:bookingId/change-requests
+//
+// Testing-mode lane tm-rab (WP-01, PLAT-F43 "suggest another time"). The buddy's
+// suggestion (POST /suggest, and POST /change-request) is stored as
+// buddy_booking_change_requests rows, and the other party answers through
+// POST /respond-change-request with a `changeRequestId`. No route ever returned
+// one, so a suggestion could be made and never seen or answered. This is that
+// read: party-only (requireBookingParty), behind the master switch like every
+// other booking read, newest first, capped at 50. A failed read is a 500, never
+// an empty list — "no suggestions" must mean there are none.
+router.get("/rent-a-buddy/bookings/:bookingId/change-requests", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
+
+  const { bookingId } = req.params;
+  const { data: booking, error: bookingErr } = await serviceClient
+    .from("rent_buddy_bookings")
+    .select("id, traveler_id, buddy_id, status")
+    .eq("id", bookingId)
+    .maybeSingle();
+  if (bookingErr) return sendError(res, "db_error", bookingErr.message);
+  if (!booking) return res.status(404).json({ error: "not_found" });
+
+  const party = await requireBookingParty(serviceClient, booking, auth.user.id, res);
+  if (!party) return;
+
+  const { data, error } = await serviceClient
+    .from("buddy_booking_change_requests")
+    .select("id, booking_id, requested_by, change_field, current_value, proposed_value, reason, status, response_note, responded_at, created_at")
+    .eq("booking_id", bookingId)
+    .order("created_at", { ascending: false })
+    .limit(50);
+  if (error) return sendError(res, "db_error", error.message);
+
+  return res.json({
+    bookingStatus: (booking as any).status,
+    changeRequests: (data ?? []).map((r: any) => ({
+      id: r.id,
+      changeField: r.change_field,
+      currentValue: r.current_value ?? {},
+      proposedValue: r.proposed_value ?? {},
+      reason: r.reason ?? null,
+      status: r.status,
+      requestedByMe: r.requested_by === auth.user.id,
+      responseNote: r.response_note ?? null,
+      respondedAt: r.responded_at ?? null,
+      createdAt: r.created_at,
+    })),
+  });
+});
+
 export default router;
 
+// ── tm-followups: the labels of rent_buddy_checkin_type (0047 + 0113) ────────
+// Appended at the foot so every cited line above keeps its number. A module
+// `const` is initialised at load, before any request reaches the
+// safety/checkin handler that reads it.
+const RENT_BUDDY_CHECKIN_TYPES: readonly string[] = [
+  "arrival", "comfort_30min", "check_ok", "uncomfortable", "end_early", "contact_support", "start_safe_return", "emergency_phrase",
+  "arrived", "started", "could_not_find", "no_show", "unsafe", "missed",
+];

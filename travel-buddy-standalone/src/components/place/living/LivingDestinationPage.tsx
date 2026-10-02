@@ -61,7 +61,7 @@ import { CachedImage } from '../../CachedImage.tsx';
 import { color, space, radius, type as t, shadow, typography, icon, aspect, dot} from '../../../theme/tokens.ts';
 import { getPlaceTimeline } from '../../../services/places.ts';
 import { useIntelPrompts } from '../../../hooks/useIntelPrompts.ts';
-import { DecisionExposureChips, buildLiveClaims } from '../../intel/DecisionExposureChips.tsx';
+import { DecisionExposureChips, buildLiveClaims } from '../../intel/DecisionExposureChips.tsx'; import { PlaceLivePanel } from '../../../features/live/PlaceLivePanel.tsx';
 import type {
   PlaceLivingResponse,
   LivingBucket,
@@ -1732,7 +1732,7 @@ export function LivingDestinationPage({ place, living, placeDaysEnabled = false 
         <PlaceHeroCarousel living={living} place={place} />
 
         {/* ── Info strip ── */}
-        <PlaceInfoStrip living={living} placeName={place.name} category={place.category} />
+        <PlaceInfoStrip living={living} placeName={place.name} category={place.category} /><PlaceLivePanel placeId={place.id} neighborhood={place.neighborhood} />{/* TM-live WP-11: decision, live state, typical, pulse, session */}
 
         {/* ── Directions ── */}
         {living.directionsUrl ? (

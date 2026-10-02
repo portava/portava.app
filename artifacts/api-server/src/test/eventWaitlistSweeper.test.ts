@@ -67,6 +67,7 @@ function makeClient(rows: WlRow[], cfg: FakeCfg = {}) {
     _rows: rows,
     _counts: counts,
     from(_table: string) {
+      if (_table !== "event_waitlist") return eligibleWorld(_table);
       let op: "select" | "delete" | "update" = "select";
       let patch: Record<string, unknown> = {};
       let usedIsNull = false;
@@ -126,6 +127,25 @@ function makeClient(rows: WlRow[], cfg: FakeCfg = {}) {
     },
   };
   return client;
+}
+
+/**
+ * Every table but event_waitlist: the reads census-trust §30.6's eligibility
+ * gate makes before a promotion, answered as a world in which every queued user
+ * is eligible (an ungated event whose host is nobody in the queue, no flag rows,
+ * no roles, no blocks). Not counted in `_counts` — the counts above are the
+ * waitlist table's. The gate's own refusals are driven in
+ * eventsWaitlistCapacityFailClosed.test.ts (SW1–SW4).
+ */
+function eligibleWorld(table: string) {
+  const row = table === "events"
+    ? { id: "ev", host_id: "host-not-queued", state: "waitlist", verified_only: false, trust_score_min: null, age_min: null, age_max: null }
+    : null;
+  const b: any = {};
+  for (const m of ["select", "eq", "in", "is", "or", "not", "order", "limit"]) b[m] = () => b;
+  b.maybeSingle = () => Promise.resolve({ data: row, error: null });
+  b.then = (onF: any, onR: any) => Promise.resolve({ data: row ? [row] : [], error: null }).then(onF, onR);
+  return b;
 }
 
 const PAST   = new Date(Date.now() - 3_600_000).toISOString();

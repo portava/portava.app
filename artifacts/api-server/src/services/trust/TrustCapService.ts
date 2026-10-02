@@ -179,15 +179,31 @@ export async function expireOldCaps(db: SupabaseClient): Promise<number> {
  * of ONE reversed finding cannot silently clear an unrelated one that still
  * stands.
  *
- * Returns the number of caps lifted. Never throws — a reversal must not fail
- * because its bookkeeping did.
+ * Never throws — a reversal must not fail because its bookkeeping did.
+ *
+ * ── WHY THIS RETURNS A RESULT AND NOT A NUMBER ──────────────────────────────
+ * It used to return `number`, and returned 0 both when there was nothing to lift
+ * and when the UPDATE errored. Those are opposite facts. `behavior_confirmed`
+ * writes a respect_safety ceiling of 40 with NO expiry and no other code path
+ * ever lifts it, so a failed lift reported as 0 meant: the admin restored the
+ * account, the API answered success, and the permanent ceiling stayed — the
+ * exact permanent-consequence-of-a-reversed-sanction this function was written
+ * to prevent, reintroduced through its own error handling. `failed` makes the
+ * two distinguishable so the caller can say so.
  */
+export interface LiftCapsResult {
+  /** Caps this call actually lifted. Meaningful only when `failed` is false. */
+  lifted: number;
+  /** True when the lift could not be performed. DISTINCT from lifted:0. */
+  failed: boolean;
+}
+
 export async function liftCapsBySourceEvents(
   db: SupabaseClient,
   sourceEventIds: readonly string[],
   liftedBy: string,
-): Promise<number> {
-  if (sourceEventIds.length === 0) return 0;
+): Promise<LiftCapsResult> {
+  if (sourceEventIds.length === 0) return { lifted: 0, failed: false };
   try {
     const { data, error } = await db
       .from("trust_caps")
@@ -195,10 +211,14 @@ export async function liftCapsBySourceEvents(
       .in("source_event_id", sourceEventIds as string[])
       .is("lifted_at", null)
       .select("id");
-    if (error) return 0;
-    return (data as any[])?.length ?? 0;
-  } catch {
-    return 0;
+    if (error) {
+      logger.warn({ err: error, sourceEvents: sourceEventIds.length }, "liftCapsBySourceEvents failed — ceilings may still stand");
+      return { lifted: 0, failed: true };
+    }
+    return { lifted: ((data as any[]) ?? []).length, failed: false };
+  } catch (err) {
+    logger.warn({ err, sourceEvents: sourceEventIds.length }, "liftCapsBySourceEvents threw — ceilings may still stand");
+    return { lifted: 0, failed: true };
   }
 }
 
@@ -215,6 +235,16 @@ export async function liftCapsBySourceEvents(
  *
  * So the service offers both postures instead of a caller choosing between
  * obeying the rule and being correct.
+ *
+ * `unavailable` is DISTINCT from `ok` with an empty list. "This user has no
+ * ceilings" and "I could not find out whether this user has ceilings" are
+ * opposite facts about a moderation subject, and the old body asserted the
+ * first while meaning the second: it destructured `const { data }` and dropped
+ * `error` entirely, and supabase-js RETURNS errors rather than throwing, so
+ * every failure became a clean empty list. Prefer this over `getActiveCaps`
+ * anywhere the answer informs a decision or is shown to an admin — a
+ * silently-empty cap list reads as "nothing is holding this account down",
+ * which is the single most misleading thing this table can say.
  */
 export type ActiveCapsRead =
   | { state: "ok"; caps: TrustCap[] }
@@ -250,6 +280,11 @@ export async function getActiveCapsResult(
   }
 }
 
+/**
+ * Array-only view of the same read, kept for call sites that have no way to
+ * render the difference. It CANNOT distinguish a failed read from an uncapped
+ * user — use {@link getActiveCapsResult} wherever that distinction can be shown.
+ */
 export async function getActiveCaps(
   db: SupabaseClient,
   userId: string,
@@ -284,6 +319,7 @@ export async function getActiveCaps(
     return [];
   }
 }
+
 
 /** Apply caps triggered by a confirmed serious event */
 export async function applyEventCaps(

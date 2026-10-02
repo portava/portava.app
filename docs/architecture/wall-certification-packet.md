@@ -162,7 +162,7 @@ Package under test: **`com.passporttravelbuddy.app`**.
    settled fling measures mostly idle frames.
 6. Stop the trace.
 
-Item 60 is reached across **three server pages** (`artifacts/api-server/src/routes/wall.ts:122#const DEFAULT_LIMIT = 20;`),
+Item 60 is reached across **three server pages** (`artifacts/api-server/src/routes/wall.ts:124#const DEFAULT_LIMIT = 20;`),
 so the scroll includes **two mid-scroll `onEndReached` fetches and two list-data
 replacements while the thumb is still moving**. Those are the moments a feed
 drops frames and they are deliberately inside the measured window.
@@ -573,7 +573,7 @@ unanswered as of this document's date.**
 
 **Nothing in this repository declares one.** `app.json` sets no minimum width,
 the theme declares no breakpoints, and — measured, not assumed — **the Wall
-reads no viewport width at all**: `grep -rn 'useWindowDimensions\|Dimensions.get' src/features/wall/`
+reads no viewport width at all**: `grep -rn 'useWindowDimensions\|Dimensions.get' src/features/wall/` (SUPERSEDED by census-wall §16, 2026-09-26: the Wall image picker now reads the window width and scale, so that grep finds wallItemShared.tsx and wallPrefetch.ts; it only chooses which stored image to fetch, and no LAYOUT switches on width)
 returns nothing. Width therefore switches no layout in the Wall; it only changes
 where text wraps, how tall a fixed-aspect media well is, and whether the
 three-chip row wraps.

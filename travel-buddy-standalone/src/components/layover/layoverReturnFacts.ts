@@ -23,9 +23,11 @@
  */
 import type {
   AbortEffect,
+  CrewNotifyUnavailableReason,
   LayoverAirportIntelligence,
   LayoverCertification,
   LayoverOfflineBundle,
+  OfflineUnavailableReason,
   ReturnNowStatusCapability,
   SafeReturnPosture,
 } from '../../services/layover.ts';
@@ -89,8 +91,22 @@ export interface DeadlineTruth {
   stalenessNotice: string | null;
 }
 
+/**
+ * The bundle fields this reads, and only those.
+ *
+ * Widened from `LayoverOfflineBundle` so that a CACHED deadline
+ * (`layoverDeadlineCache.cachedDeadlineAsBundle`) goes through THIS rule rather
+ * than a second, gentler one written for the offline path. A whole bundle still
+ * satisfies it; a second staleness rule is how a cache ends up presenting an
+ * old answer as a current one.
+ */
+export type DeadlineBundle = Pick<
+  LayoverOfflineBundle,
+  'certifiedAt' | 'staleAfter' | 'returnDeadline'
+>;
+
 export function describeDeadline(
-  bundle: LayoverOfflineBundle | null | undefined,
+  bundle: DeadlineBundle | null | undefined,
   fallbackHardReturnTime: string,
   nowMs: number,
 ): DeadlineTruth {
@@ -248,6 +264,136 @@ export function statusCapabilityNote(
     default:
       return null;
   }
+}
+
+// ── §16 L154 — the crew meeting point, cached ────────────────────────────────
+
+/**
+ * The server's `OfflineUnavailableReason` words, for a traveller.
+ *
+ * Same shape and same justification as `LayoverCrewSection`'s `REASON_TEXT`:
+ * every one of these is a true state of the bundle and none of them is a
+ * fault, so showing the raw code would make an honest absence look like a bug.
+ *
+ * EACH SENTENCE IS ABOUT THE BUNDLE, NOT ABOUT THE WORLD. `no_crew_storage`
+ * says nothing is cached here; it does NOT say the traveller has no crew or
+ * that their crew has no meeting point. The bundle is not in a position to
+ * know either, and the online crew section — which is — answers those.
+ */
+const OFFLINE_REASON_TEXT: Record<OfflineUnavailableReason, string> = {
+  no_routing_provider: 'no route was cached with it',
+  no_envelope_geometry: 'no map area was cached with it',
+  no_flight_feed: 'no confirmed flight status was cached with it',
+  no_crew_storage: 'none was cached with this layover',
+  no_phrase_catalogue: 'no phrases were cached with it',
+};
+
+export interface CrewMeetingPointFacts {
+  /** The server's label, trimmed. Null whenever there is not one to show. */
+  label: string | null;
+  /** The server's own reason word when it marked the capability unavailable. */
+  reason: OfflineUnavailableReason | null;
+  /** Never empty — an absent meeting point is still a sentence, not a blank. */
+  sentence: string;
+}
+
+/**
+ * §16 L154 "Crew — cache meeting point", read off the bundle.
+ *
+ * THREE OUTCOMES AND THE LAST TWO ARE THE POINT.
+ *
+ *   a label      surfaced verbatim. It is the crew's own
+ *                `meeting_point_label`, which a crewmate typed; this does not
+ *                reformat, geocode or abbreviate it.
+ *   unavailable  the server said so and said why. Named, not blank.
+ *   no bundle    nothing was cached at all, which is its own sentence.
+ *
+ * `available: true` WITH A BLANK VALUE IS TREATED AS NO LABEL. A meeting point
+ * of `"   "` on screen is the empty-result failure this tree has already paid
+ * for three times today: it looks like an answer and is not one.
+ */
+export function describeCrewMeetingPoint(
+  bundle: LayoverOfflineBundle | null | undefined,
+): CrewMeetingPointFacts {
+  const cap = bundle?.crewMeetingPoint;
+  if (!cap) {
+    return {
+      label: null,
+      reason: null,
+      sentence: 'No crew meeting point is saved on this device.',
+    };
+  }
+  const label = typeof cap.value === 'string' ? cap.value.trim() : '';
+  if (cap.available && label) {
+    return { label, reason: cap.reason ?? null, sentence: `Meet your crew at ${label}.` };
+  }
+  const why = cap.reason ? OFFLINE_REASON_TEXT[cap.reason] : null;
+  return {
+    label: null,
+    reason: cap.reason ?? null,
+    sentence: why
+      ? `No crew meeting point saved — ${why}.`
+      : 'No crew meeting point is saved on this device.',
+  };
+}
+
+// ── §15.1 L144 — whether the crew was told ───────────────────────────────────
+
+/**
+ * The server's crew-notify reasons, for a traveller.
+ *
+ * Deliberately NOT exhaustive over a union: `CrewNotifyUnavailableReason` is
+ * open because the vocabulary is the server's (see its docblock). A reason this
+ * client has not been taught still produces the FACT — the crew was not told —
+ * and simply omits the cause, rather than showing a raw code to a traveller or
+ * inventing one that sounds plausible.
+ */
+const CREW_NOTIFY_REASON_TEXT: Record<string, string> = {
+  no_crew_storage: 'there is nothing set up to reach them',
+};
+
+/**
+ * §15.1 L144's CLIENT half — what the traveller is told about their own abort.
+ *
+ * ── THE BOUNDARY THIS FUNCTION IS CAREFUL ABOUT ──────────────────────────────
+ * Notifying a crew that a member aborted is a DISCLOSURE ABOUT THAT MEMBER, and
+ * whether it should happen at all is an owner decision that is NOT taken here
+ * or anywhere else on this client. Nothing in this file, and nothing that calls
+ * it, sends a notification, offers a control that would, or asks the server
+ * for one.
+ *
+ * What it does is the other half, and that half is not optional: when the
+ * server reports that the traveller's abort WAS broadcast to other people, the
+ * traveller is entitled to know it happened. A surface that silently swallows
+ * `crewNotified` is deciding — by omission — that a traveller need not be told
+ * who was told about them.
+ *
+ * ── WHY IT READS THE FIELDS AND NOT `effects` ────────────────────────────────
+ * `crew_notify_unavailable` is an effect MARKER that has been unconditionally
+ * present on every abort this tree has ever served; `describeAbortEffects`
+ * drops it for exactly that reason and two tests pin that it keeps doing so.
+ * `crewNotified` and `crewNotifyUnavailableReason` are the VALUES, and a value
+ * is what this reads.
+ *
+ * Returns `null` when the server reported neither — nothing happened, so
+ * nothing is said. An empty string would be a sentence-shaped blank.
+ */
+export function describeCrewNotification(input: {
+  crewNotified: readonly string[];
+  crewNotifyUnavailableReason: CrewNotifyUnavailableReason | null;
+}): string | null {
+  const notified = input.crewNotified.length;
+  if (notified > 0) {
+    return notified === 1
+      ? 'One crewmate was told you are heading back.'
+      : `${notified} crewmates were told you are heading back.`;
+  }
+  const reason = input.crewNotifyUnavailableReason;
+  if (!reason) return null;
+  const why = CREW_NOTIFY_REASON_TEXT[reason];
+  return why
+    ? `Your crew was not told you are heading back — ${why}.`
+    : 'Your crew was not told you are heading back.';
 }
 
 // ── §2.1 "degrades VISIBLY" · §22 airport maturity, said plainly ─────────────

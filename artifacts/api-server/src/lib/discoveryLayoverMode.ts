@@ -129,7 +129,7 @@ import {
   certifiedActionUniverse,
   certifiedLayoverSnapshot,
   isDegradedRefusal,
-  type ActionAdmission,
+  type ActionAdmission, type LayoverSnapshotResult,
 } from "../services/airport/LayoverSnapshot.js";
 
 /** The two refusal codes this mode can emit, spelled once. */
@@ -236,7 +236,7 @@ export async function discoveryLayoverGate(
    * It is NOT a seam for changing the gate's answer: it changes who is asked,
    * and the contract still refuses on absence.
    */
-  opts: { provider?: TravelTimeProvider } = {},
+  opts: { provider?: TravelTimeProvider; snapshotRead?: LayoverSnapshotResult } = {}, // snapshotRead: a caller that already read THIS traveller's snapshot passes it, so one request is certified once (census-discovery §56)
 ): Promise<DiscoveryLayoverGate> {
   if (!sc || !userId) return OFF;
   const flag = await readFlagState(sc, LAYOVER_DISCOVERY_MODE_FLAG);
@@ -249,7 +249,7 @@ export async function discoveryLayoverGate(
   // Reached with the flag ON *or* UNREADABLE. In both cases the traveller has
   // to be looked at before anything can be served, because whether the
   // restriction could apply at all is a fact about THEM, not about the flag.
-  const read = await certifiedLayoverSnapshot(sc, userId);
+  const read = opts.snapshotRead ?? await certifiedLayoverSnapshot(sc, userId);
   if (!read.ok) {
     // The one branch that decides whether a shorter list is honest. See the
     // header: only the two DEGRADED reasons mean "we could not look".

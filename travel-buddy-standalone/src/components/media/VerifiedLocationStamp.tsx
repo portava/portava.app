@@ -30,14 +30,14 @@ export function VerifiedLocationStamp({ locationName, style }: VerifiedLocationS
 const s = StyleSheet.create({
   wrap: {
     alignSelf: 'flex-start',
-    opacity: 0.38,
+    opacity: 1, // census-media §31.12: was 0.38 with no backing, which no photo guaranteed; the stamp now carries its own ink backing
     transform: [{ rotate: '-12deg' }],
   },
   stamp: {
     borderWidth: 2,
     borderColor: '#E8DFC8',
     borderRadius: 40,
-    borderStyle: 'dashed',
+    borderStyle: 'dashed', backgroundColor: 'rgba(17,17,15,0.66)', // census-media §31.12: the least alpha at which the stamp's text clears 4.5:1 over a white photo
     paddingHorizontal: 12,
     paddingVertical: 6,
     alignItems: 'center',
@@ -48,7 +48,7 @@ const s = StyleSheet.create({
     fontSize: 7,
     letterSpacing: 1.8,
     color: '#E8DFC8',
-    fontWeight: '700',
+    fontWeight: '700', alignSelf: 'stretch', textAlign: 'center', // census-media §40.14: fills the stamp's width and truncates inside it when a caller narrows the stamp
   },
   name: {
     fontFamily: 'Courier',
@@ -56,6 +56,6 @@ const s = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 0.8,
     color: '#E8DFC8',
-    maxWidth: 130,
+    maxWidth: 130, alignSelf: 'stretch', textAlign: 'center', // census-media §40.14: as the eyebrow; sized to its own text, a name on web overflowed a narrowed stamp's border
   },
 });

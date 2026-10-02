@@ -33,7 +33,7 @@ import {
   KNOWN_CONTEXTS,
   POLICY_VERSION,
 } from '../lib/inputAssistance/policyRegistry';
-import { generateSuggestions } from '../lib/inputAssistance/gateway';
+import { generateSuggestionsWithCoverage, gatewayFailureRefusal } from '../lib/inputAssistance/gateway'; // census-discovery §80: coverage on the envelope
 import {
   SUGGESTION_SCHEMA_VERSION,
   parseClientCapabilities,
@@ -260,7 +260,7 @@ router.post(
     const startedAt = Date.now();
 
     try {
-      const generated = await generateSuggestions(sc, {
+      const { suggestions: generated, refusal, laneRefusals } = await generateSuggestionsWithCoverage(sc, {
         context,
         policy: servePolicy,
         text,
@@ -294,7 +294,7 @@ router.post(
         },
         context,
         fieldId,
-        suggestions,
+        suggestions, ...(refusal ? { refusal } : {}), ...(laneRefusals?.saved ? { laneRefusals: { saved: laneRefusals.saved } } : {}),
         serverMs,
       };
       // Instrumented on the server's own side too, so the quantile is
@@ -317,7 +317,7 @@ router.post(
         schemaVersion: SUGGESTION_SCHEMA_VERSION,
         context,
         fieldId,
-        suggestions: [],
+        suggestions: [], refusal: gatewayFailureRefusal(), // §80: a failed serve is not an empty one
         serverMs: Date.now() - startedAt,
       };
       res.status(200).json(payload);
@@ -537,3 +537,91 @@ router.post(
 );
 
 export default router;
+
+// ── POST /api/input-assistance/extract — §24 Paste Intelligence (GII-F08) ────
+//
+// Classify a pasted blob (coordinates, a map link, a list of stops, an
+// itinerary, one place) and resolve every item through the SAME gateway the
+// suggest route serves typed text from (`lib/inputAssistance/pasteExtraction.ts`).
+//
+// READ-ONLY BY CONSTRUCTION (§24: "Bulk extraction must always lead to a review
+// screen before persistent mutation"). Nothing here writes; the client's review
+// screen persists only what the person ticked, through the target field's own
+// endpoint and its own authorization. `mutated: false` is on every answer.
+//
+// FAILURE HONESTY. Per item, `failed` (a source did not answer) is distinct
+// from `no_match` (it answered, nothing matched). A serve that throws as a
+// whole is a retryable 503 — never a 200 with an empty list, which the review
+// screen would have to render as "nothing found".
+router.post(
+  '/input-assistance/extract',
+  asyncHandler(async (req, res) => {
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+    const { user } = auth;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+
+    const context = body.context;
+    if (!isKnownContext(context) || !PASTE_CONTEXTS.has(context)) {
+      sendError(res, 'invalid_payload', 'Paste extraction is not available for this field');
+      return;
+    }
+    const fieldId = typeof body.fieldId === 'string' && body.fieldId.length <= 100 ? body.fieldId : undefined;
+    const policy = resolvePolicy(context, fieldId);
+    if (!policy || policy.mode === 'no_assistance') {
+      sendError(res, 'invalid_payload', 'Paste extraction is not available for this field');
+      return;
+    }
+    const classification = classifyPaste(body.text);
+    if (classification.shape === 'empty') {
+      sendError(res, 'invalid_payload', 'Nothing was pasted');
+      return;
+    }
+
+    // A paste fans out into up to PASTE_MAX_ITEMS gateway serves (and geocoder
+    // calls), so it has its own, much smaller bucket than typeahead.
+    const rl = checkRateLimit('input_assist_extract', user.id, 20, 60_000);
+    if (!rl.allowed) {
+      res.setHeader('Retry-After', Math.ceil(rl.retryAfterMs / 1000).toString());
+      sendError(res, 'rate_limited', 'Too many paste extractions. Please wait.');
+      return;
+    }
+    const sc = getServiceClient();
+    if (!sc) {
+      sendError(res, 'server_not_configured', 'Service client not ready');
+      return;
+    }
+
+    const requestId = crypto.randomUUID();
+    const startedAt = Date.now();
+    try {
+      const items = await resolvePaste(sc, {
+        context,
+        policy,
+        userId: user.id,
+        sessionContext: parseSessionContext(body.sessionContext),
+        tz: typeof body.tz === 'string' && body.tz.length <= 64 ? body.tz : null,
+      }, classification);
+      // Private-by-default logging: counts and statuses only, never the text.
+      logger.info(
+        { requestId, context, shape: classification.shape, items: items.length, failed: items.filter((i) => i.status === 'failed').length, serverMs: Date.now() - startedAt },
+        'input-assistance/extract served',
+      );
+      res.status(200).json({
+        requestId,
+        policyVersion: POLICY_VERSION,
+        context,
+        fieldId,
+        shape: classification.shape,
+        truncated: classification.truncated,
+        mutated: false,
+        items,
+      });
+    } catch (err) {
+      logger.warn({ err, context, requestId }, 'input-assistance/extract failed');
+      sendError(res, 'degraded_unavailable', 'We could not read that paste. Please try again.');
+    }
+  }),
+);
+
+import { PASTE_CONTEXTS, classifyPaste, resolvePaste } from '../lib/inputAssistance/pasteExtraction';

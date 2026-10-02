@@ -28,17 +28,17 @@ import { initCityTimezonePersistence } from "./compass/CompassGraphEngine.js";
 import { assertRequiredEnv } from "./lib/envValidation";
 import { startWorkerLoop, queryStampWorkerHealth, startHealthMonitorLoop } from "./lib/stamps/generationWorker";
 import { startVisualGenerationWorker } from "./lib/visuals/generationWorker";
-import { startFxRefreshLoop } from "./lib/fxRefreshScheduler";
+import { startFxRefreshLoop } from "./lib/fxRefreshScheduler"; import "./lib/paymentsStartupLog.js"; // payments/identity provider mode: one startup line, booleans only (lib/paymentsMode.ts)
 import { startXXCatalogSweeper } from "./lib/stamps/xxCatalogRepair";
 import { startCorrectionSweep } from "./lib/stamps/countryGeocoder";
 import { runSchemaDriftCheck } from "./lib/schemaDriftCheck";
-import { startCreatorActivityScoreScheduler } from "./lib/creatorActivityScoreScheduler";
+import { startCreatorActivityScoreScheduler } from "./lib/creatorActivityScoreScheduler"; import { startPlaceCooccurrenceRebuildScheduler } from "./lib/discoveryPlaceCooccurrence.js"; /* census-discovery §95 (DV-72): hourly, one flag read until discovery_place_cooccurrence_enabled (3496, FALSE) */ import { startCreatorAttributionScheduler } from "./lib/creatorAttributionScheduler"; import { startDiscoveryTrendRebuildScheduler } from "./lib/discoveryTrendRebuildScheduler.js"; // census-discovery §52 (DV-56); §84 (DC-07)
 import { startRankingFatigueSweeper } from "./lib/rankingFatigueSweeper";
 import { startTrustMaintenanceScheduler } from "./lib/trustMaintenanceScheduler";
 import { startBuddyRequestSweeper } from "./lib/rentBuddyRequestSweeper";
 import { startNotificationMaintenanceScheduler } from "./lib/notificationMaintenanceScheduler.js";
 import { startPostPlaceBackfillWorker } from "./lib/places/postPlaceBackfillWorker";
-import { startMediaDedupWorker } from "./lib/media/mediaDedupWorker.js";
+import { startMediaDedupWorker } from "./lib/media/mediaDedupWorker.js"; import { startMediaProcessingWorker } from "./lib/media/mediaProcessingWorker.js"; import { startPendingUploadSweepScheduler } from "./lib/media/pendingUploadSweepScheduler.js";
 import { startPlaceCollectionsWorker } from "./lib/places/placeCollectionsWorker.js";
 import { startCompassSearchDecayFlushScheduler } from "./lib/compassSearchDecayFlushScheduler.js";
 import { startAccountDeletionScheduler } from "./lib/accountDeletionScheduler.js";
@@ -46,7 +46,10 @@ import { startStoryRetentionScheduler } from "./lib/storyRetentionScheduler.js";
 import { startLocationSnapshotPurgeScheduler } from "./lib/locationSnapshotPurgeScheduler.js";
 import { startIntelRetentionScheduler } from "./lib/intelRetentionScheduler.js";
 import { startSensingRetentionScheduler } from "./lib/sensingRetentionScheduler.js";
+import { startSensingPublicationScheduler } from "./lib/sensingPublicationScheduler.js";
+import { startLayoverCrewExpiryScheduler } from "./lib/layoverCrewExpiryScheduler.js"; import { startLayoverExternalEventScheduler } from "./lib/layoverExternalEventScheduler.js";
 import { startIntelProjectionScheduler } from "./lib/intelProjectionScheduler.js";
+import { startTelegraphLifecycleScheduler } from "./server/telegraph/lifecycleScheduler.js";
 import { startIntelPromotionScheduler } from "./lib/intelPromotionScheduler.js";
 import { startIntelPatternScheduler } from "./lib/intelPatternScheduler.js";
 import { startIntelCalibrationScheduler } from "./lib/intelCalibrationScheduler.js";
@@ -54,6 +57,7 @@ import { startIntelRewardScheduler } from "./lib/intelRewardScheduler.js";
 import { startIntelAttributionScheduler } from "./lib/intelAttributionScheduler.js";
 import { registerScopedTrustApplier } from "./lib/intelScopedTrustApply.js";
 import { startMemoryProjectionScheduler } from "./lib/memoryProjectionScheduler.js";
+import { startMemoryOutboxScheduler } from "./services/memoryProjections/outboxDrainRunner.js";
 // §61 (census-trips TR440): the Trips outbox loop and the trip projection workers, each started as one thing.
 import { startTripOutboxWorker } from "./server/trips/outboxWorker.js";
 import { startTripProjectionWorkers } from "./server/trips/projectionWorkers/index.js";
@@ -148,12 +152,48 @@ app.listen(port, (err) => {
   // table and never calls the RPC where 2315 is not applied, which today means
   // production, where this is an inert heartbeat.
   startSensingRetentionScheduler();
+  // The publisher census-sensing §21.4 named as S39/S24's blocker #2: the one
+  // caller of publishThroughDifferencingGate outside tests. Three gates, in
+  // order, and it refuses on the first today: the contribution policy must
+  // grant `surface` (an owner consent act, not a flag), then
+  // sensing_publication_enabled (3313, seeded FALSE), then 2315's table must
+  // exist. Runs on its own clock so no request can choose when a cohort is
+  // published. Inert on every database until the owner acts.
+  startSensingPublicationScheduler();
+  // Layover crew expiry (L196). Placed here, beside the other schema-gated
+  // retention sweep, because it behaves the same way: it probes for 2984's
+  // tables and issues no DELETE where they are absent, so on a database
+  // without 2984 it is an inert heartbeat rather than a failure. Its 10-minute
+  // startup delay sits just after the sensing sweep's 9 deliberately, so the
+  // two retention passes do not contend on boot.
+  startLayoverCrewExpiryScheduler();
   startIntelPromotionScheduler();
   startIntelProjectionScheduler();
+  // Telegraph §13.2's two expiry events. §4.3 says availability "expires
+  // automatically and revokes across Telegraph, Discovery and Compass", and
+  // census T188 records that expiry was evaluated lazily on read and emitted
+  // nothing — so a second device kept a FREE NOW chip until somebody refreshed
+  // it. This ends the signal and tells its owner, and does the same for a
+  // scoped in-thread location share. Not flag-gated: the availability half
+  // DELETEs rows every reader already refuses to render, which is a privacy
+  // improvement rather than a behaviour change, and the location half only
+  // publishes. See server/telegraph/lifecycleScheduler.ts.
+  startTelegraphLifecycleScheduler();
   // Memory + Experience Intelligence projector (spec §22): projects canonical
   // facts + the Experience Graph into memory_projections and sweeps expired
   // memory. Flag-gated on memory_projection, fail-closed; a no-op until enabled.
   startMemoryProjectionScheduler();
+  // The Memory outbox consumer (H161/H162). Without this call the consumer
+  // has no production caller at all, so it is deliberately beside the
+  // projection scheduler rather than anywhere else: it drains the outbox that
+  // the kernel writes and hands each event to the same rebuild.
+  //
+  // NOT flag-gated, and that is the safe direction rather than the loose one.
+  // An outbox row can only exist if the kernel wrote it, and memory_kernel_enabled
+  // is what gates the kernel — so with the flag off this drains zero rows. A
+  // second switch's only distinctive state is the bad one: events written, then
+  // stranded unacked because the reader was turned off separately.
+  startMemoryOutboxScheduler();
   // Trips spec §19.4 projection worker: drains trip_outbox (2420) into the
   // Map-owned trip_map_projections (2520), idempotent by event_id +
   // aggregate_version. Flag-gated on trip_map_projection_worker_enabled,
@@ -250,7 +290,7 @@ app.listen(port, (err) => {
   // Creator Activity Score recalculation job — processes stale scores every
   // 4 hours in batches of 500, stale-first. Pure background work; never on
   // the hot path of a live feed request.
-  startCreatorActivityScoreScheduler();
+  startCreatorActivityScoreScheduler(); startCreatorAttributionScheduler(); startPlaceCooccurrenceRebuildScheduler(); /* §95 */ startDiscoveryTrendRebuildScheduler(); // census-discovery §52 (DV-56): the travel_partner attribution producer, one flag read an hour until creator_attribution_enabled (2922, seeded FALSE) | §84 (DC-07): rebuild_place_momentum every 5 min, one flag read per tick until discovery_trend_rebuild_scheduler_enabled (3475, seeded FALSE)
   // Post → canonical place backfill: resolves existing posts that have a
   // canonical_location_id but no canonical_place_id to the venue-level
   // places table. Stops automatically when the backlog is exhausted.
@@ -259,7 +299,7 @@ app.listen(port, (err) => {
   // Near-duplicate media collapse worker — groups visually-similar post_media
   // images at the same canonical place using 64-bit pHash difference hashing.
   // Runs every 20 minutes; fail-soft (never affects uploads or post creation).
-  startMediaDedupWorker();
+  startMediaDedupWorker(); startMediaProcessingWorker(); startPendingUploadSweepScheduler(); // census-media §30 (MD338): claims queued/failed media_assets and completes or fails each; one flag read a minute until media_processing_worker_enabled (3338, seeded FALSE). census-discovery §56 (DV-77): the abandoned-upload sweep — removes a postcard upload whose /complete never ran (its unstripped original, parts, poster, then row); hourly, one flag read a pass until media_pending_upload_sweep_enabled (3400, seeded FALSE)
 
   // Place collections precompute worker — maintains place_best_of,
   // place_top_contributors, and place_living_cache so popular destination
@@ -306,7 +346,7 @@ app.listen(port, (err) => {
   // reads the recipient list. Safe on every instance: the delete is
   // idempotent and the digest is claimed per (user, category, day)
   // downstream. NOTIFICATION_MAINTENANCE_DISABLED=1 opts an instance out.
-  startNotificationMaintenanceScheduler();
+  startNotificationMaintenanceScheduler(); startLayoverExternalEventScheduler();
 
   // Startup stamp-worker health summary — log pending queue depth and any
   // jobs stuck in `generating` past their lock (a crashed worker never

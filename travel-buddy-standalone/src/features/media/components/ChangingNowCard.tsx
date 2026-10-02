@@ -12,7 +12,7 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { TrendingUp, TrendingDown, HelpCircle } from 'lucide-react-native';
-import { color, radius, space, dot } from '../../../theme/tokens.ts';
+import { color, radius, space, dot, typography } from '../../../theme/tokens.ts';
 import { CachedImage } from '../../../components/CachedImage.tsx';
 import type { ChangingNowItem } from '../types/mediaContext.ts';
 import { ZONE_COLOR } from '../state/stateColors.ts';
@@ -39,11 +39,11 @@ export function ChangingNowCard({ item, onPress, onWhyThis }: ChangingNowCardPro
       style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
       onPress={onPress ? () => onPress(item) : undefined}
       accessibilityRole="button"
-      accessibilityLabel={stateText ? `${item.title}, ${stateText}` : item.title}
+      accessibilityLabel={[item.title, stateText, item.uncertaintyLabel].filter(Boolean).join(', ')}
     >
       <View style={styles.hero}>
         {hero?.thumbnailUrl ? (
-          <CachedImage source={{ uri: hero.thumbnailUrl }} style={styles.heroImg} resizeMode="cover" />
+          <CachedImage source={{ uri: hero.thumbnailUrl }} style={styles.heroImg} resizeMode="cover" fallbackBg={color.mute} />
         ) : (
           <View style={[styles.heroImg, styles.heroFallback]} />
         )}
@@ -69,6 +69,14 @@ export function ChangingNowCard({ item, onPress, onWhyThis }: ChangingNowCardPro
         {item.subtitle ? (
           <Text style={styles.subtitle} numberOfLines={2}>
             {item.subtitle}
+          </Text>
+        ) : null}
+        {/* §18: a changing-now card is a world zone with a live claim — exactly
+            where reports can materially disagree. The line shows exactly when
+            the server's zone consensus says so (census-media §26, MD152). */}
+        {item.uncertaintyLabel ? (
+          <Text style={styles.uncertainty} accessibilityRole="alert" testID={`changing-uncertainty-${item.id}`}>
+            {item.uncertaintyLabel}
           </Text>
         ) : null}
         <View style={styles.footer}>
@@ -113,7 +121,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
     paddingHorizontal: space.sm,
     paddingVertical: 3,
-    backgroundColor: 'rgba(17,17,15,0.55)',
+    backgroundColor: 'rgba(17,17,15,0.88)', // census-media §31: the least alpha at which every zone colour clears 4.5:1 over a white photo; was backgroundColor: 'rgba(17,17,15,0.55)',
   },
   stateChipText: { fontSize: 11, fontWeight: '800', letterSpacing: 0.2 },
   holdDot: { width: dot.s6, height: dot.s6, borderRadius: dot.s6 / 2 },
@@ -128,4 +136,5 @@ const styles = StyleSheet.create({
   },
   whyBtn: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   whyText: { color: color.onInkMute, fontSize: 12, fontWeight: '700' },
+  uncertainty: { ...typography.label, color: color.warn },
 });

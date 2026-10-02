@@ -396,16 +396,37 @@ export const TELEGRAPH_DYNAMIC_SHARE_PRODUCERS: readonly DynamicShareProducer[] 
     sourceDomain: null,
     produces: [
       "coordination", "decision", "vote", "rendezvous", "commitment",
-      "commitment_response", "action_proposal", "acknowledgement",
+      "commitment_response", "action_proposal", "action_response",
+      "acknowledgement", "coordination_session", "coordination_transition",
     ],
     writesMessages: true,
     note:
       "DECLARED BY THE INTEGRATOR. The §9 coordination route. msg_type is the " +
-      "lowercase of one of the seven COORDINATION_KINDS, listed above. " +
+      "lowercase of one of the COORDINATION_KINDS, listed above. §21.9 recorded " +
+      "that this list had gone three values short when ACTION_RESPONSE, " +
+      "COORDINATION_SESSION and COORDINATION_TRANSITION landed, and that the " +
+      "checker does not verify the list is exhaustive; the three are added here. " +
       "OPERATIONAL because a coordination message carries no source object at all " +
       "— it carries a state the sender is asserting about themselves (on my way, " +
       "arrived, running late) or a decision the thread is taking together. There " +
       "is nothing to disclose that the thread does not already own.",
+  },
+  {
+    file: "artifacts/api-server/src/services/telegraph/coordinationSessions.ts",
+    expression: "msg_type: validated.msgType | subtype: validated.subtype",
+    family: "OPERATIONAL",
+    sourceDomain: null,
+    produces: ["coordination_session"],
+    writesMessages: true,
+    note:
+      "DECLARED WHEN THE GUARD CAUGHT IT. §13.1 CREATE_COORDINATION_SESSION, the " +
+      "one writer behind the coordination route and the command bus. It produces " +
+      "exactly one msg_type and no subtype — `validateCoordinationMessage` returns " +
+      "null for COORDINATION_SESSION — so `produces` is a single literal rather " +
+      "than the route entry's whole list. OPERATIONAL for the same reason that " +
+      "entry is: a session carries a title the opener typed and a reference to a " +
+      "plan the thread is already coordinating around, and discloses no source " +
+      "object the conversation does not already hold.",
   },
   {
     file: "artifacts/api-server/src/services/telegraph/coordination.ts",
@@ -441,6 +462,34 @@ export const TELEGRAPH_DYNAMIC_SHARE_PRODUCERS: readonly DynamicShareProducer[] 
       "because a replay carries no NEW disclosure — the recipient was already " +
       "entitled to every row it repeats, and the query proves it by scoping to " +
       "threads where the caller's membership has no `left_at`.",
+  },
+  {
+    file: "artifacts/api-server/src/services/telegraph/savedMessages.ts",
+    expression: "subtype: source.subtype ?? null",
+    family: "OPERATIONAL",
+    sourceDomain: null,
+    produces: [],
+    writesMessages: false,
+    note:
+      "DECLARED WHEN THE GUARD CAUGHT IT, on the same reading as the " +
+      "telegraphStream entry above. `projectSavedMessage` builds the RESPONSE " +
+      "shape for a caller's own `saved_messages` list: every field is copied " +
+      "off a `messages` row that already exists, including the sibling " +
+      "`msgType: source.msg_type ?? \"text\"` on the line before, which the " +
+      "scanner does not flag only because the key is camelCase in a DTO. " +
+      "Nothing here inserts or updates a message, so writesMessages is false, " +
+      "and `produces` is empty for the reason the stream entry gives: the " +
+      "value set is whatever `messages.subtype` already holds, not a second " +
+      "vocabulary. OPERATIONAL because the projection carries no NEW " +
+      "disclosure — `authorizeSavedMessage` (`:173`) withholds any save whose " +
+      "message is deleted, whose thread the caller has left, or which falls " +
+      "before the caller's §14.3 `visible_from_at` bound, so a row only " +
+      "reaches this function once the caller is already entitled to it. " +
+      "WHAT IS NOT CLAIMED: at this head the only production caller of this " +
+      "module is `routes/savedMessages.ts:37`, which imports `unsaveMessage` " +
+      "alone; the projection half has no caller yet, and the guard is " +
+      "declared now rather than when a reader arrives so the arrival is a " +
+      "wiring change and not also a registry change.",
   },
   {
     file: "artifacts/api-server/src/services/telegraphReportEvidence.ts",

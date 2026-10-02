@@ -27,12 +27,12 @@ export interface WhyThisSheetProps {
   visible: boolean;
   /** Human-readable explanation string from the feed item. */
   explanation: string | null | undefined;
-  onClose: () => void;
+  onClose: () => void; /** Replaces the footnote on a surface whose ranker reads different signals: the footnote must be true of the list it explains (§47). */ footnote?: string;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function WhyThisSheet({ visible, explanation, onClose }: WhyThisSheetProps) {
+export function WhyThisSheet({ visible, explanation, onClose, footnote }: WhyThisSheetProps) {
   const insets = useSafeAreaInsets();
 
   const displayText =
@@ -77,9 +77,9 @@ export function WhyThisSheet({ visible, explanation, onClose }: WhyThisSheetProp
 
           <View style={s.divider} />
 
-          <Text style={s.footnote}>
+          <Text style={s.footnote}>{footnote ?? (<>
             Your feed is shaped by your travel interests, the places you've explored, and creators you engage with. We never use your exact location to rank content.
-          </Text>
+          </>)}</Text>
         </ScrollView>
       </View>
     </Modal>

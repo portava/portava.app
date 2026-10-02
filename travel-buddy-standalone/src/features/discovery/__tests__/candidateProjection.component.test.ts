@@ -118,7 +118,11 @@ describe('whyNowPresentation — absence is never an endorsement', () => {
   });
 
   it('a fresh reading yields humanised claims and is not stale', () => {
-    const p = whyNowPresentation(parseDiscoveryCandidate(raw({ whyNow: ['crowd_busy', 'trajectory_building'] })));
+    // A claim is shown as CURRENT only inside its validity window, on the device
+    // clock: received at t=1_000_000, valid 60 s, judged 1 ms before the horizon.
+    const p = whyNowPresentation(parseDiscoveryCandidate(raw({
+      whyNow: ['crowd_busy', 'trajectory_building'], whyNowValidForMs: 60_000, receivedAtMs: 1_000_000,
+    })), 1_059_999);
     expect(p.claims).toEqual(['crowd busy', 'trajectory building']);
     expect(p.stale).toBe(false);
   });
@@ -142,6 +146,6 @@ describe('whyNowPresentation — absence is never an endorsement', () => {
   });
 
   it('a null candidate yields nothing rather than throwing', () => {
-    expect(whyNowPresentation(null)).toEqual({ claims: [], stale: false });
+    expect(whyNowPresentation(null)).toEqual({ claims: [], stale: false, expiresAtMs: null });
   });
 });

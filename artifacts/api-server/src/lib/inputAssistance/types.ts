@@ -294,6 +294,29 @@ export interface InputSuggestion {
   reason?: string;
   destination?: SearchDestination;
   policyVersion: string;
+  /**
+   * census-discovery §80 (A08) — present ONLY on rows served to the Map search
+   * sheet's field (`global_search` / `map.search`, lib/inputAssistance/
+   * searchPage.ts). What §27 needs to centre or frame a result, and nothing
+   * else: see {@link MapResultProjection}.
+   */
+  mapResult?: MapResultProjection;
+}
+
+/**
+ * The Map's placement of one search row (census-discovery §80). The search
+ * wire type and the display fields the Map's adapter reads, and from the row's
+ * metadata ONLY its geometry keys. Every position in it has been through the
+ * §24 protected-zone pass (lib/discoverySearchProtection.ts), so it discloses no
+ * position `GET /discovery/search` would not.
+ */
+export interface MapResultProjection {
+  serverType: string;
+  subtitle: string | null;
+  locationPreview: string | null;
+  destinationRoute: string | null;
+  startsAt: string | null;
+  metadata: Record<string, unknown> | null;
 }
 
 // ── §41 API request / response envelopes ──────────────────────────────────────
@@ -376,6 +399,16 @@ export interface SuggestResponse {
   fieldId?: string;
   suggestions: InputSuggestion[];
   /**
+   * census-discovery §80 (DV-83 / A08) — the answer's coverage, in the Discovery
+   * refusal vocabulary (lib/discoveryRefusal.ts): `coverage: "nothing"` when the
+   * entity candidates are absent BECAUSE a read failed, `"partial"` when some
+   * sources failed and the rows present are real. Absent when complete.
+   * Additive: an older client ignores it, and no shape it reads changes.
+   */
+  refusal?: DiscoveryRefusal;
+  /** The Map search page's second lane (§27's "Saved items"), when it refused. */
+  laneRefusals?: { saved?: DiscoveryRefusal };
+  /**
    * §44/§57 — the serve's OWN wall-clock cost in milliseconds, measured around
    * candidate generation in routes/inputAssistance.ts. Additive and optional so
    * an older client is unaffected.
@@ -389,3 +422,7 @@ export interface SuggestResponse {
    */
   serverMs?: number;
 }
+
+// census-discovery §80 — the gateway envelope carries coverage in the Discovery
+// refusal vocabulary. Imported at the foot so no cited line above moves.
+import type { DiscoveryRefusal } from "../discoveryRefusal";

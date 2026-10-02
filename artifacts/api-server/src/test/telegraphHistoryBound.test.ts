@@ -123,15 +123,16 @@ function msg(id: string, thread_id: string, sender_id: string, body: string, cre
   };
 }
 
-/** What the fake observed: every select() string per table, and every gte() call. */
+/** What the fake observed: every select() string, every gte() and every or(). */
 interface Observed {
   selects: Array<{ table: string; sel: string }>;
   gte: Array<{ table: string; col: string; val: any }>;
+  or: Array<{ table: string; filters: string }>;
 }
 
 function makeClient(state: State) {
   const db = fixture(state);
-  const observed: Observed = { selects: [], gte: [] };
+  const observed: Observed = { selects: [], gte: [], or: [] };
 
   function from(table: string) {
     const filters: Array<(r: any) => boolean> = [];
@@ -173,6 +174,24 @@ function makeClient(state: State) {
       gte(col: string, val: any)  {
         observed.gte.push({ table, col, val });
         filters.push((r) => Date.parse(r[col]) >= Date.parse(val));
+        return proxy;
+      },
+      // MODELLED, not proxied to a no-op. The windowed reads now carry the
+      // bound as an `or=` group (it also expresses Q6's own-message
+      // exception), and an unmodelled `or` would apply NO filter — which would
+      // make every assertion below pass because the fake had stopped
+      // filtering. Real PostgREST semantics: ORed within the group, ANDed with
+      // every other filter on the query.
+      or(f: string) {
+        observed.or.push({ table, filters: f });
+        const ms = f.split(",").map((clause) => {
+          const a = clause.indexOf("."), b = clause.indexOf(".", a + 1);
+          const col = clause.slice(0, a), op = clause.slice(a + 1, b), val = clause.slice(b + 1);
+          if (op === "gte") return (r: any) => Date.parse(r[col]) >= Date.parse(val);
+          if (op === "eq") return (r: any) => String(r[col]) === val;
+          throw new Error(`fake client: unmodelled or() operator "${op}"`);
+        });
+        filters.push((r: any) => ms.some((m) => m(r)));
         return proxy;
       },
       order(col: string, opts?: any) { _order = { col, asc: opts?.ascending !== false }; return proxy; },
@@ -294,6 +313,8 @@ describe("GET /threads/:id/messages — §14.3 bound", () => {
     assert.ok(memberSelects.length > 0);
     for (const s of memberSelects) assert.ok(!s.sel.includes("visible_from_at"), `OFF must not name the column: ${s.sel}`);
     assert.deepEqual(c._observed.gte, [], "OFF must apply no lower bound");
+    assert.deepEqual(c._observed.or.filter((o) => o.table === "messages"), [],
+      "OFF must add no or() group either — the query is byte-identical to today's");
     // And the quoted reply context still quotes the pre-window message.
     const m4 = (r.body.messages as any[]).find((m) => m.id === M4);
     assert.equal(m4.replyToId, M2);
@@ -306,6 +327,7 @@ describe("GET /threads/:id/messages — §14.3 bound", () => {
     assert.equal(r.status, 200);
     assert.equal((r.body.messages as any[]).length, 6);
     assert.deepEqual(c._observed.gte, []);
+    assert.deepEqual(c._observed.or.filter((o) => o.table === "messages"), []);
   });
 
   it("flag ON: the new member sees only messages at or after visible_from_at; the bound is in the query", async () => {
@@ -313,9 +335,14 @@ describe("GET /threads/:id/messages — §14.3 bound", () => {
     const r = await get(`/threads/${THREAD_T}/messages`, BOB);
     assert.equal(r.status, 200);
     assert.deepEqual(ids(r), [M3, M4, M5, D1].sort(), "M1 and M2 predate Bob; M3 is AT the bound and is visible");
+    // The bound is still applied IN THE QUERY, so pagination cannot walk past
+    // it. It is now carried by the `or=` group that also expresses Q6's
+    // own-message exception, and the group is asserted in full: the window OR
+    // the CALLER's own rows, and nothing else.
     assert.ok(
-      c._observed.gte.some((g) => g.table === "messages" && g.col === "created_at" && g.val === BOUND),
-      "the bound must be applied in the messages query, so pagination cannot walk past it",
+      c._observed.or.some((o) =>
+        o.table === "messages" && o.filters === `created_at.gte.${BOUND},sender_id.eq.${BOB}`),
+      `the bound must be applied in the messages query: ${JSON.stringify(c._observed.or)}`,
     );
   });
 
@@ -350,6 +377,8 @@ describe("GET /threads/:id/messages — §14.3 bound", () => {
     assert.equal(r.status, 200);
     assert.equal((r.body.messages as any[]).length, 6);
     assert.deepEqual(c._observed.gte, []);
+    assert.deepEqual(c._observed.or.filter((o) => o.table === "messages"), [],
+      "an unreadable flag leaves history unbounded: no bound in any spelling");
   });
 
   it("non-member is still refused regardless of the flag", async () => {

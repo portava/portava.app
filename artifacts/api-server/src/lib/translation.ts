@@ -22,6 +22,22 @@ export interface DetectLanguageResult {
 export interface TranslateTextResult {
   translatedText: string;
   provider: string;
+  /**
+   * WHICH ENGINE produced this text — census-telegraph T240's missing
+   * `providerVersion`.
+   *
+   * `provider` is the vendor ('openai', 'mock'); this is the thing that
+   * actually ran. They are two different questions and a stored translation
+   * needs both: "OpenAI translated it" does not say whether it was the model
+   * that was live last March or the one live today, and a corpus of stored
+   * translations with no engine identity cannot be re-evaluated, compared or
+   * selectively re-run after a model swap.
+   *
+   * It is taken FROM the call rather than written beside it — see
+   * `OPENAI_TRANSLATION_MODEL` — so a model change cannot leave the recorded
+   * version pointing at the previous one.
+   */
+  providerVersion: string;
 }
 
 export interface TranslationProvider {
@@ -45,6 +61,12 @@ const MOCK_LANGUAGE_MAP: Record<string, string> = {
   'привет': 'ru', 'مرحبا': 'ar', 'สวัสดี': 'th',
 };
 
+/**
+ * The mock's engine identity. Bumped when its behaviour changes, so a fixture
+ * corpus translated by an older mock is distinguishable from a current one.
+ */
+export const MOCK_TRANSLATION_VERSION = 'mock-1';
+
 export class MockTranslationProvider implements TranslationProvider {
   async detectLanguage(text: string): Promise<DetectLanguageResult> {
     const lower = text.toLowerCase();
@@ -58,6 +80,7 @@ export class MockTranslationProvider implements TranslationProvider {
     return {
       translatedText: `[translated from ${source}] ${text}`,
       provider: 'mock',
+      providerVersion: MOCK_TRANSLATION_VERSION,
     };
   }
 }
@@ -71,11 +94,20 @@ const ISO_LANGUAGE_NAMES: Record<string, string> = {
   sv: 'Swedish', nl: 'Dutch', pl: 'Polish', tr: 'Turkish', hi: 'Hindi',
 };
 
+/**
+ * The one place the translation model is named.
+ *
+ * Both calls below read it and `providerVersion` is set FROM it, so the engine
+ * recorded against a stored translation is the engine that produced it by
+ * construction rather than by a developer remembering to update two literals.
+ */
+export const OPENAI_TRANSLATION_MODEL = 'gpt-5-mini';
+
 export class OpenAITranslationProvider implements TranslationProvider {
   async detectLanguage(text: string): Promise<DetectLanguageResult> {
     const snippet = text.slice(0, 200);
     const completion = await getOpenAI().chat.completions.create({
-      model: 'gpt-5-mini',
+      model: OPENAI_TRANSLATION_MODEL,
       messages: [
         {
           role: 'system',
@@ -102,7 +134,7 @@ export class OpenAITranslationProvider implements TranslationProvider {
   async translateText(text: string, source: string, target: string): Promise<TranslateTextResult> {
     const targetName = ISO_LANGUAGE_NAMES[target] ?? target;
     const completion = await getOpenAI().chat.completions.create({
-      model: 'gpt-5-mini',
+      model: OPENAI_TRANSLATION_MODEL,
       messages: [
         {
           role: 'system',
@@ -115,7 +147,11 @@ export class OpenAITranslationProvider implements TranslationProvider {
     });
     const translated = completion.choices[0]?.message?.content?.trim();
     if (!translated) throw new Error('empty_response');
-    return { translatedText: translated, provider: 'openai' };
+    return {
+      translatedText: translated,
+      provider: 'openai',
+      providerVersion: OPENAI_TRANSLATION_MODEL,
+    };
   }
 }
 

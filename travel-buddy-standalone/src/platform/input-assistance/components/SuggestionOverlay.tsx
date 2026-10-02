@@ -18,6 +18,27 @@
  *    empty / no-match state (§37) and a quiet "assistance unavailable" degraded
  *    note (§38) — never an error that collapses the input.
  *
+ * ── THE DEGRADED STATE IS ITS OWN STATE (§27, §32, §37; census G13) ──────────
+ *
+ * §27 requires every surface to support "loading states, error states, empty
+ * states", and §37's own heading names TWO states — empty AND no-match. This
+ * container used to have ONE shape for the degraded case: the same
+ * caller-supplied `emptyState` slot that holds §37's context-dependent fallback
+ * actions ("Drop a pin", "Add a new Place"). So a field whose authority could
+ * not be REACHED told the user that a search had found nothing and offered to
+ * create a record instead, and a field the authority declines to assist offline
+ * at all (`server_required`) showed a panel with nothing in it and no sentence.
+ *
+ * `degradedNotice.ts` decides which of the three degraded sentences applies;
+ * this file renders it, ABOVE the rows when there are rows and INSTEAD of the
+ * no-match state when there are none. `emptyState` can no longer mask it —
+ * that slot is for a search that happened.
+ *
+ * It renders no row, and it cannot: the rows it draws are the ones the hook
+ * handed it, and the hook's §32 gate (`useInputAssistance.ts#mayRetain`) is
+ * what decides whether a degraded field has any. This surface explains an
+ * absence; it never fills one.
+ *
  * This component is presentational: it does not fetch. `SmartInput` (or any
  * consumer) feeds it the hook output.
  */
@@ -36,6 +57,7 @@ import type { InputSuggestion } from '../types/inputSuggestion.ts';
 import { groupSuggestions, SuggestionSectionHeader, type SuggestionSection } from './SuggestionGroup.tsx';
 import { SuggestionRow } from './SuggestionList.tsx';
 import { ZeroStatePanel } from './ZeroStatePanel.tsx';
+import { degradedNotice } from './degradedNotice.ts';
 import { color, space, radius, type as t, shadow } from '../../../theme/tokens.ts';
 
 /**
@@ -110,6 +132,20 @@ export interface SuggestionOverlayProps {
   loading: boolean;
   /** Endpoint unavailable / offline — show a quiet degraded note, no error. */
   unavailable?: boolean;
+  /**
+   * §32 — whether the field's `offlinePolicy` licenses ANY offline surface,
+   * i.e. `offlineSurfaceAllowed(policy.offlinePolicy)`. It selects which
+   * degraded sentence is honest; it does NOT decide what renders, because the
+   * rows are already gone by the time they reach this component.
+   *
+   * Defaults to `false`, which is the same fail-closed answer
+   * `offlineSurfaceAllowed(null)` gives: an undeclared caller gets the
+   * online-only sentence rather than a claim about a device cache this
+   * component cannot see. With rows on screen the notice ignores it and
+   * describes the rows (see `degradedNotice.ts`), so the default can never
+   * contradict what is visible.
+   */
+  offlineSurface?: boolean;
   /** Flat suggestions (auto-grouped) — ignored when `sections` is provided. */
   suggestions?: InputSuggestion[];
   /** Pre-built sections (overrides `suggestions`). */
@@ -139,6 +175,7 @@ export function SuggestionOverlay({
   visible,
   loading,
   unavailable,
+  offlineSurface = false,
   suggestions,
   sections,
   onSelect,
@@ -183,12 +220,27 @@ export function SuggestionOverlay({
 
   if (!visible) return null;
 
+  // §32 — which degraded sentence, if any. Computed after the early return so
+  // a hidden overlay decides nothing.
+  const degraded = degradedNotice({
+    unavailable: unavailable === true,
+    offlineSurface,
+    rowCount: total,
+  });
+
+  // §46 — the polite live region. THE DEGRADED ANNOUNCEMENT COMES BEFORE THE
+  // COUNT, deliberately: a sighted user sees the note above the rows, and the
+  // old order meant a screen-reader user heard "3 suggestions" for a degraded
+  // list and never learned it was device-local (G13). Loading still wins, since
+  // "we are asking" is the only one of the three that is about to change.
   const status = loading
     ? 'Loading suggestions'
-    : total > 0
-      ? `${total} suggestion${total === 1 ? '' : 's'}`
-      : unavailable
-        ? 'Suggestions unavailable'
+    : degraded
+      ? total > 0
+        ? `${degraded.a11y} ${total} suggestion${total === 1 ? '' : 's'}.`
+        : degraded.a11y
+      : total > 0
+        ? `${total} suggestion${total === 1 ? '' : 's'}`
         : zeroState
           ? 'No suggestions yet'
           : 'No suggestions';
@@ -260,6 +312,20 @@ export function SuggestionOverlay({
         </View>
       ) : null}
 
+      {/* §32 DEGRADED NOTE. Above the rows when there are rows — it is about
+          them (they are device-local and were not re-checked) — and on its own
+          when there are none. It is NOT inside the `emptyState ?? …` fallback
+          any more: a caller's §37 fallback actions answer "nothing matched",
+          which is not what happened here. */}
+      {degraded && !loading ? (
+        <View style={styles.degraded} testID={`ia-degraded-${degraded.kind}`}>
+          <Text style={styles.degradedTitle} accessibilityRole="header" numberOfLines={1}>
+            {degraded.title}
+          </Text>
+          <Text style={styles.degradedDetail}>{degraded.detail}</Text>
+        </View>
+      ) : null}
+
       {/* §27 zero-state panel — before typing, the rows are framed as the
           pre-typing set rather than as results, and their absence is a
           different sentence from "no matches". */}
@@ -267,13 +333,9 @@ export function SuggestionOverlay({
         <ZeroStatePanel title={zeroStateTitle} hint={zeroStateHint} count={total} body={list} />
       ) : total > 0 ? (
         list
-      ) : !loading ? (
+      ) : !loading && !degraded ? (
         <View style={styles.empty}>
-          {emptyState ?? (
-            <Text style={styles.emptyText}>
-              {unavailable ? 'Suggestions are unavailable right now.' : 'No matches yet.'}
-            </Text>
-          )}
+          {emptyState ?? <Text style={styles.emptyText}>No matches yet.</Text>}
         </View>
       ) : null}
     </View>
@@ -315,6 +377,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.md,
     paddingVertical: space.lg,
     alignItems: 'flex-start',
+  },
+  // §38 "provider failure must not collapse the input UI": a quiet note in the
+  // card's own colours, not an error banner. No red, no icon, no button — there
+  // is nothing for the user to press and nothing for this layer to retry.
+  degraded: {
+    paddingHorizontal: space.md,
+    paddingTop: space.sm,
+    paddingBottom: space.sm,
+    alignItems: 'flex-start',
+  },
+  degradedTitle: {
+    ...t.stamp,
+    color: color.faint,
+    paddingBottom: space.xs,
+  },
+  degradedDetail: {
+    ...t.small,
+    color: color.mute,
   },
   emptyText: {
     ...t.small,

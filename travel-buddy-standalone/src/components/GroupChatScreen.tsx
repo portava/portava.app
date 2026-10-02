@@ -35,7 +35,7 @@ import { router } from 'expo-router';
 import {
   ArrowLeft, Send, Users, Globe, Info, VolumeX, Languages, Paperclip,
   Compass, Bot, Copy, Trash2, Flag, Reply, Check, CheckCheck, Search, BookmarkPlus, X,
-  AlertCircle, RefreshCw, CalendarClock, Clock,
+  AlertCircle, RefreshCw, CalendarClock, Clock, Pencil, History,
 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useGroupChat } from '../hooks/useGroupChat.ts';
@@ -46,10 +46,10 @@ import { TelegraphSystemNotice } from './TelegraphSystemNotice.tsx';
 import { TranslationSettingsSheet } from './TranslationSettingsSheet.tsx';
 import { TripMembersSheet } from './TripMembersSheet.tsx';
 import type { Message } from '../services/messaging.ts';
-import { deleteMessage, saveMessage, sendMediaMessage, muteThread } from '../services/messaging.ts';
+import { deleteMessage, saveMessage, sendMediaMessage, muteThread, reportMessage, type MessageReportReasonCode } from '../services/messaging.ts'; import { ThreadActionSheets } from '../features/telegraph/messageActions/ThreadActionSheets.tsx'; import { canEditMessage, canViewEditHistory } from '../features/telegraph/messageActions/messageActionRules.ts'; // WP-08, one line: census cites this file by line
 import { useMessageMediaPicker } from '../hooks/useMessageMediaPicker.ts';
 import { MessageMediaBubble } from './MessageMediaBubble.tsx';
-import { reportContent, type ReasonCode } from '../services/reports.ts';
+import { type ReasonCode } from '../services/reports.ts'; // the reason list below; the report itself goes to the Telegraph route (WP-08 TM-TEL-D4)
 import { getTripMembers, getCircleMembers, type FriendUser } from '../services/friends.ts';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
@@ -108,14 +108,14 @@ function LongPressActionSheet({
   onClose,
   onDeleteForMe,
   onReply,
-  onSave,
+  onSave, canEdit = false, showHistory = false, onEdit, onHistory,
 }: {
   message: Message | null;
   mine: boolean;
   onClose: () => void;
   onDeleteForMe: (id: string) => Promise<void>;
   onReply: (msg: Message) => void;
-  onSave: (msg: Message) => void;
+  onSave: (msg: Message) => void; canEdit?: boolean; showHistory?: boolean; onEdit?: (msg: Message) => void; onHistory?: (msg: Message) => void;
 }) {
   const [showReport, setShowReport] = useState(false);
   const [reportReason, setReportReason] = useState<ReasonCode | null>(null);
@@ -126,12 +126,12 @@ function LongPressActionSheet({
     if (!reportReason || !message) return;
     setReportSending(true);
     const detail = reportDetail.trim();
-    const result = await reportContent({
-      target_type: 'message',
-      target_id: message.id,
-      reason_code: reportReason,
-      ...(detail ? { reason_detail: detail } : {}),
-    }).catch(() => ({ ok: false as const }));
+    // WP-08 TM-TEL-D4: file through the Telegraph route, which snapshots the
+    // message as §22 evidence before it answers; the code sets its severity.
+    const label = REPORT_MSG_REASONS.find((r) => r.code === reportReason)?.label ?? 'Something else';
+    const reasonText = (detail ? `${label}: ${detail}` : label).slice(0, 200);
+    const sent = await reportMessage(message.id, reasonText, reportReason as MessageReportReasonCode);
+    const result = sent.ok ? { ok: true as const } : { ok: false as const, error: sent.message ?? 'Could not submit report' };
     setReportSending(false);
     if (result.ok) {
       setShowReport(false);
@@ -149,8 +149,8 @@ function LongPressActionSheet({
     // a menu item that only explained that was a dead end.
     ['reply',     'Reply',         Reply        ],
     ['copy',      'Copy text',     Copy         ],
-    ['save',      'Save message',  BookmarkPlus ],
-    ['report',    'Report',        Flag         ],
+    ['save',      'Save message',  BookmarkPlus ], ...(canEdit ? [['edit', 'Edit', Pencil] as [string, string, React.ComponentType<{ size: number; color: string }>]] : []), ...(showHistory ? [['history', 'Edit history', History] as [string, string, React.ComponentType<{ size: number; color: string }>]] : []),
+    ...(!mine ? [['report', 'Report', Flag] as [string, string, React.ComponentType<{ size: number; color: string }>]] : []), // your own message is not yours to report
   ];
   if (showReport) {
     return (
@@ -224,7 +224,7 @@ function LongPressActionSheet({
                 onSave(message);
               } else {
                 onClose();
-                Alert.alert(label, 'This feature is coming soon.');
+                if (key === 'edit') onEdit?.(message); else if (key === 'history') onHistory?.(message); else Alert.alert(label, 'This feature is coming soon.');
               }
             }}
           >
@@ -464,7 +464,7 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
   const [threadMuted, setThreadMuted] = useState(false);
   const insets = useSafeAreaInsets();
   const { userId } = useSession();
-  const { state, thread, messages, sending, errorMessage, reload, send, retrySend, notifyTyping, typingUserIds } = useGroupChat(type, id);
+  const { state, thread, messages, sending, errorMessage, reload, send, retrySend, notifyTyping, typingUserIds, edit } = useGroupChat(type, id); const [editingMsg, setEditingMsg] = useState<Message | null>(null); const [historyMsg, setHistoryMsg] = useState<Message | null>(null); // WP-08
   const [input, setInput] = useState('');
   const mediaPicker = useMessageMediaPicker();
   const [showMediaPickerSheet, setShowMediaPickerSheet] = useState(false);
@@ -1104,9 +1104,29 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
           setActionMsg(null);
           if (!tid) return;
           saveMessage(tid, msg.id).then((r) => {
-            if (r.ok) Alert.alert('Saved', 'Message saved to your collection.');
+            if (r.ok) Alert.alert('Saved', 'Message saved to your collection.', [{ text: 'OK' }, { text: 'View saved', onPress: () => router.push('/messages/saved' as never) }]);
+            // A failed save used to be silent here; the person believed it was kept.
+            else Alert.alert('Not saved', r.message ?? 'We could not save that message. Please try again.');
           });
         }}
+        // Trip and circle chats are never end-to-end encrypted (only direct threads can be).
+        canEdit={canEditMessage(actionMsg, actionMsgMine, false)}
+        showHistory={!!thread?.id && canViewEditHistory(actionMsg)}
+        onEdit={(m) => setEditingMsg(m)}
+        onHistory={(m) => setHistoryMsg(m)}
+      />
+
+      {/* WP-08 / TEL-F07: edit through the hook (canonical route), and the edit history. */}
+      <ThreadActionSheets
+        threadId={thread?.id ?? ''}
+        editing={editingMsg}
+        onCloseEdit={() => setEditingMsg(null)}
+        onEdited={() => {}}
+        submitEdit={edit}
+        history={historyMsg}
+        onCloseHistory={() => setHistoryMsg(null)}
+        askVisible={false}
+        onCloseAsk={() => {}}
       />
 
       {/* Per-thread translation settings */}

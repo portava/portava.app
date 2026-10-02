@@ -38,6 +38,8 @@ export interface GemContributeSectionProps {
   isAuthed: boolean;
   /** Called after a successful contribution with the re-derived projection. */
   onContributed?: (gemState: GemState | null, gemConfidence: GemConfidence | null) => void;
+  /** Set when this section is opened from a media item's action rail (§45 Media → Contribution). */
+  originMediaId?: string | null;
 }
 
 type SubmitState =
@@ -46,20 +48,20 @@ type SubmitState =
   | { kind: 'done'; type: GemContributionType; already: boolean }
   | { kind: 'error' };
 
-export function GemContributeSection({ gemId, isAuthed, onContributed }: GemContributeSectionProps) {
+export function GemContributeSection({ gemId, isAuthed, onContributed, originMediaId }: GemContributeSectionProps) {
   const [submit, setSubmit] = useState<SubmitState>({ kind: 'idle' });
 
   const handlePress = useCallback(async (type: GemContributionType) => {
     if (submit.kind === 'submitting') return;
     setSubmit({ kind: 'submitting', type });
     try {
-      const res = await contributeToGem(gemId, type);
+      const res = await contributeToGem(gemId, type, undefined, { originMediaId });
       setSubmit({ kind: 'done', type, already: res.alreadyObserved });
       onContributed?.(res.gemState, res.gemConfidence);
     } catch {
       setSubmit({ kind: 'error' });
     }
-  }, [gemId, submit.kind, onContributed]);
+  }, [gemId, submit.kind, onContributed, originMediaId]);
 
   return (
     <View style={styles.card}>

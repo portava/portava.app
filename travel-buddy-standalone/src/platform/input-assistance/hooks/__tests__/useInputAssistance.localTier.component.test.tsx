@@ -85,6 +85,11 @@ function Probe({ fieldId, text }: { fieldId: string; text: string }) {
   return (
     <>
       <Text testID="labels">{suggestions.map((s) => s.label).join('|')}</Text>
+      {/* Added with the §32 local surface: "which rows survived" and "where
+          they came from" are different questions, and once a shipped row can
+          appear beside a retained one, a label list alone cannot tell them
+          apart. */}
+      <Text testID="sources">{suggestions.map((s) => s.source).join('|')}</Text>
       <Text testID="unavailable">{String(unavailable)}</Text>
     </>
   );
@@ -134,15 +139,39 @@ test('§33: network loss RETAINS the narrowed local rows and still reports degra
   await waitFor(() => expect(screen.getByTestId('unavailable').props.children).toBe('true'));
   // The degraded STATE is set (the overlay shows its quiet note) AND the rows
   // that still match the typed text survive. Clearing them here was the defect.
-  expect(screen.getByTestId('labels').props.children).toBe('Bangkok');
+  //
+  // RESTATED when the §32 local surface landed (census G197/G198/G350), and the
+  // original claim is unchanged: the RETAINED row is still the first thing the
+  // field shows, and it is still the SERVER's row. What is new is what may
+  // follow it — the shipped rungs below the retained one. This assertion is
+  // now positional rather than whole-list, because "the cached row survived" is
+  // what it was always about; asserting the whole list made it also an
+  // assertion that nothing else may ever be offered, which was never its point.
+  const labels = String(screen.getByTestId('labels').props.children).split('|');
+  expect(labels[0]).toBe('Bangkok');
+  expect(String(screen.getByTestId('sources').props.children).split('|')[0]).toBe('canonical');
 });
 
-test('§33: with nothing cached, an unavailable endpoint still yields an empty list', async () => {
+test('§33/§32: with nothing cached, an unavailable endpoint retains NOTHING of its own', async () => {
+  // SUPERSEDED ASSERTION, recorded rather than deleted. This case used to read
+  // "still yields an empty list" and asserted `''`. That was true, and it was
+  // the census's complaint: a cold offline open had no substrate at all, so the
+  // licensed surface returned nothing (G197/G198 — "the gate is real and
+  // nothing is behind it"). Since `services/localDictionary.ts` there IS
+  // something behind it, and `trip_destination` is `cached_local`, so this
+  // field is one of the fields that gets it.
+  //
+  // What this case still proves — and it is the part that mattered — is that
+  // the hook RETAINS nothing of its own here: with an empty cache, every row on
+  // screen is a SHIPPED row, and not one of them is a server row conjured out
+  // of a cache that never held it.
   mockRequest.mockResolvedValueOnce({ ok: false, aborted: false, unavailable: true, error: 'endpoint unavailable' });
   render(<Probe fieldId={FIELD} text="bangk" />);
 
   await waitFor(() => expect(screen.getByTestId('unavailable').props.children).toBe('true'));
-  expect(screen.getByTestId('labels').props.children).toBe('');
+  const sources = String(screen.getByTestId('sources').props.children).split('|');
+  expect(sources).not.toContain('canonical');
+  expect(sources.every((s) => s === 'local')).toBe(true);
 });
 
 test('§29: an uncacheable (personal) field never READS a local list, even one already cached', async () => {
@@ -200,7 +229,13 @@ test('NOT VACUOUS: the same field and the same cache, with `cached_local`, DO re
   rerender(<Probe fieldId={FIELD} text="bangk" />);
 
   await waitFor(() => expect(screen.getByTestId('unavailable').props.children).toBe('true'));
-  expect(screen.getByTestId('labels').props.children).toBe('Bangkok');
+  // Positional for the same reason as the case above: the discriminator this
+  // test exists for is that the CACHED SERVER ROW survives here and does not
+  // survive one test up, and that is a statement about the first row and its
+  // source, not about the length of the list.
+  const labels = String(screen.getByTestId('labels').props.children).split('|');
+  expect(labels[0]).toBe('Bangkok');
+  expect(String(screen.getByTestId('sources').props.children).split('|')[0]).toBe('canonical');
 
   // Restore the blanket seed so ordering between files cannot matter.
   _seedPolicy(_SEED_CONTEXTS, { telegraph_recipient: { privacyClass: 'viewer_scoped' } });

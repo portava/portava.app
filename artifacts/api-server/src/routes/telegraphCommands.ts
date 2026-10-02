@@ -16,10 +16,11 @@
 import { Router } from "express";
 import { z } from "zod";
 import { logger as rootLogger } from "../lib/logger.js";
-import { requireUser, sendError, isAcceptedTripMember } from "../lib/http.js";
+import { requireUser, sendError, isAcceptedTripMember } from "../lib/http.js"; import { isFlagEnabled } from "../lib/featureFlags.js";
 
 const cmdLogger = rootLogger.child({ route: "telegraphCommands" });
 import { resolveContext } from "../lib/privacyResolver.js";
+import { dispatchTable, lookup } from "../domain/telegraph/contracts/dispatchTable.js";
 import { getNearbyVenues, formatDistance, type NearbyVenue } from "../lib/venuesService.js";
 import {
   compensateFor,
@@ -31,8 +32,17 @@ const router = Router();
 
 const UUID = /^[0-9a-f-]{36}$/i;
 
-/** Maps a Telegraph intent to the preference category that should be boosted on confirm. */
-const INTENT_CATEGORY: Partial<Record<string, string>> = {
+/**
+ * Maps a Telegraph intent to the preference category that should be boosted on confirm.
+ *
+ * `dispatchTable`, not a bare literal: `stored.intent` is read back out of
+ * `telegraph_commands` rather than re-derived, so a row whose `intent` column
+ * says `constructor` would otherwise index this map to the `Object` FUNCTION —
+ * truthy, so the `?? "unknown"` below never fires — and put it into
+ * `ActionContext.category`, which is typed `string`. See
+ * `domain/telegraph/contracts/dispatchTable.ts`.
+ */
+const INTENT_CATEGORY: Readonly<Record<string, string>> = dispatchTable({
   find_food:            "food",
   find_nightlife:       "nightlife",
   plan_day:             "activity",
@@ -41,7 +51,7 @@ const INTENT_CATEGORY: Partial<Record<string, string>> = {
   fix_schedule_conflict:"planning",
   what_is_missing:      "planning",
   add_to_plan:          "activity",
-};
+});
 
 /* ── Intent types ── */
 export type TelegraphIntent =
@@ -65,7 +75,7 @@ export interface ProposedAction {
 
 export interface TelegraphCommandResponse {
   commandId: string;
-  intent: TelegraphIntent;
+  intent: TelegraphIntent | DiscoveryCardIntent;
   summary: string;
   suggestions: Array<{
     title: string;
@@ -74,7 +84,7 @@ export interface TelegraphCommandResponse {
     estimatedTime: string;
     priceLevel: string;
   }>;
-  proposedActions: ProposedAction[];
+  proposedActions: Array<ProposedAction | DiscoveryProposedAction>;
   accessLevel: string;
   tripId: string | null;
   createdAt: string;
@@ -436,7 +446,7 @@ router.post("/telegraph/commands/:commandId/confirm-action", async (req, res) =>
     actionId,
     label: action.label,
     params: action.params,
-    category: (action.params.category as string | undefined) ?? INTENT_CATEGORY[stored.intent] ?? "unknown",
+    category: (action.params.category as string | undefined) ?? lookup(INTENT_CATEGORY, stored.intent) ?? "unknown",
   };
 
   // AUTHORIZE — re-derived now, never taken from the card (§30A.11).
@@ -452,7 +462,7 @@ router.post("/telegraph/commands/:commandId/confirm-action", async (req, res) =>
 
   // EXECUTE — the one write Telegraph is entitled to. The canonical write
   // belongs to `registration.canonicalOwner` and is not performed here.
-  const execution = await registration.execute(ctx);
+  const execution = await registration.execute(ctx); if (execution.failed) { cmdLogger.warn({ commandId, actionId, failed: execution.failed }, "owning domain's canonical write failed; nothing confirmed"); sendError(res, "degraded_unavailable", "That could not be done right now, and nothing was changed. Please try again."); return; } // census-discovery §81
   if (execution.degraded) {
     cmdLogger.warn({ commandId, degraded: execution.degraded }, "orchestration record did not land");
   }
@@ -553,6 +563,90 @@ router.get("/trips/:tripId/telegraph/commands/history", async (req, res) => {
     .map(({ _userId: _omit, ...cmd }) => cmd);
 
   res.json({ tripId, history });
+});
+
+/* ===========================================================================
+ * POST /telegraph/commands/discovery-card
+ * census-discovery §81 (A21; register D-W10S2-5). The TAP on a shared
+ * Discovery card's Save becomes a Telegraph COMMAND (spec §30A.11: "tap ->
+ * command -> owning domain authorization/write"): it proposes one
+ * `discovery_save_place` action, derived from the CURRENT capability (§30A.10:
+ * "Action buttons are derived from current capabilities") — authorize runs
+ * before anything is offered, and again at confirmation — and the person
+ * confirms it through the ordinary confirm-action above, where the registry's
+ * execute calls Discovery's own save. Nothing is written by this endpoint.
+ * Gated by `telegraph_discovery_actions_enabled` (3467, seeded FALSE).
+ * ===========================================================================
+ */
+
+/** The intent a Discovery-card command is stored under. Not a parsed text intent. */
+type DiscoveryCardIntent = "save_discovery_place";
+
+/** A proposed action on a Discovery object. Registered in TELEGRAPH_ACTION_REGISTRY. */
+interface DiscoveryProposedAction {
+  id: string;
+  label: string;
+  kind: "discovery_save_place";
+  params: Record<string, string>;
+  requires_confirmation: true;
+}
+
+const DiscoveryCardSchema = z.object({
+  placeId:  z.string().min(1).max(200),
+  title:    z.string().max(200).optional(),
+  category: z.string().max(100).optional(),
+  type:     z.string().max(100).optional(),
+  city:     z.string().max(200).optional(),
+});
+
+router.post("/telegraph/commands/discovery-card", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  if (!(await isFlagEnabled(client, "telegraph_discovery_actions_enabled"))) {
+    sendError(res, "feature_disabled", "Saving places from a conversation is not enabled.");
+    return;
+  }
+  const parsed = DiscoveryCardSchema.safeParse(req.body);
+  if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
+
+  const commandId = genId();
+  const params: Record<string, string> = { placeId: parsed.data.placeId };
+  if (parsed.data.title) params.title = parsed.data.title;
+  if (parsed.data.category) params.category = parsed.data.category;
+  if (parsed.data.type) params.type = parsed.data.type;
+  if (parsed.data.city) params.city = parsed.data.city;
+  const action: DiscoveryProposedAction = {
+    id: `${commandId}_a1`,
+    label: parsed.data.title ? `Save ${parsed.data.title}` : "Save this place",
+    kind: "discovery_save_place",
+    params,
+    requires_confirmation: true,
+  };
+
+  // Derived from the CURRENT capability: a place the person may not save is
+  // not offered at all, rather than offered and refused at confirmation.
+  const registration = registrationFor(action.kind);
+  if (!registration) { sendError(res, "invalid_payload", "discovery_save_place is not registered."); return; }
+  const authorization = await registration.authorize({
+    client, userId: user.id, tripId: null, commandId, actionId: action.id,
+    label: action.label, params: action.params, category: params.category ?? "discovery",
+  });
+  if (!authorization.authorized) { sendError(res, "not_member", authorization.reason); return; }
+
+  const response: TelegraphCommandResponse = {
+    commandId,
+    intent: "save_discovery_place",
+    summary: "Save this place to your saved places. Nothing is saved until you confirm.",
+    suggestions: [],
+    proposedActions: [action],
+    accessLevel: "partial",
+    tripId: null,
+    createdAt: new Date().toISOString(),
+  };
+  commandStore.set(commandId, { ...response, _userId: user.id });
+  res.status(201).json(response);
 });
 
 export default router;

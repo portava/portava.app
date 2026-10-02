@@ -205,6 +205,16 @@ export const GUARDS: readonly GuardEntry[] = [
     reach: { kind: "check-all", script: "check:rank-events-surfaces" },
   },
   {
+    checker: "src/scripts/checkSilentSupabaseReads.ts",
+    // The count is FILES SCANNED, not baselined sites. The site count is a debt
+    // ledger that is supposed to reach zero; reading the proof off it would make
+    // a finished burn-down look like a collapsed scan. "How many files did I
+    // open" is the number that proves it looked.
+    inspects: { countPattern: "baselined for burn-down across (\\d+) files", unit: "source files scanned for silently-discarded reads" },
+    responsibility: "A READ never discards its error into a confident empty answer, the read-side twin of the silent-write defect.",
+    reach: { kind: "check-all", script: "check:silent-supabase-reads" },
+  },
+  {
     checker: "src/scripts/checkSilentSupabaseWrites.ts",
     inspects: { countPattern: "(\\d+) pre-existing site\\(s\\) baseline", unit: "baselined write sites" },
     responsibility: "A mutation never discards its error, the write-side twin of the unchecked-read defect.",
@@ -964,5 +974,15 @@ export const GUARDS: readonly GuardEntry[] = [
       countPattern: "(\\d+) symbol-naming citation\\(s\\) judged",
       unit: "symbol-naming citation(s) judged against the file they name",
     },
+  },
+  {
+    checker: "src/scripts/checkDiscoveryQueryPaths.ts",
+    inspects: {
+      countPattern: "(\\d+) Discovery table/index creations",
+      unit: "Discovery table and index creations checked against docs/discovery/query-paths.md",
+    },
+    responsibility:
+      "Every table or index a migration creates on a Discovery table carries expected cardinality, index rationale and EXPLAIN evidence in docs/discovery/query-paths.md (`10` §4; census-discovery DC-15).",
+    reach: { kind: "check-all", script: "check:discovery-query-paths" },
   },
 ];

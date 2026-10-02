@@ -571,96 +571,22 @@ describe("ingest — payload validation", () => {
 // the zone to the nearest active place inside it, observes against THAT place,
 // and records the zone — failing closed when nothing anchors.
 
-describe("ingest — §22 zone kinds resolve to an anchor place", () => {
-  const ZONE = "33333333-3333-4333-8333-333333333333";
-  const ANCHOR = "22222222-2222-4222-8222-2222222222aa";
-
-  function zoneDb(over: { geoZones?: any[]; placeRows?: any[] } = {}) {
-    return makeDb(
-      { map_contributions_enabled: true, intel_capture_quick_signal: true, intel_rewards: true },
-      {
-        consent: { [ACTOR]: true },
-        geoZones: over.geoZones ?? [
-          { id: ZONE, zone_type: "neighborhood", center_lat: 16.06, center_lng: 108.22, radius_meters: null, polygon_geojson: null },
-        ],
-        placeRows: over.placeRows ?? [
-          { id: ANCHOR, latitude: 16.061, longitude: 108.221, status: "active", merged_into_place_id: null },
-        ],
-      },
-    );
-  }
-
-  const zoneContribution = (over: Record<string, unknown> = {}) => ({
-    objectId: ZONE,
-    objectKind: "activity_zone",
-    kind: "crowd_direction",
-    value: CROWD_DIRECTIONS[0],
-    observedAt: OBSERVED,
-    ...over,
-  });
-
-  it("anchors a crowd_direction on a zone to the nearest place and records the zone", async () => {
-    const db = zoneDb();
-    const r = await ingestMapContribution(db, ACTOR, zoneContribution());
-    assert.equal(r.ok, true);
-    const row = db._tables.intel_observations[0];
-    assert.equal(row.subject_id, ANCHOR, "the zone observation is stored against its anchor place");
-    assert.equal(row.zone_id, ZONE, "the geo_zone it came from is recorded");
-    assert.equal(row.claim_type, "crowd.direction");
-  });
-
-  it("picks the NEAREST place when several lie within the zone radius", async () => {
-    const near = "22222222-2222-4222-8222-2222222222bb";
-    const db = zoneDb({
-      geoZones: [
-        { id: ZONE, zone_type: "neighborhood", center_lat: 16.06, center_lng: 108.22, radius_meters: 2000, polygon_geojson: null },
-      ],
-      placeRows: [
-        { id: ANCHOR, latitude: 16.065, longitude: 108.225, status: "active", merged_into_place_id: null }, // ~0.75 km
-        { id: near, latitude: 16.0605, longitude: 108.2205, status: "active", merged_into_place_id: null }, // ~0.08 km
-      ],
-    });
-    const r = await ingestMapContribution(db, ACTOR, zoneContribution());
-    assert.equal(r.ok, true);
-    assert.equal(db._tables.intel_observations[0].subject_id, near);
-  });
-
-  it("resolves a polygon zone by its centroid when it declares no centre", async () => {
-    const db = zoneDb({
-      geoZones: [
-        {
-          id: ZONE, zone_type: "polygon", center_lat: null, center_lng: null, radius_meters: null,
-          polygon_geojson: {
-            type: "Polygon",
-            coordinates: [[[108.220, 16.058], [108.224, 16.058], [108.224, 16.062], [108.220, 16.062], [108.220, 16.058]]],
-          },
-        },
-      ],
-    });
-    const r = await ingestMapContribution(db, ACTOR, zoneContribution());
-    assert.equal(r.ok, true);
-    assert.equal(db._tables.intel_observations[0].subject_id, ANCHOR);
-  });
-
-  it("fails closed (unknown_subject) when the geo_zone is unknown", async () => {
-    const db = zoneDb({ geoZones: [] });
-    const r = await ingestMapContribution(db, ACTOR, zoneContribution());
-    assert.equal(r.ok, false);
-    assert.equal((r as any).reason, "unknown_subject");
-    assert.equal((r as any).code, "not_found");
-    assert.equal(db._tables.intel_observations.length, 0, "nothing is stored when a zone cannot be anchored");
-  });
-
-  it("fails closed when no place lies within the zone radius", async () => {
-    const db = zoneDb({
-      placeRows: [
-        { id: ANCHOR, latitude: 17.5, longitude: 109.5, status: "active", merged_into_place_id: null }, // far outside
-      ],
-    });
-    const r = await ingestMapContribution(db, ACTOR, zoneContribution());
-    assert.equal(r.ok, false);
-    assert.equal((r as any).reason, "unknown_subject");
-  });
+describe("ingest — §22 zone kinds are NOT resolved to an anchor place", () => {
+  // WHAT USED TO BE HERE. Five cases pinned `resolveZoneAnchorSubject`: a zone
+  // contribution was stored against the NEAREST active place inside the zone,
+  // and a zone with no place inside it was REFUSED. Migration 3002 removed both
+  // the proximity resolution and the `subject_id NOT NULL REFERENCES places(id)`
+  // that forced it, because §18.3 requires `unknown` and `temporary_world_object`
+  // to be STORABLE — a contribution about a street is not a contribution about
+  // the cafe nearest to it. Those five cases asserted the behaviour the spec now
+  // forbids, so they were deleted rather than adjusted; their replacements live in
+  // src/test/sensingIdentityZoneSubject.test.ts, which also keeps the fail-closed
+  // property the old "unknown geo_zone" case carried, under the more precise
+  // reason `unknown_zone`.
+  //
+  // The case below is NOT one of those five. It says an OWNED subject still
+  // resolves to itself and never enters the zone path at all, which 3002 does not
+  // change, so it stays.
 
   it("does NOT run the zone resolver for a place kind — its own id stays the subject", async () => {
     const db = makeDb(

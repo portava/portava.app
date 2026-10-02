@@ -10,7 +10,7 @@ import {
   ArrowLeft, Users, UserCheck, UserPlus, UserMinus, Clock,
   MessageCircle, X, MoreVertical, ShieldAlert,
   Image as ImageIcon, Tag, Map as MapIcon, Info,
-  Bookmark, BookmarkCheck, BellOff, Bell, Flag, Trophy,
+  Bookmark, BookmarkCheck, BellOff, Bell, Flag, Trophy, LayoutGrid,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { usePublicPassport } from '../../src/hooks/usePublicPassport';
@@ -28,6 +28,7 @@ import { StampsTab } from '../../src/components/StampsTab';
 import { StampButton } from '../../src/components/stamps/StampButton';
 import { AboutTab } from '../../src/components/AboutTab';
 import { MapTab } from '../../src/components/MapTab';
+import { ProfileActivityTab } from '../../src/components/profile/ProfileActivityTab';
 import { getProfileByHandle } from '../../src/services/friends';
 import { UuidHandleRedirect, isUuidParam } from '../../src/components/profile/UuidHandleRedirect';
 import { followUser } from '../../src/services/follows';
@@ -36,7 +37,7 @@ import { muteUser, unmuteUser, getMuteStatus } from '../../src/services/mutes';
 import { saveProfile, unsaveProfile, getSaveStatus } from '../../src/services/saves';
 import { submitReport, type ReportReason } from '../../src/services/reports';
 import { ReportSheet } from '../../src/components/ReportSheet';
-import { getUserReviews, type Review } from '../../src/services/reviews';
+import { HostReviewsSummary } from '../../src/components/profile/HostReviewsSummary';
 import { getPublicShowcase, type ShowcaseStamp } from '../../src/services/stampShowcase';
 import { getBuddyProfileByUserId, type BuddyProfile } from '../../src/services/rentABuddy';
 import type { PublicProfile } from '../../src/types/models';
@@ -49,9 +50,11 @@ import { useMilestoneCelebration } from '../../src/hooks/useMilestoneCelebration
 import { TenKStampsBadge } from '../../src/components/TenKStampsBadge';
 import { errorCopy } from '../../src/lib/errorCopy';
 
-type Tab = 'postcards' | 'stamps' | 'map' | 'about';
+type Tab = 'postcards' | 'activity' | 'stamps' | 'map' | 'about';
 const TABS: { key: Tab; label: string; Icon: LucideIcon }[] = [
   { key: 'postcards', label: 'Postcards', Icon: ImageIcon },
+  // TM-social PLAT-F14 — posts / trips / events / circles from /users/:username/*
+  { key: 'activity',  label: 'Activity',  Icon: LayoutGrid },
   { key: 'stamps',    label: 'Stamps',    Icon: Tag },
   { key: 'map',       label: 'Map',       Icon: MapIcon },
   { key: 'about',     label: 'About',     Icon: Info },
@@ -439,17 +442,6 @@ function InfoChip({ label, accent = false }: { label: string; accent?: boolean }
 
 // ── Host reviews summary ─────────────────────────────────────────────────────
 
-function StarLine({ rating }: { rating: number }) {
-  const full = Math.round(rating);
-  return (
-    <View style={{ flexDirection: 'row', gap: 2 }}>
-      {[1, 2, 3, 4, 5].map((s) => (
-        <Text key={s} style={{ fontSize: 11, color: s <= full ? '#F59E0B' : '#D1D5DB' }}>★</Text>
-      ))}
-    </View>
-  );
-}
-
 function BuddySection({ userId, refreshKey }: { userId: string; refreshKey?: number }) {
   const [loading, setLoading] = useState(false);
   const [buddy, setBuddy] = useState<BuddyProfile | null>(null);
@@ -520,63 +512,6 @@ const buddyCardStyles = StyleSheet.create({
   bookBtn: { backgroundColor: color.signal },
   btnText: { ...t.small, color: color.onInk, fontWeight: '700' },
 });
-
-function HostReviewsSummary({ userId }: { userId: string }) {
-  const [data, setData]     = useState<{ avgRating: number | null; reviewCount: number; reviews: Review[] } | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let active = true;
-    getUserReviews(userId, 3)
-      .then((d) => { if (active) setData(d as any); })
-      .catch(() => {})
-      .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
-  }, [userId]);
-
-  if (loading || !data || data.reviewCount === 0) return null;
-
-  return (
-    <View style={{ marginTop: space.md }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm, marginBottom: space.sm }}>
-        <Text style={{ ...t.bodyStrong, color: color.ink, fontSize: 14 }}>Host Reviews</Text>
-        {data.avgRating !== null && (
-          <>
-            <StarLine rating={data.avgRating} />
-            <Text style={{ ...t.small, color: color.mute }}>
-              {data.avgRating.toFixed(1)} ({data.reviewCount})
-            </Text>
-          </>
-        )}
-      </View>
-      {data.reviews.slice(0, 3).map((r) => (
-        <View
-          key={r.id}
-          style={{
-            backgroundColor: color.paperRaised,
-            borderRadius: 10,
-            padding: space.md,
-            marginBottom: space.sm,
-            borderWidth: 1,
-            borderColor: color.haze,
-          }}
-        >
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm, marginBottom: 4 }}>
-            <StarLine rating={r.rating} />
-            {r.reviewer && (
-              <Text style={{ ...t.small, color: color.mute }}>@{r.reviewer.handle ?? r.reviewer.displayName ?? 'traveler'}</Text>
-            )}
-          </View>
-          {r.body ? (
-            <Text style={{ ...t.body, color: color.ink, fontSize: 13 }} numberOfLines={3}>
-              {r.body}
-            </Text>
-          ) : null}
-        </View>
-      ))}
-    </View>
-  );
-}
 
 // ── Main screen ──────────────────────────────────────────────────────────────
 
@@ -1180,6 +1115,7 @@ function PublicPassportScreenNative() {
             />
           )}
           {tab === 'map' && <MapTab postcards={postcards} sentinel={isOwn ? undefined : postcardSentinel ?? undefined} />}
+          {tab === 'activity' && <ProfileActivityTab username={profile?.username ?? username ?? ''} />}
           {tab === 'about' && (
             <View style={{ paddingHorizontal: space.lg, gap: space.md }}>
               {!canViewAbout ? (

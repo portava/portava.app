@@ -34,7 +34,7 @@ import { wrapUgc } from "./CompassStructuredContext.js";
 import {
   evaluateSenseSignals,
   getSenseSettings,
-  type CandidateNudge,
+  type CandidateNudge, type SenseSource,
   type SuppressedNudge,
 } from "./CompassSenseEngine.js";
 import { NotificationService } from "../services/notifications/NotificationService.js";
@@ -100,7 +100,7 @@ export interface LiveSession {
 export interface LiveCheckResult {
   active: boolean;
   session: LiveSession | null;
-  evaluated: number;
+  evaluated: number; failedSources: SenseSource[]; // DV-83: Sense sources this tick could not read (and "settings")
   delivered: CandidateNudge[];
   suppressed: SuppressedNudge[];
 }
@@ -486,7 +486,7 @@ export async function runLiveCheck(
 ): Promise<LiveCheckResult> {
   const session = await getActiveLiveSession(sc, userId);
   if (!session) {
-    return { active: false, session: null, evaluated: 0, delivered: [], suppressed: [] };
+    return { active: false, session: null, evaluated: 0, delivered: [], suppressed: [], failedSources: [] };
   }
 
   const nowMs = opts.nowMs ?? Date.now();
@@ -502,7 +502,7 @@ export async function runLiveCheck(
   const context = await buildLiveRollingContext(sc, userId, session.context, nowMs);
 
   // Phase 11 evaluators at live frequency + live-only session-aware signals.
-  const senseCandidates = await evaluateSenseSignals(sc, userId, { nowMs, hourUtc });
+  const { candidates: senseCandidates, failedSources } = await evaluateSenseSignals(sc, userId, { nowMs, hourUtc });
   // Every nudge delivered during a live session taps through to the live
   // surface (AI tab) where the session and the nudge itself are visible —
   // including Sense-derived candidates that carry other deep links outside
@@ -513,7 +513,7 @@ export async function runLiveCheck(
 
   // Explicit opt-in: presence level does not gate live checks, but per-category
   // permissions, durable dedupe, and the per-session cap all do.
-  const settings = await getSenseSettings(sc, userId);
+  const settingsRead = { settings: false }; const settings = await getSenseSettings(sc, userId, settingsRead); // DV-83: an unread row is not "every category on"; nothing is sent
   const delivered: CandidateNudge[] = [];
   const suppressed: SuppressedNudge[] = [];
   let sessionDelivered = session.nudgesDelivered;
@@ -528,8 +528,8 @@ export async function runLiveCheck(
   let sessionClosed = false;
 
   for (const nudge of candidates) {
-    if (settings.categories[nudge.category] === false) {
-      suppressed.push({ dedupeKey: nudge.dedupeKey, type: nudge.type, reason: "category_disabled" });
+    if (settingsRead.settings || settings.categories[nudge.category] === false) {
+      suppressed.push({ dedupeKey: nudge.dedupeKey, type: nudge.type, reason: settingsRead.settings ? "permission_unread" : "category_disabled" });
       continue;
     }
     if (await isDuplicate(sc, userId, nudge.dedupeKey, nowMs)) {
@@ -622,7 +622,7 @@ export async function runLiveCheck(
   return {
     active: true,
     session: { ...session, context, checksRun: session.checksRun + 1, nudgesDelivered: sessionDelivered, lastCheckAt: nowIso },
-    evaluated: candidates.length,
+    evaluated: candidates.length, failedSources: settingsRead.settings ? [...failedSources, "settings"] : failedSources,
     delivered,
     suppressed,
   };

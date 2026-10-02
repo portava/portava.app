@@ -13,10 +13,16 @@ export default function PlaceMomentsScreen() {
   const { isLivePlacesEnabled } = useFeatureFlags();
   const available = isLivePlacesEnabled('shared_moments_enabled');
   const [moments, setMoments] = useState<SharedMoment[] | null>(null);
+  const [listFailed, setListFailed] = useState(false);
   const [title, setTitle] = useState('');
   const [creating, setCreating] = useState(false);
 
-  const load = useCallback(async () => setMoments((await listSharedMoments(dayId))?.moments ?? []), [dayId]);
+  // `listSharedMoments` answers null for a failed read; that is not "no Moments" (DV-83).
+  const load = useCallback(async () => {
+    setListFailed(false); setMoments(null);
+    const res = await listSharedMoments(dayId);
+    if (res) setMoments(res.moments); else setListFailed(true);
+  }, [dayId]);
   useEffect(() => { if (available) void load(); }, [available, load]);
   const create = async () => {
     if (!title.trim() || creating) return;
@@ -31,10 +37,12 @@ export default function PlaceMomentsScreen() {
   return <SafeAreaView style={styles.safe} edges={['bottom']}>
     <Stack.Screen options={{ title: 'Shared Moments', headerShown: true }} />
     {!available ? <View style={styles.center}><Text style={styles.title}>Shared Moments are unavailable</Text><Text style={styles.body}>This space opens when Live Places and Shared Moments are enabled.</Text></View> :
+      listFailed ? <View style={styles.center} testID="moments-list-error"><Text style={styles.title}>Couldn’t load Shared Moments</Text><Pressable testID="moments-list-retry" onPress={load} style={styles.button}><Text style={styles.buttonText}>Try again</Text></Pressable></View> :
       moments === null ? <View style={styles.center}><ActivityIndicator color={color.signal} /></View> :
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={styles.heading}>Gather travel activity intentionally</Text>
         <Text style={styles.body}>Nothing is added or shared until a person chooses it.</Text>
+        <MomentInvitesAndSuggestions placeId={placeId} />
         <View style={styles.create}><TextInput value={title} onChangeText={setTitle} placeholder="Name this Moment" placeholderTextColor={color.faint} style={styles.input} maxLength={140} /><Pressable testID="create-shared-moment" onPress={create} style={[styles.button, (!title.trim() || creating) && styles.disabled]} disabled={!title.trim() || creating}><Text style={styles.buttonText}>{creating ? 'Creating…' : 'Create'}</Text></Pressable></View>
         {moments.length === 0 ? <View style={styles.empty}><Text style={styles.title}>No Shared Moments yet</Text><Text style={styles.body}>Start one for people who want to contribute together.</Text></View> :
           moments.map((moment) => <Pressable key={moment.id} style={styles.card} onPress={() => router.push(`/shared-moments/${moment.id}` as any)}><Text style={styles.title}>{moment.title}</Text>{moment.description ? <Text style={styles.body}>{moment.description}</Text> : null}<Text style={styles.meta}>{moment.role === 'owner' ? 'You manage this Moment' : 'Member'}</Text></Pressable>)}
@@ -50,3 +58,6 @@ const styles = StyleSheet.create({
   empty: { padding: space.xl, gap: space.sm, alignItems: 'center' }, card: { backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze, borderRadius: radius.md, padding: space.md, gap: space.xs },
   meta: { ...typography.caption, color: color.signal },
 });
+
+// Testing mode WP-07 (HM-F17, HM-F18). Imported at the TAIL; ESM hoists it.
+import { MomentInvitesAndSuggestions } from '../../../src/features/sharedMoments/MomentInvitesAndSuggestions.tsx';

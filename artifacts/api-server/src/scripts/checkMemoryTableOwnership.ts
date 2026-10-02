@@ -101,6 +101,19 @@ const LEGACY_SIDE = new Set([
   // as a source_table, which is what the spine records provenance ABOUT. It
   // names memory_domain_events nowhere — the §17 command kernel is untouched.
   "test/memoryEpisodeContract.test.ts",
+  // ADDED 2026-09-26 by the Sensing integration owner, for S112's memory stage.
+  // 3314 adds claim_refs to memory_projections and replaces the projection
+  // family's own project_user_memory_with_retraction (2195's body plus one
+  // predicate). It names public.memory_events for exactly one reason: its last
+  // postcondition RAISES if memory_events gained a claim_refs column, so the
+  // lineage stays on the owner's projection and never widens the event log.
+  // PROJECTION-side; names memory_domain_events nowhere.
+  "migrations/3314_memory_projection_claim_refs.sql",
+  // 3314's behavioural proof against a real PostgreSQL. It names
+  // public.memory_events only in its cleanup, deleting its own seeded user's
+  // rows so the account-deletion case starts from a known state.
+  // PROJECTION-side; names memory_domain_events nowhere.
+  "test/db/sessionMemoryLineage.db.test.ts",
   "lib/deletionDispositions.ts",
   "lib/memoryProjectionScheduler.ts",
   "services/accountDeletion/AccountDeletionService.ts",
@@ -126,6 +139,36 @@ const KERNEL_SIDE = new Set([
   // not part of the §17 command spine and a suite that measured it would be
   // measuring a different deployment.
   "test/highlightsMemoriesDeployedStorage.test.ts",
+  // ADDED 2026-09-22 by the INTEGRATING lane, because this check went red on the
+  // merged branch and its message is a request, not a complaint: "which of the
+  // two memory event logs does this file touch" must have a WRITTEN answer.
+  //
+  // MEASURED, not inferred from the names. 2993 names `memory_domain_events` 34
+  // times and the string `memory_events` ZERO times; the suite names it 18 times
+  // and `memory_events` zero. Both also name the kernel's three siblings —
+  // `memory_event_outbox`, `memory_command_receipts`, `memory_command_audit` —
+  // and neither reaches the projection family's log at all.
+  //
+  // 2993 is the §17 command boundary: it adds `highlight_id` to all four kernel
+  // tables, drops `memory_domain_events.memory_id`'s NOT NULL and constrains the
+  // pair with `CHECK (num_nonnulls(memory_id, highlight_id) = 1)` — in that order,
+  // so the table is never weaker than it was — and creates
+  // `highlight_kernel_execute`. That is the kernel's log and nothing else's.
+  //
+  // The suite is its contract: it drives PIN/UNPIN/HIDE through the kernel fake
+  // and asserts all four §17 artifacts land in one transaction. A file that
+  // proved the same thing about `memory_events` would be proving it about the
+  // account-deletion cascade's table, which is the exact confusion this whole
+  // module exists to make impossible.
+  "migrations/2993_highlight_command_boundary.sql",
+  // 3001 CREATE OR REPLACEs 2993's `highlight_kernel_execute` to admit
+  // UNHIDE_HIGHLIGHT, so it carries 2993's body and therefore 2993's table
+  // choices. Counted the same way 2993 was: it names `memory_domain_events`
+  // and never `memory_events`, which is the distinction this guard exists to
+  // keep — the §17 command kernel writes the former, the projection family
+  // writes the latter, and 2710 nearly conflated them.
+  "migrations/3001_highlight_kernel_admits_unhide.sql",
+  "test/highlightCommandBoundary.test.ts",
   // REMOVED 2026-09-15, and the removal is the point rather than tidying.
   // "test/productionDriftExtraction.test.ts" was listed here because it asserted
   // that the production-drift ratchet does NOT excuse the kernel's tables, on
