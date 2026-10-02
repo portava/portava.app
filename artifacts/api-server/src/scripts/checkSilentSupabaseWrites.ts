@@ -249,7 +249,7 @@ export function scanTree(root: string = SRC_ROOT): SilentWrite[] {
 // file don't churn the baseline. Fixing a site requires LOWERING its baseline
 // entry — a stale (too-high) entry fails the check, keeping the baseline honest
 // over time, exactly like UNREGISTERED_TESTS_ALLOWLIST.json.
-const BASELINE_PATH = resolve(__dir, "../../scripts/SILENT_SUPABASE_WRITES_BASELINE.json");
+export const BASELINE_PATH = resolve(__dir, "../../scripts/SILENT_SUPABASE_WRITES_BASELINE.json");
 
 export function compareToBaseline(
   violations: SilentWrite[],
