@@ -39,6 +39,20 @@ export interface InjectedError {
   message: string;
   code?: string;
   /**
+   * Restrict the injected error to these operations on that table. Absent
+   * means EVERY operation, which is what every existing fixture relies on.
+   *
+   * Needed because a handler can read a table and then write it for two
+   * different decisions, and failing the whole table makes the read deny first
+   * — so the write's own guard is never reached and a case that claims to test
+   * it asserts nothing. `telegraphChatOutageHonesty.test.ts` says so in its own
+   * header: its dismiss case was omitted because "the harness cannot fail one
+   * operation on a table without failing the UPDATE beside it". This is that
+   * capability. `afterOps` counts operations per table regardless of this, so
+   * the two compose.
+   */
+  ops?: Array<"select" | "insert" | "update" | "upsert" | "delete">;
+  /**
    * Inject the error only from the Nth operation on that table onwards
    * (1-based, counted per table across the whole client's life).
    *
@@ -203,6 +217,9 @@ export function resetFakeIds(): void {
   idCounter = 0;
 }
 
+/** The PostgREST operations the fake distinguishes. */
+type Mode = "select" | "insert" | "update" | "upsert" | "delete";
+
 export function makeFakeClient(
   seed: Record<string, any[]>,
   opts: FakeDbOptions = {},
@@ -222,9 +239,10 @@ export function makeFakeClient(
 
   const opCounts: Record<string, number> = {};
 
-  function injected(table: string): InjectedError | null {
+  function injected(table: string, mode: Mode): InjectedError | null {
     const e = opts.errors?.[table];
     if (!e) return null;
+    if (e.ops !== undefined && !e.ops.includes(mode)) return null;
     if (e.afterOps === undefined) return e;
     return (opCounts[table] ?? 0) >= e.afterOps ? e : null;
   }
@@ -234,7 +252,7 @@ export function makeFakeClient(
     let _limit: number | null = null;
     let _order: { col: string; asc: boolean } | null = null;
     let _head = false;
-    let mode: "select" | "insert" | "update" | "upsert" | "delete" = "select";
+    let mode: Mode = "select";
     let pendingRows: any[] = [];
     let pendingPatch: any = null;
 
@@ -289,7 +307,7 @@ export function makeFakeClient(
     };
 
     const settle = (): { data: any; error: any; count: number | null } => {
-      const err = injected(table);
+      const err = injected(table, mode);
       opCounts[table] = (opCounts[table] ?? 0) + 1;
       if (err) return { data: null, error: err, count: null };
       if (mode === "select") {
