@@ -105,8 +105,15 @@ export interface RetentionReport {
    * successful cleanup.
    */
   completed: number;
-  /** Objects verified ABSENT from storage after this pass deleted them. */
+  /** Entries whose storage objects were all verified ABSENT after this pass deleted them. */
   objectsDeleted: number;
+  /**
+   * Sibling objects — thumbnails and feed-sized copies made from the same
+   * upload — verified absent alongside their original. Reported apart because
+   * one entry can own several objects, so `objectsDeleted` is a count of
+   * entries and this is what says how many FILES actually went.
+   */
+  derivedSettled: number;
   /**
    * Objects deliberately kept because a NAMED live reference survives them —
    * a Highlight, a Memory item, a passport memory. Ours, and still in use.
@@ -149,6 +156,47 @@ function backoffMinutes(attempts: number): number {
 export function splitStoragePath(path: string): { dir: string; base: string } {
   const i = path.lastIndexOf("/");
   return i < 0 ? { dir: "", base: path } : { dir: path.slice(0, i), base: path.slice(i + 1) };
+}
+
+/**
+ * The sibling objects the uploader creates from the SAME bytes, derived from
+ * the primary path rather than stored anywhere.
+ *
+ * WHY DERIVED AND NOT RECORDED. `POST /api/media/upload` writes up to three
+ * objects for one upload: the original at `{uid}/{ts}.{ext}`, a thumbnail at
+ * `{uid}/{ts}.thumb.jpg` and a feed-sized copy at `{uid}/{ts}.feed.jpg`
+ * (routes/posts.ts, the `basePath` it builds before each `.upload()`). Only the
+ * original is ever written to `stories.media_url`, so the purge used to delete
+ * one of three objects, report success, and leave two behind with the Story row
+ * gone — nothing pointing at them and nothing that would ever look again.
+ *
+ * `story_purge_queue` has one bucket and one path and no room for a second, and
+ * adding a child ledger is a migration, which on this project is a manual
+ * production step. It is also unnecessary: the sibling names are a pure
+ * function of the primary path, so the ledger already preserves everything a
+ * retry needs. A failed sibling delete defers the whole entry, and the next
+ * pass re-derives the same three names from the same `storage_path`.
+ *
+ * WHAT THIS DOES NOT COVER, stated so the list is not mistaken for complete:
+ * video renditions. Production holds HLS segments and subtitle files under a
+ * `video/<media_asset_id>/hls/` prefix that bears no relation to the primary
+ * path, written by code that exists in no branch of this repository (two
+ * migrations applied to production on 2026-09-25 whose files are not here). No
+ * derivation can be written for objects whose naming scheme is not in the tree,
+ * and guessing one would be worse than the gap.
+ */
+export function derivedStoragePaths(primaryPath: string): string[] {
+  // Never derive from a name that is already a derivative: `x.thumb.jpg` would
+  // yield `x.thumb.thumb.jpg`, a path that has never existed, and a listing
+  // that does not show it would read as a confirmed delete.
+  if (primaryPath.endsWith(".thumb.jpg") || primaryPath.endsWith(".feed.jpg")) return [];
+  const dot = primaryPath.lastIndexOf(".");
+  // An extensionless path, or a dot that belongs to a directory name, gives no
+  // base to build on.
+  if (dot <= 0 || dot < primaryPath.lastIndexOf("/")) return [];
+  const base = primaryPath.slice(0, dot);
+  if (!base) return [];
+  return [`${base}.thumb.jpg`, `${base}.feed.jpg`];
 }
 
 /**
@@ -380,16 +428,34 @@ export async function enqueueDueStories(
 }
 
 /** Confirm by reading storage back that `path` is absent from `bucket`. */
+/**
+ * Is this object listed right now? `present: null` means the listing could not
+ * be read, which is a third answer and never folded into `false` — "I could not
+ * look" has caused enough damage in this file already.
+ */
+async function objectPresence(
+  sc: SupabaseClient,
+  bucket: string,
+  path: string,
+): Promise<{ present: boolean | null; detail: string }> {
+  const { dir, base } = splitStoragePath(path);
+  const { data, error } = await sc.storage.from(bucket).list(dir, { search: base, limit: 100 });
+  if (error) {
+    return { present: null, detail: `listing ${bucket}/${dir} failed: ${(error as any)?.message ?? "unknown"}` };
+  }
+  return { present: ((data ?? []) as any[]).some((o) => o?.name === base), detail: "" };
+}
+
 async function confirmObjectAbsent(
   sc: SupabaseClient,
   bucket: string,
   path: string,
 ): Promise<{ absent: boolean; detail: string }> {
-  const { dir, base } = splitStoragePath(path);
-  const { data, error } = await sc.storage.from(bucket).list(dir, { search: base, limit: 100 });
-  if (error) return { absent: false, detail: `listing ${bucket}/${dir} failed: ${(error as any)?.message ?? "unknown"}` };
-  const stillThere = ((data ?? []) as any[]).some((o) => o?.name === base);
-  return stillThere
+  // Expressed through objectPresence so the two readers of the same listing
+  // cannot drift apart.
+  const p = await objectPresence(sc, bucket, path);
+  if (p.present === null) return { absent: false, detail: p.detail };
+  return p.present
     ? { absent: false, detail: `${bucket}/${path} is still listed after remove()` }
     : { absent: true, detail: "" };
 }
@@ -418,6 +484,7 @@ export async function processPurgeQueue(
 ): Promise<{
   completed: number;
   objectsDeleted: number;
+  derivedSettled: number;
   retained: number;
   external: number;
   deferred: number;
@@ -434,7 +501,15 @@ export async function processPurgeQueue(
 
   const entries = (due ?? []) as any[];
   if (entries.length === 0) {
-    return { completed: 0, objectsDeleted: 0, retained: 0, external: 0, deferred: 0, failures: [] };
+    return {
+      completed: 0,
+      objectsDeleted: 0,
+      derivedSettled: 0,
+      retained: 0,
+      external: 0,
+      deferred: 0,
+      failures: [],
+    };
   }
 
   const pending = entries.filter((e) => !e.object_deleted_at && !e.object_retained_reason && e.storage_path);
@@ -442,6 +517,7 @@ export async function processPurgeQueue(
 
   let completed = 0;
   let objectsDeleted = 0;
+  let derivedSettled = 0;
   let retained = 0;
   let external = 0;
   let deferred = 0;
@@ -490,19 +566,50 @@ export async function processPurgeQueue(
         } else {
           const bucket = String(entry.storage_bucket);
           const path = String(entry.storage_path);
+          // The original AND the siblings made from it. A sibling that was
+          // never created is absent, which settles the same way as one that was
+          // deleted — so this is safe for an upload that produced no
+          // derivatives, and for a bucket that never had them.
+          const siblings = derivedStoragePaths(path);
+          const paths = [path, ...siblings];
+          // Which siblings were actually there before the delete. A derived
+          // name that never existed is absent afterwards too, so without this
+          // the pass would report having removed files nobody ever created —
+          // which is the same class of lie as reporting a retention as a
+          // deletion. An unreadable listing counts as neither: unknown is not
+          // a number, and the read-back below still gates settling.
+          const siblingsPresentBefore = new Set<string>();
+          for (const sib of siblings) {
+            const pre = await objectPresence(sc, bucket, sib);
+            if (pre.present === true) siblingsPresentBefore.add(sib);
+          }
           try {
-            const { error: rmErr } = await sc.storage.from(bucket).remove([path]);
+            const { error: rmErr } = await sc.storage.from(bucket).remove(paths);
             if (rmErr) {
-              failure = `remove(${bucket}/${path}) failed: ${(rmErr as any)?.message ?? "unknown"}`;
+              failure = `remove(${bucket}/[${paths.join(", ")}]) failed: ${(rmErr as any)?.message ?? "unknown"}`;
             } else {
-              const check = await confirmObjectAbsent(sc, bucket, path);
-              if (check.absent) {
+              // Every path is read back. `remove()` resolves with an empty data
+              // array both for a path that was never there and for one it
+              // failed to touch, so the listing is the only thing that
+              // distinguishes them, and one unconfirmed sibling defers the
+              // whole entry rather than settling it.
+              const unsettled: string[] = [];
+              let siblingsGone = 0;
+              for (const p of paths) {
+                const check = await confirmObjectAbsent(sc, bucket, p);
+                if (!check.absent) unsettled.push(check.detail);
+                else if (p !== path && siblingsPresentBefore.has(p)) siblingsGone += 1;
+              }
+              if (unsettled.length === 0) {
                 objectDeletedAt = nowIso;
                 byteOutcome = "deleted";
-              } else failure = check.detail;
+                derivedSettled += siblingsGone;
+              } else {
+                failure = unsettled.join("; ");
+              }
             }
           } catch (err) {
-            failure = `remove(${bucket}/${path}) threw: ${(err as any)?.message ?? String(err)}`;
+            failure = `remove(${bucket}/[${paths.join(", ")}]) threw: ${(err as any)?.message ?? String(err)}`;
           }
         }
       }
@@ -559,7 +666,7 @@ export async function processPurgeQueue(
     if (updErr) failures.push(`could not record retry state for ${storyId}: ${(updErr as any)?.message ?? "unknown"}`);
   }
 
-  return { completed, objectsDeleted, retained, external, deferred, failures };
+  return { completed, objectsDeleted, derivedSettled, retained, external, deferred, failures };
 }
 
 /**
@@ -687,6 +794,7 @@ export async function runStoryRetention(
     enqueuedDeleted: enq.deleted,
     completed: worked.completed,
     objectsDeleted: worked.objectsDeleted,
+    derivedSettled: worked.derivedSettled,
     retained: worked.retained,
     external: worked.external,
     deferred: worked.deferred,

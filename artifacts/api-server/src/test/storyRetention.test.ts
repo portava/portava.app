@@ -46,6 +46,7 @@ import {
   purgeExpiredEngagement,
   runStoryRetention,
   findSurvivingReferences,
+  derivedStoragePaths,
   splitStoragePath,
 } from "../services/stories/storyRetention.js";
 import {
@@ -635,6 +636,82 @@ describe("the reference guard", () => {
     assert.equal(out.external, 0);
     assert.equal(out.completed, 1);
     assert.deepEqual(out.failures, [], "a retention for a live reference is not a failure");
+  });
+
+  /**
+   * DERIVATIVES. One upload writes up to three objects — the original, a
+   * `.thumb.jpg` and a `.feed.jpg` — and only the original is ever stored in
+   * `stories.media_url`. The purge used to delete that one, report success, and
+   * leave the other two behind with the Story row gone, so nothing pointed at
+   * them and nothing would ever look again.
+   */
+  it("deletes the thumbnail and the feed copy alongside the original", async () => {
+    seedStory(db, "d1");
+    db.objects("post-media").add(`stories/${OWNER}/d1.thumb.jpg`);
+    db.objects("post-media").add(`stories/${OWNER}/d1.feed.jpg`);
+    await enqueueDueStories(sc, CFG as any, NOW, 100);
+
+    const out = await processPurgeQueue(sc, NOW, 100);
+
+    assert.ok(!db.objects("post-media").has(storyPath("d1")), "the original must go");
+    assert.ok(!db.objects("post-media").has(`stories/${OWNER}/d1.thumb.jpg`), "and the thumbnail");
+    assert.ok(!db.objects("post-media").has(`stories/${OWNER}/d1.feed.jpg`), "and the feed copy");
+    assert.equal(out.objectsDeleted, 1, "one entry settled");
+    assert.equal(out.derivedSettled, 2, "and three files went, which only this number says");
+    assert.equal(out.completed, 1);
+    assert.deepEqual(out.failures, []);
+  });
+
+  it("settles cleanly when an upload produced no derivatives at all", async () => {
+    // The fail-soft upload path leaves a story with only its original, so a
+    // derived name that was never created must not read as an unfinished
+    // delete — absent is absent, however it got that way.
+    seedStory(db, "d2");
+    await enqueueDueStories(sc, CFG as any, NOW, 100);
+
+    const out = await processPurgeQueue(sc, NOW, 100);
+
+    assert.equal(out.completed, 1);
+    assert.equal(out.objectsDeleted, 1);
+    assert.equal(out.derivedSettled, 0, "nothing derived existed, so nothing derived is claimed");
+    assert.deepEqual(out.failures, []);
+  });
+
+  it("DEFERS the whole entry when a sibling survives the delete", async () => {
+    // removeIsALie: remove() resolves cleanly and the objects stay. The
+    // original and both siblings are all still listed, so nothing may be
+    // recorded as deleted — a partial delete that settled would strand the
+    // survivors with the row gone.
+    seedStory(db, "d3");
+    db.objects("post-media").add(`stories/${OWNER}/d3.thumb.jpg`);
+    await enqueueDueStories(sc, CFG as any, NOW, 100);
+    db.removeIsALie = true;
+
+    const out = await processPurgeQueue(sc, NOW, 100);
+
+    assert.equal(out.objectsDeleted, 0, "a remove() that changed nothing is not a delete");
+    assert.equal(out.derivedSettled, 0);
+    assert.equal(out.deferred, 1);
+    assert.equal(db.rows("stories").length, 1, "and the row that points at them survives");
+    const entry = db.rows("story_purge_queue")[0];
+    assert.ok(entry, "the entry is kept for the retry");
+    assert.equal(entry.object_deleted_at, null);
+    assert.ok(
+      out.failures.some((f) => /d3\.thumb\.jpg is still listed/.test(f)),
+      `the surviving sibling must be named, got ${JSON.stringify(out.failures)}`,
+    );
+  });
+
+  it("never derives a sibling name from a name that is already a sibling", () => {
+    // `x.thumb.jpg` would give `x.thumb.thumb.jpg`, a path that has never
+    // existed — and a listing that does not show it would read as a confirmed
+    // delete of a file nobody ever made.
+    assert.deepEqual(derivedStoragePaths("u/1.thumb.jpg"), []);
+    assert.deepEqual(derivedStoragePaths("u/1.feed.jpg"), []);
+    assert.deepEqual(derivedStoragePaths("u/1.jpg"), ["u/1.thumb.jpg", "u/1.feed.jpg"]);
+    // No extension, and a dot that belongs to a directory, both give no base.
+    assert.deepEqual(derivedStoragePaths("u/1"), []);
+    assert.deepEqual(derivedStoragePaths("u.v/1"), []);
   });
 
   it("counts 'never ours' apart from 'ours, kept on purpose'", async () => {
