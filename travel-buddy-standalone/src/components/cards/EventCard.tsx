@@ -14,7 +14,7 @@ import { useEntityHeaderImage } from '../../hooks/useEntityHeaderImage.ts';
 import { useHydratedMedia } from '../../services/mediaUrl.ts';
 import { usePlaceImage } from '../../hooks/usePlaceImage.ts';
 import { ImageSourceBadge } from '../visuals/ImageSourceBadge.tsx';
-import { color, space, radius, shadow, typography, layout } from '../../theme/tokens.ts';
+import { color, space, radius, shadow, typography, layout } from '../../theme/tokens.ts'; import { goingText } from '../../lib/eventListMarks.ts';  // census-discovery §117 (SW17)
 
 export interface EventCardProps {
   id: string;
@@ -23,7 +23,7 @@ export interface EventCardProps {
   locationName?: string | null;
   city?: string | null;
   coverUrl?: string | null;
-  goingCount: number;
+  goingCount: number; /** census-discovery §117 (SW17): the list could not recount it live; said as last known */ goingCountUnread?: boolean;
   maxAttendees?: number | null;
   category?: string | null;
   state?: string;
@@ -58,7 +58,7 @@ const STATE_COLOR: Record<string, string> = {
 };
 
 export function EventCard({
-  title, startsAt, locationName, city, coverUrl, goingCount, maxAttendees,
+  title, startsAt, locationName, city, coverUrl, goingCount, goingCountUnread, maxAttendees,
   category, state, myRsvp, isSaved, coverDisclaimerRequired, coverDisclaimerText,
   onPress, onRsvp, onToggleSave,
 }: EventCardProps) {
@@ -141,7 +141,7 @@ export function EventCard({
           <View style={styles.metaRow}>
             <Users size={11} color={color.mute} />
             <Text style={styles.meta}>
-              {goingCount} going{maxAttendees ? `/${maxAttendees}` : ''}
+              {goingText(goingCount, goingCountUnread, maxAttendees)}
             </Text>
           </View>
           <View style={{ flex: 1 }} />

@@ -743,7 +743,7 @@ export interface CityEvent {
   block: TimeBlock;        // which time block it falls in
   category: Interest;
   host?: User;
-  attendeeCount?: number;
+  attendeeCount?: number; /** census-discovery §117 (SW17): the server could not recount it live (the cached count) */ attendeeCountUnread?: boolean;
   capacity?: number;
   /** present only when real ranking exists; null otherwise */
   score?: RecommendationScore | null;

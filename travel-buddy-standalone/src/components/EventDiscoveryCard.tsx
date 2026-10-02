@@ -22,7 +22,7 @@ import { usePlaceImage } from '../hooks/usePlaceImage.ts';
 import type { EventListItem, EventRsvpStatus } from '../services/events.ts';
 import { primaryIdentityText } from '../lib/displayIdentity.ts';
 import { effectiveEventState } from '../lib/eventRoleActions.ts';
-import { formatLocationLabel } from '../lib/formatPlaceLabel.ts';
+import { formatLocationLabel } from '../lib/formatPlaceLabel.ts'; import { attendanceText } from '../lib/eventListMarks.ts';  // census-discovery §117 (SW17)
 
 /**
  * Formats "[locationName], [city]" without repeating the city when the
@@ -253,8 +253,8 @@ export function EventDiscoveryCard({ event, onPress, onHostPress, onRsvp, isSave
           <View style={styles.metaRow}>
             <Users size={11} color={color.mute} />
             <Text style={styles.meta}>
-              {event.goingCount} going{event.maxAttendees ? `/${event.maxAttendees}` : ''}
-              {event.waitlistCount > 0 ? ` · ${event.waitlistCount} waiting` : ''}
+              {attendanceText(event, { waitlist: true })}
+              {/* census-discovery §117 (SW17): a count the list could not recount live is said as last known */}
             </Text>
           </View>
 

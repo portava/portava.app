@@ -204,7 +204,7 @@ function Pulse() {
     }).catch(() => { /* best-effort: silently ignore if not logged in yet */ });
   }, []);
 
-  const { buckets, events, status, sessionId: cityPulseSessionId } = useCityPulse({ currentCitySlug: activeCitySlug, interests: [], categoryAffinities });
+  const { buckets, events, status, sessionId: cityPulseSessionId, eventsUnread } = useCityPulse({ currentCitySlug: activeCitySlug, interests: [], categoryAffinities });
 
   const livePulse = useLivePulse({
     context: activeCitySlug ? 'currentCity' : 'myPlans',
@@ -426,7 +426,7 @@ function Pulse() {
           // Availability improves personalisation but must not gate Pulse's
           // usefulness. Show what's happening in the city right now instead of
           // a dead-end message telling the user to set availability first.
-          <ExploreTodaySection events={events} city={activeCity} sessionId={cityPulseSessionId} />
+          <ExploreTodaySection events={events} city={activeCity} sessionId={cityPulseSessionId} eventsUnread={eventsUnread} />
         ) : (
           <>
             {/* Fits your time — only visible when availability is set */}
@@ -440,8 +440,8 @@ function Pulse() {
             </View>
             {noFits ? (
               <View style={styles.empty}>
-                <Text style={styles.emptyTitle}>No plans fit your availability yet.</Text>
-                <Text style={styles.emptySub}>Check flexible options below or create a plan.</Text>
+                <Text style={styles.emptyTitle}>{eventsUnread ? "Couldn't load every plan for today" : 'No plans fit your availability yet.'}</Text>
+                <Text style={styles.emptySub}>{eventsUnread ? 'Pull down to try again, or check flexible options below.' : 'Check flexible options below or create a plan.'}</Text>
               </View>
             ) : (
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.fitsStrip}>

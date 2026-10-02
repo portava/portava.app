@@ -31,7 +31,7 @@ import {
 import { EventCard } from '../../src/components/cards/EventCard';
 import { EventCardSkeleton } from '../../src/components/loading/EventCardSkeleton';
 import { EmptyState } from '../../src/components/ui/EmptyState';
-import { ErrorState } from '../../src/components/ui/ErrorState';
+import { ErrorState } from '../../src/components/ui/ErrorState'; import { eventListNotWhole } from '../../src/lib/eventListMarks';  // census-discovery §117 (SW17)
 import { useSession } from '../../src/context/SessionContext';
 import { useLocationContext } from '../../src/context/LocationContext';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
@@ -119,7 +119,7 @@ function EventsTabScreen() {
   const [categoryRows, setCategoryRows]       = useState<Record<string, EventListItem[]>>({});
   const [loading, setLoading]                 = useState(true);
   const [error, setError]                     = useState<string | null>(null);
-  const [myEventsError, setMyEventsError]     = useState(false);
+  const [myEventsError, setMyEventsError]     = useState(false); const [listsNotWhole, setListsNotWhole] = useState(false);  // §117 (SW17): a list failed or was cut
 
   // ── Filters ────────────────────────────────────────────────────────────────
   const [showFilters, setShowFilters]         = useState(false);
@@ -242,7 +242,7 @@ function EventsTabScreen() {
     if (myRes.ok) { setMyEvents(rawMy); setMyEventsError(false); }
     else { setMyEventsError(true); setMyEvents([]); }
 
-    if (mainRes.ok) setTodayEvents(dedupedToday);
+    if (mainRes.ok) setTodayEvents(dedupedToday); setListsNotWhole([mainRes, tomorrowRes, weekendRes, followRes, circleRes, savedRes, myRes].some((r) => !r.ok || eventListNotWhole(r.data)));  // census-discovery §117 (SW17): an empty tab over a failed or cut list is not "No events yet"
     if (tomorrowRes.ok) setTomorrowEvents(dedupedTomorrow);
     if (weekendRes.ok) setWeekendEvents(dedupedWeekend);
     if (followRes.ok) setFollowingEvents(dedupedFollowing);
@@ -264,7 +264,7 @@ function EventsTabScreen() {
       FEATURED_CATEGORIES.forEach((c, i) => {
         if (catResults[i].ok) rows[c] = (catResults[i].data?.events ?? []).filter((e) => !myIds.has(e.id));
       });
-      setCategoryRows(rows);
+      setCategoryRows(rows); if (catResults.some((r) => !r.ok || eventListNotWhole(r.data))) setListsNotWhole(true);
     } else {
       setCategoryRows({});
     }
@@ -431,7 +431,7 @@ function EventsTabScreen() {
                 locationName={item.locationName}
                 city={item.city}
                 coverUrl={item.coverUrl}
-                goingCount={item.goingCount}
+                goingCount={item.goingCount} goingCountUnread={item.goingCountUnread}
                 maxAttendees={item.maxAttendees}
                 category={item.category}
                 state={item.state}
@@ -916,7 +916,7 @@ function EventsTabScreen() {
                 title="Location not available"
                 description="Enable location in your device settings to find events near you, or browse by city."
               />
-            ) : (
+            ) : listsNotWhole ? (<EmptyState icon={CalendarX} title="Couldn't load every event" description="Some event lists couldn't be read just now. Pull down to try again." />) : (
               <EmptyState
                 icon={CalendarX}
                 title="No events yet"

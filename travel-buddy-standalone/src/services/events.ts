@@ -2,7 +2,7 @@
  * Events service — typed wrappers over /api/events/*.
  */
 import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
-import { freshToken as freshApiToken } from './apiToken.ts';
+import { freshToken as freshApiToken } from './apiToken.ts'; import { markEventListResult, type EventCountMarks } from '../lib/eventListMarks.ts';  // census-discovery §117 (DV-83, sweep SW17)
 
 const BASE = (() => {
   const domain = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
@@ -113,7 +113,7 @@ export interface EventDetail extends EventSummary {
   goingAttendees: EventAttendeeProfile[]; /** census-discovery §117 (B19): the reads that failed (`event_rsvps`, `event_waitlist`, `profiles`); see lib/eventAttendeesUnread */ failedSources?: string[];
 }
 
-export interface EventListItem extends EventSummary {
+export interface EventListItem extends EventSummary, EventCountMarks {  // §117 (SW17): the counts the list could not recount live
   myRsvp: EventRsvpStatus | null;
   myWaitlistPosition?: number | null;
   isSaved?: boolean;
@@ -234,7 +234,7 @@ export interface ListEventsParams {
 
 export async function listEvents(
   params: ListEventsParams = {},
-): Promise<ApiResult<{ events: EventListItem[]; page: number; limit: number; /** census-discovery §115 (B12): the list is not whole */ truncated?: boolean }>> {
+): Promise<ApiResult<{ events: EventListItem[]; page: number; limit: number; /** census-discovery §115 (B12): the list is not whole */ truncated?: boolean; /** §117 (SW17): the live counts the server could not recount (the cached ones were served) */ failedSources?: string[] }>> {
   const qs = new URLSearchParams();
   if (params.state)           qs.set('state', params.state);
   if (params.city)            qs.set('city', params.city);
@@ -250,7 +250,7 @@ export async function listEvents(
   if (params.page)            qs.set('page', String(params.page));
   if (params.limit)           qs.set('limit', String(params.limit));
   const q = qs.toString();
-  return apiCall(`/api/events${q ? `?${q}` : ''}`);
+  return listCall(`/api/events${q ? `?${q}` : ''}`);
 }
 
 // ── My events (hosting + attending) ──────────────────────────────────────────
@@ -258,7 +258,7 @@ export async function listEvents(
 export async function listMyEvents(
   limit = 20,
 ): Promise<ApiResult<{ events: EventListItem[] }>> {
-  return apiCall(`/api/events/me?limit=${limit}`);
+  return listCall(`/api/events/me?limit=${limit}`);
 }
 
 // ── Get event detail ──────────────────────────────────────────────────────────
@@ -587,7 +587,7 @@ export async function unsaveEvent(eventId: string): Promise<ApiResult<{ ok: bool
 export async function getSavedEvents(
   page = 1,
 ): Promise<ApiResult<{ events: EventListItem[]; page: number }>> {
-  return apiCall(`/api/events/saved?page=${page}`);
+  return listCall(`/api/events/saved?page=${page}`);
 }
 
 // ── Share / report ────────────────────────────────────────────────────────────
@@ -672,7 +672,7 @@ export async function listCircleEvents(
   const q = new URLSearchParams();
   if (params.limit) q.set('limit', String(params.limit));
   if (params.cursor) q.set('cursor', params.cursor);
-  return apiCall(`/api/events/circles?${q.toString()}`);
+  return listCall(`/api/events/circles?${q.toString()}`);
 }
 
 export async function listFollowingEvents(
@@ -681,7 +681,7 @@ export async function listFollowingEvents(
   const q = new URLSearchParams();
   if (params.limit) q.set('limit', String(params.limit));
   if (params.cursor) q.set('cursor', params.cursor);
-  return apiCall(`/api/events/following?${q.toString()}`);
+  return listCall(`/api/events/following?${q.toString()}`);
 }
 
 // ── Invites ───────────────────────────────────────────────────────────────────
@@ -955,3 +955,10 @@ export async function previewSharedEvent(
   return r.ok && r.data?.event ? { ok: true, data: { ...r.data, event: normalizeEventSummary(r.data.event) } } : r;
 }
 
+/**
+ * census-discovery §117 (DV-83 round 20, sweep SW17): an events list read, its events marked with the counts the
+ * server could not recount live (`failedSources`), so the cards can say them as last known (lib/eventListMarks).
+ */
+async function listCall<T>(path: string): Promise<ApiResult<T>> {
+  return markEventListResult(await apiCall<T>(path));
+}

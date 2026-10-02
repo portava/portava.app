@@ -31,7 +31,7 @@ import type { CityEvent } from '../types/models.ts';
 import { color, space, radius, type as t, dot} from '../theme/tokens.ts';
 import { FitsCard } from './PulseFits.tsx';
 import { sortEventsByStartTime } from '../hooks/cityPulseUtils.ts';
-import { eventHref } from '../lib/feedAttribution.ts';
+import { eventHref } from '../lib/feedAttribution.ts'; import { goingText } from '../lib/eventListMarks.ts';  // census-discovery §117 (SW17)
 
 // ── Types & constants ─────────────────────────────────────────────────────────
 
@@ -87,7 +87,7 @@ function NowChip({ ev, sessionId }: { ev: CityEvent; sessionId?: string | null }
       <View style={s.nowChipBody}>
         <Text style={s.nowChipTitle} numberOfLines={1}>{ev.title}</Text>
         <Text style={s.nowChipMeta}>
-          {fmtTime(ev.startAt)} · {ev.attendeeCount ?? 0} going
+          {fmtTime(ev.startAt)} · {goingText(ev.attendeeCount, ev.attendeeCountUnread)}
         </Text>
       </View>
     </Pressable>
@@ -105,7 +105,7 @@ function ChronRow({ ev, sessionId }: { ev: CityEvent; sessionId?: string | null 
       <View style={s.chronBody}>
         <Text style={s.chronTitle} numberOfLines={2}>{ev.title}</Text>
         <Text style={s.chronMeta}>
-          {ev.attendeeCount ?? 0} going
+          {goingText(ev.attendeeCount, ev.attendeeCountUnread)}
           {ev.capacity ? ` · ${ev.capacity} max` : ''}
         </Text>
       </View>
@@ -118,7 +118,7 @@ function ChronRow({ ev, sessionId }: { ev: CityEvent; sessionId?: string | null 
 export function ExploreTodaySection({
   events,
   city,
-  sessionId,
+  sessionId, eventsUnread,
 }: {
   events: CityEvent[];
   city: string;
@@ -129,7 +129,7 @@ export function ExploreTodaySection({
    * Undefined when the caller has no session — the outcome then records
    * unattributed rather than wrongly attributed.
    */
-  sessionId?: string | null;
+  sessionId?: string | null; /** census-discovery §117 (SW17): today's events were not read whole ('failed' | 'partial') */ eventsUnread?: 'failed' | 'partial' | null;
 }) {
   const [band, setBand] = useState<TimeBand>(currentBand);
 
@@ -155,9 +155,9 @@ export function ExploreTodaySection({
       <View style={s.fallback}>
         <CalendarDays size={28} color={color.mute} />
         <Text style={s.fallbackTitle}>
-          Nothing on the calendar{city ? ` in ${city}` : ''} yet
+          {eventsUnread ? `Couldn't load today's events${city ? ` in ${city}` : ''}` : `Nothing on the calendar${city ? ` in ${city}` : ''} yet`}
         </Text>
-        <Text style={s.fallbackSub}>Be the first — create a plan for today.</Text>
+        <Text style={s.fallbackSub}>{eventsUnread ? 'Pull down to try again in a moment.' : 'Be the first — create a plan for today.'}</Text>
         <Pressable
           style={s.fallbackBtn}
           onPress={() => router.push('/trip/new' as any)}
@@ -176,7 +176,7 @@ export function ExploreTodaySection({
         <Radio size={15} color={color.signal} />
         <Text style={s.headerTitle}>Explore Today</Text>
         {city ? <Text style={s.headerCity}>in {city}</Text> : null}
-      </View>
+      </View>{eventsUnread ? <Text style={s.fallbackSub}>Some of today's events couldn't be loaded</Text> : null}
 
       {/* ── 1. Happening Now ─────────────────────────────────────────────
            Auto-refreshes on each events re-fetch (useCityPulse TTL timer).

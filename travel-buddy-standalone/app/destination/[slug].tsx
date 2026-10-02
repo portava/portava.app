@@ -27,7 +27,7 @@ import { color, space, radius, type as t, aspect, avatar } from '../../src/theme
 import { usePlainBottomInset } from '../../src/hooks/useBottomInset';
 import { CityConfidenceBadge } from '../../src/components/compass/CityConfidenceBadge';
 import { TripFsqPlacesSection } from '../../src/components/trip/TripFsqPlacesSection';
-import { toFsqCityKey } from '../../src/utils/fsqCityKey';
+import { toFsqCityKey } from '../../src/utils/fsqCityKey'; import { eventListNotWhole } from '../../src/lib/eventListMarks.ts';  // census-discovery §117 (SW17)
 
 type SectionState<T> = { status: 'loading' | 'ready' | 'error'; items: T[]; /** census-discovery §114 (sweep SW1b): the server cut the list */ cut?: boolean };
 
@@ -64,7 +64,7 @@ export default function Destination() {
     setEvents({ status: 'loading', items: [] });
     try {
       const res = await listEvents({ city: cityName, limit: 10 });
-      if (res.ok && res.data) setEvents({ status: 'ready', items: res.data.events ?? [] });
+      if (res.ok && res.data) setEvents({ status: 'ready', items: res.data.events ?? [], cut: eventListNotWhole(res.data) });  // §117 (SW17): GET /events said it is not whole
       else setEvents({ status: 'error', items: [] });
     } catch {
       setEvents({ status: 'error', items: [] });
@@ -94,7 +94,7 @@ export default function Destination() {
   const anyLoading = gems.status === 'loading' || events.status === 'loading' || posts.status === 'loading';
   const allEmpty =
     !anyLoading &&
-    gems.items.length === 0 && !gems.cut && events.items.length === 0 && posts.items.length === 0 &&  // §114 (SW1b): a cut gem read is not "no gems"
+    gems.items.length === 0 && !gems.cut && events.items.length === 0 && !events.cut && posts.items.length === 0 &&  // §114 (SW1b): a cut gem read is not "no gems"; §117 (SW17): nor a cut events read "no events"
     gems.status !== 'error' && events.status !== 'error' && posts.status !== 'error';
 
   const SectionError = ({ onRetry }: { onRetry: () => void }) => (
@@ -211,7 +211,7 @@ export default function Destination() {
               </Pressable>
             ))}
           </View>
-        ) : null}
+        ) : events.cut ? (<View style={s.section}><Text style={s.sectionTitle}>Events</Text><Text style={s.sectionErrorText}>Couldn't check every event in {cityName}</Text></View>) : null}
 
         {/* ── Recent traveler posts ── */}
         {posts.status === 'error' ? (

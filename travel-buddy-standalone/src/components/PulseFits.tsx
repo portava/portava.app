@@ -8,7 +8,7 @@ import { color, space, radius, type as t, shadow, icon } from '../theme/tokens.t
 import { HighlightRing } from './HighlightRing.tsx';
 import { HighlightViewer } from './HighlightViewer.tsx';
 import { useHighlightRingState } from '../hooks/useHighlightRingState.ts';
-import { eventHref } from '../lib/feedAttribution.ts';
+import { eventHref } from '../lib/feedAttribution.ts'; import { goingText } from '../lib/eventListMarks.ts';  // census-discovery §117 (SW17)
 
 /* avatar stack for attendees — shows count without fixture data */
 function AvatarStack({ count }: { count: number }) {
@@ -92,7 +92,7 @@ export function FitsCard({
         <View style={styles.metaRow}>
           <AvatarStack count={ev.attendeeCount ?? 0} />
           <View style={{ flex: 1 }} />
-          <Text style={styles.going}>{ev.attendeeCount ?? 0} going</Text>
+          <Text style={styles.going}>{goingText(ev.attendeeCount, ev.attendeeCountUnread)}</Text>
         </View>
         <View style={styles.vibes}>
           <View style={styles.vibe}><Text style={styles.vibeText}>{VIBE[ev.category] ?? ev.category}</Text></View>
