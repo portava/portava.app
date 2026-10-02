@@ -2753,7 +2753,7 @@ a *local* PostgreSQL 16 is itself the check that the capture is faithful.
 
 ---
 
-## `2998_story_retention.sql` — applied to `portava-ci` 2026-09-23, NOT to production
+## `2998_story_retention.sql` — applied to `portava-ci` 2026-09-23 and to production 2026-09-25
 
 The owner-archive retention unit: `stories.deleted_at` with the trigger that
 freezes it, the `story_purge_queue` ledger, `job_health.last_success_at`, and
@@ -2762,7 +2762,52 @@ push run that followed.
 
 | | `portava-ci` | production |
 |---|---|---|
-| `2998_story_retention.sql` | **applied** 2026-09-23 00:20:26 UTC | **not applied** |
+| `2998_story_retention.sql` | **applied** 2026-09-23 00:20:26 UTC | **applied** 2026-09-25 07:54:12 UTC |
+
+### Production apply, recorded 2026-10-02 after the fact
+
+**This heading said "NOT to production" for a week after the apply, and the
+table said "not applied".** The owner applied it on 2026-09-25 and nothing wrote
+it down here; a later investigation was misled by the stale row, and this is the
+third time this record has lagged production. Recording it late, with the
+evidence, rather than quietly flipping two words.
+
+Ledger row read back from production (`ajrurzioarfkagpuxfnb`) on
+2026-10-02 17:31 UTC:
+
+    filename    2998_story_retention.sql
+    applied_by  manual
+    applied_at  2026-09-25 07:54:12.645238+00
+    checksum    4ae37d9e1b0be400455733ce1ddce1536bcd1246b17cdd58349f1b173369b9f7
+    notes       Applied via Supabase MCP under owner authorization 2026-09-25.
+                Checksum is sha256 of artifacts/api-server/src/migrations/
+                2998_story_retention.sql at main 1a861c3a1.
+
+The ledger moved from 468 rows to 469. The checksum is the sha256 of the file at
+`main` — re-hashed here, byte for byte — so the row names the tree it came from
+and the two agree.
+
+Objects re-checked against production rather than inferred from the row:
+`stories.deleted_at`, `stories_deleted_at_idx`, `job_health.last_success_at`,
+`story_purge_queue` (14 columns), and `stories_freeze_deleted_at_trg` live as a
+BEFORE INSERT OR UPDATE trigger whose function reads `OLD.deleted_at`. Every
+postcondition holds.
+
+Two things worth knowing about this apply sitting in production:
+
+- **`story_purge_queue` is RLS-enabled with zero policies**, which is deny-all
+  for `anon` and `authenticated` and service-role only — the same posture as
+  `job_health`, and the intended one.
+- **The freeze trigger cannot misfire on the current build.** It returns early
+  for any row whose `state` is not `'deleted'`, and `stories.state` is
+  `NOT NULL DEFAULT 'active'` (enum `story_state`: active, expired, saved,
+  deleted, removed), so the comparison can never be NULL. `stories` is empty.
+
+**No code acting on this schema has been deployed.** As of 2026-10-02 the
+application has not been published since before PR #524, so none of the three
+retention windows is in force — production holds the schema and nothing else.
+`2325`, `2810` and `3000` remain unapplied, and the unsend function does not
+exist in production at all.
 
 Ledger row: `applied_by='ci'`, a real 64-character sha256, written inside the
 same transaction as the migration.
