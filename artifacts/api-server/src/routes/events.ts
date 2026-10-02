@@ -219,7 +219,7 @@ import {
 } from "../services/trust/TrustEventService.js";
 import { rankCandidates } from "../lib/portavaRank.js";
 import type { RankCandidate, ViewerContext } from "../lib/portavaRank.js";
-import { logImpression } from "../lib/rankLog.js"; import { nearBox, applyNearBox, type NearBox } from "../lib/nearBox.js"; import { readGoingRsvpsForEvents, readEventRsvps, readEventWaitlist, liveEventCounters } from "../lib/eventRowReads.js";  // census-discovery §116 (sweep SW13); §117 (B21)
+import { logImpression } from "../lib/rankLog.js"; import { nearBox, applyNearBox, type NearBox } from "../lib/nearBox.js"; import { readGoingRsvpsForEvents, readEventRsvps, readEventWaitlist, liveEventCounters, readEventRatings } from "../lib/eventRowReads.js";  // census-discovery §116 (sweep SW13); §117 (B21, SW19)
 import { getDisplayTrustScores, getTrustProfileResult } from "../services/trust/TrustScoreService.js";
 import {
   toPrivateEventPreview,
@@ -1578,7 +1578,7 @@ router.get("/events/search", async (req, res) => {
   }
 
   // Single pagination step after full merge+filter
-  res.json({ events: merged.slice(offset, offset + limit).map((e: any) => formatEvent(e, user.id)), page, limit, q });
+  const searchPage = merged.slice(offset, offset + limit); const searchCountsUnread = await liveEventCounters(sc, searchPage); res.json({ events: searchPage.map((e: any) => formatEvent(e, user.id)), page, limit, q, ...countsUnreadKey(searchCountsUnread) });  // census-discovery §117 (DV-83, sweep SW18): the cached counters recounted live; a failed read keeps them, named
 });
 
 // ── GET /api/events/me ────────────────────────────────────────────────────────
@@ -1622,8 +1622,8 @@ router.get("/events/me", async (req, res) => {
 
   // All events here are ones the viewer hosts or attends → always participant view.
   // Include myRsvp so the response matches the EventListItem contract used by list cards.
-  const goingSet = new Set(rsvpIds);
-  res.json({
+  const goingSet = new Set(rsvpIds); const meCountsUnread = await liveEventCounters(sc, combined);  // census-discovery §117 (DV-83, sweep SW18): the cached counters recounted live; a failed read keeps them, named
+  res.json({ ...countsUnreadKey(meCountsUnread),
     events: combined.map((e: any) => ({
       ...formatEvent(e, user.id, { goingRsvp: true }),
       myRsvp: goingSet.has(e.id as string) ? "going" : null,
@@ -1655,7 +1655,7 @@ router.get("/events/hosting", async (req, res) => {
   const { data: events, error } = await query;
   if (error) { req.log.error({ err: error }, "hosting events"); sendError(res, "db_error", error.message); return; }
 
-  res.json({ events: ((events as any[]) ?? []).map((e: any) => formatEvent(e, user.id, { goingRsvp: true })), page, limit });
+  const hostingCountsUnread = await liveEventCounters(sc, (events as any[]) ?? []); res.json({ events: ((events as any[]) ?? []).map((e: any) => formatEvent(e, user.id, { goingRsvp: true })), page, limit, ...countsUnreadKey(hostingCountsUnread) });  // census-discovery §117 (DV-83, sweep SW18): the cached counters recounted live; a failed read keeps them, named
 });
 
 // ── GET /api/events/joined ────────────────────────────────────────────────────
@@ -1686,7 +1686,7 @@ router.get("/events/joined", async (req, res) => {
 
   if (error) { req.log.error({ err: error }, "joined events"); sendError(res, "db_error", error.message); return; }
 
-  res.json({ events: ((events as any[]) ?? []).map((e: any) => formatEvent(e, user.id, { goingRsvp: true })), page, limit });
+  const joinedCountsUnread = await liveEventCounters(sc, (events as any[]) ?? []); res.json({ events: ((events as any[]) ?? []).map((e: any) => formatEvent(e, user.id, { goingRsvp: true })), page, limit, ...countsUnreadKey(joinedCountsUnread) });  // census-discovery §117 (DV-83, sweep SW18): the cached counters recounted live; a failed read keeps them, named
 });
 
 // ── GET /api/events/circles ───────────────────────────────────────────────────
@@ -1770,9 +1770,9 @@ router.get("/events/circles", async (req, res) => {
 
   const nextCursor = filtered.length === limit
     ? (filtered[filtered.length - 1].starts_at ?? null)
-    : null;
+    : null; const circleCountsUnread = await liveEventCounters(sc, filtered);  // census-discovery §117 (DV-83, sweep SW18): the cached counters recounted live; a failed read keeps them, named
 
-  res.json({
+  res.json({ ...countsUnreadKey(circleCountsUnread),
     events: filtered.map((e: any) => ({
       ...formatEvent(e, user.id, { hostProfile: hpMap[e.host_id as string] }),
       myRsvp: rsvpMap[e.id as string] ?? null,
@@ -1813,9 +1813,9 @@ router.get("/events/saved", async (req, res) => {
     ((savedRsvps as any[]) ?? [])
       .filter((r: any) => r.status === "going" || r.status === "maybe")
       .map((r: any) => r.event_id as string),
-  );
+  ); const savedCountsUnread = await liveEventCounters(sc, (events as any[]) ?? []);  // census-discovery §117 (DV-83, sweep SW18): the cached counters recounted live; a failed read keeps them, named
 
-  res.json({
+  res.json({ ...countsUnreadKey(savedCountsUnread),
     events: ((events as any[]) ?? []).map((e: any) =>
       formatEvent(e, user.id, { goingRsvp: savedRsvpSet.has(e.id as string) }),
     ),
@@ -1860,9 +1860,9 @@ router.get("/events/invites", async (req, res) => {
     const { data: profiles } = await sc.from("profiles").select("id, handle, name, avatar_url").in("id", inviterIds);
     const allowedNames = await nameVisibilitySet(sc, inviterIds);
     for (const p of (profiles as any[]) ?? []) inviterMap[p.id as string] = sanitizeIdentity(p, allowedNames, user.id);
-  }
+  } const inviteCountsUnread = await liveEventCounters(sc, Object.values(eventMap));  // census-discovery §117 (DV-83, sweep SW18): the cached counters recounted live; a failed read keeps them, named
 
-  res.json({
+  res.json({ ...countsUnreadKey(inviteCountsUnread),
     invites: inviteRows.map((inv: any) => ({
       id:        inv.id,
       eventId:   inv.event_id,
@@ -1907,9 +1907,9 @@ router.get("/events/requests", async (req, res) => {
   if (eventIds.length > 0) {
     const { data: evs } = await sc.from("events").select("*").in("id", eventIds);
     for (const e of (evs as any[]) ?? []) eventMap[e.id as string] = e;
-  }
+  } const requestCountsUnread = await liveEventCounters(sc, Object.values(eventMap));  // census-discovery §117 (DV-83, sweep SW18): the cached counters recounted live; a failed read keeps them, named
 
-  res.json({
+  res.json({ ...countsUnreadKey(requestCountsUnread),
     requests: reqRows.map((r: any) => ({
       id:       r.id,
       eventId:  r.event_id,
@@ -2249,7 +2249,7 @@ router.get("/events/share-link/:token/preview", async (req, res) => {
   const previewIsParticipant =
     (ev as any).host_id === previewUser.id ||
     (["going","maybe"].includes((previewRsvp as any)?.status ?? ""));
-  res.json({ event: formatEvent(ev as any, previewUser.id, { goingRsvp: previewIsParticipant }), shareToken: token });
+  const previewCountsUnread = await liveEventCounters(sc, [ev]); res.json({ event: formatEvent(ev as any, previewUser.id, { goingRsvp: previewIsParticipant }), shareToken: token, ...countsUnreadKey(previewCountsUnread) });  // census-discovery §117 (DV-83, sweep SW18): the cached counters recounted live; a failed read keeps them, named
 });
 
 // ── GET /api/events/near-trip/:tripId ────────────────────────────────────────
@@ -2321,7 +2321,7 @@ router.get("/events/near-trip/:tripId", async (req, res) => {
     filtered.push(ev);
   }
 
-  res.json({ events: filtered.map((e) => formatEvent(e, user.id)), tripId, city });
+  const nearTripCountsUnread = await liveEventCounters(sc, filtered); res.json({ events: filtered.map((e) => formatEvent(e, user.id)), tripId, city, ...countsUnreadKey(nearTripCountsUnread) });  // census-discovery §117 (DV-83, sweep SW18): the cached counters recounted live; a failed read keeps them, named
 });
 
 // ── GET /api/events/:id ───────────────────────────────────────────────────────
@@ -2385,9 +2385,9 @@ router.get("/events/following", async (req, res) => {
     for (const r of (rsvps as any[]) ?? []) rsvpMap[(r as any).event_id as string] = (r as any).status as string;
   }
 
-  const nextCursor = filtered.length === limit ? (filtered[filtered.length - 1].starts_at ?? null) : null;
+  const nextCursor = filtered.length === limit ? (filtered[filtered.length - 1].starts_at ?? null) : null; const followingCountsUnread = await liveEventCounters(sc, filtered);  // census-discovery §117 (DV-83, sweep SW18): the cached counters recounted live; a failed read keeps them, named
 
-  res.json({
+  res.json({ ...countsUnreadKey(followingCountsUnread),
     events: filtered.map((e: any) => ({
       ...formatEvent(e, user.id, { hostProfile: hpMap[e.host_id as string] }),
       myRsvp: rsvpMap[e.id as string] ?? null,
@@ -4538,10 +4538,10 @@ router.post("/events/:id/reviews", async (req, res) => {
   }
 
   // Recompute average rating
-  const { data: allRatings, error: allRatingsErr } = await sc
-    .from("event_reviews")
-    .select("rating")
-    .eq("event_id", id);
+  const { data: allRatings, error: allRatingsErr } = await readEventRatings(sc, id);  // census-discovery §117 (sweep SW19): every rating, read whole; a cut read is an error
+  // It was one unbounded read of this event's ratings, which PostgREST cut silently at
+  // db-max-rows: past 1000 reviews the count was stamped 1000, and the average was that
+  // of whichever rows came back.
   const avg = allRatings && (allRatings as any[]).length > 0
     ? Math.round(((allRatings as any[]).reduce((s: number, r: any) => s + r.rating, 0) / (allRatings as any[]).length) * 10) / 10
     : parsed.data.rating;
@@ -7119,4 +7119,13 @@ function withinEventsNear(e: { location_lat?: unknown; location_lng?: unknown },
 
 function eventsNearQuery(query: any, near: EventsNear): any {
   return applyNearBox(query, near.box, "location_lat", "location_lng");
+}
+
+/**
+ * census-discovery §117 (DV-83 round 20, sweep SW18): the body key for the cached counters a list could not recount
+ * live — `{ failedSources: [...] }` naming `event_rsvps` and/or `event_waitlist`, or `{}` when every recount answered,
+ * so a healthy body is unchanged.
+ */
+function countsUnreadKey(unread: string[]): { failedSources?: string[] } {
+  return unread.length > 0 ? { failedSources: unread } : {};
 }

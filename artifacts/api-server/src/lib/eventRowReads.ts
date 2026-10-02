@@ -63,3 +63,13 @@ export async function liveEventCounters(sc: any, rows: any[], which: { going?: b
   apply(waitlist, "event_waitlist", "waitlist_count");
   return failed;
 }
+
+/**
+ * census-discovery §117 (DV-83 round 20, sweep SW19): one event's review ratings (`rating`), read whole — the recount
+ * POST /events/:id/reviews stamps `review_count` and `avg_rating` from. `event_reviews` is unique on
+ * `(event_id, reviewer_id)`, so ordering by `reviewer_id` partitions the pages.
+ */
+export function readEventRatings(sc: any, eventId: string): Promise<PagedRead<{ rating: number }>> {
+  return readAllPages((from, to) => sc.from("event_reviews").select("rating", { count: "exact" })
+    .eq("event_id", eventId).order("reviewer_id").range(from, to));
+}
