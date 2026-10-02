@@ -60,7 +60,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { readFlagState } from "./capability/schemaCapability.js";  // census-discovery §115 (DV-83, B8): the buddy flag is read three-state
-import { haversineKm } from "./canonicalLocations.js";
+import { haversineKm } from "./canonicalLocations.js"; import { nearBox, applyNearBox } from "./nearBox.js";  // census-discovery §117 (DV-83, sweep SW16)
 
 // ── Field exposure — the single definition ────────────────────────────────────
 
@@ -187,8 +187,8 @@ export const BUDDY_SCAN_LIMIT = 500;
 /** How many pins may reach the projection from one viewport. */
 export const MAX_BUDDY_PINS = 200;
 
-/** Degrees of latitude per km — the same constant the traveler bbox scan uses. */
-const KM_PER_DEGREE_LAT = 111.32;
+/** census-discovery §117 (SW16): the viewport prefilter is lib/nearBox's box (the traveler scan's since §116 SW13); */
+/** this module keeps no km-per-degree constant of its own. */
 
 export async function readBuddyMapPins(
   sc: SupabaseClient | any,
@@ -206,28 +206,28 @@ export async function readBuddyMapPins(
   const blocked = opts.blockedSet;
   if (blocked === null) return { ok: false, stage: "blocks", message: "block state unknown" };  // §115: exposes nobody, and is not an empty marketplace
 
-  // 4. Viewport prefilter. A naive min/max bbox, exactly like lib/mapTravelers'
-  //    candidate scan — and with the same accepted limitation: a viewport
-  //    straddling ±180° misses the far side. The gateway rejects antimeridian
-  //    viewports upstream (parseBbox), so that case cannot arrive here.
-  const dLat = opts.radiusKm / KM_PER_DEGREE_LAT;
-  const dLng =
-    opts.radiusKm / (KM_PER_DEGREE_LAT * Math.max(0.2, Math.cos((opts.lat * Math.PI) / 180)));
+  // 4. Viewport prefilter: the circle's exact box on haversineKm's 6371 km
+  //    sphere (lib/nearBox) — two longitude ranges when the circle crosses the
+  //    180th meridian, every longitude when it holds a pole. It replaces
+  //    lat ± r/111.32, lng ± r/(111.32·max(0.2, cos lat)), which was narrower
+  const box = nearBox(opts.lat, opts.lng, opts.radiusKm);  // than the circle everywhere,
+  //    did not wrap, and dropped buddies inside the radius while the layer was
+  //    still named whole (census-discovery §117, DV-83 sweep SW16).
 
   // 3. The marketplace's visibility predicate, unchanged: status AND
   //    admin_status must both be 'active'. Ordering matches the search
   //    endpoint's default so the cap keeps the same buddies it would.
-  const { data, error } = await sc
+  const { data, error } = await applyNearBox(sc
     .from("rent_buddy_profiles")
     .select(BUDDY_PUBLIC_COLUMNS)
     .eq("status", "active")
     .eq("admin_status", "active")
     .not("meetup_base_lat", "is", null)
-    .not("meetup_base_lng", "is", null)
-    .gte("meetup_base_lat", opts.lat - dLat)
-    .lte("meetup_base_lat", opts.lat + dLat)
-    .gte("meetup_base_lng", opts.lng - dLng)
-    .lte("meetup_base_lng", opts.lng + dLng)
+    .not("meetup_base_lng", "is", null),
+    box,
+    "meetup_base_lat",
+    "meetup_base_lng",
+  )  // §117 (SW16): the box is still in the query, ahead of the scan cap
     .order("review_count", { ascending: false })
     .limit(BUDDY_SCAN_LIMIT);
 
