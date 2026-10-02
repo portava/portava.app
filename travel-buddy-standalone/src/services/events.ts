@@ -40,11 +40,11 @@ export interface EventAttendeeProfile {
   avatarUrl: string | null;
 }
 
-export interface EventCounts {
-  going: number;
-  maybe: number;
-  interested: number;
-  cant_go: number;
+export interface EventCounts {  // census-discovery §116 (SW10), §117 (B19): null when the read failed and no cached count exists
+  going: number | null;
+  maybe: number | null;
+  interested: number | null;
+  cant_go: number | null;
 }
 
 export interface EventAttendeeState {
@@ -110,7 +110,7 @@ export interface EventDetail extends EventSummary {
   myWaitlistOfferExpiresAt: string | null;
   myRole: EventRoleType | null;
   myAttendanceState: EventAttendeeState | null;
-  goingAttendees: EventAttendeeProfile[];
+  goingAttendees: EventAttendeeProfile[]; /** census-discovery §117 (B19): the reads that failed (`event_rsvps`, `event_waitlist`, `profiles`); see lib/eventAttendeesUnread */ failedSources?: string[];
 }
 
 export interface EventListItem extends EventSummary {

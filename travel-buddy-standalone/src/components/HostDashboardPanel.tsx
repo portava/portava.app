@@ -23,7 +23,7 @@ import {
 import { searchUsers, type TravelerSearchResult } from '../services/follows.ts';
 import { Avatar } from './ui.tsx';
 import { color, space, radius, type as t, avatar } from '../theme/tokens.ts';
-import { useFeatureFlags } from '../context/FeatureFlagsContext.tsx';
+import { useFeatureFlags } from '../context/FeatureFlagsContext.tsx'; import { attendeesUnread } from '../lib/eventAttendeesUnread.ts';  // census-discovery §117 (B19)
 import { GenerateHeaderSheet } from './events/GenerateHeaderSheet.tsx'; import { EventAttendancePanel } from './events/EventAttendancePanel.tsx'; import { EventCohostsPanel } from './events/EventCohostsPanel.tsx'; import { EventCancelControl } from './events/EventCancelControl.tsx';
 
 interface Props {
@@ -256,7 +256,7 @@ export function HostDashboardPanel({ event, onDismiss, onRefresh }: Props) {
             {tab === 'attendees' && (
               <>
                 {event.goingAttendees.length === 0 ? (
-                  <View style={s.empty}><Text style={s.emptyText}>No attendees yet</Text></View>
+                  <View style={s.empty}><Text style={s.emptyText}>{attendeesUnread(event) ? "Couldn't load attendees" : 'No attendees yet'}</Text></View>
                 ) : (
                   event.goingAttendees.map((a) => (
                     <View key={a.id} style={s.attendeeRow}>

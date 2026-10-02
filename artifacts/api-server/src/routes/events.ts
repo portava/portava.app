@@ -2448,7 +2448,7 @@ router.get("/events/:id", async (req, res) => {
     sc.from("event_rsvps").select("user_id, status").eq("event_id", id).in("status", ["going", "maybe"]),
     sc.from("profiles").select("id, handle, name, avatar_url").eq("id", (ev as any).host_id).maybeSingle(),
     sc.from("event_join_requests").select("status").eq("event_id", id).eq("user_id", user.id).maybeSingle(),
-  ]);
+  ]); if ([rsvpResult, waitlistResult, roleResult, attendeeResult, joinReqResult].some((r: any) => Boolean(r?.error))) { req.log?.error({ eventId: id }, "event detail: the viewer's own state unreadable — refusing"); sendError(res, "degraded_unavailable", "Your RSVP and place at this event could not be checked. Please try again."); return; }  // census-discovery §117 (DV-83, B19): a failed own-state read is never "not RSVP'd"
 
   const goingFailed = Boolean((goingResult as any).error); const goingData = (goingResult as any).data ?? [];  // census-discovery §116 (DV-83, sweep SW10): a failed count read is named, never a measured 0
   const counts = {
@@ -2476,9 +2476,9 @@ router.get("/events/:id", async (req, res) => {
   const isParticipant = viewerRole === "host" || viewerRole === "co_host" ||
     viewerRsvpStatus === "going" || viewerRsvpStatus === "maybe";
 
-  let goingProfiles: any[] = [];
+  let goingProfiles: any[] = []; let profilesFailed = false;  // §117 (B19): a failed profiles read is named, never an unnamed []
   if (isParticipant && goingAvatars.length > 0) {
-    const { data: gp } = await sc.from("profiles").select("id, handle, name, avatar_url").in("id", goingAvatars);
+    const { data: gp, error: gpErr } = await sc.from("profiles").select("id, handle, name, avatar_url").in("id", goingAvatars); if (gpErr) profilesFailed = true;
     const allowedGoing = await nameVisibilitySet(sc, goingAvatars);
     goingProfiles = ((gp as any[]) ?? []).map((p) => sanitizeIdentity(p, allowedGoing, user.id));
   }
@@ -2489,7 +2489,7 @@ router.get("/events/:id", async (req, res) => {
     .eq("event_id", id);
   const waitlistCount = waitlistErr ? ((ev as any).waitlist_count ?? null) : ((waitlistData as any[]) ?? []).length;  // §116 (SW10): the cached count over a failed read
 
-  const hpRaw = (hostResult as any).data;
+  const hpRaw = (hostResult as any).data; if ((hostResult as any).error) profilesFailed = true;  // §117 (B19): host null over a failed read is named
   const hostAllowed = await nameVisibilitySet(sc, [(ev as any).host_id]);
   const hp = sanitizeIdentity(hpRaw, hostAllowed, user.id);
   const host = hp ? {
@@ -2507,7 +2507,7 @@ router.get("/events/:id", async (req, res) => {
     ...toAuthorizedEventView(ev as any, user.id, { goingRsvp: isParticipant }),
     host,
     counts,
-    waitlistCount, ...(goingFailed || allRsvpsErr || waitlistErr ? { failedSources: [...(goingFailed || allRsvpsErr ? ["event_rsvps"] : []), ...(waitlistErr ? ["event_waitlist"] : [])] } : {}),  // §116 (SW10)
+    waitlistCount, ...(goingFailed || allRsvpsErr || waitlistErr || profilesFailed ? { failedSources: [...(goingFailed || allRsvpsErr ? ["event_rsvps"] : []), ...(waitlistErr ? ["event_waitlist"] : []), ...(profilesFailed ? ["profiles"] : [])] } : {}),  // §116 (SW10); §117 (B19): profiles too
     myRsvp: (rsvpResult as any).data?.status ?? null,
     myJoinRequestStatus: (joinReqResult as any).data?.status ?? null,
     myWaitlistPosition: (waitlistResult as any).data?.position ?? null,

@@ -77,7 +77,7 @@ import { PlaceInfoSection } from '../../src/components/place/PlaceInfoSection';
 import { getVenueInfoByCoords, clearVenueInfoCache, getCanonicalPlace, type VenueContactInfo } from '../../src/services/places';
 import type { CanonicalPlace } from '../../src/types/canonicalPlace';
 import { canonicalUrl } from '../../src/constants/canonicalUrl';
-import { readFeedSession } from '../../src/lib/feedAttribution.ts';
+import { readFeedSession } from '../../src/lib/feedAttribution.ts'; import { attendeesUnread, hostUnread } from '../../src/lib/eventAttendeesUnread.ts';  // census-discovery §117 (B19)
 
 /**
  * Composes the location subtitle line, avoiding a duplicated city when
@@ -905,7 +905,7 @@ export default function EventDetailScreen() {
             <View style={styles.metaRow}>
               <Users size={14} color={color.mute} />
               <Text style={styles.meta}>
-                {event.counts?.going ?? 0} going{event.maxAttendees ? ` · ${event.maxAttendees} max` : ''}
+                {event.counts?.going == null ? 'Going count unavailable' : `${event.counts.going} going`}{event.maxAttendees ? ` · ${event.maxAttendees} max` : ''}
                 {(event.waitlistCount ?? 0) > 0 ? ` · ${event.waitlistCount} waitlisted` : ''}
               </Text>
             </View>
@@ -959,7 +959,7 @@ export default function EventDetailScreen() {
             {/* Live voice room entry (visible only inside the event context) */}
             <EventVoiceRoomCard eventId={event.id} /><EventCheckInCard event={event} onCheckedIn={refreshLoad} />
 
-            {/* Host */}
+            {hostUnread(event) ? <Text style={styles.meta} testID="event-host-unread">Couldn't load the host</Text> : null}{/* Host — §117 (B19) */}
             {event.host && (
               <Pressable
                 style={styles.hostRow}
@@ -973,7 +973,7 @@ export default function EventDetailScreen() {
               </Pressable>
             )}
 
-            {/* Attendee strip */}
+            {attendeesUnread(event) && (event.goingAttendees?.length ?? 0) === 0 ? <Text style={styles.meta} testID="event-attendees-unread">Couldn't load who's going</Text> : null}{/* Attendee strip — census-discovery §117 (B19): a failed read is said, never nobody */}
             {(event.goingAttendees?.length ?? 0) > 0 && (
               <View style={styles.attendeeRow}>
                 {(event.goingAttendees ?? []).slice(0, 5).map((a) => (

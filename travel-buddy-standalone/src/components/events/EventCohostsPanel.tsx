@@ -20,10 +20,10 @@ import {
   type EventCohost, type EventDetail,
 } from '../../services/events.ts';
 import { Avatar } from '../ui.tsx';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { color, space, radius, type as t } from '../../theme/tokens.ts'; import { attendeesUnread } from '../../lib/eventAttendeesUnread.ts';  // census-discovery §117 (B19)
 
 interface Props {
-  event: Pick<EventDetail, 'id' | 'hostId' | 'isHost' | 'myRole' | 'goingAttendees'>;
+  event: Pick<EventDetail, 'id' | 'hostId' | 'isHost' | 'myRole' | 'goingAttendees' | 'failedSources'>;
   /** Called after a change so the event (and the viewer's roles) refresh. */
   onChanged?: () => void;
 }
@@ -117,7 +117,7 @@ export function EventCohostsPanel({ event, onChanged }: Props) {
         <>
           <Text style={[s.section, { marginTop: space.md }]}>Add a co-host from people going</Text>
           {candidates.length === 0 ? (
-            <Text style={s.note}>Everyone going is already a co-host, or nobody else is going yet.</Text>
+            <Text style={s.note}>{attendeesUnread(event) ? "Couldn't load who's going, so no one can be added right now." : 'Everyone going is already a co-host, or nobody else is going yet.'}</Text>
           ) : candidates.map((a) => (
             <View key={a.id} style={s.row}>
               <Avatar uri={a.avatarUrl ?? ''} size={36} />
