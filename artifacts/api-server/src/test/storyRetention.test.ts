@@ -699,6 +699,52 @@ describe("the reference guard", () => {
     );
   });
 
+  /**
+   * The owner's rule, 2026-10-02: normal story expiry must preserve media that
+   * a permanent Highlight still references.
+   *
+   * The three reference columns are all client-supplied strings —
+   * `routes/highlights.ts` stores `d.mediaUrl`, `routes/memories.ts:2024`
+   * stores `parsed.data.mediaUrl`, `PassportMemoryService.ts:115` stores
+   * `input.photoUrl` — so nothing on the server constrains a saved reference to
+   * the ORIGINAL path. A save made from the feed-sized render stores the
+   * `.feed.jpg`. Deriving the sibling names and deleting them with the original
+   * therefore took bytes a live reference was rendering: the fix for deleting
+   * too little must not become a fix that deletes too much.
+   *
+   * A Story saved to a Highlight through its own route carries
+   * `saved_to_highlight_id` and never enqueues at all, so the case that reaches
+   * here is a reference created independently of the Story row.
+   */
+  it("keeps the derived copy a permanent Highlight points at, and deletes only what nothing claims", async () => {
+    seedStory(db, "d4");
+    db.objects("post-media").add(`stories/${OWNER}/d4.thumb.jpg`);
+    db.objects("post-media").add(`stories/${OWNER}/d4.feed.jpg`);
+    // Permanent: expires_at null. It points at the feed copy, NOT at the
+    // original that `stories.media_url` carries.
+    db.rows("highlights").push({
+      id: "h",
+      media_url: `post-media/stories/${OWNER}/d4.feed.jpg`,
+      expires_at: null,
+    });
+    await enqueueDueStories(sc, CFG as any, NOW, 100);
+
+    const out = await processPurgeQueue(sc, NOW, 100);
+
+    assert.ok(
+      db.objects("post-media").has(`stories/${OWNER}/d4.feed.jpg`),
+      "the permanent Highlight renders this file — expiry must not take it",
+    );
+    assert.ok(!db.objects("post-media").has(storyPath("d4")), "the original is claimed by nothing");
+    assert.ok(!db.objects("post-media").has(`stories/${OWNER}/d4.thumb.jpg`), "nor is the thumbnail");
+    assert.equal(out.objectsDeleted, 2, "two files went, and objectsDeleted counts files");
+    assert.equal(out.retained, 1, "the kept file is reported as kept, never as deleted");
+    assert.equal(out.completed, 1, "from one settled entry");
+    assert.equal(db.rows("stories").length, 0, "the Story row is still purged — decision 6");
+    assert.deepEqual(out.failures, [], "keeping a referenced file is the approved outcome, not a failure");
+    assert.equal(db.rows("story_purge_queue").length, 0, "and the ledger entry settles");
+  });
+
   it("never derives a sibling name from a name that is already a sibling", () => {
     // `x.thumb.jpg` would give `x.thumb.thumb.jpg`, a path that has never
     // existed — and a listing that does not show it would read as a confirmed

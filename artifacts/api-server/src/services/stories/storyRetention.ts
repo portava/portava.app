@@ -53,6 +53,7 @@
  * which the privacy policy retains).
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { logger } from "../../lib/logger.js";
 import { appStorageUrlInfo } from "../../lib/mediaUrl.js";
 import {
   resolveStoryRetentionConfig,
@@ -118,8 +119,17 @@ export interface RetentionReport {
    */
   objectsDeleted: number;
   /**
-   * Objects deliberately kept because a NAMED live reference survives them —
-   * a Highlight, a Memory item, a passport memory. Ours, and still in use.
+   * OBJECTS deliberately kept because a NAMED live reference points at THAT
+   * object — a Highlight, a Memory item, a passport memory. Ours, and still in
+   * use. Counted per file, like `objectsDeleted`, so the two can be read
+   * side by side: one upload can have its original deleted and its `.feed.jpg`
+   * kept, and that pass reports `objectsDeleted: 2, retained: 1`.
+   *
+   * What it does NOT count, stated so the number is not read as the whole
+   * story: the derived copies of a primary that is itself referenced. Those
+   * are kept too — the pass deletes nothing for that entry — but no reference
+   * names them individually, and this is a count of objects a named reference
+   * saved, not a count of files still on disk.
    */
   retained: number;
   /**
@@ -514,7 +524,33 @@ export async function processPurgeQueue(
   }
 
   const pending = entries.filter((e) => !e.object_deleted_at && !e.object_retained_reason && e.storage_path);
-  const surviving = await findSurvivingReferences(sc, pending.map((e) => String(e.media_url)));
+
+  // Every url this pass might delete bytes for, the story's own and each
+  // derived sibling's, asked about in ONE round of reads.
+  //
+  // WHY THE SIBLINGS NEED ASKING ABOUT SEPARATELY. Deleting the thumbnail and
+  // the feed copy with the original is only safe while nothing else points at
+  // THEM. A Highlight holds one url (`highlights.media_url`), and a Highlight
+  // made from a Story copies the Story's url verbatim — but nothing in the
+  // schema stops a Highlight, a Memory item or a passport memory from holding
+  // a derived path, and the owner's rule is that normal expiry preserves media
+  // a permanent Highlight still references. Asking only about the original
+  // would honour that rule for the original and quietly break it for the two
+  // files beside it.
+  //
+  // The match is exact-string, as it has always been for the original: a
+  // reference stored in some other form (a signed or absolute URL) is not
+  // found by it. That limitation is unchanged and not newly introduced here.
+  const urlsToCheck = new Set<string>();
+  for (const e of pending) {
+    urlsToCheck.add(String(e.media_url));
+    if (e.storage_bucket && e.storage_path) {
+      for (const sib of derivedStoragePaths(String(e.storage_path))) {
+        urlsToCheck.add(`${String(e.storage_bucket)}/${sib}`);
+      }
+    }
+  }
+  const surviving = await findSurvivingReferences(sc, [...urlsToCheck]);
 
   let completed = 0;
   let objectsDeleted = 0;
@@ -541,6 +577,11 @@ export async function processPurgeQueue(
     let byteOutcome: "deleted" | "retained" | "external" | null = null;
     /** Objects this entry removed and read back, counted only once it settles. */
     let objectsGone = 0;
+    /**
+     * Objects this entry kept because a named live reference points at THAT
+     * object, counted only once the entry settles.
+     */
+    let objectsKept = 0;
 
     // ── Step 1: the bytes ────────────────────────────────────────────────────
     if (!objectDeletedAt && !objectRetainedReason) {
@@ -565,27 +606,69 @@ export async function processPurgeQueue(
         } else if (verdict?.kind === "referenced") {
           objectRetainedReason = verdict.detail;
           byteOutcome = "retained";
+          // The Story's own object, saved by the reference named above.
+          objectsKept = 1;
         } else {
           const bucket = String(entry.storage_bucket);
           const path = String(entry.storage_path);
-          // The original AND the siblings made from it. A sibling that was
-          // never created is absent, which settles the same way as one that was
-          // deleted — so this is safe for an upload that produced no
-          // derivatives, and for a bucket that never had them.
+          // The original AND the siblings made from it, minus any sibling
+          // something else still references. A sibling that was never created
+          // is absent, which settles the same way as one that was deleted — so
+          // this is safe for an upload that produced no derivatives, and for a
+          // bucket that never had them.
           const siblings = derivedStoragePaths(path);
-          const paths = [path, ...siblings];
-          // Which siblings were actually there before the delete. A derived
-          // name that never existed is absent afterwards too, so without this
-          // the pass would report having removed files nobody ever created —
-          // which is the same class of lie as reporting a retention as a
-          // deletion. An unreadable listing counts as neither: unknown is not
-          // a number, and the read-back below still gates settling.
-          const siblingsPresentBefore = new Set<string>();
+          const deletable: string[] = [];
+          const keptForReference: string[] = [];
+          let siblingBlocked: string | null = null;
           for (const sib of siblings) {
-            const pre = await objectPresence(sc, bucket, sib);
-            if (pre.present === true) siblingsPresentBefore.add(sib);
+            const v = surviving.get(`${bucket}/${sib}`);
+            if (v?.kind === "referenced") keptForReference.push(`${sib} (${v.detail})`);
+            else if (v?.kind === "unverifiable") {
+              // Same rule as the original's: not knowing is never a licence to
+              // delete. The entry defers whole rather than deleting the
+              // original and leaving the question open on a file beside it.
+              //
+              // UNREACHABLE TODAY, and deliberately kept. The primary and its
+              // siblings are resolved in ONE round against the same three
+              // sources, so an outage marks every one of them unverifiable —
+              // including `entry.media_url`, which already failed this entry in
+              // the branch above. There is therefore no test for this line:
+              // the state it guards cannot be produced without faking the map,
+              // and a test that fakes its own premise proves nothing. It stays
+              // because the day resolution becomes per-url or chunked, the
+              // absence of this branch would delete an original while a file
+              // beside it was still in question.
+              siblingBlocked = `cannot establish whether ${bucket}/${sib} is still referenced — ${v.detail}`;
+              break;
+            } else deletable.push(sib);
+          }
+          const paths = siblingBlocked ? [] : [path, ...deletable];
+          // Which deletable siblings were actually there before the delete. A
+          // derived name that never existed is absent afterwards too, so
+          // without this the pass would report having removed files nobody ever
+          // created — which is the same class of lie as reporting a retention
+          // as a deletion. An unreadable listing counts as neither: unknown is
+          // not a number, and the read-back below still gates settling.
+          const siblingsPresentBefore = new Set<string>();
+          if (!siblingBlocked) {
+            for (const sib of deletable) {
+              const pre = await objectPresence(sc, bucket, sib);
+              if (pre.present === true) siblingsPresentBefore.add(sib);
+            }
+          }
+          objectsKept = keptForReference.length;
+          if (keptForReference.length > 0) {
+            // The entry's own outcome is still "deleted" — the Story's own
+            // bytes went. The ledger cannot carry both a deletion time and a
+            // retention reason (story_purge_queue's outcome CHECK), so the kept
+            // siblings are logged rather than silently dropped.
+            logger.info(
+              { storyId, bucket, kept: keptForReference },
+              "storyRetention: kept a derived object a surviving reference still points at",
+            );
           }
           try {
+            if (siblingBlocked) throw new Error(siblingBlocked);
             const { error: rmErr } = await sc.storage.from(bucket).remove(paths);
             if (rmErr) {
               failure = `remove(${bucket}/[${paths.join(", ")}]) failed: ${(rmErr as any)?.message ?? "unknown"}`;
@@ -613,7 +696,12 @@ export async function processPurgeQueue(
               }
             }
           } catch (err) {
-            failure = `remove(${bucket}/[${paths.join(", ")}]) threw: ${(err as any)?.message ?? String(err)}`;
+            const msg = (err as any)?.message ?? String(err);
+            // A blocked sibling is already a complete sentence; only a real
+            // throw from storage needs the call wrapped around it.
+            failure = msg === siblingBlocked
+              ? msg
+              : `remove(${bucket}/[${paths.join(", ")}]) threw: ${msg}`;
           }
         }
       }
@@ -644,8 +732,11 @@ export async function processPurgeQueue(
       } else {
         completed += 1;
         if (byteOutcome === "deleted") objectsDeleted += objectsGone;
-        else if (byteOutcome === "retained") retained += 1;
         else if (byteOutcome === "external") external += 1;
+        // Not an `else`: an entry whose own object was deleted can still have
+        // kept a derived copy something else references, and reporting that
+        // file as deleted is the exact confusion the owner asked us to avoid.
+        retained += objectsKept;
         continue;
       }
     }
