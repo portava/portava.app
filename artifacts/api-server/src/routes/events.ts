@@ -219,7 +219,7 @@ import {
 } from "../services/trust/TrustEventService.js";
 import { rankCandidates } from "../lib/portavaRank.js";
 import type { RankCandidate, ViewerContext } from "../lib/portavaRank.js";
-import { logImpression } from "../lib/rankLog.js"; import { nearBox, applyNearBox } from "../lib/nearBox.js"; import { readGoingRsvpsForEvents, readEventRsvps, readEventWaitlist, liveEventCounters } from "../lib/eventRowReads.js";  // census-discovery §116 (sweep SW13); §117 (B21)
+import { logImpression } from "../lib/rankLog.js"; import { nearBox, applyNearBox, type NearBox } from "../lib/nearBox.js"; import { readGoingRsvpsForEvents, readEventRsvps, readEventWaitlist, liveEventCounters } from "../lib/eventRowReads.js";  // census-discovery §116 (sweep SW13); §117 (B21)
 import { getDisplayTrustScores, getTrustProfileResult } from "../services/trust/TrustScoreService.js";
 import {
   toPrivateEventPreview,
@@ -7089,16 +7089,14 @@ function safetySummaryFailedSources(req: any, eventId: string, reads: Record<str
 // from anywhere as its nearby layer. A request carrying both coordinates is filtered to located events within the
 // radius (a bbox in the query, the great-circle distance after it); one without them is unchanged.
 
-interface EventsNear { lat: number; lng: number; radiusKm: number; west: number; south: number; east: number; north: number }
+interface EventsNear { lat: number; lng: number; radiusKm: number; box: NearBox }
 
 function eventsNearFilter(q: Record<string, unknown>): EventsNear | null {
   const lat = Number(q.nearLat); const lng = Number(q.nearLng);
   if (q.nearLat == null || q.nearLng == null || !Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
   const r = Number(q.nearRadiusKm);
   const radiusKm = Number.isFinite(r) && r > 0 ? Math.min(r, 500) : 25;
-  const dLat = eventsNearDLat(radiusKm);  // census-discovery §116 (B18): the distance filter's own earth, so the box is never narrower than the radius
-  const dLng = eventsNearDLng(lat, radiusKm);  // §116 (B18): exact and unclamped; 180 (every longitude) when the circle holds a pole
-  return { lat, lng, radiusKm, west: lng - dLng, south: lat - dLat, east: lng + dLng, north: lat + dLat };
+  return { lat, lng, radiusKm, box: nearBox(lat, lng, radiusKm) };  // census-discovery §117 (V8, V9): lib/nearBox's box, the one NB1/NB2 pin
 }
 
 function withinEventsNear(e: { location_lat?: unknown; location_lng?: unknown }, near: EventsNear): boolean {
@@ -7110,32 +7108,15 @@ function withinEventsNear(e: { location_lat?: unknown; location_lng?: unknown },
   return 2 * 6371 * Math.asin(Math.min(1, Math.sqrt(a))) <= near.radiusKm;
 }
 
-// ── census-discovery §116 (DV-83 round 19, lane W11-X2; the round-18 verifier's B18) ─────────────────────────────────
+// ── census-discovery §116 (DV-83 round 19, lane W11-X2; the round-18 verifier's B18) and §117 (round 20; V8, V9) ──────
 //
 // The near box was built as lng ± dLng with no wrap at the 180th meridian, with cos(lat) clamped at 0.2 (narrower than
-// the radius above ~78.5°), and at 111.32 km per degree while withinEventsNear measures on a 6371 km earth (111.19 km
-// per degree) — so events inside the radius were dropped in the query, unsaid. The box is now the exact extent of the
-// circle on the distance filter's own sphere, padded by BOX_PAD_DEG; it opens to every longitude when the circle holds a
-// pole, and a box that crosses the antimeridian is queried as two longitude ranges. withinEventsNear still decides.
-
-const EVENTS_NEAR_EARTH_KM = 6371;
-const BOX_PAD_DEG = 1e-6;
-
-function eventsNearDLat(radiusKm: number): number {
-  return (radiusKm / EVENTS_NEAR_EARTH_KM) * (180 / Math.PI) + BOX_PAD_DEG;
-}
-
-function eventsNearDLng(lat: number, radiusKm: number): number {
-  const ang = radiusKm / EVENTS_NEAR_EARTH_KM;
-  const phi = (Math.abs(lat) * Math.PI) / 180;
-  if (phi + ang >= Math.PI / 2) return 180;
-  return Math.asin(Math.min(1, Math.sin(ang) / Math.cos(phi))) * (180 / Math.PI) + BOX_PAD_DEG;
-}
+// the radius above ~78.5°), and at 111.32 km per degree while withinEventsNear measures on a 6371 km earth — so events
+// inside the radius were dropped in the query, unsaid. Round 19 fixed it with a copy of lib/nearBox's box here, which
+// was unpinned at the south pole (V8) and on the viewer's own side west of -180° (V9). GET /events now applies
+// lib/nearBox itself (`nearBox` in eventsNearFilter, `applyNearBox` here): one box for every near read, pinned by NB1/NB2
+// and, through this route, by EA1–EP3, NS1 and NA0. withinEventsNear still decides.
 
 function eventsNearQuery(query: any, near: EventsNear): any {
-  const q = query.gte("location_lat", near.south).lte("location_lat", near.north);
-  if (near.east - near.west >= 360) return q;
-  if (near.west < -180) return q.or(`and(location_lng.gte.${near.west + 360},location_lng.lte.180),and(location_lng.gte.-180,location_lng.lte.${near.east})`);
-  if (near.east > 180) return q.or(`and(location_lng.gte.${near.west},location_lng.lte.180),and(location_lng.gte.-180,location_lng.lte.${near.east - 360})`);
-  return q.gte("location_lng", near.west).lte("location_lng", near.east);
+  return applyNearBox(query, near.box, "location_lat", "location_lng");
 }
