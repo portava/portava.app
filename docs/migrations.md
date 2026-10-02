@@ -3819,14 +3819,24 @@ NOT NULL, 5 policies and 0 RESTRICTIVE. On that database:
   their own ledger rows (2 → 0 with rows present), and are no-ops on re-run. The
   pair re-applies afterwards.
 
-**One behaviour change to expect that is not about permanence.** 3502 moves the
-expiry test out of the top level, so an owner's own **expired** Highlight becomes
-visible to the owner through RLS, where production refuses it today (measured:
-`false` before, `true` after). Of the fifteen `highlights` reads in
-`routes/highlights.ts`, three filter expiry explicitly and the rest are by-id
-ownership checks before a mutation — except `GET /highlights/archived`, which is
-owner-only and deliberately does not filter expiry. So this change fixes that
-route rather than widening any feed.
+**Who these policies serve, which bounds everything above.** Every
+`routes/highlights.ts` handler takes its client from `requireUser`
+(`lib/http.ts:272`), which returns the **service-role** client
+(`lib/supabase.ts:17`), and service role bypasses RLS; authorization there is
+`.eq("owner_id", user.id)` in route code, on each of the fifteen `highlights`
+statements. `travel-buddy-standalone` queries `highlights` directly zero times.
+So these two SELECT policies govern **direct PostgREST access with an anon or
+user key**, not the app's own read path. Applying 2975 first would therefore
+break the public PostgREST surface for permanent Highlights while the app's own
+endpoints kept serving them. The order still stands — the fix costs nothing —
+but the blast radius of getting it wrong is that surface, not the product.
+
+**One behaviour change 3502 does make, at that layer.** It moves the expiry test
+out of the top level, so an owner's own **expired** Highlight becomes selectable
+by the owner, where production refuses it today (measured: `false` before, `true`
+after). An earlier version of this entry said that change "fixes"
+`GET /highlights/archived`; it does not, because that route runs on service role
+and RLS never filtered it.
 
 **One cost of the 2975 reversal, named rather than discovered during one.** It
 gives every permanent Highlight a 24-hour expiry. A row left claiming
