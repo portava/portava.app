@@ -591,6 +591,27 @@ async function decide(
       // cannot make this query fail on a database that has not run 2400 — only
       // the MEMBERSHIP select has to stay conditional, and it does.
       .select("thread_id, sender_id, created_at")
+      // TOMBSTONES ARE NOT SERVABLE. Deleting or unsending a message does not
+      // clear `media_url` / `media_thumbnail_url` — the delete writes
+      // `{ deleted_at, body: '' }` (routes/groupChat.ts) and the unsend RPC
+      // writes `{ unsent_at, deleted_at, lifecycle_state, body }`
+      // (migrations/3000), and nothing in the tree nulls those two columns. So
+      // the row went on matching the OR filter below by the very key it was
+      // retracting, and this branch went on minting a signed URL into the
+      // PRIVATE `post-media` bucket for it. The TEXT reader already redacts
+      // (`isDeleted = Boolean(m.deleted_at)`, routes/messaging.ts), which is
+      // what made this survive: the picture vanished from the thread while the
+      // bytes stayed fetchable by anyone who had kept the path — which is
+      // precisely the person an unsend is meant to take it back from.
+      //
+      // One predicate covers both doors because BOTH write `deleted_at`; the
+      // unsend sets `unsent_at` as well, but filtering on that alone would miss
+      // a plain delete AND would name a column added by 2325/2810, neither of
+      // which is applied to production yet. `deleted_at` is in the baseline
+      // dump (`baseline/20260819_baseline_structure.sql`, `public.messages`), so
+      // naming it unconditionally cannot fail on any database — the same
+      // argument as `created_at` above.
+      .is("deleted_at", null)
       .or(`media_url.in.${inList},media_thumbnail_url.in.${inList}`)
       .limit(1);
     noteLookupFailure("3c messages", msgsErr, { bucket, path });
