@@ -26,7 +26,7 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { HAVE_DB, exec, psql, seedUser, deleteUser } from "./localDb.js";
+import { HAVE_DB, creatorLedgerPurgeSql, exec, psql, seedUser, deleteUser } from "./localDb.js";
 import { pgError } from "./discoverySearchPsqlClient.js";
 import {
   measureDiscoveryStopInputs,
@@ -117,7 +117,7 @@ describe("census-discovery DV-82 — 3391: the four database stop conditions, me
 
   after(() => {
     exec(`
-      DELETE FROM public.creator_attributions WHERE beneficiary_user_id IN (${X.map((x) => `'${x}'`).join(",")}); DELETE FROM public.creator_rule_versions WHERE note LIKE 'TEST FIXTURE (census-discovery §54 stop measurements)%';
+      ${creatorLedgerPurgeSql(X)} DELETE FROM public.creator_rule_versions WHERE note LIKE 'TEST FIXTURE (census-discovery §54 stop measurements)%';
       DELETE FROM public.rank_events WHERE user_id = '${V}';
       DELETE FROM public.trails WHERE id = '${TRAIL}';
       DELETE FROM public.discovery_places WHERE id IN (${P.map((p) => `'${p}'`).join(",")});

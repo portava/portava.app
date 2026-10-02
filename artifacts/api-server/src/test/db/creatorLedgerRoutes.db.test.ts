@@ -20,7 +20,7 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import express from "express";
 import { randomUUID } from "node:crypto";
-import { HAVE_DB, exec, rows, scalar, seedUser } from "./localDb.js";
+import { HAVE_DB, creatorLedgerPurgeSql, exec, rows, scalar, seedUser } from "./localDb.js";
 import { creatorPsqlClient, lit } from "./creatorLedgerPsqlClient.js";
 import { _setTestClient } from "../../lib/http.js";
 import creatorEconomyRouter from "../../routes/creatorEconomy.js";
@@ -96,6 +96,7 @@ describe("the creator-economy routes over a real database (census-discovery §52
   after(async () => {
     if (server) await new Promise<void>((res) => server!.close(() => res()));
     exec(
+      `${creatorLedgerPurgeSql(users)}\n` +
       `DELETE FROM public.profiles WHERE id IN (${users.map(lit).join(",")});\n` +
       `DELETE FROM auth.users WHERE id IN (${users.map(lit).join(",")});\n` +
       `DELETE FROM public.creator_rule_versions WHERE rule_version = ${lit(VERSION)};`,
