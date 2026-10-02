@@ -110,6 +110,8 @@ export interface CreateRoutePlanPayload {
   startLocation?: { label?: string; lat: number; lng: number } | null;
   endLocation?: { label?: string; lat: number; lng: number } | null;
   stops: CandidateStopInput[];
+  /** The media item this route was saved from (§45 Media → Route); the server records it only for an active post. */
+  originMediaId?: string;
 }
 
 // ── API calls ──────────────────────────────────────────────────────────────────

@@ -100,7 +100,7 @@ export async function isFallbackModeEnabled(db: SupabaseClient): Promise<boolean
 function buildSafeProfile(
   userId:     string,
   blockedIds: Set<string>,
-  city:       string | null,
+  city:       string | null, mutedIds: Set<string> = new Set(),  // census-compass §35: the viewer's mutes, so the safety filter's mute rule can fire in fallback
 ): CompassProfile {
   const blockedArr = [...blockedIds];
   return {
@@ -114,7 +114,7 @@ function buildSafeProfile(
     visibilityPreference:  "public",
     blockedUserIds:        blockedArr,
     blockerUserIds:        [],
-    mutedUserIds:          [],
+    mutedUserIds:          [...mutedIds],  // census-compass §35: was `[]` — a muted author was served by every fallback feed
     blockCount:            blockedArr.length,
     blockerCount:          0,
     trustScore:            null,
@@ -641,10 +641,10 @@ export async function buildFallbackFeed(
   // safety tools — admin-controlled app features, not user content, so they are
   // safe to serve with no block list — rather than either serving unfiltered
   // UGC or returning nothing at all.
-  let blockedIds: Set<string>;
+  let blockedIds: Set<string>; let mutedIds: Set<string>;  // census-compass §35: the mute list is the second half of the hidden set, read and failed closed with the blocks
   try {
-    blockedIds = await loadBlockedIds(db, userId);
-  } catch {
+    [blockedIds, mutedIds] = await Promise.all([loadBlockedIds(db, userId), loadMutedIds(db, userId)]);
+  } catch (hiddenErr) {
     return {
       sections: (() => {
         const tools = buildSafetyTools();
@@ -652,12 +652,12 @@ export async function buildFallbackFeed(
       })(),
       nextCursor: null,
       fallback: true,
-      fallbackReason: `${reason}+block_list_unavailable`,
+      fallbackReason: `${reason}+${hiddenErr instanceof MuteListUnavailableError ? "mute_list_unavailable" : "block_list_unavailable"}`,  // census-compass §35: says WHICH list could not be read
       safeItems: [],
     };
   }
 
-  const safeProf = buildSafeProfile(userId, blockedIds, city);
+  const safeProf = buildSafeProfile(userId, blockedIds, city, mutedIds);
 
   // Load all Compass feature flags once so the safety filter can enforce
   // COMPASS_LAUNCH_CONTROL_ENABLED and COMPASS_<TYPE>_SAFETY_BLOCK in fallback
@@ -720,4 +720,33 @@ export async function buildFallbackFeed(
     fallbackReason: reason,
     safeItems,
   };
+}
+
+// ── Mute list loader (census-compass §35) ─────────────────────────────────────
+
+/**
+ * Thrown by loadMutedIds when `user_mutes` cannot be read, so the fallback's
+ * refusal can say which half of the hidden set was unreadable.
+ */
+class MuteListUnavailableError extends Error {}
+
+/**
+ * Load the ids the viewer has MUTED. THROWS if the read errors.
+ *
+ * This builder is reached by catching getCompassProfile's throw, and a failed
+ * `user_mutes` read is one of the reads that makes it throw. The fallback then
+ * read only `blocks` and handed the safety filter `mutedUserIds: []`, so the
+ * filter's mute rule (CompassSafetyFilter, "author_muted_by_viewer") could not
+ * fire: a failed mute read served the muted author's posts, events, city-guide
+ * entries and threads. With COMPASS_FALLBACK_MODE_ENABLED on it did the same
+ * over a HEALTHY read. The rule here is loadBlockedIds' rule: a list that
+ * cannot be read degrades the feed to the static safety tools, never to an
+ * empty ("nobody is muted") list.
+ */
+async function loadMutedIds(db: SupabaseClient, userId: string): Promise<Set<string>> {
+  const { data, error } = await db.from("user_mutes").select("muted_id").eq("muter_id", userId);
+  if (error) {
+    throw new MuteListUnavailableError("CompassFallbackFeedBuilder: mute-list load failed — failing closed: " + error.message);
+  }
+  return new Set(((data as any[]) ?? []).map((r: any) => r.muted_id as string));
 }

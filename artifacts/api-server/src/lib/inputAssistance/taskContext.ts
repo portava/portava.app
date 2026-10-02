@@ -31,7 +31,7 @@
  * suggestion request would be worse than no carryover.
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { SearchResult } from '../../routes/discoverySearch';
+import type { SearchResult } from './searchCandidates';
 import { searchKey } from '../canonicalLocations';
 import { partitionByFeasibility } from './creation';
 import type { SuggestSessionContext } from './types';

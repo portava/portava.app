@@ -93,6 +93,11 @@ function Probe({ fieldId }: { fieldId: string }) {
     <>
       <Text testID="labels">{suggestions.map((s) => s.label).join('|')}</Text>
       <Text testID="types">{suggestions.map((s) => s.type).join('|')}</Text>
+      {/* Added with the §32 local surface: once a SHIPPED row can appear below
+          a replayed accept, "what is on screen" and "which of it came from the
+          server" are different questions. */}
+      <Text testID="sources">{suggestions.map((s) => s.source).join('|')}</Text>
+      <Text testID="actions">{suggestions.map((s) => s.action?.type ?? '-').join('|')}</Text>
       <Text testID="unavailable">{String(unavailable)}</Text>
     </>
   );
@@ -159,17 +164,40 @@ test('§34: a cold/offline open KEEPS the local zero-state and still reports deg
   await waitFor(() => expect(screen.getByTestId('unavailable').props.children).toBe('true'));
   // This is the case the row describes: "a cold or offline open of a city
   // picker shows nothing". It now shows what the user already chose.
-  expect(screen.getByTestId('labels').props.children).toBe('Bangkok');
+  //
+  // RESTATED when the §32 local surface landed: the replayed ACCEPT is still
+  // the first row and is still the row the server projected. What may follow it
+  // is the shipped city index, which is a lower rung of the same ladder.
+  const labels = String(screen.getByTestId('labels').props.children).split('|');
+  expect(labels[0]).toBe('Bangkok');
+  expect(String(screen.getByTestId('sources').props.children).split('|')[0]).toBe('canonical');
+  expect(String(screen.getByTestId('types').props.children).split('|')[0]).toBe('recent');
 });
 
-test('§34: with nothing accepted, an empty field is still empty — nothing is invented', async () => {
+test('§34/§32: with nothing accepted, an offline field is answered ONLY from shipped rows', async () => {
+  // SUPERSEDED ASSERTION, recorded rather than deleted. This case used to read
+  // "an empty field is still empty" and asserted `''` — true at the time, and
+  // the census's complaint rather than a property worth keeping: the surface
+  // the authority licensed for this field had no substrate behind it
+  // (G197/G198). It has one now, and `trip_destination` is `cached_local`.
+  //
+  // The part that mattered survives, sharpened: nothing is INVENTED. Every row
+  // here is a shipped row (`source: 'local'`), no row claims an accept that
+  // never happened, and — the §13 half — no row carries a resolution, because
+  // the client resolves nothing.
   mockRequest.mockResolvedValueOnce({
     ok: false, aborted: false, unavailable: true, error: 'endpoint unavailable',
   });
   render(<Probe fieldId={FIELD} />);
 
   await waitFor(() => expect(screen.getByTestId('unavailable').props.children).toBe('true'));
-  expect(screen.getByTestId('labels').props.children).toBe('');
+  const sources = String(screen.getByTestId('sources').props.children).split('|');
+  expect(sources).not.toContain('canonical');
+  expect(sources.every((s) => s === 'local')).toBe(true);
+  expect(String(screen.getByTestId('types').props.children).split('|')).not.toContain('recent');
+  expect(
+    String(screen.getByTestId('actions').props.children).split('|').every((a) => a === '-'),
+  ).toBe(true);
 });
 
 test('§29: a PERSONAL field never renders a local zero-state, degraded or not', async () => {

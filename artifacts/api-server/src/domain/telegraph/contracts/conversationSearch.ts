@@ -37,6 +37,8 @@
  * whoever adds the field, which is exactly the person who will not remember.
  */
 
+import { dispatchTable, lookup } from "./dispatchTable.js";
+
 /** §21's five result types, in the order the spec prints them. */
 export const TELEGRAPH_SEARCH_BUCKETS = ["MESSAGES", "PLACES", "MEDIA", "PLANS", "MEMORIES"] as const;
 export type TelegraphSearchBucket = (typeof TELEGRAPH_SEARCH_BUCKETS)[number];
@@ -89,7 +91,7 @@ export interface TelegraphSearchBehaviour {
  * every key here through `isTelegraphObjectType`, so a typo fails a test rather
  * than registering a family that does not exist.
  */
-export const SEARCH_BEHAVIOUR: Readonly<Record<string, TelegraphSearchBehaviour>> = {
+export const SEARCH_BEHAVIOUR: Readonly<Record<string, TelegraphSearchBehaviour>> = dispatchTable({
   // Places — Discovery's three families and the meetup point.
   PLACE:        { bucket: "PLACES",   structured: true,  carriedBy: ["discovery_card"] },
   HIDDEN_GEM:   { bucket: "PLACES",   structured: true,  carriedBy: ["hidden_gem"] },
@@ -103,7 +105,7 @@ export const SEARCH_BEHAVIOUR: Readonly<Record<string, TelegraphSearchBehaviour>
   POST:         { bucket: "MEMORIES", structured: false, carriedBy: ["post_card"] },
   MEMORY:       { bucket: "MEMORIES", structured: false, carriedBy: ["memory_card"] },
   MEMORY_NOTE:  { bucket: "MEMORIES", structured: false, carriedBy: [] },
-};
+});
 
 /**
  * Subtypes with a bucket and NO shareable family behind them.
@@ -118,13 +120,13 @@ export const SEARCH_BEHAVIOUR: Readonly<Record<string, TelegraphSearchBehaviour>
  * hand-written one it replaces AND leaves the gap visible: this is the one
  * searchable card kind that is not registered through the capability contract.
  */
-export const FAMILYLESS_SUBTYPE_BUCKET: Readonly<Record<string, { bucket: TelegraphSearchBucket; structured: boolean; why: string }>> = {
+export const FAMILYLESS_SUBTYPE_BUCKET: Readonly<Record<string, { bucket: TelegraphSearchBucket; structured: boolean; why: string }>> = dispatchTable({
   compass_card: {
     bucket: "PLACES",
     structured: true,
     why: "Compass answer card — sourceDomain 'compass', which is not a §5 object family and has no shareable loader.",
   },
-};
+});
 
 /**
  * Which message `subtype` lands in which bucket — DERIVED from the family
@@ -141,8 +143,12 @@ export const FAMILYLESS_SUBTYPE_BUCKET: Readonly<Record<string, { bucket: Telegr
  * from reading the table above; it can happen very easily from editing it.
  */
 function deriveSubtypeBucket(): Readonly<Record<string, TelegraphSearchBucket>> {
-  const out: Record<string, TelegraphSearchBucket> = {};
-  const owner: Record<string, string> = {};
+  // Null-prototype accumulators, not `{}`: a family that declared a subtype
+  // literally named `__proto__` would otherwise set no key at all on a literal
+  // (the assignment reparents the object instead), so the duplicate-claim check
+  // below would pass and the subtype would silently have no bucket.
+  const out = Object.create(null) as Record<string, TelegraphSearchBucket>;
+  const owner = Object.create(null) as Record<string, string>;
   for (const [family, reg] of Object.entries(SEARCH_BEHAVIOUR)) {
     for (const subtype of reg.carriedBy) {
       if (owner[subtype] !== undefined) {
@@ -163,7 +169,7 @@ function deriveSubtypeBucket(): Readonly<Record<string, TelegraphSearchBucket>> 
     }
     out[subtype] = entry.bucket;
   }
-  return out;
+  return dispatchTable(out);
 }
 
 export const SUBTYPE_BUCKET: Readonly<Record<string, TelegraphSearchBucket>> = deriveSubtypeBucket();
@@ -194,7 +200,7 @@ export const STRUCTURED_SUBTYPES: ReadonlySet<string> = deriveStructuredSubtypes
  * something a caller can ASK about instead of having to know.
  */
 export function searchBehaviourFor(objectType: string): TelegraphSearchBehaviour | null {
-  return SEARCH_BEHAVIOUR[objectType] ?? null;
+  return lookup(SEARCH_BEHAVIOUR, objectType);
 }
 
 /**
@@ -265,7 +271,11 @@ export function classifyMessage(row: {
   media_url?: string | null;
 }): TelegraphSearchBucket {
   const subtype = (row.subtype ?? "").trim();
-  const mapped = subtype ? SUBTYPE_BUCKET[subtype] : undefined;
+  // `lookup`, not `SUBTYPE_BUCKET[subtype]`: `messages.subtype` is written
+  // straight from the request body by `routes/messaging.ts`, so this key is
+  // sender-controlled. See `contracts/dispatchTable.ts` — the table is
+  // prototype-less, and this says out loud why that matters here.
+  const mapped = lookup(SUBTYPE_BUCKET, subtype);
   if (mapped) return mapped;
   if (row.media_url || (row.msg_type ?? "") === "media") return "MEDIA";
   return "MESSAGES";

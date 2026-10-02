@@ -90,6 +90,13 @@ export interface IssueSessionInput {
   lifetimeSeconds?: number;
   budget?: number;
   policy?: IntelligenceContributionPolicy;
+  /**
+   * The scopes this session may carry — the INTERSECTION of the policy and the
+   * holder's recorded consent (lib/sensingConsentScopes). Absent ⇒ the policy's
+   * scopes, which is what every caller before the issuer route did. Must be a
+   * subset of the policy's scopes; anything else is refused, never widened.
+   */
+  purposeScopes?: readonly string[];
 }
 
 export type IssueSessionResult = { ok: true; row: SensingContributionSessionRow } | { ok: false; error: string };
@@ -107,12 +114,17 @@ export function buildSensingSessionRow(input: IssueSessionInput): IssueSessionRe
   const budget = input.budget ?? SENSING_SESSION_DEFAULT_BUDGET[input.issuanceClass];
   if (!Number.isInteger(budget) || budget <= 0) return { ok: false, error: "budget_invalid" };
   const policy = input.policy ?? SENSING_ANON_POLICY_V1;
+  const scopes = input.purposeScopes ?? policy.purposeScopes;
+  if (scopes.length === 0) return { ok: false, error: "scopes_empty" };
+  for (const sc of scopes) {
+    if (!(policy.purposeScopes as readonly string[]).includes(sc)) return { ok: false, error: "scope_not_in_policy" };
+  }
   return {
     ok: true,
     row: {
       credential_hash: deriveSensingCredentialHash(input.credential),
       policy_version: policy.policyVersion,
-      purpose_scopes: [...policy.purposeScopes],
+      purpose_scopes: [...new Set(scopes)],
       reduction_version: policy.clientCapability.reductionVersion,
       issuance_class: input.issuanceClass,
       budget_cohorts_remaining: budget,

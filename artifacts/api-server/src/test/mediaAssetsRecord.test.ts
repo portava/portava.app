@@ -546,7 +546,7 @@ describe("MediaLifecycleService — owner-only deletion and retry", () => {
         const b: any = {
           select: () => b,
           eq: () => b,
-          maybeSingle: async () => ({ data: row, error: null }),
+          maybeSingle: async () => (table === "feature_flags" ? { data: { enabled: true }, error: null } : { data: row, error: null }), // the worker flag reads ON here, so a retry that may write does (census-media §30.12)
           update: (payload: any) => { writes.push({ table, row: payload }); return b; },
           insert: async (payload: any) => { writes.push({ table, row: payload }); return { error: null }; },
           then: (resolve: any) => Promise.resolve({ data: null, error: null }).then(resolve),
@@ -622,7 +622,7 @@ describe("MediaLifecycleService — owner-only deletion and retry", () => {
     assert.equal(result.ok, true);
     await result.purge;
     const retryClient = assetClient({ id: ASSET, owner_user_id: OWNER, processing_status: "failed" });
-    await retryMediaProcessing(retryClient, ASSET, OWNER);
+    await retryMediaProcessing(retryClient, ASSET, OWNER); assert.ok(retryClient.writes.some((w: any) => typeof w.row?.processing_status === "string"), "the retry must write, or this case checks nothing (census-media §30.12)");
     for (const w of [...client.writes, ...retryClient.writes]) {
       if (typeof w.row?.processing_status === "string") {
         assert.ok(PROCESSING.has(w.row.processing_status), `illegal processing_status ${w.row.processing_status}`);

@@ -17,7 +17,7 @@ import {
 import { HighlightRing } from './HighlightRing.tsx';
 import { HighlightViewer } from './HighlightViewer.tsx';
 import { color, space } from '../theme/tokens.ts';
-import type { HighlightFeedUser } from '../services/highlights.ts';
+import type { HighlightFeedUser, HighlightErrorKind } from '../services/highlights.ts';
 import { useSession } from '../context/SessionContext.tsx';
 import { DisplayMediaImage } from './ui/DisplayMediaImage.tsx';
 
@@ -27,6 +27,16 @@ interface Props {
   users: HighlightFeedUser[];
   sessionViewedIds: Set<string>;
   onMarkViewed: (ids: string[]) => void;
+  /**
+   * §28.11. Non-null when the feed could not be READ. An unreadable feed and a
+   * feed with nothing in it are different facts and must not be the same
+   * picture: the server refuses with `degraded_unavailable` rather than
+   * answering `{ users: [] }` from a follow-graph lookup that failed, and this
+   * tray disappearing was that refusal being re-stated as the claim.
+   */
+  unreadable?: HighlightErrorKind | null;
+  /** Retry the feed read. Only offered for a failure that can be retried. */
+  onRetry?: () => void;
 }
 
 /**
@@ -50,9 +60,41 @@ function resolveRingPosterUri(user: HighlightFeedUser): string | null {
   return first.mediaThumbnailUrl ?? first.mediaUrl;
 }
 
-export function FollowingHighlightsStrip({ users, sessionViewedIds, onMarkViewed }: Props) {
+export function FollowingHighlightsStrip({
+  users, sessionViewedIds, onMarkViewed, unreadable = null, onRetry,
+}: Props) {
   const { userId: currentUserId } = useSession();
   const [viewingUser, setViewingUser] = useState<HighlightFeedUser | null>(null);
+
+  // §28.11. The read failed and we have nothing to show. Say that. Rendering
+  // null here would put the same picture on screen as "nobody you follow has
+  // posted", which is a claim about other people that we have no basis for.
+  if (users.length === 0 && unreadable) {
+    // `feature_disabled` is permanent on this build; everything else is worth
+    // another try. Offering a retry that can never work is its own small lie.
+    const retryable = unreadable !== 'feature_disabled';
+    return (
+      <View style={styles.wrapper}>
+        <View style={styles.unreadableRow}>
+          <Text style={styles.unreadableText} numberOfLines={2}>
+            {unreadable === 'feature_disabled'
+              ? 'Highlights are not available on this version.'
+              : 'We could not load Highlights from people you follow.'}
+          </Text>
+          {retryable && onRetry ? (
+            <Pressable
+              onPress={onRetry}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Retry loading highlights"
+            >
+              <Text style={styles.unreadableRetry}>Retry</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      </View>
+    );
+  }
 
   if (users.length === 0) return null;
 
@@ -180,5 +222,23 @@ const styles = StyleSheet.create({
   },
   nameMuted: {
     color: color.faint,
+  },
+  unreadableRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: space.md,
+    paddingHorizontal: space.lg,
+    paddingVertical: space.md,
+  },
+  unreadableText: {
+    flex: 1,
+    fontSize: 12,
+    color: color.mute,
+  },
+  unreadableRetry: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: color.signal,
   },
 });

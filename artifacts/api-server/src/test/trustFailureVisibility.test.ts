@@ -245,16 +245,128 @@ describe("Trust scoring: an unreadable input must not become a persisted score",
     const db = makeClient(tables);
     // Deliberately asserts only the arithmetic, not whether it is persisted —
     // "no evidence" persistence is a separate question decided elsewhere.
+    //
+    // Q1 (owner decision 2026-09-22) changed the VALUE this control expects and
+    // left the DISTINCTION it exists to draw exactly where it was. What makes
+    // this the control is that it RETURNS rather than refusing: three tests
+    // above, an unreadable trust_events rejects with TrustInputUnavailableError
+    // and writes nothing. That contrast is the whole point and is untouched.
+    //
+    // The value is now `null` rather than 50, and this file's own docblock is
+    // why: it opens by naming `"this user has no history" -> score 50,
+    // PERSISTED` as the defect. 50 was a constant standing where a measurement
+    // belongs, and it is exactly a value a real measurement can hold, so it
+    // could not be told apart from one. After Q1 an absent history and an
+    // unreadable one are two distinct outcomes and NEITHER of them is 50.
     const r = await recalculateTrustScore(db, USER_A);
-    assert.equal(r.overall_score, 50, "an absent history is still a legitimate computation, unlike an unreadable one");
+    assert.equal(
+      r.overall_score, null,
+      "an absent history is still a legitimate computation, unlike an unreadable one — but what it computes is the absence of a measurement, not the constant 50",
+    );
   });
 
   it("CONTROL: an absent trust_settings ROW is still 'use the defaults'", async () => {
-    const tables = baseTables();
-    tables.trust_settings.length = 0; // no row — not an error
+    // Proved by COMPARISON rather than against a pinned level, and the change
+    // is a strengthening forced by Q1 rather than an accommodation of it.
+    //
+    // This assertion used to pin `reliable_traveler`, which an entirely
+    // unmeasured profile reached only by way of the fabricated 50 this file
+    // exists to condemn. With 50 gone the pinned answer would become
+    // `new_traveler` — which is also what a profile with NO measurement gets,
+    // so the assertion would pass without the settings row having been consulted
+    // at all, and would stop discriminating the thing it is named for.
+    //
+    // So the same MEASURED history is scored twice, once against an explicit
+    // defaults row and once against none, and the two are required to agree.
+    // That tests "an absent row means use the defaults" in the row's own terms,
+    // and it would fail if an absent row were ever read as different rules.
+    const seedMeasured = (t: Record<string, any[]>) => {
+      t.trust_events.push({
+        id: "ev-control", user_id: USER_A, category: "respect_safety",
+        delta: 6, severity: "minor", status: "confirmed",
+        created_at: new Date().toISOString(),
+      });
+    };
+
+    const withRow = baseTables();
+    seedMeasured(withRow);
+    const expected = await recalculateTrustScore(makeClient(withRow), USER_A);
+
+    const withoutRow = baseTables();
+    withoutRow.trust_settings.length = 0; // no row — not an error
+    seedMeasured(withoutRow);
+    const actual = await recalculateTrustScore(makeClient(withoutRow), USER_A);
+
+    // Guards the comparison against being vacuously true: if the fixture
+    // measured nothing, both sides would be `null` and agree for the wrong
+    // reason.
+    assert.notEqual(expected.overall_score, null, "the fixture must actually measure something, or this comparison proves nothing");
+
+    assert.equal(actual.overall_score, expected.overall_score, "an absent settings row must score identically to an explicit defaults row");
+    assert.equal(actual.public_level, expected.public_level, "...and must reach the same level, since the level comes from the same thresholds");
+  });
+});
+
+describe("Zero-evidence skip: 'never scored' must not be what a failed read looks like", () => {
+  // The skip this covers arrived with PR #449 and the failure-visibility rule
+  // with PR #458; the defect only exists where the two meet, so it is measured
+  // here rather than in either branch's own file. `recalculateTrustScore` asks
+  // trust_profiles whether this user has ever been scored, and answers "no" for
+  // an unreadable table exactly as it does for a genuinely new user — then
+  // returns `persisted: false` to callers that discard the result.
+
+  function neverScoredTables() {
+    const tables = baseTables();      // no trust_profiles row, no events, no caps
+    return tables;
+  }
+
+  it("an unreadable trust_profiles is not a user who has never been scored", async () => {
+    const tables = neverScoredTables();
+    tables.trust_profiles.push(earnedProfile());   // this user HAS a real 92
+    const db = makeClient(tables, [
+      { table: "trust_profiles", op: "select", selectContains: "user_id" },
+    ]);
+
+    await assert.rejects(
+      () => recalculateTrustScore(db, USER_A),
+      (err: any) => /trust_profiles existence read failed/.test(String(err?.message)),
+      "a failed existence read must abort, not answer 'never scored'",
+    );
+
+    const row = tables.trust_profiles.find((p) => p.user_id === USER_A);
+    assert.equal(row.overall_score, 92, "the earned score must survive a failed existence read");
+  });
+
+  // NOT ASSERTED HERE, and the reason is worth recording: this refusal cannot be
+  // driven through runTrustMaintenance with a table-level failure injection. The
+  // skip only runs when a user has NO qualifying events, so the dirty-user path
+  // cannot reach it, and the stale-user path enumerates trust_profiles with the
+  // SAME `.select("user_id")` the existence read uses — so any injection that
+  // breaks the read breaks the enumeration first and the pass recalculates
+  // nobody. The scheduler's counting of a throw as `recalcFailures` is pinned by
+  // the caps test below, which shares the mechanism.
+
+  it("CONTROL — a genuinely never-scored user with no evidence is still skipped, and that is not a failure", async () => {
+    const tables = neverScoredTables();   // truly empty: the read SUCCEEDS and finds nothing
     const db = makeClient(tables);
+
     const r = await recalculateTrustScore(db, USER_A);
-    assert.equal(r.public_level, "reliable_traveler");
+
+    assert.equal(r.persisted, false, "no evidence and no prior row: nothing is written");
+    assert.equal(tables.trust_profiles.length, 0, "and nothing was written");
+  });
+
+  it("CONTROL — a user with a cap is still persisted, so the fix does not widen the skip", async () => {
+    const tables = neverScoredTables();
+    tables.trust_caps.push({
+      id: "cap-1", user_id: USER_A, category: "respect_safety",
+      ceiling_score: 40, reason_code: "behavior_confirmed", expires_at: null, lifted_at: null,
+    });
+    const db = makeClient(tables);
+
+    const r = await recalculateTrustScore(db, USER_A);
+
+    assert.equal(r.persisted, true, "a cap is deliberate recorded state, so the row is written");
   });
 });
 

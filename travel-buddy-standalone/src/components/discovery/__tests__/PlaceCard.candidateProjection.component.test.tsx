@@ -187,6 +187,9 @@ describe('DSV2-04 — expired why-now claims become explicitly stale', () => {
     await mount(placeWith(candidate({
       whyNow: ['crowd_busy'],
       freshness: { state: 'fresh', ageMs: 2000, servedFrom: 'L2_fresh' },
+      // Inside its validity window on this device's clock (see
+      // PlaceCard.whyNowExpiry.component.test.tsx for the window's edges).
+      whyNowValidForMs: 60_000, receivedAtMs: Date.now(),
     })));
 
     await waitFor(() => expect(screen.getByTestId('candidate-why-now')).toBeTruthy());

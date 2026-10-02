@@ -111,6 +111,11 @@ function fixture() {
       // The bounded thread: one match before the window, one after.
       m("m8", T_BOUND, "sky36 before Alice joined", { created_at: "2026-02-01T00:00:00.000Z" }),
       m("m9", T_BOUND, "sky36 after Alice joined", { created_at: "2026-04-01T00:00:00.000Z" }),
+      // Q6's population: a message ALICE HERSELF sent in T_BOUND before the
+      // window her membership carries. Its token matches nothing else, so it
+      // cannot disturb any other assertion in this file.
+      m("m10", T_BOUND, "q6token said by Alice before her window",
+        { sender_id: ALICE, created_at: "2026-02-01T00:00:00.000Z" }),
       // A thread Alice is not in, and one she left.
       m("m10", T_FOREIGN, "sky36 in someone else's thread", { created_at: "2026-05-08T00:00:00.000Z" }),
       m("m11", T_LEFT, "sky36 in a thread Alice left", { created_at: "2026-05-09T00:00:00.000Z" }),
@@ -159,6 +164,24 @@ function makeClient(state: State = {}) {
       is(col: string, val: any) { filters.push(["is", col, val]); preds.push((r) => (val === null ? r[col] == null : r[col] === val)); return proxy; },
       in(col: string, vals: any[]) { filters.push(["in", col, vals]); preds.push((r) => vals.map(String).includes(String(r[col]))); return proxy; },
       gte(col: string, val: any) { filters.push(["gte", col, val]); preds.push((r) => Date.parse(r[col]) >= Date.parse(val)); return proxy; },
+      // MODELLED, not proxied to a no-op. The §14.3 window now reaches this
+      // query as an `or=` group (Q6's own-message exception rides beside the
+      // bound), and an unmodelled `or` applies NO filter — which would make the
+      // assertions below pass because the fake had stopped filtering, on the one
+      // surface that has the least JavaScript to fall back on. Real PostgREST
+      // semantics: ORed within the group, ANDed with every other filter.
+      or(expr: string) {
+        filters.push(["or", "", expr]);
+        const ms = expr.split(",").map((clause) => {
+          const a = clause.indexOf("."), b = clause.indexOf(".", a + 1);
+          const col = clause.slice(0, a), op = clause.slice(a + 1, b), val = clause.slice(b + 1);
+          if (op === "gte") return (r: any) => Date.parse(r[col]) >= Date.parse(val);
+          if (op === "eq") return (r: any) => String(r[col]) === val;
+          throw new Error(`search fake: unmodelled or() operator "${op}"`);
+        });
+        preds.push((r: any) => ms.some((f) => f(r)));
+        return proxy;
+      },
       ilike(col: string, pattern: string) {
         filters.push(["ilike", col, pattern]);
         const needle = pattern.replace(/%/g, "").toLowerCase();
@@ -247,15 +270,44 @@ describe("Telegraph §21 — access filtering happens BEFORE retrieval", () => {
 /* ──────────────────────── the §14.3 window is a filter ────────────────── */
 
 describe("Telegraph §21 × §14.3 — the history window is in the query", () => {
-  it("a bounded thread gets its own query carrying .gte(created_at, bound)", async () => {
+  it("a bounded thread gets its own query carrying the window clause", async () => {
+    // §21 forbids post-filtering, and this service has the least JavaScript of
+    // any windowed reader — the clause IS the bound. Since owner decision Q6 it
+    // is a two-clause `or=` group rather than a bare `.gte`, so it is asserted
+    // WHOLE: the window OR the SEARCHER's own rows, and nothing else. A clause
+    // that admitted any other sender's pre-window rows would fail here.
     const sc = makeClient();
     await searchConversations(sc, ALICE, "sky36");
     const bounded = messageQueries(sc).find((q: any) =>
       q.filters.some((f: any) => f[0] === "in" && f[1] === "thread_id" && f[2].includes(T_BOUND)));
     assert.ok(bounded, "the bounded thread was never queried");
-    const gte = bounded.filters.find((f: any) => f[0] === "gte" && f[1] === "created_at");
-    assert.ok(gte, "the window was not applied in the query — that is post-filtering");
-    assert.equal(gte[2], BOUND);
+    const or = bounded.filters.find((f: any) => f[0] === "or");
+    assert.ok(or, "the window was not applied in the query — that is post-filtering");
+    assert.equal(or[2], `created_at.gte.${BOUND},sender_id.eq.${ALICE}`);
+  });
+
+  it("Q6 — the searcher's OWN pre-window message IS findable", async () => {
+    // m10 and m8 both sit in T_BOUND before ALICE's window. m10 is HERS and
+    // comes back; m8 is BOB's and does not — asserted in the test above, and
+    // again here so the pair is read together.
+    const sc = makeClient();
+    const mine = await searchConversations(sc, ALICE, "q6token");
+    assert.deepEqual(mine.hits.map((h) => h.messageId), ["m10"],
+      "a member finds the message they themselves sent, from before their window");
+
+    const others = await searchConversations(makeClient(), ALICE, "sky36");
+    const found = new Set(others.hits.map((h) => h.messageId));
+    assert.ok(!found.has("m8"), "and still not the one BOB sent in the same stretch");
+  });
+
+  it("Q6 does not fire with the flag OFF-shaped scope — an unbounded thread gains no clause", async () => {
+    const sc = makeClient();
+    await searchConversations(sc, ALICE, "q6token");
+    const unbounded = messageQueries(sc).find((q: any) =>
+      q.filters.some((f: any) => f[0] === "in" && f[1] === "thread_id" && f[2].includes(T_OPEN)));
+    assert.ok(unbounded, "the unbounded slice was never queried");
+    assert.equal(unbounded.filters.find((f: any) => f[0] === "or"), undefined,
+      "an unbounded thread's query carries no window clause at all");
   });
 
   it("a pre-window match is not returned; a post-window match is", async () => {

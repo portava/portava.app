@@ -1,5 +1,5 @@
 /**
- * mediaInteractions — API calls for media like, save, share, report, and
+ * mediaInteractions — API calls for media save, share, report, and
  * owner controls (visibility change, delete).
  *
  * All mutations go through the API server (bearer token auth).
@@ -57,15 +57,15 @@ async function call(
   }
 }
 
-// ── Like ─────────────────────────────────────────────────────────────────────
-
-export async function likeMedia(mediaId: string): Promise<MediaActionResult> {
-  return call('POST', `/api/media/${encodeURIComponent(mediaId)}/like`);
-}
-
-export async function unlikeMedia(mediaId: string): Promise<MediaActionResult> {
-  return call('DELETE', `/api/media/${encodeURIComponent(mediaId)}/like`);
-}
+// ── Like — RETIRED (MD424; testing-mode WP-17, census-media §46) ────────────
+//
+// likeMedia / unlikeMedia called POST/DELETE /api/media/:id/like and had no
+// caller. Heart/Like is on the Media spec's anti-pattern list, and the server
+// route is itself a compat wrapper over Stamp. Media reactions are Stamp
+// (StampButton / useStamp through /stamps). These comment lines keep the
+// former line span: this file is cited by line number.
+//
+//
 
 // ── Save ─────────────────────────────────────────────────────────────────────
 
@@ -127,18 +127,40 @@ export async function hideMedia(mediaId: string): Promise<MediaActionResult> {
   });
 }
 
-// ── Stamp It reaction ─────────────────────────────────────────────────────────
+// ── Stamp It reaction — RETIRED (MD424; testing-mode WP-17) ─────────────────
 
 /**
- * Record a "Stamp It" long-press reaction on a Watch feed media item.
+ * reactToMediaStampIt called POST /api/media/:id/react (media_stamp_reactions)
+ * and had no caller. It was a second, separately counted stamp gesture beside
+ * Stamp — two stamps and two counts for one act, against the spec's single
+ * Stamp control and its minimal vanity metrics (MD408). Stamp is the one media
+ * reaction; Comments open the post comment sheet (MediaCommentSheet).
  *
- * Uses the dedicated POST /api/media/:id/react endpoint which writes to
- * media_stamp_reactions — separate from the post_reactions ❤️ like row so the
- * two gestures never conflict. Idempotent server-side.
- *
- * Fail-soft: returns { ok: false } on any network or auth error so the caller
- * can safely ignore the result without crashing.
+ * The server route stays for API callers; census-media §46 records the
+ * decision. These lines keep the former line span (the file is cited by line).
  */
-export async function reactToMediaStampIt(mediaId: string): Promise<MediaActionResult> {
-  return call('POST', `/api/media/${encodeURIComponent(mediaId)}/react`);
+
+
+
+
+// ── §44 signals from surfaces that hold no analytics hook (census-media §21) ──
+
+/**
+ * Send ONE §44 client signal straight to POST /media/analytics/batch — for a
+ * list row or a navigation that leaves the screen before a debounced hook
+ * would flush. The payload is built by features/media/telemetry's
+ * `emitMediaSignal`, which drops any forbidden key before this is called; the
+ * server applies its own event and payload allow-lists and its
+ * MEDIA_ANALYTICS_ENABLED gate on top. Fire-and-forget: never throws.
+ */
+export async function recordMediaSignal(
+  type: string,
+  payload: object,
+): Promise<MediaActionResult> {
+  return call('POST', '/api/media/analytics/batch', { events: [{ type, payload }] });
+}
+
+/** A recorder with the shape `emitMediaSignal` takes, sending each signal on its own. */
+export function mediaSignalRecorder(type: string, payload?: object): void {
+  void recordMediaSignal(type, payload ?? {}).catch(() => {});
 }

@@ -938,7 +938,7 @@ const loadMedia: Loader = async (client, id, viewerId) => {
   const mine = r.owner_user_id === viewerId;
   if (!mine) {
     if (r.visibility !== "public") return { state: UNAVAILABLE("private"), projection: null };
-    if (r.moderation_status !== "approved") return { state: UNAVAILABLE("unauthorized"), projection: null };
+    if (r.moderation_status !== "approved" && r.moderation_status !== "active") return { state: UNAVAILABLE("unauthorized"), projection: null }; // §36 'active' = legacy 'approved' (census-media §20)
   }
   if (processing !== "ready") return { state: UNAVAILABLE("unknown"), projection: null };
   return {

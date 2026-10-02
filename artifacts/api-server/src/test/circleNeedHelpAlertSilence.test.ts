@@ -186,3 +186,23 @@ describe("POST /circle/contexts/trip/:id/need-help — the host alert", () => {
     assert.equal(await waitForLog(/need-help host alert FAILED/i), true, errorLogs.join(" | "));
   });
 });
+
+// ── TM-create (testing mode, 2026-09-29): the success message says what happened ─
+// The route alerts the context HOST only (the block above, and its own comment:
+// "a host-action alert, not a broadcast"), yet answered "Your circle has been
+// notified". The client's own copy already says "Alert sent to the host"
+// (CheckInActions.needHelp.component.test.tsx); the server's message now agrees
+// with it instead of claiming a broadcast that never happens.
+describe("POST /circle/contexts/trip/:id/need-help — the message is honest", () => {
+  it("names the host as the one alerted, and never claims the circle was notified", async () => {
+    install({});
+    const r = await post(PATH);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.acknowledged, true);
+    assert.equal(typeof r.body.message, "string");
+    assert.match(r.body.message, /\bhost\b/i);
+    assert.doesNotMatch(r.body.message, /circle has been notified/i);
+    assert.doesNotMatch(r.body.message, /\b(everyone|all members|your circle) (has|have) been (notified|alerted)/i);
+    await new Promise((res) => setTimeout(res, 300));
+  });
+});

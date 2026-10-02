@@ -345,12 +345,14 @@ describe("submitterIsVisible is ONE rule, shared by every discovery_places reade
     // away from the feed: the rule lived inside routes/discovery.ts, described
     // itself as unmissable, and the other reader simply never called it.
     const fs = await import("node:fs/promises");
-    const src = await fs.readFile(new URL("../routes/discoverySearch.ts", import.meta.url), "utf8");
+    // census-discovery §70: the searchers moved from routes/discoverySearch.ts
+    // to the platform module, one directory deeper, so lib/blocks is "../blocks.js".
+    const src = await fs.readFile(new URL("../lib/inputAssistance/searchCandidates.ts", import.meta.url), "utf8");
 
     // Tolerates sibling names in the same import (fetchBlockedSet joined it on
     // 2026-09-07); what is pinned is that the rule comes from lib/blocks.
     assert.match(
-      src, /import \{[^}]*\bsubmitterIsVisible\b[^}]*\} from "\.\.\/lib\/blocks\.js"/,
+      src, /import \{[^}]*\bsubmitterIsVisible\b[^}]*\} from "\.\.\/blocks\.js"/,
       "discoverySearch must import the shared rule rather than define its own",
     );
     assert.ok(
@@ -368,16 +370,25 @@ describe("submitterIsVisible is ONE rule, shared by every discovery_places reade
     // edited. The gateway (lib/inputAssistance/gateway.ts) and GET /discovery
     // already read lib/blocks'; this pins /discovery/search and /suggest to it.
     const fs = await import("node:fs/promises");
-    const src = await fs.readFile(new URL("../routes/discoverySearch.ts", import.meta.url), "utf8");
+    // census-discovery §70: the platform module holds the searchers; the route
+    // still calls fetchBlockedSet itself (search and suggest), so both are read.
+    const src = await fs.readFile(new URL("../lib/inputAssistance/searchCandidates.ts", import.meta.url), "utf8");
+    const routeSrc = await fs.readFile(new URL("../routes/discoverySearch.ts", import.meta.url), "utf8");
 
     assert.match(
-      src, /import \{ fetchBlockedSet, submitterIsVisible \} from "\.\.\/lib\/blocks\.js"/,
+      src, /import \{ fetchBlockedSet, submitterIsVisible \} from "\.\.\/blocks\.js"/,
+      "the search platform module must import fetchBlockedSet from lib/blocks",
+    );
+    assert.match(
+      routeSrc, /import \{ fetchBlockedSet \} from "\.\.\/lib\/blocks\.js"/,
       "discoverySearch must import fetchBlockedSet from lib/blocks",
     );
-    assert.ok(
-      !/async function fetchBlockedSet/.test(src),
-      "a private implementation of fetchBlockedSet has reappeared in discoverySearch",
-    );
+    for (const s of [src, routeSrc]) {
+      assert.ok(
+        !/async function fetchBlockedSet/.test(s),
+        "a private implementation of fetchBlockedSet has reappeared in discoverySearch",
+      );
+    }
 
     // Identity, not resemblance: the symbol the route re-exports IS lib/blocks'.
     const routeModule = await import("../routes/discoverySearch.js");
@@ -390,7 +401,7 @@ describe("submitterIsVisible is ONE rule, shared by every discovery_places reade
 
   it("searchPlaces and searchActivities both select submitted_by and apply the rule", async () => {
     const fs = await import("node:fs/promises");
-    const src = await fs.readFile(new URL("../routes/discoverySearch.ts", import.meta.url), "utf8");
+    const src = await fs.readFile(new URL("../lib/inputAssistance/searchCandidates.ts", import.meta.url), "utf8"); // §70
 
     for (const fn of ["async function searchPlaces(", "async function searchActivities("]) {
       const start = src.indexOf(fn);

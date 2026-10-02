@@ -46,6 +46,8 @@ export default function MediaPerspectiveRoute() {
         onClose={() => router.back()}
         onViewPlace={(placeId) => router.push(`/place/${placeId}` as never)}
         onAskCompass={() => router.push('/(tabs)/ai' as never)}
+        // §7 context sheet: each edge links to its canonical home (census-media §19).
+        onNavigate={(href) => router.push(href as never)}
       />
     </>
   );

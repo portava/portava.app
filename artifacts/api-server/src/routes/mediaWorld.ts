@@ -8,7 +8,7 @@
  *   GET /api/media/me                         §30   owner library (My World)
  *   GET /api/media/timeline                   §17   Earlier / Now rails (observed only, no forecast)
  *   GET /api/media/map                        §21   perspective counts per canonical place
- *   GET /api/media/search                     §38   media / places / people / gems / experiences
+ *   GET /api/media/search                     §38   media / places / people / gems / experiences / events / trips
  *   GET /api/media/gems                       §16   Hidden Gems lens — derived gem state, not a feed
  * ADDITIVE. These are NEW routes and touch NO existing media serving
  * (mediaFeed.ts is unchanged). They are registered BEFORE mediaFeedRouter in
@@ -325,10 +325,10 @@ router.get(
     }
     const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
     const scopeRaw = str(req.query.scope);
-    const scope: MediaSearchScope =
-      scopeRaw === "me" || scopeRaw === "trip" ? scopeRaw : "all";
+    const scope: MediaSearchScope = scopeRaw === "me" || scopeRaw === "trip" ? scopeRaw : "all";
+    const near = parseMediaSearchNear(req.query); if (!near.ok) { sendError(res, "invalid_payload", near.message); return; } /* §38 "near X", zod-validated (census-media §24, MD288) */ const visual = parseMediaSearchVisual(req.query as Record<string, unknown>); if (!visual.ok) { sendError(res, "invalid_payload", visual.message); return; } // §38 "looks social" / "look like this" (census-media §37, MD289/MD293)
     const viewer = await resolveViewer(sc, auth.user.id, { needFollows: scope === "me" });
-    const results = await searchMedia(
+    const results = await searchMediaVisual( // census-media §37: searchMedia itself when no visual criterion is asked (was: searchMedia()
       sc,
       viewer,
       {
@@ -338,13 +338,13 @@ router.get(
         placeId: str(req.query.placeId),
         tripId: str(req.query.tripId),
         mediaId: str(req.query.mediaId),
-        scope,
+        scope, near: near.near, ...visual.visual,
         freshOnly: req.query.freshOnly === "true" || req.query.freshOnly === "1",
         limit: Number.parseInt(str(req.query.limit) ?? "", 10) || undefined,
       },
       nowMs,
     );
-    await sendProjection(res, "search", results, { sc, viewerId: auth.user.id });
+    await sendProjection(res, "search", withCanonicalKinds(results, await searchCanonicalEventsAndTrips(sc, viewer, { q: results.visual ? null : str(req.query.q), scope, near: near.near }, nowMs)), { sc, viewerId: auth.user.id }); // §38 events + trips by name (census-media §19, MD294); none beside a visual criterion, which a name cannot satisfy (§37)
   }),
 );
 
@@ -420,5 +420,12 @@ router.get(
     await sendProjection(res, "gems", projection, { sc, viewerId: auth.user.id });
   }),
 );
+
+// §38 EVENTS and TRIPS result kinds, used by `GET /media/search` above
+// (census-media §19, MD294). Imported HERE, below every anchored line, for the
+// same reason as the gems route's imports: an import added at the top of this
+// file would move `"/media/search"` and `sendProjection(res,` off the lines
+// census-media anchors them to. ESM hoists it either way.
+import { searchCanonicalEventsAndTrips, withCanonicalKinds, parseMediaSearchNear, searchMediaVisual, parseMediaSearchVisual } from "../services/media/MediaSearchService.js";
 
 export default router;

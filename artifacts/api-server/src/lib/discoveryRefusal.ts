@@ -56,12 +56,12 @@
  * THE SIX CLASSES ARE `11` §9's LIST, NOT AN INVENTED ONE
  * ======================================================
  * All six are declared because §9 names all six. Only the ones that actually
- * occur on a Discovery route are emitted today — `transient_db`, `validation`
- * and (see below) `upstream_unavailable`. `feature_disabled` and
- * `unsupported_surface` have no reachable site on these routes at the time of
- * writing, and a site was NOT invented to populate them: a class emitted where
- * nothing of that kind happens is a lie about the failure, which is the thing
- * this module exists to stop.
+ * occur on a Discovery route are emitted — `transient_db`, `validation`,
+ * `upstream_unavailable` (see below) and `feature_disabled`, whose one site is
+ * /discovery/suggest's `canonical_fold_unavailable` (§46; see the note at the
+ * END of this file). `unsupported_surface` has no reachable site, and one was
+ * NOT invented: a class emitted where nothing of that kind happens is a lie
+ * about the failure, which is the thing this module exists to stop.
  *
  * THE SEVENTH CLASS — AN OWNER RULING OF 2026-09-14, NOT A SPEC CLAUSE
  * ===================================================================
@@ -354,3 +354,27 @@ export function classifyRefusal(
     ? discoveryRefusal("upstream_unavailable", err.code, route, coverage)
     : discoveryRefusal("transient_db", fallbackCode, route, coverage);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// census-discovery §53 — a correction to this file's header, kept down here so
+// the header's anchored citations do not move.
+//
+// The header used to say `feature_disabled` had no reachable Discovery site.
+// census-discovery §46 (B01) made one: `GET /discovery/suggest` answers
+// `feature_disabled` / `canonical_fold_unavailable` / `coverage: "partial"`,
+// naming the canonical fold as the failed source, when the stored diacritic
+// fold (`canonical_locations.search_key`, migration 2220) is absent and the
+// Cities group fell back to the legacy matcher (lib/discoverySearchCanonical.ts
+// `sendCanonicalFoldDegraded`). That is a deliberate state of the deployment —
+// a capability not present — which is what the class means; it is not an
+// outage, so `transient_db` would be the wrong word for it.
+//
+// §53 routes two more reads through the EXISTING `transient_db` path rather
+// than a new class: the people search's profile-discovery opt-out read (which
+// used to answer an outage with a silent `[]`, byte-identical to "nobody
+// matches") and the Invisible-mode / buddy-eligibility reads §53 added
+// (lib/discoveryPeoplePrivacy.ts, lib/discoveryPeopleBuddy.ts). Each throws the
+// route's `DiscoverySearchReadError`, so a single-type people search refuses
+// with `coverage: "nothing"`, and the `type=all` / suggest fan-outs name
+// `travelers` / `buddies` in `failedSources` under `coverage: "partial"`.
+// ─────────────────────────────────────────────────────────────────────────────

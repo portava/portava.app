@@ -28,7 +28,7 @@ does not argue with that.
 >    (`:644`), which **awaits** `negotiateE2eeForNewThread` at `:675`. The client
 >    encrypts today.
 > 2. **"Nothing ever sets `is_e2ee = true` … written nowhere"** (§1.3b) —
->    **false.** `artifacts/api-server/src/routes/messaging.ts:1284` does
+>    **false.** `artifacts/api-server/src/routes/messaging.ts:1291` does
 >    `.update({ is_e2ee: true })` inside `POST /api/threads/:threadId/e2ee`
 >    (`:1224`), gated on membership, `thread_type = 'direct'` and a delivered
 >    `e2ee_welcome`. The client half is `markThreadE2ee`
@@ -123,7 +123,7 @@ confirming, I say so.
 | Server: devices | `migrations/20260801_e2ee_devices.sql` | **Live** |
 | Server: KeyPackage pool | `migrations/20260802_e2ee_key_packages.sql` + `routes/keyPackages.ts` | **Live.** 3 endpoints: publish, inventory, one-shot consume |
 | Server: ciphertext | `migrations/20260803_messages_ciphertext.sql` | **Live** — confirmed in `database.types.ts`, which was regenerated against the live schema in `1c0cfdaea` |
-| Server: send path | `routes/messaging.ts:1582-1673` | **Implemented.** Accepts `ciphertext`, enforces `body=null` on E2EE threads, rejects plaintext into an E2EE thread, 64 KB cap — ⚠️ **line numbers stale 2026-08-29:** `1580` now lands inside the *GET*-messages translation block. The send path is `POST /threads/:threadId/messages` at **`1698-2009`**, ciphertext logic at **`1707-1813`**. The behaviour described is unchanged |
+| Server: send path | `routes/messaging.ts:1589-1680` | **Implemented.** Accepts `ciphertext`, enforces `body=null` on E2EE threads, rejects plaintext into an E2EE thread, 64 KB cap — ⚠️ **line numbers stale 2026-08-29:** `1580` now lands inside the *GET*-messages translation block. The send path is `POST /threads/:threadId/messages` at **`1698-2009`**, ciphertext logic at **`1707-1813`**. The behaviour described is unchanged |
 | Tests | `src/lib/__tests__/{secureStore.e0,localMessageDb.e0,cryptoIdentity.e1,mlsSession.e2}.test.ts` | **CORRECTED 2026-08-08: present but NOT running anywhere.** All four are in the EXCLUDE array in `scripts/run-node-tests.mjs`; they do not match `test:component`'s `\.component\.test\.` filter; and under jest they fail at module resolution. An earlier revision of this table claimed they were part of the green 3696 — that was read off a grep hit inside an exclude list. ⚠️ **The 2026-08-08 correction is itself wrong on two counts, re-checked 2026-08-29.** *(a) The set is wrong.* `secureStore.e0.test.ts` no longer exists — it was repaired, renamed `secureStore.e0.component.test.ts`, removed from the exclude list, and now runs under jest (13 cases passing); and `e0Migration.test.ts`, which this row never named, is orphaned. The orphan set is `cryptoIdentity.e1` (7), `e0Migration` (7), `localMessageDb.e0` (9), `mlsSession.e2` (10) = **33 cases**. *(b) Nothing fails at module resolution under jest.* `cryptoIdentity.e1`, `e0Migration` and `mlsSession.e2` all die at `TypeError: (0, _expoSecureStore._reset) is not a function` — a missing mock, not a resolution failure — and `localMessageDb.e0` never reaches a test: the suite fails to run with `SyntaxError: Cannot use import statement outside a module`, a transform failure. (Run directly under the node:test runner they die inside `expo-modules-core` instead, which is a third failure again.) The array is spelled `KNOWN_BROKEN`, not `EXCLUDE`. |
 
 > ⚠️ **Line counts in the table are the `494e4d3bc` counts — re-measured
@@ -185,7 +185,7 @@ path that negotiates E2EE, consumes the peer's KeyPackage, or calls
 take the plaintext branch.
 
 > ⚠️ **FALSE as of 2026-08-29.** `POST /api/threads/:threadId/e2ee`
-> (`artifacts/api-server/src/routes/messaging.ts:1226`) writes the flag at `:1284`,
+> (`artifacts/api-server/src/routes/messaging.ts:1233`) writes the flag at `:1291`,
 > after checking membership, `thread_type = 'direct'`, and that an `e2ee_welcome`
 > system message has already been delivered — no Welcome, no flag. The
 > thread-creation path this paragraph says does not exist is

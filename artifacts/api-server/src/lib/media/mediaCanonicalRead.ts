@@ -119,25 +119,25 @@
  *       not a cleanup.
  *
  * ═══════════════════════════════════════════════════════════════════════════
- * WIRING — THE ONE LINE THAT IS DELIBERATELY NOT WRITTEN HERE
+ * WIRING — WRITTEN 2026-09-26 (census-media §20), AND STILL GATED OFF
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * `attachCanonicalMedia` is called from nowhere, and that is a real gap, not a
- * neutral fact: a reader nothing calls is the same shape of dead thing as the
- * writer nothing could reach. It is recorded here rather than hidden.
+ * `attachCanonicalMedia` used to be called from nowhere — a reader nothing
+ * called, the same shape of dead thing as the writer nothing could reach. It
+ * now has its intended caller:
  *
- * Its intended caller is
- * `services/media/MediaProjectionService.projectCandidatesProtected`, the single
- * funnel every World-shell builder passes through:
+ * `services/media/MediaProjectionService.prepareCanonicalRows`, run first by
+ * `projectCandidatesProtected` — the single funnel every World-shell builder
+ * passes through — which then applies each attachment's §6.1
+ * `visibility_override` (lib/mediaVisibility.mayViewUnderOverride) before the
+ * row is projected. So the canonical asset is on the read path, and an
+ * override narrows the SERVED item, not only the bytes lib/mediaAccess signs.
  *
- *     await attachCanonicalMedia(sc, rows);      // no-op while the flag is off
- *     const p = toMediaProjection(row, nowMs);   // unchanged
- *
- * That file is outside this change's ownership boundary, so the line is not
- * added here. Adding it is safe — the flag reads false in both databases (FALSE
- * in portava-ci, no row at all in production), so `attachCanonicalMedia` returns
- * before it issues any query — but it should be added by whoever owns that
- * service, in a diff that says so.
+ * Adding the call changed nothing anywhere the flag is off, and it is off in
+ * both databases (FALSE in portava-ci, no row at all in production):
+ * `attachCanonicalMedia` returns before it issues any query. Turning it on is
+ * an operator act gated on B1-B5 above, never a side effect of this code —
+ * and until B1 holds, an ON flag degrades to the legacy branches (see below).
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isFlagEnabled } from "../featureFlags.js";
@@ -216,7 +216,7 @@ export async function attachCanonicalMedia(
   try {
     const { data, error } = await sc
       .from("media_attachments")
-      .select(`entity_id, position, is_cover, media_assets(${MEDIA_PROJECTION_MEDIA_ASSET_COLUMNS})`)
+      .select(`entity_id, position, is_cover, visibility_override, media_assets(${MEDIA_PROJECTION_MEDIA_ASSET_COLUMNS})`)
       .eq("entity_type", entityType)
       .in("entity_id", ids)
       .limit(MAX_ATTACHMENT_ROWS);
@@ -248,7 +248,14 @@ export async function attachCanonicalMedia(
     // The attachment's `position` is what orders the entity's media (§6.1);
     // it is folded onto the asset so the pure projector needs only one object.
     // `is_cover` is carried for a future cover-first rule and is inert today.
-    const merged = { ...asset, position: a.position ?? 0, is_cover: a.is_cover === true };
+    // `visibility_override` is the ATTACHMENT's §6.1 audience (null = none);
+    // MediaProjectionService.prepareCanonicalRows applies it per viewer.
+    const merged = {
+      ...asset,
+      position: a.position ?? 0,
+      is_cover: a.is_cover === true,
+      visibility_override: a.visibility_override ?? null,
+    };
     const list = byEntity.get(entityId);
     if (list) list.push(merged);
     else byEntity.set(entityId, [merged]);

@@ -68,6 +68,17 @@ export interface DiscoveryCandidate {
   truthClass: DiscoveryTruthClass;
   /** DC-22's "reason labels". Empty ⇒ no ranker ran, or every signal is guardrailed. */
   reasons: DiscoveryReason[];
+  /**
+   * When the why-now claims stop being current, on THIS DEVICE's clock (epoch
+   * ms): the instant `getDiscoveryPlaces` received the page (`receivedAtMs`,
+   * stamped by `stampCandidateReceipt`) plus the server's `whyNowValidForMs` —
+   * the time left, at the serve, until the earliest claim behind `whyNow`
+   * expires. A DURATION on the wire and a receipt instant on the device, so a
+   * phone whose clock disagrees with the server's still expires the claim at
+   * the right moment. Null when either half is missing, and then no claim is
+   * ever shown as current (see `whyNowPresentation`).
+   */
+  whyNowExpiresAtMs: number | null;
 }
 
 /**
@@ -184,6 +195,12 @@ export function parseDiscoveryCandidate(raw: unknown): DiscoveryCandidate | null
   const whyNowList = parseStringList(c.whyNow);
   const whyNow = Array.isArray(c.whyNow) && whyNowList.length > 0 ? whyNowList : null;
 
+  // Validity: a non-negative duration from the server, anchored to the device's
+  // own receipt instant. Anything else is "validity unknown", never "valid".
+  const validForMs = typeof c.whyNowValidForMs === 'number' && Number.isFinite(c.whyNowValidForMs) && c.whyNowValidForMs >= 0
+    ? c.whyNowValidForMs : null;
+  const receivedAtMs = typeof c.receivedAtMs === 'number' && Number.isFinite(c.receivedAtMs) ? c.receivedAtMs : null;
+
   return {
     id: typeof c.id === 'string' ? c.id : '',
     whyNow,
@@ -192,7 +209,30 @@ export function parseDiscoveryCandidate(raw: unknown): DiscoveryCandidate | null
     freshness,
     truthClass: c.truthClass,
     reasons: parseReasons(c.reasons),
+    whyNowExpiresAtMs: whyNow && validForMs !== null && receivedAtMs !== null ? receivedAtMs + validForMs : null,
   };
+}
+
+/**
+ * Stamp every served candidate with the instant THIS DEVICE received it.
+ *
+ * Called by `getDiscoveryPlaces` on the parsed body, before the page reaches the
+ * screen or the device cache, so a page painted from the 4-minute cache carries
+ * its ORIGINAL receipt time and its why-now claims expire on schedule rather
+ * than being re-dated by the repaint. Overwrites any `receivedAtMs` on the wire:
+ * a server cannot know when a phone received something. Returns the SAME object
+ * when there is nothing to stamp.
+ */
+export function stampCandidateReceipt<T extends { places?: unknown }>(data: T, receivedAtMs: number): T {
+  if (!Array.isArray(data.places)) return data;
+  let stamped = false;
+  const places = data.places.map((p: unknown) => {
+    const cand = (p as { candidate?: unknown } | null)?.candidate;
+    if (typeof cand !== 'object' || cand === null || Array.isArray(cand)) return p;
+    stamped = true;
+    return { ...(p as object), candidate: { ...(cand as object), receivedAtMs } };
+  });
+  return stamped ? { ...data, places } : data;
 }
 
 export interface WhyNowPresentation {
@@ -204,6 +244,11 @@ export interface WhyNowPresentation {
    * "we saw this a while ago" from "we have nothing".
    */
   stale: boolean;
+  /**
+   * While the claims are shown as CURRENT: the device-clock instant at which
+   * they stop being so, for the surface to re-render at. Null otherwise.
+   */
+  expiresAtMs: number | null;
 }
 
 /**
@@ -218,21 +263,39 @@ function humaniseClaim(token: string): string {
 }
 
 /**
- * Why-now, ready to render.
+ * Why-now, ready to render, at `nowMs` on this device's clock.
  *
- * A claim is EXPIRED when the projection itself says the serve was stale —
- * either the freshness block (`state === 'stale'`, which the server sets from
- * the `L2_stale` serve point) or the truth class the same serve produced. Those
- * are the only two expiry facts on the wire; this module invents no clock of
- * its own, because a client-side age threshold would be a freshness judgement
- * the server did not make.
+ * THREE OUTCOMES, in this order:
+ *   1. STALE, explicitly — the serve itself said so (the freshness block's
+ *      `state === 'stale'`, which the server sets from the `L2_stale` serve
+ *      point, or the truth class that serve produced). Saying "no longer
+ *      current" needs no clock: it is always a safe rendering.
+ *   2. GONE — the projection carries no validity (`whyNowExpiresAtMs` null).
+ *      Nothing establishes that the claim is still current at this device's
+ *      clock, so it is not shown as current; and nothing says it expired, so it
+ *      is not shown as stale either. DSV2-04's "disappear" branch.
+ *   3. STALE at `nowMs >= whyNowExpiresAtMs`, CURRENT before it. The boundary
+ *      instant is already expired: a claim is current strictly BEFORE its
+ *      horizon, never at it.
+ *
+ * No age threshold is invented here. The horizon is the server's — the earliest
+ * expiry among the claims behind `whyNow` — and the only thing this function
+ * adds is the device's clock, which is the one clock that knows how long the
+ * page has been on screen or in the device cache.
  */
 export function whyNowPresentation(
   candidate: DiscoveryCandidate | null | undefined,
+  nowMs: number = Date.now(),
 ): WhyNowPresentation {
   if (!candidate || !candidate.whyNow || candidate.whyNow.length === 0) {
-    return { claims: [], stale: false };
+    return { claims: [], stale: false, expiresAtMs: null };
   }
-  const stale = candidate.freshness.state === 'stale' || candidate.truthClass === 'stale';
-  return { claims: candidate.whyNow.map(humaniseClaim), stale };
+  const claims = candidate.whyNow.map(humaniseClaim);
+  if (candidate.freshness.state === 'stale' || candidate.truthClass === 'stale') {
+    return { claims, stale: true, expiresAtMs: null };
+  }
+  const expiresAtMs = candidate.whyNowExpiresAtMs;
+  if (expiresAtMs === null) return { claims: [], stale: false, expiresAtMs: null };
+  if (nowMs >= expiresAtMs) return { claims, stale: true, expiresAtMs: null };
+  return { claims, stale: false, expiresAtMs };
 }

@@ -17,9 +17,55 @@
  *   - buildManualCityPayload(place) is what gets persisted to
  *     /api/me/location-state; it always carries the full place plus the
  *     legacy manualCity/manualCountry columns.
+ *
+ * ── DEVICE-BOUND PRECISION AND ACCOUNT ISOLATION (§17.8 / §30A.7) ───────────
+ * The server now answers `GET /me/location-state` with a `coordsPrecision`
+ * discriminator: `precise` only for the device that PUBLISHED the fix, and
+ * `approximate` (a grid-snapped point) for every other device, including one
+ * that has just signed in on the same account. Two consequences live here,
+ * both as pure functions so they can be tested without React:
+ *
+ *   `clampFreshnessForPrecision`  an approximate point is never presented as a
+ *                                 LIVE fix. It is a real position, coarsened —
+ *                                 "live" beside it would claim a currency the
+ *                                 point does not have.
+ *   `buildAccountChangeState`     switching accounts DROPS the coordinate, the
+ *                                 place and the source rather than carrying the
+ *                                 previous account's location into the next
+ *                                 session. This mirrors
+ *                                 `platform/input-assistance/services/policyStore.ts#setActiveAccount`,
+ *                                 which drops its snapshot on an account change
+ *                                 for the same reason: state belonging to one
+ *                                 account must not be readable as the next
+ *                                 account's. Permission status is the one thing
+ *                                 kept — it is a fact about the DEVICE, not
+ *                                 about whoever is signed in.
  */
 import type { ActiveLocationState, LocationSource, LocationFreshness, PermissionStatus } from './useActiveLocation.ts';
 import type { Place } from '../lib/location/placeTypes.ts';
+
+/**
+ * The blank Place. It lives here rather than in useActiveLocation.ts because
+ * `buildAccountChangeState` needs it and this module must not import a VALUE
+ * from the hook — that direction is already a type-only import and making it a
+ * runtime one would be an import cycle.
+ */
+export const EMPTY_PLACE: Place = {
+  id: '',
+  type: 'city',
+  name: '',
+  displayName: '',
+  country: null,
+  countryCode: null,
+  region: null,
+  city: null,
+  district: null,
+  lat: null,
+  lng: null,
+  timezone: null,
+  source: 'manual',
+};
+
 
 /**
  * State transition applied when `requestLocation` succeeds.
@@ -162,4 +208,63 @@ export function shouldRestorePersistedState(
     return false;
   }
   return true;
+}
+
+// ── Device-bound precision (§17.8 / §30A.7) ──────────────────────────────────
+
+/** Header the server reads the presented device id from. */
+export const DEVICE_ID_HEADER = 'x-portava-device-id';
+
+/** What the server said about the coordinate it returned. */
+export type CoordsPrecision = 'precise' | 'approximate' | null;
+
+/** Parse the server's discriminator without trusting an unknown value. */
+export function coordsPrecisionOf(value: unknown): CoordsPrecision {
+  return value === 'precise' || value === 'approximate' ? value : null;
+}
+
+/**
+ * Freshness for a restored coordinate.
+ *
+ * An APPROXIMATE point is a grid cell, not a fix, so it can be 'recent' at best
+ * however fresh the timestamp beside it is. Presenting it as 'live' would let
+ * every downstream consumer — meeting points, "who is near me", distance copy —
+ * treat a ~2 km cell as a live position, which is exactly the misreading the
+ * server coarsened it to prevent.
+ */
+export function clampFreshnessForPrecision(
+  freshness: LocationFreshness,
+  precision: CoordsPrecision,
+): LocationFreshness {
+  if (precision !== 'approximate') return freshness;
+  return freshness === 'live' ? 'recent' : freshness;
+}
+
+/**
+ * The state to hold when the signed-in account CHANGES (sign-out, or a switch).
+ *
+ * Everything positional goes: coords, place, source, freshness, message. The
+ * next account starts from nothing and re-runs the mount cascade, so a fix
+ * published by the previous account's device cannot be read by whoever signs in
+ * next on this phone.
+ */
+export function buildAccountChangeState(prev: ActiveLocationState): ActiveLocationState {
+  return {
+    ok: false,
+    // A device-level fact, not an account-level one: whether THIS phone has
+    // granted location access does not change because someone else signed in.
+    permissionStatus: prev.permissionStatus,
+    source: 'none',
+    freshness: 'unavailable',
+    coords: null,
+    coordsPrecision: null,
+    place: EMPTY_PLACE,
+    lastUpdatedAt: null,
+    userMessage: null,
+  };
+}
+
+/** True when the account actually changed and the state must be dropped. */
+export function accountChanged(held: string | null, next: string | null): boolean {
+  return held !== next;
 }

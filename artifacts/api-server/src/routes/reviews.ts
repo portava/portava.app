@@ -21,7 +21,7 @@ import { requireUser, optionalUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isUuid } from "../lib/followDecisions.js";
 import { recordTrustEvent } from "../services/trust/TrustEventService.js";
-import { nameVisibilitySet } from "../lib/publicIdentity.js";
+import { nameVisibilitySet } from "../lib/publicIdentity.js"; import { fetchBlockedSet } from "../lib/blocks.js";
 import { invalidateDiscoveryCacheForOsmId } from "../lib/discoveryPersistentCache.js";
 import { evictOsmPlaceFromL1Cache } from "./discovery.js";
 
@@ -297,17 +297,17 @@ router.get("/trips/:id/reviews", asyncHandler(async (req, res) => {
 
   if (error) { req.log.error({ err: error }, "get trip reviews"); sendError(res, "db_error", error.message); return; }
 
-  const rows = (reviews as any[]) ?? [];
+  const rows = await dropBlockedReviewers(sc, auth.user.id, (reviews as any[]) ?? []); if (!rows) { sendError(res, "degraded_unavailable", "Your block list could not be read"); return; } // TM-social (TRUST-F13): no review by someone in a block relation with the viewer
 
   // Aggregate across all reviews for this trip (not just the current page)
-  const { data: allForCount } = await sc
+  const { data: allForCount, error: countErr } = await sc
     .from("reviews")
     .select("rating")
     .eq("entity_type", "trip")
     .eq("entity_id", id)
     .eq("state", "published");
 
-  const allRows = (allForCount as any[]) ?? [];
+  if (countErr) { req.log.error({ err: countErr }, "trip reviews aggregate"); sendError(res, "db_error", countErr.message); return; } const allRows = (allForCount as any[]) ?? [];
   const totalCount = allRows.length;
   const avgRating = totalCount > 0
     ? Math.round((allRows.reduce((s: number, r: any) => s + r.rating, 0) / totalCount) * 10) / 10
@@ -374,16 +374,16 @@ router.get("/places/:id/reviews", asyncHandler(async (req, res) => {
 
   if (error) { req.log.error({ err: error }, "get place reviews"); sendError(res, "db_error", error.message); return; }
 
-  const rows = (reviews as any[]) ?? [];
+  const rows = await dropBlockedReviewers(sc, viewerId, (reviews as any[]) ?? []); if (!rows) { sendError(res, "degraded_unavailable", "Your block list could not be read"); return; } // TM-social (TRUST-F13): no review by someone in a block relation with the viewer
 
-  const { data: allForCount } = await sc
+  const { data: allForCount, error: countErr } = await sc
     .from("reviews")
     .select("rating")
     .eq("entity_type", "place")
     .eq("entity_id", id)
     .eq("state", "published");
 
-  const allRows = (allForCount as any[]) ?? [];
+  if (countErr) { req.log.error({ err: countErr }, "place reviews aggregate"); sendError(res, "db_error", countErr.message); return; } const allRows = (allForCount as any[]) ?? [];
   const totalCount = allRows.length;
   const avgRating = totalCount > 0
     ? Math.round((allRows.reduce((s: number, r: any) => s + r.rating, 0) / totalCount) * 10) / 10
@@ -437,20 +437,20 @@ router.get("/users/:id/reviews", asyncHandler(async (req, res) => {
   const limit = Math.min(50, Math.max(1, parseInt((req.query.limit as string) ?? "10")));
 
   // Trips hosted by this user
-  const { data: hostedTrips } = await sc
+  const blockedSet = await fetchBlockedSet(sc, auth.user.id); if (!blockedSet) { sendError(res, "degraded_unavailable", "Your block list could not be read"); return; } if (blockedSet.has(id)) { sendError(res, "forbidden", "User not available"); return; } const { data: hostedTrips, error: hostedTripsErr } = await sc
     .from("trips")
     .select("id")
     .eq("owner_id", id);
 
-  const tripIds = ((hostedTrips as any[]) ?? []).map((t: any) => t.id as string);
+  if (hostedTripsErr) { sendError(res, "db_error", hostedTripsErr.message); return; } const tripIds = ((hostedTrips as any[]) ?? []).map((t: any) => t.id as string);
 
   // Events hosted by this user
-  const { data: hostedEvents } = await sc
+  const { data: hostedEvents, error: hostedEventsErr } = await sc
     .from("events")
     .select("id")
     .eq("host_id", id);
 
-  const eventIds = ((hostedEvents as any[]) ?? []).map((e: any) => e.id as string);
+  if (hostedEventsErr) { sendError(res, "db_error", hostedEventsErr.message); return; } const eventIds = ((hostedEvents as any[]) ?? []).map((e: any) => e.id as string);
 
   if (tripIds.length === 0 && eventIds.length === 0) {
     res.json({ avgRating: null, reviewCount: 0, reviews: [] });
@@ -478,13 +478,13 @@ router.get("/users/:id/reviews", asyncHandler(async (req, res) => {
       : Promise.resolve({ data: [], error: null }),
   ]);
 
-  if (tripReviewsRes.error) {
-    req.log.error({ err: tripReviewsRes.error }, "get user trip reviews");
-    sendError(res, "db_error", tripReviewsRes.error.message); return;
+  if (tripReviewsRes.error || eventReviewsRes.error) { // TM-social: a failed event_reviews read is not a trips-only total
+    req.log.error({ err: tripReviewsRes.error ?? eventReviewsRes.error }, "get user host reviews");
+    sendError(res, "db_error", ((tripReviewsRes.error ?? eventReviewsRes.error) as { message: string }).message); return;
   }
 
-  const tripRows = (tripReviewsRes.data as any[]) ?? [];
-  const eventRows = (eventReviewsRes.data as any[]) ?? [];
+  const tripRows = ((tripReviewsRes.data as any[]) ?? []).filter((r: any) => !blockedSet.has(r.reviewer_id));
+  const eventRows = ((eventReviewsRes.data as any[]) ?? []).filter((r: any) => !blockedSet.has(r.reviewer_id));
 
   // Combined aggregate across all hosted reviews (trips + events)
   const allRatings = [
@@ -913,3 +913,22 @@ router.post("/reviews/:id/report", asyncHandler(async (req, res) => {
 }));
 
 export default router;
+
+/**
+ * TM-social (TRUST-F13): a reviews LIST never shows the words of someone the
+ * viewer is in a block relation with, in either direction — anonymous reviews
+ * included, because the server knows the author even when the reader does not.
+ * An unauthenticated reader has no block relation, so their list is unchanged.
+ *
+ * `null` means the block list could not be READ (fetchBlockedSet binds its
+ * error); the caller answers 503 rather than serving the unfiltered list.
+ * The aggregate (avgRating / total) is left over every published review: a
+ * count is not content, and recomputing it per viewer would make the same
+ * place carry a different rating for each reader.
+ */
+async function dropBlockedReviewers(sc: any, viewerId: string | null, rows: any[]): Promise<any[] | null> {
+  if (!viewerId) return rows;
+  const blocked = await fetchBlockedSet(sc, viewerId);
+  if (blocked === null) return null;
+  return rows.filter((r: any) => !blocked.has(r.reviewer_id as string));
+}

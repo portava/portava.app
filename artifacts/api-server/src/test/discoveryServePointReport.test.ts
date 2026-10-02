@@ -107,7 +107,7 @@ describe("discoveryServePointReport — the production window that broke the old
     const t = tallyServePoints(PRODUCTION_ROWS_20260815);
 
     assert.deepEqual(observedPoints(t), [DiscoveryServePoint.SUGGEST]);
-    assert.deepEqual(unexercisedPoints(t), [1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12]);
+    assert.deepEqual(unexercisedPoints(t), [1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13]);  // §94: 13 = the output kinds
   });
 
   it("attributes zero of them to GET /discovery, so the D5 population is empty", () => {
@@ -148,13 +148,13 @@ describe("discoveryServePointReport — no-marker and unknown-marker are differe
     // has grown past this build. Folding these into noMarker is what reported
     // Stage 0b rows as pre-Stage-0 ones.
     const t = tallyServePoints([
-      // 13 and 99: genuinely unrecognised. NOT 10, 11 or 12 — 10 became
+      // 14 and 99: genuinely unrecognised. NOT 10–13 — 13 became OUTPUT_KINDS (§94); 10 became
       // COMMUNITY when GET /discovery/community was instrumented, and 11/12
       // became HIDDEN_GEMS and MAP_SEARCH when those two surfaces were; reusing
       // a real point here would make this test assert the opposite of what it is
       // named for. This fixture has to be re-pointed every time the writer grows,
       // which is the mechanism working, not a maintenance cost.
-      { features: { servePoint: 13 } },
+      { features: { servePoint: 14 } },
       { features: { servePoint: 99 } },
       { features: { servePoint: "banana" } },
       { features: { servePoint: 9 } },
@@ -162,7 +162,7 @@ describe("discoveryServePointReport — no-marker and unknown-marker are differe
 
     assert.equal(t.unknownMarker, 3);
     assert.equal(t.noMarker, 0, "an unrecognised marker is NOT a missing marker");
-    assert.deepEqual([...t.unknownValues].sort(), ["13", "99", "banana"]);
+    assert.deepEqual([...t.unknownValues].sort(), ["14", "99", "banana"]);
     assert.equal(t.marked, 1);
   });
 
@@ -184,8 +184,8 @@ describe("discoveryServePointReport — the reader cannot drift past the writer 
     }
   });
 
-  it("recognises every serve point the writer can emit, 1 through 12", () => {
-    assert.deepEqual([...ALL_SERVE_POINTS], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+  it("recognises every serve point the writer can emit, 1 through 13", () => {
+    assert.deepEqual([...ALL_SERVE_POINTS], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
 
     const rows: ServeRow[] = ALL_SERVE_POINTS.map((sp) => ({ features: { servePoint: sp } }));
     const t = tallyServePoints(rows);
@@ -360,7 +360,7 @@ describe("discoveryServePointReport — an empty window says nothing rather than
     assert.deepEqual(observedPoints(t), []);
     // Everything unexercised — which is a statement about this window, not
     // about the surface.
-    assert.deepEqual(unexercisedPoints(t), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+    assert.deepEqual(unexercisedPoints(t), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
   });
 });
 

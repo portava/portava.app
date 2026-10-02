@@ -475,13 +475,26 @@ describe("CI architecture — a re-run cannot inherit somebody else's slot", () 
     role: string;
     runId: string;
     listing: string | null;
-    /** Long enough that at least one poll is logged before the deadline; the
-     *  loop checks the clock BEFORE polling, so a 1s budget can expire on the
-     *  first iteration and print no `holder=` line at all. */
+    /** Long enough that more than one poll is logged before the deadline. The
+     *  script always polls once before it may time out, so even a 1s budget
+     *  prints one `holder=` line. */
     timeoutSeconds?: number;
+    /** Stub `date` so every call advances one second: every call crosses a
+     *  second boundary, the case a real 1-second-resolution clock hits only
+     *  occasionally. */
+    tickingClock?: boolean;
   }) => {
     const dir = mkdtempSync(join(tmpdir(), "portava-slot-"));
     writeFileSync(join(dir, "listing.txt"), opts.listing ?? "");
+    if (opts.tickingClock) {
+      const clock = JSON.stringify(join(dir, "clock"));
+      writeFileSync(
+        join(dir, "date"),
+        "#!/usr/bin/env bash\n" +
+          `n=$(cat ${clock} 2>/dev/null || echo 1000); echo $((n + 1)) > ${clock}; echo "$n"\n`,
+        { mode: 0o755 },
+      );
+    }
     writeFileSync(
       join(dir, "gh"),
       "#!/usr/bin/env bash\n" +
@@ -541,6 +554,32 @@ describe("CI architecture — a re-run cannot inherit somebody else's slot", () 
     });
     assert.equal(r.code, 0, `the oldest active run must be let through. Got ${r.code}:\n${r.out}`);
     assert.match(r.out, /ACQUIRED/);
+  });
+
+  it("EXECUTES ask-before-timeout: a second boundary before the first poll never times out the slot holder", () => {
+    // The CI failure this pins: START and the first NOW straddled a second
+    // boundary, ELAPSED was already 1 >= a 1s budget, and the oldest active run
+    // exited 75 without ever asking. With a clock that ticks on every call the
+    // boundary is crossed every time.
+    const r = runSlotScript({
+      role: "verify",
+      runId: "33967153487",
+      listing: "2026-09-05T13:17:42Z 33967089832\n2026-09-05T12:49:56Z 33967153487\n",
+      tickingClock: true,
+    });
+    assert.equal(r.code, 0, `the slot holder must be let through after its first poll. Got ${r.code}:\n${r.out}`);
+    assert.match(r.out, /ACQUIRED/);
+
+    // Still fail-closed: a contended verify on the same ticking clock polls
+    // once, names the holder, and then times out with 75.
+    const contended = runSlotScript({
+      role: "verify",
+      runId: "33967089832",
+      listing: "2026-09-05T13:17:42Z 33967089832\n2026-09-05T12:49:56Z 33967153487\n",
+      tickingClock: true,
+    });
+    assert.equal(contended.code, 75, `a contended verify must still exit 75. Got ${contended.code}:\n${contended.out}`);
+    assert.match(contended.out, /holder=33967153487/, "it must have asked once before timing out");
   });
 
   it("refuses an unknown role rather than defaulting to something permissive", () => {
@@ -872,4 +911,63 @@ describe("CI architecture — each workflow's verdict covers every job in it", (
       });
     });
   }
+});
+
+/**
+ * census-discovery DC-26 (§66.4, §69) — the rehearsal the "CI rehearsal" class
+ * names is the `schema-drift` job's APPLY and CERTIFY steps. Until this block,
+ * no assertion in this file named either step, so deleting both left the suite
+ * green (§66.4: "it would not notice if they stopped being rehearsed").
+ *
+ * What this pins, and only this: the live-DB workflow's `schema-drift` job has a
+ * step that runs `db:apply-migrations` (the real apply, not `:dry-run`) and,
+ * AFTER it, a step that runs `certify:migrations`. It does NOT prove a rehearsal
+ * has passed on `portava-ci` for any migration — that is an EVENT, and DC-26
+ * does not move on this block.
+ *
+ * `P29_LIVE_DB_YML` exists so the mutation can be run against a real edited
+ * copy of the workflow without touching `.github/` (census-discovery §69.8).
+ */
+describe("CI architecture — the schema-drift job rehearses migrations (census-discovery DC-26)", () => {
+  const src = readFileSync(process.env.P29_LIVE_DB_YML ?? resolve(WF, "live-db.yml"), "utf8");
+
+  /** The `schema-drift` job, from its id line to the next top-level job id. */
+  function schemaDriftJob(text: string): string {
+    const i = text.indexOf("\n  schema-drift:\n");
+    if (i < 0) return "";
+    const rest = text.slice(i + 1);
+    const end = rest.slice(1).search(/\n {2}[A-Za-z0-9_-]+:\n/);
+    return end === -1 ? rest : rest.slice(0, end + 1);
+  }
+
+  /** Offsets of the apply and certify `run:` invocations inside the job, or -1. */
+  function rehearsalSteps(text: string): { apply: number; certify: number } {
+    const job = schemaDriftJob(text);
+    const apply = job.search(/scripts db:apply-migrations(?!:dry-run)\b/);
+    const certify = job.search(/@workspace\/api-server certify:migrations\b/);
+    return { apply, certify };
+  }
+
+  it("has a step that applies migrations (not only the dry run)", () => {
+    assert.ok(schemaDriftJob(src).length > 0, "live-db.yml has no `schema-drift` job — nothing rehearses a migration");
+    assert.ok(
+      rehearsalSteps(src).apply >= 0,
+      "the schema-drift job no longer runs `db:apply-migrations`. That step IS the CI rehearsal `12` names " +
+        "(\"rehearse on portava-ci\"); without it no migration is ever applied to the CI project.",
+    );
+  });
+
+  it("certifies the apply, after it, in the same job", () => {
+    const { apply, certify } = rehearsalSteps(src);
+    assert.ok(certify >= 0, "the schema-drift job no longer runs `certify:migrations`: an apply nobody reads back is a claim, not a rehearsal");
+    assert.ok(apply >= 0 && certify > apply, "`certify:migrations` must run AFTER `db:apply-migrations` in the schema-drift job");
+  });
+
+  it("control: the same reading rejects the workflow with either step removed", () => {
+    const noApply = src.replace(/^.*scripts db:apply-migrations(?!:dry-run)\b.*$/gm, "");
+    const noCertify = src.replace(/^.*certify:migrations\b.*$/gm, "");
+    assert.ok(rehearsalSteps(src).apply >= 0 && rehearsalSteps(src).certify >= 0, "precondition: both steps present");
+    assert.equal(rehearsalSteps(noApply).apply, -1, "removing the apply lines must be seen");
+    assert.equal(rehearsalSteps(noCertify).certify, -1, "removing the certify line must be seen");
+  });
 });

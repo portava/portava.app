@@ -93,10 +93,10 @@ export interface ViewerContext {
   interestTags?: Set<string>;
   /** Category → affinity 0–1 (learned preference engine). */
   categoryAffinities?: Record<string, number>;
-  /** Viewer availability right now (explicit opt-in systems only). */
-  availableNow?: boolean;
-  /** Minutes of free window (layover mode / availability) — actionability cap. */
-  availableMinutes?: number | null;
+  // census-discovery §93 (W11-X1; D-W10S2-7, D-W11X1-1): the two free-time
+  // inputs that stood on these four lines are DELETED. Trips `:185` forbids a
+  // consumer to calculate "free time" itself; a Temporal Freedom consumer reads
+  // the trip's windows (TripFreedomConsumers.fitInstantToWindows). Line-neutral.
   /** Author ids the viewer recently engaged with (saves/likes/comments). */
   engagedAuthorIds?: Set<string>;
   /** Item ids already seen recently — fatigue. */
@@ -273,9 +273,9 @@ export function actionabilityScore(startsAt: string | null | undefined, nowMs: n
 }
 
 /**
- * Availability fit — does the item fit the viewer's actual free window?
- * Only meaningful when the viewer has explicitly shared availability;
- * absent data contributes 0 (never inferred).
+ * Availability fit — 0 for every candidate since census-discovery §93: the
+ * ranker holds no free-time input of its own (A11). Kept as a named term so a
+ * Temporal Freedom fit can land here as its own input (D-W11X1-1).
  */
 export function availabilityFitScore(
   c: RankCandidate, ctx: ViewerContext, nowMs: number,
@@ -283,15 +283,15 @@ export function availabilityFitScore(
   if (!c.startsAt) return 0;
   const startMs = new Date(c.startsAt).getTime();
   if (!Number.isFinite(startMs)) return 0;
-  if (ctx.availableMinutes != null) {
-    // Layover/limited-window mode: must start within the window.
-    const minutesUntil = (startMs - nowMs) / 60_000;
-    return minutesUntil >= 0 && minutesUntil <= ctx.availableMinutes ? 1 : -0.5;
-  }
-  if (ctx.availableNow) {
-    const dt = startMs - nowMs;
-    return dt >= 0 && dt <= 8 * HOUR ? 1 : 0;
-  }
+  // census-discovery §93 (W11-X1): the limited-window arm and the
+  // available-now arm that stood on these nine lines are DELETED (§81.4 hunk
+  // R2, D-W10S2-7). No caller ever set either input (discoveryFreeTimeRetirement
+  // F1), so no served score moves. The term stays in the feature record as 0,
+  // so the stored feature keys keep their shape (D-W11X1-1). A future free-time
+  // fit reads Temporal Freedom windows (TripFreedomConsumers.fitInstantToWindows)
+  // and arrives as its own term, never as a scalar minute budget handed to the
+  // ranker. `ctx` and `nowMs` stay in the signature: every caller passes them,
+  // and a signature change is not this deletion.
   return 0;
 }
 
@@ -313,8 +313,8 @@ export function socialProofScore(c: RankCandidate): number {
   const base = Math.log10(1 + raw) / 3; // 0–1 around 1k
   const trustFactor = c.authorTrustScore != null
     ? 0.5 + 0.5 * Math.min(100, Math.max(0, c.authorTrustScore)) / 100
-    : 0.6;
-  return Math.min(1, base) * trustFactor;
+    : unknownAuthorTrustFactor(c);   // §78 DV-12: 0.6 unless the engagement evidence was measured — see the note at the file end
+  return Math.min(1, base) * trustFactor * evidenceIntegrityFactor(c);
 }
 
 // ── Scoring ───────────────────────────────────────────────────────────────────
@@ -389,7 +389,7 @@ export function scoreCandidate<T extends RankCandidate>(
   // place ids to candidate ids needs no second key space.
   f.trailAffinity = trailAffinityContribution(
     ctx.trailAffinity?.[c.id] ?? 0, w.trailAffinity,
-  );
+  ); applyDesignTerms(f, c, ctx, nowMs);   // census-discovery §78: each design term adds a key ONLY when its input is present
 
   let score = 0;
   for (const k of Object.keys(f)) score += f[k];
@@ -453,7 +453,7 @@ export function diversify<T extends RankCandidate>(
       for (const r of recent) {
         penalty += repetitionPenalty(c.candidate, r.candidate, pen);
       }
-      const val = c.score - penalty;
+      const val = c.score - penalty - historyRepetitionPenalty(c.candidate, pen);   // §78 DV-54: 0 unless the serve-history axis is supplied
       if (val > bestVal) { bestVal = val; bestIdx = i; }
     }
     out.push(pool.splice(bestIdx, 1)[0]);
@@ -536,9 +536,9 @@ export interface RankOptions {
 export function rankCandidates<T extends RankCandidate>(
   candidates: T[], ctx: ViewerContext, opts: RankOptions = {},
 ): ScoredCandidate<T>[] {
-  const scored = candidates.map((c) => scoreCandidate(c, ctx, opts.weights ?? DEFAULT_WEIGHTS, opts.publisherBoost ?? false));
+  const scored = rescoreForObjective(candidates.map((c) => scoreCandidate(c, ctx, opts.weights ?? DEFAULT_WEIGHTS, opts.publisherBoost ?? false)), opts);   // §78 DV-09: same array when no objective
   const diversified = opts.diversity === false ? scored.sort((a, b) => b.score - a.score)
-    : diversify(scored, opts.diversity ?? {});
+    : diversify(scored, objectiveDiversity(opts));   // §78: `opts.diversity ?? {}` unless an objective adds penalties
   return opts.exploration === false ? diversified
     : injectExploration(diversified, ctx, opts.exploration ?? {});
 }
@@ -606,7 +606,7 @@ function resolveDiversityPenalties(opts: DiversityOptions): ResolvedDiversityPen
     kind:   opts.kindPenalty ?? 0.15,
     // No default — see the note on DiversityOptions above.
     place:  opts.placePenalty ?? 0,
-    geo:    opts.geoPenalty ?? 0,
+    geo:    opts.geoPenalty ?? 0, ...resolveDesignPenalties(opts),   // §78 DV-54: adds keys only when set
   };
 }
 
@@ -626,7 +626,7 @@ export function repetitionPenalty(
   if (c.authorId && r.authorId === c.authorId) penalty += pen.author;      // creator
   if (r.kind === c.kind) penalty += pen.kind;                              // content type
   if (c.placeId && r.placeId === c.placeId) penalty += pen.place;          // place
-  if (neighborhoodMatches(c.neighborhood, r.neighborhood)) penalty += pen.geo;   // geography
+  if (neighborhoodMatches(c.neighborhood, r.neighborhood)) penalty += pen.geo; penalty += trailRepetitionPenalty(c, r, pen);   // geography; Trail (§78 DV-54, 0 without a Trail key)
   return penalty;
 }
 
@@ -752,4 +752,344 @@ export interface ViewerContext {
    * exactly which rows it derives from and what it cannot see.
    */
   neighborhood?: string | null;
+}
+
+// ── census-discovery §78 (lane W10-R2): the held scoring designs, as inputs ───
+//
+// Appended below the last line for the reason every block above gives: anchored
+// citations point INTO this file by line. §78 changed eight lines IN PLACE
+// above (the two `socialProofScore` returns, the end of the Trail clause in
+// `scoreCandidate`, the greedy value in `diversify`, the two lines of
+// `rankCandidates` that score and diversify, one line of
+// `resolveDiversityPenalties` and the geography line of `repetitionPenalty`),
+// each keeping its original text as a prefix; nothing moved.
+//
+// THE CONTRACT EVERY TERM BELOW KEEPS: ABSENT INPUT ⇒ NO KEY, NO ARITHMETIC.
+// Each design is an optional field on ViewerContext, RankCandidate,
+// DiversityOptions or RankOptions. Absent, the function it feeds returns its
+// input untouched (the same array, `0`, `1` or `{}`), so a caller that sets
+// none of them — every caller in the tree until the §78 flags are turned on —
+// gets bit-identical scores, features and order. That is pinned by
+// src/test/portavaRankDesignGolden.test.ts against a golden captured from this
+// file BEFORE the edit (`debd5ad4f`).
+//
+// WHO SETS THEM: lib/discoveryRankDesigns.ts, behind five flags seeded FALSE
+// (migrations 3450–3454), and nothing else. This file still loads no data; it
+// stays a scoring kernel, and its one import is unchanged.
+
+/** The seven live-rank axes an intent-mode profile weights (lib/discoveryLiveRank INTENT_MODE_PROFILES). */
+export type RankIntentAxis =
+  | 'compatibility' | 'forecast' | 'travel' | 'friction' | 'freshness' | 'interception' | 'durability';
+
+/** One declared intent mode, resolved to plain data by lib/discoveryRankIntent.ts. */
+export interface RankIntentMode {
+  mode: string;
+  /** The mode's own profile weights, copied from INTENT_MODE_PROFILES — never restated here. */
+  weights: Readonly<Partial<Record<RankIntentAxis, number>>>;
+  /** Category/tag slugs whose presence IS the mode's crowd preference (quiet → museum, park…). */
+  keywords: readonly string[];
+}
+
+/** Explicit CURRENT intent (A18) — a request's declared mode, or the viewer's active §8 window. */
+export interface RankIntent {
+  source: 'request' | 'passport_window';
+  modes: readonly RankIntentMode[];
+  /** Category/tag slugs the explicit window names directly (Food → food). A match is a full fit. */
+  categoryHints: readonly string[];
+}
+
+export interface ViewerContext {
+  /** A18: explicit current intent. Absent ⇒ no `intentMatch` key. */
+  intent?: RankIntent | null;
+  /** DV-18: candidate id → trip fit in [0,1] for the viewer's current or upcoming trip. Absent ⇒ no `tripMatch` key. */
+  tripMatch?: Record<string, number>;
+  /** DC-13 negative_feedback: category → the viewer's own dismissals in it. Absent ⇒ no `negativeFeedback` key. */
+  negativeFeedback?: { categoryDismissals: Record<string, number> };
+  /** DC-13 exploration_value: true ⇒ the `explorationValue` term runs. Absent ⇒ no key. */
+  explorationValue?: boolean;
+}
+
+export interface RankCandidate {
+  /**
+   * DV-12: the share of this item's engagement evidence that survived the `03`
+   * §12 detector (lib/discoveryRankIntegrity.ts), in [0,1]. Absent ⇒ not
+   * measured, and social proof is exactly what it was.
+   */
+  engagementIntegrity?: number | null;
+  /**
+   * DV-12: the item HAS a submitter even though `authorId` is not passed to the
+   * ranker (Discovery withholds it; see lib/discoveryPde.ts's DRS note). Only
+   * read to decide whether "unknown author trust" applies.
+   */
+  authored?: boolean | null;
+  /** DV-54: the Trails (`content_trails`, non-archived) this item is a member of. */
+  trailIds?: readonly string[] | null;
+  /** DV-54: how many times this viewer was served this item inside the history window. */
+  servedCount?: number | null;
+}
+
+export interface DiversityOptions {
+  /** DV-54 Trail axis: penalty per prior in-window pick sharing a Trail. Absent ⇒ 0. */
+  trailPenalty?: number;
+  /** DV-54 repeated-recommendation history: penalty per prior serve (candidate.servedCount). Absent ⇒ 0. */
+  historyPenalty?: number;
+  /** Prior serves beyond this count add nothing more. Absent ⇒ 3. */
+  historyMaxServes?: number;
+}
+
+export interface ResolvedDiversityPenalties {
+  trail?: number;
+  history?: number;
+  historyMaxServes?: number;
+}
+
+/**
+ * DV-09 / DC-13: a surface objective, resolved to a per-FEATURE multiplier by
+ * lib/discoveryRankObjectives.ts from `06` §3's eleven families. This file
+ * applies multipliers and never learns what a family is.
+ */
+export interface RankObjective {
+  surface: string;
+  /** feature key → multiplier. A key absent here (or 1) is left exactly as scored. */
+  featureWeights: Readonly<Record<string, number>>;
+  /** Per-kind overrides — Trail's "freshness appropriate to content type". */
+  kindFeatureWeights?: Readonly<Partial<Record<CandidateKind, Readonly<Record<string, number>>>>>;
+  /** Diversity the surface asks for; a caller's own `diversity` keys win. */
+  diversity?: DiversityOptions;
+}
+
+export interface RankOptions {
+  /** DV-09: re-weight the feature families for one surface. Absent ⇒ the scored array is returned as is. */
+  objective?: RankObjective;
+}
+
+/**
+ * A18 — the intent term's weight, and why it is this number.
+ *
+ * The row's criterion is Passport `:94`: explicit current intent must weigh
+ * MORE than generic interests. The generic-interest terms are `interestTag`
+ * 0.3 and `categoryAffinity` 0.4, which can stack to 0.7. So the smallest
+ * weight that satisfies the sentence for EVERY candidate pair is one above 0.7;
+ * 0.75 is that bound rounded to the grid the other weights sit on. A full
+ * intent fit therefore outranks a full generic-interest match, all else equal
+ * (src/test/discoveryRankIntent.test.ts I2), and a partial fit does not
+ * automatically — which is the "more heavily", not "instead of", the row asks.
+ * Decision D-W10-R2-5.
+ */
+export const INTENT_TERM_WEIGHT = 0.75;
+
+/**
+ * DV-18 — trip fit's weight: 0.3, the altitude of `interestTag`. Trip fit is a
+ * viewer-specific relevance claim ("this is where you are going"), as strong as
+ * one matched interest and weaker than learned category taste. Not capped by a
+ * ruling the way momentum and Trails are; the trip-planning objective may
+ * weight it up. Decision D-W10-R2-6.
+ */
+export const TRIP_MATCH_WEIGHT = 0.3;
+
+/**
+ * DC-13 negative_feedback — 0.4, the mirror of `categoryAffinity`: an explicit
+ * "Not interested" in a category can cancel a fully learned affinity for it and
+ * no more. Saturates at three dismissals in the category. Decision D-W10-R2-3.
+ */
+export const NEGATIVE_FEEDBACK_WEIGHT = 0.4;
+export const NEGATIVE_FEEDBACK_SATURATION = 3;
+
+/**
+ * DC-13 exploration_value — 0.1, below LOCAL_MOMENTUM_MAX_CONTRIBUTION: a
+ * novelty tie-breaker (unseen, outside learned taste, little social proof),
+ * never a driver. `06` §7: "relevant, not random". Decision D-W10-R2-3.
+ */
+export const EXPLORATION_VALUE_WEIGHT = 0.1;
+
+const clamp01 = (v: unknown): number =>
+  typeof v === 'number' && Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0;
+
+/** Lowercased category + tags, the vocabulary intent keywords and hints match against. */
+function candidateVocabulary(c: RankCandidate): Set<string> {
+  const out = new Set<string>();
+  if (c.category) out.add(c.category.toLowerCase());
+  for (const t of c.tags ?? []) if (typeof t === 'string') out.add(t.toLowerCase());
+  return out;
+}
+
+/** Novelty to THIS viewer, in [0,1]: unseen, and outside learned category taste. */
+function viewerNovelty(c: RankCandidate, ctx: ViewerContext): number {
+  if (ctx.seenIds?.has(c.id)) return 0;
+  const aff = c.category ? clamp01(ctx.categoryAffinities?.[c.category] ?? 0) : 0;
+  return 1 - aff;
+}
+
+/**
+ * A18 — how well one candidate fits one declared mode, in [0,1].
+ *
+ * The mode's OWN profile weights (INTENT_MODE_PROFILES) are applied to the axes
+ * this kernel can observe, and only to those: an axis with no value for this
+ * candidate (a place has no start time) is left out of both numerator and
+ * denominator rather than scored 0, so a place is not "unfit for Tonight"
+ * merely for having no start time. `friction` is never observable here and is
+ * always left out, and so is `compatibility` for a mode with no keywords.
+ */
+export function intentModeFit(c: RankCandidate, m: RankIntentMode, _ctx: ViewerContext, nowMs: number): number {
+  const axes: Partial<Record<RankIntentAxis, number>> = {};
+  if (c.distanceKm != null && Number.isFinite(c.distanceKm) && c.distanceKm >= 0) axes.travel = distanceScore(c.distanceKm);
+  if (c.startsAt) {
+    axes.interception = actionabilityScore(c.startsAt, nowMs);
+    const dt = new Date(c.startsAt).getTime() - nowMs;
+    axes.forecast = Number.isFinite(dt) && dt >= 0 && dt <= 12 * HOUR ? 1 : 0;
+    axes.durability = 0;
+  } else {
+    axes.durability = 1;
+  }
+  if (c.createdAt) axes.freshness = recencyScore(c.createdAt, nowMs);
+  if (m.keywords.length > 0) {
+    const vocab = candidateVocabulary(c);
+    axes.compatibility = m.keywords.some((k) => vocab.has(k)) ? 1 : 0;
+  }
+  let num = 0; let den = 0;
+  for (const [axis, weight] of Object.entries(m.weights) as Array<[RankIntentAxis, number]>) {
+    const v = axes[axis];
+    if (v === undefined || !(weight > 0)) continue;
+    num += weight * v; den += weight;
+  }
+  return den > 0 ? clamp01(num / den) : 0;
+}
+
+/** A18 — the candidate's fit to the viewer's explicit intent: the best declared mode, or a named category. */
+export function intentFit(c: RankCandidate, intent: RankIntent, ctx: ViewerContext, nowMs: number): number {
+  if (intent.categoryHints.length > 0) {
+    const vocab = candidateVocabulary(c);
+    if (intent.categoryHints.some((h) => vocab.has(h))) return 1;
+  }
+  let best = 0;
+  for (const m of intent.modes) best = Math.max(best, intentModeFit(c, m, ctx, nowMs));
+  return best;
+}
+
+/**
+ * The design terms, called from the one in-place hook at the end of the Trail
+ * clause in `scoreCandidate` — BEFORE the score is summed, so each term is part
+ * of the score exactly as every other feature is. Each key is written only when
+ * its input is present.
+ */
+function applyDesignTerms(f: Record<string, number>, c: RankCandidate, ctx: ViewerContext, nowMs: number): void {
+  if (ctx.intent) f.intentMatch = INTENT_TERM_WEIGHT * intentFit(c, ctx.intent, ctx, nowMs);
+  if (ctx.tripMatch) f.tripMatch = TRIP_MATCH_WEIGHT * clamp01(ctx.tripMatch[c.id]);
+  if (ctx.negativeFeedback) {
+    const n = c.category ? ctx.negativeFeedback.categoryDismissals[c.category] ?? 0 : 0;
+    f.negativeFeedback = n > 0 ? -NEGATIVE_FEEDBACK_WEIGHT * Math.min(1, n / NEGATIVE_FEEDBACK_SATURATION) : 0;
+  }
+  if (ctx.explorationValue === true) {
+    const raw = (c.likeCount ?? 0) + 2 * (c.joinCount ?? 0);
+    const exposure = raw > 0 ? Math.min(1, Math.log10(1 + raw) / 3) : 0;
+    f.explorationValue = EXPLORATION_VALUE_WEIGHT * viewerNovelty(c, ctx) * (1 - exposure);
+  }
+}
+
+// ── DV-12: the trust factor stops being a constant on unauthored evidence ────
+//
+// `socialProofScore` multiplied every Discovery row by 0.6 because no Discovery
+// candidate carried `authorTrustScore` (census-discovery §69.3 DV-12). That
+// constant was a PROXY for "this engagement might be farmed". Once the `03`
+// §12 detector has measured a row's evidence (`engagementIntegrity` set), the
+// proxy is replaced by the measurement:
+//
+//   • the abusive saves are already OUT of `likeCount` (the detector rewrites it);
+//   • `evidenceIntegrityFactor` scales what remains by the share that was clean,
+//     0.5 + 0.5·integrity — the same shape the author-trust formula uses;
+//   • an UNAUTHORED row (every OSM place) has no person whose trust is unknown,
+//     so its author factor is 1, not 0.6. An authored row whose submitter's
+//     trust could not be read keeps 0.6: unknown author trust is still unknown.
+//
+// Author trust and engagement integrity stay SEPARATE factors, as the row asks.
+// Unmeasured (`engagementIntegrity` absent) both functions return today's
+// numbers — 0.6 and 1 — so the product is bit-identical.
+
+function unknownAuthorTrustFactor(c: RankCandidate): number {
+  if (c.engagementIntegrity == null) return 0.6;
+  return c.authorId || c.authored ? 0.6 : 1;
+}
+
+function evidenceIntegrityFactor(c: RankCandidate): number {
+  if (c.engagementIntegrity == null) return 1;
+  return 0.5 + 0.5 * clamp01(c.engagementIntegrity);
+}
+
+// ── DV-09 / DC-13: a surface objective re-weights families of features ───────
+
+/** The two owner-ruled caps; an objective multiplier may never lift either. */
+const CAPPED_FEATURES: Readonly<Record<string, number>> = {
+  localMomentum: LOCAL_MOMENTUM_MAX_CONTRIBUTION,
+  trailAffinity: TRAIL_AFFINITY_MAX_CONTRIBUTION,
+};
+
+/**
+ * Apply `opts.objective` to already-scored rows. No objective ⇒ the SAME array.
+ *
+ * Delta form (score += f·(m−1) per re-weighted key) rather than a re-sum, so a
+ * multiplier of 1 changes no bit of the score, and the multiplicative boosts
+ * already folded into the score (publisher, place engagement) are re-weighted
+ * through their recorded deltas like any other feature. The feature record is
+ * updated to the re-weighted values, so what is logged is what was scored.
+ */
+export function rescoreForObjective<T extends RankCandidate>(
+  scored: ScoredCandidate<T>[], opts: RankOptions,
+): ScoredCandidate<T>[] {
+  const o = opts.objective;
+  if (!o) return scored;
+  for (const s of scored) {
+    const perKind = o.kindFeatureWeights?.[s.candidate.kind];
+    let delta = 0;
+    for (const k of Object.keys(s.features)) {
+      const m = perKind?.[k] ?? o.featureWeights[k] ?? 1;
+      if (m === 1 || !Number.isFinite(m)) continue;
+      const before = s.features[k];
+      let after = before * m;
+      const cap = CAPPED_FEATURES[k];
+      if (cap !== undefined) after = Math.min(cap, after);
+      delta += after - before;
+      s.features[k] = after;
+    }
+    if (delta !== 0) s.score += delta;
+  }
+  return scored;
+}
+
+/** `opts.diversity ?? {}` — plus the objective's diversity, under the caller's own keys. */
+function objectiveDiversity(opts: RankOptions): DiversityOptions {
+  const own = opts.diversity === false ? {} : (opts.diversity ?? {});
+  const extra = opts.objective?.diversity;
+  return extra ? { ...extra, ...own } : own;
+}
+
+// ── DV-54: the Trail and repeated-recommendation-history axes ───────────────
+
+function resolveDesignPenalties(opts: DiversityOptions): Partial<ResolvedDiversityPenalties> {
+  if (opts.trailPenalty === undefined && opts.historyPenalty === undefined) return {};
+  return {
+    trail: opts.trailPenalty ?? 0,
+    history: opts.historyPenalty ?? 0,
+    historyMaxServes: opts.historyMaxServes ?? 3,
+  };
+}
+
+/** Trail axis: two picks inside the window that share a Trail. Guarded on the candidate's own key, like place. */
+function trailRepetitionPenalty(c: RankCandidate, r: RankCandidate, pen: ResolvedDiversityPenalties): number {
+  if (!pen.trail || !c.trailIds || c.trailIds.length === 0 || !r.trailIds || r.trailIds.length === 0) return 0;
+  for (const t of c.trailIds) if (r.trailIds.includes(t)) return pen.trail;
+  return 0;
+}
+
+/**
+ * Repeated-recommendation history: a candidate the viewer has been SERVED
+ * before, in earlier requests, pays per prior serve up to `historyMaxServes`.
+ * This is the cross-serve axis the one-page window cannot see (§69.3 DV-54).
+ * It never touches a candidate the viewer was not served: `servedCount` 0 or
+ * absent ⇒ 0.
+ */
+function historyRepetitionPenalty(c: RankCandidate, pen: ResolvedDiversityPenalties): number {
+  if (!pen.history) return 0;
+  const n = c.servedCount;
+  if (typeof n !== 'number' || !Number.isFinite(n) || n <= 0) return 0;
+  return pen.history * Math.min(n, pen.historyMaxServes ?? 3);
 }

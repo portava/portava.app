@@ -32,6 +32,8 @@ import { type LayoverOverview } from '../../services/layover.ts';
 import type { SafeReturnAbortController } from './useSafeReturnAbort.ts';
 import {
   describeAbortEffects,
+  describeCrewMeetingPoint,
+  describeCrewNotification,
   describeDeadline,
   postureHeadline,
   statusCapabilityNote,
@@ -77,9 +79,26 @@ export function LayoverSafeReturnCard({ overview, nowMs, canAbort, abort: contro
     nowMs,
   );
   const cert = summarizeCertification(overview.certification);
+  // §16 L154 — the cached crew meeting point. Always a sentence: available or
+  // not, an offline capability says which, because a blank line reads as "fine".
+  const crewPoint = describeCrewMeetingPoint(overview.offlineBundle);
 
   const contract = abort?.contract ?? null;
   const outcome = abort?.outcome ?? null;
+  /**
+   * §15.1 L144 — what the server says happened to the crew, read off the
+   * fields rather than re-derived and rendered only on the path that carries
+   * them. A PARTIAL abort's 500 body is not an `AbortResult` and has neither
+   * field, so it produces no crew line at all: absence is silence here, never
+   * "your crew was not told", which would be this card answering for the
+   * server.
+   */
+  const crewNotice = outcome?.kind === 'ok'
+    ? describeCrewNotification({
+        crewNotified: outcome.result.crewNotified ?? [],
+        crewNotifyUnavailableReason: outcome.result.crewNotifyUnavailableReason ?? null,
+      })
+    : null;
 
   return (
     <View style={[styles.card, { borderColor: tone }]} testID="layover-safe-return-card">
@@ -116,6 +135,14 @@ export function LayoverSafeReturnCard({ overview, nowMs, canAbort, abort: contro
             {deadline.stalenessNotice}
           </Text>
         ) : null}
+        {/* §16 L154 — inside the deadline box because it shares the deadline's
+            standing: both come out of the SAME bundle, so a stale bundle's
+            meeting point is last-certified for exactly the reason its deadline
+            is, and the caption above governs both. Nothing here re-tests the
+            staleness bound. */}
+        <Text style={styles.crewPoint} testID="safe-return-crew-meeting-point">
+          {crewPoint.sentence}
+        </Text>
       </View>
 
       {/* ── §15.1 the control ── */}
@@ -207,6 +234,13 @@ export function LayoverSafeReturnCard({ overview, nowMs, canAbort, abort: contro
                   </Text>
                 : null)
             : null}
+          {/* §15.1 L144 — who was told about this traveller's abort. It is
+              reported, not offered: this card has no control that notifies a
+              crew, and whether a crew should be notified at all is not decided
+              on the client. See `describeCrewNotification`. */}
+          {crewNotice ? (
+            <Text style={styles.contractSub} testID="abort-crew-notice">{crewNotice}</Text>
+          ) : null}
           {describeAbortEffects(
             outcome?.kind === 'ok' ? outcome.result.effects
             : outcome?.kind === 'partial' ? outcome.effects
@@ -239,6 +273,9 @@ const styles = StyleSheet.create({
   deadlineTime:  { ...t.title, color: color.ink },
   deadlineSub:   { ...t.small, color: color.mute },
   stale:         { ...t.small, color: color.warn, fontWeight: '700', marginTop: 4 },
+  // Deliberately the muted tone, not the warning one: an uncached meeting point
+  // is an honest absence, not a safety signal and not an error.
+  crewPoint:     { ...t.small, color: color.mute, marginTop: 4 },
 
   abortBtn:      { marginTop: space.md, backgroundColor: color.signal, borderRadius: radius.md, paddingVertical: space.md, alignItems: 'center', justifyContent: 'center' },
   abortBtnBusy:  { opacity: 0.6 },

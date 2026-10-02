@@ -17,7 +17,7 @@
  * semanticIntent.ts for the note on why productionizing it here is declined.)
  *
  * The parser REUSES the existing pocket parsers rather than reimplementing them:
- *   - `parseTimeIntent` (routes/discoverySearchHelpers) for the tonight /
+ *   - `parseTimeIntent` (./searchQueryHelpers) for the tonight /
  *     tomorrow / this-weekend / next-week windows (tz-aware),
  * and ADDS the operators §18 requires that those pockets lacked: the extended
  * temporal operators (tomorrow morning / Friday after dinner / in 2h / on
@@ -31,7 +31,7 @@
  * orchestrator (semanticIntent.ts) so this module stays trivially testable and
  * side-effect-free.
  */
-import { parseTimeIntent } from '../../routes/discoverySearchHelpers';
+import { parseTimeIntent } from './searchQueryHelpers';
 
 // ── Public shape ──────────────────────────────────────────────────────────────
 

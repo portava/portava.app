@@ -126,10 +126,14 @@
  */
 import type { RankCandidate, ScoredCandidate } from "./portavaRank.js";
 import type { DiscoveryRankProvenance } from "./discoveryRankProvenance.js";
-import { explainReasons, type DiscoveryReason } from "./discoveryReasonCodes.js";
+import { explainReasons, type DiscoveryReason, type DiscoveryReasonCode } from "./discoveryReasonCodes.js";
 import { isFlagEnabled } from "./featureFlags.js";
-import { loadPdeViewer, rankForViewer, type PdePlace } from "./discoveryPde.js";
+import { loadPdeViewer, rankForViewer, type PdePlace, type PdeReadFailure } from "./discoveryPde.js";
 import type { DiscoveryLiveRank } from "./discoveryLiveRank.js";
+import { point } from "./mapObjects.js";
+import { classifyAgainstProtected, type ProtectedZone } from "./protectedLocations.js";
+import { loadActiveProtectedZones } from "./protectedZoneStore.js";
+import type { CoverageBucket } from "./truthClass.js";
 
 /** Literal name so check-flag-polarity resolves the read. `*_enabled` ⇒ capability, fail-closed. */
 export const DISCOVERY_CANDIDATE_PROJECTION_FLAG = "discovery_candidate_projection_enabled";
@@ -151,7 +155,7 @@ export interface DiscoveryCandidate {
    * vocabulary. Null when no grade was computed or the grade found no
    * reading — never an empty array, so "absent" cannot read as "none apply".
    */
-  whyNow: string[] | null;
+  whyNow: string[] | null;  /** DSV2-04 "validity": ms from THIS serve until the earliest claim behind `whyNow` expires (whyNowValidForMsOf, foot of file). */ whyNowValidForMs: number | null;
   /** Ranker feature keys with positive contribution, strongest first, ≤ 3. */
   whyForUser: string[];
   /** Which ranker produced whyForUser; "none" ⇒ the list is empty by construction. */
@@ -166,6 +170,27 @@ export interface DiscoveryCandidate {
     servedFrom: string;
   };
   truthClass: DiscoveryTruthClass;
+  /**
+   * §5.1's FOURTH field, and the last one this projection was missing.
+   *
+   * The cohort bucket behind `whyNow` — how many independent contributors the
+   * live grade rested on — in `lib/truthClass`'s four-value vocabulary, copied
+   * from `DiscoveryLiveRank.truth.coverage` and composed nowhere else. Never a
+   * count: the count is the figure §24 withholds, the bucket is what may be
+   * served in its place, and every published bucket already sits above the k
+   * floor the privacy gate applied before the claim existed.
+   *
+   * ── `unknown` IS THE WITHHOLDING VALUE, AND IT IS AMBIGUOUS ON PURPOSE ──────
+   * `unknown` means ONE of: no live grade ran, the grade found no reading, the
+   * gates refused the look, or `coverageForCandidate` REFUSED to publish the
+   * bucket because the §24 pass did not clear this row. Those cases are
+   * deliberately indistinguishable from outside, for the same reason `reasons`
+   * is: a candidate that said "withheld because this place is protected" would
+   * publish the protected status this field exists to hide. The server-side
+   * `coverageForCandidate` returns the reason for an operator; the wire does
+   * not carry it.
+   */
+  coverage: CoverageBucket;
   /**
    * `06` §5 cache metadata — model_version, feature_version, candidate source,
    * recommendation reasons, the feature vector and the ranking timestamp — for
@@ -221,6 +246,22 @@ export interface CandidateServeContext {
    * cache read is not a rank.
    */
   provenanceById?: ReadonlyMap<string, DiscoveryRankProvenance> | null;
+  /**
+   * §24 — the protected zones this serve must be checked against before any
+   * cohort signal may be published, and the position of each served row.
+   *
+   * BOTH ARE REQUIRED FOR A BUCKET TO BE SERVED, and absence is not "no zones
+   * nearby" — it is "the pass did not run", which fails closed to `unknown`.
+   * That is the whole difference between this and copying the Map's bucket
+   * across: the Map runs `applyProtection` over objects that carry their own
+   * geometry, and a `DiscoveryCandidate` carries none by design, so the serve
+   * point must hand the geometry in or get nothing.
+   *
+   * `positionById` is read ONLY to decide the zone question and never reaches
+   * the projection — no coordinate appears on a `DiscoveryCandidate`.
+   */
+  protectedZones?: readonly ProtectedZone[] | null;
+  positionById?: ReadonlyMap<string, { lat: number; lng: number }> | null;
   /** Clock, injectable for tests. */
   nowMs?: number;
 }
@@ -287,6 +328,83 @@ export function whyNowOf(id: string, ctx: Pick<CandidateServeContext, "liveRankB
   return grade.whyNow.length > 0 ? [...grade.whyNow] : null;
 }
 
+/**
+ * Why `coverage` reads as it does. SERVER-SIDE ONLY — see the field's comment
+ * for why the wire cannot carry this.
+ */
+export type CoverageWithholdReason =
+  /** A bucket was read and the §24 pass cleared it. */
+  | "served"
+  /** No live grade, no reading, or the live gates refused the look. */
+  | "no_reading"
+  /** The serve point ran no protected-zone pass, so nothing may be published. */
+  | "pass_did_not_run"
+  /** The pass ran and this row is inside (or may be inside) a protected zone. */
+  | "protected_zone";
+
+export interface CandidateCoverageDecision {
+  coverage: CoverageBucket;
+  reason: CoverageWithholdReason;
+}
+
+/**
+ * §24, answered CONSERVATIVELY — the arm that needs no ruling.
+ *
+ * The census left S49 on an owner question: either route `DiscoveryCandidate`
+ * through the same coarsening the Map runs, or rule that a four-value bucket
+ * over an already k-gated state is not protected-zone sensitive. This is the
+ * FIRST arm. It publishes a bucket only where a real protected-zone pass ran
+ * and cleared the row, so it cannot open the hole the second arm would have to
+ * be ruled safe: a `coverage` on Discovery for a place whose `coverage` the Map
+ * deliberately withholds is impossible by construction here.
+ *
+ * ── WHY IT PROBES AS `social_zone` ──────────────────────────────────────────
+ * `classifyAgainstProtected` decides on an object's KIND as well as its
+ * position, so the probe has to declare what kind of disclosure a cohort bucket
+ * is. It is an AMBIENT PRESENCE disclosure: `protectedLocations` defines that
+ * class as one where "the disclosure is the association with the place, which
+ * no amount of coordinate blurring removes", which is exactly a bucket saying
+ * independent people were observed at this place. So a coarsen-class zone
+ * ESCALATES to suppress for it, and this function withholds — the same answer
+ * the Map reaches when it deletes `coverage` inside a zone.
+ *
+ * Every non-`allow` answer withholds. There is no coarser honest bucket to fall
+ * back to: `few` over a protected place still says people were there.
+ *
+ * PURE. The probe is built, read and discarded here; no coordinate escapes.
+ */
+export function coverageForCandidate(
+  id: string,
+  ctx: Pick<CandidateServeContext, "liveRankById" | "protectedZones" | "positionById">,
+): CandidateCoverageDecision {
+  const bucket = ctx.liveRankById?.get(id)?.truth?.coverage ?? null;
+  // Nothing to withhold and nothing to serve. Checked FIRST so a row with no
+  // reading is not reported as protected — that would be a disclosure made out
+  // of an absence.
+  if (bucket === null || bucket === "unknown") return { coverage: "unknown", reason: "no_reading" };
+
+  const zones = ctx.protectedZones;
+  const position = ctx.positionById?.get(id) ?? null;
+  // Fail closed on BOTH halves. A serve point that passed no zones has not
+  // proved this row is outside one, and a row with no position cannot be
+  // placed against the zones that were passed.
+  if (!Array.isArray(zones) || position === null) return { coverage: "unknown", reason: "pass_did_not_run" };
+
+  const decision = classifyAgainstProtected(
+    {
+      id,
+      kind: "social_zone",
+      geometry: point(position.lat, position.lng),
+      title: "",
+      privacyClass: "place_level",
+      renderingPriority: 0,
+    },
+    zones,
+  );
+  if (decision.action !== "allow") return { coverage: "unknown", reason: "protected_zone" };
+  return { coverage: bucket, reason: "served" };
+}
+
 /** Project one served row. Pure; no I/O, no clock unless supplied. */
 export function projectDiscoveryCandidate(row: CandidateSourceRow, ctx: CandidateServeContext): DiscoveryCandidate {
   const nowMs = ctx.nowMs ?? Date.now();
@@ -307,17 +425,18 @@ export function projectDiscoveryCandidate(row: CandidateSourceRow, ctx: Candidat
     : ctx.rankedBy === "compass" && provenance ? provenance.reasons
     : [];
   const whyForUser = signals.slice(0, WHY_FOR_USER_MAX);
-  return {
+  return withSafetyPrecedence(ctx, {
     id: row.id,
-    whyNow: whyNowOf(row.id, ctx),
+    whyNow: whyNowOf(row.id, ctx), whyNowValidForMs: whyNowValidForMsOf(row.id, ctx, nowMs),
     whyForUser,
     rankedBy: ctx.rankedBy,
     confidence: CONFIDENCE_PRIOR[truthClass as keyof typeof CONFIDENCE_PRIOR] ?? CONFIDENCE_PRIOR.unknown,
     freshness: classifyFreshness(ctx.cacheLevel, ctx.cachedAt, nowMs),
     truthClass,
+    coverage: coverageForCandidate(row.id, ctx).coverage,
     provenance,
     reasons: explainReasons(signals),
-  };
+  });
 }
 
 // ── Flag (cached 30 s, mirrors discoveryServeLog) ─────────────────────────────
@@ -338,6 +457,61 @@ export async function candidateProjectionEnabled(sc: any): Promise<boolean> {
 }
 
 /**
+ * The position of each served row, for the §24 zone question ONLY.
+ *
+ * `CandidateSourceRow` carries no coordinate by design — a `DiscoveryCandidate`
+ * must never be able to leak one — so the geometry is read off whatever the
+ * serve point's row actually is, under either spelling the codebase uses
+ * (`lat`/`lng` on a PdePlace, `latitude`/`longitude` on a place row). A row
+ * with neither simply gets no entry, and `coverageForCandidate` then answers
+ * `pass_did_not_run` and withholds. That is the fail-closed direction: an
+ * unplaceable row is one we cannot prove is outside a protected zone.
+ *
+ * The map is built, read by the zone probe and discarded. No coordinate reaches
+ * a projection.
+ */
+export function positionIndexOf(rows: readonly unknown[]): Map<string, { lat: number; lng: number }> {
+  const out = new Map<string, { lat: number; lng: number }>();
+  for (const row of rows) {
+    const r = row as Record<string, unknown> | null;
+    if (!r || typeof r.id !== "string" || r.id === "") continue;
+    const lat = typeof r.lat === "number" ? r.lat : typeof r.latitude === "number" ? r.latitude : null;
+    const lng = typeof r.lng === "number" ? r.lng : typeof r.longitude === "number" ? r.longitude : null;
+    if (lat === null || lng === null || !Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+    out.set(r.id, { lat, lng });
+  }
+  return out;
+}
+
+/**
+ * Attach the §24 pass to a serve context the route built.
+ *
+ * WHY THE WRAPPERS DO THIS AND NOT THE ROUTES. `coverageForCandidate` needs two
+ * things — the active zones and each row's position — and it withholds unless
+ * it has both. Before this, no caller supplied either, so the §24 arm was
+ * built, reachable, fail-closed and INERT: every served `coverage` read
+ * `unknown`, on every path, for every row. Asking four Discovery serve points
+ * and one Map serve point to each remember to pass two fields is how one of
+ * them silently does not. The wrappers already hold `sc` and the rows, so they
+ * hold everything the pass needs.
+ *
+ * A context that ALREADY carries zones wins: a caller that has done its own
+ * pass is not overridden.
+ */
+async function withProtectedZonePass<T>(
+  sc: any,
+  places: readonly T[],
+  ctx: CandidateServeContext,
+): Promise<CandidateServeContext> {
+  if (ctx.protectedZones !== undefined && ctx.protectedZones !== null) return ctx;
+  // An unreadable policy stays null, and null is NOT an empty list — see
+  // lib/protectedZoneStore. Null here means the pass did not run, and every
+  // bucket is withheld.
+  const zones = await loadActiveProtectedZones(sc);
+  return { ...ctx, protectedZones: zones, positionById: ctx.positionById ?? positionIndexOf(places) };
+}
+
+/**
  * The one call the route makes. Flag OFF ⇒ returns `places` ITSELF (same
  * reference, nothing copied, nothing added). Flag ON ⇒ a new array whose
  * elements carry `candidate`. Never throws into a feed response.
@@ -350,7 +524,8 @@ export async function withDiscoveryCandidates<T extends CandidateSourceRow>(
   let on = false;
   try { on = await candidateProjectionEnabled(sc); } catch { on = false; }
   if (!on) return places;
-  return places.map((p) => ({ ...p, candidate: projectDiscoveryCandidate(p, ctx) }));
+  const served = await withProtectedZonePass(sc, places, ctx);
+  return places.map((p) => ({ ...p, candidate: projectDiscoveryCandidate(p, served) }));
 }
 
 // ── The Map-facing reader (Map §20; census-discovery A25) ─────────────────────
@@ -359,7 +534,7 @@ export interface CandidateReadOutcome<T> {
   candidates: Array<{ place: T; candidate: DiscoveryCandidate }>;
   rankedBy: DiscoveryRankedBy;
   /** Writes the ranker attempted and the no-write client intercepted. Must be 0 on the served path; here it is expected to be > 0 when PDE ran. */
-  suppressedWrites: number;
+  suppressedWrites: number; /** The viewer-side reads that FAILED on this run (lib/discoveryPde `PdeReadFailure`, in the order they failed). Absent when no per-user read was made (anonymous viewer, empty input). Non-empty ⇒ `whyForUser` was computed WITHOUT those inputs, so a consumer must not serve the answer as complete (`11` §9): the loader keeps the reads non-fatal, and this is how the failure leaves the reader instead of being dropped here. */ degraded?: readonly PdeReadFailure[];
 }
 
 /**
@@ -375,7 +550,18 @@ export async function readDiscoveryCandidatesForViewer<T extends CandidateSource
   opts: { cacheLevel?: string; cachedAt?: number | null; nowMs?: number } = {},
 ): Promise<CandidateReadOutcome<T>> {
   const cacheLevel = opts.cacheLevel ?? "map_read";
-  const base = { cacheLevel, cachedAt: opts.cachedAt ?? null, nowMs: opts.nowMs };
+  // The §24 pass, on this path too. The Map's own objects are coarsened by
+  // routes/mapProjection before they are served; a Discovery bucket attached to
+  // one of them has to clear the same zones or it re-opens what that coarsening
+  // closed — from a different module, which is exactly how it would be missed.
+  const zones = places.length === 0 ? null : await loadActiveProtectedZones(sc);
+  const base = {
+    cacheLevel,
+    cachedAt: opts.cachedAt ?? null,
+    nowMs: opts.nowMs,
+    protectedZones: zones,
+    positionById: positionIndexOf(places),
+  };
   if (!viewerId || places.length === 0) {
     const ctx: CandidateServeContext = { ...base, scoredById: null, rankedBy: "none" };
     return {
@@ -390,6 +576,67 @@ export async function readDiscoveryCandidatesForViewer<T extends CandidateSource
   return {
     candidates: outcome.ranked.map((place) => ({ place, candidate: projectDiscoveryCandidate(place, ctx) })),
     rankedBy: "pde",
-    suppressedWrites: outcome.stages.suppressedWrites,
+    suppressedWrites: outcome.stages.suppressedWrites, degraded: [...(viewer.degraded ?? [])],
   };
 }
+
+/**
+ * DSV2-04 — `02-DISCOVERY-v2.md` asks that why-now travel "through API and
+ * client" WITH its validity, and that an expired claim "disappear or become
+ * explicitly stale". The client can only do that on its own clock if the wire
+ * says how long the claim is good for.
+ *
+ * The horizon is the one `lib/compassDecision#summariseLiveState` already
+ * computes for the grade: the EARLIEST of min(validUntil, observedAt + TTL) over
+ * the claims that qualified (`DiscoveryLiveRank.interception.horizonAt`). It is
+ * sent as a DURATION from this serve (`nowMs`), not as a timestamp, so a phone
+ * whose clock disagrees with the server's still expires the claim at the right
+ * moment: the client anchors it to the instant IT received the page.
+ *
+ * Null whenever `whyNow` is null (nothing to expire), and whenever the grade
+ * carries no finite horizon — the client then does not show the claim as
+ * current at all. 0 when the horizon has already passed at serve time. Pure.
+ */
+export function whyNowValidForMsOf(
+  id: string,
+  ctx: Pick<CandidateServeContext, "liveRankById">,
+  nowMs: number,
+): number | null {
+  if (whyNowOf(id, ctx) === null) return null;
+  const horizonAt = ctx.liveRankById?.get(id)?.interception?.horizonAt ?? null;
+  const horizonMs = horizonAt ? Date.parse(horizonAt) : Number.NaN;
+  return Number.isFinite(horizonMs) ? Math.max(0, horizonMs - nowMs) : null;
+}
+
+/**
+ * Sensing §7 (spec line 129) — *"Safety constraints outrank opportunity/vibe. A dangerous
+ * place must never simultaneously be promoted as 'best move now'."* —
+ * census-discovery A07, §57.
+ *
+ * lib/discoveryLiveRank already DEMOTES a Live `unsafe_density` row (behind
+ * every non-demoted row, the ungraded tail included) and gives it a why-now of
+ * the safety reading alone. But the projection has a second "now" channel the
+ * ranker does not own: `reasons`, whose `nearby_now` code renders on the card
+ * as lib/discoveryReasonCodes nearbyNowText's sentence ("Open around now.") — which, on
+ * a place the same serve just graded dangerous, is precisely a "best move now"
+ * label sitting beside the danger. So on a DEMOTED row that one code is
+ * withheld. Nothing else is touched: the ranker's own `whyForUser` keys (a
+ * record of which features contributed) and every other reason (taste, trail,
+ * creator) are not "now" claims, and the row itself still renders — hiding a
+ * dangerous place would be its own failure, exactly as lib/mapDisplayResolver
+ * keeps a noticed place on the map and only strips its promotion.
+ *
+ * Inert without a live grade: `liveRankById` is null whenever
+ * `discovery_live_rank_enabled` is off, so the flags-off projection is the
+ * object it was given, unchanged.
+ */
+export function withSafetyPrecedence(
+  ctx: Pick<CandidateServeContext, "liveRankById">,
+  candidate: DiscoveryCandidate,
+): DiscoveryCandidate {
+  if (ctx.liveRankById?.get(candidate.id)?.safety?.demoted !== true) return candidate;
+  return { ...candidate, reasons: candidate.reasons.filter((r) => r.code !== SAFETY_WITHHELD_REASON) };
+}
+
+/** The one `01` §11 code whose plain language is a "now" claim — see `withSafetyPrecedence`. */
+export const SAFETY_WITHHELD_REASON: DiscoveryReasonCode = "nearby_now";

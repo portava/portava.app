@@ -370,7 +370,7 @@ describe("GET /places/:id/living", () => {
       hero:       { imageUrl: null, videoUrl: null },
       rating:     null,
       officialInfo: {},
-      generatedAt: hoursAgo(0.1),
+      generatedAt: hoursAgo(0.1), _placeModeAware: true, // census-media §43: a row written by the mode-aware assembler; one without the key is rebuilt as a miss (postLocationModeRemainingReaders C3)
     };
     const livingCache = {
       place_id:  PLACE_ID,
@@ -530,7 +530,7 @@ describe("GET /places/:id/living — cached Live label honours the serve-time ki
       liveClaims: [{ id: "snap-1", claimType: "crowd.level", value: { level: "busy" }, state: "live" }],
       officialInfo: {},
       timeline:   { slice: "today", posts: [], crowdLevel: "busy", weatherBrief: null },
-      generatedAt: hoursAgo(0.1),
+      generatedAt: hoursAgo(0.1), _placeModeAware: true, // census-media §43: a row written by the mode-aware assembler; one without the key is rebuilt as a miss (postLocationModeRemainingReaders C3)
     };
     return {
       place_id:  PLACE_ID,

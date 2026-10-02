@@ -206,7 +206,7 @@ export default function CreateEventScreen() {
   // ── Step 8: Invite ──────────────────────────────────────────────────────────
   const [inviteQuery, setInviteQuery] = useState('');
   const [inviteResults, setInviteResults] = useState<TravelerSearchResult[]>([]);
-  const [inviteSearching, setInviteSearching] = useState(false);
+  const [inviteSearching, setInviteSearching] = useState(false); const [inviteOutcome, setInviteOutcome] = useState<'idle' | 'ok' | 'failed'>('idle'); const inviteSeqRef = useRef(0); // census-discovery §106 (tm-people): what the latest invite search came to; its generation
   const [invitedIds, setInvitedIds] = useState<Set<string>>(new Set());
   const [inviteSending, setInviteSending] = useState<string | null>(null);
   const inviteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -377,13 +377,13 @@ export default function CreateEventScreen() {
 
   // ── Invite search ───────────────────────────────────────────────────────────
   function handleInviteQueryChange(q: string) {
-    setInviteQuery(q);
+    setInviteQuery(q); const seq = ++inviteSeqRef.current; setInviteOutcome('idle'); // a new query: whatever is in flight answers a question no longer asked
     if (inviteTimer.current) clearTimeout(inviteTimer.current);
-    if (!q.trim()) { setInviteResults([]); return; }
+    if (!q.trim()) { setInviteResults([]); setInviteSearching(false); return; }
     inviteTimer.current = setTimeout(async () => {
       setInviteSearching(true);
-      const res = await searchUsers(q.trim());
-      setInviteResults(res.ok ? (res.data ?? []) : []);
+      const res = await searchUsers(q.trim()); if (seq !== inviteSeqRef.current) return; // only the latest request writes the list
+      if (res.ok && res.data) { setInviteResults(res.data); setInviteOutcome('ok'); } else { setInviteResults([]); setInviteOutcome('failed'); } // a failed read is not an empty list
       setInviteSearching(false);
     }, 400);
   }
@@ -1329,7 +1329,7 @@ export default function CreateEventScreen() {
               />
               {inviteSearching && (
                 <ActivityIndicator size="small" color={color.signal} style={{ marginTop: space.sm }} />
-              )}
+              )}{!inviteSearching && inviteOutcome === 'failed' && (<View style={styles.infoBox}><Text style={styles.infoText}>We couldn't search travellers just now.</Text><Pressable onPress={() => handleInviteQueryChange(inviteQuery)} accessibilityRole="button" accessibilityLabel="Retry" hitSlop={8}><Text style={[styles.infoText, { color: color.signal, fontWeight: '700' }]}>Try again</Text></Pressable></View>)}{!inviteSearching && inviteOutcome === 'ok' && inviteResults.length === 0 && !!inviteQuery.trim() && (<Text style={styles.hint}>No travellers found</Text>)}
               {inviteResults.length > 0 && (
                 <View style={styles.inviteResults}>
                   {inviteResults.map((u) => {

@@ -211,7 +211,7 @@ async function assembleLivingPayload(sc: any, placeId: string): Promise<any> {
         // the projected columns, so omitting it here would leave p.status
         // undefined and the filter below would reject every post — emptying the
         // living page rather than securing it.
-        .select("id, content, media_urls, media_type, media_thumbnail_url, author_id, created_at, like_count, save_count, share_count, post_buckets, visibility, status, post_status, publish_at")
+        .select("id, content, media_urls, media_type, media_thumbnail_url, author_id, created_at, like_count, save_count, share_count, post_buckets, visibility, status, post_status, publish_at, location_privacy_mode") // census-media §43: the owner's mode, so the listings below can mark a post whose place mapPublicPost withholds
         .eq("canonical_place_id", survivorId)
         .eq("status", "active")
         // The living page is an ANONYMOUS surface (optionalUser, mounted bare)
@@ -304,7 +304,7 @@ async function assembleLivingPayload(sc: any, placeId: string): Promise<any> {
   };
 
   // ── AI summary ────────────────────────────────────────────────────────────────
-  const aiSummaryPosts = allPosts.slice(0, 10).map((p: any) => ({
+  const aiSummaryPosts = allPosts.filter((p: any) => !postPlaceWithheld(p)).slice(0, 10).map((p: any) => ({ // census-media §43: the place's shared summary is never written from a caption whose author withheld this place
     id:      p.id as string,
     caption: p.content as string | null,
   }));
@@ -332,7 +332,7 @@ async function assembleLivingPayload(sc: any, placeId: string): Promise<any> {
         .filter((p: any) => Array.isArray(p.post_buckets) && p.post_buckets.includes(bucket))
         .slice(0, 10)
         .map((p: any) => ({
-          id:           p.id,
+          id:           p.id, ...livingPostMark(p), // census-media §43: marked in the cached payload; livingPayloadForViewer drops the entry for a non-owner
           mediaUrl:     Array.isArray(p.media_urls) ? p.media_urls[0] ?? null : null,
           thumbnailUrl: p.media_thumbnail_url ?? null,
           caption:      p.content ?? null,
@@ -358,7 +358,7 @@ async function assembleLivingPayload(sc: any, placeId: string): Promise<any> {
     .filter((p: any) => (p.created_at as string) >= cutoff24h)
     .slice(0, 50)
     .map((p: any) => ({
-      id:           p.id,
+      id:           p.id, ...livingPostMark(p), // census-media §43: as the bucket entries above
       mediaUrl:     Array.isArray(p.media_urls) ? p.media_urls[0] ?? null : null,
       thumbnailUrl: p.media_thumbnail_url ?? null,
       caption:      p.content ?? null,
@@ -438,14 +438,14 @@ async function assembleLivingPayload(sc: any, placeId: string): Promise<any> {
     dedupGroups:  dedupGroupsOut,
     topContributor,
     thinBuckets,
-    generatedAt:  isoNow(),
+    generatedAt:  isoNow(), [LIVING_MODE_AWARE_KEY]: true, // census-media §43: a cached payload without this key predates the marks, so it is rebuilt rather than served
   };
 }
 
 // ── GET /api/places/:id/living ─────────────────────────────────────────────────
 router.get("/places/:id/living", asyncHandler(async (req, res) => {
   // Auth optional — auth not required for living page reads
-  await optionalUser(req);
+  const livingViewer = await optionalUser(req); // census-media §43: the viewer, for the owner bypass on the listings
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
@@ -478,7 +478,7 @@ router.get("/places/:id/living", asyncHandler(async (req, res) => {
 
   const nowMs = Date.now();
 
-  if (cached) {
+  if (cached && livingPayloadModeAware((cached as any).payload)) { // census-media §43: a payload cached before the marks existed cannot say which entries to withhold, so it is treated as a miss and rebuilt
     const ageMs = nowMs - new Date((cached as any).cached_at).getTime();
     const isSparse = (cached as any).sparse as boolean;
     const ttl = isSparse ? SPARSE_CACHE_TTL_MS : HOT_CACHE_TTL_MS;
@@ -496,12 +496,12 @@ router.get("/places/:id/living", asyncHandler(async (req, res) => {
 
     if (ageMs < ttl) {
       res.setHeader("X-Cache", "HIT");
-      res.json(payload);
+      res.json(livingPayloadForViewer(payload, livingViewer?.user.id));
       return;
     }
     // Stale — serve stale immediately, enqueue background revalidation
     res.setHeader("X-Cache", "STALE");
-    res.json(payload);
+    res.json(livingPayloadForViewer(payload, livingViewer?.user.id));
     // Best-effort background revalidation (don't await)
     void (async () => {
       try {
@@ -549,12 +549,12 @@ router.get("/places/:id/living", asyncHandler(async (req, res) => {
   void enqueueLivingCacheInvalidation(id, sc);
 
   res.setHeader("X-Cache", "MISS");
-  res.json(payload);
+  res.json(livingPayloadForViewer(payload, livingViewer?.user.id));
 }));
 
 // ── GET /api/places/:id/living/timeline ───────────────────────────────────────
 router.get("/places/:id/living/timeline", asyncHandler(async (req, res) => {
-  await optionalUser(req);
+  const timelineViewer = await optionalUser(req); // census-media §43: the viewer, for the owner bypass below
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
@@ -586,7 +586,7 @@ router.get("/places/:id/living/timeline", asyncHandler(async (req, res) => {
     // `status` projected deliberately — isEligiblePlaceDayPost reads it, and
     // PostgREST returns only projected columns, so omitting it would make the
     // filter below reject every row and empty the timeline.
-    .select("id, content, media_urls, media_type, media_thumbnail_url, author_id, created_at, like_count, post_buckets, visibility, status, post_status, publish_at")
+    .select("id, content, media_urls, media_type, media_thumbnail_url, author_id, created_at, like_count, post_buckets, visibility, status, post_status, publish_at, location_privacy_mode") // census-media §43: the owner's mode, read below
     .eq("canonical_place_id", survivorId)
     .eq("status", "active")
     // Anonymous surface: public content only. See the assembler query above.
@@ -632,7 +632,7 @@ router.get("/places/:id/living/timeline", asyncHandler(async (req, res) => {
       .slice(0, 50);
   }
 
-  const formattedPosts = posts.map((p: any) => ({
+  const formattedPosts = posts.filter((p: any) => !postPlaceWithheldFrom(p, timelineViewer?.user.id)).map((p: any) => ({ // census-media §43: after every slice and cut, a post whose owner withheld this place is not listed at it, except to its author
     id:           p.id,
     mediaUrl:     Array.isArray(p.media_urls) ? p.media_urls[0] ?? null : null,
     thumbnailUrl: p.media_thumbnail_url ?? null,
@@ -666,3 +666,62 @@ router.get("/places/:id/living/timeline", asyncHandler(async (req, res) => {
 }));
 
 export default router;
+
+// ── census-media §43: a post's location mode, on the living page ─────────────
+// Appended at the tail so no cited line above moves; ESM hoists imports and
+// function declarations, and the constants are read only at request time.
+import { postPlaceWithheld } from "../lib/postSchemas.js";
+import { postPlaceWithheldFrom } from "../lib/postPlaceDisclosure.js";
+
+/**
+ * The living payload is assembled ONCE per place and cached in
+ * place_living_cache for every caller, anonymous ones included, so it cannot
+ * be shaped for one viewer when it is built. Instead each timeline and bucket
+ * entry for a post whose place mapPublicPost withholds carries its author's id
+ * under this key in the CACHED payload, and livingPayloadForViewer — at every
+ * `res.json` — drops the entry for anyone but that author and deletes the key
+ * from every entry it keeps. The key never reaches a response.
+ */
+const LIVING_WITHHELD_KEY = "_placeWithheldAuthorId";
+/** Set on every payload built with the marks. One without it is rebuilt, not served. */
+const LIVING_MODE_AWARE_KEY = "_placeModeAware";
+
+/** The mark for one listing entry: `{}` unless the rule withholds the post's place. */
+function livingPostMark(p: any): Record<string, string> {
+  return postPlaceWithheld(p) ? { [LIVING_WITHHELD_KEY]: p?.author_id == null ? "" : String(p.author_id) } : {};
+}
+
+/** Was this cached payload built with the marks? */
+function livingPayloadModeAware(payload: any): boolean {
+  return payload != null && typeof payload === "object" && payload[LIVING_MODE_AWARE_KEY] === true;
+}
+
+/**
+ * The living payload as one viewer may receive it: every marked entry the
+ * viewer did not author is dropped from `timeline.posts` and each bucket's
+ * `posts`, and the two internal keys are removed. Nothing else is touched, and
+ * nothing is added: the lists are the built lists minus entries.
+ */
+export function livingPayloadForViewer(payload: any, viewerId: string | null | undefined): any {
+  if (payload == null || typeof payload !== "object") return payload;
+  const ownerOf = (e: any): boolean =>
+    typeof viewerId === "string" && viewerId.length > 0 && e[LIVING_WITHHELD_KEY] === viewerId;
+  const listFor = (list: any[]): any[] =>
+    list
+      .filter((e) => !(e && typeof e === "object" && LIVING_WITHHELD_KEY in e) || ownerOf(e))
+      .map((e) => {
+        if (!(e && typeof e === "object" && LIVING_WITHHELD_KEY in e)) return e;
+        const { [LIVING_WITHHELD_KEY]: _author, ...rest } = e;
+        return rest;
+      });
+  const { [LIVING_MODE_AWARE_KEY]: _aware, ...out } = payload;
+  if (out.timeline && typeof out.timeline === "object" && Array.isArray(out.timeline.posts)) {
+    out.timeline = { ...out.timeline, posts: listFor(out.timeline.posts) };
+  }
+  if (Array.isArray(out.buckets)) {
+    out.buckets = out.buckets.map((b: any) =>
+      b && typeof b === "object" && Array.isArray(b.posts) ? { ...b, posts: listFor(b.posts) } : b,
+    );
+  }
+  return out;
+}

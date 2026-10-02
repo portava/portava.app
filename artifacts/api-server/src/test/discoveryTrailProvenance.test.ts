@@ -54,8 +54,9 @@ import {
   getTrailModules, trailTrending, loadViewerTrailModifier,
 } from "../services/trails/TrailService.js";
 import { toPublicProvenance } from "../routes/trails.js";
+import { orPredicate } from "./helpers/postgrestOrFilter.js";
 import {
-  _resetLocalMomentumCacheForTest, MOMENTUM_BASELINE_WINDOW_MS,
+  _resetLocalMomentumCacheForTest, MOMENTUM_BASELINE_WINDOW_MS, LOCAL_MOMENTUM_MODEL_VERSION, LOCAL_MOMENTUM_FEATURE_VERSION,
 } from "../lib/discoveryLocalMomentum.js";
 import {
   DISCOVERY_MODEL_VERSION, DISCOVERY_FEATURE_VERSION,
@@ -121,6 +122,10 @@ function makeDb(seed: Record<string, Row[]>, erroring: string[] = []) {
       is(c: string, v: any) { filters.push((r) => (r[c] ?? null) === v); return b; },
       gt(c: string, v: any) { filters.push((r) => String(r[c] ?? "") > String(v)); return b; },
       gte(c: string, v: any) { filters.push((r) => String(r[c] ?? "") >= String(v)); return b; },
+      // lib/blocks.fetchBlockedSet narrows inside `.or()`; the Trail pages are
+      // viewer-scoped by it (census-discovery §51). A missing `.or` throws
+      // there, reads as an unreadable block list, and withholds every member.
+      or(expr: string) { filters.push(orPredicate(expr)); return b; },
       order() { return b; },
       limit(n: number) { limitN = n; return b; },
       range(a: number, z: number) { range = [a, z]; return b; },
@@ -242,9 +247,9 @@ describe("DC-17 — `trending_now`'s derived input retains its window (§38.6 it
       p.window.startMs, NOW - MOMENTUM_BASELINE_WINDOW_MS,
       "the stated start must be the baseline cut-off the bucketing actually applied",
     );
-    // Facts 2 and 3 — versions, and NOT a second vocabulary minted here.
-    assert.equal(p.modelVersion, DISCOVERY_MODEL_VERSION);
-    assert.equal(p.featureVersion, DISCOVERY_FEATURE_VERSION);
+    // Facts 2 and 3 — the kernel's OWN versions (§68), never the Compass ranker's.
+    assert.equal(p.modelVersion, LOCAL_MOMENTUM_MODEL_VERSION); assert.notEqual(p.modelVersion, DISCOVERY_MODEL_VERSION);
+    assert.equal(p.featureVersion, LOCAL_MOMENTUM_FEATURE_VERSION);
     // Fact 4 — the COMPUTATION clock, not the read-back clock.
     assert.equal(p.computedAt, NOW);
   });
@@ -429,8 +434,8 @@ describe("DC-17 — `readingProvenance` reaches the wire at both Trail URLs", ()
     assert.equal(r.status, 200);
     const p = r.body.readingProvenance;
     assert.ok(p, "the window behind `trending_now`'s order must not stop at the service");
-    assert.equal(p.modelVersion, DISCOVERY_MODEL_VERSION);
-    assert.equal(p.featureVersion, DISCOVERY_FEATURE_VERSION);
+    assert.equal(p.modelVersion, LOCAL_MOMENTUM_MODEL_VERSION);   // §68: the kernel's own, not the ranker's
+    assert.equal(p.featureVersion, LOCAL_MOMENTUM_FEATURE_VERSION);
     assert.equal(typeof p.computedAt, "number");
     assert.equal(p.window.kind, "bounded");
     assert.equal(p.spanMs, MOMENTUM_BASELINE_WINDOW_MS);
@@ -463,7 +468,7 @@ describe("DC-17 — `readingProvenance` reaches the wire at both Trail URLs", ()
     servedDb({ trails: [trail(T_A)], content_trails: [] });
     const r = await get(`/v1/discovery/trails/${T_A}/trending`);
     assert.equal(r.status, 200);
-    assert.equal(r.body.trending, false);
+    assert.equal(r.body.trending, false); // §64.13: DC-17's contract, kept by §61.17 — an EMPTY Trail (or one whose every member is withheld from this viewer) is a measured false; only a FAILED read is null
     assert.equal(
       r.body.readingProvenance, null,
       "`trending:false` with no provenance is the unmeasured case and must be visible as such",

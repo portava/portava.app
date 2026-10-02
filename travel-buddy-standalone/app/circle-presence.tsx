@@ -438,6 +438,8 @@ export default function CirclePresenceScreen() {
           disabled={globalPaused || contextPaused}
           onCheckInComplete={handleCheckInComplete}
           onNeedHelp={() => setSafeReturnOpen(true)}
+          isHost={isHostParam}
+          onHostAlerted={() => { void load(true); }}
         />
       </View>
 

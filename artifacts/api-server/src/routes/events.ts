@@ -189,7 +189,7 @@ import { getServiceClient } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
 import { detectAndStoreLanguage, invalidateContentTranslations } from "../services/contentTranslation.js";
 import { nameVisibilitySet, sanitizeIdentity } from "../lib/publicIdentity.js";
-import { isFlagEnabled, isKillSwitchEngaged } from "../lib/featureFlags.js";
+import { isFlagEnabled, isKillSwitchEngaged } from "../lib/featureFlags.js"; import { readFlagState } from "../lib/capability/schemaCapability.js";  // census-trust §30: eventTrustGatesRun
 import { isBlockedBetween } from "../lib/blockGuard.js";
 import {
   decideEventTransition,
@@ -338,14 +338,14 @@ async function isBlocked(sc: any, userA: string, userB: string): Promise<boolean
   return isBlockedBetween(sc, userA, userB);
 }
 
-/** Get going_count for event */
-async function getGoingCount(sc: any, eventId: string): Promise<number> {
-  const { data } = await sc
+/** Get going_count for event — `null` when event_rsvps cannot be read (census-trust §30.8: was 0, so every capacity check admitted) */
+async function getGoingCount(sc: any, eventId: string): Promise<number | null> {
+  const { data, error } = await sc
     .from("event_rsvps")
     .select("user_id")
     .eq("event_id", eventId)
     .eq("status", "going");
-  return ((data as any[]) ?? []).length;
+  return error ? null : ((data as any[]) ?? []).length;
 }
 
 /**
@@ -557,7 +557,7 @@ async function syncEventState(sc: any, eventId: string): Promise<void> {
   const maxAttendees: number | null = (ev as any).max_attendees;
   if (!maxAttendees) return; // unlimited
 
-  const going = await getGoingCount(sc, eventId);
+  const going = await getGoingCount(sc, eventId); if (going === null) { logger.warn({ eventId }, "event capacity sync: going count unreadable — state left as it was"); return; }  // census-trust §30.8: was 0, which reopened a full event
   const current = String((ev as any).state ?? "");
 
   // The capacity cycle. Reopening only happens when there is no active waitlist
@@ -624,9 +624,9 @@ async function promoteNextWaitlisted(sc: any, eventId: string, req?: any): Promi
     req?.log?.warn?.({ err: readErr, eventId }, "waitlist queue unreadable — seat not offered, not written off");
     return { outcome: "unreadable", message: String(readErr.message ?? readErr) };
   }
-  if (!next) return { outcome: "stranded" };
+  const pick = await pickEligibleWaitlisted(sc, eventId, (next as any) ?? null, req); if (pick.outcome !== "eligible") return pick;  // census-trust §30.6: the offer goes to the first ELIGIBLE user in queue order
 
-  const userId = (next as any).user_id as string;
+  const userId = pick.userId;
   const offerExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
   const { data: claimed, error: updErr } = await sc
     .from("event_waitlist")
@@ -666,7 +666,7 @@ async function promoteNextWaitlisted(sc: any, eventId: string, req?: any): Promi
 // any user from joining through a back-door that bypasses server-side gates.
 
 type EligibilityOk   = { ok: true };
-type EligibilityFail = { ok: false; errorCode: string; message: string };
+type EligibilityFail = { ok: false; errorCode: string; message: string; unavailable?: true };  // census-trust §30.6: `unavailable` = a gate input could not be read — a statement about the read, not the user
 
 export async function checkEventEligibility(
   sc: any,
@@ -704,15 +704,15 @@ export async function checkEventEligibility(
     .eq("role", "banned")
     .maybeSingle();
   if (bannedErr) {
-    return { ok: false, errorCode: "forbidden", message: "Event access check is temporarily unavailable" };
+    return { ok: false, errorCode: "forbidden", message: "Event access check is temporarily unavailable", unavailable: true };
   }
   if (bannedRole) return { ok: false, errorCode: "forbidden", message: "You are banned from this event" };
 
   // Trust / age / verified gates
-  const trustGatesEnabled = await isFlagEnabled(sc, "events_trust_gates_enabled");
+  const trustGatesEnabled = await eventTrustGatesRun(sc);  // census-trust §30: an UNREAD flag keeps the gates on (was two-state: unread = "gates off")
   if (trustGatesEnabled) {
     if (ev.verified_only) {
-      const { data: profile } = await sc.from("profiles").select("verified").eq("id", userId).maybeSingle();
+      const { data: profile, error: profileErr } = await sc.from("profiles").select("verified").eq("id", userId).maybeSingle(); if (profileErr) return { ok: false, errorCode: "forbidden", message: "Verification check is temporarily unavailable for this event", unavailable: true };  // census-trust §30.6: a failed read is not "unverified"
       if (!(profile as any)?.verified) {
         return { ok: false, errorCode: "forbidden", message: "This event is for verified users only" };
       }
@@ -729,7 +729,7 @@ export async function checkEventEligibility(
       // gate evaluates) from "could not read" (gate refuses).
       const tpRead = await getTrustProfileResult(sc, userId);
       if (tpRead.state === "unavailable") {
-        return { ok: false, errorCode: "forbidden", message: "Trust check is temporarily unavailable for this event" };
+        return { ok: false, errorCode: "forbidden", message: "Trust check is temporarily unavailable for this event", unavailable: true };
       }
       const score = (tpRead.state === "ok" ? tpRead.profile.overall_score : null) ?? TRUST_SCORE_WHEN_NO_PROFILE;
       if (score < ev.trust_score_min) {
@@ -745,7 +745,7 @@ export async function checkEventEligibility(
       // read that failed. The seam answers all three cases distinctly.
       const gateAge = await resolveGateAge(sc, userId);
       if (gateAge.state === "unreadable") {
-        return { ok: false, errorCode: "forbidden", message: AGE_CHECK_UNAVAILABLE_MESSAGE };
+        return { ok: false, errorCode: "forbidden", message: AGE_CHECK_UNAVAILABLE_MESSAGE, unavailable: true };
       }
       if (gateAge.state === "verified_minor") {
         return { ok: false, errorCode: "forbidden", message: AGE_NOT_VERIFIED_ADULT_MESSAGE };
@@ -1116,12 +1116,12 @@ router.get("/events", async (req, res) => {
   const staffEvents  = new Set<string>();
   const bannedEvents = new Set<string>();
   if (allEventIds.length > 0) {
-    const { data: roles } = await sc
+    const { data: roles, error: rolesErr } = await sc
       .from("event_roles")
       .select("event_id, role")
       .eq("user_id", user.id)
       .in("event_id", allEventIds)
-      .in("role", ["co_host", "moderator", "banned"]);
+      .in("role", ["co_host", "moderator", "banned"]); if (rolesErr) { req.log?.error({ err: rolesErr }, "list events: event_roles unreadable — refusing"); sendError(res, "degraded_unavailable", "Event visibility could not be checked. Please try again."); return; }  // census-trust §30: a failed read is not "banned from nothing"
     for (const r of ((roles as any[]) ?? [])) {
       if ((r as any).role === "banned") bannedEvents.add((r as any).event_id as string);
       else staffEvents.add((r as any).event_id as string);
@@ -1136,7 +1136,7 @@ router.get("/events", async (req, res) => {
   let viewerAge: number | null = null;
   let viewerTrust = 50;
   if (needsGates) {
-    trustGatesEnabled = await isFlagEnabled(sc, "events_trust_gates_enabled");
+    trustGatesEnabled = await eventTrustGatesRun(sc);  // census-trust §30: an UNREAD flag keeps the gates on
     if (trustGatesEnabled) {
       // THE EIGHTH GATE, and it was already here. The brief for this change
       // named seven; this file carries a third age gate — the one that decides
@@ -2232,8 +2232,8 @@ router.get("/events/share-link/:token/preview", async (req, res) => {
   }
 
   const { data: ev } = await sc.from("events").select("*").eq("id", (link as any).event_id).maybeSingle();
-  if (!ev || ["cancelled","archived"].includes((ev as any).state)) {
-    sendError(res, "not_found", "Event not found"); return;
+  if (!ev || ["cancelled","archived"].includes((ev as any).state) || await isBlocked(sc, (ctx as any).user.id, (ev as any).host_id)) {
+    sendError(res, "not_found", "Event not found"); return; // blocked with the host = not found, exactly as GET /events/:id answers
   }
 
   // Increment use count (non-fatal)
@@ -2849,7 +2849,7 @@ router.post("/events/:id/rsvp", async (req, res) => {
   // Update going_count + sync state + attendees table
   await syncEventState(sc, id);
   const going = await getGoingCount(sc, id);
-  await sc.from("events").update({ going_count: going }).eq("id", id);
+  if (going !== null) await sc.from("events").update({ going_count: going }).eq("id", id);  // census-trust §30.8: an unread count is not stamped as 0
   await syncAttendee(sc, id, user.id, status);
 
   // Add to event chat thread if going and chat enabled. Lazily create the
@@ -2999,7 +2999,7 @@ router.delete("/events/:id/rsvp", async (req, res) => {
   await sc.from("event_rsvps").delete().eq("event_id", id).eq("user_id", user.id);
 
   const going = await getGoingCount(sc, id);
-  await sc.from("events").update({ going_count: going }).eq("id", id);
+  if (going !== null) await sc.from("events").update({ going_count: going }).eq("id", id);  // census-trust §30.8: an unread count is not stamped as 0
   await syncAttendee(sc, id, user.id, null);
 
   // Promote the next waitlisted user BEFORE syncing state: promotion sets an
@@ -3074,7 +3074,7 @@ router.post("/events/:id/join", async (req, res) => {
 
   // Check that adding this user won't exceed capacity (race-condition guard)
   if (evData.max_attendees != null) {
-    const currentGoing = await getGoingCount(sc, id);
+    const currentGoing = await getGoingCount(sc, id); if (currentGoing === null) { sendCapacityUnavailable(req, res, id, "join"); return; }  // census-trust §30.8
     if (currentGoing >= evData.max_attendees) {
       if (!evData.waitlist_enabled) {
         sendError(res, "forbidden", "This event is full and the waitlist is not available"); return;
@@ -3094,7 +3094,7 @@ router.post("/events/:id/join", async (req, res) => {
   );
 
   const going = await getGoingCount(sc, id);
-  await sc.from("events").update({ going_count: going }).eq("id", id);
+  if (going !== null) await sc.from("events").update({ going_count: going }).eq("id", id);  // census-trust §30.8: an unread count is not stamped as 0
   await syncEventState(sc, id);
   await sc.from("event_attendees")
     .upsert({ event_id: id, user_id: user.id }, { onConflict: "event_id,user_id" })
@@ -3133,7 +3133,7 @@ router.post("/events/:id/leave", async (req, res) => {
   await sc.from("event_attendees").delete().eq("event_id", id).eq("user_id", user.id);
 
   const going = await getGoingCount(sc, id);
-  await sc.from("events").update({ going_count: going }).eq("id", id);
+  if (going !== null) await sc.from("events").update({ going_count: going }).eq("id", id);  // census-trust §30.8: an unread count is not stamped as 0
 
   // Promote BEFORE syncing state so the freed seat is reserved by an active
   // offer (see DELETE /rsvp) — otherwise syncEventState reopens to a walk-in.
@@ -3216,17 +3216,17 @@ router.post("/events/:id/waitlist", async (req, res) => {
   if (await isBlocked(sc, user.id, (ev as any).host_id)) {
     sendError(res, "forbidden", "Cannot join waitlist for this event"); return;
   }
-  const { data: bannedRoleWl } = await sc
+  const { data: bannedRoleWl, error: bannedErrWl } = await sc
     .from("event_roles")
     .select("role")
     .eq("event_id", id)
     .eq("user_id", user.id)
     .eq("role", "banned")
-    .maybeSingle();
+    .maybeSingle(); if (bannedErrWl) { req.log?.error({ err: bannedErrWl, eventId: id }, "waitlist join: banned-role read failed — refusing"); sendError(res, "degraded_unavailable", "Event access could not be checked. Please try again shortly."); return; }  // census-trust §30: a failed read is not "not banned"
   if (bannedRoleWl) { sendError(res, "forbidden", "You are banned from this event"); return; }
 
   // Trust / age / verified gates (same rules as RSVP)
-  const trustGatesEnabledWl = await isFlagEnabled(sc, "events_trust_gates_enabled");
+  const trustGatesEnabledWl = await eventTrustGatesRun(sc);  // census-trust §30: an UNREAD flag keeps the gates on
   if (trustGatesEnabledWl) {
     if ((ev as any).verified_only) {
       const { data: profileWl } = await sc.from("profiles").select("verified").eq("id", user.id).maybeSingle();
@@ -3313,7 +3313,7 @@ router.post("/events/:id/waitlist/accept", async (req, res) => {
   }
 
   // Verify capacity hasn't been filled since the offer was issued (overbooking guard)
-  const { data: evCapCheck } = await sc.from("events").select("max_attendees, state, visibility, circle_id, trip_id").eq("id", id).maybeSingle();
+  const { data: evCapCheck, error: evCapErr } = await sc.from("events").select("id, host_id, max_attendees, state, visibility, circle_id, trip_id, verified_only, trust_score_min, age_min, age_max").eq("id", id).maybeSingle(); if (evCapErr) { req.log?.error({ err: evCapErr, eventId: id }, "waitlist accept: event read failed — refusing"); sendError(res, "degraded_unavailable", "We could not check this event right now. Please try again shortly."); return; }  // census-trust §30.6
   if (!evCapCheck) { sendError(res, "not_found", "Event not found"); return; }
   // State guard: never seat a 'going' RSVP on an event that is no longer live.
   // Without this, accepting an offer on a cancelled/archived/draft event would
@@ -3330,9 +3330,9 @@ router.post("/events/:id/waitlist/accept", async (req, res) => {
     await promoteNextWaitlisted(sc, id, req);
     sendError(res, "forbidden", acceptVis.message); return;
   }
-  const maxAtt = (evCapCheck as any)?.max_attendees ?? null;
+  const accElig = await checkEventEligibility(sc, evCapCheck as any, user.id); if (!accElig.ok) { sendEligibilityRefusal(req, res, id, accElig); return; } const maxAtt = (evCapCheck as any)?.max_attendees ?? null;  // census-trust §30.6: the join gate re-runs at accept; a refusal writes nothing
   if (maxAtt != null) {
-    const currentGoing = await getGoingCount(sc, id);
+    const currentGoing = await getGoingCount(sc, id); if (currentGoing === null) { sendCapacityUnavailable(req, res, id, "waitlist:accept"); return; }  // census-trust §30.8: the row and its offer are left as they are
     if (currentGoing >= maxAtt) {
       // Slot was taken — expire this offer and promote the next person
       await sc.from("event_waitlist").update({ offer_expires_at: null }).eq("event_id", id).eq("user_id", user.id);
@@ -3353,7 +3353,7 @@ router.post("/events/:id/waitlist/accept", async (req, res) => {
   const goingNow = await getGoingCount(sc, id);
   const { data: wlAfterAccept } = await sc.from("event_waitlist").select("user_id").eq("event_id", id);
   await sc.from("events").update({
-    going_count: goingNow,
+    going_count: goingNow ?? undefined,  // census-trust §30.8: unread → the column is left alone (JSON drops undefined), never 0
     waitlist_count: ((wlAfterAccept as any[]) ?? []).length,
   }).eq("id", id);
   await syncAttendee(sc, id, user.id, "going");
@@ -3605,7 +3605,7 @@ router.patch("/events/:id/requests/:userId", async (req, res) => {
 
     // Capacity check: if full, route to waitlist (when enabled) instead of going
     const maxAtt = (evFull as any).max_attendees ?? null;
-    const currentGoing = maxAtt != null ? await getGoingCount(sc, id) : 0;
+    const currentGoing = maxAtt != null ? await getGoingCount(sc, id) : 0; if (currentGoing === null) { sendCapacityUnavailable(req, res, id, "requests:approve"); return; }  // census-trust §30.8
     if (maxAtt != null && currentGoing >= maxAtt) {
       if ((evFull as any).waitlist_enabled) {
         // Add to waitlist if not already there
@@ -3625,7 +3625,7 @@ router.patch("/events/:id/requests/:userId", async (req, res) => {
     );
     await syncEventState(sc, id);
     const going = await getGoingCount(sc, id);
-    await sc.from("events").update({ going_count: going }).eq("id", id);
+    if (going !== null) await sc.from("events").update({ going_count: going }).eq("id", id);  // census-trust §30.8: an unread count is not stamped as 0
     await syncAttendee(sc, id, userId, "going");
 
     // Add to chat
@@ -3694,14 +3694,14 @@ router.post("/events/:id/roles", async (req, res) => {
   if (targetId === user.id) { sendError(res, "invalid_payload", "Cannot change your own role"); return; }
 
   // If banning: remove RSVP and waitlist entry, remove from chat, recompute counts
-  if (role === "banned") {
+  let banWlDelErr: unknown = null; if (role === "banned") {  // census-trust §30.7: the waitlist delete's error is bound and answered below
     await sc.from("event_rsvps").delete().eq("event_id", id).eq("user_id", targetId);
-    await sc.from("event_waitlist").delete().eq("event_id", id).eq("user_id", targetId);
+    ({ error: banWlDelErr } = await sc.from("event_waitlist").delete().eq("event_id", id).eq("user_id", targetId)); if (banWlDelErr) req.log?.error({ err: banWlDelErr, eventId: id, targetId }, "ban: waitlist row could not be removed");
     await syncEventState(sc, id);
     const going = await getGoingCount(sc, id);
     const { data: wlAfterBan } = await sc.from("event_waitlist").select("user_id").eq("event_id", id);
     await sc.from("events").update({
-      going_count: going,
+      going_count: going ?? undefined,  // census-trust §30.8: unread → the column is left alone, never 0
       waitlist_count: ((wlAfterBan as any[]) ?? []).length,
     }).eq("id", id);
     await syncAttendee(sc, id, targetId, null);
@@ -3718,7 +3718,7 @@ router.post("/events/:id/roles", async (req, res) => {
   );
   if (error) { sendError(res, "db_error", error.message); return; }
 
-  res.json({ ok: true, userId: targetId, role });
+  if (banWlDelErr) { sendBanWaitlistUnremoved(res); return; } res.json({ ok: true, userId: targetId, role });  // census-trust §30.7: not "ok" over a failed delete
 });
 
 // ── DELETE /api/events/:id/roles/:userId ──────────────────────────────────────
@@ -3765,13 +3765,13 @@ router.post("/events/:id/checkin", async (req, res) => {
   if (!(rsvp as any) || (rsvp as any).status !== "going") {
     sendError(res, "forbidden", "You must have a Going RSVP to check in"); return;
   }
-
-  await sc.from("event_attendee_states").upsert(
-    { event_id: id, user_id: user.id, checked_in_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  const checkInGate = await checkInGateFor(sc, id); if (checkInGate) { sendError(res, checkInGate.code, checkInGate.message); return; }
+  const checkedInAt = new Date().toISOString(); const { error: checkInErr } = await sc.from("event_attendee_states").upsert(
+    { event_id: id, user_id: user.id, checked_in_at: checkedInAt, updated_at: checkedInAt },
     { onConflict: "event_id,user_id" },
-  );
+  ); if (checkInErr) { req.log?.error({ err: checkInErr, eventId: id }, "event check-in write failed"); sendError(res, "db_error", checkInErr.message); return; }
 
-  res.json({ ok: true, checkedInAt: new Date().toISOString() });
+  res.json({ ok: true, checkedInAt });
 });
 
 // ── POST /api/events/:id/attendance/:userId ───────────────────────────────────
@@ -3977,8 +3977,8 @@ router.post("/events/:id/memory", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const ok = await isHostOrCoHost(sc, id, user.id);
-  if (!ok) { sendError(res, "forbidden", "Only host or co-host can convert to memory"); return; }
+  const ok = await isHostOrCoHost(sc, id, user.id) || await isGoingAttendee(sc, id, user.id);
+  if (!ok) { sendError(res, "forbidden", "Only the host, co-hosts and Going attendees can save this event as a memory"); return; }
 
   const { data: ev } = await sc.from("events").select("*").eq("id", id).maybeSingle();
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
@@ -3986,7 +3986,7 @@ router.post("/events/:id/memory", async (req, res) => {
     sendError(res, "forbidden", "Only completed events can be converted to a memory"); return;
   }
 
-  // Stub memory record — full Memory System handled separately
+  const priorMemory = await existingEventMemory(sc, id, user.id); if (priorMemory.unreadable) { sendError(res, "degraded_unavailable", "We could not check your saved memories. Please try again."); return; } if (priorMemory.id) { res.status(200).json({ memoryId: priorMemory.id, alreadySaved: true }); return; } // Stub memory record — full Memory System handled separately
   const { data: memory, error } = await sc
     .from("passport_memories")
     .insert({
@@ -5144,7 +5144,7 @@ router.patch("/events/:id/attendees/:userId/status", async (req, res) => {
 
   await syncEventState(sc, id);
   const going = await getGoingCount(sc, id);
-  await sc.from("events").update({ going_count: going }).eq("id", id);
+  if (going !== null) await sc.from("events").update({ going_count: going }).eq("id", id);  // census-trust §30.8: an unread count is not stamped as 0
   await syncAttendee(sc, id, userId, status);
 
   await logEventActivity(sc, id, user.id, "attendee_status_updated", { targetUserId: userId, newStatus: status });
@@ -5172,7 +5172,7 @@ router.delete("/events/:id/attendees/:userId", async (req, res) => {
   await sc.from("event_rsvps").delete().eq("event_id", id).eq("user_id", userId);
 
   const going = await getGoingCount(sc, id);
-  await sc.from("events").update({ going_count: going }).eq("id", id);
+  if (going !== null) await sc.from("events").update({ going_count: going }).eq("id", id);  // census-trust §30.8: an unread count is not stamped as 0
   await syncAttendee(sc, id, userId, null);
 
   // Promote BEFORE syncing state so the freed seat is reserved by an active
@@ -5270,7 +5270,7 @@ router.post("/events/:id/join-requests/:requestId/approve", async (req, res) => 
     .eq("id", requestId);
 
   const maxAtt = (evFull as any).max_attendees ?? null;
-  const currentGoing = maxAtt != null ? await getGoingCount(sc, id) : 0;
+  const currentGoing = maxAtt != null ? await getGoingCount(sc, id) : 0; if (currentGoing === null) { sendCapacityUnavailable(req, res, id, "join-requests:approve"); return; }  // census-trust §30.8
   // Capacity is the OUTER condition; waitlist_enabled only selects WHICH
   // full-event outcome is returned. Both branches must return, because the
   // going-upsert below is unconditional: when these were ANDed, a full event
@@ -5304,7 +5304,7 @@ router.post("/events/:id/join-requests/:requestId/approve", async (req, res) => 
   );
   await syncEventState(sc, id);
   const going = await getGoingCount(sc, id);
-  await sc.from("events").update({ going_count: going }).eq("id", id);
+  if (going !== null) await sc.from("events").update({ going_count: going }).eq("id", id);  // census-trust §30.8: an unread count is not stamped as 0
   await syncAttendee(sc, id, targetId, "going");
 
   await logEventActivity(sc, id, user.id, "join_request_approved", { targetUserId: targetId, outcome: "going" });
@@ -5455,7 +5455,7 @@ router.post("/events/:id/invites/:inviteId/accept", async (req, res) => {
 
   // Check eligibility BEFORE marking the invite as accepted — rejected users must
   // not receive an "accepted" outcome even if a previous invite exists.
-  const { data: ev } = await sc.from("events").select("*").eq("id", id).maybeSingle();
+  const { data: ev, error: evErr } = await sc.from("events").select("*").eq("id", id).maybeSingle(); if (evErr) { req.log?.error({ err: evErr, eventId: id }, "invite accept: event read failed — refusing"); sendError(res, "degraded_unavailable", "We could not check this event right now. Please try again shortly."); return; }  // census-trust §30: a failed read skipped the eligibility gate below and still marked the invite accepted
   if (ev && ["open","full","waitlist"].includes((ev as any).state)) {
     const elig = await checkEventEligibility(sc, ev as any, user.id);
     if (!elig.ok) {
@@ -5489,7 +5489,7 @@ router.post("/events/:id/invites/:inviteId/accept", async (req, res) => {
       );
       await syncEventState(sc, id);
       const going = await getGoingCount(sc, id);
-      await sc.from("events").update({ going_count: going }).eq("id", id);
+      if (going !== null) await sc.from("events").update({ going_count: going }).eq("id", id);  // census-trust §30.8: an unread count is not stamped as 0
       await syncAttendee(sc, id, user.id, "going");
     }
   }
@@ -5546,7 +5546,7 @@ router.get("/events/:id/cohosts", async (req, res) => {
     .order("added_at", { ascending: true });
 
   if (error) { req.log.error({ err: error }, "get event cohosts"); sendError(res, "db_error", error.message); return; }
-  res.json({ cohosts: cohosts ?? [] });
+  res.json({ cohosts: await withCohostIdentity(sc, (cohosts as any[]) ?? [], user.id) });
 });
 
 // ── POST /api/events/:id/cohosts ──────────────────────────────────────────────
@@ -5578,15 +5578,15 @@ router.post("/events/:id/cohosts", async (req, res) => {
   const { userId: targetId, permissions } = parsed.data;
   if (targetId === user.id) { sendError(res, "invalid_payload", "Host cannot add themselves as co-host"); return; }
 
-  // Upsert into event_cohosts and event_roles
-  await sc.from("event_cohosts").upsert(
+  if (await isBlocked(sc, user.id, targetId)) { sendError(res, "blocked_user", "You can't add this person as a co-host"); return; } // Upsert into event_cohosts and event_roles
+  const { error: cohostErr } = await sc.from("event_cohosts").upsert(
     { event_id: id, user_id: targetId, permissions, added_by: user.id, added_at: new Date().toISOString() },
     { onConflict: "event_id,user_id" },
-  );
-  await sc.from("event_roles").upsert(
+  ); if (cohostErr) { req.log?.error({ err: cohostErr, eventId: id }, "add cohost write failed"); sendError(res, "db_error", cohostErr.message); return; }
+  const { error: cohostRoleErr } = await sc.from("event_roles").upsert(
     { event_id: id, user_id: targetId, role: "co_host" },
     { onConflict: "event_id,user_id" },
-  );
+  ); if (cohostRoleErr) { req.log?.error({ err: cohostRoleErr, eventId: id }, "add cohost role write failed"); sendError(res, "db_error", cohostRoleErr.message); return; }
 
   await logEventActivity(sc, id, user.id, "cohost_added", { targetUserId: targetId });
 
@@ -5609,8 +5609,8 @@ router.delete("/events/:id/cohosts/:userId", async (req, res) => {
   const role = await getEventRole(sc, id, user.id);
   if (role !== "host") { sendError(res, "forbidden", "Only the host can remove co-hosts"); return; }
 
-  await sc.from("event_cohosts").delete().eq("event_id", id).eq("user_id", userId);
-  await sc.from("event_roles").delete().eq("event_id", id).eq("user_id", userId);
+  const { error: rmCohostErr } = await sc.from("event_cohosts").delete().eq("event_id", id).eq("user_id", userId); if (rmCohostErr) { req.log?.error({ err: rmCohostErr, eventId: id }, "remove cohost write failed"); sendError(res, "db_error", rmCohostErr.message); return; } // supabase-js resolves on a DB error: unchecked, a failed removal answered {ok:true}
+  const { error: rmRoleErr } = await sc.from("event_roles").delete().eq("event_id", id).eq("user_id", userId); if (rmRoleErr) { req.log?.error({ err: rmRoleErr, eventId: id }, "remove cohost role write failed"); sendError(res, "db_error", rmRoleErr.message); return; }
 
   await logEventActivity(sc, id, user.id, "cohost_removed", { targetUserId: userId });
 
@@ -5795,7 +5795,7 @@ router.get("/events/:id/posts", async (req, res) => {
   let authorMap: Record<string, any> = {};
   if (authorIds.length > 0) {
     const { data: profiles } = await sc.from("profiles").select("id, handle, name, avatar_url").in("id", authorIds);
-    for (const p of (profiles as any[]) ?? []) authorMap[p.id as string] = p;
+    const allowedAuthors = await nameVisibilitySet(sc, authorIds); for (const p of (profiles as any[]) ?? []) authorMap[p.id as string] = sanitizeIdentity(p, allowedAuthors, user.id);
   }
 
   res.json({
@@ -5843,7 +5843,7 @@ router.post("/events/:id/posts", async (req, res) => {
 
   const parsed = z.object({
     body:      z.string().min(1).max(2000),
-    mediaUrls: z.array(z.string().url()).max(10).default([]),
+    mediaUrls: z.array(z.string().url().refine((u) => Boolean(appStorageUrlInfo(u)), "mediaUrls must be uploaded app media URLs (use /api/media/upload first)")).max(10).default([]), // same storage-ref check as POST /events/:id/media (TM-create)
     pinned:    z.boolean().default(false),
   }).safeParse(req.body);
   if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
@@ -5933,7 +5933,7 @@ router.post("/events/:id/media", async (req, res) => {
   }
 
   const parsed = z.object({
-    mediaUrl:  z.string().url(),
+    mediaUrl:  z.string().min(1).max(2048), // the ref POST /api/media/upload returns (post-media/<path>) or our own public URL — z.url() refused the former, so no upload could ever land; appStorageUrlInfo below is the gate
     mediaType: z.enum(["image","video"]).default("image"),
     caption:   z.string().max(500).optional(),
   }).safeParse(req.body);
@@ -5999,7 +5999,7 @@ router.get("/events/:id/comments", async (req, res) => {
 
   if (error) { req.log.error({ err: error }, "get event comments"); sendError(res, "db_error", error.message); return; }
 
-  res.json({ updates: updates ?? [], page, limit });
+  res.json({ updates: await withAuthorIdentity(sc, (updates as any[]) ?? [], user.id), page, limit });
 });
 
 // ── POST /api/events/:id/comments ─────────────────────────────────────────────
@@ -6159,23 +6159,23 @@ router.post("/events/:id/block-user/:userId", async (req, res) => {
   }
 
   // Ban from event (set role to banned)
-  await sc.from("event_roles").upsert(
+  const { error: banErrBu } = await sc.from("event_roles").upsert(
     { event_id: id, user_id: userId, role: "banned" },
     { onConflict: "event_id,user_id" },
-  );
+  ); if (banErrBu) { req.log?.error({ err: banErrBu, eventId: id }, "block-user: ban write failed"); sendError(res, "db_error", banErrBu.message); return; }  // census-trust §30.7: was unchecked — answered ok over a ban that was not written
   // Remove RSVP and waitlist
   await sc.from("event_rsvps").delete().eq("event_id", id).eq("user_id", userId);
-  await sc.from("event_waitlist").delete().eq("event_id", id).eq("user_id", userId);
+  const { error: wlDelErrBu } = await sc.from("event_waitlist").delete().eq("event_id", id).eq("user_id", userId); if (wlDelErrBu) req.log?.error({ err: wlDelErrBu, eventId: id, userId }, "block-user: waitlist row could not be removed");  // census-trust §30.7
 
   await syncEventState(sc, id);
   const going = await getGoingCount(sc, id);
   const { data: wlAfter } = await sc.from("event_waitlist").select("user_id").eq("event_id", id);
-  await sc.from("events").update({ going_count: going, waitlist_count: ((wlAfter as any[]) ?? []).length }).eq("id", id);
+  await sc.from("events").update({ going_count: going ?? undefined, waitlist_count: ((wlAfter as any[]) ?? []).length }).eq("id", id);
   await syncAttendee(sc, id, userId, null);
 
   await logEventActivity(sc, id, user.id, "user_blocked", { targetUserId: userId });
 
-  res.json({ ok: true });
+  if (wlDelErrBu) { sendBanWaitlistUnremoved(res); return; } res.json({ ok: true });  // census-trust §30.7: not "ok" over a failed delete
 });
 
 // ── GET /api/events/:id/activity ──────────────────────────────────────────────
@@ -6235,10 +6235,10 @@ router.get("/events/:id/safety-summary", async (req, res) => {
 
   res.json({
     eventId:      id,
-    reports:      (reportRes as any).data ?? [],
-    noShows:      (noShowRes as any).data ?? [],
-    blockedUsers: ((blockedRes as any).data ?? []).map((r: any) => r.user_id),
-    generatedAt:  new Date().toISOString(),
+    reports:      (reportRes as any).error ? null : (reportRes as any).data ?? [],  // census-trust §30.9: an unread list is null + named in failedSources, never []
+    noShows:      (noShowRes as any).error ? null : (noShowRes as any).data ?? [],
+    blockedUsers: (blockedRes as any).error ? null : ((blockedRes as any).data ?? []).map((r: any) => r.user_id),
+    generatedAt:  new Date().toISOString(), ...safetySummaryFailedSources(req, id, { reports: reportRes, noShows: noShowRes, blockedUsers: blockedRes }),
   });
 });
 
@@ -6855,3 +6855,214 @@ async function removeUserFromChatThread(sc: any, threadId: string, userId: strin
 }
 
 export default router;
+
+// ── Testing-mode wiring helpers (WP-05, lane tm-events) ───────────────────────
+// Appended at the foot so every census-cited line above keeps its number.
+
+/** Check-in opens this long before `starts_at`. */
+export const EVENT_CHECKIN_OPENS_BEFORE_START_MS = 60 * 60_000;
+/** …and stays open this long after `ends_at`. */
+export const EVENT_CHECKIN_GRACE_AFTER_END_MS = 2 * 60 * 60_000;
+/** With no `ends_at`, the event is taken to last this long for check-in. */
+export const EVENT_CHECKIN_ASSUMED_DURATION_MS = 6 * 60 * 60_000;
+const EVENT_CHECKIN_STATES = new Set(["open", "full", "waitlist", "started"]);
+
+/**
+ * The self check-in rule, pure. Returns null when a Going attendee may check
+ * in at `nowMs`, otherwise the reason they may not.
+ *
+ * Check-in is a self-report — no GPS proof is asked for (decision TM-EV-01 in
+ * docs/ops/testing-mode-flows.md): the trust-bearing signal is the host's
+ * confirmation (POST /attendance/:userId), which the host makes in person.
+ * What this rule does stop is a check-in days before the event, or into one
+ * that was cancelled, archived, left in draft or already completed — each of
+ * which the route used to accept and then feed to POST /complete as
+ * "attended".
+ */
+export function eventCheckInRefusal(
+  ev: { state?: string | null; starts_at?: string | null; ends_at?: string | null },
+  nowMs: number,
+): string | null {
+  if (!EVENT_CHECKIN_STATES.has(String(ev.state ?? ""))) return "Check-in is closed for this event";
+  const startMs = ev.starts_at ? Date.parse(ev.starts_at) : NaN;
+  if (Number.isNaN(startMs)) return "This event has no start time yet";
+  if (nowMs < startMs - EVENT_CHECKIN_OPENS_BEFORE_START_MS) return "Check-in opens 1 hour before the event starts";
+  const endParsed = ev.ends_at ? Date.parse(ev.ends_at) : NaN;
+  const endMs = Number.isNaN(endParsed) ? startMs + EVENT_CHECKIN_ASSUMED_DURATION_MS : endParsed;
+  if (nowMs > endMs + EVENT_CHECKIN_GRACE_AFTER_END_MS) return "Check-in has closed for this event";
+  return null;
+}
+
+async function checkInGateFor(
+  sc: any,
+  eventId: string,
+): Promise<{ code: ApiErrorCode; message: string } | null> {
+  const { data: ev, error } = await sc.from("events").select("state, starts_at, ends_at").eq("id", eventId).maybeSingle();
+  if (error) return { code: "degraded_unavailable", message: "We could not check this event's time. Please try again." };
+  if (!ev) return { code: "not_found", message: "Event not found" };
+  const refusal = eventCheckInRefusal(ev as any, Date.now());
+  return refusal ? { code: "conflict", message: refusal } : null;
+}
+
+/** True only on a readable Going RSVP — an unreadable one is not a grant. */
+async function isGoingAttendee(sc: any, eventId: string, userId: string): Promise<boolean> {
+  const { data, error } = await sc.from("event_rsvps").select("status").eq("event_id", eventId).eq("user_id", userId).maybeSingle();
+  return !error && (data as any)?.status === "going";
+}
+
+/** The caller's existing memory of this event, so a second save does not duplicate it. */
+async function existingEventMemory(
+  sc: any,
+  eventId: string,
+  userId: string,
+): Promise<{ id: string | null; unreadable: boolean }> {
+  const { data, error } = await sc.from("passport_memories").select("id")
+    .eq("user_id", userId).eq("source_type", "event").eq("source_id", eventId).limit(1);
+  if (error) return { id: null, unreadable: true };
+  const row = Array.isArray(data) ? data[0] : data;
+  return { id: (row as any)?.id ?? null, unreadable: false };
+}
+
+async function publicIdentityMap(sc: any, userIds: string[], viewerId: string): Promise<Record<string, any>> {
+  const ids = [...new Set(userIds.filter(Boolean))];
+  if (ids.length === 0) return {};
+  const { data: profiles } = await sc.from("profiles").select("id, handle, name, avatar_url").in("id", ids);
+  const allowed = await nameVisibilitySet(sc, ids);
+  const out: Record<string, any> = {};
+  for (const p of (profiles as any[]) ?? []) {
+    const safe = sanitizeIdentity(p, allowed, viewerId);
+    out[p.id as string] = { id: p.id, handle: safe.handle ?? null, displayName: safe.name ?? null, avatarUrl: safe.avatar_url ?? null };
+  }
+  return out;
+}
+
+/** GET /events/:id/cohosts rows, each with the co-host's public identity. */
+async function withCohostIdentity(sc: any, rows: any[], viewerId: string): Promise<any[]> {
+  const map = await publicIdentityMap(sc, rows.map((r) => r.user_id as string), viewerId);
+  return rows.map((r) => ({
+    ...r,
+    handle: map[r.user_id]?.handle ?? null,
+    displayName: map[r.user_id]?.displayName ?? null,
+    avatarUrl: map[r.user_id]?.avatarUrl ?? null,
+  }));
+}
+
+/** GET /events/:id/comments rows, each with `author` (public identity or null). */
+async function withAuthorIdentity(sc: any, rows: any[], viewerId: string): Promise<any[]> {
+  const map = await publicIdentityMap(sc, rows.map((r) => r.author_id as string), viewerId);
+  return rows.map((r) => ({ ...r, author: map[r.author_id] ?? null }));
+}
+
+/**
+ * census-trust §30 — do the viewer gates (verified / trust / age) run?
+ *
+ * `events_trust_gates_enabled` was read through `isFlagEnabled`, which answers
+ * `false` for an off flag, an absent row AND a read that failed. For a
+ * capability flag that is the closed answer; for THIS flag it is the open one:
+ * `false` means "skip the gates", so a failed flag read listed 18+ events to
+ * verified minors, seated them on waitlists and let them RSVP.
+ *
+ * Read three-state instead. `on` runs the gates, `off` and `absent` skip them
+ * exactly as before (healthy answers unchanged), and `unreadable` RUNS them:
+ * the gates themselves fail closed on their own unread inputs, so running them
+ * over an unknown flag can only refuse more, never admit more.
+ */
+async function eventTrustGatesRun(sc: any): Promise<boolean> {
+  const state = await readFlagState(sc, "events_trust_gates_enabled");
+  return state === "on" || state === "unreadable";
+}
+
+// ── census-trust §30.6–§30.9 — waitlist seating, ban deletes, capacity ─────────
+
+/** How many queued users a promoter looks at past an ineligible head before it gives up. */
+export const WAITLIST_PROMOTE_SCAN = 25;
+
+/**
+ * census-trust §30.6 — which of `queued` (in queue order) may be offered a seat.
+ *
+ * A waitlisted user was offered, and could accept, a seat without passing the
+ * gate every other way in runs (`checkEventEligibility`: block, ban, verified,
+ * trust, age). A user who was eligible when they queued may not be now — banned
+ * since, blocked by the host, an age signal since verified — so the gate runs
+ * at the moment of the offer as well as at accept.
+ *
+ * An INELIGIBLE user is skipped, and their row is left alone: a refusal can come
+ * from a fail-closed block read, and deleting a row over an outage would drop an
+ * innocent user from the queue for good. An UNREADABLE verdict stops the scan
+ * (`unavailable: true`) — nobody behind them is offered their place, since that
+ * would jump the queue over a user the gate could not judge.
+ */
+export async function eligibleWaitlisted(
+  sc: any, ev: any, queued: string[], want: number,
+): Promise<{ ids: string[]; unavailable: boolean; message: string | null }> {
+  const ids: string[] = [];
+  for (const userId of queued) {
+    if (ids.length >= want) break;
+    const verdict = await checkEventEligibility(sc, ev, userId);
+    if (verdict.ok) { ids.push(userId); continue; }
+    if (verdict.unavailable) return { ids, unavailable: true, message: verdict.message };
+  }
+  return { ids, unavailable: false, message: null };
+}
+
+type WaitlistPick =
+  | { outcome: "eligible"; userId: string }
+  | { outcome: "stranded" }
+  | { outcome: "unreadable"; message: string };
+
+/** promoteNextWaitlisted's gate: the head of the queue if eligible, else the next eligible user. */
+async function pickEligibleWaitlisted(sc: any, eventId: string, head: { user_id: string } | null, req?: any): Promise<WaitlistPick> {
+  if (!head) return { outcome: "stranded" };
+  const { data: ev, error: evErr } = await sc.from("events").select("*").eq("id", eventId).maybeSingle();
+  if (evErr) {
+    req?.log?.warn?.({ err: evErr, eventId }, "waitlist promotion: event unreadable — seat not offered");
+    return { outcome: "unreadable", message: String(evErr.message ?? evErr) };
+  }
+  if (!ev) return { outcome: "stranded" };
+  const first = await eligibleWaitlisted(sc, ev, [head.user_id], 1);
+  if (first.ids.length === 1) return { outcome: "eligible", userId: head.user_id };
+  if (first.unavailable) return { outcome: "unreadable", message: first.message ?? "eligibility unavailable" };
+  const { data: rest, error: restErr } = await sc
+    .from("event_waitlist")
+    .select("user_id")
+    .eq("event_id", eventId)
+    .is("offer_expires_at", null)
+    .order("position", { ascending: true })
+    .limit(WAITLIST_PROMOTE_SCAN);
+  if (restErr) return { outcome: "unreadable", message: String(restErr.message ?? restErr) };
+  const queued = ((rest as any[]) ?? []).map((r: any) => r.user_id as string).filter((u: string) => u !== head.user_id);
+  const next = await eligibleWaitlisted(sc, ev, queued, 1);
+  if (next.ids.length === 1) return { outcome: "eligible", userId: next.ids[0] };
+  if (next.unavailable) return { outcome: "unreadable", message: next.message ?? "eligibility unavailable" };
+  req?.log?.info?.({ eventId }, "waitlist promotion: no eligible user in the queue window — seat not offered");
+  return { outcome: "stranded" };
+}
+
+/** An eligibility refusal at waitlist accept: 503 when the gate could not read its inputs, else the gate's own refusal. */
+function sendEligibilityRefusal(req: any, res: any, eventId: string, elig: EligibilityFail): void {
+  if (elig.unavailable) {
+    req.log?.warn?.({ eventId }, "waitlist accept: eligibility unreadable — not seated, offer left in place");
+    sendError(res, "degraded_unavailable", "We could not check your place at this event right now. Please try again shortly.");
+    return;
+  }
+  sendError(res, elig.errorCode as any, elig.message);
+}
+
+/** census-trust §30.7 — the ban was written but the banned user's waitlist row could not be removed. */
+function sendBanWaitlistUnremoved(res: any): void {
+  sendError(res, "degraded_unavailable", "The ban was recorded, but their waitlist place could not be removed. Please try again.");
+}
+
+/** census-trust §30.8 — the going-count could not be read, so nobody is seated. */
+function sendCapacityUnavailable(req: any, res: any, eventId: string, where: string): void {
+  req.log?.error?.({ eventId, where }, "event capacity unreadable — nobody seated");
+  sendError(res, "degraded_unavailable", "Event capacity could not be checked right now, so no seat was given. Please try again shortly.");
+}
+
+/** census-trust §30.9 — `{ failedSources }` naming each safety-summary list that could not be read; `{}` when all were. */
+function safetySummaryFailedSources(req: any, eventId: string, reads: Record<string, any>): { failedSources?: string[] } {
+  const failed = Object.keys(reads).filter((k) => Boolean(reads[k]?.error));
+  if (failed.length === 0) return {};
+  req.log?.error?.({ eventId, failed }, "safety summary: lists unreadable — reported as null, not empty");
+  return { failedSources: failed };
+}

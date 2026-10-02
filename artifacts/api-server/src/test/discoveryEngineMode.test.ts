@@ -199,14 +199,19 @@ describe("DISCOVERY_ENGINE_MODE — caching (mechanic M5)", () => {
   beforeEach(() => invalidateDiscoveryEngineModeCache());
 
   it("M. resolves once inside the TTL", async () => {
-    let reads = 0;
+    // Restated (census-discovery §82): the uncached non-legacy resolution now also
+    // refreshes the stop measurements, which read the arming flag
+    // (discovery_stop_enforcement_enabled) — so reads are counted PER FLAG. The
+    // mode is still read once per TTL window, and so is the arming flag.
+    const reads = new Map<string, number>();
     const client = {
       from() {
         const q: any = {
+          _flag: "",
           select() { return q; },
-          eq() { return q; },
+          eq(_c: string, v: string) { q._flag = v; return q; },
           maybeSingle() {
-            reads += 1;
+            reads.set(q._flag, (reads.get(q._flag) ?? 0) + 1);
             return Promise.resolve({ data: { enabled: true, metadata: { mode: "shadow" } }, error: null });
           },
         };
@@ -216,7 +221,10 @@ describe("DISCOVERY_ENGINE_MODE — caching (mechanic M5)", () => {
     for (let i = 0; i < 5; i++) {
       assert.equal((await resolveDiscoveryEngineMode(client)).mode, "shadow");
     }
-    assert.equal(reads, 1, "the mode is read once per TTL window, not per request");
+    await new Promise((r) => setImmediate(r));
+    assert.equal(reads.get(DISCOVERY_ENGINE_MODE_FLAG), 1, "the mode is read once per TTL window, not per request");
+    assert.ok((reads.get("discovery_stop_enforcement_enabled") ?? 0) <= 1, "the arming flag is read at most once per TTL window too");
+    assert.deepEqual([...reads.keys()].filter((k) => k !== DISCOVERY_ENGINE_MODE_FLAG && k !== "discovery_stop_enforcement_enabled"), [], "no other flag is read");
   });
 
   it("M2. the flag names are the ones the migration and docs use", () => {
@@ -344,9 +352,11 @@ describe("N. 12 stop conditions — the evaluator", () => {
       "event_rejection_rate", "recommendation_logging_gap", "creator_concentration",
       "reports_hides", "cache_bypass", "rls_leak", "attribution_double_count",
     ]);
-    assert.deepEqual([...STOP_CONDITIONS_WITHOUT_PRODUCER], [
-      "creator_concentration", "reports_hides", "cache_bypass", "rls_leak", "attribution_double_count",
-    ], "the five with no producer must be named, so 'never trips' is distinguishable from 'working'");
+    // census-discovery §54: all seven now have a producer, so the list of
+    // producerless conditions is empty; the five that cannot TRIP are the five
+    // with no ruling, and N8 pins that they are named on every evaluation.
+    assert.deepEqual([...STOP_CONDITIONS_WITHOUT_PRODUCER], [],
+      "a condition without a producer must be named here, so 'never trips' is distinguishable from 'working'");
   });
 
   it("N2. nothing trips on an empty window — absence of evidence is not evidence", () => {
@@ -408,14 +418,15 @@ describe("N. 12 stop conditions — the evaluator", () => {
     );
   });
 
-  it("N8. a condition with no producer can never appear in `tripped`", () => {
+  it("N8. a condition with no ruling can never appear in `tripped`", () => {
     for (let i = 0; i < STOP_MIN_SAMPLE * 5; i++) recordServeLogOutcome({ outcome: "rejected", servedItems: 10 });
     const v = evaluateStopConditions();
-    for (const c of STOP_CONDITIONS_WITHOUT_PRODUCER) {
-      assert.ok(!v.tripped.includes(c), `${c} has no input; it must never claim to have fired`);
+    const unruled = ["creator_concentration", "reports_hides", "cache_bypass", "rls_leak", "attribution_double_count"];
+    for (const c of unruled) {
+      assert.ok(!v.tripped.includes(c as never), `${c} has no ruling; it must never claim to have fired`);
     }
     assert.deepEqual(
-      [...v.unenforced], [...STOP_CONDITIONS_WITHOUT_PRODUCER],
+      [...v.unenforced], unruled,
       "every evaluation must carry the list of conditions it did NOT check, so a clean result cannot be read as 'all seven are fine'",
     );
   });

@@ -6,7 +6,7 @@
  *   - Recipient eligibility uses the authoritative `canMessage` verdict
  *     (lib/messagingPermissions) — the same gate the send-message endpoints use.
  *   - Mention (@) resolution delegates to `dispatchSearch(..., 'travelers')`
- *     (routes/discoverySearch) behind the same fail-closed block/age gate.
+ *     (./searchCandidates) behind the same fail-closed block/age gate.
  *   - Hashtag (#) resolution reuses the canonical `hashtags` search + the same
  *     lowercase slug normalization the TaggingService write path uses.
  *   - Username §23 validation reuses `validateUsername` (lib/usernameRules) and
@@ -29,8 +29,8 @@ import {
   dispatchSearch,
   fetchAgeRestrictedSet,
   type SearchResult,
-} from '../../routes/discoverySearch';
-import type { SearchQueryContext } from '../../routes/discoverySearchHelpers';
+} from './searchCandidates';
+import type { SearchQueryContext } from './searchQueryHelpers';
 import { canMessage } from '../messagingPermissions';
 import { validateUsername } from '../usernameRules';
 import type { InputContext, InputSuggestion } from './types';

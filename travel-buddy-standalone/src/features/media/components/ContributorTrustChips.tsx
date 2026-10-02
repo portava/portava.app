@@ -100,7 +100,7 @@ const s = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   labelCol: { flex: 1, minWidth: 0 },
   label: { ...t.small, color: color.ink, fontWeight: '700' },
-  desc: { fontSize: 11, lineHeight: 14, color: color.faint },
+  desc: { fontSize: 11, lineHeight: 14, color: color.mute }, // census-media §31: `faint` is 2.73:1 on paper, `mute` 5.27:1; was desc: { fontSize: 11, lineHeight: 14, color: color.faint },
   meterCol: { width: 108, flexDirection: 'row', alignItems: 'center', gap: space.sm },
   track: {
     flex: 1,
@@ -111,5 +111,5 @@ const s = StyleSheet.create({
   },
   fill: { height: 6, borderRadius: radius.pill, backgroundColor: color.deep },
   pct: { ...t.stamp, color: color.mute, width: 34, textAlign: 'right' },
-  caption: { fontSize: 11, lineHeight: 14, color: color.faint, fontStyle: 'italic' },
+  caption: { fontSize: 11, lineHeight: 14, color: color.mute, fontStyle: 'italic' }, // census-media §31: was `faint`, 2.73:1 on paper
 });

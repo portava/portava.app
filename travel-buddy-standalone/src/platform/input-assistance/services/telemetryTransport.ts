@@ -67,7 +67,7 @@ export function installInputTelemetryTransport(
     }
     if (!token) return { ok: false };
     try {
-      const res = await fetch(`${base}/input-assistance/telemetry`, {
+      const res = await fetch(`${base}/api/input-assistance/telemetry`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify(batch),

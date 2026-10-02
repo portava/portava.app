@@ -173,10 +173,14 @@ function overview() {
 // the server suite (src/test/layoverCompletionStamp.test.ts, which drives the
 // real router). Here the claim is about what the SCREEN hands it.
 jest.mock('../../../src/services/layover', () => ({
-  getLayoverOverview: jest.fn(async () => (global as any).__overview),
-  getRecommendations: jest.fn(async () => []),
+  getLayoverOverview: jest.fn(async () => ({ ok: true, overview: (global as any).__overview })),
+  getRecommendations: jest.fn(async () => ({ ok: true, recommendations: [] })),
   getLayoverBuddies: jest.fn(async () => ({ city: 'Bangkok', buddies: [] })),
   getLayoverPresence: jest.fn(async () => ({ sharing: false, count: 0, travelers: [] })),
+  // census L269 — the screen mounts LayoverDiscoveryCard, which reads through
+  // this module. Kept in step with the exhaustive list above: an omission here
+  // does not fail as a missing card, it throws inside the render.
+  getLayoverDiscovery: jest.fn(async () => ({ ok: true, gems: [] })),
   addStopFromRecommendation: jest.fn(async () => null),
   endLayoverSession: jest.fn(async () => ({
     ok: true, outcome: 'cancelled',

@@ -175,18 +175,21 @@ describe("DC-17 — a missing window, an empty window and a missing record read 
 
 // ── One vocabulary for all three producers ───────────────────────────────────
 
+/** §68: a derived store names its own pair; this one is a fixture's. */
+const STORE_PAIR = { modelVersion: "store-model-x", featureVersion: "store-feature-y" };
+
 describe("DC-17 — the rank window and the derived-store window are the same type", () => {
   it("a derived store still declares a BOUNDED window, and says so", () => {
-    const p = derivedStoreProvenance({ kind: "bounded", startMs: RANKED_AT - 1_000, endMs: RANKED_AT }, RANKED_AT);
+    const p = derivedStoreProvenance({ kind: "bounded", startMs: RANKED_AT - 1_000, endMs: RANKED_AT }, RANKED_AT, STORE_PAIR);
     assert.equal(p.window.kind, "bounded");
     assert.equal(p.window.startMs, RANKED_AT - 1_000);
     assert.equal(windowSpanMs(p.window), 1_000);
   });
 
-  it("the versions a stamped record claims are the constants it read, not the caller's", () => {
-    const p = derivedStoreProvenance({ kind: "bounded", startMs: 0, endMs: RANKED_AT }, RANKED_AT);
-    assert.equal(p.modelVersion,   DISCOVERY_MODEL_VERSION);
-    assert.equal(p.featureVersion, DISCOVERY_FEATURE_VERSION);
+  it("a derived store stamps the pair its store declares (§68); a RANK still stamps the ranker's constants, never the caller's", () => {
+    const p = derivedStoreProvenance({ kind: "bounded", startMs: 0, endMs: RANKED_AT }, RANKED_AT, STORE_PAIR);
+    assert.equal(p.modelVersion,   STORE_PAIR.modelVersion);
+    assert.equal(p.featureVersion, STORE_PAIR.featureVersion);
     const r = buildRankProvenance(PAGE, SOURCES, RANKED_AT).get("osm/b")!;
     assert.equal(r.modelVersion,   DISCOVERY_MODEL_VERSION);
     assert.equal(r.featureVersion, DISCOVERY_FEATURE_VERSION);
@@ -194,7 +197,7 @@ describe("DC-17 — the rank window and the derived-store window are the same ty
 
   it("the window is copied, so a later mutation of the caller's bounds cannot rewrite history", () => {
     const mine = { kind: "bounded" as const, startMs: 10, endMs: 20 };
-    const p = derivedStoreProvenance(mine, RANKED_AT);
+    const p = derivedStoreProvenance(mine, RANKED_AT, STORE_PAIR);
     mine.startMs = 999;
     assert.equal(p.window.startMs, 10);
   });

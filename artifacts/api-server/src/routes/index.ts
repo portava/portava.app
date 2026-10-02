@@ -29,6 +29,7 @@ import telegraphKindsRouter from "./telegraphKinds";
 import telegraphVoiceRouter from "./telegraphVoice";
 import telegraphCoordinationRouter from "./telegraphCoordination";
 import telegraphMemoryRouter from "./telegraphMemory";
+import savedMessagesRouter from "./savedMessages";
 import telegraphLifecycleRouter from "./telegraphLifecycle";
 import messagingRouter from "./messaging";
 import requestsRouter from "./requests";
@@ -70,13 +71,13 @@ import phoneVerificationRouter from "./phoneVerification";
 import passportStampsRouter from "./passportStamps";
 import hiddenGemsRouter from "./hiddenGems";
 import notificationsRouter from "./notifications";
-import airportRouter from "./airport";
+import airportRouter from "./airport";import layoverEventsRouter from "./layoverEvents"; // eslint-disable-line -- same-line to keep this file line-count-stable; 27 doc citations anchor on line numbers here
 import featureFlagsRouter from "./featureFlags";
 import tagsRouter from "./tags";
 import hashtagsRouter from "./hashtags";
 import circleAgeSettingsRouter from "./circleAgeSettings";
 import rentABuddyRouter from "./rentABuddy";
-import rentABuddyMarketplaceRouter from "./rentABuddyMarketplace";
+import rentABuddyMarketplaceRouter from "./rentABuddyMarketplace"; import creatorEconomyRouter from "./creatorEconomy"; import adminCreatorLedgerRouter from "./adminCreatorLedger"; import adminTrailsRouter from "./adminTrails"; // census-discovery §52 (DC-23, DV-59/DV-74): appended to this line so every line-number citation below stays true | census-discovery §86 (DV-74)
 import rentABuddyRolloutRouter from "./rentABuddyRollout";
 import rentABuddySpecRouter from "./rentABuddySpec";
 import compassRouter from "./compass";
@@ -192,6 +193,7 @@ router.use(telegraphKindsRouter);
 router.use(telegraphVoiceRouter);
 router.use(telegraphCoordinationRouter);
 router.use(telegraphMemoryRouter);
+router.use(savedMessagesRouter);
 router.use(telegraphLifecycleRouter);
 router.use(telegraphFeedbackRouter);
 // The kernel command router and telegraphCommandsRouter BOTH register
@@ -235,14 +237,14 @@ router.use(trustAdminRouter);
 router.use(phoneVerificationRouter);
 router.use(hiddenGemsRouter);
 router.use(notificationsRouter);
-router.use(airportRouter);
+router.use(airportRouter); router.use(layoverEventsRouter); // §11 producer ingest, separate router — see routes/layoverEvents.ts
 router.use(featureFlagsRouter);
 router.use(tagsRouter);
 router.use(hashtagsRouter);
 router.use(circleAgeSettingsRouter);
 router.use(rentABuddyRouter);
 router.use(rentABuddySpecRouter);
-router.use(rentABuddyMarketplaceRouter);
+router.use(rentABuddyMarketplaceRouter); router.use(creatorEconomyRouter); router.use(adminCreatorLedgerRouter); router.use(adminTrailsRouter); // census-discovery §52; §86 (adminTrailsRouter)
 router.use(rentABuddyRolloutRouter);
 router.use(compassRouter);
 router.use(compassHomeRouter);
@@ -394,4 +396,43 @@ router.use(opportunitiesRouter);
 import experienceSessionsRouter from "./experienceSessions.js";
 router.use(experienceSessionsRouter);
 
+// ── Telegraph §4 / §30A.2: Nearby & Available, as a server-built projection ──
+// Its own file behind nearby_reachable_enabled (no feature_flags row exists, so
+// it is OFF everywhere); no existing location, map or availability route is
+// touched. Registered at the tail, and the import with it, so no line above
+// moves — census-trips.md and sensing-surface-inventory.md cite this file by
+// line.
+import nearbyReachableRouter from "./nearbyReachable.js";
+router.use(nearbyReachableRouter);
+
+// ── Sensing §4.3: the anonymous signal ingest ────────────────────────────
+// Its own file. It is the FIRST transport the anonymous sensing store has ever
+// had, and it deliberately carries no user session: it authenticates the opaque
+// contribution credential (2480) and nothing else, reads and writes no
+// actor_id, and never touches location_snapshots. routes/intel.ts — the
+// requireUser-bound human-claim capture — is untouched and shares no path with
+// it. Registered at the tail, and the import with it, so no line above moves:
+// census-sensing.md and sensing-surface-inventory.md cite this file by line.
+import sensingIngestRouter from "./sensingIngest.js";
+router.use(sensingIngestRouter);
+
+// ── Sensing §3: ELIGIBILITY — the credential the ingest above authenticates ──
+// The one sensing request that carries an account, and the place consent is
+// read: the session carries only the scopes the person's recorded disclosure
+// covers (lib/sensingConsentScopes). Tail-registered for the same reason.
+import sensingSessionRouter from "./sensingSession.js";
+router.use(sensingSessionRouter);
+
+// ── Media §37: the video poster and the resumable byte path for a postcard ───
+// slot. Its own file; routes/postcards.ts keeps the reservation and /complete,
+// which still verify and scrub whatever these routes put in the slot. No path
+// here is shared with postcards.ts. Registered at the tail, and the import with
+// it, so no line above moves — several censuses cite this file by line.
+import postcardMediaTransportRouter from "./postcardMediaTransport.js";
+router.use(postcardMediaTransportRouter);
+
+// ── Media §37: the poster for a video uploaded through POST /media/upload ─────
+import mediaVideoPosterRouter from "./mediaVideoPoster.js";
+router.use(mediaVideoPosterRouter);
+import discoveryOutputKindsRouter from "./discoveryOutputKinds.js"; router.use(discoveryOutputKindsRouter); /* census-discovery §91 (DC-01): the three §85 output kinds, behind discovery_output_kinds_enabled; on this line so no cited line moves */ import discoveryTrendingRouter from "./discoveryTrending.js"; router.use(discoveryTrendingRouter); // census-discovery §58 (DC-21): `11` §4 trend explanation, read-only, behind discovery_trending_api_enabled. Written over the blank line that stood here, so the file keeps its 439 lines and no cited line moves.
 export default router;

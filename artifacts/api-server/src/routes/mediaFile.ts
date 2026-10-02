@@ -41,7 +41,7 @@ const GENERIC_COVER_URL =
  * entity has show_header_publicly explicitly set to false, AND the viewer is
  * NOT an owner/member/RSVP-holder who should always see the real image.
  *
- * Fail-OPEN: any DB error → false (do not accidentally block valid media).
+ * Fail-CLOSED since census-media §28.8 (was Fail-OPEN: any DB error → false): an unreadable setting serves the generic cover, which blocks nothing.
  * Owners and direct members always receive the real signed URL regardless of
  * show_header_publicly — the flag masks the cover from casual/public viewers.
  */
@@ -65,8 +65,8 @@ async function isHeaderPrivate(
         .select("show_header_publicly, host_id")
         .eq("id", entityId)
         .maybeSingle();
-      // Treat any error (including missing column) as fail-open.
-      if (error || !data) return false;
+      // §28.8: a read error MASKS (the generic cover); only a missing row means "not a header".
+      if (error) return true; if (!data) return false;
       if ((data as any).show_header_publicly !== false) return false;
       // Owners / hosts always get the real image.
       if ((data as any).host_id === viewerId) return false;
@@ -83,7 +83,7 @@ async function isHeaderPrivate(
         .select("show_header_publicly, owner_id")
         .eq("id", entityId)
         .maybeSingle();
-      if (error || !data) return false;
+      if (error) return true; if (!data) return false; // §28.8: a read error masks
       if ((data as any).show_header_publicly !== false) return false;
       // Trip owner always gets the real image.
       if ((data as any).owner_id === viewerId) return false;
@@ -99,7 +99,7 @@ async function isHeaderPrivate(
       return true; // outsider → generic cover
     }
   } catch {
-    return false;
+    return true; // §28.8: a thrown read masks too
   }
 }
 

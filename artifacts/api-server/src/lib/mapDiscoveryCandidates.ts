@@ -66,6 +66,28 @@
  * No third vocabulary is coined. `coverage` is non-null exactly when `refusal`
  * is — with no refusal there is no collection whose completeness is in doubt.
  *
+ * A READ THAT FAILED INSIDE THE READER IS A REFUSAL TOO (census-discovery §57).
+ * `readDiscoveryCandidatesForViewer` cannot throw on a database error: every
+ * viewer-side read in lib/discoveryPde's `loadPdeViewer` (follows, preferences,
+ * the seen set, the viewer neighbourhood) is non-fatal by design, and a failed
+ * one is recorded in `PdeViewer.degraded` instead. Before §57 the reader
+ * dropped that list, so a viewer whose preferences read 500'd got a report of
+ * `refusal: null` — COMPLETE — over a `whyForUser` computed with no taste at
+ * all: the exact masquerade this report exists to prevent, through the one
+ * door `read_threw` does not cover. The reader now returns the list, and the
+ * fold states it: `degraded` names the reads, `refusal` is
+ * `viewer_state_unreadable` (spelled like the gateway's own
+ * `block_set_unreadable` / `protection_unreadable`), `coverage` is "partial"
+ * — the projections present are real, and a reason absent from `whyForUser`
+ * is not evidence that it does not apply. A short answer still reports
+ * `incomplete_projection` first; `degraded` is carried either way.
+ *
+ * `degraded` is PRESENT EXACTLY WHEN DISCOVERY'S READER RAN. A refusal
+ * (`flag_off`, `read_threw`) and a page with nothing eligible read no viewer
+ * state, so there is nothing that could have degraded, and they carry no key —
+ * which is also what keeps the gate-shut report byte-identical to the one the
+ * gateway served before §57.
+ *
  * HTTP STAYS 200. The gateway already answers a read failure with a named
  * refusal inside its 200 envelope rather than a status change
  * (routes/mapProjection.ts's `block_set_unreadable` / `protection_unreadable`),
@@ -82,7 +104,7 @@ import type {
   DiscoveryCandidate,
   DiscoveryRankedBy,
 } from "./discoveryCandidate.js";
-import type { PdePlace } from "./discoveryPde.js";
+import type { PdePlace, PdeReadFailure } from "./discoveryPde.js";
 
 /**
  * The rung a canonical place leaves lib/mapProjectPlace at. An object that is
@@ -125,7 +147,12 @@ export interface DiscoveryCandidateSelection {
  * Why no candidate projection is attached. `flag_off` and `read_threw` are
  * spelled as routes/mapProjection.ts's existing layer reports spell them.
  */
-export type DiscoveryCandidateRefusal = "flag_off" | "read_threw" | "incomplete_projection";
+export type DiscoveryCandidateRefusal =
+  | "flag_off"
+  | "read_threw"
+  | "incomplete_projection"
+  /** The reader ran, but a viewer-side read inside it failed — see the header. */
+  | "viewer_state_unreadable";
 
 /**
  * What the layer did, in counts and refusals — the same discipline every other
@@ -151,6 +178,12 @@ export interface DiscoveryCandidateReport {
    * impression for a Discovery page the user did not see.
    */
   suppressedWrites: number;
+  /**
+   * The viewer-side reads that failed inside Discovery's reader, by
+   * lib/discoveryPde's own names. Present exactly when the reader ran (see the
+   * header); `[]` there means every viewer read succeeded.
+   */
+  degraded?: readonly PdeReadFailure[];
 }
 
 /** A finite coordinate or null — geometry is already validated upstream. */
@@ -253,7 +286,9 @@ export function refusedDiscoveryCandidates(
  * response, never of the object.
  *
  * Fewer rows back than went in ⇒ `incomplete_projection`, with `coverage`
- * saying whether anything at all is a result.
+ * saying whether anything at all is a result. Every row back but a viewer read
+ * failed inside the reader ⇒ `viewer_state_unreadable` / "partial", with the
+ * failed reads named in `degraded` (the header's §57 note).
  */
 export function foldDiscoveryCandidates(
   objects: MapObject[],
@@ -276,6 +311,13 @@ export function foldDiscoveryCandidates(
   const projected = byObjectId.size;
   const eligible = selection.rows.length;
   const short = projected < eligible;
+  // Undefined ⇒ the reader made no per-user read (the gateway's "nothing
+  // eligible" answer), so there is no `degraded` to report and no key.
+  const degraded = outcome.degraded;
+  const refusal: DiscoveryCandidateRefusal | null =
+    short ? "incomplete_projection"
+    : degraded !== undefined && degraded.length > 0 ? "viewer_state_unreadable"
+    : null;
 
   const next = byObjectId.size === 0
     ? objects
@@ -291,13 +333,14 @@ export function foldDiscoveryCandidates(
   return {
     objects: next,
     report: {
-      refusal: short ? "incomplete_projection" : null,
-      coverage: short ? (projected === 0 ? "nothing" : "partial") : null,
+      refusal,
+      coverage: refusal !== null ? (projected === 0 ? "nothing" : "partial") : null,
       servedPlaces: selection.servedPlaces,
       eligible,
       projected,
       rankedBy: outcome.rankedBy,
       suppressedWrites: outcome.suppressedWrites,
+      ...(degraded !== undefined ? { degraded: [...degraded] } : {}),
     },
   };
 }

@@ -6,7 +6,7 @@
  */
 import { supabase } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
-import { normalizeGuideProfile } from './hiddenGemsMappers.ts';
+import { normalizeGuideProfile, normalizeGemVisitOutcomes, type GemVisitOutcomes } from './hiddenGemsMappers.ts';
 import type {
   GemState,
   GemConfidence,
@@ -75,7 +75,7 @@ export interface HiddenGem {
    * §16 bounded evidence confidence ({ score 0..1, band }). A calm indicator,
    * NOT a popularity metric. Optional / degrade-safe like gemState.
    */
-  gemConfidence: GemConfidence | null;
+  gemConfidence: GemConfidence | null; /** §16.1 OUTCOME — verified visits linked to what visitors reported (floored). */ visitOutcomes?: GemVisitOutcomes | null;
 }
 
 export interface GuideProfile {
@@ -125,7 +125,7 @@ async function apiFetch<T>(
     },
   });
   const json = await res.json();
-  if (!res.ok) throw new Error((json as any).message ?? `HTTP ${res.status}`);
+  if (!res.ok) throw Object.assign(new Error((json as any).message ?? `HTTP ${res.status}`), { status: res.status, code: (json as any).error as string | undefined }); // status/code: TM-social PLAT-F37 (409 duplicate vs 403 vs outage)
   return json as T;
 }
 
@@ -163,7 +163,7 @@ function mapGem(r: any): HiddenGem {
     // §16 Phase-8 projections. The backend attaches these camelCase on gem
     // detail + discovery-list responses; absent on older / non-enriched paths.
     gemState:              r.gemState ?? r.gem_state ?? null,
-    gemConfidence:         normalizeGemConfidence(r.gemConfidence ?? r.gem_confidence),
+    gemConfidence:         normalizeGemConfidence(r.gemConfidence ?? r.gem_confidence), visitOutcomes: normalizeGemVisitOutcomes(r.visitOutcomes),
   };
 }
 
@@ -342,6 +342,8 @@ export async function contributeToGem(
   gemId: string,
   contributionType: GemContributionType,
   notes?: string,
+  /** The media item the contribution was made from (§45 Media → Contribution). */
+  opts: { originMediaId?: string | null } = {},
 ): Promise<{
   ok: boolean;
   contributionId: string | null;
@@ -357,7 +359,7 @@ export async function contributeToGem(
     gemConfidence: any;
   }>(`/api/hidden-gems/${gemId}/contribute`, {
     method: 'POST',
-    body: JSON.stringify({ contributionType, notes }),
+    body: JSON.stringify(opts.originMediaId ? { contributionType, notes, originMediaId: opts.originMediaId } : { contributionType, notes }),
   });
   return {
     ok: data.ok ?? false,
@@ -458,3 +460,7 @@ export function verificationBadge(level: GemVerificationLevel): string {
     case 'admin':       return 'Official';
   }
 }
+
+// ── §16.1 OUTCOME (census-media §21) — pure helpers live in hiddenGemsMappers
+// (no react-native), so node tests and the gem page share one definition.
+export { normalizeGemVisitOutcomes, gemVisitOutcomeSentence, type GemVisitOutcomes } from './hiddenGemsMappers.ts';

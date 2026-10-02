@@ -130,6 +130,9 @@ const PLACE: DiscoveryPlace = {
   openingHours: null,
   rating:       null,
   isOpenNow:    null,
+  // DV-46: the exposure id GET /discovery stamped on this item for this viewer.
+  // Every report below must carry it through, unchanged, beside the item id.
+  recommendationId: 'rec_PlaceCard_tap_0001',
 };
 
 async function mountCard(props: Partial<React.ComponentProps<typeof PlaceCard>> = {}) {
@@ -184,7 +187,7 @@ describe('PlaceCard — rank outcome wiring', () => {
     fireEvent.press(getByTestId(`place-card-${PLACE.id}`));
 
     expect(mockReportTap).toHaveBeenCalledTimes(1);
-    expect(mockReportTap).toHaveBeenCalledWith(PLACE.id);
+    expect(mockReportTap).toHaveBeenCalledWith(PLACE.id, PLACE.recommendationId);
     expect(onPress).toHaveBeenCalledTimes(1);
   });
 
@@ -193,7 +196,7 @@ describe('PlaceCard — rank outcome wiring', () => {
 
     fireEvent.press(getByTestId(`place-card-directions-${PLACE.id}`));
 
-    expect(mockReportTap).toHaveBeenCalledWith(PLACE.id);
+    expect(mockReportTap).toHaveBeenCalledWith(PLACE.id, PLACE.recommendationId);
     expect(openURLSpy).toHaveBeenCalledWith(expect.stringContaining('destination=48.8566,2.3522'));
   });
 
@@ -205,7 +208,7 @@ describe('PlaceCard — rank outcome wiring', () => {
     fireEvent.press(getByTestId(`place-card-save-${PLACE.id}`));
 
     expect(mockReportSave).not.toHaveBeenCalled(); // not on the tap…
-    await waitFor(() => expect(mockReportSave).toHaveBeenCalledWith(PLACE.id)); // …on the confirmation
+    await waitFor(() => expect(mockReportSave).toHaveBeenCalledWith(PLACE.id, PLACE.recommendationId)); // …on the confirmation
     expect(mockSaveItem).toHaveBeenCalledWith('place', PLACE.id);
     expect(mockReportSave).toHaveBeenCalledTimes(1);
   });
@@ -215,7 +218,7 @@ describe('PlaceCard — rank outcome wiring', () => {
 
     fireEvent.press(getByTestId(`place-card-stamp-${PLACE.id}`));
 
-    await waitFor(() => expect(mockReportSave).toHaveBeenCalledWith(PLACE.id));
+    await waitFor(() => expect(mockReportSave).toHaveBeenCalledWith(PLACE.id, PLACE.recommendationId));
   });
 
   it('a FAILED save reports nothing — outcomes follow the API, not the tap', async () => {
@@ -246,7 +249,7 @@ describe('PlaceCard — rank outcome wiring', () => {
 
     fireEvent.press(getByTestId('wishlist-stub-save'));
 
-    expect(mockReportSave).toHaveBeenCalledWith(PLACE.id);
+    expect(mockReportSave).toHaveBeenCalledWith(PLACE.id, PLACE.recommendationId);
   });
 
   // ── intent is not an outcome ───────────────────────────────────────────────

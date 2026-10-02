@@ -7,26 +7,26 @@
  *   - ForYouNowStrip    (Nightlife · 18 fresh perspectives …)
  *   - ChangingNow cards (what is shifting right now)
  *
- * Presentation modes (§5): Overview (the dashboard), Map (deferred to the later
- * Media Map phase — no precise-location UI here per the hard constraint), and
- * Time (a temporal rail with observed-vs-forecast styling, §17).
+ * Presentation modes (§5): Overview (the dashboard), Map (the one Media Map —
+ * MediaMapScreen, place-level clusters positioned by the canonical Map), and
+ * Time (MediaTimelineScreen: the §17 rail with observed-vs-forecast styling).
  *
  * All content comes from a projection the parent loads; this screen only reads
  * it and renders empty/loading/error cleanly.
  */
-import React, { useCallback } from 'react';
+import React from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { color, space } from '../../../theme/tokens.ts';
 import type { WorldViewState } from '../state/worldState.ts';
 import type { PresentationMode, CityVisualZone, ChangingNowItem, ForYouNowItem } from '../types/mediaContext.ts';
-import type { MediaTimelineProjection } from '../types/mediaTimeline.ts';
+import type { MediaProjection } from '../types/media.ts';
 import { CityVisualPulse } from '../components/CityVisualPulse.tsx';
 import { ForYouNowStrip } from '../components/ForYouNowStrip.tsx';
 import { ChangingNowCard } from '../components/ChangingNowCard.tsx';
-import { MediaTimeRail } from '../components/MediaTimeRail.tsx';
+import { MediaTimelineScreen } from './MediaTimelineScreen.tsx';
 import { LensStateView } from '../components/LensStateView.tsx';
-import { useLensProjection } from '../hooks/useLensProjection.ts';
-import { fetchTimeline, isTimelineEmpty } from '../services/mediaProjection.ts';
+import { MediaMapScreen } from './MediaMapScreen.tsx';
+import type { MediaMapCluster } from '../state/mediaMapStore.ts';
 
 export interface MediaWorldScreenProps {
   state: WorldViewState;
@@ -35,7 +35,7 @@ export interface MediaWorldScreenProps {
   onSelectZone?: (zone: CityVisualZone) => void;
   onOpenChanging?: (item: ChangingNowItem) => void;
   onWhyThis?: (item: ChangingNowItem) => void;
-  onSelectForYou?: (item: ForYouNowItem) => void;
+  onSelectForYou?: (item: ForYouNowItem) => void; city?: string | null; center?: { lat: number; lng: number } | null; onOpenCluster?: (cluster: MediaMapCluster) => void; onOpenMedia?: (media: MediaProjection) => void;
 }
 
 export function MediaWorldScreen({
@@ -45,19 +45,19 @@ export function MediaWorldScreen({
   onSelectZone,
   onOpenChanging,
   onWhyThis,
-  onSelectForYou,
+  onSelectForYou, city = null, center = null, onOpenCluster, onOpenMedia,
 }: MediaWorldScreenProps) {
   // Time mode is its own projection (GET /media/timeline), so it stands on its
   // own regardless of the World dashboard load — render it first.
   if (mode === 'time') {
-    return <WorldTimeRail />;
+    return <MediaTimelineScreen onOpenMedia={onOpenMedia} />;
   }
 
   const world = state.data;
   const showEmptyOrLoading =
     state.status === 'loading' || state.status === 'empty' || state.status === 'error' || !world;
 
-  if (showEmptyOrLoading) {
+  if (showEmptyOrLoading && mode !== 'map') { // Map, like Time, loads its own projection
     return (
       <LensStateView
         status={state.status === 'idle' ? 'loading' : state.status}
@@ -73,16 +73,18 @@ export function MediaWorldScreen({
   }
 
   if (mode === 'map') {
+    // NOW → Map: the one Media Map — world perspective counts positioned by the
+    // canonical Map, plus §46.1 gem zones. Loads its own projections.
     return (
-      <View style={styles.modePlaceholder}>
-        <Text style={styles.placeholderTitle}>Media Map</Text>
-        <Text style={styles.placeholderBody}>
-          The Media Map consumes Portava&apos;s canonical Map projection and arrives in a later phase.
-          It shows place-level perspective clusters — never precise locations.
-        </Text>
-      </View>
+      <MediaMapScreen
+        city={city ?? world?.city?.name ?? null}
+        center={center}
+        includeGems
+        onOpenCluster={onOpenCluster}
+      />
     );
   }
+  if (!world) return null; // unreachable: showEmptyOrLoading covers it; narrows the type
 
   // Overview (default dashboard)
   return (
@@ -122,43 +124,6 @@ export function MediaWorldScreen({
   );
 }
 
-/**
- * NOW → Time mode: the §17 rail, sourced from the real GET /media/timeline. The
- * NOW dashboard is city-level (no single place), so it loads the world timeline
- * (observed Earlier band; Now / Typical / Likely-Next are place-scoped and stay
- * empty here). Degrades cleanly (§33/§39) and never shows retained data as live.
- */
-function WorldTimeRail() {
-  const fetcher = useCallback(
-    (opts: { signal: AbortSignal }) => fetchTimeline({ signal: opts.signal }),
-    [],
-  );
-  const { state, reload } = useLensProjection<MediaTimelineProjection>(fetcher, isTimelineEmpty, []);
-  const timeline = state.data;
-  const stale = state.status === 'ready' && state.errorKind != null;
-
-  if (timeline && (state.status === 'ready' || state.status === 'empty' || state.status === 'revalidating')) {
-    return (
-      <ScrollView contentContainerStyle={styles.timeContent}>
-        <Text style={styles.sectionTitle}>Right now, and what&apos;s likely next</Text>
-        <MediaTimeRail bands={timeline.bands} stale={stale} />
-        <Text style={styles.timeNote}>
-          Earlier and Now are observed. Typical is a historical pattern; Likely next is a forecast —
-          shown as &ldquo;Likely&rdquo; with its confidence, never presented as fact (§17).
-        </Text>
-      </ScrollView>
-    );
-  }
-  return (
-    <LensStateView
-      status={state.status === 'idle' ? 'loading' : state.status}
-      title="No timeline yet"
-      message="As perspectives are shared around you, the Earlier / Now rail fills in here."
-      onRetry={reload}
-    />
-  );
-}
-
 const styles = StyleSheet.create({
   content: { paddingVertical: space.lg, gap: space.xl, paddingBottom: space.xxxl },
   section: { paddingHorizontal: space.lg, gap: space.md },
@@ -170,27 +135,4 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   changingStrip: { gap: space.md, paddingRight: space.lg, paddingVertical: 2 },
-  modePlaceholder: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: space.xl,
-    gap: space.sm,
-  },
-  placeholderTitle: { color: color.onInk, fontSize: 18, fontWeight: '800' },
-  placeholderBody: { color: color.onInkMute, fontSize: 14, lineHeight: 20, textAlign: 'center' },
-  timeContent: { paddingVertical: space.xl, gap: space.lg },
-  sectionTitle: {
-    color: color.onInk,
-    fontSize: 16,
-    fontWeight: '800',
-    letterSpacing: -0.3,
-    paddingHorizontal: space.lg,
-  },
-  timeNote: {
-    color: color.onInkMute,
-    fontSize: 12,
-    lineHeight: 18,
-    paddingHorizontal: space.lg,
-  },
 });

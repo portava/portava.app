@@ -130,6 +130,18 @@ const SECTIONS: Section[] = [
         action: (p) => { close(p); p.onManageHighlights?.(); },
       },
       {
+        // §21 Archive's "unless explicitly requested". Archiving retains the
+        // Highlight and takes it out of normal browsing; this is the only way
+        // back to one, and without it Archive would be irreversible from
+        // inside the app — which is Delete, under a kinder name.
+        key: 'archived-highlights',
+        label: 'Archived Highlights',
+        Icon: Archive,
+        iconColor: '#8A7E6E',
+        live: true,
+        action: (p) => { closeThenNavigate(p.onClose, '/highlights/archived'); },
+      },
+      {
         key: 'preview-public',
         label: 'Preview Public Profile',
         Icon: Eye,
@@ -460,6 +472,7 @@ function MenuRow({
         pressed && live && mr.rowPressed,
       ]}
       onPress={live ? onAction : undefined}
+      testID={`owner-menu-${item.key}`}
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityState={{ disabled: !live }}

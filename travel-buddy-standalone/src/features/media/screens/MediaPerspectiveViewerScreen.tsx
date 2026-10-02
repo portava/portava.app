@@ -75,7 +75,7 @@ import {
   firstIndexOfGroup,
   relatedPerspectives,
 } from '../state/perspectiveViewer.ts';
-import { relativeAgeLabel } from '../state/freshness.ts';
+import { relativeAgeLabel } from '../state/freshness.ts'; import { MediaContextSheet } from '../components/MediaContextSheet.tsx'; // §7 (census-media §19) — on this line so nothing below moves
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
@@ -88,7 +88,7 @@ export interface MediaPerspectiveViewerScreenProps {
   /** §14 "View Place" — open the entity's place screen (when a place id is known). */
   onViewPlace?: (placeId: string) => void;
   /** §14 "Ask Compass" — hand the entity to Compass. */
-  onAskCompass?: (entityId: string | null) => void;
+  onAskCompass?: (entityId: string | null) => void; /** §7 context sheet links (census-media §19, MD314). */ onNavigate?: (href: string) => void;
 }
 
 export function MediaPerspectiveViewerScreen({
@@ -96,7 +96,7 @@ export function MediaPerspectiveViewerScreen({
   initialMediaId,
   onClose,
   onViewPlace,
-  onAskCompass,
+  onAskCompass, onNavigate,
 }: MediaPerspectiveViewerScreenProps) {
   const insets = useSafeAreaInsets();
 
@@ -106,7 +106,7 @@ export function MediaPerspectiveViewerScreen({
     [input],
   );
 
-  const empty = isEmptyCollection(collection);
+  const empty = isEmptyCollection(collection); const [contextOpen, setContextOpen] = useState(false);
 
   const [activeIndex, setActiveIndex] = useState(() =>
     collection ? initialIndexForMedia(collection, initialMediaId) : 0,
@@ -174,8 +174,8 @@ export function MediaPerspectiveViewerScreen({
       />
 
       {/* Top bar — back to the entity + overflow. */}
-      <TopBar entityLabel={entityLabel} onClose={onClose} insetsTop={insets.top} />
-
+      <TopBar entityLabel={entityLabel} onClose={onClose} insetsTop={insets.top} onMore={activeMedia ? () => setContextOpen(true) : undefined} />
+      {activeMedia ? <MediaContextSheet visible={contextOpen} media={activeMedia} entry={input ? { kind: input.kind, entityId: collection.entityId, entityLabel } : null} onClose={() => setContextOpen(false)} onNavigate={onNavigate} /> : null}
       {/* Bottom contextual overlay. */}
       <View
         style={[styles.overlay, { paddingBottom: Math.max(insets.bottom + space.md, space.xl) }]}
@@ -228,11 +228,11 @@ export function MediaPerspectiveViewerScreen({
 function TopBar({
   entityLabel,
   onClose,
-  insetsTop,
+  insetsTop, onMore,
 }: {
   entityLabel: string | null;
   onClose: () => void;
-  insetsTop: number;
+  insetsTop: number; onMore?: () => void;
 }) {
   return (
     <View style={[styles.topBar, { paddingTop: insetsTop + space.sm }]} pointerEvents="box-none">
@@ -246,15 +246,15 @@ function TopBar({
         <ChevronLeft size={22} color={color.onInk} strokeWidth={2.5} />
       </Pressable>
       {entityLabel ? (
-        <Text style={styles.topTitle} numberOfLines={1}>
+        <View style={tailStyles.topTitleSlot}><Text style={[styles.topTitle, tailStyles.topTitleScrim]} numberOfLines={1}>
           {entityLabel}
-        </Text>
+        </Text></View>
       ) : (
         <View style={{ flex: 1 }} />
       )}
-      <View style={styles.iconBtn} pointerEvents="none">
+      <Pressable style={styles.iconBtn} onPress={onMore} disabled={!onMore} accessibilityRole="button" accessibilityLabel="What this is part of" testID="perspective-viewer-context" hitSlop={8}>
         <MoreHorizontal size={20} color={color.onInk} strokeWidth={2.2} />
-      </View>
+      </Pressable>
     </View>
   );
 }
@@ -431,7 +431,7 @@ function PerspectiveFrame({ media }: { media: MediaProjection }) {
                 accessibilityLabel={showCaptions ? 'Hide captions' : 'Show captions'}
                 accessibilityState={{ selected: showCaptions }}
               >
-                <Captions size={16} color={color.onInk} />
+                <Captions size={16} color={showCaptions ? color.ink : color.onInk} />
               </Pressable>
             ) : null}
           </View>
@@ -448,7 +448,7 @@ function PerspectiveFrame({ media }: { media: MediaProjection }) {
               <Text style={styles.captionText}>{media.note}</Text>
             </View>
           ) : null}
-          {isBuffering ? <Text style={styles.bufferingLabel}>Loading video…</Text> : null}
+          {isBuffering ? <Text style={[styles.bufferingLabel, tailStyles.bufferingScrim]}>Loading video…</Text> : null}
         </>
       ) : null}
     </View>
@@ -546,7 +546,7 @@ function PerspectiveContext({
             entityId={media.id}
             initialCount={0}
             initialIsStamped={false}
-            iconSize={22}
+            iconSize={22} tone="onDark"
             style={styles.stampBtn}
           />
         ) : null}
@@ -629,7 +629,7 @@ const styles = StyleSheet.create({
     borderRadius: icon.s26 / 2,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(17,17,15,0.5)',
+    backgroundColor: 'rgba(17,17,15,0.59)', // census-media §31: the least alpha at which "Retry" (onInk) clears 4.5:1 over a white photo; was 0.5
   },
   controlLabel: { color: color.onInk, fontSize: 11, fontWeight: '700' },
   videoControls: {
@@ -648,7 +648,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: 'rgba(17,17,15,0.7)',
   },
-  controlButtonActive: { backgroundColor: 'rgba(250,249,246,0.32)' },
+  controlButtonActive: { backgroundColor: color.onInk }, // census-media §31.12: ON is an opaque onInk badge under an ink icon (17.95:1); the old 0.32 light wash had no floor over a photo
   videoProgressTrack: {
     position: 'absolute',
     left: 14,
@@ -656,7 +656,7 @@ const styles = StyleSheet.create({
     bottom: 6,
     height: 3,
     borderRadius: 2,
-    backgroundColor: 'rgba(250,249,246,0.26)',
+    backgroundColor: 'rgba(17,17,15,0.80)', // census-media §31: a dark track, the least alpha at which the `signal` fill clears 3:1 over any photo; was a 0.26 light wash (1.00:1)
   },
   videoProgressFill: {
     height: 3,
@@ -691,7 +691,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     gap: space.md,
     paddingTop: space.lg,
-    backgroundColor: 'rgba(17,17,15,0.62)',
+    backgroundColor: 'rgba(17,17,15,0.96)', // census-media §31: the least alpha at which every label, chip, dot and pill on it clears AA over a white photo; was backgroundColor: 'rgba(17,17,15,0.62)',
   },
   contextBlock: { paddingHorizontal: space.lg, gap: space.sm },
   headline: {
@@ -765,4 +765,19 @@ const styles = StyleSheet.create({
   emptyWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: space.xl, gap: space.sm },
   emptyTitle: { color: color.onInk, fontSize: 17, fontWeight: '800', letterSpacing: -0.3, textAlign: 'center' },
   emptyBody: { color: color.onInkMute, fontSize: 14, lineHeight: 20, textAlign: 'center' },
+});
+
+// ── census-media §31 — appended at the TAIL so no line cited above moves ──────
+// (census-media cites :255, :288, :605 and :694.)
+//
+// The top title and the buffering label sat on the photograph with no scrim at
+// all: 1.00:1 over a photo the colour of the text. Each now rides on its own
+// ink badge, at the least alpha whose worst case — a white photo — clears
+// 4.5:1 for its text colour (onInk 0.59, onInkMute 0.71).
+const tailStyles = StyleSheet.create({
+  // Keeps the title's flex slot, so the overflow button stays right-aligned,
+  // while the badge hugs the text.
+  topTitleSlot: { flex: 1, alignItems: 'flex-start' },
+  topTitleScrim: { flex: 0, flexShrink: 1, backgroundColor: 'rgba(17,17,15,0.59)', borderRadius: radius.pill, paddingHorizontal: space.sm, paddingVertical: 2, overflow: 'hidden' },
+  bufferingScrim: { backgroundColor: 'rgba(17,17,15,0.71)', borderRadius: radius.pill, paddingHorizontal: space.sm, paddingVertical: 2, overflow: 'hidden' },
 });

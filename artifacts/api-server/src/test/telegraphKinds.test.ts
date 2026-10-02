@@ -142,6 +142,7 @@ function makeClient(state: State) {
   const inserted: any[] = [];
   const observed: Array<{ table: string; sel: string }> = [];
   const gte: Array<{ table: string; col: string; val: any }> = [];
+  const or: Array<{ table: string; filters: string }> = [];
 
   function from(table: string) {
     const filters: Array<(r: any) => boolean> = [];
@@ -183,6 +184,24 @@ function makeClient(state: State) {
         filters.push((r) => Date.parse(r[col]) >= Date.parse(val));
         return proxy;
       },
+      // MODELLED, not proxied to a no-op. `readIndexableRows` now carries the
+      // §14.3 window as an `or=` group (Q6's own-message exception), and an
+      // unmodelled `or` would apply NO filter at all — which would make the
+      // assertions below pass because the fake had stopped filtering. Real
+      // PostgREST semantics: the clauses inside the group are ORed with each
+      // other, and the group is ANDed with every other filter.
+      or(f: string) {
+        or.push({ table, filters: f });
+        const ms = f.split(",").map((clause) => {
+          const a = clause.indexOf("."), b = clause.indexOf(".", a + 1);
+          const col = clause.slice(0, a), op = clause.slice(a + 1, b), val = clause.slice(b + 1);
+          if (op === "gte") return (r: any) => Date.parse(r[col]) >= Date.parse(val);
+          if (op === "eq") return (r: any) => String(r[col]) === val;
+          throw new Error(`fake client: unmodelled or() operator "${op}"`);
+        });
+        filters.push((r: any) => ms.some((m) => m(r)));
+        return proxy;
+      },
       order(col: string, opts?: any) { _order = { col, asc: opts?.ascending !== false }; return proxy; },
       limit(n: number) { _limit = n; return proxy; },
       maybeSingle() {
@@ -221,6 +240,7 @@ function makeClient(state: State) {
     _inserted: inserted,
     _observed: observed,
     _gte: gte,
+    _or: or,
     from,
     rpc: async () => ({ data: null, error: { message: "rpc not modelled" } }),
     auth: { getUser: async (token: string) => ({ data: { user: { id: token } }, error: null }) },
@@ -515,6 +535,8 @@ describe("GET /threads/:id/drawer", () => {
       assert.ok(!s.sel.includes("visible_from_at"), `OFF must not name the column: ${s.sel}`);
     }
     assert.deepEqual((c as any)._gte, []);
+    assert.deepEqual((c as any)._or.filter((o: any) => o.table === "messages"), [],
+      "OFF adds no or() group either — the query is byte-identical to today's");
   });
 
   it("§14.3 ON: Bob's drawer stops at his window, and the bound is in the query", async () => {
@@ -524,7 +546,14 @@ describe("GET /threads/:id/drawer", () => {
     const ids = r.body.items.map((i: any) => i.id);
     assert.ok(!ids.includes("m-old-photo"), "the drawer must not be a way around §14.3");
     assert.ok(ids.includes("m-photo"));
-    assert.ok((c as any)._gte.some((g: any) => g.table === "messages" && g.col === "created_at" && g.val === BOUND));
+    // The bound is still in the QUERY — it is now carried as the `or=` group
+    // that also expresses Q6's own-message exception. Asserted in full: the
+    // group must admit the window OR the CALLER's own rows, and nothing else.
+    assert.ok(
+      (c as any)._or.some((o: any) =>
+        o.table === "messages" && o.filters === `created_at.gte.${BOUND},sender_id.eq.${BOB}`),
+      `the bound must reach the query: ${JSON.stringify((c as any)._or)}`,
+    );
   });
 
   it("a non-member is refused, not handed an empty index", async () => {

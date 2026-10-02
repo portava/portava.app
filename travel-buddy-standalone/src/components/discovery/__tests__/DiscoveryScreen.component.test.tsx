@@ -125,6 +125,9 @@ jest.mock('../../../hooks/useFollowingHighlights', () => ({
     refresh: jest.fn(),
     sessionViewedIds: new Set<string>(),
     markSessionViewed: jest.fn(),
+    // §28.11: null means the feed WAS read and is genuinely empty, which is
+    // the state this screen test is exercising.
+    unreadable: null,
   }),
 }));
 

@@ -62,7 +62,7 @@ const MAX_HIDDEN_GEMS  = 20;
  * below has something to read.
  */
 const POST_COLUMNS =
-  "id, author_id, content, created_at, location_city, location_country, status, visibility, canonical_place_id, post_status";
+  "id, author_id, content, created_at, location_city, location_country, status, visibility, canonical_place_id, post_status, location_privacy_mode"; // census-media §43: the owner's mode, so postToItem can mark a post whose place mapPublicPost withholds
 
 async function fetchPosts(
   db: SupabaseClient,
@@ -132,7 +132,7 @@ function postToItem(post: any): CompassItem {
     // Place-affinity boost: carry the canonical place so scoreItem can apply
     // the ×1.15 multiplier when the viewer has recently visited this place.
     placeId:         (post.canonical_place_id as string | null) ?? null,
-    data:            { title },
+    data:            { title }, ...postPlaceMark(post), // census-media §43: an internal, never-serialised mark on a post whose place mapPublicPost withholds; placeId above stays for live constraints and the affinity boost, and CompassFeedBuilder strips it for a non-owner at the page
   };
 }
 
@@ -462,3 +462,6 @@ export async function hydrateCompassItems(
     (item) => !item.authorId || !blockedSet.has(item.authorId),
   );
 }
+
+// census-media §43 — appended at the tail so no cited line above moves; ESM hoists imports.
+import { postPlaceMark } from "../lib/postPlaceDisclosure.js";

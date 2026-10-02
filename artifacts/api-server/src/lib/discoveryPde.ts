@@ -530,7 +530,7 @@ export async function rankForViewer<T extends PdePlace>(
   // write. Reads are untouched, so the ranking stays representative.
   const sc = opts.served
     ? opts.sc
-    : suppressWrites(opts.sc, () => { stages.suppressedWrites += 1; });
+    : suppressWrites(opts.sc, () => { stages.suppressedWrites += 1; }); const pre = await pdePreRankStages(opts.sc, sc, places, viewer, opts, nowMs, stages); places = pre.places; viewer = pre.viewer; const pipe = pre.pipe;  // census-discovery §85: cold start + candidate generation — with every §85 flag off this returns the caller's own objects
 
   // ── ROADMAP step 7/8 modifiers — behind discovery_ranking_modifiers_enabled ─
   // With the flag off this is one cached flag read and an inert record; the
@@ -555,7 +555,7 @@ export async function rankForViewer<T extends PdePlace>(
       modifiers = inertModifiers("flag_off");
     }
   }
-  stages.modifiers = modifiers.reason;
+  stages.modifiers = modifiers.reason; if (modifiers.enabled) stages.graphReading = graphReadingOf(modifiers);  // census-discovery §62 (DV-52): provenance only — the graph reading these modifiers came from; absent with them off
 
   const viewerContext: ViewerContext = {
     userId:       viewer.userId,
@@ -602,16 +602,16 @@ export async function rankForViewer<T extends PdePlace>(
     __place:    p,
   }));
 
-  const prT0 = Date.now();
+  const designs = await loadRankDesigns(sc, { viewerId: viewer.userId, city: viewer.city, places, nowMs, intentMode: opts.intentMode }); if (designs.active) stages.rankDesigns = { degraded: designs.degraded }; const prT0 = Date.now();  // census-discovery §78 H1, integrated in §91: flags off ⇒ six cached flag reads, no stage key, and the same three objects below
   // With the modifiers ON the governor owns exploration for this surface, so
   // portavaRank's fixed every-7th slot is switched off here — otherwise the
   // page would carry two exploration passes and exceed the budget. With the
   // modifiers OFF the call is exactly what it was.
-  const scored = modifiers.enabled
-    ? rankCandidates(candidates, viewerContext, { exploration: false })
-    : rankCandidates(candidates, viewerContext);
+  const scored = modifiers.enabled || pipe.explorationOwnedByInventory  // §85 (DV-53): the reserved inventory owns exploration when it is on, as the governor does with the modifiers on
+    ? rankWithDesigns(candidates, viewerContext, { exploration: false }, designs)
+    : rankWithDesigns(candidates, viewerContext, {}, designs);  // §78 H1 (§91): `{}` is rankCandidates' own default, and inactive designs hand back the same three objects
   const portavaRankMs = Date.now() - prT0;
-  stages.portavaRank = true;
+  stages.portavaRank = true; stampPdeFeatureProvenance(scored, pdeFeatureProvenance(prT0, modifiers.enabled ? (modifiers.momentumProvenance ?? null) : undefined));  // census-discovery §75 (DC-17, H-P21-2): provenance only — the feature version, the rank clock (read above, before the ranker ran), its window and the momentum input's own record ride with these scored objects to rank_events; nothing reads them to rank
 
   const scoredById = new Map<string, ScoredCandidate<RankCandidate>>(
     scored.map((s) => [(s.candidate as PlaceCandidate<T>).__place.id, s]),
@@ -734,7 +734,7 @@ export async function rankForViewer<T extends PdePlace>(
       } catch { /* non-fatal — assembly analytics must never affect the feed response */ }
     }
   } catch { /* non-fatal — portavaRank order preserved on DRS error */ }
-  drsMs = Date.now() - drsT0;
+  drsMs = Date.now() - drsT0; await pdeLearningStage(pipe, sc, ranked, stages, nowMs);  // §85 (DC-11): learn from outcomes — a bounded nudge on DRS's order, only with its flag on
 
   // ── Exploration GOVERNOR (ROADMAP step 8) ──────────────────────────────────
   // Runs over the FINAL order (after DRS) so its slots are positions on the
@@ -753,7 +753,7 @@ export async function rankForViewer<T extends PdePlace>(
   // no trace: the OFF feature vector has to be byte-identical to what the
   // pre-governor pipeline produced. Observation is a thing you turn ON.
   let governor: GovernorOutcome | null = null;
-  if (modifiers.enabled) {
+  if (modifiers.enabled) { if (pipe.explorationOwnedByInventory) stages.governor = "skipped"; else  // §85 (DV-53): one exploration pass per page — the reserved inventory below
     try {
       const gc: GovernorCandidate[] = ranked.map((p) => ({
         id: p.id,
@@ -789,14 +789,14 @@ export async function rankForViewer<T extends PdePlace>(
       stages.governor = "skipped";
     }
   }
-
+  await pdeRediscoveryRetestStage(sc, opts, viewer, places, ranked, scoredById, modifiers, stages, nowMs); await pdePostRankStages(pipe, sc, ranked, scoredById, viewer, modifiers, stages, nowMs, opts);  // §93 (DV-31, H-W10R1-1): the retest, after the governor, only with the modifiers on and 3475's retest flag on; §85: the reserved inventory (DV-53), the integrity stage (DC-11), and each row's record — nothing with every §85 flag off
   return {
     ranked,
     scoredById,
     stages,
     timings: { portavaRankMs, drsMs, totalMs: Date.now() - t0 },
     modifiers,
-    governor,
+    governor, ...(pipe.sourcesById ? { candidateSources: pipe.sourcesById } : {}),  // §85 (DC-12): every candidate's attribution, only when generation ran
   };
 }
 
@@ -1049,4 +1049,201 @@ export async function loadViewerNeighborhood(
     readFailed(degraded, "viewer_neighborhood", err ?? true);
     return null;
   }
+}
+
+// ── census-discovery §62 (DV-52) — WHICH graph reading produced the modifiers ──
+//
+// §59.1 DV-52 (1): where the graph reaches a Discovery decision, the decision
+// did not record which graph reading made it. lib/discoveryModifiers.ts turns
+// `compass_city_confidence` (depth, tier, the CPV2-12 source and its reason,
+// computed-at) into a momentum scale and an exploration budget, but `stages`
+// kept only the on/off reason — and the confidence row is OVERWRITTEN on each
+// daily rebuild, so a past serve's graph input could not be recovered.
+//
+// PROVENANCE ONLY, AND ONLY WITH THE MODIFIERS ON. `graphReadingOf` copies
+// values the modifiers record already holds; it reads nothing, computes no
+// weight, term or threshold, and nothing downstream of it reads it back, so no
+// order can change (db-free golden test: test/discoveryPdeGraphReading.test.ts).
+// With the modifiers OFF (2289, seeded OFF, and the 2026-08-15 ranker hold) the
+// key is not ASSIGNED — not assigned `undefined` — so the OFF `stages` object,
+// and every byte serialised from it, is what it was before §62.
+//
+// WHERE IT IS RECORDED. `routes/discovery.ts` hands `outcome.stages` whole to
+// logDiscoveryShadowServe, so a shadow serve's `pde_stages` jsonb carries it
+// with no writer change. The SERVED path (engine mode `pde`) records no
+// `stages` at all today — not even the on/off reason — and its per-item
+// features pass DV-39's allowlist screen, which classifies no graph or governor
+// key. Recording the reading on served rows is a route + classifier change
+// outside this file (census-discovery §62.5).
+//
+// Declared by merging, down here, for the reason the PdeViewer merge above
+// gives: every line near the original interface is an anchored citation.
+
+/** One city-confidence reading, as the modifiers consumed it. Null fields: no record was read (absent, or the read failed — the loader cannot tell them apart and both mean THIN). */
+export interface PdeGraphReading {
+  /** The canonical city key the reading was stored under, or null. */
+  city: string | null;
+  /** compass_city_confidence.depth_score (0–100), or the platform coverage's. */
+  depthScore: number | null;
+  tier: string | null;
+  /** CPV2-12: which store answered — `platform_coverage` | `compass_graph`; null = unknown provenance. */
+  source: string | null;
+  sourceReason: string | null;
+  /** When the reading was computed — the key that makes an overwritten row recoverable from logs. */
+  computedAt: string | null;
+  /** What the reading became (lib/discoveryModifiers.ts cityConfidenceInputs). */
+  momentumScale: number;
+  explorationBudgetPct: number;
+}
+
+export interface PdeStages {
+  /** §62: present ONLY when the modifiers ran. Absent (never `undefined`-valued) with them off. */
+  graphReading?: PdeGraphReading;
+}
+
+/** Pure: the reading the modifiers record carries. Reads nothing; copies only. */
+export function graphReadingOf(m: DiscoveryModifiers): PdeGraphReading {
+  const c = m.cityConfidence;
+  return {
+    city:                 typeof c?.city === "string" && c.city !== "" ? c.city : null,
+    depthScore:           typeof c?.depthScore === "number" && Number.isFinite(c.depthScore) ? c.depthScore : null,
+    tier:                 typeof c?.tier === "string" ? c.tier : null,
+    source:               typeof c?.source === "string" ? c.source : null,
+    sourceReason:         typeof c?.sourceReason === "string" ? c.sourceReason : null,
+    computedAt:           typeof c?.computedAt === "string" && c.computedAt !== "" ? c.computedAt : null,
+    momentumScale:        m.momentumScale,
+    explorationBudgetPct: m.explorationBudgetPct,
+  };
+}
+
+// census-discovery §75 (DC-17, lane P33): the PDE feature vector's provenance (see the
+// stamp after `rankCandidates` above). Imported at the foot so no cited line moves.
+import { pdeFeatureProvenance, stampPdeFeatureProvenance } from "./discoveryRankProvenance.js";
+
+// ── census-discovery §85 (lane W10-R3): candidate generation, exploration, cold start, learning, integrity ──
+//
+// The stages live in lib/discoveryCandidates/stages.ts and are called from the
+// four lines of `rankForViewer` marked §85 above, each edited in place so no
+// cited line moved. Everything below is declaration merging, at the foot for
+// the reason the other merges in this file give. With every §85 flag off none
+// of these fields is assigned — not assigned `undefined` — so the OFF `stages`
+// object and the OFF outcome serialise exactly as before §85
+// (src/test/discoveryCandidatePipelineGolden.test.ts).
+
+import { pdePreRankStages, pdeLearningStage, pdePostRankStages } from "./discoveryCandidates/stages.js";
+import type { PipelineFlags } from "./discoveryCandidates/pipelineFlags.js";
+import type { GenerationReport } from "./discoveryCandidates/generate.js";
+import type { ColdStartReport } from "./discoveryCandidates/viewerColdStart.js";
+import type { LearningReport } from "./discoveryCandidates/outcomeLearning.js";
+import type { IntegrityReport, EngagementIntegrityDetector } from "./discoveryCandidates/integrity.js";
+import type { InventoryBucket } from "./discoveryCandidates/explorationInventory.js";
+import type { PdeCandidateSource } from "./discoveryCandidates/candidateSources.js";
+import type { GraphReadingProvenance } from "./discoveryCandidates/graphReadingProvenance.js";
+
+export interface PdeRankOptions {
+  /** §85: the eight flags, pre-read. Omit and they are read once (one query, cached 30 s per client). */
+  pipelineFlags?: PipelineFlags;
+  /** §85: the requested tab, which bounds the categories a generated row may carry. */
+  category?: string | null;
+  /** §85: whether candidate generation may ADD rows. Defaults to `served`: the Map reader and shadow runs never add. */
+  generateCandidates?: boolean;
+  /** §85: DV-12's detector for the integrity stage. Omit ⇒ the registered one (integrity.ts); null ⇒ none. */
+  integrityDetector?: EngagementIntegrityDetector | null;
+}
+
+export interface PdeStages {
+  /** §85 (DC-12): what each retrieval returned, claimed and added. Present only with 3480 on. */
+  candidateGeneration?: GenerationReport;
+  /** §85 (DV-55): whether the viewer was cold and what was seeded. Present only with 3482 on. */
+  coldStart?: ColdStartReport;
+  /** §85 (DC-11): the outcome-learning nudge. Present only with its flag on. */
+  outcomeLearning?: LearningReport;
+  /** §85 (DV-53): the reserved inventory. Present only with 3481 on. */
+  explorationInventory?: {
+    status: "applied" | "observed" | "skipped";
+    budgetPct: number; slotCount: number; floor: number | null; placed: number; moved: number;
+    bucketMembers: Record<InventoryBucket, number>; eligible: Record<InventoryBucket, number>; failedReads: string[];
+  };
+  /** §85 (DC-11): the integrity stage. Present only with its flag on. */
+  integrity?: IntegrityReport;
+}
+
+export interface PdeGraphReading {
+  /** §85 (H-P21-4): the reading's own model version, feature version and window, or why there is none. Present only with 3484 on. */
+  provenance?: GraphReadingProvenance;
+}
+
+export interface PdeRankOutcome<T extends PdePlace> {
+  /** §85 (DC-12): place id → every source that named it (`caller_pool` for the route's reads). Present only when generation ran. */
+  candidateSources?: Map<string, PdeCandidateSource[]>;
+}
+
+// ── census-discovery §78 (lane W10-R2) hunk H1, integrated by lane W10-I (§91) ──
+// The scoring designs' one hook (lib/discoveryRankDesigns.ts). The two in-place
+// lines are in rankForViewer; this block is appended so no cited line moves.
+import { loadRankDesigns, applyRankDesigns, type RankDesigns } from "./discoveryRankDesigns.js";
+import type { RankOptions } from "./portavaRank.js";
+
+/** rankCandidates over the designs. Inactive designs ⇒ rankCandidates(candidates, ctx, opts) exactly. */
+function rankWithDesigns<C extends RankCandidate>(candidates: C[], ctx: ViewerContext, opts: RankOptions, designs: RankDesigns): ScoredCandidate<C>[] {
+  const d = applyRankDesigns(candidates, ctx, opts, designs);
+  return rankCandidates(d.candidates, d.ctx, d.opts);
+}
+
+export interface PdeRankOptions {
+  /** §78 (A18): the request's `?intentMode=`, raw. Parsed by lib/discoveryRankIntent; unknown ⇒ ignored. Read only with discovery_intent_term_enabled on. */
+  intentMode?: unknown;
+}
+
+export interface PdeStages {
+  /** §78: present ONLY when a design flag is on; the design loaders that could not read. */
+  rankDesigns?: { degraded: string[] };
+}
+
+// ── census-discovery §85 R3 / D-W10-R3-8, integrated by lane W10-I (§91): DC-11's integrity stage calls DV-12's detector ──
+// Registered at module load, so every rankForViewer caller has it; the stage
+// runs only under discovery_integrity_stage_enabled (3483) and the detector
+// reads only under discovery_engagement_integrity_enabled (3451). Tests still
+// inject their own (opts.integrityDetector) or register null.
+import { registerEngagementIntegrityDetector } from "./discoveryCandidates/integrity.js";
+import { engagementIntegrityStageDetector } from "./discoveryRankIntegrity.js";
+registerEngagementIntegrityDetector(engagementIntegrityStageDetector);
+
+// ── census-discovery §93 (lane W11-X1): DV-31's page consumer, hunk H-W10R1-1 (§84.5) ──
+// `02` §9.5 "periodically retest promising items": after the exploration
+// governor has placed its picks, lib/discoveryTrendRediscovery moves at most one
+// cooled place (a v2 reading) to the middle of the page and the served row is
+// stamped `rediscoveryRetest: 1`, so the retest reaches rank_events as an
+// exposure like any other (D-W10-R1-14). Appended here so no cited line moves.
+//
+// Behind the modifiers (2289): the retest pool IS the momentum load's own v2
+// readings for this candidate key, and that load runs only with the modifiers
+// on. With them off nothing below runs and nothing is read — L0 and the §85
+// pipeline golden stay byte-identical. With them on and
+// `discovery_trend_rediscovery_retest_enabled` (3475) FALSE, absent or
+// unreadable, it reads one cached flag and changes nothing (D-W11X1-2).
+// Never fatal: a throw leaves the page as the governor left it.
+import { planRediscoveryRetest } from "./discoveryTrendRediscovery.js";
+
+export interface PdeStages {
+  /** §93 (DV-31): present ONLY when a retest moved a place; which, to which slot, from where. */
+  rediscoveryRetest?: { id: string; slot: number; fromIndex: number };
+}
+
+async function pdeRediscoveryRetestStage<T extends PdePlace>(
+  sc: any, opts: PdeRankOptions, viewer: PdeViewer, places: readonly T[], ranked: T[],
+  scoredById: Map<string, ScoredCandidate<RankCandidate>>, modifiers: DiscoveryModifiers, stages: PdeStages, nowMs: number,
+): Promise<void> {
+  if (!modifiers.enabled) return;
+  try {
+    // The SAME key expression the momentum load was given above, so the pool is that load's own.
+    const key = opts.candidateKey ?? deriveCandidateKey(viewer.city, places.map((p) => p.id));
+    const plan = await planRediscoveryRetest(sc, key, ranked.map((p) => p.id), nowMs);
+    if (!plan.retest) return;
+    const pos = new Map(plan.order.map((id, i) => [id, i]));
+    ranked.sort((a, b) => (pos.get(a.id) ?? ranked.length) - (pos.get(b.id) ?? ranked.length));
+    const s = scoredById.get(plan.retest.id);
+    if (s) s.features.rediscoveryRetest = 1;
+    stages.rediscoveryRetest = plan.retest;
+  } catch { /* non-fatal — the governor's page stands */ }
 }

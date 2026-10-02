@@ -17,7 +17,7 @@ import {
   Dimensions,
 } from 'react-native';
 import { Gem, MapPinned, Megaphone, SearchCheck } from 'lucide-react-native';
-import { color, radius, type as t, avatar, dot} from '../../theme/tokens.ts';
+import { radius, type as t, avatar, dot} from '../../theme/tokens.ts';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 
@@ -35,28 +35,28 @@ const ARC_ITEMS: Array<{
     key: 'gem',
     label: 'Save Gem',
     angleDeg: 210,
-    bgColor: '#8B5CF6',
+    bgColor: '#8558EC', // census-media §31.12: #8B5CF6 x 0.96, the lightest same-hue fill under which the white 8 px label reads 4.5:1
     icon: (sz, col) => <Gem size={sz} color={col} />,
   },
   {
     key: 'trip',
     label: 'Add to Trip',
     angleDeg: 255,
-    bgColor: color.signal,
+    bgColor: '#D64127', // census-media §31.12: `signal` x 0.84, likewise (a Media-local colour; the token is unchanged)
     icon: (sz, col) => <MapPinned size={sz} color={col} />,
   },
   {
     key: 'telegraph',
     label: 'Telegraph',
     angleDeg: 300,
-    bgColor: '#0EA5E9',
+    bgColor: '#0B7DB1', // census-media §31.12: #0EA5E9 x 0.76, likewise
     icon: (sz, col) => <Megaphone size={sz} color={col} />,
   },
   {
     key: 'find',
     label: 'Find here',
     angleDeg: 345,
-    bgColor: '#10B981',
+    bgColor: '#0C875E', // census-media §31.12: #10B981 x 0.73, likewise
     icon: (sz, col) => <SearchCheck size={sz} color={col} />,
   },
 ];

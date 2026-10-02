@@ -133,6 +133,7 @@ const PLACE: DiscoveryPlace = {
   openingHours: null,
   rating: null,
   isOpenNow: null,
+  recommendationId: 'rec_PlaceCard_dis_0001',  // DV-46: the served exposure id the dismissal must carry
 } as DiscoveryPlace;
 
 const noop = () => {};
@@ -189,7 +190,7 @@ describe('PlaceCard — "Not interested"', () => {
     });
 
     expect(mockReportDismiss).toHaveBeenCalledTimes(1);
-    expect(mockReportDismiss).toHaveBeenCalledWith(PLACE.id);
+    expect(mockReportDismiss).toHaveBeenCalledWith(PLACE.id, PLACE.recommendationId);
   });
 
   it('(5) the owner is told ONLY after the server accepted it', async () => {

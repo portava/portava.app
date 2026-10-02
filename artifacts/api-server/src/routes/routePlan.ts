@@ -59,7 +59,7 @@ const CreateRoutePlanSchema = z.object({
   routeStyle: z.enum(["nightlife", "scenic", "foodie", "low_walking", "custom"]).default("custom"),
   startLocation: LocationSchema.nullable().optional(),
   endLocation: LocationSchema.nullable().optional(),
-  stops: z.array(CandidateStopSchema).min(2).max(20),
+  stops: z.array(CandidateStopSchema).min(2).max(20), originMediaId: z.string().regex(UUID).optional(),
 });
 
 const PatchStopSchema = z.object({
@@ -94,7 +94,7 @@ router.post("/route-plans", asyncHandler(async (req, res) => {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body");
     return;
   }
-  const { title, tripId, routeStyle, startLocation, endLocation, stops } = parsed.data;
+  const { title, tripId, routeStyle, startLocation, endLocation, stops, originMediaId } = parsed.data;
 
   if (tripId) {
     const isMember = await isAcceptedTripMember(client, tripId, user.id);
@@ -284,6 +284,24 @@ router.post("/route-plans", asyncHandler(async (req, res) => {
   }
 
   const fullPlan = await fetchFullPlan(client, planId);
+
+  // census-media §21 — §45 "Media → Route". A route saved from a media item's
+  // experience chain (the rail's save_route action sends `originMediaId`) is
+  // recorded as that media's route outcome, keyed by the plan id so a later
+  // stop arrival or completion can be attributed to it. Only for a media row
+  // that exists and is active; fire-and-forget, gated by MEDIA_ANALYTICS_ENABLED.
+  if (originMediaId) {
+    const svc = getServiceClient();
+    if (svc) {
+      void (async () => {
+        const { data: post, error: postErr } = await svc.from("posts").select("id, status").eq("id", originMediaId).maybeSingle();
+        if (postErr || !post || (post as any).status !== "active") return;
+        const { recordMediaEvent } = await import("../lib/mediaAnalytics.js");
+        recordMediaEvent("media_route", { media_id: originMediaId, viewer_id: user.id, route_plan_id: planId, action_id: "save_route", surface: "route_plan" }, svc);
+      })().catch(() => {});
+    }
+  }
+
   res.status(201).json({
     ...fullPlan,
     warnings: optimized.warnings,
@@ -541,6 +559,14 @@ router.post("/route-plans/:id/complete", asyncHandler(async (req, res) => {
     return;
   }
 
+  // census-media §21 — §44 "Experience completed": the traveller ended a route
+  // they saved FROM MEDIA. Attribution reads their own media_route event for
+  // this plan id; no media origin, no event.
+  {
+    const svc = getServiceClient();
+    if (svc) void import("../lib/mediaAnalytics.js").then((m) => m.recordExperienceCompletionIfAttributable(svc, { userId: user.id, routePlanId: id })).catch(() => {});
+  }
+
   res.json({
     id:               (updated as any).id,
     status:           (updated as any).status,
@@ -609,6 +635,14 @@ router.patch("/route-plans/:id/stops/:stopId", asyncHandler(async (req, res) => 
     req.log.error({ err: patchErr }, "patch route_stop");
     sendError(res, "db_error", patchErr?.message ?? "Failed to update stop");
     return;
+  }
+
+  // census-media §21 — §26/§45 real-world ARRIVAL, where safely measurable: the
+  // traveller themselves marked this stop arrived. Recorded only when one of
+  // their own media-originated actions produced this route.
+  if (parsed.data.checkpointStatus === "arrived") {
+    const svc = getServiceClient();
+    if (svc) void import("../lib/mediaAnalytics.js").then((m) => m.recordMediaArrivalIfAttributable(svc, { userId: user.id, routePlanId: id, source: "route_stop" })).catch(() => {});
   }
 
   res.json(toCamel(updated as Record<string, unknown>));

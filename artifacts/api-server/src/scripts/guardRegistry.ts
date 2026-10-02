@@ -965,4 +965,14 @@ export const GUARDS: readonly GuardEntry[] = [
       unit: "symbol-naming citation(s) judged against the file they name",
     },
   },
+  {
+    checker: "src/scripts/checkDiscoveryQueryPaths.ts",
+    inspects: {
+      countPattern: "(\\d+) Discovery table/index creations",
+      unit: "Discovery table and index creations checked against docs/discovery/query-paths.md",
+    },
+    responsibility:
+      "Every table or index a migration creates on a Discovery table carries expected cardinality, index rationale and EXPLAIN evidence in docs/discovery/query-paths.md (`10` §4; census-discovery DC-15).",
+    reach: { kind: "check-all", script: "check:discovery-query-paths" },
+  },
 ];

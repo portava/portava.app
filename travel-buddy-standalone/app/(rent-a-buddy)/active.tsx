@@ -9,14 +9,16 @@ import {
 } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow, layout, avatar } from '../../src/theme/tokens';
 import { TravelLoadingState, TravelErrorState } from '../../src/components/primitives';
-import { getBooking, addExtraTime, reportBooking, safetyCheckin, feelUnsafe, endBookingEarly, type BuddyBooking, bookingErrorCopy } from '../../src/services/rentABuddy';
+import { getBooking, addExtraTime, reportBooking, safetyCheckin, feelUnsafe, endBookingEarly, type BuddyBooking, bookingErrorCopy, completeBooking, submitCheckIn, triggerEmergencyPhrase, type EmergencyPhraseOption } from '../../src/services/rentABuddy';
+import { describeGateRefusal, type GateRefusal } from '../../src/services/rentABuddyGates';
+import { RabGateRefusalState } from '../../src/components/rentabuddy/RabGateRefusalState';
 import {
   getActiveSession,
   startLiveShare,
   stopLiveShare,
   getSessionContacts,
   type SessionContact,
-} from '../../src/services/safeReturn';
+} from '../../src/services/safeReturn'; import { liveShareNoticeCopy } from '../../src/lib/liveShareRecipient.ts';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useStickyBarInset } from '../../src/hooks/useBottomInset';
 
@@ -140,6 +142,33 @@ function EndModal({ visible, onClose, onEnd }: { visible: boolean; onClose: () =
   );
 }
 
+/**
+ * The emergency phrase's private prompt (PLAT-F45). Only the traveller ever
+ * sees it — the server returns it to the traveller alone and never tells the
+ * buddy — so it must look like an ordinary sheet, not an alarm.
+ */
+function EmergencyPhraseModal({ prompt, options, onChoose, onClose }: {
+  prompt: string | null;
+  options: EmergencyPhraseOption[];
+  onChoose: (id: string) => void;
+  onClose: () => void;
+}) {
+  return (
+    <Modal visible={prompt !== null} transparent animationType="fade" onRequestClose={onClose}>
+      <View style={modal.overlay}>
+        <View style={modal.sheet} testID="emergency-phrase-sheet">
+          <Text style={modal.title}>{prompt}</Text>
+          {options.map((o) => (
+            <Pressable key={o.id} style={modal.cancelBtn} onPress={() => onChoose(o.id)} testID={`phrase-option-${o.id}`}>
+              <Text style={modal.cancelBtnText}>{o.label}</Text>
+            </Pressable>
+          ))}
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 export default function RentABuddyActive() {
   const insets = useSafeAreaInsets();
   const { inset: barInset, onBarLayout } = useStickyBarInset();
@@ -168,6 +197,11 @@ export default function RentABuddyActive() {
   const [sessionContactsError, setSessionContactsError] = useState(false);
   const [addTimeVisible, setAddTimeVisible] = useState(false);
   const [endVisible, setEndVisible] = useState(false);
+  // A refusal by a Rent-a-Buddy gate, shown as its own card (testing mode, lane tm-rab).
+  const [gate, setGate] = useState<GateRefusal | null>(null);
+  const [phrasePrompt, setPhrasePrompt] = useState<string | null>(null);
+  const [phraseOptions, setPhraseOptions] = useState<EmergencyPhraseOption[]>([]);
+  const [ending, setEnding] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const load = useCallback(async () => {
@@ -175,7 +209,12 @@ export default function RentABuddyActive() {
     setLoading(true);
     const res = await getBooking(bookingId);
     setLoading(false);
-    if (!res.ok) { setError(res.error); return; }
+    if (!res.ok) {
+      const g = describeGateRefusal(res.error, res.gate);
+      if (g) { setGate(g); return; }
+      setError(bookingErrorCopy(res.error, "Couldn't load this session."));
+      return;
+    }
     setBooking(res.data.booking);
   }, [bookingId]);
 
@@ -261,7 +300,7 @@ export default function RentABuddyActive() {
       setShareRecipientName(contact.contactName ?? 'Trusted contact');
       setShareExpiresAt(res.share.expiresAt ?? null);
       setNowTick(Date.now());
-      setCircleShare(true);
+      setCircleShare(true); const notice = liveShareNoticeCopy(res, contact.contactName ?? 'Your contact'); if (notice) Alert.alert('Contact not notified', notice); // TRUST-F10: never imply a contact was told when they were not
     } else {
       // Show error and leave toggle OFF.
       Alert.alert(
@@ -285,14 +324,89 @@ export default function RentABuddyActive() {
   const remaining = Math.max(0, totalDurationS - elapsed);
   const cashBalance = booking ? Math.round(booking.totalUsd * 0.7) : 0;
 
-  const handleEnd = () => {
+  // "End session" COMPLETES the booking on the server (the traveller's completion
+  // is final; the buddy's opens the traveller's confirmation window). It used to
+  // only navigate to the review screen, so the booking stayed in_progress forever
+  // and the review route — which requires `completed` — refused the review.
+  const handleEnd = async () => {
     setEndVisible(false);
-    if (booking) {
+    if (!booking || ending) return;
+    setEnding(true);
+    const res = await completeBooking(booking.id);
+    setEnding(false);
+    if (res.ok) {
       router.replace({ pathname: '/(rent-a-buddy)/review' as any, params: { bookingId: booking.id } });
+      return;
     }
+    const g = describeGateRefusal(res.error, res.gate);
+    if (g) { setGate(g); return; }
+    Alert.alert("Couldn't end the session", bookingErrorCopy(res.error, 'The session could not be completed. Please try again.'));
+  };
+
+  const recordCheckIn = async (type: 'arrival' | 'check_ok' | 'start_safe_return', done: string) => {
+    if (!bookingId) return;
+    const res = await submitCheckIn(bookingId, type, booking?.city);
+    if (res.ok) { Alert.alert('Check-in recorded', done); return; }
+    const g = describeGateRefusal(res.error, res.gate);
+    if (g) { setGate(g); return; }
+    Alert.alert("Check-in didn't save", bookingErrorCopy(res.error, 'Please try again. If you feel unsafe, use the SOS button.'));
+  };
+
+  const handlePhrase = async () => {
+    if (!bookingId) return;
+    const res = await triggerEmergencyPhrase(bookingId);
+    if (res.ok) {
+      setPhraseOptions(res.data.options ?? []);
+      setPhrasePrompt(res.data.prompt ?? 'Are you okay? Only you can see this message.');
+      return;
+    }
+    // Never leave a person who reached for the duress phrase with nothing: the
+    // fallback is the emergency number, whatever went wrong.
+    Alert.alert(
+      'Safety check not recorded',
+      bookingErrorCopy(res.error, 'If you are in danger, call emergency services now.'),
+      [
+        { text: 'OK' },
+        { text: 'Call emergency services', style: 'destructive', onPress: () => Linking.openURL('tel:112') },
+      ],
+    );
+  };
+
+  const choosePhraseOption = async (id: string) => {
+    setPhrasePrompt(null);
+    if (id === 'ok') { await recordCheckIn('check_ok', "Glad you're okay. Recorded privately."); return; }
+    if (id === 'end_booking') {
+      const r = await endBookingEarly(bookingId, 'emergency_phrase');
+      if (r.ok) {
+        Alert.alert('Session ended', 'The session has been ended and our safety team can see why.');
+        router.replace({ pathname: '/(rent-a-buddy)/booking/[id]' as any, params: { id: bookingId } });
+      } else {
+        Alert.alert('Could not end the session', 'Please call emergency services if you are in danger.', [
+          { text: 'OK' },
+          { text: 'Call emergency services', style: 'destructive', onPress: () => Linking.openURL('tel:112') },
+        ]);
+      }
+      return;
+    }
+    if (id === 'share_location') { void handleCircleShareToggle(true); return; }
+    if (id === 'safe_return') {
+      setSafeReturn(true);
+      await recordCheckIn('start_safe_return', 'Safe Return check-in is on for this session.');
+      return;
+    }
+    if (id === 'contact_support') {
+      const r = await reportBooking(bookingId, { reason: 'safety_concern' });
+      Alert.alert(
+        r.ok ? 'Support contacted' : 'Could not reach support',
+        r.ok ? 'Our safety team will review this session.' : 'Please call emergency services if you are in danger.',
+      );
+      return;
+    }
+    if (id === 'emergency') { Linking.openURL('tel:112'); }
   };
 
   if (loading) return <TravelLoadingState label="Loading session…" />;
+  if (gate && !booking) return <RabGateRefusalState refusal={gate} onRetry={() => { setGate(null); void load(); }} />;
   if (error) return <TravelErrorState title="Couldn't load session" sub={error} onRetry={load} />;
 
   return (
@@ -328,6 +442,12 @@ export default function RentABuddyActive() {
         contentContainerStyle={{ paddingBottom: barInset }}
         showsVerticalScrollIndicator={false}
       >
+        {gate ? (
+          <View style={{ marginHorizontal: space.lg, marginTop: space.md }}>
+            <RabGateRefusalState refusal={gate} compact onRetry={() => { setGate(null); void load(); }} testID="active-gate" />
+          </View>
+        ) : null}
+
         {/* Buddy card */}
         <View style={styles.buddyCard}>
           <View style={styles.buddyAvatar}>
@@ -394,10 +514,10 @@ export default function RentABuddyActive() {
                   setSafeReturn(v);
                   if (v && bookingId) {
                     // Broad-area check-in (city only, no GPS) so safety team knows you are OK
-                    await safetyCheckin(bookingId, {
-                      checkinType: 'safe_return_enabled',
+                    const checkin = await safetyCheckin(bookingId, {
+                      checkinType: 'check_ok', // rent_buddy_checkin_type (0047/0113) has no 'safe_return_enabled'; 'start_safe_return' would open a distress event
                       response: 'ok',
-                    }).catch(() => {});
+                    }).catch(() => null); if (!checkin?.ok) { setSafeReturn(false); Alert.alert('Safe Return check-in failed', 'We could not record your check-in. Please try again.'); }
                   }
                 }}
                 trackColor={{ true: color.success, false: color.haze }}
@@ -464,6 +584,26 @@ export default function RentABuddyActive() {
               <AlertTriangle size={13} color={color.signal} />
               <Text style={styles.unsafeBtnText}>I feel unsafe</Text>
             </Pressable>
+            {/* Check-ins (POST …/check-in) and the emergency phrase (traveller-only; testing mode, lane tm-rab) */}
+            <View style={[styles.safetyToggleRow, { borderTopWidth: 1, borderTopColor: color.haze, gap: space.sm }]}>
+              <Pressable style={styles.reportBtn} onPress={() => recordCheckIn('arrival', "Recorded that you've arrived.")} testID="active-checkin-arrival">
+                <MapPin size={13} color={color.deep} />
+                <Text style={[styles.reportText, { color: color.deep }]}>I've arrived</Text>
+              </Pressable>
+              <Pressable style={styles.reportBtn} onPress={() => recordCheckIn('check_ok', 'Recorded that all is well.')} testID="active-checkin-ok">
+                <CheckCircle size={13} color={color.deep} />
+                <Text style={[styles.reportText, { color: color.deep }]}>All good</Text>
+              </Pressable>
+            </View>
+            <Pressable
+              style={[styles.reportBtn, { borderTopWidth: 1, borderTopColor: color.haze }]}
+              onPress={handlePhrase}
+              testID="active-emergency-phrase"
+              accessibilityHint="Opens a private safety check only you can see"
+            >
+              <Shield size={13} color={color.deep} />
+              <Text style={[styles.reportText, { color: color.deep }]}>I need to check my passport</Text>
+            </Pressable>
             <Pressable
               style={[styles.reportBtn, { borderTopWidth: 1, borderTopColor: color.haze }]}
               onPress={() => {
@@ -508,7 +648,7 @@ export default function RentABuddyActive() {
           style={({ pressed }) => [styles.endBtn, pressed && { opacity: layout.pressedOpacity }]}
           onPress={() => setEndVisible(true)}
         >
-          <X size={16} color={color.onInk} />
+          {ending ? <ActivityIndicator color={color.onInk} size="small" /> : <X size={16} color={color.onInk} />}
           <Text style={styles.endBtnText}>End session</Text>
         </Pressable>
       </View>
@@ -518,7 +658,13 @@ export default function RentABuddyActive() {
         if (res.ok) setAddedH(a => a + h);
         else Alert.alert('Error', bookingErrorCopy(res.error, 'Could not add time'));
       }} />
-      <EndModal visible={endVisible} onClose={() => setEndVisible(false)} onEnd={handleEnd} />
+      <EndModal visible={endVisible} onClose={() => setEndVisible(false)} onEnd={() => { void handleEnd(); }} />
+      <EmergencyPhraseModal
+        prompt={phrasePrompt}
+        options={phraseOptions}
+        onChoose={(id) => { void choosePhraseOption(id); }}
+        onClose={() => setPhrasePrompt(null)}
+      />
       <ContactPickerModal
         visible={contactPickerVisible}
         contacts={sessionContacts}

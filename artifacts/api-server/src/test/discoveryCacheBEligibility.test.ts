@@ -68,7 +68,7 @@ import { invalidateDiscoveryEngineModeCache } from "../lib/discoveryEngineMode.j
 const _originalFetch = globalThis.fetch;
 globalThis.fetch = async (url: string | URL | Request, init?: RequestInit) => {
   const urlStr = String(typeof url === "string" ? url : (url as URL).href ?? "");
-  if (urlStr.includes("overpass-api.de") || urlStr.includes("nominatim.openstreetmap.org")) {
+  if (urlStr.includes("overpass-api.de")) return new Response(JSON.stringify({ elements: [] }), { status: 200, headers: { "content-type": "application/json" } }); if (urlStr.includes("overpass-api.de") || urlStr.includes("nominatim.openstreetmap.org")) {
     throw new Error("Network blocked in test environment");
   }
   return _originalFetch(url as string, init);

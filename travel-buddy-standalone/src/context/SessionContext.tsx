@@ -4,13 +4,13 @@ import { getSessionUserId, onAuthChange, signOut as svcSignOut, ensureProfile } 
 import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
 import { getAccountStatus, TOKEN_UNAVAILABLE } from '../services/profile.ts';
 import type { AccountStatus } from '../services/profile.ts';
-import { pauseOnSessionEnd } from '../services/circle.ts';
+import { pauseOnSessionEnd } from '../services/circle.ts'; import { unregisterPushDeviceOnSignOut } from '../services/pushTokenService.ts';
 import { clearForUser as clearSavedForUser, primeSaved } from '../services/savedPostsCache.ts';
 import { fetchMySavedPostIds } from '../services/postEngagement.ts';
 import { clearCachedFeed } from '../services/compass.ts';
 import { SECURE_KEYS, deleteSecure } from '../lib/secureStore.ts';
 import { isAccountScopedStorageEnabled } from '../config/accountScopedStorageFlag.ts';
-
+import { setDiscoveryViewerFromSession } from '../services/discoveryViewerScope.ts';
 // Prefixes of the per-account scoped keys introduced for reminders,
 // discoveryBookmarks, and the checkpoint-arrival queue (see each service's
 // scoped*Key() helper). Telegraph's suggestion cache is per-(thread,account)
@@ -103,8 +103,11 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let active = true;
-    getSessionUserId().then((uid) => { if (active) { setUserId(uid); setLoading(false); } });
-    const unsub = onAuthChange((uid) => { if (active) setUserId(uid); });
+    getSessionUserId().then((uid) => { if (active) { setDiscoveryViewerFromSession(uid); setUserId(uid); setLoading(false); } });
+    // The Discovery device caches follow the auth event itself, BEFORE any screen
+    // re-renders: a synchronous cache read at mount must never paint the previous
+    // account's page (services/discoveryViewerScope.ts).
+    const unsub = onAuthChange((uid) => { setDiscoveryViewerFromSession(uid); if (active) setUserId(uid); });
     return () => { active = false; unsub(); };
   }, []);
 
@@ -297,6 +300,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       // Telegraph-cache keys (no-op while the flag is off — see helper doc).
       void clearScopedStorageForUser(userId).catch(() => {});
     }
+    // Discovery pages and community bylines held on the device are per viewer;
+    // none of the outgoing account's may be painted after this point.
+    setDiscoveryViewerFromSession(null);
     // Wipe other AsyncStorage keys that may hold private entity data.
     // Lazy-require keeps this from crashing on web (where AsyncStorage is
     // unavailable) — getStorage() in compass.ts does the same.
@@ -314,7 +320,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     } catch {
       // Non-fatal — proceed with sign-out regardless.
     }
-    await svcSignOut();
+    await unregisterPushDeviceOnSignOut().catch(() => 'failed'); await svcSignOut(); // TM-social PLAT-F20: DELETE /me/devices/:id needs the OUTGOING token, so it runs before the session is torn down (bounded; never blocks sign-out)
     setUserId(null);
     setAccountStatus(null);
     setDeletionScheduledAt(null);

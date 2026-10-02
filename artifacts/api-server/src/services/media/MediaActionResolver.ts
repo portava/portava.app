@@ -36,7 +36,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { canEditPlan, isAcceptedTripMember } from "../../lib/http.js";
-import { isKillSwitchEngaged } from "../../lib/featureFlags.js";
+import { isKillSwitchEngaged, isFlagEnabled } from "../../lib/featureFlags.js";
 import { isCompassEnabled } from "../../compass/flags.js";
 import {
   disclosureForRow,
@@ -138,7 +138,7 @@ export type MediaActionId =
   | "invite_people"
   | "follow_this_night"
   | "save_route"
-  | "report";
+  | "report" | "directions" | "view_event" | "view_passport" | "find_quieter" | "find_cheaper" | "contribute_gem" | "link_event" | "find_busier"; // find_busier: §15, census-media §36 (MD101) — offered only while media_find_busier_enabled
 
 export interface MediaActionTarget {
   method: "GET" | "POST" | "DELETE";
@@ -162,7 +162,7 @@ export interface MediaAction {
     | "want"
     | "share"
     | "moderate"
-    | "discover";
+    | "discover" | "contribute";
   target: MediaActionTarget;
 }
 
@@ -453,12 +453,12 @@ export async function resolveMediaActions(
     target: { method: "POST", endpoint: "/api/media/:id/report", params: { id: mediaId } },
   });
 
-  // Share via Telegraph → POST /api/media/:id/share
-  actions.push({
+  // Share via Telegraph → Telegraph §5's own share contract (a revocable reference), gated as its POST loader gates: public, or yours.
+  if ((row as any).visibility === "public" || (row as any).author_id === viewer.viewerId) actions.push({
     id: "share_telegraph",
     label: "Share via Telegraph",
     outcome: "share",
-    target: { method: "POST", endpoint: "/api/media/:id/share", params: { id: mediaId } },
+    target: { method: "POST", endpoint: "/api/threads/:threadId/share", params: { objectType: "POST", objectId: mediaId } },
   });
 
   // Save (this perspective) → POST /api/media/:id/save
@@ -608,17 +608,17 @@ export async function resolveMediaActions(
     });
 
     // Do This Experience (§15.2): only when the media links to an eligible
-    // experience (a trip the viewer may see). Converts that experience into
-    // plan items via the SAME trip-plan endpoint.
+    // experience (a trip the viewer may see). Compiles it into an EXECUTABLE
+    // plan (compileExperiencePlan — timed stops) the client proposes into a trip.
     if (entities.tripId) {
       actions.push({
         id: "do_this_experience",
         label: "Do this experience",
         outcome: "plan",
         target: {
-          method: "POST",
-          endpoint: "/api/trips/:tripId/plan/items",
-          params: { editableTripIds, sourceExperienceId: entities.tripId },
+          method: "GET",
+          endpoint: "/api/media/experiences/:experienceId/plan",
+          params: { editableTripIds, sourceExperienceId: entities.tripId, experienceId: entities.tripId, compile: true, source: "experience" },
         },
       });
     }
@@ -687,7 +687,7 @@ export async function resolveMediaActions(
     }
   }
 
-  return { mediaId, entityRefs: entities.graphRefs, actions, planGateDetermined: planEditable !== null };
+  return { mediaId, entityRefs: entities.graphRefs, actions: await withFindBusierAction(sc, entities, await withSection21Actions(sc, viewer, entities, actions, { compassOn, editableTripIds, authorId: typeof (row as any).author_id === "string" ? (row as any).author_id : null, postCreatedAt: typeof (row as any).created_at === "string" ? (row as any).created_at : null }), compassOn), planGateDetermined: planEditable !== null }; // withFindBusierAction: §15 Busier, census-media §36
 }
 
 // ── Do This Experience (§15.2) ────────────────────────────────────────────────
@@ -1004,4 +1004,260 @@ export async function recordMediaIntent(
 export interface PlanGateDetermination {
   /** false ⇒ the plan-editable-trip gate could not be read; an empty result is not a "no". */
   planGateDetermined: boolean;
+}
+
+// ── census-media §21 — the §15 / §49-phase-6 actions the rail was missing ────
+//
+// Appended here, and reached from resolveMediaActions' return line, because
+// every line above carries an anchored citation somewhere in the censuses.
+// Each action keeps the rail's two rules: it targets an EXISTING endpoint, and
+// it is offered only when the viewer passes the same question that endpoint
+// asks — so dropping any gate below can only REMOVE an action.
+
+/** Trails' lifecycle state that makes a Trail a compilable itinerary. */
+const PUBLISHED_TRAIL = "published";
+
+export async function withSection21Actions(
+  sc: SupabaseClient,
+  viewer: ViewerResolved,
+  entities: ResolvedMediaEntities,
+  actions: MediaAction[],
+  opts: { compassOn: boolean; editableTripIds: string[]; authorId?: string | null; postCreatedAt?: string | null },
+): Promise<MediaAction[]> {
+  const out = [...actions];
+  const mediaId = entities.mediaId;
+
+  // §15 "Go There / Directions" (MD94) → the canonical Places page, which
+  // carries `directionsUrl` for the place. Only for a place the location/gem
+  // choke point let this viewer be told about — the same condition as
+  // show_on_map — so a withheld venue gets no route to it.
+  if (entities.placeId) {
+    out.push({
+      id: "directions",
+      label: "Go there",
+      outcome: "navigate",
+      target: { method: "GET", endpoint: "/api/places/:placeId/living", params: { placeId: entities.placeId, field: "directionsUrl" } },
+    });
+  }
+
+  // §15 "Find … Cheaper / Quieter" (MD101) → Compass, carrying the comparator
+  // axis Compass already grounds (COMPARATOR_AXIS_CLAIM: quieter ⇒ crowd.level,
+  // cheaper ⇒ price.cover). Compass-gated like ask_compass, and place-bound:
+  // with no disclosable anchor Compass has nothing to compare against.
+  if (opts.compassOn && entities.placeId) {
+    out.push({
+      id: "find_quieter",
+      label: "Find somewhere quieter",
+      outcome: "compass",
+      target: { method: "POST", endpoint: "/api/compass/ask", params: { mediaId, prompt: "Find a quieter version of this.", comparator: "quieter" } },
+    });
+    out.push({
+      id: "find_cheaper",
+      label: "Find somewhere cheaper",
+      outcome: "compass",
+      target: { method: "POST", endpoint: "/api/compass/ask", params: { mediaId, prompt: "Find a cheaper version of this.", comparator: "cheaper" } },
+    });
+  }
+
+  // §16.3 gem contribution FROM this media (MD383 / MD400) → the gem's own
+  // contribution endpoint, carrying the media id so the server can record
+  // "Media → Contribution". Only for a gem the viewer may be TOLD about
+  // (entities.gemId is set only through mayDiscloseGemIdentity) and only while
+  // hidden_gems_enabled — the flag that endpoint checks first.
+  if (entities.gemId && (await isFlagEnabled(sc, "hidden_gems_enabled").catch(() => false))) {
+    out.push({
+      id: "contribute_gem",
+      label: "Update this gem",
+      outcome: "contribute",
+      target: { method: "POST", endpoint: "/api/hidden-gems/:id/contribute", params: { id: entities.gemId, originMediaId: mediaId } },
+    });
+  }
+
+  // §15 "View Event" (MD103) → the event experience projection. The gate is
+  // resolveExperience itself — the exact read GET /media/experiences/:id
+  // serves — and it must come back as an EVENT, so a private or ineligible
+  // event (or an id that is really a trip) yields no action and no id.
+  try {
+    const { data: links, error } = await (sc as any)
+      .from("post_event_links")
+      .select("event_id")
+      .eq("post_id", mediaId)
+      .limit(5);
+    if (!error) {
+      for (const l of (links as any[]) ?? []) {
+        const eventId = typeof l?.event_id === "string" ? l.event_id : null;
+        if (!eventId) continue;
+        const exp = await resolveExperience(sc, viewer, eventId, Date.now()).catch(() => null);
+        if (exp && exp.kind === "event") {
+          out.push({
+            id: "view_event",
+            label: "View event",
+            outcome: "navigate",
+            target: { method: "GET", endpoint: "/api/media/experiences/:experienceId", params: { experienceId: eventId } },
+          });
+          break;
+        }
+      }
+    }
+  } catch {
+    /* fail closed — no event action */
+  }
+
+  // §15 "Link to event" (MD103's writer) — the AUTHOR attaches their own post to
+  // an event they took part in, which is what makes View Event (above), the
+  // §24 availability term and the event's hero media reachable at all:
+  // post_event_links had readers and no writer. Offered by the SAME predicate
+  // POST /media/:id/event-link enforces (listLinkableEvents), only while the
+  // rail's own flag is on, and only when the post links to nothing yet.
+  if (
+    opts.authorId && opts.authorId === viewer.viewerId && opts.postCreatedAt &&
+    !out.some((a) => a.id === "view_event") &&
+    (await isFlagEnabled(sc, "MEDIA_WORLD_SHELL_ENABLED").catch(() => false))
+  ) {
+    try {
+      const { listLinkableEvents } = await import("../../lib/mediaEventLinks.js");
+      const candidates = await listLinkableEvents(sc, viewer.viewerId, opts.postCreatedAt);
+      if (candidates && candidates.length > 0) {
+        out.push({
+          id: "link_event",
+          label: "Link to an event",
+          outcome: "contribute",
+          target: { method: "POST", endpoint: "/api/media/:id/event-link", params: { id: mediaId, candidates } },
+        });
+      }
+    } catch {
+      /* fail closed — no link action */
+    }
+  }
+
+  // §15 "View Passport" (MD103) — §29 keeps Passport on Postcards, so the
+  // Passport view of a media item IS its Postcard. Offered only when this post
+  // is an ACTIVE Postcard that the Passport postcard wall would show this
+  // viewer: its own postcard, or a PUBLIC postcard of an author whose passport
+  // is not private. Target: the canonical Postcard viewer's read
+  // (app/postcard/[id] reads GET /api/posts/:id — a postcard IS a posts row).
+  try {
+    const { data: pc, error } = await (sc as any)
+      .from("passport_postcards")
+      .select("id, post_id, user_id, status, visibility, deleted_at")
+      .eq("post_id", mediaId)
+      .maybeSingle();
+    if (!error && pc && (pc as any).status === "active" && !(pc as any).deleted_at) {
+      const own = (pc as any).user_id === viewer.viewerId;
+      let shown = own;
+      if (!own && (pc as any).visibility === "public") {
+        const { data: author, error: aErr } = await (sc as any)
+          .from("profiles")
+          .select("id, passport_visibility, is_private")
+          .eq("id", (pc as any).user_id)
+          .maybeSingle();
+        shown = !aErr && Boolean(author) && (author as any).passport_visibility !== "private" && (author as any).is_private !== true;
+      }
+      if (shown) {
+        out.push({
+          id: "view_passport",
+          label: "View in Passport",
+          outcome: "navigate",
+          target: { method: "GET", endpoint: "/api/posts/:id", params: { id: mediaId, postcardId: String((pc as any).id) } },
+        });
+      }
+    }
+  } catch {
+    /* fail closed — no passport action */
+  }
+
+  // §15.2 "Do This Experience" from a TRAIL (MD107) — a creator's published
+  // itinerary this post belongs to. Offered only when no trip experience
+  // already produced the action (one "Do this" per item), only into a
+  // plan-editable trip (the landing endpoint's own gate), and only for a
+  // PUBLISHED trail — compileExperiencePlan refuses anything else.
+  const hasDoThis = out.some((a) => a.id === "do_this_experience");
+  if (!hasDoThis && opts.editableTripIds.length > 0) {
+    try {
+      const { data: memberships, error } = await (sc as any)
+        .from("content_trails")
+        .select("trail_id, source_type, source_id")
+        .eq("source_type", "post")
+        .eq("source_id", mediaId)
+        .limit(5);
+      if (!error) {
+        for (const m of (memberships as any[]) ?? []) {
+          const trailId = typeof m?.trail_id === "string" ? m.trail_id : null;
+          if (!trailId) continue;
+          const { data: trail, error: tErr } = await (sc as any)
+            .from("trails")
+            .select("id, lifecycle_status")
+            .eq("id", trailId)
+            .maybeSingle();
+          if (!tErr && trail && (trail as any).lifecycle_status === PUBLISHED_TRAIL) {
+            out.push({
+              id: "do_this_experience",
+              label: "Do this trail",
+              outcome: "plan",
+              target: {
+                method: "GET",
+                endpoint: "/api/media/experiences/:experienceId/plan",
+                params: { editableTripIds: opts.editableTripIds, experienceId: trailId, compile: true, source: "trail" },
+              },
+            });
+            break;
+          }
+        }
+      }
+    } catch {
+      /* fail closed — the trails schema may be absent (2910); no action */
+    }
+  }
+
+  return out;
+}
+
+// ── §15 "Find … Busier" (census-media §36, MD101) ───────────────────────────
+// Appended at the tail so no cited line above moves; ESM hoists the functions.
+
+/** Seeded FALSE by migration 3351. Read fail-closed. */
+export const FIND_BUSIER_FLAG = "media_find_busier_enabled";
+
+/** Is §15 "Find … Busier" offered? A failed read is "no". */
+export async function isFindBusierEnabled(sc: SupabaseClient): Promise<boolean> {
+  return isFlagEnabled(sc, FIND_BUSIER_FLAG).catch(() => false);
+}
+
+/**
+ * Add §15's "Find somewhere busier" to a rail, directly after Find Cheaper.
+ *
+ * The SAME conditions as Find Quieter and Find Cheaper (withSection21Actions):
+ * Compass on, and a canonical place the location/gem choke point let this
+ * viewer be told about — with no disclosable anchor there is nothing to be
+ * busier THAN. Plus the flag. It targets the same Compass ask with the
+ * server-written prompt and `comparator: "busier"`; the §32 context grounds
+ * that axis on `crowd.level`, the reading Quieter already compares on
+ * (CompassMediaContext.COMPARATOR_AXIS_CLAIM), and prints "cannot compare"
+ * when there is no permitted, unexpired reading.
+ *
+ * Returns the input array untouched when any condition fails.
+ */
+export async function withFindBusierAction(
+  sc: SupabaseClient,
+  entities: ResolvedMediaEntities,
+  actions: MediaAction[],
+  compassOn: boolean,
+): Promise<MediaAction[]> {
+  if (!compassOn || !entities.placeId) return actions;
+  if (!(await isFindBusierEnabled(sc))) return actions;
+  const busier: MediaAction = {
+    id: "find_busier",
+    label: "Find somewhere busier",
+    outcome: "compass",
+    target: {
+      method: "POST",
+      endpoint: "/api/compass/ask",
+      params: { mediaId: entities.mediaId, prompt: "Find a busier version of this.", comparator: "busier" },
+    },
+  };
+  const out = [...actions];
+  const after = out.findIndex((a) => a.id === "find_cheaper");
+  if (after >= 0) out.splice(after + 1, 0, busier);
+  else out.push(busier);
+  return out;
 }

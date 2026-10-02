@@ -178,7 +178,7 @@ export const WatchVideoCell = forwardRef<WatchVideoCellHandle, WatchVideoCellPro
         {/* Buffering spinner overlay */}
         {isBuffering && isActive ? (
           <View style={s.spinnerOverlay} pointerEvents="none">
-            <ActivityIndicator size="large" color="rgba(255,255,255,0.8)" />
+            <View style={tailStyles.spinnerBadge}><ActivityIndicator size="large" color="rgba(255,255,255,0.8)" /></View>
           </View>
         ) : null}
       </View>
@@ -200,7 +200,7 @@ const s = StyleSheet.create({
   },
   failureOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(17,17,15,0.6)',
+    backgroundColor: 'rgba(17,17,15,0.71)', // census-media §31.12: the least alpha at which "Video unavailable" clears 4.5:1 over a white poster; was 0.6
     alignItems: 'center',
     justifyContent: 'center',
     gap: 12,
@@ -209,4 +209,12 @@ const s = StyleSheet.create({
     ...t.small,
     color: 'rgba(255,255,255,0.7)',
   },
+});
+
+// ── census-media §31.12 — appended at the TAIL so no line cited above moves ────
+// The buffering spinner was drawn straight on the poster: 1.00:1 over a poster
+// its own colour. It now sits on an ink badge; 0.52 is the least alpha at which
+// it clears 3:1 over any poster.
+const tailStyles = StyleSheet.create({
+  spinnerBadge: { padding: 10, borderRadius: 999, backgroundColor: 'rgba(17,17,15,0.52)' },
 });

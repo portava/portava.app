@@ -19,10 +19,10 @@ import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { getCurrentGps } from '../../src/services/location';
 import { useGemDetail, useGemCheckin, useGemReport } from '../../src/hooks/useHiddenGems';
-import { verificationBadge, sensitivityLabel, shareGemToTelegraph, type GemState, type GemConfidence } from '../../src/services/hiddenGems';
+import { verificationBadge, sensitivityLabel, shareGemToTelegraph, gemVisitOutcomeSentence, type GemState, type GemConfidence } from '../../src/services/hiddenGems';
 import { GemStateBadge } from '../../src/components/gems/GemStateBadge';
 import { GemContributeSection } from '../../src/components/gems/GemContributeSection';
-import { TripWishlistPicker, type AddToTripPayload } from '../../src/components/discovery/TripWishlistPicker';
+import { TripWishlistPicker, type AddToTripPayload } from '../../src/components/discovery/TripWishlistPicker'; import { GemTripPlanPicker } from '../../src/components/gems/GemTripPlanPicker';
 import { ReviewsSection } from '../../src/components/ReviewsSection';
 import { WorthItVoteRow } from '../../src/components/WorthItVoteRow';
 import { PlaceInfoSection } from '../../src/components/place/PlaceInfoSection';
@@ -245,7 +245,7 @@ export default function GemDetailScreen() {
   const [showReport,      setShowReport]      = useState(false);
   const [sharing,         setSharing]         = useState(false);
   const [builderVisible,  setBuilderVisible]  = useState(false);
-  const [pickerVisible,   setPickerVisible]   = useState(false);
+  const [pickerVisible,   setPickerVisible]   = useState(false); const [planPickerVisible, setPlanPickerVisible] = useState(false); // TM-social PLAT-F37: the trip PLAN (POST /hidden-gems/:id/plan); pickerVisible is the trip WISHLIST
   const [canonicalPlace,  setCanonicalPlace]  = useState<CanonicalPlace | null>(null);
 
   // §16.3 — after a structured contribution the backend re-derives the gem's
@@ -290,7 +290,7 @@ export default function GemDetailScreen() {
 
   const handleAddToPlan = useCallback(() => {
     if (!gem) return;
-    setPickerVisible(true);
+    setPlanPickerVisible(true);
   }, [gem]);
 
   // Cross-platform Thread-ID prompt (Alert.prompt is iOS-only — a silent
@@ -554,6 +554,12 @@ export default function GemDetailScreen() {
           </View>
         )}
 
+        {/* §16.1 OUTCOME — what verified visitors found when they went
+            (census-media §21). Shown only when the server's floor allows a number. */}
+        {gemVisitOutcomeSentence(gem.visitOutcomes) ? (
+          <Text style={styles.visitOutcome} accessibilityRole="text">{gemVisitOutcomeSentence(gem.visitOutcomes)}</Text>
+        ) : null}
+
         {/* §16.3 — structured contributions (observations). Additive to the
             existing verify-visit + report UI below. */}
         <GemContributeSection
@@ -656,6 +662,15 @@ export default function GemDetailScreen() {
         visible={pickerVisible && !!gem}
         onClose={() => setPickerVisible(false)}
       />
+      {gem ? (
+        <GemTripPlanPicker
+          gemId={gem.id}
+          gemName={gem.name}
+          visible={planPickerVisible}
+          onClose={() => setPlanPickerVisible(false)}
+          onOpenWishlist={() => { setPlanPickerVisible(false); setPickerVisible(true); }}
+        />
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -778,6 +793,7 @@ const styles = StyleSheet.create({
   guideLevelText: { color: '#fff', fontWeight: '800', fontSize: 13 },
   guideBio: { color: '#B0C4DE', fontSize: 14, marginBottom: 4 },
   guideStats: { color: '#8A9BB5', fontSize: 12 },
+  visitOutcome: { color: '#C9D6EA', fontSize: 13, lineHeight: 18, marginHorizontal: 16, marginBottom: 12 },
 
   actionBar: {
     flexDirection: 'row',

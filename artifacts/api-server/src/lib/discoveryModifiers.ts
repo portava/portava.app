@@ -102,7 +102,7 @@ export interface DiscoveryModifiers {
    * (`03` §11 / `01` §11), not a score, and turning one into a weight would
    * re-open the momentum cap this module exists to respect.
    */
-  trendStates: Record<string, TrendReading>;
+  trendStates: Record<string, TrendReading>; /** §75 (DC-17, H-P21-2): the UNSCALED momentum reading's own record (window, versions, computation clock) — what `localMomentum` was scaled FROM. Absent when the modifiers are off; null when the momentum load threw. Provenance only: nothing reads it to compute. */ momentumProvenance?: DerivedStoreProvenance | null;
   /** The confidence record consulted, or null (not read when off, or absent). */
   cityConfidence: CityConfidence | null;
   /** [MOMENTUM_SCALE_MIN, MOMENTUM_SCALE_MAX] when enabled; 0 in the inert record (nothing to scale). */
@@ -209,10 +209,10 @@ export async function loadDiscoveryModifiers(
   // the ranker is no longer the number the momentum store computed. Carrying
   // the store's provenance onto a rescaled number would label it as something
   // it is not; the provenance stays with the unscaled store, where it is true.
-  let rawMomentum: Record<string, number> = {};
+  let rawMomentum: Record<string, number> = {}; let momentumProvenance: DerivedStoreProvenance | null = null;  // §75 H-P21-2
   try {
-    rawMomentum = (await loadLocalMomentum(sc, params.placeIds, { cacheKey: params.cacheKey, nowMs })).values;
-  } catch { rawMomentum = {}; }
+    const reading = await loadLocalMomentum(sc, params.placeIds, { cacheKey: params.cacheKey, nowMs }); rawMomentum = reading.values; momentumProvenance = reading.provenance;  // §75: the record stays the store's, beside the number it describes
+  } catch { rawMomentum = {}; momentumProvenance = null; }
 
   const localMomentum: Record<string, number> = {};
   for (const [id, m] of Object.entries(rawMomentum)) {
@@ -254,6 +254,10 @@ export async function loadDiscoveryModifiers(
 
   return {
     enabled: true, reason: "flag_on",
-    localMomentum, trailAffinity, trendStates, cityConfidence, momentumScale, explorationBudgetPct,
+    localMomentum, trailAffinity, trendStates, cityConfidence, momentumScale, explorationBudgetPct, momentumProvenance,
   };
 }
+
+// census-discovery §75 (DC-17, lane P33): the type of the momentum reading's record, imported
+// at the foot (ES imports are hoisted) so no cited line above moves.
+import type { DerivedStoreProvenance } from "./discoveryRankProvenance.js";

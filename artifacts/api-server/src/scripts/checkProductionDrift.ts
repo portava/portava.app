@@ -75,7 +75,7 @@ const BASELINE_DIR = join(API_SERVER_ROOT, "baseline");
  * stale silently on the next refresh, which is how two cases in
  * productionDriftExtraction.test.ts came to assert the opposite of the truth.
  */
-export const PRODUCTION_SNAPSHOT = "20260921_production_tables.txt";
+export const PRODUCTION_SNAPSHOT = "20260922_production_tables.txt";
 
 /**
  * `unmerged-pr` HAS NO MEMBERS AS OF 2026-09-15, AND IS KEPT — ruling, with the
@@ -195,6 +195,52 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
   // This ratchet fails in BOTH directions, so leaving six entries claiming a
   // table is absent when it is present would fail the check — correctly. An
   // entry nobody prunes stops being read.
+
+  // ── ADDED 2026-09-22: six tables from the wave integrated this session ────
+  //
+  // All six are "unapplied" in the strict sense the classification requires:
+  // declared in the tree, present on NO database, and each MUST reach zero by
+  // being applied rather than by being tolerated. They arrived together because
+  // two lanes landed two migrations in one integration, and the drift check
+  // caught them on the first run after the merge — which is the check working,
+  // not the check being noisy.
+
+  layover_constraints: {
+    classification: "unapplied",
+    note:
+      "§20's decision record (2992). Applied to NO database — not production, " +
+      "not portava-ci. 2992 CANNOT be applied on its own: its own precondition " +
+      "refuses by name unless 2700_layover_certified_feasibility has run first, " +
+      "because it COMPLETES public.layover_certified_computations rather than " +
+      "forking it, and 2700 is itself absent from " +
+      "production-applied-migrations.json. So the production chain is 2700 then " +
+      "2992, and neither step has been taken. Until then persistDecision takes " +
+      "its refusal branch and GET /airport/sessions/:id/safety answers " +
+      "persisted: { state: 'not_stored' }, which is why census-layover L1 is not " +
+      "graded closed on the merged code. Strike this off in the same change that " +
+      "applies the chain and refreshes both production snapshots.",
+  },
+  layover_time_budgets:  { classification: "unapplied", note: "2992, same chain and same 2700 prerequisite as layover_constraints. See that entry for the full reason; it is not repeated here so that one statement stays the one to maintain." },
+  layover_return_plans:  { classification: "unapplied", note: "2992, same chain and same 2700 prerequisite as layover_constraints." },
+  layover_checkpoints:   { classification: "unapplied", note: "2992, same chain and same 2700 prerequisite as layover_constraints." },
+  layover_outcomes:      { classification: "unapplied", note: "2992, same chain and same 2700 prerequisite as layover_constraints." },
+
+  memory_relations: {
+    classification: "unapplied",
+    note:
+      "§3.4's Memory-to-Memory graph edges (2994). Applied to NO database. " +
+      "2994 was rehearsed against a throwaway PostgreSQL — the full chain " +
+      "replayed, applied twice for idempotency, and ten behavioural probes run " +
+      "and rolled back — and deliberately not applied anywhere real. Its " +
+      "prerequisites ARE met, unlike 2992's: 2710 and 2711 are both recorded in " +
+      "production-applied-migrations.json and all four tables 2710 creates are " +
+      "present in production. What is not met is a reason to apply it yet: " +
+      "memory_kernel_enabled reads FALSE on production, so the kernel never " +
+      "runs, no outbox row has ever been written, and the table would arrive " +
+      "with no writer. census-highlights-memories H27 is held at NOT-BUILT on " +
+      "exactly this ground. Strike this off in the same change that applies 2994 " +
+      "and refreshes the two production snapshots.",
+  },
 
   // ── Trips §23, the one Trips table that is genuinely NOT in production ─────
   trip_commitment_recurrences: {
@@ -734,6 +780,132 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
       "capped row is missed). Strike this off in the same change that applies " +
       "2998 to PRODUCTION and refreshes the two production snapshots.",
   },
+
+  // ── The anti-differencing gate's durable memory (3110): declared, unapplied ─
+  sensing_published_aggregates: {
+    classification: "unapplied",
+    note:
+      "Migration 3110_sensing_published_aggregates.sql, which this tree " +
+      "declares. Applied to NO database — not production, not portava-ci — " +
+      "because the owner runs all SQL and this lane applies nothing. Not " +
+      "'unmerged-pr': that classification is for a table whose migration is on " +
+      "some OTHER branch, and this check can see the file. " +
+      "WHAT IT IS: the durable last-published store lib/sensingDifferencingGate " +
+      "needs. That module's own header says 'the caller keeps the last " +
+      "published aggregate and hands it back in', and until 3110 there was " +
+      "nowhere to keep it — a previous value held in process memory resets on " +
+      "every deploy and replica, and a reset reads as no_previous, which " +
+      "PUBLISHES. intel_state_snapshots cannot serve: it is upserted in place, " +
+      "so the value the gate must compare against is already overwritten by the " +
+      "value it is being compared with. census-sensing S24 states both halves. " +
+      "WHAT ITS ABSENCE COSTS TODAY: nothing that any user can see. " +
+      "publishThroughDifferencingGate is the only caller of this table and it " +
+      "has no caller of its own — no route, no scheduler and no publisher " +
+      "reads a sensing aggregate, because `surface` and `share` are scopes " +
+      "SENSING_ANON_POLICY_V1 does not grant. Without the table its read fails " +
+      "and the gate answers previous_unreadable, which REFUSES rather than " +
+      "publishes; that is the fail-closed direction and it is asserted in " +
+      "src/test/sensingIngestDurableGate.test.ts. So this entry is a gap that " +
+      "must close BEFORE any publisher exists, not after. " +
+      "Strike it off in the same change that applies 3110 to PRODUCTION and " +
+      "refreshes the two production snapshots.",
+  },
+
+  // ── The contributor token's pepper (3002): declared, unapplied ─────────────
+  intel_contributor_pepper: {
+    classification: "unapplied",
+    note:
+      "Migration 3002_intel_contribution_identity.sql, which this tree " +
+      "declares. Applied to NO database — not production, not portava-ci — " +
+      "because the owner runs all SQL and this lane applies nothing. Not " +
+      "'unmerged-pr': the file is in this tree and this check can see it. " +
+      "WHAT IT IS: one row per weekly epoch holding the HMAC pepper that " +
+      "derives a contributor token from an account id. It carries ZERO grants " +
+      "to every application role on purpose — the one-way property of the " +
+      "token is exactly 'no role outside the SECURITY DEFINER functions can " +
+      "read this table'. census-sensing S19/S118 turn on it. " +
+      "WHAT ITS ABSENCE COSTS TODAY: nothing a user can see, and the reason is " +
+      "worth stating because it is not 'the feature is off'. Every consumer of " +
+      "the token is written for BOTH schemas and PROBES rather than assumes: " +
+      "lib/intelConsent.resolveContributorIdentityShape asks the database " +
+      "which shape it has and answers `account` when 3002's functions are " +
+      "absent, so intel_observations.actor_id is read as what it currently is " +
+      "— a profiles id. The paths that would otherwise silently mismatch " +
+      "(lib/intelProjectionAggregator's consent join, lib/intelRewardScheduler's " +
+      "payee resolution) go through that probe and WITHHOLD rather than " +
+      "publish or pay on an unreadable answer. " +
+      "THE ORDER THIS IMPOSES, because it is the part that bites: 3002 must be " +
+      "applied BEFORE the code that assumes a nullable subject ships. " +
+      "routes/mapObservations.ts has already deleted its nearest-place " +
+      "resolver, and production still has " +
+      "intel_observations.subject_id NOT NULL REFERENCES places(id), so a zone " +
+      "contribution on that code against an un-migrated database fails its NOT " +
+      "NULL instead of storing `unknown`. " +
+      "Strike it off in the same change that applies 3002 to PRODUCTION and " +
+      "refreshes the two production snapshots.",
+  },
+  // ── Added 2026-09-27 by census-discovery §48 (P3 telemetry) ─────────────────
+  recommendations: {
+    classification: "unapplied",
+    note:
+      "Migration 3376 (`10` §3 recommendations): one row per served Discovery " +
+      "request, signed-in or anonymous — the per-request exposure denominator " +
+      "(DV-06) and the only durable record of an anonymous serve (DV-40), which " +
+      "rank_events cannot hold because its user_id is NOT NULL. Rehearsed on the " +
+      "local PostgreSQL harness (apply, idempotent re-apply, production-shape " +
+      "rehearsal with 2893 unapplied, rollback refusing while populated); applied " +
+      "to no Supabase project. THE WRITER EXISTS AND LATCHES OFF WITHOUT IT: " +
+      "lib/discoveryServeLog.logDiscoveryServeRequest calls " +
+      "record_discovery_serve_request behind discovery_serve_log_enabled and, on " +
+      "PGRST202/PGRST205/42883/42P01, warns once and stops asking. Because that flag is TRUE in " +
+      "production, APPLYING 3376 STARTS WRITES on the next deploy — one row per " +
+      "Discovery request, anonymous ones included. Strike it off in the same " +
+      "change that applies 3376 to PRODUCTION and refreshes the two production " +
+      "snapshots.",
+  },
+  // ── Added 2026-09-27 by census-discovery §52 (P10 creator ledger) ──────────
+  creator_ledger_audit_events: {
+    classification: "unapplied",
+    note:
+      "Migration 3387 (`11` §8 creator fraud holds / ledger audit, `11` §10 admin " +
+      "actions audited): one append-only row per hold, release, recomputation or " +
+      "reversal of a creator-ledger record, written in the same transaction as the " +
+      "change by public.creator_ledger_append. Depends on 2920/2921/3386, none of " +
+      "which is in production (see creator_attributions above). Rehearsed on the " +
+      "local PostgreSQL harness only (apply, idempotent re-apply, rollback that " +
+      "refuses while populated). Its only writer, services/creators/CreatorLedgerOperations.ts, " +
+      "is gated on creator_attribution_enabled (2922, seeded FALSE), so it stays " +
+      "empty after the merge. Strike it off in the change that applies 2920-2922, " +
+      "2930 and 3385-3387 to PRODUCTION.",
+  },
+  // ── Added 2026-09-27 by census-discovery §62 (P15 verified-defect repairs) ──
+  rank_event_outcome_receipts: {
+    classification: "unapplied",
+    note:
+      "Migration 3420 (DV-37, `04` §3 idempotent where retried): one row per KEYED " +
+      "outcome that landed on a rank_events exposure, written by trigger in the same " +
+      "statement as the UPDATE; its primary key (user_id, client_event_id) refuses a " +
+      "second landing of one client event. Rehearsed on the local PostgreSQL harness " +
+      "only (apply with a behavioural probe, rollback, re-apply, fresh-chain replay). " +
+      "THE READER LATCHES OFF WITHOUT IT: routes/rankEvents.ts reads it only for an " +
+      "outcome that carries client_event_id, and on 42P01/PGRST205 (or 42703/PGRST204 " +
+      "naming the key column) warns once and records the outcome keyless. No shipped " +
+      "client sends a key yet (census-discovery §62.7 H1), so it stays empty after the " +
+      "merge. Strike it off in the change that applies 3420 to PRODUCTION.",
+  },
+  // ── Added 2026-09-27 for census-discovery §61 (P14 Trails integrity; recorded at §64.14) ──
+  trail_relations: {
+    classification: "unapplied",
+    note:
+      "Migration 3416 (`10` §3 graph projections, DV-72): the derived, rebuildable " +
+      "Trail-relation projection over DECLARED relations only (trail_edges, " +
+      "trails.parent_trail_id, and common content in content_trails); common traveler " +
+      "flow is not built. Rehearsed on the local PostgreSQL harness only; applied to no " +
+      "Supabase project. NO APPLICATION CODE READS OR WRITES IT: nothing outside the " +
+      "migration and its tests calls rebuild_trail_relations or selects from the table, " +
+      "so it stays empty after the merge. Strike it off in the change that applies 3416 " +
+      "to PRODUCTION.",
+  }, /* §81 (W10-S2): on this line so every cited line below keeps its number */ layover_place_dwell: { classification: "unapplied", note: "Migration 3466 (census-discovery §81, A14, D-W10S2-3): the Layover domain's curated per-place dwell with provenance (source_class, confidence, evidence). Rehearsed on the local PostgreSQL harness only; applied to no Supabase project. Written only by PUT /api/admin/airport/place-dwell/:placeId; read only by services/airport/LayoverPlaceDwell.ts readCuratedDwell while layover_place_dwell_enabled (3465, seeded FALSE) is ON, so at the seed nothing reads it. Strike it off in the change that applies 3466 to PRODUCTION." }, /* census-discovery §86 (lane W10-T), on this line so no cited line below moves: */ discovery_admin_audit_events: { classification: "unapplied", note: "Migration 3486 (census-discovery §86, `11` §8/§10, DV-74): the append-only audit of Trail lifecycle moves, merges, curation, edge reviews and trend integrity reviews, written only inside the 3486 functions. Harness only. Its writers (services/trails/trailAdmin.ts) answer 503 without it, so nothing is changed unaudited. Strike it off when 3486 reaches PRODUCTION." }, trend_integrity_reviews: { classification: "unapplied", note: "Migration 3486 (census-discovery §86, `11` §8 trend integrity review): admin verdicts. The one reader (TrailService.readTrendReviewVerdict) treats the absent table as no review. Harness only. Strike it off when 3486 reaches PRODUCTION." }, trail_member_exposures: { classification: "unapplied", note: "Migration 3487 (census-discovery §86, DV-22): a Trail's own module serves per member per day, no viewer id. Read and written only behind discovery_trail_exploration_enabled (3485, FALSE). Harness only. Strike it off when 3487 reaches PRODUCTION." }, trail_content_suggestions: { classification: "unapplied", note: "Migration 3488 (census-discovery §86, DC-20): a third party's pending Trail suggestion, awaiting the content's owner. Without it a stranger's suggestion answers 503 (fail closed; never spends the owner's budget). Harness only. Strike it off when 3488 reaches PRODUCTION." }, area_momentum: { classification: "unapplied", note: "Migration 3476 (census-discovery §84, DV-29 Local Pulse): one v2 trend reading per Local Pulse cell per rebuild run, written only by rebuild_place_momentum_v2 (3477) and read only by lib/discoveryTrendExplanation. Rehearsed on the local PostgreSQL harness only; applied to no Supabase project. Nothing writes it until discovery_trend_normalised_enabled and the rebuild scheduler are ON (both seeded FALSE by 3475). Strike it off in the change that applies 3476 to PRODUCTION." }, /* census-discovery §95 (lane W11-X3), on this line so no cited line moves: */ place_cooccurrence: { classification: "unapplied", note: "Migration 3495 (census-discovery §95, DV-72, D-W11X3-1): the Trail-derived place co-occurrence projection — pairs of places held by a common non-archived Trail, from content_trails only, no personal data. Rebuilt only by rebuild_place_cooccurrence, called only by lib/discoveryPlaceCooccurrence.ts's hourly tick, and read only by readPlaceCooccurrence — both behind discovery_place_cooccurrence_enabled (3496, seeded FALSE), so nothing writes or reads it after the merge. Harness only; applied to no Supabase project. Strike it off in the change that applies 3495 to PRODUCTION." },  // ── Added 2026-09-28 for census-discovery §84 (lane W10-R1) ──
 };
 
 /**
@@ -827,6 +999,14 @@ export function stripSqlNoise(sql: string): string {
   return out.join("");
 }
 
+/** The snapshot's table names: one per line, blank lines and `#` comments skipped. */
+export function snapshotTableNames(raw: string): string[] {
+  return raw
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0 && !l.startsWith("#"));
+}
+
 function readProductionSnapshot(): Set<string> {
   const path = join(BASELINE_DIR, PRODUCTION_SNAPSHOT);
   let raw: string;
@@ -841,10 +1021,7 @@ function readProductionSnapshot(): Set<string> {
     );
     process.exit(2);
   }
-  const names = raw
-    .split("\n")
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0 && !l.startsWith("#"));
+  const names = snapshotTableNames(raw);
   if (names.length === 0) {
     console.error(`check:production-drift: ${PRODUCTION_SNAPSHOT} contains no table names.`);
     process.exit(2);
@@ -989,6 +1166,32 @@ export function undeclaredEntries(
     .sort();
 }
 
+/**
+ * The lines printed under a passing run's "Unapplied" list.
+ *
+ * The ledger line used to be printed whenever anything was unapplied, and it
+ * said production has no `schema_migration_ledger`. The snapshot this check
+ * reads has listed that table since 2026-09-15 (KNOWN_PRODUCTION_GAPS strikes
+ * it off above), so the footer contradicted the file two screens up.
+ * census-discovery §69 (DV-70) found it and §70 made it conditional: the
+ * line is printed only when the snapshot does NOT list the ledger, which is
+ * the only case in which it is true.
+ */
+export const LEDGER_TABLE = "schema_migration_ledger";
+
+export function unappliedFooter(unapplied: readonly string[], production: ReadonlySet<string>): string[] {
+  if (unapplied.length === 0) return [];
+  const lines = ["\n  Unapplied — code in the tree pointed at storage production does not have:"];
+  for (const t of unapplied) lines.push(`    ${t}`);
+  if (!production.has(LEDGER_TABLE)) {
+    lines.push(
+      "\n  schema_migration_ledger is the one to fix first: without it, nothing can\n" +
+        "  establish which migrations production has, and apply-migrations.ts cannot run there.",
+    );
+  }
+  return lines;
+}
+
 function main(): void {
   const production = readProductionSnapshot();
   const declared = declaredTables();
@@ -1108,14 +1311,7 @@ function main(): void {
       `✓ No unrecorded production drift. ${Object.keys(KNOWN_PRODUCTION_GAPS).length} table(s) on the ratchet, ` +
         `of which ${unapplied.length} are UNAPPLIED and must reach zero.`,
     );
-    if (unapplied.length > 0) {
-      console.log("\n  Unapplied — code in the tree pointed at storage production does not have:");
-      for (const [t] of unapplied) console.log(`    ${t}`);
-      console.log(
-        "\n  schema_migration_ledger is the one to fix first: without it, nothing can\n" +
-          "  establish which migrations production has, and apply-migrations.ts cannot run there.",
-      );
-    }
+    for (const line of unappliedFooter(unapplied.map(([t]) => t), production)) console.log(line);
   }
 
   process.exit(failed ? 1 : 0);

@@ -50,7 +50,7 @@ pointing tests at production, **not a construction defect**. Confirmed
 
 | # | Surface | Verdict | Evidence |
 |---|---------|---------|----------|
-| 1 | Passport Home | **PARTIAL** | Owner tab `app/(tabs)/passport.tsx` (hero `:709`, Open-to-Plans chip `:727`, trust summary `:642`, stats `:730`, owner actions via `PassportQuickLinks`, recent stamps `:824`, memories tab). Gaps: §3 "high-priority previews" for **Shared Context / Featured Journey / next Trip** not surfaced on home; **Make a Plan** absent from viewer view (`app/passport/[username].tsx`). |
+| 1 | Passport Home | **PARTIAL** | Owner tab `travel-buddy-standalone/app/(tabs)/passport.tsx` (hero `:723#<PassportIdentityCard`, Open-to-Plans chip `:742#travelerState=`, trust summary `:656#<PassportSafetySection`, stats `:746#<PassportStatsRow`, owner actions via `PassportQuickLinks`, recent stamps `:847#<PassportStampCollection`, memories tab; corrected 2026-09-27 from 709, 727, 642, 730 and 824, which were right at 5f08c3b2a; the chip is now the server-projected §5 traveler-state chip, and the status is unchanged). Gaps: §3 "high-priority previews" for **Shared Context / Featured Journey / next Trip** not surfaced on home; **Make a Plan** absent from viewer view (`app/passport/[username].tsx`). |
 | 2 | Stamps | **BUILT** | `PassportProjectionService.mapStamp`; client `PassportStampCollection.tsx`, `StampCard.tsx`, `StampDetailModal.tsx`. Card lacks a verified/decorative marker (§12 latent — see Findings F2). |
 | 3 | Journeys | **BUILT** | `PassportJourneyService.ts` (group year→country→city `:308`, Featured Journey `:281`, visibility `:101`, date coarsening `:195`); client `JourneysScreen.tsx`, route `app/passport/journeys.tsx`. |
 | 4 | Memories | **BUILT (owner) / PARTIAL (viewer)** | `PassportMemoryService.ts` + `MemoriesTab.tsx`. Public passport passes `memories={[]}` (`app/passport/[username].tsx:481`) — a visitor's Memories tab is empty though the projection filters memories server-side. |
@@ -89,7 +89,7 @@ All file paths are under
    - Single aggregate assembler `services/passport/PassportProjectionService.ts:940` `buildPassportProjection`; all filtering applied before return.
    - Viewer context resolved from the **canonical** `resolveInteractionPermissions` engine (`:409`), not a passport-specific re-implementation.
    - Route resolves `viewerId` **server-side** from the bearer token via `getOptionalViewerId` (`routes/passport.ts:1461`, `:1478`, `:1505`), never a client-supplied identity.
-   - Client renders server flags only: `usePassportPlans.ts:210` `canMakePlan: proj.actions.can_make_plan`; TrustScreen note `TrustScreen.tsx:346`. Grep for client trust-threshold policy (`trust > N`) found **none**.
+   - Client renders server flags only: `usePassportPlans.ts:210` `canMakePlan: proj.actions.can_make_plan`; TrustScreen footer note `TrustScreen.tsx:443#server owns authorization`. Grep for client trust-threshold policy (`trust > N`) found **none**.
 
 2. **Exact location never ordinary Passport data; My World coarse (§5/§23/TABLE 25).**
    - `mapStamp`/`buildUpcomingPlans`/`buildTravelerState` expose only city/country; no lat/lng on any read.
@@ -114,7 +114,7 @@ All file paths are under
    - `PassportQrSheet.tsx` Bump is two-step: `startBump → 'awaiting'` then `confirmBump` fires `onBumpConfirmed` only after explicit "Confirm exchange"; proximity never reveals a profile.
 
 6. **Blocking propagates (§24).**
-   - Passport blocking is not re-implemented: it flows through the canonical `resolveInteractionPermissions`; a blocked/unavailable viewer collapses to a minimal `restricted` card (`PassportProjectionService.ts:2095#restricted: {`) with all actions false. Covered by `blocks`/`blockExclusion`/`interactionPermissions` tests (123 pass).
+   - Passport blocking is not re-implemented: it flows through the canonical `resolveInteractionPermissions`; a blocked/unavailable viewer collapses to a minimal `restricted` card (`PassportProjectionService.ts:2134#restricted: {`) with all actions false. Covered by `blocks`/`blockExclusion`/`interactionPermissions` tests (123 pass).
 
 7. **Non-goals honored (§34).**
    - No dating/compatibility/match score: `SharedContextService` emits explainable facts + a qualitative `summaryLabel` derived from fact count (`:368`), never a numeric compatibility %. Repo grep for `match_score|compatibility|dating` in passport code found only unrelated interest-category labels.
@@ -160,7 +160,7 @@ Severity is construction-completeness impact, not runtime severity.
   integration change rather than an unverifiable UI insertion here.
 
 - **F2 · MED (latent) — Stamp verification provenance not enforced on read/card
-  (§12/§13).** `mapStamp` (`PassportProjectionService.ts:1463#function mapStamp`) emits
+  (§12/§13).** `mapStamp` (`PassportProjectionService.ts:1502#function mapStamp`) emits
   `verification: "verified"` for **all** unified stamps by source-table rather than
   reading the row's own `verification_level`; the `"reported"`/`"decorative"` enum
   states are currently dead. Client cards (`StampCard.tsx`,

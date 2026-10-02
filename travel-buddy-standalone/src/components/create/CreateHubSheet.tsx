@@ -63,7 +63,7 @@ const SHARE_ENTRIES: HubEntry[] = [
     sublabel: 'Disappearing photo or short video',
     icon: Camera,
     iconColor: color.warn,
-    // No live route yet — shows "Soon" badge
+    route: '/stories', // testing mode WP-06 (PLAT-F32/F33): the viewer + composer live there
   },
   {
     id: 'memory',
@@ -71,7 +71,7 @@ const SHARE_ENTRIES: HubEntry[] = [
     sublabel: 'A photo gallery from your trip',
     icon: BookImage,
     iconColor: '#8B5CF6',
-    route: '/memory/edit',
+    route: '/memory/new',
   },
   {
     id: 'gem',

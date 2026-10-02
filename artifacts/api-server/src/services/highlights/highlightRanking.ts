@@ -349,3 +349,225 @@ export function pinnedFirst<T extends PinnablyOrdered>(rows: readonly T[]): T[] 
   });
   return [...pinned, ...automatic];
 }
+
+/* ============================================================================
+ * §12 ON A REAL SURFACE — binding `rankHighlights` to a row of
+ * `public.highlights`.
+ *
+ * Census H99: "Ranking (manual_pin + recency + significance + current_relevance
+ * + audience_relevance + presentation_quality + diversity)" — BUILT-BUT-WRONG,
+ * blocker: "`rankHighlights` — §12's seven factors — has NO caller in
+ * `src/routes/` or `src/services/` outside its own module. Only `pinnedFirst`
+ * is wired."
+ * Census H101: "Diversity constraints across trip/person/venue/activity" —
+ * BUILT-BUT-WRONG, blocker: "`DIVERSITY_DIMENSIONS` … applied inside
+ * `rankHighlights`. Unreachable."
+ *
+ * This section is the caller those two rows name, and it is deliberately
+ * SEPARATE from `rankHighlights` itself: that function is pure §12 and takes
+ * measured factors, and it must not learn what a Supabase row looks like. What
+ * was missing was never the model — it was the ADAPTER between §12's vocabulary
+ * and the eleven columns this surface actually has.
+ *
+ * ── WHY THE MODULE HEADER'S OBJECTION IS ANSWERED, NOT OVERRULED ───────────
+ * `pinnedFirst`'s own header says calling `rankHighlights` from a route "would
+ * mean inventing five" factors, "and a ranker fed five nulls does not rank".
+ * The second half is true of the SCORE and false of the ORDER, and keeping them
+ * apart is the whole of this adapter:
+ *
+ *   - The SCORE is one factor of six. `scoreOf` already excludes a `null`
+ *     factor from the mean instead of counting it as zero, and already reports
+ *     `factorsMissing`. A score computed from recency alone IS recency — it
+ *     claims nothing more, and `RANKING_FACTORS_UNMEASURED` below is published
+ *     so no caller can mistake it for a considered one.
+ *   - The ORDER is not a score. §12's two NON-arithmetic rules — "pinned/manual
+ *     order always outranks automatic ordering" and "diversity should prevent
+ *     repetitive auto-selection" — need no factor at all. Both are fully
+ *     enforceable on this surface today, and neither was being enforced.
+ *
+ * So inventing a factor is still refused; ordering by the rules that do not
+ * need one is not.
+ *
+ * ── WHICH DIVERSITY DIMENSIONS THIS SURFACE CAN KEY, AND WHICH IT CANNOT ───
+ * DERIVED from the map below rather than listed twice, for the reason
+ * FEED_ENFORCEABLE_CONTROLS gives in highlightResurfacing.ts: the list retyped
+ * beside the table was wrong once already, and a dimension silently dropped
+ * from a constraint set looks exactly like a dimension that was satisfied.
+ *
+ *   person   -> `owner_id`. Present on every row.
+ *   venue    -> `location_name`, falling back to `location_city`. §12 says
+ *               "venue"; a city is the coarsest honest stand-in, and a row with
+ *               neither keys NOTHING rather than keying the empty string —
+ *               `applyDiversity` treats a null key as "does not constrain", and
+ *               two Highlights with no known venue are not the same venue.
+ *   trip     -> NOTHING. `public.highlights` carries no trip reference (22
+ *               columns, none of them a trip id — asserted in
+ *               src/test/highlightsMemoriesDeployedStorage.test.ts). This is
+ *               the SAME ceiling HIDE_TRIP hits in highlightResurfacing.ts and
+ *               census H90 records; one missing column closes both.
+ *   activity -> NOTHING. There is no activity taxonomy on a Highlight.
+ *               `media_type` is a MIME family, not an activity, and keying
+ *               diversity on it would separate a photo from a video and call
+ *               that variety.
+ *
+ * Two of §12's four, and the surface SAYS so rather than quietly constraining
+ * two and reporting four. That is the same posture `unenforceableControls` and
+ * `consentEnforcement` already take: the ceiling is a fact the server knows, so
+ * the server states it.
+ * ==========================================================================*/
+
+/** A row of `public.highlights`, as much of it as §12 ordering reads. */
+export interface HighlightRowForRanking {
+  readonly id: string;
+  readonly created_at?: string | null;
+  readonly owner_id?: string | null;
+  readonly location_name?: string | null;
+  readonly location_city?: string | null;
+  /** §3.5 `pinned_at` — migration 2723. Absent when the probe did not project it. */
+  readonly pinned_at?: string | null;
+}
+
+/**
+ * Which column of `public.highlights` keys each §12 diversity dimension.
+ * `null` means this surface cannot key it at all — see the header.
+ */
+export const HIGHLIGHT_DIVERSITY_SOURCES: Readonly<
+  Record<DiversityDimension, { readonly columns: readonly string[]; readonly note: string }>
+> = Object.freeze({
+  trip: {
+    columns: [],
+    note: "public.highlights carries no trip reference — the same missing column HIDE_TRIP hits (census H90)",
+  },
+  person: { columns: ["owner_id"], note: "the one person a Highlight row identifies" },
+  venue: {
+    columns: ["location_name", "location_city"],
+    note: "the venue text, coarsening to the city; a row with neither keys nothing",
+  },
+  activity: {
+    columns: [],
+    note: "no activity taxonomy on a Highlight; media_type is a MIME family, not an activity",
+  },
+});
+
+/** The §12 dimensions a `public.highlights` row can key. Derived, not listed. */
+export const FEED_DIVERSITY_DIMENSIONS: readonly DiversityDimension[] = Object.freeze(
+  DIVERSITY_DIMENSIONS.filter((d) => HIGHLIGHT_DIVERSITY_SOURCES[d].columns.length > 0),
+) as readonly DiversityDimension[];
+
+/** The §12 dimensions it cannot, published so a caller can say so. */
+export const UNRESOLVABLE_DIVERSITY_DIMENSIONS: readonly DiversityDimension[] = Object.freeze(
+  DIVERSITY_DIMENSIONS.filter((d) => HIGHLIGHT_DIVERSITY_SOURCES[d].columns.length === 0),
+) as readonly DiversityDimension[];
+
+/**
+ * The §12 factors no column of `public.highlights` witnesses. Derived from
+ * RANKED_FROM_ROW below so it cannot drift from what is actually measured.
+ */
+export const RANKING_FACTORS_MEASURED_ON_ROW: readonly HighlightRankingFactor[] =
+  Object.freeze(["recency"]) as readonly HighlightRankingFactor[];
+
+export const RANKING_FACTORS_UNMEASURED: readonly HighlightRankingFactor[] = Object.freeze(
+  HIGHLIGHT_RANKING_FACTORS.filter(
+    (f) => !(RANKING_FACTORS_MEASURED_ON_ROW as readonly string[]).includes(f),
+  ),
+) as readonly HighlightRankingFactor[];
+
+/**
+ * Turn a stored row into §12's vocabulary.
+ *
+ * `pinOrder` is the pin INSTANT in epoch milliseconds, so "earliest pin first"
+ * — the only manual order `pinned_at` records — falls out of `comparePinned`'s
+ * ascending sort with no second ordering rule to disagree with `pinnedFirst`.
+ * An unparseable or absent `pinned_at` is NOT pinned; it is not "pinned at the
+ * epoch", which would put a corrupt row ahead of every real pin.
+ */
+export function rankableFromRow(row: HighlightRowForRanking): RankableHighlight {
+  const pinnedMs = row.pinned_at != null ? Date.parse(String(row.pinned_at)) : Number.NaN;
+  const venue = row.location_name ?? row.location_city ?? null;
+  return {
+    id: String(row.id),
+    // An absent created_at yields `null` recency inside `scoreOf` — unmeasured,
+    // not "infinitely old". "" parses to NaN, which is what that branch wants.
+    createdAt: row.created_at == null ? "" : String(row.created_at),
+    pinOrder: Number.isFinite(pinnedMs) ? pinnedMs : null,
+    diversityKeys: {
+      trip: null,
+      person: row.owner_id == null ? null : String(row.owner_id),
+      venue: venue == null || String(venue).trim() === "" ? null : String(venue).trim(),
+      activity: null,
+    },
+  };
+}
+
+export interface RankedPage<T> {
+  /** The rows, in §12 order. Same rows, same count — this reorders, never filters. */
+  readonly ordered: T[];
+  /** §12 factors this surface measured. */
+  readonly factorsMeasured: readonly HighlightRankingFactor[];
+  /** §12 factors it could not, so a caller can publish the ceiling. */
+  readonly factorsUnmeasured: readonly HighlightRankingFactor[];
+  /** §12 diversity dimensions actually constrained. */
+  readonly diversityApplied: readonly DiversityDimension[];
+  /** §12 diversity dimensions this surface cannot key at all. */
+  readonly diversityUnresolvable: readonly DiversityDimension[];
+  /** True when the page contains at least one pinned row. */
+  readonly pinnedCount: number;
+}
+
+/**
+ * §12 ordering for a page of stored rows. THE caller `rankHighlights` and
+ * `DIVERSITY_DIMENSIONS` did not have.
+ *
+ * REORDERS, NEVER FILTERS. The returned array is a permutation of the input:
+ * same rows, same count. Every privacy decision on this surface — blocks,
+ * `canViewHighlight`, §11 controls, §10 consent — has already been taken by the
+ * caller, and a ranker that could drop a row would be a second, unreviewed
+ * place for a Highlight to disappear. `applyDiversity` is written to the same
+ * rule: when every remaining candidate repeats a key it emits the best one
+ * anyway rather than emptying the page.
+ *
+ * `now` is REQUIRED and is not defaulted. Recency is the one factor this
+ * surface measures, so the instant it is measured against is a caller
+ * decision — and the caller should be passing the SAME instant it used to cut
+ * expired rows out of the query, or the page can contain a row the ranker
+ * scores as already gone. Defaulting it here would have made that second clock
+ * read invisible, which is the failure `splitClockGuard` exists to catch.
+ */
+export function rankHighlightRows<T extends HighlightRowForRanking>(
+  rows: readonly T[],
+  now: Date,
+  opts: { readonly recencyHalfLifeHours?: number; readonly maxConsecutivePerKey?: number } = {},
+): RankedPage<T> {
+  // CARRIED BY POSITION, NOT BY ID — and that is the whole of the round trip's
+  // correctness. Keying the rows in a Map by `id` and looking each ranked
+  // result back up looks equivalent and is not: two rows sharing an id collapse
+  // to one Map entry, both ranked entries resolve to the SAME row, and the page
+  // comes back the right LENGTH with one row silently replaced by a duplicate
+  // of another. Nothing downstream can tell that page from a correct one, and
+  // the row that vanished had already passed every privacy gate on this
+  // surface. `rankHighlights` is generic over its item type and returns the
+  // item it was handed, so an index rides along and the mapping back is exact.
+  const ranked = rankHighlights(
+    rows.map((row, index) => ({ ...rankableFromRow(row), index })),
+    {
+      now,
+      recencyHalfLifeHours: opts.recencyHalfLifeHours,
+      maxConsecutivePerKey: opts.maxConsecutivePerKey,
+      diversityDimensions: FEED_DIVERSITY_DIMENSIONS,
+    },
+  );
+
+  // A permutation by construction: `rankHighlights` partitions, sorts and
+  // reorders but never adds or drops, so every input index appears exactly
+  // once and `ordered` is `rows` in a different order.
+  const ordered: T[] = ranked.map((r) => rows[r.item.index]);
+
+  return {
+    ordered,
+    factorsMeasured: RANKING_FACTORS_MEASURED_ON_ROW,
+    factorsUnmeasured: RANKING_FACTORS_UNMEASURED,
+    diversityApplied: FEED_DIVERSITY_DIMENSIONS,
+    diversityUnresolvable: UNRESOLVABLE_DIVERSITY_DIMENSIONS,
+    pinnedCount: ranked.filter((r) => r.pinned).length,
+  };
+}

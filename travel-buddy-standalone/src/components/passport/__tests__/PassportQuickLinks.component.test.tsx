@@ -42,6 +42,8 @@ describe('PassportQuickLinks', () => {
     expect(screen.getByText('Plans')).toBeTruthy();
     expect(screen.getByText('Set availability')).toBeTruthy();
     expect(screen.getByText('Share passport')).toBeTruthy();
+    expect(screen.getByText('Compass remembers')).toBeTruthy();
+    expect(screen.getByText('Recaps & On this day')).toBeTruthy();
   });
 
   it.each([
@@ -52,6 +54,9 @@ describe('PassportQuickLinks', () => {
     ['quicklink-yearbook', '/passport/yearbook'],
     ['quicklink-plans', '/passport/plans'],
     ['quicklink-availability', '/passport/availability'],
+    // testing-mode WP-12: the owner's Compass memory surfaces.
+    ['quicklink-remembers', '/passport/remembers'],
+    ['quicklink-recaps', '/passport/recaps'],
   ])('routes %s → %s', async (testID, route) => {
     await render(<PassportQuickLinks onShare={jest.fn()} />);
 

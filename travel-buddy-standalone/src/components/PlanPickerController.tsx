@@ -54,6 +54,8 @@ export interface PlanPickerSource {
   rankSurface?: RankSurface | null;
   /** Session UUID from the originating feed response, when that feed returns one. */
   rankSessionId?: string | null;
+  /** DV-46: the served item's own `recommendationId`, echoed on the trip_add report when present. */
+  rankRecommendationId?: string | null;
 }
 
 // ── Context ───────────────────────────────────────────────────────────────────
@@ -242,7 +244,7 @@ export function PlanPickerControllerProvider({ children }: { children: React.Rea
       // the item was already in the trip, so nothing was added and the intent it
       // would record was recorded the first time. Reporting there would count
       // one commitment twice on a table whose other outcomes are counted once.
-      reportTripAdd(source.id);
+      reportTripAdd(source.id, source.rankRecommendationId);
 
       setAddedSourceIds((prev) => {
         const next = new Set(prev);
@@ -451,7 +453,7 @@ const s = StyleSheet.create({
   previewIcon: { width: avatar.s40, height: avatar.s40, borderRadius: avatar.s40 / 2, backgroundColor: color.deep, alignItems: 'center', justifyContent: 'center' },
   previewTitle: { ...t.bodyStrong, color: color.ink },
   previewMeta: { ...t.small, color: color.mute, fontSize: 11 },
-  error: { ...t.small, color: color.signal, fontWeight: '600' },
+  error: { ...t.small, color: color.signalStrong, fontWeight: '600' },
   pickerLabel: { ...t.small, fontWeight: '700', color: color.mute, letterSpacing: 0.5, textTransform: 'uppercase', fontSize: 10 },
   tripRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, padding: space.md },
   tripIcon: { width: avatar.s34, height: avatar.s34, borderRadius: avatar.s34 / 2, backgroundColor: '#E2EDF0', alignItems: 'center', justifyContent: 'center' },
@@ -469,13 +471,13 @@ const s = StyleSheet.create({
     width: avatar.s34, height: avatar.s34, borderRadius: avatar.s34 / 2,
     backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center',
   },
-  createText: { ...t.bodyStrong, color: color.signal, fontSize: 14 },
+  createText: { ...t.bodyStrong, color: color.signalStrong, fontSize: 14 },
 
   selectedTripChip: { flexDirection: 'row', alignItems: 'center', gap: 5, alignSelf: 'flex-start', backgroundColor: color.signal + '12', borderRadius: radius.pill, borderWidth: 1, borderColor: color.signal + '40', paddingHorizontal: space.md, paddingVertical: 5 },
-  selectedTripText: { ...t.small, color: color.signal, fontWeight: '700', fontSize: 12 },
+  selectedTripText: { ...t.small, color: color.signalStrong, fontWeight: '700', fontSize: 12 },
   fieldLabel: { ...t.small, fontWeight: '700', color: color.ink, marginTop: 2 },
   fieldOpt: { fontWeight: '400', color: color.mute },
-  confirmBtn: { marginTop: space.sm, backgroundColor: color.signal, borderRadius: radius.md, paddingVertical: 14, alignItems: 'center', justifyContent: 'center', minHeight: 48 },
+  confirmBtn: { marginTop: space.sm, backgroundColor: color.signalStrong, borderRadius: radius.md, paddingVertical: 14, alignItems: 'center', justifyContent: 'center', minHeight: 48 },
   confirmBtnDisabled: { opacity: 0.6 },
   confirmBtnText: { ...t.bodyStrong, color: color.onInk, fontSize: 15 },
 

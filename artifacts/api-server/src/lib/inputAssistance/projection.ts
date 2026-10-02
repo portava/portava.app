@@ -1,7 +1,7 @@
 /**
  * Suggestion Projection (§42).
  *
- * Converts the INTERNAL SearchResult (routes/discoverySearch) into the UI-ready
+ * Converts the INTERNAL SearchResult (./searchCandidates) into the UI-ready
  * InputSuggestion (§8). This is the boundary the spec calls out: the server
  * returns a UI-ready projection and NEVER exposes raw trust vectors, private
  * ranking features, or hidden policy decisions. Only a fixed, safe subset of
@@ -13,8 +13,8 @@
  * and static Compass prompt starters (§56, resolve to editable replace_text —
  * never silently inserted, §22).
  */
-import type { SearchResult } from '../../routes/discoverySearch';
-import { matchTier } from '../../routes/discoverySearchHelpers';
+import type { SearchResult } from './searchCandidates';
+import { matchTier } from './searchQueryHelpers';
 import type { CanonicalRow } from '../canonicalLocations';
 import type { CanonicalCityBinding, GeoDefault } from './geoResolver';
 import { cityBinding, airportCityBinding } from './geoResolver';

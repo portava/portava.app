@@ -14,7 +14,7 @@ import {
 import { router } from 'expo-router';
 import { Zap, ChevronDown, ChevronUp, Clock, AlertTriangle, Calendar, Sparkles, RefreshCw, Ticket, Cloud, CloudRain, Sun, MapPin, Globe } from 'lucide-react-native';
 import { color, space, radius, type as t, icon, dot} from '../theme/tokens.ts';
-import { fetchDailyBrief, refreshDailyBrief, dismissBriefRecommendation } from '../services/intelligence.ts';
+import { fetchDailyBrief, refreshDailyBrief, dismissBriefRecommendation, executeBriefAction } from '../services/intelligence.ts';
 import { TelegraphFeedbackMenu } from './TelegraphFeedbackMenu.tsx';
 
 interface DailyBriefCardProps {
@@ -31,7 +31,7 @@ export function DailyBriefCard({ tripId, date, compact = false, onGapDays }: Dai
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(!compact);
 
-  const [refreshing, setRefreshing] = useState(false);
+  const [refreshing, setRefreshing] = useState(false); const [note, setNote] = useState<string | null>(null); // TM-live COMP-F14: what the last dismiss / action / refresh did NOT do
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -39,7 +39,7 @@ export function DailyBriefCard({ tripId, date, compact = false, onGapDays }: Dai
     const res = await fetchDailyBrief(tripId, date);
     setLoading(false);
     if (!res.ok) { setError("Could not load today's brief"); return; }
-    setAccess(res.data?.access ?? 'access_denied');
+    if (res.data?.denialReason === 'db_error') { setError("Could not load today's brief"); return; } setAccess(res.data?.access ?? 'access_denied'); // TM-live: an unreadable membership is an outage, not "not a member"
     const b = res.data?.brief ?? null;
     setBrief(b);
     if (b?.gapDays?.length && onGapDays) {
@@ -51,7 +51,7 @@ export function DailyBriefCard({ tripId, date, compact = false, onGapDays }: Dai
     setRefreshing(true);
     const res = await refreshDailyBrief(tripId, date);
     setRefreshing(false);
-    if (!res.ok) return; // silently keep old brief on failure
+    if (!res.ok || res.data?.access !== 'full') { setNote("Couldn't refresh — this is the brief from before."); return; } setNote(null); // TM-live COMP-F14: a failed refresh is said, not silent
     setAccess(res.data?.access ?? 'access_denied');
     const b = res.data?.brief ?? null;
     setBrief(b);
@@ -194,7 +194,7 @@ export function DailyBriefCard({ tripId, date, compact = false, onGapDays }: Dai
       ) : null}
 
       {/* Summary */}
-      <Text style={s.summary}>{brief.summaryText}</Text>
+      <Text style={s.summary}>{brief.summaryText}</Text>{note ? <Text testID="daily-brief-note" style={s.warningText}>{note}</Text> : null}{brief.dismissalsApplied === false ? <Text testID="daily-brief-dismissals-unread" style={s.warningText}>Couldn't check what you dismissed today — something you dismissed may show again.</Text> : null}
 
       {/* Weather banner */}
       {brief.weatherSummary ? <WeatherBanner summary={brief.weatherSummary} /> : null}
@@ -266,8 +266,8 @@ export function DailyBriefCard({ tripId, date, compact = false, onGapDays }: Dai
                     suggestion={sug}
                     tripId={tripId}
                     onDismiss={() => {
-                      dismissBriefRecommendation(tripId, sug.id, sug.category);
-                      setBrief((b: any) => b ? { ...b, suggestions: b.suggestions.filter((s: any) => s.id !== sug.id) } : b);
+                      void dismissSuggestion(tripId, sug, setBrief, setNote);
+                      /* TM-live COMP-F14: the row goes only once the server has recorded the dismissal */
                     }}
                   />
                 ))}
@@ -286,8 +286,8 @@ export function DailyBriefCard({ tripId, date, compact = false, onGapDays }: Dai
                     suggestion={sug}
                     tripId={tripId}
                     onDismiss={() => {
-                      dismissBriefRecommendation(tripId, sug.id, sug.category);
-                      setBrief((b: any) => b ? { ...b, suggestions: b.suggestions.filter((s: any) => s.id !== sug.id) } : b);
+                      void dismissSuggestion(tripId, sug, setBrief, setNote);
+                      /* TM-live COMP-F14: the row goes only once the server has recorded the dismissal */
                     }}
                   />
                 ))}
@@ -300,7 +300,7 @@ export function DailyBriefCard({ tripId, date, compact = false, onGapDays }: Dai
               <Pressable
                 key={action.id}
                 style={s.actionBtn}
-                onPress={() => handleQuickAction(action, tripId)}
+                onPress={() => void runQuickAction(action, tripId, setNote)} testID={`daily-brief-action-${action.kind}`}
               >
                 <Text style={s.actionText}>{chipLabelForAction(action)}</Text>
               </Pressable>
@@ -677,3 +677,32 @@ const sc = StyleSheet.create({
   btn: { alignSelf: 'flex-end', marginTop: space.sm, paddingHorizontal: space.md, paddingVertical: 5, borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze },
   btnText: { ...t.small, color: color.ink, fontSize: 11, fontWeight: '700' },
 });
+
+/* ── TM-live (WP-11, COMP-F14): dismiss and act go through the server ────────
+ * A dismissal leaves the card only once POST /daily-brief/dismiss/:id has
+ * recorded it; the server then drops it from every brief served that day. A
+ * quick action runs POST /daily-brief/actions/:kind (the route validates the
+ * action KIND and the caller's membership) and only then navigates — a refused
+ * or unreachable action says so instead of pretending to have happened.
+ */
+async function dismissSuggestion(
+  tripId: string,
+  sug: any,
+  setBrief: (fn: (b: any) => any) => void,
+  setNote: (n: string | null) => void,
+): Promise<void> {
+  const r = await dismissBriefRecommendation(tripId, sug.id, sug.category);
+  if (!r.ok) { setNote(`Couldn't dismiss "${sug.title ?? 'that'}" — try again.`); return; }
+  setNote(null);
+  setBrief((b: any) => (b ? { ...b, suggestions: (b.suggestions ?? []).filter((x: any) => x.id !== sug.id) } : b));
+}
+
+async function runQuickAction(action: any, tripId: string, setNote: (n: string | null) => void): Promise<void> {
+  const r = await executeBriefAction(tripId, String(action.kind ?? ''));
+  if (!r.ok) {
+    setNote(r.status === 403 ? 'Only accepted trip members can do that.' : `Couldn't start "${chipLabelForAction(action)}" — try again.`);
+    return;
+  }
+  setNote(null);
+  handleQuickAction(action, tripId);
+}

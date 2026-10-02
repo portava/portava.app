@@ -74,11 +74,11 @@ import { invalidateDiscoveryEngineModeCache } from "../lib/discoveryEngineMode.j
 
 // ── No network. Overpass and Nominatim throw immediately rather than hanging.
 // Every case supplies lat/lng, so the route never needs to geocode; Overpass
-// failing is what makes the OSM half empty except where a case seeds cache A.
+// answering empty (§94.10: a throw is now a named outage) is what makes the OSM half empty except where a case seeds cache A.
 const _originalFetch = globalThis.fetch;
 globalThis.fetch = (async (url: any, init?: any) => {
   const s = String(typeof url === "string" ? url : (url as URL).href ?? "");
-  if (s.includes("overpass-api.de") || s.includes("nominatim.openstreetmap.org")) {
+  if (s.includes("overpass-api.de")) return new Response(JSON.stringify({ elements: [] }), { status: 200, headers: { "content-type": "application/json" } }); if (s.includes("overpass-api.de") || s.includes("nominatim.openstreetmap.org")) {
     throw new Error("Network blocked in test environment");
   }
   return _originalFetch(url, init);
@@ -390,14 +390,39 @@ describe("GET /discovery — the curated half of the merge (D11's last residual)
     // in this request — it feeds sourceSummary.seededDbCount — and it is THIS
     // request's read that failed. A replayed page over a source that never
     // answered is still a half-answer.
-    setClient({ rows: { feature_flags: COMPASS_ON_FLAGS } });
+    //
+    // census-discovery §47 changed WHICH page this path may replay, and this case
+    // used to pin the old answer. It seeded a page while the curated read was
+    // healthy and then REPLAYED it through the outage — curated rows the request
+    // could not verify (deactivated? submitter no longer active?) served for the
+    // rest of the ten-minute TTL. A curated outage is now its own authorized
+    // context (lib/discoveryCacheEligibility.ts `authorizedContextKey`): the first
+    // request of the outage re-ranks from what it COULD read, and the path-2
+    // replay is of THAT page. What this case exists to pin is unchanged — the
+    // replay names the unreadable half of THIS request — and a canonical row is
+    // seeded so the replayed page still carries real rows.
+    const canonical = [{
+      id: "c1", name: "canonical one", city: "Miami", primary_category: "food",
+      latitude: 25.77, longitude: -80.19, neighborhood: null, address: null,
+      image_source_type: null, image_accuracy_status: null, status: "active",
+    }];
+    setClient({ rows: { feature_flags: COMPASS_ON_FLAGS, places: canonical } });
     _setTestDbPlacesOverride(async () => [curatedPlace("p1", 10), curatedPlace("p2", 5)]);
     const first = await get(`/api/discovery?${MIAMI}&category=for_you`, true);
     assertServePath(first.body, "compass_fresh");
     assert.equal(first.body.refusal, undefined, "precondition: the seeding request is healthy");
 
     _setTestDbPlacesOverride(null);
-    setClient({ rows: { feature_flags: COMPASS_ON_FLAGS }, errorTables: ["discovery_places"] });
+    setClient({ rows: { feature_flags: COMPASS_ON_FLAGS, places: canonical }, errorTables: ["discovery_places"] });
+    const during = await get(`/api/discovery?${MIAMI}&category=for_you`, true);
+    assertServePath(during.body, "compass_fresh");
+    const duringIds = during.body.places.map((p: any) => p.id);
+    assert.ok(
+      !duringIds.includes("db/p1") && !duringIds.includes("db/p2"),
+      `the healthy page's curated rows were replayed over a read that failed: ${JSON.stringify(duringIds)}`,
+    );
+    assertCuratedPartial(during.body, "the first request of a curated outage");
+
     const r = await get(`/api/discovery?${MIAMI}&category=for_you`, true);
     assert.equal(r.status, 200);
     assertServePath(r.body, "compass_hit");

@@ -16,7 +16,17 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { getCurrentGps, reverseGeocodeToPlace, checkLocationPermission } from '../services/location.ts';
 import type { Place } from '../lib/location/placeTypes.ts';
 import { isSupabaseConfigured } from '../lib/supabase.ts';
+import { onAuthChange } from '../services/auth.ts';
 import { buildManualCityState, buildManualCityPayload, buildGpsState, buildGpsRevokedState, shouldRestorePersistedState } from './activeLocation.state';
+import {
+  DEVICE_ID_HEADER,
+  EMPTY_PLACE,
+  accountChanged,
+  buildAccountChangeState,
+  clampFreshnessForPrecision,
+  coordsPrecisionOf,
+  type CoordsPrecision,
+} from './activeLocation.state';
 import { _loadHomeFromProfile } from './activeLocation.homeProfile.ts';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -58,6 +68,13 @@ export interface ActiveLocationState {
   source: LocationSource;
   freshness: LocationFreshness;
   coords: LocationCoords | null;
+  /**
+   * What the SERVER said about a restored coordinate: `precise` only when this
+   * device is the one that published it, `approximate` for a grid-snapped point
+   * (§17.8 / §30A.7 — a precise share does not follow the account onto a new
+   * device). Absent for a coordinate this device measured itself.
+   */
+  coordsPrecision?: CoordsPrecision;
   /** Current active place — always a full canonical Place object. */
   place: Place;
   lastUpdatedAt: string | null;
@@ -79,22 +96,6 @@ export interface UseActiveLocationResult {
 
 const RECENT_THRESHOLD_MS = 15 * 60 * 1000;   // 15 min
 const STALE_THRESHOLD_MS  = 60 * 60 * 1000;   // 60 min
-
-const EMPTY_PLACE: Place = {
-  id: '',
-  type: 'city',
-  name: '',
-  displayName: '',
-  country: null,
-  countryCode: null,
-  region: null,
-  city: null,
-  district: null,
-  lat: null,
-  lng: null,
-  timezone: null,
-  source: 'manual',
-};
 
 const INITIAL_STATE: ActiveLocationState = {
   ok: false,
@@ -129,14 +130,33 @@ async function fetchToken(): Promise<string | null> {
 }
 
 
+/**
+ * This device's registered id, or null.
+ *
+ * §17.8 / §30A.7: the server binds an ACTIVE PRECISE location to the device
+ * that published it, and serves a precise coordinate back only to that device.
+ * Presenting the id is therefore how this phone keeps its own fix precise; a
+ * phone that has not registered (or a build that cannot reach SecureStore)
+ * simply reads a coarse point, which is the safe direction to fail in.
+ */
+async function deviceIdHeaders(): Promise<Record<string, string>> {
+  try {
+    const { getRegisteredDeviceId } = await import('../lib/cryptoIdentity.ts');
+    const deviceId = await getRegisteredDeviceId();
+    return deviceId ? { [DEVICE_ID_HEADER]: deviceId } : {};
+  } catch {
+    return {};
+  }
+}
+
 async function saveLocationToApi(patch: object): Promise<void> {
   if (!isSupabaseConfigured) return;
   try {
-    const [base, token] = await Promise.all([apiBase(), fetchToken()]);
+    const [base, token, deviceHeaders] = await Promise.all([apiBase(), fetchToken(), deviceIdHeaders()]);
     if (!token) return;
     await fetch(`${base}/api/me/location-state`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...deviceHeaders },
       body: JSON.stringify(patch),
     });
   } catch {
@@ -147,10 +167,10 @@ async function saveLocationToApi(patch: object): Promise<void> {
 async function loadLocationFromApi(): Promise<ActiveLocationState | null> {
   if (!isSupabaseConfigured) return null;
   try {
-    const [base, token] = await Promise.all([apiBase(), fetchToken()]);
+    const [base, token, deviceHeaders] = await Promise.all([apiBase(), fetchToken(), deviceIdHeaders()]);
     if (!token) return null;
     const res = await fetch(`${base}/api/me/location-state`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: { Authorization: `Bearer ${token}`, ...deviceHeaders },
     });
     if (!res.ok) return null;
     const json = await res.json();
@@ -194,11 +214,15 @@ async function loadLocationFromApi(): Promise<ActiveLocationState | null> {
       place = EMPTY_PLACE;
     }
 
+    const coordsPrecision = coordsPrecisionOf(d.coordsPrecision);
+
     return {
       ok: !!(d.coords || d.manualCity),
       permissionStatus: (d.permissionStatus as PermissionStatus) ?? 'unknown',
+      coordsPrecision,
       source,
-      freshness: computeFreshness(d.updatedAt),
+      // A coarse point is never 'live' — see clampFreshnessForPrecision.
+      freshness: clampFreshnessForPrecision(computeFreshness(d.updatedAt), coordsPrecision),
       coords: d.coords ?? null,
       place,
       lastUpdatedAt: d.updatedAt ?? null,
@@ -216,9 +240,38 @@ export function useActiveLocation(): UseActiveLocationResult {
   const [isLoading, setIsLoading] = useState(false);
   const mountedRef = useRef(true);
 
+  const accountRef = useRef<string | null | undefined>(undefined);
+
   useEffect(() => {
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
+  }, []);
+
+  // §17.8 / §30A.7 — ACCOUNT ISOLATION.
+  //
+  // A precise position belongs to a device AND to the account that published
+  // it. The server refuses to serve a precise fix to a device that did not
+  // publish it; this is the client half, and it is the same shape the Input
+  // Intelligence lane used for its policy snapshot
+  // (`platform/input-assistance/services/policyStore.ts#setActiveAccount` drops
+  // the snapshot, `installInputPolicySync.ts#applyAccountChange` erases the
+  // caches with it): on an account CHANGE, drop what is held rather than let
+  // the next account read the previous one's location.
+  //
+  // The first notification only records who is signed in — the mount cascade is
+  // already loading for them, and clearing here would race it. Every subsequent
+  // CHANGE clears.
+  useEffect(() => {
+    let alive = true;
+    const unsubscribe = onAuthChange((userId) => {
+      if (!alive) return;
+      const held = accountRef.current;
+      accountRef.current = userId;
+      if (held === undefined) return; // first observation, not a change
+      if (!accountChanged(held, userId)) return;
+      setLocationState((prev) => buildAccountChangeState(prev));
+    });
+    return () => { alive = false; unsubscribe(); };
   }, []);
 
   // On mount: 3-tier cascade:
@@ -242,7 +295,10 @@ export function useActiveLocation(): UseActiveLocationResult {
         setLocationState({
           ...savedState,
           permissionStatus: permStatus,
-          freshness: computeFreshness(savedState.lastUpdatedAt),
+          freshness: clampFreshnessForPrecision(
+            computeFreshness(savedState.lastUpdatedAt),
+            savedState.coordsPrecision ?? null,
+          ),
         });
       } else {
         // Tier 3: try profile home city as last resort

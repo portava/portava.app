@@ -37,7 +37,7 @@ import { GemsItemOverlay } from './GemsItemOverlay.tsx';
 import { MediaCommentSheet } from './MediaCommentSheet.tsx';
 import { MediaMoreMenu } from './MediaMoreMenu.tsx';
 import { WhyThisSheet } from './WhyThisSheet.tsx';
-import { recordMediaShare } from '../../services/mediaInteractions.ts';
+import { recordMediaShare, mediaSignalRecorder } from '../../services/mediaInteractions.ts'; import { emitMediaSignal } from '../../features/media/telemetry/mediaTelemetry.ts';
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -200,7 +200,7 @@ export function GemsFeed({
         {/* Overlay */}
         <GemsItemOverlay
           item={item}
-          onViewPlace={onViewPlace}
+          onViewPlace={onViewPlace ? (it: GemsFeedItem) => { if (it.gemId && it.location?.canonicalPlaceId) emitMediaSignal(mediaSignalRecorder, 'gem_open', { mediaId: it.id, gemId: it.gemId, placeId: it.location.canonicalPlaceId, surface: 'gems_feed' }); onViewPlace(it); } : undefined}
           onAddToTrip={onAddToTrip}
           onDirections={onDirections}
           onFollowCreator={onViewCreator}

@@ -151,7 +151,7 @@ one row where it actually binds.
 | Decision | Bound by | What applying decides |
 |---|---|---|
 | `SENSING_AUTH_POSTURE` | **2481** | Its CHECK constrains `issuance_class` to `authenticated_profile`. Under Option B this file is never run and the column never exists. 2480 alone is neutral. |
-| `MEDIA_CANONICAL_FLAG` | **2470** | `media_canonical_enabled` is TRUE in production while the columns are absent — the condition that caused three weeks of swallowed write loss. The decision is whether to add the columns under the live flag or take the flag down first. |
+| `MEDIA_CANONICAL_FLAG` | **2470** | `media_canonical_enabled` is TRUE in production while the columns are absent — the condition that caused three weeks of swallowed write loss. The decision is whether to add the columns under the live flag or take the flag down first. **Both have since happened (re-measured read-only 2026-09-26, census-media §23.2): 2470 applied 2026-09-16 (`manual`), and the flag reads FALSE since 2026-09-25 15:39 UTC. The open decision is now whether to turn the writer back on.** |
 | `LOCATION_PRECISION_DEFAULT` | *not bound by a migration* | 2338 deliberately defaults to `'exact'` so that applying it changes no served row. The default for *newly created* memories is a product decision and is not encoded anywhere yet. Applying 2338 does not pre-empt it. |
 | `STORY_HIGHLIGHT_VISIBILITY` | *not bound by a migration in this band* | 2339 gates only feed bounding, behind a FALSE flag. |
 

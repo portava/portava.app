@@ -95,7 +95,72 @@ function schemaSection(): string[] {
   return lines;
 }
 
-// ── 2. Migrations ─────────────────────────────────────────────────────────────
+
+/**
+ * SQL text with comments removed, so a table named only in PROSE is not counted
+ * as a table the migration TOUCHES.
+ *
+ * WHY THIS EXISTS. Section 2 used to test the raw file, so any mention counted.
+ * 2993_highlight_command_boundary.sql has exactly one occurrence of a messaging
+ * table name, in a comment citing another lane's file as precedent:
+ *
+ *   --     src/server/telegraph/commandRoute.ts, on `messages`), and
+ *
+ * and it was listed under a heading that promises migrations which TOUCH a
+ * messaging table. It touches none: every table it names is a Highlights or
+ * Memory-kernel object. A reader scoping a Telegraph migration audit from that
+ * list would have opened a file with nothing to do with messaging.
+ *
+ * This is a scanner, not a parser, and it is written as one on purpose: it
+ * tracks single-quoted literals and dollar-quoted bodies so that a `--` INSIDE
+ * a string is not mistaken for a comment, which is the failure mode a naive
+ * regex has. Function bodies in $$ ... $$ are KEPT, because they are real SQL
+ * that really does touch tables.
+ */
+export function stripSqlComments(src: string): string {
+  let out = "";
+  let i = 0;
+  while (i < src.length) {
+    const two = src.slice(i, i + 2);
+    if (two === "--") {
+      const nl = src.indexOf("\n", i);
+      i = nl === -1 ? src.length : nl;
+      continue;
+    }
+    if (two === "/*") {
+      const end = src.indexOf("*/", i + 2);
+      i = end === -1 ? src.length : end + 2;
+      continue;
+    }
+    if (src[i] === "'") {
+      const start = i;
+      i += 1;
+      while (i < src.length) {
+        if (src[i] === "'" && src[i + 1] === "'") { i += 2; continue; }
+        if (src[i] === "'") { i += 1; break; }
+        i += 1;
+      }
+      out += src.slice(start, i);
+      continue;
+    }
+    const dollar = /^\$[A-Za-z_]*\$/.exec(src.slice(i));
+    if (dollar) {
+      const tag = dollar[0];
+      const end = src.indexOf(tag, i + tag.length);
+      const stop = end === -1 ? src.length : end + tag.length;
+      // Keep the body: it is executable SQL, and its own comments are stripped
+      // by recursing so a commented-out table inside a function is not counted.
+      out += tag + stripSqlComments(src.slice(i + tag.length, end === -1 ? src.length : end)) + (end === -1 ? "" : tag);
+      i = stop;
+      continue;
+    }
+    out += src[i];
+    i += 1;
+  }
+  return out;
+}
+
+// ── 2. Migrations ─────────────────────────────────────────────────────
 
 function migrationSection(): string[] {
   const dir = resolve(PKG_ROOT, "src/migrations");
@@ -103,12 +168,27 @@ function migrationSection(): string[] {
   const hits: string[] = [];
   for (const f of files) {
     const src = readFileSync(join(dir, f), "utf8");
-    if (MESSAGING_TABLES.some((t) => new RegExp(`\\b${t}\\b`).test(src))) hits.push(f);
+    const sql = stripSqlComments(src);
+    if (MESSAGING_TABLES.some((t) => new RegExp(`\\b${t}\\b`).test(sql))) hits.push(f);
   }
   return [
     "### 2. Migrations that touch a messaging table",
     "",
     `${hits.length} of ${files.length} migration files reference at least one messaging table.`,
+    "",
+    "MEASURED ON THE SQL WITH COMMENTS STRIPPED. A table named only in a `--` or",
+    "`/* */` comment is not counted; before this, 13 of the 37 files listed here",
+    "qualified on a comment alone, one of them on the ordinary English word",
+    "\"messages\" in the phrase *nudge messages*.",
+    "",
+    "STRING LITERALS ARE DELIBERATELY KEPT, and that is a trade-off rather than an",
+    "oversight. Migrations legitimately name tables inside strings to drive",
+    "dynamic DDL — `2136_profiles_auth_users_convergence.sql` iterates the array",
+    "`'messages', 'message_threads'` and really does alter them — so stripping strings",
+    "would lose true positives. The cost is that a table named only inside a",
+    "`COMMENT ON ... IS '…'` string still counts; `2140_deletion_receipt.sql` and",
+    "`2812_telegraph_report_evidence.sql` are in this list for that reason and",
+    "touch no messaging table.",
     "",
     ...hits.map((f) => `- \`src/migrations/${f}\``),
     "",
