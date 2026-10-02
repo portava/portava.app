@@ -213,6 +213,30 @@ export function derivedStoragePaths(primaryPath: string): string[] {
 }
 
 /**
+ * The `role` claim of a Supabase client's key, when the key is a JWT and says.
+ *
+ * Null for anything it cannot classify: a key in the newer `sb_secret_…` /
+ * `sb_publishable_…` form, an unparseable JWT, or a test double with no key at
+ * all. Deliberately NOT signature-verified — this decides no trust and grants
+ * no access. It reads back which role THIS process is asking as, so the one
+ * mistake that would silently destroy media can be refused instead of trusted.
+ * The database still enforces what the role may actually do.
+ */
+export function clientRoleClaim(sc: SupabaseClient): string | null {
+  const key = (sc as any)?.supabaseKey;
+  if (typeof key !== "string" || !key) return null;
+  const parts = key.split(".");
+  if (parts.length !== 3) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+    const role = (payload as any)?.role;
+    return typeof role === "string" && role ? role : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Which of these media URLs are still referenced by something other than the
  * Story being purged.
  *
@@ -251,6 +275,39 @@ export async function findSurvivingReferences(
 ): Promise<Map<string, ReferenceVerdict>> {
   const referenced = new Map<string, ReferenceVerdict>();
   if (mediaUrls.length === 0) return referenced;
+
+  // ── WHOSE EYES THIS READ USES ────────────────────────────────────────────
+  // The correctness of everything below rests on a fact nothing in this
+  // function could otherwise see: it must run on a client whose reads are NOT
+  // filtered by RLS.
+  //
+  // A PERMANENT Highlight is protected today because the reads carry no
+  // visibility filter — no `expires_at`, no `deleted_at`, no `archived_at` — so
+  // a permanent Highlight's NULL expiry is a NULL in a column nobody looks at
+  // and the row still counts as a surviving reference. But RLS on `highlights`
+  // hides a private Highlight from everyone except its owner, and the SAME read
+  // issued with a user key returns ZERO ROWS for a Highlight it cannot see.
+  // Zero rows here does not mean "hidden", it means "nothing references these
+  // bytes" — and that deletes them. The pass runs on the service-role client
+  // (`lib/storyRetentionScheduler.ts`, `db ?? getServiceClient()`), and that one
+  // fact is what stands between a permanent Highlight and losing its media.
+  //
+  // So the realistic mistake — handing this pass a user or anon client — is
+  // refused rather than trusted, by the same posture as the drift assertion
+  // below: refuse to decide what is safe to delete.
+  //
+  // WHAT THIS IS NOT, so it is not mistaken for a proof: a key is classifiable
+  // only when it is a JWT carrying a `role` claim. A newer-style
+  // `sb_secret_…` / `sb_publishable_…` key and a test double with no key cannot
+  // be classified and are allowed through. This narrows the hazard to the
+  // clients it can see; it does not remove it, and it is not a substitute for
+  // handing this function the right client.
+  const asking = clientRoleClaim(sc);
+  if (asking && asking !== "service_role") {
+    throw new Error(
+      `storyRetention: the reference reads were handed a "${asking}" client — RLS would hide a private Highlight and its media would then be deleted as unreferenced. Refusing to decide what is safe to delete.`,
+    );
+  }
 
   // Each source is read through a literal `.from("…").select("…")` below rather
   // than through `.from(table)` over REFERENCE_SOURCES. The loop read better,

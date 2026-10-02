@@ -46,6 +46,7 @@ import {
   purgeExpiredEngagement,
   runStoryRetention,
   findSurvivingReferences,
+  clientRoleClaim,
   derivedStoragePaths,
   splitStoragePath,
 } from "../services/stories/storyRetention.js";
@@ -294,6 +295,15 @@ const NOW = Date.parse("2026-09-22T12:00:00.000Z");
 const iso = (ms: number) => new Date(ms).toISOString();
 
 function storyPath(id: string) { return `stories/${OWNER}/${id}.jpg`; }
+/**
+ * A key shaped like a Supabase JWT, carrying one `role` claim. Unsigned on
+ * purpose: `clientRoleClaim` reads the claim back and verifies nothing, because
+ * it decides no trust — it only refuses a client whose reads RLS would filter.
+ */
+function roleKey(role: string): string {
+  const payload = Buffer.from(JSON.stringify({ role }), "utf8").toString("base64url");
+  return `header.${payload}.signature`;
+}
 function storyUrl(id: string) { return `post-media/${storyPath(id)}`; }
 
 function seedStory(db: FakeDb, id: string, over: Row = {}): Row {
@@ -743,6 +753,50 @@ describe("the reference guard", () => {
     assert.equal(db.rows("stories").length, 0, "the Story row is still purged — decision 6");
     assert.deepEqual(out.failures, [], "keeping a referenced file is the approved outcome, not a failure");
     assert.equal(db.rows("story_purge_queue").length, 0, "and the ledger entry settles");
+  });
+
+  /**
+   * THE THREAD THE WHOLE GUARD HANGS BY. The reads above carry no visibility
+   * filter — no `expires_at`, no `deleted_at`, no `archived_at` — which is
+   * exactly why a PERMANENT Highlight's NULL expiry still counts as a surviving
+   * reference. But RLS on `highlights` hides a private Highlight from everyone
+   * but its owner, so the same read on a user key returns zero rows for a
+   * Highlight it cannot see, and zero rows here does not mean "hidden", it
+   * means "nothing references these bytes" — which deletes them.
+   *
+   * So the client is not assumed. A classifiable non-service key is refused
+   * before any read, loudly, rather than answering "no references" from behind
+   * a filter it cannot see.
+   */
+  it("refuses to decide what is safe to delete when handed a user-scoped client", async () => {
+    const user: any = makeClient(db);
+    user.supabaseKey = roleKey("authenticated");
+    await assert.rejects(
+      () => findSurvivingReferences(user, [storyUrl("r1")]),
+      /were handed a "authenticated" client/,
+      "a user key must stop the pass, not quietly report an empty reference set",
+    );
+
+    const anon: any = makeClient(db);
+    anon.supabaseKey = roleKey("anon");
+    await assert.rejects(() => findSurvivingReferences(anon, [storyUrl("r1")]), /"anon" client/);
+
+    // CONTROL: the client the job actually runs on is not refused.
+    const svc: any = makeClient(db);
+    svc.supabaseKey = roleKey("service_role");
+    const out = await findSurvivingReferences(svc, [storyUrl("r1")]);
+    assert.equal(out.size, 0, "no references seeded, and service_role is allowed to say so");
+  });
+
+  it("classifies only the keys it can actually read, and says so by returning null", () => {
+    assert.equal(clientRoleClaim({ supabaseKey: roleKey("service_role") } as any), "service_role");
+    // Not classifiable, and allowed through rather than guessed at: the newer
+    // key format carries no claims, a test double carries no key, and a
+    // three-part string is not necessarily a JWT.
+    assert.equal(clientRoleClaim({ supabaseKey: "sb_secret_not_a_jwt" } as any), null);
+    assert.equal(clientRoleClaim({} as any), null);
+    assert.equal(clientRoleClaim({ supabaseKey: "a.b.c" } as any), null);
+    assert.equal(clientRoleClaim({ supabaseKey: roleKey("") } as any), null);
   });
 
   it("never derives a sibling name from a name that is already a sibling", () => {
