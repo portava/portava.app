@@ -501,7 +501,7 @@ function schedulerReports(): JobReport[] {
       // so a pass that settled ten entries and deleted no bytes at all read as
       // a successful cleanup.
       retention.lastReport
-        ? `last pass: enqueued ${retention.lastReport.enqueuedArchive}+${retention.lastReport.enqueuedDeleted}, settled ${retention.lastReport.completed} (objects deleted ${retention.lastReport.objectsDeleted}+${retention.lastReport.derivedSettled} derived, kept for a live reference ${retention.lastReport.retained}, not ours ${retention.lastReport.external}), deferred ${retention.lastReport.deferred}`
+        ? `last pass: enqueued ${retention.lastReport.enqueuedArchive}+${retention.lastReport.enqueuedDeleted}, settled ${retention.lastReport.completed} (files deleted ${retention.lastReport.objectsDeleted}, kept for a live reference ${retention.lastReport.retained}, not ours ${retention.lastReport.external}), deferred ${retention.lastReport.deferred}`
         : null,
     ].filter(Boolean).join(" | "),
   });

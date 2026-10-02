@@ -656,9 +656,8 @@ describe("the reference guard", () => {
     assert.ok(!db.objects("post-media").has(storyPath("d1")), "the original must go");
     assert.ok(!db.objects("post-media").has(`stories/${OWNER}/d1.thumb.jpg`), "and the thumbnail");
     assert.ok(!db.objects("post-media").has(`stories/${OWNER}/d1.feed.jpg`), "and the feed copy");
-    assert.equal(out.objectsDeleted, 1, "one entry settled");
-    assert.equal(out.derivedSettled, 2, "and three files went, which only this number says");
-    assert.equal(out.completed, 1);
+    assert.equal(out.objectsDeleted, 3, "three FILES went, and objectsDeleted counts files");
+    assert.equal(out.completed, 1, "from one settled entry, which is what completed counts");
     assert.deepEqual(out.failures, []);
   });
 
@@ -672,8 +671,7 @@ describe("the reference guard", () => {
     const out = await processPurgeQueue(sc, NOW, 100);
 
     assert.equal(out.completed, 1);
-    assert.equal(out.objectsDeleted, 1);
-    assert.equal(out.derivedSettled, 0, "nothing derived existed, so nothing derived is claimed");
+    assert.equal(out.objectsDeleted, 1, "one file existed and one went — never three");
     assert.deepEqual(out.failures, []);
   });
 
@@ -690,7 +688,6 @@ describe("the reference guard", () => {
     const out = await processPurgeQueue(sc, NOW, 100);
 
     assert.equal(out.objectsDeleted, 0, "a remove() that changed nothing is not a delete");
-    assert.equal(out.derivedSettled, 0);
     assert.equal(out.deferred, 1);
     assert.equal(db.rows("stories").length, 1, "and the row that points at them survives");
     const entry = db.rows("story_purge_queue")[0];

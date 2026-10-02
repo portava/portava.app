@@ -107,7 +107,6 @@ export interface StoryRetentionStatus {
     // The four outcomes the owner asked to be kept apart. `completed` alone
     // cannot answer "were the bytes deleted", so it is never reported alone.
     | "objectsDeleted"
-    | "derivedSettled"
     | "retained"
     | "external"
     | "deferred"
@@ -308,7 +307,6 @@ export async function runStoryRetentionTick(
         enqueuedDeleted: report.enqueuedDeleted,
         completed: report.completed,
         objectsDeleted: report.objectsDeleted,
-        derivedSettled: report.derivedSettled,
         retained: report.retained,
         external: report.external,
         deferred: report.deferred,

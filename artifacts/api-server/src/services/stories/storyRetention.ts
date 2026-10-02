@@ -105,15 +105,18 @@ export interface RetentionReport {
    * successful cleanup.
    */
   completed: number;
-  /** Entries whose storage objects were all verified ABSENT after this pass deleted them. */
-  objectsDeleted: number;
   /**
-   * Sibling objects — thumbnails and feed-sized copies made from the same
-   * upload — verified absent alongside their original. Reported apart because
-   * one entry can own several objects, so `objectsDeleted` is a count of
-   * entries and this is what says how many FILES actually went.
+   * OBJECTS verified absent from storage after this pass deleted them, counting
+   * each file and not each entry. One story can own three — the original, a
+   * `.thumb.jpg` and a `.feed.jpg` — so this is deliberately not the same
+   * number as `completed`, which counts ledger entries. It is the count that
+   * can be checked against `storage.objects` path by path.
+   *
+   * Only objects that were PRESENT before the delete are counted. A derived
+   * name that was never created is absent either way, and counting absence
+   * would have the pass claim it removed files nobody made.
    */
-  derivedSettled: number;
+  objectsDeleted: number;
   /**
    * Objects deliberately kept because a NAMED live reference survives them —
    * a Highlight, a Memory item, a passport memory. Ours, and still in use.
@@ -484,7 +487,6 @@ export async function processPurgeQueue(
 ): Promise<{
   completed: number;
   objectsDeleted: number;
-  derivedSettled: number;
   retained: number;
   external: number;
   deferred: number;
@@ -504,7 +506,6 @@ export async function processPurgeQueue(
     return {
       completed: 0,
       objectsDeleted: 0,
-      derivedSettled: 0,
       retained: 0,
       external: 0,
       deferred: 0,
@@ -517,7 +518,6 @@ export async function processPurgeQueue(
 
   let completed = 0;
   let objectsDeleted = 0;
-  let derivedSettled = 0;
   let retained = 0;
   let external = 0;
   let deferred = 0;
@@ -539,6 +539,8 @@ export async function processPurgeQueue(
      * decided and counted then — counting it again would double-count.
      */
     let byteOutcome: "deleted" | "retained" | "external" | null = null;
+    /** Objects this entry removed and read back, counted only once it settles. */
+    let objectsGone = 0;
 
     // ── Step 1: the bytes ────────────────────────────────────────────────────
     if (!objectDeletedAt && !objectRetainedReason) {
@@ -603,7 +605,9 @@ export async function processPurgeQueue(
               if (unsettled.length === 0) {
                 objectDeletedAt = nowIso;
                 byteOutcome = "deleted";
-                derivedSettled += siblingsGone;
+                // The original plus whichever siblings were really there. The
+                // entry is counted separately, by `completed`.
+                objectsGone += 1 + siblingsGone;
               } else {
                 failure = unsettled.join("; ");
               }
@@ -639,7 +643,7 @@ export async function processPurgeQueue(
         failure = `could not clear ledger entry ${storyId}: ${(clearErr as any)?.message ?? "unknown"}`;
       } else {
         completed += 1;
-        if (byteOutcome === "deleted") objectsDeleted += 1;
+        if (byteOutcome === "deleted") objectsDeleted += objectsGone;
         else if (byteOutcome === "retained") retained += 1;
         else if (byteOutcome === "external") external += 1;
         continue;
@@ -666,7 +670,7 @@ export async function processPurgeQueue(
     if (updErr) failures.push(`could not record retry state for ${storyId}: ${(updErr as any)?.message ?? "unknown"}`);
   }
 
-  return { completed, objectsDeleted, derivedSettled, retained, external, deferred, failures };
+  return { completed, objectsDeleted, retained, external, deferred, failures };
 }
 
 /**
@@ -794,7 +798,6 @@ export async function runStoryRetention(
     enqueuedDeleted: enq.deleted,
     completed: worked.completed,
     objectsDeleted: worked.objectsDeleted,
-    derivedSettled: worked.derivedSettled,
     retained: worked.retained,
     external: worked.external,
     deferred: worked.deferred,
