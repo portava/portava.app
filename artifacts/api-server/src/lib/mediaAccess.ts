@@ -596,7 +596,7 @@ async function decide(
       // `{ deleted_at, body: '' }` (routes/groupChat.ts) and the unsend RPC
       // writes `{ unsent_at, deleted_at, lifecycle_state, body }`
       // (migrations/3000), and nothing in the tree nulls those two columns. So
-      // the row went on matching the `.or()` below by the very key it was
+      // the row went on matching the OR filter below by the very key it was
       // retracting, and this branch went on minting a signed URL into the
       // PRIVATE `post-media` bucket for it. The TEXT reader already redacts
       // (`isDeleted = Boolean(m.deleted_at)`, routes/messaging.ts), which is

@@ -200,19 +200,19 @@ upload. §40 covers the client upload service.
 - **The byte gate.**
   - Its entry: `artifacts/api-server/src/lib/mediaAccess.ts:168#export async function authorizeMediaAccess(`.
   - It decides at `artifacts/api-server/src/lib/mediaAccess.ts:292#async function decide(`.
-  - An unreferenced object is denied: `artifacts/api-server/src/lib/mediaAccess.ts:874#Nothing references it`.
+  - An unreferenced object is denied: `artifacts/api-server/src/lib/mediaAccess.ts:895#Nothing references it`.
 - **A derived object is decided as its base.**
   - A poster is its video (§37):
     - `artifacts/api-server/src/lib/mediaAccess.ts:369#const posterOf = derivedPosterBase(path);`;
     - `artifacts/api-server/src/lib/mediaPosterPath.ts:41#export function derivedPosterBase(`.
-  - A poster keeps its video's deadline: `artifacts/api-server/src/lib/mediaAccess.ts:907#a poster keeps its video's deadline`.
+  - A poster keeps its video's deadline: `artifacts/api-server/src/lib/mediaAccess.ts:928#a poster keeps its video's deadline`.
   - A recorded variant is its original (§23.7). The hook is
     `artifacts/api-server/src/lib/mediaAccess.ts:483#originalOfRecordedVariant(`. It runs only when no `post_media` row claims the path as an original. The pieces:
-    - the name rule: `artifacts/api-server/src/lib/mediaAccess.ts:991#export function isDerivedVariantOf(`;
-    - the lookup: `artifacts/api-server/src/lib/mediaAccess.ts:1006#async function originalOfRecordedVariant(`;
-    - client-writable prefixes excluded: `artifacts/api-server/src/lib/mediaAccess.ts:1012#VARIANT_CLIENT_WRITABLE_PREFIXES`;
-    - a lookup error denies: `artifacts/api-server/src/lib/mediaAccess.ts:1026#if (error) return "deny";`;
-    - two originals deny: `artifacts/api-server/src/lib/mediaAccess.ts:1035#if (originals.size > 1) return "deny";`;
+    - the name rule: `artifacts/api-server/src/lib/mediaAccess.ts:1012#export function isDerivedVariantOf(`;
+    - the lookup: `artifacts/api-server/src/lib/mediaAccess.ts:1027#async function originalOfRecordedVariant(`;
+    - client-writable prefixes excluded: `artifacts/api-server/src/lib/mediaAccess.ts:1033#VARIANT_CLIENT_WRITABLE_PREFIXES`;
+    - a lookup error denies: `artifacts/api-server/src/lib/mediaAccess.ts:1047#if (error) return "deny";`;
+    - two originals deny: `artifacts/api-server/src/lib/mediaAccess.ts:1056#if (originals.size > 1) return "deny";`;
     - the tests: `artifacts/api-server/src/test/mediaAccess.test.ts:858#derived variants (.feed.jpg / .thumb.jpg) are their original`.
 
 **What the spec requires.** The spec lists storage among the Phase 1 audit

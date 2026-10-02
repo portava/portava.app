@@ -4238,7 +4238,7 @@ There are two routes, one per upload transport:
 Authorization is by derivation rather than by row:
 `artifacts/api-server/src/lib/mediaAccess.ts:369#return decide(sc, viewerId, bucket, posterOf)`
 decides a poster exactly as the video it was cut from, and
-`artifacts/api-server/src/lib/mediaAccess.ts:907#return mediaAccessDeadline(sc, viewerId, bucket, posterOf)`
+`artifacts/api-server/src/lib/mediaAccess.ts:928#return mediaAccessDeadline(sc, viewerId, bucket, posterOf)`
 gives it the video's story deadline, so a signed poster URL cannot outlive the
 story. `artifacts/api-server/src/lib/mediaPosterPath.ts:41#export function derivedPosterBase`
 refuses anything whose base is not a video. It also refuses anything under
@@ -4811,14 +4811,14 @@ shell, which is seeded off.
 **The fix, which is lane D's poster rule (§37) generalised: a variant IS its original.**
 - **Where the variant is resolved.** `artifacts/api-server/src/lib/mediaAccess.ts:483#const pmRows = ((pms as any[]) ?? []); if (pmRows.length === 0) { const original = await originalOfRecordedVariant(` runs only when no row claims the path as an original. It is the same line as before, so no cited line above it moved.
 - **The recursion.** If the path is a recorded variant, the gate decides the ORIGINAL. Its moderation, its post's rules, its own attachment override and its trip context all apply, and nothing wider can.
-- **The original comes from a row, and a row is believed only when the variant is a server-derived NAME of it.** That is `<original>.feed.jpg` / `.thumb.jpg` (postcards) or `<stem>.feed.jpg` / `.thumb.jpg` (general posts): `artifacts/api-server/src/lib/mediaAccess.ts:991#export function isDerivedVariantOf(`.
+- **The original comes from a row, and a row is believed only when the variant is a server-derived NAME of it.** That is `<original>.feed.jpg` / `.thumb.jpg` (postcards) or `<stem>.feed.jpg` / `.thumb.jpg` (general posts): `artifacts/api-server/src/lib/mediaAccess.ts:1012#export function isDerivedVariantOf(`.
   - A row that names someone else's object as its "variant" is ignored.
   - This matters because a row's variant URL is data a post carries. Without the name test, any user could lend a victim's object their own post's audience.
-- **Fail-closed cases** (`artifacts/api-server/src/lib/mediaAccess.ts:1006#async function originalOfRecordedVariant(`), each of which denies:
-  - a lookup error, as 3a already denies on its own read error: `artifacts/api-server/src/lib/mediaAccess.ts:1026#if (error) return "deny";`;
+- **Fail-closed cases** (`artifacts/api-server/src/lib/mediaAccess.ts:1027#async function originalOfRecordedVariant(`), each of which denies:
+  - a lookup error, as 3a already denies on its own read error: `artifacts/api-server/src/lib/mediaAccess.ts:1047#if (error) return "deny";`;
   - a full page of rows naming the variant, where a conflicting row could lie past the cap;
-  - two different originals, where picking one would decide by read order: `artifacts/api-server/src/lib/mediaAccess.ts:1035#if (originals.size > 1) return "deny";`.
-- **Client-writable prefixes.** Nothing under `memories/` or `stories/` is ever a variant, because the server derives none there: `artifacts/api-server/src/lib/mediaAccess.ts:1012#if (VARIANT_CLIENT_WRITABLE_PREFIXES.some((prefix) => path.startsWith(prefix))) return null;`.
+  - two different originals, where picking one would decide by read order: `artifacts/api-server/src/lib/mediaAccess.ts:1056#if (originals.size > 1) return "deny";`.
+- **Client-writable prefixes.** Nothing under `memories/` or `stories/` is ever a variant, because the server derives none there: `artifacts/api-server/src/lib/mediaAccess.ts:1033#if (VARIANT_CLIENT_WRITABLE_PREFIXES.some((prefix) => path.startsWith(prefix))) return null;`.
 - **How the lookups are built.** Each is its own `.eq` / `.in`, never a string-built `.or()`, because the caller chooses `path`.
 - **What does not change.** A path that is not a recorded variant falls through exactly as before, including message thumbnails, which 3c decides. The added cost is four indexed-or-empty reads on a miss, and only for paths ending `.feed.jpg` / `.thumb.jpg`.
 
@@ -5525,7 +5525,7 @@ returns the video as its relay path (`artifacts/api-server/src/routes/posts.ts:2
 and the poster route returns `post-media/<video>.poster.jpg`. The byte gate decides
 a poster as its video (`artifacts/api-server/src/lib/mediaAccess.ts:369#{ const posterOf = derivedPosterBase(path); if (posterOf !== null) return decide(sc, viewerId, bucket, posterOf); }`),
 and a video carried by a message is decided in branch 3c
-(`artifacts/api-server/src/lib/mediaAccess.ts:594#.or(`). `mediaAccess.ts` was
+(`artifacts/api-server/src/lib/mediaAccess.ts:615#.or(`). `mediaAccess.ts` was
 not edited.
 
 The tests are appended to an existing registered file,
@@ -8367,7 +8367,7 @@ because a memory, a gem or a postcard links it.
    (`artifacts/api-server/src/lib/mediaAccess.ts:390#.select("id, owner_user_id")`).
    No branch names a memory, a gem or a postcard, and an object nothing
    publishes is denied
-   (`artifacts/api-server/src/lib/mediaAccess.ts:874#4. Nothing references it`).
+   (`artifacts/api-server/src/lib/mediaAccess.ts:895#4. Nothing references it`).
 
 Four more readers touch these rows without looking at `processing_status`, so
 the sweep cannot change them: the Wall's `experienceAt` loader (`captured_at`
