@@ -94,10 +94,32 @@ export interface RetentionReport {
   config: StoryRetentionConfig;
   enqueuedArchive: number;
   enqueuedDeleted: number;
-  /** Ledger entries fully completed and removed this pass. */
+  /**
+   * Ledger entries fully settled and removed this pass.
+   *
+   * NOT A DELETION COUNT, and it never was. An entry settles when the Story row
+   * is gone and the bytes are accounted for, which includes the two cases where
+   * nothing was deleted at all. Read it WITH `objectsDeleted`, `retained` and
+   * `external`: `completed: 10, objectsDeleted: 0` is a pass that removed no
+   * bytes, and a surface that printed `completed` alone would call that a
+   * successful cleanup.
+   */
   completed: number;
-  /** Entries whose object was deliberately kept for a surviving reference. */
+  /** Objects verified ABSENT from storage after this pass deleted them. */
+  objectsDeleted: number;
+  /**
+   * Objects deliberately kept because a NAMED live reference survives them —
+   * a Highlight, a Memory item, a passport memory. Ours, and still in use.
+   */
   retained: number;
+  /**
+   * Entries whose `media_url` claimed no object in any of this app's buckets,
+   * so there was never anything of ours to delete. Counted apart from
+   * `retained` because "we chose to keep our bytes" and "these bytes were never
+   * ours" are different answers to "was it deleted", and the owner asked for
+   * them not to be the same number.
+   */
+  external: number;
   /** Entries that could not be completed and were rescheduled. */
   deferred: number;
   /** Stories whose engagement rows were purged. */
@@ -135,21 +157,38 @@ export function splitStoragePath(path: string): { dir: string; base: string } {
  *
  * FAILS CLOSED, and this is the one place in this file where failing closed
  * means keeping bytes rather than deleting them. A read that errors returns the
- * URL as "referenced (unverifiable)", so the object is not deleted and the
- * entry is retried later. Treating an unreadable table as "no reference" would
- * delete a live Highlight's media, which is unrecoverable; treating it as a
- * reference costs one more pass.
+ * URL as `unverifiable`, so the object is not deleted and the entry is retried
+ * later. Treating an unreadable table as "no reference" would delete a live
+ * Highlight's media, which is unrecoverable; treating it as a reference costs
+ * one more pass.
+ *
+ * WHY THE VERDICT IS A TAGGED OBJECT AND NOT A STRING. It used to be a string,
+ * and the two answers it carried — "a Highlight references this" and "I could
+ * not find out" — were indistinguishable to the caller. So the caller did the
+ * one thing this docblock promises it would not: it read the outage sentinel as
+ * a surviving reference, kept the bytes, DELETED the Story row, cleared the
+ * ledger entry and counted the pass a success. The bytes then had nothing
+ * pointing at them, which is precisely the unrecoverable state decision 7
+ * names. One transient `statement timeout` on `highlights` was enough. The tag
+ * is here so the two answers cannot be confused again by anything short of
+ * ignoring a discriminant the compiler checks.
  *
  * A table that does not exist is a different thing from a table that would not
  * answer. PostgREST answers a missing relation with code 42P01 / PGRST205, and
  * that IS an establishable result — there are no references in a table that
  * does not exist — so it is not treated as a failure.
  */
+export type ReferenceVerdict =
+  /** A named live reference survives this media_url. Keeping the bytes is the approved outcome. */
+  | { kind: "referenced"; detail: string }
+  /** A source could not be read, so whether anything references it is UNKNOWN. Never a reason to delete. */
+  | { kind: "unverifiable"; detail: string };
+
 export async function findSurvivingReferences(
   sc: SupabaseClient,
   mediaUrls: string[],
-): Promise<Map<string, string>> {
-  const referenced = new Map<string, string>();
+): Promise<Map<string, ReferenceVerdict>> {
+  const referenced = new Map<string, ReferenceVerdict>();
   if (mediaUrls.length === 0) return referenced;
 
   // Each source is read through a literal `.from("…").select("…")` below rather
@@ -190,13 +229,24 @@ export async function findSurvivingReferences(
       if (missingRelation) continue; // Establishable: no such table, so no references in it.
       // Anything else: we do not know, so we do not delete.
       for (const url of mediaUrls) {
-        if (!referenced.has(url)) referenced.set(url, `${table}.${column} unreadable (${code || "unknown"})`);
+        // Only when nothing has answered yet: a real reference found in another
+        // source is a settled answer and outranks this one, which is why the
+        // real-reference branch below sets unconditionally and this one does
+        // not. Both orderings of the sources give the same verdict.
+        if (!referenced.has(url)) {
+          referenced.set(url, {
+            kind: "unverifiable",
+            detail: `${table}.${column} unreadable (${code || "unknown"})`,
+          });
+        }
       }
       continue;
     }
     for (const row of (data ?? []) as any[]) {
       const url = row?.[column];
-      if (typeof url === "string" && url) referenced.set(url, `referenced by ${table}.${column}`);
+      if (typeof url === "string" && url) {
+        referenced.set(url, { kind: "referenced", detail: `referenced by ${table}.${column}` });
+      }
     }
   }
   return referenced;
@@ -365,7 +415,14 @@ export async function processPurgeQueue(
   sc: SupabaseClient,
   nowMs: number,
   limit: number,
-): Promise<{ completed: number; retained: number; deferred: number; failures: string[] }> {
+): Promise<{
+  completed: number;
+  objectsDeleted: number;
+  retained: number;
+  external: number;
+  deferred: number;
+  failures: string[];
+}> {
   const nowIso = new Date(nowMs).toISOString();
   const { data: due, error: dueErr } = await sc
     .from("story_purge_queue")
@@ -376,13 +433,17 @@ export async function processPurgeQueue(
   if (dueErr) throw dueErr;
 
   const entries = (due ?? []) as any[];
-  if (entries.length === 0) return { completed: 0, retained: 0, deferred: 0, failures: [] };
+  if (entries.length === 0) {
+    return { completed: 0, objectsDeleted: 0, retained: 0, external: 0, deferred: 0, failures: [] };
+  }
 
   const pending = entries.filter((e) => !e.object_deleted_at && !e.object_retained_reason && e.storage_path);
   const surviving = await findSurvivingReferences(sc, pending.map((e) => String(e.media_url)));
 
   let completed = 0;
+  let objectsDeleted = 0;
   let retained = 0;
+  let external = 0;
   let deferred = 0;
   const failures: string[] = [];
 
@@ -392,6 +453,16 @@ export async function processPurgeQueue(
     let objectRetainedReason: string | null = entry.object_retained_reason ?? null;
     let rowDeletedAt: string | null = entry.row_deleted_at ?? null;
     let failure: string | null = null;
+    /**
+     * Which of the owner's four outcomes the BYTES got, decided where it is
+     * known rather than reconstructed later from the reason string. The string
+     * is for a human; this is what the counters are built from, so a reworded
+     * message cannot silently move an entry between categories.
+     *
+     * Null for an entry resumed from a previous pass, whose byte outcome was
+     * decided and counted then — counting it again would double-count.
+     */
+    let byteOutcome: "deleted" | "retained" | "external" | null = null;
 
     // ── Step 1: the bytes ────────────────────────────────────────────────────
     if (!objectDeletedAt && !objectRetainedReason) {
@@ -400,10 +471,22 @@ export async function processPurgeQueue(
         // object of ours to delete, and saying so is not the same as claiming
         // we deleted one.
         objectRetainedReason = "no app-storage object claimed by this media_url";
+        byteOutcome = "external";
       } else {
-        const stillReferenced = surviving.get(String(entry.media_url));
-        if (stillReferenced) {
-          objectRetainedReason = stillReferenced;
+        const verdict = surviving.get(String(entry.media_url));
+        if (verdict?.kind === "unverifiable") {
+          // The decisive branch. "I could not find out" is NOT "something
+          // references it": retaining on an outage would be fine, but what used
+          // to follow a retention was deleting the Story row and clearing the
+          // ledger, which leaves the bytes with nothing pointing at them and
+          // reports success. So an unverifiable source is a FAILURE: the entry
+          // keeps its storage path, the row stays, and the next pass retries
+          // once the source answers. This is what this file's docblock has
+          // always said happened.
+          failure = `cannot establish whether the bytes are still referenced — ${verdict.detail}`;
+        } else if (verdict?.kind === "referenced") {
+          objectRetainedReason = verdict.detail;
+          byteOutcome = "retained";
         } else {
           const bucket = String(entry.storage_bucket);
           const path = String(entry.storage_path);
@@ -413,8 +496,10 @@ export async function processPurgeQueue(
               failure = `remove(${bucket}/${path}) failed: ${(rmErr as any)?.message ?? "unknown"}`;
             } else {
               const check = await confirmObjectAbsent(sc, bucket, path);
-              if (check.absent) objectDeletedAt = nowIso;
-              else failure = check.detail;
+              if (check.absent) {
+                objectDeletedAt = nowIso;
+                byteOutcome = "deleted";
+              } else failure = check.detail;
             }
           } catch (err) {
             failure = `remove(${bucket}/${path}) threw: ${(err as any)?.message ?? String(err)}`;
@@ -447,7 +532,9 @@ export async function processPurgeQueue(
         failure = `could not clear ledger entry ${storyId}: ${(clearErr as any)?.message ?? "unknown"}`;
       } else {
         completed += 1;
-        if (objectRetainedReason) retained += 1;
+        if (byteOutcome === "deleted") objectsDeleted += 1;
+        else if (byteOutcome === "retained") retained += 1;
+        else if (byteOutcome === "external") external += 1;
         continue;
       }
     }
@@ -472,7 +559,7 @@ export async function processPurgeQueue(
     if (updErr) failures.push(`could not record retry state for ${storyId}: ${(updErr as any)?.message ?? "unknown"}`);
   }
 
-  return { completed, retained, deferred, failures };
+  return { completed, objectsDeleted, retained, external, deferred, failures };
 }
 
 /**
@@ -599,7 +686,9 @@ export async function runStoryRetention(
     enqueuedArchive: enq.archive,
     enqueuedDeleted: enq.deleted,
     completed: worked.completed,
+    objectsDeleted: worked.objectsDeleted,
     retained: worked.retained,
+    external: worked.external,
     deferred: worked.deferred,
     engagementStoriesPurged: engagement.stories,
     engagementRowsPurged: engagement.rows,

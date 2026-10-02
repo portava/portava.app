@@ -24,7 +24,12 @@ import { getLiveShareSweepStatus } from "../server/trips/projectionWorkers/tripC
 import { getNotificationMaintenanceStatus } from "../lib/notificationMaintenanceScheduler.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { sweepExpiredStories } from "./stories.js";
-import { getStoryRetentionStatus } from "../lib/storyRetentionScheduler.js";
+import {
+  getStoryRetentionStatus,
+  hydrateStoryRetentionStatus,
+  runStoryRetentionTick,
+  STORY_RETENTION_STALE_AFTER_MS,
+} from "../lib/storyRetentionScheduler.js";
 
 const router: IRouter = Router();
 
@@ -173,6 +178,96 @@ router.post("/admin/cleanup/expired-stories", asyncHandler(async (req, res) => {
   }
 }));
 
+// ── POST /admin/jobs/story-retention ────────────────────────────────────────
+/**
+ * Run one story-retention pass now, for a schedule that lives outside this
+ * process.
+ *
+ * WHY THIS EXISTS AND THE TIMER DOES NOT SUFFICE. `.replit` declares
+ * `deploymentTarget = "autoscale"`. An Autoscale host suspends a container
+ * that has served no request for fifteen minutes, and a suspended container's
+ * event loop does not advance, so `setInterval(…, 1h)` in
+ * lib/storyRetentionScheduler.ts only fires when traffic happens to keep one
+ * instance awake across a whole hour. This is measured, not feared: every
+ * job_health row on production froze at 2026-09-30T15:30:36Z, the last
+ * job_health upsert before that returned 200, and no request from the app
+ * reached the database for the following two days. The purge did not fail, it
+ * did not run.
+ *
+ * A request is the one thing that reliably wakes an Autoscale container, which
+ * makes an authenticated POST the natural shape: the thing that triggers the
+ * pass is also the thing that makes the pass possible.
+ *
+ * WHY IT DOES NOT REUSE /admin/cleanup/expired-stories. That route runs
+ * `sweepExpiredStories`, which is EXPIRY (active → expired, 24-hour window)
+ * and writes no job_health row at all. This route runs the RETENTION purge,
+ * which is the 365/30/30-day deletion. They are different jobs on different
+ * clocks and a schedule needs both; collapsing them would mean a caller could
+ * not tell which one failed.
+ *
+ * THE STATUS CODE IS THE VERDICT, because the caller is a cron job that can
+ * only act on an exit status:
+ *   200  the pass ran and had no failures at all.
+ *   409  another pass holds the lease. Not an error — the work is in hand.
+ *   500  the pass ran and did not succeed. The failure list is in the body.
+ *   503  no service client, so nothing was attempted.
+ * A pass that purged nothing because it could not read the archive answers
+ * 500, never 200 with a zero count: per decision 4, a failed purge is never
+ * reported as zero work.
+ *
+ * Same secret and the same constant-time compare as the two cleanup routes.
+ */
+router.post("/admin/jobs/story-retention", asyncHandler(async (req, res) => {
+  const secret = process.env.CLEANUP_ADMIN_SECRET;
+  if (!secret) {
+    logger.error("admin/jobs/story-retention: CLEANUP_ADMIN_SECRET is not configured — refusing to run");
+    res.status(500).json({ error: "cleanup_secret_not_configured" });
+    return;
+  }
+  if (!safeSecretEquals(req.headers["x-cleanup-secret"], secret)) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  const sc = getServiceClient();
+  if (!sc) {
+    logger.error("admin/jobs/story-retention: no service client — refusing to run");
+    res.status(503).json({ error: "degraded_unavailable" });
+    return;
+  }
+
+  // A cold-started container has an empty status object, and the external
+  // schedule means a cold start is the NORMAL case here rather than the rare
+  // one. Without this read the response would report a job that has never
+  // succeeded as merely not having run yet — the precise confusion decision 4
+  // exists to prevent.
+  const before = getStoryRetentionStatus();
+  await hydrateStoryRetentionStatus(sc);
+
+  const status = await runStoryRetentionTick(sc);
+  const skipped = status.lastSkippedAt !== null && status.lastSkippedAt !== before.lastSkippedAt;
+
+  if (skipped) {
+    res.status(409).json({
+      ran: false,
+      reason: "another pass holds the lease",
+      lastSuccessAt: status.lastSuccessAt,
+    });
+    return;
+  }
+
+  const succeeded = status.lastFailures.length === 0 && status.lastSuccessAt === status.lastAttemptAt;
+  res.status(succeeded ? 200 : 500).json({
+    ran: true,
+    succeeded,
+    lastAttemptAt: status.lastAttemptAt,
+    lastSuccessAt: status.lastSuccessAt,
+    consecutiveFailures: status.consecutiveFailures,
+    backlog: status.backlog,
+    failures: status.lastFailures,
+    report: status.lastReport,
+  });
+}));
+
 // ── GET /healthz/schedulers ──────────────────────────────────────────────────
 /**
  * One readable verdict for every background job whose health was computed and
@@ -212,7 +307,7 @@ router.post("/admin/cleanup/expired-stories", asyncHandler(async (req, res) => {
  * Unauthenticated, like the other /healthz routes. The body carries counters
  * and timestamps only — no user data, no identifiers.
  */
-type JobHealth = "healthy" | "failing" | "never_ran" | "unknown";
+type JobHealth = "healthy" | "failing" | "stale" | "never_ran" | "unknown";
 
 interface JobReport {
   job: string;
@@ -239,12 +334,39 @@ function classify(o: {
    * their previous classification.
    */
   requiresSuccess?: boolean;
+  /**
+   * How old the newest success may be before the job stops being healthy.
+   * Omitted for every job whose timestamps live only in this process's memory,
+   * because there a restart legitimately resets them to null and the answer is
+   * `never_ran`, not `stale`. Set it only where the timestamp is PERSISTED and
+   * re-read at startup, so the comparison survives the restart it is meant to
+   * see through.
+   */
+  staleAfterMs?: number;
+  /** Clock seam. Tests pass a fixed now; production never passes it. */
+  now?: number;
 }): JobHealth {
   if ((o.consecutiveFailures ?? 0) > 0) return "failing";
   if (o.lastOutcome === "error") return "failing";
   if (o.tracksLastRun === false) return "unknown";
   if (o.requiresSuccess && !o.lastSuccessAt) return "never_ran";
   if (!o.lastRunAt) return "never_ran";
+
+  // STALENESS. Everything above this line asks the job how it feels, and a job
+  // that is not running cannot answer: `consecutiveFailures` is a counter in a
+  // process, so a process that stopped ticking — or that was replaced by one
+  // that never ticked — carries a zero. That is how a two-day-old success read
+  // as "healthy" while production had purged nothing since 2026-09-30. The only
+  // signal a stopped job cannot launder is the clock, so the clock is consulted
+  // last and against the PERSISTED success.
+  if (o.staleAfterMs !== undefined) {
+    const anchor = o.requiresSuccess ? o.lastSuccessAt : o.lastRunAt;
+    const at = anchor ? Date.parse(anchor) : Number.NaN;
+    // An unparseable timestamp is not a recent one. Per CONTRIBUTING.md:33-66 a
+    // check that cannot establish its result does not get to pass.
+    if (!Number.isFinite(at)) return "never_ran";
+    if ((o.now ?? Date.now()) - at > o.staleAfterMs) return "stale";
+  }
   return "healthy";
 }
 
@@ -358,6 +480,12 @@ function schedulerReports(): JobReport[] {
       lastSuccessAt: retention.lastSuccessAt,
       consecutiveFailures: retention.consecutiveFailures,
       requiresSuccess: true,
+      // The one job on this list whose success timestamp is persisted in
+      // job_health and re-read at startup (hydrateStoryRetentionStatus), so it
+      // is the one job where an age comparison means something across a
+      // restart. Every other job here would report `stale` for every fresh
+      // process, which is the flapping the docblock above refuses.
+      staleAfterMs: STORY_RETENTION_STALE_AFTER_MS,
     }),
     lastRunAt: retention.lastAttemptAt,
     lastSuccessAt: retention.lastSuccessAt,
@@ -367,8 +495,13 @@ function schedulerReports(): JobReport[] {
         ? "backlog unknown (never measured, or the ledger was unreadable)"
         : `backlog: ${retention.backlog}`,
       retention.lastFailures.length > 0 ? `last failures: ${retention.lastFailures.join("; ")}` : null,
+      retention.lastSkippedAt ? `last skipped (another pass held the lease): ${retention.lastSkippedAt}` : null,
+      // Every number the owner asked to be kept apart, printed apart. The old
+      // line showed `completed` next to `kept-for-reference` and nothing else,
+      // so a pass that settled ten entries and deleted no bytes at all read as
+      // a successful cleanup.
       retention.lastReport
-        ? `last pass: enqueued ${retention.lastReport.enqueuedArchive}+${retention.lastReport.enqueuedDeleted}, completed ${retention.lastReport.completed}, kept-for-reference ${retention.lastReport.retained}, deferred ${retention.lastReport.deferred}`
+        ? `last pass: enqueued ${retention.lastReport.enqueuedArchive}+${retention.lastReport.enqueuedDeleted}, settled ${retention.lastReport.completed} (objects deleted ${retention.lastReport.objectsDeleted}, kept for a live reference ${retention.lastReport.retained}, not ours ${retention.lastReport.external}), deferred ${retention.lastReport.deferred}`
         : null,
     ].filter(Boolean).join(" | "),
   });
@@ -391,6 +524,7 @@ router.get("/healthz/schedulers", (_req, res) => {
   const jobs = schedulerReports();
 
   const failing = jobs.filter((j) => j.status === "failing");
+  const stale = jobs.filter((j) => j.status === "stale");
   const neverRan = jobs.filter((j) => j.status === "never_ran");
   const unknown = jobs.filter((j) => j.status === "unknown");
 
@@ -402,7 +536,13 @@ router.get("/healthz/schedulers", (_req, res) => {
   }
 
   const overall: JobHealth =
-    failing.length > 0 ? "failing" : neverRan.length > 0 ? "never_ran" : "healthy";
+    failing.length > 0
+      ? "failing"
+      : stale.length > 0
+        ? "stale"
+        : neverRan.length > 0
+          ? "never_ran"
+          : "healthy";
 
   if (failing.length > 0) {
     logger.error(
@@ -410,11 +550,25 @@ router.get("/healthz/schedulers", (_req, res) => {
       "schedulerHealthCheck: background jobs are failing repeatedly",
     );
   }
+  if (stale.length > 0) {
+    logger.error(
+      { stale: stale.map((j) => ({ job: j.job, lastSuccessAt: j.lastSuccessAt })) },
+      "schedulerHealthCheck: background jobs have not succeeded within their cadence",
+    );
+  }
 
-  res.status(failing.length > 0 ? 503 : 200).json({
+  // `stale` answers 503, unlike `never_ran`. The reason never_ran stays 200 is
+  // that it is the correct state for the first minute of a process's life, so
+  // alarming on it would flap on every deploy and get muted. Staleness cannot
+  // flap that way: it is measured against a timestamp read back out of the
+  // database at startup, so a fresh process inherits the real age instead of a
+  // clean slate. A job that has not succeeded within its own decided cadence is
+  // the exact condition an operator's probe exists to catch.
+  res.status(failing.length > 0 || stale.length > 0 ? 503 : 200).json({
     overall,
     jobCount: jobs.length,
     failingCount: failing.length,
+    staleCount: stale.length,
     neverRanCount: neverRan.length,
     unknownCount: unknown.length,
     jobs,
