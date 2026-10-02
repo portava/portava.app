@@ -374,9 +374,21 @@ describe("3502 — the owner-first / NULL-arm restructure of both highlights SEL
       /already owner-first with a NULL expiry arm/.test(sql),
       "the per-policy early return must be present: portava-ci already carries the target shape (2313, hand-applied) and this file must be a no-op there without erroring",
     );
+    // The real-RLS evidence is NOT in the migration, and must not drift back
+    // into it: a probe that undoes itself inside the migration's own
+    // transaction can only do so by aborting a subtransaction, which is the
+    // self-aborting shape migrationDeployability.test.ts forbids (a RAISE on a
+    // path always reached rolls back the DDL batched with it while the
+    // migration still reports success — how 2195 silently failed). So this
+    // file writes no rows and assumes no role, and the probe lives in a test
+    // that observes from a separate transaction.
     assert.ok(
-      /pg_has_role\(current_user, 'authenticated', 'MEMBER'\)/.test(sql),
-      "the real RLS probe must refuse to report a pass when it cannot assume the roles it needs",
+      !/\bINSERT\s+INTO\b/i.test(sql) && !/SET\s+LOCAL\s+ROLE/i.test(sql),
+      "3502 must stay policy-only: no row writes and no role switching, or it needs a self-aborting subtransaction to undo itself",
+    );
+    assert.ok(
+      /highlightsPermanentOwnerFirst\.db\.test\.ts/.test(sql),
+      "the header must name the DB regression test that carries the real-RLS evidence, so removing the in-migration probe does not quietly remove the evidence",
     );
     assert.ok(
       !/ALTER\s+TABLE/i.test(sql),

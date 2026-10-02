@@ -148,23 +148,29 @@
 --            a NULL expiry cannot be stored at all. This is how the NULL-expiry
 --            case is established BEFORE 2975 lands.
 --
---   $probe$  A REAL RLS PROBE: real rows inserted, `SET LOCAL ROLE` to
---            `authenticated` and to `anon`, `request.jwt.claim.sub` /
---            `request.jwt.claims` set the way PostgREST sets them, and an
---            actual `SELECT` for each case. Everything is inside a
---            subtransaction that is rolled back on every path. Guarded on
---            three profiles existing and SKIPPED WITH A LOUD WARNING when they
---            do not (2921/2975 precedent) — and the NULL-expiry ROWS are
---            skipped, loudly, while `expires_at` is still NOT NULL, because
---            they cannot be inserted. $truth$ covers those cases everywhere.
---
 --   $post$   An ASSERTION-ONLY catalog re-read, re-runnable standalone by
 --            `certify:migrations` (no mutation keyword, no EXECUTE), so the
 --            shape claim is checkable after the commit and forever after.
 --
--- A probe that cannot run is never reported as a pass. `$truth$` raises if the
--- qual it read back is missing, if a case's verdict is not the expected
--- boolean, or if any case could not be evaluated.
+-- WHAT IS DELIBERATELY *NOT* HERE: a real-RLS probe. Real rows, real roles and
+-- real SELECTs are the strongest evidence there is, but inside the migration's
+-- own transaction such a probe can only undo itself by aborting a
+-- subtransaction — a top-level `DO` block whose `RAISE` sits on a path it
+-- always reaches. That is the shape `src/test/migrationDeployability.test.ts`
+-- forbids, and for a good reason: that RAISE aborts the transaction, so every
+-- DDL statement batched with it ROLLS BACK while the migration still reports
+-- success. It is exactly how 2195 silently failed. So the guard's own remedy is
+-- followed and the probe lives in a DB regression test that observes from a
+-- SEPARATE transaction: `src/test/db/highlightsPermanentOwnerFirst.db.test.ts`
+-- does every case such a block would have done — owner, non-owner, blocked
+-- viewer and anon, over PERMANENT, unexpired and expired rows — against a real
+-- database carrying the policies this file writes. This migration therefore
+-- INSERTS NOTHING and assumes no role; `$truth$` is what runs at apply time, on
+-- production included.
+--
+-- A check that cannot establish its result is never reported as a pass.
+-- `$truth$` raises if the qual it read back is missing, if a case's verdict is
+-- not the expected boolean, or if any case could not be evaluated.
 --
 -- ══════════════════════════════════════════════════════════════════════════════
 -- RED BEFORE GREEN
@@ -209,12 +215,13 @@
 --     non-owner + NULL expiry); after, 0 are. The stored quals come out
 --     558 and 478 characters with md5 3226a69f019cce3113175c48bb1b81d1 and
 --     ff90ce3d9e6608e49caf38e692e28cb5 — BYTE-IDENTICAL to the quals read off
---     portava-ci the same day. Policy count 5 before and after; 0 highlight
---     rows and 0 block rows survived the probe.
+--     portava-ci the same day. Policy count 5 before and after; the table's
+--     row count unchanged, because this file writes no rows.
 --   * a SECOND apply on that same database reports both policies already in the
 --     target shape, changes nothing, and exits 0 — which is the portava-ci path.
 --   * on scripts/local-db's baseline + chain replay (where 2975 HAS run, so
---     expires_at is nullable): all 8 real-RLS probe cases ran and passed.
+--     expires_at is nullable): the whole local DB suite is 442 pass / 0 fail,
+--     and this file's own real-RLS suite is 11 pass / 0 fail.
 --
 -- ══════════════════════════════════════════════════════════════════════════════
 -- WHAT THIS MIGRATION DELIBERATELY DOES NOT DO
@@ -536,7 +543,7 @@ BEGIN
       ('non-owner + future expiry',    'other',  now() + interval '2 hours',    'public',    true ),
       ('non-owner + past expiry',      'other',  now() - interval '2 hours',    'public',    false),
       -- The blocked case. `blocks` is empty for these synthetic ids, so the
-      -- guard cannot bite here; it is exercised for real in $probe$. What this
+      -- guard cannot bite here; it is exercised for real in the DB test. What this
       -- row establishes is the OTHER half of the requirement -- that the
       -- blocked guard is reachable at all on the non-owner path, i.e. that a
       -- private Highlight is NOT handed to a non-owner by the restructure.
@@ -585,190 +592,7 @@ END
 $truth$;
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- 3. THE REAL RLS PROBE
---
--- Real rows, real roles, real SELECTs, everything rolled back. A qual that
--- evaluates correctly in isolation is still not evidence that PostgreSQL hands
--- the row to a signed-in viewer, which is what this establishes.
--- ═══════════════════════════════════════════════════════════════════════════
-DO $probe$
-DECLARE
-  SENTINEL_PERM_PRIV constant uuid := '00000000-0000-4000-8000-000000035021';
-  SENTINEL_PAST_PRIV constant uuid := '00000000-0000-4000-8000-000000035022';
-  SENTINEL_PERM_PUB  constant uuid := '00000000-0000-4000-8000-000000035023';
-  SENTINEL_FUT_PUB   constant uuid := '00000000-0000-4000-8000-000000035024';
-  SENTINEL_PAST_PUB  constant uuid := '00000000-0000-4000-8000-000000035025';
-
-  v_role_before   name := current_user;
-  v_nullable      boolean;
-  v_owner         uuid;
-  v_viewer        uuid;
-  v_blocker       uuid;
-  v_n_profiles    int;
-  v_ran           boolean := false;
-  v_null_rows     boolean := false;
-  -- results, recorded in plpgsql variables, which survive the rollback below
-  r_owner_perm    int := -1;
-  r_owner_past    int := -1;
-  r_other_perm    int := -1;
-  r_other_fut     int := -1;
-  r_other_past    int := -1;
-  r_blocked_fut   int := -1;
-  r_anon_fut      int := -1;
-  r_anon_past     int := -1;
-  v_survivors     int;
-BEGIN
-  SELECT a.attnotnull = false INTO v_nullable
-    FROM pg_attribute a
-   WHERE a.attrelid = 'public.highlights'::regclass AND a.attname = 'expires_at'
-     AND a.attnum > 0 AND NOT a.attisdropped;
-  IF v_nullable IS NULL THEN
-    RAISE EXCEPTION '3502 probe COULD NOT RUN: public.highlights.expires_at does not exist.';
-  END IF;
-
-  SELECT count(*) INTO v_n_profiles FROM (SELECT 1 FROM public.profiles LIMIT 3) s;
-
-  IF v_n_profiles < 3 THEN
-    RAISE WARNING '3502: the REAL RLS PROBE was SKIPPED -- public.profiles holds % row(s) and the probe needs three distinct subjects (owner, viewer, blocker). It inserted nothing and proved nothing. The six-case TRUTH TABLE above still ran against the live quals on this database, including both NULL-expiry cases, and the rewrite''s own pre-write and read-back postconditions still ran. What is unproven HERE and is proven on any database carrying three profiles: that PostgreSQL actually hands the row over, and that the blocked guard actually bites.', v_n_profiles;
-  ELSE
-    IF NOT pg_has_role(current_user, 'authenticated', 'MEMBER')
-       OR NOT pg_has_role(current_user, 'anon', 'MEMBER') THEN
-      RAISE EXCEPTION '3502 probe COULD NOT RUN: % is not a member of both anon and authenticated, so the probe cannot assume either role and cannot establish whether the row is visible. Reporting that as a pass is the failure mode this migration exists to avoid. Fix: GRANT anon, authenticated TO %;', current_user, current_user;
-    END IF;
-
-    SELECT id INTO v_owner   FROM public.profiles ORDER BY id LIMIT 1;
-    SELECT id INTO v_viewer  FROM public.profiles WHERE id <> v_owner ORDER BY id LIMIT 1;
-    SELECT id INTO v_blocker FROM public.profiles WHERE id NOT IN (v_owner, v_viewer) ORDER BY id LIMIT 1;
-    v_null_rows := v_nullable;
-
-    BEGIN
-      -- ── seed ────────────────────────────────────────────────────────────
-      INSERT INTO public.blocks (blocker_id, blocked_id) VALUES (v_blocker, v_owner);
-
-      INSERT INTO public.highlights (id, owner_id, media_url, media_type, visibility, expires_at, lifetime_class)
-      VALUES
-        (SENTINEL_PAST_PRIV, v_owner, 'https://example.invalid/3502.jpg', 'image/jpeg', 'private', now() - interval '2 hours', 'DAY'),
-        (SENTINEL_FUT_PUB,   v_owner, 'https://example.invalid/3502.jpg', 'image/jpeg', 'public',  now() + interval '2 hours', 'DAY'),
-        (SENTINEL_PAST_PUB,  v_owner, 'https://example.invalid/3502.jpg', 'image/jpeg', 'public',  now() - interval '2 hours', 'DAY');
-
-      IF v_null_rows THEN
-        INSERT INTO public.highlights (id, owner_id, media_url, media_type, visibility, expires_at, lifetime_class)
-        VALUES
-          (SENTINEL_PERM_PRIV, v_owner, 'https://example.invalid/3502.jpg', 'image/jpeg', 'private', NULL, 'PERMANENT'),
-          (SENTINEL_PERM_PUB,  v_owner, 'https://example.invalid/3502.jpg', 'image/jpeg', 'public',  NULL, 'PERMANENT');
-      END IF;
-
-      -- ── probe, as a signed-in viewer, through RLS ───────────────────────
-      -- The owner.
-      PERFORM set_config('request.jwt.claim.sub', v_owner::text, true);
-      PERFORM set_config('request.jwt.claims', json_build_object('sub', v_owner::text, 'role', 'authenticated')::text, true);
-      EXECUTE 'SET LOCAL ROLE authenticated';
-      IF v_null_rows THEN
-        SELECT count(*) INTO r_owner_perm FROM public.highlights WHERE id = SENTINEL_PERM_PRIV;
-      END IF;
-      SELECT count(*) INTO r_owner_past FROM public.highlights WHERE id = SENTINEL_PAST_PRIV;
-      EXECUTE 'RESET ROLE';
-
-      -- A different signed-in viewer.
-      PERFORM set_config('request.jwt.claim.sub', v_viewer::text, true);
-      PERFORM set_config('request.jwt.claims', json_build_object('sub', v_viewer::text, 'role', 'authenticated')::text, true);
-      EXECUTE 'SET LOCAL ROLE authenticated';
-      IF v_null_rows THEN
-        SELECT count(*) INTO r_other_perm FROM public.highlights WHERE id = SENTINEL_PERM_PUB;
-      END IF;
-      SELECT count(*) INTO r_other_fut  FROM public.highlights WHERE id = SENTINEL_FUT_PUB;
-      SELECT count(*) INTO r_other_past FROM public.highlights WHERE id = SENTINEL_PAST_PUB;
-      EXECUTE 'RESET ROLE';
-
-      -- The blocked viewer, on the row most likely to be visible.
-      PERFORM set_config('request.jwt.claim.sub', v_blocker::text, true);
-      PERFORM set_config('request.jwt.claims', json_build_object('sub', v_blocker::text, 'role', 'authenticated')::text, true);
-      EXECUTE 'SET LOCAL ROLE authenticated';
-      SELECT count(*) INTO r_blocked_fut FROM public.highlights WHERE id = SENTINEL_FUT_PUB;
-      EXECUTE 'RESET ROLE';
-
-      -- anon: only highlights_select (TO PUBLIC) can admit anything, which is
-      -- what isolates that policy from highlights_select_active.
-      PERFORM set_config('request.jwt.claim.sub', '', true);
-      PERFORM set_config('request.jwt.claims', json_build_object('role', 'anon')::text, true);
-      EXECUTE 'SET LOCAL ROLE anon';
-      SELECT count(*) INTO r_anon_fut  FROM public.highlights WHERE id = SENTINEL_FUT_PUB;
-      SELECT count(*) INTO r_anon_past FROM public.highlights WHERE id = SENTINEL_PAST_PUB;
-      EXECUTE 'RESET ROLE';
-
-      v_ran := true;
-      -- Roll the whole probe back. plpgsql variables are memory, not database
-      -- state, so every count above survives this and the rows do not.
-      RAISE EXCEPTION 'rollback_3502_probe' USING ERRCODE = 'P0001';
-    EXCEPTION
-      WHEN raise_exception THEN
-        IF SQLERRM <> 'rollback_3502_probe' THEN RAISE; END IF;
-      WHEN OTHERS THEN RAISE;
-    END;
-
-    -- The subtransaction abort reverts SET LOCAL ROLE; assert rather than hope.
-    IF current_user <> v_role_before THEN
-      EXECUTE 'RESET ROLE';
-      RAISE EXCEPTION '3502 probe FAILED: the session is still acting as % after the probe rolled back (was %).', current_user, v_role_before;
-    END IF;
-    PERFORM set_config('request.jwt.claim.sub', '', true);
-    PERFORM set_config('request.jwt.claims', '{}', true);
-
-    IF NOT v_ran THEN
-      RAISE EXCEPTION '3502 probe COULD NOT RUN: it did not reach the end of its own body, so none of the counts below mean anything.';
-    END IF;
-
-    -- ── the assertions ─────────────────────────────────────────────────────
-    IF v_null_rows THEN
-      IF r_owner_perm <> 1 THEN
-        RAISE EXCEPTION '3502 PROBE FAILED: the OWNER of a PERMANENT (NULL-expiry) Highlight selected % row(s), not 1. That row is write-only -- visible to nobody -- which is exactly the state applying 2975 without this migration produces.', r_owner_perm;
-      END IF;
-      IF r_other_perm <> 1 THEN
-        RAISE EXCEPTION '3502 PROBE FAILED: a non-owner selected % row(s) of a PUBLIC PERMANENT Highlight, not 1.', r_other_perm;
-      END IF;
-    ELSE
-      RAISE WARNING '3502: the two NULL-EXPIRY ROWS of the real probe were SKIPPED -- public.highlights.expires_at is still NOT NULL on this database, so a PERMANENT Highlight cannot be inserted here at all and no row could be offered to RLS. This is the EXPECTED state on production before 2975, and it is the reason this migration must be applied BEFORE 2975 rather than after. Those two cases ARE established on this database by the TRUTH TABLE above, which evaluates the live quals against a synthetic row and needs no column change. The other six probe cases ran.';
-    END IF;
-
-    IF r_owner_past <> 1 THEN
-      RAISE EXCEPTION '3502 PROBE FAILED: the OWNER of an EXPIRED Highlight selected % row(s), not 1. The owner arm is still gated on expiry.', r_owner_past;
-    END IF;
-    IF r_other_fut <> 1 THEN
-      RAISE EXCEPTION '3502 PROBE FAILED: a non-owner selected % row(s) of an unexpired PUBLIC Highlight, not 1. The restructure has broken the ordinary read path.', r_other_fut;
-    END IF;
-    IF r_other_past <> 0 THEN
-      RAISE EXCEPTION '3502 PROBE FAILED: a non-owner selected % row(s) of an EXPIRED PUBLIC Highlight, expected 0. The expiry test has been lost rather than moved -- this migration would have turned a 24-hour surface into a permanent one.', r_other_past;
-    END IF;
-    IF r_blocked_fut <> 0 THEN
-      RAISE EXCEPTION '3502 PROBE FAILED: a BLOCKED viewer selected % row(s) of an unexpired PUBLIC Highlight, expected 0. The blocked guard did not move into the non-owner arm intact.', r_blocked_fut;
-    END IF;
-    IF r_anon_fut <> 1 THEN
-      RAISE EXCEPTION '3502 PROBE FAILED: anon selected % row(s) of an unexpired PUBLIC Highlight, not 1. Only highlights_select can admit anon, so this is that policy''s own read path and the restructure broke it.', r_anon_fut;
-    END IF;
-    IF r_anon_past <> 0 THEN
-      RAISE EXCEPTION '3502 PROBE FAILED: anon selected % row(s) of an EXPIRED PUBLIC Highlight, expected 0.', r_anon_past;
-    END IF;
-
-    RAISE NOTICE '3502 real RLS probe PASSED: % of 8 cases ran through real RLS. The owner sees their own EXPIRED Highlight%; a non-owner sees the unexpired public one and not the expired one; a blocked viewer sees nothing; anon sees the unexpired public one and not the expired one.',
-      CASE WHEN v_null_rows THEN 8 ELSE 6 END,
-      CASE WHEN v_null_rows THEN ' and their own PERMANENT (NULL-expiry) one, and a non-owner sees the public PERMANENT one' ELSE ' (the two NULL-expiry rows were skipped -- see the WARNING above)' END;
-  END IF;
-
-  -- Nothing survived, asserted from OUTSIDE the rolled-back subtransaction.
-  SELECT count(*) INTO v_survivors FROM public.highlights
-   WHERE id IN (SENTINEL_PERM_PRIV, SENTINEL_PAST_PRIV, SENTINEL_PERM_PUB, SENTINEL_FUT_PUB, SENTINEL_PAST_PUB);
-  IF v_survivors <> 0 THEN
-    RAISE EXCEPTION '3502 PROBE FAILED: % probe row(s) survived and are on the live Highlights surface right now.', v_survivors;
-  END IF;
-  IF v_owner IS NOT NULL AND v_blocker IS NOT NULL
-     AND EXISTS (SELECT 1 FROM public.blocks WHERE blocker_id = v_blocker AND blocked_id = v_owner) THEN
-    RAISE EXCEPTION '3502 PROBE FAILED: the probe''s block row survived. Two real accounts are now blocked because of a postcondition.';
-  END IF;
-END
-$probe$;
-
--- ═══════════════════════════════════════════════════════════════════════════
--- 4. POSTCONDITIONS
+-- 3. POSTCONDITIONS
 --
 -- Re-runnable standalone by `certify:migrations`: assertion-only, catalog-only,
 -- no mutation keyword and no EXECUTE, so stage 4 re-runs it AFTER the commit,
