@@ -53,6 +53,12 @@ export interface CityVisualZone {
   /** Fresh perspective count in this zone (drives no vanity counter — optional). */
   perspectiveCount?: number | null;
   freshness?: FreshnessClass | null;
+  /**
+   * §18 "Mixed reports — conditions may be changing", exactly when the server's
+   * zone consensus says the reports disagree (services/media/mediaIntelligence
+   * `uncertaintyBanner`). Null otherwise — never invented, never dropped.
+   */
+  uncertaintyLabel?: string | null;
 }
 
 // ── "For You Now" strip (§4.1) ────────────────────────────────────────────────
@@ -92,6 +98,14 @@ export interface ChangingNowItem {
   whyThis?: string | null;
   heroMedia?: MediaProjection[];
   placeId?: string | null;
+  /**
+   * §18 uncertainty line for this zone. A "changing now" card IS a world zone
+   * with a live claim, which is exactly where a material dispute can occur. The
+   * zone's crowd label is read from the rich claim envelope, which still carries
+   * the plurality value under a material conflict — so without this line a
+   * disputed zone rendered a confident state with no sign of the dispute.
+   */
+  uncertaintyLabel?: string | null;
 }
 
 // ── The full NOW / World projection (GET /media/world, §43) ───────────────────

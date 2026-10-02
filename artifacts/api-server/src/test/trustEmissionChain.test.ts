@@ -39,6 +39,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { measured } from "./helpers/measuredScore.js";
 
 import {
   recordTrustEvent,
@@ -188,8 +189,15 @@ describe("chain: verified stamp award → trust_events → maintenance → trust
 
     const profile = await getTrustProfile(f.client, OWNER);
     assert.ok(profile, "a profile now exists");
-    assert.ok(profile!.categories.passport_authenticity > 50, "passport_authenticity moved above neutral");
-    assert.equal(profile!.categories.plan_attendance, 50, "an unrelated category stays neutral");
+    assert.ok(measured(profile!.categories.passport_authenticity) > 50, "passport_authenticity moved above neutral");
+    // Q1, owner decision 2026-09-22. This read `assert.equal(..., 50, "an
+    // unrelated category stays neutral")` — the fabricated neutral itself. A
+    // category the award did not touch has no events, so it is NOT SCORED. The
+    // point the line makes is unchanged and is arguably sharper: awarding a
+    // stamp moves passport_authenticity and NOTHING ELSE, and the eight
+    // untouched categories must not acquire a value of any kind from it.
+    assert.equal(profile!.categories.plan_attendance, null,
+      "an unrelated category is NOT SCORED — the award must not invent a value for it");
     assert.equal(profile!.evidenceCount, 1, "evidence is measured, not null");
     assert.ok(profile!.evidenceWeight! > 0.99 && profile!.evidenceWeight! <= 1, "one fresh event weighs ~1");
     assert.ok(typeof profile!.public_level === "string");
@@ -297,8 +305,8 @@ describe("chain: GPS impossible-speed finding → pending_review → queue → c
 
     const profile = await getTrustProfile(f.client, OWNER);
     assert.ok(profile);
-    assert.ok(profile!.categories.location_honesty <= 55, "the ceiling holds");
-    assert.ok(profile!.categories.location_honesty < 50, "and the -8 bit at full strength");
+    assert.ok(measured(profile!.categories.location_honesty) <= 55, "the ceiling holds");
+    assert.ok(measured(profile!.categories.location_honesty) < 50, "and the -8 bit at full strength");
     assert.equal(f.tables.trust_reviews[0].status, "resolved");
     assert.equal(f.tables.trust_admin_actions.length, 1);
 
@@ -337,7 +345,7 @@ describe("fail-closed: a read that cannot be performed never reads as an empty r
     const f = makeFake();
     await recordStampVerifiedTrustEvent(f.client, { userId: OWNER, userStampId: STAMP_ID, tier: "verified", stampSourceType: "trips" });
     const good = await recalculateTrustScore(f.client, OWNER);
-    assert.ok(good.categories.passport_authenticity > 50);
+    assert.ok(measured(good.categories.passport_authenticity) > 50);
 
     f.failNext("trust_events", "select", "connection reset");
     await assert.rejects(() => recalculateTrustScore(f.client, OWNER), /trust_events read failed/);
@@ -359,12 +367,12 @@ describe("fail-closed: a read that cannot be performed never reads as an empty r
       });
     }
     const capped = await recalculateTrustScore(f.client, OWNER);
-    assert.ok(capped.capsApplied.includes("location_honesty") || capped.categories.location_honesty <= 55);
+    assert.ok(capped.capsApplied.includes("location_honesty") || measured(capped.categories.location_honesty) <= 55);
 
     f.failNext("trust_caps", "select", "timeout");
     await assert.rejects(() => recalculateTrustScore(f.client, OWNER), /trust_caps read failed/);
     const after = await getTrustProfile(f.client, OWNER);
-    assert.ok(after!.categories.location_honesty <= 55, "still capped");
+    assert.ok(measured(after!.categories.location_honesty) <= 55, "still capped");
   });
 
   it("trust_settings read failure → throws (defaults are not a substitute for an admin's weights)", async () => {

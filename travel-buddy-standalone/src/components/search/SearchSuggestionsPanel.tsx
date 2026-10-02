@@ -21,7 +21,7 @@ import { TypeIcon } from './searchNav.tsx';
 import type { SuggestGroup } from '../../services/discovery.ts';
 import type { UnifiedSearchResult, SearchHistoryEntry } from '../../services/discovery.ts';
 import { color, space, radius, type as t, avatar } from '../../theme/tokens.ts';
-import { PlainBottomFiller } from '../../hooks/useBottomInset.ts';
+import { PlainBottomFiller } from '../../hooks/useBottomInset.ts'; import { SEARCH_PARTIAL_NOTICE } from '../../services/discoveryCoverageNotice.ts';
 import { DisplayMediaImage } from '../ui/DisplayMediaImage.tsx';
 import { ActionSuggestionRow } from '../../platform/input-assistance/components/ActionSuggestionRow.tsx';
 import type { InputSuggestion } from '../../platform/input-assistance/types/inputSuggestion.ts';
@@ -43,7 +43,7 @@ interface Props {
    *  not an answer, and the empty-state sentence below would state on the
    *  server's behalf that there is nothing to find. A `partial` refusal is not
    *  this: it carries real groups and renders as the result it is. */
-  refused?: boolean;
+  refused?: boolean; /** census-discovery §80 (DV-83): a PARTIAL answer — the groups are real, some sources were not read. */ incomplete?: boolean;
   /** @deprecated Panel no longer owns a ScrollView; scroll is handled by the outer FlatList. */
   onScroll?: never;
 }
@@ -79,7 +79,7 @@ function SuggestionAvatar({ item }: { item: UnifiedSearchResult }) {
 export function SearchSuggestionsPanel({
   query, groups, loading, recentSearches,
   onSubmit, onPickRecent, onPickResult,
-  actionSuggestions, onPickAction, refused = false,
+  actionSuggestions, onPickAction, refused = false, incomplete = false,
 }: Props) {
   const trimmed = query.trim();
   const qLower = trimmed.toLowerCase();
@@ -174,7 +174,7 @@ export function SearchSuggestionsPanel({
       )}
 
       {/* Quiet empty state — the Search-for row above remains the primary action */}
-      {!loading && !refused && !hasAny && matchingRecent.length === 0 && (
+      {!loading && !refused && incomplete && (<Text style={styles.emptyHint} testID="search-suggestions-incomplete">{SEARCH_PARTIAL_NOTICE}</Text>)}{/* §80: partial is said, never "no matches" */}{!loading && !refused && !incomplete && !hasAny && matchingRecent.length === 0 && (
         <Text style={styles.emptyHint}>
           No quick matches yet — keep typing, or search everything.
         </Text>

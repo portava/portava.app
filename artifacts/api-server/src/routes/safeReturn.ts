@@ -237,14 +237,25 @@ router.get("/me/safe-return/suggest/:planItemId", async (req, res) => {
   } catch { /* non-fatal */ }
 
   // Check for location caution flag via geo_zones (safety_rating = caution | avoid)
-  let hasLocationCautionFlag = false;
+  //
+  // THIS IS A SAFETY VERDICT, so it fails CLOSED. supabase-js RESOLVES
+  // `{ data, error }` — it does not throw — so `error` was never bound, the
+  // enclosing `catch` never fired, and a failed read collapsed to
+  // `zones === undefined -> false`: a plan item sitting inside a zone rated
+  // `avoid` was reported to the traveller as carrying no caution, in the exact
+  // voice of a table that had been read and found clean.
+  //
+  // `null` is the third value the verdict needs and previously did not have:
+  // not "no caution", but "we could not tell". shouldSuggest() treats it as a
+  // reason in its own right, and the response says so out loud.
+  let hasLocationCautionFlag: boolean | null = false;
   try {
     const lat = (item as any).lat as number | null;
     const lng = (item as any).lng as number | null;
     if (lat != null && lng != null) {
       // Bounding-box pre-filter (~50 km) then check safety_rating
       const delta = 0.45; // ~50 km in degrees
-      const { data: zones } = await db
+      const { data: zones, error: zonesErr } = await db
         .from("geo_zones")
         .select("safety_rating")
         .in("safety_rating", ["caution", "avoid"])
@@ -253,9 +264,25 @@ router.get("/me/safe-return/suggest/:planItemId", async (req, res) => {
         .gte("center_lng", lng - delta)
         .lte("center_lng", lng + delta)
         .limit(1);
-      hasLocationCautionFlag = !!zones && zones.length > 0;
+      if (zonesErr) {
+        req.log?.warn(
+          { err: zonesErr.message, planItemId },
+          "safe_return geo_zones caution lookup failed — reporting caution as unknown",
+        );
+        hasLocationCautionFlag = null;
+      } else {
+        hasLocationCautionFlag = (zones ?? []).length > 0;
+      }
     }
-  } catch { /* non-fatal */ }
+  } catch (e) {
+    // A genuine throw (network/transport) is the same epistemic state as an
+    // error result: unknown, never "clean".
+    req.log?.warn(
+      { err: (e as Error).message, planItemId },
+      "safe_return geo_zones caution lookup threw — reporting caution as unknown",
+    );
+    hasLocationCautionFlag = null;
+  }
 
   const planItemCtx = {
     id: (item as any).id,
@@ -273,6 +300,9 @@ router.get("/me/safe-return/suggest/:planItemId", async (req, res) => {
     suggest: result.shouldSuggest,
     reasons: result.reasons,
     confidence: result.confidence,
+    // Explicit, not inferable from `reasons` alone by a client that does not
+    // know the enum: the caution input to this assessment could not be read.
+    cautionUnknown: result.cautionUnknown,
     reasonText: result.shouldSuggest ? getSuggestionReason(result.reasons) : null,
     planItemId,
   });
@@ -861,8 +891,8 @@ router.post("/me/safe-return/sessions/:id/live-share/start", async (req, res) =>
   if (!share) {
     sendError(res, "db_error", "Failed to start live share", { exposeDetail: true }); return;
   }
-
-  res.status(201).json({
+  const recipientNotice = await noticeLiveShareRecipient(db, req, { shareId: share.id, sharerId: user.id, recipientUserId: (contact as any).contact_user_id ?? null, expiresAt: share.expiresAt ?? null });
+  res.status(201).json({ recipientNotified: recipientNotice.notified, ...(recipientNotice.reason ? { recipientNoticeReason: recipientNotice.reason } : {}),
     ok: true,
     share: {
       id: share.id,
@@ -1194,3 +1224,21 @@ router.get("/me/safe-return/contacts/:userId/passport", async (req, res) => {
 });
 
 export default router;
+
+// ── Live share recipient notice (WP-04, lane tm-events) ───────────────────────
+// Appended at the foot so the census-cited lines above keep their numbers; the
+// service is imported lazily for the same reason (the import block is cited).
+async function noticeLiveShareRecipient(
+  db: any,
+  req: any,
+  input: { shareId: string; sharerId: string; recipientUserId: string | null; expiresAt: string | null },
+): Promise<{ notified: boolean; reason?: string }> {
+  try {
+    const { notifyLiveShareRecipient } = await import("../services/safeReturn/SafeReturnLiveShareNotifier.js");
+    return await notifyLiveShareRecipient(db, input);
+  } catch (err) {
+    // The share itself started; say the contact may not know, never that they do.
+    req.log?.error({ err, shareId: input.shareId }, "safe-return live-share: recipient notice failed");
+    return { notified: false, reason: "notice_failed" };
+  }
+}

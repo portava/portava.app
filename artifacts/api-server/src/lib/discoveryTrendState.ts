@@ -73,7 +73,7 @@
 import type { MomentumRow } from "./discoveryLocalMomentum.js";
 // NOT type-only, and safe: lib/discoveryRankProvenance imports nothing, so it
 // cannot close a cycle back through either of the two modules that use it.
-import { derivedStoreProvenance, type DerivedStoreProvenance } from "./discoveryRankProvenance.js";
+import { derivedStoreProvenance, type DerivedStoreProvenance, type DerivedStoreVersions } from "./discoveryRankProvenance.js"; import { computeTrendStatesV2, type TrendContext, type TrendDriver, type TrendLifecycle } from "./discoveryTrendNormalised.js"; import type { PostAfterVisitInput } from "./discoveryTrendPostConvergence.js";  // §84 (W10-R1): v2, behind discovery_trend_normalised_enabled
 
 /** `03` §9's stages, in the specification's own order. */
 export const TREND_STATES = [
@@ -126,7 +126,7 @@ export interface TrendEvidence {
 }
 
 export interface TrendReading {
-  state: DiscoveryTrendState;
+  state: DiscoveryTrendState; /** §84 v2 only (absent on a v1 reading): `03` §4 lifecycle and the claim's driver. */ lifecycle?: TrendLifecycle; driver?: TrendDriver | null;
   evidence: TrendEvidence;
   /**
    * census-discovery DC-17 — what computed this reading, over which rows, when.
@@ -171,7 +171,7 @@ export function classifyTrendState(e: TrendEvidence): DiscoveryTrendState {
 }
 
 function weightFor(outcome: string): number {
-  if (outcome === "save") return TREND_EVENT_WEIGHTS.save;
+  if (outcome === "dismiss") return 0; if (outcome === "save") return TREND_EVENT_WEIGHTS.save; // §61.14 H1 (DV-25): a dismiss is not activity — zero, as 3417's SQL arm
   return TREND_EVENT_WEIGHTS.outcome;
 }
 
@@ -188,8 +188,8 @@ function weightFor(outcome: string): number {
  */
 export function computeTrendStates(
   rows: readonly MomentumRow[],
-  nowMs: number,
-): Record<string, TrendReading> {
+  nowMs: number, opts: TrendModelOptions = {},  // §84: absent ⇒ v1, byte for byte (golden G2, G10)
+): Record<string, TrendReading> { if (opts.model === "v2") return computeTrendStatesNormalised(rows, nowMs, opts.context ?? {}, opts.postAfterVisit);
   const recentSince = nowMs - TREND_RECENT_MS;
   const midSince    = nowMs - TREND_MID_MS;
   const priorSince  = nowMs - TREND_PRIOR_MS;
@@ -223,7 +223,7 @@ export function computeTrendStates(
   // reading the clock per place would let one corpus carry several computation
   // times. `priorSince` is the oldest row that can survive the bucket filter,
   // so it IS the window start rather than a restatement of it.
-  const provenance = derivedStoreProvenance({ kind: "bounded", startMs: priorSince, endMs: nowMs }, nowMs);
+  const provenance = derivedStoreProvenance({ kind: "bounded", startMs: priorSince, endMs: nowMs }, nowMs, TREND_STATE_VERSIONS);  // §68: the trend kernel's own versions
 
   const out: Record<string, TrendReading> = {};
   for (const [id, w] of acc) {
@@ -263,3 +263,260 @@ const TREND_EXPLANATION: Readonly<Partial<Record<DiscoveryTrendState, string>>> 
 export function explainTrendState(state: DiscoveryTrendState): string | null {
   return TREND_EXPLANATION[state] ?? null;
 }
+
+/**
+ * census-discovery DV-33 / §58 — the CLOSED vocabulary of trend reasons.
+ *
+ * One machine-readable code per state that IS a claim, and nothing else. Each
+ * code names what the classifier above actually compared, so a reason can never
+ * say more than the evidence computed: `trend_accelerating` is "recent against
+ * the middle window, above the growth factor", not "popular", and not "saved a
+ * lot" — the windows sum impressions, saves and outcomes together, so which
+ * signal drove a state is NOT computed and no code claims it.
+ *
+ * `unknown` has no code for the same reason it has no sentence.
+ *
+ * Appended at the foot of the file: several census citations anchor lines above.
+ */
+export const TREND_REASON_CODES = [
+  "trend_new_activity",
+  "trend_accelerating",
+  "trend_sustained",
+  "trend_slowing",
+  "trend_returning",
+] as const;
+export type TrendReasonCode = (typeof TREND_REASON_CODES)[number];
+
+const TREND_REASON_FOR_STATE: Readonly<Partial<Record<DiscoveryTrendState, TrendReasonCode>>> = {
+  emerging:     "trend_new_activity",
+  trending:     "trend_accelerating",
+  established:  "trend_sustained",
+  cooling:      "trend_slowing",
+  rediscovered: "trend_returning",
+};
+
+/** The reason for a state: its code and its plain-language sentence, or null for `unknown`. */
+export function trendReasonFor(state: DiscoveryTrendState): { code: TrendReasonCode; text: string } | null {
+  const code = TREND_REASON_FOR_STATE[state];
+  const text = explainTrendState(state);
+  return code && text ? { code, text } : null;
+}
+
+/** Is this one of `03` §9's six stages? A stored value outside them is not a state. */
+export function isTrendState(v: unknown): v is DiscoveryTrendState {
+  return typeof v === "string" && (TREND_STATES as readonly string[]).includes(v);
+}
+
+// ── census-discovery §68 (DC-17, lane P21): this kernel's own versions ────────
+//
+// Stamped on every `TrendReading.provenance` in place of the Compass ranker's
+// pair. Before §68 the same computation said `discovery-trend-state-v1` when the
+// SQL store ran it and `compass-discovery-2026-09` when this module did (§54.2).
+
+/**
+ * The trend ARITHMETIC: the three windows, the 48 h normalisation, the floor,
+ * the growth and decline factors and the evaluation order of the six stages.
+ * MUST equal `c_model` in `rebuild_place_momentum` (2892, 3410, 3417, 3435),
+ * which is what `place_momentum.model_version` stores. Pinned by a test.
+ */
+export const TREND_STATE_MODEL_VERSION = "discovery-trend-state-v1";
+
+/**
+ * What one row contributes — the SAME definition as lib/discoveryLocalMomentum's
+ * `LOCAL_MOMENTUM_FEATURE_VERSION` and 3435's `place_momentum.feature_version`
+ * (dismiss 0 since §61.17 H1). Pinned equal to both by a test, not imported.
+ */
+export const TREND_FEATURE_VERSION = "discovery-row-activity-v2";  // §84: renamed from 3435's first spelling so no version NAME contains "weight" (B2); 3435 amended to match
+
+const TREND_STATE_VERSIONS: DerivedStoreVersions = {
+  modelVersion:   TREND_STATE_MODEL_VERSION,
+  featureVersion: TREND_FEATURE_VERSION,
+};
+
+// ── census-discovery §84 (lane W10-R1): the exposure-normalised model ────────
+//
+// Behind `discovery_trend_normalised_enabled` (3475, seeded FALSE). A caller
+// that does not pass `{ model: "v2" }` gets the v1 arithmetic above, unchanged.
+// The v2 arithmetic lives in lib/discoveryTrendNormalised; this is its
+// adapter to the `TrendReading` shape every consumer already reads.
+
+/** Which trend arithmetic to run. */
+export interface TrendModelOptions {
+  model?: "v1" | "v2";
+  /** v2 only: place context (creator, cell, Trails, age, content class). */
+  context?: TrendContext; /** §95 (DV-34): the post-after-visit leg, passed only under discovery_trend_post_convergence_enabled. */ postAfterVisit?: PostAfterVisitInput;
+}
+
+/** v2's model: exposure-normalised, independence-capped, six normalisers. MUST equal 3477's `c_model`. */
+export const TREND_STATE_MODEL_VERSION_V2 = "discovery-trend-state-v2";
+
+/**
+ * v2's per-row contribution: a served row is EXPOSURE (the denominator), an
+ * outcome is activity (save 3, other positive 2, dismiss and analytics none),
+ * capped per independence cluster. MUST equal 3477's `c_feature` and
+ * lib/discoveryLocalMomentum `LOCAL_MOMENTUM_FEATURE_VERSION_V2`.
+ */
+export const TREND_FEATURE_VERSION_V2 = "discovery-exposure-activity-v3";
+
+const TREND_STATE_VERSIONS_V2: DerivedStoreVersions = {
+  modelVersion:   TREND_STATE_MODEL_VERSION_V2,
+  featureVersion: TREND_FEATURE_VERSION_V2,
+};
+
+function computeTrendStatesNormalised(
+  rows: readonly MomentumRow[], nowMs: number, context: TrendContext, postAfterVisit?: PostAfterVisitInput,
+): Record<string, TrendReading> {
+  const priorSince = nowMs - TREND_PRIOR_MS;
+  const provenance = derivedStoreProvenance({ kind: "bounded", startMs: priorSince, endMs: nowMs }, nowMs, postAfterVisit?.status === "ok" ? TREND_STATE_VERSIONS_V2_POST : TREND_STATE_VERSIONS_V2);  // §95.9: the post leg is a different per-row contribution
+  const out: Record<string, TrendReading> = {};
+  for (const [id, r] of Object.entries(computeTrendStatesV2(rows, nowMs, postAfterVisit ? { context, postAfterVisit } : { context }))) {
+    out[id] = { state: r.state, evidence: r.evidence, provenance, lifecycle: r.lifecycle, driver: r.driver };
+  }
+  return out;
+}
+
+/**
+ * DV-33 (D-W10-R1-9, D-W10-R1-10): the v2 sentence — what drove the claim, and
+ * the neighbourhood only when the caller has established that naming it is
+ * allowed (lib/discoveryTrendExplanation's k-floor). Without a driver it is
+ * v1's sentence. Mirrored, without the neighbourhood, by 3477's stored
+ * `reason` (src/test/discoveryTrendNormalised.test.ts N-SQL).
+ */
+export function explainTrendReading(state: DiscoveryTrendState, driver: TrendDriver | null, neighbourhood: string | null = null): string | null {
+  const at = neighbourhood ? ` in ${neighbourhood}` : "";
+  switch (state) {
+    case "emerging":
+      return driver === "trip_adds" ? `New${at || " around here"}, and being added to trips by several unrelated people.`
+        : driver === "saves" ? `New${at || " around here"}, and being saved by several unrelated people.`
+        : `Emerging${at} across several independent groups of people.`;
+    case "trending":
+      return driver === "trip_adds" ? `Frequently added to trips${at} in the last couple of days.`
+        : driver === "saves" ? `Saved more than usual${at} in the last couple of days.`
+        : `Picking up${at} across independent groups in the last couple of days.`;
+    case "established":
+      return driver === "trip_adds" ? `Consistently added to trips${at}, not just this week.`
+        : driver === "saves" ? `Consistently saved${at}, not just this week.`
+        : `Consistently busy${at || " here"}, not just this week.`;
+    case "cooling":
+      return `Quieter${at} than it has been recently.`;
+    case "rediscovered":
+      return driver === "trip_adds" ? `Being added to trips again${at} after a quiet spell.`
+        : driver === "saves" ? `Being saved again${at} after a quiet spell.`
+        : `Getting attention again${at} after a quiet spell.`;
+    default:
+      return null;
+  }
+}
+
+/** DV-33: the closed driver vocabulary served beside a reason code. */
+export const TREND_DRIVER_CODES = ["trend_driver_trip_adds", "trend_driver_saves", "trend_driver_independent_groups"] as const;
+export type TrendDriverCode = (typeof TREND_DRIVER_CODES)[number];
+export function trendDriverCode(driver: TrendDriver | null | undefined): TrendDriverCode | null {
+  return driver === "trip_adds" ? "trend_driver_trip_adds" : driver === "saves" ? "trend_driver_saves"
+    : driver === "independent_groups" ? "trend_driver_independent_groups" : null;
+}
+
+// ── census-discovery §93 (lane W11-X1): H-W10T-1 — a suppressed PLACE is not a trend claim ──
+//
+// `11` §8's trend integrity review (3486, D-W10T-11) records a verdict per
+// subject; the newest is in force. A Trail's `suppressed` already reached
+// GET …/trending (§86). A PLACE's did not reach the classifier. It does now:
+// every reading that could publish something — a claim (any state but
+// `unknown`), or a v2 reading the rediscovery retest could pick — asks
+// services/trails/TrailService.readTrendReviewVerdict(sc, "place", id), where
+// `id` is the trend store's own place key (rank_events.item_id =
+// place_momentum.place_id, e.g. `db/<uuid>`, `node/<n>`), verbatim (D-W11X1-5).
+//
+//   suppressed  the reading is kept, as NO CLAIM: `unknown`, lifecycle
+//               `inactive`, no driver — so trendReasonFor answers null (no
+//               reason code, no sentence), no list names it, and the retest
+//               never picks it (isRetestCandidate refuses `inactive`)
+//   unread      FAIL CLOSED: the reading is removed — "not computed", never a
+//               claim the review might have withdrawn (D-W10T-11: "an
+//               unreadable review answers null, never a claim")
+//   none        unchanged; when every answer is `none` the SAME object returns
+//
+// 3486 absent is `none` inside readTrendReviewVerdict (no review can exist).
+// The reader is imported on call, not at the top: TrailService imports
+// lib/discoveryLocalMomentum, which imports this module, so a static import
+// would close a module cycle (see the note on the imports above).
+
+export type PlaceTrendReviewVerdict = "suppressed" | "none" | "unread";
+export type PlaceTrendReviewReader = (sc: any, subjectKind: "place", subjectId: string) => Promise<PlaceTrendReviewVerdict>;
+
+async function defaultPlaceReviewReader(): Promise<PlaceTrendReviewReader> {
+  const m = await import("../services/trails/TrailService.js");
+  return m.readTrendReviewVerdict;
+}
+
+/** The newest review's effect for each id; any throw from the reader reads `unread`. */
+export async function readPlaceTrendReviews(
+  sc: any, placeIds: readonly string[], read?: PlaceTrendReviewReader,
+): Promise<Map<string, PlaceTrendReviewVerdict>> {
+  const out = new Map<string, PlaceTrendReviewVerdict>();
+  const ids = [...new Set(placeIds)];
+  if (ids.length === 0) return out;
+  let reader: PlaceTrendReviewReader;
+  try { reader = read ?? (await defaultPlaceReviewReader()); } catch { for (const id of ids) out.set(id, "unread"); return out; }
+  await Promise.all(ids.map(async (id) => {
+    let v: PlaceTrendReviewVerdict;
+    try { v = sc ? await reader(sc, "place", id) : "unread"; } catch { v = "unread"; }
+    out.set(id, v === "suppressed" || v === "none" ? v : "unread");
+  }));
+  return out;
+}
+
+/** Could this reading publish anything — a claim, or a retest pick? */
+function readingMayPublish(r: TrendReading): boolean {
+  return r.state !== "unknown" || (r.lifecycle !== undefined && r.lifecycle !== "inactive");
+}
+
+/** H-W10T-1 on computed readings (the served modifiers and the retest pool). */
+export async function applyPlaceTrendReviews(
+  sc: any, readings: Record<string, TrendReading>, read?: PlaceTrendReviewReader,
+): Promise<Record<string, TrendReading>> {
+  const ids = Object.keys(readings).filter((id) => readingMayPublish(readings[id]!));
+  if (ids.length === 0) return readings;
+  const verdicts = await readPlaceTrendReviews(sc, ids, read);
+  if ([...verdicts.values()].every((v) => v === "none")) return readings;
+  const out: Record<string, TrendReading> = { ...readings };
+  for (const [id, v] of verdicts) {
+    if (v === "unread") delete out[id];
+    else if (v === "suppressed") out[id] = { ...readings[id]!, state: "unknown", lifecycle: "inactive", driver: null };
+  }
+  return out;
+}
+
+/** The stored-row shape the trend API reads (`place_momentum`), as far as a review touches it. */
+export interface ReviewablePlaceTrendRow { place_id: string; trend_state: string; lifecycle_state?: string | null; driver?: string | null }
+
+/** H-W10T-1 on STORED rows (the trend API's explanations and lists), with the same three answers. */
+export async function applyPlaceTrendReviewsToRows<R extends ReviewablePlaceTrendRow>(
+  sc: any, rows: readonly R[], read?: PlaceTrendReviewReader,
+): Promise<R[]> {
+  const ids = rows.filter((r) => r.trend_state !== "unknown").map((r) => r.place_id);
+  if (ids.length === 0) return [...rows];
+  const verdicts = await readPlaceTrendReviews(sc, ids, read);
+  const out: R[] = [];
+  for (const r of rows) {
+    const v = verdicts.get(r.place_id);
+    if (v === "unread") continue;
+    if (v === "suppressed") out.push({ ...r, trend_state: "unknown", ...("lifecycle_state" in r ? { lifecycle_state: "inactive" } : {}), ...("driver" in r ? { driver: null } : {}) });
+    else out.push(r);
+  }
+  return out;
+}
+
+// ── census-discovery §95.9 (lane W11-X3): the post-after-visit leg's versions ──
+//
+// With discovery_trend_post_convergence_enabled ON (and the Memory read
+// answered), the v2 reading also counts "visitors post afterward" (D-W11X3-2).
+// That changes what a row contributes to convergence, so it is a different
+// feature version — the in-process reading and 3497's stored rows both carry
+// it. MUST equal 3497's `c_feature_post`. The model is unchanged.
+export const TREND_FEATURE_VERSION_V2_POST = "discovery-exposure-activity-v3+post-after-visit-v1";
+
+const TREND_STATE_VERSIONS_V2_POST: DerivedStoreVersions = {
+  modelVersion:   TREND_STATE_MODEL_VERSION_V2,
+  featureVersion: TREND_FEATURE_VERSION_V2_POST,
+};

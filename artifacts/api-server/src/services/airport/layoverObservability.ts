@@ -93,8 +93,24 @@ export const CRITICAL_UNKNOWN_CODES: readonly LayoverReasonCode[] = [
   "RETURN_ROUTE_UNRELIABLE",
 ];
 
-/** Verdicts under which a traveller is told they may go landside. */
-const LANDSIDE_VERDICTS = new Set(["yes", "tight"]);
+/**
+ * Verdicts under which a traveller is told they may go landside.
+ *
+ * `entry_unverified` IS one of them, and the reason matters. It means the clock
+ * allows the trip and the border could not be confirmed;
+ * `certifiedLayoverSnapshot` leaves landside OPEN on it (see its `forbidden`
+ * switch), and the card says the time is fine. So the traveller is told they
+ * may go, and the metric would be measuring something other than its own name
+ * if it left them out.
+ *
+ * It would also read as a collapse that did not happen. `entry_requirements`
+ * has no INSERT in any migration, so until corridors are curated this is the
+ * verdict nearly every roomy layover lands on — and the rate would appear to
+ * fall off a cliff on the day the entry gate shipped, while nothing about what
+ * travellers were told had changed. The unknown itself is already counted,
+ * once, by `critical_unknown_rate` through `ENTRY_NOT_CONFIRMED`.
+ */
+const LANDSIDE_VERDICTS = new Set(["yes", "tight", "entry_unverified"]);
 
 /** Return states at or past the first warning rung (§15). */
 const WARNING_STATES = new Set(["RETURN_SOON", "RETURN_NOW", "CONNECTION_AT_RISK"]);

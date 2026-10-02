@@ -90,7 +90,7 @@ import { sendPushWithRetry } from "../lib/pushWithRetry.js";
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
 import { invalidateSuggestedCityCache, checkRentBuddyAccess, CANCELLED_BOOKING_STATUSES } from "./rentABuddyRollout.js";
 import { requireBookingKyc } from "../lib/rentBuddyKycGate.js";
-import { isKillSwitchEngaged } from "../lib/featureFlags.js";
+import { isKillSwitchEngaged, engagedRabBookingKillSwitch } from "../lib/featureFlags.js";
 // requireRentBuddyEnabled is the lane's ONE master-switch guard, defined in
 // rentABuddy.ts (which already gates its own 70 handlers with it). Imported
 // rather than re-implemented so this router cannot drift from the meaning of
@@ -1203,7 +1203,7 @@ router.post("/rent-a-buddy/offers/:offerId/accept", async (req, res) => {
   if (!await requireBookingKyc(svc, res)) return;
   if (await isKillSwitchEngaged(svc, 'disable_rent_buddy_booking')
       || await isKillSwitchEngaged(svc, 'disable_rab_bookings')) {
-    return res.status(404).json({ error: 'feature_disabled', message: 'Rent-a-Buddy bookings are temporarily disabled' });
+    return res.status(404).json({ error: 'feature_disabled', gate: await engagedRabBookingKillSwitch(svc), message: 'Rent-a-Buddy bookings are temporarily disabled' });
   }
 
   const { offerId } = req.params;
@@ -1375,13 +1375,13 @@ router.post("/rent-a-buddy/offers/:offerId/withdraw", async (req, res) => {
   if (!await requireRentBuddyEnabled(svc, res)) return;
   const { offerId } = req.params;
 
-  const { data: offer } = await svc.from("rent_buddy_offers").select("buddy_user_id").eq("id", offerId).maybeSingle();
+  const { data: offer } = await svc.from("rent_buddy_offers").select("buddy_user_id, status").eq("id", offerId).maybeSingle();
   if (!offer) return sendError(res, 'not_found', "Offer not found.");
   if ((offer as any).buddy_user_id !== auth.user.id) return sendError(res, 'forbidden', "Only the Buddy can withdraw their offer.");
-
-  const { error: withdrawErr } = await svc.from("rent_buddy_offers").update({ status: "withdrawn", updated_at: new Date().toISOString() }).eq("id", offerId);
+  // Compare-and-set on `pending` (testing-mode lane tm-rab): an ACCEPTED offer has a live booking behind it, and withdrawing it used to flip it to `withdrawn` anyway.
+  const { data: withdrawnRows, error: withdrawErr } = await svc.from("rent_buddy_offers").update({ status: "withdrawn", updated_at: new Date().toISOString() }).eq("id", offerId).eq("status", "pending").select("id");
   if (withdrawErr) return sendError(res, 'db_error', withdrawErr.message);
-  res.json({ ok: true });
+  return (Array.isArray(withdrawnRows) && withdrawnRows.length > 0) ? res.json({ ok: true }) : res.status(409).json({ error: "invalid_transition", message: "Only a pending offer can be withdrawn.", currentStatus: (offer as any).status });
 });
 
 // ── Packages (v2) ─────────────────────────────────────────────────────────────
@@ -1526,7 +1526,7 @@ router.post("/rent-a-buddy/packages/:packageId/book", async (req, res) => {
   if (!await requireBookingKyc(svc, res)) return;
   if (await isKillSwitchEngaged(svc, 'disable_rent_buddy_booking')
       || await isKillSwitchEngaged(svc, 'disable_rab_bookings')) {
-    return res.status(404).json({ error: 'feature_disabled', message: 'Rent-a-Buddy bookings are temporarily disabled' });
+    return res.status(404).json({ error: 'feature_disabled', gate: await engagedRabBookingKillSwitch(svc), message: 'Rent-a-Buddy bookings are temporarily disabled' });
   }
 
   const { data: pkg } = await svc

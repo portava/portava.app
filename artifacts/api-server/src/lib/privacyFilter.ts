@@ -5,10 +5,16 @@
  * approved follower of.  Must be applied after block filtering so the
  * two guards compose correctly.
  *
- * Fail-open:  if the profiles query fails, rows pass through unchanged
- *             (avoids breaking the feed on a transient DB hiccup).
- * Fail-closed: if the follows query fails, all private authors are treated
- *             as non-followed (privacy takes precedence over availability).
+ * Fail-closed (BOTH reads).  An unreadable privacy input is never read as
+ * "no restriction":
+ *   • profiles read fails  → every other author is treated as private AND
+ *     non-followed, so only the viewer's own rows survive.  (This used to be
+ *     documented as "fail-open" and, worse, did not even reach the documented
+ *     path: supabase-js RESOLVES `{data: null, error}` rather than throwing, so
+ *     `data ?? []` silently produced an EMPTY private-author list and published
+ *     every private account's rows to the viewer.)
+ *   • follows read fails   → all private authors are treated as non-followed.
+ * A transient DB hiccup therefore degrades the feed, it does not widen it.
  */
 
 /**
@@ -72,16 +78,34 @@ export async function excludePrivateAuthorPosts<T extends Record<string, any>>(
     }
   } else {
     // Query profiles table for is_private status.
+    //
+    // PostgREST reports failures in `error` and RESOLVES the promise, so the
+    // catch below only fires for transport-level rejections. Both paths must be
+    // handled, and both fail CLOSED: an unreadable `is_private` means we cannot
+    // prove any author is public, so every non-viewer author is withheld.
+    let privacyReadFailed = false;
     try {
-      const { data } = await sc
+      const { data, error } = await sc
         .from("profiles")
         .select("id")
         .in("id", uniqueOtherAuthorIds)
         .eq("is_private", true);
-      privateAuthorIds = ((data as any[]) ?? []).map((r: any) => r.id as string);
+      if (error || !Array.isArray(data)) {
+        privacyReadFailed = true;
+        privateAuthorIds = [];
+      } else {
+        privateAuthorIds = (data as any[]).map((r: any) => r.id as string);
+      }
     } catch {
-      // Fail-open: cannot determine privacy → let rows through unchanged.
-      return rows;
+      privacyReadFailed = true;
+      privateAuthorIds = [];
+    }
+    if (privacyReadFailed) {
+      // Fail-CLOSED: treat every other author as private and non-followed.
+      return rows.filter((r) => {
+        const authorId = r[authorKey] as string | undefined;
+        return !authorId || authorId === viewerId;
+      });
     }
   }
 
@@ -90,12 +114,15 @@ export async function excludePrivateAuthorPosts<T extends Record<string, any>>(
   // ── Step 2: Find which private authors the viewer follows ────────────────
   let approvedSet = new Set<string>();
   try {
-    const { data } = await sc
+    const { data, error } = await sc
       .from("user_follows")
       .select("following_id")
       .eq("follower_id", viewerId)
       .in("following_id", privateAuthorIds);
-    for (const r of (data as any[]) ?? []) approvedSet.add(r.following_id as string);
+    // Explicit: a resolved `{data: null, error}` must not read as "follows none
+    // of them" by accident — it is the same fail-closed answer, stated on purpose.
+    if (error || !Array.isArray(data)) approvedSet = new Set();
+    else for (const r of data as any[]) approvedSet.add(r.following_id as string);
   } catch {
     // Fail-closed: unknown follows → treat all private authors as non-followed.
     approvedSet = new Set();

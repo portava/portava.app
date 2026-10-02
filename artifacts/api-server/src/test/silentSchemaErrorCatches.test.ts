@@ -291,22 +291,29 @@ const FIXED_SITES: Array<{ file: string; markers: string[]; reason: string }> = 
   {
     file: "routes/posts.ts",
     markers: [
-      "private accounts are NOT being excluded from this page",
+      // Marker MOVED, not deleted (2026-09-06). The global feed no longer warns
+      // and serves an unfiltered page: a failed private-author lookup is now a
+      // retryable 503, so the diagnostic states the fail-CLOSED posture. A
+      // revert to warn-and-continue changes this text and trips this rule.
+      "refusing to serve an unfiltered page",
       "stale-follow privacy cross-check",
     ],
     reason:
       "The global feed's private-author exclusion set: a rejected lookup emptied it and published every private account's " +
-      "posts. The following feed's stale-follow cross-check fails the same way.",
+      "posts. It is now fail-closed (503) rather than warn-and-continue, and the marker pins that posture. The following " +
+      "feed's stale-follow cross-check fails the same way.",
   },
   {
     file: "routes/pulse.ts",
     markers: [
-      "blocked users are NOT being filtered from this response",
+      "returning an empty rail (fail-closed)",
       "buddy-side block filter is OFF for this response",
     ],
     reason:
-      "The Live rail's block set, fail-open, in the same file whose feed endpoint treats the identical unknown as fail-closed " +
-      "and says so in the log.",
+      "The Live rail's block set. It WAS fail-open in the same file whose feed endpoint treats the identical unknown as " +
+      "fail-closed; the 2026-09-06 block fail-open sweep made the rail match the feed, so the marker now pins the " +
+      "fail-CLOSED wording. If it ever reverts to 'blocked users are NOT being filtered from this response', the text " +
+      "changes and this rule trips.",
   },
   {
     file: "routes/discovery.ts",
@@ -320,10 +327,12 @@ const FIXED_SITES: Array<{ file: string; markers: string[]; reason: string }> = 
   },
   {
     file: "routes/follows.ts",
-    markers: ["blocked users are NOT being filtered from this response"],
+    markers: ["returning no suggestions (fail-closed)"],
     reason:
       "Follow suggestions bound `blockErr` already but the two outcomes were indistinguishable downstream: an unreadable " +
-      "blocks table leaves the same empty set as a viewer who has blocked nobody.",
+      "blocks table left the same empty set as a viewer who has blocked nobody, and every suggestion is filtered on that " +
+      "set. The 2026-09-06 sweep made it fail CLOSED (serve nothing); the marker pins that wording, so a revert to " +
+      "'blocked users are NOT being filtered from this response' trips this rule.",
   },
   {
     file: "routes/telegraph.ts",

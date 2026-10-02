@@ -32,9 +32,15 @@
  *
  * WHICH MEMORIES ARE PLACEABLE
  * ============================
- * Only `subject_type = 'place'`: `place` memory (2191 projects it from
- * saved_places, keyed on discovery_places.id) and any episodic memory keyed on
- * a place. City / country / interest / social memory has no venue coordinate
+ * Only `subject_type = 'place'`: `place` memory and any episodic memory keyed
+ * on a place. The PLACE lane is projected by `project_user_memory`, keyed on
+ * `discovery_places.id`. Until **2963** that lane read `public.saved_places`, a
+ * table with no writer anywhere, so it had never produced an eligible subject
+ * and this layer was structurally empty however correct the code below was.
+ * 2963 repoints it at the UNION of the two tables saves actually land in
+ * (`discovery_place_saves` and `wishlist_places`), bridged into the
+ * `discovery_places` id-space by `id`, `canonical_location_id` and `osm_id`.
+ * City / country / interest / social memory has no venue coordinate
  * and is not drawn. The subject id is a `discovery_places.id`, so the venue
  * geography comes from that row — public reference geography
  * (lib/locationPurposes REFERENCE_LOCATION_TABLES), never a position of the

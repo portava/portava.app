@@ -110,6 +110,27 @@ const REQUIRED_ROUTES: Array<[string, string]> = [
   // Admin — payouts
   ["post",   "/api/rent-a-buddy/admin/payouts/:payoutId/hold"],
   ["post",   "/api/rent-a-buddy/admin/payouts/:payoutId/release"],
+  // Testing-mode wiring (lane tm-rab, WP-01): routes the app now calls from
+  // booking/[id], active, buddy-dashboard/sessions + my-offers and the admin
+  // reviews / support / risk / launch-controls screens. Listed here so a route
+  // the app depends on cannot be deleted without this contract going red.
+  ["post",   "/api/rent-a-buddy/bookings/:bookingId/traveler-confirm"],
+  ["post",   "/api/rent-a-buddy/bookings/:bookingId/safety/emergency-phrase"],
+  ["post",   "/api/rent-a-buddy/bookings/:bookingId/suggest"],
+  ["get",    "/api/rent-a-buddy/bookings/:bookingId/change-requests"],
+  ["get",    "/api/rent-a-buddy/me/offers"],
+  ["post",   "/api/rent-a-buddy/offers/:offerId/withdraw"],
+  ["get",    "/api/rent-a-buddy/admin/reviews"],
+  ["post",   "/api/rent-a-buddy/admin/reviews/:reviewId/approve"],
+  ["post",   "/api/rent-a-buddy/admin/reviews/:reviewId/reject"],
+  ["get",    "/api/rent-a-buddy/admin/support/reports"],
+  ["patch",  "/api/rent-a-buddy/admin/support/reports/:reportId"],
+  ["get",    "/api/rent-a-buddy/admin/risk-review"],
+  ["post",   "/api/rent-a-buddy/admin/users/:userId/risk-status"],
+  ["patch",  "/api/rent-a-buddy/admin/users/:userId/verification"],
+  ["get",    "/api/rent-a-buddy/admin/launch-controls"],
+  ["post",   "/api/rent-a-buddy/admin/launch-controls"],
+  ["patch",  "/api/rent-a-buddy/admin/launch-controls/:controlId"],
 ];
 
 const REQUIRED_TABLES: string[] = [

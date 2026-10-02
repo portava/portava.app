@@ -34,6 +34,94 @@ The root tree partially overlaps with both the canonical and legacy chains and c
 
 The frozen-dir guard (run in CI via `check:frozen-dir` and at startup of `audit:schema`) ensures no one silently adds new files to the root tree.
 
+## An applied migration file is a historical artifact: do not annotate it
+
+**The rule, learned the expensive way on 2026-09-22.** Once a migration has been
+applied anywhere, its bytes are frozen. `apply-migrations` records the SHA-256 of
+the file's exact bytes in the ledger, and on every later run it re-hashes the file
+on disk and refuses if the two differ:
+
+> the ledger records these files as applied, but their contents on disk no longer
+> match the recorded checksum. The SQL that ran and the SQL in this commit are not
+> the same text, so the live schema cannot be derived from the tree. Re-applying is
+> NOT a safe repair (a migration is not necessarily re-runnable). Reconcile by hand.
+
+**That check does not know what a comment is, and it must not.** The digest is over
+bytes. Adding a comment block to an applied file produces exactly the same failure
+as rewriting its DDL, because a checksum that tolerated "harmless" edits would be
+no checksum at all. The script says so itself: a backfill that used a different
+digest looks identical to real drift, so it fails closed on both.
+
+This was learned by breaking it. `2950_input_assistance_telemetry_events.sql`
+carried a header reading "⚠ NOT APPLIED ANYWHERE YET", written on a detached HEAD
+before the file was applied. It was applied to production on 2026-09-21 at
+12:11:18 UTC and to `portava-ci`, and the banner then read as current state to a
+later reader — it contributed directly to production being reported as unmigrated.
+The correction was written **into the file**, as 32 lines of comment with no SQL
+changed. CI went red on the next run: ledger `42072bcd…`, disk `8e8d24ae…`. The
+file has since been restored to the exact bytes that ran (verified: it re-hashes
+to `42072bcd…`), and the correction lives here instead.
+
+**So when an applied migration's header turns out to be wrong, correct it HERE,
+keyed by filename — never in the file.** The ledger stays meaningful and the
+correction still reaches the reader, because this is the document a reader
+checking "was it applied?" is sent to anyway. Reconciling the other direction —
+editing the recorded checksum to match a new file — is not the default: it mutates
+a record of what actually ran, in every database that holds one, and should happen
+only when the recorded digest is itself known to be wrong.
+
+### Correction: 2950_input_assistance_telemetry_events.sql
+
+The file's header banner is **superseded**. Its "NOT APPLIED ANYWHERE YET" was
+true when written and false from 12:11 UTC on 2026-09-21.
+
+2950 is applied to production (`ajrurzioarfkagpuxfnb`) and to `portava-ci`
+(`hwokxgbmezheskbzskfr`). Verified by object probe rather than by a ledger row
+alone: the table exists and all nine constraints are present in production,
+including `iate_event_name_known`, whose CHECK was read back from `pg_constraint`
+carrying all fourteen event names in the file's `ARRAY`. `public.schema_migration_ledger`
+also carries the row.
+
+The rest of that header stands as written, including its point that before the
+apply, every write this lane's code issued against the table failed at PostgREST
+and was answered as a **retryable refusal** — never as a successful empty result
+(`src/lib/inputAssistance/telemetry.ts`).
+
+### Why that confusion arose, written down so it does not recur
+
+**There are TWO ledgers in this project and their columns are disjoint:**
+
+| Table | Identifies a migration by | Does NOT have |
+|---|---|---|
+| `public.schema_migration_ledger` | `filename` | `version` |
+| `supabase_migrations.schema_migrations` | `version` (serial lives in `name`) | `filename` |
+
+A query written for one and run against the other answers zero and still looks
+authoritative.
+
+**The CLI table's `version` is TEXT holding two formats at once** — bare serials
+(`'2272'`) and 14-digit timestamps (`'20260921101005'`). Under `en_US.UTF-8`, a
+14-digit timestamp sorts **below** the four-digit cutoff — `'20260915123045' <
+'2890'` is TRUE — because the THIRD character decides it, `'0'` against `'9'`,
+and the remaining ten digits are never read. So `version >= '2890'` excludes
+EVERY post-cutover row no matter what is applied, and `MAX(version)` returns a
+pre-cutover serial.
+
+*(Corrected 2026-09-22. An earlier form of this paragraph wrote the ordering as
+`'289' < '20260915123045' < '2950'`. The first half is FALSE — `'289' >
+'20260915123045'`, verified in Postgres — and the error mattered because it
+described the trap as timestamps sorting AMONG the serials, when what actually
+happens is that they sort beneath the whole band. The conclusion was right for
+the wrong reason.)* This is what produced the withdrawn claim that there were
+"zero ledger rows at or above 2890".
+
+**Ledger absence is not evidence of non-application.** Probed on the same day,
+`2890`, `2900` and `2958` were all live in production with no hand-ledger row;
+`2958` had no row in *either* ledger and its column existed. Only an object probe
+settles whether a migration ran — and even then it settles that the *objects* are
+there, not that every statement in the file executed. Migration `2298` is the
+precedent for the inverse: a ledger row whose effects were absent.
+
 ## The migration ledger
 
 `public.schema_migration_ledger` (created by
@@ -1915,8 +2003,15 @@ what was wrong.
 
 ### Still open
 
-- **Production is untouched.** Zero ledger rows at or above 2890 there. 2972 has
-  been applied to **portava-ci only**.
+- **Production is untouched.** 2972 has been applied to **portava-ci only**;
+  `public.schema_migration_ledger` on `ajrurzioarfkagpuxfnb` holds **no row whose
+  filename begins `2972`** (measured 2026-09-22 05:29 UTC).
+  *(Corrected 2026-09-22. This bullet previously justified itself with "Zero
+  ledger rows at or above 2890 there", which is FALSE — the correct band query,
+  `filename ~ '^[0-9]{4}_' AND substring(filename from '^[0-9]{4}')::int >= 2890`,
+  answers **20**. The zero is what the CLI ledger's TEXT comparison returns, for
+  the collation reason above. The conclusion survives; the evidence for it is now
+  the absence of 2972's own row rather than a broken count.)*
 - The `authz`-vs-`public` name-keying notes `audit:schema` prints on every run
   (9 function claims resolving in `authz`; `is_accepted_trip_member` existing in
   both) remain as stated — pre-existing, unrelated to this apply.
@@ -1938,3 +2033,1705 @@ what was wrong.
 
     SELECT rolname, rolbypassrls FROM pg_roles WHERE rolname = 'service_role';
     -- expect rolbypassrls = true — this is why the server path is unaffected
+
+---
+
+## 2026-09-21 — PR #511 merged: 2963 and 2964 applied to `portava-ci` and CERTIFIED
+
+Run [35569016879](https://github.com/portava/portava.app/actions/runs/35569016879),
+`push` on `main` at the merge commit `fd0b3a6f4`. No `workflow_dispatch`.
+
+**This entry certifies `portava-ci` ONLY.** Production has neither file. That
+distinction is load-bearing and is restated under "Production" below, because the
+whole point of the counter 2964 creates is a privacy promise, and a reader who
+took this as a production certification would believe a promise is being kept
+where the table does not exist.
+
+### What applied
+
+Two files, quoted from the applier rather than inferred from `audit:schema`:
+
+```
+Applying 2 migration(s), in canonical order:
+  · 2963_memory_projector_place_lane_union.sql
+  · 2964_map_telemetry_disabled_discards.sql
+
+  → 2963_memory_projector_place_lane_union.sql: applied + recorded (one transaction)
+  → 2964_map_telemetry_disabled_discards.sql: applied + recorded (one transaction)
+
+apply-migrations PASSED — 2 migration(s) applied and recorded in
+public.schema_migration_ledger, each in one transaction with its ledger row.
+```
+
+The step that produced this — *"migrations — apply to the sanctioned CI project"* —
+is **skipped on every branch run** and only executes from `main`. That is why both
+files sat on the drift ratchet for the life of PR #511 and why merging, not a
+session write, was the supported control for applying them.
+
+### certify:migrations — all five stages, quoted from the run
+
+```
+certify:migrations PASSED — every stage reached a verdict and every verdict was a pass:
+  ✔ 1 ledger
+  ✔ 2 schema objects
+  ✔ 3 grants and RLS
+  ✔ 4 critical postconditions
+  ✔ 5 app checks
+```
+
+- **1 ledger** — `check:migration-ledger PASSED — project hwokxgbmezheskbzskfr has
+  a ledger row for every one of the 579 migration file(s) in src/migrations/.`
+  195 files had a recorded sha256 and matched it; 384 carry no comparable
+  checksum (2254's backfill rows, which assert only that the filename existed).
+- **2 schema objects** — `2 migration(s) in scope (ledger rows tagged
+  run=35569016879): 2963…, 2964…`, so this is **not** the vacuous case where
+  nothing applied. See the caveat on its object count below.
+- **3 grants and RLS** — `RLS is enabled on every table a scoped migration enabled
+  it on; no client role holds an ungranted write privilege on a table these
+  migrations created.` Unlike the 2972 entry above, this stage is **meaningful
+  here**: 2964 genuinely creates a table (`map_telemetry_disabled_discards`) and
+  enables RLS on it, so the stage had something in scope to look at.
+- **4 critical postconditions** — `3 assertion block(s) re-run against the
+  committed database` and `every scoped migration declared at least one
+  assertion`. Three is exactly right and worth checking rather than nodding at:
+  2963 carries one postcondition block, 2964 carries a precondition block and a
+  postcondition block. **So 2964's privacy guards were re-executed against the
+  real CI database**, not merely against the throwaway PostgreSQL they were armed
+  on: no identity-shaped column, no uuid column, exactly four columns, the
+  hour-bucket CHECK present, no client-role rights, no direct `service_role`
+  INSERT/UPDATE, exactly one writer overload.
+- **5 app checks** — `audit:schema` exited 0 over 575 files / 6529 claimed
+  objects (*"Live schema contains every object claimed by the migrations"*), and
+  `check:missing-live-columns PASSED` over 579 files / 3873 column declarations.
+
+### CAVEAT — STAGE 2's "2 declared object(s) present"
+
+Two files applied and the stage reports two declared objects, which reads like one
+object per file and is **not** what it means. The stage counts objects its own
+extractor recognises from the migration text; 2964 alone creates a table, a
+function and an index. Do not quote this number as an inventory of what 2964
+built. What does establish that inventory is STAGE 5's `audit:schema` — which
+resolves every claimed object against the live schema and passed — together with
+STAGE 4's re-run of 2964's own postcondition, which asserts the table's exact
+shape and grants.
+
+### Also cleared by this run: `main`'s four-day 2481 red
+
+```
+⤳ 2481_sensing_sessions_option_a_issuer.sql (skipped: known superseded/drifted)
+```
+
+`schema drift` had failed on every scheduled run on `main` since 2026-09-17, on
+the same unchanged commit, because two name-keyed auditors read 2481's
+**deliberate** non-apply as drift. Both now carry a posture-derived exclusion.
+See PR #512 and PR #514 — the second of which exists because #511 and #512 fixed
+this independently, merged within half an hour, and git kept both forms, which
+silently defeated the conditional.
+
+### Production — APPLIED 2026-09-21, after this entry was first written
+
+| | `portava-ci` | production |
+|---|---|---|
+| `2963_memory_projector_place_lane_union.sql` | **applied + certified** (PR #511 merge) | **applied** 2026-09-21 07:42 UTC |
+| `2964_map_telemetry_disabled_discards.sql` | **applied + certified** (PR #511 merge) | **applied** 2026-09-21 07:43 UTC |
+
+This section first read *"NOT applied, and not pending either"*, and said the
+apply was blocked by the session's permission layer. **That was true when it was
+written and is no longer true.** The supported control that had been refusing
+`execute_sql` against production stopped refusing; the applies then went through
+the ordinary Management API path, and nothing was bypassed to make that happen.
+The superseded wording is described rather than deleted so the record does not
+silently rewrite what it once claimed.
+
+**Verified against production BEFORE applying**, not inherited from the CI run:
+
+- `project_user_memory` was live as `(uuid, boolean)`, **SECURITY INVOKER**,
+  `pg_get_functiondef` length **9340**, carrying the episodic / semantic / social
+  lanes and **not** the union — i.e. production had exactly the pre-2963 shape
+  and exactly the M42 defect that CI had.
+- Every table the new body reads was confirmed present first: `wishlist_places`,
+  `discovery_place_saves`, `discovery_places` (with `canonical_location_id` and
+  `osm_id`), `memory_events`, and `memory_projections` with `source_event_ids`,
+  `retention_class` and `sensitivity`.
+- For 2964, `map_telemetry_events` and `map_telemetry_drops` both present, which
+  is what its own precondition demands, and `purge_expired_map_telemetry()`
+  present to be replaced.
+
+**Verified against production AFTER applying**, independently of each file's own
+postconditions — those ran inside the apply and would have aborted it, so they
+are a gate, not evidence:
+
+- 2963 — **1** overload, definition length **10514** (the same length
+  `portava-ci` carries), still SECURITY INVOKER, union present, both save tables
+  read.
+- 2964 — exactly **4** columns (`bucket_hour`, `batches`, `events`,
+  `expires_at`), **no** identity-shaped column and **no** `uuid` column, 2 CHECK
+  constraints including the hour-bucket one, RLS **enabled**, `anon` and
+  `authenticated` hold **nothing**, `service_role` holds `SELECT` and `DELETE`
+  but **not** `INSERT` or `UPDATE` — so the upsert function is still the only
+  writer — `service_role` can `EXECUTE` the writer, `authenticated` cannot, and
+  the table holds **0** rows.
+
+**Delivery note, stated rather than hidden.** 2964 wraps itself in
+`BEGIN;`/`COMMIT;` and the Management API supplies its own transaction, so those
+two lines were omitted and every other byte applied unchanged. The
+`schema_migration_ledger` checksum recorded for it is of the file on disk, which
+is what was applied.
+
+Both rows were then written into `public.schema_migration_ledger` with
+`applied_by='manual'` and the files' real SHA-256s — the discipline
+`scripts/src/apply-migrations.ts` itself prescribes for a hand-applied migration
+(*"and record both in the ledger with `applied_by='manual'`"*). Without that step
+the applies would have been invisible to every reader that consults the ledger,
+which is the failure mode described two sections below.
+
+### What this certification DOES unlock
+
+`2964`'s three claims come off the pending-apply ALLOWLIST in
+`src/scripts/auditMigrationsVsLive.ts` in the same change as this entry, because
+that entry's own condition was *"Remove all three once the merge-to-main apply is
+certified in docs/migrations.md — NOT when the migration merges."* It is now
+certified, so they are removed and the auditor checks those three objects against
+the live CI schema on every run.
+
+`map_telemetry_disabled_discards` **now also comes off** `KNOWN_PRODUCTION_GAPS`
+in `src/scripts/checkProductionDrift.ts` — but only because its own, *different*
+condition was met in full: *"Strike this off in the same change that applies 2964
+and refreshes the two production snapshots."* When this section was first
+written that condition was **not** satisfied and the entry was deliberately
+kept, on the grounds that removing it on the strength of a CI apply would be the
+CI-for-production substitution this file exists to prevent. That reasoning was
+right then and is what makes the removal legitimate now: 2964 is applied to
+production, and both snapshots moved in this same change
+(`baseline/20260921_production_tables.txt`,
+`snapshots/20260921-production-schema.json`, with
+`PRODUCTION_SNAPSHOT` and `PRODUCTION_SNAPSHOT_FILENAME` repointed).
+
+### What the refresh turned up, which nobody was looking for
+
+Capturing production's table list to refresh the baseline produced **seven** new
+tables since the 2026-09-17 capture, and only **one** of them was this change.
+
+The other six — `trails`, `content_trails`, `trail_edges`, `trail_follows`,
+`trail_health_snapshots`, `trail_reports` — are the **2910 Discovery Trails**
+block, applied to production on **2026-09-20 19:56 UTC** by someone other than
+this session and **never recorded** in
+`src/lib/capability/production-applied-migrations.json`. All six sat on
+`KNOWN_PRODUCTION_GAPS` saying *"absent from production only because this branch
+is unmerged"*, which had stopped being true four days earlier. Four more applies
+from that evening (2996, 2997, 2800, 2840) were unrecorded too.
+
+**Why nothing caught it, which is the part worth keeping.** The staleness
+tripwire in `checkFlagSchemaPrerequisites` fires when
+`production-applied-migrations.json` is **ahead** of the snapshot watermark. A
+record that **lags** reality — an apply that happened and was never written down
+— is exactly the case it cannot see. It was found by diffing two table captures,
+not by any check. That is a genuine gap in the tripwire; it is written down here
+and in the new baseline's header rather than quietly patched, because a
+tripwire's blind spot is worth more as a known fact than as a silent one.
+
+All seven missing entries have been added to
+`production-applied-migrations.json` from production's own
+`schema_migration_ledger` instants, so the record is at least true today. A
+`dead_check_vocabularies_2298` object also landed that evening with a
+`supabase_migrations` row, no ledger row, and no corresponding file in
+`src/migrations/`; it is **deliberately not listed**, because inventing an entry
+for something this repository cannot name would be worse than the gap.
+
+### 2963 BROKE THE PROJECTOR IN PRODUCTION, AND 2965 REPAIRED IT
+
+Written at the top of its own section rather than folded into a list, because
+this is the most serious thing in this entry and burying it would be the second
+mistake.
+
+`2963:171` is `DELETE FROM _canon_saves;` — **unqualified**, against the TEMP
+table it creates six lines above. Plain PostgreSQL permits that. `portava-ci`
+and production do not: both run `session_preload_libraries = supautils`, whose
+`safeupdate` guard raises *"DELETE requires a WHERE clause"* for PostgREST-role
+sessions.
+
+The statement sits **mid-body, after** the episodic, semantic and social
+inserts. So the failure is not a lost PLACE lane — every call through the API
+raised and the entire transaction rolled back, and `project_user_memory`
+projected **nothing at all**. That is strictly worse than the M42 defect 2963
+was written to remove, where three lanes worked and one was empty.
+`lib/memoryProjectionScheduler.ts:81` catches the rejection and only
+`logger.warn`s it, so wherever the pass runs unattended it failed **silently**.
+
+**Why the apply and every check around it missed it**, which is the part worth
+keeping:
+
+| | why it did not catch the defect |
+|---|---|
+| the apply | `CREATE OR REPLACE FUNCTION` only **parses** a body; nothing executed it |
+| the Management API session | does **not** preload `supautils` — read directly: `session_preload_libraries` is `supautils`, and `safeupdate.enabled` is `null` in that session |
+| 2963's own postconditions | inspect `pg_get_functiondef` text; a guard that fires at execution is invisible to them |
+| the independent post-apply checks | signature, overload count, lane presence — all true of a body that raises |
+| `#511`'s own PR run | `db:apply-migrations` runs from `main` only, so that run exercised a database without 2963 |
+| the behavioural proof | run against a local **plain** PostgreSQL, where the guard does not exist |
+
+That last row is this session's own: a proof was run, it passed, and it was not
+the proof it appeared to be. It established the SQL logic and nothing about the
+environment the function actually runs in. The census row that briefly moved on
+it has been moved back, with the reason written into the row.
+
+**The repair is `2965_memory_projector_canon_saves_delete_guard.sql`**, authored
+and rehearsed on `portava-ci` by a separate session and applied here **verbatim
+rather than reinvented** — a second, parallel fix for one defect is exactly the
+failure the rest of this branch documents. It reads the installed definition
+with `pg_get_functiondef`, replaces that one statement with
+`DELETE FROM _canon_saves WHERE true;` and `EXECUTE`s it, so it corrects what is
+actually installed. 2963 could not simply be re-run: it carries a ledger row the
+applier skips, and editing it in place would break its recorded sha256.
+
+Applied to production 2026-09-21 and **verified there independently** of the
+file's own postconditions: exactly 1 overload, signature still
+`(p_user_id uuid, p_enforce_flag boolean)`, SECURITY INVOKER unchanged, **zero**
+unqualified `DELETE FROM _canon_saves` remaining, exactly one qualified form,
+and the PLACE lane still reading `wishlist_places`. Recorded in
+`schema_migration_ledger` with `applied_by='manual'` and the file's real
+SHA-256.
+
+**NOT proven here, and not claimed:** that the guard now passes. It cannot be
+armed from a Management API session (`LOAD 'safeupdate'` is refused), so
+sufficiency is established by the live memory suites on the first `main` run
+after 2965 lands — not by anything runnable before it.
+
+### 2965 IS PROVEN SUFFICIENT — measured, not argued
+
+The open question on 2965 was never whether the reasoning was good. It was that
+**nothing had executed the qualified body under an armed `safeupdate` guard**,
+because the Management API session both applies ran through does not preload
+`supautils` — precisely how 2963 got through in the first place.
+
+That is now settled. On **run `35582952474`, job `106283034190`** (`live DB · RLS
++ role/is_official write boundaries`), against a `portava-ci` carrying the
+qualified form, through PostgREST, with the guard armed:
+
+| step | result |
+|---|---|
+| 12 · `test:memory-lifecycle` (derived-memory privacy, retraction, erasure) | **success** |
+| 15 · `test:memory-projection-lifecycle` (idempotency, concurrency, negative cases) | **success** |
+
+Those are the nine-plus cases that failed with *"DELETE requires a WHERE clause"*
+on every run from #511's merge onward. `WHERE true` is enough.
+
+**And it transfers to production as evidence rather than inference**, because the
+two databases are running *the same bytes*:
+
+| | `pg_get_functiondef` md5 | length |
+|---|---|---|
+| `portava-ci` (hwokxgbmezheskbzskfr) | `d44959054ec4299a97c90eb60c96341b` | 10525 |
+| production (ajrurzioarfkagpuxfnb) | `d44959054ec4299a97c90eb60c96341b` | 10525 |
+
+Identical, and production was separately confirmed to run the same
+`session_preload_libraries = supautils`. So what the suites exercised on CI is
+byte-for-byte what production will execute. That is the strongest statement
+available without running fixtures against production, and it is deliberately
+the one made here rather than "production is fine".
+
+### A TRAP IN `certify:migrations` THAT 2965 SPRANG, worth the next author's time
+
+Getting to that proof took an extra CI round for a reason nothing warns about,
+and it will catch the next surgery migration too.
+
+`certify:migrations` **stage 4 re-runs every `DO` block** of the migrations that
+run applied (`stagePostconditions`, `certifyMigrations.ts:887`). Its model is
+that every `DO` block in a migration is a *postcondition*. A surgery-pattern
+migration breaks that model twice over:
+
+- 2965's `$pre$` is a **precondition**, and an explicitly non-idempotent one —
+  it raises once the delete is qualified, which is exactly the state stage 4
+  re-runs it in. Reproduced verbatim against `portava-ci`:
+  *"2965: the installed definition already qualifies the `_canon_saves` delete;
+  this migration is not idempotent by design."*
+- 2965's `$mig$` contains `EXECUTE`, so `isAssertionOnlyDoBlock` refuses it —
+  *"a postcondition block is not read-only; REFUSED rather than run"* — which is
+  the right call by that stage, and still counts as a problem.
+
+So `certify` failed on run `35581577283`, and because the schema-drift job
+failed, `live DB · RLS` was **skipped** — the memory suites did not run at all.
+The apply itself had succeeded. A red certify there meant "this run's migration
+has a non-re-runnable block", not "the apply is bad", and the two look identical
+from the job list.
+
+**It self-clears**: scope is resolved from ledger rows tagged with
+`GITHUB_RUN_ID` (`resolveScope`), so a later run applies nothing, scope is
+empty, and stages 2-4 pass. Confirmed on the very next run.
+
+**THIS PARAGRAPH ORIGINALLY SAID "which is why no fix is proposed here", AND
+THAT WAS WRONG.** #516 fixed it properly, and measured the problem far past
+where this entry stopped looking:
+
+- **32** of 580 migration files carry an assertion-only `DO $pre$` block, and
+  **23** of those RAISE on a second apply — 2760, 2784, 2796 and 2965 among
+  them. So this was never a quirk of 2965, which is what "it self-clears" let
+  me assume.
+- Run `35581577283` was simply the **first** to reach stage 4 with such a file
+  in scope. An earlier run (`34972255308`) had 16 of them in scope and survived
+  only because certify stops at the first failed stage and failed at STAGE 1
+  instead.
+- The fix keeps `$pre$` blocks out of the re-run, **counts** them in the report
+  and names any migration that declares preconditions only — so a file certify
+  asserted nothing about is never mistaken for one it certified. 474 assertion
+  blocks are still re-run, 32 held back, and all 32 still run inside the
+  applier's own transaction where a raise aborts the apply.
+
+Self-clearing made it survivable, not harmless. A latent trap that fires the
+first time conditions line up is exactly the shape of defect this file keeps
+recording, and "it goes away on its own" is a reason to write it down, not a
+reason to leave it armed. The advice below still stands for anyone writing a
+migration today, because it costs nothing and does not depend on which certify
+version is deployed:
+
+**Make the precondition tolerate the post-state** — return quietly instead of
+raising when the work is already done — so the same block is honest run once and
+run twice.
+
+### The same defect class, looked for rather than assumed unique
+
+2963 was not searched for in isolation. Every non-extension function in
+production's `public` schema was scanned for an **unqualified `DELETE FROM x;`**
+— the shape `safeupdate` refuses — with comments stripped first so prose could
+not create or hide a match. Two functions carry one:
+
+| function | verdict |
+|---|---|
+| `project_user_memory` | **fixed** by 2965, above |
+| `global_journey_shadow_stop_v1(uuid)` | **reported, deliberately not touched** |
+
+`global_journey_shadow_stop_v1` is `SECURITY DEFINER`, `EXECUTE` to
+`service_role` only (`anon` and `authenticated` refused), and carries **three**
+unqualified deletes — `journey_shadow_ground_truth`, `journey_observations` and
+`journey_segment_revisions`. Its four `UPDATE`s are all properly qualified. By
+the same reasoning as 2963, a call through PostgREST would raise
+*"DELETE requires a WHERE clause"* and roll back, which would make a **global
+stop for the journey-shadow programme** fail — the deletes are the point of a
+stop, so this is a safety control that does not work.
+
+**Three reasons it is reported here and not repaired here.** It exists **only in
+production** — `portava-ci` has no such function. It appears **nowhere in this
+repository**: no file in `src/migrations/`, no TypeScript caller, no mention in
+any document, so it is an out-of-band object of the same family as
+`dead_check_vocabularies_2298`. And nothing establishes who is supposed to call
+it: amending an orphaned safety control whose intended caller is unknown, on the
+strength of a pattern match, is how the next unqualified delete gets shipped.
+
+It wants an owner and a deliberate decision, not a drive-by `WHERE true`.
+
+### Still open
+
+- **`global_journey_shadow_stop_v1` is broken in production and unowned.** See
+  the section directly above. Whoever owns the journey-shadow programme should
+  decide whether it is repaired, replaced or dropped; it is not this lane's to
+  guess at.
+- **Neither migration's feature is switched on in production.** 2963 changes a
+  projector body and is live the moment it is applied; 2964's counter is written
+  only on the `map_telemetry_enabled = FALSE` path, so the table exists and holds
+  0 rows. Applied is not enabled, and this file keeps those in separate columns.
+- **`npm run refresh:production-snapshot` does not exist.**
+  `scripts/refresh-production-snapshot.md` tells the operator to run it; there is
+  no such script in `package.json`. The refresh in this change was done by
+  following that document's SQL by hand. The doc naming a command nobody wired is
+  its own small instance of the same class of defect this file keeps finding.
+- **`trip_commitment_recurrences` (2797)** remains genuinely unapplied to
+  production and stays on the ratchet, with its original reasoning intact.
+
+### Re-establish any of this independently
+
+    -- against portava-ci
+    SELECT filename, applied_by, applied_at, left(checksum, 12)
+      FROM public.schema_migration_ledger WHERE filename >= '2963' ORDER BY filename;
+    -- expect 2963 and 2964, applied_by='ci', each with a real sha256
+
+    SELECT count(*) FROM information_schema.columns
+     WHERE table_schema='public' AND table_name='map_telemetry_disabled_discards';
+    -- expect 4 — bucket_hour, batches, events, expires_at, and nothing else
+
+    SELECT has_table_privilege('service_role','public.map_telemetry_disabled_discards','INSERT');
+    -- expect false — the route writes through record_map_telemetry_disabled_discard(integer)
+
+    SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+     WHERE n.nspname='public' AND p.proname='project_user_memory';
+    -- expect 1 — 2963 replaces the (uuid, boolean) signature, it does not overload it
+
+---
+
+## 2976 — THE JOURNEY SHADOW GLOBAL STOP WAS INOPERATIVE IN PRODUCTION
+
+`public.global_journey_shadow_stop_v1(uuid)` is the emergency stop for the
+Journey shadow-segmentation programme — a location-tracking research
+programme. It is `SECURITY DEFINER`, `EXECUTE` to `service_role` only, and it
+**could not run**. Every call through PostgREST raised and rolled back, so
+**the stop did nothing at all**: the flags stayed on, the cohorts stayed live,
+the sessions stayed open.
+
+This is the second instance of the defect class 2963/2965 established, found by
+the sweep recorded there rather than reported by anyone.
+
+### The defect
+
+The installed body carried **three** unqualified deletes, mid-body, **after**
+the four correctly-qualified `UPDATE`s that actually stop collection:
+
+    DELETE FROM public.journey_shadow_ground_truth;
+    DELETE FROM public.journey_observations;
+    DELETE FROM public.journey_segment_revisions;
+
+Production runs `session_preload_libraries = supautils`, whose `safeupdate`
+guard raises *"DELETE requires a WHERE clause"* for PostgREST-role sessions.
+The first delete raised, and the transaction — including the flag disable, the
+stage deactivation and the cohort/issuance revocations — rolled back.
+
+### Why it was absent from this repository — established, not guessed
+
+It was authored in `2127_journey_shadow_controlled_rollout.sql` **SECTION 9**,
+on branch `origin/fix/rls-hardening-signin-flake` (commit `46b1f0383`,
+2026-08-23; itself a renumber of `2123` from `cf9730823`, 2026-08-21). That
+branch **was never merged** — `git merge-base --is-ancestor 46b1f0383 origin/main`
+is false — but the migration **was applied to production**. Its intended callers
+were authored on the same unmerged branch and are likewise absent from `main`:
+
+| authored on the unmerged branch | purpose |
+|---|---|
+| `src/routes/adminJourney.ts` | `POST /admin/journey-shadow/stop` |
+| `src/services/journey/JourneyShadowRolloutService.ts:187` | `globalJourneyShadowStop()` |
+| `src/test/journeyControlledRolloutMigration.test.ts:1639` | the live case that would have caught it |
+
+So the RPC has **no live caller today**. The body installed in production is
+byte-identical to the body authored in 2127: **the defect was authored, not
+introduced by drift.** The repo already half-knew — `lib/crowdFlowProducer.ts:351`
+records *"src/migrations/** — no CREATE TABLE journey_observations"* as a blocker.
+
+The programme is **dormant**. Measured 2026-09-21: every journey table holds
+**0 rows**, no `COMPASS_JOURNEY_*` flag is enabled, no open journey session
+exists. The repair is preventive — the control is fixed before the programme it
+guards is ever switched on.
+
+### The contract: disable **and** erase, and why that was not assumed
+
+Unrestricted deletion was treated as a question, not a given. Four independent
+lines of evidence say erasure is intended:
+
+1. The function's own installed `COMMENT` says so verbatim — *"…ends issued
+   sessions, deletes all observations, segment revisions, and ground-truth rows."*
+2. `revoke_journey_shadow_cohort_v1` is the **per-assignment analogue**, already
+   in production, already correctly scoped, and it **does** erase.
+3. `purge_journey_observations_on_session_revocation` calls itself an *"Atomic
+   erasure boundary (not queue-only)"* and erases synchronously at session end.
+4. `lib/d6Classifications.ts` classifies all three deleted tables **ERASE**
+   under ruling 3 — `journey_observations` is *"The single clearest erase in the set."*
+
+**Audit evidence is not destroyed, and that was checked rather than asserted.**
+The tables the deletion rulings RETAIN or ANONYMIZE are exactly the ones this
+function never deletes from: `journey_revocation_jobs`
+(`RETAIN_LEGAL_SECURITY` — *"DELETION AUDIT EVIDENCE"*), `journey_retention_health`,
+`journey_shadow_qa_reports`, and the cohort-assignment / session-issuance /
+stage rows, which are **updated to revoked, not removed**. Ground truth is a
+30-day-bounded per-subject QA record, not a ledger.
+
+### The qualification is the real predicate, not `WHERE true`
+
+`WHERE true` — which is what 2965 legitimately used, against a TEMP table
+private to its own session — is **wrong here**, and is not used. These are
+real, shared, person-level tables. The stop's scope already had a name written
+into this very function: its last statement scopes the session end to
+`journey_purpose = 'journey_observation_v1'`. The deletes now use the same one.
+
+That is not a tautology. `location_sessions` also holds `live_share`,
+`trip_check_in` and `auto` sessions; a row attached to one of those is not this
+stop's to erase and now survives it. The predicate selects every row *today*
+only because these tables currently hold nothing but programme data — a property
+of the data, not of the predicate.
+
+`journey_segment_revisions` takes a **second** clause. It is the one table of
+the three with **no foreign key** on `location_session_id` (its only FKs are
+`user_id → profiles CASCADE` and `supersedes_id → self`), so a revision could
+outlive its session row; the participant clause
+(`user_id IN (SELECT user_id FROM journey_shadow_cohort_assignments)`) closes
+that hole. The other two are `NOT NULL` with `ON DELETE CASCADE`, so the
+session-purpose clause alone is complete for them.
+
+### Atomicity was kept, deliberately
+
+The alternative — let the revocations commit and queue the erasure — was
+rejected. A stop that swallows an erasure failure and returns a success payload
+tells an admin that personal data is gone when it is not, which is the
+silent-partial-success mode this repo keeps removing. Kept atomic, the caller
+gets the whole stop or an error it can retry, never a false success. Atomicity
+was only unsafe *before* because erasure was guaranteed to raise.
+
+### Shape: top-level replacement, and the certify trap AVOIDED
+
+2965's surgery pattern sprang `certify:migrations` stage 4 twice (see *"A TRAP IN
+`certify:migrations` THAT 2965 SPRANG"*). 2976 avoids **both** halves:
+
+— and #516 has since made the reasoning exact, which also corrected what this
+section used to claim. Stage 4 does **not** re-run "every `DO` block": it
+collects only blocks `isAssertionOnlyDoBlock()` accepts, then holds back the
+ones `isPreconditionDoBlock()` recognises. So of 2976's three blocks:
+
+| block | contains | stage 4 |
+|---|---|---|
+| `$pre$` | assertions only, tagged a precondition | **held back** by #516 |
+| `$mig$` | the guarded apply, via `EXECUTE` | **never collected** — not assertion-only |
+| `$post$` | assertions only, not a precondition | **re-run**, and it tolerates every state the file can leave |
+
+`$pre$` is nonetheless written to tolerate the post-state as well — it accepts
+the pre-image *and* the post-image and returns quietly on the latter, raising
+only on an unrecognised body — so it is correct inside the applier's own
+transaction on a second apply, rather than relying on #516 to excuse it.
+
+This is asserted, not asserted-about: `journeyShadowGlobalStopDeleteScope.test.ts`
+case (7) **imports** `isAssertionOnlyDoBlock` and `isPreconditionDoBlock` from
+`src/scripts/lib/migrationSqlBlocks.ts` and classifies 2976's real blocks with
+them. An earlier version of that test *replicated* those functions, because they
+were unreachable inside `certifyMigrations.ts`; #516 lifted them out precisely so
+they could be exercised, so the copy is gone.
+
+Spelling the definition out in full is also the point: **a live object no file
+describes is its own defect, and is half of why this happened.** The safety of
+replacing rather than patching comes from the `$pre$` **md5 gate** — the body is
+replaced only if what is installed is byte-for-byte the body the file was
+written against (`05e711b9fb218e42171988c1c56b8d26`, 2891 bytes, captured
+verbatim in `artifacts/api-server/src/test/fixtures/global_journey_shadow_stop_v1.preimage.sql`).
+
+### Applied to production 2026-09-21, and verified independently
+
+Recorded in `schema_migration_ledger` with `applied_by='manual'` and the file's
+real SHA-256. **That checksum has since been re-recorded**, and deliberately so:
+the chain-replayability repair above changed the file, so the sha256 on the row
+(`b28ddcb9…`) no longer named any file on `main`. It is now
+`3c080a723b9adf06f7c16dacf157837384877a6b5afa0baba9dfd25ca1d67437`, with the
+supersession, the old value and the reason appended to the row's own `notes`.
+
+**A ledger row naming a checksum no file has is the exact failure mode this
+document keeps cataloguing**, so it was corrected rather than left to rot — and
+the correction is a metadata write only. **No DDL was run on production for it.**
+
+**What changed is the migration, not the object**, and that is measured rather
+than asserted. Production still reads `md5(pg_get_functiondef)` =
+`ff476d8897d0ffac32e439800edc33e9`, length **4218**, `proacl`
+`{postgres=X/postgres,service_role=X/postgres}` — identical to what the row
+recorded on apply. The *repaired* file, replayed onto a local PostgreSQL 16.13
+carrying the captured pre-image, produces **exactly those bytes**, so the new
+file text still describes the installed object byte for byte.
+
+**Delivery differences, stated rather than implied:** the Management API supplies
+its own transaction, so the file's self-wrapped `BEGIN;`/`COMMIT;` was omitted
+from the text sent; the file's long evidence header was abridged in transit; and
+the ledger checksum hashes the **file on disk**, not the text the API received.
+
+Verified **independently of the migration's own postconditions**: `0` unqualified
+deletes (was 3), `4` `journey_purpose` scope references, `0` tautological `WHERE`
+clauses, participant clause present, exactly `1` overload, signature still
+`(p_actor uuid)`, `SECURITY DEFINER` with `search_path=''`, ACL
+`{postgres=X/postgres,service_role=X/postgres}`, `anon` and `authenticated`
+refused `EXECUTE`.
+
+**The stop was NOT invoked on production.** All journey tables remain at 0 rows.
+
+### What was proven, and what was NOT
+
+The reproduction was run on the local disposable PostgreSQL under an **armed**
+guard — not on plain PostgreSQL, which is the trap that let 2963 through.
+
+| | result |
+|---|---|
+| pre-image body, guard armed | raised *"DELETE requires a WHERE clause"*, **whole stop rolled back**: flags still on, cohorts still live, sessions still open |
+| repaired body, guard armed | completed; flags 0, stages 0, live assignments 0, live issuances 0, open sessions 0 |
+| scoping | exactly the 3 deliberately out-of-scope rows survived; the orphaned segment revision was caught by the participant clause |
+| authorization | `anon` and `authenticated` refused at runtime (*permission denied for function*); a non-admin actor refused even via `service_role` |
+
+**And it transfers to production as evidence rather than inference:** the local
+database and production now carry the **same bytes** —
+`pg_get_functiondef` md5 `ff476d8897d0ffac32e439800edc33e9`, length `4218`, on
+both. Production was separately confirmed to run
+`session_preload_libraries = supautils`.
+
+**NOT PROVEN, and not claimed.** The local guard is an **effect** proxy, not the
+real syntactic one. `supautils`' `safeupdate` refuses a DELETE whose parse tree
+carries no qualification — whether or not the table has rows — and it fires on
+statements executed *inside* a plpgsql function. Plain PostgreSQL offers no hook
+that can see an inner statement's text, and `safeupdate` is **not an installable
+extension** (`pg_available_extensions` returns nothing matching). The guard used
+instead raises the same message when a single DELETE empties a table that had
+rows, in a fixture seeded so that a correctly-scoped delete leaves rows behind.
+That establishes the rollback behaviour, the scoping and the authorization; it
+does **not** establish that this specific `safeupdate` build accepts this
+specific predicate.
+
+**And the Management API proves nothing about the guard** — confirmed by direct
+probe on `portava-ci`, not assumed: with `SET safeupdate.enabled = 'true'` an
+unqualified `DELETE` **SUCCEEDED**, deleting every row. That is the exact mistake
+that cost this project a production outage on 2026-09-21, and no check run there
+is presented here as evidence about a guarded session.
+
+**`portava-ci` could not rehearse this at all**: the function does not exist
+there (`count(*)` over `pg_proc` is **0**, verified 2026-09-21), so the
+sufficiency argument rests on the byte-identity above rather than on a CI suite.
+
+That absence was first written up here as *the design working* — `2976`'s
+precondition **refused**, *"global_journey_shadow_stop_v1 is absent … will not
+create one from nothing."* **That reading was half right, and the wrong half
+was a defect.** See below.
+
+### The refusal on an absent object was ALSO a chain-replayability defect
+
+**The invariant:** every file in the canonical chain must replay cleanly onto a
+database built from that chain. A migration that **aborts** the replay is broken
+however right it is about production, because it stops every later file running.
+
+2976 failed that, and the failure was not hypothetical — CI caught it:
+
+    ##[error]local-db: 2976_journey_shadow_global_stop_delete_scope.sql failed
+             and is not in KNOWN_UNREPLAYABLE.json
+    ERROR: 2976: public.global_journey_shadow_stop_v1 is absent.
+
+The object is absent from a chain-built database **by construction**: it was
+authored in `2127` SECTION 9 on a branch that never merged, so no file in the
+chain creates it. The same abort would have hit `live-db.yml`'s apply to
+`portava-ci` after merge, turning `main` red for the same reason.
+
+**The fix is a quiet skip, in all three blocks, from one observation.** Each
+block re-derives the same catalog fact itself, so the skip and the assertions
+can never disagree about what happened:
+
+| block | on an absent object |
+|---|---|
+| `$pre$` | `RAISE NOTICE`, `RETURN` |
+| `$mig$` | `RAISE NOTICE`, `RETURN` — so nothing is created from nothing, and the `REVOKE`/`GRANT`/`COMMENT` cannot raise either |
+| `$post$` | `RAISE NOTICE`, `RETURN` — there is nothing to assert |
+
+**A postcondition that fires on a deliberate no-op is the same class of false
+failure as the `certify:migrations` `$pre$` trap** — a guard reporting a
+migration that worked as a migration that broke. That is why `$post$` had to
+move too, and why it skips on the *same* observation rather than a second one.
+
+**What is deliberately NOT weakened.** *Absent → skip* and *present but
+unrecognised → refuse* are different branches and stay different. If the
+function exists but its body is neither the recorded pre-image nor the
+post-state, `$pre$` still **raises** and still refuses to overwrite a body it has
+not read. The md5 gate is untouched; the header's reasoning about not creating
+the object from nothing is still true, and is now enforced by the `$mig$` gate in
+behaviour rather than by an abort.
+
+### The auditor's claim metadata had to follow the no-op
+
+Making 2976 conditional made its **claim metadata wrong**, and `audit:schema`
+(`auditMigrationsVsLive.ts`) caught it against portava-ci:
+
+    ✖ 2976_journey_shadow_global_stop_delete_scope.sql
+        missing function global_journey_shadow_stop_v1
+
+The auditor is name-keyed to text: it reads the `CREATE OR REPLACE FUNCTION`
+inside the guarded `$mig$` block and records an **unconditional** promise that
+the object exists live. After the repair that promise is false on any
+chain-built database — 2976 applies, correctly no-ops, and creates nothing.
+**The migration was right and the claim was wrong.**
+
+**Neither existing exemption was honest.** `SKIP_FILES` means *"superseded or
+known-drifted"* and prints exactly that; 2976 is current, correct and applied.
+The `ALLOWLIST` means *"the object does not exist and live deliberately
+differs"*, permanently — but the object **does** exist in production, which is
+the database whose ACLs are worth guarding. So a third category was added with
+an accurate name, `CONDITIONAL_CLAIMS`: *a claim a migration makes only when a
+precondition holds in the target database.*
+
+**The condition is deliberately not "is the function there".** That shortcut is
+circular — it reduces to *never report this object missing* and would stop the
+auditor noticing if someone **dropped the stop on production**. The condition
+keys instead on something 2976 never creates and cannot fake: the programme's
+own tables, authored by 2127 alongside the function. Measured 2026-09-21:
+
+| database | journey tables | effect |
+|---|---|---|
+| production | all 9 present | claim **enforced in full** — a dropped stop is drift |
+| portava-ci | **0** present | programme never installed; nothing to audit |
+
+`some`, not `every`: the exemption applies only when the programme is wholly
+absent, so losing one table does not buy an escape from the audit.
+
+Like 2481's posture skip, **it expires by itself.** If 2127 ever merges and the
+tables land on portava-ci, the claim is enforced there again with nobody
+remembering this entry. And a **staleness assertion fails the run** if an entry
+matches no claim — a dead exemption is how a real gap gets carried for months.
+Every non-applying claim is printed, never silently dropped.
+
+The decision lives in `src/scripts/lib/conditionalClaims.ts` rather than inside
+the auditor, because that script's first import is the read-only Supabase front
+door and exits 2 without credentials — so nothing in it can be imported and
+asserted on. `conditionalClaimAudit.test.ts` covers both databases' shapes, and
+case (3) pins the part that matters: **programme installed + stop missing must
+still fail.**
+
+**Why not `KNOWN_UNREPLAYABLE.json`.** That registry exists and 2976 would have
+been accepted into it. It was rejected for two reasons. Its own `_rule` says an
+entry is *"a fact about the replay, not permission to ignore the file"* — and
+this failure was avoidable, not inherent. And it is read only by
+`scripts/local-db/up.sh`: an entry would have silenced the throwaway CI job while
+leaving the `portava-ci` apply to abort exactly as before. **It would have hidden
+half the defect.**
+
+**Proven on a real PostgreSQL 16.13**, all four branches, and the original
+failure reproduced first:
+
+| database state | original 2976 | repaired 2976 |
+|---|---|---|
+| function **absent** | `ERROR: … is absent` (exit 3) | 3 × `NOTICE`, `COMMIT`, exit 0, function still absent |
+| **pre-image** installed (md5 `05e711b9…`, 2891) | — | applies; installed body is **md5 `ff476d88…`, 4218 — byte-identical to production** |
+| **post-state** (re-apply) | — | `NOTICE: already applied`, exit 0, bytes unchanged |
+| **unrecognised body** | — | `ERROR: … REFUSING rather than overwriting` (exit 3) |
+
+The pre-image fixture reproducing production's exact `pg_get_functiondef` md5 on
+a *local* PostgreSQL 16 is itself the check that the capture is faithful.
+
+### Still open
+
+- **The programme's TypeScript never landed.** `routes/adminJourney.ts` and
+  `services/journey/JourneyShadowRolloutService.ts` exist only on
+  `fix/rls-hardening-signin-flake`. Until one of them is merged, the repaired
+  stop has **no caller** — the RPC is reachable only by hand through
+  `service_role`. Porting or retiring that branch is an ownership decision, not
+  this lane's to take. **2976 deliberately does not retire the function**: the
+  contract for retiring it is a verified canonical replacement covering its
+  callers, and there is none.
+
+  Bringing the object into the repository made it visible to
+  `check:security-definer-oracles`, which had never seen it, and it failed — a
+  SECURITY DEFINER function nothing references. **That finding is correct and is
+  now ledgered**, not silenced: `src/scripts/SECURITY_DEFINER_ORACLES.json` gains
+  a `PENDING-OWNER` entry. The check's standing warning — that Supabase default
+  privileges leave `EXECUTE` with `anon` and `authenticated` — **does not hold
+  here**, and the entry says so with the measurement: production's `proacl` reads
+  exactly `postgres=X/postgres | service_role=X/postgres`, and
+  `has_function_privilege` returns `anon` **false**, `authenticated` **false**,
+  `service_role` **true** (2026-09-21). So it is not reachable with a user token
+  and answers nobody's authorization question. A **`REVOKE` was not** used as the
+  fix — the check forbids it, and it was already done anyway.
+
+  One thing that entry records is stronger than its neighbours': a fresh replay
+  of the chain does not produce a narrowly-granted function, **it produces no
+  function at all** (see the no-op above). Production is the only database that
+  has it.
+
+  **The test must not manufacture a caller for it.** That check resolves a
+  reference edge from any quoted `"<name>"` token in `src/`, so a test asserting
+  *about* this function can accidentally register as something *calling* it —
+  the weakest reference kind, and the one the check's own report calls "the one a
+  stale test fixture produces". `journeyShadowGlobalStopDeleteScope.test.ts`
+  therefore writes that one pattern's quotes as `\x27`, with the reason in a
+  comment beside it. Suppressing the finding by accident would have been worse
+  than the finding.
+- **The rest of 2127 is still out-of-band.** This lane brought ONE object into
+  the repository. The other ~30 `journey_*` functions in production, and the nine
+  tables, remain described by no file on `main`.
+
+### Re-establish any of this independently
+
+    -- against production
+    SELECT md5(pg_get_functiondef(p.oid)), length(pg_get_functiondef(p.oid))
+      FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+     WHERE n.nspname = 'public' AND p.proname = 'global_journey_shadow_stop_v1';
+    -- expect ff476d8897d0ffac32e439800edc33e9 / 4218
+
+    SELECT has_function_privilege('anon','public.global_journey_shadow_stop_v1(uuid)','EXECUTE'),
+           has_function_privilege('authenticated','public.global_journey_shadow_stop_v1(uuid)','EXECUTE'),
+           has_function_privilege('service_role','public.global_journey_shadow_stop_v1(uuid)','EXECUTE');
+    -- expect false, false, true
+
+    SELECT filename, applied_by, left(checksum, 12)
+      FROM public.schema_migration_ledger
+     WHERE filename = '2976_journey_shadow_global_stop_delete_scope.sql';
+    -- expect applied_by='manual', checksum 3c080a723b9a (was b28ddcb90521 before the
+    --        chain-replayability repair; the row's notes record the supersession)
+
+---
+
+## 2991 APPLIED TO portava-ci, AND WHY A PR CAN NEED THAT AT ALL
+
+`audit:schema` went red on PR 521 with two missing columns:
+
+    ✖ 2991_message_translations_confidence.sql
+        missing column message_translations.confidence
+        missing column message_translations.provider_version
+
+**The failure was real and the code was fine.** The `schema drift` job runs
+`db:apply-migrations:dry-run` — which writes nothing, by design, because a PR
+must not mutate the shared CI database as a side effect of being opened — and
+then runs `audit:schema`, which measures the *live* schema. So a PR that adds a
+migration file fails its own audit until somebody applies it. The dry run says
+so in the same log, one step earlier:
+
+    Would apply 2 migration(s), IN THIS ORDER:
+        1. 2991_message_translations_confidence.sql   [shape=unwrapped]
+        2. 2998_nearby_reachable_flag.sql             [shape=unwrapped]
+
+> **The file quoted above has since been renumbered to
+> `2990_nearby_reachable_flag.sql`** (2026-09-23, at the integration of PR 525 /
+> PR 524, which brought a `2998_story_retention.sql` onto `main` and made 2998 a
+> collision). The transcript is left EXACTLY as the dry run printed it, because
+> it is a record of what a tool said on a date, not a description of the tree —
+> rewriting a log to match a later rename is how a record stops being evidence.
+> The renumbered file's content is byte-identical apart from its own header
+> line, it is applied to no database, so no ledger row and no checksum moves,
+> and the order shown above is the only thing the rename changes: 2990 now sorts
+> BEFORE 2991. That is harmless here and was checked rather than assumed — the
+> file inserts one `public.feature_flags` row and reads nothing 2991 creates.
+
+Only 2991 was reported missing: 2998's claimed objects already exist on CI, so
+it is pending in the LEDGER sense and satisfied in the OBJECT sense — the exact
+distinction the inventory work exists to keep apart, and the reason "pending"
+and "missing" are two different counts in that log.
+
+**What was done.** 2991 applied to **portava-ci (`hwokxgbmezheskbzskfr`) only**,
+via the Supabase MCP, and ledgered with `applied_by='manual'` and a note that
+records the discrepancy between the executed text and the committed file: the
+outer `BEGIN`/`COMMIT` were dropped because the MCP call supplies its own
+transaction, and the header comment block was not re-sent. The checksum in the
+ledger is of the committed file, which is the convention 2966 and 2976 set.
+Both the `$pre$` and `$post$` blocks ran inside that transaction and passed, and
+the result was re-verified independently afterwards rather than taken from the
+migration's own say-so.
+
+**Production was not touched.** `ajrurzioarfkagpuxfnb` does not have these two
+columns and does not need them yet: nothing deployed writes a confidence reading,
+and `upsertTranslation` retries once without both columns on the undefined-column
+refusal, so an unapplied 2991 degrades T242 to "treat every translation as
+not-certain" rather than breaking translation. That is the migration's own stated
+design, not a concession made here — and it is why T240 and T242 stay `W`.
+
+### Re-establish independently
+
+    -- against portava-ci
+    SELECT column_name, is_nullable, column_default
+      FROM information_schema.columns
+     WHERE table_schema='public' AND table_name='message_translations'
+       AND column_name IN ('confidence','provider_version');
+    -- expect two rows, both is_nullable='YES', both column_default NULL
+
+    SELECT pg_get_constraintdef(c.oid)
+      FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid
+      JOIN pg_namespace n ON n.oid=t.relnamespace
+     WHERE n.nspname='public' AND t.relname='message_translations'
+       AND c.conname='message_translations_confidence_check';
+    -- expect CHECK (((confidence IS NULL) OR (confidence = ANY (ARRAY['high'::text, 'low'::text]))))
+
+    SELECT filename, applied_by, left(checksum, 12)
+      FROM public.schema_migration_ledger
+     WHERE filename = '2991_message_translations_confidence.sql';
+    -- expect applied_by='manual', checksum 5af2de56c5da
+
+**The postcondition that forbids a DEFAULT is not boilerplate.** The table held
+0 rows on CI when this was applied, so nothing was backfilled and nothing could
+be invalidated — but the same apply against a populated database leaves every
+historical row NULL, which is the one true statement available about a reading
+nobody took. A default would have asserted, of every one of those rows, that
+somebody measured it.
+
+> **Both sections below were appended independently on 2026-09-23** — this one
+> by the branch that applied 2991, the next by PR #526 for 2998. They document
+> DIFFERENT migrations to the same database and neither supersedes the other,
+> so the merge keeps both rather than choosing. Read together they also close a
+> loop: #526's section records that `certify:migrations` failed at STAGE 1 on
+> ledger parity, naming `2966` and `2991` as rows whose files are not on `main`.
+> Those two files are THIS branch's, and that stage-1 failure clears when it
+> merges — which is the same fact this section's own paragraph states from the
+> other end.
+
+## `2998_story_retention.sql` — applied to `portava-ci` 2026-09-23, NOT to production
+
+The owner-archive retention unit: `stories.deleted_at` with the trigger that
+freezes it, the `story_purge_queue` ledger, `job_health.last_success_at`, and
+three indexes. Merged to `main` as `6f7d51977` (PR #524) and applied by the
+push run that followed.
+
+| | `portava-ci` | production |
+|---|---|---|
+| `2998_story_retention.sql` | **applied** 2026-09-23 00:20:26 UTC | **not applied** |
+
+Ledger row: `applied_by='ci'`, a real 64-character sha256, written inside the
+same transaction as the migration.
+
+### Read this before reading "applied" as "certified"
+
+`certify:migrations` **did not certify this apply.** It failed at **STAGE 1
+(ledger parity)** and, by its own rule, ran none of the stages after it — so
+its stage 4, which re-runs each migration's own postconditions after the
+commit, never executed for 2998.
+
+The stage-1 failure is **not about 2998**. It names two ledger rows whose files
+are not in `src/migrations/` on `main`:
+
+    • 2966_telegraph_history_bound_close.sql   (applied_by=manual)
+    • 2991_message_translations_confidence.sql (applied_by=manual)
+
+    582 file(s) on disk, 584 ledger row(s) on hwokxgbmezheskbzskfr
+
+Both were hand-applied from another branch (PR #521) and clear when it lands.
+They have been failing this gate on `main` since before 2998 existed.
+
+### What was established instead, and how
+
+Two independent readings, because "the apply step exited 0" is a claim about a
+request rather than about a database:
+
+1. **`audit:schema` passed on `main`**, in the same job, immediately after the
+   apply — *"Audited 578 migration files, 6554 claimed objects. ✔ Live schema
+   contains every object claimed by the migrations."* This is the check that was
+   RED on every #524 PR run, naming 2998's eight missing objects. It is the
+   independent auditor, not the applier reporting on itself.
+
+2. **2998's own postcondition block was re-run against `portava-ci`** — the
+   thing certify stage 4 would have done — and all nine held: the column, the
+   trigger's existence, its coverage of *both* INSERT and UPDATE, the freeze
+   function reading `OLD.deleted_at`, the table, `job_health.last_success_at`,
+   all 14 queue columns, the absence of any foreign key on the queue, and no
+   `state='deleted'` row without a clock.
+
+   A block that raises nothing is indistinguishable from a block that ran
+   nothing, so a **negative control** was run through the same path: a variant
+   demanding 99 `deleted_at` columns failed loudly with
+   `P0001 ... (found 1 columns, demanded 99)`. The silent pass above is
+   therefore a pass.
+
+### Production
+
+Not applied, and **not** applied as a side effect of anything here: the
+repository's applier refuses the production ref by construction, and
+`live-db.yml` gates the apply on `github.ref == 'refs/heads/main'` against the
+sanctioned CI project only.
+
+Production state, read 2026-09-23 00:14:40 UTC — `story_purge_queue` absent,
+`stories.deleted_at` absent, `job_health.last_success_at` absent; `stories`,
+`story_views`, `story_reactions` and `story_replies` all **0 rows**.
+
+Deploying `main` ahead of this apply is safe, and the reason is narrower than
+"the job reports a failure" — it is an **order**. `enqueueDueStories` runs
+first and its second query names `deleted_at`; PostgREST answers 42703 and the
+throw aborts the pass before `purgeExpiredEngagement` is reached, so no viewer,
+reaction or reply row is deleted on a database with no purge ledger behind it.
+That ordering is now pinned by a test (`storyRetention.test.ts`, "aborts before
+deleting any engagement row when deleted_at is not in the database"), which was
+mutation-tested by swapping the two calls.
+
+### Rollback
+
+    DROP TRIGGER IF EXISTS stories_freeze_deleted_at_trg ON public.stories;
+    DROP FUNCTION IF EXISTS public.stories_freeze_deleted_at();
+    DROP INDEX IF EXISTS public.stories_deleted_at_idx;
+    DROP TABLE IF EXISTS public.story_purge_queue;
+    ALTER TABLE public.stories    DROP COLUMN IF EXISTS deleted_at;
+    ALTER TABLE public.job_health DROP COLUMN IF EXISTS last_success_at;
+    DELETE FROM public.schema_migration_ledger WHERE filename = '2998_story_retention.sql';
+
+Nothing here destroys user data on either database as they stand. It is written
+down because a migration whose reversal has not been written down is not ready
+to apply — not because reversal is anticipated.
+
+### Re-establish any of this independently
+
+    SELECT filename, applied_by, applied_at, length(checksum)
+      FROM public.schema_migration_ledger
+     WHERE filename = '2998_story_retention.sql';
+    -- portava-ci: applied_by='ci', 2026-09-23 00:20:26.913608+00, 64
+
+    SELECT to_regclass('public.story_purge_queue'),
+           (SELECT count(*) FROM information_schema.columns
+             WHERE table_schema='public' AND table_name='story_purge_queue');
+    -- portava-ci: story_purge_queue, 14   |   production: NULL, 0
+
+## `3001_highlight_kernel_admits_unhide.sql` — REHEARSED on a throwaway database; applied to `portava-ci` 2026-09-26 (see the batch entry below), NOT to production
+
+Recorded here because a migration that exists and has been executed somewhere
+should be findable from this document, and because census-highlights-memories
+§Y's staleness entry points at this file for the rehearsal. It is **not** an
+application record: there is nothing to record on either database.
+
+**What it is.** A `CREATE OR REPLACE` of `public.highlight_kernel_execute(jsonb)`
+that makes the §17 applier admit `UNHIDE_HIGHLIGHT`. The body is 2993's, derived
+mechanically from that file rather than retyped, with exactly two edits: the
+accepted-type list gains the command name, and a new branch clears
+`archived_at`, emits `highlight.hidden`, and recomputes `to_state` as `EXPIRED`
+when the Highlight's own expiry has passed and `ACTIVE` otherwise.
+
+**Why a new file rather than an edit to 2993.** 2993 travels on PR #523 with
+2992 and 2994 as a byte-identical rehearsed set; editing it would invalidate
+that rehearsal and mean re-rehearsing a pull request instead of adding a file.
+3001 leaves it untouched.
+
+**Why the number is 3001.** 2100-2999 was full — `main` held prefixes to 2997
+and both 2998 and 2999 were claimed by unmerged branches. PR #527 extended
+`NEW_NUMERIC_PREFIX_RE` to admit 3000-3999 hours earlier, for unrelated reasons;
+3000 is #527's own, and 3001 is the first slot above 2993 that has ever been
+legal. The band rule is in
+`artifacts/api-server/src/scripts/migrationPrefixRules.ts:58#NEW_NUMERIC_PREFIX_RE`
+and is written up in `docs/architecture/10_Database_Architecture.md`.
+
+### The rehearsal
+
+Replayed against a real PostgreSQL 16 carrying the baseline plus the canonical
+chain, using `artifacts/api-server/scripts/local-db/up.sh` on an isolated
+database — executed, not read:
+
+| probe | result |
+| --- | --- |
+| `UNHIDE_HIGHLIGHT` on a hidden Highlight | `ok=true`, `archived_at` **cleared** |
+| the event it wrote | ONE row, `type='highlight.hidden'`, `command_type='UNHIDE_HIGHLIGHT'` |
+| outbox | one row |
+| `to_state` on an unexpired Highlight | `ACTIVE` |
+| `to_state` on an **expired** Highlight | `EXPIRED` — expiry survives un-hiding |
+| the same idempotency key twice | second answers `duplicate=true` |
+| `PUBLISH_HIGHLIGHT` (negative control) | still `MEMORY_COMMAND_UNKNOWN_TYPE` |
+
+The rehearsal refused the file twice before accepting it, both times for a
+defect in the file rather than in the database, and both are worth carrying
+forward:
+
+1. The postconditions created a probe Highlight. `highlights.media_url` is
+   `NOT NULL` and `owner_id` references `profiles`, which references
+   `auth.users` — a "simple" fixture is a three-table chain. They were rewritten
+   in 2993's own idiom, which probes REJECTION paths and the catalog and creates
+   no rows at all.
+2. A postcondition asserting that `highlight.unhidden` appears nowhere in the
+   installed function **failed on its own explanatory comment**, because
+   `pg_get_functiondef` returns comments. It now matches the assignment
+   (`v_event_type := '…'`) rather than the bare name.
+
+### Rollback
+
+    -- 3001 REPLACES a function; it creates and drops nothing else. The rollback
+    -- is to re-run 2993, which restores the previous definition verbatim.
+    \i artifacts/api-server/src/migrations/2993_highlight_command_boundary.sql
+    DELETE FROM public.schema_migration_ledger
+     WHERE filename = '3001_highlight_kernel_admits_unhide.sql';
+
+Nothing here destroys user data: `CREATE OR REPLACE` on a function touches no
+row, and the only `UPDATE` in the new branch is the one that clears
+`archived_at` for the Highlight a caller named.
+
+### Re-establish this independently
+
+    SELECT filename FROM public.schema_migration_ledger
+     WHERE filename IN ('2993_highlight_command_boundary.sql',
+                        '3001_highlight_kernel_admits_unhide.sql');
+    -- portava-ci: 0 rows   |   production: 0 rows
+
+**SUPERSEDED 2026-09-26 — both are now applied to `portava-ci`; neither to
+production.** The statement above was true when written (2026-09-23) and the
+re-establish query then returned 0 rows on both databases. It now returns
+`2993` and `3001` on `portava-ci` (both `applied_by='manual'`, real sha256) and
+still 0 rows on production. The ordering claim stands and was exercised: 2993
+went at 06:07:25 UTC and 3001 at 06:11:15 UTC, and 3001's own precondition was
+what would have refused the reverse. The full record is the batch entry below.
+
+## 2026-09-26 — nine migrations applied to `portava-ci` under owner decision A; NOT to production
+
+Owner decision, quoted: *"Choose option A for portava-ci only, conditional on
+the running node:test suite passing."* The condition was met first —
+`api-server · node:test suite` on `8679f5cc9` concluded **success** — and then
+the nine were applied in dependency order, one transaction each, stopping at
+the first failure. There was no failure.
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `2977_layover_maturity_gate_flag.sql` | **applied** 05:57:19 UTC | not applied |
+| `2981_layover_event_ingest_flag.sql` | **applied** 05:59:41 UTC | not applied |
+| `2986_layover_sessions_fanout_indexes.sql` | **applied** 06:02:02 UTC | not applied |
+| `2990_nearby_reachable_flag.sql` | **applied** 06:03:57 UTC | not applied |
+| `2992_layover_decision_record_and_operational_tables.sql` | **applied** 06:05:51 UTC | not applied |
+| `2993_highlight_command_boundary.sql` | **applied** 06:07:25 UTC | not applied |
+| `2994_memory_relations_and_outbox_consumer.sql` | **applied** 06:08:54 UTC | not applied |
+| `2999_trust_profiles_nullable_scores.sql` | **applied** 06:10:00 UTC | not applied |
+| `3001_highlight_kernel_admits_unhide.sql` | **applied** 06:11:15 UTC | not applied |
+
+Ledger rows: all nine `applied_by='manual'`, a real 64-character sha256 of the
+file bytes, written inside the same transaction as the migration. `notes`
+carries `sha=2efbd91ec…`, the tree the files were read from, and
+`owner-decision=A-2026-09-26`. The ledger went from 590 rows to 599. The 2481
+row (`applied_by='ci'`, 2026-09-09) was not touched; it is deliberate and
+load-bearing, as `auditMigrationsVsLive.ts` records.
+
+### How they were applied, and the one way it differs from `db:apply-migrations`
+
+The Management-API token the runner needs is not available from the
+environment that did this, so the runner binary did not execute. Everything
+the runner *decides* was done by the runner's own exported functions —
+`classifyMigration` (all nine classified `unwrapped`, 2999 `bare`; no
+refusals), `checksumOf`, and `buildApplyStatement`, which wraps body + ledger
+row in one `BEGIN … COMMIT` — and the byte-exact statements those produced were
+sent to the same endpoint the runner targets,
+`api.supabase.com/v1/projects/<ref>/database/query`, through a different
+client. The transport is the only difference. Nothing was hand-edited.
+
+Every one of the nine carries its postconditions **inside** the transaction
+(the runner classified no post-COMMIT tail), so the only outcomes possible
+were `applied` or a full rollback with no ledger row. `postcondition-failed`
+could not occur.
+
+### What was verified after each file, and after all nine
+
+**Per file, read from the catalog immediately after the commit** — not from
+the apply reporting on itself: 2977/2981/2990 each one flag row, `false`; 2986
+both partial indexes; 2992 five tables, five columns on
+`layover_certified_computations`, the immutability function, eight indexes,
+three triggers, the gate row `false`; 2993 `highlight_id` on all four kernel
+tables, `highlight_kernel_execute`, the owner policy, the audit index, all
+four constraints, `memory_id` nullable on `memory_domain_events`, and **zero**
+probe audit rows left behind; 2994 `memory_relations` with RLS on, all four
+functions, `locked_until`, four indexes, the owner policy, the owner-match
+trigger, and zero leased outbox rows; 2999 ten columns nullable **and**
+default-less, `public_level` still `NOT NULL`, `trust_profiles` still 0 rows
+(the NULL-insert probe rolled itself back); 3001 the installed function has a
+`WHEN 'UNHIDE_HIGHLIGHT'` branch.
+
+**Certification, the two halves `certify:migrations` would have run.** Its
+STAGE 1 (ledger parity) it cannot pass on this branch for reasons unrelated to
+these nine (see the 2998 entry above), so the two stages that matter were run
+by hand against `portava-ci`:
+
+* **STAGE 2 equivalent — objects.** Every object `audit:schema` named on
+  `8679f5cc9` was queried by name: 6 tables, 10 columns, 15 indexes, 6
+  functions, 2 policies, 4 triggers = **43 of 43 present**. (`audit:schema`'s
+  "44" counts `highlight_kernel_execute` once for 2993 and once for 3001.)
+* **STAGE 4 equivalent — postconditions re-run after commit.** 2992's block
+  (catalog-only by design, the largest of the nine) was executed standalone
+  and all ten assertions held.
+* **Negative control**, because a block that raises nothing is
+  indistinguishable from a block that ran nothing: 2999's postcondition 4 was
+  copied with its sense inverted (demanding `public_level` be nullable) and
+  run the same way. It failed loudly — `P0001: NEGATIVE CONTROL BIT:
+  public_level is NOT NULL (true)`. The silent passes above are therefore
+  passes.
+
+**Flags after the apply**, read rather than assumed: `layover_maturity_gate_enabled`,
+`layover_event_ingest_enabled`, `nearby_reachable_enabled`,
+`layover_decision_persistence_enabled`, `memory_kernel_enabled` all `false`;
+`trust_engine_enabled` has no row, which `isFlagEnabled` reads as false. Nothing
+was enabled. No scope was granted.
+
+### Production
+
+Not applied, and not applied as a side effect. Read 2026-09-26 06:12 UTC:
+0 of the nine in the ledger, `layover_time_budgets` and `memory_relations`
+absent, `trust_profiles.overall_score` still `NOT NULL`, 0 of the four new
+flag rows, ledger total 469.
+
+**2999 and production, stated plainly because the order is load-bearing:** this
+branch's `TrustScoreService.computeCategoryScore` returns `null` where `main`
+returns `50`. Against production's schema that write raises 23502. It does not
+raise today only because `trust_engine_enabled` has no row there. 2999 must
+reach production before anything enables that engine.
+
+### Rollback
+
+Each file's own section, in reverse order; every table any of them touches was
+at **0 rows** before and after, so none of these destroys data as the database
+stands:
+
+    -- 3001: re-run 2993's function body (a second CREATE OR REPLACE)
+    -- 2999: for each of the ten columns —
+    --   ALTER TABLE public.trust_profiles ALTER COLUMN <col> SET DEFAULT 50.00, ALTER COLUMN <col> SET NOT NULL;
+    --   (fails if any NULL has been written by then; that failure is the point)
+    -- 2994: DROP TABLE public.memory_relations; DROP FUNCTION memory_outbox_claim/_ack/_fail, memory_relations_owner_matches_source;
+    --       ALTER TABLE public.memory_event_outbox DROP COLUMN locked_until;
+    -- 2993: its REVERSIBLE BY block, in the order it gives
+    -- 2992: UPDATE feature_flags SET enabled=false WHERE flag='layover_decision_persistence_enabled'  (already false)
+    --       then DROP TABLE layover_outcomes, layover_checkpoints, layover_return_plans, layover_time_budgets, layover_constraints;
+    --       ALTER TABLE layover_certified_computations DROP COLUMN snapshot_id, input_facts, source_refs, rules_applied, ledger_version;
+    -- 2986: DROP INDEX IF EXISTS layover_sessions_airport_active_idx, layover_sessions_manual_iata_active_idx;
+    -- 2977/2981/2990: DELETE FROM public.feature_flags WHERE flag IN (...)  -- rows this apply created, all false
+    -- and for each: DELETE FROM public.schema_migration_ledger WHERE filename = '<file>';
+
+### Re-establish any of this independently
+
+    SELECT filename, applied_by, applied_at, length(checksum)
+      FROM public.schema_migration_ledger
+     WHERE notes LIKE '%owner-decision=A-2026-09-26%'
+     ORDER BY filename;
+    -- portava-ci: 9 rows, all manual, 64   |   production: 0 rows
+
+    SELECT to_regclass('public.layover_time_budgets'), to_regclass('public.memory_relations'),
+           (SELECT is_nullable FROM information_schema.columns
+             WHERE table_schema='public' AND table_name='trust_profiles' AND column_name='overall_score');
+    -- portava-ci: layover_time_budgets, memory_relations, YES   |   production: NULL, NULL, NO
+
+
+## 2026-09-26 — 3311 and 3312 applied to `portava-ci` under owner decision A; NOT to production
+
+The second batch under the same ruling as the nine above (*"option A for
+portava-ci only"*), applied after the api-server suites these two files back
+were green locally (sensingErasureRecompute 11/11, sensingReducedFeatures
+16/16, ingest route 31/31, revocation reach 10/10, intelProjection 21/21).
+Both files were written on branch `claude/sensing-completion-20260925` and are
+part of PR #528; the blob ids below identify the exact bytes independently of
+any later commit.
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3311_intel_snapshot_input_provenance.sql` (blob `519a76b21b…`) | **applied** 09:36:48 UTC | not applied |
+| `3312_sensing_anon_contribution_features.sql` (blob `eec1b648a3…`) | **applied** 09:37:49 UTC | not applied |
+
+Ledger rows: both `applied_by='manual'`, checksum = sha256 of the file bytes
+(`63fe3ddd23…` and `f5096e928d…`), written inside the same transaction as the
+DDL. `notes` carries the blob id, the branch and
+`owner-decision=A-2026-09-26`. The ledger went from 599 rows to 601. The 2481
+row was not touched.
+
+### How they were applied — runner-identical, different transport
+
+Same method as the nine: the runner's own exported functions from
+`scripts/src/apply-migrations.ts` did the deciding. `classifyMigration`
+classified both **`bare`** (no top-level transaction control; every
+postcondition `DO` block sits inside the body, so it runs INSIDE the
+`BEGIN … COMMIT` that `buildApplyStatement` wraps around it — the only
+outcomes were `applied` or a full rollback with no ledger row).
+`checksumOf` produced the digest and `buildApplyStatement` the statement.
+That statement — comments intact this time, unlike the 3002/3003/3310
+rehearsal whose ledger notes record the stripping — was sent byte-for-byte
+through the Management-API query endpoint. `body === file` was asserted in
+the build script before anything was sent.
+
+### Verified from the catalog after each commit, not from the apply reporting on itself
+
+**3311.** Both `intel_state_snapshots.input_observation_ids` and
+`intel_state_snapshot_versions.input_observation_ids` read `_uuid`, `NOT
+NULL`, default `'{}'::uuid[]`; both GIN indexes present by name; both column
+comments present. `sensing_anon_contributions` still has **zero** columns
+whose name contains `observation` — the anonymous store stays
+provenance-free, which is 3311's own last postcondition and also §20's rule.
+
+**3312.** All fifteen feature columns present and nullable (`int2`, `text`,
+`bool` as the file declares); the three CHECKs
+`sensing_anon_features_ranges`, `_enums`, `_acoustic_pair` present beside
+2315's ten; **0 foreign keys**. The 2315 name checks (no account/device
+handle, no lifecycle column) re-ran inside the transaction and held.
+
+**Negative controls, because a block that raises nothing is indistinguishable
+from a block that ran nothing.** Five inserts inside `DO` sub-blocks on
+`portava-ci`, every one rolled back, row count 0 before and after:
+
+| probe | outcome |
+|---|---|
+| `motion_energy_centi = 101` | refused: `violates check constraint "sensing_anon_features_ranges"` |
+| `density_bucket = 'crowded'` | refused: `violates check constraint "sensing_anon_features_enums"` |
+| `acoustic_energy_bucket` set, `acoustic_rhythm` NULL | refused: `violates check constraint "sensing_anon_features_acoustic_pair"` |
+| legacy shape (no feature column at all) | **accepted**, then rolled back — a pre-3312 client still inserts |
+| the full wire-contract shape (all fifteen) | **accepted**, then rolled back |
+
+**Flags after the apply**, read rather than assumed:
+`discovery_candidate_projection_enabled`, `intel_claim_projection_crowd`,
+`media_evidence_enabled`, `memory_projection`,
+`sensing_presence_context_enabled` all `false`. Neither file seeds or touches
+a flag. No scope was granted.
+
+### Production
+
+Not applied, and not applied as a side effect. Neither file is in
+production's ledger; `input_observation_ids` and the fifteen feature columns
+are absent there. The writer behind 3311 (`lib/intelProjection`) falls back
+to writing WITHOUT provenance on the schema-cache error and logs
+`intel.projection.provenance_unavailable`; the reach then enumerates at
+subject granularity. So deploying this branch's code ahead of 3311 degrades
+provenance, it does not break projection. The ingest behind 3312 accepts a
+contribution without `features` (every column is nullable), so a client ahead
+of the server, or the server ahead of 3312, still inserts. Order for
+production: `docs/ops/sensing-cutover-runbook.md`.
+
+### Rollback
+
+    -- 3312: db/rollback/2026-09-26-3312-sensing-anon-contribution-features-rollback.sql
+    -- 3311: db/rollback/2026-09-26-3311-intel-snapshot-input-provenance-rollback.sql
+    -- and for each: DELETE FROM public.schema_migration_ledger WHERE filename = '<file>';
+    -- Every table either touches was at 0 rows on portava-ci before and after.
+
+### Re-establish independently
+
+    SELECT filename, applied_by, applied_at, length(checksum)
+      FROM public.schema_migration_ledger
+     WHERE filename IN ('3311_intel_snapshot_input_provenance.sql','3312_sensing_anon_contribution_features.sql');
+    -- portava-ci: 2 rows, manual, 64   |   production: 0 rows
+
+    SELECT (SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND column_name='input_observation_ids') AS provenance_cols,
+           (SELECT count(*) FROM pg_constraint WHERE conname LIKE 'sensing_anon_features_%') AS feature_checks;
+    -- portava-ci: 2, 3   |   production: 0, 0
+
+## 2026-09-26 — 3313, 3314 and 3315 applied to `portava-ci` under owner decision A; NOT to production
+
+The third batch under the same ruling (*"option A for portava-ci only"*). All
+three files were written on branch `claude/sensing-completion-20260925`
+(PR #528). The blob ids identify the exact bytes independently of any later
+commit.
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3313_sensing_publication_flag.sql` (blob `1d5b51f2f5…`) | **applied** 16:50:23 UTC | not applied |
+| `3315_sensing_anon_surface_consent.sql` (blob `ace36c056c…`) | **applied** 16:51:14 UTC | not applied |
+| `3314_memory_projection_claim_refs.sql` (blob `16563d02db…`) | **applied** 16:52:39 UTC | not applied |
+
+Ledger rows: all `applied_by='manual'`, checksum = sha256 of the file bytes
+(`4b6d3a231e…`, `648132eeea…`, `59f7a20c78…`), written inside the same
+transaction as the DDL. `notes` carries the blob id, the branch and
+`owner-decision=A-2026-09-26`. The ledger went from 601 rows to 604. The 2481
+row was not touched (read back: `2481_sensing_sessions_option_a_issuer.sql`,
+`ci`, `56c1244782e8…`).
+
+### How they were applied
+
+Same method as the two batches above: `classifyMigration`, `checksumOf` and
+`buildApplyStatement` from `scripts/src/apply-migrations.ts` built each
+statement, which was sent unchanged through the Management-API query endpoint.
+
+- **3314 and 3315** classified **`bare`**. The statement is the whole file,
+  comments intact, wrapped in `BEGIN … COMMIT` with the ledger insert inside;
+  `body === file` was asserted before sending.
+- **3313** classified **`unwrapped`**: the file carries its own `BEGIN;` and
+  `COMMIT;`, so the runner takes the text between them and re-wraps it with the
+  ledger insert. The header comments above the file's `BEGIN` are therefore
+  not in the statement. Its postcondition `DO` block sits between the file's
+  `BEGIN` and `COMMIT`, so it ran inside the wrapping transaction. The ledger
+  note for 3313 says exactly this rather than "comments intact".
+
+### Before 3314: the function it replaces was read from both databases
+
+3314 replaces `project_user_memory_with_retraction`, last defined in the tree
+by 2195. Replacing a function from a file is only safe if the live body is the
+body the file starts from, so it was read first:
+
+- portava-ci's live `prosrc` and production's live `prosrc` are both 2195's
+  body (same declarations, flag check, `project_user_memory` +
+  `project_inferred_preferences`, same retraction predicate), differing from
+  the file only in whitespace. No later migration redefines the function
+  (2200, 2963 and 2965 mention it; none replace it).
+- After the apply, portava-ci's live `prosrc` md5 is `c12a0ff3cf71a233…`,
+  length 1062, which equals the md5 of the text between `$fn$ … $fn$` in the
+  3314 file. The deployed body is byte-for-byte the file's.
+
+### Verified from the catalog after each commit
+
+**3313.** `sensing_publication_enabled` present, `enabled = false`. Negative
+control: inside a rolled-back sub-block the row was set to `true` and the
+file's postcondition re-run; it raised `POSTCONDITION FAILED:
+sensing_publication_enabled seeded ON …`. The row read `false` afterwards.
+
+**3315.** `sensing_anon_contributions.surface_permitted` is `boolean`,
+`NOT NULL`, default `false`, commented; still **0** foreign keys; 0 rows before
+and after. Controls, each rolled back:
+
+| probe | outcome |
+|---|---|
+| legacy shape, column not named | **accepted**; `surface_permitted` read `false` |
+| `surface_permitted = NULL` | refused: `violates not-null constraint` |
+| `surface_permitted = true` | **accepted**; read `true` |
+
+**3314.** `memory_projections.claim_refs` is `_uuid`, `NOT NULL`, default
+`'{}'::uuid[]`; `memory_projections_claim_refs_gin` present; the function is
+executable by `service_role` only (anon and authenticated `false`);
+`memory_events` has no `claim_refs`. The 16 existing memory rows all read an
+empty `claim_refs`. Controls, all inside one rolled-back block against one
+existing CI user:
+
+| probe | outcome |
+|---|---|
+| a session memory carrying one ref; overlap query on that ref | finds **1** memory |
+| the watermark pass (`project_user_memory_with_retraction(u, false)`) over a stale session memory and a stale city memory | session memory stays **active**; city memory **retracted** |
+| `claim_refs = NULL` | refused: `violates not-null constraint` |
+| `claim_refs = ARRAY['not-a-uuid']` | refused: `is of type uuid[] but expression is of type text[]` |
+
+The watermark pass in that block reported 2 retracted: the probe's city row and
+one existing row of that CI user that the projector did not re-affirm. The
+second is 2195's pre-existing behaviour, unchanged by 3314. The block rolled
+back; afterwards 16 rows, 0 retracted.
+
+### 3313's status, and what green schema checks do not prove
+
+Before this entry, 3313 had been applied **nowhere**, and PR #528's CI was
+fully green on `bae9ea2d4`, including the live-DB job that reads portava-ci's
+real schema. That is the evidence that the schema checks cannot see a flag
+seed. `audit:schema` and `check:write-path-columns` read tables and columns;
+3313 creates neither, only a `feature_flags` row. At runtime an absent row and
+a `false` row also read the same, because `isFlagEnabled` fails closed. So
+neither CI nor behaviour distinguishes "3313 applied" from "3313 never run".
+
+The only proof that a flag-seed migration was applied is reading both:
+
+    SELECT flag, enabled FROM public.feature_flags WHERE flag = 'sensing_publication_enabled';
+    SELECT filename, applied_by, checksum FROM public.schema_migration_ledger
+     WHERE filename = '3313_sensing_publication_flag.sql';
+    -- portava-ci now: (sensing_publication_enabled, false) and (…, manual, 4b6d3a231e…)
+    -- production:     0 rows and 0 rows
+
+### Production
+
+Not applied, and not applied as a side effect. None of the three files is in
+production's ledger; `sensing_publication_enabled` has no row there;
+`memory_projections.claim_refs` and `sensing_anon_contributions.surface_permitted`
+are absent. Without 3314, the session memory writer refuses
+(`claim_refs_unavailable`) rather than writing a memory without its lineage,
+and the reach reports `memoryStore: "column_absent"`. Without 3315, the ingest
+omits the column when a session lacks `surface`, which is every session under
+today's consent, so it inserts unchanged; the publisher's cohort read filters
+on the column and fails closed, publishing nothing. Order for production:
+`docs/ops/sensing-cutover-runbook.md`.
+
+### Rollback
+
+    -- 3314: db/rollback/2026-09-26-3314-memory-projection-claim-refs-rollback.sql
+    --       (refuses while any subject_type = 'experience_session' row exists)
+    -- 3315: db/rollback/2026-09-26-3315-sensing-anon-surface-consent-rollback.sql
+    --       (refuses while any row reads surface_permitted = true)
+    -- 3313: db/rollback/2026-09-26-3313-sensing-publication-flag-rollback.sql
+    -- and for each: DELETE FROM public.schema_migration_ledger WHERE filename = '<file>';
+
+### Re-establish independently
+
+    SELECT filename, applied_by, length(checksum) FROM public.schema_migration_ledger
+     WHERE filename ~ '^331[345]_' ORDER BY filename;
+    -- portava-ci: 3 rows, manual, 64   |   production: 0 rows
+
+    SELECT (SELECT udt_name FROM information_schema.columns WHERE table_schema='public' AND table_name='memory_projections' AND column_name='claim_refs') AS claim_refs,
+           (SELECT data_type FROM information_schema.columns WHERE table_schema='public' AND table_name='sensing_anon_contributions' AND column_name='surface_permitted') AS surface_permitted,
+           (SELECT enabled FROM public.feature_flags WHERE flag='sensing_publication_enabled') AS publication_flag;
+    -- portava-ci: _uuid, boolean, false   |   production: NULL, NULL, NULL
+
+## 2026-09-26 — 3320 and 3321 applied to `portava-ci` under owner decision A; NOT to production
+
+Media lane B's two files (census-media §20), merged on branch
+`claude/sensing-completion-20260925` (PR #528). They were applied nowhere when
+merged, and the live-DB job's `audit:schema` failed on `4b57e8746` with the
+four objects they create missing. Both files' headers assign the portava-ci
+apply to the integrator after review. Decision A's condition held: CI's
+`node:test` suite concluded success on `4b57e8746`, a tree containing both files.
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3320_media_canonical_contract_constraints.sql` (blob `1e02b85c41…`) | **applied** 18:29:14 UTC | not applied |
+| `3321_media_moderation_canonical_state.sql` (blob `5d042d761e…`) | **applied** 18:29:47 UTC | not applied |
+
+Ledger rows: both `applied_by='manual'`, checksum = sha256 of the file bytes
+(`e6b57ec1f6…`, `0c95882754…`), written inside the same transaction as the
+DDL; `notes` carries the blob id, the branch and `owner-decision=A-2026-09-26`.
+The ledger went from 604 rows to 606. The 2481 row was not touched (read back:
+`ci`, 2026-09-09).
+
+### Reviewed before applying
+
+3321 changes what new rows hold: the default becomes `processing`, and a
+legacy `pending`/`approved`/`flagged` write is stored as
+`processing`/`active`/`limited`. Every reader of `media_assets.moderation_status`
+was read first, and each already speaks §36:
+
+- the projection's unservable set includes `limited`;
+- eligibility's non-distributable set includes it;
+- the Quick Media block includes it;
+- the moderation service and the presence receipt use the canonical states;
+- shareables accept `active`.
+
+The `!== "flagged"` checks in posts, pulse, passport, the feed item and the
+post-media resolver read `post_media`, which 3321 does not touch.
+
+One reader does not speak §36. The 20260811 RLS policies
+(`media_assets_public_select`, `media_attachments_public_select`) admit an
+`authenticated` direct read only when the asset's
+`moderation_status = 'approved'`. No client or server path reads these tables
+as `authenticated`, because the API uses the service role. So the effect is
+that such a read of a public `active` row returns nothing: it fails closed.
+Widening the policy is a protection change and is not made here (census-media §23.2).
+
+### How they were applied
+
+As for 3313–3315: `classifyMigration`, `checksumOf` and `buildApplyStatement`
+from `scripts/src/apply-migrations.ts` built each statement, and it was sent
+unchanged through the Management-API query endpoint. Both files were classified
+**`unwrapped`**, so their header comments above `BEGIN` are not in the
+statement. The precondition and postcondition `DO` blocks are inside the text
+between the file's own `BEGIN` and `COMMIT`, so they ran in the wrapping
+transaction. Before sending, the checksum was recomputed with `sha256sum` and
+the blob compared with `HEAD`; both matched.
+
+Preconditions read beforehand: `media_assets_moderation_status_canonical_check`
+(the §36 superset from 2470) present; 0 rows in `media_assets` and
+`media_attachments`; 0 violators of any new CHECK; neither function nor trigger
+present.
+
+### Verified from the catalog after each commit
+
+- **CHECKs.** The three have the files' definitions:
+  - `media_attachments_entity_type_check`: the nine §6.1 types;
+  - `media_attachments_visibility_override_check`: `IS NULL OR` inherit plus the six §33 audiences;
+  - `media_assets_visibility_check`: inherit plus the same six.
+- **Triggers.** `media_assets_version_bump` (BEFORE UPDATE) and
+  `media_assets_canonical_moderation` (BEFORE INSERT OR UPDATE OF
+  moderation_status) are both enabled.
+- **Functions.** Both have `search_path=""` and are not SECURITY DEFINER.
+  `REVOKE ALL … FROM PUBLIC` ran, but the ACL still lists EXECUTE for `anon`
+  and `authenticated`, from Supabase's default privileges on `public`. Both
+  functions `RETURNS trigger`, and PostgreSQL refuses to call such a function
+  outside a trigger, so the grant reaches nothing.
+- **Default.** `moderation_status` defaults to `'processing'`.
+
+Controls, all in one block that raised at the end to roll back (afterwards 0
+rows in both tables, 0 `ctl/%` paths):
+
+| probe | outcome |
+|---|---|
+| INSERT `flagged` / `approved` / `pending` | stored `limited` / `active` / `processing` |
+| INSERT naming no status | `processing` |
+| INSERT `rejected` (already §36) | `rejected`, unchanged |
+| UPDATE status to `approved`, then to `flagged` | `active` v2, then `limited` v3 |
+| UPDATE sending `version = 99`, then `version = 1` | stored 4, then 5: the version cannot be forged or rewound |
+| compare-and-set `WHERE version = 3` on a row at 5 | 0 rows: the lost race is refused |
+| `visibility = 'everyone'`; `entity_type = 'bogus'`; `visibility_override = 'friends'` | each refused, SQLSTATE 23514 |
+| attachment `post` with NULL override; `observation` with `trip_crew` | admitted |
+
+### Production, read 2026-09-26 (read-only)
+
+Neither file is applied and neither was applied as a side effect: no ledger
+row, no trigger, no function, and the default is still `'pending'`.
+
+**Contrary to 3321's own header, its precondition would pass there.**
+Production carries `media_assets_moderation_status_canonical_check`, because
+2470 was applied on 2026-09-16 (ledger: `manual`, *"under ORDER B, on explicit
+owner decision"*). All four canonical columns are present. 3320's
+preconditions would also pass: 11 assets, all `pending` and `inherit`, and 0
+attachments.
+
+`media_canonical_enabled` reads **FALSE** there, last updated 2026-09-25
+15:39 UTC; the tree records no reason. Applying either file to production is
+the owner's decision.
+
+The header is not edited. The ledger checksum is the file's bytes, and the
+runner reports a changed file as drift (`apply-migrations.ts`, the `drifted`
+arm). census-media §23.2 carries the correction.
+
+### Rollback
+
+    -- 3321: db/rollback/2026-09-26-3321-media-moderation-canonical-state-rollback.sql
+    -- 3320: db/rollback/2026-09-26-3320-media-canonical-contract-constraints-rollback.sql
+    -- in that order, then for each: DELETE FROM public.schema_migration_ledger WHERE filename = '<file>';
+
+### Re-establish independently
+
+    SELECT filename, applied_by, length(checksum) FROM public.schema_migration_ledger
+     WHERE filename ~ '^332[01]_' ORDER BY filename;
+    -- portava-ci: 2 rows, manual, 64   |   production: 0 rows
+
+    SELECT tgname FROM pg_trigger WHERE tgrelid = 'public.media_assets'::regclass AND NOT tgisinternal ORDER BY 1;
+    -- portava-ci: media_assets_canonical_moderation, media_assets_version_bump   |   production: none
+
+## 2026-09-27 — 3350 applied to `portava-ci` under owner decision A; 3352 and 3360 NOT applied; nothing to production
+
+PR #528's `schema drift` job (`audit:schema`) failed on `595d2e582`. Three of wave 8's migrations claim
+objects that `portava-ci` did not have:
+- 3350: the enum value `post_location_privacy_mode.neighborhood_only`;
+- 3352: the column `posts.perspective_vantage`;
+- 3360: the function `intel_evidence_rekey_reference`.
+
+The workflow's real apply runs only on `main`, so a PR that adds an object-creating migration stays red
+there until it merges or until the file is applied under decision A. That is how 3313–3315 and 3320/3321
+were handled.
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3350_media_neighborhood_only_location_mode.sql` (blob `4577ee4015…`) | **applied** 2026-09-27 | not applied |
+| `3352_media_perspective_vantage.sql` (blob `421cda2c0c…`) | **not applied** | not applied |
+| `3360_intel_evidence_sealed_reference.sql` (blob `3af15d4161…`) | **not applied** | not applied |
+
+**3350, how it was applied.** It was applied by the same method as the batches above:
+- `classifyMigration`, `checksumOf` and `buildApplyStatement` from `scripts/src/apply-migrations.ts` built the statement.
+- It was sent unchanged through the Management-API query endpoint.
+- The file classified `unwrapped +postconditions`. The text between its own `BEGIN` and `COMMIT` ran with the ledger insert in one transaction. Its trailing postcondition `DO` block ran afterwards in its own transaction, as the runner runs it, and passed.
+
+The ledger row reads `applied_by='manual'`, checksum `9d565ca9f3a9…` (sha256 of the file bytes), and its
+`notes` carry the blob, the branch and `owner-decision=A-2026-09-26`. The ledger went from 606 rows to 607.
+
+**3350, verified from the catalog.** Before the apply, the pre-flight read held:
+- the enum carried six labels;
+- `posts` had no `perspective_vantage`;
+- `intel_evidence` held 0 rows.
+
+After the apply, the label list ends in `neighborhood_only`, and `media_neighborhood_only_mode_enabled` is present and `false`.
+
+**Why 3352 and 3360 were not applied.** Applying further unmerged migrations to the shared CI database was
+stopped by this session's permission policy as a change to a shared resource. It was left for the owner
+rather than worked around. Until one of two things happens, `audit:schema` on PR #528 reports those two
+files' objects as missing:
+- both are applied under decision A;
+- the PR merges and the `main` job applies them.
+
+Both were rehearsed on the local PostgreSQL 16 harness only (census-media §36, census-map §45).
+
+**3352 also turns two live column checks red** in `api-server · check:all + live_pulse gate` on the same
+head:
+- `check:write-path-columns` flags the insert at `routes/posts.ts` that names `posts.perspective_vantage`;
+- `check:missing-live-columns` flags the column itself.
+
+In behaviour, nothing is broken. That insert passes `vantageDecision.write`, which is `undefined` unless
+`media_perspective_vantage_enabled` is on and a vantage was chosen, and supabase-js drops an undefined key.
+So no request names the column while the flag (seeded `false` by 3352 itself) is off. The checks stay red
+until 3352 is applied or the PR merges. No allowlist entry was added.
+
+**The 3350 hand-apply goes against this repo's recorded rule, stated here so it is not repeated.** The
+`checkMissingLiveColumns.ts` entries for 2745, 2810 and 2813 record the rule. Hand-applying an unmerged
+branch's migrations to `portava-ci` is recorded as the root cause of `CI (live DB)` going red on main's own
+sha. The workflow comment in `live-db.yml` gives the reason: the database is then ahead of `main` with no
+merged commit accounting for it. 3350 was applied before that was read.
+
+What it leaves:
+- `portava-ci` carries the `neighborhood_only` label and a `false` flag row that `main` does not declare.
+  `main`'s audits check presence of claimed objects only, so this does not turn `main` red.
+- On merge, the runner treats 3350 as proven applied, so its bytes must not change before then. A changed
+  checksum is reported as a mismatch.
+- If the PR does not merge, the owner can run `db/rollback/` for 3350. It removes the flag row and the
+  ledger row and leaves the label inert, because PostgreSQL cannot drop an enum value.
+
+## 2026-09-28 — the 40 pending on `portava-ci` (3338 … 3441): REHEARSED on the local harness; NOT applied anywhere
+
+Lane W10-D (census-discovery §83) prepared the owner-authorised `portava-ci` apply. This session holds no `portava-ci` credentials, so **nothing was applied to `portava-ci` or to production.** The procedure, with expected outputs, is `docs/ops/discovery-portava-ci-apply-plan.md`.
+
+- **The set.** `planApply` over a ledger modelled from this file's entries gives the same 40 files, in the same order and with the same shapes, as CI's own dry run against `portava-ci` on `84318d1b2` (run 36392056669).
+- **The harness rehearsal**, on a restored pre-3338 baseline with seeded data and flag values, used the applier's own functions with a psql transport:
+  - 40 applied, 19 post-`COMMIT` tails verified;
+  - every pre-existing row and flag byte-identical, the one documented exception being 3440's `search_key` recompute;
+  - a second apply was a no-op;
+  - 38 rollback files ran newest first, plus 3440's footer reversal;
+  - the re-apply's catalogue is identical to the first apply's;
+  - `run-tests.sh` passes 377/377 on a fresh chain.
+- **Found, and recorded for the operator:**
+  - The eleven media rollbacks 3338–3359 do not delete their ledger row. **Neither does 3350's.** The 2026-09-27 entry above says 3350's rollback removes the ledger row; it does not. Add `DELETE FROM public.schema_migration_ledger WHERE filename = '3350_media_neighborhood_only_location_mode.sql';` to that recovery.
+  - After the apply, `certify:migrations` stage 4 fails on 3360, 3362, 3363, 3364, 3365, 3390, 3421 and 3422, and `audit:schema` still reports 3360's function, which 3361 drops by design. None of these is a defect in what is applied. The fixes (F1–F4) are in the apply plan §5.3.
+
+## 2026-09-28 — certification blockers F1–F5 fixed in the pending set; rollbacks now recover correctly; NOT applied anywhere
+
+Lane W10-F (census-discovery §87) fixed what W10-D's rehearsal found. **Nothing was applied to `portava-ci` or to production.** Before any byte changed, the applied state was re-read:
+- this file's 2026-09-27 entry: 3350 is applied to `portava-ci`, and 3352 and 3360 are not;
+- this file's 2026-09-28 entry: the 40 are applied nowhere;
+- production's latest snapshot watermark is `20260922155706`, and nothing of 3338 … 3441 is applied there.
+
+So every migration changed here is unapplied everywhere.
+
+**Changed before the apply, so the ledger will record the new bytes:**
+- **F2**, line-neutral: the first guard block of 3362, 3363, 3364, 3365, 3421 and 3422 is tagged `$pre$`.
+- **F3**: 3360's `$post$` accepts the rekey function's absence only once 3361 has validated the constraint.
+- **F4**: 3390's `$post$` reads the catalogue only. It checks its literal lists and service_role's BEFORE snapshot in the applying transaction.
+
+**`audit:schema` ALLOWLIST:**
+- **F1**: `function:intel_evidence_rekey_reference`, which 3361 drops by design.
+- **F5**, new: `grant:{posts,passport_postcards,post_media}.{anon,authenticated}.select`. 3362 and 3363 take back 2148/2151/2158's table-level SELECT by design, and the auditor sees only table grants. W10-F found this by running `audit:schema` itself on the harness after the apply.
+
+**Rollbacks** (the corrections this file's 2026-09-28 entry asked for):
+- Each of 3338, 3340–3343, 3350, 3351, 3352 and 3355–3359 now deletes its forward file's ledger row. That is twelve files, not eleven, plus 3350, so the 2026-09-27 statement that 3350's rollback "removes the ledger row" is now true.
+- The sixteen flag-seed rollbacks (the twelve media ones less 3359, plus 3350, 3366, 3395, 3400 and 3410) delete the flag row only if it carries their forward file's own seed description, compared by md5. A row that existed before the apply is kept. At `debd5ad4f`, 3351's rollback deleted one.
+
+**Rehearsed on the local harness, controlled evidence, with the repository's own tools run unchanged against it** (`docs/ops/discovery-portava-ci-apply-plan.md` §7):
+- **At this tree the set is 41:** `3436` landed.
+- **`certify:migrations --files <the 40>`:** stage 4 went from **8 failures** to **59 blocks re-run, all passing**.
+- **`audit:schema` after the apply:** went from 44 findings to 37. All 37 are in 11 files the pre-apply baseline already reports, because the harness cannot replay those files; none of them is in the set.
+- **Every rollback removed its own ledger row.** Data after all rollbacks is identical to the baseline.
+- **3415's rollback needs 3441's footer reversal first** (`trails.destination_key`, since §77).
+
+### Re-establish independently
+
+    cd artifacts/api-server
+    grep -c 'DO \$pre\$' src/migrations/336[2-5]_*.sql src/migrations/342[12]_*.sql   # 1 each
+    grep -c 'schema_migration_ledger' ../../db/rollback/2026-09-2?-33[3-5][0-9]-*-rollback.sql   # >= 2 each

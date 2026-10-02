@@ -5,9 +5,11 @@
  * `trust_engine_enabled` has been TRUE since 2026-07-17. In the 52 days since,
  * the ledger received FIVE events (4 `pulse_post_created`, 1 `first_event_joined`)
  * against 18 stamp awards, 7 posts and 1 completed trip. 56 of 58 users have no
- * trust profile, so the Passport builder substitutes a constant 50 and everyone
- * reads "Established". The engine is on and starved: the emitters are the
- * defect, not the scorer or the scheduler.
+ * trust profile, so the Passport builder substitutes a constant 50. Those 56
+ * used to read "Established" on the strength of it; since 2026-09-22 they read
+ * "Not yet rated", which is the honest surface for a starved engine and does
+ * not make the engine any less starved. The emitters are the defect, not the
+ * scorer or the scheduler.
  *
  * `TRUST_EVENT_TYPES` (TrustEventService.ts) declares 31 event types. Eighteen of
  * them are emitted by NOTHING (the census said 15; it did not count the two

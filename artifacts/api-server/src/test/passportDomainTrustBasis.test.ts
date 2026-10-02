@@ -11,14 +11,17 @@
  * SIX IDENTICAL DOMAIN ROWS — the exact equivalence §10 forbids, one level down
  * from where the last pass closed it.
  *
- * WHAT THIS PINS, AND WHAT IT DELIBERATELY DOES NOT. The presentation WORD is
- * unchanged. Whether a substituted 50 may keep the word "Established" is the
- * owner decision the census records as D-WORD, and recalibrating it here — by
- * flipping `applicable`, or by renaming the word — would be taking that decision
- * under cover of a defect fix. `applicable` keeps its ONE meaning ("this domain
- * does not apply to this person", the Buddy case) and is asserted UNCHANGED
- * below, so a later recalibration is a deliberate diff rather than a side
- * effect. What is added is the domain saying what its word rests on.
+ * WHAT THIS PINS. The pass that wrote this suite added `basis` and left the
+ * presentation WORD alone, because whether a substituted 50 may keep the word
+ * "Established" was the owner decision the census records as D-WORD. THE OWNER
+ * TOOK IT ON 2026-09-22: a domain with no measured category reads "Not yet
+ * rated", and an unreadable profile reads "Temporarily unavailable".
+ *
+ * The decision was WORD-ONLY, and the rest of this suite's original caution
+ * still binds: `applicable` keeps its ONE meaning ("this domain does not apply
+ * to this person", the Buddy case) and is asserted UNCHANGED below, and `basis`
+ * still reports what the word rests on. Flipping `applicable` to mean
+ * "unmeasured" would be a second, untaken decision.
  *
  * IT TESTS THE SHIPPED PREDICATE, NOT A COPY. `domainTrustBasis` is imported and
  * called directly, and the second block runs the whole projection so the value
@@ -188,15 +191,140 @@ describe("P45 — the basis reaches every domain row on every trust path", () =>
   });
 });
 
-describe("P45 — what was deliberately NOT changed (D-WORD stays the owner's)", () => {
-  it("the presentation WORD of a substituted domain is still 'Established'", async () => {
-    // The census records recalibrating this as an owner decision. If a later
-    // pass takes that decision, this assertion is the thing it must change on
-    // purpose — which is the point of pinning it.
+describe("D-WORD — DECIDED 2026-09-22, and this assertion moved on purpose", () => {
+  /**
+   * The block below used to assert the opposite: that a substituted domain
+   * still reads "Established". Its own comment said why it existed — "If a
+   * later pass takes that decision, this assertion is the thing it must change
+   * on purpose." The owner took the decision (Q3): a substituted score must not
+   * produce "Established". So this is a deliberate re-pin to the decided
+   * behaviour, not a weakened assertion — the same case is still covered, with
+   * the opposite expected value, and the three neighbouring guarantees the
+   * decision preserves are pinned alongside it.
+   */
+  it("a SUBSTITUTED domain no longer prints a rating word", async () => {
     const p = (await buildPassportProjection(db(null), OWNER, OWNER, { resolveViewerContext: resolver(SELF) }))!;
     const d = domainMap(p.trust!.domains as any);
     for (const key of ["overall", "traveler", "trip_guest", "trip_host", "contributor"]) {
-      assert.equal(d.get(key)!.presentation, "Established", `${key} word must not move`);
+      const row = d.get(key)!;
+      assert.equal(row.basis, "substituted", `${key} precondition: this row IS substituted`);
+      assert.equal(row.presentation, "Not yet rated", `${key} must not word a substitution`);
+      assert.notEqual(row.presentation, "Established", `${key} must not claim a standing`);
+    }
+  });
+
+  it("a substituted domain stays APPLICABLE — unmeasured is not inapplicable", async () => {
+    const p = (await buildPassportProjection(db(null), OWNER, OWNER, { resolveViewerContext: resolver(SELF) }))!;
+    const d = domainMap(p.trust!.domains as any);
+    for (const key of ["overall", "traveler", "trip_guest", "trip_host", "contributor"]) {
+      assert.equal(d.get(key)!.applicable, true, `${key}: applicable must not absorb "unmeasured"`);
+    }
+    // ... and the one genuinely inapplicable domain still says so, differently.
+    const buddy = d.get("buddy")!;
+    assert.equal(buddy.applicable, false);
+    assert.equal(buddy.basis, "not_applicable");
+    assert.equal(buddy.presentation, "Not applicable");
+    assert.notEqual(buddy.presentation, "Not yet rated", "not applicable != not yet rated");
+  });
+
+  it("CONTROL — MEASURED and PARTIAL domains keep their real word", async () => {
+    // Without this, the Q3 fix could "pass" by blanking every domain, which
+    // would be the opposite failure: refusing to report what WAS observed.
+    const measured = (await buildPassportProjection(db(fullyScored), OWNER, OWNER, { resolveViewerContext: resolver(SELF) }))!;
+    for (const row of measured.trust!.domains as any[]) {
+      if (row.basis === "measured" || row.basis === "partial") {
+        assert.notEqual(row.presentation, "Not yet rated", `${row.key}: evidence must still be worded`);
+        assert.ok(
+          ["Excellent", "Strong", "Established", "Building", "New"].includes(row.presentation),
+          `${row.key}: expected a real rating word, got ${row.presentation}`,
+        );
+      }
+    }
+
+    const partial = (await buildPassportProjection(
+      db({ user_id: OWNER, overall_score: 61, public_level: "trusted", host_quality: 61, communication: 70 }),
+      OWNER, OWNER, { resolveViewerContext: resolver(SELF) },
+    ))!;
+    const pd = domainMap(partial.trust!.domains as any);
+    const host = pd.get("trip_host")!;
+    assert.equal(host.basis, "measured", "trip_host averages host_quality alone, which IS present");
+    assert.notEqual(host.presentation, "Not yet rated", "a measured domain must keep its word");
+  });
+
+  it("basis is untouched by the wording change — the note still explains", async () => {
+    const p = (await buildPassportProjection(db(null), OWNER, OWNER, { resolveViewerContext: resolver(SELF) }))!;
+    for (const row of p.trust!.domains as any[]) {
+      assert.ok(
+        ["measured", "partial", "substituted", "unavailable", "not_applicable"].includes(row.basis),
+        `basis vocabulary intact for ${row.key}`,
+      );
+    }
+  });
+
+  /*
+   * UNIONED AT INTEGRATION, 2026-09-23. Two lanes re-pinned the same owner
+   * decision (Q3 / P45, the D-WORD) independently, and the cases they chose do
+   * not overlap: the block above pins `applicable`, the buddy `not_applicable`
+   * row and the basis vocabulary; the block below pins the UNREADABLE profile
+   * ("Temporarily unavailable", which must not collapse into "Not yet rated")
+   * and splits the measured and partial controls. Keeping both is strictly
+   * more coverage than either; nothing was dropped to resolve the conflict.
+   */
+  it("the presentation WORD of a substituted domain is 'Not yet rated'", async () => {
+    // TAKEN ON PURPOSE. This assertion used to require "Established" on all
+    // five, and its comment said that if a later pass took the owner's D-WORD
+    // decision, "this assertion is the thing it must change on purpose". The
+    // owner took it: a domain with NO measured category does not get a rating
+    // word. Every one of the five is checked, because the defect was that all
+    // six read as a rating at once.
+    const p = (await buildPassportProjection(db(null), OWNER, OWNER, { resolveViewerContext: resolver(SELF) }))!;
+    const d = domainMap(p.trust!.domains as any);
+    for (const key of ["overall", "traveler", "trip_guest", "trip_host", "contributor"]) {
+      assert.equal(d.get(key)!.presentation, "Not yet rated", `${key} must not borrow a rating word`);
+    }
+  });
+
+  it("a MEASURED domain still gets the word its score earned — the fix is not a blanket", async () => {
+    // The cheapest way to pass the test above is to stop rating anything. This
+    // is the positive control that refuses it: the same five domains, on a
+    // profile that HAS the categories, still read as measurements.
+    const p = (await buildPassportProjection(db(fullyScored), OWNER, OWNER, { resolveViewerContext: resolver(SELF) }))!;
+    const d = domainMap(p.trust!.domains as any);
+    for (const key of ["overall", "traveler", "trip_guest", "trip_host", "contributor"]) {
+      const row = d.get(key)!;
+      assert.equal(row.basis, "measured", `${key} basis`);
+      assert.ok(
+        ["Excellent", "Strong", "Established", "Building", "New"].includes(row.presentation),
+        `${key} lost its rating word: ${row.presentation}`,
+      );
+    }
+  });
+
+  it("an UNREADABLE profile says 'Temporarily unavailable', NOT 'Not yet rated'", async () => {
+    // Two different facts, and they must not share words. "Not yet rated" is a
+    // statement about this person's record; "Temporarily unavailable" is a
+    // statement about the database. Collapsing them tells a user their standing
+    // is missing when the truth is that we could not look.
+    const p = (await buildPassportProjection(db(null, true), OWNER, OWNER, { resolveViewerContext: resolver(SELF) }))!;
+    const d = domainMap(p.trust!.domains as any);
+    for (const key of ["overall", "traveler", "trip_guest", "trip_host", "contributor"]) {
+      assert.equal(d.get(key)!.basis, "unavailable", `${key} basis`);
+      assert.equal(d.get(key)!.presentation, "Temporarily unavailable", `${key} word`);
+    }
+  });
+
+  it("a PARTIAL domain KEEPS its rating word — real observations are not discarded", async () => {
+    // The decision was "substituted or unmeasured", and `partial` is neither:
+    // some categories were really measured. Withholding the word here would
+    // throw away observations that exist, which is the opposite failure.
+    const p = (await buildPassportProjection(db({ user_id: OWNER, overall_score: 61, public_level: "trusted", host_quality: 61, communication: 70 }), OWNER, OWNER, { resolveViewerContext: resolver(SELF) }))!;
+    const partial = (p.trust!.domains as any[]).filter((r) => r.basis === "partial");
+    assert.ok(partial.length > 0, "the fixture produces at least one partial domain");
+    for (const row of partial) {
+      assert.ok(
+        ["Excellent", "Strong", "Established", "Building", "New"].includes(row.presentation),
+        `${row.key} is partly measured and must keep a rating word, got ${row.presentation}`,
+      );
     }
   });
 

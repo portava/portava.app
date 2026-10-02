@@ -50,14 +50,14 @@ import { NotificationService } from "../services/notifications/NotificationServi
 import { NotificationRouter } from "../services/notifications/NotificationRouter.js";
 import { isKillSwitchEngaged, killSwitchStateUnknown, KILL_SWITCH_UNKNOWN_MESSAGE } from '../lib/featureFlags.js';
 import { processImage, makeThumbnail, makeFeedVariant, computePHash } from "../lib/mediaProcessing.js";
-import { stripVideoLocationMetadata } from "../lib/videoMetadata.js";
+import { stripVideoLocationMetadata, probeVideoContainer, probedDurationSeconds } from "../lib/videoMetadata.js";
 import { hidePostForViewer } from "../lib/postHide.js";
 import {
   guardUploadRequest,
   verifyUploadedBytes,
   ALLOWED_MEDIA_MIME,
 } from "../lib/mediaPipeline.js";
-import { recordMediaAsset, capturedAtFromImageBytes } from "../lib/mediaAssets.js";
+import { recordMediaAsset, capturedAtFromImageBytes, recordPostMediaAttachments, MEDIA_SOURCE_UNDECLARED } from "../lib/mediaAssets.js";
 import { resolvePostPlace } from "../lib/places/placeResolve.js";
 import { classifyBuckets, incrementBucketCounts } from "../lib/places/bucketClassifier.js";
 import { ensurePlaceDay, isEligiblePlaceDayPost } from "../lib/places/placeDays.js";
@@ -82,14 +82,14 @@ const STORAGE_BUCKET = "post-media";
  */
 router.post(
   "/media/upload",
-  (req, res, next) => {
-    const chunks: Buffer[] = [];
-    req.on("data", (c: Buffer) => chunks.push(c));
-    req.on("end", () => { (req as any).rawBody = Buffer.concat(chunks); next(); });
-    req.on("error", next);
-  },
+  // Authenticate BEFORE the body is read, then read it BOUNDED (census-media §28.7): an
+  // unauthenticated caller could stream an unbounded body into memory before either.
+  async (req, res, next) => { const auth = await requireUser(req, res); if (!auth) return; if (!(await admitUploadBeforeBody(req, res, auth.user.id))) return; (req as any).uploadAuth = auth; next(); },
+  collectBody(Math.max(...Object.values(MEDIA_SIZE_LIMITS))), // the largest per-kind ceiling; verifyUploadedBytes applies the real kind's below
+  // (collectBody answers 400 and destroys the stream the moment the ceiling is passed)
+  // The handler reuses the identity established above; it does not authenticate twice.
   async (req, res) => {
-    const auth = await requireUser(req, res);
+    const auth = (req as any).uploadAuth as Awaited<ReturnType<typeof requireUser>>;
     if (!auth) return;
     const { user } = auth;
 
@@ -99,7 +99,7 @@ router.post(
     // Kill switch + per-user upload budget, from lib/mediaPipeline so this
     // transport and the postcard signed-URL transport share one policy and one
     // rate-limit bucket — switching endpoint does not buy a fresh allowance.
-    const guard = await guardUploadRequest(sc, user.id);
+    const guard: Awaited<ReturnType<typeof guardUploadRequest>> = (req as any).uploadGuard; // §28.10: decided BEFORE the body was read, once (was: const guard = await guardUploadRequest(sc, user.id);)
     if (!guard.ok) {
       if (guard.failure.code === "rate_limited") {
         res.setHeader("Retry-After", Math.ceil(guard.failure.retryAfterMs / 1000).toString());
@@ -143,7 +143,7 @@ router.post(
     // to read. Null for video and for any image without a plausible EXIF date.
     const capturedAt =
       sniffed.kind === "image" ? capturedAtFromImageBytes(rawBody) : null;
-
+    const videoProbe = sniffed.kind === "video" ? probeVideoContainer(rawBody) : null; // §37, measured
     if (sniffed.kind === "image") {
       try {
         // Strip EXIF/GPS + auto-orient + cap dimensions, and build a real
@@ -191,10 +191,10 @@ router.post(
       }
     } else {
       // VIDEO — no transcode tier, but the container still has to give up its
-      // capture coordinates. Length-preserving in-place scrub; see
-      // lib/videoMetadata.ts for why the bytes are overwritten rather than
-      // removed. Fail-closed: a video whose location metadata cannot be proven
-      // gone is refused, never stored.
+      // capture coordinates (length-preserving in-place scrub, lib/videoMetadata.ts;
+      // fail-closed: refused, never stored) — and it STATES its display size and
+      // duration (§37), read by lib/videoProbe.ts from these bytes, not the client.
+      [width, height] = [videoProbe?.width ?? null, videoProbe?.height ?? null];
       const scrub = stripVideoLocationMetadata(rawBody, sniffed);
       if (!scrub.ok) {
         req.log.warn({ mime: sniffed.mime }, "video location metadata could not be stripped — upload rejected");
@@ -254,8 +254,8 @@ router.post(
     const mediaRelayUrl = `${STORAGE_BUCKET}/${path}`;
 
     // Canonical dual-write (flag-gated OFF; fail-soft — legacy flow unaffected).
-    void recordMediaAsset(sc, {
-      ownerUserId: user.id,
+    void canonicalModerationAtBirth(sc).then((atBirth) => recordMediaAsset(sc, { ...atBirth, // census-media §37.8: born HELD while 3356 is on; {} (byte-identical) otherwise (was: void recordMediaAsset(sc, {)
+      ownerUserId: user.id, sourceType: MEDIA_SOURCE_UNDECLARED, // §6 source: this route receives bytes and a Content-Type, never camera vs library (census-media §35, MD37)
       storageBucket: STORAGE_BUCKET,
       storagePath: path,
       publicUrl: mediaRelayUrl,
@@ -270,7 +270,7 @@ router.post(
       // omitted the field, so media_assets.captured_at had no writer at all and
       // the Wall's §16 experienceAt could never differ from publishedAt.
       capturedAt,
-    });
+    })).then(async (assetId) => { await recordMeasuredDuration(sc, assetId, videoProbe); await runMediaVendorIngest(sc, { assetId, bucket: STORAGE_BUCKET, path, mediaType: sniffed.kind, durationMs: videoProbe?.durationMs ?? null }); }); // §37: the probed duration_ms, never the declared one; then the four vendor stages, each behind its own flag seeded FALSE (census-media §37)
 
     // Response stays backward-compatible ({url, path}); new fields are additive.
     // `phash` is included so the client can persist it on the post_media row.
@@ -281,7 +281,7 @@ router.post(
     // client must treat null as "use `url`". It must never construct a variant
     // path itself: for every pre-existing post that URL would 404.
     res.status(201).json({
-      url: mediaRelayUrl, path, thumbnailUrl, feedUrl, width, height, processed, phash,
+      url: mediaRelayUrl, path, thumbnailUrl, feedUrl, width, height, processed, phash, durationSeconds: probedDurationSeconds(videoProbe),
     });
   },
 );
@@ -571,12 +571,12 @@ router.post("/posts", async (req, res) => {
     locationVisibility,
     filterId, filterIntensity, mediaThumbnailUrl, mediaDurationSeconds,
     locationPrivacyMode: reqPrivacyMode, publishAfterTime, geofenceRadiusMeters,
-    venueName, venueId, category,
+    venueName, venueId, category, perspectiveVantage,
   } = parsed.data;
-  const locationSource = locationSrc ?? 'none';
+  const locationSource = locationSrc ?? 'none'; if (!(await neighborhoodOnlyModePermitted(flagSc, reqPrivacyMode))) { sendError(res, "feature_disabled", NEIGHBORHOOD_ONLY_DISABLED_MESSAGE); return; } // §34 "Show neighborhood only" is refused, and nothing written, until media_neighborhood_only_mode_enabled (census-media §36)
 
   // ── Delayed geotag: compute sensitivity / privacy mode / geofence radius ──
-  const sens = sensitivityLevel(venueName ?? null);
+  const sens = sensitivityLevel(venueName ?? null); const vantageDecision = await decidePerspectiveVantageWrite(flagSc, perspectiveVantage ?? null, category ?? null); if (!vantageDecision.ok) { sendError(res, vantageDecision.code, vantageDecision.message); return; } // §12 vantage: refused while media_perspective_vantage_enabled is off, and outside the category's §12 groups (census-media §36)
   const privacyMode: LocationPrivacyMode = reqPrivacyMode ?? defaultPrivacyMode(locationSource, sens);
   const radius = geofenceRadius(sens, geofenceRadiusMeters ?? undefined);
   const publicLabel = safeLocationLabel(locationName ?? null, locationCity ?? null, locationCountry ?? null, privacyMode, sens);
@@ -646,7 +646,7 @@ router.post("/posts", async (req, res) => {
       updated_by: user.id,
       source: "api_server",
       // editorial category
-      category: category ?? null,
+      category: category ?? null, perspective_vantage: vantageDecision.write, // undefined unless a vantage was chosen with the flag on — supabase-js drops an undefined key, so every other insert is byte-identical (census-media §36)
       // media filters
       filter_id: filterId ?? 'original',
       filter_intensity: filterIntensity ?? 100,
@@ -676,7 +676,7 @@ router.post("/posts", async (req, res) => {
     sendError(res, "db_error", error.message);
     return;
   }
-
+  { const msc = getServiceClient(); if (msc) void recordPostMediaAttachments(msc, { postId: String((data as any).id), authorId: user.id, mediaUrls: mediaUrls ?? [] }); } // §6.1 post→asset link, gated inside (census-media §20)
   // Compass activity ingestion — fire-and-forget
   recordActivityEvent(
     getServiceClient(),
@@ -1398,33 +1398,46 @@ router.get("/posts", async (req, res) => {
   //   2. profiles.passport_visibility = 'private'  (separate passport toggle)
   //   3. profile_privacy_settings.profile_visibility = 'private'  (canonical settings row)
   const privateAuthorIdSet = new Set<string>();
-  try {
-    const [profRes, settingsRes] = await Promise.all([
-      svc.from("profiles").select("id").or("is_private.eq.true,passport_visibility.eq.private"),
-      svc.from("profile_privacy_settings").select("user_id").eq("profile_visibility", "private"),
-    ]);
-    // An empty set means "no private accounts exist"; a rejected query means
-    // "we could not find out". Both produce the same empty exclusion list, and
-    // the second one publishes every private account's posts to the global
-    // feed. PostgREST reports such failures in `error` rather than throwing, so
-    // the catch below never fires for them — inspect both results explicitly.
-    if (profRes.error || settingsRes.error) {
-      req.log.warn(
-        {
-          profilesCode: (profRes.error as any)?.code,
-          settingsCode: (settingsRes.error as any)?.code,
-          err: profRes.error ?? settingsRes.error,
-        },
-        "global feed: private-author lookup failed — private accounts are NOT being excluded from this page",
+  {
+    let lookupFailure: unknown = null;
+    try {
+      const [profRes, settingsRes] = await Promise.all([
+        svc.from("profiles").select("id").or("is_private.eq.true,passport_visibility.eq.private"),
+        svc.from("profile_privacy_settings").select("user_id").eq("profile_visibility", "private"),
+      ]);
+      // An empty set means "no private accounts exist"; a failed query means
+      // "we could not find out". Both used to produce the same empty exclusion
+      // list, and the second one published every private account's posts to the
+      // global feed for that page. PostgREST reports such failures in `error`
+      // rather than throwing, so the catch below never fires for them — inspect
+      // both results explicitly and FAIL CLOSED.
+      if (profRes.error || settingsRes.error) {
+        lookupFailure = profRes.error ?? settingsRes.error;
+        req.log.error(
+          {
+            profilesCode: (profRes.error as any)?.code,
+            settingsCode: (settingsRes.error as any)?.code,
+            err: lookupFailure,
+          },
+          "global feed: private-author lookup failed — refusing to serve an unfiltered page",
+        );
+      } else {
+        for (const p of profRes.data ?? []) privateAuthorIdSet.add((p as any).id);
+        for (const p of settingsRes.data ?? []) privateAuthorIdSet.add((p as any).user_id);
+      }
+    } catch (err) {
+      lookupFailure = err ?? new Error("private-author lookup rejected");
+      req.log.error(
+        { err },
+        "global feed: private-author lookup rejected — refusing to serve an unfiltered page",
       );
     }
-    for (const p of profRes.data ?? []) privateAuthorIdSet.add((p as any).id);
-    for (const p of settingsRes.data ?? []) privateAuthorIdSet.add((p as any).user_id);
-  } catch (err) {
-    req.log.warn(
-      { err },
-      "global feed: private-author lookup rejected — private accounts are NOT being excluded from this page",
-    );
+    if (lookupFailure) {
+      // Fail-closed: without the exclusion list every private account's posts
+      // would surface to this page. A retryable 503 is the honest answer.
+      sendError(res, "degraded_unavailable", "Feed privacy filter unavailable");
+      return;
+    }
   }
   const privateAuthorIds = [...privateAuthorIdSet];
 
@@ -1705,7 +1718,7 @@ router.get("/trips/:tripId/posts", async (req, res) => {
     // public: any authenticated user; trip_only: accepted members only; private: no public engagement
     const canEngage = p.visibility === "public" || (p.visibility === "trip_only" && accepted);
     return {
-      ...p,
+      ...(p.author_id === user.id ? p : mapPublicPost(p)), // census-media §42: the Wall's redactor, applied to everyone but the author. This reader served location_name, and a public_location_label that stored the venue for trusted_circle_only posts written before §36, whatever the owner's location mode
       author: pr ? { id: pr.id, handle: pr.handle, name: pr.name, avatarUrl: pr.avatar_url ?? null, isOfficial: (pr.is_official as boolean) ?? false } : null,
       likeCount: eng.likeCount,
       commentCount: eng.commentCount,
@@ -2019,7 +2032,7 @@ router.patch("/posts/:postId/location-privacy", async (req, res) => {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
     return;
   }
-  const { locationPrivacyMode: newMode, publishAfterTime } = parsed.data;
+  const { locationPrivacyMode: newMode, publishAfterTime } = parsed.data; if (!(await neighborhoodOnlyModePermitted(getServiceClient(), newMode))) { sendError(res, "feature_disabled", NEIGHBORHOOD_ONLY_DISABLED_MESSAGE); return; } // census-media §36, as the create
 
   const { data: existing, error: loadErr } = await client
     .from("posts")
@@ -2050,7 +2063,7 @@ router.patch("/posts/:postId/location-privacy", async (req, res) => {
     patch.post_status = "pending_delay";
     patch.publish_eligible_at = publishAfterTime;
     patch.publish_after_time = publishAfterTime;
-  } else if (newMode === "none" || newMode === "hidden" || newMode === "city_only" || newMode === "trusted_circle_only") {
+  } else if (newMode === "none" || newMode === "hidden" || newMode === "city_only" || newMode === "trusted_circle_only" || newMode === "neighborhood_only") {
     patch.post_status = "published";
     patch.published_at = new Date(nowMs).toISOString();
     patch.publish_eligible_at = null;
@@ -2589,6 +2602,14 @@ router.get("/posts/:postId/savers", async (req, res) => {
     sc.from("profile_privacy_settings").select("user_id, allow_profile_discovery, show_real_name").in("user_id", saverIds),
   ]);
 
+  // Fail-closed: an UNREAD privacy table is not "everybody allows discovery".
+  // `privacyRes.error` resolves (PostgREST does not throw), so an unchecked read
+  // yielded an empty map and `!== false` then listed every opted-out saver.
+  if (privacyRes.error) {
+    req.log.error({ err: privacyRes.error }, "posts/:postId/savers: discovery-privacy lookup failed");
+    sendError(res, "degraded_unavailable", "Privacy settings could not be read");
+    return;
+  }
   const profileMap = new Map(((profilesRes.data ?? []) as any[]).map((p) => [p.id as string, p]));
   // No row in profile_privacy_settings means allow_profile_discovery defaults to true.
   const privacyMap = new Map(((privacyRes.data ?? []) as any[]).map((p) => [p.user_id as string, p.allow_profile_discovery as boolean]));
@@ -3632,3 +3653,44 @@ router.post("/posts/:id/wrong-place", async (req, res) => {
 });
 
 export default router;
+
+// §37 (census-media §22): the canonical row's duration_ms is the probed one. Imported at the
+// TAIL so no line above moves (census-wall cites this file by line); ESM hoists imports.
+import { recordMeasuredDuration } from "../lib/mediaVideoPoster.js";
+
+
+// Imported at the TAIL so no cited line above moves (census-media §28.7); ESM hoists imports.
+import { collectBody } from "./postcardMediaTransport.js";
+import { MEDIA_SIZE_LIMITS } from "../lib/mediaPipeline.js";
+
+// census-media §28.10: the kill switch, the per-user upload budget and the declared type are
+// decided BEFORE the body is read, so a refused upload costs the server none of its bytes. It
+// runs once; the handler reads the stored result instead of charging the budget a second time.
+async function admitUploadBeforeBody(req: any, res: any, userId: string): Promise<boolean> {
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Storage not configured"); return false; }
+  const guard = await guardUploadRequest(sc, userId);
+  if (!guard.ok) {
+    if (guard.failure.code === "rate_limited") {
+      res.setHeader("Retry-After", Math.ceil(guard.failure.retryAfterMs / 1000).toString());
+    }
+    sendError(res, guard.failure.code, guard.failure.message);
+    return false;
+  }
+  const declaredMime = String(req.headers["content-type"] ?? "").split(";")[0].trim();
+  if (!ALLOWED_MEDIA_MIME[declaredMime]) {
+    sendError(res, "invalid_payload", `Unsupported media type: ${declaredMime}`);
+    return false;
+  }
+  req.uploadGuard = guard;
+  return true;
+}
+
+// census-media §37: the moderation, vision, transcode and caption stages after a /media/upload.
+// Every stage is behind its own flag, seeded FALSE (3355–3358). Imported at the TAIL so no cited
+// line above moves; ESM hoists imports.
+import { runMediaVendorIngest, canonicalModerationAtBirth } from "../lib/media/vendors/mediaVendorStages.js";
+// Imported at the TAIL so no cited line above moves; ESM hoists it (census-media §36, MD262).
+import { neighborhoodOnlyModePermitted, NEIGHBORHOOD_ONLY_DISABLED_MESSAGE } from "../lib/media/neighborhoodOnlyMode.js";
+// census-media §36 (MD82–MD85): tail import, ESM hoists it.
+import { decidePerspectiveVantageWrite } from "../lib/media/perspectiveVantage.js";

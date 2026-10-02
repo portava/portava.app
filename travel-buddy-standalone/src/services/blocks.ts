@@ -1,7 +1,7 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
 import { serviceFailure, thrownFailure } from './serviceFailure.ts';
-
+import { invalidateDiscoveryCaches } from './discoveryViewerScope.ts';  // a block/mute changes what Discovery serves
 function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 }
@@ -44,7 +44,7 @@ export async function blockUser(userId: string): Promise<BlockResult> {
       const body = await res.json().catch(() => ({}));
       return { ok: false, error: (body as any).message ?? 'Failed to block user' };
     }
-    return { ok: true };
+    invalidateDiscoveryCaches(); return { ok: true };  // the next Discovery request reflects it; no cached page may predate it
   } catch (e: any) {
     return { ok: false, error: thrownFailure('blocks', e) };
   }
@@ -64,7 +64,7 @@ export async function unblockUser(userId: string): Promise<BlockResult> {
       const body = await res.json().catch(() => ({}));
       return { ok: false, error: (body as any).message ?? 'Failed to unblock user' };
     }
-    return { ok: true };
+    invalidateDiscoveryCaches(); return { ok: true };  // the next Discovery request reflects it; no cached page may predate it
   } catch (e: any) {
     return { ok: false, error: thrownFailure('blocks', e) };
   }

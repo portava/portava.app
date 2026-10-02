@@ -18,7 +18,7 @@ import { deriveIntentMode } from "../compass/CompassIntentModeEngine";
 import { fetchUserTimezone, localHourFor, nowUtcInstant } from "../lib/localTime";
 import { excludePrivateAuthorPosts } from '../lib/privacyFilter';
 import { resolveMediaForPosts } from "../lib/postMediaResolve.js";
-import { isPostPublished } from "../lib/postVisibility.js";
+import { isPostPublished } from "../lib/postVisibility.js"; import { postPlaceWithheld } from "../lib/postSchemas.js"; // census-media §42: mapPublicPost's decision on the owner's location mode (pulsePostsForViewer, at the foot of this file)
 
 /**
  * Pulse feed routes
@@ -81,7 +81,7 @@ const pulseQuerySchema = z.object({
 // tell a published post from one still waiting for its author to leave.
 const POST_SAFE_COLUMNS =
   "id, author_id, trip_id, content, media_urls, visibility, status, post_status, created_at, updated_at, " +
-  "location_name, location_city, location_country, location_source, canonical_place_id";
+  "location_name, location_city, location_country, location_source, canonical_place_id, location_privacy_mode"; // location_privacy_mode: census-media §42 — without it every row reads as `none` to mapPublicPost
 
 const GEO_TAG_COLUMNS =
   "location_visibility, city, district, country, country_code, venue_name, hotel_blur_applied";
@@ -331,7 +331,7 @@ router.get("/pulse", async (req, res) => {
   // pure merge — see lib/postMediaResolve.ts.
   const mediaByPost = await resolveMediaForPosts(sc, rows as any[]);
 
-  // Shape responses — NEVER include exact coords
+  // Shape responses — NEVER include exact coords. census-media §42: the owner's location mode is applied to the SERVED page at res.json below, after ranking, so the set and order of posts are exactly what they were
   const posts = rows.map((row: any) => {
     const geoTag = Array.isArray(row.pulse_geo_tags)
       ? row.pulse_geo_tags[0]
@@ -677,7 +677,7 @@ router.get("/pulse", async (req, res) => {
           interestTags,
           placeAffinities,
         },
-        { publisherBoost: publisherBoostEnabled },
+        { publisherBoost: publisherBoostEnabled, ...(await surfaceObjectiveOptions(sc, "pulse")) },  // census-discovery §78 H3 (DV-09), integrated §91: `{}` with discovery_surface_objectives_enabled off, so the options are key for key what they were
       );
       // NOT logged here. `ranked` is the CANDIDATE POOL — posts + events +
       // plans + buddies, ~60 rows — and at this point it has not been re-ordered
@@ -909,7 +909,7 @@ router.get("/pulse", async (req, res) => {
   } catch { /* non-fatal — place cards degrade gracefully */ }
 
   // perf-trim: rankedCandidates stripped — not rendered by any client component; internal ranking state only
-  res.json({ posts: orderedPosts, total: orderedPosts.length, tab, prompts, placeCards, sessionId });
+  res.json({ posts: pulsePostsForViewer(rows, orderedPosts, user.id), total: orderedPosts.length, tab, prompts, placeCards, sessionId }); // census-media §42: a post whose place mapPublicPost withholds reaches a non-owner as city and country only (pulsePostsForViewer, at the foot of this file)
 
   // ── Impressions: the SERVED page ────────────────────────────────────────────
   // Logged HERE, after res.json, because `orderedPosts` is only final here: the
@@ -1127,20 +1127,21 @@ router.get("/pulse/live", async (req, res) => {
   ]);
 
   // ── Load blocked user IDs (both directions) ──────────────────────────────
+  // FAIL CLOSED, matching the feed endpoint at the top of this file. "No blocks"
+  // and "the blocks query was rejected" both leave blockedSet empty, and every
+  // rail below (events, plans, buddies, bookings, requests) filters on it — so a
+  // schema/query error silently surfaced blocked users across the whole Live
+  // rail. PostgREST reports such rejections in `error`, so the catch never saw
+  // them. An empty rail is the correct answer when block state is unknown.
   const blockedSet = new Set<string>();
+  let blockFetchFailed = false;
   try {
     const [outRes, inRes] = await Promise.all([
       sc.from("blocks").select("blocked_id").eq("blocker_id", user.id),
       sc.from("blocks").select("blocker_id").eq("blocked_id", user.id),
     ]);
-    // "No blocks" and "the blocks query was rejected" both leave blockedSet
-    // empty, and every rail below (events, plans, buddies, bookings, requests)
-    // filters on it — so a schema/query error silently surfaces blocked users
-    // across the whole Live rail. The feed endpoint at the top of this file
-    // treats the same unknown as fail-closed; this one stays best-effort by
-    // design, but the failure must at least be visible. PostgREST returns such
-    // errors in `error`, so the catch never sees them.
     if (outRes.error || inRes.error) {
+      blockFetchFailed = true;
       req.log?.warn(
         {
           userId: user.id,
@@ -1148,16 +1149,23 @@ router.get("/pulse/live", async (req, res) => {
           inCode: (inRes.error as any)?.code,
           err: outRes.error ?? inRes.error,
         },
-        "pulse/live: block-state read failed — blocked users are NOT being filtered from this response",
+        "pulse/live: block-state read failed — returning an empty rail (fail-closed)",
       );
+    } else {
+      for (const r of (outRes.data as any[]) ?? []) blockedSet.add(r.blocked_id as string);
+      for (const r of (inRes.data as any[]) ?? []) blockedSet.add(r.blocker_id as string);
     }
-    for (const r of (outRes.data as any[]) ?? []) blockedSet.add(r.blocked_id as string);
-    for (const r of (inRes.data as any[]) ?? []) blockedSet.add(r.blocker_id as string);
   } catch (err) {
+    blockFetchFailed = true;
     req.log?.warn(
       { err, userId: user.id },
-      "pulse/live: block-state read rejected — blocked users are NOT being filtered from this response",
+      "pulse/live: block-state read rejected — returning an empty rail (fail-closed)",
     );
+  }
+
+  if (blockFetchFailed) {
+    res.json({ items: [], fallbackContext: fallbackContext ?? null, sessionId });
+    return;
   }
 
   // Internal-only fields, stripped before the response is serialised:
@@ -1975,3 +1983,50 @@ router.get("/pulse/live", async (req, res) => {
 });
 
 export default router;
+
+// ── census-media §42: the owner's location mode on the Pulse feed ────────────
+// Appended at the tail so no cited line above moves; function declarations hoist.
+/**
+ * The served GET /api/pulse page, with each post's place as THIS viewer may be
+ * told it.
+ *
+ * ONE rule, not a new one: lib/postSchemas.postPlaceWithheld, which is
+ * mapPublicPost's own decision (the Wall's redactor). The author always sees
+ * their own post in full. For anyone else, a post mapPublicPost passes (mode
+ * `none`, an absent mode, a RELEASED delayed post) is served exactly as before;
+ * a post it redacts (city_only, hidden, trusted_circle_only, neighborhood_only,
+ * an unreleased delayed post, a mode it does not know) keeps its city and
+ * country, which every one of those modes permits, and loses what is finer:
+ *   - locationName        posts.location_name, the venue the author tagged.
+ *                         POST /posts stores it whatever the mode, and the
+ *                         Pulse card renders it as its location chip.
+ *   - venueName           pulse_geo_tags.venue_name, POST /posts' copy of the
+ *                         same venue (writePulseGeoTag is handed locationName).
+ *   - locationDistrict    a neighbourhood label. The one writer of
+ *                         pulse_geo_tags never supplies it, so it is null today;
+ *                         withheld for every redacted mode, neighborhood_only
+ *                         included: Pulse shows the city there, less, never
+ *                         more (census-media §36.4.1).
+ *   - canonical_place_id  a place-level id resolves to the venue as precisely as
+ *                         its name (resolveMediaPlaceDisclosure withholds it
+ *                         below the `place` tier).
+ *
+ * Applied to the SERVED page, after ranking, not while shaping: the ranker, the
+ * creator caps and the intent overlays read the shaped posts, so redacting
+ * earlier would change which posts are served and in what order. Here the page
+ * is the same posts in the same order, and a withheld post differs only by
+ * those four fields set to null. The ranking still reads the place it withholds;
+ * census-media §42 records that side channel.
+ */
+export function pulsePostsForViewer<T extends { id?: unknown }>(rows: readonly any[], served: readonly T[], viewerId: string): T[] {
+  const withheld = new Set<string>();
+  for (const r of rows) if (r?.author_id !== viewerId && postPlaceWithheld(r)) withheld.add(String(r.id));
+  return served.map((p) =>
+    withheld.has(String(p.id))
+      ? { ...p, locationName: null, locationDistrict: null, venueName: null, canonical_place_id: null }
+      : p,
+  );
+}
+
+// census-discovery §78 H3 (DV-09), integrated by lane W10-I (§91): Pulse ranks on its own `01` §9 objective when the flag is on.
+import { surfaceObjectiveOptions } from "../lib/discoveryRankDesigns.js";

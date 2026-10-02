@@ -24,6 +24,17 @@ export interface HighlightRingState {
   hasActive: boolean;
   allViewed: boolean;
   highlights: Highlight[];
+  /**
+   * §28.11. TRUE when the read FAILED, so `hasActive:false` here is "we could
+   * not find out", not "this person has no Highlights".
+   *
+   * `GET /users/:id/highlights` refuses with `db_error` rather than serving an
+   * empty list precisely because the empty list is a claim about another
+   * person. Collapsing that refusal to `[]` re-fabricated the claim the server
+   * had just declined to make. A caller that draws a ring should draw NEITHER
+   * an active ring nor a confident empty one while this is true.
+   */
+  unreadable: boolean;
 }
 
 interface CacheEntry {
@@ -48,7 +59,16 @@ function getCached(userId: string): HighlightRingState | null {
 function computeState(highlights: Highlight[]): HighlightRingState {
   const hasActive = highlights.length > 0;
   const allViewed = hasActive && highlights.every((h) => viewedHighlightIds.has(h.id));
-  return { hasActive, allViewed, highlights };
+  return { hasActive, allViewed, highlights, unreadable: false };
+}
+
+/**
+ * The state for a read that did not happen. It is NOT cached — see the call
+ * site — because caching it would hold a fabricated "no Highlights" over every
+ * card showing this user for the whole TTL, from one failed request.
+ */
+function unreadableState(): HighlightRingState {
+  return { hasActive: false, allViewed: false, highlights: [], unreadable: true };
 }
 
 /** Invalidate the cache for a user (e.g. after creating a new highlight). */
@@ -100,8 +120,15 @@ export function useHighlightRingState(userId: string | null, refreshKey = 0): Hi
       inFlight.add(userId);
       try {
         const r = await fetchUserHighlights(userId);
-        const highlights = r.ok && r.data ? r.data : [];
-        const computed = computeState(highlights);
+        if (!r.ok || !r.data) {
+          // §28.11. The read failed. Do not answer the question, and above all
+          // do not CACHE the non-answer: a cached `hasActive:false` is
+          // indistinguishable from the truth for 60 seconds on every surface
+          // that asks about this user.
+          if (userIdRef.current === userId) setState(unreadableState());
+          return;
+        }
+        const computed = computeState(r.data);
         cache.set(userId, { state: computed, fetchedAt: Date.now() });
         if (userIdRef.current === userId) setState(computed);
       } finally {

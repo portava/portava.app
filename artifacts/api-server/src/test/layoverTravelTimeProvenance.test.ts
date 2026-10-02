@@ -411,16 +411,37 @@ describe('"measured" has no producer on this tree', () => {
     }
   });
 
+  /**
+   * REPOINTED, NOT RELAXED, WHEN THE SEAM WAS FILLED.
+   *
+   * This used to pin `LAYOVER_TRAVEL_TIME_PROVIDER.id === "none-configured"`,
+   * with the stated worry that "a routed provider is configured; the persisted
+   * read path can no longer infer provenance". That worry is DISCHARGED:
+   * migration 2745 added `layover_recommendations.travel_time_source` and
+   * `persistedTravelTimeSource` now READS it instead of inferring anything, so
+   * a routed provider no longer threatens the read path. What this file is
+   * really about — that NOTHING ON THIS TREE PRODUCES A "measured" PROVENANCE
+   * — is unchanged and is asserted below on the ANSWER rather than on the
+   * provider's name, which is the stronger of the two claims.
+   */
   it("and the configured provider produces none of it — asked, not assumed", async () => {
     const { LAYOVER_TRAVEL_TIME_PROVIDER, landsideLeg, UNMEASURED_LEG } =
       await import("../services/airport/LayoverTravelTime.js");
-    assert.equal(LAYOVER_TRAVEL_TIME_PROVIDER.id, "none-configured",
-      "a routed provider is configured; the persisted read path can no longer infer provenance");
+    // A ROUTED corridor adapter, which is what makes the refusal below a
+    // measurement of the deployment rather than a property of a stand-in.
+    assert.equal(LAYOVER_TRAVEL_TIME_PROVIDER.routed, true);
     // Two real coordinates, a real departure time: the port still answers that
     // it has nothing, and the reason is the one the absence deserves.
     const leg = await landsideLeg({ lat: 25.07, lng: 121.23 }, { lat: 25.01, lng: 121.30 }, new Date());
-    assert.deepEqual(leg, UNMEASURED_LEG);
+    // Every field of the canonical absence, unchanged. `detail` is the one
+    // addition and is checked separately, so this stays an EXACT comparison
+    // rather than a loosened one.
+    assert.deepEqual({ ...leg, detail: null }, UNMEASURED_LEG);
     assert.equal(leg.minutes, null);
+    assert.equal(leg.source, "unmeasured");
     assert.equal(leg.reason, "NO_ROUTED_PROVIDER");
+    // And the absence names the SPEND GATE, not a missing credential: nobody
+    // opted this deployment in to a billable call.
+    assert.match(String(leg.detail), /^PROVIDER_NOT_ENABLED .*LAYOVER_ROUTED_CORRIDOR_ENABLED/);
   });
 });

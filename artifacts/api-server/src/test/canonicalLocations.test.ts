@@ -14,6 +14,8 @@ import {
   matchCanonical,
   haversineKm,
   suggestCanonicalLocations,
+  isPlausibleAlias,
+  resolveCanonicalLocation,
   CanonicalReadUnavailableError,
   type CanonicalRow,
   type PlaceInput,
@@ -313,4 +315,123 @@ test("a MISSING canonical_locations table is a real empty registry, not a failed
     suggestFake({ prefixError: missing, containsError: missing }), "cebu", 5,
   );
   assert.deepEqual(out, [], "pre-migration deploys keep degrading to an empty registry");
+});
+
+// ── Alias plausibility: the append is the attack surface ──────────────────────
+//
+// `matchCanonical` rule 1 is "shared provider id -> same location, always",
+// with no name comparison — correct, a provider id IS the identity. But the
+// enrichment patch then appended the INCOMING name to that row's alias set
+// unconditionally, and both `matchCanonical`'s name test and
+// `resolveCanonicalLocation`'s candidate query READ aliases. `place.id` and
+// `place.name` reach `POST /locations/resolve` entirely caller-supplied, and
+// provider ids travel in the app's own place payloads, so a caller holding a
+// real row's provider id could attach an arbitrary name to that place.
+//
+// These tests pin the fix at both levels: the pure rule, and the write that
+// actually reaches the database. The end-to-end one is the one that would have
+// caught the original defect — `isPlausibleAlias` could be perfect and unused.
+
+/** Minimal Supabase stand-in for doResolve: records every update payload. */
+function resolveFake(rows: CanonicalRow[]) {
+  const updates: Array<{ id: string; patch: any }> = [];
+  const builder = (data: CanonicalRow[]) => {
+    const b: any = {
+      select: () => b,
+      contains: () => b,
+      eq: () => b,
+      order: () => b,
+      limit: () => Promise.resolve({ data, error: null }),
+      then: (res: any) => Promise.resolve({ data, error: null }).then(res),
+    };
+    return b;
+  };
+  return {
+    updates,
+    db: {
+      from: () => ({
+        select: () => builder(rows).select(),
+        update: (patch: any) => ({
+          eq: (_col: string, id: string) => {
+            updates.push({ id, patch });
+            return Promise.resolve({ error: null });
+          },
+        }),
+      }),
+    } as any,
+  };
+}
+
+test("alias: an unrelated name on a provider-id match is REFUSED", () => {
+  const row = makeRow({ id: "cebu-row", name: "Cebu City", normalized_name: "cebu", aliases: [] });
+  // Nothing about "Reykjavik" is a variant of "Cebu": no shared word, no
+  // spacing variant, no fold, no dictionary entry, no initialism.
+  assert.equal(isPlausibleAlias(row, "reykjavik"), false);
+  // Nor a plausible-looking near-miss that is still a different place.
+  assert.equal(isPlausibleAlias(row, "davao"), false);
+});
+
+test("alias: genuine variants are still plausible", () => {
+  const cebu = makeRow({ id: "cebu-row", name: "Cebu City", normalized_name: "cebu", aliases: ["sugbo"] });
+  assert.equal(isPlausibleAlias(cebu, "cebu metropolis"), true, "shares the word 'cebu'");
+  assert.equal(isPlausibleAlias(cebu, "sugbo city"), true, "shares an EXISTING alias's word");
+
+  const danang = makeRow({ id: "dn", name: "Đà Nẵng", normalized_name: "da nang", aliases: [] });
+  assert.equal(isPlausibleAlias(danang, "danang"), true, "closed-up spelling");
+  assert.equal(isPlausibleAlias(danang, "da nang"), true, "same after the stroke fold");
+
+  const hcmc = makeRow({ id: "hcmc", name: "Ho Chi Minh City", normalized_name: "ho chi minh", aliases: [] });
+  assert.equal(isPlausibleAlias(hcmc, "hcmc"), true, "initialism, in order");
+  assert.equal(isPlausibleAlias(hcmc, "saigon"), true, "the shipped alias dictionary");
+});
+
+test("alias: a generic word alone is not evidence of the same place", () => {
+  const sf = makeRow({ id: "sf", name: "San Francisco", normalized_name: "san francisco", aliases: [] });
+  assert.equal(isPlausibleAlias(sf, "san juan"), false, "'san' is not evidence");
+  assert.equal(isPlausibleAlias(sf, "francisco"), true, "the rare word is");
+
+  const ny = makeRow({ id: "ny", name: "New York", normalized_name: "new york", aliases: [] });
+  assert.equal(isPlausibleAlias(ny, "new delhi"), false, "'new' is not evidence");
+});
+
+test("alias poisoning: the write is refused, the RESOLUTION is not", async () => {
+  const row = makeRow({
+    id: "cebu-row", name: "Cebu City", normalized_name: "cebu",
+    aliases: [], provider_ids: { nominatim: "777" },
+    lat: null as any, lng: null as any,
+  });
+  const fake = resolveFake([row]);
+  // A caller who knows the row's real provider id, sending an unrelated name.
+  const out = await resolveCanonicalLocation(fake.db, {
+    id: "nominatim-777",
+    type: "city",
+    name: "Reykjavik",
+    lat: 64.15,
+    lng: -21.94,
+  });
+
+  assert.equal(out.canonicalId, "cebu-row", "the provider id still identifies the row");
+  assert.equal(fake.updates.length, 1, "the enrichment patch still runs");
+  const patch = fake.updates[0]!.patch;
+  assert.ok(!("aliases" in patch), "the alias set must NOT have grown");
+  // A refused alias is not a refused backfill: the rest of the patch is intact,
+  // which is what stops this guard from quietly becoming a resolution failure.
+  assert.equal(patch.lat, 64.15, "unrelated-name coordinates still backfill an empty row");
+});
+
+test("alias: a real spelling variant on the same provider id DOES append", async () => {
+  const row = makeRow({
+    id: "dn-row", name: "Đà Nẵng", normalized_name: "da nang",
+    aliases: [], provider_ids: { nominatim: "888" },
+  });
+  const fake = resolveFake([row]);
+  const out = await resolveCanonicalLocation(fake.db, {
+    id: "nominatim-888",
+    type: "city",
+    name: "Danang",
+  });
+
+  assert.equal(out.canonicalId, "dn-row");
+  assert.equal(fake.updates.length, 1);
+  assert.deepEqual(fake.updates[0]!.patch.aliases, ["danang"], "the legitimate variant is kept");
 });

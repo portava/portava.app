@@ -1352,9 +1352,12 @@ export class CreatorSignalAggregator {
    * `trust_profiles` answers three different questions and the old reader
    * collapsed all of them onto the single number 1.0:
    *
-   *   ok          — a row exists. Its `overall_score` decides the multiplier
-   *                 through the four numeric rungs. This is a measurement.
-   *   absent      — no row. Under #449 this is the CANONICAL representation of
+   *   ok          — a row exists AND carries a score. Its `overall_score`
+   *                 decides the multiplier through the four numeric rungs.
+   *                 This is a measurement.
+   *   absent      — no row, OR (since Q1, 2026-09-22) a row whose
+   *                 `overall_score` is NULL = not scored. Under #449 this is
+   *                 the CANONICAL representation of
    *                 "no earned trust": a user with zero qualifying events is
    *                 computed but deliberately NOT persisted, because writing a
    *                 fabricated 50/reliable_traveler row is what destroyed that
@@ -1394,10 +1397,35 @@ export class CreatorSignalAggregator {
         return { state: "unavailable", reason: read.reason };
       }
       if (read.state !== "ok") return { state: "absent" };
-      const data = { overall_score: read.profile.overall_score };
 
-      const d = data as any;
-      const overallScore = Number(d.overall_score) || 50;
+      // Q1, owner decision 2026-09-22: `overall_score` is now nullable, and
+      // NULL means NOT SCORED. A row that exists but holds no score is, for
+      // this reader's purposes, the SAME FACT as no row at all — "no earned
+      // trust", #449's canonical state — so it takes the same `absent` branch
+      // and keeps the full multiplier. An unmeasured person must not be
+      // de-ranked, and that is now stated rather than arrived at.
+      //
+      // IT USED TO BE INCIDENTAL, AND ONLY ACCIDENTALLY RIGHT. The line was
+      // `Number(d.overall_score) || 50`. For NULL that evaluates `Number(null)`
+      // = 0, which is falsy, so `|| 50` substituted the neutral 50 and the
+      // rungs below returned 1.0 — the correct multiplier, reached by
+      // fabricating exactly the value this decision removes. It was also one
+      // edit away from catastrophe: drop the `|| 50` as a "simplification" and
+      // NULL becomes 0, which trips the `< 20` rung and COLLAPSES the ranking
+      // of every unmeasured creator to zero. Naming the state removes both the
+      // fabrication and the trap.
+      //
+      // A genuine 0 is still a measurement and still collapses the score; only
+      // the absence of one is excused. The `|| 50` is gone with the ambiguity.
+      const raw = read.profile.overall_score;
+      if (raw === null || raw === undefined) return { state: "absent" };
+      const overallScore = Number(raw);
+      // An unparseable score is not a safe score, but it is not a measurement
+      // either — it is a read that produced nothing usable, which is the
+      // `unavailable` fact, not the `absent` one.
+      if (!Number.isFinite(overallScore)) {
+        return { state: "unavailable", reason: `overall_score is not a number: ${String(raw)}` };
+      }
       if (overallScore < 20) return { state: "ok", multiplier: 0.0 };
       if (overallScore < 30) return { state: "ok", multiplier: 0.3 };
       if (overallScore < 40) return { state: "ok", multiplier: 0.6 };

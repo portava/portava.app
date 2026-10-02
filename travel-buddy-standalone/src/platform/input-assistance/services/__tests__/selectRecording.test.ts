@@ -24,8 +24,26 @@ import { buildDefaultPolicy } from '../../contexts/inputPolicies.ts';
 import type { InputSuggestion } from '../../types/inputSuggestion.ts';
 import type { InputFieldPolicy } from '../../types/fieldPolicy.ts';
 
+// ── SEEDED 2026-09-21 (G340) ────────────────────────────────────────────────
+// `registerField` derives its policy from the context descriptor, which now
+// comes from the authority rather than from a local table. Without a seeded
+// policy every context resolves conservative (`no_assistance`), which is the
+// correct cold-start answer and makes any assertion about a context's MODE
+// vacuous. Seeding states the premise these tests were always relying on:
+// "the authority has answered, and permits assistance here".
+import { INPUT_CONTEXTS } from '../../types/inputContext.ts';
+import { _seedPolicyForTests } from '../../services/policyStore.ts';
+// The overrides are this test's PREMISE, not a restatement of the server's
+// table: each names the restriction the case exists to prove the client
+// honours. Seeding them here is what makes the assertions non-vacuous.
+_seedPolicyForTests(INPUT_CONTEXTS, {
+  username: { allowPersonalization: false },
+  telegraph_message: { privacyClass: 'private_message' },
+});
+
+
 // A personalization-enabled canonical picker (city_picker: allowPersonalization,
-// privacyClass 'personal', entityTypes include city/country).
+// privacyClass 'viewer_scoped', entityTypes include city/country).
 const cityPolicy: InputFieldPolicy = buildDefaultPolicy('city.test', 'city_picker', {
   entityTypes: ['city', 'country'],
 });

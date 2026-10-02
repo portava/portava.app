@@ -469,6 +469,8 @@ export async function recordSelection(
   if (!allowed.includes(params.entityType)) {
     return { recorded: false, reason: 'entity_type_not_allowed' };
   }
+  // §6 privacyClass gate (census G31) — fail-closed. See MEMORABLE_PRIVACY_CLASSES.
+  if (!MEMORABLE_PRIVACY_CLASSES.has(policy.privacyClass)) return { recorded: false, reason: 'privacy_class_refuses_memory' };
   const queryKey = selectionQueryKey(params.query);
   const label =
     typeof params.label === 'string' && params.label.trim().length > 0
@@ -494,3 +496,38 @@ export async function recordSelection(
   }
   return { recorded: true };
 }
+
+/**
+ * §6/§29 — the ONLY privacy classes whose selections may be written to
+ * `input_selection_history` (census G31).
+ *
+ * WHY THIS EXISTS BESIDE `allowPersonalization`, WHICH ALREADY REFUSES.
+ * ====================================================================
+ * Census G31 read `privacyClass` as "declared on all 29 contexts and read by
+ * nothing" on this side, and it was right. The invariant the member encodes —
+ * a private or sensitive field never reaches the selection-memory table —
+ * existed only as an assertion in `test/inputPolicyContractParity.test.ts`.
+ *
+ * An assertion is not a gate. A registry edit setting `allowPersonalization`
+ * on `hidden_gem_location` would have sent the Hidden Gem name the user was
+ * typing into `input_record_selection` as `p_query_key`, and the only thing in
+ * the way would have been whoever next ran the suite. That is one member over
+ * from the defect `d4db6009` found, and the answer is the same one: enforce it
+ * where the write happens.
+ *
+ * So this is not redundant with the gate above it. It is the gate that holds
+ * when the gate above it is WRONG.
+ *
+ * AN ALLOWLIST, NOT A DENYLIST, and deliberately. A denylist admits every class
+ * nobody has thought about yet, and a new member of `PrivacyClass` is exactly
+ * the case where "did anyone consider the memory table?" has no answer.
+ * `owner_only`, `sensitive_location` and `private_message` are absent on
+ * purpose.
+ *
+ * Declared here rather than at the top of the file for the same reason the
+ * parity table in `policyRegistry.ts` sits at its end: the census cites this
+ * file by line in eleven places, and a declaration inserted above them would
+ * have repointed all eleven at code they do not describe.
+ */
+const MEMORABLE_PRIVACY_CLASSES: ReadonlySet<InputFieldPolicy['privacyClass']> =
+  new Set<InputFieldPolicy['privacyClass']>(['public', 'viewer_scoped']);

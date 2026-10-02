@@ -982,24 +982,79 @@ export async function sweepExpiredStories(sc: any): Promise<number> {
   if (error) throw error;
   const rows: any[] = data ?? [];
 
-  // Audit privacy fix: "ephemeral" 24h stories previously expired in STATE only
-  // — the file stayed publicly fetchable at its URL forever. Delete the storage
-  // objects for the stories just expired. Safe: the saved_to_highlight_id IS
-  // NULL filter above guarantees no highlight references this media. Best-effort
-  // (a storage failure never breaks the sweep; rows are already expired).
-  const paths: string[] = [];
-  for (const r of rows) {
-    const ref = appStorageUrlInfo(String(r.media_url ?? ""));
-    if (ref && ref.bucket === "post-media") paths.push(ref.path);
-  }
-  if (paths.length > 0) {
-    try {
-      await sc.storage.from("post-media").remove(paths);
-    } catch {
-      /* best-effort */
-    }
-  }
+  // Expiry no longer deletes the bytes. An expired story stays in the owner's
+  // private archive; expiry ends the AUDIENCE's access, not the owner's.
+  //
+  // The deletion that used to live here was doing two jobs. The stated one was
+  // privacy-by-absence, and that job is now done properly: `post-media` is a
+  // private bucket, and lib/mediaAccess.ts's story branch serves an expired
+  // story to nobody but its owner.
+  //
+  // The UNSTATED job was the load-bearing one. A signed URL is a bearer token
+  // that keeps working for its whole TTL, so an audience member who fetched a
+  // link shortly before expiry held a working link well past it — and deleting
+  // the object is what actually broke that link. Removing the deletion without
+  // replacing that guarantee would have let issued access outlive the boundary
+  // it claims to enforce. It is replaced, at the token: routes/mediaFile.ts
+  // clamps a story link's lifetime to the story's own `expires_at`, via
+  // mediaAccessDeadline() in lib/mediaAccess.ts.
+  //
+  // What still deletes story bytes: an explicit delete, and account deletion —
+  // which collects story media by owner_id with NO state filter, so expired and
+  // archived stories are covered there and never became unreachable garbage.
+  //
+  // This is NOT a retention promise. Nothing here undertakes to keep a story
+  // for any period; a retention policy is a separate decision.
   return rows.length;
 }
+
+// ── GET /me/stories — the owner's own live stories (testing-mode WP-06, PLAT-F33) ──
+//
+// `GET /stories/feed` never includes the viewer's own stories and
+// `GET /stories/archive` lists only expired and saved ones, so an owner could
+// not open the story they had just posted — and "save your story to a
+// highlight" (owner-only, above) could not be reached. This is the owner's
+// read: it takes no user id, so it is only ever the caller's own, and applies
+// no audience filter because the owner is every story's audience. Live means
+// state `active` and not yet expired, the feed's own definition. An unreadable
+// table is a 503, never an empty list.
+router.get("/me/stories", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+  if (!(await storiesEnabled(sc))) { sendError(res, "feature_disabled", "Stories are not enabled"); return; }
+
+  const { data: rows, error } = await sc
+    .from("stories")
+    .select(STORY_COLS)
+    .eq("owner_id", user.id)
+    .eq("state", "active")
+    .gt("expires_at", new Date().toISOString())
+    .order("created_at", { ascending: true })
+    .limit(100);
+  if (error) {
+    req.log.error({ err: error, ownerId: user.id }, "stories/me: own stories unreadable — refusing rather than reporting none");
+    sendError(res, "degraded_unavailable", "We could not load your stories. Please try again.");
+    return;
+  }
+
+  const { data: me, error: meErr } = await sc
+    .from("profiles").select("id, handle, name, avatar_url, verified").eq("id", user.id).maybeSingle();
+  if (meErr) req.log.warn({ err: meErr, userId: user.id }, "stories/me: own profile unreadable — serving the stories without a display name");
+
+  res.status(200).json({
+    author: {
+      userId: user.id,
+      handle: (me as any)?.handle ?? null,
+      name: (me as any)?.name ?? null,
+      avatarUrl: (me as any)?.avatar_url ?? null,
+      verified: (me as any)?.verified ?? false,
+    },
+    stories: rows ?? [],
+  });
+}));
 
 export default router;

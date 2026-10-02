@@ -39,7 +39,9 @@ import {
 import {
   EVIDENCE_SOURCE_MAP_CONTRIBUTION,
   MEDIA_EVIDENCE_KIND,
+  _setPhotoEvidenceConsentVersionsForTests,
   attachMediaEvidence,
+  openEvidenceReference,
   resolveOwnedMediaReference,
 } from "../lib/intelEvidenceCapture.js";
 import { publicUrlFor } from "../lib/mediaAccess.js";
@@ -65,6 +67,21 @@ const OBSERVED = new Date(Date.now() - 5 * 60_000).toISOString();
 const OWN_MEDIA = `post-media/${ACTOR}/1756600000000.jpg`;
 const OTHER_MEDIA = `post-media/${ACTOR_B}/1756600000000.jpg`;
 
+// The evidence path SEALS the key it stores (census-map §45) and refuses when no
+// key is configured, so this suite configures one, as a deployment must.
+process.env.INTEL_EVIDENCE_REFERENCE_KEY ??= "map-media-evidence-suite-key-0123456789abcdef";
+// Gate 2b keeps a photo only under a recorded disclosure whose words name photos,
+// and NO real version does (the shipped list is empty; intelEvidenceReference.test.ts
+// pins that refusal). This suite tests everything AFTER that gate, so its
+// consenting actors hold a fictional covering version.
+const PHOTO_TEST_VERSION = "test_only_disclosure_naming_photos";
+_setPhotoEvidenceConsentVersionsForTests([PHOTO_TEST_VERSION]);
+/** The storage key a stored row's sealed reference opens to, or null. */
+const openedKey = (row: any): string | null => {
+  const o = openEvidenceReference(row?.reference, row?.observation_id);
+  return o.ok ? o.storageKey : null;
+};
+
 // ── Fake supabase client ──────────────────────────────────────────────────────
 //
 // Same generic-filter shape as mapObservations.test.ts, plus two things this
@@ -84,6 +101,7 @@ function makeDb(flags: Record<string, boolean>, opts: FakeOpts = {}) {
     intel_contribution_consent: Object.entries(opts.consent ?? {}).map(([user_id, state]) => ({
       user_id,
       enabled: state !== false,
+      consent_version: PHOTO_TEST_VERSION,
       withdrawn_at: state === "withdrawn" ? new Date().toISOString() : null,
     })),
     freshness_policies: CLAIM_TYPES.map((c) => ({
@@ -344,7 +362,7 @@ describe("a client mediaUri is untrusted input", () => {
     assert.equal((r as any).reference, OWN_MEDIA);
   });
 
-  it("stores a STORAGE KEY, never the URL the client sent", async () => {
+  it("stores a SEALED storage key, never the URL the client sent", async () => {
     // A full URL on the app's own storage origin is accepted, and is normalised
     // down to `<bucket>/<path>` — no origin, no scheme, no query, no token.
     //
@@ -360,7 +378,8 @@ describe("a client mediaUri is untrusted input", () => {
     const r = await ingestMapContribution(db, ACTOR, mediaContribution({ observationId: obs, mediaUri: url }));
     assert.equal(r.ok, true, JSON.stringify(r));
     const row = db._tables.intel_evidence[0];
-    assert.equal(row.reference, OWN_MEDIA);
+    assert.equal(openedKey(row), OWN_MEDIA, "the stored reference opens to the normalised key");
+    assert.equal(String(row.reference).includes(ACTOR), false, "and the stored value itself names no account");
     assert.equal(JSON.stringify(db._tables).includes("http"), false,
       "no URL, origin or token may survive into storage");
   });
@@ -383,7 +402,7 @@ describe("an accepted photo becomes one evidence row and nothing else", () => {
     assert.equal(row.observation_id, obs);
     assert.equal(row.actor_id, ACTOR);
     assert.equal(row.evidence_kind, "photo");
-    assert.equal(row.reference, OWN_MEDIA);
+    assert.equal(openedKey(row), OWN_MEDIA, "sealed, and opens to the key the contributor owns");
 
     // No second observation, no claim, no snapshot, no reward.
     assert.equal(db._writes.intel_observations, before, "attaching evidence must not write an observation");

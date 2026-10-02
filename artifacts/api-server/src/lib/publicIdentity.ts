@@ -166,3 +166,27 @@ export function sanitizeIdentityKeys<T extends Record<string, any>>(
   for (const k of keys) if (k in copy) copy[k] = null;
   return copy;
 }
+
+/**
+ * nameVisibilitySet, for a caller that can SAY a failure: `null` when the
+ * privacy-settings read failed, instead of the empty set nameVisibilitySet
+ * falls back to. census-discovery §106 (tm-people): GET /users/search drops
+ * every row that matched only on a hidden name, so the empty fallback turned
+ * a failed read into "nobody matched". Callers that can only fail closed keep
+ * nameVisibilitySet; the rule (show_real_name = true) is the same query.
+ */
+export async function readNameVisibilitySet(sc: any, userIds: Array<string | null | undefined>): Promise<Set<string> | null> {
+  const ids = [...new Set(userIds.filter((x): x is string => typeof x === "string" && x.length > 0))];
+  if (ids.length === 0) return new Set();
+  try {
+    const { data, error } = await sc
+      .from("profile_privacy_settings")
+      .select("user_id")
+      .in("user_id", ids)
+      .eq("show_real_name", true);
+    if (error) return null;
+    return new Set((((data as any[]) ?? []).map((r) => r.user_id as string)));
+  } catch {
+    return null;
+  }
+}

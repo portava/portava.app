@@ -25,9 +25,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<RecapReques
     return { data: null, error: code === 'feature_disabled' ? 'disabled' : code === 'not_found' ? 'removed' : res.status === 401 ? 'unauthorized' : 'server' };
   } catch { return { data: null, error: 'network' }; }
 }
-export async function listPlaceRecaps(placeId: string): Promise<PlaceRecap[]> {
-  const result = await request<{ recaps: PlaceRecap[] }>(`/places/${encodeURIComponent(placeId)}/recaps`);
-  return result.data?.recaps ?? [];
+export async function listPlaceRecaps(placeId: string): Promise<RecapRequest<PlaceRecapListItem[]>> { // HM-F19: a failure is never an empty list
+  const result = await request<{ recaps?: unknown }>(`/places/${encodeURIComponent(placeId)}/recaps`);
+  return result.error !== null ? result : Array.isArray(result.data.recaps) ? { data: result.data.recaps as PlaceRecapListItem[], error: null } : { data: null, error: 'server' };
 }
 export async function getPlaceRecap(id: string): Promise<RecapRequest<PlaceRecapDetail>> {
   return request<PlaceRecapDetail>(`/place-recaps/${encodeURIComponent(id)}`);
@@ -37,4 +37,9 @@ export async function createPlaceDayRecap(placeDayId: string, title?: string): P
 }
 export async function recapAction(id: string, action: 'review' | 'publish' | 'regenerate' | 'archive' | 'restore'): Promise<any | null> {
   return (await request(`/place-recaps/${encodeURIComponent(id)}/${action}`, { method: 'POST' })).data;
+}
+
+/** One row of `GET /places/:placeId/recaps` — the caller's own recaps at this place, every version joined. */
+export interface PlaceRecapListItem extends PlaceRecap {
+  live_place_recap_versions: Array<{ version_number: number; title: string; summary: string; published_at: string | null }> | null;
 }

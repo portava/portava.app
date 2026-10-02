@@ -18,7 +18,7 @@ const CACHE_TTL_MS = 60_000;
 const CACHE_MAX = 60;
 const MIN_CHARS = 2;
 
-interface CacheEntry { groups: SuggestGroup[]; ts: number }
+interface CacheEntry { groups: SuggestGroup[]; ts: number; /** §80 (DV-83): the cached answer was partial. */ incomplete: boolean }
 
 export interface UseSearchSuggestionsOpts {
   lat?: number;
@@ -37,7 +37,7 @@ export function useSearchSuggestions(query: string, opts: UseSearchSuggestionsOp
    * sources. `groups` then holds whatever was on screen before, deliberately,
    * so a consumer that renders "no matches" must consult this first.
    */
-  const [refused, setRefused] = useState(false);
+  const [refused, setRefused] = useState(false); const [incomplete, setIncomplete] = useState(false); // §80: a partial answer, rows real, list short
 
   const cacheRef = useRef<Map<string, CacheEntry>>(new Map());
   const abortRef = useRef<AbortController | null>(null);
@@ -58,7 +58,7 @@ export function useSearchSuggestions(query: string, opts: UseSearchSuggestionsOp
       seqRef.current++;
       setGroups([]);
       setLoading(false);
-      setRefused(false);
+      setRefused(false); setIncomplete(false);
       return;
     }
 
@@ -71,7 +71,7 @@ export function useSearchSuggestions(query: string, opts: UseSearchSuggestionsOp
       seqRef.current++;
       setGroups(cached.groups);
       setLoading(false);
-      setRefused(false);
+      setRefused(false); setIncomplete(cached.incomplete);
       return;
     }
 
@@ -107,7 +107,7 @@ export function useSearchSuggestions(query: string, opts: UseSearchSuggestionsOp
         // are real, so it is cached and rendered like any other answer, the same
         // line useCommunityDiscovery draws.
         const refusedNow = res.refusal?.coverage === 'nothing';
-        setRefused(refusedNow);
+        setRefused(refusedNow); setIncomplete(!refusedNow && res.refusal?.coverage === 'partial');
         if (refusedNow) {
           // Identical handling to the transport-error arm below, and for the
           // same stated reason: keep whatever was on screen, never flash empty.
@@ -117,7 +117,7 @@ export function useSearchSuggestions(query: string, opts: UseSearchSuggestionsOp
           return;
         }
         const cache = cacheRef.current;
-        cache.set(key, { groups: res.groups, ts: Date.now() });
+        cache.set(key, { groups: res.groups, ts: Date.now(), incomplete: res.refusal?.coverage === 'partial' });
         while (cache.size > CACHE_MAX) {
           const oldest = cache.keys().next().value;
           if (oldest == null) break;
@@ -139,5 +139,5 @@ export function useSearchSuggestions(query: string, opts: UseSearchSuggestionsOp
   // Abort any in-flight request on unmount
   useEffect(() => () => { abortRef.current?.abort(); }, []);
 
-  return { groups, loading, refused };
+  return { groups, loading, refused, incomplete };
 }

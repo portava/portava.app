@@ -23,6 +23,13 @@ import {
   authorizeMediaAttachment,
   authorizeMediaContext,
 } from "./mediaVisibility.js";
+import {
+  historyBoundEnabled,
+  membershipSelect,
+  visibleFromOf,
+  withinWindow,
+} from "../services/groupChatHistoryBound.js";
+import { resolveStoryRetentionConfig, retentionDatesFor } from "../services/stories/storyRetentionPolicy.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -185,6 +192,103 @@ export async function authorizeMediaAccess(
   return allow;
 }
 
+/**
+ * True when this object belongs to a story its OWNER has deleted.
+ *
+ * ── WHY THE OWNER IS CHECKED AT ALL ──────────────────────────────────────────
+ * Until now the owner short-circuit above was unconditional: your own bytes,
+ * always yours, no lookup. That was right while expiry deleted the file,
+ * because there was nothing left to serve. Two changes together make it wrong.
+ * Expired stories are now kept for the owner's archive, so the bytes survive;
+ * and an owner-deleted story is now a row with a 30-day recovery clock rather
+ * than a row on its way out within the hour.
+ *
+ * The owner's decision was "delete this". Answering a direct request for its
+ * photo with the photo makes that decision mean "hide it from the list", which
+ * is not what the word says and not what the retention copy promises.
+ *
+ * ── WHY THE RECOVERY WINDOW IS THE LINE, NOT `state = 'deleted'` ─────────────
+ * An earlier version of this denied on `state === "deleted"` alone. That was
+ * wrong, and the archive screen is the proof: its "Deleted" tab renders each
+ * recoverable story's thumbnail, so denying the bytes blanks every row and the
+ * owner is asked to choose what to restore from a list of grey squares. The
+ * approved policy is a DISCLOSED owner-only recovery window, and a window the
+ * owner cannot see into is not the window that was published.
+ *
+ * So the line is `retentionDatesFor(...).recoverable`: inside the window the
+ * bytes are the owner's, and the moment it closes they are not — which covers
+ * the gap this branch actually exists for, between the window closing and the
+ * hourly job reaching the row. The window itself is computed in ONE place
+ * (services/stories/storyRetentionPolicy.ts) and read here, rather than
+ * re-derived, so the relay cannot disagree with the date the archive printed.
+ *
+ * This is NOT an audience question — the audience never got past branch 3d for
+ * a deleted story. It is about whether the product keeps its own word to the
+ * person who owns the content.
+ *
+ * ── WHY AN UNREADABLE TABLE DENIES ───────────────────────────────────────────
+ * A read that fails cannot establish that the story is live, and this file's
+ * posture everywhere else is that a branch which cannot decide denies. The
+ * clamp in mediaAccessDeadline() already made the same call for the same
+ * question from the audience's side, returning the present instant rather than
+ * null on a failed read; the owner's side answering "sure, here it is" to the
+ * identical failure would be the two halves of one boundary disagreeing.
+ *
+ * The cost is stated rather than hidden: while `stories` is unreadable, an
+ * owner's own media does not serve. That is a real availability regression on
+ * the hottest media path, and it is accepted because a deletion promise that
+ * holds only while the database is healthy is not a promise. The read is a
+ * single indexed lookup (`stories_media_url_idx`, migrations/2027).
+ *
+ * A story in any other state — active, expired, saved, removed — is the
+ * owner's to see. Expiry is an audience boundary and deliberately not an owner
+ * one; that is what the archive is.
+ */
+async function ownerDeletedThisStory(
+  sc: SupabaseClient,
+  viewerId: string,
+  bucket: string,
+  path: string,
+): Promise<boolean> {
+  if (bucket !== "post-media") return false;
+
+  const publicUrl = publicUrlFor(bucket, path);
+  const urlForms = [publicUrl, `${bucket}/${path}`].filter(
+    (u): u is string => typeof u === "string" && u.length > 0,
+  );
+  // No URL form to match on means the lookup cannot run at all. Denying the
+  // owner every object under a misconfigured SUPABASE_URL would take the whole
+  // app down for a rule about deleted stories, so this returns "not deleted"
+  // and leaves the decision where it was before this function existed.
+  if (urlForms.length === 0) return false;
+
+  try {
+    const { data, error } = await sc
+      .from("stories")
+      .select("owner_id, state, expires_at, deleted_at, saved_to_highlight_id")
+      .in("media_url", urlForms)
+      .limit(1);
+    if (error) {
+      noteLookupFailure("owner deleted-story", error, { bucket, path });
+      return true; // cannot establish the state → deny, per the docblock
+    }
+    const story = (data as any[])?.[0];
+    if (!story) return false; // not story media at all
+    // Someone else's story row pointing at this object does not get to revoke
+    // the object owner's access to their own bytes — the same attribution rule
+    // branch 3d applies in the other direction.
+    if (story.owner_id !== viewerId) return false;
+    if (story.state !== "deleted") return false;
+    // Inside the disclosed recovery window the owner keeps their bytes: the
+    // archive's Deleted tab shows them what they are about to restore. Once it
+    // closes they do not, whether or not the hourly job has reached the row.
+    return !retentionDatesFor(story, resolveStoryRetentionConfig()).recoverable;
+  } catch (err) {
+    noteLookupFailure("owner deleted-story", err, { bucket, path });
+    return true;
+  }
+}
+
 async function decide(
   sc: SupabaseClient,
   viewerId: string,
@@ -262,10 +366,13 @@ async function decide(
   }
 
   if (bucket !== "post-media") return false;
-
-  // 1. Owner always sees their own bytes.
+  { const posterOf = derivedPosterBase(path); if (posterOf !== null) return decide(sc, viewerId, bucket, posterOf); } // §37: a poster IS its video
+  // 1. Owner sees their own bytes — unless they deleted the story that holds
+  //    them, in which case "deleted" has to mean deleted for them too.
   const pathOwner = ownerFromPath(path);
-  if (pathOwner === viewerId) return true;
+  if (pathOwner === viewerId) {
+    return !(await ownerDeletedThisStory(sc, viewerId, bucket, path));
+  }
 
   let owner = pathOwner;
   /**
@@ -373,11 +480,11 @@ async function decide(
     // The moderation carrier could not be read. Nothing later in this function
     // can answer the question it was asked, so deny rather than fall through.
     if (pmErr) return false;
-    const pmRows = ((pms as any[]) ?? []);
+    const pmRows = ((pms as any[]) ?? []); if (pmRows.length === 0) { const original = await originalOfRecordedVariant(sc, path, urlForms); if (original === "deny") return false; if (original !== null) return decide(sc, viewerId, bucket, original); } // §23.7: a recorded, server-derived variant IS its original
     if (pmRows.length > 0) {
       // A truncated page cannot support a deny-if-any scan: an unservable row
       // could be the one that did not fit. Deny instead of guessing.
-      if (pmRows.length >= POST_MEDIA_ATTACHMENT_CAP) return false;
+      if (pmRows.length >= POST_MEDIA_ATTACHMENT_CAP) return false;  if (pmRows.some((r) => String(r?.processing_status ?? "") !== "ready")) return false;  // census-discovery §56 (DV-77): a row that is not `ready` may hold the UNSTRIPPED original (/complete strips in place, THEN marks ready) — never served to anyone but its owner (branch 1)
       // ANY attachment moderated away denies the object. A rejection is recorded
       // per attachment, and this function answers about the BYTES — one post's
       // clean row is not authority to serve what another post's row removed.
@@ -479,7 +586,11 @@ async function decide(
   try {
     const { data: msgs, error: msgsErr } = await sc
       .from("messages")
-      .select("thread_id, sender_id")
+      // `created_at` is here for the §14.3 window below. It is a column
+      // `messages` has had since the baseline, so naming it unconditionally
+      // cannot make this query fail on a database that has not run 2400 — only
+      // the MEMBERSHIP select has to stay conditional, and it does.
+      .select("thread_id, sender_id, created_at")
       .or(`media_url.in.${inList},media_thumbnail_url.in.${inList}`)
       .limit(1);
     noteLookupFailure("3c messages", msgsErr, { bucket, path });
@@ -504,9 +615,31 @@ async function decide(
       // denies it. Returning false here would let a forged message row SUPPRESS an
       // object its real owner is entitled to publish elsewhere.
       if (owner && owner === (msg as any).sender_id) {
+        // §14.3 GROUP HISTORY BOUNDS, THE MEDIA DOOR.
+        //
+        // Membership alone was the whole test here, and membership alone is
+        // what migration 2400 exists because of: syncTripChatMembers adds every
+        // newly accepted trip member to the trip thread, so "is in the thread"
+        // was true for a person the thread's older messages are not theirs to
+        // read. Every TEXT reader in this tree now excludes messages created
+        // before the caller's `visible_from_at`; this branch decides whether to
+        // hand over BYTES from a PRIVATE bucket for the same messages. A media
+        // URL reachable without the bound is the same disclosure through
+        // another door, and the door that gives up more.
+        //
+        // The flag polarity is the lane's, not this file's: `historyBoundEnabled`
+        // is FALSE ON ERROR (lib/featureFlags.isFlagEnabled), so an unreadable
+        // `feature_flags` leaves thread media exactly as reachable as it is
+        // today rather than denying every member their own thread's photos.
+        // This file's own deny-on-unreadable posture still governs the two
+        // reads that decide ACCESS — `messages` and `message_thread_members`
+        // — and both keep it.
+        const boundOn = await historyBoundEnabled(sc);
         const { data: member, error: memberErr } = await sc
           .from("message_thread_members")
-          .select("user_id")
+          // Conditional, so a build carrying this code never names a column a
+          // database without 2400 would reject with 42703.
+          .select(membershipSelect("user_id", boundOn))
           .eq("thread_id", msg.thread_id)
           .eq("user_id", viewerId)
           .is("left_at", null)
@@ -514,7 +647,38 @@ async function decide(
         // Returned directly: an unreadable membership table denies a member's own
         // thread media exactly as it denies a non-member's.
         noteLookupFailure("3c thread membership", memberErr, { bucket, path, threadId: msg.thread_id });
-        return Boolean(member);
+        if (!member) return false;
+        const visibleFrom = visibleFromOf(member as any, boundOn);
+        // A POLICY deny, not a lookup failure, so it does not go through
+        // noteLookupFailure (which exists to make an undecidable branch
+        // diagnosable). This branch decided.
+        //
+        // Q6, AT THE MEDIA DOOR — AND IT IS A NO-OP HERE, WHICH IS WORTH
+        // SAYING RATHER THAN LEAVING A READER TO ASSUME OTHERWISE.
+        //
+        // This branch is only reached when `owner === msg.sender_id`. Q6 only
+        // fires when the VIEWER is that sender. The two together give
+        // `owner === viewerId` — and `decide()` returned true for exactly that
+        // four branches above, at "1. Owner always sees their own bytes"
+        // (`pathOwner === viewerId`). So the exception cannot change a decision
+        // here today. It is wired in regardless, because the alternative is
+        // leaving the one call site in the tree that spells the window rule
+        // differently, and because this is the branch that hands over BYTES
+        // from a PRIVATE bucket: if step 1 ever narrows, this door must already
+        // be carrying the same rule as every text reader.
+        //
+        // WHAT IS LOAD-BEARING HERE IS THE LIMIT, and it is unchanged: ANOTHER
+        // member's protected attachment from before this member's window stays
+        // refused. `senderId` is then not `viewerId`, the predicate returns
+        // false, and the bytes are not served. An accessible own MESSAGE is
+        // never a key to somebody else's OBJECT — each object is decided by ITS
+        // OWN row's sender, one call at a time.
+        //
+        // The membership read above is `.is("left_at", null)`: an INACTIVE
+        // member has no `member` row here and was already refused.
+        if (!withinWindow((msg as any).created_at, visibleFrom,
+                          { senderId: (msg as any).sender_id, viewerId })) return false;
+        return true;
       }
     }
   } catch { /* fall through */ }
@@ -541,18 +705,40 @@ async function decide(
       // POST /stories now rejects such a row at write time. This covers rows
       // written before that guard existed, and any future writer that skips it.
       if (!owner || owner !== story.owner_id) return false;
-      const live =
-        (story.state === "active" || story.state === "saved") &&
-        (!story.expires_at ||
-          new Date(story.expires_at).getTime() > Date.now() ||
-          story.state === "saved");
-      if (!live) return false;
-      const needsClose =
-        story.close_friends_only === true ||
-        story.visibility === "close_friends";
-      if (needsClose)
-        return isCloseFriend(sc, story.owner_id, viewerId);
-      return story.visibility === "public";
+      // A SAVED story is no longer the publisher of its own bytes. Saving
+      // promotes it into a Highlight (routes/stories.ts save-to-highlight),
+      // which carries the same media_url under its OWN visibility and its own
+      // `expires_at`, and the Highlight is what the audience is looking at.
+      //
+      // This branch used to answer `saved` itself, on the STORY's visibility
+      // and with no expiry test at all — `state === "saved"` appeared twice in
+      // the `live` expression precisely to bypass one. The audience therefore
+      // kept access on the expired STORY's terms, and kept it after the
+      // Highlight expired (24h), was archived, or was deleted, because nothing
+      // here ever looked at the Highlight. That is the reference restoring
+      // audience access to the expired Story, which the owner ruled out.
+      //
+      // It mattered less while expiry deleted the bytes; the archive keeps
+      // them for a year now, so the boundary has to be a decision rather than
+      // a side effect of deletion.
+      //
+      // So: fall THROUGH to 3e, which asks the Highlight. No Highlight row
+      // means no publisher, and §4 denies — the fail-closed answer, and the
+      // right one when the link update that marks a story saved is known to be
+      // able to not take. The owner is unaffected; they never reach this
+      // branch.
+      if (story.state !== "saved") {
+        const live =
+          story.state === "active" &&
+          (!story.expires_at || new Date(story.expires_at).getTime() > Date.now());
+        if (!live) return false;
+        const needsClose =
+          story.close_friends_only === true ||
+          story.visibility === "close_friends";
+        if (needsClose)
+          return isCloseFriend(sc, story.owner_id, viewerId);
+        return story.visibility === "public";
+      }
     }
   } catch { /* fall through */ }
 
@@ -687,4 +873,165 @@ async function decide(
 
   // 4. Nothing references it → orphan/unknown → DENY (fail-closed).
   return false;
+}
+
+/**
+ * The instant after which a NON-OWNER's access to this object must stop, as an
+ * epoch millisecond value, or `null` when no time boundary applies.
+ *
+ * This exists because a signed URL outlives the request that minted it.
+ * `authorizeMediaAccess` is a decision about NOW; a signed URL is a bearer
+ * token that keeps working for its whole TTL, so a viewer who asks one second
+ * before a story expires holds a working link long after the story stopped
+ * being theirs to see. Until now the expiry sweep deleted the bytes, and that
+ * deletion — not the authorization layer — is what actually ended the token's
+ * usefulness. Stories are now preserved for the owner's archive, so the
+ * boundary has to be enforced where it is claimed: on the token's lifetime.
+ *
+ * Returns null for the OWNER, deliberately. The archive is owner-only and has
+ * no expiry; clamping the owner's own link would break the thing #461 exists
+ * to build.
+ *
+ * A read failure returns `Date.now()` — the most restrictive answer — rather
+ * than null. This file's posture everywhere else is that an unreadable table
+ * denies, and a null here would silently restore the full TTL, which is the
+ * exact failure this function exists to prevent.
+ */
+export async function mediaAccessDeadline(
+  sc: SupabaseClient,
+  viewerId: string,
+  bucket: string,
+  path: string,
+): Promise<number | null> {
+  if (bucket !== "post-media") return null;
+  { const posterOf = derivedPosterBase(path); if (posterOf !== null) return mediaAccessDeadline(sc, viewerId, bucket, posterOf); } // §37: a poster keeps its video's deadline
+  const owner = ownerFromPath(path);
+  if (owner && owner === viewerId) return null; // owner archive: no boundary
+
+  const publicUrl = publicUrlFor(bucket, path);
+  const urlForms = [publicUrl, `${bucket}/${path}`].filter(
+    (u): u is string => typeof u === "string" && u.length > 0,
+  );
+  if (urlForms.length === 0) return Date.now();
+
+  try {
+    const { data, error } = await sc
+      .from("stories")
+      .select("owner_id, state, expires_at")
+      .in("media_url", urlForms)
+      .limit(1);
+    if (error) return Date.now();
+    const story = (data as any[])?.[0];
+    if (!story) return null; // not story media — no story boundary applies
+    if (story.owner_id === viewerId) return null; // owner archive
+    // A saved story has been promoted into a Highlight and is governed by the
+    // Highlight's own expiry, not the story's 24h window. That sentence used to
+    // sit above `return null`, which governed it by nothing: the token kept the
+    // full TTL and outlived the Highlight. Read the Highlight and clamp to it,
+    // so the statement is enforced rather than asserted. No Highlight row for a
+    // saved story means nothing publishes these bytes to a non-owner, and 3d
+    // now falls through to the same conclusion — the most restrictive answer,
+    // not null.
+    if (story.state === "saved") {
+      const { data: hs, error: hErr } = await sc
+        .from("highlights")
+        .select("owner_id, expires_at")
+        .in("media_url", urlForms)
+        .limit(1);
+      if (hErr) return Date.now();
+      const h = (hs as any[])?.[0];
+      if (!h || h.owner_id !== story.owner_id) return Date.now();
+      if (!h.expires_at) return null;
+      const hAt = new Date(h.expires_at).getTime();
+      return Number.isFinite(hAt) ? hAt : Date.now();
+    }
+    if (!story.expires_at) return null;
+    const at = new Date(story.expires_at).getTime();
+    return Number.isFinite(at) ? at : Date.now();
+  } catch {
+    return Date.now();
+  }
+}
+
+// ── §37 video posters ─────────────────────────────────────────────────────────
+// A postcard video's poster is stored at `<storage_path>.poster.jpg`, a path the
+// SERVER derives from the slot (routes/postcardMediaTransport.ts) and the only
+// thumbnail path /complete admits. The one-line branch at the top of decide()
+// therefore authorizes a poster by authorizing the video it was cut from —
+// exactly that audience, no wider and no narrower — instead of letting it fall
+// through every branch to §4's deny as an unreferenced object. Imported at the
+// TAIL so no line above moves (census-highlights-memories cites this file by
+// line); ESM hoists imports, so evaluation order is unchanged.
+import { derivedPosterBase } from "./mediaPosterPath.js";
+
+// ── Server-derived image variants (census-media §23.7) ───────────────────────
+// `post_media` records the server-derived variants of its object: the feed-size
+// derivative (`feed_storage_path` / `feed_url`, 0208) and the thumbnail
+// (`thumbnail_storage_path` / `thumbnail_url`). Branch 3a matched
+// `storage_path` only, so a viewer entitled to the image was refused its
+// variant: no branch named it, and §4 denies. With `media_private_buckets_enabled`
+// on, that is every non-owner's feed image. The fix is lane D's poster rule
+// (§37), generalised: a variant IS its original, so the ONE line in 3a decides
+// the original instead — its moderation, its post's rules, its own attachment
+// override and its trip context all apply, and nothing wider can.
+//
+// What makes that safe is that the original is taken from a ROW, and only
+// believed when the variant is a server-derived NAME of it:
+//   `<original>.feed.jpg` / `<original>.thumb.jpg` (postcards), or
+//   `<original minus its extension>.feed.jpg` / `.thumb.jpg` (general posts).
+// A row that names someone else's object as its variant fails that test, and
+// is ignored. Nothing under a client-writable prefix is ever a variant.
+// Each lookup is its own `.eq` / `.in`, whose values the client encodes, and
+// never a string-built `.or()`, because `path` is chosen by the caller.
+// Appended at the tail so no cited line above moves.
+const DERIVED_VARIANT_SUFFIXES = [".feed.jpg", ".thumb.jpg"] as const;
+const VARIANT_CLIENT_WRITABLE_PREFIXES = ["memories/", "stories/"] as const;
+
+/** Pure: is `variant` a server-derived name of `original`? */
+export function isDerivedVariantOf(variant: string, original: string): boolean {
+  if (typeof variant !== "string" || typeof original !== "string") return false;
+  if (!variant || !original || variant === original) return false;
+  const stem = original.replace(/\.[^/.]+$/, "");
+  return DERIVED_VARIANT_SUFFIXES.some(
+    (suffix) => variant === `${original}${suffix}` || (stem !== original && variant === `${stem}${suffix}`),
+  );
+}
+
+/**
+ * The original a recorded variant was derived from. `null` when `path` is not
+ * a recorded variant (3a falls through exactly as before). `"deny"` when it
+ * cannot be decided: a lookup failed, a page was truncated, or two rows name
+ * different originals.
+ */
+async function originalOfRecordedVariant(
+  sc: SupabaseClient,
+  path: string,
+  urlForms: string[],
+): Promise<string | null | "deny"> {
+  if (!DERIVED_VARIANT_SUFFIXES.some((suffix) => path.endsWith(suffix))) return null;
+  if (VARIANT_CLIENT_WRITABLE_PREFIXES.some((prefix) => path.startsWith(prefix))) return null;
+  const rowsNaming = (col: "feed_storage_path" | "thumbnail_storage_path" | "feed_url" | "thumbnail_url") => {
+    const q = sc.from("post_media").select("storage_path");
+    return (col.endsWith("_url") ? q.in(col, urlForms) : q.eq(col, path)).limit(POST_MEDIA_ATTACHMENT_CAP);
+  };
+  const results = await Promise.all([
+    rowsNaming("feed_storage_path"),
+    rowsNaming("thumbnail_storage_path"),
+    rowsNaming("feed_url"),
+    rowsNaming("thumbnail_url"),
+  ]);
+  const originals = new Set<string>();
+  for (const { data, error } of results) {
+    noteLookupFailure("3a derived variant", error, { path });
+    if (error) return "deny";
+    const rows = (data as any[]) ?? [];
+    if (rows.length >= POST_MEDIA_ATTACHMENT_CAP) return "deny";
+    for (const row of rows) {
+      const original = typeof row?.storage_path === "string" ? row.storage_path : "";
+      if (isDerivedVariantOf(path, original)) originals.add(original);
+    }
+  }
+  if (originals.size === 0) return null;
+  if (originals.size > 1) return "deny";
+  return [...originals][0]!;
 }

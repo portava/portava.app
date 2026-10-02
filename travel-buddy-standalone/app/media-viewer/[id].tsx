@@ -159,7 +159,7 @@ interface OverlayProps {
   /** Media v2 World shell (§15): show the action-rail entry when enabled. */
   showActions?: boolean;
   /** Opens the media action rail. */
-  onActions?: () => void;
+  onActions?: () => void; /** census-media §40: the screen draws page dots in their own slot under the columns; the columns rise by PAGE_DOTS_SLOT to leave it free. */ pageDots?: boolean;
 }
 
 function ViewerOverlay({
@@ -179,7 +179,7 @@ function ViewerOverlay({
   isOwner,
   stampItCount,
   showActions,
-  onActions,
+  onActions, pageDots,
 }: OverlayProps) {
   const insets = useSafeAreaInsets();
 
@@ -221,8 +221,8 @@ function ViewerOverlay({
 
       {/* ── Bottom area: author + actions ────────────────────────────── */}
       <View
-        style={[ov.bottom, { paddingBottom: Math.max(insets.bottom + 16, 24) }]}
-        pointerEvents="box-none"
+        style={[ov.bottom, { paddingBottom: overlayBaseline(insets.bottom) + (pageDots ? PAGE_DOTS_SLOT : 0) }]}
+        pointerEvents="box-none" testID="viewer-overlay-bottom"
       >
         {/* Left column: author + caption + place */}
         <View style={ov.leftCol} pointerEvents="box-none">
@@ -306,7 +306,7 @@ function ViewerOverlay({
               entityId={post.id}
               initialCount={post.likeCount}
               initialIsStamped={post.likedByMe}
-              iconSize={28}
+              iconSize={28} tone="onDark"
               style={ov.stampBtnWrapper}
             />
           ) : null}
@@ -386,7 +386,7 @@ const ov = StyleSheet.create({
   leftCol: {
     flex: 1,
     gap: 6,
-    paddingRight: space.sm,
+    paddingRight: space.sm, padding: space.sm, borderRadius: radius.md, backgroundColor: 'rgba(17,17,15,0.71)', // census-media §31.13: an ink backing under the left column (the gradient is kept, and not relied on); 0.71 is set by the handle in onInkMute
   },
   authorRow: {
     flexDirection: 'row',
@@ -438,7 +438,7 @@ const ov = StyleSheet.create({
   rightCol: {
     alignItems: 'center',
     gap: space.xl,
-    paddingBottom: 4,
+    paddingBottom: space.sm, paddingTop: space.md, paddingHorizontal: space.xs, borderRadius: radius.pill, backgroundColor: 'rgba(17,17,15,0.80)', // census-media §31.13: an ink backing under the action column; 0.80 is set by the saved bookmark and the stamped icon in `signal`
   },
   actionBtn: {
     alignItems: 'center',
@@ -499,7 +499,7 @@ function ViewerPage({ item, isActive, isMuted, postData }: ViewerPageProps) {
           {posterUrl ? (
             <CachedImage source={{ uri: posterUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" fallbackLabel="" />
           ) : null}
-          <ActivityIndicator size="large" color={color.onInk} />
+          <View style={tailStyles.spinnerBadge}><ActivityIndicator size="large" color={color.onInk} /></View>
         </View>
       ) : isVideo ? (
         <>
@@ -526,7 +526,7 @@ function ViewerPage({ item, isActive, isMuted, postData }: ViewerPageProps) {
           ) : null}
         </>
       ) : (
-        <CachedImage source={{ uri: mediaUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+        <CachedImage source={{ uri: mediaUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" fallbackBg={color.mute} />
       )}
     </View>
   );
@@ -781,7 +781,7 @@ export default function MediaViewer() {
         isOwner={activeIsOwner}
         stampItCount={activeStampItCount}
         showActions={worldShellEnabled}
-        onActions={() => setActionsOpen(true)}
+        onActions={() => setActionsOpen(true)} pageDots={items.length > 1}
       />
 
       {/* ── Comment sheet ─────────────────────────────────────────── */}
@@ -803,15 +803,15 @@ export default function MediaViewer() {
       {/* Page indicator dots (only when multiple items) */}
       {items.length > 1 ? (
         <View
-          style={[ms.dots, { bottom: Math.max(insets.bottom + 80, 90) }]}
-          pointerEvents="none"
+          style={[ms.dots, { bottom: overlayBaseline(insets.bottom) /* census-media §40: the columns' old baseline, now the dots' slot; was Math.max(insets.bottom + 80, 90), over the left column's last lines */ }]}
+          pointerEvents="none" testID="viewer-page-dots"
         >
-          {items.map((_, i) => (
+          <View style={tailStyles.dotsPill}>{items.map((_, i) => (
             <View
               key={i}
-              style={[ms.dot, i === activeIndex && ms.dotActive]}
+              style={[ms.dot, i === activeIndex && ms.dotActive, pageDotWindow(i, activeIndex, items.length)]}
             />
-          ))}
+          ))}</View>
         </View>
       ) : null}
     </View>
@@ -863,3 +863,47 @@ const ms = StyleSheet.create({
     borderRadius: 2.5,
   },
 });
+
+// census-media §31.13 — two badges, appended at the tail so no cited line moves.
+// The page spinner sat straight on the poster: 1.00:1 over a poster its own
+// colour. 0.47 is the least ink alpha at which onInk clears 3:1 over any frame.
+// The page dots sat straight on the frame. 0.87 is the least alpha at which
+// the inactive dot (white at 0.35) clears 3:1 over any frame; the active dot
+// is also 14 px wide against 5, so the page does not rest on colour alone.
+const tailStyles = StyleSheet.create({
+  spinnerBadge: { padding: 10, borderRadius: 999, backgroundColor: 'rgba(17,17,15,0.47)' },
+  dotsPill: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 8, paddingVertical: 6, borderRadius: 999, backgroundColor: 'rgba(17,17,15,0.87)' },
+});
+
+// census-media §40 — the page dots get a slot of their own. The pill sat at
+// max(insets.bottom + 80, 90), over the left column's last lines, and once it
+// had its 0.87 backing it hid a caption line (H8, lane S). Now the dots sit on
+// the columns' old baseline and, when they show, the columns rise by the
+// pill's height (2 × its paddingVertical 6, plus one dot) and a gap, so neither
+// covers the other whatever the left column holds. Pinned by
+// __tests__/pageDots.layout.component.test.tsx.
+const PAGE_DOTS_SLOT = 2 * 6 + dot.s5 + space.sm;
+function overlayBaseline(insetBottom: number): number {
+  return Math.max(insetBottom + 16, 24);
+}
+
+// census-media §40.13 — at most PAGE_DOTS_MAX dots. The pill is 10 px wider
+// per item (a 5 px dot and a 5 px gap), so with the Grid's whole loaded feed as
+// pages it outgrew the left column at ~28 items and the screen at ~36. Up to
+// PAGE_DOTS_MAX items nothing changes. Beyond that the dots are a window of
+// PAGE_DOTS_MAX around the current page (it sits in the middle once it can),
+// and a window edge that has more pages beyond it draws its dot at 3 px instead
+// of 5. The current page keeps its 14 px white dot. The widest pill is
+// 9 × 10 + 20 = 110 px, under any left column (the column is the screen less
+// 93 px: 227 px on a 320 px screen).
+const PAGE_DOTS_MAX = 9;
+const PAGE_DOT_HIDDEN = { display: 'none' } as const;
+const PAGE_DOT_EDGE = { width: 3, height: 3, borderRadius: 1.5 } as const;
+function pageDotWindow(i: number, active: number, count: number) {
+  if (count <= PAGE_DOTS_MAX) return null;
+  const start = Math.max(0, Math.min(active - Math.floor(PAGE_DOTS_MAX / 2), count - PAGE_DOTS_MAX));
+  const end = start + PAGE_DOTS_MAX; // exclusive
+  if (i < start || i >= end) return PAGE_DOT_HIDDEN;
+  if ((i === start && start > 0) || (i === end - 1 && end < count)) return PAGE_DOT_EDGE;
+  return null;
+}

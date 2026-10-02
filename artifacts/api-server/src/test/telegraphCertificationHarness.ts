@@ -19,8 +19,10 @@
  *     authorization, and a fake that threw instead would make those bugs
  *     untestable.
  *   - `.or()` is really parsed, including the `and(...)` groups the block guard
- *     builds, because "the filter silently stopped matching" is one of the two
- *     failure modes that resolver documents.
+ *     builds and the `col.gte.<instant>` terms the §14.3 window builds, because
+ *     "the filter silently stopped matching" is one of the two failure modes
+ *     that resolver documents — and an unparsed term makes the WHOLE group
+ *     match nothing, which reads as a correct deny.
  *   - `.maybeSingle()` returns the first row and never raises on multiples;
  *     `.single()` behaves the same. The mutual-block case that made the real
  *     `.maybeSingle()` raise is exercised through `.limit(1)` in the guard
@@ -81,6 +83,13 @@ export interface Observed {
   upserts: Array<{ table: string; rows: any[] }>;
   deletes: Array<{ table: string }>;
   gte: Array<{ table: string; col: string; val: any }>;
+  /**
+   * Every `or=` group this client was handed, per table. The §14.3 window is
+   * now carried this way (`created_at.gte.<bound>,sender_id.eq.<viewer>`), so
+   * "the bound is in the QUERY, not in a post-filter pagination walks past" is
+   * asserted against THIS rather than against `gte`.
+   */
+  or: Array<{ table: string; expr: string }>;
 }
 
 type Predicate = (row: any) => boolean;
@@ -98,6 +107,34 @@ function termPredicate(term: string): Predicate | null {
       return (r) => String(r[col]) !== String(val);
     case "is":
       return (r) => (val === null ? r[col] == null : r[col] === val);
+    // The §14.3 window's comparison arms. `applyHistoryWindow` now sends the
+    // bound as `created_at.gte.<iso>` INSIDE an `or()` group (beside
+    // `sender_id.eq.<viewer>`, Q6's own-message exception), and without these
+    // arms the term parsed as null — so the whole `or()` matched NOTHING and
+    // the window half of the clause silently vanished. Compared as INSTANTS,
+    // the same way this fake's top-level `.gte`/`.lte` already compare them, so
+    // the two spellings of the boundary instant agree here as they do in
+    // `withinWindow`.
+    case "gte":
+      return (r) => Date.parse(r?.[col]) >= Date.parse(String(val));
+    case "gt":
+      return (r) => Date.parse(r?.[col]) > Date.parse(String(val));
+    case "lte":
+      return (r) => Date.parse(r?.[col]) <= Date.parse(String(val));
+    case "lt":
+      return (r) => Date.parse(r?.[col]) < Date.parse(String(val));
+    case "in": {
+      // `col.in.("a","b")` — the shape lib/mediaAccess builds to ask whether a
+      // message carries one of an object's URL spellings. Without this arm the
+      // term parsed as null, the whole `or()` matched NOTHING, and that branch
+      // was untestable through this harness: every case came back "denied",
+      // which is the same answer a correct deny gives.
+      const quoted = raw.match(/"((?:[^"\\]|\\.)*)"/g);
+      const vals = quoted
+        ? quoted.map((q) => q.slice(1, -1).replace(/\\"/g, '"'))
+        : raw.replace(/^\(|\)$/g, "").split(",").map((v) => v.trim());
+      return (r) => vals.includes(String(r[col]));
+    }
     default:
       return null;
   }
@@ -180,6 +217,7 @@ export function makeFakeClient(
     upserts: [],
     deletes: [],
     gte: [],
+    or: [],
   };
 
   const opCounts: Record<string, number> = {};
@@ -306,7 +344,7 @@ export function makeFakeClient(
         if (op === "is") filters.push((r) => (val === null ? r?.[col] != null : r?.[col] !== val));
         return proxy;
       },
-      or(expr: string) { filters.push(orPredicate(expr)); return proxy; },
+      or(expr: string) { observed.or.push({ table, expr }); filters.push(orPredicate(expr)); return proxy; },
       lt(col: string, val: any) { filters.push((r) => Date.parse(r?.[col]) < Date.parse(val)); return proxy; },
       lte(col: string, val: any) { filters.push((r) => Date.parse(r?.[col]) <= Date.parse(val)); return proxy; },
       gt(col: string, val: any) { filters.push((r) => Date.parse(r?.[col]) > Date.parse(val)); return proxy; },

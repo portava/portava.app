@@ -49,9 +49,10 @@ import {
   loadVideoMediaCandidates,
   loadSharedMomentCandidates,
   loadContextualOpportunityCandidates,
-  loadQuickMediaItems,
+  loadQuickMediaRow,
   MAX_QUICK_MEDIA_ITEMS,
   mergeLoadedCandidates,
+  type LoadedWallCandidates,
 } from "../services/wall/WallCandidateLoaders.js";
 import {
   applyFeedDiversity,
@@ -95,6 +96,7 @@ import type {
   PublicActorRef,
   PublicPlaceRef,
   StructuredIntent,
+  WallLane,
   WallObjectType,
   WallProjection,
   WallResponse,
@@ -133,7 +135,24 @@ const CANDIDATE_FETCH = 150;
 const POST_COLUMNS =
   "id, author_id, trip_id, content, visibility, status, post_status, created_at, published_at, " +
   "canonical_place_id, has_video, media_count, category, location_city, location_country, " +
-  "like_count, comment_count, save_count";
+  "like_count, comment_count, save_count, location_privacy_mode"; // census-media §43: the owner's mode, read with the row so a withheld place can be marked (lib/postPlaceDisclosure)
+
+/**
+ * Turn a PostgREST `{ data, error }` envelope into a throw.
+ *
+ * supabase-js RESOLVES a rejected query rather than throwing it, so a read
+ * written as `const { data } = await q` discards the error, skips the very
+ * `catch` that exists to handle it, logs NOTHING, and yields `[]`. On the Wall
+ * that `[]` is not merely a quiet feed: `loadCandidates` derives
+ * `followingReachedEnd` from `rows.length < CANDIDATE_FETCH`, so a permission
+ * error / dropped column / RLS change satisfies `0 < 150` and the response
+ * asserts `caughtUp: true`. Routing the error through here makes the existing
+ * catch blocks real and keeps that inference honest.
+ */
+function rowsOrThrow(res: { data?: unknown; error?: unknown } | null | undefined): any[] {
+  if (res?.error) throw res.error;
+  return (res?.data as any[]) ?? [];
+}
 
 // ── Local analytics (reuses the existing rank_events store; no Wall table) ────
 
@@ -519,6 +538,13 @@ interface LoadedCandidates {
    * (capped) fetch never masquerades as "you're all caught up" (§27).
    */
   followingReachedEnd?: boolean;
+  /**
+   * True when the Post spine's own read FAILED. Distinct from an empty spine:
+   * §34 still returns a (degraded) 200, but the response must SAY so rather
+   * than let an outage render as a quiet feed — and `followingReachedEnd` must
+   * never be inferred from a fetch that did not happen.
+   */
+  spineFailed?: boolean;
 }
 
 function classifyObjectType(row: any, isOutsideGraph: boolean, discoveryEnabled: boolean): WallObjectType {
@@ -528,7 +554,16 @@ function classifyObjectType(row: any, isOutsideGraph: boolean, discoveryEnabled:
   return "social_update";
 }
 
-async function loadCandidates(
+/**
+ * Exported as a TEST SEAM only (see src/test/wallFailureVsEmpty.test.ts), for
+ * the same reason `loadViewerContext` above is: `followingReachedEnd` is a
+ * claim this function alone is entitled to make, and the route applies a
+ * SECOND, broader guard downstream (`degradedLanes.length > 0 ⇒ caughtUp
+ * false`). Through HTTP the two are indistinguishable — the downstream guard
+ * masks a regression here — so the honesty of THIS function's own answer has to
+ * be pinned at this seam or it is not pinned at all.
+ */
+export async function loadCandidates(
   sc: any,
   mode: "for_you" | "following",
   viewer: WallViewerContext,
@@ -578,8 +613,7 @@ async function loadCandidates(
       if (mode === "following" && opts.followingCursorPublishedAt) {
         q = q.lte("created_at", opts.followingCursorPublishedAt);
       }
-      const { data } = await q;
-      const primary = (data as any[]) ?? [];
+      const primary = rowsOrThrow(await q);
       // True end of the followed spine iff the fetch came back short of its cap.
       if (mode === "following") followingReachedEnd = primary.length < CANDIDATE_FETCH;
       rows = primary.map((r) => ({ ...r, __outside: false }));
@@ -597,16 +631,18 @@ async function loadCandidates(
         .order("created_at", { ascending: false })
         .limit(CANDIDATE_FETCH);
       if (opts.snapshotAtIso) q = q.lte("created_at", opts.snapshotAtIso);
-      const { data } = await q;
+      const outsideRows = rowsOrThrow(await q);
       const followedSet = viewer.followedCreatorIds;
-      for (const r of (data as any[]) ?? []) {
+      for (const r of outsideRows) {
         if (followedSet.has(String(r.author_id))) continue; // already in primary set
         rows.push({ ...r, __outside: true });
       }
     }
   } catch (err) {
     logger.warn({ err }, "wall: candidate posts read failed — returning empty candidate set");
-    return empty;
+    // NOT `followingReachedEnd: undefined`: buildFollowing reads `reachedEnd ??
+    // true`, so leaving it unset would restore the exact lie this fixes.
+    return { ...empty, followingReachedEnd: false, spineFailed: true };
   }
 
   if (rows.length === 0) return { ...empty, followingReachedEnd };
@@ -630,22 +666,23 @@ async function loadCandidates(
   const placeById = new Map<string, PublicPlaceRef>();
   try {
     if (authorIds.length > 0) {
-      const { data } = await sc
-        .from("profiles")
-        .select("id, display_name, username, avatar_url, account_status")
-        .in("id", authorIds.slice(0, 500));
-      for (const p of (data as any[]) ?? []) profileById.set(String(p.id), p);
+      const rows = rowsOrThrow(
+        await sc
+          .from("profiles")
+          .select("id, display_name, username, avatar_url, account_status")
+          .in("id", authorIds.slice(0, 500)),
+      );
+      for (const p of rows) profileById.set(String(p.id), p);
     }
   } catch (err) {
     logger.warn({ err }, "wall: author profile batch read failed");
   }
   try {
     if (placeIds.length > 0) {
-      const { data } = await sc
-        .from("places")
-        .select("id, name, city, country_code")
-        .in("id", placeIds.slice(0, 500));
-      for (const pl of (data as any[]) ?? []) {
+      const rows = rowsOrThrow(
+        await sc.from("places").select("id, name, city, country_code").in("id", placeIds.slice(0, 500)),
+      );
+      for (const pl of rows) {
         placeById.set(String(pl.id), {
           placeId: String(pl.id),
           name: String(pl.name ?? "Place"),
@@ -667,12 +704,14 @@ async function loadCandidates(
   const permittedGemPlaceIds = new Set<string>();
   if (opts.discoveryEnabled && placeIds.length > 0) {
     try {
-      const { data } = await sc
-        .from("hidden_gems")
-        .select("canonical_place_id, sensitivity_level, status")
-        .in("canonical_place_id", placeIds.slice(0, 500))
-        .eq("status", "active");
-      for (const g of (data as any[]) ?? []) {
+      const rows = rowsOrThrow(
+        await sc
+          .from("hidden_gems")
+          .select("canonical_place_id, sensitivity_level, status")
+          .in("canonical_place_id", placeIds.slice(0, 500))
+          .eq("status", "active"),
+      );
+      for (const g of rows) {
         const pid = g.canonical_place_id ? String(g.canonical_place_id) : null;
         const sens = String(g.sensitivity_level ?? "public");
         if (pid && (sens === "public" || sens === "approximate")) permittedGemPlaceIds.add(pid);
@@ -742,7 +781,7 @@ async function loadCandidates(
       tripId: r.trip_id ?? null,
       publishedAt: String(r.published_at ?? r.created_at),
       text: r.content ?? null,
-      place: placeRef,
+      place: withPostPlaceMark(placeRef, r), // census-media §43: the same ref, marked (never serialised) when mapPublicPost withholds this post's place; wallItemsForViewer strips it for a non-owner at the response
       actor,
       authorAccountStatus: prof?.account_status ?? "active",
       isDeleted: false,
@@ -756,7 +795,7 @@ async function loadCandidates(
       saveCount: Number(r.save_count ?? 0),
       isFirstImpression: true,
     });
-    if (placeRef) placeByObject.set(id, placeRef);
+    if (placeRef) placeByObject.set(id, withPostPlaceMark(placeRef, r)!); // census-media §43: marked as above, so the Live strip can tell a withheld post's place from a disclosed one
   }
 
   return { candidates, signals, placeByObject, followingReachedEnd };
@@ -811,16 +850,19 @@ async function buildLiveStrip(
   liveEnabled: boolean,
   candidates: () => Promise<LiveForYouCandidate[]>,
   opts: { limit: number; dedupeSubjectIds?: Set<string> },
-): Promise<LiveForYouItem[]> {
-  if (!liveEnabled) return [];
+): Promise<{ items: LiveForYouItem[]; failed: boolean }> {
+  // A flag that is OFF is not a failure: the strip is absent by policy, and
+  // saying "degraded" there would cry outage on the current, intended state.
+  if (!liveEnabled) return { items: [], failed: false };
   try {
-    return await buildLiveForYou(sc, await candidates(), {
+    const items = await buildLiveForYou(sc, await candidates(), {
       limit: opts.limit,
       dedupeSubjectIds: opts.dedupeSubjectIds,
     });
+    return { items, failed: false };
   } catch (err) {
     logger.warn({ err }, "wall: live strip build failed — degrading to empty");
-    return [];
+    return { items: [], failed: true };
   }
 }
 
@@ -1012,28 +1054,48 @@ router.get(
       upcomingTripCities: viewer.upcomingTripCities,
       interests: viewer.interests,
     };
-    const emptyLoad = () => ({ candidates: [], signals: new Map(), placeByObject: new Map() });
+    const emptyLoad = (): LoadedWallCandidates => ({
+      candidates: [],
+      signals: new Map(),
+      placeByObject: new Map(),
+    });
+    // A loader that THREW is as failed as one that returned `failed: true`; both
+    // must reach `degraded` or the §34 empty set is again indistinguishable from
+    // a genuinely quiet lane.
+    const failedLoad = (): LoadedWallCandidates => ({ ...emptyLoad(), failed: true });
     const [postcardsLoaded, mediaLoaded, momentsLoaded, opportunitiesLoaded] = await Promise.all([
       loadPostcardCandidates(sc, mode, loaderViewer, loaderOpts).catch((err) => {
         logger.warn({ err }, "wall: postcard loader threw — no postcards");
-        return emptyLoad();
+        return failedLoad();
       }),
       loadVideoMediaCandidates(sc, user.id, loaderOpts).catch((err) => {
         logger.warn({ err }, "wall: video/media loader threw — no media objects");
-        return emptyLoad();
+        return failedLoad();
       }),
       loadSharedMomentCandidates(sc, user.id, loaderOpts).catch((err) => {
         logger.warn({ err }, "wall: shared moment loader threw — no moments");
-        return emptyLoad();
+        return failedLoad();
       }),
       mode === "for_you" && rabEnabled
         ? loadContextualOpportunityCandidates(sc, opportunityViewer, loaderOpts).catch((err) => {
             logger.warn({ err }, "wall: RAB opportunity loader threw — no buddy opportunities");
-            return emptyLoad();
+            return failedLoad();
           })
         : Promise.resolve(emptyLoad()),
     ]);
     const merged = mergeLoadedCandidates(loaded, postcardsLoaded, mediaLoaded, momentsLoaded, opportunitiesLoaded);
+
+    // ── §34 degradation ledger. A lane lands here ONLY when its canonical read
+    //    FAILED; a lane that answered with no rows contributes nothing, so an
+    //    absent `degraded` is a positive statement that the feed is honestly
+    //    empty rather than broken.
+    const degradedLanes: WallLane[] = [];
+    if (!viewer.followGraphKnown) degradedLanes.push("follow_graph");
+    if (loaded.spineFailed) degradedLanes.push("spine");
+    if (postcardsLoaded.failed) degradedLanes.push("postcards");
+    if (mediaLoaded.failed) degradedLanes.push("media");
+    if (momentsLoaded.failed) degradedLanes.push("moments");
+    if (opportunitiesLoaded.failed) degradedLanes.push("opportunities");
 
     // Steer For You only (spec §5). `sessionIntent` is already undefined outside
     // For You (resolved above only in that mode); the explicit mode guard keeps
@@ -1077,6 +1139,7 @@ router.get(
     } catch (err) {
       logger.warn({ err }, "wall: projection failed — empty social feed (safe)");
       projections = [];
+      degradedLanes.push("projection");
     }
 
     // ── Order per mode.
@@ -1095,6 +1158,12 @@ router.get(
       items = built.items;
       caughtUp = built.caughtUp;
       nextCursor = built.nextCursor ? encodeFollowingCursor(built.nextCursor) : undefined;
+      // A lane that could have carried followed content and did not answer means
+      // the end of that content was never established. `loaded.spineFailed`
+      // already forces reachedEnd=false, but the projection gate and the
+      // supplementary lanes sit downstream of it, so the claim is withdrawn here
+      // too rather than relying on one upstream flag to cover all of them.
+      if (degradedLanes.length > 0) caughtUp = false;
     } else {
       const rankViewer = buildForYouRankViewer(viewer, user.id);
       const built = await rankForYou(sc, projections, rankViewer, {
@@ -1139,12 +1208,14 @@ router.get(
     //    The candidate assembly is deferred behind the strip's own flag (see
     //    buildLiveStrip): with wall_live_for_you_enabled OFF the first page pays
     //    for none of the producer reads.
-    const liveForYou = await buildLiveStrip(
+    const liveStrip = await buildLiveStrip(
       sc,
       liveEnabled,
       () => assembleLiveCandidates(sc, viewer, user.id, feedPlaceRefs, rabEnabled),
       { limit: MAX_LIVE_FOR_YOU },
     );
+    const liveForYou = liveStrip.items;
+    if (liveStrip.failed) degradedLanes.push("live");
 
     // ── Context Threads (spec §8/§9): attach an OPTIONAL compact bridge beneath
     //    an object ONLY where the §9 gate says it earns its place. Behind
@@ -1173,10 +1244,12 @@ router.get(
     const body: WallResponse = {
       mode,
       sessionIntent,
-      liveForYou,
-      items,
+      liveForYou: wallLiveStripForViewer(liveForYou, items.map((it) => it.place ?? merged.placeByObject.get(it.canonicalObjectId)), user.id), // census-media §43: built as before, then a strip item about a place ONLY withheld posts on this page point at is dropped
+      items: wallItemsForViewer(items, user.id), // census-media §43: ranked, diversified and threaded as before; only then does a non-owner lose a withheld post's place, its place actions and its place-anchored thread
       nextCursor,
       caughtUp,
+      // Omitted entirely when nothing failed — see WallResponse.degraded.
+      degraded: degradedLanes.length > 0 ? degradedLanes : undefined,
       generatedAt: new Date().toISOString(),
     };
     res.status(200).json(body);
@@ -1213,7 +1286,7 @@ router.get(
     // ON. The strip IS this route's entire response, so with the flag off the
     // route must cost nothing beyond the flag reads themselves — not the viewer
     // context, not the followed-content window, not the producers.
-    const liveForYou = await buildLiveStrip(
+    const liveRefs: PublicPlaceRef[] = []; const liveStrip = await buildLiveStrip( // census-media §43: liveRefs collects every ref the strip is built from, marks included
       sc,
       liveEnabled,
       async () => {
@@ -1221,9 +1294,17 @@ router.get(
         // BOTH the Wall flag and the RAB master — see isWallRabEnabled.
         const rabEnabled = await isWallRabEnabled(sc);
         const loaded = await loadCandidates(sc, "following", viewer, { discoveryEnabled: false });
+        // The strip's subjects ARE the viewer's recent followed places. If the
+        // graph or the spine that yields them could not be read, the strip has
+        // no subject set — "no live signals" would be an answer to a question
+        // that was never asked. Surfacing it as a failure is what lets the
+        // route report `degraded` instead of a confident empty strip.
+        if (!viewer.followGraphKnown || loaded.spineFailed) {
+          throw new Error("wall/live: the strip's place source could not be read");
+        }
         const seen = new Set<string>();
         const placeRefs: PublicPlaceRef[] = [];
-        for (const [, placeRef] of loaded.placeByObject) {
+        for (const [, placeRef] of loaded.placeByObject) { liveRefs.push(placeRef);
           if (seen.has(placeRef.placeId)) continue;
           seen.add(placeRef.placeId);
           placeRefs.push(placeRef);
@@ -1232,7 +1313,15 @@ router.get(
       },
       { limit },
     );
-    res.status(200).json({ liveForYou, generatedAt: new Date().toISOString() });
+    // On THIS route the strip is the entire answer, and "nothing is live right
+    // now" is its most ordinary honest result — so a failed build that returns
+    // the same empty array is the worst possible place for the two to be
+    // indistinguishable. `degraded` is omitted when nothing failed (§34).
+    res.status(200).json({
+      liveForYou: wallLiveStripForViewer(liveStrip.items, liveRefs, user.id), // census-media §43: as on GET /wall
+      degraded: liveStrip.failed ? (["live"] satisfies WallLane[]) : undefined,
+      generatedAt: new Date().toISOString(),
+    });
   }),
 );
 
@@ -1404,14 +1493,20 @@ router.get(
       ? Math.max(1, Math.min(Math.trunc(limitRaw), MAX_QUICK_MEDIA_ITEMS))
       : MAX_QUICK_MEDIA_ITEMS;
 
-    let items: Awaited<ReturnType<typeof loadQuickMediaItems>> = [];
+    let row: Awaited<ReturnType<typeof loadQuickMediaRow>> = { items: [], failed: false };
     try {
-      items = await loadQuickMediaItems(sc, user.id, { limit });
+      row = await loadQuickMediaRow(sc, user.id, { limit });
     } catch (err) {
       logger.warn({ err }, "wall: quick media load threw — degrading to an empty row");
-      items = [];
+      row = { items: [], failed: true };
     }
-    res.status(200).json({ items, generatedAt: new Date().toISOString() });
+    // §34 still returns the empty row; it just no longer PRETENDS the row is
+    // empty because nobody posted. An absent `degraded` is the positive claim.
+    res.status(200).json({
+      items: row.items,
+      degraded: row.failed ? (["quick_media"] satisfies WallLane[]) : undefined,
+      generatedAt: new Date().toISOString(),
+    });
   }),
 );
 
@@ -1588,3 +1683,72 @@ router.post(
 );
 
 export default router;
+
+// ── census-media §43: a post's location mode, at the Wall's response ──────────
+// Appended at the tail so no cited line above moves; ESM hoists imports and
+// function declarations, and the constant below is read only at request time.
+import { withPostPlaceMark, postPlaceMarkedWithheldFrom } from "../lib/postPlaceDisclosure.js";
+
+/**
+ * The reason explainDiscovery gives when the ONLY thing that explains an
+ * outside-graph post is that its place is a disclosure-permitted Hidden Gem.
+ * Derived from explainDiscovery itself (a candidate that matches no earlier
+ * rung), so it cannot drift from the string the ladder writes.
+ */
+const WALL_GEM_DISCOVERY_REASON: string | null =
+  explainDiscovery({ authorId: "", isPermittedHiddenGem: true }, {})?.reason ?? null;
+
+/**
+ * The Wall page as a viewer may receive it. Every item is handed back as the
+ * very same object, EXCEPT one whose place ref carries the withheld mark
+ * (loadCandidates / loadPostcardCandidates set it from the owner's
+ * location_privacy_mode) when the viewer is not its author. That item:
+ *   - loses `place` (the ref's id, venue name and city);
+ *   - loses every action that targets that place (See place, Ask Compass);
+ *   - loses its context thread — every thread kind is anchored on the item's
+ *     place (ContextThreadService.gatherContextThread), so a thread on a
+ *     withheld place describes it;
+ *   - is DROPPED when it is a discovery insertion whose only explanation was
+ *     its place being a Hidden Gem: that reason describes the withheld place,
+ *     and §13 does not show an unexplained outside-graph object.
+ * Runs after ranking, diversity, the Live strip and context threads, so every
+ * other item is exactly what it was, in the same order.
+ */
+export function wallItemsForViewer(items: WallProjection[], viewerId: string): WallProjection[] {
+  const out: WallProjection[] = [];
+  for (const item of items) {
+    const place = item.place;
+    if (!place || !postPlaceMarkedWithheldFrom(place, viewerId)) { out.push(item); continue; }
+    if (item.objectType === "discovery" && WALL_GEM_DISCOVERY_REASON !== null && (item as { discoveryReason?: string }).discoveryReason === WALL_GEM_DISCOVERY_REASON) continue;
+    const { contextThread: _thread, ...rest } = item as WallProjection & { contextThread?: unknown };
+    out.push({
+      ...rest,
+      place: undefined,
+      actions: (item.actions ?? []).filter((a) => !(a.targetType === "place" && a.targetId === place.placeId)),
+    } as WallProjection);
+  }
+  return out;
+}
+
+/**
+ * The Live For You strip as a viewer may receive it. The strip is BUILT exactly
+ * as before, from every place the page points at; then an item is dropped when
+ * its subject is a place that only withheld posts (of authors other than the
+ * viewer) point at. A place that any disclosed post on the page also points at
+ * was already disclosed by that post, so its strip items stay. Nothing is
+ * added: the strip is the old strip minus entries.
+ */
+export function wallLiveStripForViewer(
+  strip: LiveForYouItem[],
+  refs: Iterable<PublicPlaceRef | null | undefined>,
+  viewerId: string,
+): LiveForYouItem[] {
+  const disclosed = new Set<string>();
+  const withheld = new Set<string>();
+  for (const ref of refs) {
+    if (!ref || !ref.placeId) continue;
+    (postPlaceMarkedWithheldFrom(ref, viewerId) ? withheld : disclosed).add(ref.placeId);
+  }
+  if (withheld.size === 0) return strip;
+  return strip.filter((i) => !(withheld.has(i.subjectId) && !disclosed.has(i.subjectId)));
+}

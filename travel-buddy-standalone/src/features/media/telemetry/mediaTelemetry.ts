@@ -60,21 +60,21 @@ import type { MediaEventType, MediaEventPayload } from '../../../hooks/useMediaA
  * analytics `MediaEventType` vocabulary (they are declared there too), so the
  * existing `record` helper accepts them with no adapter.
  *
- * `media_arrival` is the "Real-World Arrival where safely measurable" transition;
- * `media_route` and `media_contribution` have no action-rail trigger yet (there
- * is no directions / contribution-submit affordance in the rail) and are
- * reserved for the surfaces that will emit them. The vocabulary is complete so
- * those surfaces have a canonical name to reuse rather than inventing one.
+ * `media_route` fires when the rail's Directions actually open (and the server
+ * records it for a route saved from media); `media_contribution` and
+ * `media_arrival` are recorded by the SERVER when the contribution or the
+ * traveller's own check-in is committed (census-media §21) — the client never
+ * claims them. Every name here now has a producer.
  */
 export type MediaNorthStarEvent =
   | 'media_place_open' // Media → Place Open
   | 'media_compass' //    Media → Compass
-  | 'media_route' //      Media → Route (reserved: no rail trigger yet)
+  | 'media_route' //      Media → Route (rail Directions; server, saved route)
   | 'media_trip_add' //   Media → Trip Add
   | 'media_plan' //       Media → Plan
-  | 'media_contribution' //Media → Contribution (reserved)
+  | 'media_contribution' //Media → Contribution (server-recorded)
   | 'media_correction' // Media → Useful Correction
-  | 'media_arrival'; //   Media → Real-World Arrival (reserved)
+  | 'media_arrival'; //   Media → Real-World Arrival (server-recorded)
 
 /** Runtime mirror of the union — for validation and for the server allow-list. */
 export const MEDIA_NORTH_STAR_EVENTS: readonly MediaNorthStarEvent[] = [
@@ -96,32 +96,32 @@ export const MEDIA_NORTH_STAR_EVENTS: readonly MediaNorthStarEvent[] = [
  * real-world outcome.
  *
  * Mapped (a real-world transition):
- *   • show_on_map / view_experience → media_place_open  (open the entity behind
- *     the media — a place, or an experience/trip)
- *   • ask_compass                   → media_compass
- *   • create_plan / do_this_experience → media_plan     (build a plan/experience)
- *   • add_to_trip                   → media_trip_add
+ *   • show_on_map / view_experience / view_event / follow_this_night →
+ *     media_place_open (open the entity behind the media)
+ *   • ask_compass / find_quieter / find_cheaper / find_busier → media_compass
+ *   • directions → media_route, emitted once directions OPEN (NORTH_STAR_ON_COMPLETION)
+ *   • create_plan / do_this_experience → media_plan; add_to_trip → media_trip_add
  *   • report                        → media_correction  (user-supplied correction)
  *
  * NOT mapped (returns null — deliberately NOT north-star):
  *   • see_nearby / find_similar — in-app discovery, not a real-world outcome.
- *   • save — an engagement-adjacent signal, already tracked as its own `save`
- *     event; §45's canon is the eight transitions, and "save" is not one.
- *   • meet_here — a social meetup, outside the §45 set.
- *   • i_want_this — a want SIGNAL (§15.1), not a completed real-world action.
- *   • share_telegraph — a share; §2/§26 explicitly keep shares from dominating
- *     the hierarchy, so it is not optimized for here.
+ *   • save — its own `save` event; "save" is not one of §45's eight.
+ *   • meet_here — outside the §45 set. i_want_this — a want SIGNAL (§15.1).
+ *   • share_telegraph — a share (§2/§26); view_passport — a navigation.
+ *   • save_route / invite_people / contribute_gem — the SERVER records these
+ *     outcomes when they are committed (media_route keyed by the plan id,
+ *     invite_sent, contribution_submit / media_contribution); a tap is not one.
  *
- * Pure and total: an unknown/future id returns null (a no-op, never a fabricated
- * outcome).
+ * Pure and total: an unknown/future id returns null (a no-op, never fabricated).
  */
 export function mediaActionToNorthStar(actionId: string): MediaNorthStarEvent | null {
   switch (actionId) {
-    case 'show_on_map':
-    case 'view_experience':
+    case 'show_on_map': case 'view_experience': case 'view_event': case 'follow_this_night':
       return 'media_place_open';
-    case 'ask_compass':
+    case 'ask_compass': case 'find_quieter': case 'find_cheaper': case 'find_busier':
       return 'media_compass';
+    case 'directions':
+      return 'media_route';
     case 'create_plan':
     case 'do_this_experience':
       return 'media_plan';
@@ -237,5 +237,96 @@ export function emitMediaNorthStar(
   } catch {
     // Telemetry must never surface an error to the user.
     return null;
+  }
+}
+
+// ── Deferred north-star emission (census-media §21) ──────────────────────────
+
+/**
+ * Actions whose north-star event fires only once the outcome HAPPENED, not on
+ * the tap. "Directions started" is the maps app opening with a route, which
+ * can fail (no directions for the place, no maps app) — a tap is not a start.
+ * The rail emits these itself after the action succeeds.
+ */
+export const NORTH_STAR_ON_COMPLETION: ReadonlySet<string> = new Set(['directions']);
+
+/** True when the rail should emit this action's north-star event at tap time. */
+export function emitsNorthStarOnTap(actionId: string): boolean {
+  return !NORTH_STAR_ON_COMPLETION.has(actionId);
+}
+
+// ── §44 client outcome / navigation signals (census-media §21) ────────────────
+
+/**
+ * The §44 signals a CLIENT surface emits, each at the moment the viewer did the
+ * thing — never pre-emptively:
+ *   visual_opportunity_open — a NOW-lens opportunity (zone, changing-now card,
+ *                              for-you bucket) was opened
+ *   gem_open                — a Hidden Gem was opened from a gem media surface
+ *   directions_tap          — directions actually opened in a maps app
+ *   place_open              — a place was opened from a media item
+ *   profile_open            — a contributor's profile was opened from a media item
+ *   comment                 — a comment was POSTED from a media surface
+ * The server-only outcome signals (invite_sent, contribution_submit/accept,
+ * postcard_create, experience_complete) are not here, and the batch endpoint
+ * refuses them.
+ */
+export type MediaClientSignal =
+  | 'visual_opportunity_open'
+  | 'gem_open'
+  | 'directions_tap'
+  | 'place_open'
+  | 'profile_open'
+  | 'comment';
+
+export const MEDIA_CLIENT_SIGNALS: readonly MediaClientSignal[] = [
+  'visual_opportunity_open',
+  'gem_open',
+  'directions_tap',
+  'place_open',
+  'profile_open',
+  'comment',
+];
+
+/** Opaque ids and coarse enums only — like MediaNorthStarContext. */
+export interface MediaSignalContext {
+  mediaId?: string | null;
+  placeId?: string | null;
+  gemId?: string | null;
+  /** The pseudonymous user id of a contributor whose profile was opened. */
+  creatorId?: string | null;
+  surface?: string | null;
+  actionId?: string | null;
+}
+
+export function buildSignalPayload(ctx: MediaSignalContext): MediaEventPayload {
+  const out: Record<string, unknown> = {};
+  put(out, 'media_id', ctx.mediaId);
+  put(out, 'place_id', ctx.placeId);
+  put(out, 'gem_id', ctx.gemId);
+  put(out, 'creator_id', ctx.creatorId);
+  put(out, 'surface', ctx.surface);
+  put(out, 'action_id', ctx.actionId);
+  return out as MediaEventPayload;
+}
+
+/**
+ * Emit one §44 client signal. Fire-and-forget and fail-soft; an unknown signal
+ * or a payload carrying a forbidden key is DROPPED, never sent. Returns whether
+ * it was handed to the recorder.
+ */
+export function emitMediaSignal(
+  record: MediaEventRecorder,
+  signal: MediaClientSignal,
+  ctx: MediaSignalContext = {},
+): boolean {
+  try {
+    if (!(MEDIA_CLIENT_SIGNALS as readonly string[]).includes(signal)) return false;
+    const payload = buildSignalPayload(ctx);
+    if (hasForbiddenKey(payload)) return false;
+    record(signal, payload);
+    return true;
+  } catch {
+    return false;
   }
 }

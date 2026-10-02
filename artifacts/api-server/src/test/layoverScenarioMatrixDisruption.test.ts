@@ -314,37 +314,85 @@ describe("§21.1 L231 — a cancellation transitions to disruption", () => {
 
 // ── L230 — unknown entry permission ──────────────────────────────────────────
 
-describe("§21.1 L230 — unknown entry permission, and why it cannot gate anything", () => {
+describe("§21.1 L230 — entry permission is now read. The prohibition is still not built.", () => {
   /**
    * L230 asks that an unknown entry permission produce NO LANDSIDE
-   * RECOMMENDATION. It cannot be satisfied on this tree and it cannot even be
-   * parameterised: no field of a session or an airport carries entry
-   * permission (census L34, L48), so "unknown" is the only state there is, and
-   * a gate on it would refuse every traveller at every airport forever.
+   * RECOMMENDATION. Half of that is now met and half is refused on purpose,
+   * and the two halves fail for completely different reasons.
    *
-   * What the engine does instead is DISCLOSE. This case pins that the
-   * disclosure is unconditional — present on the permissive answer, which is
-   * the one where a missing caveat would actually mislead someone.
+   * WHAT CHANGED. Entry permission used to be inexpressible: no field of a
+   * session or an airport carried it, so "unknown" was the only state there
+   * was. It is expressible now — `FeasibilityInputs.entry`, resolved by
+   * `resolveLayoverEntry` from the traveller's passport and the airport's
+   * country, part of `inputHash` like every other named input. The engine reads
+   * it and answers `entry_unverified` instead of `yes` when it is not
+   * confirmed.
+   *
+   * WHAT DID NOT. The engine still does not REFUSE. `entry_requirements` has no
+   * INSERT in any migration, so every real corridor resolves to
+   * `no_data_for_corridor`, and a gate that forbade landside advice on an
+   * unresolved corridor would refuse every traveller at every airport — over a
+   * missing table, not over a border. That is why census L230 stays NOT-BUILT
+   * rather than moving: what L230 asks for is the prohibition, and the
+   * prohibition is the half deliberately left out.
+   *
+   * So this block pins BOTH: that the disclosure is unconditional, and that the
+   * refusal is absent. The day corridors are curated, the second case is the
+   * one that must go red.
    */
-  it("every landside verdict still carries ENTRY_NOT_CONFIRMED", () => {
+  it("an unresolved corridor is disclosed on the permissive answer, not hidden behind it", () => {
     const permissive = certify(session(8));
-    assert.equal(permissive.verdict, "yes");
+    // Was "yes" before the gate: eight roomy hours and a shrug in `unknowns[]`.
+    assert.equal(permissive.verdict, "entry_unverified");
     assert.ok(permissive.reasonCodes.includes("ENTRY_NOT_CONFIRMED"));
     assert.ok(permissive.unknowns.some((u) => /visa|transit-permit/i.test(u)));
   });
 
-  it("POSITIVE CONTROL: no input in the whole certified set can express entry permission", () => {
+  it("a confirmed corridor takes the caveat away — the disclosure is a measurement, not decoration", () => {
+    const confirmed = certifySessionFeasibility(airport(), session(8), {
+      nowMs: NOW,
+      entry: { state: "permitted", corridor: { passportCountry: "TW", destinationCountry: "TW" }, status: "visa_free" },
+    });
+    assert.equal(confirmed.verdict, "yes");
+    assert.ok(!confirmed.reasonCodes.includes("ENTRY_NOT_CONFIRMED"));
+    assert.ok(!confirmed.unknowns.some((u) => /visa|transit-permit/i.test(u)));
+  });
+
+  it("POSITIVE CONTROL: entry permission IS now an input, and the old control would have missed it", () => {
     const r = certify(session(8));
-    const keys = [
-      ...Object.keys(r.inputs.airport).map((k) => `airport.${k}`),
-      ...Object.keys(r.inputs.session).map((k) => `session.${k}`),
-    ];
-    for (const k of keys) {
-      assert.ok(
-        !/entry|visa|permit|nationality|passport/i.test(k),
-        `${k} exists — L230 is now parameterisable and this scenario must be rewritten as a real gate`,
-      );
-    }
+    // The control this replaced swept `inputs.airport` and `inputs.session` for
+    // a key matching /entry|visa|permit|nationality|passport/ and asserted none
+    // existed. It still passes — and that is the problem: `entry` arrived as a
+    // TOP-LEVEL input, not as a field of either, so the sweep it was built for
+    // no longer looks where the answer is. A check that cannot see the thing it
+    // is checking is worse than no check.
+    assert.ok("entry" in r.inputs, "entry is no longer a named input — the gate has been removed");
+    assert.ok(
+      r.inputs.entry === null || typeof r.inputs.entry === "object",
+      "entry must be a resolved eligibility or an explicit null, never undefined",
+    );
+  });
+
+  it("L230's own ask — refusing on an unresolved corridor — is NOT built, and this says so", () => {
+    // The assertion that must break when corridors are curated and the
+    // prohibition is switched on. Until then it records a live divergence
+    // between what L230 asks and what the engine does, in the file that scores
+    // it, rather than in prose somebody has to go and read.
+    const unresolved = certifySessionFeasibility(airport(), session(8), {
+      nowMs: NOW,
+      entry: { state: "unresolved", reason: "no_data_for_corridor" },
+    });
+    assert.notEqual(
+      unresolved.verdict,
+      "no",
+      "the engine now REFUSES on an unresolved corridor — L230 may be closable; re-score it",
+    );
+    // A refusal, though, is honoured: the half that is built is built.
+    const refused = certifySessionFeasibility(airport(), session(8), {
+      nowMs: NOW,
+      entry: { state: "refused", corridor: { passportCountry: "TW", destinationCountry: "JP" }, status: "visa_required" },
+    });
+    assert.equal(refused.verdict, "no");
   });
 });
 

@@ -13,7 +13,7 @@
  */
 
 import React from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { View, Text, Pressable, StyleSheet, useWindowDimensions } from 'react-native';
 import { CachedImage } from '../../../../components/CachedImage.tsx';
 import { router } from 'expo-router';
 import {
@@ -284,7 +284,7 @@ export function WallImage({
   ratio?: number;
   rounded?: boolean;
 }) {
-  const uri = media?.thumbnailUrl ?? media?.url ?? null;
+  const uri = pickWallImageRef(media, wallImageTargetPx(useWindowDimensions())); // §33: the smallest stored variant that covers the frame — the same pick the prefetch warms
   const frameStyle = [s.mediaFrame, { aspectRatio: ratio }, rounded ? s.mediaRounded : null];
   if (media?.processing || !uri) {
     return (
@@ -624,3 +624,6 @@ const s = StyleSheet.create({
   mediaPlaceholder: { alignItems: 'center', justifyContent: 'center' },
   mediaPlaceholderText: { ...t.small, color: color.mute, fontWeight: '600' },
 });
+
+// Imported at the TAIL so no cited line above moves; ESM hoists it.
+import { pickWallImageRef, wallImageTargetPx } from '../../services/wallImageVariant.ts';

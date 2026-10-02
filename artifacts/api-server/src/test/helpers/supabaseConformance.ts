@@ -53,6 +53,10 @@ import { makeFailClosedClient } from "./failClosedSupabase.js";
 import { makeFakeMapDb } from "./fakeMapDb.js";
 import { makeSchemaStrictClient } from "./schemaStrictSupabase.js";
 import { makeEnumAwareClient } from "./enumAwareSupabase.js";
+import { makeTelemetryDb } from "./fakeDiscoveryTelemetryDb.js";
+import { makeFakeTrailsDb } from "./fakeTrailsDb.js";
+import { makeRulesDb } from "./fakeTrailRulesDb.js";
+import { makeFakeCandidateDb } from "./fakeCandidateDb.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -434,6 +438,155 @@ export function enumAwareSubject(): Subject {
   };
 }
 
+/**
+ * census-discovery §48's telemetry double. It models rank_events' 2891 arbiter
+ * and 3376's per-request RPC; every other table is a plain in-memory array, so
+ * the contract's generic `t` / `audit_events` scenarios run against it as-is.
+ * Registered by the integrator (census-discovery §49) when the helpers scan
+ * found it unregistered.
+ */
+export function telemetrySubject(): Subject {
+  return {
+    name: "fakeDiscoveryTelemetryDb",
+    sourceFile: join(HERE, "fakeDiscoveryTelemetryDb.ts"),
+    gaps: {
+      "insert/unique-violation-23505": {
+        mode: "divergent",
+        why: "only 2891's (recommendation_id, outcome) arbiter on rank_events is modelled; any other table appends a duplicate",
+      },
+      "error/unknown-column-42703": {
+        mode: "divergent",
+        why: "no schema knowledge; an unknown column reads as undefined instead of failing the statement (use schemaStrictSupabase for that question)",
+      },
+      "rls/denied-read-yields-zero-rows": { mode: "divergent", why: "no service-vs-user distinction; there is one seed and no policies" },
+      "rls/denied-write-yields-42501": { mode: "divergent", why: "no service-vs-user distinction; there is one seed and no policies" },
+    },
+    build(w) {
+      const world = forFake(w);
+      const sizes = seedSizes(world.tables);
+      const db = makeTelemetryDb({ failReads: world.failReads, failWrites: world.failWrites, rpc: world.rpc as any });
+      for (const [t, rows] of Object.entries(world.tables)) db.tables[t] = rows;
+      return { client: db.client, writes: (t) => (db.tables[t]?.length ?? 0) - (sizes[t] ?? 0) };
+    },
+  };
+}
+
+/**
+ * census-discovery §75's Trails double (lane P33). It models the builder
+ * surface TrailService calls; everything else throws an honest refusal.
+ * Registered by the integrator when CI's fakeConformanceRegistry found it
+ * unregistered on 627bad340.
+ */
+export function trailsSubject(): Subject {
+  return {
+    name: "fakeTrailsDb",
+    sourceFile: join(HERE, "fakeTrailsDb.ts"),
+    gaps: {
+      "single/zero-rows": { mode: "refused", why: "TrailService never calls .single(); the fake refuses it rather than guess" },
+      "single/one-row": { mode: "refused", why: "TrailService never calls .single(); the fake refuses it rather than guess" },
+      "single/many-rows": { mode: "refused", why: "TrailService never calls .single(); the fake refuses it rather than guess" },
+      "update/zero-rows-no-select": { mode: "refused", why: "no update surface; TrailService's updates are tested elsewhere" },
+      "update/many-rows-no-select": { mode: "refused", why: "no update surface; TrailService's updates are tested elsewhere" },
+      "update/zero-rows-with-select": { mode: "refused", why: "no update surface; TrailService's updates are tested elsewhere" },
+      "update/many-rows-with-select": { mode: "refused", why: "no update surface; TrailService's updates are tested elsewhere" },
+      "delete/many-rows-no-select": { mode: "refused", why: "no delete surface" },
+      "delete/many-rows-with-select": { mode: "refused", why: "no delete surface" },
+      "insert/with-select-single": { mode: "refused", why: "insert().select().single() is not modelled" },
+      "rpc/success": { mode: "refused", why: "no rpc surface; `.rpc()` throws" },
+      "rpc/error-resolves": { mode: "refused", why: "no rpc surface; `.rpc()` throws" },
+      "rpc/unknown-function": { mode: "refused", why: "no rpc surface; `.rpc()` throws" },
+      "insert/unique-violation-23505": { mode: "divergent", why: "no unique constraints are modelled; a duplicate insert appends" },
+      "error/unknown-column-42703": { mode: "divergent", why: "only columns named in `missingColumns` fail; there is no schema" },
+      "select/count-exact": { mode: "divergent", why: "no count surface; `count` is always absent" },
+      "rls/denied-read-yields-zero-rows": { mode: "divergent", why: "no service-vs-user distinction; there is one seed and no policies" },
+      "rls/denied-write-yields-42501": { mode: "divergent", why: "no service-vs-user distinction; there is one seed and no policies" },
+    },
+    build(w) {
+      const world = forFake(w);
+      const sizes = seedSizes(world.tables);
+      const db = makeFakeTrailsDb(world.tables, {
+        readFailure: Object.fromEntries(
+          Object.entries(world.failReads ?? {}).map(([t, e]: [string, any]) => [t, { code: String(e?.code ?? ""), message: String(e?.message ?? "") }]),
+        ),
+        insertFailure: Object.fromEntries(
+          Object.entries(world.failWrites ?? {}).map(([t, e]: [string, any]) => [t, { code: String(e?.code ?? ""), message: String(e?.message ?? "") }]),
+        ),
+      });
+      return { client: db, writes: (t) => (db.tables[t]?.length ?? 0) - (sizes[t] ?? 0) };
+    },
+  };
+}
+
+/**
+ * census-discovery §86's Trails double (lane W10-T). It models the builder
+ * surface the §86 services call, lazily and at most once as the real client
+ * does; everything else throws an honest refusal.
+ */
+export function trailRulesSubject(): Subject {
+  return {
+    name: "fakeTrailRulesDb",
+    sourceFile: join(HERE, "fakeTrailRulesDb.ts"),
+    gaps: {
+      "single/zero-rows": { mode: "refused", why: "the §86 code never calls .single(); the fake refuses it rather than guess" },
+      "single/one-row": { mode: "refused", why: "the §86 code never calls .single(); the fake refuses it rather than guess" },
+      "single/many-rows": { mode: "refused", why: "the §86 code never calls .single(); the fake refuses it rather than guess" },
+      "insert/with-select-single": { mode: "refused", why: "insert().select().single() is not modelled" },
+      "insert/unique-violation-23505": { mode: "divergent", why: "no unique constraints are modelled; a duplicate insert appends" },
+      "error/unknown-column-42703": { mode: "divergent", why: "no schema; an unknown column reads as undefined" },
+      "rls/denied-read-yields-zero-rows": { mode: "divergent", why: "no service-vs-user distinction; one seed and no policies" },
+      "rls/denied-write-yields-42501": { mode: "divergent", why: "no service-vs-user distinction; one seed and no policies" },
+    },
+    build(w) {
+      const world = forFake(w);
+      const sizes = seedSizes(world.tables);
+      const pg = (m: Record<string, any> | undefined) =>
+        Object.fromEntries(Object.entries(m ?? {}).map(([t, e]) => [t, { code: String(e?.code ?? ""), message: String(e?.message ?? "") }]));
+      const db = makeRulesDb(world.tables, {
+        readFailure: pg(world.failReads), writeFailure: pg(world.failWrites),
+        rpc: world.rpc ? Object.fromEntries(Object.entries(world.rpc).map(([k, h]) => [k, (a: any) => h(a) as any])) : undefined,
+      });
+      return { client: db, writes: (t) => (db.tables[t]?.length ?? 0) - (sizes[t] ?? 0) };
+    },
+  };
+}
+
+/**
+ * census-discovery §85's candidate-generation double (lane W10-R3). Registered
+ * by lane W10-I (§91) when fakeConformanceRegistry found it unregistered.
+ */
+export function candidateSubject(): Subject {
+  return {
+    name: "fakeCandidateDb",
+    sourceFile: join(HERE, "fakeCandidateDb.ts"),
+    gaps: {
+      "single/zero-rows": { mode: "refused", why: "no §85 path calls .single(); the fake refuses it rather than guess" },
+      "single/one-row": { mode: "refused", why: "no §85 path calls .single(); the fake refuses it rather than guess" },
+      "single/many-rows": { mode: "refused", why: "no §85 path calls .single(); the fake refuses it rather than guess" },
+      "update/zero-rows-with-select": { mode: "refused", why: "writes are recorded, never applied, so RETURNING is refused" },
+      "update/many-rows-with-select": { mode: "refused", why: "writes are recorded, never applied, so RETURNING is refused" },
+      "delete/many-rows-with-select": { mode: "refused", why: "writes are recorded, never applied, so RETURNING is refused" },
+      "insert/with-select-returns-rows": { mode: "refused", why: "writes are recorded, never applied, so RETURNING is refused" },
+      "insert/with-select-single": { mode: "refused", why: "writes are recorded, never applied, so RETURNING is refused" },
+      "write/read-after-write-visible": { mode: "divergent", why: "writes are recorded in `writes`, never applied to the seed" },
+      "insert/unique-violation-23505": { mode: "divergent", why: "no unique constraints are modelled; a duplicate insert is recorded" },
+      "error/unknown-column-42703": { mode: "divergent", why: "only columns named in `missingColumns` fail; there is no schema" },
+      "rpc/success": { mode: "divergent", why: "an rpc is recorded and resolves empty; no function is modelled" },
+      "rpc/error-resolves": { mode: "divergent", why: "an rpc is recorded and resolves empty; no function is modelled" },
+      "rpc/unknown-function": { mode: "divergent", why: "an rpc is recorded and resolves empty; no function is modelled" },
+      "rls/denied-read-yields-zero-rows": { mode: "divergent", why: "no service-vs-user distinction; there is one seed and no policies" },
+      "rls/denied-write-yields-42501": { mode: "divergent", why: "no service-vs-user distinction; there is one seed and no policies" },
+    },
+    build(w) {
+      const world = forFake(w);
+      const err = (m?: Record<string, { code?: string; message: string }>) =>
+        Object.fromEntries(Object.entries(m ?? {}).map(([t, e]) => [t, { code: String(e.code ?? ""), message: e.message }]));
+      const db = makeFakeCandidateDb(world.tables, { readFailure: err(world.failReads), writeFailure: err(world.failWrites) });
+      const rowsOf = (p: unknown) => (Array.isArray(p) ? p.length : 1);
+      return { client: db, writes: (t) => db.writes.filter((x) => x.table === t && x.op !== "delete").reduce((n, x) => n + rowsOf(x.payload), 0) };
+    },
+  };
+}
+
 export function allFakeSubjects(): Subject[] {
   return [
     layoverSubject(),
@@ -442,6 +595,10 @@ export function allFakeSubjects(): Subject[] {
     mapSubject(),
     schemaStrictSubject(),
     enumAwareSubject(),
+    telemetrySubject(),
+    trailsSubject(),
+    trailRulesSubject(),
+    candidateSubject(),
   ];
 }
 

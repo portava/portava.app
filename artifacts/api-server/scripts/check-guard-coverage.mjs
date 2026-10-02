@@ -326,6 +326,25 @@ const READ_ONLY_AUDIT_ENTRY_POINTS = [
       'to choose. Production is where its 114 broken images were found.',
   },
   {
+    file: 'src/scripts/reportMigrationInventory.ts',
+    reason:
+      'FOUR SELECTs, all reads: two to_regclass() existence probes for the two ledger tables; ' +
+      '`select filename, checksum, applied_by, applied_at, notes from public.schema_migration_ledger`; ' +
+      '`select version, name from supabase_migrations.schema_migrations`; and ' +
+      '`select table_schema, table_name, column_name, is_nullable, column_default, data_type from ' +
+      'information_schema.columns` over every non-system schema (public AND authz — reading only public ' +
+      'would report every authz object absent). Neither ledger read carries a WHERE ' +
+      'clause, deliberately — a band filter cannot be expressed in SQL over either table without ' +
+      "producing a wrong answer (a text `>=` on the CLI table's mixed-format version column excludes " +
+      "every post-cutover row; a numeric cast over the hand ledger's filename scoops up imported files " +
+      'whose names begin with a 14-digit instant), so the rows come back whole and the banding happens ' +
+      'in memory over parsed serials. It reports ledger evidence and observed schema state as separate ' +
+      'dimensions and writes NOTHING: no INSERT/UPDATE/DELETE/DDL, no RPC, no auth-admin call, and in ' +
+      'particular no ledger row — when it finds something that needs writing it prints that fact and ' +
+      'exits 3. Production is the only place its question can be settled: the inventory it replaces ' +
+      'reported that production carried ZERO ledger rows at or above 2890, and production carried 20.',
+  },
+  {
     file: 'src/scripts/checkAuthorizationContract.ts',
     reason:
       'The client-write authorization regression guard (check:authorization-contract). Reads the live ' +
@@ -701,6 +720,25 @@ const EXEMPT = [
       'insert-if-absent), so it is not a read-only-audit door. EXEMPTION MEANS UNGUARDED, NOT SAFE — the safety ' +
       'is the four hard gates in the script, not this list.',
   },
+  {
+    file: 'src/scripts/reportInputMetrics.ts',
+    reason:
+      'OPERATOR-RUN reader for §57\'s nine Product Success Metrics over the §44 serve log '
+      + '(input_assistance_telemetry_events, migration 2950). It reaches Supabase for real, through '
+      + 'getServiceClient(), and it is deliberately pointed at WHICHEVER DEPLOYMENT IS BEING MEASURED — which '
+      + 'is production, because that is where the metrics that matter live. That is why neither door fits: the '
+      + 'strict front door allows only the sanctioned CI project, and the read-only audit door asserts '
+      + 'non-production, so both would refuse the one target the script exists for. The "process is SUPPOSED '
+      + 'to talk to production" case, same as backfillPlacePhotos.ts above.\n'
+      + 'CI NEVER INVOKES IT, which is the claim this entry has to make and which was measured rather than '
+      + 'assumed: its only package script is report:input-metrics, that script is named by no workflow, no '
+      + 'other script and no import path, and check:guard-coverage\'s own CI-surface derivation agrees — it '
+      + 'reported this file under "If CI never invokes it", not under "CI INVOKES IT".\n'
+      + 'READ-ONLY by construction: it issues SELECTs and nothing else — zero insert, upsert, update, delete '
+      + 'or rpc call anywhere in the file — so an operator who runs it against production cannot change a row '
+      + 'there. EXEMPTION MEANS UNGUARDED, NOT SAFE — the safety is that it only reads, and if this file ever '
+      + 'gains a write the exemption is void.',
+  },
   // ── Application code. The server is SUPPOSED to talk to production. ───────
   {
     file: 'src/lib/supabase.ts',
@@ -913,6 +951,36 @@ const EXEMPT = [
       'EXEMPTION MEANS UNGUARDED, NOT SAFE — if the injected fetch is ever removed, or the URL ever comes ' +
       'from the environment, the exemption is void and this file must import the guard.',
   },
+  {
+    file: 'src/test/db/trailPostgrestBridge.ts',
+    reason:
+      'THE TRAILS HARNESS BRIDGE (census-discovery §51). It builds the REAL @supabase/supabase-js client on ' +
+      'purpose, so TrailService and routes/trails.ts run against the local PostgreSQL harness with the filters ' +
+      'production sends. It CANNOT DIAL SUPABASE: createClient is given an injected fetch that turns each ' +
+      'request into one psql statement, and that fetch is the only transport the client has; the URL is the ' +
+      'literal "http://trail-bridge.invalid", written in the file and never read from the environment. It ' +
+      'names no Supabase credential variable. The psql it runs goes to LOCAL_DB_URL through the same ' +
+      'src/test/db/localDb.ts door every database suite uses, the throwaway database scripts/local-db/up.sh ' +
+      'boots. It is a helper, not an entry point: it runs only when src/test/db/trailsService.db.test.ts ' +
+      'imports it, and that suite skips without a local database. EXEMPTION MEANS UNGUARDED, NOT SAFE — if the ' +
+      'injected fetch is ever removed, or the URL ever comes from the environment, the exemption is void and ' +
+      'this file must import the guard.',
+  },
+  {
+    file: 'src/test/db/discoveryVerifyBridge.ts',
+    reason:
+      'THE VERIFICATION LANE\'S HARNESS BRIDGE (census-discovery §59). It builds the REAL @supabase/supabase-js ' +
+      'client on purpose, so routes/discovery.ts, routes/rankEvents.ts, the admin debug routes and ' +
+      'CreatorAttributionService run against the local PostgreSQL harness with the requests production sends. ' +
+      'It CANNOT DIAL SUPABASE: createClient is given an injected fetch that turns each request into one psql ' +
+      'statement against LOCAL_DB_URL (imported from src/test/db/localDb.ts, the throwaway database ' +
+      'scripts/local-db/up.sh boots), and that fetch is the only transport the client has; the URL is the ' +
+      'literal "http://p12-verify-bridge.invalid", written in the file and never read from the environment. It ' +
+      'names no Supabase credential variable. It is a helper, not an entry point: it runs only when a ' +
+      'src/test/db/discoveryVerify*.db.test.ts suite imports it, and those suites skip without a local ' +
+      'database. EXEMPTION MEANS UNGUARDED, NOT SAFE — if the injected fetch is ever removed, or the URL ever ' +
+      'comes from the environment, the exemption is void and this file must import the guard.',
+  },
 
   {
     file: 'src/test/mediaAccessFailClosed.test.ts',
@@ -926,6 +994,19 @@ const EXEMPT = [
       'with the file rather than with package.json, and it cannot inherit whatever an operator .env names ' +
       'because it overwrites it. pinnedTestEnv is set because CI invokes it and the CI-surface rule requires ' +
       'the flag of any exemption CI runs; the loopback pin is the weaker of the two. EXEMPTION MEANS ' +
+      'UNGUARDED, NOT SAFE — if this file is ever changed to construct a client, the exemption is void.',
+  },
+
+  {
+    file: 'src/test/mediaProcessingWorker.test.ts',
+    pinnedTestEnv: true,
+    reason:
+      'Registered unit test for the media processing worker and its dimension sweep (census-media §30, §32). ' +
+      'Its privacy case runs the real byte gate over rows as the sweep leaves them, and names SUPABASE_URL only ' +
+      'to SET it to the hardcoded literal "http://sb.example.test" and to restore whatever was there afterwards, ' +
+      'exactly as src/test/mediaAccessFailClosed.test.ts does, because mediaAccess builds a storage URL out of ' +
+      'that variable. It constructs NO client: it calls createClient nowhere, and every Supabase call goes to ' +
+      'in-file fakes. pinnedTestEnv is set because CI invokes it through the test script. EXEMPTION MEANS ' +
       'UNGUARDED, NOT SAFE — if this file is ever changed to construct a client, the exemption is void.',
   },
 
@@ -967,6 +1048,22 @@ const EXEMPT = [
   },
 
   {
+    file: 'src/test/discoveryFeedNoServiceClient.test.ts',
+    pinnedTestEnv: true,
+    reason:
+      'Registered unit test for GET /discovery/feed on the NO-SERVICE-CLIENT path (census-discovery §98, DV-83): '
+      + 'a presented Bearer token with no client to resolve it must be refused as an unresolved viewer, not served '
+      + 'as an anonymous empty feed. Same shape as authSignupStatusNoClient.test.ts: it names SUPABASE_URL and '
+      + 'SUPABASE_SERVICE_ROLE_KEY only to `delete` them from process.env before a dynamic import() of '
+      + 'src/lib/supabase.js, because isServiceClientReady is a load-time const and the runner\'s credentials would '
+      + 'otherwise pin it true. The detector is NAME-BASED and cannot tell that deletion from a read. The file '
+      + 'constructs no client, calls createClient nowhere, and asserts in before() that getServiceClient() is null, '
+      + 'so nothing in it can dial a database. Every other network call goes through a fetch override that refuses '
+      + 'the only upstreams the route calls. EXEMPTION MEANS UNGUARDED, NOT SAFE — if this file ever stops deleting '
+      + 'those variables, or ever constructs a client, the exemption is void and it must import the guard.',
+  },
+
+  {
     file: 'src/test/wallSessionIntentLiveDbStatus.test.ts',
     pinnedTestEnv: true,
     reason:
@@ -981,6 +1078,26 @@ const EXEMPT = [
       + 'the silence it exists to prevent, so the exemption is not a convenience but the requirement. '
       + 'EXEMPTION MEANS UNGUARDED, NOT SAFE — if this file ever constructs a client or issues a request, the '
       + 'exemption is void and it must import the guard or leave the curated list.',
+  },
+
+  {
+    file: 'src/test/inputAssistanceSelectionMemoryLiveDbStatus.test.ts',
+    pinnedTestEnv: true,
+    reason:
+      'G226 ANNOUNCEMENT half of the §35 selection-memory live harness — the same construction as '
+      + 'wallSessionIntentLiveDbStatus.test.ts above, for the same reason, and exempt on the same terms. Its '
+      + 'whole job is to make the ordinary suite SAY, on every run, that '
+      + 'src/test/inputAssistanceSelectionMemoryLiveDb.test.ts (which DOES import the strict guard front door, '
+      + 'and is therefore unregisterable in the curated test script) was not verified against a database. It '
+      + 'reads process.env.SUPABASE_URL and process.env.SUPABASE_SERVICE_ROLE_KEY at exactly two lines, and '
+      + 'uses both only to COMPOSE THE BANNER STRING naming what is missing. The detector here is NAME-BASED '
+      + 'and cannot tell a read that dials from a read that describes. MEASURED ON THIS FILE rather than '
+      + 'asserted: zero createClient, zero getServiceClient, zero .from(, zero fetch, zero import of '
+      + 'src/lib/supabase. Importing the strict guard here would make the file exit 2 on every ordinary run, '
+      + 'which is precisely the silence it exists to prevent, so the exemption is the requirement rather than '
+      + 'a convenience. pinnedTestEnv because CI invokes it and the CI-surface rule requires the flag of any '
+      + 'exemption CI runs. EXEMPTION MEANS UNGUARDED, NOT SAFE — if this file ever constructs a client or '
+      + 'issues a request, the exemption is void and it must import the guard or leave the curated list.',
   },
 
   {
@@ -1124,6 +1241,13 @@ const EXEMPT = [
     // nowhere, and every fetch it issues is to 127.0.0.1 on a port it opened
     // itself. It is in the `test` script, so the loopback pin below covers it.
     'src/test/verifyAuthzVoiceMediaOwnership.test.ts',
+    // ADDED 2026-09-26 with the Media §37 video lane. Same shape, checked: it
+    // names SUPABASE_URL only to save and restore the string around its own
+    // express server, injects a fake through `_setTestClient`, calls
+    // `createClient` nowhere, and answers the one Storage read /complete makes
+    // (a `https://storage.test/` signed URL) from an in-memory map. It is in the
+    // `test` script, so the loopback pin below covers it.
+    'src/test/mediaVideoTransport.test.ts',
   ].map((file) => ({
     file,
     pinnedTestEnv: true,

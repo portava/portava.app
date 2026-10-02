@@ -8,6 +8,7 @@
  * §6.1 hard invariants (deadline monotonicity), §15 escalation ladder
  * (`computeReturnState`), §20 engineVersion, Appendix A reason codes.
  */
+import type { EntryEligibility, EntryUnresolvedReason } from "./layoverEntryGate.js";
 import type { AirportProfile } from "./AirportProfileService.js";
 import type { LayoverSession } from "./LayoverSessionService.js";
 import { localHour, localHourMinute, localDayString } from "./AirportTime.js";
@@ -75,7 +76,7 @@ export type SafetyRating =
  *                 `hardReturnTime` computed under the old rules is not
  *                 reproducible under these.
  */
-export const LAYOVER_ENGINE_VERSION = "2026.09.14-1";
+export const LAYOVER_ENGINE_VERSION = "2026.09.22-1";
 
 /**
  * Spec Appendix A reason codes — the whole vocabulary, declared once so it can
@@ -1180,7 +1181,19 @@ export function computeWindow(
 }
 
 export interface LeaveAdvice {
-  verdict: "yes" | "tight" | "no" | "stay_airside";
+  /**
+   * `entry_unverified` ADDED 2026-09-22 with the entry gate. It is deliberately
+   * NOT one of the three time verdicts: "the clock allows this and we cannot
+   * confirm you may enter the country" is a different fact from "you are short
+   * of time", and folding it into `tight` would put the old conflation back one
+   * level down — a traveller told to hurry when the real problem is a border.
+   *
+   * Every consumer of this union was migrated with it. `LayoverSnapshot`'s
+   * `forbidden` test is the one that mattered: an unrecognised verdict there
+   * read as NOT forbidden, so adding a value without touching it would have
+   * been a fail-open.
+   */
+  verdict: "yes" | "tight" | "no" | "entry_unverified" | "stay_airside";
   reasons: string[];
   /** Facts we cannot know from the data we hold — shown explicitly to the user. */
   unknowns: string[];
@@ -1218,6 +1231,17 @@ export interface LeaveAdviceFacts {
    * reading them twice is how two numbers in one response stop agreeing.
    */
   liveConditions?: LiveConditions | null;
+  /**
+   * May this traveller legally enter the country they would be walking out
+   * into? Resolved by `layoverEntryGate.resolveLayoverEntry` from the curated
+   * corridor table — the same facts `lib/entryRequirements.ts` serves
+   * everywhere else, not a second source.
+   *
+   * ABSENT IS UNRESOLVED, never permitted. A caller that forgets to ask gets
+   * the cautious answer, which is the only default that cannot be wrong in the
+   * traveller's favour.
+   */
+  entry?: EntryEligibility | null;
 }
 
 /**
@@ -1234,6 +1258,45 @@ export interface LeaveAdviceFacts {
 export const TRAVEL_TIME_UNMEASURED_UNKNOWN =
   "How long it takes to reach places outside this airport has not been measured — no routed travel time exists for this airport";
 
+/**
+ * What a refused corridor's status means in a sentence. An UNRECOGNISED status
+ * falls back to the generic phrase rather than being printed raw: a column
+ * value is not traveller-facing copy, and a vocabulary this table has not seen
+ * is exactly when it should say less, not more.
+ */
+const ENTRY_REFUSAL_NOUN: Record<string, string> = {
+  visa_required: "a visa arranged in advance",
+  eta_required: "an electronic travel authorisation arranged in advance",
+  transit_visa_required: "a transit visa arranged in advance",
+  banned: "entry permission this passport does not have",
+};
+
+/**
+ * Why we could not confirm entry, said to the traveller. Each sentence names
+ * WHO can change the answer, because that is the difference between the five
+ * reasons and the only reason to keep them apart.
+ */
+const ENTRY_UNRESOLVED_REASON: Record<EntryUnresolvedReason, string> = {
+  entry_intelligence_disabled:
+    "We can't check entry rules right now, so confirm your own visa or transit-permit position before leaving.",
+  no_passport_on_file:
+    "Add your passport in Portava and we can check whether this country lets you in — until then, confirm it yourself.",
+  airport_country_unknown:
+    "We don't hold a country for this airport, so we can't check its entry rules — confirm your own visa position.",
+  no_data_for_corridor:
+    "Nobody has verified the entry rules for your passport into this country yet, so we won't guess — confirm them yourself.",
+  corridor_unreadable:
+    "We couldn't read the entry rules just now. Try again shortly, and confirm your own visa position before leaving.",
+};
+
+/**
+ * The standing entry unknown. Named so the one place that REMOVES it — a
+ * corridor confirmed permitted — can find it by identity, and so a test can
+ * assert its presence and absence without restating the sentence.
+ */
+export const ENTRY_UNCONFIRMED_UNKNOWN =
+  "Visa or transit-permit requirements for your nationality";
+
 /** "Can I Leave the Airport?" decision, phrased as guidance. */
 export function adviseLeaving(
   airport: Pick<AirportProfile, "verified">,
@@ -1242,9 +1305,7 @@ export function adviseLeaving(
   facts: LeaveAdviceFacts = {},
 ): LeaveAdvice {
   const reasons: string[] = [];
-  const unknowns: string[] = [
-    "Visa or transit-permit requirements for your nationality",
-  ];
+  const unknowns: string[] = [ENTRY_UNCONFIRMED_UNKNOWN];
   // Landside travel times: on this tree there are none (TravelTimeSource
   // "unmeasured"), and rows written before census L293 hold a category constant
   // ("category_default"). Say so wherever the traveller might act on it — i.e.
@@ -1253,9 +1314,25 @@ export function adviseLeaving(
   if (session.wantsToLeave && travelTimeSourceFor({ insideAirport: false, travelTimeSource: facts.travelTimeSource }) !== "measured") {
     unknowns.push(TRAVEL_TIME_UNMEASURED_UNKNOWN);
   }
-  // Entry is never confirmed on this tree — the visa line above is a standing
-  // unknown, and the code says so in a form a client or a metric can count.
-  const reasonCodes: LayoverReasonCode[] = ["ENTRY_NOT_CONFIRMED"];
+  // ENTRY. This used to read "Entry is never confirmed on this tree" and emit
+  // the code unconditionally, because nothing under services/airport/ read
+  // `entry_requirements` or `traveler_passports` — both present since 0169. Now
+  // a caller can supply the corridor, so the code is emitted where its
+  // CONDITION applies rather than always: whenever entry is not confirmed as
+  // permitted, which covers a refusal (confirmed, and confirmed as no) as well
+  // as every unresolved reason.
+  const entry: EntryEligibility = facts.entry ?? { state: "unresolved", reason: "entry_intelligence_disabled" };
+  const entryConfirmed = entry.state === "permitted";
+  const reasonCodes: LayoverReasonCode[] = entryConfirmed ? [] : ["ENTRY_NOT_CONFIRMED"];
+  if (entryConfirmed) {
+    // The standing visa unknown is no longer true for this traveller: a curated
+    // row says this corridor is open, and leaving the line in would disclaim a
+    // fact we now hold. Removed BY IDENTITY rather than by position — a
+    // positional `shift()` would silently drop whichever line happened to be
+    // first the day somebody adds an earlier unknown.
+    const at = unknowns.indexOf(ENTRY_UNCONFIRMED_UNKNOWN);
+    if (at >= 0) unknowns.splice(at, 1);
+  }
   // §10 live conditions carry their own Appendix A codes (SECURITY_WAIT_HIGH,
   // TRAFFIC_DEGRADED, DATA_STALE, SOURCE_CONFLICT). They are merged, never
   // re-derived here, and de-duplicated so a caller passing the same code twice
@@ -1286,10 +1363,31 @@ export function adviseLeaving(
     };
   }
 
+  // A REFUSED corridor overrides the clock entirely. All the spare time in the
+  // world does not make a border let you through, so this is checked before any
+  // usable-minutes branch rather than as a downgrade applied after one.
+  if (entry.state === "refused") {
+    reasons.unshift(
+      `Entry to ${entry.corridor.destinationCountry} on a ${entry.corridor.passportCountry} passport needs ${ENTRY_REFUSAL_NOUN[entry.status] ?? "documents you cannot get during a layover"}.`,
+    );
+    return { verdict: "no", reasons, reasonCodes, ...common };
+  }
+
   if (window.usableMinutes >= 90) {
     reasons.unshift(
       `About ${Math.floor(window.usableMinutes / 60)}h ${window.usableMinutes % 60}m of usable time after exit and return buffers.`,
     );
+    // THE DEFECT THIS GATE EXISTS TO CLOSE. This branch returned a confident
+    // "yes" while `unknowns` carried the visa line, so the response affirmed
+    // and disclaimed the same act at once. The clock still says yes; what it
+    // cannot say is that the traveller may enter, and now it does not pretend
+    // to. Only this branch is gated: "tight" and "no" were never a confident
+    // yes, and downgrading them further would be the gate inventing caution it
+    // has no fact for.
+    if (!entryConfirmed) {
+      reasons.push(ENTRY_UNRESOLVED_REASON[entry.reason]);
+      return { verdict: "entry_unverified", reasons, reasonCodes, ...common };
+    }
     return { verdict: "yes", reasons, reasonCodes, ...common };
   }
   if (window.usableMinutes >= 45) {
@@ -1303,4 +1401,139 @@ export function adviseLeaving(
   );
   reasonCodes.push("INSUFFICIENT_USABLE_TIME");
   return { verdict: "no", reasons, reasonCodes, ...common };
+}
+
+/**
+ * §8 L68 / L69 / L70 / L71 / L282 — the RETURN CORRIDOR's risk terms, in the one
+ * shape this engine will accept them in.
+ *
+ * DECLARED HERE, PRODUCED ELSEWHERE — the same arrangement as `LiveConditions`
+ * above, and for the same reason. Reconciliation, thresholds and the
+ * three-valued judgement are policy and belong one layer up
+ * (`lib/providers/returnRouteRisk.ts` owns them and argues them at length);
+ * what reaches this file is already a DECIDED answer with its factors named.
+ * Declaring the shape structurally rather than importing
+ * `ReturnRiskAssessment` keeps the arrow pointing one way: `services/airport`
+ * does not depend on `lib/providers`, and a producer satisfies this by being
+ * the right shape rather than by being the right module.
+ *
+ * `returnRouteUnreliable` and `fragileCorridor` are `boolean | null` and the
+ * `null` is load-bearing: it means THE CORRIDOR DOES NOT SUPPORT THE JUDGEMENT,
+ * never "reliable". This code exists to raise a flag, so resolving an unknown
+ * to `false` would withhold the warning on exactly the itineraries nobody could
+ * check — the population most likely to need it.
+ */
+export interface ReturnCorridorRisk {
+  /** L282. `null` = not judgeable. Never "reliable". */
+  returnRouteUnreliable: boolean | null;
+  /** L69. Same three-valued contract. */
+  fragileCorridor: boolean | null;
+  /** Which conditions fired, by name, so a warning is actionable. */
+  contributingFactors: readonly string[];
+  /** The measurements the judgement was read off. No thresholds in here. */
+  facts: {
+    /** L68 — ways back that fail INDEPENDENTLY, not `routes.length`. */
+    independentReturnRoutes: number;
+    /** Every way back offered, before the independence reduction. */
+    offeredReturnRoutes: number;
+    /** L70 — `committed` means that once aboard, a moved deadline cannot be acted on. */
+    bestRouteInterruptibility: string;
+    /** L70 across every offered route. */
+    allRoutesInterruptibility: string;
+    /** L71 — fewest changes of conveyance any way back requires. */
+    minTransferCount: number;
+    /** L71 — the most, so the spread is visible. */
+    maxTransferCount: number;
+    /** L73 — the corridor has stopped being a statement about now. */
+    stale: boolean;
+    /** L62 — signals the corridor could not measure, each naming its blocker. */
+    unmeasured: ReadonlyArray<{ signal: string; blockedBy: string }>;
+  };
+}
+
+/** The `unknowns` line for a way back nobody could check. */
+export const RETURN_CORRIDOR_UNJUDGEABLE_UNKNOWN =
+  "Whether there is a reliable way back to this airport could not be checked — no return route was measured";
+
+/** The `unknowns` line for a way back that was measured but has gone stale. */
+export const RETURN_CORRIDOR_STALE_UNKNOWN =
+  "The route back was measured earlier and is no longer current, so it is not being used to judge your return";
+
+/**
+ * Fold the return corridor's risk terms into an advice, WITHOUT recomputing any
+ * of them.
+ *
+ * ── IT MAY ONLY EVER DOWNGRADE ───────────────────────────────────────────────
+ * §10.1's conservative rule, applied to a verdict instead of a buffer: a
+ * corridor signal may make the advice more cautious and may never make it less.
+ * `yes` becomes `tight` when the way back is judged unreliable; `tight` and
+ * `no` stay where they are, and `stay_airside` is the traveller's own answer
+ * and is not the engine's to revise. There is deliberately no path from `tight`
+ * to `no`: "no" is an arithmetic claim about the window, and a fragile corridor
+ * is not evidence about the window.
+ *
+ * ── AN ABSENT CORRIDOR IS THE IDENTITY ───────────────────────────────────────
+ * `risk === null` returns the advice OBJECT unchanged — not a rebuilt copy, so
+ * a test can prove it by identity. That is every call on this tree: the
+ * corridor provider's two gates refuse on every deployment, so nothing a
+ * traveller sees moves until an owner decides to spend.
+ *
+ * `LAYOVER_ENGINE_VERSION` is NOT bumped. The buffer arithmetic is untouched —
+ * not a term, not a threshold, not a band — so every stored `hardReturnTime`
+ * and `returnState` is still reproducible under these rules, which is what that
+ * constant exists to promise. `adviseLeaving` itself is byte-identical.
+ */
+export function returnRiskAdjustedAdvice(
+  advice: LeaveAdvice,
+  risk: ReturnCorridorRisk | null,
+): LeaveAdvice {
+  if (!risk) return advice;
+
+  const reasons = [...advice.reasons];
+  const unknowns = [...advice.unknowns];
+  const reasonCodes: LayoverReasonCode[] = [...advice.reasonCodes];
+  const f = risk.facts;
+
+  // L282. The ONLY emitter of this code on the tree — it is listed in
+  // LAYOVER_REASON_CODES as "declared, never emitted (no input exists in any
+  // shape)", and the input is this argument.
+  if (risk.returnRouteUnreliable === true && !reasonCodes.includes("RETURN_ROUTE_UNRELIABLE")) {
+    reasonCodes.push("RETURN_ROUTE_UNRELIABLE");
+  }
+  // Not judgeable is NOT reliable. Disclosed, never silently dropped.
+  if (risk.returnRouteUnreliable === null) {
+    unknowns.push(f.stale ? RETURN_CORRIDOR_STALE_UNKNOWN : RETURN_CORRIDOR_UNJUDGEABLE_UNKNOWN);
+  }
+
+  // L68 / L69 — one way back is one failure away from none. Stated as a reason
+  // rather than folded into the verdict's prose, so a traveller reads WHY.
+  if (risk.fragileCorridor === true) {
+    reasons.push(
+      f.independentReturnRoutes <= 0
+        ? "No independent way back was found."
+        : `Only ${f.independentReturnRoutes} independent way back (${f.offeredReturnRoutes} route(s) offered, sharing a transfer point).`,
+    );
+  }
+  // L70 — once aboard, a deadline that moves cannot be acted on.
+  if (f.bestRouteInterruptibility === "committed") {
+    reasons.push("The fastest way back cannot be interrupted once you are aboard.");
+  } else if (f.bestRouteInterruptibility === "unknown") {
+    unknowns.push("Whether the way back can be interrupted part-way is not known");
+  }
+  // L71 — every change of conveyance is a place the plan can break.
+  if (f.minTransferCount >= 2) {
+    reasons.push(`Every way back needs at least ${f.minTransferCount} changes of transport.`);
+  }
+  // L62 — an assessment that hid its own coverage would be worse than none.
+  for (const u of f.unmeasured) {
+    unknowns.push(`Return-route risk could not account for ${u.signal} — ${u.blockedBy}`);
+  }
+
+  const verdict: LeaveAdvice["verdict"] =
+    risk.returnRouteUnreliable === true && advice.verdict === "yes" ? "tight" : advice.verdict;
+  if (verdict !== advice.verdict) {
+    reasons.unshift("The way back is not dependable enough to call this comfortable.");
+  }
+
+  return { ...advice, verdict, reasons, unknowns, reasonCodes };
 }

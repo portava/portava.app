@@ -20,7 +20,7 @@
  * beside the read for check-flag-polarity to resolve it, and because a caller
  * that forgot would otherwise be handed a decision it had no right to serve.
  */
-import { liveLabelsServable, readLiveClaimEnvelopes, type LiveClaimEnvelope } from "./liveClaimRead.js";
+import { liveLabelsServable, readLiveClaimEnvelopes, type LiveClaimEnvelope } from "./liveClaimRead.js"; import { liveClaimReadFailed } from "./liveClaimRead.js"; // TM-live COMP-F15
 import { haversineKm } from "./mapSearch.js";
 import { WALKING_SPEED_KMH } from "../compass/CompassLiveConstraints.js";
 import { decideCompass, type CompassDecisionResult, type DecisionIntent, type DecisionSubject } from "./compassDecision.js";
@@ -60,7 +60,7 @@ async function readPlace(sc: any, id: string): Promise<{ ok: true; row: PlaceRow
 
 async function subjectState(sc: any, subjectId: string, readable: boolean, now: Date): Promise<DecisionSubject> {
   const envelopes: LiveClaimEnvelope[] = readable ? await readLiveClaimEnvelopes(sc, subjectId, { now }) : [];
-  return { subjectId, envelopes, readable };
+  return { subjectId, envelopes, readable: readable && !liveClaimReadFailed(envelopes) }; // TM-live COMP-F15: a FAILED read (§94 mark) is "could not look", never "no evidence"
 }
 
 /**
@@ -103,5 +103,5 @@ export async function assembleCompassDecision(sc: any, q: DecisionQuery, now: Da
     },
     now.getTime(),
   );
-  return { ok: true, result, place: place.row, liveIntelligenceReadable: readable, etaMinutes };
+  return { ok: true, result, place: place.row, liveIntelligenceReadable: readable && candidate.readable, etaMinutes }; // TM-live COMP-F15: an errored candidate read is not readable
 }

@@ -4,7 +4,7 @@ import {
 } from 'react-native';
 import { Search } from 'lucide-react-native';
 import type { DiscoveryCategory, DiscoveryContextMode, DiscoveryFilters, DiscoveryPlace } from '../../services/discovery.ts';
-import { getDiscoveryPlaces, getCachedDiscoveryPlaces } from '../../services/discovery.ts';
+import { getDiscoveryPlaces, getCachedDiscoveryPlaces } from '../../services/discovery.ts'; import { listPartialNotice, listPartialEmptyTitle, LIST_PARTIAL_EMPTY_BODY } from '../../services/discoveryCoverageNotice.ts'; import { liveClaimsUnchecked, LIVE_UNCHECKED_NOTICE } from './liveUnchecked.ts';  // census-discovery §91 (A07)
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import PlaceCard from './PlaceCard.tsx';
 import { PlaceSkeletonList } from './PlaceSkeleton.tsx';
@@ -344,6 +344,12 @@ interface DiscoveryCategoryTabProps {
   onAddToRoute?: (draft: import('../RouteBuilderSheet.tsx').RouteStopDraft) => void;
   onPickDestination?: (place: Place) => void;
   contextMode?: DiscoveryContextMode | null;
+  /**
+   * Sensing §8 intent mode the user chose (census-discovery §71), sent as
+   * `?intentMode=` on GET /discovery. Null / absent ⇒ not sent. The screen
+   * remounts this tab when it changes (its `key`), so it is fixed per instance.
+   */
+  intentMode?: import('../../../src/services/discovery.ts').DiscoveryIntentMode | null;
   viewMode?: 'list' | 'map';
   ageFilter?: import('../../../src/services/discovery.ts').DiscoveryAgeFilter | null;
   customMinAge?: number | null;
@@ -376,6 +382,7 @@ export function DiscoveryCategoryTab({
   onAddToRoute,
   onPickDestination,
   contextMode,
+  intentMode,
   viewMode = 'list',
   ageFilter,
   customMinAge,
@@ -393,17 +400,17 @@ export function DiscoveryCategoryTab({
   // SWR: seed from in-memory client cache so second opens paint instantly.
   const [places, setPlaces]         = useState<DiscoveryPlace[]>(() => {
     if (!destination) return [];
-    return getCachedDiscoveryPlaces(destination, category, 10, 1)?.places ?? [];
+    return getCachedDiscoveryPlaces(destination, category, 10, 1, intentMode)?.places ?? [];
   });
   const [loading, setLoading]       = useState<boolean>(() => {
     if (!destination) return false;
-    return getCachedDiscoveryPlaces(destination, category, 10, 1) === null;
+    return getCachedDiscoveryPlaces(destination, category, 10, 1, intentMode) === null;
   });
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError]           = useState<string | null>(null);
   const [page, setPage]             = useState(1);
-  const [total, setTotal]           = useState(0);
-  const [locationNudge, setLocationNudge] = useState(false);
+  const [total, setTotal]           = useState(0);  const [moreRefused, setMoreRefused] = useState(false); const [partial, setPartial] = useState(false);  // DV-83: page ≥ 2 was REFUSED — see load(); §80: a page came back PARTIAL
+  const [locationNudge, setLocationNudge] = useState(false); const [liveUnchecked, setLiveUnchecked] = useState(false);  // census-discovery §91 (A07): the served page's "now" claims were withheld (meta.liveSafety)
   const loadingMore                 = useRef(false);
   const nudgeOpacity                = useRef(new Animated.Value(0)).current;
   const nudgeTimer                  = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -456,7 +463,7 @@ export function DiscoveryCategoryTab({
   const load = useCallback(async (nextPage: number, currentFilters: DiscoveryFilters, reset: boolean) => {
     if (!destination) return;
     if (reset) setLoading(true);
-    setError(null);
+    setError(null); setMoreRefused(false);
 
     // Read user coords from refs so this callback stays stable across GPS updates.
     // The location-change effect is the sole handler that re-fires when the user
@@ -480,7 +487,8 @@ export function DiscoveryCategoryTab({
       nearestFetchPendingWithCoords.current = true;
     }
 
-    const res = await getDiscoveryPlaces(destination, category, currentFilters, nextPage, contextMode, ageFilter, customMinAge, customMaxAge, lat, lng, nearestUserLat, nearestUserLng);
+    const requestFilters = intentMode ? { ...currentFilters, intentMode } : currentFilters;  // no mode ⇒ the filters object passed before §71
+    const res = await getDiscoveryPlaces(destination, category, requestFilters, nextPage, contextMode, ageFilter, customMinAge, customMaxAge, lat, lng, nearestUserLat, nearestUserLng);
 
     // Always clear — bootstrap guard is only needed during the async window.
     nearestFetchPendingWithCoords.current = false;
@@ -511,7 +519,19 @@ export function DiscoveryCategoryTab({
     if (nextPage === 1 && res.data.refusal?.coverage === 'nothing') {
       setError("We couldn't load places just now — this is on our side, not your filters.");
       setPlaces([]);
-      setTotal(0);
+      setTotal(0); setPartial(false); setLiveUnchecked(false);
+      return;
+    }
+
+    // …and a refused LOAD-MORE is not the end of the list. It used to fall through
+    // to the success path below, which set `total` to the refusal's padding `0` and
+    // advanced `page` — so the footer printed "N places found", the list's own
+    // claim that the set had ended, about a page nobody read, and every further
+    // load-more was refused locally (`places.length >= total`). The page already on
+    // screen stays, `total` and `page` stay what the last REAL answer said, and the
+    // footer says what happened in the page-1 refusal's own words, with its retry.
+    if (res.data.refusal?.coverage === 'nothing') {
+      setMoreRefused(true);
       return;
     }
 
@@ -521,8 +541,8 @@ export function DiscoveryCategoryTab({
       lastFetchedCoords.current = { lat: nearestUserLat, lng: nearestUserLng };
     }
 
-    const filtered = applyClientFilters(res.data.places);
-    setTotal(res.data.total);
+    const filtered = applyClientFilters(res.data.places); const pagePartial = res.data.refusal?.coverage === 'partial'; setPartial((prev) => (nextPage === 1 ? pagePartial : prev || pagePartial)); // §80: page 1 decides; a later partial page keeps the line up
+    setTotal(res.data.total); setLiveUnchecked((prev) => (nextPage === 1 ? false : prev) || liveClaimsUnchecked(res.data));  // §91 (A07): a new page-1 query restates it; a later page can only add it
     // Replace on page-1 (new query), append on subsequent pages (pagination).
     setPlaces((prev) => nextPage === 1 ? filtered : [...prev, ...filtered]);
     setPage(nextPage);
@@ -532,10 +552,10 @@ export function DiscoveryCategoryTab({
     // SWR: immediately hydrate with the cache for the active destination/category
     // so city or tab switches never show stale content from the previous query.
     const cachedResult = destination
-      ? getCachedDiscoveryPlaces(destination, category, filters.radiusKm, 1)
+      ? getCachedDiscoveryPlaces(destination, category, filters.radiusKm, 1, intentMode)
       : null;
     if (cachedResult) {
-      setPlaces(cachedResult.places);
+      setPlaces(cachedResult.places); setPartial(cachedResult.refusal?.coverage === 'partial');
       setLoading(false);
     } else {
       setPlaces([]);
@@ -611,7 +631,7 @@ export function DiscoveryCategoryTab({
 
   return (
     <View style={{ flex: 1 }}>
-
+      {liveUnchecked && places.length > 0 ? <Text style={[styles.endText, { paddingHorizontal: 16, paddingTop: 8 }]} testID="discovery-live-unchecked">{LIVE_UNCHECKED_NOTICE}</Text> : null}
       {locationNudge && (
         <Animated.View style={[nudge.bar, { opacity: nudgeOpacity }]} pointerEvents="none">
           <Text style={nudge.text}>📍 Location updated — re-sorting nearest places</Text>
@@ -630,7 +650,7 @@ export function DiscoveryCategoryTab({
             <Text style={styles.retryText}>Try again</Text>
           </Pressable>
         </View>
-      ) : places.length === 0 ? (
+      ) : places.length === 0 && partial ? (<View style={styles.center} testID="discovery-category-partial-empty"><Text style={styles.emptyTitle}>{listPartialEmptyTitle('places')}</Text><Text style={styles.emptyDesc}>{LIST_PARTIAL_EMPTY_BODY}</Text><Pressable style={styles.retryBtn} onPress={() => load(1, filters, true)}><Text style={styles.retryText}>Try again</Text></Pressable></View>) : places.length === 0 ? (
         <View style={styles.center}>
           <Text style={styles.emptyTitle}>No places found</Text>
           <Text style={styles.emptyDesc}>
@@ -640,7 +660,7 @@ export function DiscoveryCategoryTab({
       ) : (
         <FlatList
           testID="main-scroll"
-          data={places}
+          data={places} ListHeaderComponent={partial ? <Text style={styles.emptyDesc} testID="discovery-category-partial">{listPartialNotice('places')}</Text> : null}
           keyExtractor={(item) => item.id}
           renderItem={({ item }) => (
             <PlaceCard
@@ -681,10 +701,19 @@ export function DiscoveryCategoryTab({
               tintColor={color.signal}
             />
           }
-          onEndReached={handleLoadMore}
+          // While page ≥ 2 is refused, scrolling does not re-ask: during an outage that
+          // would re-send the same request on every scroll. The footer's retry does.
+          onEndReached={moreRefused ? undefined : handleLoadMore}
           onEndReachedThreshold={0.4}
           ListFooterComponent={
-            places.length >= total && places.length > 0 ? (
+            moreRefused ? (
+              <View style={styles.moreRefused} testID="discovery-category-more-refused">
+                <Text style={styles.emptyDesc}>We couldn't load places just now — this is on our side, not your filters.</Text>
+                <Pressable style={styles.retryBtn} onPress={handleLoadMore}>
+                  <Text style={styles.retryText}>Try again</Text>
+                </Pressable>
+              </View>
+            ) : places.length >= total && places.length > 0 ? (
               <Text style={styles.endText}>{places.length} places found</Text>
             ) : null
           }
@@ -747,6 +776,12 @@ const styles = StyleSheet.create({
     color: color.faint,
     fontSize: 11,
     textAlign: 'center',
+    marginVertical: space.xl,
+  },
+  moreRefused: {
+    alignItems: 'center',
+    gap: space.md,
+    paddingHorizontal: space.xxl,
     marginVertical: space.xl,
   },
 });

@@ -12,11 +12,47 @@
  * triggers, the (actor_id, idempotency_key) unique index and the service_role
  * grants — this module only writes through them.
  *
- * FAIL-CLOSED SUBJECT CHECK: intel_observations.subject_id FKs public.places(id).
- * In production places holds 0 rows (the Replit backfill is pending), so a real
- * capture would hit a foreign-key 500. This service verifies the subject resolves
- * FIRST and returns a clean `unknown_subject` rejection instead — the 0-rows
- * blocker surfaces as validation, never a stack trace.
+ * FAIL-CLOSED SUBJECT CHECK: a NON-NULL intel_observations.subject_id FKs
+ * public.places(id). In production places holds 0 rows (the Replit backfill is
+ * pending), so a real capture would hit a foreign-key 500. This service verifies
+ * the subject resolves FIRST and returns a clean `unknown_subject` rejection
+ * instead — the 0-rows blocker surfaces as validation, never a stack trace.
+ *
+ * ── §18.3: A SUBJECT MAY BE UNKNOWN, AND THAT IS AN ANSWER ───────────────────
+ * `subjectId` is NULLABLE here, and the schema is nullable with it (migration
+ * 3002). The spec's entity reconciliation has four outcomes — Place, Event,
+ * Temporary world object, Unknown — and until 3002 the last two could not be
+ * STORED, because `subject_id` was `NOT NULL REFERENCES places(id)`. That
+ * requirement is what produced the nearest-place snap §14 and §18.3 both forbid
+ * by name ("Never assign to the nearest place merely to satisfy a foreign key").
+ *
+ * So an unowned cluster is written with `subjectId: null`, the zone it was seen
+ * in, and a subject kind of `unknown` or `temporary_world_object`
+ * (lib/sensingSubjectReconciliation owns that vocabulary and the rule that
+ * PROXIMITY IS NOT OWNERSHIP). This service refuses an unowned capture that
+ * names no zone — `unknown_subject`, fail-closed — because a cluster with
+ * neither an owner nor a place to be in is not an observation of anywhere.
+ *
+ * Note what does NOT follow: proposeClaim REFUSES an unresolved subject
+ * (`unresolved_subject`). intel_claims.subject_id is still NOT NULL REFERENCES
+ * places(id), deliberately — a published claim is a proposition about a PLACE,
+ * and minting one for an unowned cluster would be the same snap by another
+ * route.
+ *
+ * ── THE CONTRIBUTOR IDENTITY IS NOT AN ACCOUNT ID ────────────────────────────
+ * `actorId` is still passed in and still used for consent, crew membership and
+ * the group key — those are decisions ABOUT THE PERSON MAKING THE REQUEST, taken
+ * before anything is stored. What is STORED is not an account id: migration 3002
+ * dropped `actor_id`'s foreign key to profiles and put a BEFORE INSERT trigger on
+ * the three contribution tables that replaces the submitted account id with a
+ * rotating, non-reversible contributor token. Sensing §3: "World-intelligence
+ * contribution records should not carry a permanent profiles.id / account
+ * user_id foreign key."
+ *
+ * The one place that has to KNOW about the swap is the idempotent-replay lookup
+ * below, because it reads a row back by contributor identity. It handles both
+ * schemas on purpose — 3002 is in the tree and has NOT been applied — and the
+ * pre-3002 branch becomes dead the day it is.
  */
 import { isFlagEnabled } from "../../lib/featureFlags.js";
 import { affectedRows } from "../../lib/affectedRows.js";
@@ -45,6 +81,7 @@ import { resolveActiveCrewId } from "../../lib/activeCrew.js";
 import { hasValidIntelConsent } from "../../lib/intelConsent.js";
 import { logger } from "../../lib/logger.js";
 import { verifyPresence, type PresenceVerificationOutcome } from "./PresenceVerifier.js";
+import { isUnownedSubjectKind } from "../../lib/sensingSubjectReconciliation.js";
 
 /**
  * Capture surfaces, each gated by its own flag (spec §26 flag registry):
@@ -108,8 +145,12 @@ async function captureSystemEnabled(sc: any): Promise<boolean> {
 }
 
 export interface CaptureInput {
-  subjectId: string;              // places(id)
-  subjectKind?: string;           // default 'experience'
+  /**
+   * places(id), or NULL for the two §18.3 outcomes that have no canonical owner
+   * (`unknown`, `temporary_world_object`). A null subject REQUIRES `zoneId`.
+   */
+  subjectId: string | null;
+  subjectKind?: string;           // default 'experience'; 'unknown' / 'temporary_world_object' when subjectId is null
   zoneId?: string | null;
   claimType: string;              // must be in SURFACE_CLAIMS[captureSurface]
   value: Record<string, unknown>; // validated against the claim type
@@ -238,7 +279,8 @@ export interface ResolvedPresenceForCapture extends ResolvedPresence {
 
 export interface PresenceCaptureContext {
   actorId: string;
-  subjectId: string;
+  /** Null for an unowned (§18.3 unknown / temporary_world_object) capture. */
+  subjectId: string | null;
   subjectKind: string;
   claimType: string;
   /** Server-clamped ISO observed_at. */
@@ -256,6 +298,11 @@ export async function resolvePresenceForCapture(
   const isLiveGrade = presenceRank(claimed) >= MIN_LIVE_PRESENCE_INDEX;
   // Below the live floor nothing is verified — unchanged behaviour, no flag read.
   if (!isLiveGrade) return resolvePresenceAttestation(claimedLevelRaw, claimedAttestation);
+  // §18.3 unowned subject: there is no place to geofence against, no saved_place
+  // to interact with and no mission to redeem, so PresenceVerifier has nothing to
+  // verify — every one of its rungs is keyed on a places row. Clamping (the
+  // no-verifier path) is the fail-closed answer, not a reason to invent a place.
+  if (ctx.subjectId == null) return resolvePresenceAttestation(claimedLevelRaw, claimedAttestation);
   // Flag OFF (or unreadable — isFlagEnabled is fail-closed) ⇒ today's clamp, byte-identical.
   if (!(await isFlagEnabled(sc, "intel_presence_verification_enabled"))) {
     return resolvePresenceAttestation(claimedLevelRaw, claimedAttestation);
@@ -318,6 +365,68 @@ async function recordPresenceVerification(
 }
 
 /**
+ * Find the row a 23505 on (actor_id, idempotency_key) says already exists.
+ *
+ * TWO SCHEMAS, ON PURPOSE. `3002_intel_contribution_identity.sql` drops
+ * `actor_id`'s foreign key to profiles and puts a BEFORE INSERT trigger on
+ * intel_observations that replaces the submitted account id with a rotating,
+ * non-reversible contributor token. It is IN THE TREE and has NOT been applied,
+ * so this lookup must be correct against both shapes:
+ *
+ *   pre-3002   the stored actor_id IS the account id  -> filter on it directly
+ *   post-3002  the stored actor_id is a token         -> ask the database for
+ *              this actor's token (public.intel_contributor_token, service_role
+ *              only) and filter on that
+ *
+ * Order matters only for cost: the direct filter is one round trip and is the
+ * whole answer before the migration lands, so it runs first and the RPC is only
+ * reached when it finds nothing — which, after the migration, is always.
+ *
+ * FAILURE IS NOT SILENCE. A lookup that cannot answer returns `ok:false` and the
+ * caller reports db_error so the client retries; it never reports a dedup it did
+ * not verify, and never returns someone else's row. In particular it does NOT
+ * fall back to matching on `idempotency_key` alone: a derived key (see
+ * routes/mapObservations.deriveIdempotencyKey) is a function of the
+ * CONTRIBUTION, not of the contributor, so two travellers tapping the same
+ * prompt in the same minute share one — and handing back the other person's
+ * observation id would be a disclosure, not a dedup.
+ */
+type ReplayLookup =
+  | { ok: true; observation: any | null }
+  | { ok: false; error: unknown; detail: string };
+
+async function findReplayedObservation(
+  sc: any, actorId: string, idempotencyKey: string,
+): Promise<ReplayLookup> {
+  const { data: direct, error: directErr } = await sc
+    .from("intel_observations").select("*")
+    .eq("actor_id", actorId).eq("idempotency_key", idempotencyKey).maybeSingle();
+  if (directErr) return { ok: false, error: directErr, detail: String((directErr as any).message ?? "") };
+  if (direct) return { ok: true, observation: direct };
+
+  // Post-3002: the stored identity is a token this process cannot derive (the
+  // pepper is unreadable by every application role — that is the point), so the
+  // database is asked for it.
+  let token: string | null = null;
+  try {
+    const { data, error } = await sc.rpc("intel_contributor_token", { p_actor_id: actorId });
+    if (error) return { ok: false, error, detail: `contributor token lookup: ${String((error as any).message ?? "")}` };
+    token = typeof data === "string" ? data : (Array.isArray(data) && typeof data[0] === "string" ? data[0] : null);
+  } catch (err) {
+    // A client without .rpc, or a database without 3002 applied. Nothing more can
+    // be established, and the safe direction is to say so.
+    return { ok: false, error: err, detail: "contributor token lookup unavailable" };
+  }
+  if (!token) return { ok: false, error: null, detail: "contributor token lookup returned nothing" };
+
+  const { data: byToken, error: tokenErr } = await sc
+    .from("intel_observations").select("*")
+    .eq("actor_id", token).eq("idempotency_key", idempotencyKey).maybeSingle();
+  if (tokenErr) return { ok: false, error: tokenErr, detail: String((tokenErr as any).message ?? "") };
+  return { ok: true, observation: byToken ?? null };
+}
+
+/**
  * Write one observation. Fail-closed no-op when the flag is off. Idempotent: a
  * replay of the same (actor_id, idempotency_key) returns the stored row.
  */
@@ -357,10 +466,39 @@ export async function writeObservation(sc: any, actorId: string, input: CaptureI
   }
 
   const visibility: Visibility = input.visibility && VISIBILITIES.includes(input.visibility) ? input.visibility : "private";
-  // Fail-closed subject resolution — never let the places FK throw a 500.
-  const { data: subj, error: subjErr } = await sc.from("places").select("id").eq("id", input.subjectId).maybeSingle();
-  if (subjErr) return { ok: false, reason: "db_error", detail: "subject lookup" };
-  if (!subj) return { ok: false, reason: "unknown_subject", detail: input.subjectId };
+
+  // ── SUBJECT RESOLUTION (§18.3) ────────────────────────────────────────────
+  // Two shapes, and the second one is the whole point of this unit.
+  //
+  //   OWNED    subjectId names a places row. Resolved fail-closed, exactly as
+  //            before — never let the places FK throw a 500.
+  //   UNOWNED  subjectId is null. The §18.3 outcomes `unknown` and
+  //            `temporary_world_object`, keyed on the ZONE the activity was seen
+  //            in. There is no place to look up, and looking for a nearby one is
+  //            the snap §14 forbids.
+  //
+  // The two refusals below are the fail-closed halves of the unowned shape:
+  // a null subject with no zone names nowhere at all, and a null subject with an
+  // OWNED subject kind is a caller that lost its answer on the way here. Both are
+  // also refused by intel_observations_subject_resolution_check (migration 3002),
+  // so a caller that bypasses this service still cannot write either shape.
+  const subjectKind = input.subjectKind ?? "experience";
+  const unowned = input.subjectId == null;
+  if (unowned) {
+    if (!input.zoneId) {
+      return { ok: false, reason: "unknown_subject", detail: "an unowned observation must name the zone it was observed in" };
+    }
+    if (!isUnownedSubjectKind(subjectKind)) {
+      return { ok: false, reason: "unknown_subject", detail: `subject_kind '${subjectKind}' requires a subject id` };
+    }
+  } else {
+    if (isUnownedSubjectKind(subjectKind)) {
+      return { ok: false, reason: "unknown_subject", detail: `subject_kind '${subjectKind}' must not carry a place id` };
+    }
+    const { data: subj, error: subjErr } = await sc.from("places").select("id").eq("id", input.subjectId).maybeSingle();
+    if (subjErr) return { ok: false, reason: "db_error", detail: "subject lookup" };
+    if (!subj) return { ok: false, reason: "unknown_subject", detail: input.subjectId ?? "" };
+  }
 
   // Presence attestation gate (H2): a client-asserted live-grade presence is not
   // trusted without a server-verified attestation. With
@@ -372,7 +510,7 @@ export async function writeObservation(sc: any, actorId: string, input: CaptureI
   const presence = await resolvePresenceForCapture(sc, input.presenceLevel, input.presenceAttestation, {
     actorId,
     subjectId: input.subjectId,
-    subjectKind: input.subjectKind ?? "experience",
+    subjectKind,
     claimType: input.claimType,
     observedAt: clamped.observedAt,
     capturedAt: input.capturedAt ?? null,
@@ -429,7 +567,12 @@ export async function writeObservation(sc: any, actorId: string, input: CaptureI
       }
     }
   }
-  const groupKey = deriveGroupKey(input.subjectId, groupIdentity);
+  // The group key folds the SUBJECT in so the same crew at two venues produces two
+  // unlinkable keys (lib/intelGroupKey). An unowned cluster has no place id, so the
+  // zone takes that role — a coarse area, never a position, and prefixed so a zone
+  // id can never collide with a place id in the digest.
+  const groupSubject = input.subjectId ?? `zone:${input.zoneId ?? ""}`;
+  const groupKey = deriveGroupKey(groupSubject, groupIdentity);
 
   // §22 Table 30 commercial disclosure. Fail-closed: an unknown/omitted value is
   // 'none'. A DISCLOSED commercial relationship (non-'none') records the
@@ -443,8 +586,13 @@ export async function writeObservation(sc: any, actorId: string, input: CaptureI
       : "none";
 
   const row = {
+    // The INGEST CREDENTIAL, not what is stored. Migration 3002's BEFORE INSERT
+    // trigger replaces this with a rotating, non-reversible contributor token
+    // before the row exists; there is no longer a foreign key to profiles for it
+    // to satisfy. Sending the account id is what lets the database derive the
+    // token (and what lets erase_intel_for_actor find it again).
     actor_id: actorId,
-    subject_kind: input.subjectKind ?? "experience",
+    subject_kind: subjectKind,
     subject_id: input.subjectId,
     zone_id: input.zoneId ?? null,
     claim_type: input.claimType,
@@ -469,20 +617,18 @@ export async function writeObservation(sc: any, actorId: string, input: CaptureI
   if (error) {
     // Unique (actor_id, idempotency_key) -> idempotent replay: return the stored row.
     if (String((error as any).code) === "23505") {
-      const { data: existing, error: replayErr } = await sc
-        .from("intel_observations").select("*")
-        .eq("actor_id", actorId).eq("idempotency_key", input.idempotencyKey).maybeSingle();
+      const replay = await findReplayedObservation(sc, actorId, input.idempotencyKey);
       // The direction here is already safe — a replay we cannot confirm falls
       // through to the db_error below and the client retries, rather than being
       // told a write happened that we cannot show. What was NOT safe is the
       // silence: the reported detail was the 23505, which reads as "your
       // idempotency key collided" when the truth is "the replay lookup failed",
       // and no operator would ever see the second fact.
-      if (replayErr) {
-        logger.warn({ err: replayErr, actorId }, "intel observation replay lookup failed after 23505");
-        return { ok: false, reason: "db_error", detail: `replay lookup failed: ${String(replayErr.message ?? "")}` };
+      if (!replay.ok) {
+        logger.warn({ err: replay.error, actorId }, "intel observation replay lookup failed after 23505");
+        return { ok: false, reason: "db_error", detail: `replay lookup failed: ${replay.detail}` };
       }
-      if (existing) return { ok: true, observation: existing, deduped: true };
+      if (replay.observation) return { ok: true, observation: replay.observation, deduped: true };
     }
     return { ok: false, reason: "db_error", detail: String((error as any).message ?? "") };
   }
@@ -540,6 +686,14 @@ export async function proposeClaim(sc: any, observation: any): Promise<ProposeRe
   // Privacy invariant (spec §4): a movement claim is aggregate-only — never a
   // single-user published claim. Capture keeps the observation; propose refuses.
   if (mustAggregate(observation.claim_type)) return { ok: false, reason: "must_aggregate" };
+  // §18.3, the half that is NOT about storage. An observation whose subject
+  // reconciled to `unknown` or `temporary_world_object` is STORED (3002 made
+  // that possible) but may not become a CLAIM: intel_claims.subject_id is still
+  // NOT NULL REFERENCES places(id), deliberately, because a claim is a published
+  // proposition about a PLACE. Refusing here is what keeps that a ruling rather
+  // than a foreign-key 500 — and picking a place for it would be the nearest-
+  // place snap arriving one stage later.
+  if (observation.subject_id == null) return { ok: false, reason: "unresolved_subject" };
   const ttl = ttlFor(observation.claim_type);
   const base = new Date(observation.observed_at).getTime();
   const observationId: string | null = typeof observation.id === "string" && observation.id.length > 0 ? observation.id : null;
@@ -711,6 +865,30 @@ export async function correctClaim(
 ): Promise<CaptureResult & { supersededPrior?: boolean; invalidation?: CorrectionInvalidation }> {
   const written = await writeObservation(sc, actorId, input);
   if (!written.ok) return written;
+  // A correction supersedes a CLAIM, and a claim is always about a place
+  // (proposeClaim refuses an unresolved subject). So an unowned correcting
+  // observation has nothing it could legitimately supersede: the new observation
+  // is kept — it is still evidence — and the supersede is skipped rather than
+  // aimed at whatever claim id the caller happened to send. Scoping the UPDATE
+  // by a null subject_id would match nothing anyway; saying so is better than
+  // discovering it.
+  if (input.subjectId == null) {
+    const unresolved: CorrectionInvalidation = {
+      prior_claim_id: priorClaimId,
+      subject_id: "",
+      claim_type: input.claimType,
+      observation_id: typeof written.observation?.id === "string" ? written.observation.id : null,
+      superseded: false,
+      snapshot_targets: [],
+      completion: "prior_not_supersedable",
+    };
+    logger.info(
+      { event: "intel.correction.invalidation", ...unresolved, target_count: 0, reason: "unresolved_subject" },
+      "intel correction: unowned observation supersedes nothing",
+    );
+    return { ...written, supersededPrior: false, invalidation: unresolved };
+  }
+  const correctedSubjectId: string = input.subjectId;
   // Scope the supersede to the SAME subject + claim_type the correction observes,
   // and only from a supersedable status. Previously this filtered on id alone, so
   // any claim id (obtained from another place's live label) could be flipped to
@@ -721,7 +899,7 @@ export async function correctClaim(
     .from("intel_claims")
     .update({ status: "superseded" })
     .eq("id", priorClaimId)
-    .eq("subject_id", input.subjectId)
+    .eq("subject_id", correctedSubjectId)
     .eq("claim_type", input.claimType)
     .in("status", ["active", "conflicting", "candidate"])
     .select("id");
@@ -731,7 +909,7 @@ export async function correctClaim(
   // re-derivation/expiry. A failed read is reported, never hidden as "no targets".
   const invalidation: CorrectionInvalidation = {
     prior_claim_id: priorClaimId,
-    subject_id: input.subjectId,
+    subject_id: correctedSubjectId,
     claim_type: input.claimType,
     observation_id: typeof written.observation?.id === "string" ? written.observation.id : null,
     superseded: supersededPrior,
@@ -742,7 +920,7 @@ export async function correctClaim(
     const { data: snaps, error: snapErr } = await sc
       .from("intel_state_snapshots")
       .select("id, zone_id, privacy_eligible")
-      .eq("subject_id", input.subjectId)
+      .eq("subject_id", correctedSubjectId)
       .eq("claim_type", input.claimType);
     if (snapErr) {
       invalidation.completion = "targets_unreadable";

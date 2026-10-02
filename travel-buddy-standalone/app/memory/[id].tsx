@@ -15,14 +15,14 @@ import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ArrowLeft, Trash2, Globe, Users, Lock, Eye,
-  MoreHorizontal, Plus, CalendarDays, MapPin,
+  MoreHorizontal, Plus, CalendarDays, MapPin, Search,
 } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import {
   getMemory, deleteMemoryItem, deleteMemory,
   addMemoryItem, type Memory, type MemoryItem,
 } from '../../src/services/memories';
-import { StampButton } from '../../src/components/stamps/StampButton';
+import { MemorySocialBar } from '../../src/features/memories/social/MemorySocialBar.tsx';
 import { useSession } from '../../src/context/SessionContext';
 import { useMediaPicker } from '../../src/hooks/useMediaPicker.ts';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
@@ -112,8 +112,8 @@ export default function MemoryDetailScreen() {
               {
                 text: 'Delete', style: 'destructive',
                 onPress: async () => {
-                  await deleteMemory(memory.id);
-                  router.back();
+                  const del = await deleteMemory(memory.id); // HM-F09: a refused delete is said, not hidden behind router.back()
+                  if (del.ok) router.back(); else Alert.alert('Could not delete', 'The memory was not deleted. Please try again.');
                 },
               },
             ],
@@ -208,7 +208,7 @@ export default function MemoryDetailScreen() {
   if (error || !memory) {
     return (
       <View style={[s.centered, { paddingTop: insets.top }]}>
-        <Text style={s.errorText}>{error || 'Memory not found'}</Text>
+        <Text style={s.errorText}>{error || 'Memory not found'}</Text>{id ? <MemoryTagConsentFallback memoryId={id} viewerId={userId ?? null} /> : null}
         <Pressable onPress={() => router.back()} style={s.backLink}>
           <Text style={s.backLinkText}>Go back</Text>
         </Pressable>
@@ -228,8 +228,27 @@ export default function MemoryDetailScreen() {
         <Text style={s.headerTitle} numberOfLines={1}>
           {memory.title ?? 'Memory'}
         </Text>
+        {/* §15 retrieval, reachable.
+          *
+          * `/memory/search` was mounted and registered and navigated to by
+          * NOTHING, so `POST /api/memories/search` had a complete client and no
+          * person could open it. It lives here rather than on the Passport
+          * Memories tab on purpose: that tab renders `passport_memories`, a
+          * different table with different ids, and a search box there would
+          * return hits the tab cannot show. This screen reads `GET
+          * /api/memories/:id` — the same corpus the search searches, and the
+          * screen the search's own results navigate into. */}
+        <Pressable
+          onPress={() => router.push('/memory/search' as any)}
+          hitSlop={8}
+          testID="memory-search-entry"
+          accessibilityRole="button"
+          accessibilityLabel="Search your memories"
+        >
+          <Search size={20} color={color.ink} />
+        </Pressable>
         {isOwner ? (
-          <Pressable onPress={handleOwnerMenu} hitSlop={8}>
+          <Pressable onPress={handleOwnerMenu} hitSlop={8} testID="memory-owner-menu" accessibilityRole="button" accessibilityLabel="Memory options">
             <MoreHorizontal size={22} color={color.ink} />
           </Pressable>
         ) : (
@@ -350,16 +369,16 @@ export default function MemoryDetailScreen() {
             <Text style={s.metaChip}>{formatDate(memory.createdAt)}</Text>
           </View>
 
-          {/* Stamp */}
-          <View style={s.likeRow}>
-            <StampButton
-              entityType="memory"
-              entityId={memory.id}
-              initialCount={memory.likeCount ?? 0}
-              initialIsStamped={memory.likedByMe ?? false}
-              iconSize={20}
-            />
-          </View>
+          {/* Like / save / share (HM-F09, HM-F13), people (HM-F12), own history (HM-F11) */}
+          <MemorySocialBar memory={memory} isOwner={isOwner} />
+          <MemoryParticipantsSection
+            memoryId={memory.id}
+            participants={(memory as MemoryWithParticipants).tags ?? []}
+            anonymousCount={(memory as MemoryWithParticipants).anonymousParticipants ?? 0}
+            viewerId={userId ?? null} isOwner={isOwner} onChanged={load}
+          />
+          <MemoryBrowseLinks memory={memory} isOwner={isOwner} />
+          {/* The like writes memory_likes through useMemoryLike — see MemorySocialBar. */}
         </View>
 
         <PlainBottomFiller />
@@ -460,3 +479,8 @@ const s = StyleSheet.create({
   likeRow: { flexDirection: 'row', alignItems: 'center', gap: space.xs, marginTop: space.sm },
   likeCount: { ...(t.small as object), color: color.mute },
 });
+
+// Testing mode WP-06. Imported at the TAIL so no line above moves; ESM hoists them.
+import { MemoryParticipantsSection, MemoryTagConsentFallback } from '../../src/features/memories/social/MemoryParticipantsSection.tsx';
+import { MemoryBrowseLinks } from '../../src/features/memories/social/MemoryBrowseLinks.tsx';
+import type { MemoryWithParticipants } from '../../src/services/memorySocial.ts';

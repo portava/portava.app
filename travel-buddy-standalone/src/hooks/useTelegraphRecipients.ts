@@ -16,7 +16,7 @@
  * enumeration) before projection; this hook trusts that list and does no
  * client-side re-filtering.
  */
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useInputAssistance } from '../platform/input-assistance/hooks/useInputAssistance.ts';
 import {
   mapRecipientSuggestions,
@@ -26,6 +26,7 @@ import {
   registerSocialFields,
   SOCIAL_FIELD_IDS,
 } from '../platform/input-assistance/social/socialFields.ts';
+import { recordSuggestionSelection } from '../platform/input-assistance/services/selectionRecorder.ts';
 import type { InputSessionContext } from '../platform/input-assistance/types/inputSuggestion.ts';
 
 // Register the social fields' policies once at module load (idempotent).
@@ -47,6 +48,13 @@ export interface TelegraphRecipientsResult {
   /** True when the recipient-search endpoint is unavailable (404/offline) —
    *  the picker should degrade to the Discover fallback, not show an error. */
   unavailable: boolean;
+  /**
+   * §35 — record an EXPLICIT pick of a shown recipient as selection memory.
+   * Call it from the picker's accept handler. Fire-and-forget, fail-soft, and a
+   * no-op for a row this hook did not serve, so a caller may invoke it
+   * unconditionally and must NEVER gate opening the conversation on it.
+   */
+  recordPick: (row: { userId?: string | null } | null | undefined) => void;
 }
 
 export function useTelegraphRecipients(
@@ -75,9 +83,33 @@ export function useTelegraphRecipients(
     [gateway.suggestions],
   );
 
+  // §35 — the write half of Phase 8 for this surface. The writer-coverage guard
+  // carried this hook as a KNOWN GAP: `telegraph_recipient` allows
+  // personalization, the picker consumed the gateway, and nothing recorded, so
+  // the context's selection memory could never be filled. The read half now
+  // exists too — the gateway's recipient branch applies the §15 PriorSelection
+  // boost, which it did not when this gap was written down.
+  //
+  // Only rows this hook actually SERVED are recordable: the originating
+  // suggestion is looked up by its own entityId, so a caller cannot record a
+  // person the eligibility gate never returned.
+  const recordPick = useCallback(
+    (row: { userId?: string | null } | null | undefined) => {
+      const userId = row?.userId;
+      if (!userId) return;
+      const suggestion = (gateway.suggestions ?? []).find(
+        (s) => s.entityType === 'user' && s.entityId === userId,
+      );
+      if (!suggestion) return;
+      recordSuggestionSelection(suggestion, { policy: gateway.policy, query });
+    },
+    [gateway.suggestions, gateway.policy, query],
+  );
+
   return {
     recipients,
     loading: gateway.loading,
     unavailable: gateway.unavailable,
+    recordPick,
   };
 }

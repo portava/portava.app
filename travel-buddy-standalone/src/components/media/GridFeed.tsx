@@ -159,7 +159,7 @@ export function GridFeed() {
             description={isNetworkError
               ? 'Check your connection and try again.'
               : 'Something went wrong on our end.'}
-            primaryAction={{ label: 'Try again', onPress: loadFeed }}
+            primaryAction={{ label: 'Try again', onPress: loadFeed, fill: '#C43B23' /* census-media §31.13: onInk on it reads 4.99:1, on `signal` 3.14:1 */ }}
           />
         </View>
       </View>

@@ -136,13 +136,39 @@ export async function confirmEvent(
  *
  * Never throws: an admin restoring an account must not be blocked by trust
  * bookkeeping. Returns what it did so the caller can log it.
+ *
+ * ── `incomplete`: THE COUNTS ALONE USED TO LIE ──────────────────────────────
+ * Every failure inside this function produced `{ eventsDismissed: 0, capsLifted: 0 }`
+ * — the identical value returned when the user simply had no moderation
+ * consequences to reverse. Worse, the dismissal UPDATE dropped its `error`
+ * entirely and the function then reported `eventsDismissed: ids.length`: the
+ * count of rows it INTENDED to dismiss, returned unconditionally, whether or not
+ * a single row changed. So a wholly failed reversal reported full success.
+ *
+ * That matters more here than almost anywhere else in the engine, because the
+ * consequence being reversed is PERMANENT if the reversal does not land: a
+ * `behavior_confirmed` respect_safety ceiling has no `expires_at` and no other
+ * code path lifts it. `incomplete: true` is the signal that the sanction was
+ * lifted but its trust consequence may still be standing, and needs a human.
  */
+export interface RevokeModerationTrustResult {
+  /** Events this call actually moved to 'dismissed' (not the count attempted). */
+  eventsDismissed: number;
+  /** Caps this call actually lifted. */
+  capsLifted: number;
+  /**
+   * True when any step could not be completed. NOT the same as "there was
+   * nothing to reverse", which is `incomplete: false` with both counts 0.
+   */
+  incomplete: boolean;
+}
+
 export async function revokeModerationTrustConsequences(
   db: SupabaseClient,
   adminId: string,
   userId: string,
   reason: string,
-): Promise<{ eventsDismissed: number; capsLifted: number }> {
+): Promise<RevokeModerationTrustResult> {
   try {
     const { data: events, error } = await db
       .from("trust_events")
@@ -150,13 +176,19 @@ export async function revokeModerationTrustConsequences(
       .eq("user_id", userId)
       .eq("source_type", "moderation")
       .in("status", ["applied", "confirmed", "pending_review"]);
-    if (error) return { eventsDismissed: 0, capsLifted: 0 };
+    if (error) {
+      logger.warn({ err: error, userId }, "revokeModerationTrustConsequences: event read failed — consequences may still stand");
+      return { eventsDismissed: 0, capsLifted: 0, incomplete: true };
+    }
 
     const ids = ((events as any[]) ?? []).map((e) => e.id).filter(Boolean);
-    if (ids.length === 0) return { eventsDismissed: 0, capsLifted: 0 };
+    // Genuinely nothing to reverse. The only path that returns zeroes WITHOUT
+    // incomplete, and the one every failure above used to be confused with.
+    if (ids.length === 0) return { eventsDismissed: 0, capsLifted: 0, incomplete: false };
 
     const { liftCapsBySourceEvents } = await import("./TrustCapService.js");
-    const capsLifted = await liftCapsBySourceEvents(db, ids, adminId);
+    const lift = await liftCapsBySourceEvents(db, ids, adminId);
+    let incomplete = lift.failed;
 
     // The count this function RETURNS is what routes/admin.ts's restore path
     // reports as "the sanction's trust consequences were reversed". It used to
@@ -178,7 +210,11 @@ export async function revokeModerationTrustConsequences(
       logger.error({ err: dismissErr, userId, adminId }, "revokeModerationTrustConsequences: event dismissal failed — trust penalty NOT reversed");
     }
     const eventsDismissed = dismissErr ? 0 : affectedRows(dismissedEvents);
+    if (dismissErr) incomplete = true;
+    // A write that reported success but moved fewer rows than it targeted is
+    // still a PARTIAL reversal, and must not read as a whole one.
     if (eventsDismissed < ids.length) {
+      incomplete = true;
       logger.warn({ userId, selected: ids.length, dismissed: eventsDismissed }, "revokeModerationTrustConsequences: fewer events dismissed than selected");
     }
 
@@ -192,12 +228,26 @@ export async function revokeModerationTrustConsequences(
     // metadata carries what actually happened.
     await logAdminAction(
       db, adminId, userId, "lift_cap", reason,
-      { op: "revoke_moderation_trust", eventsDismissed, capsLifted },
+      {
+        op: "revoke_moderation_trust",
+        eventsTargeted: ids.length,
+        eventsDismissed,
+        capsLifted: lift.lifted,
+        incomplete,
+      },
     ).catch(() => {});
 
-    return { eventsDismissed, capsLifted };
-  } catch {
-    return { eventsDismissed: 0, capsLifted: 0 };
+    if (incomplete) {
+      logger.error(
+        { userId, adminId, eventsTargeted: ids.length, eventsDismissed, capsLifted: lift.lifted },
+        "moderation trust reversal INCOMPLETE — a permanent ceiling or a charged finding may still stand",
+      );
+    }
+
+    return { eventsDismissed, capsLifted: lift.lifted, incomplete };
+  } catch (err) {
+    logger.warn({ err, userId }, "revokeModerationTrustConsequences threw — consequences may still stand");
+    return { eventsDismissed: 0, capsLifted: 0, incomplete: true };
   }
 }
 
@@ -356,7 +406,13 @@ export async function adminOverrideScore(
   category: TrustCategory,
   newScore: number,
   reason: string,
-): Promise<{ ok: boolean; category: TrustCategory; persistedScore: number; ceilingBinding: boolean }> {
+): Promise<{
+  ok: boolean;
+  category: TrustCategory;
+  /** The category value now on the row, or `null` = NOT SCORED (Q1). */
+  persistedScore: number | null;
+  ceilingBinding: boolean;
+}> {
   if (newScore < 0 || newScore > 100) throw new Error("Score must be 0–100");
 
   const cap = await createCap(db, {
@@ -378,18 +434,43 @@ export async function adminOverrideScore(
       (read.state === "unavailable" ? ` (${read.reason})` : ""),
     );
   }
-  const persistedScore = Number((read.profile.categories as Record<string, unknown>)[category]);
+  // Q1, owner decision 2026-09-22: a category may now be NULL = NOT SCORED, and
+  // that is tested BEFORE any numeric coercion. `Number(null)` is 0, which is
+  // finite and is not above any ceiling, so an unscored category would sail
+  // through the guard below and be AUDITED as a ceiling that had taken effect
+  // on a category holding no score at all.
+  //
+  // A cap on an unmeasured category leaves it unmeasured — `recalculateTrustScore`
+  // will not manufacture a score just to clamp it, because a ceiling is low by
+  // construction and inventing one would fabricate a BAD measurement out of no
+  // evidence. So `persistedScore` is null and `ceilingBinding` is FALSE: the cap
+  // row is written and will bind the moment the category is first measured, but
+  // nothing here demonstrates it is in force, and the audit says exactly that.
+  //
+  // THIS DOES NOT THROW, and an earlier draft that did was wrong. The cap row
+  // has already been written by this point, so throwing would report a failure
+  // for an operation that had in fact taken effect — and leave an admin unsure
+  // whether to retry. `ok: true` with a null score and a false `ceilingBinding`
+  // is the honest report: the override is recorded, and it is not yet biting.
+  // The invariant this function guards is unharmed either way: it is that no
+  // persisted value sits ABOVE the ceiling, and there is no value here at all.
+  const rawPersisted = (read.profile.categories as Record<string, unknown>)[category];
+  const notScored = rawPersisted === null || rawPersisted === undefined;
+  const persistedScore = notScored ? null : Number(rawPersisted);
+
   // numeric(5,2) round-trips exactly at two decimals; the epsilon absorbs that,
   // not a disagreement. A persisted value ABOVE the ceiling means the ceiling is
   // not in force, which is the one thing this function exists to guarantee.
-  if (!Number.isFinite(persistedScore) || persistedScore > newScore + 0.005) {
+  if (persistedScore !== null && (!Number.isFinite(persistedScore) || persistedScore > newScore + 0.005)) {
     throw new Error(
       `adminOverrideScore: ceiling ${newScore} did not take effect on ${category} — trust_profiles still reads ${String(persistedScore)}`,
     );
   }
 
   const ceilingBinding =
-    recalculated.capsApplied.includes(category) && Math.abs(persistedScore - newScore) < 0.005;
+    persistedScore !== null &&
+    recalculated.capsApplied.includes(category) &&
+    Math.abs(persistedScore - newScore) < 0.005;
 
   // The audit records what HAPPENED, not what was asked for: an override that
   // withheld nothing is a different fact from one that pulled a score down.
@@ -442,7 +523,12 @@ export async function adminRemoveOverride(
   category: TrustCategory,
   reason: string,
   sourceCapId?: string,
-): Promise<{ ok: boolean; liftedCapIds: string[]; persistedScore: number }> {
+): Promise<{
+  ok: boolean;
+  liftedCapIds: string[];
+  /** The category value after the lift, or `null` = NOT SCORED (Q1). */
+  persistedScore: number | null;
+}> {
   // Find the active admin_override cap for this user+category. A failed read
   // must not be audited as "override removed" — nothing was lifted.
   const { data: caps, error: capsErr } = await db
@@ -500,7 +586,7 @@ async function confirmOverrideRemoved(
   db: SupabaseClient,
   targetUserId: string,
   category: TrustCategory,
-): Promise<number> {
+): Promise<number | null> {
   const { data: stillActive, error: recheckErr } = await db
     .from("trust_caps")
     .select("id")
@@ -526,7 +612,20 @@ async function confirmOverrideRemoved(
       (read.state === "unavailable" ? ` (${read.reason})` : ""),
     );
   }
-  const persistedScore = Number((read.profile.categories as Record<string, unknown>)[category]);
+  // Q1: NULL = NOT SCORED is caught before the coercion, for the same reason as
+  // in adminOverrideScore — `Number(null)` is 0 and 0 is finite, so an unscored
+  // category would be RETURNED AND AUDITED as a persisted score of zero: a
+  // fabricated measurement, and the lowest one available, reported as the
+  // outcome of lifting a ceiling.
+  //
+  // `null` is returned rather than thrown. The lift itself has already been
+  // verified above (no admin_override ceiling is still active); "there is no
+  // score to report" is a description of the category, not a failure of the
+  // removal, and failing the call would tell an admin their successful lift
+  // did not happen.
+  const rawPersisted = (read.profile.categories as Record<string, unknown>)[category];
+  if (rawPersisted === null || rawPersisted === undefined) return null;
+  const persistedScore = Number(rawPersisted);
   if (!Number.isFinite(persistedScore)) {
     throw new Error(
       `adminRemoveOverride: trust_profiles.${category} reads ${String(persistedScore)} after the removal`,

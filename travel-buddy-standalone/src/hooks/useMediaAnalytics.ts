@@ -49,7 +49,7 @@ export type MediaEventType =
   | 'media_plan'
   | 'media_contribution'
   | 'media_correction'
-  | 'media_arrival';
+  | 'media_arrival' | 'visual_opportunity_open' | 'gem_open'; // + §44 client outcome signals (census-media §21); server-only ones (invite_sent, …) the batch endpoint refuses
 
 export interface MediaEventPayload {
   media_id?: string;
@@ -79,7 +79,7 @@ export interface MediaEventPayload {
   processing_status?: string;
   source_type?: string;
   is_rewatch?: boolean;
-  ranking_version?: string;
+  ranking_version?: string; gem_id?: string; // gem_id: opaque hidden-gem id (§44 Hidden Gem opened)
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────

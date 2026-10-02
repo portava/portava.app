@@ -139,6 +139,12 @@ export const GUARDS: readonly GuardEntry[] = [
     reach: { kind: "check-all", script: "check:route-auth-gate" },
   },
   {
+    checker: "src/scripts/checkRouteShadowing.ts",
+    inspects: { countPattern: "(\\d+) registrations across", unit: "route registrations checked for shadowing" },
+    responsibility: "No literal path is registered behind a parameterised one that captures it, which leaves a handler that exists and typechecks but is never called.",
+    reach: { kind: "check-all", script: "check:route-shadowing" },
+  },
+  {
     checker: "src/scripts/checkAsyncHandlers.ts",
     inspects: { countPattern: "(\\d+) route file\\(s\\) clean", unit: "route files checked for unhandled async rejection" },
     responsibility: "An async Express handler cannot reject unhandled, which would answer nothing and leave the request hanging.",
@@ -958,5 +964,15 @@ export const GUARDS: readonly GuardEntry[] = [
       countPattern: "(\\d+) symbol-naming citation\\(s\\) judged",
       unit: "symbol-naming citation(s) judged against the file they name",
     },
+  },
+  {
+    checker: "src/scripts/checkDiscoveryQueryPaths.ts",
+    inspects: {
+      countPattern: "(\\d+) Discovery table/index creations",
+      unit: "Discovery table and index creations checked against docs/discovery/query-paths.md",
+    },
+    responsibility:
+      "Every table or index a migration creates on a Discovery table carries expected cardinality, index rationale and EXPLAIN evidence in docs/discovery/query-paths.md (`10` §4; census-discovery DC-15).",
+    reach: { kind: "check-all", script: "check:discovery-query-paths" },
   },
 ];

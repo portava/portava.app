@@ -32,7 +32,8 @@ import { requireUser, sendError } from "../lib/http.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { logger as rootLogger } from "../lib/logger.js";
 import { guardTelegraphThreadWrite } from "../lib/telegraphThreadWrite.js";
-import { publishToThread } from "../lib/telegraphEvents.js";
+import { emitCoordinationCompleted, publishToThread } from "../lib/telegraphEvents.js";
+import { createCoordinationSession } from "../services/telegraph/coordinationSessions.js";
 import {
   COORDINATION_ACTIONS,
   COORDINATION_KINDS,
@@ -43,6 +44,7 @@ import {
   parseCoordinationEnvelope,
   projectAcknowledgements,
   projectCommitment,
+  projectConversationSessions,
   projectCoordinationSession,
   projectDecision,
   sessionStateNow,
@@ -66,6 +68,7 @@ import {
   type LayerInputRow,
 } from "../services/telegraph/layers.js";
 import {
+  applyHistoryWindow,
   historyBoundEnabled,
   membershipSelect,
   visibleFromOf,
@@ -86,7 +89,12 @@ const PostSchema = z.object({
 });
 
 type MemberGate =
-  | { ok: true; visibleFrom: string | null; lastReadAt: string | null }
+  // `viewerId` rides with `visibleFrom` for the reason the bound itself rides
+  // in this gate: Q6's exception is (bound, viewer) and a route that took one
+  // without the other would apply half a rule. It is the AUTHENTICATED caller,
+  // echoed back from the gate that just proved their ACTIVE membership — never
+  // anything from the request body or query string.
+  | { ok: true; visibleFrom: string | null; lastReadAt: string | null; viewerId: string }
   | { ok: false; code: "forbidden" | "db_error"; message: string };
 
 async function memberWindow(
@@ -109,6 +117,7 @@ async function memberWindow(
     ok: true,
     visibleFrom: visibleFromOf(data as any, boundOn),
     lastReadAt: ((data as any).last_read_at ?? null) as string | null,
+    viewerId: userId,
   };
 }
 
@@ -125,10 +134,15 @@ async function memberWindow(
 function readAnnouncementRow(
   row: any,
   visibleFrom: string | null,
+  viewerId: string,
 ): AnnouncementInputMessage | null {
   if (!row) return null;
   if (row.deleted_at != null) return null;
-  if (!withinWindow(row.created_at, visibleFrom)) return null;
+  // Q6: the caller's own earlier announcement is theirs to read back. The
+  // tombstone check above and the thread binding in the query both still
+  // refuse first, and an announcement by ANOTHER member from before this
+  // member's window is still a 404 that cannot be told from "no such row".
+  if (!withinWindow(row.created_at, visibleFrom, { senderId: row.sender_id, viewerId })) return null;
   const env = parseKindEnvelope(row.msg_type, row.body);
   if (!env || env.kind !== "ANNOUNCEMENT") return null;
   const payload = env.payload as { title?: unknown; requiresAcknowledgement?: unknown };
@@ -153,10 +167,11 @@ function readAnnouncementRow(
  * `readAnnouncementRow` is: no row, wrong thread, tombstone, wrong kind,
  * unparseable envelope, or outside this member's §14.3 window.
  */
-function readActionProposalRow(row: any, visibleFrom: string | null): { id: string } | null {
+function readActionProposalRow(row: any, visibleFrom: string | null, viewerId: string): { id: string } | null {
   if (!row) return null;
   if (row.deleted_at != null) return null;
-  if (!withinWindow(row.created_at, visibleFrom)) return null;
+  // Q6, same shape as `readAnnouncementRow` and for the same reason.
+  if (!withinWindow(row.created_at, visibleFrom, { senderId: row.sender_id, viewerId })) return null;
   const coord = parseCoordinationEnvelope(row.msg_type, row.body);
   if (coord && coord.kind === "ACTION_PROPOSAL") return { id: String(row.id) };
   const env = parseKindEnvelope(row.msg_type, row.body);
@@ -168,6 +183,59 @@ type SessionRead =
   | { kind: "ok"; state: CoordinationState; session: CoordinationSession }
   | { kind: "not_found" }
   | { kind: "db_error"; message: string };
+
+/** How many session and transition rows one conversation's session read takes. */
+export const SESSION_SCAN_LIMIT = 200;
+
+type ThreadSessionRows =
+  | { ok: true; sessions: any[]; transitions: any[]; truncated: boolean }
+  | { ok: false; message: string };
+
+/**
+ * Every COORDINATION_SESSION and COORDINATION_TRANSITION in one thread, newest
+ * first, bounded to this member's §14.3 window.
+ *
+ * Read by `msg_type` rather than filtered out of a general scan, so a session
+ * survives a conversation that is busier than the general scan's cap. The
+ * error is CHECKED and returned — a PostgREST rejection RESOLVES, and an
+ * unchecked read here would answer "there is no coordination session" for a
+ * database that refused to say, which on this surface reads as "the evening is
+ * over".
+ */
+async function readSessionRowsForThread(
+  client: SupabaseClient,
+  threadId: string,
+  visibleFrom: string | null,
+  viewerId: string,
+): Promise<ThreadSessionRows> {
+  let q = client
+    .from("messages")
+    .select(COORD_COLUMNS)
+    .eq("thread_id", threadId)
+    .in("msg_type", ["coordination_session", "coordination_transition"])
+    .is("deleted_at", null)
+    .order("created_at", { ascending: false })
+    .limit(SESSION_SCAN_LIMIT);
+  // Q6 in the QUERY because of `SESSION_SCAN_LIMIT`: the scan is capped, so a
+  // plain `.gte` spends the cap on rows the member may see and discards the
+  // member's own earlier session rows before JavaScript runs. `msg_type`,
+  // `thread_id` and `deleted_at IS NULL` stay AND-ed outside the relaxed clause.
+  q = applyHistoryWindow(q, visibleFrom, viewerId);
+  const { data, error } = await q;
+  if (error) return { ok: false, message: error.message ?? "session read failed" };
+
+  const rows = ((data as any[]) ?? []).filter((r) =>
+    withinWindow(r.created_at, visibleFrom, { senderId: r.sender_id, viewerId }));
+  const sessions: any[] = [];
+  const transitions: any[] = [];
+  for (const r of rows) {
+    const env = parseCoordinationEnvelope(r.msg_type, r.body);
+    if (!env) continue;
+    if (env.kind === "COORDINATION_SESSION") sessions.push({ ...r, kind: env.kind, payload: env.payload });
+    else if (env.kind === "COORDINATION_TRANSITION") transitions.push({ ...r, kind: env.kind, payload: env.payload });
+  }
+  return { ok: true, sessions, transitions, truncated: rows.length >= SESSION_SCAN_LIMIT };
+}
 
 /**
  * The session named by a transition, and the state a new transition must be
@@ -183,6 +251,7 @@ async function readSessionForTransition(
   threadId: string,
   sessionId: string,
   visibleFrom: string | null,
+  viewerId: string,
 ): Promise<SessionRead> {
   const { data: sessionRow, error: sErr } = await client
     .from("messages")
@@ -192,7 +261,10 @@ async function readSessionForTransition(
     .maybeSingle();
   if (sErr) return { kind: "db_error", message: sErr.message ?? "session read failed" };
   const row = sessionRow as any;
-  if (!row || row.deleted_at != null || !withinWindow(row.created_at, visibleFrom)) {
+  // Q6: a session the caller themselves opened before they were re-added is
+  // theirs to read. A session opened by somebody else stays a 404.
+  if (!row || row.deleted_at != null ||
+      !withinWindow(row.created_at, visibleFrom, { senderId: row.sender_id, viewerId })) {
     return { kind: "not_found" };
   }
   const env = parseCoordinationEnvelope(row.msg_type, row.body);
@@ -205,12 +277,13 @@ async function readSessionForTransition(
     .is("deleted_at", null)
     .order("created_at", { ascending: false })
     .limit(COORDINATION_SCAN_LIMIT);
-  if (visibleFrom) q = q.gte("created_at", visibleFrom);
+  // Q6 in the QUERY: `COORDINATION_SCAN_LIMIT` caps this read too.
+  q = applyHistoryWindow(q, visibleFrom, viewerId);
   const { data, error } = await q;
   if (error) return { kind: "db_error", message: error.message ?? "transition read failed" };
 
   const transitions = ((data as any[]) ?? [])
-    .filter((r) => withinWindow(r.created_at, visibleFrom))
+    .filter((r) => withinWindow(r.created_at, visibleFrom, { senderId: r.sender_id, viewerId }))
     .map((r) => {
       const e = parseCoordinationEnvelope(r.msg_type, r.body);
       return e && e.kind === "COORDINATION_TRANSITION"
@@ -265,6 +338,85 @@ router.post(
       return;
     }
 
+    /**
+     * The session the transition below belongs to, as it stood BEFORE this
+     * write. Carried out of the gate so the terminal-event emission after the
+     * insert does not read the thread a second time — and so `coordination.
+     * completed` cannot be emitted for a transition the gate refused.
+     */
+    let transitionSession: CoordinationSession | null = null;
+
+    // §13.1 CREATE_COORDINATION_SESSION. One writer, two doors — see
+    // `services/telegraph/coordinationSessions.ts`. It returns early because
+    // the generic insert below has no idempotency and would mint a second
+    // session on every retry.
+    if (validated.kind === "COORDINATION_SESSION") {
+      const gate = await memberWindow(client, threadId, user.id);
+      if (!gate.ok) {
+        sendError(res, gate.code, gate.message);
+        return;
+      }
+      const p = (validated.envelope as any).payload as {
+        title: string;
+        planObjectId?: string | null;
+        note?: string | null;
+        idempotencyKey?: string | null;
+      };
+      const created = await createCoordinationSession(client, {
+        threadId,
+        actorUserId: user.id,
+        title: p.title,
+        planObjectId: p.planObjectId ?? null,
+        note: p.note ?? null,
+        idempotencyKey: String(p.idempotencyKey ?? ""),
+        visibleFrom: gate.visibleFrom,
+      });
+      if (!created.ok) {
+        if (created.code === "db_error") {
+          log.error({ threadId, message: created.message }, "coordination session write failed");
+        }
+        sendError(res, created.code, created.message);
+        return;
+      }
+      if (!created.duplicate) {
+        const at = created.session.startedAt;
+        const { error: bumpErr } = await client
+          .from("message_threads")
+          .update({ last_message_at: at, updated_at: at })
+          .eq("id", threadId);
+        if (bumpErr) {
+          log.warn({ err: bumpErr, threadId }, "thread bump after session open failed (session was written)");
+        }
+      }
+      // 200 on a duplicate, 201 on a creation. A client that retried gets the
+      // session it asked for and can tell from the status that it already had
+      // it, which is what makes the retry safe to make.
+      res.status(created.duplicate ? 200 : 201).json({
+        id: created.messageId,
+        threadId,
+        senderId: created.session.startedBy,
+        createdAt: created.session.startedAt,
+        msgType: "coordination_session",
+        subtype: null,
+        kind: "COORDINATION_SESSION",
+        duplicate: created.duplicate,
+        session: created.session,
+      });
+      if (!created.duplicate) {
+        void publishToThread(client, threadId, {
+          type: "message.created",
+          payload: {
+            messageId: created.messageId,
+            senderId: created.session.startedBy,
+            msgType: "coordination_session",
+            subtype: null,
+            createdAt: created.session.startedAt,
+          },
+        });
+      }
+      return;
+    }
+
     // §19: an ACKNOWLEDGEMENT must name an ANNOUNCEMENT this member can
     // actually see, in THIS thread, that ASKED to be acknowledged. Without
     // this check the kind would be a free-text pointer: a client could
@@ -289,7 +441,7 @@ router.post(
         sendError(res, "db_error", "Could not read the announcement");
         return;
       }
-      const announcement = readAnnouncementRow(target, gate.visibleFrom);
+      const announcement = readAnnouncementRow(target, gate.visibleFrom, gate.viewerId);
       if (!announcement) {
         sendError(res, "not_found", "No such announcement in this conversation");
         return;
@@ -313,13 +465,18 @@ router.post(
     // client show CANCELLED -> ACTIVE optimistically and be contradicted on the
     // next read.
     if (validated.kind === "COORDINATION_TRANSITION") {
-      const payload = (validated.envelope as any).payload as { sessionId: string; to: string };
+      const payload = (validated.envelope as any).payload as {
+        sessionId: string;
+        to: string;
+        idempotencyKey?: string | null;
+        expectedVersion?: number | null;
+      };
       const gate = await memberWindow(client, threadId, user.id);
       if (!gate.ok) {
         sendError(res, gate.code, gate.message);
         return;
       }
-      const session = await readSessionForTransition(client, threadId, payload.sessionId, gate.visibleFrom);
+      const session = await readSessionForTransition(client, threadId, payload.sessionId, gate.visibleFrom, gate.viewerId);
       if (session.kind === "db_error") {
         log.error({ threadId, message: session.message }, "session read failed");
         sendError(res, "db_error", "Could not read that coordination session");
@@ -329,6 +486,42 @@ router.post(
         sendError(res, "not_found", "No such coordination session in this conversation");
         return;
       }
+
+      // §17.2 — a RETRY is answered with the state the first attempt produced,
+      // BEFORE the machine is consulted. Order matters: checked after the
+      // legality gate, a retried COMPLETE would be refused as "this session is
+      // COMPLETE, §9 allows nothing" — telling a client its own successful
+      // command had failed, which is the worst of the three possible answers.
+      const retryKey = payload.idempotencyKey ?? null;
+      if (retryKey !== null && session.session.transitions.some((t) => t.idempotencyKey === retryKey)) {
+        res.status(200).json({
+          duplicate: true,
+          threadId,
+          kind: "COORDINATION_TRANSITION",
+          sessionId: payload.sessionId,
+          state: session.session.state,
+          version: session.session.version,
+        });
+        return;
+      }
+
+      // Optimistic concurrency, in the trip kernel's shape. ABSENT means "I did
+      // not look", which stays legal; PRESENT and stale is a 409 naming both
+      // numbers, because the useful answer to "your view is old" is how old.
+      if (payload.expectedVersion != null && payload.expectedVersion !== session.session.version) {
+        res.status(409).json({
+          error: "conflict",
+          reason: "TELEGRAPH_COORDINATION_VERSION_CONFLICT",
+          message:
+            `This session has had ${session.session.version} applied transitions; you expected ` +
+            `${payload.expectedVersion}. Somebody else moved it. Re-read the session and decide again.`,
+          currentVersion: session.session.version,
+          expectedVersion: payload.expectedVersion,
+          state: session.session.state,
+        });
+        return;
+      }
+
       const from = session.state;
       if (!legalNextStates(from).includes(payload.to as any)) {
         sendError(
@@ -339,6 +532,7 @@ router.post(
         );
         return;
       }
+      transitionSession = session.session;
     }
 
     // §8.2: an ACTION_RESPONSE must name an action proposal this member can
@@ -364,7 +558,7 @@ router.post(
         sendError(res, "db_error", "Could not read the action");
         return;
       }
-      if (!readActionProposalRow(target, gate.visibleFrom)) {
+      if (!readActionProposalRow(target, gate.visibleFrom, gate.viewerId)) {
         sendError(res, "not_found", "No such action proposal in this conversation");
         return;
       }
@@ -419,6 +613,24 @@ router.post(
         createdAt: m.created_at,
       },
     });
+
+    // §13.2 `coordination.completed`. Emitted from the ARROW that was just
+    // accepted rather than from a re-read: the gate above proved this
+    // transition legal from `transitionSession`'s state, so a terminal `to` is
+    // a terminal session and no second read can disagree with the write that
+    // just happened. Both of §9's terminal states fire it — see the emitter.
+    if (validated.kind === "COORDINATION_TRANSITION" && transitionSession) {
+      const to = (validated.envelope as any).payload.to as CoordinationState;
+      if (to === "COMPLETE" || to === "CANCELLED") {
+        void emitCoordinationCompleted(client, threadId, {
+          sessionId: transitionSession.sessionId,
+          terminalState: to,
+          endedAt: String(m.created_at),
+          declaredBy: String(m.sender_id),
+          reason: ((validated.envelope as any).payload.reason ?? null) as string | null,
+        });
+      }
+    }
   }),
 );
 
@@ -479,7 +691,13 @@ router.get(
       .is("deleted_at", null)
       .order("created_at", { ascending: false })
       .limit(COORDINATION_SCAN_LIMIT);
-    if (gate.visibleFrom) q = q.gte("created_at", gate.visibleFrom);
+    // Q6 in the QUERY. Every one of these scans is CAPPED, so the plain
+    // `.gte` discards rows in PostgREST before any filter runs: relaxing only
+    // `withinWindow` would leave this surface exactly as it is today. The
+    // relaxed clause is the window ONLY — `thread_id`, `deleted_at IS NULL`
+    // and the ordering stay AND-ed outside it, and active membership was
+    // already proved by `memberWindow` above.
+    q = applyHistoryWindow(q, gate.visibleFrom, gate.viewerId);
 
     const { data, error } = await q;
     if (error) {
@@ -488,7 +706,8 @@ router.get(
       return;
     }
 
-    const rows = ((data as any[]) ?? []).filter((r) => withinWindow(r.created_at, gate.visibleFrom));
+    const rows = ((data as any[]) ?? []).filter((r) =>
+      withinWindow(r.created_at, gate.visibleFrom, { senderId: r.sender_id, viewerId: gate.viewerId }));
 
     const parsedRows = rows
       .map((r) => {
@@ -497,8 +716,31 @@ router.get(
       })
       .filter((r): r is any => r !== null);
 
+    /**
+     * §14.2's re-authorization on the READ, applied to the live participant
+     * view. A member who has left the conversation is not on their way to
+     * anything; their declared status must stop counting. The roster is read
+     * here rather than inferred, and `rosterKnown: false` when the read fails —
+     * an unreadable roster must not silently become "everybody is still here",
+     * and must not become "nobody is" either. See `latestQuickStates`.
+     */
+    const { data: roster, error: rosterErr } = await client
+      .from("message_thread_members")
+      .select("user_id")
+      .eq("thread_id", threadId)
+      .is("left_at", null);
+    if (rosterErr) {
+      log.warn(
+        { threadId, message: rosterErr.message },
+        "coordination roster read failed; quick states are NOT re-authorized and the response says so",
+      );
+    }
+    const activeMemberIds = rosterErr
+      ? null
+      : new Set(((roster as any[]) ?? []).map((r) => String(r.user_id)));
+
     const quickRows = parsedRows.filter((r) => r.kind === "COORDINATION");
-    const quickStates = latestQuickStates(quickRows);
+    const quickStates = latestQuickStates(quickRows, activeMemberIds);
 
     const decisionRows = parsedRows.filter((r) => r.kind === "DECISION");
     const voteRows = parsedRows.filter((r) => r.kind === "VOTE");
@@ -555,11 +797,34 @@ router.get(
     // §8's CoordinationSession. The newest open session wins; a thread that
     // held two evenings' sessions shows the one still running rather than the
     // first one ever opened.
-    const transitionRows = parsedRows.filter((r) => r.kind === "COORDINATION_TRANSITION");
-    const sessions = parsedRows
-      .filter((r) => r.kind === "COORDINATION_SESSION")
-      .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
-      .map((r) => projectCoordinationSession(r, transitionRows, state));
+    /**
+     * The session is read by KIND, not taken from the generic scan above.
+     *
+     * The scan is the newest `COORDINATION_SCAN_LIMIT` messages of any kind. In
+     * a busy crew thread that is perhaps an hour of conversation, and a session
+     * opened before it falls out of the window — so the coordination panel
+     * VANISHES mid-evening, exactly when it is being used, and comes back if
+     * the chat goes quiet. §12 calls a coordination session "temporary active
+     * real-world coordination state"; temporary means until it ends, not until
+     * four hundred messages have gone past.
+     *
+     * A second query bounded to the two session kinds fixes it without storing
+     * anything: `SESSION_SCAN_LIMIT` transitions is far more than one evening
+     * produces, and the bound is reported rather than assumed.
+     */
+    const sessionRead = await readSessionRowsForThread(client, threadId, gate.visibleFrom, gate.viewerId);
+    if (!sessionRead.ok) {
+      log.error({ threadId, message: sessionRead.message }, "coordination session read failed");
+      sendError(res, "db_error", "Could not read this conversation's coordination state");
+      return;
+    }
+    const transitionRows = sessionRead.transitions;
+    const projectedSessions = projectConversationSessions(
+      sessionRead.sessions,
+      transitionRows,
+      state,
+    );
+    const sessions = projectedSessions.sessions;
     const session: CoordinationSession | null =
       sessions.find((sn) => sn.endedAt === null) ?? sessions[0] ?? null;
 
@@ -574,6 +839,7 @@ router.get(
       arrivedCount: quickStates.filter((q2) => q2.state === "ARRIVED").length,
       onMyWayCount: quickStates.filter((q2) => q2.state === "ON_MY_WAY").length,
       session,
+      rosterKnown: activeMemberIds !== null,
       decisions,
       commitments,
       rendezvous: rendezvousRows.map((r) => ({
@@ -593,6 +859,15 @@ router.get(
        */
       stateProvenance: "DERIVED_FROM_PLAN_TIMELINE",
       scanned: rows.length,
+      /**
+       * §17.2's retries, made visible rather than silently swallowed. A
+       * non-empty list means two rows carried one idempotency key and the later
+       * one is inert. An operator watching this number is watching for a client
+       * whose retry logic has gone wrong.
+       */
+      duplicateSessionIds: projectedSessions.duplicateSessionIds,
+      /** The session read's own bound, stated separately from the message scan. */
+      sessionScanTruncated: sessionRead.truncated,
     });
   }),
 );
@@ -637,7 +912,13 @@ router.get(
       .is("deleted_at", null)
       .order("created_at", { ascending: false })
       .limit(COORDINATION_SCAN_LIMIT);
-    if (gate.visibleFrom) q = q.gte("created_at", gate.visibleFrom);
+    // Q6 in the QUERY. Every one of these scans is CAPPED, so the plain
+    // `.gte` discards rows in PostgREST before any filter runs: relaxing only
+    // `withinWindow` would leave this surface exactly as it is today. The
+    // relaxed clause is the window ONLY — `thread_id`, `deleted_at IS NULL`
+    // and the ordering stay AND-ed outside it, and active membership was
+    // already proved by `memberWindow` above.
+    q = applyHistoryWindow(q, gate.visibleFrom, gate.viewerId);
 
     const { data, error } = await q;
     if (error) {
@@ -646,12 +927,13 @@ router.get(
       return;
     }
 
-    const rows = ((data as any[]) ?? []).filter((r) => withinWindow(r.created_at, gate.visibleFrom));
+    const rows = ((data as any[]) ?? []).filter((r) =>
+      withinWindow(r.created_at, gate.visibleFrom, { senderId: r.sender_id, viewerId: gate.viewerId }));
 
     const announcements: AnnouncementInputMessage[] = [];
     const acknowledgements: Array<{ id: string; sender_id: string; created_at: string; payload: unknown }> = [];
     for (const r of rows) {
-      const ann = readAnnouncementRow(r, gate.visibleFrom);
+      const ann = readAnnouncementRow(r, gate.visibleFrom, gate.viewerId);
       if (ann) {
         announcements.push(ann);
         continue;
@@ -746,7 +1028,13 @@ router.get(
       .is("deleted_at", null)
       .order("created_at", { ascending: false })
       .limit(COORDINATION_SCAN_LIMIT);
-    if (gate.visibleFrom) q = q.gte("created_at", gate.visibleFrom);
+    // Q6 in the QUERY. Every one of these scans is CAPPED, so the plain
+    // `.gte` discards rows in PostgREST before any filter runs: relaxing only
+    // `withinWindow` would leave this surface exactly as it is today. The
+    // relaxed clause is the window ONLY — `thread_id`, `deleted_at IS NULL`
+    // and the ordering stay AND-ed outside it, and active membership was
+    // already proved by `memberWindow` above.
+    q = applyHistoryWindow(q, gate.visibleFrom, gate.viewerId);
 
     const { data, error } = await q;
     if (error) {
@@ -755,7 +1043,8 @@ router.get(
       return;
     }
 
-    const rows = ((data as any[]) ?? []).filter((r) => withinWindow(r.created_at, gate.visibleFrom));
+    const rows = ((data as any[]) ?? []).filter((r) =>
+      withinWindow(r.created_at, gate.visibleFrom, { senderId: r.sender_id, viewerId: gate.viewerId }));
 
     const projection = projectSemanticLayers({
       threadId,
@@ -845,7 +1134,13 @@ router.get(
       .is("deleted_at", null)
       .order("created_at", { ascending: false })
       .limit(CATCH_UP_SCAN_LIMIT);
-    if (gate.visibleFrom) q = q.gte("created_at", gate.visibleFrom);
+    // Q6 in the QUERY. Every one of these scans is CAPPED, so the plain
+    // `.gte` discards rows in PostgREST before any filter runs: relaxing only
+    // `withinWindow` would leave this surface exactly as it is today. The
+    // relaxed clause is the window ONLY — `thread_id`, `deleted_at IS NULL`
+    // and the ordering stay AND-ed outside it, and active membership was
+    // already proved by `memberWindow` above.
+    q = applyHistoryWindow(q, gate.visibleFrom, gate.viewerId);
 
     const { data, error } = await q;
     if (error) {
@@ -854,7 +1149,8 @@ router.get(
       return;
     }
 
-    const rows = ((data as any[]) ?? []).filter((r) => withinWindow(r.created_at, gate.visibleFrom));
+    const rows = ((data as any[]) ?? []).filter((r) =>
+      withinWindow(r.created_at, gate.visibleFrom, { senderId: r.sender_id, viewerId: gate.viewerId }));
 
     const projection = projectCatchUp({
       threadId,
@@ -977,8 +1273,14 @@ router.get(
       return;
     }
 
+    // Q6, per thread. The query's `.gte("created_at", since)` above is the
+    // N-day PRODUCT horizon, not the §14.3 bound — it is the same for every
+    // thread and every viewer, so it is left exactly as it is and stays
+    // AND-ed. The bound itself is only ever applied here, so this filter is
+    // the whole of Q6 on this surface.
     const rows = ((data as any[]) ?? []).filter((r) =>
-      withinWindow(r.created_at, windowByThread.get(String(r.thread_id)) ?? null),
+      withinWindow(r.created_at, windowByThread.get(String(r.thread_id)) ?? null,
+                   { senderId: r.sender_id, viewerId: user.id }),
     );
 
     const parsedRows = rows
@@ -1050,6 +1352,169 @@ router.get(
   }),
 );
 
+// ── GET /api/me/coordination-sessions ────────────────────────────
+
+/** How many of the caller's threads one cross-thread session query joins across. */
+export const SESSIONS_MAX_THREADS = 200;
+/** How many session-shaped rows that query will scan. */
+export const SESSIONS_SCAN_LIMIT = 1000;
+/** How far back "what am I coordinating" looks by default. */
+export const SESSIONS_DEFAULT_DAYS = 14;
+
+/**
+ * §12 `coordination_sessions`, listed ACROSS the caller's conversations.
+ *
+ * census-telegraph T150 scored the row N on the evidence "No table, service or
+ * route." Two of those three are stale — `services/telegraph/coordination.ts`
+ * is the service and `routes/telegraphCoordination.ts` is the route — and what
+ * remained true was the shape of the complaint T84 made about commitments: an
+ * object you can project per thread but cannot LIST is not something a surface
+ * can work with. T84 was closed by a query rather than a table, on the reasoning
+ * that "a query is a route, not a table", and this is the same answer for the
+ * same reason.
+ *
+ * WHAT IT STILL IS NOT, AND THE CENSUS ROW SAYS SO. Without a row per session
+ * there is nothing to index, nothing a sweeper can advance, and no way to ask a
+ * question that is not "scan the caller's own threads". The scan is bounded by
+ * threads, by kind and by a time window, and every bound is in the response.
+ *
+ * DEFAULT FOURTEEN DAYS, not ninety like the commitments list. §9's sessions are
+ * "TEMPORARY active real-world coordination state"; a coordination session from
+ * three months ago is history, and putting it in a list called "what am I
+ * coordinating" would be the surface lying about the word.
+ *
+ * AUTHORIZATION. Threads come from the caller's OWN active memberships, so a
+ * session in a conversation they are not in cannot be reached, and each thread's
+ * §14.3 window is applied to its own rows.
+ */
+router.get(
+  "/me/coordination-sessions",
+  asyncHandler(async (req: any, res: any) => {
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+    const { client, user } = auth;
+
+    const includeEnded = String(req.query.includeEnded ?? "") === "true";
+    const daysRaw = Number.parseInt(String(req.query.days ?? ""), 10);
+    const days = Number.isFinite(daysRaw) && daysRaw > 0 && daysRaw <= 365 ? daysRaw : SESSIONS_DEFAULT_DAYS;
+    const since = new Date(Date.now() - days * 86_400_000).toISOString();
+
+    const boundOn = await historyBoundEnabled(client);
+    // Two literal select lists rather than `membershipSelect(...)`:
+    // check:write-path-columns resolves select lists STATICALLY, so a computed
+    // one is a blind spot where none of these columns is verified against the
+    // live schema. `membershipSelect` remains the single definition of what the
+    // bound adds; this site spells the answer out where the checker can read it.
+    const membershipQuery = boundOn
+      ? client
+          .from("message_thread_members")
+          .select("thread_id, user_id, left_at, visible_from_at")
+      : client.from("message_thread_members").select("thread_id, user_id, left_at");
+    const { data: memberships, error: memberErr } = await membershipQuery
+      .eq("user_id", user.id)
+      .is("left_at", null)
+      .limit(SESSIONS_MAX_THREADS);
+    if (memberErr) {
+      // "You are coordinating nothing" is indistinguishable from a real empty
+      // answer and is wrong in the direction that makes somebody miss the
+      // evening they are in the middle of.
+      log.error({ userId: user.id, message: memberErr.message }, "session membership read failed");
+      sendError(res, "db_error", "Could not read your conversations");
+      return;
+    }
+
+    const windowByThread = new Map<string, string | null>();
+    for (const m of ((memberships as any[]) ?? [])) {
+      windowByThread.set(String(m.thread_id), visibleFromOf(m as any, boundOn));
+    }
+    const threadIds = [...windowByThread.keys()];
+    if (threadIds.length === 0) {
+      res.status(200).json({
+        sessions: [], includeEnded, windowDays: days,
+        threadsScanned: 0, scanned: 0, truncated: false,
+      });
+      return;
+    }
+
+    const { data, error } = await client
+      .from("messages")
+      .select(COORD_COLUMNS + ", thread_id")
+      .in("thread_id", threadIds)
+      .in("msg_type", ["coordination_session", "coordination_transition"])
+      .is("deleted_at", null)
+      .gte("created_at", since)
+      .order("created_at", { ascending: false })
+      .limit(SESSIONS_SCAN_LIMIT);
+    if (error) {
+      log.error({ userId: user.id, message: error.message }, "session read failed");
+      sendError(res, "db_error", "Could not read your coordination sessions");
+      return;
+    }
+
+    // Q6, per thread. The query's `.gte("created_at", since)` above is the
+    // N-day PRODUCT horizon, not the §14.3 bound — it is the same for every
+    // thread and every viewer, so it is left exactly as it is and stays
+    // AND-ed. The bound itself is only ever applied here, so this filter is
+    // the whole of Q6 on this surface.
+    const rows = ((data as any[]) ?? []).filter((r) =>
+      withinWindow(r.created_at, windowByThread.get(String(r.thread_id)) ?? null,
+                   { senderId: r.sender_id, viewerId: user.id }),
+    );
+    const parsedRows = rows
+      .map((r) => {
+        const env = parseCoordinationEnvelope(r.msg_type, r.body);
+        return env ? { ...r, kind: env.kind, payload: env.payload } : null;
+      })
+      .filter((r): r is any => r !== null);
+
+    const out: any[] = [];
+    const duplicates: string[] = [];
+    for (const threadId of threadIds) {
+      const mine = parsedRows.filter((r) => String(r.thread_id) === threadId);
+      if (mine.length === 0) continue;
+      // Transitions are matched WITHIN their own thread. A session id is only
+      // unique inside a conversation, and a transition from another thread
+      // moving this one would let any of the caller's threads end an evening in
+      // a different one.
+      const projected = projectConversationSessions(
+        mine.filter((r) => r.kind === "COORDINATION_SESSION"),
+        mine.filter((r) => r.kind === "COORDINATION_TRANSITION"),
+        // DERIVED state is deliberately not computed here. It needs the plan
+        // each thread is coordinating around, which is a read per thread, and a
+        // list that did two hundred of those is not a list. `derivedState` is
+        // null in this answer and the response says so rather than implying the
+        // thread view and this one disagree.
+        null,
+      );
+      for (const sn of projected.sessions) {
+        if (!includeEnded && sn.endedAt !== null) continue;
+        out.push({ ...sn, threadId });
+      }
+      duplicates.push(...projected.duplicateSessionIds);
+    }
+
+    // Newest first: the evening you are in is the one you are looking for.
+    out.sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt));
+
+    res.status(200).json({
+      sessions: out,
+      includeEnded,
+      windowDays: days,
+      threadsScanned: threadIds.length,
+      scanned: rows.length,
+      duplicateSessionIds: duplicates,
+      /**
+       * §9.1's separation, restated for this surface: `declaredState` is what
+       * somebody SAID and is present; `derivedState` is null here because this
+       * route does not read each thread's plan, and a client must not fill it
+       * in from the clock.
+       */
+      derivedStateComputed: false,
+      truncated: rows.length >= SESSIONS_SCAN_LIMIT || threadIds.length >= SESSIONS_MAX_THREADS,
+    });
+  }),
+);
+
 // ── GET /api/threads/:threadId/safety-mode ───────────────────────────────────
 
 /**
@@ -1093,7 +1558,13 @@ router.get(
       .is("deleted_at", null)
       .order("created_at", { ascending: false })
       .limit(COORDINATION_SCAN_LIMIT);
-    if (gate.visibleFrom) q = q.gte("created_at", gate.visibleFrom);
+    // Q6 in the QUERY. Every one of these scans is CAPPED, so the plain
+    // `.gte` discards rows in PostgREST before any filter runs: relaxing only
+    // `withinWindow` would leave this surface exactly as it is today. The
+    // relaxed clause is the window ONLY — `thread_id`, `deleted_at IS NULL`
+    // and the ordering stay AND-ed outside it, and active membership was
+    // already proved by `memberWindow` above.
+    q = applyHistoryWindow(q, gate.visibleFrom, gate.viewerId);
 
     const { data, error } = await q;
     if (error) {
@@ -1104,7 +1575,8 @@ router.get(
       return;
     }
 
-    const rows = ((data as any[]) ?? []).filter((r) => withinWindow(r.created_at, gate.visibleFrom));
+    const rows = ((data as any[]) ?? []).filter((r) =>
+      withinWindow(r.created_at, gate.visibleFrom, { senderId: r.sender_id, viewerId: gate.viewerId }));
 
     const projection = projectSafetyMode({
       threadId,

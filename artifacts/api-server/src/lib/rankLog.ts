@@ -17,7 +17,7 @@ import { getServiceClient } from "./supabase";
 import { logger } from "./logger.js";
 import { LIVE_PULSE_SERVE_EVENT } from "../services/ranking/rankingAnalytics.js";
 import { recordImpressionDistributionStats } from "../services/ranking/DiscoveryRankingService.js";
-import type { ScoredCandidate, RankCandidate } from "./portavaRank";
+import type { ScoredCandidate, RankCandidate } from "./portavaRank";  import { canonicalServedAt } from "./discoveryRecommendationRecord.js";  /* §48 — the rest of this module's Discovery record helpers are imported at its foot's declarations; this line is shared on purpose (anchored citations below). */
 
 // ── Fatigue tracking ──────────────────────────────────────────────────────────
 // Fire-and-forget upsert into viewer_creator_fatigue for impression batches.
@@ -95,13 +95,13 @@ export async function logImpression(
   userId: string,
   surface: "pulse" | "discovery" | "events",
   sessionId?: string,
-  extraFeatures?: Record<string, string | number | boolean>,
+  extraFeatures?: Record<string, string | number | boolean>,  /** §48 / DC-22 — the serve clock the route stamped its RESPONSE with, and the ids it served in order (so `position` is the served one); omitted ⇒ as before. */ served?: { servedAt?: string; servedIds?: readonly string[] },
 ): Promise<void> {
   try {
     const sc = getServiceClient();
     if (!sc || scored.length === 0) return;
 
-    const servedAt = new Date().toISOString();
+    const servedAt = canonicalServedAt(served?.servedAt ?? new Date().toISOString()), positions = servedPositions(scored, served?.servedIds);
     // Generate one fallback session UUID for the whole batch so every row from
     // this invocation shares the same session_id — mirrors the "single open"
     // semantics callers rely on for funnel reconstruction.
@@ -120,14 +120,14 @@ export async function logImpression(
         user_id:    userId,
         item_id:    s.candidate.id,
         item_kind:  itemKind,
-        position:   idx,
-        features:   { ...stripCoordinateKeys(s.features), ...(extraFeatures ?? {}) },
+        position:   positions[idx]!,  ...discoveryExposureColumns(surface, { userId, sessionId: effectiveSessionId, servedAt }, positions[idx]!, s.candidate.id),  // §48 DV-40: the stamped id as a COLUMN, on Discovery rows only
+        features:   discoveryRecordFeatures(surface, { ...stripCoordinateKeys(s.features), ...(extraFeatures ?? {}) }, { userId, sessionId: effectiveSessionId, servedAt }, positions[idx]!, s, served?.servedIds?.length ?? scored.length),
         outcome:    "impression",
         served_at:  servedAt,
         surface,
         session_id: effectiveSessionId,
       };
-    });
+    });  if (surface === "discovery") await logDiscoveryPdeServeRequest(sc, { userId, sessionId: effectiveSessionId, servedAt }, rows, extraFeatures, served?.servedIds);  // §48 DV-06 — this request's own row
 
     // The returned `error` MUST be inspected. A PostgREST-level rejection — a
     // CHECK or FK violation, say — does NOT throw, so relying on the catch below
@@ -139,13 +139,13 @@ export async function logImpression(
     //
     // Still fire-and-forget: this warns and returns, it never throws into the
     // feed. logDiscoveryServe already does precisely this.
-    const { error: insertError } = await sc.from("rank_events").insert(rows);
+    const { error: insertError } = await sc.from("rank_events").insert(rows).then((r: any) => settleImpressionInsert(sc, surface, rows, r));  // §48: Discovery rows degrade without 2890/2891, and a replay is a duplicate, not a rejection (DV-37)
     if (insertError) {
       logger.warn(
         { err: insertError, surface, count: rows.length },
         "rankLog: impression insert rejected",
       );
-    } else {
+    } else if (!REPLAYED_IMPRESSION_BATCHES.has(rows)) {  // a replayed batch already moved the denominator once
       // Exposure denominator — content_distribution_stats.eligible_impressions
       // mirrors the impression rows that landed, so it is incremented HERE, on
       // the impression path, and only when the insert was accepted. It used to
@@ -604,4 +604,189 @@ function reportFatigueWriteFailure(err: unknown): void {
     { err, rpc: "increment_creator_fatigue_batch" },
     "rankLog: creator fatigue upsert rejected",
   );
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// census-discovery §48 — the Discovery record on the two PDE serve paths
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// `GET /discovery`'s cache-A PDE cohort and its cold fetch log through
+// `logImpression`, not `logDiscoveryServe`, because they carry the ranker's
+// real feature vector. Before §48 those rows had NO recommendation id, no model
+// version, no reason codes and a session and clock of their own — so the
+// `recommendationId` the route put on its RESPONSE joined to no row at all on
+// exactly the two paths that rank per viewer (DV-40 "2 of 6 serve points mint
+// nothing", DV-46). These helpers complete the record for `surface ===
+// "discovery"` ONLY: pulse and events rows are byte-identical to what they were.
+//
+// Declared at the foot for the reason the fatigue sinks above give: the
+// citations into this file sit at fixed lines.
+
+import { servedRecommendationId, serveIdFor, screenFeaturesForStorage, isDuplicateExposureReplay, DISCOVERY_EVENT_SCHEMA_VERSION, DISCOVERY_EVENT_PRIVACY_CLASS, type ServeExposure } from "./discoveryRecommendationRecord.js";
+import { isMissingRecommendationIdSchema, noteRecommendationIdAbsent, recommendationIdSchemaAbsent } from "./rankEventsProvenance.js";
+import { DISCOVERY_PDE_MODEL_VERSION, pdeFeatureProvenanceFeatures } from "./discoveryRankProvenance.js";
+import { reasonCodesFromSignals } from "./discoveryReasonCodes.js";
+import { logDiscoveryServeRequest, type DiscoveryServePointId } from "./discoveryServeLog.js";
+
+/** This module's name where it latches the shared schema state. */
+const RANK_LOG_WRITER = "lib/rankLog.ts";
+
+/**
+ * Batches whose insert was refused WHOLE as a replay of rows already written
+ * (23505 on 2891's exposure index). They landed once already, so they must not
+ * move `eligible_impressions` a second time. A WeakSet keyed by the batch array:
+ * nothing is retained after the call.
+ */
+const REPLAYED_IMPRESSION_BATCHES = new WeakSet<object>();
+
+/**
+ * The columns a Discovery exposure row carries beyond the pre-§48 shape:
+ * 2891's `recommendation_id` and 2890's `schema_version` / `privacy_class`.
+ * Omitted entirely (not nulled) off Discovery, and wherever the shared latch
+ * says this database lacks them.
+ */
+function discoveryExposureColumns(
+  surface: string, e: ServeExposure, position: number, itemId: string,
+): Record<string, string | number> {
+  if (surface !== "discovery" || recommendationIdSchemaAbsent()) return {};
+  return {
+    recommendation_id: servedRecommendationId(e, position, itemId),
+    schema_version:    DISCOVERY_EVENT_SCHEMA_VERSION,
+    privacy_class:     DISCOVERY_EVENT_PRIVACY_CLASS,
+  };
+}
+
+/**
+ * A Discovery row's `features`: screened (an unclassified key is refused, by
+ * name — DV-39) and completed with the record's own keys, written AFTER the
+ * caller's so no caller can restate them.
+ *
+ * Reason codes are the ones the ranker's own POSITIVE contributions ground,
+ * strongest first, through DV-18's vocabulary — the same mapping the Compass
+ * path uses, so a PDE row never claims a reason the score did not earn and a
+ * guardrailed signal (trust, seenPenalty) never becomes one.
+ */
+function discoveryRecordFeatures(
+  surface: string,
+  features: Record<string, string | number | boolean>,
+  e: ServeExposure,
+  position: number,
+  scored: ScoredCandidate<RankCandidate>,
+  servedCount: number,
+): Record<string, unknown> {
+  if (surface !== "discovery") return features;
+  const screened = screenFeaturesForStorage(features);
+  const signals = Object.entries(scored.features ?? {})
+    .filter(([, v]) => typeof v === "number" && Number.isFinite(v) && v > 0)
+    .sort((a, b) => (b[1] as number) - (a[1] as number))
+    .map(([k]) => k);
+  return {
+    ...screened.kept,
+    recommendationId: servedRecommendationId(e, position, scored.candidate.id),
+    modelVersion:     DISCOVERY_PDE_MODEL_VERSION,  ...pdeFeatureProvenanceFeatures(scored),  // §75 (DC-17, H-P21-2): featureVersion, rankedAt, sourceWindow, momentumProvenance — the record's own keys, after the screen like modelVersion; none when no PDE run scored this candidate
+    reasonCodes:      reasonCodesFromSignals(signals),
+    schemaVersion:    DISCOVERY_EVENT_SCHEMA_VERSION,
+    privacyClass:     DISCOVERY_EVENT_PRIVACY_CLASS,
+    serveId:          serveIdFor(e),
+    servedCount,
+    ...(screened.refused.length > 0 ? { privacyRefused: screened.refused } : {}),
+  };
+}
+
+/**
+ * Settle a Discovery impression insert:
+ *   - a replay of this exact batch (23505 on 2891's index) is a DUPLICATE —
+ *     reported as success, remembered so the denominator does not move twice;
+ *   - a database without 2890/2891 (42703 / PGRST204 / 42P10) latches the
+ *     shared state and the batch is redone ONCE without the three columns,
+ *     so adding the join key never costs the rows it was added to join;
+ *   - anything else is returned untouched for the caller's existing warn.
+ * Off Discovery the result passes through unchanged.
+ */
+async function settleImpressionInsert(
+  sc: any, surface: string, rows: Array<Record<string, unknown>>, result: any,
+): Promise<{ error: unknown }> {
+  const error = result?.error ?? null;
+  if (surface !== "discovery" || !error) return { error };
+  if (isDuplicateExposureReplay(error)) {
+    REPLAYED_IMPRESSION_BATCHES.add(rows);
+    return { error: null };
+  }
+  if (!isMissingRecommendationIdSchema(error)) return { error };
+  if (noteRecommendationIdAbsent(RANK_LOG_WRITER)) {
+    logger.warn(
+      { err: error, migration: "2891_rank_events_recommendation_id.sql" },
+      "rankLog: rank_events.recommendation_id / schema_version / privacy_class unavailable — " +
+      "Discovery exposures written WITHOUT a join key until 2890/2891 are applied here",
+    );
+  }
+  // Spelled out, never spread-minus-keys: check:write-path-columns must be able
+  // to read the column list of every write into this table.
+  const legacy = rows.map((r) => ({
+    user_id:    r["user_id"],
+    item_id:    r["item_id"],
+    item_kind:  r["item_kind"],
+    position:   r["position"],
+    features:   r["features"],
+    outcome:    r["outcome"],
+    served_at:  r["served_at"],
+    surface:    r["surface"],
+    session_id: r["session_id"],
+  }));
+  const retry = await sc.from("rank_events").insert(legacy);
+  return { error: retry?.error ?? null };
+}
+
+/**
+ * The SERVED position of each scored row.
+ *
+ * `logImpression`'s callers hand it the scored subset of a served page, in
+ * served order, but a served item the ranker said nothing about is filtered out
+ * of that subset — so the subset's index is not the served position, and an id
+ * derived from it is not the id the RESPONSE carried for that item. Given the
+ * served ids, each scored row takes the next served slot holding its id
+ * (repeats included, in order). Without them, the historical index — every
+ * pulse and events caller, unchanged.
+ */
+function servedPositions(
+  scored: ReadonlyArray<ScoredCandidate<RankCandidate>>,
+  servedIds?: readonly string[],
+): number[] {
+  if (!servedIds || servedIds.length === 0) return scored.map((_, i) => i);
+  const out: number[] = [];
+  let cursor = 0;
+  for (let i = 0; i < scored.length; i++) {
+    const id = scored[i]!.candidate.id;
+    let j = cursor;
+    while (j < servedIds.length && servedIds[j] !== id) j++;
+    if (j < servedIds.length) { out.push(j); cursor = j + 1; }
+    else out.push(i);   // not on the served page at all: keep the old index rather than invent one
+  }
+  return out;
+}
+
+/** DV-06 — the per-request row for a PDE-ranked Discovery serve. Never throws. */
+async function logDiscoveryPdeServeRequest(
+  sc: any,
+  e: ServeExposure,
+  rows: ReadonlyArray<{ item_id: string; item_kind: string }>,
+  extraFeatures?: Record<string, string | number | boolean>,
+  servedIds?: readonly string[],
+): Promise<void> {
+  const servePoint = extraFeatures?.["servePoint"];
+  if (typeof servePoint !== "number") return;
+  const { kept } = screenFeaturesForStorage(extraFeatures ?? {});
+  await logDiscoveryServeRequest(sc, {
+    userId:     e.userId,
+    sessionId:  e.sessionId,
+    servedAt:   e.servedAt,
+    servePoint: servePoint as DiscoveryServePointId,
+    route:      typeof extraFeatures?.["route"] === "string" ? (extraFeatures["route"] as string) : "GET /discovery", modelVersion: DISCOVERY_PDE_MODEL_VERSION,
+    // The REQUEST served every id on its page, scored or not; the denominator
+    // is the page, not the ranked subset.
+    items:      servedIds && servedIds.length > 0
+      ? servedIds.map((id) => ({ id }))
+      : rows.map((r) => ({ id: r.item_id, kind: r.item_kind as any })),
+    context:    kept,
+  });
 }

@@ -79,6 +79,11 @@ import {
   type SensingContributionRow,
   type SensingReadResult,
 } from "./sensingAnonStore.js";
+import {
+  SENSING_DENSITY_BUCKETS,
+  type SensingContributionFeatureColumns,
+  type SensingDensityBucket,
+} from "./sensingAnonStore.js";
 
 /**
  * Why an aggregate was refused. The privacy gate's own reasons, plus the two
@@ -87,7 +92,85 @@ import {
  * different fact from "we looked and there were too few people", and collapsing
  * them would hide an outage behind a privacy suppression.
  */
-export type SensingAggregateReason = SuppressionReason | "read_failed" | "read_incomplete";
+export type SensingAggregateReason =
+  | SuppressionReason
+  | "read_failed"
+  | "read_incomplete"
+  // Not a suppression and not a failed read: the cohort was looked up in the
+  // DURABLE publication store (3110) and has no unexpired publication. Kept
+  // distinct from `read_failed` for the reason that file keeps every other
+  // refusal distinct — "we looked and there is nothing" and "we could not
+  // look" are different operator facts, and collapsing them would hide a
+  // broken read behind a legitimately empty one. Both still render the SAME
+  // unknown state; only the diagnostic differs.
+  | "no_live_publication";
+
+/**
+ * The cohort's 3312 features, one statistic per field, PER CONTRIBUTOR (the
+ * contributor's latest row is the one that counts, as for medianSignalBucket).
+ * Null whenever the cohort is not publishable: a sub-k cohort's median motion
+ * energy is a fact about a handful of people, so it is withheld like the
+ * bucket is. Each field is null when no counted contributor carried it.
+ */
+export interface SensingCohortFeatures {
+  /** Contributors whose latest row carried the feature half at all. */
+  contributorsWithFeatures: number;
+  motionEnergyCenti: number | null;
+  periodicityCenti: number | null;
+  /** The devices' own dwell estimate (0..4), distinct from the cohort-persistence dwell the window derives. */
+  reducedDwellBucket: number | null;
+  /**
+   * The plurality device density bucket among contributors that ASSERTED one
+   * (`unknown` does not vote — a device that did not know must not outvote
+   * those that did); a tie resolves to the LOWER band.
+   */
+  densityBucket: SensingDensityBucket | null;
+  /** 0..4, over contributors that held the separate acoustic permission. */
+  acousticEnergyBucket: number | null;
+  /** Contributors whose latest row carried the acoustic pair. */
+  acousticContributors: number;
+}
+
+const NO_FEATURES: SensingCohortFeatures = Object.freeze({
+  contributorsWithFeatures: 0,
+  motionEnergyCenti: null,
+  periodicityCenti: null,
+  reducedDwellBucket: null,
+  densityBucket: null,
+  acousticEnergyBucket: null,
+  acousticContributors: 0,
+});
+
+/** The per-contributor feature statistics over the contributors' latest rows. */
+export function cohortFeatures(latestRows: readonly SensingContributionFeatureColumns[]): SensingCohortFeatures {
+  const carrying = latestRows.filter((r) => r && typeof r.movement_class === "string");
+  if (carrying.length === 0) return NO_FEATURES;
+  const ints = (pick: (r: SensingContributionFeatureColumns) => number | null | undefined): number[] =>
+    carrying.map(pick).filter((v): v is number => typeof v === "number" && Number.isInteger(v));
+  const votes = new Map<SensingDensityBucket, number>();
+  for (const r of carrying) {
+    const d = r.density_bucket;
+    if (!d || d === "unknown" || !(SENSING_DENSITY_BUCKETS as readonly string[]).includes(d)) continue;
+    votes.set(d, (votes.get(d) ?? 0) + 1);
+  }
+  let density: SensingDensityBucket | null = null;
+  let best = 0;
+  for (const d of SENSING_DENSITY_BUCKETS) {
+    // Ascending band order, strict '>' — a tie keeps the LOWER band.
+    const n = votes.get(d) ?? 0;
+    if (n > best) { best = n; density = d; }
+  }
+  const acoustic = ints((r) => r.acoustic_energy_bucket);
+  return {
+    contributorsWithFeatures: carrying.length,
+    motionEnergyCenti: lowerMedian(ints((r) => r.motion_energy_centi)),
+    periodicityCenti: lowerMedian(ints((r) => r.periodicity_centi)),
+    reducedDwellBucket: lowerMedian(ints((r) => r.dwell_bucket)),
+    densityBucket: density,
+    acousticEnergyBucket: lowerMedian(acoustic),
+    acousticContributors: acoustic.length,
+  };
+}
 
 export interface SensingCohortAggregate {
   publishable: boolean;
@@ -113,6 +196,8 @@ export interface SensingCohortAggregate {
    * carries the ordinal and no label.
    */
   medianSignalBucket: number | null;
+  /** 3312 feature statistics; null unless publishable — see SensingCohortFeatures. */
+  features: SensingCohortFeatures | null;
 }
 
 const REFUSED_WITHOUT_LOOKING = (reason: SensingAggregateReason): SensingCohortAggregate => ({
@@ -124,6 +209,7 @@ const REFUSED_WITHOUT_LOOKING = (reason: SensingAggregateReason): SensingCohortA
   contributions: 0,
   observedAt: null,
   medianSignalBucket: null,
+  features: null,
 });
 
 /** Lower median of a non-empty integer list; null for an empty one. */
@@ -174,6 +260,8 @@ export function aggregateSensingCohort(
   // One bucket PER CONTRIBUTOR — the contributor's latest row wins, so a device
   // that wrote several rows before 2340's replay key still weighs exactly one.
   const bucketByActor = new Map<string, { createdMs: number; bucket: number }>();
+  // The contributor's latest ROW, for the 3312 features — same rule, whole row.
+  const latestRowByActor = new Map<string, { createdMs: number; row: SensingContributionRow }>();
 
   for (const r of fresh) {
     const token = r.contributor_token;
@@ -187,6 +275,11 @@ export function aggregateSensingCohort(
       const createdMs = Number.isFinite(created) ? created : Number.NEGATIVE_INFINITY;
       const prev = bucketByActor.get(token);
       if (!prev || createdMs >= prev.createdMs) bucketByActor.set(token, { createdMs, bucket: r.signal_bucket });
+    }
+    {
+      const createdMs = Number.isFinite(created) ? created : Number.NEGATIVE_INFINITY;
+      const prev = latestRowByActor.get(token);
+      if (!prev || createdMs >= prev.createdMs) latestRowByActor.set(token, { createdMs, row: r });
     }
 
     const group = r.group_token;
@@ -233,6 +326,7 @@ export function aggregateSensingCohort(
       contributions: fresh.length,
       observedAt: null,
       medianSignalBucket: null,
+      features: null,
     };
   }
 
@@ -263,6 +357,9 @@ export function aggregateSensingCohort(
     // median is a fact about a handful of people, so it is withheld outright.
     medianSignalBucket: decision.publishable
       ? lowerMedian([...bucketByActor.values()].map((v) => v.bucket))
+      : null,
+    features: decision.publishable
+      ? cohortFeatures([...latestRowByActor.values()].map((v) => v.row))
       : null,
   };
 }

@@ -94,13 +94,29 @@ const CONTEXT_OPTIONS: Array<{ value: ContextSharingDefault; label: string; sub:
 function useLocationPrefs() {
   const [prefs, setPrefs] = useState<LocationPrivacy | null>(null);
   const [loading, setLoading] = useState(true);
+  // True when the read came back unreadable. Distinct from `prefs === null`
+  // before the first load resolves: this is "we asked and could not find out",
+  // and the screen must say so rather than show fabricated switch positions.
+  const [loadError, setLoadError] = useState(false);
   const [saving, setSaving] = useState(false);
   const saveLock = useRef(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setLoadError(false);
+    const p = await getMyLocationPrivacy();
+    if (p) setPrefs(p);
+    else { setPrefs(null); setLoadError(true); }
+    setLoading(false);
+  }, []);
 
   useEffect(() => {
     let alive = true;
     getMyLocationPrivacy().then((p) => {
-      if (alive) { setPrefs(p); setLoading(false); }
+      if (!alive) return;
+      if (p) setPrefs(p);
+      else { setPrefs(null); setLoadError(true); }
+      setLoading(false);
     });
     return () => { alive = false; };
   }, []);
@@ -124,7 +140,7 @@ function useLocationPrefs() {
     }
   }, [prefs]);
 
-  return { prefs, loading, saving, save };
+  return { prefs, loading, loadError, saving, save, reload: load };
 }
 
 // ── OptionSheet ─────────────────────────────────────────────────────────────
@@ -203,7 +219,10 @@ export default function LocationAvailabilityScreen() {
 }
 
 function LocationAvailabilityScreenInner() {
-  const { prefs, loading: locLoading, saving: locSaving, save } = useLocationPrefs();
+  const {
+    prefs, loading: locLoading, loadError: locLoadError, saving: locSaving, save,
+    reload: reloadLocationPrefs,
+  } = useLocationPrefs();
 
   // Find Your Circle state (verbatim wiring from settings/find-your-circle.tsx)
   const { isAuthed, configured } = useSession();
@@ -298,6 +317,24 @@ function LocationAvailabilityScreenInner() {
       subtitle="Location sharing, Find Your Circle"
       right={savingIndicator}
     >
+      {/* Location prefs could not be read. Reuses this screen's own absence
+          idiom (see the Find Your Circle branch below) rather than showing
+          switch positions the server never asserted. */}
+      {!prefs && (
+        <SettingsSection title="Location Sharing">
+          <View style={{ padding: space.lg, gap: space.md, alignItems: 'center' }}>
+            <Text style={sx.errorText}>
+              {locLoadError ? 'Failed to load settings.' : 'Sign in to manage location sharing.'}
+            </Text>
+            {locLoadError && (
+              <Pressable style={sx.retryBtn} onPress={reloadLocationPrefs}>
+                <Text style={sx.retryText}>Try again</Text>
+              </Pressable>
+            )}
+          </View>
+        </SettingsSection>
+      )}
+
       {prefs && (
         <>
           {/* Sharing pause */}

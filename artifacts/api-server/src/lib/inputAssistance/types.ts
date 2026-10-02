@@ -176,6 +176,18 @@ export interface InputFieldPolicy {
 
   allowedSuggestionTypes: AssistanceType[];
   entityTypes?: EntityType[];
+  /**
+   * §14 — does this context offer useful ZERO-CHARACTER suggestions?
+   *
+   * MOVED HERE FROM THE CLIENT 2026-09-21 (G340). It was the last piece of
+   * per-context policy that existed ONLY in the client's local table, so
+   * deleting that table would have deleted it. It is policy, not chrome: it
+   * decides whether an empty field issues a request at all, and the server
+   * already builds a zero-character answer (`gateway.ts#zeroCharGeoDefaults`)
+   * that a client can only ask for if it knows the field has one. Defaults to
+   * FALSE, so a context that says nothing offers no zero-state.
+   */
+  zeroStateAssistance?: boolean;
 
   allowPersonalization: boolean;
   allowLiveContext: boolean;
@@ -282,6 +294,29 @@ export interface InputSuggestion {
   reason?: string;
   destination?: SearchDestination;
   policyVersion: string;
+  /**
+   * census-discovery §80 (A08) — present ONLY on rows served to the Map search
+   * sheet's field (`global_search` / `map.search`, lib/inputAssistance/
+   * searchPage.ts). What §27 needs to centre or frame a result, and nothing
+   * else: see {@link MapResultProjection}.
+   */
+  mapResult?: MapResultProjection;
+}
+
+/**
+ * The Map's placement of one search row (census-discovery §80). The search
+ * wire type and the display fields the Map's adapter reads, and from the row's
+ * metadata ONLY its geometry keys. Every position in it has been through the
+ * §24 protected-zone pass (lib/discoverySearchProtection.ts), so it discloses no
+ * position `GET /discovery/search` would not.
+ */
+export interface MapResultProjection {
+  serverType: string;
+  subtitle: string | null;
+  locationPreview: string | null;
+  destinationRoute: string | null;
+  startsAt: string | null;
+  metadata: Record<string, unknown> | null;
 }
 
 // ── §41 API request / response envelopes ──────────────────────────────────────
@@ -336,9 +371,43 @@ export interface SuggestRequest {
 export interface SuggestResponse {
   requestId: string;
   policyVersion: string;
+  /**
+   * §48 (census G341) — the version of this ENVELOPE'S SHAPE, independent of
+   * `policyVersion`. Optional and additive so an older client is unaffected;
+   * absent means "schema 1", which is what every serve before 2026-09-21 was.
+   *
+   * `policyVersion` could never carry this. A policy bump changes what a field
+   * is ALLOWED to do and every shipped client can still parse the answer; a
+   * shape bump changes what the answer IS. A client that refused both would
+   * black out on a registry tweak; one that refused neither would render a
+   * shape it does not understand.
+   */
+  schemaVersion?: number;
+  /**
+   * §48 (census G343) — the declaration half of the capability handshake: what
+   * the serve actually honoured of what the client declared. A handshake in one
+   * direction is a filter; this is what tells a client "no AI rows because this
+   * FIELD is not allowed them", which is a different fact from "no AI rows
+   * came back". Absent when the client declared nothing.
+   */
+  capabilities?: {
+    schemaVersion: number;
+    suggestionTypes: AssistanceType[];
+    withheldForClient: number;
+  };
   context: InputContext;
   fieldId?: string;
   suggestions: InputSuggestion[];
+  /**
+   * census-discovery §80 (DV-83 / A08) — the answer's coverage, in the Discovery
+   * refusal vocabulary (lib/discoveryRefusal.ts): `coverage: "nothing"` when the
+   * entity candidates are absent BECAUSE a read failed, `"partial"` when some
+   * sources failed and the rows present are real. Absent when complete.
+   * Additive: an older client ignores it, and no shape it reads changes.
+   */
+  refusal?: DiscoveryRefusal;
+  /** The Map search page's second lane (§27's "Saved items"), when it refused. */
+  laneRefusals?: { saved?: DiscoveryRefusal };
   /**
    * §44/§57 — the serve's OWN wall-clock cost in milliseconds, measured around
    * candidate generation in routes/inputAssistance.ts. Additive and optional so
@@ -353,3 +422,7 @@ export interface SuggestResponse {
    */
   serverMs?: number;
 }
+
+// census-discovery §80 — the gateway envelope carries coverage in the Discovery
+// refusal vocabulary. Imported at the foot so no cited line above moves.
+import type { DiscoveryRefusal } from "../discoveryRefusal";

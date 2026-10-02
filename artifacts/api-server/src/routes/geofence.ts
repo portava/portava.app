@@ -197,6 +197,9 @@ export type AdminGeofenceDefaultsResult =
   | { ok: true; defaults: AdminGeofenceDefaults }
   | { ok: false; reason: string };
 
+/** PostgREST/Postgres codes that mean "this table is not in the schema at all". */
+const TABLE_ABSENT_CODES = new Set(["PGRST205", "42P01"]);
+
 export const GEOFENCE_FALLBACK_DEFAULTS: AdminGeofenceDefaults = {
   defaultRadiusM: 150,
   minRadiusM: 50,
@@ -213,7 +216,16 @@ async function getAdminDefaults(
     .eq("id", 1)
     .maybeSingle();
   if (error) {
-    return { ok: false, reason: String((error as any)?.message ?? (error as any)?.code ?? error) };
+    // ABSENT is not UNREADABLE. PGRST205 / 42P01 mean the table is not in the
+    // schema at all — an under-migrated environment, where there is no admin
+    // intention to override and the shipped numbers ARE the policy. Refusing
+    // there would block every geofence save in a tree that has simply not run
+    // the migration, for no safety gained. Any other error means the table
+    // exists and its rows — somebody's deliberate clamp — could not be read,
+    // which is the case that must refuse.
+    const code = String((error as any)?.code ?? "");
+    if (TABLE_ABSENT_CODES.has(code)) return { ok: true, defaults: GEOFENCE_FALLBACK_DEFAULTS };
+    return { ok: false, reason: String((error as any)?.message ?? code ?? error) };
   }
   return {
     ok: true,

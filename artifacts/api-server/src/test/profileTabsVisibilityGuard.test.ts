@@ -99,7 +99,7 @@ const PUBLIC_PROFILE = {
 };
 
 const POSTS = [
-  { id: "post-1", author_id: OWNER, post_status: "published", content: "hello", created_at: "2026-01-01T00:00:00Z" },
+  { id: "post-1", author_id: OWNER, post_status: "published", visibility: "public", status: "active", deleted_at: null, content: "hello", created_at: "2026-01-01T00:00:00Z" },
 ];
 
 /** Count of privacy-settings reads issued — measured, not assumed. */

@@ -24,6 +24,15 @@
  *     this fixture is about.
  *   - F-08: services/groupChatSync.ts — the departed-member reconciliation
  *     (`left_at` marking) short-circuited. F-08 failed.
+ *   - F-11 was `vacuous` and asserted, from `src/routes/messaging.ts`, that no
+ *     unsend existed. It STAYED GREEN when unsend landed, because unsend landed
+ *     in telegraphLifecycle and the §13.1 command route and the assertion
+ *     watched one file. Rewritten 2026-09-23 as a real race fixture and shown
+ *     red twice (baseline 29/29): moving the receipt-row lock below the
+ *     seen-check in migration 3000 — which keeps the clause COUNT at two and
+ *     reopens the window — failed the lock-order assertion (28/29); putting a
+ *     direct `.from("messages").update(...)` back into the lifecycle route
+ *     failed the one-call assertion (28/29).
  *   - F-01/F-03/F-07/F-09/F-12 are the DIVERGENT ones and went red the other way
  *     round: each was first written asserting the spec's required outcome and
  *     observed to fail on today's tree, and the assertion was then rewritten
@@ -58,6 +67,7 @@ import {
   type TelegraphEvent,
 } from "../lib/telegraphEvents.js";
 import { isRabBookingCallEligible } from "../lib/calls/callGatewayAdapter.js";
+import { makeUnsendFunctionFake } from "./telegraphUnsendFunctionFake.js";
 import { isVisibleTo } from "../services/passport/OpenToPlansService.js";
 import { TELEGRAPH_ADVERSARIAL_FIXTURES } from "../domain/telegraph/invariants/adversarialFixtures.js";
 import {
@@ -600,15 +610,90 @@ describe("F-10 — AI summary sees conflicting messages", () => {
 // ── F-11 unsend races recipient seen update ──────────────────────────────────
 
 describe("F-11 — unsend races recipient seen update", () => {
-  it("there is no unsend operation, so there is no race to run", () => {
-    const s = readFileSync(resolve(process.cwd(), "src/routes/messaging.ts"), "utf8");
-    assert.equal(/router\.(post|delete|patch)\([^)]*unsend/i.test(s), false);
-    assert.equal(/telegraph_unsend_message_before_seen/.test(s), false);
+  /**
+   * This fixture used to assert that no unsend existed, by reading
+   * `src/routes/messaging.ts` — and it stayed green when unsend landed in
+   * `routes/telegraphLifecycle.ts` and `server/telegraph/commandRoute.ts`. The
+   * same blind spot is written up at P-06/P-07 in
+   * telegraphPropertyInvariants.test.ts. The race is now RUN rather than
+   * declared absent.
+   *
+   * What a fixture in this process can and cannot show:
+   *   - it CANNOT serialise two transactions; there is one thread here;
+   *   - it CAN show that the decision and the write are ONE call, so there is
+   *     no window in the route for a receipt to land in, which is the thing
+   *     that was wrong before;
+   *   - and it CAN read the migration and require the locks to be taken BEFORE
+   *     `last_read_at` is read, which is the guarantee itself.
+   * The locks are executed for real by the `api-server · kernel SQL executed on
+   * a throwaway database` CI job.
+   */
+  const MIGRATION = "src/migrations/3000_telegraph_unsend_authoritative.sql";
+
+  it("no route decides the race itself: both unsend paths call the function and nothing else", () => {
+    for (const route of ["src/routes/telegraphLifecycle.ts", "src/server/telegraph/commandRoute.ts"]) {
+      const src = readFileSync(resolve(process.cwd(), route), "utf8");
+      assert.ok(
+        /unsendBeforeSeen/.test(src),
+        `EXPECTED BY §7.4: ${route} resolves the race transactionally. ACTUAL: it does not call the function.`,
+      );
+      // The old shape was select-message, select-roster, update. Any direct
+      // update of `messages` on an unsend path is that shape coming back.
+      assert.equal(
+        /\.from\(["'`]messages["'`]\)[\s\S]{0,200}?\.update\(/.test(src),
+        false,
+        `${route} updates public.messages directly — the decision is back in the route, and so is the window`,
+      );
+    }
   });
 
-  it("the receipt the race would turn on DOES exist, which is why a competing one was not invented", () => {
+  it("the function takes the receipt locks BEFORE it reads last_read_at", () => {
+    const sql = readFileSync(resolve(process.cwd(), MIGRATION), "utf8");
+    const body = sql.slice(sql.indexOf("AS $fn$"), sql.indexOf("$fn$;", sql.indexOf("AS $fn$")));
+    assert.ok(body.length > 0, "could not find the function body");
+
+    const lockMessage = body.indexOf("FOR UPDATE");
+    const lockReceipts = body.indexOf("FOR UPDATE", lockMessage + 1);
+    const readReceipts = body.indexOf("INTO v_seen_count");
+    const write = body.indexOf("UPDATE public.messages");
+
+    assert.ok(lockMessage > 0 && lockReceipts > lockMessage, "both row locks must be present");
+    assert.ok(
+      readReceipts > lockReceipts,
+      "EXPECTED BY §7.4: lock, then read, then write. ACTUAL: last_read_at is read before the receipt rows are locked — a concurrent mark-as-read can still land in the gap.",
+    );
+    assert.ok(write > readReceipts, "the write precedes the seen-check");
+  });
+
+  it("a receipt that lands BEFORE the call is seen by it, and the unsend is refused without writing", async () => {
+    // The losing side of the race, run end to end through the model: the read
+    // is already committed when the unsend arrives, so §7.4 refuses. This is the
+    // outcome the lock makes deterministic rather than lucky.
+    const messages = [{
+      id: "m1", thread_id: "t", sender_id: "alice",
+      created_at: "2026-05-02T00:00:00.000Z", deleted_at: null, unsent_at: null, body: "hi",
+    }];
+    const members = [
+      { thread_id: "t", user_id: "alice", left_at: null, last_read_at: null },
+      { thread_id: "t", user_id: "bob", left_at: null, last_read_at: "2026-05-02T00:00:01.000Z" },
+    ];
+    let wrote = false;
+    const rpc = makeUnsendFunctionFake(() => ({ messages, message_thread_members: members }), {
+      onWrite: () => { wrote = true; },
+    });
+    const { data } = await rpc("telegraph_unsend_message_before_seen", {
+      p_message_id: "m1", p_actor_id: "alice", p_thread_id: "t",
+    });
+    assert.deepEqual(data, { outcome: "seen", seenBy: 1, recipientCount: 1 });
+    assert.equal(wrote, false, "a refused unsend wrote — the message is gone and the sender was told it was not");
+    assert.equal(messages[0].body, "hi", "the body must survive a refusal");
+  });
+
+  it("the receipt the race turns on is last_read_at, not a competing sequence", () => {
     const s = readFileSync(resolve(process.cwd(), "src/routes/messaging.ts"), "utf8");
     assert.ok(/last_read_at/.test(s));
+    const sql = readFileSync(resolve(process.cwd(), MIGRATION), "utf8");
+    assert.ok(/last_read_at/.test(sql), "the function reads some other signal than the one the app writes");
   });
 });
 

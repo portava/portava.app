@@ -402,17 +402,28 @@ describe("real-repo integration — the actual consolidated tree passes end-to-e
     );
   });
 
-  it("ALLOWLISTED_ROOTS has exactly the two named directories, each with a non-empty reason", () => {
+  it("ALLOWLISTED_ROOTS has exactly the three named directories, each with a non-empty reason", () => {
+    // An exact set, not a floor. Allowlisting a directory exempts it from the
+    // unlisted-root sweep, so a fourth entry appearing without this assertion
+    // changing is how the sweep would quietly stop covering somewhere.
     const relPaths = ALLOWLISTED_ROOTS.map((r) => r.relPath).sort();
-    assert.deepEqual(relPaths, ["artifacts/api-server/baseline", "reconciliation-staging"].sort());
+    assert.deepEqual(relPaths, [
+      "artifacts/api-server/baseline",
+      "artifacts/api-server/sql/rehearsals",
+      "reconciliation-staging",
+    ].sort());
     for (const root of ALLOWLISTED_ROOTS) {
       assert.ok(root.reason?.trim(), `${root.relPath} has no reason`);
     }
   });
 
-  it("the baseline root is flagged nonExecutable; the review-staging root is not", () => {
+  it("the baseline and rehearsal roots are flagged nonExecutable; the review-staging root is not", () => {
     const byPath = Object.fromEntries(ALLOWLISTED_ROOTS.map((r) => [r.relPath, r.nonExecutable]));
     assert.equal(byPath["artifacts/api-server/baseline"], true);
+    // A rehearsal is wrapped in BEGIN/ROLLBACK and deliberately breaks things to
+    // prove a guard fires. Replayed as a migration it would apply nothing and
+    // report success, so the overlap check has to be armed for it.
+    assert.equal(byPath["artifacts/api-server/sql/rehearsals"], true);
     assert.equal(byPath["reconciliation-staging"], false);
   });
 });

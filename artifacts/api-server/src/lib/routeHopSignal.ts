@@ -477,7 +477,19 @@ export type AcceptedPlanReadRefusal =
   | "no_service_client"
   | "no_zone_resolver"
   | "no_group_key_secret"
-  | "read_failed";
+  | "read_failed"
+  /**
+   * The consent table could not be read, so NOBODY is treated as consented.
+   *
+   * The suppression is the same one this module always applied — a failure may
+   * shrink a cohort, never inflate one — but it used to be returned as
+   * `{ signals: [], refusal: null }`, which is a silent empty and exactly what
+   * `refusal`'s own doc comment says can never happen. "Nobody has consented"
+   * and "we could not read the consent table" are different facts about D4
+   * consent (route_flow_contribution_consent, 2224), and only the first may be
+   * reported to a caller as a successfully-read, empty cohort.
+   */
+  | "consent_read_failed";
 
 export interface ReadAcceptedPlanHopsResult {
   signals: MovementSignal[];
@@ -508,7 +520,10 @@ const MAX_PLANS_PER_READ = 500;
  *
  * Consent is enforced per actor, mirroring lib/crowdFlowProducer's D4 handling
  * exactly: enabled AND not withdrawn, with a consent-read FAILURE leaving the
- * consented set EMPTY. A failure can shrink a cohort; it can never inflate one.
+ * consented set EMPTY. A failure can shrink a cohort; it can never inflate one
+ * — and it is NAMED (`consent_read_failed`) rather than returned as a cohort
+ * of zero, so a caller cannot mistake an unreadable consent table for an
+ * unconsenting population.
  */
 export async function readAcceptedPlanHops(
   sc: any,
@@ -574,11 +589,14 @@ export async function readAcceptedPlanHops(
       .in("user_id", actorIds)
       .eq("enabled", true)
       .is("withdrawn_at", null);
-    if (consentErr) {
+    if (consentErr || !Array.isArray(consentRows)) {
       logger.warn({ err: consentErr }, "routeHopSignal: consent read failed; cohort empty");
-    } else {
-      consented = new Set(((consentRows as any[]) ?? []).map((r) => r.user_id as string));
+      // Fail-closed AND fail-loud: no signals (unchanged), but the caller is
+      // told the cohort is empty because the consent read failed, not because
+      // nobody has consented.
+      return empty("consent_read_failed");
     }
+    consented = new Set((consentRows as any[]).map((r) => r.user_id as string));
 
     const consentedPlans = plans.filter((p) => consented.has(p.actorId));
     if (consentedPlans.length === 0) return { signals: [], refusal: null, skipped: [] };

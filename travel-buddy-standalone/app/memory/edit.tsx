@@ -10,7 +10,7 @@ import {
   StyleSheet, ActivityIndicator, Alert,
 } from 'react-native';
 import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router, useLocalSearchParams, Redirect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { X, Globe, Users, Lock, Eye, MapPin, ChevronDown } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
@@ -145,7 +145,7 @@ export default function EditMemoryScreen() {
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
-  if (loading) {
+  if (!id) return <Redirect href="/memory/new" />; /* HM-F08: no id is a NEW Memory — this screen used to spin forever on it */ if (loading) {
     return (
       <View style={[s.centered, { paddingTop: insets.top }]}>
         <ActivityIndicator color={color.signal} />

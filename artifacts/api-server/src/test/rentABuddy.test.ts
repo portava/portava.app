@@ -5131,3 +5131,58 @@ describe("Trips §7.3: a booking on a trip consults the freedom windows (TR133)"
     assert.equal("tripFit" in r.body, false);
   });
 });
+
+// ── Safety checkin: the check-in type and a refused insert (tm-followups) ─────
+// Appended at the foot: census-trips cites this file by line.
+
+describe("safety checkin — known types only, and a refused insert is not ok:true", () => {
+  // tm-followups (integrator addition): the active-session Safe Return switch
+  // sent `safe_return_enabled`, which rent_buddy_checkin_type (0047/0113) does
+  // not have; this route discarded the insert's error and answered ok:true, so
+  // the client could not have shown the failure even had it looked.
+  const inProgressBooking = () => ({
+    [BOOKING_ID]: {
+      id: BOOKING_ID, buddy_id: BUDDY_PROF, traveler_id: USER_ID,
+      status: "in_progress", safety_status: "normal",
+      booking_date: new Date().toISOString().slice(0, 10),
+      duration_h: 2, city: "Tokyo", category: "city",
+      payment_mode: "full_in_app", total_usd: 50, deposit_usd: 50, cash_balance_usd: 0,
+      route_plan: [], updated_at: new Date().toISOString(), created_at: new Date().toISOString(),
+    },
+  });
+
+  it("refuses a check-in type the enum does not have (400) and records nothing", async () => {
+    setupState({ bookings: inProgressBooking() });
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/safety/checkin`, {
+      checkinType: "safe_return_enabled",
+      response: "ok",
+    });
+    assert.equal(r.status, 400, JSON.stringify(r.body));
+    assert.equal(r.body.error, "invalid_payload");
+    assert.equal((state.safetyCheckins ?? []).length, 0);
+  });
+
+  it("a refused check-in insert is db_error, never ok:true", async () => {
+    setupState({
+      bookings: inProgressBooking(),
+      insertErrorOverrides: { rent_buddy_safety_checkins: { message: "invalid input value for enum", code: "22P02" } },
+    });
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/safety/checkin`, {
+      checkinType: "check_ok",
+      response: "ok",
+    });
+    assert.notEqual(r.body.ok, true, JSON.stringify(r.body));
+    assert.equal(r.body.error, "db_error");
+  });
+
+  it("check_ok + ok is recorded and is not a distress event (the Safe Return switch's check-in)", async () => {
+    setupState({ bookings: inProgressBooking() });
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/safety/checkin`, {
+      checkinType: "check_ok",
+      response: "ok",
+    });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal((state.safetyCheckins ?? []).length, 1);
+    assert.equal((state.safetyEvents ?? []).length, 0);
+  });
+});

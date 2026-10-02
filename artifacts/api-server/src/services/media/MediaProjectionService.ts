@@ -35,7 +35,7 @@ import {
   MEDIA_PROJECTION_POST_MEDIA_COLUMNS,
   MEDIA_PROJECTION_PROFILE_COLUMNS,
   applyLocationDisclosure,
-  toMediaProjection,
+  toMediaProjection, placeholderProjectionLayers,
   type MediaCandidateRow,
   type MediaProjection,
 } from "../../lib/media/mediaProjection.js";
@@ -63,8 +63,8 @@ import {
   type PerspectiveSummary,
 } from "./MediaPerspectiveService.js";
 import { buildMyWorldMemory, type MyWorldMemory } from "./MyWorldMemoryService.js";
-import { rankMediaCandidates } from "./MediaRankingService.js";
-import { buildVisualConsensus, type VisualConsensus } from "./MediaConsensusService.js";
+import { rankCandidatesForViewer, type MediaRankingScore } from "./MediaRankingService.js";
+import { buildVisualConsensus, type VisualConsensus } from "./MediaConsensusService.js"; import { attachCanonicalMedia } from "../../lib/media/mediaCanonicalRead.js"; import { mayViewUnderOverride, filterMediaProjectionVisibility } from "../../lib/mediaVisibility.js"; import { explainWorldZones, type Section47Reason } from "./MediaExplanationService.js";
 
 const DEFAULT_CANDIDATE_LIMIT = 200;
 
@@ -197,7 +197,7 @@ export interface CandidateFilter {
  * Which candidate-loader input could not be read. Carried on the refusal so a
  * log line names the failing read rather than "media unavailable".
  */
-export type MediaCandidateInput = "posts" | "eligibility";
+export type MediaCandidateInput = "posts" | "eligibility" | "visibility";
 
 /**
  * Raised when the candidate read could not be performed — NOT when it found
@@ -648,17 +648,17 @@ async function rankAndProject(
   sc: SupabaseClient,
   viewer: ViewerResolved,
   candidates: MediaCandidateRow[],
-  nowMs: number,
+  nowMs: number, scoresOut?: Map<string, MediaRankingScore>,
 ): Promise<MediaProjection[]> {
   return projectCandidatesProtected(
     sc,
     viewer,
-    rankMediaCandidates(candidates, {
+    await rankCandidatesForViewer(sc, viewer, candidates, {
       viewerId: viewer.viewerId,
       viewerTripIds: viewer.viewerTripIds,
       intentMediaIds: viewer.intentMediaIds,
       nowMs,
-    }),
+    }, scoresOut),
     nowMs,
   );
 }
@@ -676,7 +676,7 @@ export async function projectCandidatesProtected(
   rows: MediaCandidateRow[],
   nowMs: number,
 ): Promise<MediaProjection[]> {
-  if (rows.length === 0) return [];
+  if (rows.length === 0) return []; rows = await prepareCanonicalRows(sc, viewer, rows); if (rows.length === 0) return []; const vantages = await loadPerspectiveVantages(sc, rows); // §12 vantage — no read while media_perspective_vantage_enabled is off (census-media §36)
   // Two independent batch reads, one round trip's worth of latency. The gem
   // context is fail-CLOSED (losing it widens disclosure); the neighborhood map
   // is fail-SOFT (losing it only removes a label) — see loadPlaceNeighborhoods.
@@ -689,13 +689,13 @@ export async function projectCandidatesProtected(
     const p = toMediaProjection(row, nowMs);
     if (!p) continue;
     out.push(
-      applyLocationDisclosure(
+      withPerspectiveVantage(vantages, String(row.id), applyLocationDisclosure( // the vantage rides the place: attached only when the disclosure kept the place id
         p,
         disclosureForRow(row, viewer.viewerId, ctx, neighborhoodForRow(row, neighborhoods)),
-      ),
+      )),
     );
   }
-  return out;
+  return visibleToViewerOrRefuse(sc, viewer.viewerId, out); // census-media §28: every count downstream is taken from what this viewer may see
 }
 
 // ── Live current-state (gated, fail-closed) ──────────────────────────────────
@@ -797,7 +797,7 @@ export async function buildWorldProjection(
     limit: DEFAULT_CANDIDATE_LIMIT,
     nowMs,
   });
-  const media = await rankAndProject(sc, viewer, candidates, nowMs);
+  const scores = new Map<string, MediaRankingScore>(); const media = await rankAndProject(sc, viewer, candidates, nowMs, scores);
 
   const forYouNow = buildCategoryBuckets(media, nowMs);
 
@@ -833,7 +833,7 @@ export async function buildWorldProjection(
       };
     }),
   );
-
+  await explainWorldZones(sc, viewer.viewerId, cityVisualState, zoneList.map((z) => z.items), candidates, scores, nowMs); // §47, from the ranker's own scores (census-media §25)
   // "Changing now" is ONLY zones with a gated live claim. No live claims → empty.
   const changingNow = cityVisualState.filter((z) => z.liveClaims.length > 0);
 
@@ -930,7 +930,7 @@ export async function buildPlaceProjection(
     limit: DEFAULT_CANDIDATE_LIMIT,
     nowMs,
   });
-  const media = await rankAndProject(sc, viewer, candidates, nowMs);
+  const media = keepDisclosedAtPlace(await rankAndProject(sc, viewer, candidates, nowMs), placeId); // census-media §36: a place page lists only what may be SAID to be at this place
   if (!placeCity) placeCity = media.find((m) => m.city)?.city ?? null;
   if (!placeName) placeName = media.find((m) => m.placeLabel)?.placeLabel ?? null;
 
@@ -1184,7 +1184,7 @@ export async function buildPeopleProjection(
   for (const [cid, items] of byContributor) {
     const relation = relationOf(cid);
     if (!relation) continue;
-    const sorted = items.sort(
+    const sorted = [...items].sort(
       (a, b) => new Date(b.capturedAt).getTime() - new Date(a.capturedAt).getTime(),
     );
     people.push({
@@ -1192,7 +1192,7 @@ export async function buildPeopleProjection(
       relation,
       perspectiveCount: sorted.length,
       freshness: aggregateFreshness(sorted.map((m) => m.capturedAt), nowMs),
-      media: sorted.slice(0, 12),
+      media: items.slice(0, 12).sort((a, b) => new Date(b.capturedAt).getTime() - new Date(a.capturedAt).getTime()),
     });
   }
   // §27's declared order first, the count only inside a population.
@@ -1329,7 +1329,7 @@ export async function buildMyWorldProjection(
           country: typeof row.location_country === "string" ? row.location_country : null,
           category: typeof row.category === "string" ? row.category : null,
           freshness: "historical",
-          contributor: null,
+          contributor: null, ...placeholderProjectionLayers(row),
         },
       );
       continue;
@@ -1552,7 +1552,7 @@ export async function buildTimelineProjection(
     limit: DEFAULT_CANDIDATE_LIMIT,
     nowMs,
   });
-  const media = (await rankAndProject(sc, viewer, candidates, nowMs)).sort(
+  const media = keepDisclosedAtPlace(await rankAndProject(sc, viewer, candidates, nowMs), opts.placeId ?? null).sort( // census-media §36, as the place page
     (a, b) => new Date(b.capturedAt).getTime() - new Date(a.capturedAt).getTime(),
   );
 
@@ -1618,7 +1618,7 @@ export interface MediaMapProjection {
    * projection (spec §21 — Media Map does not own a second location engine). The
    * client joins these counts onto positions it already has from the Map gateway.
    */
-  clusters: MapCluster[];
+  clusters: MapClusterWithCover[]; // each carries at most ONE cover image: see attachClusterCovers, end of file (census-media §24, MD300)
   totalPerspectives: number;
 }
 
@@ -1651,5 +1651,258 @@ export async function buildMediaMapProjection(
     }))
     .sort((a, b) => b.perspectiveCount - a.perspectiveCount);
 
-  return { generatedAt, clusters, totalPerspectives: media.length };
+  return attachClusterCovers(sc, viewer, { generatedAt, clusters, totalPerspectives: media.length }, zoneMap); // §39 "Map thumbnails" (census-media §24, MD300)
 }
+
+// ── §6 canonical asset on the read path, §6.1 override per viewer ────────────
+
+/**
+ * The first step of `projectCandidatesProtected` (census-media §20): put the
+ * CANONICAL asset (spec §6) on the projection's read path, then apply each
+ * canonical attachment's §6.1 `visibility_override` for THIS viewer.
+ *
+ * 1. `attachCanonicalMedia` — gated by `media_canonical_read_enabled`, which is
+ *    off in both databases, so today this issues no query and changes nothing.
+ *    With it on, `mediaProjection.firstReadyMedia` prefers the asset over
+ *    `post_media` / `media_urls` and the §8 provenance layer is the asset's own.
+ *
+ * 2. The override. An attachment whose audience does not include the viewer is
+ *    REMOVED from `canonical_media`, and — because the legacy stores may hold
+ *    the very same file — that row's legacy branches are cleared as well, so the
+ *    projector cannot fall back to serving by `post_media` what the override just
+ *    withheld. If nothing canonical survives, the item is dropped; if another
+ *    canonical asset survives, it is served instead. Owner-only-sees-everything
+ *    and fail-closed-on-error both come from `lib/mediaVisibility`, the same rule
+ *    `lib/mediaAccess` applies before signing the bytes, so the served item and
+ *    the bytes cannot disagree.
+ *
+ * Rows are never mutated beyond what `attachCanonicalMedia` already does: a row
+ * that loses an attachment is replaced by a shallow copy, so a caller that
+ * still holds the page (counts, consensus) sees the rows it passed in.
+ */
+export async function prepareCanonicalRows(
+  sc: SupabaseClient,
+  viewer: ViewerResolved,
+  rows: MediaCandidateRow[],
+): Promise<MediaCandidateRow[]> {
+  await attachCanonicalMedia(sc, rows);
+  const memo = new Map<string, Promise<boolean>>();
+  const out: MediaCandidateRow[] = [];
+  for (const row of rows) {
+    const canonical = Array.isArray(row.canonical_media) ? row.canonical_media : [];
+    const narrowed = canonical.filter((m: any) => m && m.visibility_override != null);
+    if (narrowed.length === 0) {
+      out.push(row);
+      continue;
+    }
+    const ownerId = typeof row.author_id === "string" ? row.author_id : "";
+    const tripId = typeof (row as any).trip_id === "string" ? String((row as any).trip_id) : null;
+    const kept: any[] = [];
+    let withheld = false;
+    for (const m of canonical) {
+      if (m?.visibility_override == null) {
+        kept.push(m);
+        continue;
+      }
+      const key = `${row.id}:${ownerId}:${tripId ?? ""}:${String(m.visibility_override)}`;
+      let decision = memo.get(key);
+      if (!decision) {
+        decision = mayViewUnderOverride(sc, viewer.viewerId, ownerId, m.visibility_override, {
+          context: tripId ? { contextType: "trip", contextId: tripId } : undefined,
+          entity: { entityType: "post", entityId: String(row.id) },
+        });
+        memo.set(key, decision);
+      }
+      if (await decision) kept.push(m);
+      else withheld = true;
+    }
+    if (!withheld) {
+      out.push(row);
+      continue;
+    }
+    if (kept.length === 0) continue; // nothing this viewer may see — drop the item
+    out.push({ ...row, canonical_media: kept, post_media: [], media_urls: [] });
+  }
+  return out;
+}
+
+/**
+ * §47 "Why this?" on a World zone (census-media §25, MD428). Merged into
+ * `WorldZone` here, at the file's tail, so no line cited above it moves.
+ *
+ * Written by `MediaExplanationService.explainWorldZones` in
+ * `buildWorldProjection`, from the scores the §24 ranker ordered this page by.
+ * PRESENT only when at least one of §47's five reasons materially lifted a
+ * perspective disclosed at this zone's place for this viewer; ABSENT otherwise.
+ * Never a generic sentence. `changingNow` is a filter of the same zone objects,
+ * so a changing-now card carries exactly its zone's explanation.
+ */
+export interface WorldZone {
+  /** The §47 bullets, one per material reason, strongest first, joined by newlines. */
+  whyThis?: string;
+  /** The same reasons as codes, in the same order. */
+  whyThisReasons?: Section47Reason[];
+}
+
+
+/**
+ * The trip-context circle filter, applied where the page is PROJECTED rather
+ * than only where the response is SENT (census-media §28).
+ *
+ * `routes/mediaWorld.ts`'s `sendProjection` runs `filterMediaProjectionVisibility`
+ * on the finished payload, and that removes hidden media OBJECTS. It cannot
+ * reach a number. Every builder here counts its page before the route sees it
+ * (a World zone's `perspectiveCount`, freshness and consensus, a bucket's
+ * `freshPerspectives`, `totalPerspectives`, a place's perspective summary, an
+ * experience's counts), so a perspective the viewer may not see still moved
+ * those numbers: a hidden trip post at a place was announced as "2 perspectives,
+ * fresh". Filtering here, before anything is counted, makes every count a count
+ * of what this viewer is served. The route's own filter stays as the second
+ * line. An undecidable filter refuses (503), as an unreadable candidate read
+ * already does, rather than counting a page it could not decide about.
+ */
+async function visibleToViewerOrRefuse(
+  sc: SupabaseClient,
+  viewerId: string,
+  media: MediaProjection[],
+): Promise<MediaProjection[]> {
+  if (media.length === 0) return media;
+  const visible = await filterMediaProjectionVisibility(sc, viewerId, media);
+  if (!Array.isArray(visible)) {
+    throw new MediaCandidatesUnavailableError("visibility", "trip-context visibility could not be decided for this page");
+  }
+  return visible as MediaProjection[];
+}
+
+// ── §39 "Map thumbnails": ONE cover image per `/media/map` cluster ───────────
+//
+// census-media MD300 (§22.5): "`/media/map` carries counts and no image, so
+// there is nothing to cache." Each cluster now carries at most one cover, and
+// NOTHING NEW DECIDES WHO MAY SEE IT:
+//
+//   1. A cover is one of the cluster's OWN items, and every item already came
+//      through `loadEligibleCandidatesOrRefuse` (eligibility, blocks, mutes,
+//      private accounts, delayed publish) and `projectCandidatesProtected` (the
+//      servable-media gate over processing and moderation, the §6 canonical
+//      read, the §6.1 per-viewer attachment override and the location choke
+//      point) — the same two steps the place projection's perspectives take.
+//   2. The directional circle override is applied to the candidates HERE,
+//      BEFORE one is chosen, with the function the router applies at its
+//      boundary (`lib/mediaVisibility.filterMediaProjectionVisibility`).
+//      Choosing first and leaving it to the boundary would strip a cluster of
+//      its image whenever its top item was hidden from this viewer, although
+//      another item was not.
+//   3. The cover rides in an ARRAY of zero or one. That boundary filter prunes
+//      media only out of arrays; a lone object would pass it unexamined, and
+//      step 2 would be the only line instead of the first of two.
+//   4. A candidate must carry an IMAGE: an image item, or a video with its
+//      server-derived poster (`thumbnailUrl`). A video file is never a cover.
+//   5. A directional read that cannot be completed yields NO covers — fail
+//      closed on images. The counts are served exactly as before this change.
+//
+// The cover is SLIM on purpose: no contributor, no place labels (the cluster
+// carries its own), no provenance. A map thumbnail is not a second item view.
+// The byte gate (`lib/mediaAccess`) still decides the signature on the file.
+
+/** The image a Media Map cluster is shown with. No coordinates, by construction. */
+export type MapClusterCover = Pick<
+  MediaProjection,
+  "id" | "mediaType" | "url" | "thumbnailUrl" | "width" | "height" | "capturedAt" | "freshness"
+>;
+
+export interface MapClusterWithCover extends MapCluster {
+  /** Zero or one item. An array so the router's directional filter can prune it (step 3 above). */
+  coverMedia: MapClusterCover[];
+}
+
+/** Step 4: an image item, or a video that has its poster. */
+export function hasClusterCoverImage(m: MediaProjection): boolean {
+  if (m.mediaType === "video") return typeof m.thumbnailUrl === "string" && m.thumbnailUrl.length > 0;
+  return (
+    (typeof m.url === "string" && m.url.length > 0) ||
+    (typeof m.thumbnailUrl === "string" && m.thumbnailUrl.length > 0)
+  );
+}
+
+function toClusterCover(m: MediaProjection): MapClusterCover {
+  return {
+    id: m.id,
+    mediaType: m.mediaType,
+    url: m.url,
+    thumbnailUrl: m.thumbnailUrl,
+    width: m.width,
+    height: m.height,
+    capturedAt: m.capturedAt,
+    freshness: m.freshness,
+  };
+}
+
+/**
+ * Give each cluster its cover: the HIGHEST-RANKED item of that cluster that has
+ * an image and survives the directional override for this viewer. Items arrive
+ * in ranked order (`rankAndProject`, and `groupZones` keeps it), so "first" is
+ * the ranker's choice, not recency's.
+ */
+async function attachClusterCovers(
+  sc: SupabaseClient,
+  viewer: ViewerResolved,
+  base: { generatedAt: string; clusters: MapCluster[]; totalPerspectives: number },
+  zones: Map<string, { placeId: string | null; label: string; items: MediaProjection[] }>,
+): Promise<MediaMapProjection> {
+  const itemsOf = (c: MapCluster): MediaProjection[] =>
+    c.placeId ? (zones.get(c.placeId)?.items ?? []) : [];
+  const pool = base.clusters.flatMap((c) => itemsOf(c).filter(hasClusterCoverImage));
+  let visible: Set<string> | null = null;
+  if (pool.length > 0) {
+    const kept = await filterMediaProjectionVisibility(sc, viewer.viewerId, pool);
+    if (Array.isArray(kept)) {
+      visible = new Set((kept as MediaProjection[]).map((m) => m.id));
+    } else {
+      logger.warn(
+        { clusters: base.clusters.length },
+        "mediaMap: directional media visibility could not be resolved — clusters served without covers",
+      );
+    }
+  }
+  const allowed = visible;
+  return {
+    ...base,
+    clusters: base.clusters.map((c) => {
+      const cover = allowed
+        ? itemsOf(c).find((m) => hasClusterCoverImage(m) && allowed.has(m.id))
+        : undefined;
+      return { ...c, coverMedia: cover ? [toClusterCover(cover)] : [] };
+    }),
+  };
+}
+
+// `filterMediaProjectionVisibility` is imported on the file's import line (census-media §28.1 needed it there first).
+
+// ── §33/§34 on PLACE-SCOPED reads (census-media §36, MD262) ──────────────────
+//
+// Appended at the tail so no cited line above moves; function declarations
+// hoist.
+/**
+ * Keep only the items this viewer may be TOLD are at `placeId`.
+ *
+ * A place-scoped read — GET /media/places/:placeId, and GET /media/timeline
+ * with a placeId — selects its candidates BY canonical_place_id, so every row
+ * it returns is at that place. Each projection has already been through the
+ * location choke point, which withholds `placeId` from a viewer who may not
+ * learn it: the owner chose city_only / hidden / trusted_circle_only /
+ * neighborhood_only, the post is an unreleased delayed one, or a Hidden Gem's
+ * ceiling binds. Listing such an item ON the place's own page discloses the
+ * very place the choke point withheld — the page is the place — so it is
+ * dropped here. The item is not hidden anywhere else: it still appears where
+ * it can be shown at its own tier (the city World view, the People lens).
+ *
+ * The OWNER keeps their own items (the choke point never withholds a place id
+ * from its owner), and with no placeId the read is not place-scoped and nothing
+ * is filtered. Narrowing only: this returns a subset of its input.
+ */
+export function keepDisclosedAtPlace(media: MediaProjection[], placeId: string | null): MediaProjection[] {
+  if (!placeId) return media;
+  return media.filter((m) => m.placeId === placeId);
+}
+// census-media §36 (MD82–MD85): tail import, ESM hoists it.
+import { loadPerspectiveVantages, withPerspectiveVantage } from "../../lib/media/perspectiveVantage.js";

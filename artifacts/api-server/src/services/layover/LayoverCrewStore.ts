@@ -34,10 +34,21 @@
  * would fork the rule.
  *
  * ── STORAGE ──────────────────────────────────────────────────────────────────
- * `layover_crews` and `layover_crew_members`, created by migration 2984
- * (written, NOT applied — see docs/BUILD-BACKLOG.md). Both tables have RLS on
- * and no policy at all, so a client reaches nothing and every access here is on
- * the service role.
+ * `layover_crews` and `layover_crew_members`, created by migration 2984.
+ *
+ * APPLIED, and this line used to say the opposite. Until 2026-09-16 it read
+ * "written, NOT applied — see docs/BUILD-BACKLOG.md", which was true when it
+ * was written and false afterwards: census-layover §26.1 records 2984 applied
+ * to production (`ajrurzioarfkagpuxfnb`) and to CI, each inside `BEGIN … COMMIT`
+ * with the file's own postcondition block and a `schema_migration_ledger` row,
+ * and both tables re-probed after the fact rather than assumed.
+ *
+ * Both tables have RLS on and — re-probed in that same pass — ZERO policies and
+ * ZERO `anon`/`authenticated` grants. A client reaches nothing, every access
+ * here is on the service role, and there is therefore no database-level scope
+ * underneath this module: the route layer is the ONLY answer to who may join a
+ * crew and who may see a crewmate, not the looser of two. That is what makes
+ * `joinCrew`'s city check load-bearing rather than belt-and-braces.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../../lib/logger.js";
@@ -229,7 +240,22 @@ export async function openCrewsInCity(
 
 export type CrewWrite<T> =
   | { ok: true; value: T }
-  | { ok: false; reason: "read_failed" | "write_failed" | "already_in_a_crew" | "crew_full" | "crew_unavailable" };
+  | {
+      ok: false;
+      reason:
+        | "read_failed"
+        | "write_failed"
+        | "already_in_a_crew"
+        | "crew_full"
+        | "crew_unavailable"
+        /**
+         * The joiner's layover is not in the crew's city. Discovery has always
+         * been city-scoped (`openCrewsInCity`); until this reason existed the
+         * ACTION behind it was not, so a crew id was enough to join a crew on
+         * another continent. See `joinCrew`.
+         */
+        | "city_mismatch";
+    };
 
 export interface CreateCrewInput {
   userId: string;
@@ -321,10 +347,33 @@ export async function createCrew(
  * The composite primary key (crew_id, user_id) is what makes a double-tapped
  * join a constraint violation rather than a second row; 23505 is reported as
  * success, because the traveller is in the crew either way.
+ *
+ * ── THE CITY IS PART OF THE JOIN, NOT JUST PART OF THE LIST ──────────────────
+ * `input.city` is the city the JOINER's layover is in, and a crew in any other
+ * city is refused. This is not defensive tidiness; it closes a measured defect.
+ * Discovery (`openCrewsInCity`) has always filtered on city and both the GET
+ * and the POST-create routes refuse outright when the city is unknown, but the
+ * join took a crew id from the URL and asked nothing. Staged against the real
+ * router, a traveller at an airport whose city is *not known at all* joined a
+ * Taoyuan crew and came back:
+ *
+ *     "sharedReturnBy": "…T15:42Z", "bindingMemberIds": ["scope-user-b"]
+ *
+ * — the remote joiner BINDING the shared deadline for everyone actually in
+ * Taoyuan, because §14.1's `shared_return_by` is a minimum over all members.
+ * The founder was told to be back four hours early by someone who was not
+ * there. Membership is also the first of the three gates `crewMemberCards`
+ * applies, so an unscoped join is a widening of who gets past it.
+ *
+ * The check sits directly after the crew row is read, so it applies to a
+ * re-join exactly as it applies to a first join: a membership that should never
+ * have existed is not re-confirmed by tapping again. Comparison is through
+ * `canonCity` on both sides — the stored city is already canonical (`createCrew`
+ * writes it that way) and the caller's is not.
  */
 export async function joinCrew(
   db: SupabaseClient,
-  input: { userId: string; sessionId: string; crewId: string },
+  input: { userId: string; sessionId: string; crewId: string; city: string },
   nowIso: string,
 ): Promise<CrewWrite<{ crew: CrewRow; members: CrewMemberRow[] }>> {
   const existing = await activeCrewForUser(db, input.userId, nowIso);
@@ -346,6 +395,16 @@ export async function joinCrew(
   }
   if (!crewData) return { ok: false, reason: "crew_unavailable" };
   const crew = toCrew(crewData as Record<string, any>);
+
+  // A crew is a CITY-level thing. Refused BEFORE the capacity read and before
+  // any write, so a mismatched join costs one read and leaves nothing behind.
+  if (crew.city !== canonCity(input.city)) {
+    logger.warn(
+      { crewId: crew.id, crewCity: crew.city, joinerCity: canonCity(input.city) },
+      "crew join refused — the joiner's layover is in another city",
+    );
+    return { ok: false, reason: "city_mismatch" };
+  }
 
   const before = await crewMembers(db, crew.id);
   if (!before.ok) return { ok: false, reason: "read_failed" };

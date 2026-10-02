@@ -41,7 +41,7 @@ interface CachedImageProps {
    * map pins, badges, tiles under roughly 64pt — where the icon alone is the
    * affordance and "Image unavailable" would just be clipped. See MediaFallback.
    */
-  fallbackLabel?: string;
+  fallbackLabel?: string; /** Optional ground for the fallback box (census-media §31.13), e.g. one on which its paper caption clears 4.5:1; MediaFallback's `bg`. Absent: renders exactly as before. */ fallbackBg?: string;
   /**
    * Forwarded to the image. Set it whenever the image carries meaning the
    * surrounding text does not already state — callers that swapped in from a
@@ -90,7 +90,7 @@ export function CachedImage({
   placeholder,
   filterId,
   filterIntensity,
-  fallbackLabel,
+  fallbackLabel, fallbackBg,
   accessibilityLabel,
   aspect,
 }: CachedImageProps) {
@@ -185,7 +185,7 @@ export function CachedImage({
   if (!uri || failed || !resolvedSource) {
     return (
       <View style={sizedStyle as any} testID={testID}>
-        <MediaFallback style={{ flex: 1 }} label={fallbackLabel} />
+        <MediaFallback style={{ flex: 1 }} label={fallbackLabel} {...(fallbackBg !== undefined ? { bg: fallbackBg } : {})} />
       </View>
     );
   }

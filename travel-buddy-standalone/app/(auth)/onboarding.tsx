@@ -62,10 +62,11 @@ export default function Onboarding() {
   // enforces (§23) — reuses the single shared rule set so a handle accepted here
   // can no longer be rejected on the identity screen. Username is optional: an
   // empty (or already-owned) handle is idle, never invalid.
-  const { status: usernameStatus, message: usernameMessage } = useUsernameAvailability(
-    handle,
-    { skipValue: loadedUsername },
-  );
+  const {
+    status: usernameStatus,
+    message: usernameMessage,
+    alternatives: usernameAlternatives,
+  } = useUsernameAvailability(handle, { skipValue: loadedUsername });
   const usernameBlocking =
     handle.length > 0 &&
     (usernameStatus === 'invalid' || usernameStatus === 'taken' || usernameStatus === 'checking');
@@ -271,6 +272,23 @@ export default function Onboarding() {
                 ) : (
                   <Text style={styles.hint}>Letters, numbers, . and _ only. Can be changed later.</Text>
                 )}
+                {usernameAlternatives.length > 0 ? (
+                  <View style={styles.usernameAltRow}>
+                    <Text style={styles.hint}>Try:</Text>
+                    {usernameAlternatives.map((alt) => (
+                      <Pressable
+                        key={alt}
+                        onPress={() => setHandle(sanitizeUsername(alt))}
+                        style={styles.usernameAltChip}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Use the username ${alt}`}
+                        testID={`onboarding-username-alt-${alt}`}
+                      >
+                        <Text style={styles.usernameAltChipText}>@{alt}</Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                ) : null}
               </View>
             </View>
           </View>
@@ -438,6 +456,12 @@ const styles = StyleSheet.create({
   hintSuccess: { color: color.success },
   hintError: { color: color.signal },
   usernameStatusRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 },
+  usernameAltRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginTop: 6 },
+  usernameAltChip: {
+    borderWidth: 1, borderColor: color.faint, borderRadius: 999,
+    paddingHorizontal: 10, paddingVertical: 4,
+  },
+  usernameAltChipText: { fontSize: 13, fontWeight: '600' },
   dobErrorText: { ...t.small, color: color.signal, marginTop: 4 },
   labelRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
   charCount: { ...t.small, color: color.faint, fontWeight: '600' as const },

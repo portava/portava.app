@@ -236,7 +236,13 @@ export interface DomainTrust {
   key: string;
   /** Display label, e.g. "Trip Host". */
   domain: string;
-  /** Presentation word, e.g. "Excellent" | "Strong" | "Established" | "Building" | "New" | "Not applicable". */
+  /**
+   * Presentation word. Either a rating the domain earned — "Excellent" |
+   * "Strong" | "Established" | "Building" | "New" — or, when no rating is owed,
+   * "Not yet rated" (nothing measured), "Temporarily unavailable" (the profile
+   * could not be read) or "Not applicable" (the domain does not apply).
+   * `basis` says which, and is what the word is derived from.
+   */
   presentation: string;
   /**
    * False when the domain does not apply to this user (e.g. Buddy for a
@@ -329,6 +335,19 @@ export interface TrustProjection {
   strengths: string[];
   /** TABLE 12 per-domain trust presentations (never raw scores). */
   domains: DomainTrust[];
+  /**
+   * Ordered recovery advice (TrustPrivacyGuard.getSafeTrustSummary →
+   * TrustRecoveryService.suggestedSteps, top 3) — OWNER-ONLY (§9/§10).
+   *
+   * These are second-person instructions to the SUBJECT about their own standing
+   * ("Attend 3 more plans without cancelling"), and their mere PRESENCE
+   * discloses that a trust category sits below neutral — i.e. that this user is
+   * in recovery. That is not a fact another viewer may learn, so the key is
+   * ABSENT for every non-self viewer context. On the owner's own view an EMPTY
+   * array is authoritative ("nothing to recover"), the same way `score: null` is
+   * an authoritative "no number here" rather than a missing read.
+   */
+  recoveryHints?: string[];
   /**
    * True when `label`, `publicLevel`, `strengths` and `domains` are the
    * NEW-ACCOUNT / neutral-50 defaults because `trust_profiles` could not be
@@ -1103,8 +1122,9 @@ function buildIntent(
 
 /**
  * Non-stigmatizing presentation word for a 0–100 domain score (§10, TABLE 12).
- * Deliberately avoids "low/poor/weak" — a neutral 50 reads "Established", not a
- * penalty, so new travelers are not stigmatized.
+ * Deliberately avoids "low/poor/weak", so a low but MEASURED score is described
+ * without stigma. It is only ever called on a score with a basis — see
+ * `wordForBasis`, which is what decides whether a word is owed at all.
  */
 function presentationWord(score: number): string {
   if (score >= 80) return "Excellent";
@@ -1112,6 +1132,46 @@ function presentationWord(score: number): string {
   if (score >= 50) return "Established";
   if (score >= 35) return "Building";
   return "New";
+}
+
+/**
+ * THE WORD A DOMAIN HAS EARNED, which is not always a rating word.
+ *
+ * `presentationWord` answers "what does this score read as". That is the wrong
+ * question when there is no score. The neutral 50 is a placeholder the trust
+ * engine substitutes so arithmetic downstream has a number — it is not an
+ * observation about a person, and running it through the rating vocabulary
+ * turned it into one: every account on a seeded-off trust engine read
+ * "Established" in all six domains, which is a claim nothing supports.
+ *
+ * So the basis chooses the word:
+ *
+ *   substituted     NO category was measured. "Not yet rated" — an absence of
+ *                   records, stated as an absence (§10, non-stigmatizing), not
+ *                   a rating and not an alarming zero.
+ *   unavailable     `trust_profiles` could not be READ. "Temporarily
+ *                   unavailable" — a different fact from never having been
+ *                   rated, and it must not borrow the same words, because one
+ *                   of them says something about the person and the other says
+ *                   something about the database.
+ *   not_applicable  "Not applicable", unchanged.
+ *   measured        the word the score earned.
+ *   partial         also the word the score earned. A mean of real scores and
+ *                   substituted ones IS partly a measurement; `basis` says so
+ *                   and the client's note says so in words. Withholding the
+ *                   word here would discard real observations.
+ *
+ * This is presentation only. `applicable`, `basis` and the numeric score are
+ * untouched on every branch — a domain that is not yet rated still APPLIES to
+ * this person, and `applicable: false` keeps its one meaning ("this domain does
+ * not apply", Buddy for a non-buddy). Collapsing the two would change the flag
+ * clients key their layout off.
+ */
+function wordForBasis(basis: DomainTrustBasis, score: number): string {
+  if (basis === "not_applicable") return "Not applicable";
+  if (basis === "unavailable") return "Temporarily unavailable";
+  if (basis === "substituted") return "Not yet rated";
+  return presentationWord(score);
 }
 
 function mean(...xs: number[]): number {
@@ -1122,42 +1182,94 @@ function mean(...xs: number[]): number {
 
 /**
  * TABLE 12 — project the nine canonical category scores into per-domain trust
- * PRESENTATIONS (no raw numbers reach the viewer). Categories default to the
- * neutral 50 when there is no trust profile, matching the trust engine's own
- * neutral default, so a brand-new account reads "Established" everywhere rather
- * than an alarming zero.
+ * PRESENTATIONS (no raw numbers reach the viewer). Categories still default to
+ * the neutral 50 when there is no trust profile, matching the trust engine's
+ * own neutral default, but that number no longer reaches the viewer as a word:
+ * a domain with no measured category reads "Not yet rated". The old behaviour
+ * — "a brand-new account reads 'Established' everywhere rather than an alarming
+ * zero" — avoided the alarming zero by making a claim instead. "Not yet rated"
+ * avoids both. See `wordForBasis`.
  */
-function buildDomainTrust(
+/*
+ * EXPORTED so its tests exercise the SHIPPED projection rather than a copy of
+ * it — the same reason `domainTrustBasis` and `trustConfidenceBasis` are
+ * exported. A test that reimplements the rule it is checking passes whatever
+ * the rule does, and the Q1 null-coercion hazard is precisely the kind of
+ * defect a reimplementation would reproduce rather than catch.
+ */
+export function buildDomainTrust(
   overallScore: number,
-  categories: Record<string, number> | null | undefined,
+  /** A category value may be `null` = NOT SCORED (Q1). See `measuredValue`. */
+  categories: Record<string, number | null> | null | undefined,
   isBuddy: boolean,
   state: TrustProfileRead["state"],
   overallMeasured: boolean,
 ): DomainTrust[] {
-  const c = (k: string): number => {
-    const v = Number((categories as Record<string, number> | undefined)?.[k]);
-    return Number.isFinite(v) ? v : 50;
+  /**
+   * Q1, owner decision 2026-09-22: a category may now be `null` = NOT SCORED,
+   * and `null` MUST NOT reach `Number()` before it is tested.
+   *
+   * `Number(null)` is 0 and `Number.isFinite(0)` is true. So the previous
+   * one-liner would have classified every unscored category as a MEASURED ZERO
+   * — reporting `basis: "measured"` and wording it "New" — which is the single
+   * worst outcome available: the harshest possible rating, presented as a
+   * measurement, about a person nobody measured. (`undefined` was safe by
+   * accident, because `Number(undefined)` is NaN; `null` is not.)
+   *
+   * An unscored category therefore takes exactly the path an ABSENT one always
+   * took: `isMeasured` is false, `c()` yields the neutral substitute, the basis
+   * comes out `substituted` or `partial`, and Q3's `wordForBasis` presents
+   * "Not yet rated" rather than a rating word. That is deliberate reuse — the
+   * null case flows into the vocabulary that already exists for it rather than
+   * introducing a second one.
+   */
+  const measuredValue = (k: string): number | null => {
+    const raw = (categories as Record<string, number | null> | undefined)?.[k];
+    if (raw === null || raw === undefined) return null;
+    const v = Number(raw);
+    return Number.isFinite(v) ? v : null;
   };
+  const c = (k: string): number => measuredValue(k) ?? 50;
   // The SAME test `c` applies, asked separately so the answer does not depend on
   // the order the domains happen to read their categories in — `respect_safety`
   // feeds three domains and must report identically to each.
-  const isMeasured = (k: string): boolean =>
-    Number.isFinite(Number((categories as Record<string, number> | undefined)?.[k]));
+  const isMeasured = (k: string): boolean => measuredValue(k) !== null;
   const basisOf = (...keys: string[]): DomainTrustBasis =>
     domainTrustBasis(state, keys.filter(isMeasured).length, keys.length);
 
+  // The basis is computed FIRST and the word is chosen from it. Asking
+  // `presentationWord` for a word and then labelling it with a basis is how a
+  // substituted 50 came to read "Established" beside a basis that said it was
+  // not measured: the two answers were produced independently and could
+  // disagree. Here one cannot contradict the other, because one is derived from
+  // the other.
+  const row = (
+    key: string,
+    domain: string,
+    score: number,
+    basis: DomainTrustBasis,
+  ): DomainTrust => ({ key, domain, presentation: wordForBasis(basis, score), applicable: true, basis });
+
   const domains: DomainTrust[] = [
-    { key: "overall",     domain: "Overall",     presentation: presentationWord(overallScore), applicable: true, basis: domainTrustBasis(state, overallMeasured ? 1 : 0, 1) },
-    { key: "traveler",    domain: "Traveler",    presentation: presentationWord(mean(c("respect_safety"), c("communication"), c("location_honesty"), c("passport_authenticity"))), applicable: true, basis: basisOf("respect_safety", "communication", "location_honesty", "passport_authenticity") },
-    { key: "trip_guest",  domain: "Trip Guest",  presentation: presentationWord(mean(c("plan_attendance"), c("respect_safety"), c("communication"))), applicable: true, basis: basisOf("plan_attendance", "respect_safety", "communication") },
-    { key: "trip_host",   domain: "Trip Host",   presentation: presentationWord(c("host_quality")), applicable: true, basis: basisOf("host_quality") },
-    { key: "contributor", domain: "Contributor", presentation: presentationWord(mean(c("content_quality"), c("community_value"), c("guide_accuracy"))), applicable: true, basis: basisOf("content_quality", "community_value", "guide_accuracy") },
+    row("overall", "Overall", overallScore, domainTrustBasis(state, overallMeasured ? 1 : 0, 1)),
+    row("traveler", "Traveler",
+      mean(c("respect_safety"), c("communication"), c("location_honesty"), c("passport_authenticity")),
+      basisOf("respect_safety", "communication", "location_honesty", "passport_authenticity")),
+    row("trip_guest", "Trip Guest",
+      mean(c("plan_attendance"), c("respect_safety"), c("communication")),
+      basisOf("plan_attendance", "respect_safety", "communication")),
+    row("trip_host", "Trip Host", c("host_quality"), basisOf("host_quality")),
+    row("contributor", "Contributor",
+      mean(c("content_quality"), c("community_value"), c("guide_accuracy")),
+      basisOf("content_quality", "community_value", "guide_accuracy")),
     // Buddy is a contextual projection (§20): "Not applicable" unless the user
     // actually offers a buddy service. A domain that does not apply has no
     // inputs, so `basisOf()` reports not_applicable rather than a vacuous
     // "measured".
     isBuddy
-      ? { key: "buddy", domain: "Buddy", presentation: presentationWord(mean(c("host_quality"), c("respect_safety"), c("communication"))), applicable: true, basis: basisOf("host_quality", "respect_safety", "communication") }
+      ? row("buddy", "Buddy",
+          mean(c("host_quality"), c("respect_safety"), c("communication")),
+          basisOf("host_quality", "respect_safety", "communication"))
       : { key: "buddy", domain: "Buddy", presentation: "Not applicable", applicable: false, basis: basisOf() },
   ];
   return domains;
@@ -1235,14 +1347,25 @@ async function buildTrust(
   // `travel_proxy`, whose name now means "the engine recorded no evidence"),
   // and `degraded` says so again at the section level.
   const confidence = passportTrustConfidence(profileRead.state, evidenceWeight);
-  const overallMeasured = !!profile && Number.isFinite(Number(profile.overall_score));
-  const overallForDomains = overallMeasured ? Number(profile!.overall_score) : 50;
+  // Q1: `overall_score` is now nullable (= NOT SCORED). The null test comes
+  // FIRST and separately, because `Number(null)` is 0 and `Number.isFinite(0)`
+  // is true — so the finite check alone would call an unscored profile
+  // "measured" and hand `buildDomainTrust` a hard 0, publishing the Overall
+  // domain as a measured "New". With the null caught here, `overallMeasured` is
+  // false, the basis is `substituted`, and Q3's `wordForBasis` prints
+  // "Not yet rated" — the same vocabulary the category domains use.
+  const overallRaw = profile?.overall_score;
+  const overallMeasured =
+    !!profile && overallRaw !== null && overallRaw !== undefined && Number.isFinite(Number(overallRaw));
+  const overallForDomains = overallMeasured ? Number(overallRaw) : 50;
   // Explainability at the level the words are SHOWN. `presentation` is
   // unchanged on every branch — see `DomainTrust.applicable` for why the
   // substituted domains keep both their word and their flag.
   const domains = buildDomainTrust(
     overallForDomains,
-    profile?.categories as Record<string, number> | undefined,
+    // Widened for Q1: the cast used to say `number`, which would have hidden
+    // every NULL from the compiler at exactly the seam that has to notice them.
+    profile?.categories as Record<string, number | null> | undefined,
     isBuddy,
     profileRead.state,
     overallMeasured,
@@ -1289,8 +1412,18 @@ async function buildTrust(
   // trust_profiles.overall_score) — the exact same source and rounding the
   // identity card and Rent-a-Buddy card read through lib/trustScore, so the
   // three surfaces can never show different numbers.
+  //
+  // Recovery hints ride the SAME `context === "self"` gate, and deliberately not
+  // "reached the safe-summary path": the early return above only peels off the
+  // `public` context, so every RELATIONSHIP context (follower / following /
+  // trip_crew / trip_host / buddy_customer / buddy_provider / event_group) also
+  // reads getSafeTrustSummary here. Those viewers are not the owner, and hints
+  // are advice to the owner whose presence would disclose that they are in
+  // recovery — so the key is omitted entirely for them.
   let score: number | null = null;
+  let recoveryHints: string[] | undefined;
   if (context === "self") {
+    recoveryHints = summary.recoveryHints;
     try {
       score = await getDisplayTrustScore(sc, userId);
     } catch {
@@ -1302,6 +1435,7 @@ async function buildTrust(
     label, publicLevel: summary.publicLevel, score, confidence,
     confidenceBasis, evidenceWeight, evidenceCount,
     strengths: summary.strengths, domains,
+    ...(recoveryHints ? { recoveryHints } : {}),
     ...(degraded || summary.profileUnavailable ? { degraded: true } : {}),
   };
 }
@@ -1452,6 +1586,23 @@ async function loadVisibilityPrefs(sc: SupabaseClient, userId: string): Promise<
     return { prefs: null, readFailed: true };
   }
   return { prefs: (data as any) ?? null, readFailed: false };
+}
+
+/**
+ * Collection gate, fail-closed on an unreadable preference row.
+ *
+ * The owner always sees their own passport (an unreadable preference row is not
+ * a reason to hide someone's own content from them); every other caller is
+ * DENIED when the tier could not be read.
+ */
+function collectionPermits(
+  read: VisibilityPrefsRead,
+  key: "stamps_visible" | "memories_visible",
+  caller: CallerContext,
+): boolean {
+  if (caller === "owner") return true;
+  if (read.readFailed) return false;
+  return tierPermits((read.prefs as any)?.[key], caller);
 }
 
 /**

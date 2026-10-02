@@ -40,6 +40,7 @@
  */
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import { measured } from "./helpers/measuredScore.js";
 
 import {
   awardStamp,
@@ -358,7 +359,7 @@ describe("chain: award → trust_events → runTrustMaintenance → recalculateT
     assert.equal(pass.usersRecalculated, 1);
     const p = await getTrustProfile(f.client, OWNER);
     assert.ok(p, "the maintenance pass persisted a profile");
-    assert.ok(p!.categories.passport_authenticity > 50, `passport_authenticity moved above neutral, got ${p!.categories.passport_authenticity}`);
+    assert.ok(measured(p!.categories.passport_authenticity) > 50, `passport_authenticity moved above neutral, got ${p!.categories.passport_authenticity}`);
     assert.equal(p!.evidenceCount, 1, "one stamp is one piece of evidence");
     assert.equal(f.tables.trust_profiles.length, 1);
     assert.equal(f.tables.trust_profiles[0].user_id, OWNER);
@@ -377,7 +378,7 @@ describe("chain: award → trust_events → runTrustMaintenance → recalculateT
     const c = await recalculateTrustScore(f.client, OWNER);
     assert.equal(a.overall_score, b.overall_score);
     assert.equal(b.overall_score, c.overall_score);
-    assert.ok(a.categories.passport_authenticity > 50);
+    assert.ok(measured(a.categories.passport_authenticity) > 50);
   });
 });
 

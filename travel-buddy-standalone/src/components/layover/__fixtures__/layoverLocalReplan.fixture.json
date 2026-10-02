@@ -1,0 +1,363 @@
+{
+  "$comment": "GENERATED — do not hand-edit. Produced by travel-buddy-standalone/scripts/generate-layover-local-replan-fixture.mjs by EXECUTING the server's own localReplan (LayoverDegradedService.ts). It is the shared pin between that function and the client mirror in src/components/layover/layoverLocalReplan.ts. Both sides must assert against it; see this lane's report for the server-side ask.",
+  "generatedFrom": {
+    "module": "artifacts/api-server/src/services/airport/LayoverDegradedService.ts",
+    "export": "localReplan",
+    "headCommit": "ea80a0ca3083bb46b1693d7c39e5c65717f7c61e",
+    "offlineBundleTtlMin": 15
+  },
+  "bundle": {
+    "certifiedAt": "2026-09-08T10:00:00.000Z",
+    "staleAfter": "2026-09-08T10:15:00.000Z",
+    "returnDeadline": {
+      "hardReturnTime": "2026-09-08T13:40:00.000Z",
+      "hardReturnLocal": "20:40",
+      "returnState": "RETURN_SOON",
+      "bufferMinutes": 95,
+      "returnReminderAt": null
+    }
+  },
+  "cases": [
+    {
+      "name": "fresh bundle, unchanged schedule, before the deadline — allowed",
+      "nowMs": 1788861900000,
+      "input": {
+        "certifiedUsableMinutes": 120,
+        "currentDepartureTime": "2026-09-08T16:00:00.000Z",
+        "currentBoardingTime": "2026-09-08T15:20:00.000Z",
+        "certifiedDepartureTime": "2026-09-08T16:00:00.000Z",
+        "certifiedBoardingTime": "2026-09-08T15:20:00.000Z"
+      },
+      "expected": {
+        "allowed": true,
+        "refusals": [],
+        "lastCertifiedDeadline": "2026-09-08T13:40:00.000Z",
+        "lastCertifiedReturnState": "RETURN_SOON",
+        "freshness": {
+          "stale": false,
+          "ageMinutes": 5,
+          "freshForMinutes": 10
+        },
+        "conservativeUsableMinutes": 115
+      }
+    },
+    {
+      "name": "conservative minutes shrink with the bundle’s age, never grow",
+      "nowMs": 1788862320000,
+      "input": {
+        "certifiedUsableMinutes": 120,
+        "currentDepartureTime": "2026-09-08T16:00:00.000Z",
+        "currentBoardingTime": "2026-09-08T15:20:00.000Z",
+        "certifiedDepartureTime": "2026-09-08T16:00:00.000Z",
+        "certifiedBoardingTime": "2026-09-08T15:20:00.000Z"
+      },
+      "expected": {
+        "allowed": true,
+        "refusals": [],
+        "lastCertifiedDeadline": "2026-09-08T13:40:00.000Z",
+        "lastCertifiedReturnState": "RETURN_SOON",
+        "freshness": {
+          "stale": false,
+          "ageMinutes": 12,
+          "freshForMinutes": 3
+        },
+        "conservativeUsableMinutes": 108
+      }
+    },
+    {
+      "name": "a device clock behind the server does not buy extra minutes",
+      "nowMs": 1788859800000,
+      "input": {
+        "certifiedUsableMinutes": 120,
+        "currentDepartureTime": "2026-09-08T16:00:00.000Z",
+        "currentBoardingTime": "2026-09-08T15:20:00.000Z",
+        "certifiedDepartureTime": "2026-09-08T16:00:00.000Z",
+        "certifiedBoardingTime": "2026-09-08T15:20:00.000Z"
+      },
+      "expected": {
+        "allowed": true,
+        "refusals": [],
+        "lastCertifiedDeadline": "2026-09-08T13:40:00.000Z",
+        "lastCertifiedReturnState": "RETURN_SOON",
+        "freshness": {
+          "stale": false,
+          "ageMinutes": 0,
+          "freshForMinutes": 45
+        },
+        "conservativeUsableMinutes": 120
+      }
+    },
+    {
+      "name": "one tick before staleAfter the bundle is still fresh",
+      "nowMs": 1788862499999,
+      "input": {
+        "certifiedUsableMinutes": 120,
+        "currentDepartureTime": "2026-09-08T16:00:00.000Z",
+        "currentBoardingTime": "2026-09-08T15:20:00.000Z",
+        "certifiedDepartureTime": "2026-09-08T16:00:00.000Z",
+        "certifiedBoardingTime": "2026-09-08T15:20:00.000Z"
+      },
+      "expected": {
+        "allowed": true,
+        "refusals": [],
+        "lastCertifiedDeadline": "2026-09-08T13:40:00.000Z",
+        "lastCertifiedReturnState": "RETURN_SOON",
+        "freshness": {
+          "stale": false,
+          "ageMinutes": 15,
+          "freshForMinutes": 0
+        },
+        "conservativeUsableMinutes": 105
+      }
+    },
+    {
+      "name": "at exactly staleAfter the bundle is stale — refused",
+      "nowMs": 1788862500000,
+      "input": {
+        "certifiedUsableMinutes": 120,
+        "currentDepartureTime": "2026-09-08T16:00:00.000Z",
+        "currentBoardingTime": "2026-09-08T15:20:00.000Z",
+        "certifiedDepartureTime": "2026-09-08T16:00:00.000Z",
+        "certifiedBoardingTime": "2026-09-08T15:20:00.000Z"
+      },
+      "expected": {
+        "allowed": false,
+        "refusals": [
+          "bundle_stale"
+        ],
+        "lastCertifiedDeadline": "2026-09-08T13:40:00.000Z",
+        "lastCertifiedReturnState": "RETURN_SOON",
+        "freshness": {
+          "stale": true,
+          "ageMinutes": 15,
+          "freshForMinutes": 0
+        },
+        "conservativeUsableMinutes": null
+      }
+    },
+    {
+      "name": "past staleAfter — refused, and the deadline is still carried",
+      "nowMs": 1788864000000,
+      "input": {
+        "certifiedUsableMinutes": 120,
+        "currentDepartureTime": "2026-09-08T16:00:00.000Z",
+        "currentBoardingTime": "2026-09-08T15:20:00.000Z",
+        "certifiedDepartureTime": "2026-09-08T16:00:00.000Z",
+        "certifiedBoardingTime": "2026-09-08T15:20:00.000Z"
+      },
+      "expected": {
+        "allowed": false,
+        "refusals": [
+          "bundle_stale"
+        ],
+        "lastCertifiedDeadline": "2026-09-08T13:40:00.000Z",
+        "lastCertifiedReturnState": "RETURN_SOON",
+        "freshness": {
+          "stale": true,
+          "ageMinutes": 40,
+          "freshForMinutes": 0
+        },
+        "conservativeUsableMinutes": null
+      }
+    },
+    {
+      "name": "departure moved since certification — refused",
+      "nowMs": 1788861900000,
+      "input": {
+        "certifiedUsableMinutes": 120,
+        "currentDepartureTime": "2026-09-08T16:35:00.000Z",
+        "currentBoardingTime": "2026-09-08T15:20:00.000Z",
+        "certifiedDepartureTime": "2026-09-08T16:00:00.000Z",
+        "certifiedBoardingTime": "2026-09-08T15:20:00.000Z"
+      },
+      "expected": {
+        "allowed": false,
+        "refusals": [
+          "schedule_changed_since_certification"
+        ],
+        "lastCertifiedDeadline": "2026-09-08T13:40:00.000Z",
+        "lastCertifiedReturnState": "RETURN_SOON",
+        "freshness": {
+          "stale": false,
+          "ageMinutes": 5,
+          "freshForMinutes": 10
+        },
+        "conservativeUsableMinutes": null
+      }
+    },
+    {
+      "name": "boarding moved since certification — refused",
+      "nowMs": 1788861900000,
+      "input": {
+        "certifiedUsableMinutes": 120,
+        "currentDepartureTime": "2026-09-08T16:00:00.000Z",
+        "currentBoardingTime": "2026-09-08T15:05:00.000Z",
+        "certifiedDepartureTime": "2026-09-08T16:00:00.000Z",
+        "certifiedBoardingTime": "2026-09-08T15:20:00.000Z"
+      },
+      "expected": {
+        "allowed": false,
+        "refusals": [
+          "schedule_changed_since_certification"
+        ],
+        "lastCertifiedDeadline": "2026-09-08T13:40:00.000Z",
+        "lastCertifiedReturnState": "RETURN_SOON",
+        "freshness": {
+          "stale": false,
+          "ageMinutes": 5,
+          "freshForMinutes": 10
+        },
+        "conservativeUsableMinutes": null
+      }
+    },
+    {
+      "name": "boarding that was known and is now absent — refused",
+      "nowMs": 1788861900000,
+      "input": {
+        "certifiedUsableMinutes": 120,
+        "currentDepartureTime": "2026-09-08T16:00:00.000Z",
+        "currentBoardingTime": null,
+        "certifiedDepartureTime": "2026-09-08T16:00:00.000Z",
+        "certifiedBoardingTime": "2026-09-08T15:20:00.000Z"
+      },
+      "expected": {
+        "allowed": false,
+        "refusals": [
+          "schedule_changed_since_certification"
+        ],
+        "lastCertifiedDeadline": "2026-09-08T13:40:00.000Z",
+        "lastCertifiedReturnState": "RETURN_SOON",
+        "freshness": {
+          "stale": false,
+          "ageMinutes": 5,
+          "freshForMinutes": 10
+        },
+        "conservativeUsableMinutes": null
+      }
+    },
+    {
+      "name": "boarding absent on BOTH sides is not a change — allowed",
+      "nowMs": 1788861900000,
+      "input": {
+        "certifiedUsableMinutes": 120,
+        "currentDepartureTime": "2026-09-08T16:00:00.000Z",
+        "currentBoardingTime": null,
+        "certifiedDepartureTime": "2026-09-08T16:00:00.000Z",
+        "certifiedBoardingTime": null
+      },
+      "expected": {
+        "allowed": true,
+        "refusals": [],
+        "lastCertifiedDeadline": "2026-09-08T13:40:00.000Z",
+        "lastCertifiedReturnState": "RETURN_SOON",
+        "freshness": {
+          "stale": false,
+          "ageMinutes": 5,
+          "freshForMinutes": 10
+        },
+        "conservativeUsableMinutes": 115
+      }
+    },
+    {
+      "name": "one tick before the hard return time — stale, but NOT yet past the deadline",
+      "nowMs": 1788874799999,
+      "input": {
+        "certifiedUsableMinutes": 600,
+        "currentDepartureTime": "2026-09-08T16:00:00.000Z",
+        "currentBoardingTime": "2026-09-08T15:20:00.000Z",
+        "certifiedDepartureTime": "2026-09-08T16:00:00.000Z",
+        "certifiedBoardingTime": "2026-09-08T15:20:00.000Z"
+      },
+      "expected": {
+        "allowed": false,
+        "refusals": [
+          "bundle_stale"
+        ],
+        "lastCertifiedDeadline": "2026-09-08T13:40:00.000Z",
+        "lastCertifiedReturnState": "RETURN_SOON",
+        "freshness": {
+          "stale": true,
+          "ageMinutes": 220,
+          "freshForMinutes": 0
+        },
+        "conservativeUsableMinutes": null
+      }
+    },
+    {
+      "name": "at exactly the hard return time — already_past_hard_return joins bundle_stale",
+      "nowMs": 1788874800000,
+      "input": {
+        "certifiedUsableMinutes": 600,
+        "currentDepartureTime": "2026-09-08T16:00:00.000Z",
+        "currentBoardingTime": "2026-09-08T15:20:00.000Z",
+        "certifiedDepartureTime": "2026-09-08T16:00:00.000Z",
+        "certifiedBoardingTime": "2026-09-08T15:20:00.000Z"
+      },
+      "expected": {
+        "allowed": false,
+        "refusals": [
+          "bundle_stale",
+          "already_past_hard_return"
+        ],
+        "lastCertifiedDeadline": "2026-09-08T13:40:00.000Z",
+        "lastCertifiedReturnState": "RETURN_SOON",
+        "freshness": {
+          "stale": true,
+          "ageMinutes": 220,
+          "freshForMinutes": 0
+        },
+        "conservativeUsableMinutes": null
+      }
+    },
+    {
+      "name": "all three refusals at once — every one is named, not just the first",
+      "nowMs": 1788874860000,
+      "input": {
+        "certifiedUsableMinutes": 120,
+        "currentDepartureTime": "2026-09-08T16:35:00.000Z",
+        "currentBoardingTime": "2026-09-08T15:20:00.000Z",
+        "certifiedDepartureTime": "2026-09-08T16:00:00.000Z",
+        "certifiedBoardingTime": "2026-09-08T15:20:00.000Z"
+      },
+      "expected": {
+        "allowed": false,
+        "refusals": [
+          "bundle_stale",
+          "schedule_changed_since_certification",
+          "already_past_hard_return"
+        ],
+        "lastCertifiedDeadline": "2026-09-08T13:40:00.000Z",
+        "lastCertifiedReturnState": "RETURN_SOON",
+        "freshness": {
+          "stale": true,
+          "ageMinutes": 221,
+          "freshForMinutes": 0
+        },
+        "conservativeUsableMinutes": null
+      }
+    },
+    {
+      "name": "age exceeds the certified window — conservative minutes floor at 0, never negative",
+      "nowMs": 1788862200000,
+      "input": {
+        "certifiedUsableMinutes": 4,
+        "currentDepartureTime": "2026-09-08T16:00:00.000Z",
+        "currentBoardingTime": "2026-09-08T15:20:00.000Z",
+        "certifiedDepartureTime": "2026-09-08T16:00:00.000Z",
+        "certifiedBoardingTime": "2026-09-08T15:20:00.000Z"
+      },
+      "expected": {
+        "allowed": true,
+        "refusals": [],
+        "lastCertifiedDeadline": "2026-09-08T13:40:00.000Z",
+        "lastCertifiedReturnState": "RETURN_SOON",
+        "freshness": {
+          "stale": false,
+          "ageMinutes": 10,
+          "freshForMinutes": 5
+        },
+        "conservativeUsableMinutes": 0
+      }
+    }
+  ]
+}

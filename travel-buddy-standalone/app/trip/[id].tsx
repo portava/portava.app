@@ -29,16 +29,16 @@ import { ReviewsSection } from '../../src/components/ReviewsSection';
 import { TripBudgetSection } from '../../src/components/trip/TripBudgetSection';
 import { DailyBriefCard } from '../../src/components/DailyBriefCard';
 import { TripReadinessCard } from '../../src/components/trip/TripReadinessCard';
-import { TripFeasibilityCard } from '../../src/features/trips/planning/TripFeasibilityCard';
-import { TripCrewPresenceCard } from '../../src/features/trips/crew/TripCrewPresenceCard';
+import { TripFeasibilityCard } from '../../src/features/trips/planning/TripFeasibilityCard'; import { TripTransportPolicyCard } from '../../src/features/trips/planning/TripTransportPolicyCard.tsx'; import { TripBallotsCard } from '../../src/features/trips/planning/TripBallotsCard.tsx';
+import { TripCrewPresenceCard } from '../../src/features/trips/crew/TripCrewPresenceCard'; import { TripGeofenceCard } from '../../src/features/trips/crew/TripGeofenceCard.tsx'; import { JoinRequestsList } from '../../src/features/trips/joinRequests/JoinRequestsList.tsx';
 import { TripDecisionsCard } from '../../src/features/trips/planning/TripDecisionsCard';
 import { TripStageSpineCard } from '../../src/components/trip/TripStageSpineCard';
 import { TripMapLayersCard } from '../../src/features/trips/map/TripMapLayersCard';
 import { TripTodayCard } from '../../src/features/trips/today/TripTodayCard.tsx';
 import { TripTimelineConflictsCard } from '../../src/features/trips/timeline/TripTimelineConflictsCard.tsx';
-import { TripCloseoutCard } from '../../src/features/trips/closeout/TripCloseoutCard.tsx';
-import { TripOfflineCard } from '../../src/features/trips/offline/TripOfflineCard.tsx';
-import { TripRescueEntry } from '../../src/features/trips/disruption/TripRescueEntry.tsx';
+import { TripCloseoutCard } from '../../src/features/trips/closeout/TripCloseoutCard.tsx'; import { TripPostTripCard } from '../../src/features/trips/closeout/TripPostTripCard.tsx';
+import { TripOfflineCard } from '../../src/features/trips/offline/TripOfflineCard.tsx'; import { TripSharedContentSection } from '../../src/features/trips/sharedContent/TripSharedContentSection.tsx';
+import { TripRescueEntry } from '../../src/features/trips/disruption/TripRescueEntry.tsx'; import { TripRegroupCard } from '../../src/features/trips/crew/TripRegroupCard.tsx'; import { TripFreeTimeCard } from '../../src/features/trips/opportunities/TripFreeTimeCard.tsx'; import { TripReplanCard } from '../../src/features/trips/opportunities/TripReplanCard.tsx';
 import { BeforeYouGoSection } from '../../src/components/trip/BeforeYouGoSection';
 import { TripFsqPlacesSection } from '../../src/components/trip/TripFsqPlacesSection';
 import { TripDestinationInfoCard } from '../../src/components/trip/TripDestinationInfoCard';
@@ -53,7 +53,7 @@ import { useTrip, usePendingTripInvites } from '../../src/hooks/useBackend';
 import { openTripChat } from '../../src/services/messaging';
 import { getTripMemory, createTripMemory, type Memory } from '../../src/services/memories';
 import { getEventsNearTrip, type EventSummary } from '../../src/services/events';
-import { updateTrip, createInviteLink, getTripMemberRole, fetchTripPrivatePreview } from '../../src/services/trips';
+import { createInviteLink, getTripMemberRole, fetchTripPrivatePreview } from '../../src/services/trips'; import { TripLifecycleCard } from '../../src/features/trips/lifecycle/TripLifecycleCard.tsx'; import { runLifecycleAction } from '../../src/features/trips/lifecycle/tripLifecycle.ts'; import { intentKey } from '../../src/features/trips/shared/tripApi.ts';
 import { PrivateTripCard, type PrivateTripPreview } from '../../src/components/privacy/PrivateTripCard';
 import { getCanonicalPlace } from '../../src/services/places';
 import type { CanonicalPlace } from '../../src/types/canonicalPlace';
@@ -247,10 +247,10 @@ function TripDetailScreen() {
           text: 'Mark complete',
           onPress: async () => {
             setCompletingTrip(true);
-            const updated = await updateTrip(id, { status: 'completed' });
+            const updated = (await runLifecycleAction(id, 'complete', intentKey(`trip-complete:${id}`))).state === 'done'; // WP-10: POST /complete runs COMPLETE_TRIP + the §20.2 closeout
             setCompletingTrip(false);
             if (updated) {
-              checkForNewStamps(2000);
+              checkForNewStamps(2000); void reloadTrip();
             } else {
               Alert.alert('Error', 'Could not mark the trip as complete. Try again.');
             }
@@ -564,7 +564,7 @@ function TripDetailScreen() {
             The traveller names the problem in the server's vocabulary and gets
             the server's plan; whether the disruption was declared is the
             server's word (with the kernel off it says "not declared"). */}
-        {live && trip.id ? <TripRescueEntry tripId={trip.id} attentionMode={attentionMode} /> : null}
+        {live && trip.id ? <TripRescueEntry tripId={trip.id} attentionMode={attentionMode} /> : null}{live && trip.id ? <TripFreeTimeCard tripId={trip.id} /> : null}{live && trip.id ? <TripReplanCard tripId={trip.id} /> : null}{/* TM-live TRIP-F21: free time, I'm bored, opportunities, replan, pulse */}
 
         {/* ── §18 offline copy and queue ─────────────────────────────────
             The signed bundle kept as issued, its age and version judged by the
@@ -583,7 +583,7 @@ function TripDetailScreen() {
             Asked once the trip is over or completed: "Did you make it to X?"
             with the two answers RECORD_OUTCOME takes. Recorded only on the
             server's word; refused by name without the kernel. */}
-        {live && trip.id && (deriveTripDisplayStatus(trip.status, trip.endDate) === 'completed' || trip.status === 'completed') ? <TripCloseoutCard tripId={trip.id} /> : null}
+        {live && trip.id && (deriveTripDisplayStatus(trip.status, trip.endDate) === 'completed' || trip.status === 'completed') ? <TripCloseoutCard tripId={trip.id} /> : null}{live && trip.id && (deriveTripDisplayStatus(trip.status, trip.endDate) === 'completed' || trip.status === 'completed') ? <TripPostTripCard tripId={trip.id} /> : null}
 
         {/* ── Trip Readiness — renders nothing when flag is off (null response) ── */}
         {live && trip.id ? (
@@ -596,21 +596,21 @@ function TripDetailScreen() {
             Only INFEASIBLE is a proof — the card draws the other verdicts as
             what they are, and renders itself rather than vanishing when the
             check could not run. */}
-        {live && trip.id ? <TripFeasibilityCard tripId={trip.id} /> : null}
+        {live && trip.id ? <TripFeasibilityCard tripId={trip.id} /> : null}{live && trip.id ? <TripTransportPolicyCard tripId={trip.id} isOwner={realTrip.ownerId === userId} /> : null}
 
         {/* ── §10 crew presence ────────────────────────────────────────────
             The first reader §10 has ever had: five migrations built presence
             and nothing displayed it. Stale rows are shown rather than hidden —
             §10.4 needs last-known data to remain available — but never drawn
             like live ones. */}
-        {live && trip.id ? <TripCrewPresenceCard tripId={trip.id} /> : null}
+        {live && trip.id ? <TripCrewPresenceCard tripId={trip.id} /> : null}{live && trip.id && realTrip.ownerId === userId ? <JoinRequestsList tripId={trip.id} onOpenAll={() => router.push('/trip/join-requests' as any)} onApproved={() => setCrewRefreshKey((k) => k + 1)} /> : null}{live && trip.id ? <TripRegroupCard tripId={trip.id} /> : null}{/* TM-live TRIP-F19: regroup + meeting checkpoints */}
 
         {/* ── §8 decisions and risks ───────────────────────────────────────
             The chain §8 describes — goal, decision task, proposals, §7
             feasibility, risk register, recommendation — reaching a screen for
             the first time. INSUFFICIENT_BASIS renders as itself; the card's
             whole discipline is not letting it look like approval. */}
-        {live && trip.id ? <TripDecisionsCard tripId={trip.id} /> : null}
+        {live && trip.id ? <TripDecisionsCard tripId={trip.id} /> : null}{live && trip.id ? <TripBallotsCard tripId={trip.id} isOwner={realTrip.ownerId === userId} /> : null}
 
         {/* ── §5.1 stage spine ─────────────────────────────────────────────
             Stages, legs and plan attendance reaching a screen for the first
@@ -670,7 +670,7 @@ function TripDetailScreen() {
           />
         </View>
         {live && trip.id ? (
-          <TripReservationsSection tripId={trip.id} />
+          <><TripReservationsSection tripId={trip.id} /><TripGeofenceCard tripId={trip.id} isOwner={realTrip.ownerId === userId} isMember={realTrip.ownerId === userId || (!!memberRole && memberRole !== 'invited' && !isPendingInvite)} /></>
         ) : null}
         {live && trip.id ? (
           <TripAvailabilitySection
@@ -687,7 +687,7 @@ function TripDetailScreen() {
         ) : null}
 
         <SavedIdeas ideas={[]} tripId={trip.id} />
-        <TripSavedPlacesSection tripId={trip.id} />
+        <TripSavedPlacesSection tripId={trip.id} />{live && trip.id ? <TripSharedContentSection tripId={trip.id} isHost={realTrip.ownerId === userId || memberRole === 'co_host'} /> : null}
 
         {live && trip.id ? (
           <NeighborhoodMatchSection tripId={trip.id} />
@@ -809,7 +809,7 @@ function TripDetailScreen() {
             onExtended={(s) => { setShowMissedPrompt(false); setActiveSafeReturnSession(s); }}
           />
         )}
-        {/* Mark as complete — shown to trip owner when trip is not yet completed */}
+        {live && isAuthed ? <TripLifecycleCard tripId={trip.id} isOwner={realTrip.ownerId === userId} storedStatus={realTrip.status} exclude={['complete']} onChanged={() => { void reloadTrip(); }} /> : null}{/* Mark as complete — shown to trip owner when trip is not yet completed (WP-10: cancel/archive/delete live in TripLifecycleCard above) */}
         {live && isAuthed && realTrip?.ownerId === userId && realTrip?.status !== 'completed' && (
           <Pressable
             style={[styles.markCompleteBtn, completingTrip && { opacity: 0.6 }]}
@@ -1096,7 +1096,7 @@ function TripMemorySection({
 
   return (
     <View style={tm.wrap}>
-      <Text style={tm.title}>Trip Memory</Text>
+      <View style={tmRecap.row}><Text style={tm.title}>Trip Memory</Text>{memory ? <Pressable testID="trip-open-recap" onPress={() => router.push(`/trip/${tripId}/recap` as any)} accessibilityRole="button" hitSlop={6}><Text style={tmRecap.link}>View trip recap</Text></Pressable> : null}</View>
       {memory ? (
         <Pressable style={tm.card} onPress={() => router.push(`/memory/${memory.id}` as any)}>
           {memory.cover?.mediaUrl && !memoryCoverFailed ? (
@@ -1289,3 +1289,10 @@ export default function TripDetail() {
     </ScreenErrorBoundary>
   );
 }
+
+// Testing mode WP-06 (HM-F15): the "View trip recap" link beside the Trip Memory title.
+// Declared at the TAIL so no line above moves; `const` is read only at render time.
+const tmRecap = StyleSheet.create({
+  row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  link: { ...t.small, color: color.deep, fontWeight: '700' },
+});

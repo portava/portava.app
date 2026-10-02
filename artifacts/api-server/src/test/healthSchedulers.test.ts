@@ -61,6 +61,11 @@ const EXPECTED_JOBS = [
   "notificationMaintenanceScheduler",
   "dailyBriefCleanup",
   "suggestionSeenCleanup",
+  // Added by the story-retention lane. It is on this exact-set list, not merely
+  // in the aggregate, because decision 4 requires the job's last attempt, last
+  // success, backlog and failures to be visible — a purge job that silently
+  // stopped being reported is exactly the failure that list exists to catch.
+  "storyRetention",
 ].sort();
 
 // ── HTTP plumbing ────────────────────────────────────────────────────────────
@@ -165,7 +170,8 @@ describe("never_ran is distinguished, and does NOT alarm", () => {
     const byJob = new Map((r.body.jobs as any[]).map((j) => [j.job, j]));
     for (const name of ["inviteSlotReconciler", "zombieTokenSweeper", "eventWaitlistSweeper",
                         "rentBuddyRequestSweeper", "inviteSlotSweeper", "tripCrewLiveShareScheduler",
-                        "notificationMaintenanceScheduler", "dailyBriefCleanup", "suggestionSeenCleanup"]) {
+                        "notificationMaintenanceScheduler", "dailyBriefCleanup", "suggestionSeenCleanup",
+                        "storyRetention"]) {
       assert.equal(byJob.get(name)?.status, "never_ran", `${name} has not run and must say so`);
       assert.equal(byJob.get(name)?.lastRunAt, null);
     }

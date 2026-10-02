@@ -70,11 +70,30 @@ interface State {
   rpcFail: boolean;
 }
 
+/**
+ * A calendar day N days from NOW, as `YYYY-MM-DD`.
+ *
+ * THE TRIP WINDOW BELOW IS DERIVED FROM THE CLOCK, NOT PINNED, AND THAT IS THE
+ * WHOLE POINT. The UPDATE_TRIP case asserts the emitted event is `trip.updated`,
+ * but the route computes a trip's status from its dates against the REAL clock
+ * and emits `trip.trip_completed` on the transition into `completed`. A pinned
+ * window is therefore an assertion about today: it is green until the end date
+ * passes and red every day after, with nobody having touched the code.
+ *
+ * MEASURED, not theorised — running this suite with the process clock shifted
+ * forward 45 days failed exactly here, `trip.trip_completed` where
+ * `trip.updated` was expected. Moving the constants to a later date would be
+ * green tomorrow and armed for the day after; deriving them from the clock is
+ * what actually removes the fuse.
+ */
+const isoDay = (offsetDays: number): string =>
+  new Date(Date.now() + offsetDays * 86_400_000).toISOString().slice(0, 10);
+
 function baseState(kernelOn: boolean): State {
   return {
     users: { "alice-tok": { id: ALICE_ID }, "bob-tok": { id: BOB_ID }, "carol-tok": { id: CAROL_ID }, "dave-tok": { id: DAVE_ID } },
     trips: [{ id: TRIP_ID, owner_id: ALICE_ID, plan_edit_permission: "all_members", version: 0,
-      title: "Lisbon", destination_city: "Lisbon", destination_country: "PT", start_date: "2026-10-01", end_date: "2026-10-05",
+      title: "Lisbon", destination_city: "Lisbon", destination_country: "PT", start_date: isoDay(10), end_date: isoDay(14),
       status: "upcoming", visibility: "private", timezone: "Europe/Lisbon", trip_notes: null, cover_url: null, cover_media_type: null,
       show_header_publicly: false, reminder_sent_at: null, internal_notes: "NEVER-TO-CLIENT",
       created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z" }],

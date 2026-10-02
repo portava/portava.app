@@ -49,7 +49,13 @@
  *     was promoted by a concurrent pass between the queue read and the write is
  *     not given a second, later-expiring offer;
  *   • an unreadable queue is `unreadable`, never `stranded` — the seat is left
- *     alone and retried next pass rather than written off.
+ *     alone and retried next pass rather than written off;
+ *   • (census-trust §30.6) the seat goes to the first ELIGIBLE users in queue
+ *     order — the same `checkEventEligibility` gate every other way in runs
+ *     (block, ban, verified, trust, age). An ineligible user is skipped and
+ *     their row left alone; an event or eligibility read that fails makes the
+ *     event `unreadable` and nobody is offered a place past the user the gate
+ *     could not judge.
  *
  * `runSweep` RETURNS the counts. A sweeper that processed zero rows and one
  * that could not read the table are different values, and the tests assert the
@@ -63,6 +69,7 @@
 
 import { getServiceClient } from "./supabase.js";
 import { logger as rootLogger } from "./logger.js";
+import { eligibleWaitlisted, WAITLIST_PROMOTE_SCAN } from "../routes/events.js";
 
 const logger = rootLogger.child({ service: "EventWaitlistSweeper" });
 
@@ -215,14 +222,15 @@ export async function runSweep(opts?: { client?: any }): Promise<SweepPassResult
         logger.info({ eventId, expiredCount: freed }, "cleared expired waitlist offers");
 
         // Promote up to the number of reservations we just freed — one per
-        // seat actually freed — in queue order.
+        // seat actually freed — in queue order. The window reaches past
+        // `freed` so an ineligible user near the head does not strand a seat.
         const { data: nextRows, error: nextErr } = await sc
           .from("event_waitlist")
           .select("user_id")
           .eq("event_id", eventId)
           .is("offer_expires_at", null)
           .order("position", { ascending: true })
-          .limit(freed);
+          .limit(freed + WAITLIST_PROMOTE_SCAN);
         if (nextErr) {
           // `error` was not even destructured here. An unreadable queue read as
           // "nobody is waiting" and the freed seat was written off in silence.
@@ -233,8 +241,27 @@ export async function runSweep(opts?: { client?: any }): Promise<SweepPassResult
           continue;
         }
 
-        const promoteIds = ((nextRows as any[]) ?? []).map((r) => r.user_id as string);
+        // census-trust §30.6: the offer is gated like every other way in. The
+        // event row is what the gate judges against, so an unreadable event
+        // promotes nobody.
+        const { data: evRow, error: evErr } = await sc.from("events").select("*").eq("id", eventId).maybeSingle();
+        if (evErr) {
+          out.unreadable += 1;
+          out.lastError = String(evErr.message ?? evErr);
+          logger.error({ err: evErr, eventId, freed }, "event unreadable — eligibility cannot be checked, nobody promoted");
+          continue;
+        }
+        const queued = ((nextRows as any[]) ?? []).map((r) => r.user_id as string);
+        const pick = evRow ? await eligibleWaitlisted(sc, evRow, queued, freed) : { ids: [] as string[], unavailable: false, message: null };
+        if (pick.unavailable) {
+          out.unreadable += 1;
+          out.lastError = pick.message;
+          logger.error({ eventId, freed, eligibleAhead: pick.ids.length },
+            "waitlister eligibility unreadable — nobody at or behind them promoted");
+        }
+        const promoteIds = pick.ids;
         if (promoteIds.length === 0) {
+          if (pick.unavailable) continue;
           out.stranded += freed;
           logger.info({ eventId, freed }, "queue exhausted — no one to promote");
           continue;
@@ -261,7 +288,7 @@ export async function runSweep(opts?: { client?: any }): Promise<SweepPassResult
         }
         const promoted = Array.isArray(promotedRows) ? promotedRows.length : 0;
         out.promoted += promoted;
-        if (promoted < freed) out.stranded += freed - promoted;
+        if (promoted < freed && !pick.unavailable) out.stranded += freed - promoted;
         logger.info({ eventId, promotedCount: promoted, freed }, "promoted next waitlisted users");
       } catch (evErr) {
         out.failed += 1;

@@ -122,8 +122,17 @@ export function ActiveSafeReturnCard({ session, onSessionEnded, onSessionUpdated
     }
     setShareLoading(true);
     const contacts = await getSessionContacts(session.id);
-    const eligible = contacts.filter((c) => c.canReceiveLiveLocation);
     setShareLoading(false);
+
+    // `null` = the session's contact list could not be read. Reporting that as
+    // "no contacts have location sharing enabled" tells someone mid-safety-flow
+    // that their alert list is empty when it may be full.
+    if (contacts === null) {
+      Alert.alert('Error', "Could not load this session's contacts. Please try again.");
+      return;
+    }
+
+    const eligible = contacts.filter((c) => c.canReceiveLiveLocation);
 
     if (eligible.length === 0) {
       Alert.alert('No contacts', 'No contacts in this session have location sharing enabled.');

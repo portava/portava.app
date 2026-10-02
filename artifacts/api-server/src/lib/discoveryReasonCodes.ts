@@ -61,8 +61,8 @@
  *                    is destination affinity, not trip fit, and calling it
  *                    trip_match would be the over-claim this module exists to
  *                    avoid.
- *   season_match     No seasonality signal exists under any name. Compass's
- *                    `time_relevance` is hours-to-event, not season.
+ *   season_match     LEFT this list in census-discovery §47: Compass's CPH-15 `city_season` factor ranks for_you and
+ *                    is now reported (compass/CompassPipeline.ts), so the code has a producer. ONE remains, trip_match.
  *
  * Emitting any of the three would be exactly the defect `00-readme` §1 and
  * Sensing §5.1 name for why-now: a prediction rendered as an observation.
@@ -111,8 +111,8 @@ export type DiscoveryReasonCode = (typeof DISCOVERY_REASON_CODES)[number];
  * can tell "not built" from "forgotten".
  */
 export const REASON_CODES_WITHOUT_PRODUCER: readonly DiscoveryReasonCode[] = [
-  "trip_match",
-  "season_match",
+  // "trip_match" — producer since census-discovery §78: portavaRank `tripMatch` (lib/discoveryRankTrip.ts, the viewer's own current or upcoming trip), mapped below
+  // "season_match" — producer since census-discovery §47: Compass `city_season` (CPH-15), mapped below
 ];
 
 /**
@@ -131,7 +131,7 @@ const SIGNAL_TO_CODE: Readonly<Record<string, DiscoveryReasonCode>> = {
   neighborhoodMatch: "nearby_now",   // PDE
   open_now:          "nearby_now",   // Compass
   availability:      "nearby_now",   // Compass
-  time_relevance:    "nearby_now",   // Compass — "Happening soon"
+  time_relevance:    "nearby_now",   city_season: "season_match", // Compass — "Happening soon"; city_season is CPH-15's month-profile factor (census-discovery §47), declared on this line so the cited lines below do not move
   actionability:     "nearby_now",   // PDE
   availabilityFit:   "nearby_now",   // PDE
   capacityOpen:      "nearby_now",   // PDE
@@ -165,7 +165,7 @@ const SIGNAL_TO_CODE: Readonly<Record<string, DiscoveryReasonCode>> = {
   mutualAuthor:              "social_context", // PDE
 
   // ── exploration — reserved inventory, not earned rank ──────────────────────
-  governorSlot:      "exploration",  // PDE exploration governor
+  governorSlot:      "exploration",  tripMatch: "trip_match", explorationValue: "exploration", // PDE exploration governor; §78: trip fit (DV-18) and the exploration_value family term (DC-13), declared on this line so no cited line moves
 };
 
 /** `governor_<reason>` keys are all one reason: the exploration governor placed this row. */
@@ -185,7 +185,7 @@ export const UNMAPPED_SIGNALS: Readonly<Record<string, string>> = {
   safety_fit:   "GUARDRAIL 01 §10 — safety/private-control state must not become a public signal",
   trust:        "GUARDRAIL 01 §10 — author trust is a moderation input, not a public reason",
   verifiedBonus:"GUARDRAIL 01 §10 — verification state is moderation-adjacent; not a travel reason",
-  seenPenalty:  "GUARDRAIL — a repetition penalty is a negative, and a negative is not a reason FOR",
+  seenPenalty:  "GUARDRAIL — a repetition penalty is a negative, and a negative is not a reason FOR", negativeFeedback: "GUARDRAIL — §78 (DC-13): the viewer's own dismissals are private-control events (01 §10), and a negative is not a reason FOR",
   risk:         "GUARDRAIL — moderation signal",
   reports:      "GUARDRAIL — moderation signal",
   spam:         "GUARDRAIL — moderation signal",
@@ -195,7 +195,7 @@ export const UNMAPPED_SIGNALS: Readonly<Record<string, string>> = {
   language_match:   "NO CODE — accessibility fit; none of 01 §11's nine codes covers language",
   budget_fit:       "NO CODE — budget tendency; none of the nine covers it",
   community_popular:"NO CODE — all-time popularity is not a TREND; calling it trending_local would over-claim `rising`",
-  recency:          "NO CODE — item age is freshness, which the projection already reports separately",
+  recency:          "NO CODE — item age is freshness, which the projection already reports separately", intentMatch: "NO CODE — §78 (A18): the viewer's own declared intent or §8 window; none of the nine describes it, and a window's intents are private context",
 };
 
 /**
@@ -240,12 +240,12 @@ const PLAIN_LANGUAGE: Readonly<Partial<Record<DiscoveryReasonCode, string>>> = {
   // shared screen rendering "Because you follow Bangkok After Dark" discloses
   // it. The bounded fact — that a followed Trail is why — is said without it.
   trail_affinity:   "From a trail you follow.",
-  nearby_now:       "Close to you and open around now.",
+  nearby_now:       "In this area.",  // §76 (A03): the claim every LOCATION signal supports (none measures the viewer); the served text is nearbyNowText(signals)
   trending_local:   "Picking up locally this week.",
   creator_affinity: "From travelers whose posts you follow.",
   exploration:      "Newer here, and worth a look.",
-  saved_similar:    "Because you saved similar places.",
-  social_context:   "Fits how you like to travel with others.",
+  saved_similar:    "Because you saved similar places.", trip_match: "Fits your trip.", // §78: fixed text — names no destination, date or companion; true under way and upcoming alike
+  social_context:   "Fits how you like to travel with others.", season_match: "What people here do at this time of year.", // season_match: fixed text, names no month or category (§47)
 };
 
 export function explainReasonCode(code: DiscoveryReasonCode): string | null {
@@ -267,7 +267,7 @@ export interface DiscoveryReason {
 export function explainReasons(signalKeys: readonly string[]): DiscoveryReason[] {
   const out: DiscoveryReason[] = [];
   for (const code of reasonCodesFromSignals(signalKeys)) {
-    const text = explainReasonCode(code);
+    const text = code === "nearby_now" ? nearbyNowText(signalKeys) : explainReasonCode(code);  // §68 (A03): what FIRED decides the claim
     if (text) out.push({ code, text });
   }
   return out;
@@ -306,4 +306,70 @@ export function reasonCodesByIdFromProvenance(
     out[id] = reasonCodesFromSignals(p?.reasons ?? []);
   });
   return out;
+}
+
+// ── census-discovery §68 (A03, lane P21): nearby_now says only what fired ─────
+//
+// `nearby_now` is grounded by three different kinds of evidence, and the fixed
+// sentence it used to carry — "Close to you and open around now." — claimed two
+// of them whichever had fired. PDE's `distance`, `cityMatch` and
+// `neighborhoodMatch` read no opening hours, so a place was told "open around
+// now" because it was in the right city (census §57, A03). The CODE is unchanged
+// for every signal (the exposure record, the served `code` and every reader of
+// codes see what they saw before); only the served SENTENCE is chosen from the
+// signals that fired. Declared at the foot so the cited lines above do not move.
+//
+// THE WORDING IS OWNER-OVERRULABLE COPY, NOT A POLICY. §76: no location signal
+// measures the VIEWER (PDE cityMatch fires for every candidate; distance is from
+// the search centre; city_match includes a preferred city), so a location says
+// "In this area." (the app's own words for a searched area) and never "close to
+// you". Timing/capacity: fires only for what has not ended and can still be joined.
+
+/** Which kind of evidence a `nearby_now` signal is. Exhaustive over the keys mapped to the code (pinned by a test). */
+export const NEARBY_NOW_SIGNAL_FAMILY: Readonly<Record<string, "location" | "open" | "timing">> = {
+  distance:          "location",  // Compass + PDE: from the search centre (the viewer only on some rows: census §76)
+  city_match:        "location",  // Compass: the viewer's current OR a preferred city (not where the viewer is)
+  cityMatch:         "location",  // PDE: the viewer's city, set on EVERY candidate (lib/discoveryPde)
+  neighborhoodMatch: "location",  // PDE: stacked on cityMatch
+  open_now:          "open",      // Compass: fires ONLY on an explicit isOpenNow === true
+  availability:      "timing",    // Compass: an event with spots left, or an active buddy
+  time_relevance:    "timing",    // Compass: an event starting within 48 h
+  actionability:     "timing",    // PDE: a start time that has not passed by more than 2 h
+  availabilityFit:   "timing",    // PDE: starts inside the viewer's stated free window
+  capacityOpen:      "timing",    // PDE: the item reports capacity
+};
+
+const NEARBY_NOW_TEXT = {
+  locationAndOpen: "In this area, and open around now.",
+  location:        "In this area.",
+  open:            "Open around now.",
+  timing:          "You can still make it or join in.",
+} as const;
+
+/**
+ * The sentence for a `nearby_now` code, from the signals that grounded it.
+ * "open" only when `open_now` fired; "in this area" only when a location signal
+ * fired, and never "close to you" (§76). A key with no family contributes
+ * NO claim; if nothing with a family fired, the code carries no sentence and
+ * `explainReasons` drops it rather than serve an unbacked one.
+ */
+export function nearbyNowText(signalKeys: readonly string[]): string | null {
+  let location = false, open = false, timing = false;
+  for (const k of signalKeys) {
+    if (reasonCodeForSignal(k) !== "nearby_now") continue;
+    const family = NEARBY_NOW_SIGNAL_FAMILY[k];
+    if (family === "location") location = true;
+    else if (family === "open") open = true;
+    else if (family === "timing") timing = true;
+  }
+  if (location && open) return NEARBY_NOW_TEXT.locationAndOpen;
+  if (location) return NEARBY_NOW_TEXT.location;
+  if (open) return NEARBY_NOW_TEXT.open;
+  if (timing) return NEARBY_NOW_TEXT.timing;
+  return null;
+}
+
+/** Test hook: every signal key this module maps to `nearby_now`. */
+export function _nearbyNowKeysForTest(): string[] {
+  return Object.keys(SIGNAL_TO_CODE).filter((k) => SIGNAL_TO_CODE[k] === "nearby_now");
 }

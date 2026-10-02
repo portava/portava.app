@@ -210,3 +210,37 @@ describe('CanILeaveCard — §2.1 "degrade visibly" (census L9, L250)', () => {
     expect(text).not.toContain('No live airport conditions');
   });
 });
+
+describe('CanILeaveCard — the entry verdict (census-layover L48)', () => {
+  /**
+   * `entry_unverified` joined `LeaveAdvice['verdict']` with the entry gate. The
+   * card looks its label up in a `Record` keyed by the union, so a verdict the
+   * table forgot renders as an EMPTY PILL rather than failing — the server
+   * would be saying "we could not confirm you may enter this country" and the
+   * traveller would read a blank chip above a reason they cannot place.
+   */
+  it('renders its own label, and the reason the server gave for it', async () => {
+    const advice = {
+      ...ADVICE,
+      verdict: 'entry_unverified',
+      reasons: [
+        'About 3h 0m of usable time after exit and return buffers.',
+        'Nobody has verified the entry rules for your passport into this country yet, so we won\'t guess — confirm them yourself.',
+      ],
+      reasonCodes: ['ENTRY_NOT_CONFIRMED'],
+    } as unknown as LeaveAdvice;
+    await render(<CanILeaveCard advice={advice} window={WINDOW} airport={AIRPORT} airportIntelligence={intel({})} />);
+    expect(screen.getByText('Time is fine — entry unconfirmed')).toBeTruthy();
+    expect(screen.getByText(/Nobody has verified the entry rules/)).toBeTruthy();
+  });
+
+  it('is not dressed as a refusal — "no" keeps its own words', async () => {
+    // The two say different things and a traveller acts differently on each:
+    // one is "you do not have time", the other is "you have time and we could
+    // not check the border".
+    const refused = { ...ADVICE, verdict: 'no' } as unknown as LeaveAdvice;
+    await render(<CanILeaveCard advice={refused} window={WINDOW} airport={AIRPORT} airportIntelligence={intel({})} />);
+    expect(screen.getByText('No — stay airside')).toBeTruthy();
+    expect(screen.queryByText('Time is fine — entry unconfirmed')).toBeNull();
+  });
+});

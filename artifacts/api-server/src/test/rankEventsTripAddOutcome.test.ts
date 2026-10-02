@@ -37,7 +37,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import express, { type Express } from "express";
 import { _setTestClient } from "../lib/http.js";
-import { upgradableOutcomesFor, compassStageFor, exposureColumns } from "../routes/rankEvents.js";
+import { upgradableOutcomesFor, compassStageFor, exposureColumns, KEYLESS_LANDING_COLUMNS } from "../routes/rankEvents.js";
 
 const ALICE_ID   = "a1a1a1a1-aaaa-aaaa-aaaa-000000000001";
 const ITEM_ID    = "db/11111111-1111-4111-8111-111111111111";
@@ -300,8 +300,12 @@ describe("C. POST /api/rank-events/outcome accepts trip_add and respects the lad
   // here rather than by a PGRST100 in production.
   it("selects exactly the list exposureColumns() names", () => {
     assert.ok(selectLists.length > 0, "the outcome handler must have issued a select");
+    // Restated (census-discovery §82, D-W10-O-5): the handler now issues a SECOND
+    // rank_events select for a keyless outcome — the retry check, on its own
+    // named list. Every EXPOSURE lookup still uses exactly exposureColumns().
+    assert.ok(selectLists.some((l) => l === exposureColumns()), "the exposure lookup issued its select");
     for (const list of selectLists) {
-      assert.equal(list, exposureColumns(), "the inlined select list drifted from exposureColumns()");
+      assert.ok(list === exposureColumns() || list === KEYLESS_LANDING_COLUMNS, `the inlined select list drifted from exposureColumns(): ${list}`);
     }
     assert.ok(exposureColumns().includes("recommendation_id"), "the un-latched list carries 2891's column");
   });

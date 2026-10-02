@@ -316,7 +316,10 @@ describe("buildPassportProjection — TABLE 12 domain trust + §20 reputation cr
     const buddy = (p.trust?.domains ?? []).find((d) => d.key === "buddy")!;
     assert.equal(buddy.applicable, false);
     assert.equal(buddy.presentation, "Not applicable");
-    // Neutral 50 everywhere reads "Established" — non-stigmatizing (§10).
+    // Every category is PRESENT on the seeded row and equal to 50, so this is a
+    // measured 50, not a substituted one, and it reads "Established" —
+    // non-stigmatizing (§10). The unmeasured case is a different word now; see
+    // `wordForBasis` and passportTrustEvidenceConfidence.test.ts.
     const overall = (p.trust?.domains ?? []).find((d) => d.key === "overall")!;
     assert.equal(overall.presentation, "Established");
     assert.equal(p.credentials.find((c) => c.key === "host_reputation"), undefined);

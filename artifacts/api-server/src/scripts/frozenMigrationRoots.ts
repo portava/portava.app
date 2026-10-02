@@ -67,6 +67,13 @@ export const ALLOWLISTED_ROOTS: AllowlistedRoot[] = [
       "Non-executable artifact: a point-in-time pg_dump captured for reconciliation reference, never a migration to run — new dated captures may be added over time, so this is allowlisted by directory rather than hash-pinned to one file. checkNonExecutableOverlap() below additionally fails the build if anything here is ever copied into (or shares a filename/content hash with) the canonical migration chain, since a baseline dump run as a migration would be catastrophic.",
     nonExecutable: true,
   },
+  {
+    relPath: "artifacts/api-server/sql/rehearsals",
+    label: "Rehearsal scripts — migrations exercised, never applied",
+    reason:
+      "Non-executable artifact: each file is a rehearsal of a migration against a throwaway database (scripts/local-db), wrapped in BEGIN/ROLLBACK and carrying assertions and negative controls that a migration itself must not carry — a rehearsal drops a trigger to prove the trigger is what sets the clock, which is exactly the thing that must never run anywhere real. They are migration-SHAPED (2998_03_chain_behaviour.sql and the like, named after the migration they rehearse) so the unlisted-file sweep sees them, and allowlisted by directory rather than hash-pinned because new rehearsals are added as new migrations are written. nonExecutable: true so checkNonExecutableOverlap() fails the build if any file here ever shares a filename or a content hash with the canonical chain: a rehearsal replayed as a migration would roll back the change it was supposed to apply and report success.",
+    nonExecutable: true,
+  },
 ];
 
 export const FROZEN_ROOTS: FrozenRoot[] = [

@@ -106,9 +106,13 @@ export default function GuideProfileScreen() {
     );
   }
 
+  // Em dash = "we could not find out". Shared by all three stat tiles below so
+  // an unreported figure never reads as a zero.
   const accuracy = typeof guide.accuracyScore === 'number'
     ? `${Math.round(guide.accuracyScore * 100)}%`
     : '—';
+  const gemsValue = typeof guide.contributionCount === 'number' ? guide.contributionCount : '—';
+  const votesValue = typeof guide.helpfulVotes === 'number' ? guide.helpfulVotes : '—';
 
   return (
     <SafeAreaView style={styles.root} edges={['top']}>
@@ -147,8 +151,8 @@ export default function GuideProfileScreen() {
 
         {/* Stats */}
         <View style={styles.statsRow}>
-          <StatTile label="Gems" value={guide.contributionCount ?? 0} />
-          <StatTile label="Helpful votes" value={guide.helpfulVotes ?? 0} />
+          <StatTile label="Gems" value={gemsValue} />
+          <StatTile label="Helpful votes" value={votesValue} />
           <StatTile label="Accuracy" value={accuracy} />
         </View>
 

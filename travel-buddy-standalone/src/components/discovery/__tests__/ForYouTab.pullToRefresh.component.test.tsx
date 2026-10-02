@@ -5,6 +5,8 @@
  *   1. calls getDiscoveryPlaces again (OSM baseline re-fetch)
  *   2. invokes the onRefresh prop passed by the parent discovery screen
  *   3. clears the refreshing spinner once the re-fetch resolves
+ *   4. re-fetches the "Live from events" rail, whose refused copy asks for a pull
+ *      (census-discovery §98, DV-83)
  *
  * testID "main-scroll" on the FlatList lets us reach refreshControl via
  * scroll.props.refreshControl.props.onRefresh / .refreshing.
@@ -18,6 +20,7 @@ import { render, screen, waitFor, act } from '@testing-library/react-native';
 
 const mockGetDiscoveryPlaces       = jest.fn();
 const mockGetCachedDiscoveryPlaces = jest.fn();
+const mockGetDiscoveryFeed         = jest.fn();
 
 // NOTE: intentionally exhaustive — the real module imports Supabase; spreading
 // requireActual would load the client and OOM the Jest runner.
@@ -25,10 +28,9 @@ jest.mock('../../../services/discovery', () => ({
   getDiscoveryPlaces:       (...args: unknown[]) => mockGetDiscoveryPlaces(...args),
   getSavedPlaceIds:         jest.fn().mockResolvedValue([]),
   getCachedDiscoveryPlaces: (...args: unknown[]) => mockGetCachedDiscoveryPlaces(...args),
-  // DiscoveryEventPostsRail (serve point 7) calls this; the rail renders nothing
-  // on a non-ok result, which keeps this pull-to-refresh test focused on the
-  // OSM baseline path.
-  getDiscoveryFeed:         jest.fn().mockResolvedValue({ ok: false, error: 'test' }),
+  // DiscoveryEventPostsRail (serve point 7) calls this. Its default is a non-ok
+  // result, on which the rail renders nothing; the §98 case below sets its own.
+  getDiscoveryFeed:         (...args: unknown[]) => mockGetDiscoveryFeed(...args),
 }));
 
 // NOTE: intentionally exhaustive — the real module imports Supabase.
@@ -109,6 +111,7 @@ describe('ForYouTab — pull-to-refresh', () => {
     jest.clearAllMocks();
     mockGetCachedDiscoveryPlaces.mockReturnValue(null);
     mockGetDiscoveryPlaces.mockResolvedValue({ ok: true, data: { places: [MOCK_PLACE] } });
+    mockGetDiscoveryFeed.mockResolvedValue({ ok: false, error: 'test' });
   });
 
   afterEach(async () => {
@@ -160,5 +163,28 @@ describe('ForYouTab — pull-to-refresh', () => {
     await waitFor(() => {
       expect(screen.getByTestId('main-scroll').props.refreshControl.props.refreshing).toBe(false);
     });
+  });
+
+  it('refetches the "Live from events" rail too, so its refused copy ("Pull to refresh") can be acted on (census-discovery §98, DV-83)', async () => {
+    const refused = { ok: true, data: { places: [], posts: [], nextCursor: null, total: 0, destination: 'Lisbon', sourceSummary: { seededDbCount: 0, osmCount: 0, userCreatedCount: 0 }, sessionId: null, refusal: { class: 'upstream_unavailable', code: 'feed_viewer_unresolved', route: 'GET /discovery/feed', coverage: 'nothing', failedSources: ['event_posts'] } } };
+    const healthy = { ok: true, data: { places: [], posts: [], nextCursor: null, total: 0, destination: 'Lisbon', sourceSummary: { seededDbCount: 0, osmCount: 0, userCreatedCount: 0 }, sessionId: 'sess-2' } };
+    mockGetDiscoveryFeed.mockResolvedValue(refused);
+    await render(<ForYouTab destination="Lisbon" onAddToPlan={jest.fn()} onRefresh={onRefreshSpy} />);
+    expect(await screen.findByTestId('discovery-event-posts-rail-refused')).toBeTruthy();
+    const before = mockGetDiscoveryFeed.mock.calls.length;
+
+    mockGetDiscoveryFeed.mockResolvedValue(healthy);
+    const scroll = await getScroll();
+    await act(async () => { scroll.props.refreshControl.props.onRefresh(); });
+
+    await waitFor(() => expect(mockGetDiscoveryFeed.mock.calls.length).toBeGreaterThan(before));
+    await waitFor(() => expect(screen.queryByTestId('discovery-event-posts-rail-refused')).toBeNull());
+
+    // Every pull, not only the first: a refusal can come back, and the next pull must reach the rail again.
+    mockGetDiscoveryFeed.mockResolvedValue(refused);
+    const afterFirst = mockGetDiscoveryFeed.mock.calls.length;
+    await act(async () => { screen.getByTestId('main-scroll').props.refreshControl.props.onRefresh(); });
+    await waitFor(() => expect(mockGetDiscoveryFeed.mock.calls.length).toBeGreaterThan(afterFirst));
+    expect(await screen.findByTestId('discovery-event-posts-rail-refused')).toBeTruthy();
   });
 });

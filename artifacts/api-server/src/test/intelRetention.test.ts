@@ -6,6 +6,7 @@ import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   runIntelRetentionSweep, runMapTelemetryRetentionSweep,
+  runInputTelemetryRetentionSweep, INPUT_TELEMETRY_RETENTION_DAYS, RETENTION_PASSES,
   startIntelRetentionScheduler, stopIntelRetentionScheduler,
   INTERVAL_MS, INTEL_RETENTION_SWEEP_INTERVAL_SECONDS,
 } from "../lib/intelRetentionScheduler.js";
@@ -171,5 +172,104 @@ describe("map telemetry retention — the expiry 2202 declared, enforced", () =>
     const r = await runMapTelemetryRetentionSweep({ client: throwing });
     assert.equal(r.reason, "error");
     assert.equal(r.purged, 0);
+  });
+});
+
+/**
+ * §44 — the sweeper that had to ship with the sink.
+ *
+ * `input_assistance_telemetry_events` (migration 2950) is the store the §44
+ * telemetry sink now posts into, and until this pass existed it had no
+ * retention bound at all. This file's own subject header records the two times
+ * this tree shipped a store without its sweeper; these tests are the third
+ * time's ratchet.
+ *
+ * EVERY TEST NAMES ITS MUTATION, and each was applied and watched go RED.
+ */
+describe("input telemetry retention (§44 / migration 2950)", () => {
+  /** A client that records the delete it was asked to make and never opens a socket. */
+  function deleteClient(opts: { rows?: { id: number }[]; error?: boolean; throws?: boolean }) {
+    const state = { table: "", column: "", cutoff: "", called: false };
+    return {
+      state,
+      from(table: string) {
+        state.table = table;
+        return {
+          delete() {
+            state.called = true;
+            return {
+              lt(column: string, value: string) {
+                state.column = column;
+                state.cutoff = value;
+                return {
+                  select: async () => {
+                    if (opts.throws) throw new Error("connection reset");
+                    return opts.error
+                      ? { data: null, error: { message: "relation does not exist" } }
+                      : { data: opts.rows ?? [], error: null };
+                  },
+                };
+              },
+            };
+          },
+        };
+      },
+    };
+  }
+
+  it("deletes from the telemetry table at exactly the 90-day boundary", async () => {
+    const c = deleteClient({ rows: [{ id: 1 }, { id: 2 }, { id: 3 }] });
+    const now = new Date("2026-09-21T00:00:00.000Z");
+    const r = await runInputTelemetryRetentionSweep({ client: c, now });
+
+    assert.equal(r.purged, 3);
+    assert.equal(r.skipped, false);
+    assert.equal(c.state.table, "input_assistance_telemetry_events");
+    // MUTATION: changing the window to 180 days moves this string and goes red.
+    assert.equal(c.state.cutoff, "2026-06-23T00:00:00.000Z");
+    assert.equal(
+      INPUT_TELEMETRY_RETENTION_DAYS,
+      90,
+      "the house window is 90 days (docs/ops/retention-policy.md)",
+    );
+  });
+
+  it("bounds on the SERVER's clock, never the device's", async () => {
+    const c = deleteClient({ rows: [] });
+    await runInputTelemetryRetentionSweep({ client: c, now: new Date("2026-09-21T00:00:00.000Z") });
+    // MUTATION: swapping to `occurred_at` lets a device with a fast clock keep
+    // its rows past the window and deletes a slow device's rows on arrival.
+    assert.equal(c.state.column, "received_at");
+  });
+
+  it("reports no_client rather than opening a socket when passed null", async () => {
+    const r = await runInputTelemetryRetentionSweep({ client: null });
+    assert.equal(r.reason, "no_client");
+    assert.equal(r.purged, 0);
+  });
+
+  it("an absent table — the state of every deployment today — is an error, not a clean sweep", async () => {
+    const r = await runInputTelemetryRetentionSweep({ client: deleteClient({ error: true }) });
+    // MUTATION: returning {purged:0, reason:null} here reports "nothing to
+    // delete" for a table that does not exist, which is how a retention promise
+    // goes unkept while the logs look healthy.
+    assert.equal(r.reason, "error");
+    assert.equal(r.purged, 0);
+  });
+
+  it("swallows a throwing client and reports error", async () => {
+    const r = await runInputTelemetryRetentionSweep({ client: deleteClient({ throws: true }) });
+    assert.equal(r.reason, "error");
+    assert.equal(r.purged, 0);
+  });
+
+  it("is REGISTERED on the scheduler — an unregistered sweeper is the defect this file exists for", () => {
+    const pass = RETENTION_PASSES.find((p) => p.name === "input_telemetry_retention");
+    assert.ok(pass, "input_telemetry_retention is not in RETENTION_PASSES");
+    assert.equal(pass.run, runInputTelemetryRetentionSweep);
+    // Deliberately flagless — see the function's header. Asserting it stops a
+    // later "make it consistent" edit from silently adding an unseeded flag,
+    // whose only effect would be to stop the retention promise being kept.
+    assert.equal(pass.flag, null);
   });
 });

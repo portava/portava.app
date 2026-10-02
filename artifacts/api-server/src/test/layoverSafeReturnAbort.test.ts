@@ -548,7 +548,7 @@ describe("§15 the return reminder — the two defects, not the delivery questio
     assert.equal(tables.layover_events.length, 1);
     const ev = tables.layover_events[0];
     assert.equal(ev.event_type, "return_deadline_set");
-    assert.equal(ev.metadata.inputHash, record(s).inputHash);
+    assert.equal(ev.metadata.inputHash, certifySessionFeasibility(AIRPORT, s, { nowMs: NOW, entry: { state: "unresolved", reason: "entry_intelligence_disabled" } }).inputHash); // census-discovery §65: the reminder now certifies with the entry input, which this fixture (no feature_flags row) resolves as unresolved
     assert.equal(JSON.stringify(ev.metadata).includes("ExponentPushToken"), false);
   });
 

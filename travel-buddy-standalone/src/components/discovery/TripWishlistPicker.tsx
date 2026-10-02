@@ -32,7 +32,7 @@ import {
   toggleSave,
   getSavedListIds,
   type BookmarkedPlace,
-} from '../../services/discoveryBookmarks.ts';
+} from '../../services/discoveryBookmarks.ts'; import { applyTripSaveToggle } from '../../features/trips/savedPlaces/tripSavedPlacesSync.ts'; // WP-10: the trip's shared list
 import { color, space, radius, type as t, shadow, avatar } from '../../theme/tokens.ts';
 
 // ── Shared payload type ────────────────────────────────────────────────────────
@@ -86,6 +86,16 @@ interface TripWishlistPickerProps {
   onClose: () => void;
   /** Called after a successful save with the trip that received the place. */
   onSaved?: (trip: TripRow) => void;
+  /**
+   * Called when a save was ATTEMPTED and failed.
+   *
+   * The failure was already visible to the user (the row shows an error chip)
+   * and invisible to everything else. §44's `action_completed` carries an `ok`
+   * flag, and a caller that can only ever learn about successes would report
+   * `ok: true` forever — a metric that is green because it cannot be anything
+   * else. This is the other arm.
+   */
+  onSaveFailed?: (trip: TripRow) => void;
 }
 
 export function TripWishlistPicker({
@@ -93,6 +103,7 @@ export function TripWishlistPicker({
   visible,
   onClose,
   onSaved,
+  onSaveFailed,
 }: TripWishlistPickerProps) {
   const payload = place;
   const [trips, setTrips]         = useState<TripRow[]>([]);
@@ -135,7 +146,7 @@ export function TripWishlistPicker({
     });
     try {
       const bookmark = payloadToBookmark(payload);
-      const { added: nowSaved } = await toggleSave(bookmark, trip.id);
+      const { added: nowSaved } = await toggleSave(bookmark, trip.id); const shared = await applyTripSaveToggle(trip.id, bookmark, nowSaved); if (shared.state === 'failed') throw new Error(shared.detail); // an unsave the trip list refused was rolled back on the device
       setSavedIds((prev) => {
         const next = new Set(prev);
         if (nowSaved) {
@@ -150,10 +161,11 @@ export function TripWishlistPicker({
       }
     } catch {
       setErrorIds((prev) => new Set(prev).add(trip.id));
+      onSaveFailed?.(trip);
     } finally {
       setSaving(null);
     }
-  }, [payload, saving, onSaved]);
+  }, [payload, saving, onSaved, onSaveFailed]);
 
   const renderTrip = ({ item }: { item: TripRow }) => {
     const isSaved  = savedIds.has(item.id);

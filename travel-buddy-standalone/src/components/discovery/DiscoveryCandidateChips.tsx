@@ -12,11 +12,16 @@
  *                      structural property of the tree a test can hold, not a
  *                      colour a redesign can drop.
  *   why-now line       The grounded live claims, in the claims' own vocabulary.
- *                      When the serve says the reading is stale the line says
- *                      "no longer current" in words — DSV2-04's "disappear or
- *                      become explicitly stale", taking the second branch,
- *                      because silently dropping a claim hides that anything was
- *                      ever observed.
+ *                      When the serve says the reading is stale, or the claims'
+ *                      validity runs out on THIS DEVICE's clock while the card
+ *                      is on screen or in the device cache, the line says "no
+ *                      longer current" in words — DSV2-04's "disappear or become
+ *                      explicitly stale", taking the second branch, because
+ *                      silently dropping a claim hides that anything was ever
+ *                      observed. A claim that carries no validity at all is not
+ *                      shown (the first branch): nothing says it is current.
+ *                      The component re-renders itself AT the expiry instant, so
+ *                      a card left open does not go on asserting a claim past it.
  *   reason labels      DC-22: `11` §5 lists reason labels among the five
  *                      Recommendation API outputs. The server produces the
  *                      plain-language text (`lib/discoveryReasonCodes.ts`); this
@@ -29,7 +34,7 @@
  * No hardcoded circular sizes: the chips are text-only, so there is nothing in
  * the avatar/icon sizing bands to get wrong.
  */
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import {
   parseDiscoveryCandidate,
@@ -38,12 +43,32 @@ import {
 } from '../../features/discovery/candidateProjection.ts';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 
+/** setTimeout's ceiling (~24.8 days); a longer wait is re-armed rather than overflowing to 0. */
+const MAX_TIMER_MS = 2_147_483_647;
+
 export function DiscoveryCandidateChips({ candidate }: { candidate?: unknown }) {
   const parsed = parseDiscoveryCandidate(candidate);
+  // The why-now line is judged at the device clock AT RENDER, never at mount: a
+  // card that re-renders with a page painted from the device cache must not
+  // judge that page's claims at the moment the card first appeared. `nowMs` is
+  // the tick the timer below advances at the expiry instant, so the line flips
+  // even when nothing else re-renders the card.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const whyNow = whyNowPresentation(parsed, Math.max(nowMs, Date.now()));
+  const expiresAtMs = whyNow.expiresAtMs;
+
+  useEffect(() => {
+    if (expiresAtMs === null) return undefined;
+    // Re-armed on every tick (`nowMs` is a dependency): a wait capped at the
+    // timer ceiling, or a timer that fires a hair early, just schedules again.
+    const wait = Math.min(MAX_TIMER_MS, Math.max(0, expiresAtMs - Date.now()));
+    const timer = setTimeout(() => setNowMs((prev) => Math.max(Date.now(), prev + 1)), wait);
+    return () => clearTimeout(timer);
+  }, [expiresAtMs, nowMs]);
+
   if (!parsed) return null;
 
   const presentation = TRUTH_CLASS_PRESENTATION[parsed.truthClass];
-  const whyNow = whyNowPresentation(parsed);
 
   return (
     <View style={s.wrap}>

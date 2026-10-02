@@ -13,6 +13,7 @@ import {
   isDispatchableActionSuggestion,
   extractActionSuggestions,
   getAddToTripTarget,
+  getOpenCompassTarget,
   DISPATCHABLE_ACTION_TYPES,
 } from '../smartActions.ts';
 import type { InputSuggestion } from '../../types/inputSuggestion.ts';
@@ -71,8 +72,13 @@ test('non-dispatchable actions and actionless rows are NOT chips (no dead chip)'
   assert.deepEqual(extractActionSuggestions(rows), []);
 });
 
-test('the dispatchable set is deliberately narrow (only add_to_trip today)', () => {
-  assert.deepEqual([...DISPATCHABLE_ACTION_TYPES], ['add_to_trip']);
+// The ratchet, not a description: this set is CLOSED and each member has to
+// arrive with the screen dispatcher that handles it (see the module header).
+// `open_compass` joined it together with `app/search.tsx`'s Compass handoff
+// (census G305); everything else in §43's union is still refused below, which
+// is what keeps an unhandled action from becoming a dead chip.
+test('the dispatchable set is deliberately narrow (each member has a screen dispatcher)', () => {
+  assert.deepEqual([...DISPATCHABLE_ACTION_TYPES].sort(), ['add_to_trip', 'open_compass']);
 });
 
 test('extraction tolerates a nullish list (never throws)', () => {
@@ -103,4 +109,68 @@ test('returns null for a non-add_to_trip suggestion or one lacking an entity id'
   assert.equal(getAddToTripTarget(sug({ action: undefined })), null);
   // add_to_trip with an empty entityId (and no fallback) is not dispatchable.
   assert.equal(getAddToTripTarget(sug({ action: { type: 'add_to_trip', entityId: '' }, entityId: undefined, structuredValue: undefined })), null);
+});
+
+// ── §43 open_compass: produced by the server, now dispatched (census G305) ────
+//
+// The row's complaint, verbatim: "Produced (`semanticIntent.ts:259`) and then
+// dropped by every client surface: `search/smartActions.ts:35-43` excludes it
+// from DISPATCHABLE_ACTION_TYPES because it has 'no dispatch target in the
+// global search bar today', and the grouped-row bridge skips it too. A
+// server-emitted action that no client can act on."
+//
+// The bridge half is asserted in globalSearch.test.ts (a dispatchable row is
+// skipped from the groups so it lands in exactly one lane); the SCREEN half is
+// asserted in app/__tests__/search.openCompassDispatch.component.test.tsx.
+//
+// MUTATION-PROOFS (each applied, watched go red, reverted):
+//   - remove 'open_compass' from DISPATCHABLE_ACTION_TYPES → the lift test and
+//     the screen dispatch test both go red.
+//   - getOpenCompassTarget: return the label instead of replacementText → "the
+//     prompt is the user's own words" goes red.
+//   - getOpenCompassTarget: drop the empty-prompt guard → "a row with nothing
+//     to ask is not dispatched" goes red.
+
+function openCompass(context: unknown = { category: 'bars' }): SuggestionAction {
+  return { type: 'open_compass', context } as SuggestionAction;
+}
+
+test('an open_compass row is lifted into the dispatchable action lane', () => {
+  const s = sug({
+    id: 'c1',
+    type: 'ai_suggestion',
+    label: 'rooftop bars · near your hotel · tonight',
+    replacementText: 'rooftop bars near my hotel tonight',
+    action: openCompass(),
+  });
+  assert.equal(isDispatchableActionSuggestion(s), true);
+  assert.deepEqual(extractActionSuggestions([s]).map((x) => x.id), ['c1']);
+});
+
+test("the Compass prompt is the user's OWN words, not the structured restatement", () => {
+  const s = sug({
+    type: 'ai_suggestion',
+    label: 'rooftop bars · near your hotel · tonight',
+    replacementText: 'rooftop bars near my hotel tonight',
+    action: openCompass({ category: 'bars' }),
+  });
+  const target = getOpenCompassTarget(s);
+  assert.equal(target?.prompt, 'rooftop bars near my hotel tonight');
+  assert.deepEqual(target?.structuredContext, { category: 'bars' });
+});
+
+test('a row with nothing to ask is not dispatched (no empty Compass chat)', () => {
+  const s = sug({ type: 'ai_suggestion', label: '   ', replacementText: '  ', action: openCompass() });
+  assert.equal(getOpenCompassTarget(s), null);
+});
+
+test('getOpenCompassTarget refuses every OTHER action type', () => {
+  assert.equal(getOpenCompassTarget(sug({ action: addToTrip() })), null);
+  assert.equal(getOpenCompassTarget(sug({ action: { type: 'drop_pin' } })), null);
+  assert.equal(getOpenCompassTarget(sug({})), null);
+});
+
+test('share_entity and drop_pin are STILL not dispatchable (no dead chips)', () => {
+  assert.equal(DISPATCHABLE_ACTION_TYPES.has('share_entity' as any), false);
+  assert.equal(DISPATCHABLE_ACTION_TYPES.has('drop_pin' as any), false);
 });

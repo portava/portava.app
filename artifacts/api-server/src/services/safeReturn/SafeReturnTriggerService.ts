@@ -21,8 +21,21 @@ export interface PlanItemContext {
   startsAt: string | null;  // ISO timestamp or null
   dayDate: string | null;   // YYYY-MM-DD or null
   locationName: string | null;
-  /** Caution flag from geo_zones (optional). */
-  hasLocationCautionFlag?: boolean;
+  /**
+   * Caution flag from geo_zones.
+   *
+   *   true      — a caution/avoid zone covers this location
+   *   false     — the zone table was READ and covers nothing here
+   *   null      — the read FAILED; whether this location is flagged is UNKNOWN
+   *   undefined — no lookup was attempted (caller does not use this signal)
+   *
+   * `null` and `false` are deliberately distinct. supabase-js resolves
+   * `{ data, error }` rather than throwing, so a failed geo_zones read used to
+   * collapse into `data = undefined -> length 0 -> false` and a location rated
+   * `avoid` was reported as carrying no caution. A safety verdict may not be
+   * manufactured out of a failed read, so the unknown case has its own value.
+   */
+  hasLocationCautionFlag?: boolean | null;
   /** Number of confirmed attendees (optional — 1 = solo). */
   attendeeCount?: number | null;
 }
@@ -37,12 +50,18 @@ export type SuggestionReason =
   | "late_night_activity"
   | "solo_activity"
   | "location_caution_flag"
+  | "location_caution_unknown"
   | "new_city";
 
 export interface SuggestionResult {
   shouldSuggest: boolean;
   reasons: SuggestionReason[];
   confidence: "low" | "medium" | "high";
+  /**
+   * True when at least one input to the verdict could not be read. The caller
+   * must surface this rather than presenting the result as a measurement.
+   */
+  cautionUnknown: boolean;
 }
 
 /** Hour (0–23) at which we consider a start "late night". */
@@ -99,9 +118,16 @@ export function shouldSuggest(
     reasons.push("solo_activity");
   }
 
-  // 4. Location caution flag
-  if (planItem.hasLocationCautionFlag) {
+  // 4. Location caution flag.
+  //
+  // Fail CLOSED. `null` means the geo_zones read failed, so this location may
+  // well be rated caution/avoid — we simply do not know. Treating that as "no
+  // caution" is the fabrication this branch exists to prevent, so an unknown
+  // becomes its own reason and still raises the suggestion.
+  if (planItem.hasLocationCautionFlag === true) {
     reasons.push("location_caution_flag");
+  } else if (planItem.hasLocationCautionFlag === null) {
+    reasons.push("location_caution_unknown");
   }
 
   // 5. New city (current city differs from home city)
@@ -114,12 +140,16 @@ export function shouldSuggest(
   }
 
   const shouldSuggest = reasons.length > 0;
+  const cautionUnknown = planItem.hasLocationCautionFlag === null;
 
+  // Confidence describes how much was MEASURED, so an unknown must not inflate
+  // it — a single unread table would otherwise read as corroborating evidence.
+  const measuredReasons = reasons.filter((r) => r !== "location_caution_unknown");
   let confidence: "low" | "medium" | "high" = "low";
-  if (reasons.length >= 3) confidence = "high";
-  else if (reasons.length >= 2) confidence = "medium";
+  if (measuredReasons.length >= 3) confidence = "high";
+  else if (measuredReasons.length >= 2) confidence = "medium";
 
-  return { shouldSuggest, reasons, confidence };
+  return { shouldSuggest, reasons, confidence, cautionUnknown };
 }
 
 /**
@@ -134,6 +164,7 @@ export function getSuggestionReason(reasons: SuggestionReason[]): string {
     late_night_activity:    "This activity starts late at night",
     solo_activity:          "You're going solo",
     location_caution_flag:  "This area has a travel advisory",
+    location_caution_unknown: "We couldn't check this area's travel advisories",
     new_city:               "You're exploring a new city",
   };
 

@@ -17,11 +17,12 @@ import type { Place } from '../../src/lib/location/placeTypes';
 import { useLayoverAwareBottomInset } from '../../src/hooks/useBottomInset';
 import { useRecentPlaces } from '../../src/hooks/useRecentPlaces';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
-import type { DiscoveryCategory, DiscoveryPlace, DiscoveryContextMode, DiscoveryFilters } from '../../src/services/discovery';
+import type { DiscoveryCategory, DiscoveryPlace, DiscoveryContextMode, DiscoveryFilters, DiscoveryIntentMode } from '../../src/services/discovery';
 import { getDiscoveryCategoryCounts } from '../../src/services/discovery';
 import { DiscoveryCategoryTab, FilterStrip, SORT_LABELS } from '../../src/components/discovery/DiscoveryCategoryTab';
 import { PlaceDetailSheet } from '../../src/components/discovery/PlaceDetailSheet';
 import { ForYouTab } from '../../src/components/discovery/ForYouTab';
+import { DiscoveryIntentModeSelector, useDiscoveryIntentModeCapability } from '../../src/components/discovery/DiscoveryIntentModeSelector';
 import { DestinationBar } from '../../src/components/discovery/DestinationBar';
 import { usePlanPicker } from '../../src/components/PlanPickerController';
 import { listMyTrips } from '../../src/services/trips';
@@ -102,7 +103,12 @@ function DiscoveryHubScreen() {
   const { isAuthed } = useSession();
   const { open: openPlanPicker } = usePlanPicker();
   const { locationState, requestLocation, showCityPicker, openCityPicker, closeCityPicker, setManualCity } = useLocationContext();
-  const { users: highlightUsers, sessionViewedIds, markSessionViewed } = useFollowingHighlights();
+  const {
+    users: highlightUsers, sessionViewedIds, markSessionViewed,
+    // §28.11: the server refuses this feed rather than reporting it empty, and
+    // the tray says so rather than vanishing. See FollowingHighlightsStrip.
+    unreadable: highlightsUnreadable, refresh: refreshHighlights,
+  } = useFollowingHighlights();
   const currentCity = locationState.place.city ?? null;
 
   const [trendingHashtags, setTrendingHashtags] = useState<TrendingHashtag[]>([]);
@@ -170,6 +176,14 @@ function DiscoveryHubScreen() {
     () => finiteOrNull(locationState.coords?.lng)
   );
   const [contextMode, setContextMode] = useState<DiscoveryContextMode>('in_city');
+  // Sensing §8 intent mode (census-discovery §71). Session state held HERE and
+  // nowhere else: never written to discoveryFilterStorage, no default. It is
+  // handed to the tabs only while the server reports the capability
+  // (`discovery_live_rank_enabled`), so with the flag off or unreadable every
+  // request is the one sent before the selector existed.
+  const [intentMode, setIntentMode] = useState<DiscoveryIntentMode | null>(null);
+  const intentModeCapable = useDiscoveryIntentModeCapability();
+  const effectiveIntentMode = intentModeCapable ? intentMode : null;
   const [ageFilter, setAgeFilter] = useState<DiscoveryAgeFilter>('any');
   // Single object so any preset updating both min and max is one setState call →
   // one render → one debounce cycle (avoids the double-fetch when both change together).
@@ -639,7 +653,7 @@ function DiscoveryHubScreen() {
   // Map toggle is shown on all native tabs (category tabs + for_you).
   const showMapToggle = Platform.OS !== 'web';
 
-  const handleAddToPlan = useCallback((place: { id: string; name: string; category: string; address?: string | null }) => {
+  const handleAddToPlan = useCallback((place: { id: string; name: string; category: string; address?: string | null; recommendationId?: string | null }) => {
     setDetailVisible(false);
     openPlanPicker({
       id:           place.id,
@@ -656,12 +670,12 @@ function DiscoveryHubScreen() {
       //
       // GET /discovery returns no session_id, so no rankSessionId is passed —
       // absent, not null, exactly as the tap/save reports from this screen.
-      rankSurface:  'discovery',
+      rankSurface:  'discovery', rankRecommendationId: place.recommendationId ?? null,  // DV-46: the served item's exposure id
     });
   }, [openPlanPicker]);
 
   const handleAddToPlanFromPlace = useCallback((place: DiscoveryPlace) => {
-    handleAddToPlan({ id: place.id, name: place.name, category: place.category, address: place.address });
+    handleAddToPlan({ id: place.id, name: place.name, category: place.category, address: place.address, recommendationId: place.recommendationId });
   }, [handleAddToPlan]);
 
   const handleSelectPlace = (place: DiscoveryPlace) => {
@@ -716,9 +730,10 @@ function DiscoveryHubScreen() {
   // ── Map vs list mode ─────────────────────────────────────────────────────
   const isMapMode = viewMode === 'map' || activeTab === 'for_you';
 
-  // ── Filter badge count (all 6 dimensions) ─────────────────────────────────
+  // ── Filter badge count (all 7 dimensions) ─────────────────────────────────
   const totalActiveFilters = [
     contextMode !== 'in_city',
+    effectiveIntentMode != null,
     ageFilter !== 'any',
     activeFilters.radiusKm !== 10,
     activeFilters.openNow,
@@ -769,11 +784,12 @@ function DiscoveryHubScreen() {
         {activeTab === 'for_you' ? (
           <SectionErrorBoundary label="ForYouTab">
             <ForYouTab
-              key={`${destination}-${contextMode}-${communityRefreshKey}`}
+              key={`${destination}-${contextMode}-${effectiveIntentMode ?? ''}-${communityRefreshKey}`}
               destination={destination}
               onAddToPlan={handleAddToPlan}
               onAddToRoute={handleAddToRoute}
               contextMode={contextMode}
+              intentMode={effectiveIntentMode}
               lat={destinationLat}
               lng={destinationLng}
               userLat={locationState.coords?.lat ?? null}
@@ -788,7 +804,7 @@ function DiscoveryHubScreen() {
         ) : (
           <SectionErrorBoundary label={`DiscoveryCategoryTab-${activeTab}`}>
             <DiscoveryCategoryTab
-              key={`${activeTab}-${destination}-${contextMode}-${activeFilters.sortBy ?? ''}`}
+              key={`${activeTab}-${destination}-${contextMode}-${effectiveIntentMode ?? ''}-${activeFilters.sortBy ?? ''}`}
               category={activeTab}
               destination={destination}
               onSelectPlace={handleSelectPlace}
@@ -796,6 +812,7 @@ function DiscoveryHubScreen() {
               onAddToRoute={handleAddToRoute}
               onPickDestination={handlePickDestination}
               contextMode={contextMode}
+              intentMode={effectiveIntentMode}
               viewMode={viewMode}
               ageFilter={ageFilter}
               customMinAge={debouncedAgeRange.min}
@@ -828,13 +845,14 @@ function DiscoveryHubScreen() {
             pointerEvents="auto"
           >
             <Pressable
+              testID="discovery-filters-toggle"
               style={[styles.filtersTabBtn, hasNonDefaultFilters && styles.filtersTabBtnActive]}
               onPress={() => setFiltersExpanded((v) => !v)}
               hitSlop={8}
             >
               <SlidersHorizontal size={14} color={hasNonDefaultFilters ? '#fff' : color.mute} />
               {totalActiveFilters > 0 && (
-                <View style={styles.filtersTabBtnBadge}>
+                <View testID="discovery-filters-badge" style={styles.filtersTabBtnBadge}>
                   <Text style={styles.filtersTabBtnBadgeText}>{totalActiveFilters}</Text>
                 </View>
               )}
@@ -932,6 +950,9 @@ function DiscoveryHubScreen() {
                 })}
               </ScrollView>
 
+              {/* Sensing §8 intent modes — renders nothing unless the server reports discovery_live_rank_enabled. */}
+              <DiscoveryIntentModeSelector selected={intentMode} onChange={setIntentMode} />
+
               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.ageFilterBar} contentContainerStyle={styles.ageFilterBarContent}>
                 {([
                   { key: 'any',        label: 'Any age' },
@@ -1017,6 +1038,8 @@ function DiscoveryHubScreen() {
                 users={highlightUsers}
                 sessionViewedIds={sessionViewedIds}
                 onMarkViewed={markSessionViewed}
+                unreadable={highlightsUnreadable}
+                onRetry={refreshHighlights}
               />
             </View>
           )}

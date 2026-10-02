@@ -96,6 +96,7 @@ import {
   sessionForbiddenKeys,
 } from "../lib/experienceSession.js";
 import { appendSessionEvent, readOpenSession, readSessionById } from "../lib/experienceSessionStore.js";
+import { persistSessionMemory } from "../services/memoryProjections/sessionMemoryStore.js";
 
 const router = Router();
 
@@ -418,6 +419,10 @@ router.post(
         res.status(409).json({ ok: false, refusal: recorded.reason, calibrated: false });
         return;
       }
+      // S112's memory stage: the closed session goes to the memory store WITH
+      // its claim refs (3314). Behind memory_projection, fail-closed; a refusal
+      // is reported and never fails the close — the outcome is recorded either way.
+      const memory = await persistSessionMemory(g.sc, g.userId, built.envelope, now);
       res.json({
         ok: true,
         session: built.envelope,
@@ -426,6 +431,7 @@ router.post(
         outcomeEventId: recorded.eventId,
         deduped: recorded.deduped === true,
         calibrated: true,
+        memory,
       });
       return;
     }
@@ -435,7 +441,8 @@ router.post(
       res.status(500).json({ ok: false, refusal: write.refusal });
       return;
     }
-    res.json({ ok: true, session: built.envelope, state: "closed", verb: built.event.verb, calibrated: false });
+    const memory = await persistSessionMemory(g.sc, g.userId, built.envelope, now);
+    res.json({ ok: true, session: built.envelope, state: "closed", verb: built.event.verb, calibrated: false, memory });
   }),
 );
 

@@ -50,6 +50,7 @@ import {
   Star,
   BadgeCheck,
   Info,
+  TrendingUp,
 } from 'lucide-react-native';
 import { color, space, radius, type as t, avatar, icon } from '../../theme/tokens.ts';
 import {
@@ -121,6 +122,19 @@ function ScoreHero({ view }: { view: TrustView }) {
         <Text style={s.confidenceLabel}>{view.confidenceLabel}</Text>
       </View>
       <Text style={s.confidenceCopy}>{view.confidenceCopy}</Text>
+
+      {/* Server-chosen strongest areas (§9/§10). Rendered verbatim; when the
+          server sent none, nothing is rendered — no placeholder, no copy. */}
+      {view.strengths.length > 0 ? (
+        <View style={s.strengths} accessibilityLabel={`Strongest areas: ${view.strengths.join(', ')}`}>
+          {view.strengths.map((strength) => (
+            <View key={strength} style={s.strengthChip}>
+              <Star size={icon.s14} color={color.deep} />
+              <Text style={s.strengthText} numberOfLines={1}>{strength}</Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -199,6 +213,26 @@ function CapabilityChips({ view }: { view: TrustView }) {
   );
 }
 
+// ── Recovery hints (owner-only) ──────────────────────────────────────────────
+
+/**
+ * Ordered, server-authored steps the OWNER can take to rebuild standing.
+ *
+ * Owner-only by construction: the server sends `trust.recoveryHints` ONLY on the
+ * owner's own view (a non-self viewer's projection has no such key), so a
+ * non-empty list here already means "this is the owner". The screen renders the
+ * strings verbatim, in server order — it never composes, translates or tops up
+ * advice of its own, and shows nothing at all when the server sent nothing.
+ */
+function RecoveryHintRow({ hint }: { hint: string }) {
+  return (
+    <View style={s.hintRow} accessibilityLabel={hint}>
+      <TrendingUp size={icon.s16} color={color.deep} />
+      <Text style={s.hintText}>{hint}</Text>
+    </View>
+  );
+}
+
 // ── Section header ───────────────────────────────────────────────────────────
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
@@ -224,6 +258,33 @@ function ErrorView({ message, onRetry }: { message: string; onRetry: () => void 
       <Text style={s.centerText}>{message}</Text>
       <Pressable style={s.retryBtn} onPress={onRetry} accessibilityRole="button">
         <Text style={s.retryText}>Tap to retry</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+/**
+ * The projection LOADED but the server could not read this person's trust
+ * records. The rows below are the server's fallback shape, not measurements, so
+ * this says so above them and offers the same retry the error view offers.
+ *
+ * Deliberately a BANNER rather than a replacement for the screen: blanking the
+ * screen on a failed read is the other half of the same defect — the owner's
+ * ruling is that unavailable information is labelled, not hidden and not
+ * dressed up as a result.
+ */
+function DegradedBanner({ onRetry }: { onRetry: () => void }) {
+  return (
+    <View style={s.degradedBanner} accessibilityLabel="Trust records are unavailable right now">
+      <ShieldHalf size={icon.s16} color={color.faint} />
+      <View style={s.degradedText}>
+        <Text style={s.degradedTitle}>Trust records are unavailable right now</Text>
+        <Text style={s.degradedCopy}>
+          Nothing below is a measurement of this traveler. Try again in a moment.
+        </Text>
+      </View>
+      <Pressable style={s.degradedRetry} onPress={onRetry} accessibilityRole="button">
+        <Text style={s.retryText}>Retry</Text>
       </Pressable>
     </View>
   );
@@ -325,6 +386,8 @@ export default function TrustScreen({
           <UnavailableView />
         ) : (
           <>
+            {view.degraded ? <DegradedBanner onRetry={hook.reload} /> : null}
+
             <ScoreHero view={view} />
 
             {/* Domain-specific trust (§9, TABLE 12) */}
@@ -334,6 +397,20 @@ export default function TrustScreen({
                 <DomainRow key={row.key} row={row} />
               ))}
             </View>
+
+            {/* Ways to strengthen (§10) — owner-only recovery advice the server
+                projected for THIS viewer. Rendered only when the server sent
+                hints; nothing is inferred or defaulted when it did not. */}
+            {view.recoveryHints.length > 0 ? (
+              <>
+                <SectionTitle>Ways to strengthen your standing</SectionTitle>
+                <View style={s.card}>
+                  {view.recoveryHints.map((hint) => (
+                    <RecoveryHintRow key={hint} hint={hint} />
+                  ))}
+                </View>
+              </>
+            ) : null}
 
             {/* Positive credentials (TABLE 13) */}
             {view.credentials.length > 0 ? (
@@ -483,6 +560,30 @@ const s = StyleSheet.create({
     marginTop: space.xs,
     paddingHorizontal: space.sm,
   },
+  strengths: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: space.xs,
+    marginTop: space.sm,
+  },
+  strengthChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.xs,
+    paddingHorizontal: space.sm,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    backgroundColor: color.paper,
+    borderWidth: 1,
+    borderColor: color.haze,
+  },
+  strengthText: {
+    ...t.small,
+    color: color.deep,
+    fontWeight: '600',
+    fontSize: 12,
+  },
 
   // Section
   sectionTitle: {
@@ -496,6 +597,38 @@ const s = StyleSheet.create({
     marginBottom: space.sm,
     marginHorizontal: space.lg,
   },
+  degradedBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    marginHorizontal: space.lg,
+    marginBottom: space.md,
+    backgroundColor: color.paperRaised,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: color.haze,
+    paddingHorizontal: space.md,
+    paddingVertical: space.sm,
+  },
+  degradedText: {
+    flex: 1,
+  },
+  degradedTitle: {
+    ...t.bodyStrong,
+    color: color.deep,
+  },
+  degradedCopy: {
+    ...t.small,
+    color: color.mute,
+  },
+  degradedRetry: {
+    paddingHorizontal: space.md,
+    paddingVertical: space.xs,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: color.haze,
+  },
+
   card: {
     marginHorizontal: space.lg,
     backgroundColor: color.paperRaised,
@@ -554,6 +687,23 @@ const s = StyleSheet.create({
   standingTextOff: {
     color: color.faint,
     fontWeight: '600',
+  },
+
+  // Recovery hints (owner-only)
+  hintRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: space.sm,
+    paddingVertical: space.md,
+    borderBottomWidth: 1,
+    borderBottomColor: color.haze,
+  },
+  hintText: {
+    ...t.body,
+    flex: 1,
+    color: color.ink,
+    fontSize: 14,
+    lineHeight: 20,
   },
 
   // Credentials

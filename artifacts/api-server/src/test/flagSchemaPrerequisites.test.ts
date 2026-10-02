@@ -27,6 +27,7 @@ import assert from "node:assert/strict";
 import { KNOWN } from "../scripts/checkFlagSchemaPrerequisites.js";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { stripComments } from "../scripts/lib/stripComments.js";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -288,6 +289,44 @@ describe("the script", () => {
     assert.match(r.stdout, /NEW INSTANCE OF THE CLASS: wall_enabled is ON in production/);
   });
 
+  it("does not call process.exit, because that drops the FAIL block it just wrote", () => {
+    // THE CASE ABOVE WAS "FLAKY" AND WAS NOT. It went red on CI while passing in
+    // isolation, and the reason is in this script's exit path rather than in
+    // anything it measures.
+    //
+    // Node's stdout is ASYNCHRONOUS when it is a pipe, which it is whenever the
+    // script is spawned rather than run by a human — `run()` above spawns it
+    // with pipes, and so does every CI step that captures output.
+    // `process.exit()` does not wait for a queued write. The FAIL block is the
+    // LAST thing the script writes, so it is the thing that goes missing, and
+    // the exit code stays 1 either way: a failure arrives with no reason
+    // attached, and whether it does depends on machine load.
+    //
+    // Measured before the fix, six spawns under CPU load: four carried 27,662
+    // bytes and the FAIL block, two carried 20,695 and 21,546 with the block
+    // gone, all six exited 1. After it: six of six complete.
+    //
+    // This case pins the fix rather than the symptom, because the symptom is
+    // load-dependent and a test that reproduces it only sometimes is a test
+    // that fails sometimes. `process.exitCode` plus a return is the spelling
+    // that lets the writes land; `process.exit` is the one that does not.
+    // stripComments, not the raw text: the docblock this fix added SAYS
+    // "process.exit()", and a guard that reads its own explanation as the thing
+    // it forbids is the exact bug src/scripts/lib/stripComments.ts exists to
+    // stop. Its conservative direction is the right one here too — it can only
+    // remove text, so this can report a false clean, never a false call.
+    const src = stripComments(readFileSync(SCRIPT, "utf8"));
+    const calls = [...src.matchAll(/process\.exit\s*\(/g)];
+    assert.equal(
+      calls.length,
+      0,
+      `checkFlagSchemaPrerequisites.ts calls process.exit ${calls.length} time(s); ` +
+        "set process.exitCode and return instead, so stdout is flushed before Node exits",
+    );
+    // And the exit code still has to be real, not merely un-truncated.
+    assert.equal(run({ FLAG_SCHEMA_SNAPSHOT: join(fixture, "does-not-exist.json") }).status, 2);
+  });
+
   it("exits 1 when a KNOWN entry goes stale (the migration lands in production)", () => {
     // THE SUBJECT IS DERIVED FROM `KNOWN`, and that is the point of this rewrite.
     // This case has now outlived its subject TWICE: it first pushed
@@ -308,20 +347,42 @@ describe("the script", () => {
     // latter (trip_subgroups does not exist in production at all). Both shapes are
     // "the migration has not landed", so both are usable, and creating the table is
     // what landing it would do.
-    let subject: { flag: string; table: string; column: string } | null = null;
+    // THREE OBJECT SHAPES, and the third is why this block was rewritten.
+    // A KNOWN entry names `table`, `table.column` OR `some_function()`, and a
+    // function does not live in `snap.tables` at all — it is a bare name in
+    // `snap.functions`. The earlier version split every object on "." and fell
+    // through to the bare-table branch for a function, so it "landed"
+    // `intel_contributor_token()` by inventing a TABLE of that name: the
+    // function stayed absent, the script stayed green, and this case failed
+    // while the rule it guards was working correctly. Landing a function means
+    // adding it to `snap.functions`, which is what the apply actually does.
+    type Subject =
+      | { flag: string; kind: "table"; table: string; column: string; names: string }
+      | { flag: string; kind: "function"; fn: string; names: string };
+    let subject: Subject | null = null;
+    const fns = new Set<string>(Array.isArray(snap.functions) ? snap.functions : []);
     for (const [flag, entry] of Object.entries(KNOWN)) {
       for (const obj of entry.objects ?? []) {
-        const [table, column] = String(obj).split(".");
+        const raw = String(obj);
+        if (raw.endsWith("()")) {
+          const fn = raw.slice(0, -2);
+          if (!fns.has(fn)) {
+            subject = { flag, kind: "function", fn, names: fn };
+            break;
+          }
+          continue;
+        }
+        const [table, column] = raw.split(".");
         if (!table) continue;
         const cols = snap.tables?.[table];
         if (column) {
           if (!Array.isArray(cols) || !cols.includes(column)) {
-            subject = { flag, table, column };
+            subject = { flag, kind: "table", table, column, names: column };
             break;
           }
         } else if (!Array.isArray(cols)) {
           // A bare table name: landing it means the table exists with an id.
-          subject = { flag, table, column: "id" };
+          subject = { flag, kind: "table", table, column: "id", names: "id" };
           break;
         }
       }
@@ -350,15 +411,21 @@ describe("the script", () => {
       return;
     }
 
-    if (!Array.isArray(snap.tables[subject!.table])) snap.tables[subject!.table] = [];
-    if (!snap.tables[subject!.table].includes(subject!.column)) {
-      snap.tables[subject!.table].push(subject!.column);
+    // Simulate the apply, in whichever place the object actually lives.
+    if (subject.kind === "function") {
+      if (!Array.isArray(snap.functions)) snap.functions = [];
+      if (!snap.functions.includes(subject.fn)) snap.functions.push(subject.fn);
+    } else {
+      if (!Array.isArray(snap.tables[subject.table])) snap.tables[subject.table] = [];
+      if (!snap.tables[subject.table].includes(subject.column)) {
+        snap.tables[subject.table].push(subject.column);
+      }
     }
     const p = join(fixture, "applied-snapshot.json");
     writeFileSync(p, JSON.stringify(snap));
     const r = run({ FLAG_SCHEMA_SNAPSHOT: p });
     assert.equal(r.status, 1, r.stdout);
-    assert.match(r.stdout, new RegExp(`STALE: KNOWN\\.${subject!.flag}`));
-    assert.ok(r.stdout.includes(subject!.column), `the report must name ${subject!.column}`);
+    assert.match(r.stdout, new RegExp(`STALE: KNOWN\\.${subject.flag}`));
+    assert.ok(r.stdout.includes(subject.names), `the report must name ${subject.names}`);
   });
 });

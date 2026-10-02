@@ -223,8 +223,8 @@ export function normalizeStripeWebhook(
   nowMs: number = Date.now(),
 ): VerificationResult | null {
   if (!parsed || typeof parsed !== "object") return null;
-  const envelope = parsed as { type?: unknown; data?: { object?: unknown } | null };
-  if (typeof envelope.type !== "string" || !ACTIONABLE_EVENT_TYPES.has(envelope.type)) return null;
+  const envelope = parsed as { type?: unknown; livemode?: unknown; data?: { object?: unknown } | null };
+  assertWebhookLivemodeAllowed("stripe", envelope.livemode); if (typeof envelope.type !== "string" || !ACTIONABLE_EVENT_TYPES.has(envelope.type)) return null;
   const object = envelope.data?.object;
   if (!object || typeof object !== "object") return null;
   return normalizeStripeSession(object as StripeSessionObject, nowMs);
@@ -239,7 +239,7 @@ function secretKey(env: NodeJS.ProcessEnv = process.env): string {
       "Stripe Identity is selected (IDENTITY_PROVIDER=stripe) but STRIPE_IDENTITY_SECRET_KEY is not set.",
     );
   }
-  return key;
+  assertProviderKeyAllowed("stripe", key, env); return key; // live/unknown refused BEFORE any fetch (lib/paymentsMode.ts)
 }
 
 async function stripeCall(
@@ -247,10 +247,10 @@ async function stripeCall(
   form: Record<string, string> | null,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<unknown> {
-  const res = await fetch(`${STRIPE_API_BASE}${path}`, {
+  const authorization = `Bearer ${secretKey(env)}`; const res = await fetch(`${STRIPE_API_BASE}${path}`, {
     method: form === null ? "GET" : "POST",
     headers: {
-      Authorization: `Bearer ${secretKey(env)}`,
+      Authorization: authorization,
       ...(form === null ? {} : { "Content-Type": "application/x-www-form-urlencoded" }),
     },
     ...(form === null ? {} : { body: new URLSearchParams(form).toString() }),
@@ -332,3 +332,7 @@ export async function stripeRequestDeletion(
     env,
   );
 }
+
+// Sandbox-only guard (appended at the foot so every line the censuses cite keeps
+// its number). ES imports are hoisted, so this binds before any code above runs.
+import { assertProviderKeyAllowed, assertWebhookLivemodeAllowed } from "../../lib/paymentsMode.js";

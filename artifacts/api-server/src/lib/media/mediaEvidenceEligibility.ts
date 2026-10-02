@@ -26,9 +26,37 @@
  * BOUNDARY: this module NEVER promotes anything to "live". §10's freshnessClass
  * union includes 'live', but the media side caps at 'fresh' — the "Live" label
  * is owned by the gated Live Intelligence path (lib/liveClaimRead.ts /
- * lib/intelLiveScope.ts), never manufactured from a raw media asset. Nor does
- * it stamp an operational `expiresAt`: intel expiry belongs to the
- * observation/claim, not to the asset.
+ * lib/intelLiveScope.ts), never manufactured from a raw media asset.
+ *
+ * §10 `expiresAt` / §11 `intelligenceExpiresAt` — THE ASSET'S OPERATIONAL
+ * LIFETIME, STAMPED (2026-09-26). This module used to decline the field on the
+ * ground that "intel expiry belongs to the observation/claim". That conflated
+ * two different expiries. A CLAIM's TTL (lib/freshnessPolicy) says how long a
+ * statement about a place stays current; it is owned by Live Intelligence and
+ * nothing here touches it. The ASSET's `expiresAt` says something narrower and
+ * media-owned: the instant after which this photograph can no longer back ANY
+ * current claim, because it is no longer a picture of "now". That instant is
+ * exactly where `computeFreshnessClass` already moves the asset to
+ * 'historical' — so `expiresAt = capturedAt + INTELLIGENCE_OPERATIONAL_WINDOW_MS`,
+ * stamped only on an ELIGIBLE asset (an ineligible one never had operational
+ * value, so it has nothing to expire). A claim may still apply a SHORTER TTL of
+ * its own; this is the ceiling, never an extension.
+ *
+ * It is ENFORCED, not decorative: `isOperationalEvidenceAt` is the gate the
+ * evidence read side (lib/media/mediaEvidenceLink) applies, so an expired asset
+ * cannot count as evidence for a current claim. `eligible` itself stays
+ * time-independent on purpose — §35 eligibility is a property of source and
+ * edit lineage, and lib/intel PresenceVerifier asks it about a receipt inside a
+ * historical observation window, where "is it still operational NOW" is the
+ * wrong question.
+ *
+ * §10 `locationConfidence` — DISTINGUISHES HOW THE LOCATION WAS ESTABLISHED.
+ * It used to be `hasLocation ? 0.7 : 0.2`, so a server-verified GPS fix and a
+ * hand-typed venue scored the same. `LocationBasis` carries which one it was,
+ * derived from the post's OWN location provenance (`posts.location_source`
+ * gps|manual|none and the server-decided `location_verified` /
+ * `geotag_verified` — routes/posts.ts computes those from `verifyLocation`,
+ * never from the client). `hasLocation` without a basis keeps its old value.
  */
 
 import { FRESH_WINDOW_MS, RECENT_WINDOW_MS } from "./mediaFreshness.js";
@@ -187,6 +215,57 @@ export interface EditLineageEntry {
 }
 
 /**
+ * §10 locationConfidence input: HOW a media item's location was established.
+ *
+ *   verified_gps  a device GPS fix the SERVER verified against the tagged place
+ *                 (`posts.location_source='gps'` AND `location_verified` or
+ *                 `geotag_verified` — both server-decided in routes/posts.ts);
+ *   gps           a device GPS fix, not (or not yet) verified;
+ *   manual        a place the user typed or picked — a claim, not a measurement;
+ *   none          no location at all.
+ */
+export type LocationBasis = "verified_gps" | "gps" | "manual" | "none";
+
+export const LOCATION_BASES: readonly LocationBasis[] = ["verified_gps", "gps", "manual", "none"];
+
+/**
+ * The §10 scalar per basis. `gps` keeps the value the old `hasLocation: true`
+ * produced (0.7) and `none` keeps the old `hasLocation: false` value (0.2), so
+ * every row computed before the basis existed reads identically. The two new
+ * rungs are the point: a verified fix is worth more than an unverified one, and
+ * a hand-typed venue is worth barely more than nothing.
+ */
+export const LOCATION_CONFIDENCE_BY_BASIS: Readonly<Record<LocationBasis, number>> = {
+  verified_gps: 0.9,
+  gps: 0.7,
+  manual: 0.3,
+  none: 0.2,
+};
+
+export function isLocationBasis(v: unknown): v is LocationBasis {
+  return typeof v === "string" && (LOCATION_BASES as readonly string[]).includes(v);
+}
+
+/**
+ * Derive the basis from a post row's OWN location provenance. Reads only the
+ * enum and the two server-decided booleans — never a coordinate. Fail-closed to
+ * the weaker rung: an unknown `location_source` value is `none`, and `gps`
+ * is only `verified_gps` when the server said so.
+ */
+export function locationBasisFromPost(row: {
+  location_source?: unknown;
+  location_verified?: unknown;
+  geotag_verified?: unknown;
+} | null | undefined): LocationBasis {
+  const src = String(row?.location_source ?? "none");
+  if (src === "gps") {
+    return row?.location_verified === true || row?.geotag_verified === true ? "verified_gps" : "gps";
+  }
+  if (src === "manual") return "manual";
+  return "none";
+}
+
+/**
  * §6 MediaProvenance: source + capture + edit lineage for one asset. This is the
  * shape stored in `media_assets.provenance` (jsonb).
  */
@@ -196,6 +275,8 @@ export interface MediaProvenance {
   capturedAt?: string | null;
   /** True when the asset carries a trustworthy location binding. */
   hasLocation?: boolean;
+  /** §10: how that binding was established, when known. Absent on older rows. */
+  locationBasis?: LocationBasis;
   /** Append-only edit history — the §35 lineage. */
   editHistory: EditLineageEntry[];
 }
@@ -246,28 +327,35 @@ export function normalizeProvenance(v: unknown): MediaProvenance | null {
       if (e.detail && typeof e.detail === "object") entry.detail = e.detail as Record<string, unknown>;
       return entry;
     });
-  return {
+  const prov: MediaProvenance = {
     sourceType: normalizeSourceType(o.sourceType),
     capturedAt: typeof o.capturedAt === "string" ? o.capturedAt : null,
     hasLocation: o.hasLocation === true,
     editHistory,
   };
+  // A stored basis is kept only when it is one of the four; anything else is
+  // dropped rather than trusted, and the confidence falls back to hasLocation.
+  if (isLocationBasis(o.locationBasis)) prov.locationBasis = o.locationBasis;
+  return prov;
 }
 
 export interface InitProvenanceInput {
   sourceType?: string | null;
   capturedAt?: string | null;
   hasLocation?: boolean;
+  locationBasis?: LocationBasis | null;
 }
 
 /** Build a fresh provenance record with an empty edit lineage. */
 export function initProvenance(input: InitProvenanceInput): MediaProvenance {
-  return {
+  const prov: MediaProvenance = {
     sourceType: normalizeSourceType(input.sourceType),
     capturedAt: input.capturedAt ?? null,
-    hasLocation: input.hasLocation ?? false,
+    hasLocation: input.hasLocation ?? (input.locationBasis != null && input.locationBasis !== "none"),
     editHistory: [],
   };
+  if (isLocationBasis(input.locationBasis)) prov.locationBasis = input.locationBasis;
+  return prov;
 }
 
 export interface AppendEditOptions {
@@ -321,6 +409,30 @@ export interface IntelligenceEligibility {
 /** Minimum provenance AND capture confidence for an asset to be live evidence. */
 export const MIN_EVIDENCE_CONFIDENCE = 0.5;
 
+/**
+ * §10/§11: how long after capture an eligible asset keeps OPERATIONAL
+ * intelligence value. Deliberately the same instant `computeFreshnessClass`
+ * moves it to 'historical' (RECENT_WINDOW_MS, 24 h), so the eligibility object
+ * can never say "historical" and "not yet expired" about the same asset at the
+ * same moment. A claim's own TTL may be shorter; this is the ceiling.
+ */
+export const INTELLIGENCE_OPERATIONAL_WINDOW_MS = RECENT_WINDOW_MS;
+
+/**
+ * The asset's operational expiry, or undefined when it has none: an ineligible
+ * asset never had operational value, and an asset with no valid capture time
+ * cannot say when its "now" was.
+ */
+export function operationalExpiresAt(
+  eligible: boolean,
+  capturedAt: string | null | undefined,
+): string | undefined {
+  if (!eligible || !capturedAt) return undefined;
+  const t = new Date(capturedAt).getTime();
+  if (!Number.isFinite(t)) return undefined;
+  return new Date(t + INTELLIGENCE_OPERATIONAL_WINDOW_MS).toISOString();
+}
+
 /** Base provenance confidence per source type. */
 const SOURCE_PROVENANCE_BASE: Record<MediaSourceType, number> = {
   camera: 0.9,
@@ -370,6 +482,8 @@ export interface EligibilityComputeInput {
   capturedAt?: string | null;
   editHistory?: EditLineageEntry[];
   hasLocation?: boolean;
+  /** §10: how the location was established. Wins over `hasLocation` when valid. */
+  locationBasis?: LocationBasis | null;
   /** Injectable clock for deterministic freshness (defaults to Date.now()). */
   now?: number;
 }
@@ -418,7 +532,10 @@ export function computeIntelligenceEligibility(
   let provenanceConfidence = SOURCE_PROVENANCE_BASE[sourceType] ?? 0.2;
   if (hasBreaking || hasUnknown) provenanceConfidence = 0;
   const captureConfidence = computeCaptureConfidence(sourceType, input.capturedAt);
-  const locationConfidence = input.hasLocation ? 0.7 : 0.2;
+  const basis: LocationBasis = isLocationBasis(input.locationBasis)
+    ? input.locationBasis
+    : input.hasLocation ? "gps" : "none";
+  const locationConfidence = LOCATION_CONFIDENCE_BY_BASIS[basis];
 
   if (provenanceConfidence < MIN_EVIDENCE_CONFIDENCE) reasons.push("provenance_confidence_below_threshold");
   if (captureConfidence < MIN_EVIDENCE_CONFIDENCE) reasons.push("capture_confidence_below_threshold");
@@ -430,16 +547,20 @@ export function computeIntelligenceEligibility(
   const eligible = sourceEligible && !hasBreaking && !hasUnknown && confidentEnough;
   if (eligible) reasons.unshift("evidence_eligible");
 
-  return {
+  const out: IntelligenceEligibility = {
     eligible,
     reasons,
     freshnessClass: computeFreshnessClass(input.capturedAt, input.now),
     captureConfidence: round2(captureConfidence),
     locationConfidence: round2(locationConfidence),
     provenanceConfidence: round2(provenanceConfidence),
-    // expiresAt intentionally omitted: operational expiry is owned by the intel
-    // observation/claim, not the media asset.
   };
+  // §10 expiresAt: the asset's OPERATIONAL lifetime (see the module header).
+  // Present only on an eligible asset; a claim's own TTL is separate and owned
+  // by Live Intelligence.
+  const expiresAt = operationalExpiresAt(eligible, input.capturedAt);
+  if (expiresAt) out.expiresAt = expiresAt;
+  return out;
 }
 
 // ── The public contract the media→intel seam will call ────────────────────────
@@ -482,6 +603,7 @@ export function evaluateEvidenceEligibility(
     capturedAt,
     editHistory: prov?.editHistory ?? [],
     hasLocation: prov?.hasLocation ?? false,
+    locationBasis: prov?.locationBasis ?? null,
     now: asset.now,
   });
 }
@@ -497,3 +619,56 @@ export function evaluateEvidenceEligibility(
 export function isEvidenceEligible(asset: EvidenceAssetInput): boolean {
   return evaluateEvidenceEligibility(asset).eligible;
 }
+
+/**
+ * isOperationalEvidenceAt — the §10/§11 gate for evidence behind a CURRENT
+ * claim: §35-eligible AND still inside its operational lifetime at `nowMs`.
+ *
+ * The distinction from `isEvidenceEligible` is deliberate (module header):
+ * eligibility is a property of source and lineage and does not decay; operational
+ * value does. A photograph captured two days ago is still a first-party,
+ * unedited capture — and still cannot tell anyone what a place is like now.
+ * Fail-closed: no expiry (ineligible, or no capture time) ⇒ false.
+ */
+export function isOperationalEvidenceAt(asset: EvidenceAssetInput, nowMs?: number): boolean {
+  const now = nowMs ?? asset.now ?? Date.now();
+  const e = evaluateEvidenceEligibility({ ...asset, now });
+  if (!e.eligible || !e.expiresAt) return false;
+  return now < new Date(e.expiresAt).getTime();
+}
+
+// ── census-media §35 (MD37): §6's eight values, and the one no writer chose ───
+
+/**
+ * The eight §6 `MediaAsset.sourceType` values, exactly, in the spec's order.
+ * `MediaSourceType` above is these eight plus the legacy 'user'.
+ */
+export const SPEC_MEDIA_SOURCE_TYPES = [
+  "camera",
+  "library",
+  "provider",
+  "official",
+  "community",
+  "generated",
+  "screenshot",
+  "derivative",
+] as const satisfies readonly MediaSourceType[];
+
+/**
+ * What a `media_assets` writer passes when the spec does not settle its source.
+ *
+ * It is the legacy 'user' — the value those writers already stored through the
+ * writer's own fallback — under a name, so that a writer nobody has told its
+ * source SAYS so where it writes, and the list of such writers is the owner's
+ * decision inventory (census-media §35, MD37; pinned by
+ * src/test/mediaAssetSourceDeclared.test.ts).
+ *
+ * It is deliberately NOT one of the eight. Choosing one would be a protection
+ * change, not a rename: camera, library and community are evidence-eligible
+ * (EVIDENCE_ELIGIBLE_SOURCE_TYPES above), which a presence receipt reads
+ * (services/intel/PresenceVerifier checkReceipt), and they rank as `authentic`
+ * where 'user' ranks `unknown` (lib/mediaRankingSignals provenanceClassOf). The
+ * upload route receives bytes and a Content-Type only, so which of camera,
+ * library or screenshot a file is was never declared to the server.
+ */
+export const MEDIA_SOURCE_UNDECLARED = "user" as const satisfies MediaSourceType;

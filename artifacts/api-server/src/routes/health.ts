@@ -24,6 +24,7 @@ import { getLiveShareSweepStatus } from "../server/trips/projectionWorkers/tripC
 import { getNotificationMaintenanceStatus } from "../lib/notificationMaintenanceScheduler.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { sweepExpiredStories } from "./stories.js";
+import { getStoryRetentionStatus } from "../lib/storyRetentionScheduler.js";
 
 const router: IRouter = Router();
 
@@ -225,14 +226,24 @@ interface JobReport {
 
 function classify(o: {
   lastRunAt?: string | null;
+  lastSuccessAt?: string | null;
   consecutiveFailures?: number;
   lastOutcome?: string | null;
   /** false when the job keeps no run timestamp at all. */
   tracksLastRun?: boolean;
+  /**
+   * True for a job that distinguishes an ATTEMPT from a SUCCESS. For those,
+   * `lastRunAt` alone can never make the job healthy: a job that has attempted
+   * a hundred times and succeeded never would otherwise read exactly like one
+   * that is working. Jobs that do not track success are unaffected and keep
+   * their previous classification.
+   */
+  requiresSuccess?: boolean;
 }): JobHealth {
   if ((o.consecutiveFailures ?? 0) > 0) return "failing";
   if (o.lastOutcome === "error") return "failing";
   if (o.tracksLastRun === false) return "unknown";
+  if (o.requiresSuccess && !o.lastSuccessAt) return "never_ran";
   if (!o.lastRunAt) return "never_ran";
   return "healthy";
 }
@@ -331,6 +342,35 @@ function schedulerReports(): JobReport[] {
     lastRunAt: cleanup.lastRunAt,
     lastSuccessAt: null,
     consecutiveFailures: cleanup.consecutiveFailures,
+  });
+
+  // Story retention. The one job on this list whose failure is a privacy
+  // promise rather than a stale row, so it is the one job that must never read
+  // as healthy on the strength of having been ATTEMPTED — see decision 4 and
+  // lib/storyRetentionScheduler.ts. `backlog` is reported separately from the
+  // failure list because a pass can succeed while the ledger grows, and that
+  // combination is what a purge looks like when it has quietly stopped working.
+  const retention = getStoryRetentionStatus();
+  reports.push({
+    job: "storyRetention",
+    status: classify({
+      lastRunAt: retention.lastAttemptAt,
+      lastSuccessAt: retention.lastSuccessAt,
+      consecutiveFailures: retention.consecutiveFailures,
+      requiresSuccess: true,
+    }),
+    lastRunAt: retention.lastAttemptAt,
+    lastSuccessAt: retention.lastSuccessAt,
+    consecutiveFailures: retention.consecutiveFailures,
+    detail: [
+      retention.backlog === null
+        ? "backlog unknown (never measured, or the ledger was unreadable)"
+        : `backlog: ${retention.backlog}`,
+      retention.lastFailures.length > 0 ? `last failures: ${retention.lastFailures.join("; ")}` : null,
+      retention.lastReport
+        ? `last pass: enqueued ${retention.lastReport.enqueuedArchive}+${retention.lastReport.enqueuedDeleted}, completed ${retention.lastReport.completed}, kept-for-reference ${retention.lastReport.retained}, deferred ${retention.lastReport.deferred}`
+        : null,
+    ].filter(Boolean).join(" | "),
   });
 
   const seen = getSuggestionSeenStatus();

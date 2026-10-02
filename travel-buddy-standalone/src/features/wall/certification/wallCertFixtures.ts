@@ -77,7 +77,7 @@ function atOffset(hoursAgo: number): string {
 /**
  * The widths the set is captured at.
  *
- * MEASURED, NOT ASSUMED, about this tree: the Wall reads no viewport width
+ * MEASURED, NOT ASSUMED, about this tree: the Wall reads no viewport width (SUPERSEDED by census-wall §16, 2026-09-26: the Wall image picker now reads the window width and scale, so that grep finds wallItemShared.tsx and wallPrefetch.ts; it only chooses which stored image to fetch, and no LAYOUT switches on width)
  * anywhere. `grep -rn 'useWindowDimensions\|Dimensions.get' src/features/wall/`
  * returns nothing, and the theme declares no breakpoints. So width does not
  * switch any layout in the Wall — it only changes where text wraps, how tall a

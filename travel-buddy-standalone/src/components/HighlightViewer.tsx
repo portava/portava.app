@@ -9,6 +9,14 @@
  *   - POST /highlights/:id/view on each item shown
  *   - Owner sees "👁 N" chip → opens HighlightViewersSheet
  *   - Videos play natively via expo-av; progress driven by onPlaybackStatusUpdate
+ *
+ * OWNER OPERATIONS, AND WHY THEY ARE FOUR AND NOT ONE. §21: "Delete, archive,
+ * do-not-resurface, and 'keep but do not personalize' are different operations
+ * and must remain separate in both data model and UX." The owner row therefore
+ * carries Archive (reversible, retained, reachable again at
+ * /highlights/archived) and Delete (terminal, confirmed) as separate buttons,
+ * with the two resurfacing controls living behind the privacy sheet. §12's pin
+ * is a fifth, and is not a removal at all.
  */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
@@ -20,7 +28,7 @@ import { Video, ResizeMode, type AVPlaybackStatus } from 'expo-av';
 import { getMediaFilter, buildCssFilter } from '../lib/media/filters.ts';
 import { DisplayMediaImage, AvatarImage } from './ui/DisplayMediaImage.tsx';
 import { useHydratedMedia } from '../services/mediaUrl.ts';
-import { X, MessageCircle, Flag, Eye, Plus, Trash2, Volume2, VolumeX, Lock, Pin } from 'lucide-react-native';
+import { X, MessageCircle, Flag, Eye, Plus, Trash2, Volume2, VolumeX, Lock, Pin, Archive } from 'lucide-react-native';
 import { ActionStampIcon, ActionShareIcon } from './ui/ActionRowIcon.tsx';
 import { POST_ACTION_ICON_SIZE } from './PostActionRow.tsx';
 import { SaveButton } from './SaveButton.tsx';
@@ -36,6 +44,11 @@ import {
   replyToHighlight,
   reportHighlight,
   deleteHighlight,
+  // §21: "Delete, archive, do-not-resurface, and 'keep but do not personalize'
+  // are different operations and must remain separate in both data model and
+  // UX." The server has had the archive routes and no caller; the viewer had
+  // Delete and nothing else, so the UX half of that sentence was unmet.
+  archiveHighlight,
 } from '../services/highlights.ts';
 import { markHighlightsViewed } from '../services/messaging.ts';
 import { markViewed, invalidateHighlightCache } from '../hooks/useHighlightRingState.ts';
@@ -59,6 +72,30 @@ const AVATAR_SIZE = 36;
 const ITEM_DURATION_MS = 5000;
 
 const HIT_SLOP = { top: 12, bottom: 12, left: 12, right: 12 };
+
+/**
+ * This Highlight's §12 pin timestamp: what this session has changed it to, or
+ * failing that what the SERVER sent with the row.
+ *
+ * The server half is the load-bearing one. `GET /users/:id/highlights` projects
+ * `pinnedAt` and `pinnedFirst` orders on it, but `mapHighlight` used to drop the
+ * field, so this read always answered `undefined` and every Highlight opened as
+ * unpinned. The only affordance offered was PIN — which the server accepts and
+ * which changes nothing — so a pin made in an earlier session could not be
+ * undone. §17's UNPIN_HIGHLIGHT exists precisely so a pin is not a trap.
+ *
+ * `in` and not `??`: a session value of `null` means THIS SESSION UNPINNED IT,
+ * and `session[id] ?? highlight.pinnedAt` would fall straight back through it
+ * onto the row's now-stale timestamp — so a successful unpin re-rendered as
+ * PINNED one frame later. Presence of the key is the question, not truthiness
+ * of the value.
+ */
+function pinnedAtOf(
+  highlight: Highlight,
+  session: Record<string, string | null>,
+): string | null | undefined {
+  return highlight.id in session ? session[highlight.id] : highlight.pinnedAt;
+}
 
 interface Props {
   visible: boolean;
@@ -93,6 +130,7 @@ export function HighlightViewer({
   // Keyed by highlight id so the state survives advancing through the set.
   const [pinState, setPinState] = useState<Record<string, string | null>>({});
   const [pinBusy, setPinBusy] = useState(false);
+  const [archiving, setArchiving] = useState(false);
   const [replyOpen, setReplyOpen] = useState(false);
   const [replyText, setReplyText] = useState('');
   const [replying, setReplying] = useState(false);
@@ -113,6 +151,7 @@ export function HighlightViewer({
 
   const current = localHighlights[index];
   const isOwner = current?.ownerId === currentUserId;
+  const currentPinnedAt = current ? pinnedAtOf(current, pinState) : undefined;
   const isVideo = (current?.mediaType ?? '').startsWith('video/');
 
   // Video sources hydrate exactly as SharedVideoPlayer's do (deb8c9a86).
@@ -232,6 +271,52 @@ export function HighlightViewer({
     }
   }, []);
 
+  /**
+   * Drop the current Highlight from THIS viewer after the server accepted a
+   * removal, and tell the surface behind it to re-read.
+   *
+   * Shared by Delete and Archive because the viewer-side consequence is the
+   * same — the row leaves every normal read — while the operations are not:
+   * one is terminal, the other is reversible from /highlights/archived. §21
+   * requires them to stay separate, and they do; what they share is this
+   * bookkeeping, which is not a policy.
+   */
+  function dropCurrentFromViewer(removedId: string, ownerId: string) {
+    invalidateHighlightCache(ownerId);
+    onDeleted?.();
+    const remaining = localHighlights.filter((h) => h.id !== removedId);
+    if (remaining.length === 0) {
+      onClose();
+      return;
+    }
+    setLocalHighlights(remaining);
+    setIndex((i) => Math.min(i, remaining.length - 1));
+    setProgress(0);
+  }
+
+  /**
+   * §21 Archive — reversible, retains the row, does NOT consume the delete.
+   *
+   * No destructive confirmation, deliberately: a confirmation prompt is how a
+   * reversible operation starts looking like the terminal one next to it, and
+   * the way back is one screen away. A REFUSED write leaves the Highlight
+   * exactly where it was — closing the viewer on a failure would tell the
+   * owner it had been archived when nothing was written.
+   */
+  async function handleArchive() {
+    if (!current || !isOwner || archiving) return;
+    const id = current.id;
+    const ownerId = current.ownerId;
+    setArchiving(true);
+    const result = await archiveHighlight(id);
+    setArchiving(false);
+    if (!result.ok) {
+      Alert.alert('Could not archive', result.message ?? 'Please try again.');
+      return;
+    }
+    dropCurrentFromViewer(id, ownerId);
+  }
+
   function goNext() {
     if (index < localHighlights.length - 1) {
       const next = index + 1;
@@ -260,16 +345,7 @@ export function HighlightViewer({
               Alert.alert('Could not delete', result.message ?? 'Please try again.');
               return;
             }
-            invalidateHighlightCache(ownerId);
-            onDeleted?.();
-            const remaining = localHighlights.filter((h) => h.id !== current.id);
-            if (remaining.length === 0) {
-              onClose();
-            } else {
-              setLocalHighlights(remaining);
-              setIndex((i) => Math.min(i, remaining.length - 1));
-              setProgress(0);
-            }
+            dropCurrentFromViewer(current.id, ownerId);
           },
         },
       ],
@@ -288,7 +364,7 @@ export function HighlightViewer({
   async function handlePinToggle() {
     if (!current || !isOwner || pinBusy) return;
     const id = current.id;
-    const currentlyPinned = (pinState[id] ?? (current as any).pinnedAt ?? null) != null;
+    const currentlyPinned = pinnedAtOf(current, pinState) != null;
     setPinBusy(true);
     const result = currentlyPinned ? await unpinHighlight(id) : await pinHighlight(id);
     setPinBusy(false);
@@ -301,7 +377,7 @@ export function HighlightViewer({
       );
       return;
     }
-    setPinState((m) => ({ ...m, [id]: (result.data as any).pinnedAt ?? null }));
+    setPinState((m) => ({ ...m, [id]: result.data.pinnedAt }));
   }
 
   const toggleMute = useCallback(() => {
@@ -602,24 +678,14 @@ export function HighlightViewer({
                 onPress={() => void handlePinToggle()}
                 style={s.actionBtn}
                 hitSlop={HIT_SLOP}
+                testID={currentPinnedAt != null ? 'highlight-pin-on' : 'highlight-pin-off'}
                 accessibilityRole="button"
-                accessibilityState={{
-                  selected: ((pinState[current.id] ?? (current as any).pinnedAt ?? null) != null),
-                  disabled: pinBusy,
-                }}
-                accessibilityLabel={
-                  (pinState[current.id] ?? (current as any).pinnedAt ?? null) != null
-                    ? 'Unpin this highlight'
-                    : 'Pin this highlight'
-                }
+                accessibilityState={{ selected: currentPinnedAt != null, disabled: pinBusy }}
+                accessibilityLabel={currentPinnedAt != null ? 'Unpin this highlight' : 'Pin this highlight'}
               >
                 <Pin
                   size={POST_ACTION_ICON_SIZE}
-                  color={
-                    (pinState[current.id] ?? (current as any).pinnedAt ?? null) != null
-                      ? color.signal
-                      : 'rgba(255,255,255,0.85)'
-                  }
+                  color={currentPinnedAt != null ? color.signal : 'rgba(255,255,255,0.85)'}
                 />
               </Pressable>
             )}
@@ -636,8 +702,34 @@ export function HighlightViewer({
               </Pressable>
             )}
 
+            {/* §21 Archive, next to Delete and distinct from it: this one is
+              * reversible and the row is retained. The way back is
+              * /highlights/archived. */}
             {isOwner && (
-              <Pressable onPress={handleDelete} style={s.actionBtn} hitSlop={HIT_SLOP}>
+              <Pressable
+                onPress={() => void handleArchive()}
+                style={s.actionBtn}
+                hitSlop={HIT_SLOP}
+                testID="highlight-archive"
+                accessibilityRole="button"
+                accessibilityState={{ disabled: archiving }}
+                accessibilityLabel="Archive this highlight"
+              >
+                {archiving
+                  ? <ActivityIndicator size="small" color="#fff" />
+                  : <Archive size={POST_ACTION_ICON_SIZE} color="rgba(255,255,255,0.85)" />}
+              </Pressable>
+            )}
+
+            {isOwner && (
+              <Pressable
+                onPress={handleDelete}
+                style={s.actionBtn}
+                hitSlop={HIT_SLOP}
+                testID="highlight-delete"
+                accessibilityRole="button"
+                accessibilityLabel="Delete this highlight"
+              >
                 <Trash2 size={POST_ACTION_ICON_SIZE} color="rgba(255,255,255,0.7)" />
               </Pressable>
             )}

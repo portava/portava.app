@@ -87,6 +87,11 @@ function makeClient(mode: "norow" | "error" | "throw" | "on") {
       update() { return b; },
       delete() { return b; },
       eq() { return b; }, neq() { return b; }, in() { return b; }, not() { return b; },
+      // `ilike` was missing: the airport resolvers filter with it, so calling
+      // them against this fake threw a TypeError that the service used to
+      // swallow as "not in the DB". Now that a failed read is reported rather
+      // than swallowed, the gap is visible — a real PostgREST builder has it.
+      ilike() { return b; },
       is() { return b; }, gte() { return b; }, lte() { return b; }, gt() { return b; },
       lt() { return b; }, or() { return b; }, order() { return b; }, limit() { return b; },
       range() { return b; }, single() { return b.maybeSingle(); },

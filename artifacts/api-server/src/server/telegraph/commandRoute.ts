@@ -42,9 +42,12 @@ import { asyncHandler } from "../../lib/asyncHandler.js";
 import { logger as rootLogger } from "../../lib/logger.js";
 import { publishToThread } from "../../lib/telegraphEvents.js";
 import { messageKernelEnabled } from "../../services/telegraphMessageKernel.js";
+import { createCoordinationSession } from "../../services/telegraph/coordinationSessions.js";
+import { unsendBeforeSeen } from "../../services/telegraph/unsend.js";
 import {
   ISSUABLE_COMMANDS,
   LEGACY_PATH_COMMANDS,
+  SCHEMA_GATED_COMMANDS,
   UNIMPLEMENTED_COMMANDS,
   isIssuable,
   refusal,
@@ -68,12 +71,38 @@ const FORBIDDEN_REASONS = new Set<string>([
 
 router.post(
   "/telegraph/commands",
-  asyncHandler(async (req, res) => {
+  asyncHandler(async (req, res, next) => {
+    // ── THIS PATH IS SHARED, AND THIS IS THE LINE THAT DIVIDES IT ────────────
+    //
+    // `routes/telegraphCommands.ts` registers POST /telegraph/commands too —
+    // the natural-language assistant, whose body is `{ text }`. Express
+    // dispatches to the first matching handler and neither used to yield, so
+    // whichever router `routes/index.ts` mounted first answered EVERY request
+    // to this path and the other was dead code. It mounted the assistant
+    // first, so this endpoint — the whole §13.1 command vocabulary — was
+    // unreachable in the running app: a well-formed UNSEND_MESSAGE came back
+    // `400 invalid_payload "Required"`, which is the assistant's schema
+    // refusing a body that has no `text`. It was reachable in its own tests,
+    // which mount this router alone, and that is why nothing caught it.
+    //
+    // The two bodies are disjoint: a typed command carries `type`, the
+    // assistant carries `text`. So this handler claims exactly the bodies it
+    // was written for and yields the rest — BEFORE authenticating, so a body
+    // meant for the assistant reaches it in exactly the state it did before.
+    // `routes/index.ts` now mounts this router first, and
+    // `check:route-shadowing` fails on any other pair of routers that register
+    // one path without a divider like this one.
+    const rawBody = (req.body ?? {}) as Record<string, unknown>;
+    if (!("type" in rawBody)) {
+      next();
+      return;
+    }
+
     const auth = await requireUser(req, res);
     if (!auth) return;
     const { user } = auth;
 
-    const body = (req.body ?? {}) as Record<string, unknown>;
+    const body = rawBody;
 
     // A body that names an actor is refused, not ignored. See the header.
     if ("actorUserId" in body || "actorId" in body || "senderId" in body) {
@@ -115,10 +144,15 @@ router.post(
     const sc = getServiceClient();
     if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-    // ONE gate for every command here, because every one of them needs schema
-    // from 2810/2811. Answering feature_disabled is the difference between a
-    // refusal a client can render and a 42703 it cannot.
-    if (!(await messageKernelEnabled(sc))) {
+    // The gate is PER COMMAND, not per endpoint. `SCHEMA_GATED_COMMANDS` names
+    // the three that need columns and tables 2810/2811 add; answering
+    // feature_disabled for those is the difference between a refusal a client
+    // can render and a 42703 it cannot. CREATE_COORDINATION_SESSION needs none
+    // of that schema — it writes a `messages` row through columns every
+    // deployment already has — and gating it here would put a live capability
+    // behind a switch that exists for a different reason. See the note on
+    // ISSUABLE_COMMANDS.
+    if (SCHEMA_GATED_COMMANDS.has(type) && !(await messageKernelEnabled(sc))) {
       sendError(res, "feature_disabled",
         "Telegraph message commands are not enabled on this deployment.");
       return;
@@ -139,6 +173,71 @@ router.post(
     }
     if (!membership || (membership as any).left_at != null) {
       res.status(403).json({ error: "forbidden", reason: "TELEGRAPH_AUTH_NOT_MEMBER" });
+      return;
+    }
+
+    /**
+     * §13.1 `CREATE_COORDINATION_SESSION`, handled before the switch because
+     * its failure vocabulary is not the switch's.
+     *
+     * The other three commands here answer 403 or 409 and nothing else — every
+     * way they fail is "you may not" or "it already moved". This one can also
+     * fail with "you did not send an idempotency key", which is a 400 and a
+     * client bug, and collapsing that into a 409 would send an author looking
+     * for a conflict that is not there.
+     *
+     * `body.idempotency_key` is accepted beside `params.idempotencyKey` because
+     * the trip command endpoint takes it at the envelope's top level and a
+     * caller who has written one client should not have to discover that the
+     * other spells it differently. Snake at the envelope, camel in the params:
+     * both are read, and the envelope wins when both are present because that
+     * is where a generic retry wrapper would put it.
+     */
+    if (type === "CREATE_COORDINATION_SESSION") {
+      const envelopeKey = typeof body["idempotency_key"] === "string" ? body["idempotency_key"] : "";
+      const paramKey = typeof params["idempotencyKey"] === "string" ? (params["idempotencyKey"] as string) : "";
+      const created = await createCoordinationSession(sc, {
+        threadId: conversationId,
+        actorUserId: user.id,
+        title: String(params["title"] ?? ""),
+        planObjectId: typeof params["planObjectId"] === "string" ? (params["planObjectId"] as string) : null,
+        note: typeof params["note"] === "string" ? (params["note"] as string) : null,
+        idempotencyKey: envelopeKey || paramKey,
+        // §14.3's window is not applied here. This endpoint's membership check
+        // above is the gate, and the idempotency lookup reads the caller's own
+        // conversation; narrowing it by a window the caller has not been handed
+        // would make a retry mint a duplicate for a member whose history is
+        // bounded. The coordination route, which HAS the window, passes it.
+        visibleFrom: null,
+      });
+      if (!created.ok) {
+        if (created.code === "db_error") {
+          log.error({ conversationId, detail: created.message }, "CREATE_COORDINATION_SESSION write failed");
+          // 503 and not 400: the command may have been perfectly valid. The
+          // same distinction `server/trips/commandRoute.ts` draws for
+          // TRIP_KERNEL_UNAVAILABLE, and for the same reason — telling a caller
+          // their input was wrong when the database was unreachable sends them
+          // to fix the wrong thing.
+          res.status(503).json({
+            ok: false,
+            error: "degraded_unavailable",
+            command: type,
+            reason: "TELEGRAPH_DEGRADED_THREAD_UNREADABLE",
+          });
+          return;
+        }
+        sendError(res, "invalid_payload", created.message);
+        return;
+      }
+      res.status(200).json({
+        ...success(type, {
+          sessionId: created.session.sessionId,
+          state: created.session.state,
+          version: created.session.version,
+          startedAt: created.session.startedAt,
+        }),
+        duplicate: created.duplicate,
+      });
       return;
     }
 
@@ -188,6 +287,21 @@ router.post(
  *
  * AN UNREADABLE ROSTER REFUSES. The same rule as everywhere else in this lane:
  * "we could not check whether anyone saw it" is not "nobody saw it".
+ *
+ * ── THE DECISION IS NOT MADE HERE ANY MORE ──────────────────────────────────
+ * This handler used to read the message, read the roster, decide, and write —
+ * four round trips, each its own implicit transaction. Between the roster read
+ * and the write, `POST /threads/:id/read` could land, and the unsend of a
+ * message that HAD been seen went through: §28's "unsend-after-seen violations:
+ * 0" could not be met by code shaped like that, however carefully it was
+ * written.
+ *
+ * `telegraph_unsend_message_before_seen` takes FOR UPDATE locks on the
+ * recipient receipt rows before reading them, so a concurrent mark-as-read
+ * blocks until the unsend commits or vice versa. It is now the only writer, and
+ * this handler is an adapter: it maps outcomes to this endpoint's published
+ * reason codes and does nothing else. Same mapping, same codes, same HTTP
+ * statuses as before.
  */
 async function unsendMessage(
   sc: any,
@@ -198,60 +312,48 @@ async function unsendMessage(
   const messageId = String(params["messageId"] ?? "");
   if (!UUID_RE.test(messageId)) return refusal("UNSEND_MESSAGE", "TELEGRAPH_LIFECYCLE_NOT_EDITABLE");
 
-  const { data: msg, error: msgErr } = await sc
-    .from("messages")
-    .select("id, thread_id, sender_id, created_at, deleted_at, unsent_at")
-    .eq("id", messageId)
-    .eq("thread_id", conversationId)
-    .maybeSingle();
-  if (msgErr) return refusal("UNSEND_MESSAGE", "TELEGRAPH_DEGRADED_THREAD_UNREADABLE");
-  // A message in another conversation answers exactly as a message that does
-  // not exist: not-sender. Distinguishing them would make this endpoint a
-  // message-existence oracle.
-  if (!msg) return refusal("UNSEND_MESSAGE", "TELEGRAPH_AUTH_NOT_SENDER");
-  if ((msg as any).sender_id !== userId) return refusal("UNSEND_MESSAGE", "TELEGRAPH_AUTH_NOT_SENDER");
-  if ((msg as any).deleted_at != null) return refusal("UNSEND_MESSAGE", "TELEGRAPH_LIFECYCLE_ALREADY_DELETED");
-  if ((msg as any).unsent_at != null) return refusal("UNSEND_MESSAGE", "TELEGRAPH_LIFECYCLE_ALREADY_UNSENT");
+  const verdict = await unsendBeforeSeen(sc, { messageId, actorId: userId, threadId: conversationId });
 
-  const createdAt = String((msg as any).created_at);
+  // null is "we could not establish an answer", which is neither permission nor
+  // refusal. It must not read as either.
+  if (verdict === null) return refusal("UNSEND_MESSAGE", "TELEGRAPH_DEGRADED_THREAD_UNREADABLE");
 
-  const { data: others, error: othersErr } = await sc
-    .from("message_thread_members")
-    .select("user_id, last_read_at")
-    .eq("thread_id", conversationId)
-    .is("left_at", null)
-    .neq("user_id", userId);
-  if (othersErr) return refusal("UNSEND_MESSAGE", "TELEGRAPH_DEGRADED_MEMBERSHIP_UNREADABLE");
+  switch (verdict.outcome) {
+    case "not_found":
+      // A message in another conversation answers exactly as a message that
+      // does not exist: not-sender. Distinguishing them would make this
+      // endpoint a message-existence oracle.
+      return refusal("UNSEND_MESSAGE", "TELEGRAPH_AUTH_NOT_SENDER");
+    case "not_sender":
+      return refusal("UNSEND_MESSAGE", "TELEGRAPH_AUTH_NOT_SENDER");
+    case "not_member":
+      // The outer gate established membership before dispatching, so reaching
+      // this means the caller left the thread in between.
+      return refusal("UNSEND_MESSAGE", "TELEGRAPH_AUTH_LEFT_THREAD");
+    case "already_deleted":
+      return refusal("UNSEND_MESSAGE", "TELEGRAPH_LIFECYCLE_ALREADY_DELETED");
+    case "already_unsent":
+      return refusal("UNSEND_MESSAGE", "TELEGRAPH_LIFECYCLE_ALREADY_UNSENT");
+    case "seen":
+      return refusal("UNSEND_MESSAGE", "TELEGRAPH_LIFECYCLE_SEEN_BY_RECIPIENT");
+    case "unsent":
+      break;
+  }
 
-  const createdMs = Date.parse(createdAt);
-  const seenByAnyone = ((others as any[]) ?? []).some((m) => {
-    const lr = m.last_read_at;
-    if (!lr) return false;
-    const lrMs = Date.parse(String(lr));
-    return Number.isFinite(lrMs) && Number.isFinite(createdMs) && lrMs >= createdMs;
-  });
-  if (seenByAnyone) return refusal("UNSEND_MESSAGE", "TELEGRAPH_LIFECYCLE_SEEN_BY_RECIPIENT");
-
-  const now = new Date().toISOString();
   // The row is RETAINED and redacted, not removed: §17.2 requires the tombstone
   // so the sequence stays continuous. `body: ''` rather than NULL because
-  // messages.body is NOT NULL — the same constraint the delete path documents.
-  const { error: updErr } = await sc
-    .from("messages")
-    .update({ unsent_at: now, lifecycle_state: "unsent", body: "" })
-    .eq("id", messageId)
-    .is("unsent_at", null);
-  if (updErr) return refusal("UNSEND_MESSAGE", "TELEGRAPH_DEGRADED_THREAD_UNREADABLE");
+  // messages.body is NOT NULL — the function documents that constraint too.
+  const unsentAt = verdict.unsentAt ?? new Date().toISOString();
 
   // §13.2 `message.unsent`, after the write. The outbox trigger has already
   // written the durable event inside the same transaction as the UPDATE; this
   // is the realtime nudge, and it carries no body because there is none.
   void publishToThread(sc, conversationId, {
     type: "message.unsent",
-    payload: { messageId, unsentAt: now, senderId: userId },
+    payload: { messageId, unsentAt, senderId: userId },
   }, { excludeUserId: userId });
 
-  return success("UNSEND_MESSAGE", { messageId, unsentAt: now });
+  return success("UNSEND_MESSAGE", { messageId, unsentAt });
 }
 
 /* ───────────────────────────── reactions ──────────────────────────────────── */

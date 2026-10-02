@@ -145,11 +145,22 @@ export interface InteractionPermissions {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * TRUE only for a genuinely ABSENT TABLE (Phase-2 tables that may not be
+ * migrated yet).
+ *
+ * PGRST204 — "column not found in schema cache" — used to be listed here, which
+ * meant COLUMN drift was silently classified as a missing table: `optQuery`
+ * returned null, and the three opt-outs read from profile_privacy_settings
+ * (`allow_follow`, `allow_tagging`, `allow_friend_requests`) all fell to their
+ * `!== false` default and were PERMITTED. Renaming or dropping one column
+ * therefore disabled every one of those opt-outs, silently. A column error is
+ * now a real error: it throws, and the caller reports a degraded check.
+ */
 function isTableMissingError(error: any): boolean {
   if (!error) return false;
   return (
     error.code === "42P01" ||
-    error.code === "PGRST204" ||
     String(error.message ?? "").toLowerCase().includes("does not exist")
   );
 }
@@ -245,7 +256,7 @@ const ALL_FALSE: Omit<
 
 export interface ResolveOptions {
   sourceType?: string | null;
-  sourceId?: string | null;
+  sourceId?: string | null; /** census-discovery §81 (DV-76, §63.7 Q5 — APPROVAL REQUIRED): "consent_copy" reads `interacted` and `friends_only` as the settings copy words them, on the arms this engine observes; absent = the engine's own reading. Only POST /api/tags passes it, and only behind `tag_permission_consent_copy_enabled`. */ tagDefinitions?: "engine" | "consent_copy";
 }
 
 export async function resolveInteractionPermissions(
@@ -797,14 +808,40 @@ export async function resolveInteractionPermissions(
   let canTag = false;
   let canTagPending = false;  // true when tag_permission='approval_required' → insert with status='pending'
   switch (whoCanTag) {
-    case "everyone":            canTag = true; break;
+    case "everyone":
+    case "anyone":              canTag = true; break;
     case "friends":
-    case "friends_only":        canTag = isFriend; break;
+    case "friends_only":        canTag = isFriend; if (opts.tagDefinitions === "consent_copy") canTag = viewerFollowsTarget && targetFollowsViewer; break; // copy: "Only mutual follows and circle members" — the circle arm is not observed here, so it refuses
     case "followers":           canTag = viewerFollowsTarget; break;
-    case "no_one":              canTag = false; break;
+    case "interacted":          canTag = isFriend || viewerFollowsTarget || targetFollowsViewer; if (opts.tagDefinitions === "consent_copy") canTag = targetFollowsViewer; break; // copy: "Only people you've followed or messaged" — the tagged user followed the tagger; the message arm is not observed here, so it refuses
+    // census-discovery §62 cites this line as it read before §63: `default:                    canTag = true;` — an unknown value ALLOWED. It now fails closed, below.
+    case "no_one":
+    case "nobody":              canTag = false; break;
     case "approval_required":   canTagPending = true; canTag = false; break;
-    default:                    canTag = true;
+    default:                    canTag = false;
   }
+  // THE VOCABULARY (census-discovery §63, DV-76). `profiles.tag_permission` is
+  // the enum tag_permission_level {anyone, interacted, friends_only, nobody},
+  // NOT NULL DEFAULT 'anyone' — the only column anything writes (PATCH
+  // /me/tag-permission, PATCH /me/profile; both z.enum over those four).
+  // `user_privacy_settings.who_can_tag` is free text that no server or client
+  // path writes; its older labels (everyone, friends, followers, no_one,
+  // approval_required) are kept so a row that holds one keeps its meaning.
+  // Before §63 `anyone`, `interacted` and `nobody` all fell to
+  // `default: canTag = true`, so a user who chose 'nobody' could be tagged
+  // through POST /api/tags, approved. Now:
+  //   - `interacted` is a follow in EITHER direction — exactly the reading of
+  //     GET /api/tags/suggestions (the tagger's picker) and of telegraph's AI
+  //     @mention filter — or a friendship. The friendship arm keeps the scale
+  //     the settings UI presents in order (anyone ⊇ interacted ⊇ friends_only
+  //     ⊇ nobody): friends_only admits a friend, so the looser setting must
+  //     too, and accepting a friend request writes no follow (routes/friends.ts).
+  //     TaggingService's inline @mention also accepts a shared message thread;
+  //     that arm is not copied (it inspects only one of the author's threads,
+  //     and it is a read this engine does not make), so this path disagrees
+  //     with it only by REFUSING a pair whose sole interaction is a message.
+  //   - a value this switch does not know REFUSES. A label nobody mapped is not
+  //     consent; the old default made every future enum value an allow.
   // allow_tagging=false is a hard opt-out that overrides who_can_tag (PRIV-3).
   if (!allowTagging) { canTag = false; canTagPending = false; }
 

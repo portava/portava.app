@@ -319,6 +319,56 @@ export async function getActiveWindows(
 }
 
 /**
+ * Windows for MANY owners in one read, for a surface that projects a list of
+ * people (Telegraph §4 Nearby & Available / §30A.2 ReachablePersonProjection).
+ *
+ * ── WHY IT RETURNS null AND listWindows RETURNS [] ───────────────────────────
+ * `listWindows` above logs a failed read and returns an empty array. For a
+ * self-view that is a tolerable shape — the person sees their own screen empty
+ * and knows something is wrong. For a MULTI-PERSON projection it is not: an
+ * empty array from a failed read means "none of these twenty people is
+ * available", which the caller publishes as an answer. supabase-js RESOLVES the
+ * failure as `{ data: null, error }`, so nothing throws and no `try/catch`
+ * notices.
+ *
+ * So this function distinguishes the two: `null` means the read FAILED and the
+ * caller must say so, an empty Map means nobody has a window. The existing
+ * single-owner function is left exactly as it is; adding a second, honest shape
+ * beside it is safer than changing a return type five call sites depend on.
+ *
+ * Expired windows are NOT filtered here — the caller passes the same `nowMs`
+ * to `isVisibleTo`, which re-applies §31's expiry per viewer.
+ */
+export async function listWindowsForOwners(
+  db: SupabaseClient,
+  ownerIds: readonly string[],
+): Promise<Map<string, AvailabilityWindow[]> | null> {
+  const ids = [...new Set(ownerIds)].filter((id) => typeof id === "string" && id.length > 0);
+  if (ids.length === 0) return new Map();
+  const { data, error } = await db
+    .from("availability_windows")
+    .select(SELECT_COLS)
+    .in("user_id", ids);
+
+  if (error) {
+    logger.error(
+      { table: "availability_windows", op: "select", owners: ids.length, message: error.message },
+      "listWindowsForOwners failed — caller must report a refusal, not an empty list",
+    );
+    return null;
+  }
+
+  const byOwner = new Map<string, AvailabilityWindow[]>();
+  for (const row of data ?? []) {
+    const w = rowToWindow(row);
+    const list = byOwner.get(w.userId);
+    if (list) list.push(w);
+    else byOwner.set(w.userId, [w]);
+  }
+  return byOwner;
+}
+
+/**
  * Project another traveler's windows for a viewer. §7 + §31: only EXPLICIT,
  * non-expired windows whose visibility admits the viewer are returned. An
  * inferred window is never returned to a non-self viewer.

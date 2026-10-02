@@ -29,11 +29,11 @@ import {
   Text,
   Image,
   Animated,
-  type ViewToken,
+  type ViewToken, AppState,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import { Volume2, VolumeX } from 'lucide-react-native';
+import { Volume2, VolumeX, Play } from 'lucide-react-native';
 import type { Video } from 'expo-av';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -42,7 +42,7 @@ import { WatchItemOverlay } from './WatchItemOverlay.tsx';
 import { StampItBurst, type StampItBurstHandle } from './StampItBurst.tsx';
 import { RouteItPlaceSheet } from './RouteItPlaceSheet.tsx';
 import { WatchRadialMenu } from './WatchRadialMenu.tsx';
-import { useWatchPlayback } from '../../hooks/useWatchPlayback.ts';
+import { useWatchPlayback } from '../../hooks/useWatchPlayback.ts'; import { useMediaSurfaceDecisions } from '../../features/media/hooks/useMediaSurfaceDecisions.ts'; import { mediaEvents } from '../../lib/mediaEvents.ts';
 import { useWatchStamp } from '../../hooks/useWatchStamp.ts';
 import type { MediaFeedItem } from '../../types/media.ts';
 import { color, radius, avatar, dot} from '../../theme/tokens.ts';
@@ -73,7 +73,7 @@ interface CellWrapperProps {
   onVideoUnmount: (id: string) => void;
   isSaved: boolean;
   /** Show a faint swipe-right hint arrow (after user has seen ≥3 videos). */
-  showSwipeHint?: boolean;
+  showSwipeHint?: boolean; /** census-media §34 (F2): MEDIA_WATCH_TAP_TO_PLAY_ENABLED, read once by the list. false — the seed — is today's autoplay. */ tapToPlay?: boolean;
 }
 
 const CellWrapper = React.memo(function CellWrapper({
@@ -87,11 +87,11 @@ const CellWrapper = React.memo(function CellWrapper({
   onVideoRef,
   onVideoUnmount,
   isSaved,
-  showSwipeHint = false,
+  showSwipeHint = false, tapToPlay = false,
 }: CellWrapperProps) {
   // ── Playback state ─────────────────────────────────────────────────────────
   const [progress, setProgress] = useState(0);
-  const [userPaused, setUserPaused] = useState(false);
+  const [userPaused, setUserPaused] = useState(tapToPlay); const pausedBeforeHoldRef = useRef(tapToPlay); useTapToPlayRestOnLeave(tapToPlay, setUserPaused);
 
   // ── Scrub state ────────────────────────────────────────────────────────────
   const [isScrubbing, setIsScrubbing] = useState(false);
@@ -138,14 +138,14 @@ const CellWrapper = React.memo(function CellWrapper({
   // Reset user-pause and scrub when the cell becomes active/inactive.
   useEffect(() => {
     if (!isActive) {
-      setUserPaused(false);
+      setUserPaused(tapToPlay);
       setProgress(0);
       setScrubProgress(0);
       isScrubbingRef.current = false;
       setIsScrubbing(false);
       setShowRadialMenu(false);
     }
-  }, [isActive]);
+  }, [isActive, tapToPlay]);
 
   // ── Progress callback ──────────────────────────────────────────────────────
 
@@ -205,8 +205,8 @@ const CellWrapper = React.memo(function CellWrapper({
 
   const handleRadialDismiss = useCallback(() => {
     setShowRadialMenu(false);
-    setUserPaused(false);
-  }, []);
+    setUserPaused(tapToPlay ? pausedBeforeHoldRef.current : false);
+  }, [tapToPlay]);
 
   // ── Main gesture (full-screen layer) ──────────────────────────────────────
 
@@ -231,11 +231,11 @@ const CellWrapper = React.memo(function CellWrapper({
     .minDuration(400)
     .runOnJS(true)
     .onStart(() => {
-      setUserPaused(true);
+      pausedBeforeHoldRef.current = userPaused; setUserPaused(true);
       setShowRadialMenu(true);
     })
-    .onEnd(() => { setUserPaused(false); })
-    .onFinalize(() => { setUserPaused(false); });
+    .onEnd(() => { setUserPaused(tapToPlay ? pausedBeforeHoldRef.current : false); })
+    .onFinalize(() => { setUserPaused(tapToPlay ? pausedBeforeHoldRef.current : false); });
 
   // ── Route It pan gesture (swipe right ≥60 px, horizontal-only) ────────────
 
@@ -389,7 +389,7 @@ const CellWrapper = React.memo(function CellWrapper({
       <StampItBurst ref={stampBurstRef} />
 
       {/* Pause indicator */}
-      {userPaused ? (
+      {userPaused && tapToPlay ? <TapToPlayBadge /> : userPaused ? (
         <View style={s.pauseIndicator} pointerEvents="none">
           <View style={s.pauseIcon}>
             <View style={s.pauseBar} />
@@ -458,7 +458,7 @@ export function WatchFeedList({
   savedSet,
 }: WatchFeedListProps) {
   const insets = useSafeAreaInsets();
-  const playback = useWatchPlayback();
+  const tapToPlay = useMediaSurfaceDecisions().tapToPlay; const playback = useWatchPlayback({ autoplay: !tapToPlay }); // census-media §34 (F2): tapToPlay false — the seed — is today's autoplaying manager and cells
 
   // Mute state — persisted to AsyncStorage.
   const [isMuted, setIsMuted] = useState(true);
@@ -532,12 +532,12 @@ export function WatchFeedList({
         onVideoRef={playback.registerRef}
         onVideoUnmount={playback.unregisterRef}
         isSaved={savedSet[item.id] ?? item.savedByMe}
-        showSwipeHint={showSwipeHint}
+        showSwipeHint={showSwipeHint} tapToPlay={tapToPlay}
       />
     ),
     [activeIndex, isMuted, currentUserId, onComment, onSave, onMore,
       playback.registerRef, playback.unregisterRef, savedSet,
-      showSwipeHint],
+      showSwipeHint, tapToPlay],
   );
 
   const keyExtractor = useCallback((item: MediaFeedItem) => item.id, []);
@@ -622,7 +622,7 @@ const s = StyleSheet.create({
   },
   progressTrack: {
     height: 3,
-    backgroundColor: 'rgba(255,255,255,0.22)',
+    backgroundColor: 'rgba(17,17,15,0.80)', // census-media §31.12: a dark track, the least alpha at which the `signal` fill clears 3:1 over any frame; was a 0.22 light wash (1.00:1)
   },
   progressTrackActive: {
     height: 5,
@@ -654,7 +654,7 @@ const s = StyleSheet.create({
   pauseIcon: {
     flexDirection: 'row',
     gap: 6,
-    width: 44,
+    width: 44, borderRadius: radius.md, backgroundColor: 'rgba(17,17,15,0.57)', // census-media §31.12: an ink backing, the least alpha at which the pause bars clear 3:1 over any frame
     height: 52,
     alignItems: 'center',
     justifyContent: 'center',
@@ -686,7 +686,7 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: 'rgba(0,0,0,0.4)',
+    backgroundColor: 'rgba(0,0,0,0.59)', // census-media §31.12: the least alpha at which the hint clears 4.5:1 over a white frame; was 0.4
     borderRadius: radius.pill,
     paddingHorizontal: 10,
     paddingVertical: 5,
@@ -702,4 +702,55 @@ const s = StyleSheet.create({
     color: 'rgba(255,255,255,0.85)',
     fontWeight: '600',
   },
+});
+
+// ── census-media §34 (owner decision F2) — tap-to-play ────────────────────────
+//
+// Appended at the TAIL so no line the census cites moves. Live only while
+// MEDIA_WATCH_TAP_TO_PLAY_ENABLED is on (seeded OFF by migration 3342, read
+// through features/media/state/mediaSurfaceFlags.ts). Off, CellWrapper starts
+// every cell unpaused and useWatchPlayback plays whatever becomes viewable —
+// today's autoplay — and neither of these is mounted or subscribed.
+//
+// On: a cell that becomes the viewable one waits PAUSED under this mark, and
+// the single tap that pauses today is what starts it (MD425: autoplay is no
+// longer the navigation). The list still pages; what it no longer does is play.
+
+function TapToPlayBadge() {
+  return (
+    <View style={s.pauseIndicator} pointerEvents="none" testID="watch-tap-to-play" accessible accessibilityLabel="Tap to play">
+      <View style={tapToPlayStyles.badge}>
+        <Play size={26} color="#fff" fill="#fff" />
+        <Text style={tapToPlayStyles.label}>Tap to play</Text>
+      </View>
+    </View>
+  );
+}
+
+/**
+ * While tap-to-play is on, leaving the tab (MEDIA_PAUSE_ALL, emitted by the
+ * Media tab on blur) or the app (AppState background/inactive) returns the cell
+ * to "Tap to play". useWatchPlayback pauses the player itself on both; this
+ * keeps the paused state the viewer SEES equal to the state the player is in,
+ * because with autoplay off nothing resumes it on the way back.
+ */
+function useTapToPlayRestOnLeave(tapToPlay: boolean, setUserPaused: (paused: boolean) => void): void {
+  useEffect(() => {
+    if (!tapToPlay) return undefined;
+    const unsubscribe = mediaEvents.on('MEDIA_PAUSE_ALL', () => setUserPaused(true));
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next === 'background' || next === 'inactive') setUserPaused(true);
+    });
+    return () => {
+      unsubscribe();
+      sub.remove();
+    };
+  }, [tapToPlay, setUserPaused]);
+}
+
+const tapToPlayStyles = StyleSheet.create({
+  // The pause mark's own ink backing, widened for the label: 0.71 is the least
+  // alpha at which white text clears 4.5:1 over a white frame (census-media §31.12).
+  badge: { alignItems: 'center', justifyContent: 'center', gap: 6, paddingHorizontal: 16, paddingVertical: 12, borderRadius: radius.md, backgroundColor: 'rgba(17,17,15,0.71)' },
+  label: { fontSize: 13, fontWeight: '700', color: '#fff' },
 });

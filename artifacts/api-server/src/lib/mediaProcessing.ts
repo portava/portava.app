@@ -399,3 +399,30 @@ export function sniffVoiceAudio(buf: Buffer): VoiceSniffResult | null {
   if (handlers.some((h) => h !== "soun")) return null;
   return { kind: "audio", mime: "audio/mp4", ext: "m4a", brand, handlers };
 }
+
+/**
+ * VIDEO POSTER — a device-extracted frame, re-encoded as the poster a video
+ * postcard shows while it buffers and wherever it appears as a still (§37
+ * "Thumbnail generation"). Appended at the bottom for the same reason the voice
+ * sniffer is: censuses cite this module by line.
+ *
+ * The frame is extracted ON THE DEVICE because this tier has no decoder (see the
+ * header), so the server's job is the one it can do for any still: auto-orient,
+ * cap the longest edge, and re-encode — which, exactly as in processImage, drops
+ * ALL metadata. A frame grabbed from a geotagged clip must not carry the GPS the
+ * clip's own container was scrubbed of (lib/videoMetadata.ts).
+ *
+ * Always JPEG, whatever the input format, because the stored object's path is
+ * `<storage_path>.poster.jpg` and a PNG under a .jpg name is a lie every
+ * downstream consumer would have to discover. Throws on undecodable input —
+ * the caller refuses the poster, exactly as processImage's callers refuse an
+ * image.
+ */
+export async function makeVideoPoster(input: Buffer, maxDim: number): Promise<ProcessedImage> {
+  const { data, info } = await sharp(input, { failOn: "error" })
+    .rotate()
+    .resize({ width: maxDim, height: maxDim, fit: "inside", withoutEnlargement: true })
+    .jpeg({ quality: 80, mozjpeg: true })
+    .toBuffer({ resolveWithObject: true });
+  return { buffer: data, width: info.width, height: info.height, mime: "image/jpeg", ext: "jpg" };
+}

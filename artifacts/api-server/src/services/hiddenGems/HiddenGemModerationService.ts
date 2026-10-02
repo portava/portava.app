@@ -177,11 +177,11 @@ export async function markSensitive(
   db: SupabaseClient,
   gemId: string,
   sensitivityLevel: string,
-): Promise<void> {
-  await db
+): Promise<boolean> {  // true = updated; false = no gem has this id; throws on a refused write (tm-followups A2)
+  const { data: updated, error } = await db
     .from("hidden_gems")
     .update({ sensitivity_level: sensitivityLevel, updated_at: new Date().toISOString() })
-    .eq("id", gemId);
+    .eq("id", gemId).select("id").maybeSingle(); if (error) throw error; return Boolean(updated);
 }
 
 /** Hide a gem (admin action). */
@@ -197,15 +197,15 @@ export async function mergeDuplicate(
   db: SupabaseClient,
   duplicateGemId: string,
   canonicalGemId: string,
-): Promise<void> {
-  await db
+): Promise<"merged" | "not_found" | "canonical_not_found"> {  // tm-followups A2: checked; throws on a refused read or write
+  const { data: canonical, error: canonErr } = await db.from("hidden_gems").select("id").eq("id", canonicalGemId).maybeSingle(); if (canonErr) throw canonErr; if (!canonical) return "canonical_not_found";
+  const { data: merged, error } = await db
     .from("hidden_gems")
-    .update({
-      status: "merged",
-      merged_into: canonicalGemId,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", duplicateGemId);
+    .update({ status: "merged", merged_into: canonicalGemId, updated_at: new Date().toISOString() })
+    .eq("id", duplicateGemId)
+    .select("id")
+    .maybeSingle();
+  if (error) throw error; return merged ? "merged" : "not_found";
 }
 
 /** Admin queue: pending gems awaiting review. */

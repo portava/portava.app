@@ -34,7 +34,11 @@ const read = (rel: string): string => readFileSync(join(SRC, rel), "utf8");
 const AUDIT = "scripts/auditMigrationsVsLive.ts";
 const COLUMNS = "scripts/checkMissingLiveColumns.ts";
 const MIGRATION = "2481_sensing_sessions_option_a_issuer.sql";
-const COLUMN_KEY = "sensing_contribution_sessions.issued_to_profile_id";
+/** The gated form both auditors must use: the skip added inside the posture check. */
+const GUARDED_SKIP = new RegExp(
+  String.raw`if\s*\(\s*!isOptionAInForce\(\)\s*\)\s*\{[^}]*2481_sensing_sessions_option_a_issuer\.sql[^}]*\}`,
+  "s",
+);
 
 describe("the 2481 auditor reconciliation is derived from the posture", () => {
   test("the reader agrees with what lib/sensingAuthPosture.ts actually declares", () => {
@@ -81,21 +85,69 @@ describe("the reconciliation is exactly two entries, both conditional", () => {
   test("auditMigrationsVsLive skips 2481 only when Option A is not in force", () => {
     const src = read(AUDIT);
     assert.ok(src.includes(MIGRATION), "the auditor must name the file it skips");
-    // The skip must be inside the conditional, not a bare SKIP_FILES member.
-    const guarded = new RegExp(
-      String.raw`if\s*\(\s*!isOptionAInForce\(\)\s*\)\s*\{[^}]*${MIGRATION.replace(/\./g, "\\.")}[^}]*\}`,
-      "s",
-    );
-    assert.match(src, guarded, "2481's skip must be derived from the posture, not pinned");
+    assert.match(src, GUARDED_SKIP, "2481's skip must be derived from the posture, not pinned");
   });
 
-  test("checkMissingLiveColumns allows the column only when Option A is not in force", () => {
+  // ── THE CASE THIS FILE WAS MISSING, AND THE REASON IT EXISTS ───────────────
+  //
+  // #511 and #512 fixed 2481 independently and merged within half an hour. Git
+  // kept BOTH forms with no conflict: #512's permanent literal inside the
+  // SKIP_FILES array, and #511's gated add. A Set add is idempotent, so the
+  // duplication changed nothing at runtime — and it silently DEFEATED the gate.
+  // Measured on the merge commit, posture flipped to `authenticated_only`:
+  // isOptionAInForce() correctly withheld the add, and the auditor skipped 2481
+  // anyway, on the one posture where those three objects MUST exist.
+  //
+  // The cases above could not see it. They assert the gated form is PRESENT;
+  // none of them asserted nothing else also skips the file. That is the same
+  // shape of hole this whole effort keeps finding — a passing test that means
+  // less than it looks — so it is closed here by name.
+  for (const [label, file] of [["auditMigrationsVsLive", AUDIT], ["checkMissingLiveColumns", COLUMNS]] as const) {
+    test(`${label} carries EXACTLY ONE 2481 exclusion, and it is the gated one`, () => {
+      const src = read(file);
+      const esc = MIGRATION.replace(/\./g, "\\.");
+
+      // An EXECUTABLE exclusion is one of two shapes, and prose mentioning the
+      // filename is neither — these files carry paragraphs of reasoning that
+      // name it, and counting those would make this assertion meaningless.
+      //   (a) a bare array member inside a SKIP_FILES / ALLOWLIST literal
+      //   (b) a `.add("2481…")` call
+      const bareMember = new RegExp(String.raw`^\s*"${esc}",\s*$`, "gm");
+      const setAdd = new RegExp(String.raw`\.add\(\s*"${esc}"\s*\)`, "g");
+
+      const bare = src.match(bareMember) ?? [];
+      const adds = src.match(setAdd) ?? [];
+
+      assert.equal(
+        bare.length,
+        0,
+        `${label}: a permanent literal beside the gated add makes the gate a no-op — the ` +
+          "skip would survive a move to Option A and hide real drift. That is exactly what " +
+          "#511 and #512 produced when both merged.",
+      );
+      assert.equal(
+        adds.length,
+        1,
+        `${label}: expected exactly ONE posture-gated exclusion for 2481, found ${adds.length}. ` +
+          "Two would make the file's behaviour depend on which one a reader noticed.",
+      );
+      // And that one add must sit inside the posture gate, not anywhere else.
+      assert.match(src, GUARDED_SKIP, `${label}: the sole exclusion must be posture-gated`);
+    });
+  }
+
+  test("checkMissingLiveColumns skips 2481 only when Option A is not in force", () => {
+    // The mechanism changed after #511 and #512 merged in parallel. #512 was
+    // right that the FILE is the unit: ALLOWLIST means "pending a live apply,
+    // remove once certified", and 2481 is never to be applied. #511's ALLOWLIST
+    // entry is gone; the surviving entry is #512's SKIP_FILES form, gated.
     const src = read(COLUMNS);
-    const guarded = new RegExp(
-      String.raw`if\s*\(\s*!isOptionAInForce\(\)\s*\)\s*\{[^}]*${COLUMN_KEY.replace(/\./g, "\\.")}[^}]*\}`,
-      "s",
+    assert.match(src, GUARDED_SKIP, "2481's skip must be derived from the posture");
+    assert.doesNotMatch(
+      src,
+      /\bALLOWLIST\.add\(\s*"sensing_contribution_sessions\.issued_to_profile_id"/,
+      "the column must NOT also sit in ALLOWLIST — that list is for pending applies",
     );
-    assert.match(src, guarded, "the column allowance must be derived from the posture");
   });
 
   test("neither auditor IMPORTS the sensing stack — §9.1 stays meaningful", () => {

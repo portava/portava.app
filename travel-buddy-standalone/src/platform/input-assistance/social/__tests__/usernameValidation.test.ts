@@ -63,6 +63,10 @@ test('available → status available, no message', () => {
   assert.deepEqual(interpretAvailability({ available: true }), {
     status: 'available',
     message: null,
+    // §23 alternatives are additive and empty here — an available handle has
+    // nothing to replace. Kept inside the exact deepEqual so a future change
+    // that started offering handles to a user who needs none would fail.
+    alternatives: [],
   });
 });
 
@@ -70,6 +74,9 @@ test('taken → status taken with the server reason', () => {
   assert.deepEqual(interpretAvailability({ available: false, reason: 'Already taken' }), {
     status: 'taken',
     message: 'Already taken',
+    // A server that sent no `alternatives` key offers none — see the §23 block
+    // below for the case where it does.
+    alternatives: [],
   });
 });
 
@@ -77,6 +84,7 @@ test('taken with no reason → the shared fallback message', () => {
   assert.deepEqual(interpretAvailability({ available: false }), {
     status: 'taken',
     message: USERNAME_UNAVAILABLE_MESSAGE,
+    alternatives: [],
   });
 });
 
@@ -89,4 +97,54 @@ test('the audit bug: a 1–2 char handle is rejected by the shared min-length ru
   assert.equal(cleaned, 'ab');
   assert.equal(usernameSyntaxError(cleaned), USERNAME_TOO_SHORT_MESSAGE);
   assert.equal(isUsernameCheckable(cleaned), false);
+});
+
+// ── §23 alternatives (G147) ───────────────────────────────────────────────────
+//
+// The census row read "No alternatives are ever suggested". Before the change
+// `InterpretedAvailability` had no `alternatives` field at all, so none of these
+// assertions could be written, let alone pass.
+//
+// MUTATION-PROOF: drop the `.filter((a) => isUsernameCheckable(a))` in
+// interpretAvailability and the "a handle this client would not let you type is
+// never offered" case goes RED — a 2-character offer reaches the screens, where
+// tapping it produces the very "At least 3 characters required" error the offer
+// was supposed to resolve.
+
+test('an available handle carries no alternatives — there is nothing to replace', () => {
+  const r = interpretAvailability({ available: true });
+  assert.equal(r.status, 'available');
+  assert.deepEqual(r.alternatives, []);
+});
+
+test('a taken handle carries the free handles the server checked', () => {
+  const r = interpretAvailability({
+    available: false,
+    reason: 'Username is already taken',
+    alternatives: ['maya_torres1', 'maya_torres2'],
+  });
+  assert.equal(r.status, 'taken');
+  assert.equal(r.message, 'Username is already taken');
+  assert.deepEqual(r.alternatives, ['maya_torres1', 'maya_torres2']);
+});
+
+test('an OMITTED alternatives key (unreadable registry) is an empty offer, not a crash', () => {
+  const r = interpretAvailability({ available: false, reason: USERNAME_UNAVAILABLE_MESSAGE });
+  assert.deepEqual(r.alternatives, [], 'the screens render nothing rather than guessing');
+});
+
+test('a handle this client would not let you TYPE is never offered', () => {
+  const r = interpretAvailability({
+    available: false,
+    reason: 'Username is already taken',
+    // "ab" is below USERNAME_MIN_LENGTH; "@Maya!" is not client-sanitized.
+    alternatives: ['ab', '@Maya!_Torres', 'maya_torres1'],
+  });
+  assert.ok(!r.alternatives.includes('ab'), 'too short to submit — offering it sets the user up to fail');
+  assert.ok(!r.alternatives.includes('@Maya!_Torres'), 'unsanitized handles are never surfaced verbatim');
+  assert.ok(r.alternatives.includes('maya_torres1'));
+  for (const a of r.alternatives) {
+    assert.equal(a, sanitizeUsername(a));
+    assert.ok(isUsernameCheckable(a));
+  }
 });

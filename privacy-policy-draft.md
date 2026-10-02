@@ -119,6 +119,24 @@ consent for optional features like precise location and verification.
 - Reports you file, and moderation records about enforcement actions,
   are retained for platform safety even after related content is
   removed, with personal identifiers minimized where possible.
+- **Stories.** A story is visible to the audience you chose for 24
+  hours. After that it leaves every feed and can no longer be opened
+  by anyone you shared it with, and it moves to your private archive,
+  where only you can see it. We keep it there for 365 days from the
+  moment it expired, and then the story and its photo or video are
+  permanently deleted.
+- **Who saw a story.** The list of who viewed a story, the reactions
+  to it, and replies sent to it are deleted 30 days after the story
+  expires — sooner if the story itself is deleted first. They are not
+  kept for the life of the archive.
+- **Deleting a story.** Deleting a story removes it from your archive
+  and from everywhere else immediately. You can restore it for 30 days
+  from when you deleted it, after which it is permanently deleted.
+  Deleting it again does not extend that 30 days — the clock runs from
+  the first deletion.
+- Saving a story as a Highlight takes it out of this schedule: a
+  Highlight has its own lifetime that you choose, and its photo or
+  video is kept for as long as the Highlight is.
 
 ## Your rights
 
@@ -165,3 +183,22 @@ We'll notify you in-app of material changes and update the date above.
 - If Compass Live / background location ships, add a dedicated
   background-location section before release.
 - If Rent-a-Buddy payments ship, add a payments/financial-data section.
+- **The Stories retention paragraphs are not publishable yet, and the
+  blocker is specific.** "can no longer be opened by anyone you shared
+  it with" is true of the row and feed layers today, but a media link
+  already issued to a viewer keeps working for up to an hour after a
+  story expires, because signed storage URLs cannot be revoked. A
+  clamp that ends the link at the story's own expiry is implemented
+  and verified on `claude/project-thread-hxl9m3` (564dd9ede) and is
+  NOT merged to main as of 2026-09-22. Publish this paragraph only
+  once that has landed, or soften it to name the hour.
+- The three windows here (24 hours, 365 days, 30 days) must match
+  what the server enforces. `GET /api/stories/retention-policy`
+  reports the effective numbers and lists any divergence from the
+  published ones; check it against this text before publishing, and
+  again after any deployment that sets STORY_RETENTION_POLICY_ACK.
+- The retention job that enforces the Stories paragraphs is on
+  `claude/project-thread-3gbh92` and migration 2998 is not applied
+  anywhere. Until both land, nothing is deleted on any schedule at
+  all, so publishing these paragraphs first would describe a deletion
+  that does not happen.

@@ -24,36 +24,53 @@ export interface SuggestionListProps {
   testID?: string;
 }
 
+export interface SuggestionRowProps {
+  suggestion: InputSuggestion;
+  onSelect: (s: InputSuggestion) => void;
+  activeId?: string | null;
+  renderLeading?: (s: InputSuggestion) => React.ReactNode;
+}
+
+/**
+ * A SINGLE suggestion row, dispatched by assistance type.
+ *
+ * Extracted from `SuggestionList`'s map so that a VIRTUALIZED container can
+ * render one row at a time without re-implementing the type dispatch (§33
+ * "virtualize large suggestion groups"). `SuggestionList` below is now this
+ * component mapped — the two can never disagree about what an `action` or an
+ * `ai_suggestion` row looks like, because there is only one answer.
+ */
+export function SuggestionRow({ suggestion: s, onSelect, activeId, renderLeading }: SuggestionRowProps) {
+  if (s.type === 'action') {
+    return <ActionSuggestionRow suggestion={s} onAction={onSelect} active={activeId === s.id} />;
+  }
+  if (s.type === 'ai_suggestion') {
+    // §22 — an AI proposal is tap-to-insert (never auto-applied). In the
+    // shared overlay the consumer's onSelect performs the editable insert.
+    return <AiSuggestionRow suggestion={s} onInsert={onSelect} active={activeId === s.id} />;
+  }
+  return (
+    <EntitySuggestionRow
+      suggestion={s}
+      onPress={onSelect}
+      active={activeId === s.id}
+      leading={renderLeading?.(s)}
+    />
+  );
+}
+
 export function SuggestionList({ suggestions, onSelect, activeId, renderLeading, testID }: SuggestionListProps) {
   return (
     <View testID={testID}>
-      {suggestions.map((s) =>
-        s.type === 'action' ? (
-          <ActionSuggestionRow
-            key={s.id}
-            suggestion={s}
-            onAction={onSelect}
-            active={activeId === s.id}
-          />
-        ) : s.type === 'ai_suggestion' ? (
-          // §22 — an AI proposal is tap-to-insert (never auto-applied). In the
-          // shared overlay the consumer's onSelect performs the editable insert.
-          <AiSuggestionRow
-            key={s.id}
-            suggestion={s}
-            onInsert={onSelect}
-            active={activeId === s.id}
-          />
-        ) : (
-          <EntitySuggestionRow
-            key={s.id}
-            suggestion={s}
-            onPress={onSelect}
-            active={activeId === s.id}
-            leading={renderLeading?.(s)}
-          />
-        ),
-      )}
+      {suggestions.map((s) => (
+        <SuggestionRow
+          key={s.id}
+          suggestion={s}
+          onSelect={onSelect}
+          activeId={activeId}
+          renderLeading={renderLeading}
+        />
+      ))}
     </View>
   );
 }

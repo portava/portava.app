@@ -121,7 +121,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { parseServedPlaceId } from "./placeIdBridge.js";
 import { statedDurationMin, statedTravelMin } from "../services/airport/LayoverPlanFit.js";
-import { landsideLeg, placePoint } from "../services/airport/LayoverTravelTime.js";
+import { landsideLeg, placePoint } from "../services/airport/LayoverTravelTime.js"; import { readCuratedDwell } from "../services/airport/LayoverPlaceDwell.js"; // census-discovery §81
 import type { TravelTimeProvider, GeoPoint } from "../domain/trips/contracts/TravelTimeProvider.js";
 
 /** The table a stated duration can come from. Named so a refusal can say it. */
@@ -132,7 +132,7 @@ export type StatedTimingSource =
   /** A ROUTED provider answered the port. Has no producer on this tree today. */
   | "routed_port"
   /** The traveller's own stop in their own layover plan for this session. */
-  | "traveller_plan_stop"
+  | "traveller_plan_stop" | "curated_dwell" /* census-discovery §81: the Layover domain's curated per-place dwell (services/airport/LayoverPlaceDwell.ts) — activity term only */
   /** Nobody stated it. NOT a zero, and never rendered as one. */
   | "unmeasured";
 
@@ -147,7 +147,7 @@ export type TermAbsence =
    */
   | "no_layover_subject"
   /** The plan was READ, successfully, and holds no stop for this place. */
-  | "no_plan_stop"
+  | "no_plan_stop" | "dwell_source_unreadable" /* census-discovery §81: no stop, and the curated dwell table could not be read — activity term only */
   /**
    * A stop exists and its landside `travel_min` is the column's NOT-NULL zero.
    * `INTEGER NOT NULL DEFAULT 0` cannot hold "nobody said", so outside the
@@ -333,7 +333,7 @@ export async function statedLayoverTimings(
 
   // The subject each served id maps to, resolved ONCE. `null` is not a lookup
   // miss — see the header: an OSM element can never have a stop.
-  const subjects = candidates.map((c) => layoverSubjectId(c.id));
+  const subjects = candidates.map((c) => layoverSubjectId(c.id)); const dwell = await readCuratedDwell(db, subjects); // §81: `off` (the seed) reads nothing
 
   // ONE port call per candidate, exactly as `fetchDiscoveryPlaces` does. It
   // cannot throw into this function — `estimateTravel` turns a rejecting
@@ -389,14 +389,14 @@ export async function statedLayoverTimings(
       portReason,
     };
 
-    const activityValue = stop ? stop.durationMin : null;
+    const curated = !stop && subject !== null && dwell.state === "read" ? (dwell.byPlace.get(subject) ?? null) : null; const activityValue = stop ? stop.durationMin : curated ? curated.activityMin : null;
     const activity: StatedTerm = {
       value: activityValue,
-      source: activityValue !== null ? "traveller_plan_stop" : "unmeasured",
+      source: activityValue !== null ? (stop ? "traveller_plan_stop" : "curated_dwell") : "unmeasured",
       absence: activityValue !== null
         ? null
         : noSubject ? "no_layover_subject"
-        : !stop ? "no_plan_stop"
+        : !stop ? (dwell.state === "unreadable" ? "dwell_source_unreadable" : "no_plan_stop")
         : "stop_duration_unstated",
       // The port measures journeys, not dwell. It was never asked about this
       // term, and a reason copied over from the other one would be a borrowed

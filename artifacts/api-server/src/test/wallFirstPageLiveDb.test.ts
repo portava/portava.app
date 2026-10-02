@@ -222,6 +222,11 @@ interface Recorded {
   p50: number;
   p95: number;
   reads: number;
+  // The REST origin the measured client actually points at, captured from the
+  // client object itself rather than from the env var it was built from. The
+  // summary quotes this so the "live database" label in the measurement doc is
+  // bound to the object that produced the numbers, not to the suite's name.
+  clientRestUrl: string;
 }
 const recorded: Partial<Recorded> = {};
 
@@ -353,6 +358,35 @@ describe(
       // The REAL supabase-js client, pointed at the REAL PostgREST. This is the
       // only difference from wallPerformance.test.ts's fake, and it is the whole
       // point of the file.
+      //
+      // ── AND THE CLAIM IS NOW BOUND TO THE OBJECT ─────────────────────────
+      // Added 2026-09-21 after the same defect was found in M256(a): that
+      // harness printed `arm=live-supabase` from two environment variables
+      // while `startRouterApp` built the in-process double regardless, so the
+      // LABEL outran the thing it labelled by about an order of magnitude.
+      //
+      // This file never had that bug — it is checked, not assumed: with the
+      // database unreachable the suite CANCELS its five live cases and exits 1
+      // rather than falling back to anything, and the numbers below were
+      // re-measured against a real PostgreSQL after the check. But it did have
+      // the same structural weakness: nothing here ASSERTED that the object
+      // handed to the router was a real client. A comment saying "the REAL
+      // supabase-js client" is worth exactly as much as the next edit's care.
+      //
+      // So the binding is asserted at install time, before a single request is
+      // measured. A fake in this repo is a plain object literal or a Proxy; a
+      // real supabase-js client carries `.rest.url` pointing at the configured
+      // target, and `.auth`/`.from` from the package's own prototype.
+      const restUrl = String((pub as unknown as { rest?: { url?: unknown } })?.rest?.url ?? "");
+      if (!restUrl.startsWith(SUPABASE_URL)) {
+        throw new Error(
+          `W146: the client about to be measured does not point at the configured target. ` +
+            `rest.url=${restUrl || "(absent)"} SUPABASE_URL=${SUPABASE_URL}. A benchmark whose ` +
+            "client is not the real one is a number about nothing, and that is exactly the " +
+            "defect M256(a) carried.",
+        );
+      }
+      recorded.clientRestUrl = restUrl;
       _setTestClient(pub, true);
       clearTestClient = _clearTestClient;
 
@@ -443,6 +477,27 @@ describe(
       // owns the ratchets; this file's job is to REPORT what a real database
       // costs at zero network latency, and a ceiling invented from one local run
       // would be a production claim this environment cannot support.
+    });
+
+    it("the measured client IS the real one — the label is bound to the object", () => {
+      // The companion to the install-time throw in before(), so the property is
+      // visible as a PASS rather than only as an absence of failure. M256(a)'s
+      // defect was a live label over a fake's numbers; the cheapest way for it
+      // to reappear here is an edit that swaps `pub` for a double and leaves
+      // every sentence in this file intact.
+      const restUrl = recorded.clientRestUrl ?? "";
+      assert.ok(
+        restUrl.startsWith(SUPABASE_URL),
+        `the benchmarked client must point at ${SUPABASE_URL}; got ${restUrl || "(absent)"}`,
+      );
+      // State the discriminator rather than leave a reader to infer it from a
+      // url prefix: a real supabase-js client exposes its PostgREST base at
+      // /rest/v1, and the plain-object doubles in this repo expose no `rest` at
+      // all — which is why the check in before() throws rather than mismatches.
+      assert.ok(
+        restUrl.includes("/rest/v1"),
+        `a real supabase-js client exposes /rest/v1; got ${restUrl}`,
+      );
     });
 
     it("MEASURED — one first page's real PostgREST round trips", async () => {

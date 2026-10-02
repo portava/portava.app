@@ -61,6 +61,7 @@
  * table there is nothing to delete, and with a table there is nothing to delete
  * that anything could still read.
  */
+import { purgeExpiredSensingPublications } from "./sensingDifferencingGate.js";
 import { logger } from "./logger.js";
 import { getServiceClient } from "./supabase.js";
 import { purgeExpiredSensingContributions } from "./sensingAnonStore.js";
@@ -101,6 +102,13 @@ export interface SensingSweepResult {
   deleted: number;
   skipped: boolean;
   /**
+   * Publications removed by the 3110 TTL sweep, or null where that store is not
+   * present in this database. Reported SEPARATELY from `deleted` on purpose:
+   * they are different stores with different retention rules, and summing them
+   * would make a pass that swept one look like a pass that swept both.
+   */
+  publicationsDeleted: number | null;
+  /**
    * WHY this pass did nothing.
    *
    *   no_client     the process holds no service-role client
@@ -124,27 +132,48 @@ export async function runSensingRetentionSweep(
   // explicit null, so a unit test passing `client: null` would get a REAL client
   // and open a socket. lib/intelRetentionScheduler records that exact defect.
   const db = "client" in opts && opts.client !== undefined ? opts.client : getServiceClient();
-  if (!db) return { deleted: 0, skipped: true, reason: "no_client" };
+  if (!db) return { deleted: 0, publicationsDeleted: null, skipped: true, reason: "no_client" };
 
   // The hard precondition. An absent store is not an error to retry into
   // success, and the DELETE must never be attempted against a database that does
   // not have the table.
   if (!(await sensingStorePresent(db))) {
-    return { deleted: 0, skipped: true, reason: "store_absent" };
+    return { deleted: 0, publicationsDeleted: null, skipped: true, reason: "store_absent" };
   }
 
   const nowIso = (opts.now ?? new Date()).toISOString();
   const result = await purgeExpiredSensingContributions(db, nowIso);
   if (!result.ok) {
     logger.warn({ error: result.error }, "sensing retention sweep failed");
-    return { deleted: 0, skipped: true, reason: "error" };
+    return { deleted: 0, publicationsDeleted: null, skipped: true, reason: "error" };
+  }
+
+  // ── The 3110 publication TTL, swept in the SAME pass ───────────────────────
+  // Not a second scheduler: this is the same job — remove what has aged out of
+  // the sensing stores — and 3110's 72-hour bound is a privacy bound, so a bound
+  // nothing enforces is a bound that does not hold.
+  //
+  // ITS FAILURE NEVER FAILS THE CONTRIBUTION SWEEP. The stores are independent
+  // and 3110 is applied to no database yet, so an absent function must not turn
+  // a successful contribution purge into `reason: "error"` — which would stop
+  // the sweep that IS working. A null says "not swept" and is distinct from 0,
+  // which says "swept, nothing had expired".
+  let publicationsDeleted: number | null = null;
+  const pubs = await purgeExpiredSensingPublications(db, nowIso);
+  if (pubs.ok) {
+    publicationsDeleted = pubs.deleted;
+    if (pubs.deleted > 0) {
+      logger.info({ deleted: pubs.deleted }, "sensing retention sweep removed expired publications");
+    }
+  } else {
+    logger.warn({ error: pubs.error }, "sensing publication sweep did not run");
   }
   if (result.deleted > 0) {
     // A count and nothing else. Which cohort, zone or token expired is a fact
     // about contributors, and a log is not a place any of that belongs.
     logger.info({ deleted: result.deleted }, "sensing retention sweep removed expired contributions");
   }
-  return { deleted: result.deleted, skipped: false, reason: null };
+  return { deleted: result.deleted, publicationsDeleted, skipped: false, reason: null };
 }
 
 export function startSensingRetentionScheduler(): void {

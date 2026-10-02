@@ -670,6 +670,19 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     deepLink: '/passport/shared-context',
   },
   {
+    key: 'story-archive',
+    path: 'story-archive',
+    title: 'Story Archive',
+    // Reached from Passport -> owner menu -> Content. Owner-only, and the
+    // server enforces it: both listings filter on the caller's own id and take
+    // no target user, so there is no parameter to point somewhere else.
+    parent: 'tab-passport',
+    icon: 'Archive',
+    requiresAuth: true,
+    ownerOnly: true,
+    deepLink: '/story-archive',
+  },
+  {
     key: 'passport-journeys',
     path: 'passport/journeys',
     title: 'Journeys',
@@ -1070,6 +1083,23 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     ownerOnly: true,
   },
 
+  // ── Highlights ──────────────────────────────────────────────────────────────
+
+  {
+    // §21 Archive's "unless explicitly requested". `GET /highlights/archived`
+    // is the only read on the Highlights surface that returns archived rows;
+    // without this screen an archived Highlight is unreachable from inside the
+    // app, which would make Archive an irreversible removal wearing a softer
+    // word than Delete. Owner-only: the route is scoped to the caller.
+    key: 'highlights-archived',
+    path: 'highlights/archived',
+    title: 'Archived Highlights',
+    parent: null,
+    icon: null,
+    requiresAuth: true,
+    ownerOnly: true,
+  },
+
   // ── Hashtag ───────────────────────────────────────────────────────────────
 
   {
@@ -1154,6 +1184,15 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     path: 'memory/edit',
     title: 'Edit Memory',
     parent: 'memory-detail',
+    icon: null,
+    requiresAuth: true,
+    ownerOnly: true,
+  },
+  {
+    key: 'memory-search',
+    path: 'memory/search',
+    title: 'Search Memories',
+    parent: null,
     icon: null,
     requiresAuth: true,
     ownerOnly: true,
@@ -2034,7 +2073,51 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     requiresAuth: true,
     adminOnly: true,
   },
-];
+
+  // ── Media client IA (census-media §19) — appended at the end so no cited
+  //    line above moves.
+  {
+    key: 'media-map',
+    path: 'media-map/index',
+    title: 'Media Map',
+    parent: null,
+    icon: null,
+    requiresAuth: false,
+    // §4/§21 Media Map (census-media §19). Additive; reached from the World
+    // shell's lens Map modes and by deep link. Positions come from the
+    // canonical Map gateway — the screen owns no location engine.
+  },
+  {
+    key: 'media-search',
+    path: 'media-search/index',
+    title: 'Media Search',
+    parent: null,
+    icon: null,
+    requiresAuth: false,
+    // §4/§38 Media Search (census-media §19). Additive; reached from the World
+    // shell header and the viewer's "Where was this taken?".
+  },
+  {
+    key: 'media-timeline',
+    path: 'media-timeline/index',
+    title: 'Media Timeline',
+    parent: null,
+    icon: null,
+    requiresAuth: false,
+    // §4/§17 Media Timeline / Time Rail (census-media §19). Also mounted as the
+    // Time mode of the NOW and PLACES lenses.
+  },
+  {
+    key: 'media-contribute',
+    path: 'media-contribute/index',
+    title: 'Add your view',
+    parent: null,
+    icon: null,
+    requiresAuth: true,
+    // §4 Media Contribution (census-media §19). A current perspective of one
+    // canonical place, through the existing upload + post write.
+  },
+  { key: 'saved-people', path: 'saved-people', title: 'Saved People', parent: 'saved', icon: null, requiresAuth: true, ownerOnly: true }, { key: 'stamp-collections', path: 'stamp-collections', title: 'Stamp Collections', parent: 'stamps', icon: null, requiresAuth: true, ownerOnly: true }, { key: 'memory-new', path: 'memory/new', title: 'New Memory', parent: null, icon: null, requiresAuth: true, ownerOnly: true }, { key: 'messages-saved', path: 'messages/saved', title: 'Saved messages', parent: 'tab-messages', icon: null, requiresAuth: true, deepLink: '/messages/saved' }, { key: 'settings-messages', path: 'settings/messages', title: 'Message settings', parent: 'settings-index', icon: null, requiresAuth: true }, { key: 'meetups-invites', path: 'meetups/invites', title: 'Meetup Invites', parent: 'meetups-list', icon: null, requiresAuth: true, ownerOnly: true }, { key: 'safe-return-live-share', path: 'safe-return/[shareId]', title: 'Live location', parent: null, icon: null, requiresAuth: true, deepLink: '/safe-return/[shareId]' }, { key: 'trip-join-requests', path: 'trip/join-requests', title: 'Join requests', parent: 'tab-trips', icon: null, requiresAuth: true, ownerOnly: true }, { key: 'memory-timeline', path: 'memory/timeline', title: 'Your timeline', parent: null, icon: null, requiresAuth: true, ownerOnly: true }, { key: 'memory-place-history', path: 'memory/place-history', title: 'Your history here', parent: 'memory-detail', icon: null, requiresAuth: true, ownerOnly: true }, { key: 'memory-people-history', path: 'memory/people-history', title: 'Shared history', parent: 'memory-detail', icon: null, requiresAuth: true, ownerOnly: true }, { key: 'memory-saved', path: 'memory/saved', title: 'Saved memories', parent: null, icon: null, requiresAuth: true }, { key: 'trip-recap', path: 'trip/[id]/recap', title: 'Trip recap', parent: 'trip-detail', icon: null, requiresAuth: true, deepLink: '/trip/[id]/recap' }, { key: 'stories', path: 'stories', title: 'Stories', parent: null, icon: null, requiresAuth: true, deepLink: '/stories' }, { key: 'rab-dashboard-sessions', path: '(rent-a-buddy)/buddy-dashboard/sessions', title: 'My Sessions', parent: 'rab-dashboard', icon: null, requiresAuth: true, ownerOnly: true, featureFlag: 'rent_buddy_enabled' }, { key: 'rab-dashboard-my-offers', path: '(rent-a-buddy)/buddy-dashboard/my-offers', title: 'My Offers', parent: 'rab-dashboard', icon: null, requiresAuth: true, ownerOnly: true, featureFlag: 'rent_buddy_enabled' }, { key: 'rab-admin-reviews', path: '(rent-a-buddy)/admin/reviews', title: 'RAB Review Moderation', parent: 'rab-admin', icon: null, requiresAuth: true, adminOnly: true, featureFlag: 'rent_buddy_enabled' }, { key: 'rab-admin-support', path: '(rent-a-buddy)/admin/support', title: 'RAB Support Reports', parent: 'rab-admin', icon: null, requiresAuth: true, adminOnly: true, featureFlag: 'rent_buddy_enabled' }, { key: 'rab-admin-risk', path: '(rent-a-buddy)/admin/risk', title: 'RAB Risk Review', parent: 'rab-admin', icon: null, requiresAuth: true, adminOnly: true, featureFlag: 'rent_buddy_enabled' }, { key: 'rab-admin-launch-controls', path: '(rent-a-buddy)/admin/launch-controls', title: 'RAB Launch Controls', parent: 'rab-admin', icon: null, requiresAuth: true, adminOnly: true, featureFlag: 'rent_buddy_enabled' }, { key: 'passport-remembers', path: 'passport/remembers', title: 'Compass remembers', parent: 'tab-passport', icon: 'Brain', requiresAuth: true, ownerOnly: true, deepLink: '/passport/remembers' }, { key: 'passport-recaps', path: 'passport/recaps', title: 'Recaps & On this day', parent: 'tab-passport', icon: 'History', requiresAuth: true, ownerOnly: true, featureFlag: 'memory_recaps', deepLink: '/passport/recaps' }, { key: 'admin-console', path: 'admin/console', title: 'Testing Console', parent: null, icon: null, requiresAuth: true, adminOnly: true }, { key: 'admin-hidden-gems', path: 'admin/hidden-gems', title: 'Hidden Gem Review', parent: null, icon: null, requiresAuth: true, adminOnly: true }, { key: 'admin-local-guides', path: 'admin/local-guides', title: 'Local Guides', parent: null, icon: null, requiresAuth: true, adminOnly: true }, { key: 'admin-live-scopes', path: 'admin/live-scopes', title: 'Live-Label Scopes', parent: null, icon: null, requiresAuth: true, adminOnly: true }, { key: 'admin-user-stamps', path: 'admin/user-stamps', title: 'User Stamps', parent: null, icon: null, requiresAuth: true, adminOnly: true }, { key: 'admin-airports', path: 'admin/airports', title: 'Airports', parent: null, icon: null, requiresAuth: true, adminOnly: true }, ]; // testing mode: entries on the closing line so every cited line keeps its number
 
 // ── Layout registry ───────────────────────────────────────────────────────────
 //

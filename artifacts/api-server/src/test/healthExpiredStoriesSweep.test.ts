@@ -215,14 +215,25 @@ describe("POST /admin/cleanup/expired-stories", () => {
     );
   });
 
-  it("deletes the storage objects for the stories it just expired", async () => {
+  it("expires the rows but keeps the storage objects for the owner's archive", async () => {
+    // Inverted deliberately. Expiry ends the audience's access, not the
+    // owner's, so the bytes survive and the owner can still open the story.
+    // The guarantee the deletion used to carry — that a link issued before
+    // expiry stops working after it — now lives on the signed URL's lifetime
+    // and is proved in mediaUploadHardening.test.ts. If it ever stops being
+    // proved there, this relaxation is unsafe.
     _setTestServiceClient(storiesClient(rec, {
       data: [{ id: "s1", media_url: mediaUrl("u1/a.jpg") }],
       error: null,
     }));
-    await post(base, PATH, { "x-cleanup-secret": SECRET });
-    assert.equal(rec.removed.length, 1, "the bytes must go, not just the state column");
-    assert.deepEqual(rec.removed[0], ["u1/a.jpg"]);
+    const r = await post(base, PATH, { "x-cleanup-secret": SECRET });
+    assert.equal(r.status, 200, "the sweep still runs and still reports");
+    assert.equal(rec.updates.length, 1, "the state column is still swept to expired");
+    assert.equal(
+      rec.removed.length,
+      0,
+      "expiry must not delete the bytes — the private owner archive depends on them",
+    );
   });
 
   it("a FAILED sweep is 500, never 200 with a fabricated zero", async () => {

@@ -340,7 +340,17 @@ describe("L293c — certifyFeasibility with no probe makes no journey claim", ()
       const w = Engine.computeWindow(AIRPORT, s);
       const advice = Engine.adviseLeaving(AIRPORT, s, w);
       const a = Engine.assessWindowOnly(AIRPORT, s, w);
-      const expected = { yes: "safe", tight: "possible_but_risky", no: "not_recommended", stay_airside: "airport_only" } as const;
+      // `entry_unverified` ADDED with the entry gate, and it is the case this
+      // assertion exists for. `assessWindowOnly` reads a clock and knows
+      // nothing about borders, so on a roomy window it still says "safe" while
+      // the advice withholds the yes. The two are reconciled in
+      // `certifyFeasibility`, which is the one place that publishes both — so
+      // the pairing is asserted THERE, on the record, and this loop drives the
+      // raw engine where the clock's own answer is the right one to read.
+      const expected = {
+        yes: "safe", tight: "possible_but_risky", no: "not_recommended",
+        stay_airside: "airport_only", entry_unverified: "safe",
+      } as const;
       assert.equal(a.rating, expected[advice.verdict],
         `verdict ${advice.verdict} (usable ${w.usableMinutes}) but rating ${a.rating}`);
     }
@@ -519,7 +529,18 @@ describe("routes/airport — the fabrication does not cross the HTTP boundary", 
   it("GET /safety: overallRating agrees with advice.verdict", async () => {
     stage();
     const r = await req("GET", "/api/airport/sessions/session-1/safety");
-    const expected = { yes: "safe", tight: "possible_but_risky", no: "not_recommended", stay_airside: "airport_only" } as any;
+    // `entry_unverified` maps to `possible_but_risky` and NOT to "safe", which
+    // is the difference between this map and the one over the raw engine
+    // above. This reads the HTTP response, and by the time a verdict reaches
+    // the wire `certifyFeasibility` has capped the rating at what the verdict
+    // allows — an unconfirmed border cannot ship beside "safe". The raw
+    // `assessWindowOnly` knows nothing about borders and still says "safe";
+    // that is the gap the cap exists to close, and the two maps disagreeing
+    // here is the evidence it is closed.
+    const expected = {
+      yes: "safe", tight: "possible_but_risky", no: "not_recommended",
+      stay_airside: "airport_only", entry_unverified: "possible_but_risky",
+    } as any;
     assert.equal(r.body.overallRating, expected[r.body.advice.verdict],
       `${r.body.advice.verdict} vs ${r.body.overallRating}`);
   });

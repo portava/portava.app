@@ -491,7 +491,7 @@ async function processPlace(sc: any, placeId: string, claimedQueuedAt: string): 
       // so naming them meant this read returned 42703 every time and the
       // collections worker's ranking has never seen a single row. Nothing in
       // this file ever consumed either value — they were selected and dropped.
-      "post_buckets, like_count, save_count, share_count",
+      "post_buckets, like_count, save_count, share_count, location_privacy_mode", // census-media §43: isPublicPlaceRailPost reads the owner's mode for both public rails (Best-Of, top contributors); the stamp count below does not
     )
     .eq("canonical_place_id", placeId)
     .eq("status", "active")

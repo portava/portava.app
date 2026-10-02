@@ -200,7 +200,16 @@ describe('TrustScreen', () => {
     expect(screen.getByText('Early days')).toBeTruthy();
     // No numeric score anywhere.
     expect(screen.queryByText('/ 100')).toBeNull();
-    // Out-of-scope domains read the neutral "Not applicable" (TABLE 12).
-    expect(screen.getAllByText('Not applicable').length).toBeGreaterThan(0);
+    // This fixture sends NO `trust.domains`, and all six capability flags are
+    // false. The rows used to read "Not applicable" here — derived from those
+    // flags, and therefore a claim that six domains had been measured and found
+    // out of scope, when nothing had been measured at all. The owner ruled on
+    // 2026-09-22 that standing is never derived from capabilities, so the rows
+    // now say what is true: the standing could not be loaded.
+    expect(screen.queryByText('Not applicable')).toBeNull();
+    expect(screen.getAllByText('Not available').length).toBe(6);
+    expect(
+      screen.getAllByText('This traveler\u2019s standing could not be loaded.').length,
+    ).toBe(6);
   });
 });

@@ -13,7 +13,7 @@
  * unit-tested without a database.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { logger as rootLogger } from "./logger";
+import { logger as rootLogger } from "./logger"; import { LATIN_LETTER_FOLD, LATIN_MARKS_RE } from "./latinLetterFold"; // §73: the stroke/hook/bar table; §77: the four Latin mark blocks
 
 const logger = rootLogger.child({ lib: "canonicalLocations" });
 
@@ -90,7 +90,7 @@ const GENERIC_SUFFIX = /\s+(?:city|municipality|metro)$/;
 export function normalizeLocationName(name: string): string {
   let n = name
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "") // diacritics
+    .replace(LATIN_MARKS_RE, "") // diacritics: all four Latin combining blocks, U+0300–U+036F, U+1AB0–U+1AFF, U+1DC0–U+1DFF, U+FE20–U+FE2F (§77)
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, " ")    // punctuation -> space
     .replace(/\s+/g, " ")
@@ -100,51 +100,51 @@ export function normalizeLocationName(name: string): string {
   return stripped.length > 0 ? stripped : n;
 }
 
-// ── Stroke-letter fold (§10) ──────────────────────────────────────────────────
+// ── Stroke / hook / bar letter fold (§10; census-discovery §73, DV-20 and B01) ──
 //
 // Unicode NFD (used by normalizeLocationName) decomposes a *precomposed base +
-// combining mark* — but a Latin letter whose diacritic is a STROKE or BAR
-// THROUGH the glyph (đ, Đ, ø, ł, …) has NO canonical decomposition: the stroke
-// is part of the base codepoint, so NFD leaves it intact and the subsequent
-// `[^a-z0-9\s]` strip then deletes it entirely. For Đà Nẵng (a launch city) that
-// silently turns "Đà Nẵng" into "a nang", which never matches a typed "da nang".
-// The client Phase-1 SDK hit and fixed this exact bug; this mirrors it
-// server-side so the stored search key and the typed query fold identically.
+// combining mark*, but a Latin letter whose mark is a STROKE, BAR, HOOK, CURL,
+// TAIL or LOOP through or on the glyph (đ, ø, ł, ƀ, ƙ, ȥ, …) has NO canonical
+// decomposition: NFD leaves it whole and the `[^a-z0-9\s]` strip then DELETES it.
+// For Đà Nẵng (a launch city) that turned "Đà Nẵng" into "a nang", which never
+// matches a typed "da nang". The client Phase-1 SDK hit and fixed this exact bug.
 //
-// This is an EXPLICIT, additive fold applied BEFORE normalization so the base
-// letter survives the punctuation strip. It never touches stored *display*
-// spelling (`name`/`display_name`) — only the derived comparison key.
-const STROKE_FOLD: Record<string, string> = {
-  "đ": "d", "Đ": "d", // Latin small/capital d with stroke (Vietnamese, Croatian)
-  "ø": "o", "Ø": "o", // o with stroke (Danish, Norwegian)
-  "ł": "l", "Ł": "l", // l with stroke (Polish)
-  "ħ": "h", "Ħ": "h", // h with stroke (Maltese)
-  "ŧ": "t", "Ŧ": "t", // t with stroke (Sámi)
-  "ð": "d", "Ð": "d", // eth (Icelandic) — folds to d for search
-  "ı": "i", "İ": "i", // dotless i / dotted capital I (Turkish)
-};
-const STROKE_FOLD_RE = new RegExp(`[${Object.keys(STROKE_FOLD).join("")}]`, "g");
+// THE TABLE is lib/latinLetterFold's LATIN_LETTER_FOLD (§73): every Latin letter
+// named "LATIN … LETTER X WITH …" (or BARRED X / X BAR) folds as X does, the
+// other case of each wherever Unicode puts it, ſ and ı, and 2220's eth and İ.
+// Until §73 this was fourteen letters (đ Đ ø Ø ł Ł ħ Ħ ŧ Ŧ ð Ð ı İ), applied to
+// the raw text only, so Ǿ ǿ (Ø/ø + acute) never met it and Ƀ Ƙ ȥ … had no entry:
+// "Ǿresund" keyed `resund` (B01) and 114 of the 398 letters in U+00C0–U+024F
+// were deleted from a Trail slug (DV-20). strokeFold now applies the table as
+// typed AND to the decomposition. ß æ œ þ ŋ are NOT in it: census-discovery
+// §66.9 owner question 4 is open.
+//
+// discoveryLetterFoldCompleteness.test.ts enumerates every Latin letter Node
+// knows; 3440 and 3441 carry the same table to SQL, and the db suites run both.
+// Only the derived key is folded, never `name`/`display_name`.
+// It still runs BEFORE normalizeLocationName, on the text and on its NFD form.
+// STROKE_FOLD keeps its name: the census, 2220 and the tests all call the table that.
+export const STROKE_FOLD: Readonly<Record<string, string>> = LATIN_LETTER_FOLD;
+const STROKE_FOLD_RE = new RegExp(`[${Object.keys(STROKE_FOLD).join("")}]`, "gu"), STROKE_FOLD_ANY = new RegExp(STROKE_FOLD_RE.source, "u");
+const foldTable = (s: string) => s.replace(STROKE_FOLD_RE, (ch) => STROKE_FOLD[ch] ?? ch);
 
 /**
- * Fold stroke/bar Latin letters (đ→d, Đ→d, ø→o, ł→l, …) to their base ASCII
- * letter. Pure, deterministic, and idempotent. Applied before NFD so the base
- * letter is preserved through diacritic stripping. Non-stroke input is returned
- * unchanged.
+ * Fold stroke/hook/bar Latin letters (đ→d, ø→o, ƀ→b, …) to their base letter, as typed AND
+ * inside a decomposition (Ǿ is Ø + acute: → ó). Pure, idempotent; other text is unchanged.
  */
 export function strokeFold(s: string): string {
   if (!s) return s;
-  return s.replace(STROKE_FOLD_RE, (ch) => STROKE_FOLD[ch] ?? ch);
+  const direct = foldTable(s), nfd = direct.normalize("NFD"); // §73: the table ran before NFD, so Ǿ ǿ ẛ never met it
+  return STROKE_FOLD_ANY.test(nfd) ? foldTable(nfd).normalize("NFC") : direct;
 }
 
 /**
  * The canonical geographic SEARCH KEY for a name: stroke-fold then the existing
- * diacritic/case/punctuation normalization. Diacritic-insensitive and
- * case-insensitive while never mutating the stored display spelling.
- *
+ * diacritic/case/punctuation normalization. Diacritic- and case-insensitive,
+ * never mutating the stored display spelling.
  *   searchKey("Đà Nẵng") === searchKey("da nang") === "da nang"
  *   searchKey("Ho Chi Minh City")                  === "ho chi minh"
- *
- * The `search_key` generated column (migration 2220) computes the identical
+ * The `search_key` generated column (2220, recomputed by 3440) holds the same
  * value in SQL, so the query side and the stored side always fold the same way.
  */
 export function searchKey(name: string): string {
@@ -350,6 +350,120 @@ function rowToCanonicalFields(row: CanonicalRow): ResolveResult["canonical"] {
   };
 }
 
+// ── Alias plausibility (the append is the attack surface, not the read) ───────
+//
+// WHY THIS EXISTS. `matchCanonical`'s first rule is "shared provider id -> same
+// location, always", with no name or country comparison — which is correct, a
+// provider id IS the identity. But `buildRowPatch` then appended the INCOMING
+// name to that row's alias set unconditionally, and `matchCanonical`'s later
+// name test and `resolveCanonicalLocation`'s candidate query both READ aliases.
+// `POST /locations/resolve` is authenticated and rate-limited, but `place.id`
+// and `place.name` are entirely caller-supplied, and provider ids travel in the
+// app's own place payloads. So a caller holding a real row's provider id could
+// attach an arbitrary name to it, and from then on that name resolved to that
+// place through canonical identity merging.
+//
+// THE GUARD IS ON THE APPEND, NOT THE READ. Refusing to READ aliases would
+// break the legitimate variants the alias set exists for. Refusing an
+// implausible WRITE keeps the set meaning what it says. The provider-id match
+// is untouched: an implausible name still identifies and returns the row, it
+// just does not get to rename it. A refused alias must never become a refused
+// resolution.
+//
+// WHAT "PLAUSIBLE" MEANS. The base rule is the obvious one — a variant of a
+// name shares a word with it. Four carve-outs exist because real variants that
+// share no word do occur, and each is a shape this codebase already handles
+// elsewhere rather than a new invention:
+//   spacing   "danang" for "da nang"            (squash whitespace)
+//   folds     "da nang" for stored "Đà Nẵng"    (searchKey, migration 2220)
+//   dictionary "hcmc" for "ho chi minh"          (CITY_GEO_ALIASES/CITY_NAME_ALIASES)
+//   initials  "nyc" for "new york city"          (first letters, in order)
+//
+// KNOWN LIMITS, stated rather than papered over. (1) Generic geographic
+// particles are not counted as a shared word — otherwise "San Juan" would be a
+// plausible alias of "San Francisco" — but two names that share a rare word
+// still pass, so this narrows the hole rather than closing it. (2) A row whose
+// every word is generic has no non-generic word to share, so appends to it
+// resolve through the carve-outs only; that is the fail-closed direction.
+// (3) This says nothing about whether the caller SHOULD be trusted; it says the
+// name is at least a variant of the row it is being attached to.
+
+/** Words too common in place names to count as evidence of the same place. */
+const GENERIC_NAME_TOKENS = new Set([
+  "de", "del", "la", "las", "le", "les", "los", "el", "da", "do", "dos", "di",
+  "van", "von", "al", "the", "of", "and", "y", "e",
+  "san", "santa", "santo", "sao", "saint", "st", "sankt",
+  "new", "nova", "nuevo", "old", "north", "south", "east", "west", "central",
+  "upper", "lower", "great", "greater", "little", "big",
+  "port", "puerto", "lake", "fort", "mount", "mt", "cape", "isla", "island",
+  "city", "town", "village", "municipality", "province", "district", "county",
+  "region", "state", "prefecture", "area", "metro",
+]);
+
+function nameTokens(s: string): string[] {
+  return s.split(" ").filter((t) => t.length > 0);
+}
+
+function squash(s: string): string {
+  return s.replace(/\s+/g, "");
+}
+
+/** `["new","york","city"]` -> `"nyc"`. Empty for a single-word name. */
+function initialsOf(tokens: string[]): string {
+  return tokens.length >= 2 ? tokens.map((t) => t[0]).join("") : "";
+}
+
+/**
+ * Is `norm` (an already-normalized incoming name) plausibly another name for
+ * `row`? Pure; exported so the rule is testable without a database.
+ *
+ * Compared against every name the row already answers to: its
+ * `normalized_name`, the normalized form of its display `name`, and each
+ * existing alias — so a row legitimately grown one variant at a time keeps
+ * accepting further variants of what it has become.
+ */
+export function isPlausibleAlias(row: CanonicalRow, norm: string): boolean {
+  if (!norm) return false;
+
+  const known = [
+    row.normalized_name,
+    row.name ? normalizeLocationName(row.name) : "",
+    ...(row.aliases ?? []),
+  ].filter((k): k is string => typeof k === "string" && k.length > 0);
+  if (known.length === 0) return false;
+
+  const incoming = nameTokens(norm);
+  const incomingSquashed = squash(norm);
+  const incomingKey = searchKey(norm);
+  const incomingAliased = resolveGeoAlias(norm);
+  const incomingInitials = initialsOf(incoming);
+
+  for (const k of known) {
+    if (k === norm) return true;
+
+    // 1. Shares a non-generic word — the base rule.
+    const kt = nameTokens(k);
+    if (incoming.some((t) => !GENERIC_NAME_TOKENS.has(t) && kt.includes(t))) return true;
+
+    // 2. Spacing variant: "danang" / "da nang", "newyork" / "new york".
+    if (incomingSquashed === squash(k)) return true;
+
+    // 3. Diacritic / stroke fold: a typed "da nang" for a stored "Đà Nẵng".
+    if (incomingKey === searchKey(k)) return true;
+
+    // 4. The abbreviation dictionary this module already ships.
+    if (incomingAliased === k || incomingAliased === resolveGeoAlias(k) || norm === resolveGeoAlias(k)) {
+      return true;
+    }
+
+    // 5. Initialism, in order, in either direction: "hcmc" / "ho chi minh city".
+    if (incomingSquashed.length >= 2 && incomingSquashed === initialsOf(kt)) return true;
+    if (incomingInitials.length >= 2 && incomingInitials === squash(k)) return true;
+  }
+
+  return false;
+}
+
 /** Prefer non-null incoming values to backfill canonical rows over time. */
 function buildRowPatch(row: CanonicalRow, place: PlaceInput, norm: string): Partial<CanonicalRow> | null {
   const patch: any = {};
@@ -358,7 +472,18 @@ function buildRowPatch(row: CanonicalRow, place: PlaceInput, norm: string): Part
     patch.provider_ids = { ...(row.provider_ids ?? {}), [pk.provider]: pk.providerId };
   }
   if (norm !== row.normalized_name && !(row.aliases ?? []).includes(norm)) {
-    patch.aliases = [...(row.aliases ?? []), norm];
+    if (isPlausibleAlias(row, norm)) {
+      patch.aliases = [...(row.aliases ?? []), norm];
+    } else {
+      // The row is still matched, patched and returned — only the alias growth
+      // is refused. Logged because a provider-id match carrying an unrelated
+      // name is either a provider data error worth seeing or an attempt at
+      // canonical identity poisoning, and both are invisible otherwise.
+      logger.warn(
+        { canonicalId: row.id, rowNormalizedName: row.normalized_name, refusedAlias: norm },
+        "canonicalLocations: refused an implausible alias append",
+      );
+    }
   }
   if (row.lat == null && place.lat != null) { patch.lat = place.lat; patch.lng = place.lng; }
   if (row.postal_code == null && place.postalCode) patch.postal_code = place.postalCode;
@@ -585,7 +710,7 @@ export async function suggestCanonicalLocations(
 //     graceful fallback for the pre-migration deploy window (or fixtures without
 //     the column), the legacy `normalized_name` — whichever returns rows.
 // Prefix matches lead contains matches; rows are deduped and city-class only.
-// Fail-soft: any hard error returns [].
+// Fail-soft on a PARTIAL error; when EVERY read fails it throws CanonicalRegistryUnreadable (an outage is not "no such city").
 export async function suggestCanonicalLocationsFolded(
   db: SupabaseClient,
   q: string,
@@ -605,7 +730,7 @@ export async function suggestCanonicalLocationsFolded(
       db.from(TABLE).select("*").ilike("normalized_name", `${escNorm}%`).limit(fetch),
       db.from(TABLE).select("*").ilike("normalized_name", `%${escNorm}%`).limit(fetch),
     ]);
-    // Prefix rows first (both columns), then contains rows. A per-result error
+    if ([skPrefix, skContains, nnPrefix, nnContains].every((r) => r.error)) throw new CanonicalRegistryUnreadable(); // Prefix rows first (both columns), then contains rows. A per-result error
     // (e.g. search_key missing pre-migration) is simply skipped — the other
     // column still yields matches.
     const prefixRows = [
@@ -634,8 +759,8 @@ export async function suggestCanonicalLocationsFolded(
       if (out.length >= limit) break;
     }
     return out;
-  } catch {
-    return [];
+  } catch (e) { // A thrown read (network, client) is an outage exactly like four errored ones.
+    throw e instanceof CanonicalRegistryUnreadable ? e : new CanonicalRegistryUnreadable();
   }
 }
 
@@ -646,4 +771,17 @@ export async function suggestCanonicalLocationsFolded(
  */
 export function rowSearchKey(row: CanonicalRow): string {
   return (row.search_key ?? searchKey(row.name)) || "";
+}
+
+/**
+ * Every read of the registry failed — an OUTAGE, not "no such city". Thrown by
+ * `suggestCanonicalLocationsFolded` so the input gateway can record the cities
+ * source as unreadable on its coverage (§80) instead of serving an empty list
+ * that reads as "nothing matched" (§24 paste honesty, GII-F08).
+ */
+export class CanonicalRegistryUnreadable extends Error {
+  constructor() {
+    super("canonical_locations unreadable");
+    this.name = "CanonicalRegistryUnreadable";
+  }
 }

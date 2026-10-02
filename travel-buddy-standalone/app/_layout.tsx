@@ -67,6 +67,12 @@ import {
 } from '../src/features/wall/services/wallAnalytics';
 import { createWallAnalyticsTransport } from '../src/features/wall/services/wallAnalyticsTransport';
 import { installPassportTelemetry } from '../src/features/passport/installPassportTelemetry';
+import { installInputTelemetry } from '../src/platform/input-assistance/services/installInputTelemetry';
+import { installInputPolicySync } from '../src/platform/input-assistance/services/installInputPolicySync';
+import { installLocalRecents } from '../src/platform/input-assistance/services/installLocalRecents';
+import { installInputTelemetryTransport } from '../src/platform/input-assistance/services/telemetryTransport';
+import { registerGeographicFields } from '../src/platform/input-assistance/geographic/geoFields';
+import { installSensingCapture } from '../src/services/sensing/installSensingCapture';
 
 /**
  * Session-aware root crash boundary. Sits inside SessionProvider so it can
@@ -129,6 +135,135 @@ function PassportTelemetrySetup() {
       getToken: freshToken,
       appState: AppState,
     });
+    return () => handle.dispose();
+  }, []);
+  return null;
+}
+
+/**
+ * §44 Input Intelligence telemetry — attach the platform's telemetry sink to the
+ * real batched/authenticated transport once at boot.
+ *
+ * Until this mounted, `platform/input-assistance/services/inputTelemetry.ts`
+ * kept its default `() => {}` sink in EVERY build of the app, and the twelve §44
+ * events `SmartInput` and `useInputAssistance` emit were produced and discarded
+ * inside the function call. `docs/architecture/census-input-intelligence.md` §3
+ * fact 5 records that as the deployment reality that decides whether the §44
+ * column means anything at all.
+ *
+ * The privacy argument for attaching this unconditionally — no account id, no
+ * raw text, four enforcement points — is written out in
+ * `installInputTelemetry.ts`'s header, and the gate belongs there if it is ever
+ * revised. Note that migration 2950 is still unapplied everywhere, so today the
+ * ingest refuses the batch with 503 and the batcher drops and COUNTS it.
+ */
+/**
+ * §48 / G340 — attach the policy sync once at boot.
+ *
+ * THIS IS THE LINE THAT MAKES THE CLIENT OBEY THE SERVER. Without it,
+ * `sharedPolicyStore` is never filled and every context resolves to the
+ * conservative policy forever: fields render as plain inputs and no assistance
+ * ever appears. That is a safe failure, not a silent one — but it IS the whole
+ * feature, so this mount is load-bearing in a way the telemetry mount is not.
+ *
+ * It also owns the other direction. On sign-out and on account switch the sync
+ * drops the policy snapshot AND clears `sharedSuggestionCache`, whose `clear()`
+ * previously had no caller anywhere in the app. Before this, two people signing
+ * in on the same device shared one process-global map of suggestion lists keyed
+ * by the text that produced them.
+ *
+ * Mounted ABOVE the field registrations below on purpose: those build policies
+ * from context descriptors, and a descriptor is only non-conservative once this
+ * has run. Ordering is not load-bearing for correctness (a field re-resolves
+ * its policy when the store changes), but it avoids a needless conservative
+ * pass on the very first frame.
+ */
+function InputPolicySyncSetup() {
+  useEffect(() => {
+    const unsubscribe = installInputPolicySync();
+    return () => unsubscribe();
+  }, []);
+  return null;
+}
+
+/**
+ * §32 G199 — attach the DEVICE-LOCAL recents store once at boot.
+ *
+ * `localZeroState` replays this session's explicit accepts so a cold or offline
+ * open of a picker shows what the user already chose. Until this mount, that
+ * memory died with the process: an app RESTART had nothing local, which is the
+ * half census G199 was still open on.
+ *
+ * Mounted BELOW `InputPolicySyncSetup` on purpose. That one owns the account
+ * lifecycle and, on a sign-out or account switch, erases this store — so it
+ * must be listening before a stale device blob could be read back under the
+ * wrong viewer. Hydration is fail-soft: an unreadable or expired device blob
+ * restores nothing, and the app behaves exactly as it did before this line.
+ *
+ * The teardown UNBINDS without erasing: a root remount must not cost a user
+ * their recents. Erasing is the account change's job, and only its job.
+ */
+function LocalRecentsSetup() {
+  useEffect(() => installLocalRecents(), []);
+  return null;
+}
+
+function InputTelemetrySetup() {
+  useEffect(() => {
+    const handle = installInputTelemetry({
+      createBatcher: () => installInputTelemetryTransport(),
+      appState: AppState,
+    });
+    return () => handle.dispose();
+  }, []);
+  return null;
+}
+
+/**
+ * §5/§52 — register the geographic fields' policies once at boot.
+ *
+ * `registerGeographicFields()` has existed, been idempotent and been
+ * unit-tested since Phase 2, and was called from NO non-test file in the app.
+ * Every geographic surface therefore resolved a DEFAULT policy built from its
+ * context descriptor instead of its registered one — or, where a screen passed
+ * no context at all, nothing. §50's field inventory records `geo.city` as
+ * UNMOUNTED for exactly this reason.
+ *
+ * It is a pure registry operation — no React state, no network, no I/O — so it
+ * runs at module-mount cost and is safe to call before anything renders. The
+ * function's own latch makes a re-mounting root layout a no-op, and a field a
+ * test already registered is left untouched.
+ */
+function GeographicFieldsSetup() {
+  useEffect(() => {
+    registerGeographicFields();
+  }, []);
+  return null;
+}
+
+/**
+ * §4.1 — attach the ON-DEVICE sensing capture loop once at boot.
+ *
+ * THIS IS THE LINE THAT MAKES THE DEVICE A SENSOR. Without it
+ * `src/lib/sensing/*` and `src/services/sensing/*` are a tree nothing imports,
+ * which is exactly the state the sensing census records for S28: "no client
+ * capture module produces the nine named features". The reduction, the privacy
+ * boundary and the transport are all unit-tested, and none of that would mean
+ * anything if no build ever ran them.
+ *
+ * It is fail-closed twice over before it samples anything:
+ * `installSensingCapture` starts nothing without an API base AND without valid
+ * server-authoritative Intelligence-Contribution consent, and it re-checks that
+ * consent on every foreground. Acoustic sensing stays off unless the SEPARATE
+ * `sensing.acoustic.energy` grant is held — the microphone Portava already has
+ * for calls and video buys nothing there (§4.1).
+ *
+ * Nothing leaves the handset but buckets: see
+ * `src/lib/sensing/contributionPayload.ts` and the privacy test beside it.
+ */
+function SensingCaptureSetup() {
+  useEffect(() => {
+    const handle = installSensingCapture();
     return () => handle.dispose();
   }, []);
   return null;
@@ -259,6 +394,13 @@ export default function RootLayout() {
                       <PushSetup />
                       <CryptoSetup />
                       <PassportTelemetrySetup />
+                      <InputPolicySyncSetup />
+                      <LocalRecentsSetup />
+                      <InputTelemetrySetup />
+                      <GeographicFieldsSetup />
+                      <SensingCaptureSetup />
+                      <MediaUploadResumeSetup />
+                      <MediaOfflineWarmupSetup />
                       <CompassFrontloadSetup />
                       <WallAnalyticsSetup />
                       <StatusBar style="dark" />
@@ -303,3 +445,34 @@ export default function RootLayout() {
     </GestureHandlerRootView>
   );
 }
+
+/**
+ * Media §37 — resume the app-level postcard upload queue at launch and on every
+ * return to the foreground, so an upload interrupted by a closed screen, a
+ * backgrounded app or a killed process continues from what the server already
+ * holds. A no-op while src/services/media/uploadTransportFlag.ts is off (it
+ * ships off): production keeps the composer's own single upload until a device
+ * run has proven the queue. Defined and imported at the TAIL so no line above
+ * moves — census documents cite this file by line.
+ */
+function MediaUploadResumeSetup() {
+  useEffect(() => installPostcardUploadResume(AppState), []);
+  return null;
+}
+import { installPostcardUploadResume } from '../src/services/media/postcardUploadDevice';
+
+/**
+ * Media §39 — pre-cache the signed-in user's saved places and current trips
+ * for offline use, on launch and on each foreground (throttled). Installed only
+ * while MEDIA_WORLD_SHELL_ENABLED is on: the offline surfaces are the World
+ * lenses, and no request or storage is spent for a surface nobody can open.
+ * Defined at the tail with its imports, for the same reason as the setup above.
+ */
+function MediaOfflineWarmupSetup() {
+  const { isEnabled } = useFeatureFlags();
+  const shellOn = isEnabled('MEDIA_WORLD_SHELL_ENABLED');
+  useEffect(() => (shellOn ? installMediaOfflineWarmup(AppState) : undefined), [shellOn]);
+  return null;
+}
+import { useFeatureFlags } from '../src/context/FeatureFlagsContext';
+import { installMediaOfflineWarmup } from '../src/services/media/mediaOfflineDevice';

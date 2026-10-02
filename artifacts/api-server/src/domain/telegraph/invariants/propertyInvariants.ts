@@ -14,10 +14,14 @@
  * `enforcedBy`. Seeded, not random: a property test that cannot be re-run on the
  * input that failed is a flake generator.
  *
- * Two of the seven (P-06, P-07) are `vacuous` because the operation they
- * quantify over — unsend — does not exist in this tree. Their test asserts that
- * absence structurally, so the day an unsend handler is added the test goes red
- * and the property must be written rather than remembered.
+ * P-06 and P-07 were `vacuous` — the operation they quantify over, unsend, did
+ * not exist in this tree — and their test asserted that absence structurally so
+ * that the day a handler landed it would go red. It did not. The assertion read
+ * `src/routes/messaging.ts` alone, and unsend landed in telegraphLifecycle and
+ * the §13.1 command route. A tripwire scoped to one file only watches one
+ * doorway. Both properties are now written and `enforced`; what replaced the
+ * absence assertion quantifies over the decision rather than over any file's
+ * text, so there is no doorway left to come through.
  */
 
 import type { PropertyInvariant } from "../contracts/certification.js";
@@ -134,15 +138,20 @@ export const TELEGRAPH_PROPERTY_INVARIANTS: readonly PropertyInvariant[] = [
     censusRow: "T326",
     requirement: "message unseen → unsend may succeed",
     quantifier: "for all messages M with no eligible recipient receipt, unsend(M) succeeds",
-    status: "vacuous",
-    enforcedBy: ["src/routes/messaging.ts"],
+    status: "enforced",
+    enforcedBy: [
+      "src/migrations/3000_telegraph_unsend_authoritative.sql",
+      "src/services/telegraph/unsend.ts",
+    ],
     note:
-      "There is no unsend operation in this tree — no route, no column, no " +
-      "handler — so the property has nothing to quantify over. Migration 2325 and " +
-      "its route live in unmerged PR #472 and are applied to portava-ci only. The " +
-      "test asserts the absence STRUCTURALLY (no unsend/unsent surface in the " +
-      "messaging router), so it goes red the moment one lands and the property " +
-      "must then be written for real.",
+      "Was `vacuous` until 2026-09-23, when unsend landed. Now quantified over " +
+      "204 enumerated states — three message lifecycles x sender-or-not x " +
+      "actor-present-or-departed x 17 recipient rosters covering every read " +
+      "position including the created_at BOUNDARY — and run against BOTH copies " +
+      "of the rule: the model of telegraph_unsend_message_before_seen, which is " +
+      "pinned against the migration's own SQL, and planUnsend. The success must " +
+      "also WRITE; a build that answered `unsent` without writing would satisfy " +
+      "a weaker reading of this property and lose the message nowhere.",
   },
   {
     id: "P-07",
@@ -150,14 +159,22 @@ export const TELEGRAPH_PROPERTY_INVARIANTS: readonly PropertyInvariant[] = [
     requirement: "any eligible recipient seen → unseen-unsend impossible",
     quantifier:
       "for all messages M and all recipients R, seen(R, M) → every unsend(M) is refused",
-    status: "vacuous",
-    enforcedBy: ["src/routes/messaging.ts"],
+    status: "enforced",
+    enforcedBy: [
+      "src/migrations/3000_telegraph_unsend_authoritative.sql",
+      "src/services/telegraph/unsend.ts",
+    ],
     note:
-      "Same absence as P-06, and the same structural assertion guards it. This is " +
-      "the safety half of the pair: P-06 failing costs a user an affordance, P-07 " +
-      "failing retracts something a person has already read. When unsend lands, " +
-      "this property — not a fixture — is what has to hold, because the failure " +
-      "mode is a race and a race is exactly what a fixed fixture cannot cover.",
+      "The safety half of the pair: P-06 failing costs a user an affordance, " +
+      "P-07 failing retracts something a person has already read. Over the same " +
+      "204 states, every state with an eligible reader refuses AND writes " +
+      "nothing, with seenBy equal to the count — and a fourth assertion requires " +
+      "the live space to be PARTITIONED, because a build that refused every " +
+      "unsend would satisfy this property and violate P-06. The race itself is " +
+      "not closed here: it is closed by the FOR UPDATE locks in migration 3000, " +
+      "whose lock-then-read ORDER is asserted against the migration text in " +
+      "telegraphUnsendFunctionFake.test.ts, and executed for real by the " +
+      "`api-server · kernel SQL executed on a throwaway database` job.",
   },
 ];
 

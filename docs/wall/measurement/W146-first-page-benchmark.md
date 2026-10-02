@@ -451,3 +451,76 @@ cannot carry a marker, so the run writes one extra flag whose name **is**
 namespaced; finding it at the start of a later run is how that run knows the
 flags in the table belong to a dead predecessor rather than to the environment.
 Verified after the runs above: every fixture table back to 0 rows.
+
+---
+
+## 2026-09-21 — RE-MEASURED, and the evidence AUDITED rather than re-quoted
+
+A live-arm defect was found in a *different* harness, `mapProjectionPerf.test.ts`
+(M256(a)): it printed `arm=live-supabase` whenever two environment variables were
+set, while the harness built the in-process double regardless. The label outran
+the thing it labelled by about an order of magnitude.
+
+That made one question unavoidable: **were W146's numbers produced the same way?**
+The answer had to be established, not assumed, because "this one is fine" is what
+the M256(a) header also said.
+
+### The audit, and its result
+
+**Nothing is withdrawn. W146's figures were produced against a real database.**
+Three independent checks, in increasing strength:
+
+1. **Read the wiring.** `createClient(SUPABASE_URL, SERVICE_ROLE_KEY)` builds a
+   real supabase-js client; `_setTestClient(pub, true)` installs *that object*;
+   the real `wallRouter` is mounted on it. There is no fake anywhere in the
+   measured path — unlike M256(a), where `startRouterApp` always built one.
+2. **Take the database away.** With PostgREST unreachable the suite does **not**
+   fall back to anything: `before()` throws, all five live cases are CANCELLED,
+   and the run exits 1. A harness that cannot produce a number without a real
+   database cannot have produced its number with a double.
+3. **Re-measure.** Three fresh runs against a rebuilt throwaway PostgreSQL
+   carrying the replayed chain:
+
+| run | p50 | p95 | round trips |
+|---|---|---|---|
+| 1 | 393.4 ms | 464.4 ms | **346** |
+| 2 | 382.1 ms | 418.6 ms | **346** |
+| 3 | 376.6 ms | 436.2 ms | **346** |
+| *previously recorded (median of eight)* | *388 ms* | *461 ms* | ***346*** |
+
+The latencies sit inside the existing quiet-box spread, and the **round-trip
+count is identical — 346 in every run, old and new**. That count is the
+discriminating figure: it is a property of the query plan the router issues, not
+of the machine's mood, and a double would not reproduce it.
+
+**So the recorded p50 388 ms / p95 461 ms stands, and W146's verdict stands.**
+
+### What DID need fixing: the label had no binding to the object
+
+W146 never had M256(a)'s bug, but it had the same *structural* weakness —
+nothing asserted that the object handed to the router was a real client. The
+comment said "the REAL supabase-js client", and a comment is worth exactly as
+much as the next edit's care.
+
+Two additions close it:
+
+- an **install-time refusal** in `before()`: the client's own `rest.url` must
+  start with the configured `SUPABASE_URL`, or the harness throws before a single
+  request is measured;
+- a **case that reports it as a pass**, `"the measured client IS the real one —
+  the label is bound to the object"`, so the property is visible rather than
+  merely un-violated.
+
+Armed, not assumed: replacing the measured client with a plain-object double —
+leaving every sentence in the file intact — makes `before()` throw
+*"the client about to be measured does not point at the configured target …
+A benchmark whose client is not the real one is a number about nothing"* and
+cancels all six live cases. Restored: 16/16.
+
+### Scope, unchanged
+
+Still a loopback PostgREST over a disposable PostgreSQL: real schema, real
+indexes, real planner, no network, no production data. It is a regression gate on
+the work the route does per request. It is **not** a production latency, and the
+production column of the table above remains deliberately empty.
+

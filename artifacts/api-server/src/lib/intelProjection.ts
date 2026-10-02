@@ -54,9 +54,14 @@ import {
   type ConfidencePenalties,
   type ConfidenceResult,
 } from "./confidenceScore.js";
-import { evaluatePrivacy, type PrivacyDecision, type SuppressionReason } from "./privacyGate.js";
+import { evaluatePrivacy, type PrivacyDecision, type PrivacyThreshold, type SuppressionReason } from "./privacyGate.js";
 import { expiresAt as policyExpiresAt, FRESHNESS_CURVE_VERSION } from "./freshnessPolicy.js";
-import { LIVE_ELIGIBLE_CLAIM_STATUSES, SOURCE_CLASSES, type SourceClass } from "./intelContracts.js";
+import { LIVE_ELIGIBLE_CLAIM_STATUSES, PRIVACY_THRESHOLD_V1, SOURCE_CLASSES, type SourceClass } from "./intelContracts.js";
+import {
+  evaluateSafetyPublication,
+  isSafetyAssertion,
+  type SafetyAuthority,
+} from "./safetyPolicy.js";
 import { toStoredConflictState, type ConflictState, type StoredConflictState } from "./intelConflict.js";
 
 /**
@@ -133,6 +138,16 @@ export interface ProjectionInput {
   freshness?: { ageSeconds: number; ttlSeconds: number };
   /** Table 17 lineage: the claim rows (with their versions) this input came from. */
   inputClaimVersions?: InputClaimVersion[];
+  /**
+   * FORWARD provenance (3311): the intel_observations.id values the aggregator
+   * READ for this input — the fresh, consented cohort. Written to both snapshot
+   * tables so an erasure can find exactly which state rested on which evidence
+   * (services/accountDeletion/sensingRevocationReach) and recompute or retract
+   * it (sensingErasureRecompute). Opaque ids naming no contributor; never
+   * served. Absent means "unrecorded", which the reach treats as
+   * subject-granularity, never as "rested on nothing".
+   */
+  inputObservationIds?: readonly string[];
   /** §24 candidate counts, for the lineage log line. */
   candidateLineage?: ProjectionCandidateLineage;
   /**
@@ -160,6 +175,32 @@ export interface ProjectionInput {
    * Absent ⇒ supported (hand-built inputs are unaffected).
    */
   cohortSupportsValue?: boolean;
+  /**
+   * The claim's lifecycle status, carried through so the SAFETY lane can apply
+   * SAFETY_SERVABLE_CLAIM_STATUSES.
+   *
+   * The projection selects claims with `.in("status", LIVE_ELIGIBLE_CLAIM_STATUSES)`
+   * — 'active' AND 'conflicting'. For ordinary intel that is right: a disputed
+   * vibe still projects, and the read path lowers its band. For a safety
+   * assertion it is not, and S1a says so: SAFETY_SERVABLE_CLAIM_STATUSES is
+   * ['active'] alone. Without the status here that rule had nowhere to be
+   * applied — a snapshot carries no status, so by the time the Map producer sees
+   * a row the distinction is already gone.
+   *
+   * Absent ⇒ unknown ⇒ a safety assertion is refused (fail-closed). Ordinary
+   * claims never consult it.
+   */
+  claimStatus?: string | null;
+  /**
+   * How a SAFETY assertion earned publication, established by the caller from
+   * the audit trail — never inferred from the claim's value or status.
+   *
+   * This is the field that separates "an authorized reviewer approved this
+   * hazard" from "an unsafe_density row exists". Only the first may publish on
+   * the reviewed threshold; the second stays subject to the ordinary community
+   * gate and, at k=1, never publishes at all. Absent/null ⇒ no authority.
+   */
+  safetyAuthority?: SafetyAuthority | null;
   /**
    * FAIL-CLOSED ON AN UNREADABLE COHORT. False when any of the reads the
    * aggregator derives this input from was REJECTED by the database — the
@@ -220,6 +261,8 @@ export interface ProjectedSnapshot {
   confidence_components: ConfidenceReplayRecord;
   algorithm_version: string;
   input_claim_versions: InputClaimVersion[];
+  /** 3311 forward provenance — see ProjectionInput.inputObservationIds. Empty when unrecorded. */
+  input_observation_ids: string[];
   /** Table 17 conflict_state, in the PERSISTED vocabulary the 2273 CHECKs admit
    *  ('none' | 'contextualized' | 'material'). Column added in I1; unit I2 (2275)
    *  populates it — projectClaim leaves it null and projectAndStore writes the
@@ -238,7 +281,9 @@ export interface ProjectionResult {
   snapshot: ProjectedSnapshot | null;
   /** Why it is not publishable, when it is not. */
   privacy: PrivacyDecision;
-  skippedReason?: "no_ttl_policy" | "invalid_input" | "value_not_supported" | "evidence_unreadable";
+  skippedReason?: "no_ttl_policy" | "invalid_input" | "value_not_supported" | "safety_policy_refused" | "evidence_unreadable";
+  /** For a safety assertion the safety policy refused: which clause refused it. */
+  safetyRefusal?: string;
   /** The full scored record, for callers that want it without re-reading the snapshot. */
   scored?: ConfidenceResult;
 }
@@ -317,18 +362,85 @@ export async function projectClaim(
     }
   }
 
+  // ── THE SAFETY LANE ─────────────────────────────────────────────────────────
+  //
+  // A safety assertion is not an aggregate of people, and the ordinary gate
+  // treats it as one. This is the defect S2 found by trying to prove the path
+  // end to end: an admin-approved `crowd.level = unsafe_density` claim projected
+  // with privacy_eligible = FALSE, because evaluatePrivacy ran on
+  // PRIVACY_THRESHOLD_V1 — fifteen distinct actors in five independent groups —
+  // and a reviewed assertion has ONE authorized principal behind it. The read
+  // path filters `privacy_eligible = true`, so the entire safety lane (S1a's
+  // policy, S1b's review service, the Map producer, the gateway) could never
+  // serve a single notice. Everything was built; nothing could publish.
+  //
+  // The fix is NOT a bypass. The assertion still goes through evaluatePrivacy —
+  // only the threshold differs, and S1a already declared which one and why
+  // (SAFETY_REVIEWED_THRESHOLD: "requiring fifteen strangers to corroborate an
+  // evacuation before it may be shown would be a privacy control doing safety
+  // harm"). evaluateSafetyPublication is the single place that chooses, so the
+  // choice lives with the policy rather than being restated here.
+  //
+  // WHAT MAKES IT SAFE. The authority comes from `input.safetyAuthority`, which
+  // the caller establishes from the intel_claim_reviews audit trail — never from
+  // the claim's value. An `unsafe_density` row that reached 'active' by any other
+  // route (a direct database write, IntelCaptureService.approveClaim, a future
+  // bug) carries no authority, gets no reviewed threshold, and is refused. And
+  // because SAFETY_SERVABLE_CLAIM_STATUSES is ['active'] alone, a CONFLICTING
+  // safety claim is refused HERE, at the writer — the projection never gives it
+  // a snapshot, which is the enforcement point S1a's rule was missing.
+  //
+  // A refusal withholds the snapshot entirely rather than writing a suppressed
+  // one, matching the cohortSupportsValue precedent above: there is no honest
+  // safety state to record, and no row is better than an ineligible row a later
+  // reader might learn to serve.
+  let safetyThreshold: PrivacyThreshold | undefined;
+  let reviewerBackstop = false;
+  if (isSafetyAssertion(input.claimType, input.value)) {
+    const decision = evaluateSafetyPublication({
+      claimType: input.claimType,
+      value: input.value,
+      status: input.claimStatus,
+      authority: input.safetyAuthority ?? null,
+      subjectPlaceId: subjectId,
+      distinctActors: input.distinctActors,
+      distinctGroups: input.distinctGroups,
+      maxGroupShare: input.maxGroupShare,
+    });
+    if (!decision.publishable) {
+      return {
+        snapshot: null,
+        privacy: { publishable: false, reason: "invalid_input" },
+        skippedReason: "safety_policy_refused",
+        safetyRefusal: decision.reason,
+      };
+    }
+    safetyThreshold = decision.threshold;
+    // The REVIEWER is the principal, and the reviewed threshold's numbers (1
+    // actor, 1 group) are written for exactly that. Contributor observations are
+    // corroboration here, not the basis, so the gate is asked about a cohort of
+    // at least the one authorized principal — otherwise a reviewed assertion
+    // backed by an observation with no `group_key` scores distinctGroups = 0 and
+    // SAFETY_REVIEWED_THRESHOLD becomes unsatisfiable in the ordinary case, i.e.
+    // dead policy. This adjusts what the GATE is asked, never what the snapshot
+    // RECORDS: distinct_actors below stays the honest observation count, so no
+    // contributor number is inflated by a review.
+    reviewerBackstop =
+      decision.authority === "admin_review" || decision.authority === "authenticated_official";
+  }
+
   const scored = scoreConfidence(input.components, input.penalties);
   const privacy = evaluatePrivacy({
-    distinctActors: input.distinctActors,
-    distinctGroups: input.distinctGroups,
-    maxGroupShare: input.maxGroupShare,
+    distinctActors: reviewerBackstop ? Math.max(input.distinctActors || 0, 1) : input.distinctActors,
+    distinctGroups: reviewerBackstop ? Math.max(input.distinctGroups ?? 0, 1) : input.distinctGroups,
+    maxGroupShare: reviewerBackstop ? Math.min(input.maxGroupShare ?? 1, 1) : input.maxGroupShare,
     // Publication-delay clock keyed to the STABLE anchor (earliest qualifying
     // observation), NOT the newest-observation freshness clock — otherwise a
     // venue with continuous fresh signals resets the delay forever (H3).
     observedAt: input.publicationAnchorAt ?? input.observedAt,
     now,
     sensitiveSubject: input.sensitiveSubject,
-  });
+  }, safetyThreshold ?? PRIVACY_THRESHOLD_V1);
 
   return {
     snapshot: {
@@ -354,11 +466,76 @@ export async function projectClaim(
       // Exact lineage (Table 17). An input assembled without claim identity
       // (tests, ad-hoc callers) records an empty array — honest, not invented.
       input_claim_versions: Array.isArray(input.inputClaimVersions) ? input.inputClaimVersions : [],
+      // 3311: only well-formed uuids, de-duplicated — the column is uuid[] and a
+      // stray string would fail the whole write.
+      input_observation_ids: uniqueUuids(input.inputObservationIds),
       conflict_state: null,
     },
     privacy,
     scored,
   };
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The provenance list as the uuid[] column will accept it. */
+export function uniqueUuids(ids: readonly unknown[] | null | undefined): string[] {
+  if (!Array.isArray(ids)) return [];
+  const out = new Set<string>();
+  for (const id of ids) if (typeof id === "string" && UUID_RE.test(id)) out.add(id.toLowerCase());
+  return [...out];
+}
+
+/**
+ * PostgREST's answer when a row names a column the schema cache lacks —
+ * `PGRST204` ("Could not find the 'x' column…"), or Postgres's own 42703. Only
+ * a complaint about THIS column triggers the fallback; anything else is an
+ * ordinary write failure and stays one.
+ */
+function isUnknownProvenanceColumn(error: unknown): boolean {
+  const e = error as { code?: unknown; message?: unknown } | null | undefined;
+  const code = String(e?.code ?? "");
+  const message = String(e?.message ?? "");
+  return (code === "PGRST204" || code === "42703" || message.includes("schema cache")) && message.includes("input_observation_ids");
+}
+
+let provenanceUnavailableLogged = false;
+/** TEST SEAM. */
+export function _resetProvenanceFallbackLog(): void { provenanceUnavailableLogged = false; }
+
+/**
+ * Write a row that carries `input_observation_ids`; if the database does not
+ * have 3311 yet, write it WITHOUT the column and say so, loudly, once.
+ *
+ * WHY A FALLBACK AND NOT A REFUSAL. This writer is the only thing that turns
+ * observations into servable state. Refusing every projection because a
+ * provenance column is missing would stop the whole intel spine on a code
+ * deploy that beat its migration — the failure mode census-sensing §14.8
+ * exists to prevent. Degrading to "provenance unrecorded" keeps the spine
+ * serving and the deletion reach honest: an unrecorded provenance falls back
+ * to subject granularity (over-inclusive), never to "rested on nothing".
+ * The cutover runbook still applies 3311 BEFORE this code, so in the
+ * intended order this branch never runs.
+ */
+async function writeWithProvenanceFallback<T extends Record<string, unknown>>(
+  write: (row: T) => PromiseLike<{ error?: unknown } | null | undefined>,
+  row: T,
+  what: string,
+): Promise<{ error: unknown; provenance: "recorded" | "unrecorded" }> {
+  const first = await write(row);
+  const firstError = first?.error ?? null;
+  if (!firstError || !isUnknownProvenanceColumn(firstError)) return { error: firstError, provenance: "recorded" };
+  if (!provenanceUnavailableLogged) {
+    provenanceUnavailableLogged = true;
+    logger.warn(
+      { event: "intel.projection.provenance_unavailable", what, err: firstError },
+      "intelProjection: input_observation_ids is not a column on this database (3311 not applied); writing WITHOUT provenance — the deletion reach falls back to subject granularity until 3311 lands",
+    );
+  }
+  const { input_observation_ids: _dropped, ...without } = row as Record<string, unknown>;
+  void _dropped;
+  const second = await write(without as T);
+  return { error: second?.error ?? null, provenance: "unrecorded" };
 }
 
 /**
@@ -420,7 +597,12 @@ export async function projectAndStore(
         privacy_reason: r.privacy.reason,
         generated_at: now.toISOString(),
       };
-      const { error: versionError } = await sc.from("intel_state_snapshot_versions").insert(version);
+      const versionWrite = await writeWithProvenanceFallback(
+        (row) => sc.from("intel_state_snapshot_versions").insert(row),
+        version as unknown as Record<string, unknown>,
+        "intel_state_snapshot_versions.insert",
+      );
+      const versionError = versionWrite.error;
       if (versionError) {
         tally.skipped++;
         logger.warn(
@@ -442,9 +624,12 @@ export async function projectAndStore(
       if (input.sourceClass && (SOURCE_CLASSES as readonly string[]).includes(input.sourceClass)) {
         currentRow.source_class = input.sourceClass;
       }
-      const { error } = await sc
-        .from("intel_state_snapshots")
-        .upsert(currentRow, { onConflict: "subject_id,zone_id,claim_type" });
+      const currentWrite = await writeWithProvenanceFallback(
+        (row) => sc.from("intel_state_snapshots").upsert(row, { onConflict: "subject_id,zone_id,claim_type" }),
+        currentRow,
+        "intel_state_snapshots.upsert",
+      );
+      const error = currentWrite.error;
       if (error) {
         tally.skipped++;
         logger.warn({ err: error, version_id: version.id }, "intelProjection: upsert failed");
@@ -463,6 +648,10 @@ export async function projectAndStore(
           claim_type: input.claimType,
           algorithm_version: PROJECTION_ALGORITHM_VERSION,
           input_claim_versions: r.snapshot.input_claim_versions,
+          // 3311: the COUNT of observations this row rests on, and whether the
+          // ids themselves were recorded. Never the ids, never an actor.
+          input_observation_count: r.snapshot.input_observation_ids.length,
+          provenance: versionWrite.provenance === "recorded" && currentWrite.provenance === "recorded" ? "recorded" : "unrecorded",
           confidence: r.snapshot.confidence,
           confidence_band: r.snapshot.confidence_band,
           privacy_eligible: r.snapshot.privacy_eligible,

@@ -9,8 +9,8 @@
  * Contract (identical return shape to `useSearchSuggestions`, so the search
  * screen swaps one hook for another):
  *   - The legacy hook is the FALLBACK, and it runs exactly while it is needed:
- *     until the gateway has answered once on this mount, and again from the
- *     moment the gateway reports itself `unavailable`. See A08 below.
+ *     while the gateway reports itself `unavailable` (E-9, census-discovery
+ *     §80 — the proving window is retired). See A08 below.
  *   - The gateway hook and, when the legacy hook is running, the legacy hook
  *     both produce grouped rows; the gateway's are shown whenever it actually
  *     has rows (mapped to the same `SuggestGroup` shape the panel renders).
@@ -28,13 +28,13 @@
  * legacy hook when the gateway is `available`"*.
  *
  * The legacy typeahead is now gated on `legacyEnabled` rather than left
- * permanently on. It runs:
- *   - before the gateway has produced a single suggestion on this mount (the
- *     PROVING window — a gateway that has never answered is not yet a
- *     fallback-free path), and
- *   - whenever the gateway reports `unavailable` (§38's own signal: 404 or
- *     offline), at which point the latch releases and the proven typeahead is
- *     back on the very next keystroke.
+ * permanently on. It runs ONLY while the gateway reports `unavailable` (§38's
+ * own signal: 404 or offline), and the proven typeahead is then back on the
+ * very next keystroke. Until census-discovery §80 it also ran through a
+ * PROVING window — until the gateway had produced a suggestion on the mount —
+ * which kept two requests per keystroke alive on every first keystroke and on
+ * every mount whose queries never matched (§53.4 reason 2). E-9 retired it
+ * (register D-W10-S1-4): a gateway that has not answered yet has not failed.
  *
  * Why retiring the duplicate request is not retiring a second opinion: A08
  * measured that `/discovery/suggest` *"is not a parallel matcher — it calls the
@@ -51,14 +51,15 @@
  * This hook is the reversible seam: to disable the gateway wiring, the search
  * screen imports `useSearchSuggestions` again — nothing else changes.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchSuggestions, type UseSearchSuggestionsOpts } from './useSearchSuggestions.ts';
 import type { SuggestGroup } from '../services/discovery.ts';
 import { useInputAssistance } from '../platform/input-assistance/hooks/useInputAssistance.ts';
 import { mapSuggestionsToGroups, findSuggestionForRow } from '../platform/input-assistance/search/globalSearch.ts';
 import { recordSuggestionSelection } from '../platform/input-assistance/services/selectionRecorder.ts';
 import { extractActionSuggestions } from '../platform/input-assistance/search/smartActions.ts';
-import { registerSearchFields, SEARCH_FIELD_IDS } from '../platform/input-assistance/search/searchFields.ts';
+import { GLOBAL_SEARCH_CAPABILITIES } from '../platform/input-assistance/contexts/clientCapabilities.ts';
+import { registerSearchFields, SEARCH_FIELD_IDS } from '../platform/input-assistance/search/searchFields.ts'; import { refreshPolicyOnUse } from '../platform/input-assistance/services/policyRefreshOnUse.ts';
 import type { InputSessionContext, InputSuggestion } from '../platform/input-assistance/types/inputSuggestion.ts';
 
 // Register the global-search field's policy once at module load (idempotent).
@@ -93,6 +94,13 @@ export interface GlobalSearchSuggestionsResult {
    */
   refused: boolean;
   /**
+   * census-discovery §80 (DV-83, D-W10-S1-2) — the SHOWN source answered with a
+   * `coverage: "partial"` refusal: its groups are real, and some sources were not
+   * read, so the list may be missing things. The panel says so; it never renders
+   * such an answer as a complete one.
+   */
+  incomplete: boolean;
+  /**
    * §35 — record an EXPLICIT pick of a shown row as selection memory. Call it
    * from the screen's suggestion-pick handler. Fire-and-forget, fail-soft, and a
    * no-op for a legacy-typeahead row or a non-recordable one, so a caller may
@@ -122,24 +130,35 @@ export function useGlobalSearchSuggestions(
     context: 'global_search',
     text: query,
     sessionContext,
+    // §48 capability handshake (census G343). This surface does NOT render the
+    // shared overlay: it maps rows through `globalSearch.ts` and
+    // `smartActions.ts`, which between them resolve `open_entity`,
+    // `submit_search` and `add_to_trip` and DROP everything else on arrival —
+    // `share_entity`, `drop_pin`, `open_compass`. The census's words for that
+    // were "graceful degradation, not negotiation — the server keeps spending
+    // work on rows it will never see used". Declaring the three makes it a
+    // negotiation: the serve stops building them. The declaration is derived
+    // from `DISPATCHABLE_ACTION_TYPES` itself, so it cannot drift away from
+    // what this screen really dispatches.
+    capabilities: GLOBAL_SEARCH_CAPABILITIES,
     enabled,
   });
 
-  // A08 — has the gateway ever answered on this mount? A latch, not a snapshot:
-  // one answer retires the duplicate request, and `unavailable` releases it
-  // again so §38's fallback is one keystroke away, not a reload away.
-  const [gatewayProven, setGatewayProven] = useState(false);
-  useEffect(() => {
-    if (gateway.unavailable) { setGatewayProven(false); return; }
-    if (gateway.suggestions.length > 0) setGatewayProven(true);
-  }, [gateway.unavailable, gateway.suggestions]);
+  // A08 / E-9 (census-discovery §80, register D-W10-S1-4) — the PROVING WINDOW
+  // is retired. Until §80 a latch here kept the legacy typeahead running until
+  // the gateway had produced a row on the mount, so a first keystroke — and a
+  // mount whose queries never matched — cost two requests (§53.4 reason 2). A
+  // gateway that has not answered YET has not failed; §38's failure signal is
+  // `unavailable` (404/405/501, offline, no token, an unreadable schema), and
+  // only that turns the legacy typeahead on. It turns off again on the next
+  // successful serve, because `unavailable` clears there.
 
   // The fallback runs exactly while it is the fallback for something.
-  const legacyEnabled = enabled && (!gatewayProven || gateway.unavailable);
-
+  const legacyEnabled = enabled && (gateway.unavailable || !gateway.policyAuthoritative); usePolicyRefreshOnUse(enabled && !gateway.policyAuthoritative && query.trim().length > 0, query.trim()); // §80 round 3 (D-W10-S1-4): no authoritative policy = the gateway cannot serve, so the fallback runs and the table is asked for again
+  const shownRef = useRef<'gateway' | 'legacy'>('gateway'); const handoff = enabled && !gateway.unavailable && gateway.policyAuthoritative && shownRef.current === 'legacy' && gateway.answeredText !== query.trim(); // §80 round 4 (D-W10-S1-4): the screen showed legacy rows and the gateway has not yet ANSWERED this query, so the legacy rows, and the hook that keeps them current, stay until it has
   // Proven path — the fallback. `enabled: false` stops its fetching entirely
   // (useSearchSuggestions.ts:49), which is the whole of the A08 consolidation.
-  const legacy = useSearchSuggestions(query, { lat, lng, city, enabled: legacyEnabled });
+  const legacy = useSearchSuggestions(query, { lat, lng, city, enabled: legacyEnabled || handoff });
 
   const gatewayGroups = useMemo(
     () => mapSuggestionsToGroups(gateway.suggestions, query),
@@ -156,11 +175,11 @@ export function useGlobalSearchSuggestions(
   // Prefer the gateway when it is enabled, available, and either
   //   - it actually has content — grouped rows OR a smart-action chip (an "add
   //     to trip" parse can yield an action with no search rows; it must still
-  //     surface) — so it never replaces a live legacy list with an empty one; or
+  //     surface) — so it never replaces a live legacy list with an empty one (nor, since round 4, before it has ANSWERED the current query: `handoff`); or
   //   - the legacy hook is not running (A08), in which case the gateway is the
   //     only source and falling back would mean falling back to nothing.
   const preferGateway =
-    enabled && !gateway.unavailable && (!legacyEnabled || gatewayHasRows || gatewayActions.length > 0);
+    enabled && !gateway.unavailable && gateway.policyAuthoritative && !handoff && (!legacyEnabled || gatewayHasRows || gatewayActions.length > 0);
 
   // §35 — the write half of Phase 8 personalization for this surface. Before
   // this existed, `global_search` selection memory had exactly one writer in the
@@ -177,13 +196,36 @@ export function useGlobalSearchSuggestions(
     },
     [preferGateway, gateway.suggestions, gateway.policy, query],
   );
-
+  const shown = preferGateway ? 'gateway' : 'legacy'; useEffect(() => { if (enabled) shownRef.current = shown; }, [enabled, shown]); // round 4: what the screen last showed, read by the next render's handoff
   return {
     groups: preferGateway ? gatewayGroups : legacy.groups,
     actionSuggestions: preferGateway ? gatewayActions : [],
     loading: preferGateway ? gateway.loading : legacy.loading,
     source: preferGateway ? 'gateway' : 'legacy',
-    refused: preferGateway ? false : legacy.refused,
+    refused: preferGateway ? gateway.refusal?.coverage === 'nothing' : legacy.refused, incomplete: preferGateway ? gateway.refusal?.coverage === 'partial' : legacy.incomplete,
     recordPick,
   };
+}
+
+/**
+ * census-discovery §80 round 3 (register D-W10-S1-4, "The missing policy").
+ *
+ * While the search field is being USED without an authoritative policy, ask the
+ * authority for the table again — on each keystroke, which
+ * `policyRefreshOnUse.ts` throttles to one attempt per
+ * `POLICY_RETRY_MIN_GAP_MS` with one in flight — and re-render when a table lands so the mounted
+ * screen moves back to the gateway without waiting for another keystroke. The
+ * gateway hook keys its resolved policy on `policyEpoch()`, so that re-render is
+ * all it needs to read the new table.
+ */
+function usePolicyRefreshOnUse(wanted: boolean, typed: string): void {
+  const [, setLanded] = useState(0);
+  useEffect(() => {
+    if (!wanted) return;
+    let live = true;
+    void refreshPolicyOnUse().then((outcome) => {
+      if (live && outcome === 'installed') setLanded((n) => n + 1);
+    });
+    return () => { live = false; };
+  }, [wanted, typed]);
 }

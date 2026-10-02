@@ -62,7 +62,7 @@ import {
 // `12` "Stop conditions" — the automatic half of the stop. `disable_discovery_pde`
 // is a human pulling a lever; this is the system pulling it when the evidence
 // instrument itself is failing. It can only ever resolve DOWNWARD, to legacy.
-import { evaluateStopConditions } from "./discoveryStopConditions.js";
+import { evaluateStopConditions } from "./discoveryStopConditions.js"; import { refreshDiscoveryStopMeasurements } from "./discoveryStopMeasurements.js";
 
 export const DISCOVERY_ENGINE_MODE_FLAG = "DISCOVERY_ENGINE_MODE";
 export const DISCOVERY_PDE_KILL_SWITCH  = "disable_discovery_pde";
@@ -317,7 +317,7 @@ async function resolveUncached(sc: any): Promise<ResolvedMode> {
     // the evaluator: a condition that trips mid-TTL takes effect on the next
     // uncached resolution. Stated because "it halts" and "it halts within 30
     // seconds" are different promises.
-    const stop = evaluateStopConditions();
+    void refreshDiscoveryStopMeasurements(sc); const stop = evaluateStopConditions();
     if (stop.tripped.length > 0) {
       logger.warn(
         { mode, tripped: stop.tripped, attempts: stop.attempts,

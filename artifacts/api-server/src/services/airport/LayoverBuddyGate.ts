@@ -45,7 +45,7 @@
  * flake. L254 therefore stays `W` with the tight-window arm closed.
  */
 import type { AirportProfile } from "./AirportProfileService.js";
-import type { LayoverSession } from "./LayoverSessionService.js";
+import type { LayoverSession } from "./LayoverSessionService.js"; import type { EntryEligibility } from "./layoverEntryGate.js";
 import {
   certifySessionFeasibility,
   type LayoverFeasibilityRecord,
@@ -112,11 +112,15 @@ export interface LayoverBuddyDecision {
 export function layoverBuddyDecision(
   airport: AirportProfile,
   session: LayoverSession,
-  nowMs: number = Date.now(),
+  nowMs: number = Date.now(), /** The session owner's corridor (`resolveLayoverEntry`), as every certification takes it — census-discovery §65. Omitted = unresolved. */ entry?: EntryEligibility | null, /** census-discovery §81: the certified snapshot's record, when the caller read one; the gate then certifies nothing itself. */ certified?: LayoverFeasibilityRecord | null,
 ): LayoverBuddyDecision {
-  const record = certifySessionFeasibility(airport, session, { nowMs });
+  const record = certified ?? certifySessionFeasibility(airport, session, { nowMs, entry });
   const safetyGate: BuddySafetyGate = {
     passed:
+      // A DENY-LIST, and `entry_unverified` is deliberately not on it: it means
+      // the border could not be checked, not that the traveller is refused, and
+      // the advice they hold says so in words. A verdict added later passes by
+      // default here — check this list when the union grows.
       record.verdict !== "no" &&
       record.verdict !== "stay_airside" &&
       record.envelope.returnState === "NORMAL",

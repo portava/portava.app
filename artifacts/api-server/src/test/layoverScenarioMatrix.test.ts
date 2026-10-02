@@ -35,6 +35,7 @@ import assert from "node:assert/strict";
 import { adviseLeaving, computeWindow } from "../services/airport/LayoverSafetyEngine.js";
 import type { AirportProfile } from "../services/airport/AirportProfileService.js";
 import type { LayoverSession } from "../services/airport/LayoverSessionService.js";
+import type { EntryEligibility } from "../services/airport/layoverEntryGate.js";
 
 const HOUR = 3_600_000;
 /** 10:00 in Asia/Taipei — outside every time-of-day band at the arrival end. */
@@ -80,9 +81,22 @@ function layover(hours: number, over: Partial<LayoverSession> = {}): LayoverSess
   };
 }
 
-const run = (a: AirportProfile, s: LayoverSession) => {
+/**
+ * A corridor this passport may walk through. Supplied where a scenario is about
+ * the CLOCK reaching landside, so the verdict under test is the clock's answer
+ * and not the entry gate's: a call with no entry fact answers
+ * `entry_unverified` whatever the window says, which would make a landside
+ * scenario indistinguishable from an airside one.
+ */
+const PERMITTED_ENTRY = {
+  state: "permitted" as const,
+  corridor: { passportCountry: "TW", destinationCountry: "TW" },
+  status: "visa_free",
+};
+
+const run = (a: AirportProfile, s: LayoverSession, entry?: EntryEligibility) => {
   const window = computeWindow(a, s, NOW);
-  return { window, advice: adviseLeaving(a, s, window) };
+  return { window, advice: adviseLeaving(a, s, window, entry ? { entry } : undefined) };
 };
 
 // ── L219 ─────────────────────────────────────────────────────────────────────
@@ -203,9 +217,19 @@ describe("§21.1 L221 / L223 — the two rungs that do reach landside", () => {
   it("6h international, curated: landside, with the deadline the CONTRACT would have to carry", () => {
     const { window, advice } = run(
       curatedAirport(), layover(6, { flightType: "international", immigrationRequired: true }),
+      PERMITTED_ENTRY,
     );
     assert.equal(window.tier, "quick_city");
     assert.equal(advice.verdict, "yes");
+
+    // The other half of the rung, stated rather than assumed: the SAME six
+    // hours with no entry fact does not reach a landside yes. L221/L223 are
+    // about a window that permits landside; whether the border does is a
+    // separate question the engine now asks out loud.
+    const unasked = run(
+      curatedAirport(), layover(6, { flightType: "international", immigrationRequired: true }),
+    );
+    assert.equal(unasked.advice.verdict, "entry_unverified");
     assert.equal(window.usableMinutes, 139);
     // L221 asks for "landside + RETURN CONTRACT". The deadline exists and is
     // certified; the contract (`layover_return_plans`, census L24) does not, so

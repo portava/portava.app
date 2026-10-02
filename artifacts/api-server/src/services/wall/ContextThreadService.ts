@@ -493,7 +493,7 @@ async function readSocialPresenceCandidate(
     const cutoff = new Date(now.getTime() - SOCIAL_PRESENCE_DAYS * 24 * 60 * 60 * 1000).toISOString();
     const { data, error } = await sc
       .from("posts")
-      .select("author_id, created_at")
+      .select("author_id, created_at, location_privacy_mode, post_status") // census-media §43: the owner's mode (and the release state it reads), so a post whose place mapPublicPost withholds is not counted AT this place
       .eq("canonical_place_id", place.placeId)
       .eq("visibility", "public")
       .eq("status", "active")
@@ -511,7 +511,7 @@ async function readSocialPresenceCandidate(
     for (const row of data as any[]) {
       const a = String(row.author_id ?? "");
       // Exclude the viewer's own posts from "people you follow".
-      if (!a || a === viewer.viewerId) continue;
+      if (!a || a === viewer.viewerId || postPlaceWithheld(row)) continue; // census-media §43: a post whose owner withheld its place does not place its author here (the viewer's own posts were never counted)
       distinct.add(a);
       const t = Date.parse(String(row.created_at ?? ""));
       if (!Number.isNaN(t) && t > newestMs) newestMs = t;
@@ -1140,3 +1140,6 @@ export const _internal = {
   buildCompassClusterCandidate,
   PROTECTED_GEM_SENSITIVITY,
 };
+
+// census-media §43 — appended at the tail so no cited line above moves; ESM hoists imports.
+import { postPlaceWithheld } from "../../lib/postSchemas.js";

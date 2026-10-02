@@ -20,10 +20,13 @@ import type { CompassRecommendation } from '../src/services/compass';
 import { CompassTravelerRow } from '../src/components/compass/CompassTravelerRow';
 import { useActiveLocation } from '../src/hooks/useActiveLocation';
 import { parseSearchIntent, intentSummary } from '../src/lib/compassIntent';
-import { SearchSuggestionsPanel } from '../src/components/search/SearchSuggestionsPanel';
+import { SearchSuggestionsPanel } from '../src/components/search/SearchSuggestionsPanel'; import { SEARCH_PARTIAL_NOTICE } from '../src/services/discoveryCoverageNotice';
 import { useGlobalSearchSuggestions } from '../src/hooks/useGlobalSearchSuggestions';
 import { getSubmitQuery } from '../src/platform/input-assistance/search/globalSearch';
-import { getAddToTripTarget } from '../src/platform/input-assistance/search/smartActions';
+import { getAddToTripTarget, getOpenCompassTarget } from '../src/platform/input-assistance/search/smartActions';
+import { emitActionCompleted } from '../src/platform/input-assistance/services/inputTelemetry';
+import { resolveFieldPolicy } from '../src/platform/input-assistance/contexts/fieldRegistry';
+import { SEARCH_FIELD_IDS } from '../src/platform/input-assistance/search/searchFields';
 import type { InputSuggestion } from '../src/platform/input-assistance/types/inputSuggestion';
 import { TripWishlistPicker, type AddToTripPayload } from '../src/components/discovery/TripWishlistPicker';
 import { usePlainBottomInset } from '../src/hooks/useBottomInset';
@@ -161,7 +164,7 @@ export default function SearchScreen() {
     // `coverage: 'nothing'` — the suggest read was refused, not empty. Carried
     // to the panel so it does not print "no quick matches" on the server's
     // behalf when the server never reached the table.
-    refused: suggestRefused,
+    refused: suggestRefused, incomplete: suggestIncomplete, // §80 (DV-83): a partial typeahead is said, not passed off as whole
   } = useGlobalSearchSuggestions(query, {
     lat: userCoords?.lat,
     lng: userCoords?.lng,
@@ -458,7 +461,44 @@ export default function SearchScreen() {
   // so this never renders a dead chip and never throws.
   const [addToTripPayload, setAddToTripPayload] = useState<AddToTripPayload | null>(null);
 
+  /**
+   * §44 `action_completed` for the one dispatchable §21 action this screen owns.
+   *
+   * The field is `discovery.search` on `global_search` — the same registration
+   * `useGlobalSearchSuggestions` serves this screen from, so the event joins the
+   * rest of that field's funnel in the serve log rather than arriving under an
+   * id nothing else uses. `requestId` is null and honestly so: this screen's
+   * hook does not surface the serve id, so the completion cannot yet be joined
+   * back to the impression that produced the action row (census G355's other
+   * half). A null says that; an invented id would not.
+   */
+  function emitInputAssistActionCompleted(ok: boolean) {
+    const policy = resolveFieldPolicy(SEARCH_FIELD_IDS.globalSearch, 'global_search');
+    if (!policy) return;
+    emitActionCompleted(
+      {
+        fieldId: policy.fieldId,
+        context: policy.context,
+        policy: policy.telemetryPolicy,
+        requestId: null,
+      },
+      'add_to_trip',
+      ok,
+    );
+  }
+
   function handleSuggestionAction(suggestion: InputSuggestion) {
+    // §43 `open_compass` — the server's structured interpretation of what was
+    // typed, handed to Compass as the user's OWN question. Until now this row
+    // was produced by `semanticIntent.buildCompassStructuredRow` and discarded
+    // by every client surface (census G305); `prefillMessage` is the handoff
+    // the Compass screen already accepts from Layover's "Ask locals", reused
+    // rather than a second mechanism invented beside it.
+    const compass = getOpenCompassTarget(suggestion);
+    if (compass) {
+      router.push({ pathname: '/(tabs)/ai', params: { prefillMessage: compass.prompt } } as any);
+      return;
+    }
     const target = getAddToTripTarget(suggestion);
     if (target) {
       setAddToTripPayload({
@@ -638,7 +678,7 @@ export default function SearchScreen() {
         <View style={styles.partialBanner}>
           <AlertCircle size={14} color={color.warn} />
           <Text style={styles.partialBannerText}>
-            These results are incomplete — part of the search couldn’t be run.
+            {SEARCH_PARTIAL_NOTICE}
           </Text>
         </View>
       )}
@@ -655,7 +695,7 @@ export default function SearchScreen() {
           onPickResult={handleSuggestionPick}
           actionSuggestions={actionSuggestions}
           onPickAction={handleSuggestionAction}
-          refused={suggestRefused}
+          refused={suggestRefused} incomplete={suggestIncomplete}
         />
       ) : loading ? (
         <View style={styles.center}>
@@ -921,6 +961,18 @@ export default function SearchScreen() {
         place={addToTripPayload}
         visible={!!addToTripPayload}
         onClose={() => setAddToTripPayload(null)}
+        // §44 `action_completed` (census G319). The row the user tapped only
+        // OPENED this picker; §21 actions are propose-only, so the tap itself is
+        // not a completion and SmartInput deliberately does not record one — "an
+        // abandoned picker would look like a success". This screen is the one
+        // place that learns the answer, which is why the census named it as the
+        // owner of this event.
+        //
+        // Both arms, on purpose: `onClose` alone emits nothing, so an abandoned
+        // picker stays uncounted, and a failed save reports ok:false rather than
+        // being indistinguishable from never having tried.
+        onSaved={() => emitInputAssistActionCompleted(true)}
+        onSaveFailed={() => emitInputAssistActionCompleted(false)}
       />
     </KeyboardSafeScrollView>
   );

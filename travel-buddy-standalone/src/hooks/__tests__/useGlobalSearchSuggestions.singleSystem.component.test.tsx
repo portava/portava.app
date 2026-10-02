@@ -54,8 +54,8 @@ let mockGatewayState: {
   suggestions: Array<Record<string, unknown>>;
   loading: boolean;
   unavailable: boolean;
-  policy: unknown;
-} = { suggestions: [], loading: false, unavailable: false, policy: null };
+  policy: unknown; policyAuthoritative: boolean; // §80 round 3: the real hook reports whether its policy is the authority's; every case here is under an authoritative one
+} = { suggestions: [], loading: false, unavailable: false, policy: null, policyAuthoritative: true };
 
 // NOTE: intentionally exhaustive — the real gateway hook performs its own
 // debounced network calls; this test is about WHO FETCHES, so the gateway's
@@ -86,17 +86,41 @@ async function pastDebounce() {
 
 beforeEach(() => {
   mockLegacyFetches.length = 0;
-  mockGatewayState = { suggestions: [], loading: false, unavailable: false, policy: null };
+  mockGatewayState = { suggestions: [], loading: false, unavailable: false, policy: null, policyAuthoritative: true };
 });
 
 describe('A08 — the legacy typeahead is a fallback, not a parallel system', () => {
   /**
-   * The CONTROL for the case below. It also proves the harness itself moves:
-   * each rerender is a keystroke, and each keystroke must show up as a legacy
-   * request while the gateway has not answered. Without this, "no legacy
-   * request" in the next test could be a dead rerender rather than a fix.
+   * E-9 (census-discovery §80, register D-W10-S1-4): the PROVING WINDOW is
+   * retired. Until §80 this case read "BEFORE the gateway has answered: every
+   * keystroke still fetches the legacy typeahead" and asserted
+   * ['tok', 'toky', 'tokyo'] — §53.4's reason 2, two requests per keystroke
+   * until the gateway had produced a row on the mount, and for the whole mount
+   * when no query matched. A gateway that has not answered YET has not failed;
+   * §38's signal for failure is `unavailable`, and only that turns the legacy
+   * typeahead on. So a healthy gateway that has never answered issues NO
+   * legacy request.
+   *
+   * The harness still moves: the unavailable cases below show the same
+   * rerenders DO reach the legacy hook when it is enabled.
    */
-  it('BEFORE the gateway has answered: every keystroke still fetches the legacy typeahead', async () => {
+  it('BEFORE the gateway has answered: no keystroke fetches the legacy typeahead (E-9)', async () => {
+    const { rerender } = await renderHook(
+      ({ q }: { q: string }) => useGlobalSearchSuggestions(q),
+      { initialProps: { q: 'to' } },
+    );
+    await pastDebounce();
+
+    for (const q of ['tok', 'toky', 'tokyo']) {
+      await rerender({ q });
+      await pastDebounce();
+    }
+
+    expect(mockLegacyFetches).toEqual([]);
+  });
+
+  it('CONTROL: the same keystrokes DO fetch the legacy typeahead while the gateway is unavailable', async () => {
+    mockGatewayState = { suggestions: [], loading: false, unavailable: true, policy: null, policyAuthoritative: true };
     const { rerender } = await renderHook(
       ({ q }: { q: string }) => useGlobalSearchSuggestions(q),
       { initialProps: { q: 'to' } },
@@ -110,6 +134,19 @@ describe('A08 — the legacy typeahead is a fallback, not a parallel system', ()
     }
 
     expect(mockLegacyFetches).toEqual(['tok', 'toky', 'tokyo']);
+  });
+
+  it('a mount whose queries NEVER match issues no legacy request either (§53.4 reason 2)', async () => {
+    const { result, rerender } = await renderHook(
+      ({ q }: { q: string }) => useGlobalSearchSuggestions(q),
+      { initialProps: { q: 'zz' } },
+    );
+    for (const q of ['zzq', 'zzqx', 'zzqxw']) {
+      await rerender({ q });
+      await pastDebounce();
+    }
+    expect(mockLegacyFetches).toEqual([]);
+    expect(result.current.source).toBe('gateway');
   });
 
   it('AFTER the gateway has answered: further keystrokes issue NO legacy request', async () => {
@@ -165,7 +202,7 @@ describe('A08 — the legacy typeahead is a fallback, not a parallel system', ()
 
     // The suggest endpoint disappears (404 / offline).
     await act(async () => {
-      mockGatewayState = { suggestions: [], loading: false, unavailable: true, policy: null };
+      mockGatewayState = { suggestions: [], loading: false, unavailable: true, policy: null, policyAuthoritative: true };
     });
     await rerender({ q: 'toky' });
     await pastDebounce();
@@ -180,7 +217,7 @@ describe('A08 — the legacy typeahead is a fallback, not a parallel system', ()
     );
 
     await act(async () => {
-      mockGatewayState = { suggestions: [], loading: false, unavailable: true, policy: null };
+      mockGatewayState = { suggestions: [], loading: false, unavailable: true, policy: null, policyAuthoritative: true };
     });
     await rerender({ q: 'tok' });
     await pastDebounce();
@@ -214,7 +251,7 @@ describe('A08 — the legacy typeahead is a fallback, not a parallel system', ()
 
     // A new query the gateway is still loading: available, no rows yet.
     await act(async () => {
-      mockGatewayState = { suggestions: [], loading: true, unavailable: false, policy: null };
+      mockGatewayState = { suggestions: [], loading: true, unavailable: false, policy: null, policyAuthoritative: true };
     });
     await rerender({ q: 'tokyo' });
     await pastDebounce();

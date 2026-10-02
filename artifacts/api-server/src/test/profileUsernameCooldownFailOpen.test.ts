@@ -41,6 +41,7 @@ import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import { makeFailClosedClient, type FakeClientSpec } from "./helpers/failClosedSupabase.js";
+import { RESERVED_USERNAMES, USERNAME_RE } from "../lib/usernameRules.js";
 import profileRouter from "../routes/profile.js";
 
 const ME = "ee000000-0000-4000-a000-000000000055";
@@ -48,6 +49,9 @@ const OTHER = "ee000000-0000-4000-a000-000000000056";
 const TOK = "tok-user";
 
 const READ_ERROR = { message: "server closed the connection unexpectedly", code: "08006" };
+
+/** Read counter for the §23 alternatives fail-closed case below. */
+let readCount = 0;
 
 /** Changed 3 days ago — well inside the 30-day cooldown. */
 const RECENTLY_CHANGED = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
@@ -214,5 +218,98 @@ describe("username availability: 'could not check' is not 'available'", () => {
       true,
       "calling a taken name free costs the user 30 days when the PATCH then rejects it",
     );
+  });
+});
+
+// ── §23 / G147 — "unavailable" is answered with ALTERNATIVES ─────────────────
+//
+// The census row (docs/architecture/census-input-intelligence.md, G147) read
+// "No alternatives are ever suggested". This is the LIVE surface: both username
+// entry points the app ships — app/profile/edit/identity.tsx and
+// app/(auth)/onboarding.tsx — reach availability through
+// hooks/useUsernameAvailability → services/profile.checkUsername → this
+// endpoint. Before the change the response carried `available` and `reason` and
+// nothing else, so there was no `alternatives` key for these assertions to read.
+//
+// MUTATION-PROOFS:
+//   F. delete the `.filter((c) => !taken.has(c))` in suggestUsernameAlternatives
+//      ⇒ "every offered handle is genuinely free" goes RED — the endpoint offers
+//      a handle another profile already holds.
+//   G. replace `if (error) return null` with a permissive empty list ⇒ the
+//      unreadable-registry case goes RED: an outage would be answered with five
+//      handles claimed free.
+
+describe("§23 — a taken username comes back with alternatives (G147)", () => {
+  it("HEALTHY: a taken name is answered with free alternatives", async () => {
+    install({
+      rows: {
+        profiles: profiles({ username_updated_at: null }, [
+          { id: OTHER, account_status: "active", username: "brandnewname" },
+          // The first candidate is ALSO taken, so a generator that merely
+          // appends suffixes without checking would be caught here.
+          { id: "ee000000-0000-4000-a000-000000000057", account_status: "active", username: "brandnewname1" },
+        ]),
+      },
+    });
+
+    const res = await checkUsername("brandnewname");
+    assert.equal(res.status, 200);
+    assert.equal(res.body.available, false);
+    assert.ok(Array.isArray(res.body.alternatives), "an unavailable handle must carry alternatives");
+    assert.ok(res.body.alternatives.length > 0, "at least one usable handle must be offered");
+    assert.ok(
+      !res.body.alternatives.includes("brandnewname"),
+      "the handle the user typed is not an alternative to itself",
+    );
+    assert.ok(
+      !res.body.alternatives.includes("brandnewname1"),
+      "every offered handle is genuinely free — brandnewname1 is held by another profile",
+    );
+    assert.ok(res.body.alternatives.includes("brandnewname2"), "the next free candidate takes its place");
+  });
+
+  it("HEALTHY: a reserved name is also answered with alternatives", async () => {
+    install({ rows: { profiles: profiles({ username_updated_at: null }) } });
+
+    const res = await checkUsername("admin");
+    assert.equal(res.body.available, false);
+    assert.equal(res.body.reason, "That username is reserved");
+    assert.ok(res.body.alternatives?.length > 0, "a reserved handle is unavailable too, and §23 answers it");
+    for (const alt of res.body.alternatives) {
+      assert.ok(!RESERVED_USERNAMES.has(alt), `${alt} must not itself be reserved`);
+      assert.ok(USERNAME_RE.test(alt), `${alt} must satisfy the handle rules the write path enforces`);
+    }
+  });
+
+  it("a FREE name carries no alternatives — there is nothing to replace", async () => {
+    install({ rows: { profiles: profiles({ username_updated_at: null }) } });
+
+    const res = await checkUsername("brandnewname");
+    assert.equal(res.body.available, true);
+    assert.equal(res.body.alternatives, undefined);
+  });
+
+  it("FAILS CLOSED: an unreadable registry offers NO alternatives, never free-looking ones", async () => {
+    // EXACTLY the third `profiles` read, and no other. Read 1 is requireUser's
+    // account_status ban gate and read 2 is the availability check — failing
+    // either would answer 500 before the alternatives branch is reached, and the
+    // assertion below would then pass off someone else's refusal. Read 3 IS the
+    // alternatives lookup: the verdict must still arrive, WITHOUT offers.
+    readCount = 0;
+    install({
+      rows: {
+        profiles: profiles({ username_updated_at: null }, [
+          { id: OTHER, account_status: "active", username: "brandnewname" },
+        ]),
+      },
+      failOn: (ctx) => (ctx.table === "profiles" && (readCount += 1) === 3 ? READ_ERROR : null),
+    });
+
+    const res = await checkUsername("brandnewname");
+    assert.equal(readCount, 3, `expected the alternatives read to be reached; saw ${readCount} profiles read(s)`);
+    assert.equal(res.status, 200, "the availability verdict itself is unaffected");
+    assert.equal(res.body.available, false, "the name is still taken");
+    assert.equal(res.body.alternatives, undefined,
+      "'these handles are free' may not be asserted out of a failed read");
   });
 });

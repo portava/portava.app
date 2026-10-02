@@ -1417,10 +1417,20 @@ failed.
 major, matching `.replit`'s `modules = ["nodejs-24", …]` and
 `docs/eas-runbook.md`'s required-tools table ("node | 24.x (LTS)").
 
-> **Node 24 is inferred, not enforced by the repo.** There is no `engines` field
-> in any `package.json`, no `.nvmrc`, and no `.tool-versions`. If CI ever pins a
-> different major, **nothing in the repo will object** — which is itself a gap
-> worth closing, ideally with an `engines` field.
+> **Node 24 is checked by the test suite, not enforced at install.** There is no
+> `engines` field in any `package.json`, no `.nvmrc`, and no `.tool-versions`.
+> What objects instead: `artifacts/api-server/src/test/nodeRuntimePin.test.ts`
+> fails when any workflow's `NODE_VERSION` differs from `.replit`'s `nodejs-N`,
+> or when the suite runs on a lower major. That matters because a lower major
+> does not fail cleanly: on Node 22, api-server tests that import
+> travel-buddy-standalone modules which import one another cannot load under
+> `tsx/esm`, and `discoveryClientRouteE2E` reports a misleading "does not
+> provide an export named 'truncateDisplayName'" (census-discovery §76.5).
+> Claude Code on the web sessions switch to `.replit`'s major in
+> `.claude/hooks/session-start.sh`. An `engines` field is still absent on
+> purpose: pnpm refuses to install a project whose own `engines.node` does not
+> match, so it would stop every install on a Node 22 machine. That is the
+> owner's call.
 
 **pnpm, twice.** The repo has **two independent workspace roots**:
 

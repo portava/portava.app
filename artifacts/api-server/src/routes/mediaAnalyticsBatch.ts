@@ -14,7 +14,7 @@ import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import {
   recordMediaEvent,
-  MEDIA_NORTH_STAR_EVENT_TYPES,
+  MEDIA_NORTH_STAR_EVENT_TYPES, MEDIA_CLIENT_OUTCOME_SIGNAL_TYPES,
   type MediaEventType,
 } from "../lib/mediaAnalytics.js";
 
@@ -42,6 +42,9 @@ const VALID_EVENT_TYPES = new Set<string>([
   "add_to_trip", "directions_tap", "wrong_place_report",
   "upload_start", "processing_complete", "processing_failure", "playback_failure",
   ...MEDIA_NORTH_STAR_EVENT_TYPES,
+  // §44 outcome signals a client surface emits (census-media §21). The SERVER-only
+  // outcome signals (MEDIA_SERVER_OUTCOME_SIGNAL_TYPES) are deliberately absent.
+  ...MEDIA_CLIENT_OUTCOME_SIGNAL_TYPES,
 ]);
 
 const batchSchema = z.object({

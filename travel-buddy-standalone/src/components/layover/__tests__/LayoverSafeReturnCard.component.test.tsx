@@ -416,3 +416,96 @@ test('a non-active session offers no abort control at all', async () => {
   expect(screen.queryByTestId('return-to-airport-btn')).toBeNull();
   expect(screen.getByTestId('safe-return-inactive')).toBeTruthy();
 });
+
+// ── §16 L154 — the crew meeting point the bundle cached ──────────────────────
+//
+// WHAT WOULD TURN THIS RED. Before the widening, `crewMeetingPoint` was
+// `OfflineCapability<never>`, so `value` was typed `null` and the first test
+// below did not COMPILE — there was no shape on this side of the wire for a
+// meeting point to arrive in, which is why L154 could never have been closed
+// from the server alone.
+//
+// The second test is the one that stops the fix becoming a different lie: an
+// unavailable capability must render a NAMED absence, not a blank line and not
+// a claim that the crew has no meeting point.
+
+test('a cached crew meeting point is on screen, verbatim', async () => {
+  const ov = overviewFixture();
+  const withPoint: LayoverOverview = {
+    ...ov,
+    offlineBundle: {
+      ...ov.offlineBundle,
+      crewMeetingPoint: { available: true, value: 'Gate D4 Starbucks', reason: null },
+    },
+  };
+  await render(<CardUnderTest overview={withPoint} nowMs={CERTIFIED_MS} canAbort />);
+  const line = screen.getByTestId('safe-return-crew-meeting-point');
+  expect(String(line.props.children)).toContain('Gate D4 Starbucks');
+});
+
+test('an unavailable crew meeting point is named rather than left blank', async () => {
+  // The fixture's own value: `{available:false, value:null, reason:'no_crew_storage'}`,
+  // which is what `buildOfflineBundle` still sends unconditionally today.
+  await render(<CardUnderTest overview={overviewFixture()} nowMs={CERTIFIED_MS} canAbort />);
+  const line = screen.getByTestId('safe-return-crew-meeting-point');
+  const text = String(line.props.children);
+  expect(text.trim().length).toBeGreaterThan(0);
+  expect(text).toMatch(/No crew meeting point/i);
+});
+
+// ── §15.1 L144 — the traveller is told what was told about them ──────────────
+//
+// WHAT WOULD TURN THIS RED. `crewNotifyUnavailableReason` was
+// `'no_crew_storage' | null`; the second test's body carries `not_in_a_crew`,
+// which did not COMPILE against that union. `no_crew_storage` has been false
+// since crew storage landed on 2026-09-16, so the only value the old type could
+// hold was one the server should stop sending.
+//
+// THE BOUNDARY. These assert only that the ABORTING TRAVELLER can read back
+// what the server says happened about their own abort. Nothing here — and
+// nothing in the card — initiates a notification or offers a control that
+// would; whether a crew should be told at all is the owner's decision.
+
+test('when the server reports it told the crew, the traveller is told that too', async () => {
+  fetchSpy.mockResolvedValue(jsonResponse(200, {
+    ...ABORT_OK_BODY,
+    crewNotified: ['u-2', 'u-3'],
+    crewNotifyUnavailableReason: null,
+  }));
+  await render(<CardUnderTest overview={overviewFixture()} nowMs={CERTIFIED_MS} canAbort />);
+  await act(async () => { fireEvent.press(screen.getByTestId('return-to-airport-btn')); });
+  await waitFor(() => expect(screen.getByTestId('return-contract')).toBeTruthy());
+
+  const notice = screen.getByTestId('abort-crew-notice');
+  const text = String(notice.props.children);
+  expect(text).toContain('2');
+  expect(text).toMatch(/crewmates were told/i);
+});
+
+test('a reason the old closed union could not hold is reported as "not told"', async () => {
+  fetchSpy.mockResolvedValue(jsonResponse(200, {
+    ...ABORT_OK_BODY,
+    crewNotified: [],
+    crewNotifyUnavailableReason: 'not_in_a_crew',
+  }));
+  await render(<CardUnderTest overview={overviewFixture()} nowMs={CERTIFIED_MS} canAbort />);
+  await act(async () => { fireEvent.press(screen.getByTestId('return-to-airport-btn')); });
+  await waitFor(() => expect(screen.getByTestId('return-contract')).toBeTruthy());
+
+  const text = String(screen.getByTestId('abort-crew-notice').props.children);
+  expect(text).toMatch(/not told/i);
+  // A reason this client has not been taught is never shown as a raw code.
+  expect(text).not.toContain('not_in_a_crew');
+});
+
+test('a partial abort carries no crew answer, so the card makes no crew claim', async () => {
+  // The 500 body has neither field — `AbortResult` is not what a partial
+  // failure returns. Absence must produce silence, not "your crew was not told",
+  // which would be this card answering a question the server did not.
+  fetchSpy.mockResolvedValue(jsonResponse(500, ABORT_PARTIAL_BODY));
+  await render(<CardUnderTest overview={overviewFixture()} nowMs={CERTIFIED_MS} canAbort />);
+  await act(async () => { fireEvent.press(screen.getByTestId('return-to-airport-btn')); });
+  await waitFor(() => expect(screen.getByTestId('abort-partial-notice')).toBeTruthy());
+
+  expect(screen.queryByTestId('abort-crew-notice')).toBeNull();
+});

@@ -609,6 +609,19 @@ export async function canBeSeenByViewersBatch(
     }
   }
 
+  // Fail CLOSED on an unreadable blocks table. `blocksRes.data ?? []` alone read
+  // a PostgREST error as "nobody is blocked" and handed live circle presence —
+  // status, venue label, approximate location — to a viewer the target had
+  // blocked. The deny is reported as "unavailable" rather than "blocked" for the
+  // reason this file's docblock gives: a failed read must not be reported to the
+  // caller as a fact about a relationship nobody established.
+  const blocksUnreadable = Boolean((blocksRes as any).error);
+  if (blocksUnreadable) {
+    console.warn(
+      "canBeSeenByViewersBatch: blocks read FAILED — denying every viewer as unavailable",
+      describeReadError((blocksRes as any).error),
+    );
+  }
   const blocks = (blocksRes.data ?? []) as Array<{ blocker_id: string; blocked_id: string }>;
   const blockedWithTarget = new Set<string>();
   for (const b of blocks) {
@@ -652,6 +665,10 @@ export async function canBeSeenByViewersBatch(
     }
     if (targetDenyReason) {
       out.set(viewerId, { allowed: false, reason: targetDenyReason });
+      continue;
+    }
+    if (blocksUnreadable) {
+      out.set(viewerId, { allowed: false, reason: "unavailable" });
       continue;
     }
     if (blockedWithTarget.has(viewerId)) {
@@ -800,6 +817,17 @@ export async function canViewCirclePresenceBatch(
   for (const s of (settingsRes.data ?? []) as any[]) settingsById.set(s.user_id as string, s);
   const ctxById = new Map<string, any>();
   for (const c of (ctxRes.data ?? []) as any[]) ctxById.set(c.user_id as string, c);
+  // Same fail-CLOSED rule as the per-viewer batch above: an errored blocks read
+  // is "block state unknown", not "no blocks". Every target in this sweep is
+  // withheld rather than served to a viewer who may have blocked them, and the
+  // denial says "unavailable" rather than naming a block that was never read.
+  const blocksUnreadable = Boolean((blocksRes as any).error);
+  if (blocksUnreadable) {
+    console.warn(
+      "canViewCirclePresenceBatch: blocks read FAILED — denying every target as unavailable",
+      describeReadError((blocksRes as any).error),
+    );
+  }
   const blocks = (blocksRes.data ?? []) as Array<{ blocker_id: string; blocked_id: string }>;
   const now = new Date();
   const restricted = new Set<string>();
@@ -883,6 +911,10 @@ export async function canViewCirclePresenceBatch(
         (b.blocker_id === viewerId && b.blocked_id === targetUserId) ||
         (b.blocker_id === targetUserId && b.blocked_id === viewerId),
     );
+    if (blocksUnreadable) {
+      out.set(targetUserId, { allowed: false, reason: "unavailable" });
+      continue;
+    }
     if (mutualBlock) {
       out.set(targetUserId, { allowed: false, reason: "blocked" });
       continue;

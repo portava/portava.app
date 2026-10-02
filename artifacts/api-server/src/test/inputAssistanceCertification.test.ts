@@ -786,6 +786,64 @@ describe("§44 telemetry ingest — the serve log the client had no destination 
     assert.equal((out as { reason: string }).reason, "unknown_event_name");
   });
 
+  it("§57/G369 — the duplicate-prevention bit survives the rebuild, and nothing else does", () => {
+    // `resolvedExisting` is the ONE bit that distinguishes a §55 duplicate
+    // resolution from a §19 ambiguity, and §57's "duplicate creation prevented"
+    // is a count of it. The rebuild is where a prop either survives or silently
+    // does not, so this asserts it there rather than at the emitter.
+    const policy = resolvePolicy("hidden_gem_name")!;
+    const out = rebuildTelemetryEvent(
+      {
+        name: "disambiguation_selected",
+        context: "hidden_gem_name",
+        fieldId: "gem.name",
+        at: Date.now(),
+        props: {
+          entityType: "hidden_gem",
+          confidence: 0.72,
+          resolvedExisting: true,
+          // The row's LABEL, which a caller might think harmless on a
+          // duplicate. It is a place name someone submitted and it must not
+          // survive — the allow-list is what stops it, not the caller.
+          label: "Hidden Bar, Soi 11",
+        },
+      },
+      "sess-abc",
+      policy,
+      POLICY_VERSION,
+      Date.now(),
+    );
+    assert.equal(out.ok, true);
+    const row = (out as { row: { props: Record<string, unknown> } }).row;
+    // MUTATION: dropping `resolvedExisting` from TELEMETRY_EVENT_PROPS makes
+    // this undefined, and §57's duplicate count silently becomes zero forever.
+    assert.equal(row.props["resolvedExisting"], true);
+    assert.equal(row.props["entityType"], "hidden_gem");
+    assert.ok(!("label" in row.props), "a label must never survive the rebuild");
+  });
+
+  it("a non-boolean `resolvedExisting` is dropped, never coerced to a duplicate", () => {
+    const policy = resolvePolicy("hidden_gem_name")!;
+    const out = rebuildTelemetryEvent(
+      {
+        name: "disambiguation_selected",
+        context: "hidden_gem_name",
+        fieldId: "gem.name",
+        at: Date.now(),
+        props: { resolvedExisting: "true" },
+      },
+      "sess-abc",
+      policy,
+      POLICY_VERSION,
+      Date.now(),
+    );
+    assert.equal(out.ok, true);
+    const row = (out as { row: { props: Record<string, unknown> } }).row;
+    // MUTATION: coercing with `Boolean(raw)` makes the string "true" a prevented
+    // duplicate, and every client bug inflates a product success metric.
+    assert.ok(!("resolvedExisting" in row.props));
+  });
+
   it("every event name any registered policy declares is in the §44 vocabulary", () => {
     // The drift ratchet between policyRegistry.ts and migration 2950's
     // `iate_event_name_known` CHECK. A name declared by a policy but absent

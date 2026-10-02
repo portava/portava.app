@@ -54,7 +54,13 @@ let lastSignArgs: { bucket: string; path: string; ttl: number; options: any } | 
  */
 function makeClient() {
   function noop(): any {
+    // `limit()`/`order()` are here because lib/mediaAccess.ts reaches the
+    // stories table on the OWNER path too now (the deleted-story
+    // recovery-window check). A builder missing them does not return "no rows"
+    // — it throws, the branch fails closed, and every request in this file
+    // answers 403 instead of exercising the transform logic it is about.
     const b: any = { select() { return b; }, eq() { return b; }, in() { return b; },
+      limit() { return Promise.resolve({ data: [], error: null }); }, order() { return b; },
       is() { return b; }, maybeSingle() { return Promise.resolve({ data: null, error: null }); },
       then(ok: any, _err: any) { return Promise.resolve({ data: [], error: null }).then(ok, _err); } };
     return b;

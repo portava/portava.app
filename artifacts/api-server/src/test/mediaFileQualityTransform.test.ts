@@ -54,6 +54,13 @@ function makeClient() {
       select() { return b; },
       eq()     { return b; },
       in()     { return b; },
+      // `.limit()` is here because lib/mediaAccess.ts reaches the stories table
+      // on the OWNER path too now (the deleted-story recovery-window check). A
+      // builder missing it does not return "no rows" — it throws, the branch
+      // fails closed, and every request in this file answers 403 instead of
+      // exercising the transform logic it is about.
+      limit()  { return Promise.resolve({ data: [], error: null }); },
+      order()  { return b; },
       is()     { return b; },
       maybeSingle() { return Promise.resolve({ data: null, error: null }); },
       then(ok: any, _err: any) { return Promise.resolve({ data: [], error: null }).then(ok, _err); },

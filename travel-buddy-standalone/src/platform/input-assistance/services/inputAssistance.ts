@@ -20,9 +20,11 @@ import type {
   SuggestRequest,
   SuggestResult,
 } from '../types/inputSuggestion.ts';
-import { INPUT_POLICY_VERSION } from '../contexts/inputContexts.ts';
+import { inputPolicyVersion } from '../contexts/inputContexts.ts';
+import { sharedPolicyStore } from './policyStore.ts';
 import { buildSuggestBody } from './suggestBody.ts';
-import { parseSuggestBody, type RawSuggestBody } from './suggestResponse.ts';
+import { parseSuggestBody, isSchemaCompatible, type RawSuggestBody } from './suggestResponse.ts';
+import { CLIENT_SCHEMA_VERSION } from '../contexts/clientCapabilities.ts';
 
 function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
@@ -63,15 +65,17 @@ export async function requestSuggestions(
     return { ok: false, aborted: false, unavailable: true, error: 'Not signed in' };
   }
 
+  let budget: Budget | null = null;
   try {
-    const res = await fetch(`${base}/input-assistance/suggest`, {
+    budget = withBudget(signal);
+    const res = await fetch(`${base}/api/input-assistance/suggest`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify(buildSuggestBody(req)),
-      signal,
+      signal: budget.signal,
     });
 
     if (!res.ok) {
@@ -88,19 +92,134 @@ export async function requestSuggestions(
     // cannot be reached by a node:test. Inline, they were unprovable.
     const parsed = parseSuggestBody((await res.json()) as RawSuggestBody);
 
+    // §48 (census G341) — a serve whose RESPONSE SHAPE is newer than this build
+    // is not an error and not an empty result: it is assistance this client
+    // cannot safely read. `unavailable` is §38's own word for that, and it is
+    // what makes the field fall back to its local zero-state instead of
+    // rendering rows out of a shape it does not know.
+    if (!isSchemaCompatible(parsed.schemaVersion, CLIENT_SCHEMA_VERSION)) {
+      return {
+        ok: false,
+        aborted: false,
+        unavailable: true,
+        error: `Unsupported suggestion schema ${parsed.schemaVersion} (this build reads ${CLIENT_SCHEMA_VERSION})`,
+      };
+    }
+
+    // The authority's own statement of which policy table produced this serve.
+    // Recording it is what lets the store notice, under a live session, that
+    // the table it holds has been retired — §48's promise, which had no
+    // mechanism behind it while there was no endpoint to refetch from.
+    sharedPolicyStore.noteServedVersion(parsed.policyVersion ?? null);
+
     return {
       ok: true,
       requestId: parsed.requestId,
-      policyVersion: parsed.policyVersion ?? INPUT_POLICY_VERSION,
+      // §48 SKEW DETECTION, which this line used to defeat. It read
+      // `?? INPUT_POLICY_VERSION` — a constant baked in at BUILD time — so a
+      // deployment that sent no version was reported as running whatever
+      // version the client was compiled against. The one field designed to
+      // notice skew always agreed with itself. It now falls back to what the
+      // store actually HOLDS (`'unfetched'` when it holds nothing).
+      policyVersion: parsed.policyVersion ?? inputPolicyVersion(),
       suggestions: parsed.suggestions,
       // §44/§57 serve latency (census G372). ABSENT, never 0, when the server
       // did not send it — see suggestResponse.ts.
       serverMs: parsed.serverMs,
+      schemaVersion: parsed.schemaVersion ?? undefined,
+      // census-discovery §80 — coverage, when the serve did not read everything.
+      ...(parsed.refusal ? { refusal: parsed.refusal } : {}),
     };
   } catch (e) {
+    // census-discovery §80: a request that ran out of budget is a HUNG gateway,
+    // and a hung gateway is an unavailable one (§38) — so the field falls back.
+    // Only the CALLER's own abort (a superseded keystroke) is `aborted`.
+    if (budget?.timedOut()) {
+      return { ok: false, aborted: false, unavailable: true, error: `Timed out after ${SUGGEST_TIMEOUT_MS} ms` };
+    }
     const aborted = e instanceof Error && e.name === 'AbortError';
     // A network failure (backend unreachable) is treated as unavailable, not a
     // hard error — the field falls back to local/cached suggestions (§38).
     return { ok: false, aborted, unavailable: !aborted, error: 'Network error' };
+  } finally {
+    budget?.done();
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// census-discovery §80 (A08 reason 3) — the Map search sheet's field.
+//
+// The same endpoint, token and base as `requestSuggestions`; a different
+// PROJECTION, because the `map.search` field is served as a search page (see
+// `search/mapSearch.ts`). Never throws. The error strings are the ones
+// `services/discovery.ts` `searchUnified` gave the sheet before, so the sheet's
+// error line reads as it always did.
+// ─────────────────────────────────────────────────────────────────────────────
+export async function requestMapSearchPage(
+  query: string,
+  opts: MapSearchOpts = {},
+  signal?: AbortSignal,
+): Promise<MapSearchPageResult> {
+  const base = apiBase();
+  if (!base) return { ok: false, error: 'API not configured' };
+  const token = await freshToken();
+  if (!token) return { ok: false, error: 'Not signed in' };
+  const budget = withBudget(signal);
+  try {
+    const res = await fetch(`${base}/api/input-assistance/suggest`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(buildMapSearchBody(query, opts)),
+      signal: budget.signal,
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      return { ok: false, error: (body.message as string) ?? `HTTP ${res.status}` };
+    }
+    return { ok: true, ...parseMapSearchEnvelope(await res.json()) };
+  } catch {
+    return { ok: false, error: 'Network error — check your connection' };
+  } finally {
+    budget.done();
+  }
+}
+
+import {
+  buildMapSearchBody,
+  parseMapSearchEnvelope,
+  type MapSearchOpts,
+  type MapSearchPageResult,
+} from '../search/mapSearch.ts';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// census-discovery §80 follow-up — the request budget (register D-W10-S1-4,
+// "The timeout"). No request to the suggest endpoint may wait forever: after
+// SUGGEST_TIMEOUT_MS it is aborted and reported as `unavailable`, which is what
+// starts §38's fallback (E-9's legacy typeahead; the Map sheet's error line).
+// 5 s: two orders of magnitude over GII §33's 100–150 ms debounce, so a slow
+// but live serve is never cut off, and short enough that a person still typing
+// gets the fallback while it is useful.
+// ─────────────────────────────────────────────────────────────────────────────
+export const SUGGEST_TIMEOUT_MS = 5000;
+
+interface Budget {
+  signal: AbortSignal;
+  timedOut: () => boolean;
+  done: () => void;
+}
+
+function withBudget(outer?: AbortSignal): Budget {
+  const ctrl = new AbortController();
+  let expired = false;
+  const timer = setTimeout(() => { expired = true; ctrl.abort(); }, SUGGEST_TIMEOUT_MS);
+  const onOuter = () => ctrl.abort();
+  if (outer) {
+    if (outer.aborted) ctrl.abort();
+    else outer.addEventListener('abort', onOuter);
+  }
+  return {
+    signal: ctrl.signal,
+    timedOut: () => expired,
+    done: () => { clearTimeout(timer); outer?.removeEventListener('abort', onOuter); },
+  };
 }

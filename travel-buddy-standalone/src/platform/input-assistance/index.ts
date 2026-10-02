@@ -43,9 +43,9 @@ export type { SuggestionAction, SuggestionActionType } from './types/suggestionA
 
 // ── contexts / registry ──────────────────────────────────────────────────────
 export {
-  INPUT_CONTEXT_REGISTRY,
-  INPUT_POLICY_VERSION,
+  inputPolicyVersion,
   getContextDescriptor,
+  conservativeDescriptor,
   type InputContextDescriptor,
 } from './contexts/inputContexts.ts';
 export {
@@ -81,6 +81,34 @@ export {
 export { requestSuggestions } from './services/inputAssistance.ts';
 export { buildSuggestBody } from './services/suggestBody.ts';
 export { SuggestionCache, sharedSuggestionCache } from './services/suggestionCache.ts';
+// ── §48 / G340 — the policy authority ────────────────────────────────────────
+export {
+  PolicyStore,
+  sharedPolicyStore,
+  DEFAULT_MAX_AGE_MS,
+  type PolicySnapshot,
+  type PolicyReadResult,
+  type PolicyMissReason,
+} from './services/policyStore.ts';
+export {
+  CONSERVATIVE_POLICY,
+  conservativePolicyFor,
+  sanitizeServedPolicy,
+  offlineSurfaceAllowed,
+  UNREACHABLE_MIN_CHARS,
+  type ServedContextPolicy,
+} from './contexts/policyFallback.ts';
+export {
+  installInputPolicySync,
+  refreshInputPolicies,
+} from './services/installInputPolicySync.ts';
+export {
+  refreshPolicies,
+  applyAccountChange,
+  type PolicySyncDeps,
+  type PolicyRefreshOutcome,
+} from './services/policySync.ts';
+export { fetchInputPolicies, type PolicyFetchResult } from './services/policyClient.ts';
 export { createSequenceGuard, type SequenceGuard } from './services/raceGuard.ts';
 export {
   dedupeSuggestions,
@@ -104,6 +132,38 @@ export {
   clearRecentSelections,
   type RecentSelection,
 } from './services/suggestionHistory.ts';
+// §32/§34 — the LOCAL tiers. `localZeroState` replays this session's explicit
+// accepts (G216); `installLocalRecents` makes that memory survive a restart
+// (G199) by binding AsyncStorage to the port in `localRecentsStore.ts`;
+// `offlineLocalRows` is the shipped-artifact tier the authority's
+// `static_dictionary` / `cached_local` surfaces open onto (G197/G198/G212).
+export {
+  localZeroState,
+  recordLocalSelection,
+  mayRetainLocally,
+  clearLocalZeroState,
+  clearLocalRecents,
+  attachLocalRecents,
+  detachLocalRecents,
+  type LocalZeroStatePolicy,
+} from './services/localZeroState.ts';
+export { installLocalRecents } from './services/installLocalRecents.ts';
+export {
+  LOCAL_RECENTS_STORAGE_KEY,
+  LOCAL_RECENTS_MAX_AGE_MS,
+  type LocalRecentsStorage,
+} from './services/localRecentsStore.ts';
+export {
+  offlineLocalRows,
+  localDictionaryFor,
+  type LocalDictionaryPolicy,
+  type LocalDictionarySource,
+} from './services/localDictionary.ts';
+export { COUNTRY_DICTIONARY } from './data/countries.ts';
+export { CITY_INDEX } from './data/cities.ts';
+export { LANGUAGE_DICTIONARY } from './data/languages.ts';
+export { INTEREST_DICTIONARY } from './data/interests.ts';
+export type { LocalDictionaryEntry } from './data/types.ts';
 // Phase 8 (Personalization, §35/§15/§14) — explicit-selection recorder. The pure
 // predicate + body builder + fail-soft core (selectBody.ts, node:test-safe) and
 // the RN fire-and-forget wiring (selectionRecorder.ts).
@@ -145,6 +205,15 @@ export { installInputTelemetryTransport } from './services/telemetryTransport.ts
 // ── components ───────────────────────────────────────────────────────────────
 export { SmartInput, type SmartInputProps } from './components/SmartInput.tsx';
 export { SuggestionOverlay, type SuggestionOverlayProps } from './components/SuggestionOverlay.tsx';
+// §32/§27 — the degraded sentence, exported because a surface that renders its
+// own overlay (a bottom sheet, a picker) must be able to say the same three
+// things rather than inventing a fourth.
+export {
+  degradedNotice,
+  type DegradedNotice,
+  type DegradedNoticeKind,
+  type DegradedNoticeParams,
+} from './components/degradedNotice.ts';
 export { SuggestionList, type SuggestionListProps } from './components/SuggestionList.tsx';
 export {
   SuggestionGroup,

@@ -147,4 +147,47 @@ describe('useSearchSuggestions — a refusal is not a cacheable empty typeahead'
     await new Promise((r) => setTimeout(r, 600));
     expect(mockGetSearchSuggestions).toHaveBeenCalledTimes(2);
   });
+
+  /**
+   * census-discovery §80 (DV-83, register D-W10-S1-2): a PARTIAL answer is kept
+   * and cached — its groups are real — but it is no longer indistinguishable
+   * from a complete one. `incomplete` says so, and it survives the cache: a
+   * replayed partial is still partial.
+   */
+  it('PARTIAL (§80): the hook reports incomplete, and a cached replay still does', async () => {
+    mockGetSearchSuggestions.mockResolvedValue({
+      ok: true, groups: [group('p1')], refusal: REFUSAL_PARTIAL,
+    });
+    const { result, rerender } = await renderHook(
+      ({ q }: { q: string }) => useSearchSuggestions(q, {}),
+      { initialProps: { q: 'laksa' } },
+    );
+    await waitFor(() => expect(result.current.groups).toHaveLength(1), PAST_DEBOUNCE);
+    expect(result.current.incomplete).toBe(true);
+    expect(result.current.refused).toBe(false);
+
+    mockGetSearchSuggestions.mockResolvedValue({ ok: true, groups: [group('p2')] });
+    await act(async () => { rerender({ q: 'laksaa' }); });
+    await waitFor(() => expect(result.current.incomplete).toBe(false), PAST_DEBOUNCE);
+
+    await act(async () => { rerender({ q: 'laksa' }); });
+    await waitFor(() => expect(result.current.groups[0]?.items[0]?.id).toBe('p1'), PAST_DEBOUNCE);
+    expect(mockGetSearchSuggestions).toHaveBeenCalledTimes(2);
+    expect(result.current.incomplete).toBe(true);
+  });
+
+  it('CONTROL (§80): a complete answer is not incomplete, and neither is a refused one', async () => {
+    mockGetSearchSuggestions.mockResolvedValue({ ok: true, groups: [group('c1')] });
+    const { result, rerender } = await renderHook(
+      ({ q }: { q: string }) => useSearchSuggestions(q, {}),
+      { initialProps: { q: 'roti' } },
+    );
+    await waitFor(() => expect(result.current.groups).toHaveLength(1), PAST_DEBOUNCE);
+    expect(result.current.incomplete).toBe(false);
+
+    mockGetSearchSuggestions.mockResolvedValue({ ok: true, groups: [], refusal: REFUSAL_NOTHING });
+    await act(async () => { rerender({ q: 'rotii' }); });
+    await waitFor(() => expect(result.current.refused).toBe(true), PAST_DEBOUNCE);
+    expect(result.current.incomplete).toBe(false);
+  });
 });

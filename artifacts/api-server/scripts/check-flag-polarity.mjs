@@ -455,6 +455,18 @@ const CLASSIFIED = [
   { flag: 'MEDIA_RANKING_ENABLED',               kind: 'CAPABILITY', reason: 'SCREAMING_CASE capability gate: media feed ranking. `true` = ranking applied.' },
   { flag: 'MEDIA_ANALYTICS_ENABLED',             kind: 'CAPABILITY', reason: 'SCREAMING_CASE capability gate: media analytics collection. `true` = collected.' },
   {
+    flag: 'MEDIA_WORLD_SHELL_ENABLED', kind: 'CAPABILITY',
+    reason:
+      'SCREAMING_CASE capability gate: the Media v2 World shell. `true` = the shell and its action rail are ' +
+      "available. The app reads it through isEnabled('MEDIA_WORLD_SHELL_ENABLED') (app/(tabs)/media.tsx, " +
+      'app/media-viewer/[id].tsx); since census-media §21 (2026-09-26) the API reads it too, to keep the ' +
+      'rail-only write POST/DELETE /api/media/:id/event-link and the link_event offer as dark as the rail ' +
+      'that shows them (routes/mediaActions.ts, services/media/MediaActionResolver.ts). An unreadable flag ' +
+      'leaves both OFF. It sat on APP_TREE_READS until that server read existed: seeded by ' +
+      '2300_phantom_feature_flag_rows.sql, and before that it existed nowhere, so no operator action could ' +
+      'reach the surface.',
+  },
+  {
     flag: 'MEDIA_SHARES_ENABLED', kind: 'CAPABILITY',
     reason:
       'SCREAMING_CASE capability gate: the media share/export surface (POST /api/media/:id/share). `true` = ' +
@@ -630,7 +642,7 @@ const CLASSIFIED = [
       'so a suppression is auditable — this flag gates whether projection happens at all, not whether the ' +
       'privacy gate is honoured; that is never optional.',
   },
-
+  { flag: 'MEDIA_WATCH_STAGE24_RANKING_ENABLED', kind: 'CAPABILITY', reason: 'SCREAMING_CASE capability gate (census-media §34, owner decision F2; seeded OFF by 3343): `true` = the Watch feed (GET /api/media/feed) is ordered by the §24 Media Ranking stage instead of the legacy MediaFeedRankingService.rankMediaFeed. Read through the shared isFlagEnabled in services/media/WatchStage24Ranking.ts, so an unreadable flag leaves the legacy ranker ordering the page, which is today.' },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1063,7 +1075,7 @@ const APP_UNRESOLVED_READS = [
       '`flagKey: \'MEDIA_VIEW_MODE_{FULLSCREEN,GRID,HIDDEN_GEMS}_ENABLED\'` properties. The scanner reads ' +
       'those literals through its `flagKey:` pattern, so all three names ARE in the app-read population and ' +
       'ARE checked by R9 — the unresolvable call site adds no name the scan is missing. Verified by hand ' +
-      'against media.tsx on 2026-09-05; all three are seeded by 2037_media_tab_flags.sql.',
+      'against media.tsx on 2026-09-05; all three are seeded by 2037_media_tab_flags.sql. ' + 'census-media §34 (2026-09-27) added a FOURTH entry, `flagKey: \'MEDIA_TAB_WORLD_DEFAULT_ENABLED\'` (seeded by 3340), read the same way. For that entry both filter sites call resolveMediaSurfaceDecisions (src/features/media/state/mediaSurfaceFlags.ts), which reads it and MEDIA_WORLD_SHELL_ENABLED as isEnabled literals.',
   },
 ];
 
@@ -1240,6 +1252,21 @@ const UNRESOLVABLE = [
       'convention. The check resolves consts only within a single file and does not follow imports, so this ' +
       'is declared rather than silently resolved. Verified by hand at c89f09a77.',
   },
+  {
+    file: 'services/airport/layoverEntryGate.ts',
+    expr: 'ENTRY_FLAG',
+    covers: ['passport_entry_intelligence_enabled'],
+    reason:
+      'The SAME imported const as the routes/entryRequirements.ts entry above, and unresolvable for the same ' +
+      'reason: consts are resolved within one file and imports are not followed. Copying the literal into ' +
+      'this file to satisfy the check would put the flag name in two places and is exactly what the shared ' +
+      'export exists to prevent. The read is fail-CLOSED and the module says so at the call site: a ' +
+      'feature_flags table that cannot be read makes isFlagEnabled return false, which lands on ' +
+      'unresolved/entry_intelligence_disabled, and an unresolved corridor never produces a landside yes. ' +
+      'Verified by hand at ecc2a0a5b -- grep -n ENTRY_FLAG src/services/airport/layoverEntryGate.ts returns ' +
+      'exactly two lines, the import and the single isFlagEnabled call, plus one mention in the file header ' +
+      'comment.',
+  },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1386,6 +1413,7 @@ const DIRECT_READS = [
       `(\`{ error: { message: "TypeError: fetch failed" }, status: 0 }\`), so a catch here means a non-builder ` +
       `client — a wiring bug — not an unhealthy database, and blanking every content type for a wiring bug ` +
       `would hide it behind an empty feed.` },
+  { file: 'lib/discoveryCandidates/pipelineFlags.ts', shape: 'bulk', reason: `\`.in("flag", [...])\` over the eight census-discovery §85 flags (3480–3484), each a literal at the read site and a *_enabled CAPABILITY by convention. Verified by hand at W10-I (§91): an \`error\`, a non-array \`data\` or a throw leaves the ON set empty, and a row counts only when it names the flag AND \`enabled === true\` — every stage off. Fail-closed.` },
   { file: 'services/ranking/DiscoveryRankingService.ts', shape: 'bulk', reason: `\`.in("flag", [...])\` over five SCREAMING_CASE ranking boosts, each individually present in CLASSIFIED. ${V}: catch → {}, boosts off. Fail-closed.` },
   { file: 'services/ranking/MediaFeedRankingService.ts', shape: 'bulk', reason: `\`.in("flag", [...])\` over eight SCREAMING_CASE media ranking flags, each individually present in CLASSIFIED. ${V}: a \`defaults\` object of all-false is returned on failure. Fail-closed.` },
   { file: 'routes/adminRankingConfig.ts',            shape: 'bulk', reason: `Admin listing of ranking flags for display. ${V}: not a gate.` },
@@ -1395,7 +1423,7 @@ const DIRECT_READS = [
   { file: 'routes/featureFlags.ts',       shape: 'management', reason: `THE ADMIN READ SURFACE: selects flag/enabled/description for the admin UI. Not a gate — it reports flag state, it does not act on it. Errors surface as db_error. ${V}.` },
   { file: 'routes/admin.ts',              shape: 'management', reason: `Admin dashboard listing all flags for display (select flag/enabled/description/updated_at, no filter). Not a gate — it reports flag state. ${V}.` },
   { file: 'routes/adminCompass.ts',       shape: 'management', reason: `Admin upsert of Compass flags by variable. A write. ${V}.` },
-  { file: 'routes/circle.ts',             shape: 'management', reason: `POST /admin/circle/kill-switch — the OPERATOR'S CONTROL SURFACE for find_your_circle_disabled. It upserts the stop; it does not read it to gate. Fails LOUDLY (db_error) on write failure, which is correct: an operator flipping a stop must learn if it did not take. ${V}.` },
+  // routes/circle.ts (POST /admin/circle/kill-switch) was listed here as a direct upsert; tm-followups moved it onto toggle_feature_flag_with_audit, so the entry was removed.
   // notifications.ts and admin.ts (safe-return) previously wrote flags via a raw
   // `.update({enabled}).eq("flag", <var>)`; audit FLAG-1/2 moved both onto the
   // audited toggle_feature_flag_with_audit RPC, so those var-shaped direct
@@ -1500,21 +1528,6 @@ const APP_TREE_READS = [
       'reconciliation rests on — it lived ONLY in production, so a restored environment got no row, read false ' +
       'through the fail-closed helper, and the entry point was permanently invisible, which was mistaken for a ' +
       'deliberate design choice rather than a missing row.',
-  },
-  {
-    flag: 'MEDIA_WORLD_SHELL_ENABLED',
-    file: 'app/(tabs)/media.tsx',
-    line: 190,
-    reason:
-      "isEnabled('MEDIA_WORLD_SHELL_ENABLED') gates the World entry pill on the Media tab and, at " +
-      'app/media-viewer/[id].tsx, the World shell affordances in the viewer — i.e. the whole Media v2 client ' +
-      'surface and its /media-world route. Entered this list on 2026-09-05 with ' +
-      '2300_phantom_feature_flag_rows.sql, which seeds the row: this is the SAME shape as the ' +
-      'MEDIA_HIDDEN_GEMS_CREATE_ENABLED precedent above, one rung worse. That flag at least existed in ' +
-      'production; this one existed nowhere at all, so no operator action of any kind could reach the ' +
-      'surface — it needed a migration first. The reason it survived the reconciliation that caught the ' +
-      'other is that this check reads only the API src/ tree, and a flag read ONLY in the app tree was ' +
-      'invisible to both directions of the old rules. R9 now scans the app tree for exactly this.',
   },
   // city_launch_mode had an entry here from 2026-08-12 until 2026-08-13: an
   // app-tree read whose banner was its ONLY reader, recorded as

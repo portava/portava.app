@@ -59,11 +59,11 @@ import { logger as rootLogger } from "./logger.js";
 // already pages in. Separate module, separate function, and the scalar above is
 // not touched: a number the ranker consumes must not move because a diagnostic
 // was added beside it.
-import { computeTrendStates, type TrendReading } from "./discoveryTrendState.js";
+import { computeTrendStates, applyPlaceTrendReviews, type TrendReading } from "./discoveryTrendState.js";
 // census-discovery DC-17's four facts, and the version constants `06` §5's rank
 // provenance already uses. Imported rather than redeclared: a momentum reading
 // and a ranked page must never claim different versions of the same pipeline.
-import { derivedStoreProvenance, type DerivedStoreProvenance } from "./discoveryRankProvenance.js";
+import { derivedStoreProvenance, type DerivedStoreProvenance, type DerivedStoreVersions } from "./discoveryRankProvenance.js"; import { computeLocalMomentumV2, buildPlaceTrendContext, contextKeyOfItem, type TrendContext, type ContextPlaceRow, type ContextMembershipRow } from "./discoveryTrendNormalised.js"; import { isFlagEnabled } from "./featureFlags.js"; import { isMissingSchemaError } from "./capability/schemaCapability.js";  // §84 (W10-R1)
 
 const logger = rootLogger.child({ mod: "localMomentum" });
 
@@ -116,7 +116,7 @@ export interface MomentumRow {
   item_id: string;
   outcome: string;
   served_at: string;
-  outcome_at?: string | null;
+  outcome_at?: string | null; /** §84: read only under v2, where independence is counted by it. */ user_id?: string | null;
 }
 
 /**
@@ -144,7 +144,7 @@ export interface MomentumMap {
 }
 
 function weightFor(outcome: string): number {
-  if (outcome === "save") return MOMENTUM_EVENT_WEIGHTS.save;
+  if (outcome === "dismiss") return 0; if (outcome === "save") return MOMENTUM_EVENT_WEIGHTS.save; // §61 (DV-25): a dismiss is EXCLUDED — zero, never a negative weight
   return MOMENTUM_EVENT_WEIGHTS.outcome;
 }
 
@@ -153,7 +153,7 @@ function weightFor(outcome: string): number {
  * `values` mean "no surge anywhere", never "the read failed" — and the
  * provenance beside them says over which window that was established.
  */
-export function computeLocalMomentum(rows: readonly MomentumRow[], nowMs: number): MomentumMap {
+export function computeLocalMomentum(rows: readonly MomentumRow[], nowMs: number, opts: { model?: "v1" | "v2"; context?: TrendContext } = {}): MomentumMap { if (opts.model === "v2") return computeLocalMomentumNormalised(rows, nowMs, opts.context ?? {});  // §84: absent ⇒ v1, byte for byte (golden G1, G10)
   const recentSince   = nowMs - MOMENTUM_RECENT_WINDOW_MS;
   const baselineSince = nowMs - MOMENTUM_BASELINE_WINDOW_MS;
 
@@ -189,7 +189,7 @@ export function computeLocalMomentum(rows: readonly MomentumRow[], nowMs: number
   // arithmetic they describe because they are the same two numbers. Stamped
   // even when `out` is empty: "this window was read and nothing surged" is a
   // measurement, and the bare `{}` it used to return could not say it.
-  return { values: out, provenance: derivedStoreProvenance({ kind: "bounded", startMs: baselineSince, endMs: nowMs }, nowMs) };
+  return { values: out, provenance: derivedStoreProvenance({ kind: "bounded", startMs: baselineSince, endMs: nowMs }, nowMs, LOCAL_MOMENTUM_VERSIONS) };  // §68: this kernel's own versions, not the ranker's
 }
 
 // ── Loader, with a bounded per-key cache ──────────────────────────────────────
@@ -210,7 +210,7 @@ const _cache = new Map<string, CacheEntry>();
 
 /** Test hook: drop every cached momentum map. */
 export function _resetLocalMomentumCacheForTest(): void {
-  _cache.clear();
+  _cache.clear(); _retests.clear();
 }
 
 /**
@@ -237,10 +237,10 @@ export async function loadLocalMomentum(
   const hit = _cache.get(opts.cacheKey);
   if (hit && nowMs - hit.at < MOMENTUM_CACHE_TTL_MS) return hit.map;
 
-  let map: MomentumMap = empty();
+  let map: MomentumMap = empty(); let v2 = false; let context: TrendContext = {};  // §84: the v2 model, only with discovery_trend_normalised_enabled
   let trends: Record<string, TrendReading> = {};
   try {
-    const since = new Date(nowMs - MOMENTUM_BASELINE_WINDOW_MS).toISOString();
+    const since = new Date(nowMs - MOMENTUM_BASELINE_WINDOW_MS).toISOString(); v2 = await isFlagEnabled(sc, "discovery_trend_normalised_enabled"); if (v2) { const c = await loadTrendContext(sc, placeIds); if (c === null) throw new Error("trend context unread"); context = c; }
     const ids = [...new Set(placeIds)];
     const rows: MomentumRow[] = [];
     let failed = false;
@@ -254,7 +254,7 @@ export async function loadLocalMomentum(
       // over a non-total order can return one row twice and skip another.
       const { data, error } = await sc
         .from("rank_events")
-        .select("item_id, outcome, served_at, outcome_at")
+        .select(v2 ? "item_id, outcome, served_at, outcome_at, user_id" : "item_id, outcome, served_at, outcome_at")
         .eq("surface", "discovery")
         .neq("outcome", "analytics")
         .in("item_id", ids)
@@ -282,21 +282,21 @@ export async function loadLocalMomentum(
         "localMomentum: row ceiling reached — baseline window is bounded to the most recent rows",
       );
     }
-    if (!failed) {
-      map = computeLocalMomentum(rows, nowMs);
+    if (failed && v2) map = computeLocalMomentum([], nowMs, { model: "v2" });  if (!failed) {
+      map = computeLocalMomentum(rows, nowMs, v2 ? { model: "v2", context } : {});
       // Same rows, second pass. Cheap relative to the read that produced them,
       // and computed here rather than at the call site so the two can never be
       // derived from different corpora and then compared.
-      trends = computeTrendStates(rows, nowMs);
+      if (v2) trends = computeTrendStates(rows, nowMs, { model: "v2", context, ...(await postConvergenceOption(sc, rows, ids, since, nowMs)) }); else trends = computeTrendStates(rows, nowMs);  trends = await applyPlaceTrendReviews(sc, trends);  // §95 (DV-34): the post leg only under its own flag | census-discovery §93 (H-W10T-1): a place under a `suppressed` review is no claim and no retest pick; an unread review drops the reading
     }
   } catch {
     // resolves-not-throws-ok: a momentum read failure degrades to "no surge",
     // which is the documented honest default; the ranker must never throw here.
-    map = empty();
+    map = v2 ? computeLocalMomentum([], nowMs, { model: "v2" }) : empty();
     trends = {};
   }
 
-  _cache.set(opts.cacheKey, { at: nowMs, map, trends });
+  _cache.set(opts.cacheKey, { at: nowMs, map, trends }); if (v2) _retests.set(opts.cacheKey, trends); else _retests.delete(opts.cacheKey);  // §84 DV-31: the retest pool is a v2 reading only
   pruneAndBound(_cache, { max: MOMENTUM_CACHE_MAX, ttlMs: MOMENTUM_CACHE_TTL_MS, timestampOf: (e) => e.at, now: nowMs });
   return map;
 }
@@ -317,4 +317,148 @@ export function readLocalTrendStates(
   const hit = _cache.get(cacheKey);
   if (!hit || nowMs - hit.at >= MOMENTUM_CACHE_TTL_MS) return {};
   return hit.trends;
+}
+
+// ── census-discovery §68 (DC-17, lane P21): this kernel's own versions ────────
+//
+// Stamped on every `MomentumMap.provenance` in place of the Compass ranker's
+// pair, which versioned a pipeline this arithmetic is not part of. Declared at
+// the foot so no line above that a census cites moves.
+
+/**
+ * The momentum ARITHMETIC: the 48 h / 30 d split, the baseline divisor, the
+ * smoothing, the saturation, the recent-weight floor and the 3-decimal rounding.
+ * Bump when any of them changes. The string says "velocity", which is what this
+ * module measures (see the header), and NOT the other word on purpose: this
+ * record is served by routes/trails.ts as `readingProvenance`, and that route's
+ * suite forbids the word anywhere in a body (`11` §4's tripwire).
+ */
+export const LOCAL_MOMENTUM_MODEL_VERSION = "discovery-place-velocity-v1";
+
+/**
+ * What ONE `rank_events` row contributes: analytics rows excluded, an impression
+ * at `served_at` weighing 1, and an outcome at `outcome_at` weighing save 3,
+ * dismiss 0 (§61, DV-25) and any other outcome 2. `v2` because §61's dismiss
+ * exclusion changed it; the pre-§61 weighting (a dismiss at 2) is `v1`. Which
+ * surface's rows are read is the CALLER's read, not part of this definition.
+ *
+ * MUST equal lib/discoveryTrendState's `TREND_FEATURE_VERSION` and the literal
+ * 3435's `rebuild_place_momentum` writes to `place_momentum.feature_version`,
+ * because all three weigh the same rows the same way. Pinned by
+ * src/test/discoveryDerivedProvenance.test.ts rather than shared by an import,
+ * for the cycle reason lib/discoveryTrendState states at its own imports.
+ */
+export const LOCAL_MOMENTUM_FEATURE_VERSION = "discovery-row-activity-v2";  // §84: renamed from 3435's first spelling so no version NAME contains "weight" (B2)
+
+const LOCAL_MOMENTUM_VERSIONS: DerivedStoreVersions = {
+  modelVersion:   LOCAL_MOMENTUM_MODEL_VERSION,
+  featureVersion: LOCAL_MOMENTUM_FEATURE_VERSION,
+};
+
+// ── census-discovery §75 (DC-17, lane P33, H-P21-5) ───────────────────────────
+
+/**
+ * The record `computeLocalMomentum` stamps on ANY computation it runs at
+ * `nowMs` — its bounds, versions and clock depend on the clock alone, never on
+ * the rows. A caller whose rows reached this kernel through another function
+ * (the Trail fold, lib/discoveryTrailAffinity `trailMomentumFromRankEvents`,
+ * which returns `.values` only) can therefore state that computation's
+ * provenance without a second read. Computed BY the kernel, not restated, so it
+ * cannot drift from it; pinned equal to a real computation's record by a test.
+ */
+export function localMomentumProvenance(nowMs: number): DerivedStoreProvenance {
+  return computeLocalMomentum([], nowMs).provenance;
+}
+
+// ── census-discovery §84 (lane W10-R1): the exposure-normalised scalar ───────
+
+/** v2's arithmetic (lib/discoveryTrendNormalised). Bump when it changes. Says "velocity", not the other word (routes/trails.ts's tripwire). */
+export const LOCAL_MOMENTUM_MODEL_VERSION_V2 = "discovery-place-velocity-v2";
+/** MUST equal lib/discoveryTrendState `TREND_FEATURE_VERSION_V2` and 3477's `c_feature`. */
+export const LOCAL_MOMENTUM_FEATURE_VERSION_V2 = "discovery-exposure-activity-v3";
+
+const LOCAL_MOMENTUM_VERSIONS_V2: DerivedStoreVersions = {
+  modelVersion:   LOCAL_MOMENTUM_MODEL_VERSION_V2,
+  featureVersion: LOCAL_MOMENTUM_FEATURE_VERSION_V2,
+};
+
+function computeLocalMomentumNormalised(rows: readonly MomentumRow[], nowMs: number, context: TrendContext): MomentumMap {
+  const baselineSince = nowMs - MOMENTUM_BASELINE_WINDOW_MS;
+  return {
+    values: computeLocalMomentumV2(rows, nowMs, { context }),
+    provenance: derivedStoreProvenance({ kind: "bounded", startMs: baselineSince, endMs: nowMs }, nowMs, LOCAL_MOMENTUM_VERSIONS_V2),
+  };
+}
+
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/**
+ * The v2 context for a candidate set: `discovery_places` for the community
+ * ids and their non-archived Trail memberships. Null when a read FAILED (the
+ * caller then degrades to "no surge", as for a failed event read). A database
+ * without 2910's Trail tables has no memberships, which is a fact, not a
+ * failure — the SQL twin (3476) answers the same.
+ */
+export async function loadTrendContext(sc: any, placeIds: readonly string[]): Promise<TrendContext | null> {
+  const ids = [...new Set(placeIds.map(contextKeyOfItem).filter((id) => UUID_SHAPE.test(id)))];
+  if (ids.length === 0) return {};
+  try {
+    const places = await sc.from("discovery_places")
+      .select("id, submitted_by, city, neighborhood, lat, lng, created_at, category, place_type")
+      .in("id", ids);
+    if (places?.error || !Array.isArray(places?.data)) return null;
+    let memberships: ContextMembershipRow[] = [];
+    const ct = await sc.from("content_trails").select("trail_id, source_id").eq("source_type", "place").in("source_id", ids);
+    if (ct?.error) {
+      if (!isMissingSchemaError(ct.error)) return null;
+    } else if (Array.isArray(ct?.data) && ct.data.length > 0) {
+      const trailIds = [...new Set((ct.data as ContextMembershipRow[]).map((m) => m.trail_id))];
+      const live = await sc.from("trails").select("id").in("id", trailIds).neq("lifecycle_status", "archived");
+      if (live?.error || !Array.isArray(live?.data)) return null;
+      const ok = new Set((live.data as Array<{ id: string }>).map((t) => t.id));
+      memberships = (ct.data as ContextMembershipRow[]).filter((m) => ok.has(m.trail_id));
+    }
+    return buildPlaceTrendContext(places.data as ContextPlaceRow[], memberships);
+  } catch {
+    // resolves-not-throws-ok: a throw is a failed read, reported as null.
+    return null;
+  }
+}
+
+// ── §84 DV-31: the rediscovery retest pool ───────────────────────────────────
+
+/** The v2 readings of the last load per candidate key; empty under v1 (the retest is a v2 mechanism). */
+const _retests = new Map<string, Record<string, TrendReading>>();
+
+/**
+ * The v2 trend readings `loadLocalMomentum` computed for this key, for
+ * lib/discoveryTrendRediscovery to choose retests from. `{}` when the last
+ * load ran v1, failed, or has expired — never readings inferred from nothing.
+ */
+export function readRetestReadings(cacheKey: string, nowMs: number = Date.now()): Record<string, TrendReading> {
+  const hit = _cache.get(cacheKey);
+  if (!hit || nowMs - hit.at >= MOMENTUM_CACHE_TTL_MS) return {};
+  return _retests.get(cacheKey) ?? {};
+}
+
+// ── census-discovery §95 (lane W11-X3): "visitors post afterward" (DV-34) ────
+//
+// Read only while discovery_trend_normalised_enabled is on (the v2 branch above)
+// AND discovery_trend_post_convergence_enabled (3496, seeded FALSE) is on. Off,
+// absent or unreadable: `{}` — no Memory is read and the reading is §84's, byte
+// for byte (src/test/discoveryTrendPostConvergence.test.ts P0). A failed or
+// truncated Memory read is `unread`: it adds nothing, and the evidence says so.
+import { loadPublicMemoriesAtPlaces, postAfterVisitAuthors, type PostAfterVisitInput } from "./discoveryTrendPostConvergence.js";
+import { TREND_V2_RECENT_MS, TREND_V2_MID_MS, TREND_V2_PRIOR_MS, type TrendRowV2 } from "./discoveryTrendNormalised.js";
+
+async function postConvergenceOption(
+  sc: any, rows: readonly MomentumRow[], placeIds: readonly string[], sinceIso: string, nowMs: number,
+): Promise<{ postAfterVisit?: PostAfterVisitInput }> {
+  if (!(await isFlagEnabled(sc, "discovery_trend_post_convergence_enabled"))) return {};
+  const memories = await loadPublicMemoriesAtPlaces(sc, placeIds, sinceIso);
+  if (memories === null) return { postAfterVisit: { status: "unread" } };
+  return {
+    postAfterVisit: postAfterVisitAuthors(rows as readonly TrendRowV2[], memories, nowMs,
+      { recentMs: TREND_V2_RECENT_MS, midMs: TREND_V2_MID_MS, priorMs: TREND_V2_PRIOR_MS }),
+  };
 }

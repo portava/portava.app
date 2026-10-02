@@ -19,7 +19,7 @@ import { Router } from "express";
 import { sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
 import { resolveMediaForPosts } from "../lib/postMediaResolve.js";
-import { nameVisibilitySet } from "../lib/publicIdentity";
+import { nameVisibilitySet } from "../lib/publicIdentity"; import { fetchBlockedSet } from "../lib/blocks.js"; import { profilePostTiers } from "../lib/profilePostTiers.js";
 import {
   resolveProfileVisibility,
   extractBearerToken,
@@ -102,10 +102,12 @@ async function applyVisibilityGuard(
   // error. `.error` is the only failure signal.
   let visibility: string;
   let privacySettings: PrivacySettings | null;
+  let privacySettingsUnavailable = false;
   try {
     const result = await resolveProfileVisibility(sc, viewerId, targetId, targetRow);
     visibility = result.visibility;
     privacySettings = result.privacySettings;
+    privacySettingsUnavailable = result.privacySettingsUnavailable === true;
   } catch (e: any) {
     res.status(500).json({ error: "db_error", message: e.message ?? "Visibility check failed" });
     return { allowed: false, privacySettings: null, isOwner };
@@ -128,6 +130,17 @@ async function applyVisibilityGuard(
   }
   if (visibility === "limited_preview") {
     res.status(200).json({ items: [], nextCursor: null });
+    return { allowed: false, privacySettings: null, isOwner: false };
+  }
+
+  // The per-tab gates below all read `privacySettings?.show_x === false`, so a
+  // NULL settings object reads as "the owner opted in to everything". When the
+  // row could not be READ that inference is wrong and serves posts / stamps /
+  // trips to strangers who opted out. Answer honestly and retryably instead of
+  // guessing — a filtered-empty 200 would be indistinguishable from "this user
+  // has nothing".
+  if (privacySettingsUnavailable) {
+    sendError(res, "degraded_unavailable", "Privacy settings could not be read");
     return { allowed: false, privacySettings: null, isOwner: false };
   }
 
@@ -156,13 +169,13 @@ router.get("/users/:username/posts", async (req, res) => {
   }
 
   const limit = parseLimit(req.query.limit);
-  const cursor = req.query.cursor as string | undefined;
+  const cursor = req.query.cursor as string | undefined; const tiers = await profilePostTiers(sc, viewerId, target.id, guard.isOwner); if (!tiers) { sendError(res, "degraded_unavailable", "Your follow relationship could not be read"); return; } // TM-social: a post's own visibility tier holds on the profile tab
 
   let query = sc
     .from("posts")
     .select("id, content, media_urls, location_city, location_country, trip_id, created_at, post_status")
     .eq("author_id", target.id)
-    .eq("post_status", "published")
+    .eq("post_status", "published").eq("status", "active").is("deleted_at", null).in("visibility", tiers)
     .order("created_at", { ascending: false })
     .limit(limit + 1);
 
@@ -479,7 +492,7 @@ router.get("/users/:username/circles", async (req, res) => {
 
   const viewerId = await getOptionalViewerId(sc, req);
   const guard = await applyVisibilityGuard(sc, viewerId, target.id, target, res);
-  if (!guard.allowed) return;
+  if (!guard.allowed) return; if (!guard.isOwner && guard.privacySettings?.show_friends === false) { res.status(200).json({ items: [], nextCursor: null }); return; } // TM-social: circle memberships are friends-graph data
 
   const limit = parseLimit(req.query.limit);
   const cursor = req.query.cursor as string | undefined;
@@ -506,10 +519,10 @@ router.get("/users/:username/circles", async (req, res) => {
     return;
   }
 
-  const rows = data ?? [];
+  const rows = data ?? []; const blockedOwners = viewerId ? await fetchBlockedSet(sc, viewerId) : new Set<string>(); if (!blockedOwners) { sendError(res, "degraded_unavailable", "Block list could not be read"); return; }
   // Universal display-name rule: circle owners show @handle unless opted in.
   const allowedOwnerNames = await nameVisibilitySet(sc, rows.map((r: any) => r.user_id));
-  const items = rows.slice(0, limit).map((r: any) => {
+  const items = rows.slice(0, limit).filter((r: any) => !blockedOwners.has(r.user_id as string)).map((r: any) => {
     const owner = r.owner ?? {};
     const nameOk = r.user_id === viewerId || allowedOwnerNames.has(r.user_id as string);
     return {

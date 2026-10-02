@@ -40,7 +40,7 @@ import type { RankingFactor } from "./CompassRecommendationEngine.js";
 import { canonicalCityKey } from "../lib/canonicalLocations.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { mayPublishRhythm } from "../lib/compassRhythmGate.js";
-import { logger as rootLogger } from "../lib/logger.js";
+import { logger as rootLogger } from "../lib/logger.js"; import { cityConfidenceWindowedCorpus } from "./cityConfidenceWindowedReads.js";  // census-discovery §85 H-P21-4
 
 const logger = rootLogger.child({ service: "CompassGraphEngine" });
 
@@ -551,7 +551,7 @@ export interface GraphRebuildReport {
    * "swept, found nothing" and "never swept" are different states and the
    * scheduler log is where anyone would notice the difference.
    */
-  experienceRevocations?: ExperienceReconcileReport;
+  experienceRevocations?: ExperienceReconcileReport; edgeSupport?: EdgeSupportReport; cityRowRetirements?: CityRowRetirementReport; // §67 — see reconcileEdgeSupport
 }
 
 // ── Node kinds ────────────────────────────────────────────────────────────────
@@ -584,7 +584,7 @@ interface EdgeObs {
 
 class GraphBatch {
   nodes = new Map<string, NodeRec>();
-  edges = new Map<string, { rec: EdgeObs; count: number; first: string | null; last: string | null }>();
+  edges = new Map<string, { rec: EdgeObs; count: number; first: string | null; last: string | null; days: Set<string> }>(); // `days`: §81 (DV-51) diversity — distinct UTC observation days
 
   /**
    * Register a node. Order-independent: a builder that only knows a node by
@@ -609,11 +609,11 @@ class GraphBatch {
     const at = obs.at ?? null;
     const cur = this.edges.get(k);
     if (cur) {
-      cur.count++;
+      cur.count++; if (at) cur.days.add(at.slice(0, 10));
       if (at && (!cur.first || at < cur.first)) cur.first = at;
       if (at && (!cur.last || at > cur.last)) cur.last = at;
     } else {
-      this.edges.set(k, { rec: obs, count: 1, first: at, last: at });
+      this.edges.set(k, { rec: obs, count: 1, first: at, last: at, days: new Set(at ? [at.slice(0, 10)] : []) });
     }
   }
 }
@@ -670,7 +670,7 @@ const BUILD_LIMIT = 5000;
  * Returns the numbers of nodes/edges upserted.
  */
 export async function buildGraphFromSources(
-  db: SupabaseClient,
+  db: SupabaseClient, opts: { strength?: (e: GraphEdgeObservation) => number; retireBelow?: number } = {}, // §81 (DV-51): the decay rule, when the rebuild runs under it
 ): Promise<{ nodesUpserted: number; edgesUpserted: number; nodesFailed: number; edgesFailed: number }> {
   const batch = new GraphBatch();
 
@@ -833,10 +833,10 @@ export async function buildGraphFromSources(
   // person-to-person edge is a social fact the read-time privacy guards were
   // never designed to aggregate over.
   try {
-    const { data } = await db
-      .from("circles")
-      .select("id, owner_id, city, visibility, created_at")
-      .limit(BUILD_LIMIT);
+    // The literal read is circleSourceRows (end of file), shared with the §67
+    // reconcile so that `circles` — writerless, a dead lane on the
+    // check:writerless-reads ratchet — keeps exactly one reader site.
+    const { data } = await circleSourceRows(db).limit(BUILD_LIMIT);
     for (const r of (data as any[]) ?? []) {
       if (!r.id || !r.owner_id) continue;
       const city = normCity(r.city);
@@ -971,7 +971,7 @@ export async function buildGraphFromSources(
     }
   }
 
-  const edgeRows = [...batch.edges.values()].map((e) => ({
+  const edgeRows = [...batch.edges.values()].filter((e) => !(opts.strength && opts.retireBelow !== undefined && opts.strength(graphEdgeObservationOf(e)) < opts.retireBelow)).map((e) => ({ // §81: under decay the rebuild does not re-create what the reconcile retires
     src_type:       e.rec.src_type,
     src_key:        e.rec.src_key,
     dst_type:       e.rec.dst_type,
@@ -982,7 +982,7 @@ export async function buildGraphFromSources(
     first_seen:     e.first,
     last_seen:      e.last,
     attrs:          e.rec.attrs ?? {},
-    updated_at:     nowIso,
+    updated_at:     nowIso, ...(opts.strength ? { weight: opts.strength(graphEdgeObservationOf(e)) } : {}), // §81: absent → byte-identical
   }));
   for (let i = 0; i < edgeRows.length; i += 500) {
     const chunk = edgeRows.slice(i, i + 500);
@@ -1447,8 +1447,8 @@ export function scoreCityDepth(signals: {
  */
 export async function computeCityConfidenceIndex(
   db: SupabaseClient,
-): Promise<{ scored: number; strongestCity: string | null }> {
-  const [{ data: models }, { data: visitEdges }, { data: cityEvents }] = await Promise.all([
+): Promise<{ scored: number; strongestCity: string | null; readErrors?: string[] }> {  // §85 H-P21-4: `readErrors` only under compass_city_confidence_windowed_reads_enabled
+  const windowed = await cityConfidenceWindowedCorpus(db); const [{ data: models }, { data: visitEdges }, { data: cityEvents }] = windowed ? windowed.base : await Promise.all([  // §85 H-P21-4 (3484, seeded FALSE): ordered, paged, windowed reads; OFF ⇒ the three reads below, unchanged
     db.from("compass_city_models").select("city, time_slices, sample_size").limit(1000),
     db.from("compass_graph_edges")
       .select("src_key, dst_key, edge_type, observed_count")
@@ -1458,7 +1458,7 @@ export async function computeCityConfidenceIndex(
       .select("node_type, node_key, city")
       .eq("node_type", "event")
       .limit(20000),
-  ]);
+  ]); if (windowed && windowed.readErrors.length > 0) { logger.warn({ readErrors: windowed.readErrors }, "city confidence: a corpus read failed — no city scored this run"); return { scored: 0, strongestCity: null, readErrors: windowed.readErrors }; }  // §85: a failed read is unknowable, never an empty city
 
   const visitorsByCity = new Map<string, number>();
   const returnersByCity = new Map<string, number>();
@@ -1477,7 +1477,7 @@ export async function computeCityConfidenceIndex(
   // Outcome depth per city: outcome edges whose target item lives in the city.
   const outcomesByCity = new Map<string, number>();
   try {
-    const { data: outcomeEdges } = await db
+    const { data: outcomeEdges } = windowed ? { data: windowed.outcomes } : await db  // §85: under the flag, the ordered, paged outcome read
       .from("compass_graph_edges")
       .select("dst_key, edge_type")
       .like("edge_type", "outcome:%")
@@ -1496,7 +1496,7 @@ export async function computeCityConfidenceIndex(
   let scored = 0;
   let strongestCity: string | null = null;
   let strongestScore = -1;
-  const computedAt = new Date().toISOString();
+  const computedAt = windowed?.computedAtIso ?? new Date().toISOString();  // §85: under the flag, the clock the window ends at
 
   for (const m of (models as any[]) ?? []) {
     const city = String(m.city);
@@ -1512,7 +1512,7 @@ export async function computeCityConfidenceIndex(
     };
     const depthScore = scoreCityDepth(signals);
     const { error } = await db.from("compass_city_confidence").upsert(
-      { city, depth_score: depthScore, tier: tierForScore(depthScore), signals, computed_at: computedAt },
+      { city, depth_score: depthScore, tier: tierForScore(depthScore), signals, computed_at: computedAt, ...(windowed ? windowed.provenance : {}) },  // §85: model_version, feature_version, source_window (3484) — absent with the flag off
       { onConflict: "city" },
     );
     if (!error) {
@@ -2140,17 +2140,731 @@ export async function reconcileExperienceNodes(db: SupabaseClient): Promise<Expe
 }
 
 export async function rebuildIntelligenceGraph(db: SupabaseClient): Promise<GraphRebuildReport> {
-  const { nodesUpserted, edgesUpserted, nodesFailed, edgesFailed } = await buildGraphFromSources(db);
+  const decayPolicy = await readGraphDecayPolicy(db); const { nodesUpserted, edgesUpserted, nodesFailed, edgesFailed } = await buildGraphFromSources(db, decayPolicy ? { strength: decayPolicy.strength, retireBelow: GRAPH_DECAY_RETIRE_BELOW } : {});
   // §28.8 / §21 — BEFORE the aggregates are folded, not after. buildCityWorldModels
   // and computeCityConfidenceIndex both read compass_graph_edges, so a revoked
   // experience swept afterwards would still have been counted into this run's
   // world model and confidence score, and would sit there until tomorrow.
   const experienceRevocations = await reconcileExperienceNodes(db);
+  // §67 (DV-51) — every other family, on the same "before the fold" rule: an
+  // edge whose stamp, trip, event, circle, outcome, rank event or Memory is
+  // gone must not be counted into this run's world model or confidence score.
+  const edgeSupport = await reconcileEdgeSupport(db);
   const citiesModeled = await buildCityWorldModels(db);
+  // Before the confidence index, so a city whose model is retired here is not
+  // scored (and named strongest) on its stale row first.
+  const cityRowRetirements = await retireUnsupportedCityRows(db);
   const { scored, strongestCity } = await computeCityConfidenceIndex(db);
   return {
     nodesUpserted, edgesUpserted, nodesFailed, edgesFailed,
     citiesModeled, citiesScored: scored, strongestCity,
-    experienceRevocations,
+    experienceRevocations, edgeSupport, cityRowRetirements,
   };
+}
+
+// ── §67 (DV-51) — revocation reaches every edge the rebuild writes ───────────
+//
+// Appended rather than interleaved on purpose: every line above keeps its
+// number, so the censuses that cite the build by line stay true.
+
+/**
+ * The edge families the rebuild writes, each named by the source fact that
+ * supports it. Every edge `buildGraphFromSources` can emit belongs to exactly
+ * one (compassGraphRevocation.test.ts pins that against a build over every
+ * source); an edge that belongs to none is left alone and counted, never
+ * guessed at.
+ *
+ *   family            edge (src —type→ dst)                               supported by                                   judged by
+ *   stamp_visit       person —visited→ city                               a live presence stamp                          the person's stamps
+ *   person_activity   person —active_in→ time_slice                       a live presence stamp or public Memory         the person's stamps + Memories
+ *   trip_owner        person —took_trip→ trip                             the trip row                                   the trip, by id
+ *   trip_destination  trip —destination→ city                             the trip row                                   the trip, by id
+ *   trip_return       person —returned_to→ city                           two or more of the person's trips there        the person's trips
+ *   event_link        event —in_city / hosted_by / has_vibe→ …            the event row                                  the event, by id
+ *   outcome           person —outcome:<stage>→ event | place              a compass_outcome_events row                   the (user, item) pair
+ *   behavior          person —behavior:<outcome>→ place                   a non-impression rank_events row               the (user, item) pair
+ *   circle_owner      person —owns_circle→ circle                         the circle row                                 the circle, by id
+ *   circle_city       circle —in_city→ city                               the circle row                                 the circle, by id
+ *   experience        person —experienced→ experience, experience —…→ …   a published, public Memory                     the Memory, by id
+ *   city_rhythm       city —active_during[_month|_event]:<cat>→ slice     any stamp, event or Memory observed there      a COMPLETE read of all three
+ */
+export const GRAPH_EDGE_FAMILIES = [
+  "stamp_visit", "person_activity", "trip_owner", "trip_destination", "trip_return",
+  "event_link", "outcome", "behavior", "circle_owner", "circle_city", "experience", "city_rhythm",
+] as const;
+export type GraphEdgeFamily = (typeof GRAPH_EDGE_FAMILIES)[number];
+
+/** The family an edge belongs to, or null for an edge no builder writes. */
+export function classifyGraphEdge(e: { src_type: string; dst_type: string; edge_type: string }): GraphEdgeFamily | null {
+  const { src_type: s, dst_type: d, edge_type: t } = e;
+  if (s === "person") {
+    if (d === "city" && t === "visited") return "stamp_visit";
+    if (d === "time_slice" && t === "active_in") return "person_activity";
+    if (d === "trip" && t === "took_trip") return "trip_owner";
+    if (d === "city" && t === "returned_to") return "trip_return";
+    if ((d === "event" || d === "place") && t.startsWith("outcome:")) return "outcome";
+    if (d === "place" && t.startsWith("behavior:")) return "behavior";
+    if (d === "circle" && t === "owns_circle") return "circle_owner";
+    if (d === "experience" && t === "experienced") return "experience";
+    return null;
+  }
+  if (s === "trip" && d === "city" && t === "destination") return "trip_destination";
+  if (s === "event" && ((d === "city" && t === "in_city") || (d === "circle" && t === "hosted_by") || (d === "vibe" && t === "has_vibe"))) {
+    return "event_link";
+  }
+  if (s === "circle" && d === "city" && t === "in_city") return "circle_city";
+  if (s === "experience" && (
+    (d === "place" && t === "at_place") || (d === "trip" && t === "during_trip") ||
+    (d === "event" && t === "at_event") || (d === "city" && t === "in_city")
+  )) return "experience";
+  if (s === "city" && d === "time_slice" && (
+    t.startsWith("active_during:") || t.startsWith("active_during_month:") || t.startsWith("active_during_event:")
+  )) return "city_rhythm";
+  return null;
+}
+
+/** What one support reconciliation did. Zeroes are a real answer, not a skip. */
+export interface EdgeSupportReport {
+  /** Stored edges read and classified. */
+  examined: number;
+  /** Stored edges no builder writes — left alone. */
+  unclassified: number;
+  /** Edges whose source is gone, revoked or no longer eligible, and were deleted. */
+  retired: number; /** §81 (DV-51), present only under the decay rule: of `retired`, the edges retired because their derived strength fell below GRAPH_DECAY_RETIRE_BELOW; and the survivors whose stored weight was rewritten. */ decayRetired?: number; reweighed?: number; reweighFailed?: number;
+  retiredByFamily: Partial<Record<GraphEdgeFamily, number>>;
+  /** Source-anchored nodes (trip, event, circle) read. */
+  nodesExamined: number;
+  /** Source-anchored nodes whose source row is gone, deleted. */
+  nodesRetired: number;
+  /**
+   * Edges this pass REFUSED TO JUDGE, because a read that would have decided
+   * them failed or did not finish. They keep exactly what they had; the next
+   * rebuild judges them.
+   */
+  undecided: number;
+  undecidedFamilies: GraphEdgeFamily[];
+  /** Rows a DELETE was refused for — still stored. */
+  deleteFailed: number;
+  /** The stored-edge read reached its bound; edges past it were not examined. */
+  truncated: boolean;
+  /** True when anything above left the pass partial. */
+  unresolved: boolean;
+}
+
+/**
+ * Page size for every read below: strictly UNDER the deployment's PostgREST
+ * `db-max-rows` (1000, recorded in services/accountDeletion). A SHORT page is
+ * what ends a read, so a server that silently capped a full page would read as
+ * "the end" — and an absence that is really a truncation is exactly the
+ * misreading that must never retire an edge.
+ */
+const SUPPORT_PAGE = 500;
+/** Bounds, so one rebuild's cost is fixed whatever the tables hold. */
+const SUPPORT_EDGE_PAGES = 400;     // 200,000 stored edges / nodes / city rows
+const SUPPORT_ANCHOR_PAGES = 20;    // 10,000 source rows per anchor chunk
+const SUPPORT_FULL_PAGES = 200;     // 100,000 rows per source table (city_rhythm)
+const SUPPORT_ANCHOR_CHUNK = 100;
+
+type SupportRow = Record<string, unknown>;
+interface PagedRead { rows: SupportRow[]; complete: boolean; failed: boolean }
+interface PageableQuery {
+  order(column: string, options?: { ascending?: boolean }): { range(from: number, to: number): PromiseLike<{ data: unknown; error: unknown }> };
+}
+
+/**
+ * Every row `build()` matches, in pages ordered by `orderBy`, up to `maxPages`.
+ * `complete` is true ONLY when a short page ended the read and no page failed —
+ * the one state in which "a row is absent" means "no such row exists". A
+ * failed page and a read that reached its bound are both reported, and neither
+ * is ever mistaken for an empty or finished result.
+ */
+async function readAllPages(build: () => PageableQuery, maxPages: number, orderBy = "id"): Promise<PagedRead> {
+  const rows: SupportRow[] = [];
+  for (let page = 0; page < maxPages; page++) {
+    const from = page * SUPPORT_PAGE;
+    let got: SupportRow[];
+    try {
+      const res = await build().order(orderBy, { ascending: true }).range(from, from + SUPPORT_PAGE - 1);
+      if (res?.error || !Array.isArray(res?.data)) return { rows, complete: false, failed: true };
+      got = res.data as SupportRow[];
+    } catch {
+      return { rows, complete: false, failed: true };
+    }
+    rows.push(...got);
+    if (got.length < SUPPORT_PAGE) return { rows, complete: true, failed: false };
+  }
+  return { rows, complete: false, failed: false };
+}
+
+function chunked<T>(xs: readonly T[], n: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < xs.length; i += n) out.push(xs.slice(i, i + n));
+  return out;
+}
+
+/** Delete by `column` in chunks; a refused chunk is COUNTED, never silently skipped. */
+async function retireRows(db: SupabaseClient, table: string, column: string, keys: readonly string[]): Promise<{ deleted: number; failed: number }> {
+  let deleted = 0, failed = 0;
+  for (const chunk of chunked(keys, DELETE_CHUNK)) {
+    try {
+      const { error } = await db.from(table).delete().in(column, chunk);
+      if (error) failed += chunk.length;
+      else deleted += chunk.length;
+    } catch {
+      failed += chunk.length;
+    }
+  }
+  return { deleted, failed };
+}
+
+// ── The source reads, as the build issues them ───────────────────────────────
+//
+// Same table, same select list, same predicates as `buildGraphFromSources`
+// (pinned by compassGraphRevocation.test.ts), narrowed by the anchor the
+// caller adds. The predicates are repeated only to keep the reads small; they
+// do not decide anything — the replayed build applies its own.
+
+const supportReads = {
+  user_stamps: (db: SupabaseClient) => db
+    .from("user_stamps")
+    .select("user_id, city, country, earned_at, is_revoked, lat, lng, stamp_definitions(evidences_presence)")
+    .eq("is_revoked", false),
+  trips: (db: SupabaseClient) => db
+    .from("trips")
+    .select("id, owner_id, destination_city, start_date, end_date, destination_lat, destination_lng"),
+  events: (db: SupabaseClient) => db
+    .from("events")
+    .select("id, city, category, starts_at, location_lat, location_lng, circle_id"),
+  compass_outcome_events: (db: SupabaseClient) => db
+    .from("compass_outcome_events")
+    .select("user_id, item_id, item_type, stage, occurred_at"),
+  rank_events: (db: SupabaseClient) => db
+    .from("rank_events")
+    .select("user_id, item_id, item_kind, outcome, served_at")
+    .neq("outcome", "impression"),
+  circles: (db: SupabaseClient) => circleSourceRows(db),
+  memories: (db: SupabaseClient) => db
+    .from("memories")
+    .select("id, owner_id, place_id, trip_id, event_id, location_city, location_country, location_lat, location_lng, starts_at, created_at, state, visibility")
+    .eq("state", "published")
+    .eq("visibility", "public"),
+};
+type GraphSourceTable = keyof typeof supportReads;
+
+/** The build's `circles` read, and its only literal site: the build and the reconcile both call it. */
+function circleSourceRows(db: SupabaseClient) {
+  return db
+    .from("circles")
+    .select("id, owner_id, city, visibility, created_at");
+}
+/** The tables `buildGraphFromSources` reads, in the order it reads them. */
+export const GRAPH_SOURCE_TABLES = Object.keys(supportReads) as GraphSourceTable[];
+
+/** What a replayed build supports, and whether the replay can be trusted. */
+interface Replay {
+  edges: Set<string>;
+  nodes: Set<string>;
+  /**
+   * False when the replay is not a faithful run of the build: the build called
+   * a query method the stand-in does not model, read a table it does not
+   * serve, skipped a source table, or stopped iterating a source's rows before
+   * the end (its fail-soft `catch` swallowed a throw). Any of those would make
+   * support look smaller than it is, so an unsound replay decides nothing.
+   */
+  sound: boolean; /** §81 (DV-51): each replayed edge's written weight — its derived strength when the replay ran under the decay rule. */ weights: Map<string, number>;
+}
+
+/**
+ * ONE DEFINITION OF SUPPORT: the build itself. Runs `buildGraphFromSources` —
+ * its own queries' predicates, its own loop bodies, its own eligibility gates
+ * (`evidences_presence`, `isPublicWorldMemory`, the returned_to count) — over
+ * `rows`, against a stand-in client that serves those rows (and nothing else)
+ * and CAPTURES what the build would persist instead of writing it. An edge the
+ * replay does not produce is an edge those rows do not support.
+ *
+ * A hand-written "is this edge still supported?" predicate beside the build
+ * would be a second definition, and the two drift: that is how the Memory
+ * sweep once kept four private audiences the builder had stopped admitting
+ * (see `isPublicWorldMemory`). The stand-in ignores `.limit()` — the replay
+ * must see every row it is handed, since the cap is precisely what a
+ * revocation must not inherit — and applies `.eq()` / `.neq()`, so the build's
+ * own predicates narrow what the reconcile read.
+ */
+async function replayBuild(rows: Partial<Record<GraphSourceTable, SupportRow[]>>, strength?: (e: GraphEdgeObservation) => number): Promise<Replay> {
+  const replay: Replay = { edges: new Set(), nodes: new Set(), sound: true, weights: new Map() };
+  const read = new Set<string>();
+  const finished = new Set<string>();
+  const sources = new Set<string>(GRAPH_SOURCE_TABLES);
+
+  const from = (table: string) => {
+    let data: SupportRow[] = [...(rows[table as GraphSourceTable] ?? [])];
+    let written: SupportRow[] | null = null;
+    const run = (): { data: unknown; error: null } => {
+      if (written) {
+        if (table === "compass_graph_edges") {
+          for (const e of written) { replay.edges.add(`${e.src_type}|${e.src_key}|${e.dst_type}|${e.dst_key}|${e.edge_type}`); replay.weights.set(`${e.src_type}|${e.src_key}|${e.dst_type}|${e.dst_key}|${e.edge_type}`, Number(e.weight)); }
+        } else if (table === "compass_graph_nodes") {
+          for (const n of written) replay.nodes.add(`${n.node_type}|${n.node_key}`);
+        } else {
+          replay.sound = false;
+        }
+        return { data: null, error: null };
+      }
+      if (!sources.has(table)) { replay.sound = false; return { data: [], error: null }; }
+      read.add(table);
+      const served = data;
+      // Iterated to the END, or the build's catch swallowed something mid-way.
+      const tracked = Object.assign([...served], {
+        *[Symbol.iterator]() { yield* served; finished.add(table); },
+      });
+      return { data: tracked, error: null };
+    };
+    const q: Record<string | symbol, unknown> = {
+      select: () => q,
+      eq: (k: string, v: unknown) => { data = data.filter((r) => r[k] === v); return q; },
+      neq: (k: string, v: unknown) => { data = data.filter((r) => r[k] !== v); return q; },
+      limit: () => q,
+      upsert: (p: SupportRow | SupportRow[]) => { written = Array.isArray(p) ? p : [p]; return q; },
+      then: (ok?: (v: unknown) => unknown, bad?: (e: unknown) => unknown) => Promise.resolve(run()).then(ok, bad),
+    };
+    return new Proxy(q, {
+      get(target, prop) {
+        if (prop in target) return target[prop];
+        replay.sound = false;             // a query shape the replay does not model
+        return () => q;
+      },
+    });
+  };
+
+  try {
+    await buildGraphFromSources({ from } as unknown as SupabaseClient, strength ? { strength } : {});
+  } catch {
+    replay.sound = false;
+  }
+  for (const t of GRAPH_SOURCE_TABLES) if (!read.has(t) || !finished.has(t)) replay.sound = false;
+  return replay;
+}
+
+interface StoredEdge { id: string; key: string; family: GraphEdgeFamily; src_type: string; src_key: string; dst_key: string; weight?: number }
+
+/**
+ * Retire every stored edge — and every trip, event and circle node — whose
+ * supporting source fact no longer exists, is revoked, or is no longer
+ * eligible. Weights are never written: an edge is kept exactly as it is, or
+ * deleted.
+ *
+ * WHY. The build persists with `upsert`, which adds and updates and never
+ * removes, so an edge whose support is gone keeps its last weight for as long
+ * as the table exists (census-discovery §56.6: a revoked stamp's `visited`
+ * edge, reproduced). `reconcileExperienceNodes` retires a Memory's experience
+ * edges and nothing else — not even that Memory's own `active_in` and rhythm
+ * edges.
+ *
+ * POSITIVE, NOT INFERRED FROM THE BUILD'S OUTPUT. "Delete what this build did
+ * not write" is wrong: the build reads each source capped (BUILD_LIMIT, and
+ * PostgREST's db-max-rows under it), so an edge missing from one build is not
+ * proof its support vanished (§56.6). Each stored edge is instead judged
+ * against every source row that could support it — read by the edge's own
+ * anchor (its person, trip, event, circle, Memory, or user–item pair), paged,
+ * independent of how much the build read — by replaying the build over those
+ * rows (`replayBuild`). The one family with no anchor, city_rhythm (a count
+ * over many sources), is judged only from a COMPLETE read of all three sources
+ * that write it.
+ *
+ * FAILS VISIBLY. An unreadable edge table decides nothing and says so. A
+ * source read that fails or reaches its bound, or a replay that is not
+ * sound, leaves the edges it would have decided `undecided`, by family; every
+ * other anchor is still judged, so one failed read neither holds every
+ * revocation hostage nor widens one. A refused delete is counted in
+ * `deleteFailed`. Idempotent: a second pass over the same sources retires
+ * nothing.
+ */
+export async function reconcileEdgeSupport(db: SupabaseClient, opts: { decay?: GraphDecayPolicy | null } = {}): Promise<EdgeSupportReport> { const decay = opts.decay !== undefined ? opts.decay : await readGraphDecayPolicy(db); const reweigh = new Map<string, number>(); let decayRetired = 0;
+  const report: EdgeSupportReport = {
+    examined: 0, unclassified: 0, retired: 0, retiredByFamily: {}, nodesExamined: 0, nodesRetired: 0,
+    undecided: 0, undecidedFamilies: [], deleteFailed: 0, truncated: false, unresolved: false,
+  };
+  const undecided = new Set<GraphEdgeFamily>();
+
+  const stored = await readAllPages(
+    () => db.from("compass_graph_edges").select(decay ? "id, src_type, src_key, dst_type, dst_key, edge_type, weight" : "id, src_type, src_key, dst_type, dst_key, edge_type"),
+    SUPPORT_EDGE_PAGES,
+  );
+  if (stored.failed) {
+    report.unresolved = true;
+    logger.warn({ report }, "compass graph: edge table unreadable — support reconciliation decided nothing");
+    return report;
+  }
+  report.truncated = !stored.complete;
+
+  const byFamily = new Map<GraphEdgeFamily, StoredEdge[]>();
+  const seen = new Set<string>();
+  for (const r of stored.rows) {
+    const id = String(r.id ?? "");
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const e = {
+      src_type: String(r.src_type ?? ""), src_key: String(r.src_key ?? ""),
+      dst_type: String(r.dst_type ?? ""), dst_key: String(r.dst_key ?? ""), edge_type: String(r.edge_type ?? ""),
+    };
+    report.examined++;
+    const family = classifyGraphEdge(e);
+    if (!family) { report.unclassified++; continue; }
+    const key = `${e.src_type}|${e.src_key}|${e.dst_type}|${e.dst_key}|${e.edge_type}`;
+    const list = byFamily.get(family) ?? [];
+    list.push({ id, key, family, src_type: e.src_type, src_key: e.src_key, dst_key: e.dst_key, ...(decay ? { weight: Number(r.weight) } : {}) });
+    byFamily.set(family, list);
+  }
+  const edgesOf = (f: GraphEdgeFamily) => byFamily.get(f) ?? [];
+
+  const doomedEdges: StoredEdge[] = [];
+  /** Judge `edges` against `support`; no (sound) support ⇒ undecided, nothing retired. */
+  const judge = (edges: readonly StoredEdge[], support: Replay | null) => {
+    for (const e of edges) {
+      if (!support?.sound) { report.undecided++; undecided.add(e.family); continue; }
+      if (!support.edges.has(e.key)) doomedEdges.push(e); else if (decay) { const w = support.weights.get(e.key) ?? 0; if (w < GRAPH_DECAY_RETIRE_BELOW) { doomedEdges.push(e); decayRetired++; } else if (!(Math.abs((e.weight ?? NaN) - w) < 1e-9)) reweigh.set(e.id, w); } // §81 (DV-51)
+    }
+  };
+  const within = (chunk: readonly string[]) => { const set = new Set(chunk); return (k: string) => set.has(k); };
+  /** Replay over the reads that completed; null when any read it needs did not. */
+  const replayIf = async (reads: Partial<Record<GraphSourceTable, PagedRead | null>>): Promise<Replay | null> => {
+    const rows: Partial<Record<GraphSourceTable, SupportRow[]>> = {};
+    for (const [t, r] of Object.entries(reads) as Array<[GraphSourceTable, PagedRead | null]>) {
+      if (!r?.complete) return null;
+      rows[t] = r.rows;
+    }
+    return replayBuild(rows, decay?.strength);
+  };
+
+  // ── Source-anchored nodes (trip, event, circle) ────────────────────────────
+  const nodes = await readAllPages(
+    () => db.from("compass_graph_nodes").select("id, node_type, node_key").in("node_type", ["trip", "event", "circle"]),
+    SUPPORT_EDGE_PAGES,
+  );
+  if (!nodes.complete) report.unresolved = true;
+  const nodeIds = new Map<string, string[]>();
+  for (const n of nodes.failed ? [] : nodes.rows) {
+    const k = `${String(n.node_type ?? "")}|${String(n.node_key ?? "")}`;
+    nodeIds.set(k, [...(nodeIds.get(k) ?? []), String(n.id ?? "")]);
+  }
+  report.nodesExamined = nodeIds.size;
+  const nodeKeysOf = (type: string) => [...nodeIds.keys()].filter((k) => k.startsWith(`${type}|`)).map((k) => k.slice(type.length + 1));
+  const doomedNodes: string[] = [];
+  const judgeNodes = (type: string, keys: readonly string[], support: Replay | null) => {
+    if (!support?.sound) { if (keys.some((k) => nodeIds.has(`${type}|${k}`))) report.unresolved = true; return; }
+    for (const k of keys) {
+      if (nodeIds.has(`${type}|${k}`) && !support.nodes.has(`${type}|${k}`)) doomedNodes.push(...(nodeIds.get(`${type}|${k}`) ?? []));
+    }
+  };
+
+  // ── Person-anchored: stamp_visit, person_activity, trip_return ─────────────
+  {
+    const visits = edgesOf("stamp_visit"), activity = edgesOf("person_activity"), returns = edgesOf("trip_return");
+    const persons = [...new Set([...visits, ...activity, ...returns].map((e) => e.src_key))];
+    for (const chunk of chunked(persons, SUPPORT_ANCHOR_CHUNK)) {
+      const mine = within(chunk);
+      const v = visits.filter((e) => mine(e.src_key));
+      const a = activity.filter((e) => mine(e.src_key));
+      const t = returns.filter((e) => mine(e.src_key));
+      const stamps = v.length || a.length ? await readAllPages(() => supportReads.user_stamps(db).in("user_id", chunk), SUPPORT_ANCHOR_PAGES) : null;
+      const mems = a.length ? await readAllPages(() => supportReads.memories(db).in("owner_id", chunk), SUPPORT_ANCHOR_PAGES) : null;
+      const trips = t.length ? await readAllPages(() => supportReads.trips(db).in("owner_id", chunk), SUPPORT_ANCHOR_PAGES) : null;
+      if (v.length) judge(v, await replayIf({ user_stamps: stamps }));
+      if (a.length) judge(a, await replayIf({ user_stamps: stamps, memories: mems }));
+      if (t.length) judge(t, await replayIf({ trips }));
+    }
+  }
+
+  // ── Trip-anchored: trip_owner, trip_destination, trip nodes ────────────────
+  {
+    const owners = edgesOf("trip_owner"), dests = edgesOf("trip_destination");
+    const ids = [...new Set([...owners.map((e) => e.dst_key), ...dests.map((e) => e.src_key), ...nodeKeysOf("trip")])];
+    for (const chunk of chunked(ids, SUPPORT_ANCHOR_CHUNK)) {
+      const mine = within(chunk);
+      const support = await replayIf({ trips: await readAllPages(() => supportReads.trips(db).in("id", chunk), SUPPORT_ANCHOR_PAGES) });
+      judge(owners.filter((e) => mine(e.dst_key)), support);
+      judge(dests.filter((e) => mine(e.src_key)), support);
+      judgeNodes("trip", chunk, support);
+    }
+  }
+
+  // ── Event-anchored: event_link, event nodes ────────────────────────────────
+  {
+    const links = edgesOf("event_link");
+    const ids = [...new Set([...links.map((e) => e.src_key), ...nodeKeysOf("event")])];
+    for (const chunk of chunked(ids, SUPPORT_ANCHOR_CHUNK)) {
+      const mine = within(chunk);
+      const support = await replayIf({ events: await readAllPages(() => supportReads.events(db).in("id", chunk), SUPPORT_ANCHOR_PAGES) });
+      judge(links.filter((e) => mine(e.src_key)), support);
+      judgeNodes("event", chunk, support);
+    }
+  }
+
+  // ── Circle-anchored: circle_owner, circle_city, circle nodes ───────────────
+  // A circle NODE is also registered by an event that names the circle
+  // (hosted_by), so a node's support is its circle row OR such an event.
+  {
+    const owners = edgesOf("circle_owner"), located = edgesOf("circle_city");
+    const ids = [...new Set([...owners.map((e) => e.dst_key), ...located.map((e) => e.src_key), ...nodeKeysOf("circle")])];
+    for (const chunk of chunked(ids, SUPPORT_ANCHOR_CHUNK)) {
+      const mine = within(chunk);
+      const circles = await readAllPages(() => supportReads.circles(db).in("id", chunk), SUPPORT_ANCHOR_PAGES);
+      judge(owners.filter((e) => mine(e.dst_key)), await replayIf({ circles }));
+      judge(located.filter((e) => mine(e.src_key)), await replayIf({ circles }));
+      if (chunk.some((k) => nodeIds.has(`circle|${k}`))) {
+        const hosting = await readAllPages(() => supportReads.events(db).in("circle_id", chunk), SUPPORT_ANCHOR_PAGES);
+        judgeNodes("circle", chunk, await replayIf({ circles, events: hosting }));
+      }
+    }
+  }
+
+  // ── Memory-anchored: experience ────────────────────────────────────────────
+  {
+    const exp = edgesOf("experience");
+    const memoryOf = (e: StoredEdge) => (e.src_type === "person" ? e.dst_key : e.src_key);
+    for (const chunk of chunked([...new Set(exp.map(memoryOf))], SUPPORT_ANCHOR_CHUNK)) {
+      const mine = within(chunk);
+      const memories = await readAllPages(() => supportReads.memories(db).in("id", chunk), SUPPORT_ANCHOR_PAGES);
+      judge(exp.filter((e) => mine(memoryOf(e))), await replayIf({ memories }));
+    }
+  }
+
+  // ── Pair-anchored: outcome, behavior ───────────────────────────────────────
+  for (const chunk of chunked(edgesOf("outcome"), SUPPORT_ANCHOR_CHUNK)) {
+    const users = [...new Set(chunk.map((e) => e.src_key))], items = [...new Set(chunk.map((e) => e.dst_key))];
+    const outcomes = await readAllPages(() => supportReads.compass_outcome_events(db).in("user_id", users).in("item_id", items), SUPPORT_ANCHOR_PAGES);
+    judge(chunk, await replayIf({ compass_outcome_events: outcomes }));
+  }
+  for (const chunk of chunked(edgesOf("behavior"), SUPPORT_ANCHOR_CHUNK)) {
+    const users = [...new Set(chunk.map((e) => e.src_key))], items = [...new Set(chunk.map((e) => e.dst_key))];
+    const ranked = await readAllPages(() => supportReads.rank_events(db).in("user_id", users).in("item_id", items), SUPPORT_ANCHOR_PAGES);
+    judge(chunk, await replayIf({ rank_events: ranked }));
+  }
+
+  // ── Unanchored: city_rhythm, from a COMPLETE read of every source it has ───
+  const rhythm = edgesOf("city_rhythm");
+  if (rhythm.length) {
+    const stamps = await readAllPages(() => supportReads.user_stamps(db), SUPPORT_FULL_PAGES);
+    const events = stamps.complete ? await readAllPages(() => supportReads.events(db), SUPPORT_FULL_PAGES) : null;
+    const memories = events?.complete ? await readAllPages(() => supportReads.memories(db), SUPPORT_FULL_PAGES) : null;
+    judge(rhythm, await replayIf({ user_stamps: stamps, events, memories }));
+  }
+
+  // Edges FIRST, then nodes — the order reconcileExperienceNodes argues for.
+  const edges = await retireRows(db, "compass_graph_edges", "id", doomedEdges.map((e) => e.id));
+  report.retired = edges.deleted;
+  if (edges.failed === 0) {
+    for (const e of doomedEdges) report.retiredByFamily[e.family] = (report.retiredByFamily[e.family] ?? 0) + 1;
+  }
+  const retiredNodes = await retireRows(db, "compass_graph_nodes", "id", doomedNodes);
+  report.nodesRetired = retiredNodes.deleted; if (decay) { const rw = await rewriteDecayedWeights(db, reweigh); report.decayRetired = decayRetired; report.reweighed = rw.written; report.reweighFailed = rw.failed; if (rw.failed > 0) report.unresolved = true; } // §81 (DV-51)
+  report.deleteFailed = edges.failed + retiredNodes.failed;
+
+  report.undecidedFamilies = GRAPH_EDGE_FAMILIES.filter((f) => undecided.has(f));
+  if (report.undecided > 0 || report.deleteFailed > 0 || report.truncated) report.unresolved = true;
+  if (report.unresolved) {
+    logger.warn({ report }, "compass graph: support reconciliation was PARTIAL — undecided edges keep their stored weight until a pass can judge them");
+  }
+  return report;
+}
+
+/** What `retireUnsupportedCityRows` did. */
+export interface CityRowRetirementReport {
+  modelsExamined: number;
+  /** World-model rows for a city with no remaining `active_during:` edge, deleted. */
+  modelsRetired: number;
+  /** Confidence rows for a city with no world model, deleted. */
+  confidenceRetired: number;
+  deleteFailed: number;
+  unresolved: boolean;
+}
+
+/**
+ * The per-city rows are upserted too, so a city whose every observation was
+ * revoked kept its world model and its confidence tier: `buildCityWorldModels`
+ * rewrites only the cities it still has edges for. This retires a model whose
+ * city has no `active_during:` edge left — asked of the edge table per city,
+ * not inferred from the fold's own capped read — and a confidence row whose
+ * city has no model (`computeCityConfidenceIndex` scores models only, so such
+ * a row could never be refreshed). A failed or unfinished read retires
+ * nothing it would have decided.
+ */
+export async function retireUnsupportedCityRows(db: SupabaseClient): Promise<CityRowRetirementReport> {
+  const report: CityRowRetirementReport = { modelsExamined: 0, modelsRetired: 0, confidenceRetired: 0, deleteFailed: 0, unresolved: false };
+  const models = await readAllPages(() => db.from("compass_city_models").select("city"), SUPPORT_EDGE_PAGES, "city");
+  if (!models.complete) {
+    report.unresolved = true;
+    logger.warn({ report }, "compass graph: world-model table not fully read — no city rows retired");
+    return report;
+  }
+  const modelCities = [...new Set(models.rows.map((r) => String(r.city ?? "")).filter(Boolean))];
+  report.modelsExamined = modelCities.length;
+
+  const unsupported: string[] = [];
+  for (const chunk of chunked(modelCities, SUPPORT_ANCHOR_CHUNK)) {
+    const read = await readAllPages(
+      () => db.from("compass_graph_edges").select("id, src_key").eq("src_type", "city").in("src_key", chunk).like("edge_type", "active_during:%"),
+      SUPPORT_ANCHOR_PAGES,
+    );
+    if (!read.complete) { report.unresolved = true; continue; }
+    const supported = new Set(read.rows.map((r) => String(r.src_key ?? "")));
+    for (const c of chunk) if (!supported.has(c)) unsupported.push(c);
+  }
+  const retiredModels = await retireRows(db, "compass_city_models", "city", unsupported);
+  report.modelsRetired = retiredModels.deleted;
+  report.deleteFailed += retiredModels.failed;
+
+  const conf = await readAllPages(() => db.from("compass_city_confidence").select("city"), SUPPORT_EDGE_PAGES, "city");
+  if (!conf.complete) {
+    report.unresolved = true;
+  } else {
+    const gone = new Set(unsupported);
+    const kept = new Set(modelCities.filter((c) => !gone.has(c)));
+    const orphans = [...new Set(conf.rows.map((r) => String(r.city ?? "")).filter((c) => c && !kept.has(c)))];
+    const retiredConf = await retireRows(db, "compass_city_confidence", "city", orphans);
+    report.confidenceRetired = retiredConf.deleted;
+    report.deleteFailed += retiredConf.failed;
+  }
+  if (report.deleteFailed > 0) report.unresolved = true;
+  if (report.unresolved) logger.warn({ report }, "compass graph: city-row retirement was PARTIAL");
+  return report;
+}
+
+// ── §81 (DV-51; register D-W10S2-10) — graded decay ──────────────────────────
+//
+// `05` §6: *"Use derived strength from: recency, frequency, diversity,
+// confirmed experiences. Do not store 'relationship truth' as a single
+// permanent score."* §9: *"it can decay stale relationships"*. Before this the
+// rebuild wrote `weight = observed_count` — a count, never lowered with age:
+// the permanent score §6 forbids. §67 retired edges whose SOURCE is gone; this
+// lowers and eventually retires edges whose source still exists but is STALE.
+//
+// THE RULE, from the four named inputs and nothing else:
+//
+//   strength = base(frequency, diversity) × 2^(−age / halfLife(confirmed))
+//
+//   frequency  f = observed_count — how many source rows support the edge
+//   diversity  d = distinct UTC days among them — how many separate occasions
+//   base       = log2(1 + d) + ½·log2(f / d): each separate occasion counts
+//                fully, a repeat on the same occasion counts half, both with
+//                diminishing returns, so no single burst dominates. One
+//                observation is exactly 1.
+//   recency    age = days since the edge's latest support (`last_seen`); an
+//              edge with no dated support is not stale by any evidence and is
+//              not decayed.
+//   confirmed  sets the half-life. An edge supported by a CONFIRMED experience
+//              — a presence-evidencing stamp, a published public Memory, a
+//              trip taken, or an outcome where the person went, stayed,
+//              returned or made a memory — keeps CONFIRMED_HALF_LIFE_DAYS = 365:
+//              one full seasonal cycle, the period the world model itself
+//              buckets by (`compass_city_models.monthly`), so a relationship
+//              observed in one season is still more than half-strength when the
+//              season recurs. An edge supported only by INTENT — a tap, a save,
+//              a view, an invite (`behavior:*`, the unconfirmed outcome stages)
+//              — keeps INTENT_HALF_LIFE_DAYS = 14, the repository's existing
+//              activity half-life (`ranking.activity.decayHalfLifeDays`
+//              default, services/ranking/rankingConfig.ts).
+//   structural edges — a trip's owner and destination, an event's city, host
+//              and vibe, a circle's owner and city, an experience's own edges —
+//              state an object's attributes, not a relationship's currency;
+//              they are not decayed, and leave the graph only when their source
+//              does (§67, §28.8).
+//
+// RETIREMENT: below GRAPH_DECAY_RETIRE_BELOW = 1/8 — one fresh observation
+// after three half-lives, where its contribution is under an eighth. A single
+// tap is retired after 42 days; a single presence stamp after three years.
+//
+// §56.9 Q6's last clause — may a rebuild retire an edge whose source rows it did
+// not read? — is answered NO by construction: decay is judged inside §67's
+// reconcile, on the edge's COMPLETE, anchored support replayed through the
+// build under this rule. An undecided edge keeps its stored weight.
+//
+// FLAG: `compass_graph_decay_enabled` (migration 3469, seeded FALSE). Off or
+// unreadable: the build writes `weight = observed_count`, the reconcile reads
+// and writes exactly what it did, and the report carries no decay field —
+// byte-identical (compassGraphDecay.test.ts pins it against the §67 world).
+
+export const GRAPH_DECAY_FLAG = "compass_graph_decay_enabled";
+export const CONFIRMED_HALF_LIFE_DAYS = 365;
+export const INTENT_HALF_LIFE_DAYS = 14;
+export const GRAPH_DECAY_RETIRE_BELOW = 1 / 8;
+/** `compass_outcome_events` stages that record the person DID it (CompassOutcomeEngine.OUTCOME_STAGES). */
+export const CONFIRMED_OUTCOME_STAGES = ["went", "stayed", "made_memory", "returned"] as const;
+
+const DAY_MS = 86_400_000;
+
+/** What the rule reads off one edge. */
+export interface GraphEdgeObservation {
+  src_type: string;
+  dst_type: string;
+  edge_type: string;
+  count: number;
+  distinctDays: number;
+  last: string | null;
+}
+
+function graphEdgeObservationOf(e: { rec: EdgeObs; count: number; last: string | null; days: Set<string> }): GraphEdgeObservation {
+  return {
+    src_type: e.rec.src_type, dst_type: e.rec.dst_type, edge_type: e.rec.edge_type,
+    count: e.count, distinctDays: e.days.size, last: e.last,
+  };
+}
+
+/** Half-life in days, or null for a structural edge the rule does not decay. */
+export function graphEdgeHalfLifeDays(e: { src_type: string; dst_type: string; edge_type: string }): number | null {
+  const family = classifyGraphEdge(e);
+  switch (family) {
+    case "stamp_visit":
+    case "person_activity":
+    case "trip_return":
+    case "city_rhythm":
+      return CONFIRMED_HALF_LIFE_DAYS;
+    case "outcome": {
+      const stage = e.edge_type.slice("outcome:".length);
+      return (CONFIRMED_OUTCOME_STAGES as readonly string[]).includes(stage) ? CONFIRMED_HALF_LIFE_DAYS : INTENT_HALF_LIFE_DAYS;
+    }
+    case "behavior":
+      return INTENT_HALF_LIFE_DAYS;
+    default:
+      return null;   // structural, or an edge no builder writes
+  }
+}
+
+/** The derived strength of one edge at `nowMs`. Rounded to 1e-6 so a stored numeric round-trips. */
+export function graphEdgeStrength(o: GraphEdgeObservation, nowMs: number): number {
+  const d = Math.max(1, Math.floor(o.distinctDays));
+  const f = Math.max(d, Math.floor(o.count));
+  const base = Math.log2(1 + d) + 0.5 * Math.log2(f / d);
+  const halfLife = graphEdgeHalfLifeDays(o);
+  const lastMs = o.last ? Date.parse(o.last) : NaN;
+  const recency = halfLife === null || !Number.isFinite(lastMs)
+    ? 1
+    : Math.pow(2, -Math.max(0, (nowMs - lastMs) / DAY_MS) / halfLife);
+  return Math.round(base * recency * 1e6) / 1e6;
+}
+
+export interface GraphDecayPolicy {
+  nowMs: number;
+  strength: (o: GraphEdgeObservation) => number;
+}
+
+/** The policy for one rebuild, or null when the flag is off or unreadable (fail-closed: no decay). */
+export async function readGraphDecayPolicy(db: SupabaseClient, nowMs: number = Date.now()): Promise<GraphDecayPolicy | null> {
+  if (!(await isFlagEnabled(db, GRAPH_DECAY_FLAG))) return null;
+  return { nowMs, strength: (o) => graphEdgeStrength(o, nowMs) };
+}
+
+/** Write each surviving edge's derived strength. A refused write is counted, never assumed. */
+async function rewriteDecayedWeights(db: SupabaseClient, weights: ReadonlyMap<string, number>): Promise<{ written: number; failed: number }> {
+  let written = 0;
+  let failed = 0;
+  for (const [id, weight] of weights) {
+    try {
+      const { error } = await db.from("compass_graph_edges").update({ weight }).eq("id", id);
+      if (error) failed++; else written++;
+    } catch {
+      failed++;
+    }
+  }
+  return { written, failed };
 }

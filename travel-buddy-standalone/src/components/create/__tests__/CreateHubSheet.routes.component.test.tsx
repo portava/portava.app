@@ -34,13 +34,16 @@ describe('CreateHubSheet — route navigation', () => {
     try {
       const liveEntries: Array<[string, string]> = [
         ['Post', '/create'],
-        ['Memory', '/memory/edit'],
+        ['Memory', '/memory/new'],
         ['Add a Gem', '/gems/submit'],
         ['Event', '/events/create'],
         ['Trip', '/trip/new'],
         ['Recommend Hidden Gem', '/gems/submit'],
+        // Testing mode WP-06 (PLAT-F32/F33): Story is live — /stories mounts the
+        // viewer and composer that nothing reached before. Restated from "Soon".
+        ['Story', '/stories'],
       ];
-      const soonEntries = ['Story', 'Plan', 'Add Place', 'Review Place'];
+      const soonEntries = ['Plan', 'Add Place', 'Review Place'];
 
       // Single mount; exercise every row in the same tree to avoid
       // render/unmount interaction contamination across cases.

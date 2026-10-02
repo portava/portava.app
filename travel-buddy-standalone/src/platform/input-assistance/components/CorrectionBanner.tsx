@@ -22,7 +22,7 @@ export interface CorrectionBannerProps {
   /** Dismiss the banner (keep the user's original input). */
   onDismiss?: () => void;
   /** 'warning' (default) or 'error' — non-color-only cue via the leading icon + label. */
-  tone?: 'warning' | 'error';
+  tone?: 'warning' | 'error'; /** Optional colour for the dismiss icon (census-media §31.13), e.g. `mute` where `faint` is below 3:1 on the banner. Absent: renders exactly as before. */ dismissColor?: string;
   testID?: string;
 }
 
@@ -31,7 +31,7 @@ function CorrectionBannerBase({
   onAccept,
   acceptLabel = 'Use this',
   onDismiss,
-  tone = 'warning',
+  tone = 'warning', dismissColor,
   testID,
 }: CorrectionBannerProps) {
   const accent = tone === 'error' ? color.signal : color.warn;
@@ -64,7 +64,7 @@ function CorrectionBannerBase({
           accessibilityLabel="Dismiss"
           hitSlop={8}
         >
-          <X size={iconToken.s16} color={color.faint} />
+          <X size={iconToken.s16} color={dismissColor ?? color.faint} />
         </Pressable>
       ) : null}
     </View>

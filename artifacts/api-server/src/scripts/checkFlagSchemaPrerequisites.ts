@@ -22,9 +22,8 @@
  * file-vs-file comparison against it. No socket, no environment variable, so
  * it runs in the credential-free preflight lane and cannot be starved.
  *
- * Production has NO migration ledger (no schema_migration_ledger; Supabase's
- * own schema_migrations stops at 2272), so "is migration N applied" cannot
- * be asked. "Does column X exist" can, and that is the question that matters.
+ * NEITHER production ledger is an inventory (read THE LEDGER CORRECTION near the
+ * foot of this file), so "is migration N applied" cannot be asked there.
  *
  * ─── TWO KINDS OF ABSENT, KEPT APART ─────────────────────────────────────────
  *
@@ -66,6 +65,7 @@ import { createHash } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildCanonicalSchema, hasColumn, isModelled, stripSqlComments } from "./lib/canonicalSchema.js";
+import { compareVersions, profileVersionColumn } from "./lib/migrationInventoryCore.js";
 import {
   evaluateFlags,
   evaluateRegistry,
@@ -216,16 +216,16 @@ function checkSnapshotFreshness(snapshotPath: string): string[] {
     problems.push("production-applied-migrations.json lists no migrations; the tripwire would never fire.");
     return problems;
   }
-  // Versions are zero-padded timestamps, so lexicographic order IS chronological.
-  const newest = versions.reduce((a, b) => (b > a ? b : a));
-  if (newest > watermark) {
-    const late = (applied.migrations ?? [])
-      .filter((m: any) => String(m?.version ?? "") > watermark)
-      .map((m: any) => `${m.version} ${m.name}`);
+  // entriesAfterWatermark() is at the foot of this file. It never compares two
+  // version strings of different formats, it reports a mixed column as its own
+  // problem, and an entry it cannot place is treated as NEWER rather than
+  // dropped — fail closed, not quiet.
+  const late = entriesAfterWatermark(applied.migrations ?? [], watermark, problems);
+  if (late.length > 0) {
     problems.push(
-      `STALE SNAPSHOT: ${late.length} migration(s) recorded as applied to production AFTER this snapshot was captured ` +
-        `(watermark ${watermark}, newest applied ${newest}): ${late.join(", ")}. ` +
-        `Every answer below is graded against a production that no longer exists. ` +
+      `STALE SNAPSHOT: ${late.length} migration(s) recorded as applied to production AFTER this snapshot ` +
+        `was captured (watermark ${watermark}): ${late.join(", ")}. Every answer below is graded against ` +
+        `a production that no longer exists. ` +
         `Refresh: see artifacts/api-server/scripts/refresh-production-snapshot.md`,
     );
   }
@@ -387,6 +387,47 @@ export const KNOWN: Record<string, Known> = {
   // outside the subgroup read 0 rows, as did a non-member of the trip. So
   // subgroup_id on that table is metadata for the notify path, NOT a read grant,
   // and nothing about 2794 widened who can see a Safe Return session.
+
+  // ── Added 2026-09-25: the intel contributor token, ahead of its migration ──
+  //
+  // Two entries, ONE object and ONE call site: intel_capture_quick_signal and
+  // intel_trail_followup are the two flags that open
+  // services/intel/IntelCaptureService.writeObservation (surfaceFlagEnabled), so
+  // the same closure is charged to both. They are struck together.
+  //
+  // Placed at the END of this map on purpose: inserting above shifts the line
+  // numbers census-compass.md cites into this file, and check-doc-citations
+  // catches that. Keep new entries here.
+  intel_capture_quick_signal: {
+    classification: "unguarded",
+    objects: ["intel_contributor_token()"],
+    note:
+      "IntelCaptureService.findReplayedObservation names public.intel_contributor_token(). " + "3002_intel_contribution_identity.sql is IN THE TREE, NOT APPLIED. It drops intel_observations.actor_id's foreign key to profiles and replaces the stored account id with a rotating contributor token (Sensing §3/§24, census S19/S118). The only code that has to know about the swap is writeObservation's idempotent-replay lookup, which reads a row back by contributor identity, and it is written for BOTH schemas: it filters on actor_id directly FIRST — the whole answer while 3002 is unapplied, because the stored actor_id IS the account id — and reaches intel_contributor_token() only when that finds nothing, which cannot happen before the apply. So the absent function is named on a branch production never executes; and were it ever reached, the call is wrapped so an unavailable RPC yields a retryable db_error, never a crash and never a dedup that was not verified. STRIKE THIS ENTRY when 3002 is applied and recorded in the migration ledger — the ratchet will report it STALE first.",
+  },
+  intel_trail_followup: {
+    classification: "unguarded",
+    objects: ["intel_contributor_token()"],
+    note:
+      "Same object, same call site: the trail surface shares writeObservation. " + "3002_intel_contribution_identity.sql is IN THE TREE, NOT APPLIED. It drops intel_observations.actor_id's foreign key to profiles and replaces the stored account id with a rotating contributor token (Sensing §3/§24, census S19/S118). The only code that has to know about the swap is writeObservation's idempotent-replay lookup, which reads a row back by contributor identity, and it is written for BOTH schemas: it filters on actor_id directly FIRST — the whole answer while 3002 is unapplied, because the stored actor_id IS the account id — and reaches intel_contributor_token() only when that finds nothing, which cannot happen before the apply. So the absent function is named on a branch production never executes; and were it ever reached, the call is wrapped so an unavailable RPC yields a retryable db_error, never a crash and never a dedup that was not verified. STRIKE THIS ENTRY when 3002 is applied and recorded in the migration ledger — the ratchet will report it STALE first.",
+  },
+  // census-discovery §91 (lane W10-I) listed COMPASS_V1_RULE_BASED_ENABLED here: the Compass-gated GET /discovery
+  // handler reaches rankForViewer, whose §85 post-rank stages name 3484's three compass_city_confidence columns
+  // and 2892's place_momentum, both unapplied in production. STRUCK by census-discovery §93 (lane W11-X1) because
+  // the ratchet reported it STALE, and for a stated reason that is NOT an apply: §93's DV-31 hunk (H-W10R1-1) makes
+  // rankForViewer call a pure gate helper (pdeRediscoveryRetestStage → planRediscoveryRetest, which reads
+  // discovery_trend_rediscovery_retest_enabled and names no schema), and this scan's GATE BOUNDARY is function-
+  // granular: rankForViewer is now "gated somewhere inside", so the Compass closure stops there and the same seven
+  // objects are charged to the nearest gate instead — LATENT under discovery_trend_rediscovery_retest_enabled
+  // (3475, no row in production). The runtime facts D-W10-I-9 recorded are UNCHANGED: with every §85 flag FALSE,
+  // pdePostRankStages returns before either read; the provenance read also needs 3484's own flag and 2289, the
+  // inventory read 3481; absence degrades to `columns_absent` / a named failed read. Nothing reads them in
+  // production. RESTORE the §91 entry verbatim (census-discovery §91.1, register D-W10-I-9) if the retest call
+  // leaves rankForViewer, or when this scan's boundary becomes flow-sensitive; strike nothing else on this basis.
+  //
+  //
+  //
+  //
+  //
 };
 
 // ── Declared-by-a-migration ──────────────────────────────────────────────────
@@ -409,18 +450,42 @@ function declaredFunctions(): Set<string> {
   return out;
 }
 
+/**
+ * WHY THIS SETS `process.exitCode` AND RETURNS RATHER THAN CALLING `process.exit`.
+ *
+ * Node's stdout and stderr are ASYNCHRONOUS when they are pipes, which is what
+ * they are whenever this script is run by another process rather than by a
+ * human — `spawnSync` in src/test/flagSchemaPrerequisites.test.ts, and every CI
+ * step that captures output. `process.exit()` does not wait for a queued write,
+ * so the last thing written before it can simply never arrive. What is written
+ * last here is the FAIL block: the list of problems, which is the entire point
+ * of the run.
+ *
+ * That is not a theory. Six runs of this script under CPU load, spawned with
+ * pipes exactly as the test spawns it: four returned 27,662 bytes and the FAIL
+ * block; two returned 20,695 and 21,546 bytes with the block missing — and all
+ * six exited 1. A reader who trusts the exit code sees a failure with no
+ * reason attached; a reader who greps the output sees a clean run. The test
+ * that greps for a specific failure line went red on CI for exactly this, while
+ * passing in isolation, which is what "flaky" turned out to mean.
+ *
+ * Setting `exitCode` lets main() return, the event loop drain, and Node exit on
+ * its own once the writes have landed. The exit code is identical.
+ */
 function main(): void {
   const started = Date.now();
   if (!existsSync(SNAPSHOT)) {
     console.error(`check:flag-schema-prerequisites: snapshot missing at ${SNAPSHOT}.`);
-    process.exit(2);
+    process.exitCode = 2;
+    return;
   }
   const freshness = checkSnapshotFreshness(SNAPSHOT);
   if (freshness.length) {
     console.error(`\ncheck:flag-schema-prerequisites: the snapshot cannot be trusted:`);
     for (const f of freshness) console.error(`  • ${f}`);
     console.error("");
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
   const snap = loadProductionSnapshot(SNAPSHOT);
   const canon = buildCanonicalSchema(BASELINE, MIGRATION_DIRS);
@@ -544,12 +609,135 @@ function main(): void {
   if (failures.length) {
     console.log(`FAIL — ${failures.length} problem(s):`);
     for (const f of failures) console.log(`  • ${f}`);
-    process.exit(REPORT ? 0 : 1);
+    process.exitCode = REPORT ? 0 : 1;
+    return;
   }
   console.log(
     `OK — ${unguarded.length} unguarded (all known), ${guarded.length} guarded, ${latent.length} latent; ${Date.now() - started} ms.` +
       (unguarded.length ? ` ${unguarded.length} unguarded entries remain: each is a feature that is ON and dead in production.` : ""),
   );
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// THE LEDGER CORRECTION  (2026-09-22)
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// THIS FILE'S HEADER USED TO SAY SOMETHING FALSE, and it was quoted elsewhere
+// as a standing fact. It read:
+//
+//   "Production has NO migration ledger (no schema_migration_ledger; Supabase's
+//    own schema_migrations stops at 2272)"
+//
+// Both halves are wrong, and the second half is a TRAP rather than a stale
+// reading. Measured read-only on production (ajrurzioarfkagpuxfnb) 2026-09-22:
+//
+//   public.schema_migration_ledger          EXISTS, created 2026-09-15, 465 rows,
+//                                           20 with a 4-digit serial >= 2890
+//   supabase_migrations.schema_migrations   103 rows, 96 of them post-cutover
+//                                           14-digit timestamps
+//   max(version) on that table              '2272'
+//
+// It does not "stop at 2272". Its MAXIMUM IS '2272' because that one text column
+// holds bare serials AND 14-digit timestamps, and text order sorts every
+// timestamp below a four-digit serial. The number was read correctly and meant
+// something else. src/scripts/lib/migrationInventoryCore.ts carries the full
+// reproduction, and src/scripts/reportMigrationInventory.ts is the instrument
+// for the question this script deliberately does not ask.
+//
+// WHAT REMAINS TRUE, and is why this script still grades a frozen snapshot
+// rather than reading a ledger: NEITHER TABLE IS AN INVENTORY. A Supabase
+// dashboard apply writes no row in either; the CLI writes only
+// supabase_migrations; this repository's own discipline writes only
+// schema_migration_ledger; and 378 of the hand ledger's 465 rows are 'backfill'
+// rows that assert a filename existed when 2254 ran and never that it ran. So
+// "is migration N applied" still cannot be asked of production. "Does column X
+// exist" can, and that is the question that matters here.
+
+/**
+ * Every recorded apply that is NEWER than the snapshot's watermark — the
+ * staleness question — answered without ever comparing two version strings of
+ * different formats.
+ *
+ * WHAT THIS REPLACED, AND WHY. The staleness test used to read:
+ *
+ *   // Versions are zero-padded timestamps, so lexicographic order IS chronological.
+ *   const newest = versions.reduce((a, b) => (b > a ? b : a));
+ *   if (newest > watermark) { … }
+ *
+ * True of production-applied-migrations.json TODAY — all 126 entries are
+ * 14-digit — and enforced nowhere, while that file is documented as being taken
+ * FROM supabase_migrations.schema_migrations, which is the column that is NOT
+ * single-format. On production that column's maximum is '2272', a pre-cutover
+ * serial that sorts above every 14-digit timestamp. One hand-added serial entry
+ * here and `newest` silently becomes a number from before the cutover, the
+ * comparison can never fire, and the tripwire goes quiet WITHOUT EVER FAILING —
+ * which is the failure mode this check was written against, reproduced inside
+ * the check itself.
+ *
+ * THREE RULES, and each one is strictly stricter than the line above:
+ *
+ *   1. A version of the SAME format as the watermark is compared to it, which
+ *      is safe: both are fixed-width zero-padded digits, so text order is
+ *      chronological WITHIN a format. compareVersions() is what establishes
+ *      that they share a format; it refuses rather than guessing.
+ *   2. A version of a DIFFERENT format, or one of no recognised format, CANNOT
+ *      be placed relative to the watermark. It is counted as LATE anyway and
+ *      named in its own problem. Fail closed: an entry whose position is
+ *      unknown might be after the capture, and the cost of assuming it is not
+ *      is a snapshot silently graded against a production that moved.
+ *   3. profileVersionColumn() reports a mixed column as its own problem, so the
+ *      state that hides defect (1) is visible even on a run where nothing is
+ *      late.
+ *
+ * Nothing here can pass what the old line failed: every version the old
+ * comparison would have called late is either the same format (rule 1, still
+ * late) or a different one (rule 2, late by default).
+ */
+function entriesAfterWatermark(
+  migrations: readonly { version?: unknown; name?: unknown }[],
+  watermark: string,
+  problems: string[],
+): string[] {
+  const late: string[] = [];
+  const unplaceable: string[] = [];
+
+  for (const m of migrations) {
+    const version = String(m?.version ?? "");
+    if (version === "") continue;
+    const label = `${version} ${String(m?.name ?? "")}`.trim();
+    const cmp = compareVersions(version, watermark);
+    if (!cmp.ok) {
+      unplaceable.push(label);
+      late.push(label);
+      continue;
+    }
+    if (cmp.value > 0) late.push(label);
+  }
+
+  if (unplaceable.length > 0) {
+    problems.push(
+      `${unplaceable.length} entr(y/ies) in production-applied-migrations.json carry a version that cannot ` +
+        `be ordered against the snapshot watermark ${watermark}: ${unplaceable.join(", ")}. They are counted ` +
+        "as LATE rather than ignored, because an entry whose position is unknown might be after the capture " +
+        "and a tripwire that assumes otherwise is the defect this check exists to catch.",
+    );
+  }
+
+  // The shape of the column itself, reported even when nothing is late, so the
+  // state that would hide a stale snapshot is visible before it hides one.
+  const profile = profileVersionColumn(
+    migrations.map((m) => String(m?.version ?? "")).filter(Boolean),
+  );
+  if (profile.mixed) {
+    problems.push(
+      "production-applied-migrations.json mixes version formats (" +
+        profile.formats.map((f) => `${f}=${profile.counts[f]}`).join(", ") +
+        "). A mixed column has no maximum: MAX over it returns a bare serial — on production, '2272' — " +
+        "which is OLDER than almost every row it was asked to dominate. Put every entry in one format.",
+    );
+  }
+
+  return late;
 }
 
 main();

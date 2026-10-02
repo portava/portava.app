@@ -28,7 +28,7 @@ import {
   verifyUploadedBytes,
   MEDIA_SIZE_LIMITS,
 } from '../lib/mediaPipeline.js';
-import { recordEntityMedia } from '../lib/mediaAssets.js';
+import { recordEntityMedia, MEDIA_SOURCE_UNDECLARED } from '../lib/mediaAssets.js'; import { recordPostcardCreatedSignal } from '../lib/mediaAnalytics.js';
 
 const router = Router();
 
@@ -185,16 +185,16 @@ async function refreshMediaCounts(sc: any, postId: string): Promise<{
   mediaCount: number;
   hasVideo: boolean;
   primaryMediaType: string;
-  firstReadyUrl: string | null;
+  firstReadyUrl: string | null; /** census-media §37.9: the public_url of every READY file that does NOT count (held, flagged, rejected…), and whether the read could not run (nothing is written then). */ uncountedUrls: string[]; unread?: true;
 }> {
-  const { data: mediaRows } = await sc
+  const { data: mediaRows, error: mediaReadErr } = await sc
     .from('post_media')
-    .select('media_type, processing_status, public_url, sort_order')
+    .select('media_type, processing_status, public_url, sort_order, moderation_status') // census-media §37.8: moderation read so a held file neither counts nor becomes the cover
     .eq('post_id', postId);
-
+  if (mediaReadErr) return { mediaCount: 0, hasVideo: false, primaryMediaType: 'none', firstReadyUrl: null, uncountedUrls: [], unread: true }; // §37.9: a read that could not run is not "no files" — write no zeros
   const ready = ((mediaRows ?? []) as any[])
     .filter((r: any) => r.processing_status === 'ready')
-    .sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+    .filter((r: any) => countsTowardPostcard(r)).sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0)); // §37.8: ready AND distributable (was: .sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0));)
 
   const mediaCount = ready.length;
   const hasVideo = ready.some((r: any) => r.media_type === 'video');
@@ -213,7 +213,7 @@ async function refreshMediaCounts(sc: any, postId: string): Promise<{
     .eq('post_id', postId)
     .then(undefined, () => {});
 
-  return { mediaCount, hasVideo, primaryMediaType, firstReadyUrl };
+  return { mediaCount, hasVideo, primaryMediaType, firstReadyUrl, uncountedUrls: ((mediaRows ?? []) as any[]).filter((r: any) => r.processing_status === 'ready' && !countsTowardPostcard(r)).map((r: any) => String(r.public_url ?? '')).filter(Boolean) };
 }
 
 /* ============================================================================
@@ -494,11 +494,11 @@ router.post('/postcards/:id/media/upload-url', async (req, res) => {
   const storagePath = `${user.id}/${postId}/${mediaId}.${mimeInfo.ext}`;
 
   // Backfill storage_path now that we have the mediaId
-  await sc
+  const { error: pathErr } = await sc
     .from('post_media')
     .update({ storage_path: storagePath })
-    .eq('id', mediaId)
-    .then(undefined, () => {});
+    .eq('id', mediaId);  // census-discovery §56 (DV-77): BOUND. A slot whose path did not record is one no sweep can find, so no URL is minted for it.
+  if (pathErr) { req.log.error({ err: pathErr, mediaId }, 'postcards: storage_path backfill failed — refusing rather than minting an untracked upload URL'); await sc.from('post_media').update({ processing_status: 'failed' }).eq('id', mediaId).then(undefined, () => {}); sendError(res, "db_error", "We couldn't prepare your upload. Please try again.", { exposeDetail: true }); return; }
 
   // Generate signed upload URL
   const { data: urlData, error: urlErr } = await sc.storage
@@ -702,11 +702,11 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
   // Audit privacy fix: postcard media goes DIRECT to storage via signed URL, so
   // the server never saw the bytes — EXIF/GPS survived and width/height were
   // client-declared. For images: download, strip EXIF/auto-orient, re-upload in
-  // place, and measure real dimensions server-side. Fail-closed for images —
-  // a corrupt image rejects completion (retryable) rather than skipping the
-  // GPS strip. Videos are not transcoded (no ffmpeg tier), but their container
-  // location atoms ARE stripped — see the location-metadata scrub in the video
-  // branch below.
+  // place, and measure real dimensions server-side. Fail-closed for images.
+  // Videos are not transcoded (no ffmpeg tier), but their container location
+  // atoms ARE stripped, and their duration + display size are READ from the
+  // container (§37, lib/videoProbe.ts) — server-measured wins, as for images.
+  let probedVideo: VideoProbe | null = null;
   let measuredWidth: number | null = null;
   let measuredHeight: number | null = null;
   let computedPhash: string | null = null;
@@ -788,33 +788,33 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
       return;
     }
   } else {
-    // VIDEO — dimensions first, then bytes. ORDER IS LOAD-BEARING.
+    // VIDEO — the bytes first, then the dimensions (census-media §37.8).
     //
     // For video, measuredWidth/measuredHeight are never set: the processing
-    // block above is gated on media_type === 'image'. So the dimension guard
-    // further down resolves to p.width/p.height — values that arrived in the
-    // request body and are knowable here for free.
+    // block above is gated on media_type === 'image'. The dimension guard
+    // further down resolves to the size the CONTAINER states (probed below,
+    // from the verified bytes) and only then to p.width/p.height.
     //
-    // Running the storage round-trip first meant a request we could reject
-    // locally instead bought a signed URL and a range read, and then failed in
-    // the catch below with the generic 'Video could not be verified' — so on a
-    // dimensionless payload the specific message clients branch on was
-    // unreachable whenever the store was slow or down, and the guard that
-    // exists to report exactly this was dead for its own failure mode. It was
-    // reachable only when verification happened to succeed first.
+    // This used to refuse a payload without p.width/p.height HERE, before any
+    // storage read, so the specific message stayed reachable with the store
+    // down. That was right while the client's figure was the only source. It
+    // stopped being right once census-media §22 began probing the stored
+    // container: a client that sent no dimensions for a video whose container
+    // states them was refused for a size the server reads itself. So the
+    // payload is no longer refused on its face. The guard below refuses only
+    // when NEITHER source states a size; with the store down the answer is the
+    // storage failure (retryable), because the size is then genuinely unknown.
     //
-    // Images are deliberately NOT reordered this way: their dimensions ARE the
-    // storage read (processImage measures them), so there is nothing local to
-    // check first, and their guard is satisfied by construction or rejected.
+    // Images are unaffected: their dimensions ARE the storage read (processImage
+    // measures them), and their guard is satisfied by construction or rejected.
     //
-    // Fail-closed on storage is unchanged and still correct — nothing below is
-    // relaxed. This only stops us paying a network call to deliver a worse
-    // error for a request that was already invalid on its face.
+    // Fail-closed on storage is unchanged — nothing below is relaxed.
+    //
     if (p.width == null || p.height == null) {
-      req.log.warn({ mediaId, mediaType: 'video' }, 'postcards: complete rejected — width/height required (pre-verification)');
-      sendError(res, 'invalid_payload', DIMENSIONS_REQUIRED_MESSAGE);
-      return;
+      req.log.info({ mediaId, mediaType: 'video' }, 'postcards: complete without client dimensions — the container probe decides');
     }
+    // (was: a pre-verification refusal — sendError(res, 'invalid_payload', DIMENSIONS_REQUIRED_MESSAGE); return;)
+    //
 
     // Verify the stored bytes are really a video, and really within the
     // ceiling.
@@ -921,7 +921,7 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
       // BYTES — content.
       const verifiedFull = verifyUploadedBytes(videoBuf, 'video');
       if (!verifiedFull.ok) throw contentFailure(verifiedFull.failure.message);
-
+      probedVideo = probeVideoContainer(videoBuf); // duration + display size, from the verified bytes
       const scrub = stripVideoLocationMetadata(videoBuf, verifiedFull.value);
       if (!scrub.ok) {
         // A specific, actionable refusal — not the generic verification error.
@@ -945,11 +945,11 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
     }
   }
 
-  // Compute thumbnail bare bucket/path if client supplied a thumbnail path
-  let thumbnailUrl: string | null = null;
-  if (p.thumbnailPath) {
-    thumbnailUrl = `${STORAGE_BUCKET}/${p.thumbnailPath}`;
-  }
+  // Thumbnail: only THIS slot's own server-written poster (routes/postcardMediaTransport.ts).
+  const poster = admissiblePosterPath(storagePath, p.thumbnailPath);
+  if (!poster.ok) { sendError(res, 'invalid_payload', poster.message); return; }
+  const thumbnailUrl: string | null = poster.path ? `${STORAGE_BUCKET}/${poster.path}` : null;
+  const storedDuration = resolveStoredDuration(probedVideo, p.durationSeconds);
 
   // Optional stamp overlay — resolved & pinned server-side. An ineligible or
   // unavailable stamp NEVER blocks the upload: we complete without the overlay
@@ -975,21 +975,27 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
   // Mark ready + store metadata
   const baseUpdate: Record<string, unknown> = {
     processing_status:      'ready',
-    moderation_status:      'approved',
+    moderation_status:      await preDistributionPostMediaStatus(sc, { mediaType: (mediaRow as any).media_type === 'video' ? 'video' : 'image', bucket: STORAGE_BUCKET, path: storagePath, framePath: poster.path }), // census-media §37 (MD269/MD283): 'approved' while media_moderation_classifier_enabled is off (3356, seeded FALSE) (was: moderation_status:      'approved',)
     public_url:             publicUrl,
     mime_type:              p.mimeType,
     file_size_bytes:        p.fileSizeBytes,
-    duration_seconds:       p.durationSeconds ?? null,
+    duration_seconds:       storedDuration.seconds,
     // Server-measured dimensions win over client-declared (audit trust fix).
-    width:                  measuredWidth ?? p.width ?? null,
-    height:                 measuredHeight ?? p.height ?? null,
+    width:                  measuredWidth ?? probedVideo?.width ?? p.width ?? null,
+    height:                 measuredHeight ?? probedVideo?.height ?? p.height ?? null,
     thumbnail_url:          thumbnailUrl,
-    thumbnail_storage_path: p.thumbnailPath ?? null,
+    thumbnail_storage_path: poster.path,
     updated_at:             new Date().toISOString(),
     // Perceptual hash for near-duplicate grouping (null for videos or when
     // computation failed — worker skips rows with phash IS NULL).
     phash:                  computedPhash,
   };
+  if ((mediaRow as any).media_type === 'video' && storedDuration.source !== 'measured') {
+    // §37: the container did not state a duration (a live-recorded WebM, a
+    // fragmented file with no timing). The stored value is the client's word,
+    // and the log says so rather than the row pretending it was measured.
+    req.log.warn({ mediaId, source: storedDuration.source }, 'postcards: video duration not stated by its container');
+  }
 
   // Dimension guard: width and height must be present before we can flip the
   // row to 'ready'. For images this is guaranteed — server-side processing
@@ -1063,8 +1069,8 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
     sendError(res, "db_error", "We couldn't finish your upload. Please try again.", { exposeDetail: true });
     return;
   }
-
-  // Refresh parent counts and get first-ready URL for postcard creation
+  const counts = await syncPostcardAfterMediaChange(sc, postId, user, req); res.status(200).json({ ok: true, mediaCount: counts.mediaCount, hasVideo: counts.hasVideo, ...(p.stampOverlay ? (overlay ? { stampOverlayApplied: true } : { stampOverlayApplied: false, stampOverlayError: overlayError ?? 'stamp_unavailable' }) : {}) }); }); // census-media §37.9: the step below is shared with admin moderation; the response is unchanged
+export async function syncPostcardAfterMediaChange(sc: any, postId: string, user: { id: string }, req: { log: { warn: (...args: any[]) => void } }, alsoGone: readonly string[] = []): Promise<PostcardStepResult> { // census-media §37.10: it also moves the passport cover (was: …, req: {…}): Promise<PostcardMediaCounts> {) // Refresh parent counts and get first-ready URL for postcard creation (census-media §37.9: /complete and POST /admin/media/:id/moderate)
   const counts = await refreshMediaCounts(sc, postId);
 
   // Lazily create passport_postcard on the first ready media when add_to_passport=true.
@@ -1118,23 +1124,26 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
           publicUrl: counts.firstReadyUrl,
           entityType: 'postcard',
           entityId: (pcIns.data as any).id as string,
-          isCover: true,
+          isCover: true, sourceType: MEDIA_SOURCE_UNDECLARED, // the post's uploaded file: §6 source never declared (census-media §35, MD37)
         });
+        // census-media §21 — §44 "Memory / Postcard created", at the one
+        // moment the Postcard row is actually written.
+        recordPostcardCreatedSignal(sc, { userId: user.id, postId });
       }
     }
   }
-
-  res.status(200).json({
-    ok: true,
-    mediaCount: counts.mediaCount,
-    hasVideo:   counts.hasVideo,
-    ...(p.stampOverlay
-      ? overlay
-        ? { stampOverlayApplied: true }
-        : { stampOverlayApplied: false, stampOverlayError: overlayError ?? 'stamp_unavailable' }
-      : {}),
-  });
-});
+  const cover = await repointPassportCover(sc, postId, counts, req, alsoGone); // census-media §37.10 item 3: the step owns the one cover rule, for /complete too (was: // census-media §37.9: the cover repoint after a moderation decision is syncPostcardAfterModeration's)
+  return { ...counts, cover };
+}
+// ── census-media §37.9 ────────────────────────────────────────────────────────────
+// The /complete handler above used to end here: its 200 response (mediaCount, hasVideo and the
+// stamp-overlay flags) is now sent on the line before this function, unchanged in content. The
+// recount and the lazy passport postcard moved into syncPostcardAfterMediaChange IN PLACE — every
+// line census-media cites inside it (the insert, the canonical cover, the created signal) kept its
+// number and its text — so POST /admin/media/:id/moderate runs the same step when a moderator
+// releases a held file or holds a counted one (routes/adminMedia.ts).
+// (was: res.status(200).json({ ok: true, mediaCount: counts.mediaCount, hasVideo: counts.hasVideo,
+// …stampOverlay… }); }); — the end of the /complete handler)
 
 /* ============================================================================
  * DELETE /api/postcards/:id/media/:mediaId — owner-only removal
@@ -1159,7 +1168,7 @@ router.delete('/postcards/:id/media/:mediaId', async (req, res) => {
   // Load media row
   const { data: mediaRow, error: loadErr } = await sc
     .from('post_media')
-    .select('id, user_id, post_id, storage_bucket, storage_path, processing_status')
+    .select('id, user_id, post_id, storage_bucket, storage_path, processing_status, public_url') // census-media §37.10 item 1: the removed file's URL, to move a cover off it (was: .select('id, user_id, post_id, storage_bucket, storage_path, processing_status'))
     .eq('id', mediaId)
     .eq('post_id', postId)
     .maybeSingle();
@@ -1209,10 +1218,13 @@ router.delete('/postcards/:id/media/:mediaId', async (req, res) => {
       .from(STORAGE_BUCKET)
       .remove([storagePath, `${storagePath}.feed.jpg`])
       .then(undefined, () => {});
+    // The video poster and any resumable parts are derivatives of this exact
+    // object too (routes/postcardMediaTransport.ts); they go with it.
+    await removeTransportArtifacts(sc.storage.from(STORAGE_BUCKET), storagePath).then(undefined, () => {});
   }
 
   // Re-derive parent media counts
-  const counts = await refreshMediaCounts(sc, postId);
+  const counts = await refreshMediaCounts(sc, postId); await repointPassportCover(sc, postId, counts, req, [String((mediaRow as any).public_url ?? '')].filter(Boolean)); // census-media §37.10 item 1: a cover that sat on the removed file moves (or clears) by the one cover rule
 
   res.status(200).json({
     ok:         true,
@@ -1478,8 +1490,8 @@ function requireInternalSecret(req: any, res: any): boolean {
   return true;
 }
 
-/** How old a pending row must be before it is considered an orphan (ms). */
-const ORPHAN_CUTOFF_MS = 60 * 60 * 1000; // 1 hour
+/** How old a pending row must be before it is considered an orphan (ms). Defined with the pass, in services/media/PendingUploadSweep.ts. */
+const ORPHAN_CUTOFF_MS = PENDING_UPLOAD_ORPHAN_CUTOFF_MS; // 2 h 30 of no activity — census-discovery §81 (D-W10S2-6)
 
 router.post('/postcards/sweep-orphans', async (req, res) => {
   if (!requireInternalSecret(req, res)) return;
@@ -1490,72 +1502,271 @@ router.post('/postcards/sweep-orphans', async (req, res) => {
     return;
   }
 
-  const cutoff = new Date(Date.now() - ORPHAN_CUTOFF_MS).toISOString();
-
-  // Load orphaned pending rows (cap at 200 per sweep to bound latency).
-  const { data: orphans, error: fetchErr } = await sc
-    .from('post_media')
-    .select('id, storage_path, storage_bucket')
-    .eq('processing_status', 'pending')
-    .lt('created_at', cutoff)
-    .limit(200);
-
-  if (fetchErr) {
-    req.log?.error?.({ err: fetchErr }, 'sweep-orphans: failed to fetch pending rows');
+  // ── census-discovery §56 (DV-77) — the pass moved, the rules did not ─────────
+  //
+  // What used to be written out here is now `sweepAbandonedPendingUploads` in
+  // services/media/PendingUploadSweep.ts, called by THIS manual trigger and by
+  // lib/media/pendingUploadSweepScheduler.ts — the scheduler this endpoint's
+  // header asked for ("designed to be called on a schedule") and never had.
+  // Two copies of a deletion pass drift, and the drift is invisible until one of
+  // them deletes a row the other would have kept.
+  //
+  // The four rules this block used to state in code, and still holds, are:
+  //
+  //   1. Only `processing_status = 'pending'` rows older than the cutoff. Pending
+  //      is exactly "not yet stripped": /complete strips in place, THEN marks
+  //      the row ready, and a /complete that refuses the bytes leaves it pending.
+  //   2. Storage objects BEFORE the row. `remove` reports failure in `{ error }`
+  //      rather than by rejecting; a failed removal KEEPS the row so the next
+  //      pass can find the bytes again. Deleting the row first would strand the
+  //      object permanently — nothing else records where it is.
+  //   3. The resumable-upload artifacts (parts, poster) under the same rule.
+  //   4. A missing object is not an error: every step is idempotent, so two
+  //      passes racing on one row, or a retry after a partial pass, converge.
+  //
+  // And three it did not have, each stated where it is implemented: the read is
+  // ordered OLDEST FIRST, so a backlog larger than one batch cannot starve the
+  // oldest raw original; a row with no recorded `storage_path` has its path
+  // DERIVED (the old block removed nothing for it and then deleted the only
+  // pointer to the bytes); and a row is re-read as still pending immediately
+  // before its bytes are removed, so one that completed meanwhile is not
+  // stripped of the file it now serves.
+  //
+  // The response is unchanged: `{ swept, errors }`, and 500 `db_error` when the
+  // pending rows cannot be read — never `{ swept: 0 }` for a read that failed.
+  //
+  // WHAT THIS DOES NOT CHANGE: who may call it (INTERNAL_API_SECRET, compared
+  // in constant time above), the cutoff (the same one hour), or the batch (the
+  // same 200). The cutoff and the batch are the values this endpoint shipped
+  // with on 2026-08-11; neither has been ratified, and §56 says so.
+  //
+  // The lines below this comment are the whole handler now. The comment is this
+  // long on purpose: census-media and census-discovery cite later lines of this
+  // file by number (the moderation literals, the postcard-sync helpers), and a
+  // shorter block here would move every one of them. It is documentation of the
+  // moved rules rather than padding, and it is the only place a reader of this
+  // route will look for them.
+  //
+  // ─────────────────────────────────────────────────────────────────────────────
+  //
+  // The manual trigger ignores the scheduler's flag on purpose. It is an
+  // operator's explicit act behind the internal secret; the flag
+  // (`media_pending_upload_sweep_enabled`, migration 3400, seeded FALSE) gates
+  // only the UNATTENDED pass, which is the one that needs an owner's decision.
+  //
+  // An operator who calls this is doing, once, exactly what the scheduler would
+  // do every hour with the flag on — no more, no less.
+  //
+  // ─────────────────────────────────────────────────────────────────────────────
+  //
+  // Retry semantics, for the operator: calling this twice in a row is safe. The
+  // second call finds the rows the first could not finish (their counts are in
+  // `errors`) and tries them again; rows the first call finished are gone.
+  //
+  // Concurrency, for the operator: this and the scheduler may run at once, on
+  // one instance or several. Both use the same idempotent steps, so the worst
+  // outcome is a row counted in `errors` by the pass that lost the race.
+  //
+  // What the pass reports: `examined` rows read, `swept` rows whose bytes and
+  // row are gone, `errors` rows kept for the next pass, and `more` when the
+  // batch was full. Only `swept` and `errors` are returned here, as before.
+  //
+  const result = await sweepAbandonedPendingUploads(sc, { cutoffMs: ORPHAN_CUTOFF_MS, log: req.log });
+  if (!result.ok) {
+    req.log?.error?.({ reason: result.reason }, 'sweep-orphans: failed to fetch pending rows');
     res.status(500).json({ error: 'db_error', message: 'Failed to load orphaned rows' });
     return;
   }
 
-  const rows = (orphans ?? []) as Array<{ id: string; storage_path: string; storage_bucket: string }>;
-  if (rows.length === 0) {
-    res.status(200).json({ swept: 0, errors: 0 });
-    return;
-  }
-
-  let swept = 0;
-  let errors = 0;
-
-  for (const row of rows) {
-    try {
-      // Remove storage objects (original + any feed variant) BEFORE deleting
-      // the DB row. Order matters: if storage removal fails, we KEEP the DB row
-      // so a subsequent sweep can retry. Deleting the DB row first would orphan
-      // the storage object permanently — the sweep could never find it again.
-      //
-      // `remove` reports errors in the resolved `{ error }` field, not via
-      // rejection. A missing object is not an error (idempotent); a genuine
-      // bucket failure IS an error that must keep the row alive for retry.
-      if (row.storage_path) {
-        const { error: rmErr } = await sc.storage
-          .from(row.storage_bucket || STORAGE_BUCKET)
-          .remove([row.storage_path, `${row.storage_path}.feed.jpg`]);
-        if (rmErr) {
-          req.log?.warn?.({ err: rmErr, mediaId: row.id, storagePath: row.storage_path },
-            'sweep-orphans: storage removal failed — retaining DB row for retry');
-          errors++;
-          continue; // Leave the DB row so the next sweep can try again.
-        }
-      }
-
-      // Storage objects gone (or there was no path). Now safe to delete the row.
-      const { error: delErr } = await sc
-        .from('post_media')
-        .delete()
-        .eq('id', row.id);
-
-      if (delErr) {
-        req.log?.warn?.({ err: delErr, mediaId: row.id }, 'sweep-orphans: failed to delete row');
-        errors++;
-      } else {
-        swept++;
-      }
-    } catch (err) {
-      req.log?.warn?.({ err, mediaId: row.id }, 'sweep-orphans: unexpected error for row');
-      errors++;
-    }
-  }
-
-  res.status(200).json({ swept, errors });
+  res.status(200).json({ swept: result.swept, errors: result.errors });
 });
 
 export default router;
+
+// ── Media §37 (video duration, poster, resumable parts) ──────────────────────
+// Imported at the TAIL so no line above moves: census-media.md cites this file
+// by line (the pending/approved moderation literals). ESM hoists imports, so
+// placement does not change evaluation order.
+import { probeVideoContainer, resolveStoredDuration, type VideoProbe } from '../lib/videoMetadata.js';
+import { admissiblePosterPath } from '../lib/mediaPosterPath.js';
+import { removeTransportArtifacts } from '../lib/postcardMediaTransport.js';  import { sweepAbandonedPendingUploads, PENDING_UPLOAD_ORPHAN_CUTOFF_MS } from '../services/media/PendingUploadSweep.js';  // census-discovery §56 (DV-77)
+
+// census-media §37 (MD269/MD283): the §36 safety-moderation stage decides the value /complete
+// writes. Off (the seed), it is 'approved', as before. Imported at the TAIL, like the block above.
+import { preDistributionPostMediaStatus } from '../lib/media/vendors/mediaVendorStages.js';
+
+// ── census-media §37.8: what counts toward a postcard, and what may be its cover ──
+// A file counts — in media_count, has_video and primary_media_type, and as the
+// passport cover (`firstReadyUrl`) — only when it is READY and DISTRIBUTABLE.
+// The moderation half is the same deny-set every post_media distribution reader
+// applies (lib/mediaEligibility NON_DISTRIBUTABLE_MEDIA_MODERATION_STATES:
+// flagged, limited, rejected, removed, owner_deleted). Before this, a file an
+// admin flagged or rejected, and — once 3356 is on — a file the §36 stage HOLDS
+// (`flagged`), still counted, and could be copied into
+// `passport_postcards.media_url`. Declared at the tail so no cited line moves;
+// a function declaration is hoisted.
+export function countsTowardPostcard(row: { moderation_status?: unknown }): boolean {
+  return !NON_DISTRIBUTABLE_MEDIA_MODERATION_STATES.has(String(row?.moderation_status ?? ''));
+}
+import { NON_DISTRIBUTABLE_MEDIA_MODERATION_STATES } from '../lib/mediaEligibility.js';
+
+// ── census-media §37.9: a moderation decision re-runs the postcard step ──────
+//
+// §37.8 made the count and the cover read only files that are READY and
+// distributable, but only the upload path (/complete) and the owner's delete
+// ever re-derived them. POST /admin/media/:id/moderate flips a post_media
+// row's moderation_status (and its `delete` removes the row) without either, so:
+//   • a moderator RELEASING a held file left the postcard at media_count 0 and
+//     with no passport postcard, for good (§37.8.7 item 1);
+//   • a moderator FLAGGING or REJECTING a counted file left it counted, and left
+//     it as the passport cover.
+// The admin route now calls `syncPostcardAfterModeration`, which decides from
+// the SAME two predicates refreshMediaCounts applies (ready, and
+// countsTowardPostcard) whether the file's countability changed, and if it did
+// runs `syncPostcardAfterMediaChange` — the one step /complete runs. The count
+// rule lives in refreshMediaCounts alone.
+
+export type PostcardMediaCounts = Awaited<ReturnType<typeof refreshMediaCounts>>;
+
+/** Does this post_media row count toward its postcard? The two filters refreshMediaCounts applies, composed. */
+export function isCountedPostcardFile(row: { processing_status?: unknown; moderation_status?: unknown }): boolean {
+  return row?.processing_status === 'ready' && countsTowardPostcard(row);
+}
+
+export type PassportCoverOutcome = 'kept' | 'repointed' | 'filled' | 'cleared' | 'no_postcard' | 'failed'; // census-media §37.10: 'cleared' replaces 'no_countable_file'; 'filled' gives a cleared cover the first file that counts again
+
+/**
+ * A passport postcard whose cover is a file of this post that NO LONGER counts
+ * (held, flagged, rejected — or removed, passed in `alsoGone`) moves to the
+ * first file that does. A cover that is not one of this post's uncounted files
+ * is left alone: this never rewrites a cover it cannot prove is stale. With no
+ * file left that counts the cover is CLEARED to null (census-media §37.10 item
+ * 3; needs 3359), and a null cover is FILLED once a file counts again. NEVER throws.
+ */
+async function repointPassportCover(
+  sc: any,
+  postId: string,
+  counts: PostcardMediaCounts,
+  req: { log: { warn: (...args: any[]) => void } },
+  alsoGone: readonly string[] = [],
+): Promise<PassportCoverOutcome> {
+  try {
+    if (counts.unread) return 'failed'; // census-media §37.10: an unread recount proves nothing about the cover — write nothing
+    const { data, error } = await sc.from('passport_postcards').select('id, media_url').eq('post_id', postId).maybeSingle();
+    if (error) return 'failed';
+    if (!data) return 'no_postcard';
+    const cover = String((data as any).media_url ?? ''); const next = counts.firstReadyUrl ?? null;
+    if (cover && !(counts.uncountedUrls.includes(cover) || alsoGone.includes(cover))) return 'kept'; // not provably stale: left alone
+    if ((cover || null) === next) return 'kept'; // no cover, and no file that counts: nothing to write
+    // census-media §37.10 item 3: with no file left that counts the cover is cleared to null, never left on a held or removed file
+    const { error: upErr } = await sc.from('passport_postcards').update({ media_url: next }).eq('id', (data as any).id);
+    if (upErr) { req.log.warn({ postId, err: upErr, clearing: next === null }, next === null ? 'postcards: the passport cover could not be CLEARED — passport_postcards.media_url is NOT NULL until 3359 is applied' : 'postcards: the passport cover could not be moved'); return 'failed'; }
+    return next === null ? 'cleared' : cover ? 'repointed' : 'filled';
+  } catch {
+    return 'failed';
+  }
+}
+
+export type PostcardModerationSync =
+  /** The file counted before and after (or neither): nothing to re-derive. */
+  | { state: 'unchanged' }
+  /** Countability changed (or the prior state was unknown): the postcard step ran. */
+  | { state: 'synced'; mediaCount: number; cover: PassportCoverOutcome }
+  /** The step could not run (no post id, the recount's read failed — nothing was written — or it threw). */
+  | { state: 'failed' };
+
+/**
+ * After a moderator changed (or deleted) one post_media row: re-run the
+ * postcard step when the file's countability changed. `before` is the row as it
+ * was (null when it could not be read — then the step runs, because a recount
+ * converges on the rule whatever the prior state was); `after` is its new
+ * moderation_status, or null when the row was deleted. NEVER throws.
+ */
+export async function syncPostcardAfterModeration(
+  sc: any,
+  input: {
+    postId: string | null | undefined;
+    ownerUserId: string | null | undefined;
+    before: { processing_status?: unknown; moderation_status?: unknown; public_url?: unknown } | null;
+    after: string | null; /** census-media §37.10 item 4: the file to re-read after the step; a status that moved meanwhile re-runs it. */ recheckMediaId?: string;
+  },
+  req: { log: { warn: (...args: any[]) => void } },
+): Promise<PostcardModerationSync> {
+  const postId = typeof input.postId === 'string' && input.postId ? input.postId : null;
+  if (!postId) return { state: 'failed' };
+  const wasCounted = input.before ? isCountedPostcardFile(input.before) : null;
+  const isCounted = input.after === null || !input.before
+    ? false
+    : isCountedPostcardFile({ processing_status: input.before.processing_status, moderation_status: input.after });
+  if (wasCounted !== null && wasCounted === isCounted) return { state: 'unchanged' };
+  try {
+    const gone = input.after === null && typeof input.before?.public_url === 'string' ? [input.before.public_url] : [];
+    let step = await runPostcardStepForModeration(sc, postId, input.ownerUserId, req, gone);
+    // census-media §37.10 item 4: re-read after the write. The recount reads, then
+    // writes; a second moderator's decision landing between the two leaves this
+    // step's write stale. A file whose status is no longer the one this decision
+    // wrote re-runs the step, which then reads the rows as they are (bounded).
+    let expected: string | null = input.after;
+    for (let rerun = 0; input.recheckMediaId && !step.unread && rerun < MODERATION_STEP_RERUNS; rerun++) {
+      const now = await readModerationStatusNow(sc, input.recheckMediaId);
+      if (!now.read || now.status === expected) break;
+      expected = now.status; // the re-run reads the rows as they are at this status
+      step = await runPostcardStepForModeration(sc, postId, input.ownerUserId, req, gone);
+    }
+    if (step.unread) {
+      req.log.warn({ postId }, 'postcards: the post_media read for the recount could not run after a moderation decision — counts left as they were');
+      return { state: 'failed' };
+    }
+    return { state: 'synced', mediaCount: step.mediaCount, cover: step.cover };
+  } catch (err) {
+    req.log.warn({ err, postId }, 'postcards: re-deriving the postcard after a moderation decision failed');
+    return { state: 'failed' };
+  }
+}
+
+// ── census-media §37.10: the moderation step's owner, its re-read, and its result ──
+
+/** What the postcard step returns: the recount, and what happened to the passport cover. */
+export type PostcardStepResult = PostcardMediaCounts & { cover: PassportCoverOutcome };
+
+/** How many times a moderation step re-runs after finding its file's status moved (census-media §37.10 item 4). */
+export const MODERATION_STEP_RERUNS = 2;
+
+/**
+ * census-media §37.10 item 5. The passport postcard belongs to the post's
+ * author: /postcards/:id/media/upload-url makes a slot only for the author, so
+ * post_media.user_id IS the author (and is NOT NULL in the baseline). When the
+ * moderation path has no uploader id (both of its reads of the row came back
+ * without one) the author is read from the post, and the step runs whole. Only
+ * when no author can be read either does it recount and move the cover without
+ * making a passport postcard, whose user_id is NOT NULL: there is nobody to
+ * make it for, and that is logged rather than guessed.
+ */
+async function runPostcardStepForModeration(
+  sc: any,
+  postId: string,
+  ownerUserId: string | null | undefined,
+  req: { log: { warn: (...args: any[]) => void } },
+  gone: readonly string[],
+): Promise<PostcardStepResult> {
+  let owner = typeof ownerUserId === 'string' && ownerUserId ? ownerUserId : null;
+  if (!owner) {
+    const { data, error } = await sc.from('posts').select('author_id').eq('id', postId).maybeSingle();
+    owner = !error && typeof (data as any)?.author_id === 'string' && (data as any).author_id ? (data as any).author_id : null;
+    if (!owner) req.log.warn({ postId }, 'postcards: no uploader and no readable post author — recount and cover only, no passport postcard is made');
+  }
+  if (owner) return syncPostcardAfterMediaChange(sc, postId, { id: owner }, req, gone);
+  const counts = await refreshMediaCounts(sc, postId);
+  return { ...counts, cover: await repointPassportCover(sc, postId, counts, req, gone) };
+}
+
+/** The file's moderation status now: `status: null` when the row is gone; `read: false` when it could not be read. */
+async function readModerationStatusNow(sc: any, mediaId: string): Promise<{ read: boolean; status: string | null }> {
+  try {
+    const { data, error } = await sc.from('post_media').select('moderation_status').eq('id', mediaId).maybeSingle();
+    if (error) return { read: false, status: null };
+    return { read: true, status: data ? String((data as any).moderation_status ?? '') : null };
+  } catch {
+    return { read: false, status: null };
+  }
+}

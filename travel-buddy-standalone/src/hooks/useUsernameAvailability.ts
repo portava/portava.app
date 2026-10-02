@@ -47,6 +47,8 @@ export interface UseUsernameAvailabilityResult {
   /** True when the field is safe to submit: idle (empty/unchanged) or available.
    *  Never blocks on a transient `checking` — callers gate that separately. */
   ok: boolean;
+  /** §23: free handles to offer when this one is taken. Empty in every other state. */
+  alternatives: string[];
 }
 
 /**
@@ -61,6 +63,7 @@ export function useUsernameAvailability(
 
   const [status, setStatus] = useState<UsernameAvailabilityStatus>('idle');
   const [message, setMessage] = useState<string | null>(null);
+  const [alternatives, setAlternatives] = useState<string[]>([]);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Monotonic sequence guard: only the latest check may commit (§33).
   const seqRef = useRef(0);
@@ -73,6 +76,7 @@ export function useUsernameAvailability(
     if (!enabled || handle.length === 0 || handle === (skipValue ?? '')) {
       setStatus('idle');
       setMessage(null);
+      setAlternatives([]);
       return;
     }
 
@@ -81,22 +85,27 @@ export function useUsernameAvailability(
     if (syntaxError) {
       setStatus('invalid');
       setMessage(syntaxError);
+      setAlternatives([]);
       return;
     }
     if (!isUsernameCheckable(handle)) {
       setStatus('idle');
       setMessage(null);
+      setAlternatives([]);
       return;
     }
 
     setStatus('checking');
     setMessage(null);
+    setAlternatives([]);
     timerRef.current = setTimeout(async () => {
       const res = await checkUsername(handle);
       if (mySeq !== seqRef.current) return; // superseded by a newer keystroke
       const interpreted = interpretAvailability(res);
       setStatus(interpreted.status);
       setMessage(interpreted.message);
+      // §23: an unavailable handle arrives WITH somewhere to go.
+      setAlternatives(interpreted.alternatives);
     }, debounceMs);
 
     return () => {
@@ -105,5 +114,5 @@ export function useUsernameAvailability(
   }, [handle, skipValue, debounceMs, enabled]);
 
   const ok = status === 'idle' || status === 'available';
-  return { status, message, ok };
+  return { status, message, ok, alternatives };
 }

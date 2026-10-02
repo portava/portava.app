@@ -72,18 +72,29 @@
  * this does it before the fact, and the property test quantifies over
  * permutations of adversarial fractions rather than illustrating one.
  *
- * RUNTIME EFFECT: NONE on its own. The shipping reader is
- * `services/ledger/CanonicalShareReader.ts`.
+ * ── THE THIRD LEDGER (3385) ─────────────────────────────────────────────────
+ * 2930 projected two ledgers and `creator_earning_entries` (2921) sat beside
+ * them, invisible to the share. 3385 adds it as a third partition — currency
+ * minor units and double entry like 2901, and carrying a real `attribution_id`
+ * FK. `projectCreatorEarningEntryRow` is its twin here.
+ *
+ * RUNTIME EFFECT: NONE on its own. The readers are
+ * `services/ledger/CanonicalShareReader.ts` and
+ * `services/creators/CreatorLedgerReader.ts`.
  */
 
 /** The canonical relation created by migration 2930. */
 export const CREATOR_SHARE_LEDGER = "creator_share_ledger";
 
-/** The two physical partitions behind the view. */
-export type SourceLedger = "intel_reward_ledger" | "rent_buddy_earnings_entries";
+/**
+ * The physical partitions behind the view. 2930 projected the first two; 3385
+ * added `creator_earning_entries` (2921), which 2930 never projected — so an
+ * earning booked there was a creator's money the share could not see (DV-64).
+ */
+export type SourceLedger = "intel_reward_ledger" | "rent_buddy_earnings_entries" | "creator_earning_entries";
 
 export const SOURCE_LEDGERS: readonly SourceLedger[] = [
-  "intel_reward_ledger", "rent_buddy_earnings_entries",
+  "intel_reward_ledger", "rent_buddy_earnings_entries", "creator_earning_entries",
 ] as const;
 
 /**
@@ -95,6 +106,20 @@ export type PartyRole = "creator" | "platform" | "traveler" | "external";
 /** 2901 account → party role. Total by construction; no silent default. */
 export const ACCOUNT_PARTY_ROLE: Readonly<Record<string, PartyRole>> = {
   buddy_payable: "creator",
+  platform_revenue: "platform",
+  traveler_receivable: "traveler",
+  cash_external: "external",
+};
+
+/**
+ * 2921 account → party role. The same four roles; 2921 says `creator_payable`
+ * where 2901 says `buddy_payable`, because only one of `07` §2's six creator
+ * types is a buddy. Total over 2921's `cee_account_known`, as 3385's CASE is.
+ * Kept SEPARATE from ACCOUNT_PARTY_ROLE: that map is pinned exhaustively against
+ * 2930's CASE, and 2930 never saw this vocabulary.
+ */
+export const CREATOR_ACCOUNT_PARTY_ROLE: Readonly<Record<string, PartyRole>> = {
+  creator_payable: "creator",
   platform_revenue: "platform",
   traveler_receivable: "traveler",
   cash_external: "external",
@@ -126,6 +151,9 @@ export const UNIT_KINDS: readonly UnitKind[] = ["qiu", "credit", "currency"] as 
 export const SOURCE_RECORDS_PLATFORM_SIDE: Readonly<Record<SourceLedger, boolean>> = {
   intel_reward_ledger: false,
   rent_buddy_earnings_entries: true,
+  // 2921 books the platform's take as a `platform_revenue` leg of the same
+  // transaction, under the same attribution_id — double entry, like 2901.
+  creator_earning_entries: true,
 };
 
 /**
@@ -265,6 +293,54 @@ export function projectEarningsEntryRow(row: RentBuddyEarningsEntryRowLike): Can
   }];
 }
 
+/** `public.creator_earning_entries` (2921), as PostgREST returns it. */
+export interface CreatorEarningEntryRowLike {
+  id: string;
+  creator_type: string;
+  attribution_id: string;
+  account: string;
+  entry_reason?: string | null;
+  amount_minor?: number | string | null;
+  currency?: string | null;
+  cash_settled_minor?: number | string | null;
+  rule_version?: string | null;
+  beneficiary_user_id?: string | null;
+  reverses_entry_id?: string | null;
+  occurred_at?: string | null;
+}
+
+/**
+ * The TypeScript twin of 3385's third partition. `attributionKind` is the
+ * creator type and `attributionId` the FK to `creator_attributions` — which is
+ * what makes every canonical row from this ledger name the attribution it came
+ * from (`09` §11 "attribution is linked").
+ */
+export function projectCreatorEarningEntryRow(row: CreatorEarningEntryRowLike): CanonicalShareRow[] {
+  const role = CREATOR_ACCOUNT_PARTY_ROLE[str(row.account)];
+  if (role === undefined) {
+    throw new Error(
+      `creatorShareCanonical: creator_earning_entries.account=${JSON.stringify(row.account)} ` +
+      "has no party role. Map it in CREATOR_ACCOUNT_PARTY_ROLE and in migration 3385's CASE, in the same change.",
+    );
+  }
+  return [{
+    sourceLedger: "creator_earning_entries",
+    sourceEntryId: str(row.id),
+    unitKind: "currency",
+    unitCode: str(row.currency).trim(),
+    amount: num(row.amount_minor),
+    partyRole: role,
+    creatorId: nullableStr(row.beneficiary_user_id),
+    entryReason: str(row.entry_reason),
+    ruleVersion: str(row.rule_version),
+    attributionKind: str(row.creator_type),
+    attributionId: nullableStr(row.attribution_id),
+    reversesSourceEntryId: nullableStr(row.reverses_entry_id),
+    cashRecorded: num(row.cash_settled_minor),
+    occurredAt: str(row.occurred_at),
+  }];
+}
+
 /** A row of the view itself, as PostgREST returns it. */
 export interface CreatorShareLedgerViewRow {
   source_ledger: string;
@@ -285,7 +361,7 @@ export interface CreatorShareLedgerViewRow {
 
 export function fromViewRow(row: CreatorShareLedgerViewRow): CanonicalShareRow {
   const ledger = str(row.source_ledger);
-  if (ledger !== "intel_reward_ledger" && ledger !== "rent_buddy_earnings_entries") {
+  if (!(SOURCE_LEDGERS as readonly string[]).includes(ledger)) {
     throw new Error(`creatorShareCanonical: unknown source_ledger ${JSON.stringify(ledger)}`);
   }
   const unitKind = str(row.unit_kind);
@@ -298,7 +374,7 @@ export function fromViewRow(row: CreatorShareLedgerViewRow): CanonicalShareRow {
     throw new Error(`creatorShareCanonical: unknown party_role ${JSON.stringify(role)}`);
   }
   return {
-    sourceLedger: ledger,
+    sourceLedger: ledger as SourceLedger,
     sourceEntryId: str(row.source_entry_id),
     unitKind: unitKind as UnitKind,
     unitCode: str(row.unit_code).trim(),

@@ -17,6 +17,7 @@ import { ChevronDown, ChevronUp, DoorOpen, HelpCircle } from 'lucide-react-nativ
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import { fmtClock, fmtDur } from './layoverFormat.ts';
 import { summarizeAirportIntelligence } from './layoverReturnFacts.ts';
+import { describeReasonCodes, type LayoverReasonTone } from '../../lib/layoverReasonCodes.ts';
 import type {
   LeaveAdvice,
   LayoverWindow,
@@ -42,7 +43,23 @@ const VERDICT: Record<LeaveAdvice['verdict'], { label: string; bg: string; fg: s
   yes:         { label: 'Yes — you have time',      bg: 'rgba(46,125,91,0.12)',  fg: color.success },
   tight:       { label: 'Tight — stay close',       bg: 'rgba(200,133,26,0.14)', fg: color.warn },
   no:          { label: 'No — stay airside',        bg: 'rgba(255,77,46,0.12)',  fg: color.signalDim },
+  // Not a time verdict. The clock allows the trip; what we could not confirm is
+  // that this passport may enter this country. Warn-coloured rather than
+  // refusal-coloured, because it is an unknown and not a no — and the reason
+  // beneath the label says which of the five unknowns it is.
+  entry_unverified: { label: 'Time is fine — entry unconfirmed', bg: 'rgba(200,133,26,0.14)', fg: color.warn },
   stay_airside:{ label: 'Staying in — good call',   bg: 'rgba(10,61,74,0.10)',   fg: color.deep },
+};
+
+/**
+ * Colour per Appendix A tone. NOT a ranking and never used to reorder: two
+ * codes with the same tone still render in the order the server sent them.
+ */
+const REASON_TONE_FG: Record<LayoverReasonTone, string> = {
+  blocking:    color.signalDim,
+  caution:     color.warn,
+  unknown:     color.mute,
+  opportunity: color.success,
 };
 
 const PROVENANCE_FG: Record<string, string> = {
@@ -56,6 +73,9 @@ export function CanILeaveCard({ advice, window: win, airport, airportIntelligenc
   const [expanded, setExpanded] = useState(false);
   const v = VERDICT[advice.verdict];
   const provenance = summarizeAirportIntelligence(airportIntelligence, airport.iataCode);
+  // The server's list, de-duplicated and kept in its order. An unrecognised
+  // code survives as itself — see `lib/layoverReasonCodes.ts`.
+  const reasonCodes = describeReasonCodes(advice.reasonCodes);
 
   return (
     <View style={styles.card}>
@@ -71,6 +91,42 @@ export function CanILeaveCard({ advice, window: win, airport, airportIntelligenc
       {advice.reasons.map((r) => (
         <Text key={r} style={styles.reason}>·  {r}</Text>
       ))}
+
+      {/*
+        Appendix A (census L278–L292) — THE MACHINE-READABLE HALF, RENDERED.
+
+        `advice.reasonCodes` has been on every `/overview` and `/safety`
+        response since the server declared `LAYOVER_REASON_CODES`, and this card
+        drew only `advice.reasons` — the prose. The two are not the same
+        disclosure: the codes are what the engine commits to, and two of the
+        four a live session actually carries (`AIRPORT_MATURITY_LIMITED`,
+        `RETURN_THRESHOLD_REACHED`) have no sentence in `reasons` at all.
+
+        Rendered in THE SERVER'S ORDER, with the server's own tokens as testIDs
+        so a surface test names the code rather than a paraphrase. The block is
+        absent entirely when the list is empty: an empty heading reads as a
+        disclosure that failed to load.
+      */}
+      {reasonCodes.length > 0 && (
+        <View style={styles.reasonCodes} testID="layover-reason-codes">
+          <Text style={styles.reasonCodesTitle}>Why this answer</Text>
+          {reasonCodes.map((rc) => (
+            <View
+              key={rc.code}
+              style={styles.reasonCodeRow}
+              testID={`layover-reason-code-${rc.code}`}
+            >
+              <Text style={[styles.reasonCodeTitle, { color: REASON_TONE_FG[rc.tone] }]}>
+                {rc.title}
+              </Text>
+              {/* `null` for a code this build has never been taught — the token
+                  above is then the whole of what is shown, which is the only
+                  honest rendering of a sentence nobody wrote. */}
+              {rc.detail ? <Text style={styles.reasonCodeDetail}>{rc.detail}</Text> : null}
+            </View>
+          ))}
+        </View>
+      )}
 
       {/*
         §7.2 — "a conflict is not silently rendered as a normal itinerary".
@@ -163,6 +219,11 @@ const styles = StyleSheet.create({
   verdictPill:{ alignSelf: 'flex-start', borderRadius: 999, paddingHorizontal: space.md, paddingVertical: 6 },
   verdictText:{ ...t.bodyStrong },
   reason:     { ...t.small, color: color.mute },
+  reasonCodes:     { backgroundColor: color.paper, borderRadius: radius.md, padding: space.md, gap: space.xs, marginTop: space.xs },
+  reasonCodesTitle:{ ...t.stamp, color: color.faint, textTransform: 'uppercase' },
+  reasonCodeRow:   { gap: 2 },
+  reasonCodeTitle: { ...t.small, fontWeight: '700' },
+  reasonCodeDetail:{ ...t.small, color: color.mute },
   shortfall:  { ...t.small, color: color.signalDim, fontWeight: '600' },
 
   numbersRow: { flexDirection: 'row', gap: space.sm, marginTop: space.sm },

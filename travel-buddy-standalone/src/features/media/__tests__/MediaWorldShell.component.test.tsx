@@ -1,0 +1,304 @@
+/**
+ * MediaWorldShell — the six lenses, their §5 modes, and the §14 entry contexts,
+ * rendered through the shell itself (census-media §19: MD15 · MD33 · MD21 ·
+ * MD25/MD30/MD31/MD35 map modes · MD26 time mode · MD89 · MD90 · MD91 · MD27).
+ *
+ * What these cases prove that the per-screen suites cannot: that the SHELL
+ * mounts the new screens (the HIDDEN GEMS lens is the §16 gem-state screen, not
+ * the pre-existing GemsFeed), that each Map / Time mode is the one Media Map /
+ * Media Timeline, and that a tap in the Experiences and People lenses stages
+ * the right §14 entry-context KIND with a collection scoped to that entity.
+ */
+import React from 'react';
+import { fireEvent, getDefaultNormalizer, render, screen, waitFor } from '@testing-library/react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { MediaWorldShell } from '../screens/MediaWorldShell.tsx';
+
+const METRICS = { frame: { x: 0, y: 0, width: 390, height: 844 }, insets: { top: 47, left: 0, right: 0, bottom: 34 } };
+function Shell(props: React.ComponentProps<typeof MediaWorldShell>) {
+  return (
+    <SafeAreaProvider initialMetrics={METRICS}>
+      <MediaWorldShell {...props} />
+    </SafeAreaProvider>
+  );
+}
+import { getPerspectiveViewerContext, clearPerspectiveViewerContext } from '../state/perspectiveViewerContext.ts';
+
+const mockPush = jest.fn();
+jest.mock('expo-router', () => ({
+  ...jest.requireActual('expo-router'),
+  router: { push: (href: unknown) => mockPush(href), back: () => {}, replace: () => {} },
+}));
+
+const TRIP = '33333333-3333-3333-3333-333333333333';
+const EVENT = '44444444-4444-4444-4444-444444444444';
+
+const mockFetchGems = jest.fn();
+const mockFetchExperience = jest.fn();
+const mockFetchPlaceView = jest.fn();
+let mockChangingNow: unknown[] = [];
+jest.mock('../services/mediaProjection.ts', () => {
+  const actual = jest.requireActual('../services/mediaProjection.ts');
+  return {
+    ...actual,
+    fetchWorld: async () => ({
+      ok: true,
+      data: actual.mapWorldProjection({
+        city: 'Da Nang',
+        cityVisualState: [{ placeId: '66666666-6666-6666-6666-666666666666', label: 'An Thuong', perspectiveCount: 3, freshness: 'fresh' }],
+        forYouNow: [],
+        changingNow: mockChangingNow,
+      }),
+    }),
+    fetchPlaceView: (...a: unknown[]) => mockFetchPlaceView(...a),
+    fetchGems: (...a: unknown[]) => mockFetchGems(...a),
+    // The lens resolves each id through the §39 offline cache
+    // (services/media/mediaOffline.experiencesOffline), which calls
+    // fetchExperience per id; the batch fetch is kept for any other caller. Both
+    // go through the one mock, so the test controls every experience resolved.
+    fetchExperience: (...a: unknown[]) => mockFetchExperience(...a),
+    fetchExperiencesByIds: async (ids: string[]) => {
+      const data = [];
+      for (const id of ids) {
+        const r = await mockFetchExperience(id, {});
+        if (r?.ok && r.data) data.push(r.data);
+      }
+      return { ok: true, data };
+    },
+    fetchPeople: async () => ({
+      ok: true,
+      data: actual.mapPeopleProjection({
+        people: [
+          {
+            contributor: { id: 'maya', displayName: 'Maya', verified: true },
+            relation: 'followed',
+            perspectiveCount: 2,
+            freshness: 'fresh',
+            media: [
+              { id: 'p1', mediaType: 'image', thumbnailUrl: 't', observationClass: 'observed', contributor: { id: 'maya', displayName: 'Maya' } },
+              { id: 'p2', mediaType: 'image', thumbnailUrl: 't', observationClass: 'observed', contributor: { id: 'maya', displayName: 'Maya' } },
+            ],
+          },
+        ],
+      }),
+    }),
+    fetchMediaMap: async () => ({ ok: true, data: { clusters: [], totalPerspectives: 0, generatedAt: null } }),
+    fetchTimeline: async () => ({ ok: true, data: actual.mapTimeline({}) }),
+    fetchMyWorld: async () => ({ ok: true, data: actual.mapMyWorldLibrary({ buckets: [] }) }),
+  };
+});
+// NOTE: intentionally exhaustive — the Experiences lens gathers ids from these
+// three canonical services; the real modules pull the Supabase client, and the
+// test supplies the canonical rows itself.
+jest.mock('../../../services/events.ts', () => ({
+  listMyEvents: async () => ({ ok: true, data: { events: [{ id: EVENT }] } }),
+  listEvents: async () => ({ ok: true, data: { events: [] } }),
+}));
+// NOTE: intentionally exhaustive — see the events mock above.
+jest.mock('../../../services/trips.ts', () => ({
+  listMyTrips: async () => [{ id: TRIP }],
+}));
+jest.mock('../../../services/mapProjection.ts', () => ({
+  ...jest.requireActual('../../../services/mapProjection.ts'),
+  fetchMapProjection: async () => ({ ok: true, data: { enabled: false, objects: [] } }),
+}));
+// NOTE: intentionally exhaustive — imagery is not under test.
+jest.mock('../../../components/CachedImage.tsx', () => {
+  const { View } = require('react-native');
+  return { CachedImage: () => <View /> };
+});
+
+function experienceBody(id: string, kind: 'event' | 'trip', title: string) {
+  const { mapExperienceProjection } = jest.requireActual('../services/mediaProjection.ts');
+  return {
+    ok: true,
+    data: mapExperienceProjection({
+      id,
+      kind,
+      title,
+      available: true,
+      placeIds: [],
+      perspectiveCount: 1,
+      contributorCount: 1,
+      freshness: 'fresh',
+      heroMedia: [{ id: `${kind}-media`, mediaType: 'image', thumbnailUrl: 't', observationClass: 'observed' }],
+    }),
+  };
+}
+
+beforeEach(() => {
+  mockPush.mockReset();
+  clearPerspectiveViewerContext();
+  mockChangingNow = [];
+  mockFetchPlaceView.mockReset();
+  mockFetchPlaceView.mockResolvedValue({ ok: true, data: null });
+  mockFetchGems.mockResolvedValue({
+    ok: true,
+    data: jest.requireActual('../state/gemLens.ts').mapGemLensProjection({
+      gems: [{ gemId: 'g1', name: 'Secret cove', state: 'recently_confirmed', confidence: { score: 0.8, band: 'live' } }],
+      determined: true,
+      undetermined: [],
+    }),
+  });
+  mockFetchExperience.mockImplementation(async (id: string) =>
+    id === TRIP
+      ? experienceBody(TRIP, 'trip', 'Vietnam')
+      : id === EVENT
+        ? experienceBody(EVENT, 'event', 'Beach Festival')
+        : experienceBody(id, 'event', 'Linked event'),
+  );
+});
+
+async function openLens(label: string) {
+  await fireEvent.press(screen.getByLabelText(label));
+}
+
+describe('MediaWorldShell', () => {
+  it('HIDDEN GEMS is the §16 gem-STATE screen (not GemsFeed), scoped by the city label, honouring all three modes', async () => {
+    await render(<Shell cityName="Da Nang" lat={16.05} lng={108.22} />);
+    await openLens('Hidden Gems');
+    await waitFor(() => expect(screen.getByTestId('gem-lens-overview')).toBeTruthy());
+    expect(mockFetchGems).toHaveBeenCalledWith(expect.objectContaining({ city: 'Da Nang' }));
+    expect(screen.getByTestId('hidden-gem-card-g1')).toBeTruthy();
+    await fireEvent.press(screen.getByLabelText('Visual'));
+    await waitFor(() => expect(screen.getByTestId('gem-lens-visual')).toBeTruthy());
+    await fireEvent.press(screen.getByLabelText('Map'));
+    // Gems-only Media Map (the gateway is off in this fixture, so it says so).
+    await waitFor(() => expect(screen.getByText('No hidden gems on the map yet')).toBeTruthy());
+  });
+
+  it('NOW: a "Changing now" card opens that PLACE\'s perspectives (§14 Place), not the generic single-item viewer', async () => {
+    const PLACE = '66666666-6666-6666-6666-666666666666';
+    mockChangingNow = [
+      { id: 'ch1', placeId: PLACE, title: 'Filling up on An Thuong', freshness: 'fresh', heroMedia: [{ id: 'h2', mediaType: 'image', thumbnailUrl: 't', observationClass: 'observed' }] },
+    ];
+    const { mapPlaceCurrentView } = jest.requireActual('../services/mediaProjection.ts');
+    mockFetchPlaceView.mockResolvedValue({
+      ok: true,
+      data: mapPlaceCurrentView({
+        place: { id: PLACE, name: 'An Thuong' },
+        perspectives: {
+          totalPerspectives: 2,
+          groups: [{ key: 'nightlife', label: 'Nightlife', perspectiveCount: 2, media: [
+            { id: 'h1', mediaType: 'image', observationClass: 'observed', placeId: PLACE, capturedAt: '2026-09-26T10:00:00Z' },
+            { id: 'h2', mediaType: 'image', observationClass: 'observed', placeId: PLACE, capturedAt: '2026-09-26T09:00:00Z' },
+          ] }],
+        },
+      }),
+    });
+    await render(<Shell cityName="Da Nang" lat={16.05} lng={108.22} />);
+    await waitFor(() => expect(screen.getByLabelText('Filling up on An Thuong')).toBeTruthy());
+    await fireEvent.press(screen.getByLabelText('Filling up on An Thuong'));
+    await waitFor(() => expect(mockPush).toHaveBeenCalled());
+    expect(mockFetchPlaceView).toHaveBeenCalledWith(PLACE);
+    const staged = getPerspectiveViewerContext();
+    expect(staged?.input.kind).toBe('place');
+    expect(staged?.input.entityId).toBe(PLACE);
+    expect(staged?.initialMediaId).toBe('h2'); // opened on the card's own hero
+    expect(staged?.input.media.map((m) => m.id).sort()).toEqual(['h1', 'h2']);
+    expect(mockPush).toHaveBeenCalledWith('/media-perspective/h2');
+    expect(mockPush).not.toHaveBeenCalledWith(expect.stringMatching(/^\/media-viewer\//));
+  });
+
+  it('NOW → Map is the one Media Map and NOW → Time is the Media Timeline screen', async () => {
+    await render(<Shell cityName="Da Nang" lat={16.05} lng={108.22} />);
+    await fireEvent.press(screen.getByLabelText('Map'));
+    await waitFor(() => expect(screen.getByText('No perspectives on the map yet')).toBeTruthy());
+    await fireEvent.press(screen.getByLabelText('Time'));
+    await waitFor(() => expect(screen.getByTestId('media-timeline-screen')).toBeTruthy());
+  });
+
+  it('EXPERIENCES resolves the viewer\'s own events and trips; a Trip opens the TRIP entry context, an Event the EVENT one', async () => {
+    await render(<Shell cityName="Da Nang" lat={16.05} lng={108.22} />);
+    await openLens('Experiences');
+    await waitFor(() => expect(screen.getByLabelText('Vietnam')).toBeTruthy());
+    expect(mockFetchExperience).toHaveBeenCalledWith(TRIP, expect.anything());
+    expect(mockFetchExperience).toHaveBeenCalledWith(EVENT, expect.anything());
+
+    await fireEvent.press(screen.getByLabelText('Vietnam'));
+    let staged = getPerspectiveViewerContext();
+    expect(staged?.input.kind).toBe('trip');
+    expect(staged?.input.entityId).toBe(TRIP);
+    expect(mockPush).toHaveBeenLastCalledWith('/media-perspective/trip-media');
+
+    await fireEvent.press(screen.getByLabelText('Beach Festival'));
+    staged = getPerspectiveViewerContext();
+    expect(staged?.input.kind).toBe('event');
+    expect(staged?.input.entityId).toBe(EVENT);
+  });
+
+  it('a deep-linked experience id is resolved first', async () => {
+    const LINKED = '55555555-5555-5555-5555-555555555555';
+    await render(<Shell cityName="Da Nang" initialLens="experiences" experienceIds={[LINKED]} />);
+    await waitFor(() => expect(mockFetchExperience).toHaveBeenCalledWith(LINKED, expect.anything()));
+  });
+
+  it('PEOPLE: tapping a person\'s perspective opens the PEOPLE entry context scoped to that person', async () => {
+    await render(<Shell cityName="Da Nang" />);
+    await openLens('People');
+    await waitFor(() => expect(screen.getAllByLabelText('Perspective').length).toBeGreaterThan(0));
+    await fireEvent.press(screen.getAllByLabelText('Perspective')[0]!);
+    const staged = getPerspectiveViewerContext();
+    expect(staged?.input.kind).toBe('people');
+    expect(staged?.input.entityId).toBe('maya');
+    expect((staged?.input.media ?? []).map((m) => m.id)).toEqual(['p1', 'p2']);
+    expect(mockPush).toHaveBeenLastCalledWith(expect.stringMatching(/^\/media-perspective\//));
+  });
+
+  it('the header Search opens Media Search, not the global app search', async () => {
+    await render(<Shell cityName="Da Nang" />);
+    await fireEvent.press(screen.getByLabelText('Search media'));
+    expect(mockPush).toHaveBeenCalledWith('/media-search');
+  });
+
+  it('PLACES: a canonical place offers "Add your view", which opens the §4 Media Contribution screen for it', async () => {
+    await render(<Shell cityName="Da Nang" />);
+    await openLens('Places');
+    await waitFor(() => expect(screen.getByLabelText('Open An Thuong')).toBeTruthy());
+    await fireEvent.press(screen.getByLabelText('Open An Thuong'));
+    await waitFor(() => expect(screen.getByTestId('place-add-your-view')).toBeTruthy());
+    await fireEvent.press(screen.getByTestId('place-add-your-view'));
+    expect(mockPush).toHaveBeenCalledWith('/media-contribute?placeId=66666666-6666-6666-6666-666666666666');
+  });
+
+  it('PLACES → Map and EXPERIENCES → Map are the one Media Map (no "arrives in a later phase" placeholder)', async () => {
+    await render(<Shell cityName="Da Nang" lat={16.05} lng={108.22} />);
+    await openLens('Places');
+    await fireEvent.press(screen.getByLabelText('Map'));
+    await waitFor(() => expect(screen.getByText('No perspectives on the map yet')).toBeTruthy());
+    await openLens('Experiences');
+    await fireEvent.press(screen.getByLabelText('Map'));
+    await waitFor(() => expect(screen.getByText('No experiences on the map yet')).toBeTruthy());
+    expect(screen.queryByText(/arrive(s)? with the Media Map phase/)).toBeNull();
+  });
+
+  it('MY WORLD → Map is the Media Map over the owner\'s own places', async () => {
+    await render(<Shell cityName="Da Nang" lat={16.05} lng={108.22} />);
+    await openLens('My World');
+    await fireEvent.press(screen.getByLabelText('Map'));
+    await waitFor(() => expect(screen.getByText('Your world on the map')).toBeTruthy());
+  });
+
+  it('NOW: "Why this?" opens the §47 reasons the SERVER derived for that zone, verbatim; a zone served with none offers no "Why this?" (MD428, census-media §25)', async () => {
+    const SERVED = "• You want to go to Bach Dang\n• In Da Nang, where you're travelling now\n• You saved this place";
+    // The WorldZone shape GET /media/world serves: changingNow is a filter of
+    // cityVisualState, so a card carries its zone's whyThis / whyThisReasons.
+    mockChangingNow = [
+      { placeId: '77777777-7777-7777-7777-777777777777', label: 'Bach Dang', perspectiveCount: 3, freshness: 'recent', liveClaims: [{ claimType: 'crowd.level' }], liveCrowdLabel: null, whyThis: SERVED, whyThisReasons: ['intent_match', 'distance', 'prior_saves'] },
+      { placeId: '88888888-8888-8888-8888-888888888888', label: 'My Khe', perspectiveCount: 2, freshness: 'recent', liveClaims: [{ claimType: 'crowd.level' }], liveCrowdLabel: null },
+    ];
+    await render(<Shell cityName="Da Nang" lat={16.05} lng={108.22} />);
+    await waitFor(() => expect(screen.getByLabelText('Bach Dang')).toBeTruthy());
+    expect(screen.getByLabelText('My Khe')).toBeTruthy();
+    // One affordance: on the zone the server explained, none on the zone it did not.
+    expect(screen.getAllByLabelText('Why am I seeing this?')).toHaveLength(1);
+    await fireEvent.press(screen.getByLabelText('Why am I seeing this?'));
+    const exact = { normalizer: getDefaultNormalizer({ trim: false, collapseWhitespace: false }) };
+    await waitFor(() => expect(screen.getByText(SERVED, exact)).toBeTruthy());
+    expect(screen.queryByText(/matches your travel preferences and recent activity/)).toBeNull();
+    // census-media §28.3: the footnote describes THIS ranker, which reads no
+    // engagement and places the viewer by their trip, never GPS.
+    expect(screen.getByText(/people you follow, and how fresh and useful a perspective is/)).toBeTruthy();
+    expect(screen.queryByText(/creators you engage with/)).toBeNull();
+  });
+});

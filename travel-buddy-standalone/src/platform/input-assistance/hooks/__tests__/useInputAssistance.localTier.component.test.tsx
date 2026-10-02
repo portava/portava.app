@@ -42,6 +42,24 @@ import { registerField, unregisterField } from '../../contexts/fieldRegistry.ts'
 import { sharedSuggestionCache, SuggestionCache } from '../../services/suggestionCache.ts';
 import type { InputSuggestion } from '../../types/inputSuggestion.ts';
 
+// ── SEEDED 2026-09-21 (G340) ────────────────────────────────────────────────
+// `useInputAssistance` derives its policy from the context descriptor, which
+// since G340 comes from `GET /input-assistance/policies` rather than a local
+// table. With nothing fetched every context resolves CONSERVATIVE — mode
+// `no_assistance`, an unreachable `minChars` — so the hook correctly makes no
+// request and renders no rows, and every assertion below about suggestions
+// would be vacuous. Seeding states the premise these tests always relied on.
+import { INPUT_CONTEXTS as _SEED_CONTEXTS } from '../../types/inputContext.ts';
+import { _seedPolicyForTests as _seedPolicy } from '../../services/policyStore.ts';
+// `telegraph_recipient` is seeded VIEWER-SCOPED on purpose: the §29 cases below
+// exist to prove an uncacheable field never reads or writes the process-global
+// cache, and that is only a real assertion if the authority actually classifies
+// it as one. The blanket template is `public`, which is the one class the cache
+// admits — seeding it unchanged would have made those cases pass for the wrong
+// reason.
+_seedPolicy(_SEED_CONTEXTS, { telegraph_recipient: { privacyClass: 'viewer_scoped' } });
+
+
 const mockRequest = requestSuggestions as jest.MockedFunction<typeof requestSuggestions>;
 
 const FIELD = 'test.trip.destination';
@@ -67,6 +85,11 @@ function Probe({ fieldId, text }: { fieldId: string; text: string }) {
   return (
     <>
       <Text testID="labels">{suggestions.map((s) => s.label).join('|')}</Text>
+      {/* Added with the §32 local surface: "which rows survived" and "where
+          they came from" are different questions, and once a shipped row can
+          appear beside a retained one, a label list alone cannot tell them
+          apart. */}
+      <Text testID="sources">{suggestions.map((s) => s.source).join('|')}</Text>
       <Text testID="unavailable">{String(unavailable)}</Text>
     </>
   );
@@ -116,19 +139,43 @@ test('§33: network loss RETAINS the narrowed local rows and still reports degra
   await waitFor(() => expect(screen.getByTestId('unavailable').props.children).toBe('true'));
   // The degraded STATE is set (the overlay shows its quiet note) AND the rows
   // that still match the typed text survive. Clearing them here was the defect.
-  expect(screen.getByTestId('labels').props.children).toBe('Bangkok');
+  //
+  // RESTATED when the §32 local surface landed (census G197/G198/G350), and the
+  // original claim is unchanged: the RETAINED row is still the first thing the
+  // field shows, and it is still the SERVER's row. What is new is what may
+  // follow it — the shipped rungs below the retained one. This assertion is
+  // now positional rather than whole-list, because "the cached row survived" is
+  // what it was always about; asserting the whole list made it also an
+  // assertion that nothing else may ever be offered, which was never its point.
+  const labels = String(screen.getByTestId('labels').props.children).split('|');
+  expect(labels[0]).toBe('Bangkok');
+  expect(String(screen.getByTestId('sources').props.children).split('|')[0]).toBe('canonical');
 });
 
-test('§33: with nothing cached, an unavailable endpoint still yields an empty list', async () => {
+test('§33/§32: with nothing cached, an unavailable endpoint retains NOTHING of its own', async () => {
+  // SUPERSEDED ASSERTION, recorded rather than deleted. This case used to read
+  // "still yields an empty list" and asserted `''`. That was true, and it was
+  // the census's complaint: a cold offline open had no substrate at all, so the
+  // licensed surface returned nothing (G197/G198 — "the gate is real and
+  // nothing is behind it"). Since `services/localDictionary.ts` there IS
+  // something behind it, and `trip_destination` is `cached_local`, so this
+  // field is one of the fields that gets it.
+  //
+  // What this case still proves — and it is the part that mattered — is that
+  // the hook RETAINS nothing of its own here: with an empty cache, every row on
+  // screen is a SHIPPED row, and not one of them is a server row conjured out
+  // of a cache that never held it.
   mockRequest.mockResolvedValueOnce({ ok: false, aborted: false, unavailable: true, error: 'endpoint unavailable' });
   render(<Probe fieldId={FIELD} text="bangk" />);
 
   await waitFor(() => expect(screen.getByTestId('unavailable').props.children).toBe('true'));
-  expect(screen.getByTestId('labels').props.children).toBe('');
+  const sources = String(screen.getByTestId('sources').props.children).split('|');
+  expect(sources).not.toContain('canonical');
+  expect(sources.every((s) => s === 'local')).toBe(true);
 });
 
 test('§29: an uncacheable (personal) field never READS a local list, even one already cached', async () => {
-  // telegraph_recipient is privacyClass `personal`. It never writes to the
+  // telegraph_recipient is privacyClass `viewer_scoped`. It never writes to the
   // shared cache — so seed the cache DIRECTLY, which isolates the read guard
   // from the write guard and makes the assertion about this branch only. A list
   // of PEOPLE must never be re-shown without a round trip that can re-check
@@ -140,4 +187,56 @@ test('§29: an uncacheable (personal) field never READS a local list, even one a
 
   await waitFor(() => expect(screen.getByTestId('unavailable').props.children).toBe('true'));
   expect(screen.getByTestId('labels').props.children).toBe('');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// §32 / G340 — `server_required` is ENFORCED HERE, not merely declared
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// §29 aligned the two `OfflineInputPolicy` unions so the authority's value could
+// ARRIVE on the client intact, and said plainly that alignment alone changes
+// nothing a user sees. These two cases are the difference. They run the real
+// hook through the real consumer path with the real cache, and the ONLY thing
+// that differs between them is what the authority says about the field.
+//
+// The case above — "network loss RETAINS the narrowed local rows" — is §33's
+// general rule and stays true for a field with an offline surface. This is the
+// per-field narrowing: for the nine contexts the authority marks
+// `server_required`, retaining rows is assistance it declined to license, shown
+// at the one moment nothing can re-check it.
+
+test('§32: on network loss a `server_required` field shows NOTHING, however warm the cache', async () => {
+  _seedPolicy(_SEED_CONTEXTS, { trip_destination: { offlinePolicy: 'server_required' } });
+  const { rerender } = await primeCacheForBan();
+
+  // A cached prefix EXISTS and would be retained for a field with an offline
+  // surface — the case two above proves exactly that. This one has none.
+  mockRequest.mockResolvedValueOnce({ ok: false, aborted: false, unavailable: true, error: 'endpoint unavailable' });
+  rerender(<Probe fieldId={FIELD} text="bangk" />);
+
+  await waitFor(() => expect(screen.getByTestId('unavailable').props.children).toBe('true'));
+  expect(screen.getByTestId('labels').props.children).toBe('');
+});
+
+test('NOT VACUOUS: the same field and the same cache, with `cached_local`, DO retain', async () => {
+  // Without this the case above would also pass against a hook that simply
+  // stopped retaining anything — the other way to be wrong, and one that would
+  // silently delete §33's stale-while-revalidate behaviour for every field.
+  _seedPolicy(_SEED_CONTEXTS, { trip_destination: { offlinePolicy: 'cached_local' } });
+  const { rerender } = await primeCacheForBan();
+
+  mockRequest.mockResolvedValueOnce({ ok: false, aborted: false, unavailable: true, error: 'endpoint unavailable' });
+  rerender(<Probe fieldId={FIELD} text="bangk" />);
+
+  await waitFor(() => expect(screen.getByTestId('unavailable').props.children).toBe('true'));
+  // Positional for the same reason as the case above: the discriminator this
+  // test exists for is that the CACHED SERVER ROW survives here and does not
+  // survive one test up, and that is a statement about the first row and its
+  // source, not about the length of the list.
+  const labels = String(screen.getByTestId('labels').props.children).split('|');
+  expect(labels[0]).toBe('Bangkok');
+  expect(String(screen.getByTestId('sources').props.children).split('|')[0]).toBe('canonical');
+
+  // Restore the blanket seed so ordering between files cannot matter.
+  _seedPolicy(_SEED_CONTEXTS, { telegraph_recipient: { privacyClass: 'viewer_scoped' } });
 });

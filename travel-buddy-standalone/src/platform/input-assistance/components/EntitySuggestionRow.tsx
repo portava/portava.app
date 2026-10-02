@@ -9,13 +9,16 @@
  * `freshness`), and an optional "why this is suggested" reason.
  *
  * Accessibility: role=button, a composed accessibilityLabel announcing the
- * title, type, subtitle and freshness, `selected` state for keyboard nav, and a
+ * title, type, subtitle and freshness, `selected` state for keyboard nav, a
  * caret glyph that marks the keyboard-active row WITHOUT relying on colour
- * (§46 "non-color-only state indicators" — see the activeSlot comment below).
+ * (§46 "non-color-only state indicators" — see the activeSlot comment below),
+ * and a line budget that grows with the OS text scale instead of truncating
+ * (§46 "dynamic type and large text support" — see `rowLineLimit`).
  */
 import React from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { View, Text, Pressable, PixelRatio, StyleSheet } from 'react-native';
 import type { InputSuggestion } from '../types/inputSuggestion.ts';
+import { rowLineLimit } from './overlayFit.ts';
 import { EntityIcon } from './entityIcon.tsx';
 import { freshnessDisplay } from './freshnessDisplay.ts';
 import { suggestionBadges } from './suggestionBadges.ts';
@@ -28,10 +31,10 @@ export interface EntitySuggestionRowProps {
   active?: boolean;
   /** Optional custom leading element (e.g. a sanctioned avatar wrapper). */
   leading?: React.ReactNode;
-  testID?: string;
+  testID?: string; /** Optional colour for the reason line (census-media §31.13), e.g. `mute` where `faint` is below 4.5:1 on the row's ground. Absent: renders exactly as before. */ reasonColor?: string;
 }
 
-function EntitySuggestionRowBase({ suggestion, onPress, active, leading, testID }: EntitySuggestionRowProps) {
+function EntitySuggestionRowBase({ suggestion, onPress, active, leading, testID, reasonColor }: EntitySuggestionRowProps) {
   // §31: render ONLY the freshness the server attached — the state label plus the
   // "Updated 4m ago" age, verbatim. Never synthesized; absent ⇒ no chip.
   const fresh = freshnessDisplay(suggestion.freshness).text;
@@ -39,6 +42,11 @@ function EntitySuggestionRowBase({ suggestion, onPress, active, leading, testID 
   // helper the announcement below joins, so a badge can never be visible and
   // unannounced (or the reverse).
   const badges = suggestionBadges(suggestion);
+  // §46 dynamic type — at a large OS text scale `numberOfLines={1}` does not
+  // make the row fit, it makes the ANSWER shorter: "Đà Nẵng, Vietnam" becomes
+  // "Đà Na…" for exactly the readers who need the whole of it. The budget grows
+  // with the scale and the overlay's internal ScrollView absorbs the height.
+  const lines = rowLineLimit(PixelRatio.getFontScale());
   const a11yLabel = [
     suggestion.label,
     suggestion.entityType,
@@ -94,7 +102,7 @@ function EntitySuggestionRowBase({ suggestion, onPress, active, leading, testID 
 
       <View style={styles.body}>
         <View style={styles.titleLine}>
-          <Text style={styles.title} numberOfLines={1}>
+          <Text style={styles.title} numberOfLines={lines} testID="ia-row-title">
             {suggestion.label}
           </Text>
           {fresh ? (
@@ -106,7 +114,7 @@ function EntitySuggestionRowBase({ suggestion, onPress, active, leading, testID 
           ) : null}
         </View>
         {suggestion.subtitle ? (
-          <Text style={styles.subtitle} numberOfLines={1}>
+          <Text style={styles.subtitle} numberOfLines={lines} testID="ia-row-subtitle">
             {suggestion.subtitle}
           </Text>
         ) : null}
@@ -122,7 +130,7 @@ function EntitySuggestionRowBase({ suggestion, onPress, active, leading, testID 
           </View>
         ) : null}
         {suggestion.reason ? (
-          <Text style={styles.reason} numberOfLines={1}>
+          <Text style={reasonColor === undefined ? styles.reason : [styles.reason, { color: reasonColor }]} numberOfLines={1}>
             {suggestion.reason}
           </Text>
         ) : null}

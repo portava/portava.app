@@ -44,7 +44,7 @@ export default function NewTelegraphScreen() {
   const [query, setQuery] = useState('');
   const [openingId, setOpeningId] = useState<string | null>(null);
 
-  const { recipients, loading, unavailable } = useTelegraphRecipients(query, {
+  const { recipients, loading, unavailable, recordPick } = useTelegraphRecipients(query, {
     surface: 'telegraph_new',
   });
 
@@ -57,6 +57,12 @@ export default function NewTelegraphScreen() {
   const startConversation = useCallback(
     async (r: RecipientRow) => {
       if (openingId) return;
+      // §35 — the EXPLICIT selection, recorded before we navigate away. This is
+      // an accepted canonical entity, not a view or a hover: the user chose
+      // this person out of the list. Fire-and-forget and fail-soft by
+      // construction, and deliberately NOT awaited — opening the conversation
+      // must never wait on, or be blocked by, selection memory.
+      recordPick(r);
       setOpeningId(r.userId);
       const res = await openDirectThread(r.userId);
       setOpeningId(null);
@@ -71,7 +77,7 @@ export default function NewTelegraphScreen() {
       const profileKey = r.handle ?? r.userId;
       router.push(`/u/${profileKey}` as any);
     },
-    [openingId],
+    [openingId, recordPick],
   );
 
   const trimmed = query.trim();

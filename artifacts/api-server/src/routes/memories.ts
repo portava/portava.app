@@ -16,7 +16,7 @@
  * DELETE /memories/:id/like              — unlike
  * POST   /memories/:id/save              — save (idempotent)
  * DELETE /memories/:id/save              — unsave
- * POST   /memories/:id/share             — log share intent
+ * POST   /memories/:id/share             — share gate: readability, then the Telegraph MEMORY reference
  *
  * POST   /trips/:tripId/memory           — create-from-trip (owner only)
  * POST   /events/:eventId/memory         — handled in events.ts (stub upgraded below)
@@ -371,7 +371,7 @@ async function notifyTagged(sc: any, memory: any, taggedUserId: string): Promise
       await sendPushWithRetry(sc, { userId: taggedUserId, tokens: [tagged.expo_push_token] }, {
         title: "You were tagged in a Memory",
         body: `${ownerName} tagged you in a memory. Tap to approve or remove.`,
-        data: { screen: "memory", memoryId: memory.id },
+        data: { screen: "memory", memoryId: memory.id, actionUrl: `/memory/${memory.id}` },
       });
     }
 
@@ -383,7 +383,7 @@ async function notifyTagged(sc: any, memory: any, taggedUserId: string): Promise
       user_id: taggedUserId,
       actor_id: memory.owner_id,
       event_type: "trip.memory_tagged",
-      category: "trips",
+      category: "trips", action_url: `/memory/${memory.id}`, // testing-mode WP-06: the tap lands on the screen that hosts the approval
       title: "You were tagged in a Memory",
       body: "Tap to approve or remove the tag.",
       metadata: { memoryId: memory.id, memoryTitle: memory.title },
@@ -2518,7 +2518,7 @@ router.post("/memories/:id/share", async (req, res) => {
   const { id } = req.params;
   if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid memory id"); return; }
 
-  res.json({ ok: true });
+  await answerMemoryShare(req, res, auth.user.id, id); // testing-mode WP-06 (HM-F13): the gate, at the foot of this file
 });
 
 // ── POST /trips/:tripId/memory — create-from-trip ─────────────────────────────
@@ -3320,5 +3320,129 @@ router.get("/users/:userId/memories/highlights", async (req, res) => {
     },
   });
 });
+
+// ── GET /me/saved-memories — the collection POST /memories/:id/save fills ─────
+//
+// Testing-mode WP-06 (flow HM-F13). `memory_saves` had a writer and no list
+// reader, so "save to your collection" stored a row nobody could find again.
+//
+// A SAVE IS NOT A GRANT. Every row is re-judged NOW by §23's `canReadMemory`
+// (surface "single" — the same addressed read `GET /memories/:id` runs) and the
+// block check, so a Memory the owner has since narrowed, or whose owner has
+// blocked the saver, drops off the shelf instead of being served from a stale
+// save. Serialized through `enrichMemories`, the single list serialization
+// point, so location protection and the owner-only audience lists apply here
+// exactly as on every other list.
+//
+// DV-83: an unreadable `memory_saves` or `memories` is a 503, never an empty
+// shelf — "you saved nothing" is a statement a failed read cannot make.
+const SAVED_MEMORIES_LIMIT = 100;
+
+router.get("/me/saved-memories", asyncHandler(async (req: any, res: any) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: saves, error: savesErr } = await sc
+    .from("memory_saves")
+    .select("memory_id, created_at")
+    .eq("user_id", user.id)
+    .order("created_at", { ascending: false })
+    .limit(SAVED_MEMORIES_LIMIT);
+  if (savesErr) {
+    req.log.error({ err: savesErr, userId: user.id }, "memories: saved list read failed — refusing rather than reporting an empty shelf");
+    sendError(res, "degraded_unavailable", "We could not load your saved memories. Please try again.");
+    return;
+  }
+  const order = ((saves ?? []) as any[]).map((r) => r.memory_id as string);
+  if (order.length === 0) { res.json({ memories: [], truncated: false }); return; }
+
+  const precisionEnabled = await isFlagEnabled(sc, "memory_location_precision_enabled");
+  const rows: any[] = [];
+  for (const batch of chunkIds(order)) {
+    const { data, error } = await (precisionEnabled // two literal selects, not a ternary inside one, so check:write-path-columns can verify both column lists
+      ? sc.from("memories").select(MEMORY_SELECT_WITH_PRECISION as any)
+      : sc.from("memories").select(MEMORY_SELECT as any))
+      .in("id", batch)
+      .neq("state", "deleted");
+    if (error) {
+      req.log.error({ err: error, userId: user.id }, "memories: saved memories read failed — refusing rather than reporting an empty shelf");
+      sendError(res, "degraded_unavailable", "We could not load your saved memories. Please try again.");
+      return;
+    }
+    rows.push(...((data ?? []) as any[]));
+  }
+
+  // Block check once per owner; `isBlocked` fails CLOSED on an unreadable table.
+  const owners = [...new Set(rows.map((m) => m.owner_id as string).filter((o) => o !== user.id))];
+  const blockedOwners = new Set<string>();
+  for (const ownerId of owners) {
+    if (await isBlocked(sc, user.id, ownerId)) blockedOwners.add(ownerId);
+  }
+  const readable = await Promise.all(rows.map((m) => (
+    blockedOwners.has(m.owner_id as string) ? Promise.resolve(false) : canReadMemory(sc, m, user.id, "single")
+  )));
+  const byId = new Map(rows.filter((_, i) => readable[i]).map((m) => [m.id as string, m]));
+  const visible = order.map((id) => byId.get(id)).filter((m): m is any => Boolean(m));
+
+  const enriched = await enrichMemories(sc, visible, user.id, precisionEnabled, req.log);
+  if (!enriched.ok) {
+    sendError(res, "degraded_unavailable", "We could not load your saved memories. Please try again.");
+    return;
+  }
+  res.json({
+    memories: enriched.rows.map((m: any) => ({ ...m, savedByMe: true })),
+    truncated: order.length >= SAVED_MEMORIES_LIMIT,
+  });
+}));
+
+// ── POST /memories/:id/share — the share gate (testing-mode WP-06, HM-F13) ───
+//
+// This route answered `{ ok: true }` for any well-formed id and did nothing: a
+// Memory the caller could not read, a blocked owner's, a deleted one — all
+// "shared". It is now the GATE a share passes before it is made. The share
+// itself is a Telegraph §5 object REFERENCE the client posts into a thread
+// (`POST /threads/:id/share`), resolved per reader at read time by
+// services/telegraph/shareables.ts, so a later narrowing, block or deletion is
+// honoured in the chat; nothing is copied here and nothing is written.
+//
+// Readability is the save route's, exactly: owner always; otherwise the block
+// check (fail-closed) and §23's canReadMemory "single". A refusal is the same
+// not_found a Memory that does not exist gets, so the gate is not an oracle.
+async function answerMemoryShare(req: any, res: any, userId: string, id: string): Promise<void> {
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+  const { data: memory, error } = await sc
+    .from("memories")
+    .select("id, owner_id, visibility, allowed_user_ids, hidden_user_ids, trip_id, state")
+    .eq("id", id)
+    .neq("state", "deleted")
+    .maybeSingle();
+  if (error) {
+    req.log.error({ err: error, memoryId: id }, "memories: share gate read failed — refusing rather than approving a share");
+    sendError(res, "db_error", "Could not check this Memory. Please try again.", { exposeDetail: true });
+    return;
+  }
+  if (!memory) { sendError(res, "not_found", "Memory not found"); return; }
+  if ((memory as any).owner_id !== userId) {
+    if (await isBlocked(sc, userId, (memory as any).owner_id)) { sendError(res, "not_found", "Memory not found"); return; }
+    if (!(await canReadMemory(sc, memory, userId, "single"))) { sendError(res, "not_found", "Memory not found"); return; }
+  }
+  res.json({
+    ok: true,
+    share: {
+      objectType: "MEMORY",
+      objectId: id,
+      deepLink: `/memory/${id}`,
+      public: (memory as any).visibility === "public" && (memory as any).state === "published",
+    },
+  });
+}
+
+// Imported at the TAIL so no line above moves; ESM hoists it.
+import { asyncHandler } from "../lib/asyncHandler.js";
 
 export default router;

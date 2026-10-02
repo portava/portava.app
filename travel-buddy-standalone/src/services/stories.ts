@@ -100,7 +100,7 @@ export async function uploadStoryMedia(localUri: string, mediaType: string): Pro
     if (!token) return null;
 
     // Fetch the local file as a blob
-    const response = await fetch(localUri);
+    const response = await fetch(await videoUriForUpload(localUri, mediaType.startsWith('video/'))); // §37 MD282: localUri itself unless a compressor module is in the binary and switched on
     const blob = await response.blob();
 
     const uploadRes = await fetch(`${apiBase()}/api/media/upload`, {
@@ -113,7 +113,7 @@ export async function uploadStoryMedia(localUri: string, mediaType: string): Pro
     });
 
     if (!uploadRes.ok) return null;
-    const json = await uploadRes.json();
+    const json = await uploadRes.json(); if (mediaType.startsWith('video/')) void attachPosterInBackground(json?.path, localUri, token); // §37 poster
     return typeof json?.url === 'string' ? json.url : null;
   } catch {
     return null;
@@ -236,14 +236,14 @@ export async function replyToStory(storyId: string, message: string): Promise<{ 
 
 // ── Save to highlight ─────────────────────────────────────────────────────────
 
-export async function saveToHighlight(storyId: string, highlightId: string): Promise<{ ok: boolean }> {
-  try {
+export async function saveToHighlight(storyId: string): Promise<{ ok: true; highlightId: string } | { ok: false; message: string }> {
+  try { // The route CREATES a Highlight from the story (no highlightId is read); a 409 says why this audience cannot.
     const headers = { ...(await authHeader()), 'Content-Type': 'application/json' };
     const res = await fetch(`${apiBase()}/api/stories/${storyId}/save-to-highlight`, {
-      method: 'POST', headers, body: JSON.stringify({ highlightId }),
-    });
-    return { ok: res.ok };
-  } catch { return { ok: false }; }
+      method: 'POST', headers, body: JSON.stringify({}),
+    }); const j = await res.json().catch(() => null) as { highlightId?: unknown; message?: string } | null;
+    return res.ok && typeof j?.highlightId === 'string' ? { ok: true, highlightId: j.highlightId as string } : { ok: false, message: j?.message ?? 'Could not save this story to your highlights. Please try again.' };
+  } catch { return { ok: false, message: 'You appear to be offline. Check your connection and try again.' }; }
 }
 
 // ── Close Friends ─────────────────────────────────────────────────────────────
@@ -283,4 +283,26 @@ export async function removeCloseFriend(userId: string): Promise<{ ok: boolean }
     });
     return { ok: res.status === 204 };
   } catch { return { ok: false }; }
+}
+
+// §37 (census-media §22): a story video gets its poster, attached in the
+// background. Imported at the TAIL so no line above moves; ESM hoists it.
+import { attachPosterInBackground } from './media/generalVideoPoster.ts';
+// §37 MD282 (census-media §37): the device compression seam. At the TAIL for the same reason.
+import { videoUriForUpload } from './media/videoCompression.ts';
+
+// ── Your own live stories (PLAT-F33) ──────────────────────────────────────────
+// GET /me/stories. The feed never includes the viewer's own stories, so this is
+// how the owner opens the story they posted (and reaches save-to-highlight).
+// Appended at the foot so no cited line above moves.
+export async function getMyStories(): Promise<{ ok: true; user: StoryFeedUser } | { ok: false; disabled: boolean; message: string }> {
+  try {
+    const res = await fetch(`${apiBase()}/api/me/stories`, { headers: await authHeader() });
+    const j = await res.json().catch(() => null) as { error?: string; message?: string; author?: StoryAuthor; stories?: Story[] } | null;
+    if (!res.ok) return { ok: false, disabled: j?.error === 'feature_disabled', message: j?.message ?? 'Your stories could not be loaded.' };
+    if (!j?.author || !Array.isArray(j.stories)) return { ok: false, disabled: false, message: 'Your stories could not be read.' };
+    return { ok: true, user: { ...j.author, stories: j.stories, hasUnviewed: false } };
+  } catch {
+    return { ok: false, disabled: false, message: 'You appear to be offline. Check your connection and try again.' };
+  }
 }

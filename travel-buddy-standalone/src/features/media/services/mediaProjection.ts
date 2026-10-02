@@ -41,7 +41,22 @@ import type {
   ExperienceChain,
   ExperienceChainStep,
 } from '../types/mediaExperience.ts';
-import type { HiddenGemMediaProjection, HiddenGemState, GemLocationPrecision } from '../types/hiddenGemMedia.ts';
+import type {
+  HiddenGemMediaProjection,
+  HiddenGemState,
+  GemLocationPrecision,
+  HiddenGemLensProjection,
+} from '../types/hiddenGemMedia.ts';
+import { mapGemLensProjection } from '../state/gemLens.ts';
+import { mapMediaMapProjection, type MediaMapProjection } from '../state/mediaMapStore.ts';
+import { mapContextRefs, type ContextRef } from '../state/mediaContextGraph.ts';
+import type {
+  MediaSearchResultsView,
+  SearchCanonicalResult,
+  SearchGemResult,
+  SearchPersonResult,
+  SearchPlaceResult,
+} from '../types/mediaSearchResults.ts';
 import type { ConfidenceState } from '../types/media.ts';
 import type { PeopleLensGroup, PeopleLensProjection, PeopleLensRelation } from '../types/peopleLens.ts';
 import type {
@@ -381,7 +396,7 @@ export function mapCityVisualZone(raw: unknown): CityVisualZone | null {
     state,
     trend: raw.trend != null ? oneOf<ActivityTrend>(raw.trend, TRENDS, 'steady') : null,
     perspectiveCount: asNumber(raw.perspectiveCount),
-    freshness: raw.freshness != null ? freshnessClass(raw.freshness) : null,
+    freshness: raw.freshness != null ? freshnessClass(raw.freshness) : null, uncertaintyLabel: zoneUncertainty(raw.consensus),
   };
 }
 
@@ -432,7 +447,7 @@ function mapChangingNow(raw: unknown): ChangingNowItem | null {
     freshnessLabel: asString(raw.freshnessLabel),
     whyThis: asString(raw.whyThis),
     heroMedia: mapMediaList(raw.heroMedia),
-    placeId: asString(raw.placeId),
+    placeId: asString(raw.placeId), uncertaintyLabel: zoneUncertainty(raw.consensus),
   };
 }
 
@@ -537,10 +552,13 @@ export function mapPlaceCurrentView(raw: unknown, nowMs: number = Date.now()): P
       .flatMap((g) => g.media)
       .sort((a, b) => Date.parse(b.capturedAt ?? '') - Date.parse(a.capturedAt ?? ''));
 
-    const sourceCount = asNumber(perspectivesObj.independentSourceCount) ?? 0;
+    const allAgesSources = asNumber(perspectivesObj.independentSourceCount) ?? 0;
     const updatedAt = newestCapturedAt(heroMedia);
+    // §18: the CURRENT picture is what fresh independent witnesses say (services/media/mediaIntelligence.ts).
+    const consensus = mapVisualConsensus(o.consensus);
+    const { strength, sourceCount } = currentPictureFromConsensus(consensus, { strength: strengthFromSources(allAgesSources), sourceCount: allAgesSources });
     const currentPicture: CurrentPicture = {
-      strength: strengthFromSources(sourceCount),
+      strength,
       updatedAt,
       ageMinutes: ageMinutesFromIso(updatedAt, nowMs),
       perspectiveCount: asNumber(perspectivesObj.totalPerspectives) ?? heroMedia.length,
@@ -559,6 +577,7 @@ export function mapPlaceCurrentView(raw: unknown, nowMs: number = Date.now()): P
       areaName:
         (placeObj ? asString(placeObj.neighborhood) ?? asString(placeObj.city) : null) ??
         asString(o.areaName),
+      consensus,
     };
   }
 
@@ -615,6 +634,7 @@ export function mapExperienceProjection(raw: unknown): MediaExperienceProjection
       : null;
   return {
     id,
+    kind: kind === 'event' || kind === 'trip' ? kind : null,
     title,
     placeIds: asArray(raw.placeIds)
       .map((p) => asString(p))
@@ -1058,6 +1078,12 @@ function errMessage(err: unknown): string {
 
 export interface WorldParams {
   cityId?: string | null;
+  /**
+   * The coarse city LABEL. `GET /media/world` scopes by `city` (its `parseCity`);
+   * it has never read `cityId`, so without this the NOW lens was always the
+   * unscoped global projection (census-media §19).
+   */
+  city?: string | null;
   lat?: number | null;
   lng?: number | null;
   signal?: AbortSignal;
@@ -1065,6 +1091,7 @@ export interface WorldParams {
 
 function worldQuery(params: WorldParams): string {
   const qs = new URLSearchParams();
+  if (params.city) qs.set('city', params.city);
   if (params.cityId) qs.set('cityId', params.cityId);
   if (params.lat != null) qs.set('lat', String(params.lat));
   if (params.lng != null) qs.set('lng', String(params.lng));
@@ -1156,20 +1183,21 @@ export async function fetchExperiencesByIds(
   return { ok: true, data };
 }
 
-/** GET /media/gems — hidden-gem media (§16). */
+/**
+ * GET /media/gems — the §16 Hidden Gems LENS (census-media §19).
+ *
+ * Reads the server's REAL `MediaGemStateProjection` through `mapGemLensProjection`
+ * and sends the coarse `city` LABEL the route parses (`parseCity`). The previous
+ * version sent `cityId` — a parameter the route never reads — and mapped the
+ * body through `mapHiddenGemList`, which looks for `id`/`title` on a payload
+ * that carries `gemId`/`name`, so every served gem was silently dropped.
+ */
 export function fetchGems(opts?: {
-  cityId?: string | null;
+  city?: string | null;
   signal?: AbortSignal;
-}): Promise<ProjectionResult<HiddenGemMediaProjection[]>> {
-  const qs = opts?.cityId ? `?cityId=${encodeURIComponent(opts.cityId)}` : '';
-  return getJson(
-    `/api/media/gems${qs}`,
-    (b) => {
-      const inner = isObj(b) && 'gems' in b ? (b as Record<string, unknown>).gems : b;
-      return mapHiddenGemList(inner);
-    },
-    opts,
-  );
+}): Promise<ProjectionResult<HiddenGemLensProjection>> {
+  const qs = opts?.city ? `?city=${encodeURIComponent(opts.city)}` : '';
+  return getJson(`/api/media/gems${qs}`, mapGemLensProjection, opts);
 }
 
 /** GET /media/people — explicitly social lens grouped by contributor (§27). */
@@ -1226,4 +1254,281 @@ export function fetchMedia(
     },
     opts,
   );
+}
+
+/**
+ * GET /media/map — §21 perspective counts per canonical place (census-media §19).
+ * The payload carries NO geometry; `mediaMapStore.joinClustersToPositions`
+ * positions it from the canonical Map gateway. Sends the coarse `city` label
+ * the route's `parseCity` reads.
+ */
+export function fetchMediaMap(opts?: {
+  city?: string | null;
+  signal?: AbortSignal;
+}): Promise<ProjectionResult<MediaMapProjectionWithCovers>> {
+  const qs = opts?.city ? `?city=${encodeURIComponent(opts.city)}` : '';
+  return getJson(`/api/media/map${qs}`, mapMediaMapWithCovers, opts); // + each cluster's cover (census-media §24, MD300)
+}
+
+// ── §38 Search (census-media §19) ─────────────────────────────────────────────
+
+function searchFreshness(v: unknown): FreshnessClass | null {
+  return v === 'fresh' || v === 'recent' || v === 'historical' ? v : null;
+}
+
+function mapSearchCanonical(raw: unknown, kind: 'event' | 'trip'): SearchCanonicalResult | null {
+  if (!isObj(raw)) return null;
+  const id = asString(raw.id);
+  // A result of the wrong kind is dropped, not relabelled.
+  if (!id || (raw.kind != null && raw.kind !== kind)) return null;
+  return {
+    id,
+    kind,
+    title: asString(raw.title),
+    startedAt: asString(raw.startedAt),
+    expectedEndAt: asString(raw.expectedEndAt),
+    placeIds: asArray(raw.placeIds).map(asString).filter((p): p is string => p !== null),
+    perspectiveCount: asNumber(raw.perspectiveCount) ?? 0,
+    freshness: searchFreshness(raw.freshness),
+  };
+}
+
+/**
+ * Map the `GET /media/search` body into the seven §38 result lists. Safe on
+ * `{}` / garbage. A person's `name` is carried only as the server sent it —
+ * the handle-first projection already decided what may be shown.
+ */
+export function mapMediaSearchResults(raw: unknown): MediaSearchResultsView {
+  const o = isObj(raw) ? raw : {};
+  const strings = (v: unknown) => asArray(v).filter((s): s is string => typeof s === 'string');
+  return {
+    generatedAt: asString(o.generatedAt),
+    criteriaUsed: strings(o.criteriaUsed),
+    media: mapMediaList(o.media),
+    places: asArray(o.places)
+      .map((p): SearchPlaceResult | null => {
+        if (!isObj(p)) return null;
+        const placeId = asString(p.placeId);
+        if (!placeId) return null;
+        return {
+          placeId,
+          label: asString(p.label),
+          neighborhood: asString(p.neighborhood),
+          city: asString(p.city),
+          country: asString(p.country),
+          perspectiveCount: asNumber(p.perspectiveCount) ?? 0,
+          freshPerspectiveCount: asNumber(p.freshPerspectiveCount) ?? 0,
+          freshness: searchFreshness(p.freshness),
+        };
+      })
+      .filter((p): p is SearchPlaceResult => p !== null),
+    people: asArray(o.people)
+      .map((p): SearchPersonResult | null => {
+        if (!isObj(p)) return null;
+        const id = asString(p.id);
+        if (!id) return null;
+        return {
+          id,
+          username: asString(p.username),
+          name: asString(p.name),
+          avatarUrl: asString(p.avatarUrl),
+          verified: asBool(p.verified),
+          isOfficial: asBool(p.isOfficial),
+          perspectiveCount: asNumber(p.perspectiveCount) ?? 0,
+        };
+      })
+      .filter((p): p is SearchPersonResult => p !== null),
+    hiddenGems: asArray(o.hiddenGems)
+      .map((g): SearchGemResult | null => {
+        if (!isObj(g)) return null;
+        const gemId = asString(g.gemId);
+        const placeId = asString(g.placeId);
+        if (!gemId || !placeId) return null;
+        return { gemId, name: asString(g.name), placeId };
+      })
+      .filter((g): g is SearchGemResult => g !== null),
+    experiences: mapExperienceList(o.experiences),
+    events: asArray(o.events)
+      .map((e) => mapSearchCanonical(e, 'event'))
+      .filter((e): e is SearchCanonicalResult => e !== null),
+    trips: asArray(o.trips)
+      .map((t) => mapSearchCanonical(t, 'trip'))
+      .filter((t): t is SearchCanonicalResult => t !== null),
+    unsupported: strings(o.unsupported),
+    undetermined: strings(o.undetermined),
+  };
+}
+
+/** True when every result list is empty (whatever the reason — see `undetermined`). */
+export function isMediaSearchEmpty(r: MediaSearchResultsView): boolean {
+  return (
+    r.media.length === 0 &&
+    r.places.length === 0 &&
+    r.people.length === 0 &&
+    r.hiddenGems.length === 0 &&
+    r.experiences.length === 0 &&
+    r.events.length === 0 &&
+    r.trips.length === 0
+  );
+}
+
+/**
+ * GET /media/search — §38. Takes the query string `mediaFilterStore.
+ * toSearchQueryString` built and an optional `near` (census-media §24): with
+ * neither, it is answered locally with an empty result and NO request,
+ * mirroring the server's "empty means empty" rule.
+ */
+export function fetchMediaSearch(
+  queryString: string | null,
+  opts?: { signal?: AbortSignal; near?: MediaSearchNearParam | null },
+): Promise<ProjectionResult<MediaSearchResultsWithNear>> {
+  const path = mediaSearchPath(queryString, opts?.near ?? null);
+  return path.kind === 'request' ? getJson(path.url, mapMediaSearchWithNear, opts) : Promise.resolve(path.answer);
+}
+
+/**
+ * The server-resolved §7 context refs of one media item — the `entityRefs` of
+ * `GET /media/:id/actions`, which that route emits only for edges the viewer may
+ * see. Read with `mapContextRefs`, which keeps the Shared Moment kind the action
+ * rail's mapper narrows away (census-media §19, MD314).
+ */
+export function fetchMediaContextRefs(
+  mediaId: string,
+  opts?: { signal?: AbortSignal },
+): Promise<ProjectionResult<ContextRef[]>> {
+  return getJson(`/api/media/${encodeURIComponent(mediaId)}/actions`, mapContextRefs, opts);
+}
+// §18 (census-media §22, MD323): the client's reading of the server's Visual
+// Consensus. Imported at the TAIL so no line above moves; ESM hoists it.
+import { mapVisualConsensus, currentPictureFromConsensus, uncertaintyBanner } from '../../../services/media/mediaIntelligence.ts';
+
+/**
+ * §18 on a §43 WorldZone (census-media §26, MD152): the server emits the zone's
+ * Visual Consensus on every zone, and "Mixed reports — conditions may be
+ * changing" when its reports materially disagree. The line is the SAME rule the
+ * place view applies (uncertaintyBanner): shown exactly when the server says so,
+ * never invented, never dropped. An unreadable consensus is absent → null.
+ * Appended at the tail so no line census-media cites above moves.
+ */
+function zoneUncertainty(rawConsensus: unknown): string | null {
+  return uncertaintyBanner(mapVisualConsensus(rawConsensus));
+}
+
+// ── §39 "Map thumbnails": each `/media/map` cluster's cover (census-media §24, MD300) ──
+import type { MediaMapCluster } from '../state/mediaMapStore.ts';
+
+/** A Media Map cluster with the ONE image the server chose for it. */
+export interface MediaMapClusterWithCover extends MediaMapCluster {
+  /**
+   * The server's choice, after every gate it applies to the viewer. Null when
+   * it sent none. The device never picks a cover of its own: an image the
+   * server did not choose is one it did not clear for this viewer.
+   */
+  cover: MediaProjection | null;
+}
+
+export interface MediaMapProjectionWithCovers extends MediaMapProjection {
+  clusters: MediaMapClusterWithCover[];
+}
+
+/**
+ * The server sends `coverMedia` as an array of zero or one. A cover must carry
+ * an image: an image item's own file or thumbnail, or a video's poster. A video
+ * with no poster is not a cover, because its `url` is the video file.
+ */
+function mapClusterCover(raw: unknown): MediaProjection | null {
+  const first = asArray(raw)[0];
+  if (!isObj(first)) return null;
+  const m = mapMediaProjection(first);
+  if (!m.id) return null;
+  const hasImage = m.mediaType === 'video' ? !!m.thumbnailUrl : !!(m.thumbnailUrl || m.url);
+  return hasImage ? m : null;
+}
+
+/** `mapMediaMapProjection`, plus each kept cluster's cover, matched by place id. */
+export function mapMediaMapWithCovers(raw: unknown): MediaMapProjectionWithCovers {
+  const base = mapMediaMapProjection(raw);
+  const covers = new Map<string, MediaProjection | null>();
+  for (const c of asArray(isObj(raw) ? raw.clusters : null)) {
+    if (!isObj(c)) continue;
+    const placeId = asString(c.placeId);
+    if (placeId && !covers.has(placeId)) covers.set(placeId, mapClusterCover(c.coverMedia));
+  }
+  return { ...base, clusters: base.clusters.map((c) => ({ ...c, cover: covers.get(c.placeId) ?? null })) };
+}
+
+// ── §38 "near X": a center and a bounded radius (census-media §24, MD288) ─────
+
+/** The server's bounds (MediaSearchService NEAR_RADIUS_MIN_M / _MAX_M). */
+export const MEDIA_SEARCH_NEAR_RADIUS_MIN_M = 100;
+export const MEDIA_SEARCH_NEAR_RADIUS_MAX_M = 5_000;
+
+/** Near a canonical place, or near a point — each within `radiusM` metres. */
+export type MediaSearchNearParam =
+  | { placeId: string; radiusM: number }
+  | { lat: number; lng: number; radiusM: number };
+
+/** How the server resolved a "near" search. It never echoes a coordinate. */
+export interface MediaSearchNearView {
+  center: 'place' | 'point';
+  radiusM: number;
+  /** `center_unpositioned`: the canonical Map would not place the center, so every list is empty for THAT reason. */
+  refusal: 'center_unpositioned' | null;
+}
+
+export type MediaSearchResultsWithNear = MediaSearchResultsView & { near: MediaSearchNearView | null };
+
+const NEAR_PLACE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The `near` query parameters, or null for a `near` the server would refuse.
+ * Such a `near` is refused HERE, with no request, rather than dropped: a
+ * search sent without it would be answered city-coarse and read as "near".
+ */
+export function mediaSearchNearParams(near: MediaSearchNearParam): URLSearchParams | null {
+  const r = near.radiusM;
+  if (!Number.isInteger(r) || r < MEDIA_SEARCH_NEAR_RADIUS_MIN_M || r > MEDIA_SEARCH_NEAR_RADIUS_MAX_M) return null;
+  const qs = new URLSearchParams();
+  if ('placeId' in near) {
+    if (!NEAR_PLACE_ID_RE.test(near.placeId)) return null;
+    qs.set('nearPlaceId', near.placeId);
+  } else {
+    if (!Number.isFinite(near.lat) || !Number.isFinite(near.lng)) return null;
+    if (Math.abs(near.lat) > 90 || Math.abs(near.lng) > 180) return null;
+    qs.set('nearLat', String(near.lat));
+    qs.set('nearLng', String(near.lng));
+  }
+  qs.set('radiusM', String(r));
+  return qs;
+}
+
+function mediaSearchPath(
+  queryString: string | null,
+  near: MediaSearchNearParam | null,
+):
+  | { kind: 'request'; url: string }
+  | { kind: 'local'; answer: ProjectionResult<MediaSearchResultsWithNear> } {
+  const nearQs = near ? mediaSearchNearParams(near) : null;
+  if (near && !nearQs) {
+    return {
+      kind: 'local',
+      answer: { ok: false, data: null, errorKind: 'unknown', message: 'A "near" search needs one center and a radius of 100 m to 5 km' },
+    };
+  }
+  const parts = [queryString, nearQs ? nearQs.toString() : null].filter((p): p is string => !!p);
+  if (parts.length === 0) return { kind: 'local', answer: { ok: true, data: mapMediaSearchWithNear({}) } };
+  return { kind: 'request', url: `/api/media/search?${parts.join('&')}` };
+}
+
+function mapMediaSearchNear(raw: unknown): MediaSearchNearView | null {
+  if (!isObj(raw)) return null;
+  const center = raw.center === 'place' || raw.center === 'point' ? raw.center : null;
+  const radiusM = asNumber(raw.radiusM);
+  if (!center || radiusM == null) return null;
+  return { center, radiusM, refusal: raw.refusal === 'center_unpositioned' ? 'center_unpositioned' : null };
+}
+
+/** `mapMediaSearchResults`, plus the server's report on how "near" resolved. */
+export function mapMediaSearchWithNear(raw: unknown): MediaSearchResultsWithNear {
+  return { ...mapMediaSearchResults(raw), near: mapMediaSearchNear(isObj(raw) ? raw.near : null) };
 }

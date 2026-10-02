@@ -28,8 +28,8 @@ import {
   Platform,
 } from 'react-native';
 import { Avatar } from '../ui/Avatar.tsx';
-import { LinearGradient } from 'expo-linear-gradient';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { LinearGradient } from 'expo-linear-gradient'; import { Bookmark, MessageCircle } from 'lucide-react-native'; // census-media §31.13: the rail's comment and save glyphs
+import { avatar, color, space, radius, type as t } from '../../theme/tokens.ts'; import { useLayoverAwareBottomInset } from '../../hooks/useBottomInset.ts'; // census-media §40: the rail clears the Media tab's FAB
 import type { GemsFeedItem } from '../../hooks/useGemsFeed.ts';
 import { PlaceQuickActions } from '../PlaceQuickActions.tsx';
 import { StampButton } from '../stamps/StampButton.tsx';
@@ -98,8 +98,8 @@ export function GemsItemOverlay({
   isSaved,
 }: GemsItemOverlayProps) {
   // Legacy inline mini-menu — only used when onMore is not provided.
-  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
-  const [captionExpanded, setCaptionExpanded] = useState(false);
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false); const tabBarClearance = useLayoverAwareBottomInset(); // census-media §40.12: the bottom content ends above the floating tab bar
+  const [captionExpanded, setCaptionExpanded] = useState(false); const railBottom = useLayoverAwareBottomInset() + RAIL_FAB_CLEARANCE; // census-media §40: the FAB's top edge, plus a gap
 
   const loc = item.location;
   const firstMedia = item.media[0] ?? null;
@@ -139,26 +139,26 @@ export function GemsItemOverlay({
       />
 
       {/* ── Right action column ───────────────────────────────────────────── */}
-      <View style={styles.actionColumn}>
+      <View style={[styles.actionColumn, { bottom: railBottom }]} testID="gems-action-rail">
         <StampButton
           entityType="gem"
           entityId={item.id}
           initialCount={item.stats.likeCount ?? 0}
           initialIsStamped={item.viewerState?.hasLiked ?? false}
-          iconSize={24}
+          iconSize={24} tone="onDark"
           style={styles.stampBtnWrapper}
         />
         {/* Comments are disabled for gem items (not post-backed); only shown when onComment is wired. */}
         {onComment && (
           <ActionButton
-            label="💬"
+            icon={<MessageCircle size={26} color={color.onInk} strokeWidth={1.8} />} // census-media §31.13: was label="💬", a colour emoji the source cannot colour
             sublabel={String(item.stats.commentCount || '')}
             onPress={() => onComment(item)}
             accessibilityLabel="Comment"
           />
         )}
         <ActionButton
-          label={(isSaved ?? item.viewerState.hasSaved) ? '🔖' : '🏷'}
+          icon={<Bookmark size={26} color={(isSaved ?? item.viewerState.hasSaved) ? color.signal : color.onInk} fill={(isSaved ?? item.viewerState.hasSaved) ? color.signal : 'transparent'} strokeWidth={(isSaved ?? item.viewerState.hasSaved) ? 0 : 1.8} />} // census-media §31.13: was the emoji swap 🔖 / 🏷; saved is now a filled `signal` bookmark, as on the Watch rail
           sublabel={String(item.stats.saveCount || '')}
           active={isSaved ?? item.viewerState.hasSaved}
           onPress={() => onSave?.(item)}
@@ -195,7 +195,7 @@ export function GemsItemOverlay({
       )}
 
       {/* ── Bottom content ─────────────────────────────────────────────────── */}
-      <View style={styles.bottomContent}>
+      <View style={[styles.bottomContent, { paddingBottom: tabBarClearance }]} testID="gems-bottom-content">
         {/* Place block — dominant */}
         {loc && (
           <View style={styles.placeBlock}>
@@ -311,14 +311,14 @@ export function GemsItemOverlay({
 // ── ActionButton ──────────────────────────────────────────────────────────────
 
 interface ActionButtonProps {
-  label: string;
+  label?: string; /** A source-coloured glyph drawn in place of `label` (census-media §31.13): unlike a colour emoji, the contrast test can measure it. */ icon?: React.ReactNode;
   sublabel?: string;
   active?: boolean;
   onPress: () => void;
   accessibilityLabel: string;
 }
 
-function ActionButton({ label, sublabel, active, onPress, accessibilityLabel }: ActionButtonProps) {
+function ActionButton({ label, icon, sublabel, active, onPress, accessibilityLabel }: ActionButtonProps) {
   return (
     <Pressable
       style={({ pressed }) => [styles.actionBtn, pressed && styles.chipPressed]}
@@ -326,9 +326,9 @@ function ActionButton({ label, sublabel, active, onPress, accessibilityLabel }: 
       accessibilityLabel={accessibilityLabel}
       accessibilityState={{ selected: active }}
     >
-      <Text style={[styles.actionBtnIcon, active && styles.actionBtnIconActive]}>
+      {icon ?? <Text style={[styles.actionBtnIcon, active && styles.actionBtnIconActive]}>
         {label}
-      </Text>
+      </Text>}
       {sublabel ? (
         <Text style={styles.actionBtnSublabel}>{sublabel}</Text>
       ) : null}
@@ -350,7 +350,7 @@ const styles = StyleSheet.create({
     top: 100,
     left: space.lg,
     right: 80, // clear of right action column
-    backgroundColor: 'rgba(0,0,0,0.55)',
+    backgroundColor: 'rgba(0,0,0,0.83)', // census-media §31.12: the least alpha at which the `warn` notice clears 4.5:1 over a white image; was 0.55
     borderRadius: radius.sm,
     paddingHorizontal: space.sm,
     paddingVertical: space.xs,
@@ -365,11 +365,11 @@ const styles = StyleSheet.create({
     top: '40%', // start gradient halfway down
   },
   actionColumn: {
-    position: 'absolute',
+    position: 'absolute', zIndex: 2, // census-media §40: above the bottom content, a later sibling whose full-width 0.81 backing painted over the rail's lower half and took its taps
     right: space.md,
-    bottom: BOTTOM_SAFE + 120,
+    // bottom: railBottom, set at render (census-media §40); was bottom: BOTTOM_SAFE + 120, inside the Media tab FAB's box, so ⋯ sat under the FAB
     alignItems: 'center',
-    gap: space.lg,
+    gap: space.lg, paddingVertical: space.sm, paddingHorizontal: space.xs, borderRadius: 999, backgroundColor: 'rgba(0,0,0,0.89)', // census-media §31.12/§31.13: a backing under the action column. Under the StampButton's onDark tone every asserted pair on it clears from 0.74; 0.89 is kept because the rail's emoji, whose colours come from the platform font and are not measured, sit on it too
   },
   stampBtnWrapper: {
     minHeight: 44,
@@ -425,9 +425,9 @@ const styles = StyleSheet.create({
   },
   bottomContent: {
     paddingHorizontal: space.lg,
-    paddingBottom: BOTTOM_SAFE + space.md,
+    // paddingBottom: tabBarClearance, set at render (census-media §40.12); was BOTTOM_SAFE + space.md (28 on web), which left the handle and caption under the floating tab bar
     paddingRight: 80, // clear of right action column
-    gap: space.sm,
+    gap: space.sm, paddingTop: space.md, backgroundColor: 'rgba(0,0,0,0.81)', // census-media §31.12: a backing under the place block and creator row, the least alpha at which each line clears AA over a white image
   },
   placeBlock: {
     gap: space.xs,
@@ -448,7 +448,7 @@ const styles = StyleSheet.create({
   },
   verifiedDot: {
     ...t.stamp,
-    color: color.success,
+    color: '#B6D2C6', // census-media §31.12: `success` tinted 0.65 toward white, the least tint at 4.5:1 on the type badge over the backing (`success` is 1.48 there)
   },
   placeName: {
     ...t.title,
@@ -529,3 +529,12 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
 });
+
+// census-media §40 — where the action rail sits. The Media tab's FAB
+// (app/(tabs)/media.tsx `fab`) floats 16 above useLayoverAwareBottomInset()
+// and is avatar.s52 tall, over this overlay's right edge; the rail's bottom
+// edge starts space.sm above the FAB's top edge, so its lowest control (⋯) is
+// never under the FAB. The rail takes the same inset hook as the FAB, so an
+// active layover pill lifts both. Pinned by
+// __tests__/GemsItemOverlay.railLayer.component.test.tsx.
+const RAIL_FAB_CLEARANCE = 16 + avatar.s52 + space.sm;

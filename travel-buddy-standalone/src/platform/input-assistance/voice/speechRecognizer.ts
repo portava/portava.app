@@ -1,0 +1,269 @@
+/**
+ * Global Input Intelligence — the PLATFORM speech recognizer seam (§25, census
+ * G163; flow GII-F09).
+ *
+ * WHY A SECOND PORT BESIDE `transcriptionPort.ts`. That port is shaped for a
+ * clip-based engine: capture audio, then hand the clip to a transcriber (a
+ * cloud STT API). The platforms' own recognizers do not work that way — the
+ * browser's `SpeechRecognition`, iOS `SFSpeechRecognizer` and Android
+ * `SpeechRecognizer` own the microphone themselves and stream results. §25 says
+ * speech-to-text is "an input transport, not a separate intelligence system",
+ * so both shapes end in the SAME place: a `TranscriptionResult` handed to
+ * `voiceIntake.ts`, whose request builder is the typed path's own.
+ *
+ * THE RULING THIS FOLLOWS. census-wall §13.2/§14.2 and the Compass/Wall
+ * activation note: a new PAID speech service is prepared and priced for the
+ * owner, never purchased, and the recommended route is the free platform
+ * recognizer. So:
+ *   - `createWebSpeechRecognizer` binds the platform API where the platform
+ *     exposes one to JavaScript (web builds: `SpeechRecognition` /
+ *     `webkitSpeechRecognition`). No dependency, no key, no spend.
+ *   - `createNativeSpeechRecognizer` is the adapter for the native module the
+ *     owner has not yet approved (`expo-speech-recognition`). It takes the
+ *     module as an ARGUMENT and imports nothing, so this file loads today and
+ *     the device build becomes one bootstrap line once the module ships.
+ *   - With neither, `NO_SPEECH_RECOGNIZER` answers `unavailable/no_provider` —
+ *     never a placeholder transcript.
+ *
+ * Pure module — no React, no RN import, no network. node:test-safe.
+ */
+import type { TranscriptionResult } from './types.ts';
+import type { TranscriptionOutcome } from './transcriptionPort.ts';
+
+export interface RecognizeOnceOptions {
+  /** BCP-47 language, when the surface knows it. */
+  language?: string | null;
+  /** Abort = stop listening now; whatever was final so far is used. */
+  signal?: AbortSignal;
+  /** Live partials, for display only — they never enter the engine. */
+  onPartial?: (r: TranscriptionResult) => void;
+}
+
+export interface SpeechRecognizerPort {
+  /** 'web-speech', 'native-speech', 'none'. */
+  readonly providerId: string;
+  isAvailable(): Promise<boolean>;
+  /** Listen for one utterance. Resolves an outcome envelope; never throws. */
+  recognizeOnce(opts?: RecognizeOnceOptions): Promise<TranscriptionOutcome>;
+}
+
+export const NO_SPEECH_RECOGNIZER: SpeechRecognizerPort = {
+  providerId: 'none',
+  async isAvailable() {
+    return false;
+  },
+  async recognizeOnce(): Promise<TranscriptionOutcome> {
+    return {
+      ok: false,
+      unavailable: true,
+      reason: 'no_provider',
+      error: 'This build has no speech recognizer.',
+    };
+  },
+};
+
+let installed: SpeechRecognizerPort | null = null;
+
+export function installSpeechRecognizer(port: SpeechRecognizerPort): SpeechRecognizerPort {
+  installed = port;
+  return port;
+}
+
+export function clearSpeechRecognizer(): void {
+  installed = null;
+}
+
+/** The installed recognizer, else the platform's own if it has one, else the honest none. */
+export function resolveSpeechRecognizer(scope: unknown = globalThis): SpeechRecognizerPort {
+  return installed ?? createWebSpeechRecognizer(scope) ?? NO_SPEECH_RECOGNIZER;
+}
+
+// ── The web platform's own recognizer ──────────────────────────────────────
+
+/** The slice of the Web Speech API this adapter uses. */
+interface WebSpeechAlternative { transcript: string; confidence: number }
+interface WebSpeechResult { isFinal: boolean; length: number; [i: number]: WebSpeechAlternative }
+interface WebSpeechEvent { resultIndex: number; results: { length: number; [i: number]: WebSpeechResult } }
+interface WebSpeechRecognition {
+  lang: string;
+  interimResults: boolean;
+  continuous: boolean;
+  maxAlternatives: number;
+  onresult: ((e: WebSpeechEvent) => void) | null;
+  onerror: ((e: { error?: string }) => void) | null;
+  onend: (() => void) | null;
+  start(): void;
+  stop(): void;
+  abort(): void;
+}
+type WebSpeechCtor = new () => WebSpeechRecognition;
+
+function webSpeechCtor(scope: unknown): WebSpeechCtor | null {
+  if (!scope || typeof scope !== 'object') return null;
+  const s = scope as Record<string, unknown>;
+  const ctor = s.SpeechRecognition ?? s.webkitSpeechRecognition;
+  return typeof ctor === 'function' ? (ctor as WebSpeechCtor) : null;
+}
+
+/** Map a platform error name onto the intake's vocabulary. */
+function reasonFor(code: string | undefined): 'permission_denied' | 'capture_failed' | 'provider_error' {
+  if (code === 'not-allowed' || code === 'service-not-allowed' || code === 'permission-denied') return 'permission_denied';
+  if (code === 'audio-capture' || code === 'no-speech' || code === 'aborted') return 'capture_failed';
+  return 'provider_error';
+}
+
+const ERROR_COPY: Record<'permission_denied' | 'capture_failed' | 'provider_error', string> = {
+  permission_denied: 'Microphone or speech permission is off.',
+  capture_failed: 'No speech was heard.',
+  provider_error: 'Speech recognition stopped unexpectedly.',
+};
+
+/**
+ * The Web Speech API, where the platform exposes it. Null when it does not
+ * (every native build today, and browsers without it) — so a caller can never
+ * mistake "absent" for "available but silent".
+ */
+export function createWebSpeechRecognizer(scope: unknown = globalThis): SpeechRecognizerPort | null {
+  const Ctor = webSpeechCtor(scope);
+  if (!Ctor) return null;
+  return {
+    providerId: 'web-speech',
+    async isAvailable() {
+      return true;
+    },
+    recognizeOnce(opts: RecognizeOnceOptions = {}): Promise<TranscriptionOutcome> {
+      return new Promise((resolve) => {
+        let rec: WebSpeechRecognition;
+        try {
+          rec = new Ctor();
+        } catch {
+          resolve({ ok: false, unavailable: true, reason: 'provider_error', error: ERROR_COPY.provider_error });
+          return;
+        }
+        let final: TranscriptionResult | null = null;
+        let failure: string | undefined;
+        let settled = false;
+        const settle = (out: TranscriptionOutcome) => {
+          if (settled) return;
+          settled = true;
+          opts.signal?.removeEventListener('abort', onAbort);
+          resolve(out);
+        };
+        const onAbort = () => {
+          try { rec.stop(); } catch { /* already stopped */ }
+        };
+        rec.lang = opts.language ?? '';
+        rec.interimResults = !!opts.onPartial;
+        rec.continuous = false;
+        rec.maxAlternatives = 1;
+        rec.onresult = (e) => {
+          for (let i = e.resultIndex; i < e.results.length; i += 1) {
+            const r = e.results[i];
+            const alt = r?.[0];
+            if (!r || !alt) continue;
+            const out: TranscriptionResult = { text: alt.transcript, confidence: alt.confidence, isFinal: r.isFinal, language: opts.language ?? null };
+            if (r.isFinal) final = out;
+            else opts.onPartial?.(out);
+          }
+        };
+        rec.onerror = (e) => { failure = e?.error ?? 'unknown'; };
+        rec.onend = () => {
+          if (final) settle({ ok: true, result: final });
+          else {
+            const reason = reasonFor(failure ?? 'no-speech');
+            settle({ ok: false, unavailable: reason === 'permission_denied', reason, error: ERROR_COPY[reason] });
+          }
+        };
+        opts.signal?.addEventListener('abort', onAbort);
+        try {
+          rec.start();
+        } catch {
+          settle({ ok: false, unavailable: true, reason: 'provider_error', error: ERROR_COPY.provider_error });
+        }
+      });
+    },
+  };
+}
+
+// ── The native module the owner has not yet approved ─────────────────────────
+
+/**
+ * The slice of `expo-speech-recognition`'s `ExpoSpeechRecognitionModule` this
+ * adapter needs. Declared structurally so nothing here imports a package that
+ * is not a dependency. When the owner approves it, the device bootstrap is:
+ *
+ *   import { ExpoSpeechRecognitionModule } from 'expo-speech-recognition';
+ *   installSpeechRecognizer(createNativeSpeechRecognizer(ExpoSpeechRecognitionModule));
+ */
+export interface NativeSpeechModuleLike {
+  requestPermissionsAsync(): Promise<{ granted: boolean }>;
+  isRecognitionAvailable(): boolean;
+  start(options: { lang?: string; interimResults?: boolean; continuous?: boolean; requiresOnDeviceRecognition?: boolean }): void;
+  stop(): void;
+  addListener(
+    event: 'result' | 'error' | 'end',
+    cb: (e: { isFinal?: boolean; results?: Array<{ transcript: string; confidence: number }>; error?: string }) => void,
+  ): { remove(): void };
+}
+
+export function createNativeSpeechRecognizer(
+  mod: NativeSpeechModuleLike,
+  config: { requiresOnDeviceRecognition: boolean } = { requiresOnDeviceRecognition: true },
+): SpeechRecognizerPort {
+  return {
+    providerId: 'native-speech',
+    async isAvailable() {
+      try {
+        return mod.isRecognitionAvailable() === true;
+      } catch {
+        return false;
+      }
+    },
+    async recognizeOnce(opts: RecognizeOnceOptions = {}): Promise<TranscriptionOutcome> {
+      let perm: { granted: boolean };
+      try {
+        perm = await mod.requestPermissionsAsync();
+      } catch {
+        perm = { granted: false };
+      }
+      if (!perm.granted) return { ok: false, unavailable: true, reason: 'permission_denied', error: ERROR_COPY.permission_denied };
+      return new Promise((resolve) => {
+        let final: TranscriptionResult | null = null;
+        let failure: string | undefined;
+        const subs = [
+          mod.addListener('result', (e) => {
+            const alt = e.results?.[0];
+            if (!alt) return;
+            const out: TranscriptionResult = { text: alt.transcript, confidence: alt.confidence, isFinal: e.isFinal === true, language: opts.language ?? null };
+            if (out.isFinal) final = out;
+            else opts.onPartial?.(out);
+          }),
+          mod.addListener('error', (e) => { failure = e.error ?? 'unknown'; }),
+          mod.addListener('end', () => {
+            subs.forEach((s) => s.remove());
+            opts.signal?.removeEventListener('abort', onAbort);
+            if (final) resolve({ ok: true, result: final });
+            else {
+              const reason = reasonFor(failure ?? 'no-speech');
+              resolve({ ok: false, unavailable: reason === 'permission_denied', reason, error: ERROR_COPY[reason] });
+            }
+          }),
+        ];
+        const onAbort = () => { try { mod.stop(); } catch { /* already stopped */ } };
+        opts.signal?.addEventListener('abort', onAbort);
+        try {
+          mod.start({
+            lang: opts.language ?? undefined,
+            interimResults: !!opts.onPartial,
+            continuous: false,
+            // The owner-recommended posture: keep audio on the device.
+            requiresOnDeviceRecognition: config.requiresOnDeviceRecognition,
+          });
+        } catch {
+          subs.forEach((s) => s.remove());
+          resolve({ ok: false, unavailable: true, reason: 'provider_error', error: ERROR_COPY.provider_error });
+        }
+      });
+    },
+  };
+}
