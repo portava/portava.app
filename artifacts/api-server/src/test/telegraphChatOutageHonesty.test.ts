@@ -311,3 +311,121 @@ for (const [path, label] of [
     });
   });
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE THREE WRITE LIMBS, ported from the unmerged PR #460.
+//
+// The six cases above are all READS. The same handler file had three places
+// where the result of a WRITE was discarded, and `check:silent-supabase-writes`
+// cannot see them: it models a dead `catch`, and `check:unissued-supabase-writes`
+// models a write that is never awaited. These are awaited, resolve, and have
+// their outcome thrown away — so nothing in the tree guards this class, and
+// `routes/telegraphChat.ts` is absent from SILENT_SUPABASE_WRITES_BASELINE.json.
+//
+// The dismiss case the header above says the harness could not express is here
+// now: `InjectedError.ops` fails ONE operation on a table while the others
+// still work, which is what lets each case isolate its subject.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A message whose intent `services/telegraphIntent.ts` detects at 0.85. */
+const INTENT_MSG = "let's meet up tomorrow";
+const WITH_MSG = `${SUGGESTIONS}?message=${encodeURIComponent(INTENT_MSG)}`;
+
+describe("a suggestion INSERT that failed is not an empty suggestions list", () => {
+  it("CONTROL — on a healthy tree the cards are actually inserted", async () => {
+    const c = use(store({ telegraph_chat_suggestions: [] }));
+    const r = await call(harness.base, "GET", WITH_MSG, A);
+    assert.equal(r.status, 200);
+    assert.ok(
+      c._observed.inserts.filter((i) => i.table === "telegraph_chat_suggestions").length >= 1,
+      "the fixture must REACH the insert, or the outage case below proves nothing",
+    );
+  });
+
+  it("an INSERT outage REFUSES rather than answering that there are none", async () => {
+    const c = use(store({ telegraph_chat_suggestions: [] }), {
+      errors: { telegraph_chat_suggestions: { ...down("telegraph_chat_suggestions"), ops: ["insert"] } },
+    });
+    const r = await call(harness.base, "GET", WITH_MSG, A);
+    assert.equal(r.body?.error, "degraded_unavailable",
+      "cards the handler had just decided to show cannot come back as `you have none`");
+    assert.equal(r.status, 503);
+    assert.equal(
+      c._observed.inserts.filter((i) => i.table === "telegraph_chat_suggestions").length, 1,
+      "the insert must have been ATTEMPTED — a case that refused before reaching it tests nothing",
+    );
+  });
+
+  it("the SELECT still works in that case — the failure is isolated to the insert", async () => {
+    use(store(), {
+      errors: { telegraph_chat_suggestions: { ...down("telegraph_chat_suggestions"), ops: ["insert"] } },
+    });
+    const r = await call(harness.base, "GET", SUGGESTIONS, A);
+    assert.equal(r.status, 200, "a read-only request must be unaffected by an insert-only outage");
+    assert.equal(r.body.suggestions.length, 1);
+  });
+});
+
+describe("dismissing a suggestion that is not there is not a success", () => {
+  it("CONTROL — dismissing a real suggestion still answers ok and writes the update", async () => {
+    const c = use(store());
+    const r = await call(harness.base, "POST", `${SUGGESTIONS}/${SUG}/dismiss`, A);
+    assert.equal(r.status, 200);
+    assert.equal(r.body?.ok, true);
+    assert.equal(
+      c._observed.updates.filter((u) => u.table === "telegraph_chat_suggestions").length, 1,
+      "the healthy path must actually dismiss",
+    );
+  });
+
+  it("a suggestion that does not exist answers not_found, and writes nothing", async () => {
+    const c = use(store());
+    const r = await call(harness.base, "POST", `${SUGGESTIONS}/${GONE}/dismiss`, A);
+    assert.equal(r.body?.error, "not_found",
+      "a zero-row UPDATE is not an error in PostgREST, so {ok:true} here was a confident lie");
+    assert.equal(r.status, 404);
+    assert.equal(
+      c._observed.updates.filter((u) => u.table === "telegraph_chat_suggestions").length, 0,
+    );
+  });
+
+  it("an unreadable suggestion is NOT reported as a missing one — the dismiss proceeds", async () => {
+    const c = use(store(), {
+      errors: { telegraph_chat_suggestions: { ...down("telegraph_chat_suggestions"), ops: ["select"] } },
+    });
+    const r = await call(harness.base, "POST", `${SUGGESTIONS}/${SUG}/dismiss`, A);
+    assert.notEqual(r.body?.error, "not_found",
+      "THE POINT of binding that read's error was to stop an outage reading as absence; the new 404 must not undo it");
+    assert.equal(r.status, 200);
+    assert.equal(
+      c._observed.updates.filter((u) => u.table === "telegraph_chat_suggestions").length, 1,
+      "the dismiss itself is not best-effort and must still be attempted",
+    );
+  });
+});
+
+describe("a card that could not be retired says so", () => {
+  it("CONTROL — on a healthy tree add-to-plan reports suggestionRetired true", async () => {
+    use(store({ trip_plan_items: [] }));
+    const r = await call(harness.base, "POST", `${SUGGESTIONS}/${SUG}/add-to-plan`, A,
+      { tripId: TRIP, title: "Tapas near the hotel" });
+    assert.equal(r.status, 200);
+    assert.equal(r.body?.suggestionRetired, true);
+  });
+
+  it("a failed retirement stays 200 but reports suggestionRetired false", async () => {
+    const c = use(store({ trip_plan_items: [] }), {
+      errors: { telegraph_chat_suggestions: { ...down("telegraph_chat_suggestions"), ops: ["update"] } },
+    });
+    const r = await call(harness.base, "POST", `${SUGGESTIONS}/${SUG}/add-to-plan`, A,
+      { tripId: TRIP, title: "Tapas near the hotel" });
+    assert.equal(r.status, 200,
+      "the plan item is already committed: a 500 here would make a retrying client add it twice");
+    assert.equal(r.body?.suggestionRetired, false,
+      "an un-retired card stays on screen offering to do what has already been done");
+    assert.equal(
+      c._observed.inserts.filter((i) => i.table === "trip_plan_items").length, 1,
+      "the primary write must still have landed — that is why this is not a refusal",
+    );
+  });
+});
