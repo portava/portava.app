@@ -244,11 +244,24 @@ export async function claimStoryRetentionLease(
     logger.warn({ job: JOB_KEY, err: insErr }, "storyRetention: could not create the lease row; running anyway");
     return "acquired";
   }
-  const { data: after } = await client
+  // Bound with `error` and acted on, because supabase-js RESOLVES on a database
+  // error: `const { data } = await …` would turn a failed read into an empty
+  // result, and an empty result here reads as "our insert did not win" — which
+  // would make an unreadable row look like a held lease and skip the pass. The
+  // whole point of this function failing open is that a skipped hour is
+  // absorbed by nothing.
+  const { data: after, error: afterErr } = await client
     .from("job_health")
     .select("last_run_at")
     .eq("job", JOB_KEY)
     .maybeSingle();
+  if (afterErr) {
+    logger.warn(
+      { job: JOB_KEY, err: afterErr },
+      "storyRetention: could not read the lease row back after inserting it; running anyway",
+    );
+    return "acquired";
+  }
   return (after as any)?.last_run_at === attemptAt ? "acquired" : "held";
 }
 
