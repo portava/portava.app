@@ -100,8 +100,47 @@
  * capture describes one instant, a new instant gets a new file, and this
  * constant moves. That is the whole refresh.
  */
+/**
+ * REFRESH OF 2026-10-02 18:01 UTC, the current one, taken in the same change
+ * that finally records 2998_story_retention in production-applied-migrations.json
+ * -- applied to production 2026-09-25 07:54:12 UTC and recorded by nothing in
+ * this repository for a week. Read-only; this session applied nothing.
+ *
+ * The delta from the 09-22 capture is SIX tables, TWO functions and ONE flag,
+ * and only three of those objects are 2998's: `stories.deleted_at`, the table
+ * `story_purge_queue`, `job_health.last_success_at` and the function
+ * `stories_freeze_deleted_at`.
+ *
+ * THE REST IS SOMEBODY ELSE'S WORK AND THIS REPOSITORY HAS NO FILE FOR IT.
+ * `media_assets` gained `hls_path`, `subtitle_paths` and
+ * `subtitle_processing_status`; `media_upload_sessions`, `media_upload_chunks`
+ * and `commit_media_upload_chunk` appeared; production's
+ * supabase_migrations.schema_migrations carries `20260925140702 media_video_hls`
+ * and `20260925140705 resumable_video_uploads` for them, with no ledger row and
+ * no file in src/migrations/. They are NOT listed in the applied-migrations
+ * record, for the reason that file gives for dead_check_vocabularies_2298 and
+ * 2970 -- naming a file this repository does not have would be worse than the
+ * gap. The capture records the objects regardless, because it reads production.
+ *
+ * ONE FLAG MOVED AND IT IS A BEHAVIOUR CHANGE, not a seeding:
+ * `media_canonical_enabled` TRUE -> FALSE. public.feature_flag_audit_log holds
+ * the sequence, all three rows with a NULL actor: 2026-09-25 15:37:08 metadata
+ * set to a video-upload rollout block at percent 0 naming one user, 15:37:09
+ * enabled false -> true, 15:39:58 enabled true -> false. The canonical media
+ * write path that schemaRequirement.ts's header is about is OFF in production.
+ *
+ * The delta was PROVEN complete rather than assumed, by the method the notes
+ * below describe: production located it with per-initial-letter digests over its
+ * own catalogue (only `j`, `m` and `s` disagreed), and then recomputed all five
+ * digests and all five counts, which match this file's exactly. 500 tables, 166
+ * functions, 69 enums, 201 flags, 106 enabled.
+ *
+ * The 09-22 capture was NOT overwritten, for the reason the notes below give: a
+ * capture describes one instant, a new instant gets a new file, and this
+ * constant moves. That is the whole refresh.
+ */
 /** The capture every reader should grade against. Change this on a refresh. */
-export const PRODUCTION_SNAPSHOT_FILENAME = "20260922-production-schema.json";
+export const PRODUCTION_SNAPSHOT_FILENAME = "20261002-production-schema.json";
 
 /** Resolved against this directory, which is where the captures live. */
 export const PRODUCTION_SNAPSHOT_URL = new URL(
