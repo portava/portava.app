@@ -50,13 +50,14 @@ Everything else in scope is **unapplied**.
    for as long as the window stays open.
 ```
 
-**The 3502 ordering is a RESERVATION, not yet a fact.** As of 2026-10-02 19:50
-the policy migration is not on `main` — `main`'s 35xx band holds only 3500, and
-3501 is taken by open PR #549 (`3501_discovery_recommendations_retention.sql`,
-verified from the PR's own file list). The prefix is claimed and the file is
-built but unpushed. Until it lands, the hazard above is live for anyone who
-applies 2975, and 2975 is itself unapplied on production. Neither is in the
-Story-retention/unsend rollout's sequence.
+**BOTH FILES ARE ON `main` AND NEITHER IS APPLIED TO PRODUCTION.** Measured at
+`e39624c66` on 2026-10-02: `src/migrations/2975_highlights_permanent_lifetime.sql`
+and `src/migrations/3502_highlights_permanent_visibility_owner_first.sql` are
+both tracked on `main` (3502 landed with PR #554), and production's
+`schema_migration_ledger` carries neither. So the hazard above is not a
+reservation about future work — it is live for the next person who replays this
+chain in file order, and that person is whoever applies 2975. Neither migration
+is in the Story-retention/unsend rollout's sequence.
 
 Everything else is independent and may be applied in any order — **except as the
 3502 → 2975 entry above states.** That blanket sentence predates it and is not a
