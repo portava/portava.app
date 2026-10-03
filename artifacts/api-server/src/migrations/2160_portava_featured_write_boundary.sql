@@ -1,6 +1,35 @@
 -- 2160_portava_featured_write_boundary.sql
 --
 -- ⚠ STAGED. Apply to portava-ci ONLY. DO NOT APPLY TO PRODUCTION without owner approval.
+--
+-- ⚠ SUPERSEDED BY 2332_money_grant_boundary.sql. DO NOT APPLY, AND NEVER AFTER 2332.
+-- Recorded 2026-10-03 by the 2490/3503/3504 client-privilege lane, on the
+-- rollout thread's reading. This file is left in place rather than deleted
+-- because both databases carry a ledger row for it and the chain is the record
+-- of what was written, not only of what runs.
+--
+-- WHY IT MUST NOT RUN. This migration ends with anon and authenticated holding
+-- SELECT. 2332 ends with them holding NOTHING on this table, having pressed the
+-- same boundary further for a reason it argues at :312-322: no client reaches
+-- portava_featured over PostgREST at all, so the SELECT granted back below is a
+-- privilege nothing uses. Applied in prefix order, 2160 then 2332, the result is
+-- 2332's. Applied the other way round -- which only a hand-apply can do -- 2160
+-- RE-GRANTS exactly the SELECT 2332 revoked, and the postcondition below would
+-- still report PASSED, because `anon=SELECT` is what it was written to demand.
+-- A postcondition can only check the claim its author made.
+--
+-- WHY RETIREMENT IS ALREADY THE FACT. Measured read-only 2026-10-03.
+--   * portava-ci: 2332 is applied by object (`service_role=arwd`, no client
+--     grant), ledger row applied_by='ci' 2026-09-09. This file has a ledger row
+--     too, applied_by='backfill'.
+--   * travel-buddy (the testing database): all four of 2332's tables still show
+--     `anon=arwd, authenticated=arwd, service_role=arwdDxtm`, so neither file
+--     has run there -- yet the ledger carries a 'backfill' row for THIS file,
+--     which 2254:65-91 says asserts only that the filename existed when the
+--     ledger was seeded.
+-- So the applier will never run this file on either database: it is already
+-- marked applied on both. The only way it can execute is a deliberate
+-- hand-apply, which is the case this note exists to stop.
 -- POST-CUTOVER CANONICAL FORWARD MIGRATION (2100-2999 band).
 --
 -- ── WHAT IS WRONG, PROVEN BY EXECUTION (portava-ci, self-rolling-back) ───────

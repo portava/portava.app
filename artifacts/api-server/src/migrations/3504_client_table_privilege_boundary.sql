@@ -194,12 +194,19 @@
 --     and it cannot be replayed there until 2224 lands, because 2333:179-198
 --     requires `route_flow_contribution_consent`, which is absent. The fix for
 --     these four is to unblock and apply 2333, not to re-derive it.
---   * portava_featured — 2160:39-42 then 2332:288-292. portava-ci shows
+--   * portava_featured — 2332:318-322, and ONLY 2332. portava-ci shows
 --     `service_role=arwd` and no client grant, so it landed there. The testing
 --     database still shows `anon=arwd` AND carries a ledger row for 2160 with
 --     applied_by='backfill' — which 2254 says asserts only that the filename
 --     existed, never that the file ran. The object state is the evidence, and
---     it says 2160 never applied. Same remedy: apply 2332.
+--     it says neither file applied there.
+--     CORRECTED 2026-10-03: the remedy is 2332 ALONE, not "2160 then 2332".
+--     2160 ends with anon and authenticated holding SELECT; 2332 ends with them
+--     holding nothing, and 2160 run AFTER 2332 would re-grant exactly what 2332
+--     revoked while its own postcondition still reported PASSED. 2160 is now
+--     marked superseded in its header. Neither database can reach it through
+--     the applier — both carry a ledger row for it — so only a hand-apply
+--     could, which is the case that note exists to stop.
 --
 -- A LIVE CLIENT PATH, so the revoke is not safe to assert:
 --   * generated_visuals — travel-buddy-standalone/src/hooks/useVisualStatusChannel.ts:125

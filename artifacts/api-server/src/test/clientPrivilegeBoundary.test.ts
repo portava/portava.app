@@ -93,7 +93,11 @@ describe("client-privilege boundary ratchet", () => {
   });
 
   it("FAILS on GRANT ALL to a client role", () => {
-    // This is the shape 2332's recorded rollback would execute.
+    // This WAS the shape 2332's recorded rollback would have executed, until
+    // 2026-10-03, when this lane corrected it to the four DML verbs for the
+    // client roles and GRANT ALL for service_role alone. This case is what
+    // made that a defect rather than a style point: the rollback could not
+    // have been committed as a migration without failing the ratchet.
     const { code, out } = run(fixture("all",
       "GRANT ALL ON TABLE public.rent_buddy_payouts TO anon, authenticated, service_role;"));
     assert.notEqual(code, 0);
