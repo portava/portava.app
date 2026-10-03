@@ -71,7 +71,7 @@ import {
 } from '../../src/features/telegraph/lifecycle/lifecycleApi.ts';
 import { useThreadReadState } from '../../src/features/telegraph/lifecycle/useThreadReadState.ts';
 import { OwnMessageStatusRow } from '../../src/features/telegraph/lifecycle/OwnMessageStatusRow.tsx';
-import { useReaderAvatars } from '../../src/features/telegraph/lifecycle/useReaderAvatars.ts'; import type { OwnMessageStatus } from '../../src/features/telegraph/lifecycle/readState.ts';
+import { useReaderAvatars } from '../../src/features/telegraph/lifecycle/useReaderAvatars.ts'; import type { OwnMessageStatus } from '../../src/features/telegraph/lifecycle/readState.ts'; import { TelegraphConnectionBanner } from '../../src/features/telegraph/connection/TelegraphConnectionBanner.tsx';
 import { headerSubtitle } from '../../src/features/telegraph/header/headerAxes.ts';
 import { useConversationHeader } from '../../src/features/telegraph/header/useConversationHeader.ts';
 import { ComposerPlusMenu } from '../../src/features/telegraph/composer/ComposerPlusMenu.tsx'; import { VoiceRecorderSheet } from '../../src/features/telegraph/voice/VoiceRecorderSheet.tsx'; // one line: census-telegraph cites this file at :253, :270, :844, :869, :1624, :1831, :1947, :1958, :2089, :2094, :2114, :2172, :2227, :2269 and :2376.
@@ -2086,7 +2086,7 @@ export default function TelegraphThread() {
       {/* Telegraph §2.2 / §3: the Shared Context Rail sits between the header
           and the message stream. It renders nothing when there is no mutual
           canonical state, and nothing when the read failed. */}
-      {id ? <SharedContextRail threadId={id} scrolled={railCollapsed} /> : null}
+      {id ? <SharedContextRail threadId={id} scrolled={railCollapsed} /> : null}<TelegraphConnectionBanner />{/* §30A.15: says when messages cannot arrive; nothing while fine */}
 
       {/* Telegraph §2.2's optional coordination panel / §9's coordination
           mode. Renders only while the thread is actually coordinating, or

@@ -24,7 +24,7 @@ import { useScreenTiming } from '../hooks/useScreenTiming.ts';
 import type { ThreadSummary, MessageRequest } from '../services/messaging.ts';
 import { circleCardInboxPreview } from './CircleStatusCardMessage.logic';
 import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity.ts';
-import { originLabel } from '../features/telegraph/lib/requestOriginLabel.ts';
+import { originLabel } from '../features/telegraph/lib/requestOriginLabel.ts'; import { TelegraphConnectionBanner } from '../features/telegraph/connection/TelegraphConnectionBanner.tsx';
 import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
 import { errorCopy } from '../lib/errorCopy.ts'; import { typedKindPreviewLabel } from '../features/telegraph/inbox/typedPreviewLabels.ts'; // one line, on purpose: census-telegraph cites this file at :33, :222, :226 and :457.
 // Telegraph §21 — object-aware, authorization-scoped message search. A
@@ -447,7 +447,7 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
   // Header, search bar, and filter chips — used as ListHeaderComponent so they
   // scroll with the list content rather than staying fixed above it.
   const listHeader = (
-    <View style={{ paddingTop: pt }}>
+    <View style={{ paddingTop: pt }}><TelegraphConnectionBanner />{/* §30A.15: says when the inbox cannot update */}
       <View style={s.header}>
         <View style={s.headerBar}>
           <View style={s.brandRow}>

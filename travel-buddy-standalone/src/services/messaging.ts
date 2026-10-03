@@ -13,7 +13,7 @@
  * No private posts, trip data, live location, or GPS are accessible here.
  */
 import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
-import { freshToken as freshApiToken } from './apiToken.ts';
+import { freshToken as freshApiToken } from './apiToken.ts'; import { noteTelegraphRequest } from '../features/telegraph/connection/connectionMonitor.ts'; // §30A.15: every answer (or none) feeds the connection banner
 
 export type MessageVerdict = 'allowed' | 'requires_request' | 'denied';
 
@@ -291,10 +291,10 @@ async function apiGet<T>(path: string): Promise<MsgResult<T>> {
     const res = await fetch(`${apiBase()}${path}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    if (!res.ok) return mapApiError<T>(res.status, await res.json().catch(() => ({})));
+    noteTelegraphRequest(res.status >= 500 ? 'server' : 'ok'); if (!res.ok) return mapApiError<T>(res.status, await res.json().catch(() => ({})));
     return { ok: true, data: await res.json() };
   } catch (e) {
-    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+    noteTelegraphRequest(isNetworkError(e) ? 'network' : 'server'); if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
     return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
   }
 }
@@ -309,10 +309,10 @@ async function apiPost<T>(path: string, body?: unknown): Promise<MsgResult<T>> {
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
-    if (!res.ok) return mapApiError<T>(res.status, await res.json().catch(() => ({})));
+    noteTelegraphRequest(res.status >= 500 ? 'server' : 'ok'); if (!res.ok) return mapApiError<T>(res.status, await res.json().catch(() => ({})));
     return { ok: true, data: await res.json() };
   } catch (e) {
-    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+    noteTelegraphRequest(isNetworkError(e) ? 'network' : 'server'); if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
     return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
   }
 }
@@ -327,10 +327,10 @@ async function apiPatch<T>(path: string, body: unknown): Promise<MsgResult<T>> {
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify(body),
     });
-    if (!res.ok) return mapApiError<T>(res.status, await res.json().catch(() => ({})));
+    noteTelegraphRequest(res.status >= 500 ? 'server' : 'ok'); if (!res.ok) return mapApiError<T>(res.status, await res.json().catch(() => ({})));
     return { ok: true, data: await res.json() };
   } catch (e) {
-    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+    noteTelegraphRequest(isNetworkError(e) ? 'network' : 'server'); if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
     return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
   }
 }

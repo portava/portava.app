@@ -56,7 +56,7 @@ import * as Clipboard from 'expo-clipboard';
 import { MessageEntrance, useMessageEntranceGate } from './MessageEntrance.tsx';
 import { SharedContextRail } from '../features/telegraph/index.ts';
 import { PortavaObjectMessage } from '../features/telegraph/sharing/PortavaObjectMessage.tsx';
-import { OwnMessageStatusRow } from '../features/telegraph/lifecycle/OwnMessageStatusRow.tsx'; import { useReaderAvatars } from '../features/telegraph/lifecycle/useReaderAvatars.ts'; import type { OwnMessageStatus } from '../features/telegraph/lifecycle/readState.ts';
+import { TelegraphConnectionBanner } from '../features/telegraph/connection/TelegraphConnectionBanner.tsx'; import { OwnMessageStatusRow } from '../features/telegraph/lifecycle/OwnMessageStatusRow.tsx'; import { useReaderAvatars } from '../features/telegraph/lifecycle/useReaderAvatars.ts'; import type { OwnMessageStatus } from '../features/telegraph/lifecycle/readState.ts';
 import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
 import { localDateKey, localTodayKey } from '../utils/localDate.ts';
 
@@ -737,7 +737,7 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
           "at the top of EACH conversation". Renders nothing when the pair (or
           crew) shares no canonical mutual state, and nothing when the read
           failed. */}
-      {thread?.id ? <SharedContextRail threadId={thread.id} /> : null}
+      {thread?.id ? <SharedContextRail threadId={thread.id} /> : null}<TelegraphConnectionBanner />{/* §30A.15 */}
 
       <FlatList
         ref={listRef}
