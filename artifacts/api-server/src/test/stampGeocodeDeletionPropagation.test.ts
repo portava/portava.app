@@ -3404,7 +3404,11 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
     mockNow(T0);
 
     const TOMBSTONED_AT = new Date(T0 - 40 * 60 * 60 * 1_000).toISOString(); // 40h ago
-    let reclaimPredicate: { column: string; before: string } | null = null;
+    // Captured in an array rather than a nullable local: the write happens
+    // inside the client double's closure, which control-flow analysis cannot
+    // see, so a `… | null` local narrows to `never` and the assertions below
+    // stop compiling under typecheck:tests.
+    const reclaimPredicates: Array<{ column: string; before: string }> = [];
     let pass2SawRows = false;
     const store = new Map<string, string>([["kyoto", TOMBSTONED_AT]]);
 
@@ -3430,7 +3434,7 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
               // The reclaim. Honour its predicate rather than deleting blindly,
               // so the test proves the cutoff is an age floor and not "delete
               // every tombstone".
-              reclaimPredicate = { column: ltColumn, before: ltValue };
+              reclaimPredicates.push({ column: ltColumn, before: ltValue });
               const cutoff = new Date(ltValue).getTime();
               const removed: Array<{ city_key: string }> = [];
               for (const [key, at] of [...store]) {
@@ -3462,17 +3466,18 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
 
     assert.equal(pass2SawRows, false,
       "pre-condition: the aged tombstone is invisible to Pass 2's one-hour look-back");
-    assert.ok(reclaimPredicate !== null,
-      "the sweep must issue an age-based reclaim, not only the keyed Pass 2 delete");
-    assert.equal(reclaimPredicate!.column, "deleted_at",
+    assert.equal(reclaimPredicates.length, 1,
+      "the sweep must issue exactly one age-based reclaim, not only the keyed Pass 2 delete");
+    const reclaim = reclaimPredicates[0];
+    assert.equal(reclaim.column, "deleted_at",
       "reclaim selects by tombstone age");
 
     // The cutoff must be an age FLOOR in the past, never 'now' — a reclaim that
     // deleted fresh tombstones would race the cross-instance eviction signal
     // Pass 2 depends on.
-    const cutoffMs = new Date(reclaimPredicate!.before).getTime();
+    const cutoffMs = new Date(reclaim.before).getTime();
     assert.ok(cutoffMs < T0,
-      `reclaim cutoff must be in the past, got ${reclaimPredicate!.before}`);
+      `reclaim cutoff must be in the past, got ${reclaim.before}`);
     assert.ok(T0 - cutoffMs > 60 * 60 * 1_000,
       "reclaim cutoff must be older than the one-hour eviction window so it cannot race propagation");
 
