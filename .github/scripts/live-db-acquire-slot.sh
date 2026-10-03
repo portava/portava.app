@@ -159,7 +159,38 @@ ATTEMPT="${GITHUB_RUN_ATTEMPT:-1}"
 #   • the queue job is still queued or in progress                ⇒ `held`.
 #     A run that is legitimately waiting or working is never dropped.
 # Only an explicit `failure` / `cancelled` conclusion forfeits.
+#
+# A run RELEASES the slot (added 2026-10-03) once every DATABASE job of its
+# CURRENT attempt has concluded — success, failure, cancelled or skipped. Measured
+# on run 37128138124: all four DB jobs concluded by 14:42:46Z, but the verdict
+# job (no database) sat in GitHub's runner queue from 14:42:46Z, the run stayed
+# `queued`, and other runs' verify steps timed out (exit 75) behind a run that
+# had finished with the database. A released run blocks nobody, exactly like a
+# forfeited one, and is reported as `released` so the two stay distinguishable.
+#
+# Release is the strictest of the three verdicts, and every doubt is `held`:
+#   • LIVE_DB_SLOT_DB_JOBS unset or empty                         ⇒ `held`.
+#   • the jobs query exits non-zero (even after printing output)  ⇒ `held`.
+#   • any named DB job absent from the listing                    ⇒ `held`.
+#     GitHub may not list a job blocked on `needs:` until it is queued, so
+#     "not listed" is never read as "finished".
+#   • any named DB job not `completed`, or with a null conclusion ⇒ `held`.
+#   • the run's current attempt unknown, or any named DB job listed from a
+#     DIFFERENT attempt (a re-run whose new jobs are not listed yet) ⇒ `held`.
+#   • the run asking is the run being judged                      ⇒ `held`.
+#     A run that is asking is still working; see annotate_claims.
+# Forfeiture is checked FIRST and wins: a run that never acquired the slot is
+# reported as forfeited, never as released.
+#
+# The set of DB jobs comes from ONE place: LIVE_DB_SLOT_DB_JOBS in live-db.yml's
+# workflow-level env, exact job display names separated by newlines or `|`.
+# ciWorkflowArchitecture.test.ts asserts it equals the workflow's DB jobs.
 SLOT_JOB_NAME="live DB · acquire the shared-database slot"
+DB_JOBS="$(printf '%s\n' "${LIVE_DB_SLOT_DB_JOBS:-}" | tr '|' '\n' \
+            | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e '/^$/d')"
+if [ -z "$DB_JOBS" ]; then
+  echo "live-db slot: LIVE_DB_SLOT_DB_JOBS is not set — no run will be treated as having released the slot (fail closed)."
+fi
 
 # Forfeiture is monotonic — a concluded job does not un-conclude — so a verdict
 # of `forfeited` is cached for the life of this process. `held` is NOT cached,
@@ -167,29 +198,59 @@ SLOT_JOB_NAME="live DB · acquire the shared-database slot"
 # whole case this exists for.
 FORFEITED_CACHE=" "
 
+# Succeeds only when EVERY named DB job appears in the jobs listing ($1, the
+# tab-separated `attempt status conclusion name` lines run_claim fetches), every
+# appearance is from attempt $2, `completed`, with a non-empty conclusion.
+db_jobs_concluded() {
+  local jobs="$1" attempt="$2" name
+  # No list, no release. This guard is the ONLY thing that stops an empty list
+  # from vacuously satisfying "every DB job concluded" below.
+  [ -n "$DB_JOBS" ] || return 1
+  case "$attempt" in ''|*[!0-9]*) return 1 ;; esac
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    printf '%s\n' "$jobs" | WANT_NAME="$name" WANT_ATTEMPT="$attempt" awk -F'\t' '
+      $4 == ENVIRON["WANT_NAME"] {
+        seen = 1
+        if ($1 != ENVIRON["WANT_ATTEMPT"] || $2 != "completed" || $3 == "") open = 1
+      }
+      END { if (!seen || open) exit 1 }' || return 1
+  done <<< "$DB_JOBS"
+}
+
 run_claim() {
-  local run_id="$1"
+  local run_id="$1" run_attempt="${2:-}"
   case "$FORFEITED_CACHE" in *" ${run_id} "*) echo "forfeited"; return ;; esac
 
-  local conclusion
-  conclusion="$(gh api --paginate \
+  # One jobs query answers both questions: forfeited (the queue job) and
+  # released (the DB jobs). Output and exit code are kept apart on purpose —
+  # forfeiture reads whatever was printed, as it always has; release requires
+  # the query to have SUCCEEDED as well.
+  local jobs rc conclusion
+  jobs="$(gh api --paginate \
       "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/jobs?per_page=100" \
-      --jq ".jobs[] | select(.name == \"${SLOT_JOB_NAME}\") | .conclusion // \"\"" \
-    2>/dev/null | head -1)"
+      --jq '.jobs[] | "\(.run_attempt // "")\t\(.status // "")\t\(.conclusion // "")\t\(.name)"' \
+    2>/dev/null)"
+  rc=$?
+  conclusion="$(printf '%s\n' "$jobs" | WANT_NAME="$SLOT_JOB_NAME" awk -F'\t' '$4 == ENVIRON["WANT_NAME"] {print $3; exit}')"
 
   case "$conclusion" in
     failure|cancelled)
       FORFEITED_CACHE="${FORFEITED_CACHE}${run_id} "
       echo "forfeited"
-      ;;
-    *)
-      # success, skipped, null (still running), empty (unreachable/unknown).
-      echo "held"
+      return
       ;;
   esac
+  # success, skipped, null (still running), empty (unreachable/unknown): the
+  # queue job did not lose. Released only if the DB jobs say so; else held.
+  if [ "$rc" -eq 0 ] && db_jobs_concluded "$jobs" "$run_attempt"; then
+    echo "released"
+  else
+    echo "held"
+  fi
 }
 
-# Reads `<started> <id>` lines, writes `<started> <id> <claim>` lines.
+# Reads `<started> <id> [<run_attempt>]` lines, writes `<started> <id> <claim>`.
 annotate_claims() {
   local listing="$1"
   local my_started
@@ -197,9 +258,10 @@ annotate_claims() {
 
   printf '%s\n' "$listing" | while IFS= read -r line; do
     [ -z "${line//[[:space:]]/}" ] && continue
-    local started id
+    local started id attempt claim
     started="$(printf '%s' "$line" | awk '{print $1}')"
     id="$(printf '%s' "$line" | awk '{print $2}')"
+    attempt="$(printf '%s' "$line" | awk '{print $3}')"
     if [ -z "$started" ] || [ -z "$id" ]; then
       # Leave malformed lines exactly as they are: the decider REFUSES a
       # listing it cannot parse, and that refusal must not be papered over here.
@@ -211,7 +273,13 @@ annotate_claims() {
     if [ -n "$my_started" ] && [ "$started" \> "$my_started" ]; then
       printf '%s %s held\n' "$started" "$id"
     else
-      printf '%s %s %s\n' "$started" "$id" "$(run_claim "$id")"
+      claim="$(run_claim "$id" "$attempt")"
+      # Our own run is never `released`: the job asking is one of its DB jobs
+      # (or its queue job) and is still working. Forfeited still applies.
+      if [ "$id" = "$GITHUB_RUN_ID" ] && [ "$claim" = "released" ]; then
+        claim="held"
+      fi
+      printf '%s %s %s\n' "$started" "$id" "$claim"
     fi
   done
 }
@@ -272,7 +340,8 @@ while :; do
     exit 75
   fi
 
-  # Every in-progress/queued run of this workflow, `<started> <id>` per line.
+  # Every in-progress/queued run of this workflow, `<started> <id> <attempt>`
+  # per line. The attempt is the run's CURRENT one, which a release must match.
   #
   # FILTERED SERVER-SIDE, ONE STATUS AT A TIME (measured 2026-10-03). The
   # listing used to page through the workflow's WHOLE run history
@@ -296,7 +365,7 @@ while :; do
     for st in queued in_progress; do
       if ! part="$(gh api --paginate \
             "repos/${GITHUB_REPOSITORY}/actions/workflows/${WF_ID}/runs?status=${st}&per_page=100" \
-            --jq '.workflow_runs[] | select(.status == "in_progress" or .status == "queued") | "\(.run_started_at // .created_at) \(.id)"' \
+            --jq '.workflow_runs[] | select(.status == "in_progress" or .status == "queued") | "\(.run_started_at // .created_at) \(.id) \(.run_attempt // "")"' \
             2>/dev/null)"; then
         exit 0
       fi
@@ -318,7 +387,9 @@ while :; do
   case "$RC" in
     0)
       ACTIVE="$(printf '%s\n' "$DECISION" | sed -n 's/^active=//p')"
-      echo "live-db slot [${ROLE}]: ACQUIRED after ${ELAPSED}s (this run is the oldest of ${ACTIVE:-?} active)"
+      FORF="$(printf '%s\n' "$DECISION" | sed -n 's/^forfeited=//p')"
+      REL="$(printf '%s\n' "$DECISION" | sed -n 's/^released=//p')"
+      echo "live-db slot [${ROLE}]: ACQUIRED after ${ELAPSED}s (this run is the oldest of ${ACTIVE:-?} active; ${FORF:-0} forfeited, ${REL:-0} released)"
       emit "live_db_slot=acquired"
       emit "live_db_slot_wait_seconds=${ELAPSED}"
       emit "live_db_slot_attempt=${ATTEMPT}"
@@ -328,7 +399,8 @@ while :; do
       HOLDER="$(printf '%s\n' "$DECISION" | sed -n 's/^holder=//p')"
       ACTIVE="$(printf '%s\n' "$DECISION" | sed -n 's/^active=//p')"
       FORF="$(printf '%s\n' "$DECISION" | sed -n 's/^forfeited=//p')"
-      echo "live-db slot [${ROLE}]: waiting ${ELAPSED}s/${TIMEOUT}s — holder=${HOLDER:-?}, ${ACTIVE:-?} active, ${FORF:-0} forfeited"
+      REL="$(printf '%s\n' "$DECISION" | sed -n 's/^released=//p')"
+      echo "live-db slot [${ROLE}]: waiting ${ELAPSED}s/${TIMEOUT}s — holder=${HOLDER:-?}, ${ACTIVE:-?} active, ${FORF:-0} forfeited, ${REL:-0} released"
       ;;
     3)
       # We are in-progress ourselves, so an unusable list means the API is not
