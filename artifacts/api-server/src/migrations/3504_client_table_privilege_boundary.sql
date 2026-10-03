@@ -194,7 +194,7 @@
 --     and it cannot be replayed there until 2224 lands, because 2333:179-198
 --     requires `route_flow_contribution_consent`, which is absent. The fix for
 --     these four is to unblock and apply 2333, not to re-derive it.
---   * portava_featured — 2332:318-322, and ONLY 2332. portava-ci shows
+--   * portava_featured — 2332:288-292, and ONLY 2332. portava-ci shows
 --     `service_role=arwd` and no client grant, so it landed there. The testing
 --     database still shows `anon=arwd` AND carries a ledger row for 2160 with
 --     applied_by='backfill' — which 2254 says asserts only that the filename
@@ -207,6 +207,49 @@
 --     marked superseded in its header. Neither database can reach it through
 --     the applier — both carry a ledger row for it — so only a hand-apply
 --     could, which is the case that note exists to stop.
+--
+--     A DEFECT IN 2332'S RECORDED ROLLBACK, carried here because 2332's BYTES
+--     CANNOT BE TOUCHED. 2332:208-211 (production) and :218-220 (portava-ci)
+--     record the rollback as `GRANT ALL ON TABLE <t> TO anon, authenticated,
+--     service_role`, described at :198 as "the exact prior grant set".
+--     It is not. The CI block's own portava_featured lines, :221-222, are
+--     already in the faithful shape; it is the three money tables there, and
+--     all four in the production block, that over-grant.
+--     Measured read-only 2026-10-03, every one of the four on travel-buddy
+--     holds `anon=arwd, authenticated=arwd, service_role=arwdDxtm`: the client
+--     roles hold the four DML verbs and NOT TRUNCATE, REFERENCES, TRIGGER or
+--     MAINTAIN, because 2490 took those from them database-wide. So running
+--     that block as written would hand four privileges back on money tables and
+--     silently undo part of 2490. It would also fail this repository's own
+--     ratchet: the shape is the fixture `checkClientPrivilegeBoundary` rejects,
+--     asserted in test/clientPrivilegeBoundary.test.ts under "FAILS on GRANT
+--     ALL to a client role". A rollback nobody could commit as a migration is
+--     not a rollback.
+--
+--     THE FAITHFUL FORM, for whoever ever needs it:
+--       GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.rent_buddy_earnings_ledger TO anon, authenticated;
+--       GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.rent_buddy_payouts         TO anon, authenticated;
+--       GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.rent_buddy_tips            TO anon, authenticated;
+--       GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.portava_featured           TO anon, authenticated;
+--       GRANT ALL ON TABLE <each of the four> TO service_role;
+--     On portava-ci, portava_featured takes `GRANT SELECT` for the client roles
+--     instead, because 2160 had already reduced them to that there.
+--
+--     WHY THIS NOTE IS HERE AND NOT IN 2332. 2332 IS APPLIED on portava-ci —
+--     all four tables show `service_role=arwd` with no client grant, ledger row
+--     applied_by='ci' 2026-09-09 — and its ledger checksum there is a real
+--     sha256 of the file's bytes, `bbbbbd055c26…`. check:migration-ledger
+--     hashes each file on disk and compares (scripts/lib/migrationLedgerCore.ts
+--     :148-164), so a COMMENT-ONLY edit to 2332 is still a byte change and
+--     would fail that gate against a database where the file really ran. I made
+--     that edit, measured the mismatch, and reverted it: the restored file
+--     hashes to `bbbbbd055c26…` again, exactly the stored row. Same precedent
+--     as checkProductionDrift.ts's 2950 entry, which declined to edit an
+--     applied file for this reason and recorded the correction in a note.
+--     2160's header carries its SUPERSEDED warning, which is safe for the
+--     opposite reason: its ledger rows on BOTH databases hold the literal
+--     'backfill', which isComparableChecksum() excludes from comparison
+--     (:115-117), so its bytes are not pinned by any checksum.
 --
 -- A LIVE CLIENT PATH, so the revoke is not safe to assert:
 --   * generated_visuals — travel-buddy-standalone/src/hooks/useVisualStatusChannel.ts:125

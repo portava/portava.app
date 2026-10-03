@@ -10,7 +10,7 @@
 --
 -- WHY IT MUST NOT RUN. This migration ends with anon and authenticated holding
 -- SELECT. 2332 ends with them holding NOTHING on this table, having pressed the
--- same boundary further for a reason it argues at :312-322: no client reaches
+-- same boundary further for a reason it argues at :282-292: no client reaches
 -- portava_featured over PostgREST at all, so the SELECT granted back below is a
 -- privilege nothing uses. Applied in prefix order, 2160 then 2332, the result is
 -- 2332's. Applied the other way round -- which only a hand-apply can do -- 2160

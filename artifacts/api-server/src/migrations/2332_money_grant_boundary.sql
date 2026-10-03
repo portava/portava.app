@@ -200,57 +200,27 @@
 -- captured live on 2026-09-07 (aclexplode, PostgreSQL 17.6).
 --
 -- This restores PRIVILEGE, not safety: after either block, anon and
--- authenticated again hold the four DML verbs (or, on portava-ci's
+-- authenticated again hold the full ALL set (or, on portava-ci's
 -- portava_featured, SELECT), and the boundary rests on RLS alone again.
---
--- CORRECTED 2026-10-03 by the 2490/3503/3504 client-privilege lane. Both blocks
--- read `GRANT ALL ... TO anon, authenticated, service_role`, which is NOT the
--- prior state and would OVER-GRANT. Measured read-only the same day, every one
--- of the four tables on travel-buddy holds `anon=arwd, authenticated=arwd,
--- service_role=arwdDxtm`: the client roles hold the four DML verbs and not
--- TRUNCATE, REFERENCES, TRIGGER or MAINTAIN, because 2490 took those four from
--- the client roles database-wide. `GRANT ALL` to a client role would hand all
--- four back on money tables, so the rollback as first written would have
--- undone part of 2490 while claiming to restore "the exact prior grant set".
--- It would also have violated this repository's own ratchet: the recorded
--- shape is the fixture `checkClientPrivilegeBoundary` rejects, asserted in
--- test/clientPrivilegeBoundary.test.ts under "FAILS on GRANT ALL to a client
--- role". A rollback nobody could commit as a migration is not a rollback.
--- The blocks below are the faithful form. service_role keeps GRANT ALL, which
--- matches its measured `arwdDxtm` and is what the ratchet permits.
 --
 -- ── travel-buddy / ajrurzioarfkagpuxfnb (PRODUCTION) ─────────────────────────
 --   BEGIN;
---   GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.rent_buddy_earnings_ledger TO anon, authenticated;
---   GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.rent_buddy_payouts         TO anon, authenticated;
---   GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.rent_buddy_tips            TO anon, authenticated;
---   GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.portava_featured           TO anon, authenticated;
---   GRANT ALL ON TABLE public.rent_buddy_earnings_ledger TO service_role;
---   GRANT ALL ON TABLE public.rent_buddy_payouts         TO service_role;
---   GRANT ALL ON TABLE public.rent_buddy_tips            TO service_role;
---   GRANT ALL ON TABLE public.portava_featured           TO service_role;
+--   GRANT ALL ON TABLE public.rent_buddy_earnings_ledger TO anon, authenticated, service_role;
+--   GRANT ALL ON TABLE public.rent_buddy_payouts         TO anon, authenticated, service_role;
+--   GRANT ALL ON TABLE public.rent_buddy_tips            TO anon, authenticated, service_role;
+--   GRANT ALL ON TABLE public.portava_featured           TO anon, authenticated, service_role;
 --   COMMIT;
 --
 -- ── portava-ci / hwokxgbmezheskbzskfr (the sanctioned CI project) ────────────
 --   -- Identical except portava_featured, where 2160 had already reduced anon
---   -- and authenticated to SELECT. (2160 is now marked superseded by this file
---   -- and must never be applied after it; see its header.)
+--   -- and authenticated to SELECT.
 --   BEGIN;
---   GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.rent_buddy_earnings_ledger TO anon, authenticated;
---   GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.rent_buddy_payouts         TO anon, authenticated;
---   GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.rent_buddy_tips            TO anon, authenticated;
---   GRANT ALL ON TABLE public.rent_buddy_earnings_ledger TO service_role;
---   GRANT ALL ON TABLE public.rent_buddy_payouts         TO service_role;
---   GRANT ALL ON TABLE public.rent_buddy_tips            TO service_role;
+--   GRANT ALL ON TABLE public.rent_buddy_earnings_ledger TO anon, authenticated, service_role;
+--   GRANT ALL ON TABLE public.rent_buddy_payouts         TO anon, authenticated, service_role;
+--   GRANT ALL ON TABLE public.rent_buddy_tips            TO anon, authenticated, service_role;
 --   GRANT ALL    ON TABLE public.portava_featured TO service_role;
 --   GRANT SELECT ON TABLE public.portava_featured TO anon, authenticated;
 --   COMMIT;
---
---   STATE NOTE, measured read-only 2026-10-03: this file IS applied on
---   portava-ci (all four tables show `service_role=arwd` and no client grant;
---   ledger row applied_by='ci' 2026-09-09), and is NOT applied on travel-buddy
---   by object. So the CI block above is the one that would actually be needed,
---   and the production block describes a state that is still current there.
 --
 -- Neither block re-grants to PUBLIC, because PUBLIC held nothing on any of the
 -- four tables in either database before this migration — verified, not assumed.
