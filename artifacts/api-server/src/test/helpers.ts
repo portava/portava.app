@@ -64,6 +64,10 @@ export function makeFakeClient(state: FakeState) {
         return builder;
       },
       in(col: string, vals: any[]) { filters.push((r) => vals.includes(r[col])); return builder; },
+      // `.neq()` is modelled because the feeds' post_media read issues it. Without
+      // it that read THREW, an empty catch made the throw look like "no media",
+      // and census-media §47 now (rightly) reports a thrown read as unknown.
+      neq(col: string, val: any) { filters.push((r) => r[col] !== val); return builder; },
       is(col: string, val: any) { filters.push((r) => (val === null ? r[col] == null : r[col] === val)); return builder; },
       lt(col: string, val: any) { filters.push((r) => r[col] < val); return builder; },
       or(expr: string) {

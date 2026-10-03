@@ -146,7 +146,7 @@ export function GemsFeed({
     if (items.length === 0) return;
     saveHook.seed(items.map((i) => ({
       id: i.id,
-      savedByMe: i.viewerState?.hasSaved ?? false,
+      savedByMe: i.viewerState?.hasSaved ?? null, // unread (§47) is not seeded as "not saved"
     })));
   }, [items]); // eslint-disable-line react-hooks/exhaustive-deps
 
