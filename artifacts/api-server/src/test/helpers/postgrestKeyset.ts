@@ -11,7 +11,8 @@
  *   - `logicFilter(expr)` parses an `.or()` argument (`col.op.value` terms, nested `and(...)` / `or(...)`, values
  *     optionally double-quoted with `\` escapes) into a row predicate over eq/neq/gt/gte/lt/lte; `null` when the
  *     expression is not of that grammar (so the double can fall back to its own `.or()`);
- *   - `sortByOrders(rows, orders)` sorts by every `.order()` column in turn, as `ORDER BY a, b` does.
+ *   - `sortByOrders(rows, orders)` sorts by every `.order()` column in turn, as `ORDER BY a, b` does, NULLs where
+ *     PostgreSQL puts them (census-discovery §122).
  */
 
 type Pred = (row: Record<string, unknown>) => boolean;
@@ -72,12 +73,22 @@ export function logicFilter(expr: string): Pred | null {
   return (r) => ps.some((p) => p(r));
 }
 
-/** `rows` sorted by every `.order()` column in turn (ascending unless `asc` is false), as `ORDER BY a, b` does. */
-export function sortByOrders<T extends Record<string, unknown>>(rows: T[], orders: Array<{ col: string; asc?: boolean }>): T[] {
+/**
+ * `rows` sorted by every `.order()` column in turn (ascending unless `asc` is false), as `ORDER BY a, b` does. A NULL
+ * (or absent) key sorts where PostgreSQL puts it: LAST ascending and FIRST descending, unless `nullsFirst` (supabase-js's
+ * option, `NULLS FIRST` / `NULLS LAST`) says otherwise (census-discovery §122: it sorted NULL first ascending, so no
+ * double could hold an undated event behind a dated one).
+ */
+export function sortByOrders<T extends Record<string, unknown>>(rows: T[], orders: Array<{ col: string; asc?: boolean; nullsFirst?: boolean }>): T[] {
   if (orders.length === 0) return rows;
   return [...rows].sort((x, y) => {
     for (const o of orders) {
       const a = x[o.col] as any, b = y[o.col] as any;
+      const an = a === null || a === undefined, bn = b === null || b === undefined;
+      if (an && bn) continue;
+      const nullsFirst = o.nullsFirst ?? (o.asc === false);
+      if (an) return nullsFirst ? -1 : 1;
+      if (bn) return nullsFirst ? 1 : -1;
       if (a === b) continue;
       return (a > b ? 1 : -1) * (o.asc === false ? -1 : 1);
     }

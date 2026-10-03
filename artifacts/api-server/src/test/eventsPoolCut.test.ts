@@ -42,8 +42,8 @@ function keyedEvents(w: ReturnType<typeof world>) {
   w.client.from = (t: string) => {
     const b = from(t);
     if (t !== "events") return b;
-    const orders: Array<{ col: string; asc?: boolean }> = []; const preds: Array<(r: any) => boolean> = []; let lim: number | null = null;
-    b.order = (col: string, o?: { ascending?: boolean }) => { orders.push({ col, asc: o?.ascending !== false }); return b; };
+    const orders: Array<{ col: string; asc?: boolean; nullsFirst?: boolean }> = []; const preds: Array<(r: any) => boolean> = []; let lim: number | null = null;
+    b.order = (col: string, o?: { ascending?: boolean; nullsFirst?: boolean }) => { orders.push({ col, asc: o?.ascending !== false, nullsFirst: o?.nullsFirst }); return b; };  // census-discovery §122: NULLs where PostgreSQL puts them
     b.limit = (n: number) => { lim = n; return b; };
     b.or = (expr: string) => { const p = logicFilter(expr); assert.ok(p, `unmodelled .or(${expr})`); preds.push(p as any); return b; };
     const then = b.then;
