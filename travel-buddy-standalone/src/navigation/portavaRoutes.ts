@@ -357,6 +357,16 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     ownerOnly: true,
   },
   {
+    // census-trust §31 (TV-2d): where an `underage` identity-check result
+    // routes instead of re-offering the check.
+    key: 'profile-age-policy',
+    path: 'profile/age-policy',
+    title: 'Age requirements',
+    parent: 'profile-verification',
+    icon: null,
+    requiresAuth: true,
+  },
+  {
     key: 'user-profile',
     path: 'u/[username]',
     title: 'Profile',
