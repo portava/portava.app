@@ -53,6 +53,7 @@
  * which the privacy policy retains).
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { logger } from "../../lib/logger.js";
 import { appStorageUrlInfo } from "../../lib/mediaUrl.js";
 import {
   resolveStoryRetentionConfig,
@@ -94,10 +95,51 @@ export interface RetentionReport {
   config: StoryRetentionConfig;
   enqueuedArchive: number;
   enqueuedDeleted: number;
-  /** Ledger entries fully completed and removed this pass. */
+  /**
+   * Ledger entries fully settled and removed this pass.
+   *
+   * NOT A DELETION COUNT, and it never was. An entry settles when the Story row
+   * is gone and the bytes are accounted for, which includes the two cases where
+   * nothing was deleted at all. Read it WITH `objectsDeleted`, `retained` and
+   * `external`: `completed: 10, objectsDeleted: 0` is a pass that removed no
+   * bytes, and a surface that printed `completed` alone would call that a
+   * successful cleanup.
+   */
   completed: number;
-  /** Entries whose object was deliberately kept for a surviving reference. */
+  /**
+   * OBJECTS verified absent from storage after this pass deleted them, counting
+   * each file and not each entry. One story can own three — the original, a
+   * `.thumb.jpg` and a `.feed.jpg` — so this is deliberately not the same
+   * number as `completed`, which counts ledger entries. It is the count that
+   * can be checked against `storage.objects` path by path.
+   *
+   * Only objects that were PRESENT before the delete are counted. A derived
+   * name that was never created is absent either way, and counting absence
+   * would have the pass claim it removed files nobody made.
+   */
+  objectsDeleted: number;
+  /**
+   * OBJECTS deliberately kept because a NAMED live reference points at THAT
+   * object — a Highlight, a Memory item, a passport memory. Ours, and still in
+   * use. Counted per file, like `objectsDeleted`, so the two can be read
+   * side by side: one upload can have its original deleted and its `.feed.jpg`
+   * kept, and that pass reports `objectsDeleted: 2, retained: 1`.
+   *
+   * What it does NOT count, stated so the number is not read as the whole
+   * story: the derived copies of a primary that is itself referenced. Those
+   * are kept too — the pass deletes nothing for that entry — but no reference
+   * names them individually, and this is a count of objects a named reference
+   * saved, not a count of files still on disk.
+   */
   retained: number;
+  /**
+   * Entries whose `media_url` claimed no object in any of this app's buckets,
+   * so there was never anything of ours to delete. Counted apart from
+   * `retained` because "we chose to keep our bytes" and "these bytes were never
+   * ours" are different answers to "was it deleted", and the owner asked for
+   * them not to be the same number.
+   */
+  external: number;
   /** Entries that could not be completed and were rescheduled. */
   deferred: number;
   /** Stories whose engagement rows were purged. */
@@ -130,27 +172,142 @@ export function splitStoragePath(path: string): { dir: string; base: string } {
 }
 
 /**
+ * The sibling objects the uploader creates from the SAME bytes, derived from
+ * the primary path rather than stored anywhere.
+ *
+ * WHY DERIVED AND NOT RECORDED. `POST /api/media/upload` writes up to three
+ * objects for one upload: the original at `{uid}/{ts}.{ext}`, a thumbnail at
+ * `{uid}/{ts}.thumb.jpg` and a feed-sized copy at `{uid}/{ts}.feed.jpg`
+ * (routes/posts.ts, the `basePath` it builds before each `.upload()`). Only the
+ * original is ever written to `stories.media_url`, so the purge used to delete
+ * one of three objects, report success, and leave two behind with the Story row
+ * gone — nothing pointing at them and nothing that would ever look again.
+ *
+ * `story_purge_queue` has one bucket and one path and no room for a second, and
+ * adding a child ledger is a migration, which on this project is a manual
+ * production step. It is also unnecessary: the sibling names are a pure
+ * function of the primary path, so the ledger already preserves everything a
+ * retry needs. A failed sibling delete defers the whole entry, and the next
+ * pass re-derives the same three names from the same `storage_path`.
+ *
+ * WHAT THIS DOES NOT COVER, stated so the list is not mistaken for complete:
+ * video renditions. Production holds HLS segments and subtitle files under a
+ * `video/<media_asset_id>/hls/` prefix that bears no relation to the primary
+ * path, written by code that exists in no branch of this repository (two
+ * migrations applied to production on 2026-09-25 whose files are not here). No
+ * derivation can be written for objects whose naming scheme is not in the tree,
+ * and guessing one would be worse than the gap.
+ */
+export function derivedStoragePaths(primaryPath: string): string[] {
+  // Never derive from a name that is already a derivative: `x.thumb.jpg` would
+  // yield `x.thumb.thumb.jpg`, a path that has never existed, and a listing
+  // that does not show it would read as a confirmed delete.
+  if (primaryPath.endsWith(".thumb.jpg") || primaryPath.endsWith(".feed.jpg")) return [];
+  const dot = primaryPath.lastIndexOf(".");
+  // An extensionless path, or a dot that belongs to a directory name, gives no
+  // base to build on.
+  if (dot <= 0 || dot < primaryPath.lastIndexOf("/")) return [];
+  const base = primaryPath.slice(0, dot);
+  if (!base) return [];
+  return [`${base}.thumb.jpg`, `${base}.feed.jpg`];
+}
+
+/**
+ * The `role` claim of a Supabase client's key, when the key is a JWT and says.
+ *
+ * Null for anything it cannot classify: a key in the newer `sb_secret_…` /
+ * `sb_publishable_…` form, an unparseable JWT, or a test double with no key at
+ * all. Deliberately NOT signature-verified — this decides no trust and grants
+ * no access. It reads back which role THIS process is asking as, so the one
+ * mistake that would silently destroy media can be refused instead of trusted.
+ * The database still enforces what the role may actually do.
+ */
+export function clientRoleClaim(sc: SupabaseClient): string | null {
+  const key = (sc as any)?.supabaseKey;
+  if (typeof key !== "string" || !key) return null;
+  const parts = key.split(".");
+  if (parts.length !== 3) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+    const role = (payload as any)?.role;
+    return typeof role === "string" && role ? role : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Which of these media URLs are still referenced by something other than the
  * Story being purged.
  *
  * FAILS CLOSED, and this is the one place in this file where failing closed
  * means keeping bytes rather than deleting them. A read that errors returns the
- * URL as "referenced (unverifiable)", so the object is not deleted and the
- * entry is retried later. Treating an unreadable table as "no reference" would
- * delete a live Highlight's media, which is unrecoverable; treating it as a
- * reference costs one more pass.
+ * URL as `unverifiable`, so the object is not deleted and the entry is retried
+ * later. Treating an unreadable table as "no reference" would delete a live
+ * Highlight's media, which is unrecoverable; treating it as a reference costs
+ * one more pass.
+ *
+ * WHY THE VERDICT IS A TAGGED OBJECT AND NOT A STRING. It used to be a string,
+ * and the two answers it carried — "a Highlight references this" and "I could
+ * not find out" — were indistinguishable to the caller. So the caller did the
+ * one thing this docblock promises it would not: it read the outage sentinel as
+ * a surviving reference, kept the bytes, DELETED the Story row, cleared the
+ * ledger entry and counted the pass a success. The bytes then had nothing
+ * pointing at them, which is precisely the unrecoverable state decision 7
+ * names. One transient `statement timeout` on `highlights` was enough. The tag
+ * is here so the two answers cannot be confused again by anything short of
+ * ignoring a discriminant the compiler checks.
  *
  * A table that does not exist is a different thing from a table that would not
  * answer. PostgREST answers a missing relation with code 42P01 / PGRST205, and
  * that IS an establishable result — there are no references in a table that
  * does not exist — so it is not treated as a failure.
  */
+export type ReferenceVerdict =
+  /** A named live reference survives this media_url. Keeping the bytes is the approved outcome. */
+  | { kind: "referenced"; detail: string }
+  /** A source could not be read, so whether anything references it is UNKNOWN. Never a reason to delete. */
+  | { kind: "unverifiable"; detail: string };
+
 export async function findSurvivingReferences(
   sc: SupabaseClient,
   mediaUrls: string[],
-): Promise<Map<string, string>> {
-  const referenced = new Map<string, string>();
+): Promise<Map<string, ReferenceVerdict>> {
+  const referenced = new Map<string, ReferenceVerdict>();
   if (mediaUrls.length === 0) return referenced;
+
+  // ── WHOSE EYES THIS READ USES ────────────────────────────────────────────
+  // The correctness of everything below rests on a fact nothing in this
+  // function could otherwise see: it must run on a client whose reads are NOT
+  // filtered by RLS.
+  //
+  // A PERMANENT Highlight is protected today because the reads carry no
+  // visibility filter — no `expires_at`, no `deleted_at`, no `archived_at` — so
+  // a permanent Highlight's NULL expiry is a NULL in a column nobody looks at
+  // and the row still counts as a surviving reference. But RLS on `highlights`
+  // hides a private Highlight from everyone except its owner, and the SAME read
+  // issued with a user key returns ZERO ROWS for a Highlight it cannot see.
+  // Zero rows here does not mean "hidden", it means "nothing references these
+  // bytes" — and that deletes them. The pass runs on the service-role client
+  // (`lib/storyRetentionScheduler.ts`, `db ?? getServiceClient()`), and that one
+  // fact is what stands between a permanent Highlight and losing its media.
+  //
+  // So the realistic mistake — handing this pass a user or anon client — is
+  // refused rather than trusted, by the same posture as the drift assertion
+  // below: refuse to decide what is safe to delete.
+  //
+  // WHAT THIS IS NOT, so it is not mistaken for a proof: a key is classifiable
+  // only when it is a JWT carrying a `role` claim. A newer-style
+  // `sb_secret_…` / `sb_publishable_…` key and a test double with no key cannot
+  // be classified and are allowed through. This narrows the hazard to the
+  // clients it can see; it does not remove it, and it is not a substitute for
+  // handing this function the right client.
+  const asking = clientRoleClaim(sc);
+  if (asking && asking !== "service_role") {
+    throw new Error(
+      `storyRetention: the reference reads were handed a "${asking}" client — RLS would hide a private Highlight and its media would then be deleted as unreferenced. Refusing to decide what is safe to delete.`,
+    );
+  }
 
   // Each source is read through a literal `.from("…").select("…")` below rather
   // than through `.from(table)` over REFERENCE_SOURCES. The loop read better,
@@ -190,13 +347,24 @@ export async function findSurvivingReferences(
       if (missingRelation) continue; // Establishable: no such table, so no references in it.
       // Anything else: we do not know, so we do not delete.
       for (const url of mediaUrls) {
-        if (!referenced.has(url)) referenced.set(url, `${table}.${column} unreadable (${code || "unknown"})`);
+        // Only when nothing has answered yet: a real reference found in another
+        // source is a settled answer and outranks this one, which is why the
+        // real-reference branch below sets unconditionally and this one does
+        // not. Both orderings of the sources give the same verdict.
+        if (!referenced.has(url)) {
+          referenced.set(url, {
+            kind: "unverifiable",
+            detail: `${table}.${column} unreadable (${code || "unknown"})`,
+          });
+        }
       }
       continue;
     }
     for (const row of (data ?? []) as any[]) {
       const url = row?.[column];
-      if (typeof url === "string" && url) referenced.set(url, `referenced by ${table}.${column}`);
+      if (typeof url === "string" && url) {
+        referenced.set(url, { kind: "referenced", detail: `referenced by ${table}.${column}` });
+      }
     }
   }
   return referenced;
@@ -330,16 +498,34 @@ export async function enqueueDueStories(
 }
 
 /** Confirm by reading storage back that `path` is absent from `bucket`. */
+/**
+ * Is this object listed right now? `present: null` means the listing could not
+ * be read, which is a third answer and never folded into `false` — "I could not
+ * look" has caused enough damage in this file already.
+ */
+async function objectPresence(
+  sc: SupabaseClient,
+  bucket: string,
+  path: string,
+): Promise<{ present: boolean | null; detail: string }> {
+  const { dir, base } = splitStoragePath(path);
+  const { data, error } = await sc.storage.from(bucket).list(dir, { search: base, limit: 100 });
+  if (error) {
+    return { present: null, detail: `listing ${bucket}/${dir} failed: ${(error as any)?.message ?? "unknown"}` };
+  }
+  return { present: ((data ?? []) as any[]).some((o) => o?.name === base), detail: "" };
+}
+
 async function confirmObjectAbsent(
   sc: SupabaseClient,
   bucket: string,
   path: string,
 ): Promise<{ absent: boolean; detail: string }> {
-  const { dir, base } = splitStoragePath(path);
-  const { data, error } = await sc.storage.from(bucket).list(dir, { search: base, limit: 100 });
-  if (error) return { absent: false, detail: `listing ${bucket}/${dir} failed: ${(error as any)?.message ?? "unknown"}` };
-  const stillThere = ((data ?? []) as any[]).some((o) => o?.name === base);
-  return stillThere
+  // Expressed through objectPresence so the two readers of the same listing
+  // cannot drift apart.
+  const p = await objectPresence(sc, bucket, path);
+  if (p.present === null) return { absent: false, detail: p.detail };
+  return p.present
     ? { absent: false, detail: `${bucket}/${path} is still listed after remove()` }
     : { absent: true, detail: "" };
 }
@@ -365,7 +551,14 @@ export async function processPurgeQueue(
   sc: SupabaseClient,
   nowMs: number,
   limit: number,
-): Promise<{ completed: number; retained: number; deferred: number; failures: string[] }> {
+): Promise<{
+  completed: number;
+  objectsDeleted: number;
+  retained: number;
+  external: number;
+  deferred: number;
+  failures: string[];
+}> {
   const nowIso = new Date(nowMs).toISOString();
   const { data: due, error: dueErr } = await sc
     .from("story_purge_queue")
@@ -376,13 +569,50 @@ export async function processPurgeQueue(
   if (dueErr) throw dueErr;
 
   const entries = (due ?? []) as any[];
-  if (entries.length === 0) return { completed: 0, retained: 0, deferred: 0, failures: [] };
+  if (entries.length === 0) {
+    return {
+      completed: 0,
+      objectsDeleted: 0,
+      retained: 0,
+      external: 0,
+      deferred: 0,
+      failures: [],
+    };
+  }
 
   const pending = entries.filter((e) => !e.object_deleted_at && !e.object_retained_reason && e.storage_path);
-  const surviving = await findSurvivingReferences(sc, pending.map((e) => String(e.media_url)));
+
+  // Every url this pass might delete bytes for, the story's own and each
+  // derived sibling's, asked about in ONE round of reads.
+  //
+  // WHY THE SIBLINGS NEED ASKING ABOUT SEPARATELY. Deleting the thumbnail and
+  // the feed copy with the original is only safe while nothing else points at
+  // THEM. A Highlight holds one url (`highlights.media_url`), and a Highlight
+  // made from a Story copies the Story's url verbatim — but nothing in the
+  // schema stops a Highlight, a Memory item or a passport memory from holding
+  // a derived path, and the owner's rule is that normal expiry preserves media
+  // a permanent Highlight still references. Asking only about the original
+  // would honour that rule for the original and quietly break it for the two
+  // files beside it.
+  //
+  // The match is exact-string, as it has always been for the original: a
+  // reference stored in some other form (a signed or absolute URL) is not
+  // found by it. That limitation is unchanged and not newly introduced here.
+  const urlsToCheck = new Set<string>();
+  for (const e of pending) {
+    urlsToCheck.add(String(e.media_url));
+    if (e.storage_bucket && e.storage_path) {
+      for (const sib of derivedStoragePaths(String(e.storage_path))) {
+        urlsToCheck.add(`${String(e.storage_bucket)}/${sib}`);
+      }
+    }
+  }
+  const surviving = await findSurvivingReferences(sc, [...urlsToCheck]);
 
   let completed = 0;
+  let objectsDeleted = 0;
   let retained = 0;
+  let external = 0;
   let deferred = 0;
   const failures: string[] = [];
 
@@ -392,6 +622,23 @@ export async function processPurgeQueue(
     let objectRetainedReason: string | null = entry.object_retained_reason ?? null;
     let rowDeletedAt: string | null = entry.row_deleted_at ?? null;
     let failure: string | null = null;
+    /**
+     * Which of the owner's four outcomes the BYTES got, decided where it is
+     * known rather than reconstructed later from the reason string. The string
+     * is for a human; this is what the counters are built from, so a reworded
+     * message cannot silently move an entry between categories.
+     *
+     * Null for an entry resumed from a previous pass, whose byte outcome was
+     * decided and counted then — counting it again would double-count.
+     */
+    let byteOutcome: "deleted" | "retained" | "external" | null = null;
+    /** Objects this entry removed and read back, counted only once it settles. */
+    let objectsGone = 0;
+    /**
+     * Objects this entry kept because a named live reference points at THAT
+     * object, counted only once the entry settles.
+     */
+    let objectsKept = 0;
 
     // ── Step 1: the bytes ────────────────────────────────────────────────────
     if (!objectDeletedAt && !objectRetainedReason) {
@@ -400,24 +647,118 @@ export async function processPurgeQueue(
         // object of ours to delete, and saying so is not the same as claiming
         // we deleted one.
         objectRetainedReason = "no app-storage object claimed by this media_url";
+        byteOutcome = "external";
       } else {
-        const stillReferenced = surviving.get(String(entry.media_url));
-        if (stillReferenced) {
-          objectRetainedReason = stillReferenced;
+        const verdict = surviving.get(String(entry.media_url));
+        if (verdict?.kind === "unverifiable") {
+          // The decisive branch. "I could not find out" is NOT "something
+          // references it": retaining on an outage would be fine, but what used
+          // to follow a retention was deleting the Story row and clearing the
+          // ledger, which leaves the bytes with nothing pointing at them and
+          // reports success. So an unverifiable source is a FAILURE: the entry
+          // keeps its storage path, the row stays, and the next pass retries
+          // once the source answers. This is what this file's docblock has
+          // always said happened.
+          failure = `cannot establish whether the bytes are still referenced — ${verdict.detail}`;
+        } else if (verdict?.kind === "referenced") {
+          objectRetainedReason = verdict.detail;
+          byteOutcome = "retained";
+          // The Story's own object, saved by the reference named above.
+          objectsKept = 1;
         } else {
           const bucket = String(entry.storage_bucket);
           const path = String(entry.storage_path);
+          // The original AND the siblings made from it, minus any sibling
+          // something else still references. A sibling that was never created
+          // is absent, which settles the same way as one that was deleted — so
+          // this is safe for an upload that produced no derivatives, and for a
+          // bucket that never had them.
+          const siblings = derivedStoragePaths(path);
+          const deletable: string[] = [];
+          const keptForReference: string[] = [];
+          let siblingBlocked: string | null = null;
+          for (const sib of siblings) {
+            const v = surviving.get(`${bucket}/${sib}`);
+            if (v?.kind === "referenced") keptForReference.push(`${sib} (${v.detail})`);
+            else if (v?.kind === "unverifiable") {
+              // Same rule as the original's: not knowing is never a licence to
+              // delete. The entry defers whole rather than deleting the
+              // original and leaving the question open on a file beside it.
+              //
+              // UNREACHABLE TODAY, and deliberately kept. The primary and its
+              // siblings are resolved in ONE round against the same three
+              // sources, so an outage marks every one of them unverifiable —
+              // including `entry.media_url`, which already failed this entry in
+              // the branch above. There is therefore no test for this line:
+              // the state it guards cannot be produced without faking the map,
+              // and a test that fakes its own premise proves nothing. It stays
+              // because the day resolution becomes per-url or chunked, the
+              // absence of this branch would delete an original while a file
+              // beside it was still in question.
+              siblingBlocked = `cannot establish whether ${bucket}/${sib} is still referenced — ${v.detail}`;
+              break;
+            } else deletable.push(sib);
+          }
+          const paths = siblingBlocked ? [] : [path, ...deletable];
+          // Which deletable siblings were actually there before the delete. A
+          // derived name that never existed is absent afterwards too, so
+          // without this the pass would report having removed files nobody ever
+          // created — which is the same class of lie as reporting a retention
+          // as a deletion. An unreadable listing counts as neither: unknown is
+          // not a number, and the read-back below still gates settling.
+          const siblingsPresentBefore = new Set<string>();
+          if (!siblingBlocked) {
+            for (const sib of deletable) {
+              const pre = await objectPresence(sc, bucket, sib);
+              if (pre.present === true) siblingsPresentBefore.add(sib);
+            }
+          }
+          objectsKept = keptForReference.length;
+          if (keptForReference.length > 0) {
+            // The entry's own outcome is still "deleted" — the Story's own
+            // bytes went. The ledger cannot carry both a deletion time and a
+            // retention reason (story_purge_queue's outcome CHECK), so the kept
+            // siblings are logged rather than silently dropped.
+            logger.info(
+              { storyId, bucket, kept: keptForReference },
+              "storyRetention: kept a derived object a surviving reference still points at",
+            );
+          }
           try {
-            const { error: rmErr } = await sc.storage.from(bucket).remove([path]);
+            if (siblingBlocked) throw new Error(siblingBlocked);
+            const { error: rmErr } = await sc.storage.from(bucket).remove(paths);
             if (rmErr) {
-              failure = `remove(${bucket}/${path}) failed: ${(rmErr as any)?.message ?? "unknown"}`;
+              failure = `remove(${bucket}/[${paths.join(", ")}]) failed: ${(rmErr as any)?.message ?? "unknown"}`;
             } else {
-              const check = await confirmObjectAbsent(sc, bucket, path);
-              if (check.absent) objectDeletedAt = nowIso;
-              else failure = check.detail;
+              // Every path is read back. `remove()` resolves with an empty data
+              // array both for a path that was never there and for one it
+              // failed to touch, so the listing is the only thing that
+              // distinguishes them, and one unconfirmed sibling defers the
+              // whole entry rather than settling it.
+              const unsettled: string[] = [];
+              let siblingsGone = 0;
+              for (const p of paths) {
+                const check = await confirmObjectAbsent(sc, bucket, p);
+                if (!check.absent) unsettled.push(check.detail);
+                else if (p !== path && siblingsPresentBefore.has(p)) siblingsGone += 1;
+              }
+              if (unsettled.length === 0) {
+                objectDeletedAt = nowIso;
+                byteOutcome = "deleted";
+                // The original plus whichever siblings were really there. The
+                // entry is counted separately, by `completed`.
+                objectsGone += 1 + siblingsGone;
+              } else {
+                failure = unsettled.join("; ");
+              }
             }
           } catch (err) {
-            failure = `remove(${bucket}/${path}) threw: ${(err as any)?.message ?? String(err)}`;
+            const msg = (err as any)?.message ?? String(err);
+            // A blocked sibling is already a complete sentence; only a real
+            // throw from storage needs the call wrapped around it.
+            failure = msg === siblingBlocked
+              ? msg
+              : `remove(${bucket}/[${paths.join(", ")}]) threw: ${msg}`;
           }
         }
       }
@@ -447,7 +788,12 @@ export async function processPurgeQueue(
         failure = `could not clear ledger entry ${storyId}: ${(clearErr as any)?.message ?? "unknown"}`;
       } else {
         completed += 1;
-        if (objectRetainedReason) retained += 1;
+        if (byteOutcome === "deleted") objectsDeleted += objectsGone;
+        else if (byteOutcome === "external") external += 1;
+        // Not an `else`: an entry whose own object was deleted can still have
+        // kept a derived copy something else references, and reporting that
+        // file as deleted is the exact confusion the owner asked us to avoid.
+        retained += objectsKept;
         continue;
       }
     }
@@ -472,7 +818,7 @@ export async function processPurgeQueue(
     if (updErr) failures.push(`could not record retry state for ${storyId}: ${(updErr as any)?.message ?? "unknown"}`);
   }
 
-  return { completed, retained, deferred, failures };
+  return { completed, objectsDeleted, retained, external, deferred, failures };
 }
 
 /**
@@ -599,7 +945,9 @@ export async function runStoryRetention(
     enqueuedArchive: enq.archive,
     enqueuedDeleted: enq.deleted,
     completed: worked.completed,
+    objectsDeleted: worked.objectsDeleted,
     retained: worked.retained,
+    external: worked.external,
     deferred: worked.deferred,
     engagementStoriesPurged: engagement.stories,
     engagementRowsPurged: engagement.rows,
