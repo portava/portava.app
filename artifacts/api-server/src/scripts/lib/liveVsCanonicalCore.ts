@@ -349,6 +349,19 @@ const TYPE_SYNONYMS: Record<string, string> = {
   float8: "double precision",
   float4: "real",
   decimal: "numeric",
+  // Bare aliases a migration writes and the live side never echoes back.
+  // 2297 declares record_distribution_negative_signal(... FLOAT), Postgres
+  // stores float8, and pg_get_function_identity_arguments prints
+  // 'double precision' — so the model said `float`, live said
+  // `double precision`, and a function the repository plainly declares read as
+  // UNEXPLAINED_LIVE. Bare FLOAT is float8 in Postgres (a precision-qualified
+  // FLOAT(1..24) is real, and FLOAT(n) is not folded here — it would stay
+  // unexplained rather than be guessed at).
+  float: "double precision",
+  timestamp: "timestamp without time zone",
+  time: "time without time zone",
+  char: "character",
+  bpchar: "character",
 };
 // First tokens that BEGIN a multiword built-in type (so the first token is the
 // type, not an argument name).

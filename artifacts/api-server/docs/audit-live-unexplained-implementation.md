@@ -173,7 +173,7 @@ policies, 17 columns, 15 triggers, 5 functions, 3 relations.
 
 ### It was not drift. The MODEL could not read the migrations.
 
-Three model-side defects, none of them a property of the database:
+Four model-side defects, none of them a property of the database:
 
 1. **The SQL scanners were comment-blind.** `balancedParenBody`, `splitTopLevel`
    and `readStatement` tracked single-quoted literals but not comments. An
@@ -205,7 +205,19 @@ Three model-side defects, none of them a property of the database:
    `CREATE CONSTRAINT TRIGGER`, which is a contype-`t` pg_constraint row as well
    as a pg_trigger row (`cee_transaction_balances`, 3387).
 
-3. **The canonical band had an off-by-one that no number can fix.** The file
+3. **Bare type aliases were not folded, so a declared function read as
+   undeclared.** `2297_rank_events_dismiss_outcome.sql:123` declares
+   `record_distribution_negative_signal(… p_suppression_rate FLOAT DEFAULT 0.3)`.
+   Postgres stores that as float8 and
+   `pg_get_function_identity_arguments` prints `double precision`, but
+   `TYPE_SYNONYMS` carried `float8` and `float4` and not bare `float` — so the
+   model's key ended `,float` and the live key ended `,double precision`, and a
+   function the repository plainly declares was reported as UNEXPLAINED_LIVE on
+   every run. `float`, bare `timestamp`, bare `time`, `char` and `bpchar` now
+   fold to the spelling the live side emits. A precision-qualified `FLOAT(n)` is
+   deliberately NOT folded and would stay unexplained rather than be guessed at.
+
+4. **The canonical band had an off-by-one that no number can fix.** The file
    filter read `f.slice(0, 4) >= "2100"` on this document's own premise that
    nothing below 2100 post-dates the baseline. `2095_discovery_place_photos.sql`
    is the counter-example: the 2026-08-19 baseline dump contains no `CREATE
@@ -228,18 +240,28 @@ this file.
 
 ### What remains is NOT model-side, and some of it is real drift
 
-* **6 constraints, 3 relations and 4 functions are genuine drift on
-  portava-ci** — live objects no migration in the tree declares and the baseline
-  does not contain. `sensing_anon_publications` and `sensing_anon_projection`
-  (2 tables, 5 constraints, `sensing_record_contribution`,
-  `sensing_publication_cas`, `purge_sensing_expired`) appear in no `.sql` file in
-  the repository at all; so does `record_distribution_negative_signal`. And
-  `highlights.highlights_expiry_is_permanent_or_dated` is a constraint on a
-  BASELINE table that no migration declares. Nothing here drops or alters them:
-  they are reported, and whoever owns that feature reconciles them into a
-  migration or into the EXPLAINED ledger. The permanent-Highlights constraint
-  overlaps the production-rollout work on 3502/2975 and is flagged to it rather
-  than touched.
+* **6 constraints, 2 relations and 3 functions are genuine drift on
+  portava-ci, and it is CI-only.** `sensing_anon_publications` and
+  `sensing_anon_projection` (2 tables, 5 constraints) and the functions
+  `sensing_record_contribution`, `sensing_publication_cas` and
+  `purge_sensing_expired` appear in no `.sql` file in the repository at all, and
+  the production-rollout thread confirmed read-only that none of them exists on
+  production either. `highlights.highlights_expiry_is_permanent_or_dated` is the
+  sixth constraint: it is on a BASELINE table, no forward migration declares it,
+  it is NOT on production, and its only appearance in the tree is a `DROP
+  CONSTRAINT IF EXISTS` in `db/rollback/2026-09-07-ci-migrations-rollback.sql`,
+  so it reads as a leftover of a rolled-back CI experiment. Nothing here drops
+  or alters any of them: they are reported, and whoever owns the feature
+  reconciles them into a migration or into the EXPLAINED ledger. The Highlights
+  constraint is flagged to the production-rollout work on 3502/2975 rather than
+  touched — 2975 adds a differently NAMED constraint for the same rule
+  (`highlights_permanent_has_no_expiry`), so applying 2975 to the CI database
+  would leave two overlapping constraints and one of them should go.
+
+  **Corrected 2026-10-03:** an earlier revision of this section listed
+  `record_distribution_negative_signal` as drift as well. It is not — 2297
+  declares it, and defect 3 above is why the audit could not see that. The
+  rollout thread caught the claim; the function is explained by the model now.
 
 * **101 of the 104 policy findings are dynamic DDL and cannot be parsed from
   text, by nature.** `3390_discovery_rls_explicit_policies.sql:200-226` creates

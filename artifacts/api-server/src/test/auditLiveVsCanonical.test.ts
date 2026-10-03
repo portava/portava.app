@@ -705,6 +705,20 @@ CREATE TABLE IF NOT EXISTS layover_checkpoints (
     assert.equal(skippedTooLong.length, 1);
   });
 
+  it("normalizeArgTypes folds the bare type aliases a migration writes", () => {
+    // 2297: `p_suppression_rate FLOAT DEFAULT 0.3` is stored as float8 and
+    // printed by pg_get_function_identity_arguments as 'double precision'. The
+    // model said 'float', so a function the repository declares read as
+    // UNEXPLAINED_LIVE on every run.
+    assert.equal(
+      normalizeArgTypes("p_item_id TEXT, p_viewer_id TEXT, p_threshold INTEGER DEFAULT 100, p_suppression_rate FLOAT DEFAULT 0.3"),
+      "text,text,integer,double precision",
+    );
+    assert.equal(normalizeArgTypes("a timestamp, b time, c char"), "timestamp without time zone,time without time zone,character");
+    // The live spelling is already canonical and must survive untouched.
+    assert.equal(normalizeArgTypes("timestamp with time zone, double precision"), "timestamp with time zone,double precision");
+  });
+
   it("extractExtensions reads CREATE EXTENSION (baseline has none, canonical may add)", () => {
     assert.ok(extractExtensions("CREATE EXTENSION IF NOT EXISTS pgcrypto;").has("pgcrypto"));
     assert.equal(extractExtensions("select 1;").size, 0);
