@@ -72,7 +72,7 @@ export function useLivePulse(opts: UseLivePulseOptions = {}): UseLivePulseResult
   // different batch of cards.
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null); const [unread, setUnread] = useState<string[]>([]); const fetchSeq = useRef(0);  // §118 (SW20): what the server could not read; only the latest fetch is drawn
+  const [error, setError] = useState<string | null>(null); const [unread, setUnread] = useState<string[]>([]); const fetchSeq = useRef(0); const itemsKey = useRef<string | null>(null);  // §118 (SW20): what the server could not read; only the latest fetch is drawn; §122 (B39): the context the items were read for
   const [dismissedVersion, setDismissedVersion] = useState(0);
 
   // Use a ref to avoid stale closure in the timer callback
@@ -82,15 +82,15 @@ export function useLivePulse(opts: UseLivePulseOptions = {}): UseLivePulseResult
     if (paused) return;
     setLoading(true);
     setError(null);
-    const params: GetLivePulseParams = { context, citySlug, lat, lng }; const seq = ++fetchSeq.current;
+    const params: GetLivePulseParams = { context, citySlug, lat, lng }; const seq = ++fetchSeq.current; const key = `${context}|${citySlug ?? ''}|${lat ?? ''}|${lng ?? ''}`; if (itemsKey.current !== key) { itemsKey.current = key; setAllItems([]); setUnread([]); setSessionId(null); }  // census-discovery §122 (DV-83 round 23, B39): a new context keeps nothing of the old one's items, so a failed read never leaves them standing
     const result = await getLivePulseItems(params); if (seq !== fetchSeq.current) return;  // census-discovery §118 (SW20): an answer for a context no longer on screen is never drawn
     setLoading(false);
     if (result.ok) {
       setAllItems(result.items); setUnread(result.failedSources ?? []);
       setSessionId(result.sessionId);
     } else {
-      // Leave items AND sessionId untouched: on a failed refresh the previously
-      // served cards stay on screen, so they keep the session that served them.
+      // Leave items AND sessionId untouched: on a failed refresh of the SAME context the previously
+      // served cards stay (and keep their session); a new context was cleared above (§122, B39).
       setError(result.error);
     }
   }, [context, citySlug, lat, lng, paused]);

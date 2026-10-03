@@ -109,7 +109,7 @@ export function LivePulseRail({ pulse }: LivePulseRailProps) {
       <Pressable style={styles.headerRow} onPress={() => setExpanded((e) => !e)}>
         <View style={styles.headerLeft}>
           <Text style={styles.headerTitle}>Live Pulse</Text>
-          {!expanded && items.length > 0 && (
+          {!expanded && error ? (<Text style={styles.summaryText}>Couldn't load live plans</Text>) : !expanded && items.length > 0 && (  /* census-discovery §122 (B39): a failed read is said collapsed too, never a summary of other items */
             <Text style={styles.summaryText}>{summaryText}</Text>
           )}
         </View>
