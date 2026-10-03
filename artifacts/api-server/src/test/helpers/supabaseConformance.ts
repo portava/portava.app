@@ -56,8 +56,7 @@ import { makeEnumAwareClient } from "./enumAwareSupabase.js";
 import { makeTelemetryDb } from "./fakeDiscoveryTelemetryDb.js";
 import { makeFakeTrailsDb } from "./fakeTrailsDb.js";
 import { makeRulesDb } from "./fakeTrailRulesDb.js";
-import { makeFakeCandidateDb } from "./fakeCandidateDb.js";
-import { makeFeedDb } from "./fakeFeedDb.js";
+import { makeFakeCandidateDb } from "./fakeCandidateDb.js"; import { makeFeedDb } from "./fakeFeedDb.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
