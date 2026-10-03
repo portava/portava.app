@@ -249,6 +249,24 @@ jobs:
         shell: bash
         run: bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server check:api-prefix
 
+      # Wired 2026-10-03, and it was RED on main when it was found. It is a
+      # generator: the plain form REWRITES docs/architecture/telegraph-phase0-inventory.md
+      # and `--check` (the form below, via the package script) exits 1 when the
+      # committed file no longer matches the tree. It is in artifacts/api-server's
+      # local check:all, but ci.yml:95 states that check:all is deliberately NOT
+      # invoked in the api-server job, and the CI step that carries the name runs
+      # only 7 credential-requiring checks — so nothing in CI had ever run this.
+      # Main carried `25 of 681 migration files` against a tree of 682, from a
+      # merge that added a migration without regenerating, and CI was green.
+      #
+      # It goes stale on EVERY merge that adds a migration, so unwired is where
+      # it belongs rather than a one-off fix: credential-free, reads only the
+      # tree, exits 1 on a finding.
+      - name: 'api-server: check:telegraph-inventory'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server check:telegraph-inventory
+
       # @workspace/scripts is a real workspace member with 9 node:test suites
       # and a contract check, and NO check:all. Only test:cross-tree-paths is
       # referenced anywhere (a .replit workflow). The rest have never run
