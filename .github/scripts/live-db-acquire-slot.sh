@@ -268,7 +268,16 @@ while :; do
     else
       echo "::error::live-db slot: waited ${ELAPSED}s without acquiring the shared database. This run has certified NOTHING. It is NOT a pass — re-run it when the queue drains."
     fi
+    # THE WAIT IS THE FINDING, so record it on this path too. Only the
+    # acquired path used to emit it, which left `outputs.waited` EMPTY exactly
+    # when the duration was the whole story: live-db-verdict printed
+    # "waited=?s", and the telemetry artifact — whose stated purpose is the two
+    # facts the Actions API cannot reconstruct afterwards, how long THIS run
+    # waited and whether it got the database — recorded "queue_wait_seconds":
+    # "null". Measured on run 37111083339: 2721s of waiting, reported as "?".
     emit "live_db_slot=timeout"
+    emit "live_db_slot_wait_seconds=${ELAPSED}"
+    emit "live_db_slot_attempt=${ATTEMPT}"
     exit 75
   fi
 
