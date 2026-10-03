@@ -18,6 +18,17 @@
  *   PC3  comment delete: the soft-delete UPDATE refused → db_error, never ok:true
  *   PC4  comment delete: the comment read failed → db_error, never "Comment not found"
  *   PC5  comment create: healthy → the exact count, stamped (control)
+ *   PS5  GET /posts/:id/savers: the author check unread → db_error, never "Post not found"
+ *   PS6  GET /posts/:id/savers: saver profiles unread → 503, never an empty "nobody saved this"
+ *   PC6  comment create: the post read unread → db_error, never "Post not found"
+ *   PC7  comment create, friends-only: the friendship read unread → 503, never "Only friends can comment"
+ *   PC8  comment create, friends-only: friends with an accepted request in BOTH directions may comment
+ *        (`.maybeSingle()` over the two-direction filter resolved PGRST116 and refused them)
+ *   PC9  comment create, circle-only: the membership read unread → 503
+ *   PC10 comment create, verified-only: the caller's profile unread → 503
+ *   PR1  reply create: the post read unread → db_error, never "Post not found"
+ *   PR2  reply create, friends-only: friends accepted in both directions may reply (the same PGRST116 refusal)
+ *   PR3  reply create, verified-only: the caller's profile unread → 503
  *
  * Run: node --import tsx/esm --test src/test/postCountersHonest.test.ts
  */
@@ -184,5 +195,104 @@ describe("the comment paths never stamp a failed count (census-media §47)", () 
     assert.equal(r.body.commentCount, 3);
     assert.equal(r.body.failedSources, undefined);
     assert.equal(postRow().comment_count, 3);
+  });
+});
+
+describe("savers and comment permissions never answer an outage as a fact (census-media §47)", () => {
+  const SAVER = "cccccccc-0000-4000-a000-000000000003";
+  const asAuthor = (spec: FakeFeedDbSpec) => ({ ...spec, users: { [TOKEN]: AUTHOR } });
+
+  it("PS5 — savers: the author check unread → db_error", async () => {
+    use(asAuthor(seed({ failReads: { posts: true } })));
+    const r = await call("GET", `/posts/${POST}/savers`);
+    assert.equal(r.status, 500, JSON.stringify(r.body));
+    assert.equal(r.body.error, "db_error");
+  });
+
+  it("PS6 — savers: saver profiles unread → 503, never an empty list", async () => {
+    const spec = asAuthor(seed({ failReads: { profiles: (q: any) => q.select.includes("username") } }));
+    spec.tables.profiles.push({ id: SAVER, username: "saver", account_status: "active" });
+    use(spec);
+    const r = await call("GET", `/posts/${POST}/savers`);
+    assert.equal(r.status, 503, JSON.stringify(r.body));
+    assert.equal(r.body.error, "degraded_unavailable");
+  });
+
+  it("PC6 — comment create: the post read unread → db_error", async () => {
+    use(seed({ failReads: { posts: true } }));
+    const r = await call("POST", `/posts/${POST}/comments`, { body: "hi" });
+    assert.equal(r.status, 500, JSON.stringify(r.body));
+    assert.equal(r.body.error, "db_error");
+  });
+
+  const withSetting = (setting: string, over: Partial<FakeFeedDbSpec> = {}) => {
+    const spec = seed(over);
+    spec.tables.posts[0].comments_setting = setting;
+    return spec;
+  };
+
+  it("PC7 — friends-only: the friendship read unread → 503", async () => {
+    use(withSetting("friends", { failReads: { friend_requests: true } }));
+    const r = await call("POST", `/posts/${POST}/comments`, { body: "hi" });
+    assert.equal(r.status, 503, JSON.stringify(r.body));
+  });
+
+  it("PC8 — friends-only: an accepted request in both directions still lets a friend comment", async () => {
+    const spec = withSetting("friends");
+    spec.tables.friend_requests = [
+      { id: "fr-a", requester_id: VIEWER, recipient_id: AUTHOR, status: "accepted" },
+      { id: "fr-b", requester_id: AUTHOR, recipient_id: VIEWER, status: "accepted" },
+    ];
+    use(spec);
+    const r = await call("POST", `/posts/${POST}/comments`, { body: "hi" });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+  });
+
+  it("PC9 — circle-only: the membership read unread → 503", async () => {
+    use(withSetting("circle", { failReads: { circle_memberships: true } }));
+    const r = await call("POST", `/posts/${POST}/comments`, { body: "hi" });
+    assert.equal(r.status, 503, JSON.stringify(r.body));
+  });
+
+  it("PC10 — verified-only: the caller's profile unread → 503", async () => {
+    use(withSetting("verified", { failReads: { profiles: (q: any) => q.select === "verified" } }));
+    const r = await call("POST", `/posts/${POST}/comments`, { body: "hi" });
+    assert.equal(r.status, 503, JSON.stringify(r.body));
+  });
+});
+
+describe("reply permissions, the same rule (census-media §47)", () => {
+  const withSetting = (setting: string, over: Partial<FakeFeedDbSpec> = {}) => {
+    const spec = seed(over);
+    spec.tables.posts[0].comments_setting = setting;
+    return spec;
+  };
+  const replyPath = `/posts/${POST}/comments/33333333-0000-4000-a000-000000000002/replies`;
+
+  it("PR1 — reply create: the post read unread → db_error", async () => {
+    use(seed({ failReads: { posts: true } }));
+    const r = await call("POST", replyPath, { body: "re" });
+    assert.equal(r.status, 500, JSON.stringify(r.body));
+    assert.equal(r.body.error, "db_error");
+  });
+
+  it("PR2 — friends-only: friends accepted in both directions may reply", async () => {
+    const spec = withSetting("friends");
+    spec.tables.friend_requests = [
+      { id: "fr-a", requester_id: VIEWER, recipient_id: AUTHOR, status: "accepted" },
+      { id: "fr-b", requester_id: AUTHOR, recipient_id: VIEWER, status: "accepted" },
+    ];
+    spec.tables.posts_comments.forEach((c) => { c.parent_comment_id = null; });
+    use(spec);
+    const r = await call("POST", replyPath, { body: "re" });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+  });
+
+  it("PR3 — verified-only: the caller's profile unread → 503", async () => {
+    const spec = withSetting("verified", { failReads: { profiles: (q: any) => q.select === "verified" } });
+    spec.tables.posts_comments.forEach((c) => { c.parent_comment_id = null; });
+    use(spec);
+    const r = await call("POST", replyPath, { body: "re" });
+    assert.equal(r.status, 503, JSON.stringify(r.body));
   });
 });

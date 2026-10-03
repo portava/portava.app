@@ -2570,12 +2570,12 @@ router.get("/posts/:postId/savers", async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
   // Verify caller is the post author.
-  const { data: post } = await sc
+  const { data: post, error: postReadErr } = await sc
     .from("posts")
     .select("author_id")
     .eq("id", postId)
     .maybeSingle();
-  if (!post) { sendError(res, "not_found", "Post not found"); return; }
+  if (postReadErr) { req.log.error({ err: postReadErr }, "posts/:postId/savers: post read failed"); sendError(res, "db_error", postReadErr.message); return; } if (!post) { sendError(res, "not_found", "Post not found"); return; } // census-media §47: an unread post is not "Post not found"
   if ((post as any).author_id !== user.id) {
     sendError(res, "forbidden", "Only the post author can view savers");
     return;
@@ -2605,7 +2605,7 @@ router.get("/posts/:postId/savers", async (req, res) => {
   // Fail-closed: an UNREAD privacy table is not "everybody allows discovery".
   // `privacyRes.error` resolves (PostgREST does not throw), so an unchecked read
   // yielded an empty map and `!== false` then listed every opted-out saver.
-  if (privacyRes.error) {
+  if (profilesRes.error) { req.log.error({ err: profilesRes.error }, "posts/:postId/savers: saver profiles read failed"); sendError(res, "degraded_unavailable", "Savers could not be read"); return; } if (privacyRes.error) { // census-media §47: unread profiles left every saver without a handle, so the filter below served "nobody saved this"
     req.log.error({ err: privacyRes.error }, "posts/:postId/savers: discovery-privacy lookup failed");
     sendError(res, "degraded_unavailable", "Privacy settings could not be read");
     return;
@@ -2771,8 +2771,8 @@ router.post("/posts/:postId/comments", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: post } = await sc.from("posts").select("id, author_id, visibility, trip_id, comments_setting, sharing_disabled").eq("id", postId).eq("status", "active").maybeSingle();
-  if (!post) { sendError(res, "not_found", "Post not found"); return; }
+  const { data: post, error: postReadErr } = await sc.from("posts").select("id, author_id, visibility, trip_id, comments_setting, sharing_disabled").eq("id", postId).eq("status", "active").maybeSingle();
+  if (postReadErr) { req.log.error({ err: postReadErr }, "comment create: post read failed"); sendError(res, "db_error", postReadErr.message); return; } if (!post) { sendError(res, "not_found", "Post not found"); return; } // census-media §47
   if (!(await checkEngagePermission(res, post as any, user.id, client))) return;
 
   // Enforce comments_setting (fail-open if column not yet migrated)
@@ -2795,16 +2795,16 @@ router.post("/posts/:postId/comments", async (req, res) => {
       return;
     }
     if (commentsSetting === "friends") {
-      const { data: fr } = await sc
+      const { data: frRows, error: frErr } = await sc
         .from("friend_requests").select("id").eq("status", "accepted")
         .or(`and(requester_id.eq.${callerId},recipient_id.eq.${authorId}),and(requester_id.eq.${authorId},recipient_id.eq.${callerId})`)
-        .maybeSingle();
-      if (!fr) { sendError(res, "comments_limited", "Only friends can comment on this post"); return; }
+        .limit(1); // census-media §47: NOT maybeSingle — friends accepted in BOTH directions are two rows, and PGRST116 refused them
+      if (frErr) { sendError(res, "degraded_unavailable", "Could not check who may comment on this post. Please try again."); return; } if (!frRows?.length) { sendError(res, "comments_limited", "Only friends can comment on this post"); return; }
     }
     if (commentsSetting === "circle") {
-      const { data: mem } = await sc
+      const { data: mem, error: memErr } = await sc
         .from("circle_memberships").select("other_id").eq("user_id", authorId).eq("other_id", callerId).maybeSingle();
-      if (!mem) { sendError(res, "comments_limited", "Only circle members can comment on this post"); return; }
+      if (memErr) { sendError(res, "degraded_unavailable", "Could not check who may comment on this post. Please try again."); return; } if (!mem) { sendError(res, "comments_limited", "Only circle members can comment on this post"); return; } // §47
     }
     if (commentsSetting === "trip_crew") {
       const tripId = (post as any).trip_id as string | null;
@@ -2814,8 +2814,8 @@ router.post("/posts/:postId/comments", async (req, res) => {
       }
     }
     if (commentsSetting === "verified") {
-      const { data: profile } = await sc.from("profiles").select("verified").eq("id", callerId).maybeSingle();
-      if (!(profile as any)?.verified) { sendError(res, "comments_limited", "Only verified accounts can comment on this post"); return; }
+      const { data: profile, error: verifiedErr } = await sc.from("profiles").select("verified").eq("id", callerId).maybeSingle();
+      if (verifiedErr) { sendError(res, "degraded_unavailable", "Could not check who may comment on this post. Please try again."); return; } if (!(profile as any)?.verified) { sendError(res, "comments_limited", "Only verified accounts can comment on this post"); return; } // §47
     }
   }
 
@@ -3446,8 +3446,8 @@ router.post("/posts/:postId/comments/:commentId/replies", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: post } = await sc.from("posts").select("id, author_id, visibility, trip_id, comments_setting").eq("id", postId).eq("status", "active").maybeSingle();
-  if (!post) { sendError(res, "not_found", "Post not found"); return; }
+  const { data: post, error: postReadErr } = await sc.from("posts").select("id, author_id, visibility, trip_id, comments_setting").eq("id", postId).eq("status", "active").maybeSingle();
+  if (postReadErr) { req.log.error({ err: postReadErr }, "reply create: post read failed"); sendError(res, "db_error", postReadErr.message); return; } if (!post) { sendError(res, "not_found", "Post not found"); return; } // census-media §47
   if (!(await checkEngagePermission(res, post as any, user.id, client))) return;
 
   // Verify parent comment belongs to the post and is a root comment (one-level depth guard).
@@ -3477,22 +3477,22 @@ router.post("/posts/:postId/comments/:commentId/replies", async (req, res) => {
   if (callerId !== authorId && commentsSetting !== "everyone") {
     if (commentsSetting === "disabled") { sendError(res, "comments_disabled", "Comments are disabled on this post"); return; }
     if (commentsSetting === "friends") {
-      const { data: fr } = await sc.from("friend_requests").select("id").eq("status", "accepted")
+      const { data: frRows, error: frErr } = await sc.from("friend_requests").select("id").eq("status", "accepted")
         .or(`and(requester_id.eq.${callerId},recipient_id.eq.${authorId}),and(requester_id.eq.${authorId},recipient_id.eq.${callerId})`)
-        .maybeSingle();
-      if (!fr) { sendError(res, "comments_limited", "Only friends can comment on this post"); return; }
+        .limit(1); // census-media §47: NOT maybeSingle (two accepted rows for one friendship resolved PGRST116)
+      if (frErr) { sendError(res, "degraded_unavailable", "Could not check who may comment on this post. Please try again."); return; } if (!frRows?.length) { sendError(res, "comments_limited", "Only friends can comment on this post"); return; }
     }
     if (commentsSetting === "circle") {
-      const { data: mem } = await sc.from("circle_memberships").select("other_id").eq("user_id", authorId).eq("other_id", callerId).maybeSingle();
-      if (!mem) { sendError(res, "comments_limited", "Only circle members can comment on this post"); return; }
+      const { data: mem, error: memErr } = await sc.from("circle_memberships").select("other_id").eq("user_id", authorId).eq("other_id", callerId).maybeSingle();
+      if (memErr) { sendError(res, "degraded_unavailable", "Could not check who may comment on this post. Please try again."); return; } if (!mem) { sendError(res, "comments_limited", "Only circle members can comment on this post"); return; } // §47
     }
     if (commentsSetting === "trip_crew") {
       const tripId = (post as any).trip_id as string | null;
       if (!tripId || !(await isAcceptedTripMember(client, tripId, callerId))) { sendError(res, "comments_limited", "Only trip crew can comment on this post"); return; }
     }
     if (commentsSetting === "verified") {
-      const { data: profile } = await sc.from("profiles").select("verified").eq("id", callerId).maybeSingle();
-      if (!(profile as any)?.verified) { sendError(res, "comments_limited", "Only verified accounts can comment on this post"); return; }
+      const { data: profile, error: verifiedErr } = await sc.from("profiles").select("verified").eq("id", callerId).maybeSingle();
+      if (verifiedErr) { sendError(res, "degraded_unavailable", "Could not check who may comment on this post. Please try again."); return; } if (!(profile as any)?.verified) { sendError(res, "comments_limited", "Only verified accounts can comment on this post"); return; } // §47
     }
   }
 
