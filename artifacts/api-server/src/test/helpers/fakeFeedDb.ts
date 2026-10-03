@@ -18,6 +18,18 @@
  * Embedded resources are not projected: a seeded row carries its embeds
  * (`post_media`, `profiles`) and the read returns the row as stored.
  * Unknown tables read as empty, so helpers a route calls in passing work.
+ *
+ * CHECKED AGAINST THE REAL CLIENT: registered in helpers/supabaseConformance.ts
+ * (`feedSubject`), so supabaseContract.test.ts measures it against the real
+ * supabase-js client. `failReads` / `failWrites` may name the error a table
+ * answers ({ code, message }), as the contract's worlds do. Do not loosen it
+ * to make a test pass.
+ * NOT MODELLED — every entry below is a declared gap the contract enforces:
+ *   divergent — error/unknown-column-42703 (there is no schema, so an unknown
+ *              column reads rows), rpc/success and rpc/error-resolves (no
+ *              function is modelled; every rpc resolves PGRST202),
+ *              rls/denied-read-yields-zero-rows and rls/denied-write-yields-42501
+ *              (no service-vs-user distinction: one seed, no policies)
  */
 import { orPredicate } from "./postgrestOrFilter.js";
 
@@ -36,10 +48,10 @@ export interface FakeFeedDbSpec {
   tables: Record<string, Row[]>;
   /** token → user id */
   users: Record<string, string>;
-  /** table → fail every read of it, or only the reads the predicate picks. */
-  failReads?: Record<string, true | ((r: FakeRead) => boolean)>;
-  /** table → fail every write to it. */
-  failWrites?: Record<string, true>;
+  /** table → fail every read of it (with the given error, or a statement timeout), or only the reads the predicate picks. */
+  failReads?: Record<string, true | PgError | ((r: FakeRead) => boolean)>;
+  /** table → fail every write to it (with the given error, or a refusal). */
+  failWrites?: Record<string, true | PgError>;
   /** PostgREST db-max-rows. */
   maxRows?: number;
   /** unique keys per table, for upsert conflict handling. */
@@ -55,6 +67,8 @@ export interface FakeFeedDb {
 
 const FAIL = { message: "canceling statement due to statement timeout", code: "57014", details: null, hint: null };
 
+export interface PgError { code: string; message: string }
+
 function cmp(a: any, b: any): number {
   if (a === b) return 0;
   if (a == null) return 1;
@@ -67,10 +81,13 @@ export function makeFeedDb(spec: FakeFeedDbSpec): FakeFeedDb {
   const writes: FakeFeedDb["writes"] = [];
   const maxRows = spec.maxRows ?? 1_000;
 
-  function readFails(r: FakeRead): boolean {
+  /** The error a read resolves with, or null when it succeeds. */
+  function readFailure(r: FakeRead): Record<string, unknown> | null {
     const f = spec.failReads?.[r.table];
-    if (!f) return false;
-    return f === true ? true : f(r);
+    if (!f) return null;
+    if (f === true) return { ...FAIL };
+    if (typeof f === "function") return f(r) ? { ...FAIL } : null;
+    return { code: f.code, message: f.message, details: null, hint: null };
   }
 
   function builder(table: string) {
@@ -100,7 +117,8 @@ export function makeFeedDb(spec: FakeFeedDbSpec): FakeFeedDb {
     function runRead(single: "no" | "maybe" | "one") {
       const r: FakeRead = { table, select: selectCols, head, count: wantCount, filters: [...filterText] };
       reads.push(r);
-      if (readFails(r)) return { data: null, error: { ...FAIL }, count: null, status: 500, statusText: "error" };
+      const readErr = readFailure(r);
+      if (readErr) return { data: null, error: readErr, count: null, status: 500, statusText: "error" };
       let rows = matches();
       for (const o of [...orders].reverse()) {
         rows = [...rows].sort((a, c) => cmp(a[o.col], c[o.col]) * (o.asc ? 1 : -1));
@@ -124,7 +142,8 @@ export function makeFeedDb(spec: FakeFeedDbSpec): FakeFeedDb {
 
     function runWrite(single: "no" | "maybe" | "one") {
       writes.push({ table, op, payload });
-      if (spec.failWrites?.[table]) return { data: null, error: { ...FAIL, message: `write to ${table} refused` }, count: null, status: 500, statusText: "error" };
+      const wf = spec.failWrites?.[table];
+      if (wf) return { data: null, error: wf === true ? { ...FAIL, message: `write to ${table} refused` } : { code: wf.code, message: wf.message, details: null, hint: null }, count: null, status: 500, statusText: "error" };
       let affected: Row[] = [];
       if (op === "insert" || op === "upsert") {
         const list = Array.isArray(payload) ? payload : [payload];

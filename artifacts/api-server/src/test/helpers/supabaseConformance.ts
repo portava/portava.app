@@ -57,6 +57,7 @@ import { makeTelemetryDb } from "./fakeDiscoveryTelemetryDb.js";
 import { makeFakeTrailsDb } from "./fakeTrailsDb.js";
 import { makeRulesDb } from "./fakeTrailRulesDb.js";
 import { makeFakeCandidateDb } from "./fakeCandidateDb.js";
+import { makeFeedDb } from "./fakeFeedDb.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -587,6 +588,39 @@ export function candidateSubject(): Subject {
   };
 }
 
+/**
+ * census-media §47's feed double (MEDIA lane). Registered when
+ * fakeConformanceRegistry found it unregistered; the declared gaps are the
+ * ones supabaseContract.test.ts measured against the real client.
+ */
+const FEED_GAPS: Record<string, Gap> = {
+  "error/unknown-column-42703": { mode: "divergent", why: "there is no schema; a select names no columns the fake checks, so an unknown column reads rows" },
+  "rpc/success": { mode: "divergent", why: "no function is modelled; every rpc resolves PGRST202 (unknown function), which the §47 routes never call" },
+  "rpc/error-resolves": { mode: "divergent", why: "no function is modelled; every rpc resolves PGRST202 (unknown function), which the §47 routes never call" },
+  "rls/denied-read-yields-zero-rows": { mode: "divergent", why: "no service-vs-user distinction; there is one seed and no policies" },
+  "rls/denied-write-yields-42501": { mode: "divergent", why: "no service-vs-user distinction; there is one seed and no policies" },
+};
+
+export function feedSubject(): Subject {
+  return {
+    name: "fakeFeedDb",
+    sourceFile: join(HERE, "fakeFeedDb.ts"),
+    gaps: FEED_GAPS,
+    build(w) {
+      const world = forFake(w);
+      const sizes = seedSizes(world.tables);
+      const db = makeFeedDb({
+        tables: world.tables,
+        users: {},
+        failReads: world.failReads,
+        failWrites: world.failWrites,
+        unique: world.unique,
+      });
+      return { client: db.client, writes: (t) => (db.tables[t]?.length ?? 0) - (sizes[t] ?? 0) };
+    },
+  };
+}
+
 export function allFakeSubjects(): Subject[] {
   return [
     layoverSubject(),
@@ -599,6 +633,7 @@ export function allFakeSubjects(): Subject[] {
     trailsSubject(),
     trailRulesSubject(),
     candidateSubject(),
+    feedSubject(),
   ];
 }
 
