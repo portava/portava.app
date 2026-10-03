@@ -108,13 +108,8 @@ const ALLOWED: Record<string, { sites: number; reason: string }> = {
       "an unreadable result costs that boost and nothing else. No row is shown or hidden by this read, so the empty set is the " +
       "correct value for both 'no shared threads' and 'could not check'.",
   },
-  "routes/posts.ts::post_hides": {
-    sites: 2,
-    reason:
-      "The VIEWER'S OWN hide list, on the following feed and the global feed. A failure re-shows posts that viewer had hidden — " +
-      "wrong, but visible to the one person who can tell it is wrong, recoverable by hiding again, and with no cross-user " +
-      "exposure: nothing here decides what OTHER people may see.",
-  },
+  // "routes/posts.ts::post_hides" (2 sites) was here until census-media §47: the following and global feeds now
+  // read the viewer's hide list WHOLE, by key, bind its error, and name an unread one in `failedSources`.
   "routes/pulse.ts::post_hides": {
     sites: 1,
     reason: "Same read, same reasoning, on the Pulse feed: the viewer's own hide list, no cross-user exposure.",
