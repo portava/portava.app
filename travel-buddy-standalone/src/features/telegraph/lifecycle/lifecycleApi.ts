@@ -27,19 +27,19 @@ export interface MessageReceipt {
 }
 
 /**
- * NOTE — there is deliberately no `fetchReceipts` here.
- *
- * `GET /api/threads/:id/receipts` exists, is tested, and applies two guarantees
- * at the API level: the §14.3 window, and the rule that a caller only ever
- * learns who read THEIR OWN messages. No screen calls it, because both chat
- * surfaces already hold every member's `last_read_at` — they fetch it anyway to
- * render reader-avatar chips — and `deriveReceiptState` below turns that into a
- * receipt with no extra round trip.
- *
- * An unused API client function would be the same dead weight as an unmounted
- * component, so it is not kept "in case". The endpoint stays because it is the
- * API-level statement of the rule; the client stays local because the data is
- * already here.
+ * NOTE — `fetchReceipts` and `markSeen` are at the foot of this module.
+ * `GET /api/threads/:id/receipts` applies two guarantees at the API level: the
+ * §14.3 window, and the rule that a caller only ever learns who read THEIR OWN
+ * messages. Until 2026-10-03 this note said no screen called it, because both
+ * chat surfaces read every member's `last_read_at` themselves and derived
+ * receipts with `deriveReceiptState`. That copy was read ONCE, when the thread
+ * opened, and never refreshed, so a message read while its sender watched said
+ * "Sent"; and a read that failed left it empty, so every message said "Sent".
+ * Both screens now go through `useThreadReadState`, which reads receipts from
+ * the server, re-reads them when a read lands, and keeps a failed read
+ * distinct. `deriveReceiptState` still decides one thing on the client: whether
+ * a direct chat's `read.updated` event already covers a message, so "Seen" can
+ * show before the refetch confirms it.
  */
 
 /**
@@ -209,4 +209,38 @@ export function deriveSeenBy(createdAt: string, memberReads: MemberRead[]): numb
 export function canOfferUnsend(receipt: MessageReceipt | null | undefined): boolean {
   if (!receipt) return false;
   return receipt.seenBy === 0;
+}
+
+/**
+ * `GET /api/threads/:id/receipts` — §7.3's receipts for the caller's OWN
+ * messages, at most 100 ids per call (the server refuses more).
+ *
+ * The screens used to read every member's `last_read_at` straight from
+ * `message_thread_members` ONCE, when the thread opened: never refreshed, so a
+ * message read while the sender watched said "Sent" until they left and came
+ * back; read as empty when it FAILED, so every message said "Sent" — a negative
+ * nobody measured; and outside the two guarantees this endpoint applies (the
+ * §14.3 window, and that a caller learns only who read THEIR OWN messages).
+ */
+export async function fetchReceipts(
+  threadId: string,
+  messageIds: string[],
+): Promise<LifecycleResult<{ threadId: string; receipts: MessageReceipt[] }>> {
+  return call(`/api/threads/${threadId}/receipts?messageIds=${encodeURIComponent(messageIds.join(','))}`);
+}
+
+/**
+ * `POST /api/threads/:id/seen` — §7.2's "seen", stated as the newest MESSAGE
+ * the person actually had on screen rather than a clock reading. The server
+ * refuses a message that is not in the thread, is a tombstone, or is outside
+ * the caller's §14.3 window, and never moves the marker backwards.
+ */
+export async function markSeen(
+  threadId: string,
+  upToMessageId: string,
+): Promise<LifecycleResult<{ advanced: boolean; lastReadAt: string | null }>> {
+  return call(`/api/threads/${threadId}/seen`, {
+    method: 'POST',
+    body: JSON.stringify({ upToMessageId }),
+  });
 }

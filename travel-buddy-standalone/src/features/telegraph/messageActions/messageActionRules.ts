@@ -48,3 +48,19 @@ export function editErrorCopy(code: string | undefined, message: string | undefi
     default: return message ?? 'Your edit was not saved. The message is unchanged.';
   }
 }
+
+/**
+ * What to say when a BLOCK did not go through (TELEGRAPH lane, 2026-10-03).
+ *
+ * Three Telegraph surfaces called `blockUser` and ignored its result: the
+ * thread screen's Block (and its long-press "Block this person") navigated back
+ * to the inbox as though the block had happened, and the inbox's request card
+ * declined the request — so it disappeared — whatever the block returned. A
+ * block that failed looked exactly like one that worked, and the person who
+ * believed they were safe could still be messaged. The copy says the one thing
+ * that matters: nothing changed.
+ */
+export function blockFailedCopy(error: string | undefined): string {
+  const base = 'Nothing was changed — they can still message you. Please try again.';
+  return error && error.trim().length > 0 ? `${error}. ${base}` : base;
+}
