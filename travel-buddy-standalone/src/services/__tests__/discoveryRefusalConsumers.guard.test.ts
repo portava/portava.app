@@ -997,7 +997,7 @@ const REGISTERED_SITES: Record<string, Record<string, number>> = {
 
 /** §112's own per-tree checks: no computed specifier, and every carrier call site in a registered consumer is pinned. */
 function round15Checks(): void {
-  assert.deepEqual(computedSpecifiers(), [], 'a client source loads a module by a computed specifier — the guard cannot tell whether it reads a refusal-carrying Discovery carrier; use a literal specifier');
+  const computed = computedSpecifiers(); assert.deepEqual(computed, [], `a client source loads a module by a computed specifier or require.context — the guard cannot tell whether it reads a refusal-carrying Discovery carrier; use a literal specifier: ${computed.join('; ')}`);  // §118 (GH53): the sites are named
   for (const [file, c] of Object.entries(CONSUMERS)) {
     assert.deepEqual(carrierSiteCounts(file, read(file), c.uses), REGISTERED_SITES[file] ?? {}, `${file}: a carrier call site was added or removed — every call site of a refusal-carrying read must branch on its coverage; register the new site in REGISTERED_SITES with the branch (G4) and the suite (G5) that prove it`);
   }
@@ -1741,8 +1741,8 @@ function moduleLoads(src: string): ModuleLoad[] {
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node)) {
       const e = unwrapOuter(node.expression);  // census-discovery §117 (GH45–GH47, GH49): `(require)`, `require!`, `(require as T)`, `(require satisfies T)` are require
-      const kind = e.kind === ts.SyntaxKind.ImportKeyword ? 'import' : ts.isIdentifier(e) && ts.idText(e) === 'require' ? 'require' : null;
-      if (kind) out.push({ kind, spec: literal(node.arguments[0]), call: node, text: node.getText(sf) });
+      const kind = e.kind === ts.SyntaxKind.ImportKeyword ? 'import' : ts.isIdentifier(e) && ts.idText(e) === 'require' ? 'require' : requireMember(e) === 'unstable_importMaybeSync' ? 'import' : null;  // census-discovery §118 (GH54): Metro's require.unstable_importMaybeSync(x) is an import of x
+      if (kind) out.push({ kind, spec: literal(node.arguments[0]), call: node, text: node.getText(sf) }); else if (requireMember(e) === 'context') out.push({ kind: 'require', spec: null, call: node, text: node.getText(sf) });  // §118 (GH53): require.context loads files the guard cannot resolve, so it is refused as a computed specifier
     } else if (ts.isExternalModuleReference(node)) out.push({ kind: 'require', spec: literal(node.expression), call: node, text: node.getText(sf) });
     ts.forEachChild(node, visit);
   };
@@ -1835,3 +1835,65 @@ describe("DV-83 guard reach — the angle-bracket and instantiation wrappers (§
     assert.deepEqual(moduleLoads("const m = (require<any>)('../services/compass.ts');\nexport default m;\n").map((d) => [d.kind, d.spec]), [['require', '../services/compass.ts']]);
   });
 });
+
+// ── census-discovery §118 (DV-83 round 21, lane W11-X2): the round-20 verifier's GH53, and the shapes beside it ──────
+//
+// Expo's Metro config enables `require.context(dir, recursive, re)` (unstable_allowRequireContext), and Metro's
+// collect-dependencies bundles every module under `dir` the pattern matches and hands their exports to the caller — with
+// no `import` or `require(x)` of the carrier the guard could see (GH53). Metro also collects
+// `require.unstable_importMaybeSync(x)`, an import of `x` under another name (GH54). `moduleLoads` now reads both: a
+// `require.context(…)` call (however its callee is wrapped, or its member spelled) is a load the guard cannot resolve
+// to files, so it is refused like a computed specifier, whatever its arguments; `require.unstable_importMaybeSync(x)` is
+// an import of `x`. `require.resolveWeak(x)` hands back an id and loads nothing, and a `.context` of anything but
+// `require` is not Metro's.
+const GH20V = {
+  requireContext: "const zzServicesF7 = require.context('../services', false, /^\\.\\/compass\\.ts$/);\nexport async function zzRawRecsF7(): Promise<number> {\n  const { fetchCompassRecommendations } = zzServicesF7('./compass.ts');\n  const res = await fetchCompassRecommendations({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  templateDir: "const zzCtx = require.context(`../services`, false, /compass/);\nexport const zzRecs = () => zzCtx('./compass.ts').fetchCompassRecommendations({ surface: 'passport' });\n",
+  parenRequire: "const zzCtx = (require).context('../services', false, /compass/);\nexport const zzRecs = () => zzCtx('./compass.ts').fetchCompassRecommendations({ surface: 'passport' });\n",
+  elementAccess: "const zzCtx = require['context']('../services', false, /compass/);\nexport const zzRecs = () => zzCtx('./compass.ts').fetchCompassRecommendations({ surface: 'passport' });\n",
+  asRequire: "const zzCtx = (require as any).context('../services', true);\nexport const zzRecs = () => zzCtx('./compass.ts').fetchCompassRecommendations({ surface: 'passport' });\n",
+  importMaybeSync: "export async function zzRawRecsGH54(): Promise<number> {\n  const { fetchCompassRecommendations } = await require.unstable_importMaybeSync('../services/compass.ts');\n  const res = await fetchCompassRecommendations({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  notLoads: "export const zzId = require.resolveWeak('../services/compass.ts');\nexport const zzOther = (canvas as any).context('2d');\nexport const zzMember = obj.require.context('../services');\n",
+};
+
+describe("DV-83 guard reach — the round-20 verifier's GH53 and the shapes beside it (§118)", () => {
+  it('G13 GH53: `require.context(dir, recursive, re)` in a client source is refused', () => {
+    assert.throws(() => withFiles({ 'src/components/zzGH53.tsx': GH20V.requireContext }, wholeGuard), /zzGH53\.tsx: require\.context/);
+  });
+  it('G13 GH53b: a template-literal directory is refused', () => {
+    assert.throws(() => withFiles({ 'src/components/zzGH53b.tsx': GH20V.templateDir }, wholeGuard), /zzGH53b\.tsx: require\.context/);
+  });
+  it('G13 GH53c: `(require).context(…)` is refused', () => {
+    assert.throws(() => withFiles({ 'src/components/zzGH53c.tsx': GH20V.parenRequire }, wholeGuard), /zzGH53c\.tsx: \(require\)\.context/);
+  });
+  it("G13 GH53d: `require['context'](…)` is refused", () => {
+    assert.throws(() => withFiles({ 'src/components/zzGH53d.tsx': GH20V.elementAccess }, wholeGuard), /zzGH53d\.tsx: require\['context'\]/);
+  });
+  it('G13 GH53e: `(require as any).context(…)` is refused', () => {
+    assert.throws(() => withFiles({ 'src/components/zzGH53e.tsx': GH20V.asRequire }, wholeGuard), /zzGH53e\.tsx: \(require as any\)\.context/);
+  });
+  it('G13 GH54: `require.unstable_importMaybeSync(x)` is an import of x, and is caught', () => {
+    assert.deepEqual(moduleLoads(GH20V.importMaybeSync).map((d) => [d.kind, d.spec]), [['import', '../services/compass.ts']]);
+    assert.throws(() => withFiles({ 'src/components/zzGH54.tsx': GH20V.importMaybeSync }, wholeGuard), /zzGH54\.tsx \(fetchCompassRecommendations\)/);
+  });
+  it('G13 GH53f CONTROL: `require.resolveWeak(x)`, another object\'s `.context(…)` and a member `.require.context` load nothing', () => {
+    assert.deepEqual(moduleLoads(GH20V.notLoads), []);
+    assert.equal(withFiles({ 'src/components/zzGH53f.tsx': GH20V.notLoads }, () => unregisteredNow().has('src/components/zzGH53f.tsx')), false);
+  });
+});
+
+/**
+ * §118 (GH53, GH54): the member a call reads off the global `require` — `require.context`, `(require).context`,
+ * `(require as T).context`, `require['context']` — or null for anything else (a member of another object, or of
+ * `obj.require`). Metro collects `require.context` and `require.unstable_importMaybeSync` as loads.
+ */
+function requireMember(e: ts.Expression): string | null {
+  if (ts.isPropertyAccessExpression(e) || ts.isElementAccessExpression(e)) {
+    const obj = unwrapOuter(e.expression);
+    if (!ts.isIdentifier(obj) || ts.idText(obj) !== 'require') return null;
+    if (ts.isPropertyAccessExpression(e)) return ts.isIdentifier(e.name) ? ts.idText(e.name) : null;
+    const arg = unwrapOuter(e.argumentExpression);
+    return ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg) ? arg.text : null;
+  }
+  return null;
+}
