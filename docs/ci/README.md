@@ -974,10 +974,31 @@ Measured on PR #562 at `b3293929c`: `CI` green, `Unwired checks` green, both
 verdict jobs green, and **no `CI (live DB)` run existed for the sha at all** —
 on a commit whose entire subject was a fix to two gates that execute only
 inside `api-server · check:all + live_pulse gate`. Three other open PRs were in
-the same state when this was written, their current heads carrying zero
-live-DB runs: #561 and #530 (both `dirty` against the 2026-10-03 advance of
-`main`) and #393, which has been `dirty` since 2026-09-05 and has therefore
-never been certified at its head at all.
+the same state that morning, their heads carrying zero live-DB runs: #561,
+#530 and #393. #561's head had moved and carried a run again within the hour;
+#530 was `dirty` against the 2026-10-03 advance of `main`; and #393 has been
+`dirty` since 2026-09-05, so its head has never been certified at all and has
+read green for four weeks.
+
+The condition is narrower than "the PR is conflicted", and a detector must not
+key on `mergeable_state`: a PR whose head landed while it was still mergeable
+KEEPS that run and goes `dirty` later when `main` moves, which is why #521,
+#54, #52 and #549 are all `dirty` and all have a live-DB run at their head:
+#521 and #54 green, #549 red and therefore visible, and #52's from the
+`push` trigger that predates the narrowing. What is missing is a run for a commit **pushed while the PR was
+already `dirty`**. The question to ask of a head sha is therefore whether a
+`CI (live DB)` run exists for it at all, and then whether
+`api-server · check:all + live_pulse gate` reached a conclusion of its own —
+not whether a verdict is red, because a superseded run's verdict job reports
+failure and looks the same as a real one.
+
+This is the third time the defect has been found. PR #521's description
+documents it under *"Read this first: a certification tier that switched itself
+off"*, with a measured table naming heads `5aa5d4836`, `71f156dc2` and
+`7a53438b6` and the conclusion "A conflicted PR is an unmonitored PR"; it
+declined to change the trigger, correctly, and left no mechanical remedy. The
+remedy in force is still "merge `main` promptly", which is a habit rather than
+a gate.
 
 There is no fix in the workflow to make here: a `pull_request` event for an
 unbuildable merge ref is not something a repository can ask for. What is

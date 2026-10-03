@@ -9,7 +9,7 @@ and none of them should be automated behind a green checkmark.
 | **Production** — never a target of CI | `ajrurzioarfkagpuxfnb` |
 | **CI (non-production), currently EMPTY** | `hwokxgbmezheskbzskfr` |
 
-The production ref is pinned at `.github/workflows/live-db.yml:150` as
+The production ref is pinned at `.github/workflows/live-db.yml:212#KNOWN_PROD_PROJECT_REF` as
 `KNOWN_PROD_PROJECT_REF` and matches `.replit:145,148`. The CI ref is what you will
 set as `CI_SUPABASE_PROJECT_REF`.
 
@@ -699,11 +699,11 @@ the set that had been identified as of 2026-08-10; of them, one is read.
   `SUPABASE_SERVICE_ROLE_KEY`, `EXPO_PUBLIC_SUPABASE_ANON_KEY` — all from the **CI**
   project.
 
-`KNOWN_PROD_PROJECT_REF` is already correct at `live-db.yml:150`; leave that line
+`KNOWN_PROD_PROJECT_REF` is already correct at `live-db.yml:212#KNOWN_PROD_PROJECT_REF`; leave that line
 alone. `assert-nonprod-supabase.sh:62` hard-fails if it is empty or malformed, by
 design.
 
-**But note what `live-db.yml:150` is and is not.** It is the workflow's top-level
+**But note what `live-db.yml:212#KNOWN_PROD_PROJECT_REF` is and is not.** It is the workflow's top-level
 `env:` block. It configures **GitHub Actions runners only**. It puts nothing in your
 shell. Both `KNOWN_PROD_PROJECT_REF` and `CI_SUPABASE_PROJECT_REF` must *also* be
 exported locally before any guarded script will run on your machine — see §5.2, which
@@ -894,7 +894,7 @@ script hard-fails on an unset `KNOWN_PROD_PROJECT_REF` (`:62`) and on an unset
 nothing** — including both negative controls in §5.3, which is the entire "do not
 trust a green run" mechanism.
 
-Step 7's `KNOWN_PROD_PROJECT_REF` at `live-db.yml:150` does not help here: that is a
+Step 7's `KNOWN_PROD_PROJECT_REF` at `live-db.yml:212#KNOWN_PROD_PROJECT_REF` does not help here: that is a
 workflow `env:` block, read by GitHub Actions runners. It is not your shell.
 
 From `artifacts/api-server`:
