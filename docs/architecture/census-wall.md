@@ -2139,23 +2139,28 @@ misses a lane, and MC-5 was re-run and killed.
 - **W110** (`WallResponse`): the server contract is unchanged; the client type gains the optional
   `degraded` the server already sent. C stands.
 - **W158** (offline → cached feed, no fake live states): the cached-page path is unchanged; its pointers are
-  repointed (`useWallFeed.ts:194-212`). F5 adds that an offline first open with NO cached page now says it
+  repointed to the shifted cached-page branch. F5 adds that an offline first open with NO cached page now says it
   could not load. C stands.
 - **W179** (takedowns reach cached projections): F3 closes a fail-open on exactly that path. C stands.
 - **W146**: row text updated for 19.3; `?` stands.
 
 Pointers repaired, verdicts untouched: `WallFeed.tsx` (W1, W149, W167's neighbours at lines 118, 426, 447),
 `useWallFeed.ts` (lines 394–399, 440, 568), the `wallPerformance.test.ts` and `wallApi.ts` anchors at lines
-423, 476, 774, 1152, 1305 and 1412, and `wall-certification-packet.md:249`.
+423, 476, 774, 1152, 1305 and 1412, and the `WallFeed.tsx` windowing anchor in `wall-certification-packet.md`.
 
 ### 19.7 Headline after §19
 
 **Unchanged: 205 requirements · 199 BUILT-AND-CORRECT · 0 BUILT-BUT-WRONG · 0 NOT-BUILT · 6 CANNOT-VERIFY**,
 counted from the rows in §2. 199 + 0 + 0 + 6 = 205. (See 19.1 for the §14.5 / §15.4 figures that disagree.)
 
-- NOT-GRADED: artifacts/api-server/src/test/wallFollowGraphWhole.test.ts — §19.2's proof for F1/F2; no row's verdict moved on it
-- NOT-GRADED: travel-buddy-standalone/src/features/wall/components/__tests__/WallScreen.failedRead.component.test.tsx — §19.2's proof for F5/F6; controlled evidence for built work
-- NOT-GRADED: travel-buddy-standalone/src/features/wall/components/__tests__/WallMomentsStrip.staleResponse.component.test.tsx — §19.2's proof for F7
-- NOT-GRADED: travel-buddy-standalone/src/features/wall/hooks/__tests__/useWallSessionIntent.staleResponse.component.test.tsx — §19.2's proof for F8
-- NOT-GRADED: travel-buddy-standalone/src/features/wall/hooks/__tests__/useWallFeed.failedLanes.component.test.tsx — §19.2's proof for F5's session behaviour
-- NOT-GRADED: travel-buddy-standalone/src/features/wall/services/__tests__/wallApi.degradedLanes.component.test.ts — §19.2's proof for F5's wire half
+| BUILT-AND-CORRECT | **199** |
+|---|---|
+| BUILT-BUT-WRONG | **0** |
+| NOT-BUILT | **0** |
+| CANNOT-VERIFY | **6** |
+
+This block restates the headline from the rows so that the last headline in the document is the one the
+rows support; `check:census-integrity` reads the LAST such block, which until this pass was §14.5's.
+
+- NOT-GRADED: artifacts/api-server/src/lib/wallMomentRead.ts — §19.2 swept it and §19.5 records a finding in it that the security lane's file ownership keeps this lane from fixing; no Wall row grades the previous-readings read
+- NOT-GRADED: artifacts/api-server/src/lib/wallMoments.ts — §19.2 names it among the read paths swept; nothing was found or changed there and no Wall row grades moment building

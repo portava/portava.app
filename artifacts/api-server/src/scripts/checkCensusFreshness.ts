@@ -1591,6 +1591,10 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/wallQuickMedia.test.ts",
     // WIDENED 2026-09-27 by lane E (census-media §38.11): W10 now spells its tab-registration citation as the standalone screen, so the guard checks the file the row means rather than the repo-root mock above.
     "travel-buddy-standalone/app/(tabs)/_layout.tsx",
+    // ADDED 2026-10-03 by census-wall §19: the proofs §19.2 cites for F1–F4.
+    "artifacts/api-server/src/test/wallFollowGraphWhole.test.ts",
+    "artifacts/api-server/src/test/wallTakedownRevalidate.test.ts",
+    "artifacts/api-server/src/test/wallEngagementLoop.test.ts",
   ],
   // Discovery has NO SPEC. Its 67 rows are 25 inbound obligations from other
   // surfaces' specs, 9 rows shared with the Global Input Intelligence census,
