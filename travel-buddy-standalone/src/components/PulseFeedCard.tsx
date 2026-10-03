@@ -356,7 +356,7 @@ function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: Puls
                     key="save"
                     entityType="post"
                     entityId={item.id}
-                    initialSaved={item.savedByMe ?? false}
+                    initialSaved={item.savedByMe ?? false} savedUnknown={item.savedByMe === null}
                     size={POST_ACTION_ICON_SIZE}
                     sessionId={sessionId}
                   />
@@ -500,7 +500,7 @@ function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: Puls
                   key="save"
                   entityType="post"
                   entityId={item.id}
-                  initialSaved={item.savedByMe ?? false}
+                  initialSaved={item.savedByMe ?? false} savedUnknown={item.savedByMe === null}
                   size={POST_ACTION_ICON_SIZE}
                   sessionId={sessionId}
                 />
@@ -680,7 +680,7 @@ function GemCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: Pulse
             variant="light"
           />
           <View style={{ flex: 1 }} />
-          <SaveButton entityType="post" entityId={item.id} initialSaved={item.savedByMe ?? false} size={POST_ACTION_ICON_SIZE} sessionId={sessionId} />
+          <SaveButton entityType="post" entityId={item.id} initialSaved={item.savedByMe ?? false} savedUnknown={item.savedByMe === null} size={POST_ACTION_ICON_SIZE} sessionId={sessionId} />
           <CompassFeedbackMenu
             recommendationId={item.id}
             itemType={item.type}
@@ -733,7 +733,7 @@ function ItineraryCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item:
               <Text style={s.outlineText}>Use this plan</Text>
             </Pressable>
             <View style={{ flex: 1 }} />
-            <SaveButton entityType="post" entityId={item.id} initialSaved={item.savedByMe ?? false} size={POST_ACTION_ICON_SIZE} sessionId={sessionId} />
+            <SaveButton entityType="post" entityId={item.id} initialSaved={item.savedByMe ?? false} savedUnknown={item.savedByMe === null} size={POST_ACTION_ICON_SIZE} sessionId={sessionId} />
             <CompassFeedbackMenu
               recommendationId={item.id}
               itemType={item.type}

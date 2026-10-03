@@ -294,16 +294,16 @@ router.get("/pulse", async (req, res) => {
   // Batch-fetch which posts the viewer has bookmarked so we can include savedByMe
   // in the response without a per-post query.
   const postIds = rows.map((r: any) => r.id as string);
-  const savedSet = new Set<string>();
+  const savedSet = new Set<string>(); let savedReadFailed = false;
   if (postIds.length > 0) {
     try {
-      const { data: saveRows } = await sc
+      const { data: saveRows, error: saveRowsErr } = await sc
         .from("post_saves")
         .select("post_id")
         .eq("user_id", user.id)
-        .in("post_id", postIds);
+        .in("post_id", postIds); if (saveRowsErr) savedReadFailed = true;
       for (const r of (saveRows as any[]) ?? []) savedSet.add(r.post_id as string);
-    } catch { /* non-fatal — savedByMe defaults to false */ }
+    } catch { savedReadFailed = true; }  // census-discovery §122 (DV-83 round 23, B36): a failed read is never "you saved none of these" — savedByMe is null and post_saves is named
   }
 
   // Batch-fetch featured-by-Portava status so the badge renders without a
@@ -374,7 +374,7 @@ router.get("/pulse", async (req, res) => {
       spanTags:         spans.tags,
       spanHashtags:     spans.hashtagUsages,
       // Bookmark state for the authenticated viewer
-      savedByMe: savedSet.has(row.id as string),
+      savedByMe: savedReadFailed ? null : savedSet.has(row.id as string),
       // Featured-by-Portava badge category — null when post has not been featured
       featuredByPortava: featuredPulseMap.get(row.id as string) ?? null,
       // Canonical place ID — used by the place-affinity boost in scoreCandidate
@@ -909,7 +909,7 @@ router.get("/pulse", async (req, res) => {
   } catch { /* non-fatal — place cards degrade gracefully */ }
 
   // perf-trim: rankedCandidates stripped — not rendered by any client component; internal ranking state only
-  res.json({ posts: pulsePostsForViewer(rows, orderedPosts, user.id), total: orderedPosts.length, tab, prompts, placeCards, sessionId }); // census-media §42: a post whose place mapPublicPost withholds reaches a non-owner as city and country only (pulsePostsForViewer, at the foot of this file)
+  res.json({ posts: pulsePostsForViewer(rows, orderedPosts, user.id), total: orderedPosts.length, tab, prompts, placeCards, sessionId, ...(savedReadFailed ? { failedSources: ["post_saves"] } : {}) }); // census-discovery §122 (B36) names an unread save state; census-media §42: a post whose place mapPublicPost withholds reaches a non-owner as city and country only (pulsePostsForViewer, at the foot of this file)
 
   // ── Impressions: the SERVED page ────────────────────────────────────────────
   // Logged HERE, after res.json, because `orderedPosts` is only final here: the

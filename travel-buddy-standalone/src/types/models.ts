@@ -903,7 +903,7 @@ export interface PulseFeedItem {
   commentCount?: number;
   shareCount?: number;
   likedByMe?: boolean;
-  savedByMe?: boolean;
+  savedByMe?: boolean | null;  // census-discovery §122 (B36): null when the viewer's save state could not be read
   canLike?: boolean;
   canComment?: boolean;
   canShare?: boolean;
