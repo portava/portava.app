@@ -3849,3 +3849,193 @@ rows to `DAY` in the same transaction and says how many it touched.
     cd artifacts/api-server
     grep -c 'schema_migration_ledger' ../../db/rollback/2026-10-02-*-rollback.sql   # >= 2 each
     grep -n 'REFUSING' ../../db/rollback/2026-10-02-3502-*-rollback.sql             # the NULL-expiry guard
+
+## 2026-10-03 — the Telegraph three (2325 → 2810 → 3000): two rollbacks already existed, 2325's did not and now does; NOT applied anywhere
+
+The production rollout stages these three in this apply order, as
+`1_apply_2325.sql` / `2_apply_2810.sql` / `3_apply_3000.sql`:
+
+    2325_telegraph_unsend_before_seen.sql
+    2810_telegraph_message_kernel.sql
+    3000_telegraph_unsend_authoritative.sql
+
+**Two of the three already had rollbacks, and they were not rewritten.**
+
+    db/rollback/2026-09-12-2810-telegraph-message-kernel-rollback.sql   (pre-existing)
+    db/rollback/2026-09-23-3000-telegraph-unsend-authoritative-rollback.sql   (pre-existing)
+    db/rollback/2026-10-03-2325-telegraph-unsend-before-seen-rollback.sql   (NEW, this entry)
+
+2810's own header already names its rollback by path, and 3000's carries the
+full precondition/postcondition/ledger-delete shape. Both were re-read and then
+**executed** rather than taken on trust (see the rehearsal below); both work.
+
+**2325 had no rollback of its own.** What it had was a section inside
+`db/rollback/2026-09-07-ci-migrations-rollback.sql`, written for the PR #472 CI
+batch. That section is not a substitute and was not reused: it is one of five
+`BEGIN; … COMMIT;` blocks in a file about five different migrations, so it
+cannot be run for 2325 alone; it has no preconditions, no postconditions and no
+order guard; and it predates both 2810 and 3000, so it would drop
+`messages.unsent_at` and `telegraph_unsend_message_before_seen` with no idea
+that 2810 re-declares the first and 3000 replaces the second. It is left
+untouched as the historical artifact it is.
+
+### The reverse order, and how it is enforced rather than advised
+
+    db/rollback/2026-09-23-3000-telegraph-unsend-authoritative-rollback.sql
+    db/rollback/2026-09-12-2810-telegraph-message-kernel-rollback.sql
+    DELETE FROM public.schema_migration_ledger
+     WHERE filename = '2810_telegraph_message_kernel.sql';
+    db/rollback/2026-10-03-2325-telegraph-unsend-before-seen-rollback.sql
+
+**3000 before 2325, because 3000 does not create the unsend function — it
+`CREATE OR REPLACE`s 2325's body.** On a database carrying 3000, the function
+named `telegraph_unsend_message_before_seen` is 3000's text. A plain
+`DROP FUNCTION` in 2325's rollback would therefore have reversed 3000 too,
+silently, while 3000's ledger row still claimed it applied. The new file refuses
+instead, and it establishes the answer **two independent ways** — the installed
+`prosrc` (3000's `already_unsent` / `already_deleted` / `recipientCount` /
+`lifecycle_state` vocabulary, none of which appears in 2325's body) and the
+ledger row — rather than trusting either alone. A function it can match to
+neither body is also a refusal.
+
+**2810 before 2325, because 2810 re-declares `messages.unsent_at` itself** —
+`ADD COLUMN IF NOT EXISTS`, a silent no-op on a database that already ran 2325 —
+**and `telegraph_outbox_from_message()` reads it** to decide whether to publish
+`message.unsent`. Dropping the column underneath that trigger leaves a trigger
+that cannot run, and it would not fail loudly: the trigger reads
+`telegraph_message_kernel_enabled` first and returns immediately while it is
+FALSE, so the breakage stays invisible until the day an owner turns the flag on,
+at which point every lifecycle UPDATE on `public.messages` starts erroring. The
+new file refuses while **any** 2810 object survives and names all of them in one
+message (the outbox table, both triggers, the trigger/backfill functions,
+`messages.sequence` / `messages.lifecycle_state`, the flag row).
+
+**The converse hazard, which the pre-existing 2810 rollback creates and which is
+worth knowing before the rollout:** 2810's rollback drops `messages.unsent_at`
+unconditionally, although 2325 is the migration that created it. For the full
+reverse chain that is harmless — by the time 2325's rollback runs the column is
+already gone and its `DROP COLUMN IF EXISTS` is a verified no-op. But a
+**partial** reversal that stops after 2810 is a broken resting state, not a safe
+one: 2325's function still exists and still writes `unsent_at`, and the column
+is gone, so the first unsend after that point raises. If 2810's rollback has
+been run, 2325's must be run too.
+
+### The one defect found in a pre-existing file, recorded here rather than patched
+
+**`db/rollback/2026-09-12-2810-telegraph-message-kernel-rollback.sql` does not
+delete its own ledger row.** It predates the 2026-09-28 standard that every
+rollback does, and it is the only file in this chain that still does not —
+measured, not inferred: run to completion on the local harness it removes every
+2810 object and the flag row and emits exactly one `DELETE 1`, which is the
+`feature_flags` delete, leaving `schema_migration_ledger` carrying
+`2810_telegraph_message_kernel.sql`.
+
+That leftover row is quietly dangerous: the applier reads it and would **skip**
+2810 on the next apply, leaving a database whose ledger claims a kernel it does
+not have, after which 3000 fails its own preconditions. So 2325's rollback
+**refuses** on it and prints the one-statement remedy, which is why the `DELETE`
+appears as a step in the reverse order above. The file itself was not edited,
+per the standing instruction not to rewrite a working rollback; the durable fix
+is to add
+
+    DELETE FROM public.schema_migration_ledger
+     WHERE filename = '2810_telegraph_message_kernel.sql';
+
+to 2810's rollback, exactly as the 2026-09-28 entry above did for the twelve
+media rollbacks and 3350. Until someone does, it is a manual step.
+
+### What each rollback destroys, named rather than discovered during one
+
+**2325's rollback** drops `public.messages.unsent_at`, the partial index
+`messages_unsent_at_idx`, and `public.telegraph_unsend_message_before_seen`.
+Every row that was ever unsent keeps `deleted_at` and `body = ''`, so nothing
+becomes visible — but every one of them becomes **indistinguishable from an
+ordinary delete**, permanently. There is no second copy once the chain is fully
+reversed: `lifecycle_state` is 2810's column and 2810's rollback drops it one
+step earlier, and the outbox rows that carried `message.unsent` went with
+`public.telegraph_outbox` in that same step. Dropping the function also removes
+the only implementation in this tree that closes §7.4's read-vs-unsend race
+under a lock, so §28's "unsend-after-seen violations: 0" stops being enforceable
+anywhere: both `services/telegraph/unsend.ts` and
+`server/telegraph/commandRoute.ts` do a read-then-write across two implicit
+transactions, which is the defect 2325 exists to fix. **Roll the application
+back too.** The emptied `body` was never recoverable and this file does not
+pretend otherwise. The count of rows about to lose their marker is reported as a
+`NOTICE` before anything is dropped.
+
+**2810's rollback** (pre-existing, and its own header says this plainly) destroys
+every sequence ever allocated with `messages.sequence`, and every unconsumed
+event with `public.telegraph_outbox`. Its header's advice is the important part
+and still stands: **turning the flag off is the reversal almost everyone wants**,
+and it loses nothing. It also drops `client_message_id`, `idempotency_key`,
+`content_ref`, `unsent_at`, `lifecycle_state`, the `message_threads` counter and
+policy columns, and the four `message_thread_members` sequence bounds. It
+deliberately does **not** drop `visible_from_at` (migration 2400).
+
+**3000's rollback** (pre-existing) destroys nothing: 3000 creates no object and
+replaces one function body, so its rollback restores 2325's body. Its header's
+warning is the load-bearing part — doing that while the post-#527 application is
+deployed breaks unsend for every already-deleted or already-unsent message,
+because the deployed `UNSEND_OUTCOMES` list does not contain `already_gone`.
+
+### The flag row `telegraph_message_kernel_enabled`, and what the rollback does with it
+
+2810 seeds it **FALSE** and both its triggers read it as their first statement
+and return immediately while it is not TRUE, so a database that has run 2810
+behaves exactly as one that has not. **The pre-existing 2810 rollback deletes
+that row, last, deliberately** — last so that if any statement above it fails,
+the flag is still there to be turned off, which is the cheap reversal. Deleting
+it is right rather than leaving it: the row's whole meaning is "the kernel this
+flag gates exists", and a flag that gates dropped triggers is a switch wired to
+nothing, which the next reader would have to re-derive. 2325's rollback treats a
+**surviving** flag row as evidence that 2810 is still applied and refuses on it.
+
+One narrowing worth recording: 2810 seeds with `ON CONFLICT (flag) DO NOTHING`,
+so if the row had somehow pre-existed 2810 its rollback would delete a row 2810
+did not create. The sixteen flag-seed rollbacks of 2026-09-28 guard exactly that
+by comparing the seed description by md5; 2810's rollback predates that
+convention and does not. Not changed here, for the same reason as the ledger row.
+
+### Rehearsed on the local harness — refusals and end state measured, not argued
+
+`scripts/local-db/up.sh` replayed the canonical chain from 2093 onto production's
+baseline structure (390 migrations in byte order, 12 known-unreplayable), so
+2325, 2810 and 3000 were all genuinely installed; each scenario then ran on its
+own database cloned from that template, with the three ledger rows seeded by hand
+because the harness applies with `psql` rather than through the applier.
+
+- **2325's rollback run first**, 3000 and 2810 applied → **REFUSED** on 3000's
+  installed body.
+- **After 3000's rollback only** → **REFUSED**, naming all six surviving 2810
+  objects in one message.
+- **3000 → 2810 → 2325** → refused on 2810's leftover ledger row, printing the
+  `DELETE`; after it, **passed**. End state: zero functions by that name, no
+  `unsent_at`, no index, `deleted_at` and `last_read_at` intact, zero of the
+  three ledger rows left, `telegraph_outbox` gone.
+- **Second run of 2325's rollback** → passed, `DELETE 0`, a clean no-op.
+- **A 2325-only database** (2810 and 3000 never applied) → passed; this is the
+  path on which the column drop is the one that actually destroys data.
+- **Ledger claims 3000 applied but the function is gone** → **REFUSED**.
+- **`public.schema_migration_ledger` absent** → **REFUSED**, because two checks
+  could not then establish their own result. Fails closed.
+- **With real rows** — a 2325-only database carrying one unsent message, one
+  ordinary delete and one live message: the notice counted the **1** unsent row
+  before the drop; afterwards all 3 rows were still present, 2 still suppressed,
+  1 still live, and the unsent/delete distinction gone. Exactly what the header
+  promises.
+
+**What the rehearsal does not establish.** It is not production. The harness
+carries production's baseline *structure* and no production rows, 12 files in the
+chain are known-unreplayable there, and the ledger rows were seeded by hand.
+**None of these three rollbacks has been run against production or against any
+Supabase project, and none of the three forward migrations is in production's
+ledger.** The refusals and the end state are measured on the harness; production
+row counts are not.
+
+### Re-establish independently
+
+    cd artifacts/api-server
+    grep -c 'schema_migration_ledger' ../../db/rollback/2026-10-03-2325-*-rollback.sql   # >= 2
+    grep -c 'schema_migration_ledger' ../../db/rollback/2026-09-12-2810-*-rollback.sql   # 0 — the defect above
+    grep -c 'REFUSING' ../../db/rollback/2026-10-03-2325-*-rollback.sql                  # 4 — the order guards
+    env -u LOCAL_DB_URL bash scripts/local-db/up.sh                                      # replay the chain, then rehearse
