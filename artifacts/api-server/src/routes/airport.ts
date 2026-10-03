@@ -91,11 +91,40 @@ import {
 // two imports are the storage and the routes that finally give it members.
 import {
   certifyCrewPlan,
-  unsplitPlan,
+  evaluateCrewLocationShare,
+  locationPrecisionFor,
+  type CrewLocationGrant,
   type CrewMember,
+  type CrewShareSignals,
+  type LocationPrecision,
 } from "../services/airport/LayoverCrewService.js";
+// §14.1 the crew's own itinerary (3513) and §14 L4's grant store (3514). Both
+// are row sources for arithmetic that already existed: `certifyCrewPlan` has
+// been called with the empty unsplit plan, and `locationPrecisionFor` has had
+// nowhere to read a grant from, so its only reachable answers were `none` and
+// `meeting_point`.
+import {
+  MAX_CREW_STOPS_PER_BRANCH,
+  UNSPLIT_BRANCH_ID,
+  assignCrewBranches,
+  buildCrewPlan,
+  canonBranchId,
+  crewBranchAssignments,
+  crewStops,
+  dropCrewStop,
+  proposeCrewStop,
+} from "../services/layover/LayoverCrewItineraryStore.js";
+import {
+  boundedGrantWindow,
+  crewShareSignalsFor,
+  grantCrewLocation,
+  newestGrantsForCrew,
+  revokeCrewLocation,
+} from "../services/layover/LayoverCrewLocationGrantStore.js";
 import {
   CREW_TTL_MINUTES,
+  type CrewMemberRow,
+  type CrewRow,
   activeCrewForUser,
   crewMembers,
   createCrew,
@@ -3000,7 +3029,22 @@ async function crewSolverMembers(
   sc: any,
   members: Array<{ userId: string; sessionId: string }>,
   nowMs: number,
-): Promise<{ ok: true; members: CrewMember[] } | { ok: false }> {
+): Promise<
+  | {
+      ok: true;
+      members: CrewMember[];
+      /**
+       * The session rows the records were certified FROM, kept rather than
+       * discarded. §14.1's location-share terminators include session expiry
+       * and boarding, and both are facts about these rows; re-reading
+       * `layover_sessions` to get them would be a second read of the same
+       * table in one request, which is how two numbers in one response stop
+       * agreeing (the reason `liveConditions` is read once).
+       */
+      sessionsById: Map<string, LayoverSession>;
+    }
+  | { ok: false }
+> {
   const read = await readSessionsByIds(sc, members.map((m) => m.sessionId));
   if (!read.ok) return { ok: false };
   const byId = new Map(read.sessions.map((s) => [s.id, s]));
@@ -3025,7 +3069,7 @@ async function crewSolverMembers(
       record: certifyCrewMemberRecord(resolved.airport, session, nowMs),
     });
   }
-  return { ok: true, members: out };
+  return { ok: true, members: out, sessionsById: byId };
 }
 
 /**
@@ -3035,20 +3079,59 @@ async function crewSolverMembers(
 async function crewPayload(
   sc: any,
   viewerId: string,
-  crew: { id: string; title: string; city: string; meetingPointLabel: string | null; status: string; maxMembers: number; expiresAt: string; createdBy: string },
+  crew: { id: string; title: string; city: string; meetingPointLabel: string | null; status: string; maxMembers: number; expiresAt: string; createdBy: string; updatedAt: string },
   members: Array<{ userId: string; sessionId: string; role: string }>,
   nowMs: number,
 ): Promise<{ ok: true; body: Record<string, unknown> } | { ok: false }> {
   const solver = await crewSolverMembers(sc, members, nowMs);
   if (!solver.ok) return { ok: false };
 
-  // The crew has no itinerary of its own yet, so the plan certified here is the
-  // EMPTY unsplit plan: one branch, everybody, no stops. That is not a
-  // placeholder — it is the question "can this group be together at all and
-  // when must they be back", which is exactly `sharedReturnBy` plus a
-  // zero-minute branch, and it is the honest thing to publish before anyone has
-  // proposed a stop. A crew itinerary is a further build; see BUILD-BACKLOG.
-  const solution = certifyCrewPlan(unsplitPlan(solver.members, []), solver.members, { nowMs });
+  // THE CREW'S OWN ITINERARY (3513), WHICH IS WHAT FINALLY EXERCISES §14.1.
+  //
+  // This call site used to be `unsplitPlan(solver.members, [])` — one branch,
+  // everybody, NO STOPS — and the comment here explained that the empty plan
+  // was the honest thing to publish before a crew could have an itinerary.
+  // That was true and it is no longer: the stops and the branch assignments
+  // exist, so the plan certified below is the crew's real one.
+  //
+  // BOTH READS REFUSE THE WHOLE PAYLOAD, and this is the single most important
+  // line in the change. An empty plan CERTIFIES FEASIBLE: zero needed minutes
+  // fit inside any usable minutes and end before any deadline. So an unreadable
+  // stops table served as `[]` would publish `feasible: true` over an itinerary
+  // nobody could measure, to a crew about to go and walk it. A refusal is a
+  // retry; a false green is a missed flight.
+  //
+  // The same holds for the assignments, in the other direction: an unreadable
+  // assignment list served as `[]` reads as UNSPLIT, so a crew that had split
+  // would be certified as one branch doing all the stops together — the
+  // stricter arithmetic, but about a plan that does not exist, and `split`
+  // would go out false over a crew that had split.
+  const stops = await crewStops(sc, crew.id);
+  if (!stops.ok) return { ok: false };
+  const assignments = await crewBranchAssignments(sc, crew.id);
+  if (!assignments.ok) return { ok: false };
+
+  const plan = buildCrewPlan({
+    memberIds: members.map((m) => m.userId),
+    stops: stops.value,
+    assignments: assignments.value,
+  });
+  const solution = certifyCrewPlan(plan, solver.members, { nowMs });
+
+  // §14 L4, the precision ladder's row source (3514).
+  //
+  // A FAILED READ DEGRADES RATHER THAN REFUSING, which is the opposite of the
+  // two reads above, and the difference is which way the error points. An
+  // unreadable itinerary CERTIFIES A PLAN AS FEASIBLE, so it must refuse. An
+  // unreadable grant table discloses LESS — every member reads as
+  // `never_granted`, so the ladder answers `meeting_point` — so refusing the
+  // whole crew over it would take the roster and the deadline away from a crew
+  // for the sake of a field that is already failing safe.
+  //
+  // It is still reported. A feature that silently degrades to "nobody is
+  // sharing" looks completely correct while telling the traveller who tapped
+  // "share my location" nothing at all.
+  const grants = await newestGrantsForCrew(sc, crew.id);
 
   const otherIds = members.map((m) => m.userId).filter((id) => id !== viewerId);
   const cards = await crewMemberCards(sc, viewerId, otherIds);
@@ -3081,11 +3164,215 @@ async function crewPayload(
           usableMinutes: m.usableMinutes,
           returnState: m.returnState,
         })),
+        // PER-BRANCH FEASIBILITY, ON THE WIRE FOR THE FIRST TIME. The solver has
+        // computed `branches` all along and this payload published only the
+        // plan-level roll-up, so a crew whose split left one member short was
+        // told `feasible: false` with no way to see which branch or who. Each
+        // verdict is `certifyCrewPlan`'s own, unmodified.
+        branches: solution.branches.map((b) => ({
+          branchId: b.branchId,
+          memberIds: b.memberIds,
+          branchReturnBy: b.branchReturnBy,
+          bindingMemberIds: b.bindingMemberIds,
+          neededMinutes: b.neededMinutes,
+          usableMinutes: b.usableMinutes,
+          feasible: b.feasible,
+          reasons: b.reasons,
+          perMemberSlackMin: b.perMemberSlackMin,
+        })),
+      },
+      // The crew's itinerary as proposed, which is what the branches above were
+      // certified over. `proposedBy` travels because a shared plan with no
+      // attribution is one nobody can discuss.
+      itinerary: {
+        stops: stops.value.map((st) => ({
+          id: st.id,
+          branchId: st.branchId,
+          title: st.title,
+          durationMin: st.durationMin,
+          travelMin: st.travelMin,
+          insideAirport: st.insideAirport,
+          locationLabel: st.locationLabel,
+          proposedBy: st.proposedBy,
+        })),
+        maxStopsPerBranch: MAX_CREW_STOPS_PER_BRANCH,
       },
       members: cards.cards,
-      degraded: cards.degraded,
-      degradedReasons: cards.degradedReasons,
+      // §14.1 "No precise stranger location by default", per member, finally
+      // answered from a grant rather than from `null`. See `crewLocationRungs`.
+      locationRungs: crewLocationRungs({
+        viewerId,
+        crew,
+        members,
+        sessionsById: solver.sessionsById,
+        grants: grants.ok ? grants.value : null,
+        nowMs,
+      }),
+      // Whether the VIEWER is sharing — see `crewOwnShare`. `null` is
+      // "could not be read", never "not sharing".
+      yourShare: crewOwnShare({
+        viewerId,
+        crew,
+        members,
+        sessionsById: solver.sessionsById,
+        grants: grants.ok ? grants.value : null,
+        nowMs,
+      }),
+      degraded: cards.degraded || !grants.ok,
+      degradedReasons: grants.ok
+        ? cards.degradedReasons
+        : [...cards.degradedReasons, "location_grants_unreadable"],
     },
+  };
+}
+
+/**
+ * §14's disclosure rung for every crewmate, from the viewer's seat.
+ *
+ * PURE, and every answer is `locationPrecisionFor`'s — this function assembles
+ * arguments and does not decide anything. That matters because the ladder has
+ * an exhaustive test sweep behind it asserting that no argument combination
+ * yields `precise` without a live, target-issued, crew-scoped grant, and that
+ * guarantee is only worth something if the call site adds no rules of its own.
+ *
+ * ── WHAT IS PUBLISHED IS THE RUNG, NOT A POSITION ────────────────────────────
+ * There is no coordinate anywhere in this response and none in the schema: 3514
+ * stores permission, and 2984's postcondition asserting the crew tables hold no
+ * coordinate is untouched. The rung is what the §13 map element and the
+ * meet-action gates are keyed on, so publishing it is what makes them
+ * expressible; publishing a position is a separate build with its own retention
+ * answer.
+ *
+ * ── AN UNREADABLE GRANT TABLE IS `null`, NOT AN EMPTY MAP ────────────────────
+ * `grants: null` means the read failed, and every member then gets
+ * `grant: undefined`, which the ladder reads as `never_granted` → the
+ * `meeting_point` rung. That is the same answer an empty map would give, which
+ * is exactly why the two are kept apart here: the caller reports
+ * `location_grants_unreadable` on the degrade, so "nobody is sharing" and "we
+ * could not tell" are different things on the wire even though they are the
+ * same rung.
+ *
+ * ── THE VIEWER'S OWN ROW IS INCLUDED ─────────────────────────────────────────
+ * `locationPrecisionFor` answers `precise` with reason `self` for the viewer,
+ * and it is published rather than filtered out so a client can render one list
+ * without a special case. It discloses nothing: a traveller's own position is
+ * theirs.
+ *
+ * ── `blocked` IS FALSE HERE, AND THAT IS SAFE FOR A REASON WORTH STATING ─────
+ * The ladder takes a `blocked` flag and short-circuits to `none` on it. This
+ * function passes `false` and does not re-read `blocks`, because the list it
+ * runs over is the crew's membership and the BLOCK gate has already been
+ * applied one level up, by `crewMemberCards`, which fails closed on an
+ * unreadable block list and publishes no card for a blocked member at all.
+ *
+ * So a blocked member has a rung in this map and no card beside it. That is not
+ * a leak — a rung is not a position, and `meeting_point` is the crew's agreed
+ * place, which 2984 made a free-text label precisely so it would not be one —
+ * but a client joining the two lists must key on the CARDS and not on this map,
+ * which is why the cards carry the identity and this carries nothing but a
+ * rung and a reason.
+ */
+function crewLocationRungs(input: {
+  viewerId: string;
+  crew: { id: string; status: string; updatedAt: string };
+  members: Array<{ userId: string; sessionId: string }>;
+  sessionsById: Map<string, LayoverSession>;
+  grants: Map<string, { grant: { grantedByUserId: string; crewId: string; grantedAtMs: number; expiresAtMs: number }; revokedAtMs: number | null }> | null;
+  nowMs: number;
+}): Array<{ userId: string; precision: LocationPrecision; reason: string }> {
+  return input.members.map((m) => {
+    const held = input.grants?.get(m.userId) ?? null;
+    const signals = crewShareSignals(input, m);
+    const verdict = locationPrecisionFor({
+      viewerUserId: input.viewerId,
+      targetUserId: m.userId,
+      sameCrewId: input.crew.id,
+      blocked: false,
+      grant: held?.grant ?? null,
+      signals,
+      nowMs: input.nowMs,
+    });
+    return { userId: m.userId, precision: verdict.precision, reason: verdict.reason };
+  });
+}
+
+/**
+ * The five §14.1 terminators for ONE member, assembled once so that the per-
+ * member rungs and the viewer's own share verdict below cannot drift apart.
+ * A second copy of this is the bug where you stop sharing and the crew keeps
+ * seeing you, or the reverse.
+ */
+function crewShareSignals(
+  input: {
+    crew: { status: string; updatedAt: string };
+    sessionsById: Map<string, LayoverSession>;
+    grants: Map<string, { grant: CrewLocationGrant; revokedAtMs: number | null }> | null;
+    nowMs: number;
+  },
+  member: { userId: string; sessionId: string },
+): CrewShareSignals {
+  const held = input.grants?.get(member.userId) ?? null;
+  const session = input.sessionsById.get(member.sessionId) ?? null;
+  return crewShareSignalsFor({
+    crewStatus: input.crew.status,
+    crewUpdatedAt: input.crew.updatedAt,
+    granterSessionStatus: session?.status ?? null,
+    granterSessionUpdatedAt: session?.updatedAt ?? null,
+    granterBoardingTime: session?.boardingTime ?? null,
+    liveSessionStatuses: LAYOVER_LIVE_SESSION_STATUSES,
+    revokedAtMs: held?.revokedAtMs ?? null,
+  });
+}
+
+/**
+ * WHETHER THE VIEWER IS SHARING, WHICH THE RUNG LADDER CANNOT ANSWER.
+ *
+ * `locationPrecisionFor` short-circuits to `{ precision: "precise", reason:
+ * "self" }` the moment viewer and target are the same person — correctly, since
+ * a rung says what the VIEWER may see and you may always see yourself. But that
+ * means the viewer's own row reads `precise` whether they have granted anything
+ * or not, so a client reading the rungs cannot tell a traveller whether the crew
+ * can currently see them. Offering both "share" and "stop sharing" is the honest
+ * response to not knowing, and it is a poor one: the question has an answer and
+ * the server is the only thing holding it.
+ *
+ * So this reports the viewer's OWN grant through `evaluateCrewLocationShare`,
+ * which has no self short-circuit and applies the same five terminators as
+ * every other member's rung.
+ *
+ * `null` means UNKNOWN, not "not sharing", and it is returned only when the
+ * grant table could not be read — the one case where this server genuinely does
+ * not know. The caller pairs it with `location_grants_unreadable` on the
+ * degrade. A client must not render `null` as either state.
+ */
+function crewOwnShare(input: {
+  viewerId: string;
+  crew: { status: string; updatedAt: string };
+  members: Array<{ userId: string; sessionId: string }>;
+  sessionsById: Map<string, LayoverSession>;
+  grants: Map<string, { grant: CrewLocationGrant; revokedAtMs: number | null }> | null;
+  nowMs: number;
+}): { live: boolean; reason: string; expiresAt: string | null } | null {
+  if (input.grants === null) return null;
+  const me = input.members.find((m) => m.userId === input.viewerId);
+  // A viewer who is not in the member list is not sharing with this crew, and
+  // that is a fact rather than an absence: there is no membership to share from.
+  if (!me) return { live: false, reason: "not_a_member", expiresAt: null };
+
+  const held = input.grants.get(input.viewerId) ?? null;
+  const verdict = evaluateCrewLocationShare(
+    held?.grant ?? null,
+    crewShareSignals(input, me),
+    input.nowMs,
+  );
+  return {
+    live: verdict.active,
+    reason: verdict.active ? "live_scoped_grant" : `no_live_grant:${verdict.endedBy ?? "never_granted"}`,
+    // The expiry is published ONLY while the share is live. A past expiry on a
+    // dead grant would read as a countdown that has already run out, which is
+    // the same number meaning the opposite thing.
+    expiresAt:
+      verdict.active && held ? new Date(held.grant.expiresAtMs).toISOString() : null,
   };
 }
 
@@ -3342,6 +3629,355 @@ router.post("/airport/sessions/:id/crew/leave", async (req, res) => {
     crewId: mine.value.crew.id, disbanded: left.value.disbanded,
   });
   res.json({ ok: true, inCrew: false, disbanded: left.value.disbanded });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §14.1 THE CREW'S ITINERARY, and §14 L4's location grant
+//
+// POST   /api/airport/sessions/:id/crew/stops
+// DELETE /api/airport/sessions/:id/crew/stops/:stopId
+// PUT    /api/airport/sessions/:id/crew/branches
+// POST   /api/airport/sessions/:id/crew/location-grant
+// DELETE /api/airport/sessions/:id/crew/location-grant
+//
+// These five give rows to arithmetic that was already written and already
+// tested, and that is the whole shape of this change. `certifyCrewPlan` has
+// implemented §14.1's per-branch feasibility and explicit split plan since
+// before `layover_crews` existed, and was being called with
+// `unsplitPlan(members, [])`; `locationPrecisionFor` has implemented §14's
+// disclosure ladder with an exhaustive sweep behind it, and was being called
+// with `grant: null`. Storage is 3513 and 3514.
+//
+// ── EVERY ONE OF THEM ANSWERS WITH THE WHOLE CERTIFIED CREW ──────────────────
+// Not with the row that was written. `respondWithCrew` re-reads and re-certifies
+// after each write, the way `respondWithStops` does on the solo surface, because
+// a stop is only interesting through its effect on the plan: a traveller who
+// proposes a 90-minute stop needs to be told that the branch no longer fits,
+// and a response echoing the stop they just sent tells them nothing. It also
+// means the client cannot hold a plan assembled from write replies that no
+// single certification ever saw.
+//
+// ── NOTHING HERE WRITES A `layover_events` ROW, AND THAT IS DELIBERATE ───────
+// The solo stops route emits `plan_stop_added`, so the symmetry would be to
+// emit here too. Two reasons not to, one per surface:
+//
+// THE ITINERARY ALREADY CARRIES ITS OWN RECORD. 3513 stores `proposed_by` on
+// every stop and `assigned_by` on every assignment, and both are published. An
+// event row would re-record a fact the row itself already states, and
+// `check:enum-literals` cannot see an event type passed as an ARGUMENT to
+// `emitLayoverEvent` (docs/BUILD-BACKLOG.md records this blind spot), so an
+// event type missing from `layover_events`'s CHECK would be logged as a warning
+// and audit nothing — a surface that looks audited and is not.
+//
+// THE GRANT MUST NOT BE RE-RECORDED ANYWHERE WITH A LONGER LIFE. A
+// `crew_location_granted` event would be a user-linked row naming who shared
+// their location and when, in a table keyed on `session_id` and NOT cascaded by
+// the crew's deletion. 3514's rows die with their crew (2984 cascades
+// `crew_id`, and `layoverCrewExpiryScheduler` deletes expired crews), so
+// minting an event would move the same personal fact into a table that outlives
+// it. `layoverCrewExpiryScheduler`'s header makes this exact argument for
+// declining to emit `crew_expired`, and it holds here for the same reason.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const crewStopCreateSchema = z.object({
+  title: z.string().min(1).max(120),
+  durationMin: z.number().int().min(5).max(720),
+  // Optional, and the refusal below is what makes that safe for a landside
+  // stop. `travelMin: 0` from a client is a stated zero and is accepted only
+  // for an airside stop, where zero is a fact.
+  travelMin: z.number().int().min(0).max(240).optional(),
+  insideAirport: z.boolean(),
+  locationLabel: z.string().min(1).max(200).optional().nullable(),
+  // The branch this stop is for. Defaulted rather than required so the unsplit
+  // case — the only case a crew is in before anybody splits it — needs no
+  // argument, and defaulted to the SAME id `unsplitPlan` uses.
+  branchId: z.string().min(1).max(64).optional(),
+});
+
+const crewBranchAssignSchema = z.object({
+  // An EMPTY array is valid and means "we are all going together again". See
+  // `assignCrewBranches`: it is the way back to unsplit, not a bad argument.
+  assignments: z
+    .array(
+      z.object({
+        userId: z.string().min(1),
+        branchId: z.string().min(1).max(64),
+      }),
+    )
+    .max(12),
+});
+
+const crewLocationGrantSchema = z.object({
+  /**
+   * When the traveller wants the share to end. OPTIONAL, and omitting it does
+   * not mean "forever" — it means the derived ceiling, which is
+   * `min(crew.expires_at, my own certified hard return)`. There is no way to
+   * ask for longer than that and no duration is chosen anywhere in this
+   * repository; see `boundedGrantWindow`.
+   */
+  expiresAt: z.string().datetime().optional(),
+});
+
+/**
+ * The crew the caller is in, or a reply already sent.
+ *
+ * Every itinerary and grant route needs the same three things — the crew, its
+ * membership, and a refusal when either cannot be read — and getting them
+ * through one function is what keeps "a failed read is not an empty crew" a
+ * single rule rather than five copies of it.
+ */
+async function requireOwnCrew(
+  res: any,
+  sc: any,
+  userId: string,
+  nowIso: string,
+): Promise<{ crew: CrewRow; members: CrewMemberRow[] } | null> {
+  const mine = await activeCrewForUser(sc, userId, nowIso);
+  if (!mine.ok) {
+    sendError(res, "degraded_unavailable", "Your crew could not be loaded. Please try again.");
+    return null;
+  }
+  if (!mine.value) { sendError(res, "not_found", "You are not in a crew."); return null; }
+  const members = await crewMembers(sc, mine.value.crew.id);
+  if (!members.ok) {
+    sendError(res, "degraded_unavailable", "Your crew could not be loaded. Please try again.");
+    return null;
+  }
+  return { crew: mine.value.crew, members: members.value };
+}
+
+/** Re-read, re-certify, publish. The solo surface's `respondWithStops` shape. */
+async function respondWithCrew(
+  res: any,
+  sc: any,
+  viewerId: string,
+  crewId: string,
+  nowMs: number,
+): Promise<void> {
+  const nowIso = new Date(nowMs).toISOString();
+  const again = await requireOwnCrew(res, sc, viewerId, nowIso);
+  if (!again) return;
+  // Not an assertion about the write: the caller already knows that succeeded.
+  // This guards against answering with a DIFFERENT crew's plan if the
+  // membership moved underneath the request.
+  if (again.crew.id !== crewId) {
+    sendError(res, "degraded_unavailable", "Your crew changed while that was saving. Please refresh.");
+    return;
+  }
+  const payload = await crewPayload(sc, viewerId, again.crew, again.members, nowMs);
+  if (!payload.ok) {
+    sendError(res, "degraded_unavailable", "Your crew could not be certified just now. Please try again.");
+    return;
+  }
+  res.json({ ok: true, inCrew: true, ...payload.body });
+}
+
+router.post("/airport/sessions/:id/crew/stops", async (req, res) => {
+  const ctx = await requireOwnedSession(req, res);
+  if (!ctx) return;
+  const { sc, user } = ctx;
+
+  const parsed = crewStopCreateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid stop"); return;
+  }
+
+  // THE SAME FUNCTION THE SOLO SURFACE USES, not a copy of its rule. census L47
+  // is what a fabricated zero leg cost once, and a second implementation of the
+  // refusal is how the two surfaces would come to disagree about it.
+  const travelRefusal = landsideTravelRefusal(parsed.data.insideAirport, parsed.data.travelMin);
+  if (travelRefusal) { sendError(res, "invalid_payload", travelRefusal); return; }
+
+  const nowMs = Date.now();
+  const own = await requireOwnCrew(res, sc, user.id, new Date(nowMs).toISOString());
+  if (!own) return;
+
+  const proposed = await proposeCrewStop(sc, {
+    crewId: own.crew.id,
+    branchId: parsed.data.branchId ?? UNSPLIT_BRANCH_ID,
+    proposedBy: user.id,
+    title: parsed.data.title,
+    durationMin: parsed.data.durationMin,
+    // Airside: the zero is a fact. Landside: the refusal above guarantees a
+    // stated figure, so this is never a laundered default.
+    travelMin: parsed.data.insideAirport ? 0 : parsed.data.travelMin!,
+    insideAirport: parsed.data.insideAirport,
+    locationLabel: parsed.data.locationLabel ?? null,
+  });
+  if (!proposed.ok) {
+    if (proposed.reason === "not_a_member") { sendError(res, "not_found", "You are not in that crew."); return; }
+    if (proposed.reason === "branch_full") {
+      sendError(res, "invalid_payload", `A crew branch can have at most ${MAX_CREW_STOPS_PER_BRANCH} stops`); return;
+    }
+    if (proposed.reason === "read_failed") {
+      sendError(res, "degraded_unavailable", "Your crew's plan could not be read, so the stop was not added. Please try again."); return;
+    }
+    sendError(res, "db_error", "That stop could not be saved."); return;
+  }
+
+  await respondWithCrew(res, sc, user.id, own.crew.id, nowMs);
+});
+
+router.delete("/airport/sessions/:id/crew/stops/:stopId", async (req, res) => {
+  const ctx = await requireOwnedSession(req, res);
+  if (!ctx) return;
+  const { sc, user } = ctx;
+
+  const stopId = typeof req.params.stopId === "string" ? req.params.stopId : "";
+  if (!stopId) { sendError(res, "invalid_payload", "stopId is required"); return; }
+
+  const nowMs = Date.now();
+  const own = await requireOwnCrew(res, sc, user.id, new Date(nowMs).toISOString());
+  if (!own) return;
+
+  const dropped = await dropCrewStop(sc, { crewId: own.crew.id, stopId, userId: user.id });
+  if (!dropped.ok) {
+    if (dropped.reason === "not_a_member") { sendError(res, "not_found", "You are not in that crew."); return; }
+    // The id named no stop of THIS crew. Reported rather than passed off as a
+    // success, which is what a bare `.delete().eq("id", …)` would have done.
+    if (dropped.reason === "stop_unavailable") { sendError(res, "not_found", "That stop is not in your crew's plan."); return; }
+    if (dropped.reason === "read_failed") {
+      sendError(res, "degraded_unavailable", "Your crew could not be read, so nothing was removed. Please try again."); return;
+    }
+    sendError(res, "db_error", "That stop could not be removed."); return;
+  }
+
+  await respondWithCrew(res, sc, user.id, own.crew.id, nowMs);
+});
+
+router.put("/airport/sessions/:id/crew/branches", async (req, res) => {
+  const ctx = await requireOwnedSession(req, res);
+  if (!ctx) return;
+  const { sc, user } = ctx;
+
+  const parsed = crewBranchAssignSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid split"); return;
+  }
+
+  // PUT, not POST, and the whole assignment at once. §14.1's split is a property
+  // of the PLAN, so a crew assigned one member per call passes through a
+  // half-split state on every re-split — and a GET landing in the middle would
+  // publish `member_unassigned` for a crew nobody had broken. See
+  // `assignCrewBranches`.
+  const duplicate = new Set<string>();
+  for (const a of parsed.data.assignments) {
+    if (duplicate.has(a.userId)) {
+      sendError(res, "invalid_payload", "A member can only be on one branch."); return;
+    }
+    duplicate.add(a.userId);
+  }
+
+  const nowMs = Date.now();
+  const own = await requireOwnCrew(res, sc, user.id, new Date(nowMs).toISOString());
+  if (!own) return;
+
+  const assigned = await assignCrewBranches(sc, {
+    crewId: own.crew.id,
+    assignedBy: user.id,
+    assignments: parsed.data.assignments.map((a) => ({
+      userId: a.userId,
+      branchId: canonBranchId(a.branchId),
+    })),
+  });
+  if (!assigned.ok) {
+    if (assigned.reason === "not_a_member") { sendError(res, "not_found", "You are not in that crew."); return; }
+    if (assigned.reason === "not_all_members") {
+      sendError(res, "invalid_payload", "That split names somebody who is not in your crew."); return;
+    }
+    if (assigned.reason === "read_failed") {
+      sendError(res, "degraded_unavailable", "Your crew could not be read, so the split was not saved. Please try again."); return;
+    }
+    sendError(res, "db_error", "That split could not be saved."); return;
+  }
+
+  await respondWithCrew(res, sc, user.id, own.crew.id, nowMs);
+});
+
+router.post("/airport/sessions/:id/crew/location-grant", async (req, res) => {
+  const ctx = await requireOwnedSession(req, res);
+  if (!ctx) return;
+  const { sc, user, session } = ctx;
+
+  const parsed = crewLocationGrantSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid grant"); return;
+  }
+
+  // A grant is scoped to a LIVE layover. §17: "Precise crew/live location —
+  // session scoped; expire automatically", and a session that has ended has no
+  // certified return to bound the grant by.
+  if (!LAYOVER_LIVE_SESSION_STATUSES.includes(session.status as any)) {
+    sendError(res, "invalid_payload", "This layover has ended, so your location cannot be shared for it."); return;
+  }
+
+  const nowMs = Date.now();
+  const own = await requireOwnCrew(res, sc, user.id, new Date(nowMs).toISOString());
+  if (!own) return;
+
+  const airport = await airportOr503(sc, res, session);
+  if (!airport) return;
+  // THE CREW FEATURE'S ONE CERTIFICATION WRAPPER, reused rather than a second
+  // `certifySessionFeasibility` call. The ratchet in
+  // `src/test/layoverFeasibilityRecord.test.ts` counts those calls in this file
+  // for exactly this reason, and this route adds none.
+  const record = certifyCrewMemberRecord(airport, session, nowMs);
+
+  const window = boundedGrantWindow({
+    nowMs,
+    requestedExpiresAtMs: parsed.data.expiresAt ? Date.parse(parsed.data.expiresAt) : null,
+    crewExpiresAtIso: own.crew.expiresAt,
+    granterHardReturnMs: record.deadline.hardReturnTime.getTime(),
+  });
+  if (!window.ok) {
+    // Not a validation error about the request: there is genuinely no window
+    // left between now and whichever of the crew's life and this traveller's
+    // return comes first. Saying so beats writing a grant that expires the
+    // instant it is made and then reporting `ttl_elapsed`.
+    sendError(res, "invalid_payload", "There is no time left on this crew or this layover to share your location for.");
+    return;
+  }
+
+  const granted = await grantCrewLocation(sc, {
+    crewId: own.crew.id,
+    grantedByUserId: user.id,
+    sessionId: session.id,
+    grantedAtMs: window.grantedAtMs,
+    expiresAtMs: window.expiresAtMs,
+  });
+  if (!granted.ok) {
+    if (granted.reason === "not_a_member") { sendError(res, "not_found", "You are not in that crew."); return; }
+    if (granted.reason === "read_failed") {
+      sendError(res, "degraded_unavailable", "Your crew could not be read, so nothing was shared. Please try again."); return;
+    }
+    sendError(res, "db_error", "Your location share could not be saved."); return;
+  }
+
+  await respondWithCrew(res, sc, user.id, own.crew.id, nowMs);
+});
+
+router.delete("/airport/sessions/:id/crew/location-grant", async (req, res) => {
+  const ctx = await requireOwnedSession(req, res);
+  if (!ctx) return;
+  const { sc, user } = ctx;
+
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const own = await requireOwnCrew(res, sc, user.id, nowIso);
+  if (!own) return;
+
+  const revoked = await revokeCrewLocation(sc, { crewId: own.crew.id, userId: user.id }, nowIso);
+  if (!revoked.ok) {
+    if (revoked.reason === "read_failed") {
+      sendError(res, "degraded_unavailable", "Your crew could not be read, so nothing was revoked. Please try again."); return;
+    }
+    // A revocation that did not write has NOT happened, and the traveller must
+    // not be shown "sharing stopped" over a grant that is still live.
+    sendError(res, "db_error", "Your location share could not be stopped. It is still live — please try again.");
+    return;
+  }
+
+  await respondWithCrew(res, sc, user.id, own.crew.id, nowMs);
 });
 
 // ── PATCH /api/airport/sessions/:id/share ─────────────────────────────────────
