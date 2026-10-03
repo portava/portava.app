@@ -1529,7 +1529,7 @@
         "GET",
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/airport.ts:1888",
+      "handler": "artifacts/api-server/src/routes/airport.ts:1890",
       "handlerCount": 2,
       "classification": "BACKEND WITH NO MOBILE CONSUMER",
       "chain": []
@@ -1539,7 +1539,7 @@
       "methods": [
         "DELETE"
       ],
-      "handler": "artifacts/api-server/src/routes/airport.ts:1955",
+      "handler": "artifacts/api-server/src/routes/airport.ts:1957",
       "handlerCount": 1,
       "classification": "BACKEND WITH NO MOBILE CONSUMER",
       "chain": []
@@ -1550,7 +1550,7 @@
         "GET",
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/airport.ts:1755",
+      "handler": "artifacts/api-server/src/routes/airport.ts:1757",
       "handlerCount": 2,
       "classification": "BACKEND WITH NO MOBILE CONSUMER",
       "chain": []
@@ -1561,7 +1561,7 @@
         "DELETE",
         "PATCH"
       ],
-      "handler": "artifacts/api-server/src/routes/airport.ts:1800",
+      "handler": "artifacts/api-server/src/routes/airport.ts:1802",
       "handlerCount": 2,
       "classification": "BACKEND WITH NO MOBILE CONSUMER",
       "chain": []
@@ -1571,7 +1571,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "artifacts/api-server/src/routes/airport.ts:2040",
+      "handler": "artifacts/api-server/src/routes/airport.ts:2042",
       "handlerCount": 1,
       "classification": "BACKEND WITH NO MOBILE CONSUMER",
       "chain": []
@@ -1581,7 +1581,7 @@
       "methods": [
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/airport.ts:2065",
+      "handler": "artifacts/api-server/src/routes/airport.ts:2067",
       "handlerCount": 1,
       "classification": "BACKEND WITH NO MOBILE CONSUMER",
       "chain": []
@@ -1591,7 +1591,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "artifacts/api-server/src/routes/airport.ts:1863",
+      "handler": "artifacts/api-server/src/routes/airport.ts:1865",
       "handlerCount": 1,
       "classification": "BACKEND WITH NO MOBILE CONSUMER",
       "chain": []
@@ -1601,7 +1601,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "artifacts/api-server/src/routes/airport.ts:1973",
+      "handler": "artifacts/api-server/src/routes/airport.ts:1975",
       "handlerCount": 1,
       "classification": "BACKEND WITH NO MOBILE CONSUMER",
       "chain": []
@@ -1611,7 +1611,7 @@
       "methods": [
         "PATCH"
       ],
-      "handler": "artifacts/api-server/src/routes/airport.ts:2005",
+      "handler": "artifacts/api-server/src/routes/airport.ts:2007",
       "handlerCount": 1,
       "classification": "BACKEND WITH NO MOBILE CONSUMER",
       "chain": []
@@ -5385,7 +5385,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "artifacts/api-server/src/routes/airport.ts:1643",
+      "handler": "artifacts/api-server/src/routes/airport.ts:1645",
       "handlerCount": 1,
       "classification": "DEAD ENDPOINT",
       "chain": []
@@ -5395,7 +5395,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "artifacts/api-server/src/routes/airport.ts:332",
+      "handler": "artifacts/api-server/src/routes/airport.ts:334",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -5427,7 +5427,7 @@
         "GET",
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/airport.ts:370",
+      "handler": "artifacts/api-server/src/routes/airport.ts:372",
       "handlerCount": 2,
       "classification": "WIRED",
       "chain": [
@@ -5459,7 +5459,7 @@
         "DELETE",
         "PATCH"
       ],
-      "handler": "artifacts/api-server/src/routes/airport.ts:547",
+      "handler": "artifacts/api-server/src/routes/airport.ts:549",
       "handlerCount": 2,
       "classification": "WIRED",
       "chain": [
@@ -5503,7 +5503,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "artifacts/api-server/src/routes/airport.ts:1530",
+      "handler": "artifacts/api-server/src/routes/airport.ts:1532",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -5527,7 +5527,7 @@
       "methods": [
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/airport.ts:763",
+      "handler": "artifacts/api-server/src/routes/airport.ts:765",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -5549,7 +5549,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "artifacts/api-server/src/routes/airport.ts:1199",
+      "handler": "artifacts/api-server/src/routes/airport.ts:1201",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -5573,7 +5573,7 @@
       "methods": [
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/airport.ts:808",
+      "handler": "artifacts/api-server/src/routes/airport.ts:810",
       "handlerCount": 1,
       "classification": "DEAD ENDPOINT",
       "chain": []
@@ -5583,7 +5583,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "artifacts/api-server/src/routes/airport.ts:1508",
+      "handler": "artifacts/api-server/src/routes/airport.ts:1510",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -5607,7 +5607,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "artifacts/api-server/src/routes/airport.ts:644",
+      "handler": "artifacts/api-server/src/routes/airport.ts:646",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -5632,7 +5632,7 @@
       "methods": [
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/airport.ts:894",
+      "handler": "artifacts/api-server/src/routes/airport.ts:896",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -5657,7 +5657,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "artifacts/api-server/src/routes/airport.ts:707",
+      "handler": "artifacts/api-server/src/routes/airport.ts:709",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -5680,7 +5680,7 @@
       "methods": [
         "PATCH"
       ],
-      "handler": "artifacts/api-server/src/routes/airport.ts:1491",
+      "handler": "artifacts/api-server/src/routes/airport.ts:1493",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -5705,7 +5705,7 @@
         "GET",
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/airport.ts:1294",
+      "handler": "artifacts/api-server/src/routes/airport.ts:1296",
       "handlerCount": 2,
       "classification": "WIRED",
       "chain": [
@@ -5737,7 +5737,7 @@
         "DELETE",
         "PATCH"
       ],
-      "handler": "artifacts/api-server/src/routes/airport.ts:1395",
+      "handler": "artifacts/api-server/src/routes/airport.ts:1397",
       "handlerCount": 2,
       "classification": "WIRED",
       "chain": [
@@ -5792,7 +5792,7 @@
       "methods": [
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/airport.ts:1340",
+      "handler": "artifacts/api-server/src/routes/airport.ts:1342",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -5836,7 +5836,7 @@
       "methods": [
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/airport.ts:1458",
+      "handler": "artifacts/api-server/src/routes/airport.ts:1460",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -5878,7 +5878,7 @@
       "methods": [
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/airport.ts:942",
+      "handler": "artifacts/api-server/src/routes/airport.ts:944",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -5902,7 +5902,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "artifacts/api-server/src/routes/airport.ts:1172",
+      "handler": "artifacts/api-server/src/routes/airport.ts:1174",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
