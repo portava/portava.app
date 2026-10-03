@@ -113,11 +113,23 @@ export const TELEGRAPH_PROJECTIONS: readonly TelegraphProjection[] = [
     id: "PRJ-06",
     name: "ConversationContentIndex",
     censusRow: "T294",
-    status: "absent",
-    builtBy: null,
+    status: "partial",
+    builtBy: "src/routes/telegraphKinds.ts",
     note:
-      "The content drawer. Dead-coded behind a literal false (T66) — which is " +
-      "worse than absent for a reader, because the affordance looks built.",
+      "The content drawer. CORRECTED 2026-10-03: the earlier note said \"dead-coded " +
+      "behind a literal false (T66)\" and that is no longer true. `GET /threads/:threadId/" +
+      "drawer` serves it (`routes/telegraphKinds.ts:376`), membership-gated before any read " +
+      "(`:393`), and the client mounts the entry point in the thread header " +
+      "(`travel-buddy-standalone/app/messages/[id].tsx:1958`, testID " +
+      "`telegraph-open-content-drawer`) with the sheet rendered at `:2414`. NOT " +
+      "unconditional, and not a flag either: the mount sits inside the `{!compact && …}` " +
+      "header-actions block (`[id].tsx:1932`), a layout variant, so the compact header " +
+      "offers no way in. THE GAP THAT KEEPS THIS `partial` RATHER THAN `built`: §24 asks " +
+      "for a server-BUILT projection, and this is an on-demand route that classifies the " +
+      "thread's rows per request and stores nothing — there is no materialised " +
+      "ConversationContentIndex, so nothing can be read without re-deriving it, and nothing " +
+      "outside a live request can consume it. The census verdict row (T294) still carries " +
+      "the old wording; re-grading it is the lead's call, not this registry's.",
   },
 ];
 
