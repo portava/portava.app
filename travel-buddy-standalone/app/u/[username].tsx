@@ -721,15 +721,8 @@ function PublicPassportScreenNative() {
 
   const isOwn = social?.isOwnProfile ?? profile?.isOwnProfile ?? (profile?.id === currentUserId);
 
-  // Stamps Earned count — sourced from the public passport response. The server
-  // sends `stampsEarned: null` with `stampsEarnedUnavailable: true` when it could
-  // not count (a failed or cut read); that is shown as "—", never as 0, and it
-  // does not feed the milestone celebration.
-  const stampsEarnedRaw = (profile as any)?.stampsEarned;
-  const stampsEarned: number | null =
-    typeof stampsEarnedRaw === 'number' && (profile as any)?.stampsEarnedUnavailable !== true
-      ? stampsEarnedRaw
-      : null;
+  // Stamps Earned — public passport response; null / stampsEarnedUnavailable (server could not count) shows "—", never 0, and skips the milestone hook.
+  const stampsEarned: number | null = typeof (profile as any)?.stampsEarned === 'number' && (profile as any)?.stampsEarnedUnavailable !== true ? (profile as any).stampsEarned : null;
 
   // Milestone celebration hook — only fires for the profile owner.
   const {

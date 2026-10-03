@@ -369,6 +369,11 @@ router.get("/users/:username/passport", async (req, res) => {
   let trustScore: number | null = null;
   let trustLabel: string | null = null;
   let trustScoreBreakdown: import("../lib/trustScore.js").TrustScoreBreakdown | null = null;
+  // `stampsEarned` starts UNAVAILABLE ("not_read") rather than 0, so if the
+  // closure below never assigned it the response could not publish a
+  // confident zero. The closure always assigns it: measureStampsEarned never
+  // rejects. Its shape is a measurement (`count` a number) or an explicit
+  // unknown (`count: null`, `unavailable: true`) — never a placeholder number.
   let stampsEarned: ReceivedCount = { count: null, unavailable: true, reason: "not_read" };
 
   await Promise.allSettled([
@@ -392,12 +397,24 @@ router.get("/users/:username/passport", async (req, res) => {
       }
     })(),
     (async () => {
-      // Lifetime non-revoked user_stamps + content stamps received on this
-      // user's posts/media. Either half unreadable is `stampsEarned: null` with
-      // `stampsEarnedUnavailable: true` — it used to be a silent 0 for a failed
-      // half, and the received half read `posts` unbounded, so PostgREST's
-      // 1,000-row cut undercounted anyone with more posts (passport lane,
-      // 2026-10-03). measureStampsEarned never rejects.
+      // STAMPS EARNED — lifetime non-revoked user_stamps PLUS the content
+      // stamps (Roam/Watch reactions) other people placed on this user's own
+      // posts/media, so STAMPS reflects both.
+      //
+      // Either half unreadable is `stampsEarned: null` with
+      // `stampsEarnedUnavailable: true` on the response. It used to be a
+      // silent 0 for the failed half (each half sat in its own try/catch
+      // around a supabase-js call, which RESOLVES on error, so the catch never
+      // ran and `count ?? 0` did the hiding), and the received half read
+      // `posts` with no bound, so PostgREST's 1,000-row cut undercounted
+      // anyone with more posts than that — a partial number shown as measured.
+      //
+      // measureStampsEarned (services/stamps/ContentStampService.ts) walks
+      // posts by keyset to an empty page, binds every error, and never
+      // rejects, so this closure cannot take the passport down with it.
+      // Passport lane, 2026-10-03.
+      //
+      // The client renders the null as "—", never as 0.
       stampsEarned = await measureStampsEarned(sc, targetId);
     })(),
   ]);
@@ -1855,8 +1872,7 @@ function sendEventShareRefusal(res: any, reason: string): void {
     case "disabled":
       res.status(200).json({ enabled: false });
       return;
-    case "event_not_found":
-    case "not_found":
+    case "event_not_found": case "not_found":
       sendError(res, "not_found", "Share not found");
       return;
     case "event_not_live":
@@ -1874,11 +1890,7 @@ function sendEventShareRefusal(res: any, reason: string): void {
     case "not_attending":
       sendError(res, "forbidden", "This event Passport is only for people at the event");
       return;
-    case "unavailable":
-      // A read or write FAILED. Retryable, and never a 403/404: "we could not
-      // check" is not "you are not at this event" or "that does not exist".
-      sendError(res, "db_error", "Event Passport is temporarily unavailable — please try again");
-      return;
+    case "unavailable": sendError(res, "db_error", "Event Passport is temporarily unavailable — please try again"); return; // a FAILED read/write: retryable, never "not at the event" / "does not exist"
     default:
       sendError(res, "not_found", "Share not found");
   }

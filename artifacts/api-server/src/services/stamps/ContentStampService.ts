@@ -232,7 +232,11 @@ export async function measureContentStampsReceived(
       if (typeof count !== "number") return unavailable("content_stamps_count_missing", null);
       total += count;
     }
-    after = ids[ids.length - 1];
+    // The page's greatest id (its last row while `order(id)` is honoured). A
+    // walk that does not advance would count the same posts forever.
+    const top = ids.reduce((m, id) => (id > m ? id : m), "");
+    if (after !== null && top <= after) return unavailable("posts_keyset_stalled", null);
+    after = top;
   }
   return { count: total, unavailable: false };
 }

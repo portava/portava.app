@@ -133,6 +133,8 @@ interface FakeOpts {
   maxRows?: number;
   /** Make one read RESOLVE an error, the way supabase-js does (never a throw). */
   failOn?: (table: string, desc: string[]) => { message: string; code?: string } | null;
+  /** Treat `.gt()` as a no-op — a server/proxy that drops the keyset filter. */
+  ignoreGt?: boolean;
   /** RPC answer; default is PGRST202 (function not in the schema cache). */
   rpc?: (name: string, args: any) => { data: any; error: any };
 }
@@ -192,9 +194,13 @@ function makeFakeClient(db: FakeDB, userId: string = AUTHOR_ID, opts: FakeOpts =
       or()     { return chain; },
       gte()    { return chain; },
       lte()    { return chain; },
-      gt(col: string, val: any) { _desc.push(`gt:${col}`); _filters.push((r) => String(r[col]) > String(val)); return chain; },
+      gt(col: string, val: any) {
+        _desc.push(`gt:${col}`);
+        if (!opts.ignoreGt) _filters.push((r) => String(r[col]) > String(val));
+        return chain;
+      },
       ilike()  { return chain; },
-      order(col: string) { _order = col; return chain; },
+      order(col: string) { _desc.push("order"); _order = col; return chain; },
       range(a: number, b: number) { _desc.push("range"); _range = [a, b]; return chain; },
       limit(n: number) { _limit = n; return chain; },
       single()      { _single      = true; return chain; },
@@ -550,6 +556,13 @@ describe("E. measureContentStampsReceived — failures and cuts are not counts",
     assert.deepEqual(await measureContentStampsReceived(sc, AUTHOR_ID), { count: 40, unavailable: false });
   });
 
+  it("E8. a keyset filter that is not honoured is unavailable — never a loop or a double count", async () => {
+    const sc = makeFakeClient(makeDB(manyPosts(40)), AUTHOR_ID, { ignoreGt: true }) as any;
+    const r = await measureContentStampsReceived(sc, AUTHOR_ID);
+    assert.equal(r.unavailable, true);
+    assert.equal(r.count, null);
+  });
+
   it("E7. an RPC outage AND a fallback outage is unavailable", async () => {
     const sc = makeFakeClient(makeDB(), AUTHOR_ID, {
       rpc: () => ({ data: null, error: { code: "57014", message: "statement timeout" } }),
@@ -679,4 +692,69 @@ describe("G. GET /me/profile — stampsEarned is a measurement or null + flag", 
       assert.equal(body.stampsEarnedUnavailable, true);
     });
   }
+});
+
+// ── H. Passport stats (Countries / Stamps on the passport home) are a WHOLE read ──
+//
+// buildStats read every non-revoked user_stamps row in ONE request. PostgREST
+// answers at most max-rows (1,000) and says nothing about the rest, so a
+// traveller past 1,000 stamps was shown "1,000 stamps" and the countries/cities
+// of whichever 1,000 rows came back — a cut read served as a measurement.
+
+function manyUserStamps(n: number): Partial<FakeDB> {
+  const user_stamps: any[] = [];
+  for (let i = 0; i < n; i++) {
+    user_stamps.push({
+      id: `us000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+      user_id: AUTHOR_ID, is_revoked: false, visibility: "public",
+      country: `Country ${i % 120}`, city: `City ${i}`,
+      stamp_definitions: { category: "trip", slug: "city_visit", evidences_presence: true },
+    });
+  }
+  return { user_stamps };
+}
+
+describe("H. GET /me/passport/stats — countries and stamps over a 1,000-row server cap", async () => {
+  let srv: { url: string; close: () => Promise<void> };
+  before(async () => {
+    const { default: passportStampsRouter } = await import("../routes/passportStamps.js");
+    srv = await startServer(makeApp(passportStampsRouter));
+  });
+  after(() => srv.close());
+
+  async function stats(db: FakeDB, opts: FakeOpts) {
+    _setTestClient(makeFakeClient(db, AUTHOR_ID, opts) as any, true);
+    const res = await fetch(`${srv.url}/api/me/passport/stats`, {
+      headers: { Authorization: `Bearer token-${AUTHOR_ID}` },
+    });
+    return { status: res.status, body: await res.json() as any };
+  }
+
+  it("H1. 1,500 stamps under a 1,000-row cap: totalStamps 1,500, all 120 countries, all 1,500 cities", async () => {
+    const { status, body } = await stats(makeDB(manyUserStamps(1500)), { maxRows: 1000 });
+    assert.equal(status, 200, JSON.stringify(body).slice(0, 300));
+    assert.equal(body.totalStamps, 1500);
+    assert.equal(body.countries, 120);
+    assert.equal(body.cities, 1500);
+    assert.equal(body.readFailed, false);
+  });
+
+  it("H2. a page failing after the first is readFailed, not the first page's numbers", async () => {
+    let reads = 0;
+    const { body } = await stats(makeDB(manyUserStamps(1500)), {
+      maxRows: 1000,
+      // Only the WHOLE-ROW walk (not the head count behind Stamps Earned).
+      failOn: (t, d) => (t === "user_stamps" && d.includes("order") && ++reads === 2
+        ? { message: "statement timeout", code: "57014" } : null),
+    });
+    assert.equal(body.readFailed, true);
+    assert.equal(body.totalStamps, 0, "the placeholder is flagged, never a partial 1,000");
+  });
+
+  it("H3. a keyset filter that is not honoured ends the walk as readFailed — never a loop or a double count", async () => {
+    const { status, body } = await stats(makeDB(manyUserStamps(1500)), { maxRows: 1000, ignoreGt: true });
+    assert.equal(status, 200);
+    assert.equal(body.readFailed, true);
+    assert.equal(body.totalStamps, 0);
+  });
 });

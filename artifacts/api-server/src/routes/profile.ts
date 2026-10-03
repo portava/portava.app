@@ -414,11 +414,10 @@ router.get("/me/profile", async (req, res) => {
     sc ? sc.from("user_follows").select("follower_id", { count: "exact", head: true }).eq("following_id", user.id) : Promise.resolve({ count: 0 }),
     sc ? sc.from("user_follows").select("follower_id", { count: "exact", head: true }).eq("follower_id", user.id) : Promise.resolve({ count: 0 }),
     sc ? computeTrustScore(user.id, sc, data as Record<string, any>) : Promise.resolve(null),
-    // Stamps Earned: lifetime non-revoked user_stamps + content stamps others
-    // placed on this user's posts, keyset-paged so it is exact for
-    // high-post-count users. NOT routed through settledCount: this one is shown
-    // to the person as a number, so an unreadable half is `stampsEarned: null`
-    // plus `stampsEarnedUnavailable: true`, not a silent 0 added into a total.
+    // Stamps Earned: non-revoked user_stamps + content stamps others placed on
+    // this user's posts (keyset-paged, exact). NOT through settledCount: it is
+    // shown to the person as a number, so an unreadable half is `stampsEarned:
+    // null` + `stampsEarnedUnavailable: true`, not a silent 0 in a total.
     measureStampsEarned(sc, user.id),
     // THROUGH THE SEAM (lib/gateAge.ts), and inside the batch that was already
     // being awaited — so `ageGateRequired` costs one more read and not one more
