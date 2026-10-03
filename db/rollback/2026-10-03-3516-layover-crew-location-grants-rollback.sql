@@ -1,4 +1,4 @@
--- Rollback for 3514_layover_crew_location_grants.sql (spec §14 L4 / census-layover L124, L132, lane 3514).
+-- Rollback for 3516_layover_crew_location_grants.sql (spec §14 L4 / census-layover L124, L132, lane 3516).
 -- NOT applied to portava-ci (hwokxgbmezheskbzskfr) at the time of writing.
 -- NOT applied to travel-buddy (ajrurzioarfkagpuxfnb).
 -- REHEARSED 2026-10-03 on PostgreSQL 16, and here is exactly what that covered.
@@ -15,17 +15,17 @@
 -- proves this file's own SQL, its postconditions and its idempotency — not how
 -- it behaves against a database with the real parent tables and their data.
 --
--- WHAT 3514 DID: created public.layover_crew_location_grants — RLS on, no
+-- WHAT 3516 DID: created public.layover_crew_location_grants — RLS on, no
 -- permissive policy, four RESTRICTIVE client-deny policies, service_role
 -- grants, two CHECK constraints (positive window, revocation not before grant)
 -- and layover_crew_location_grants_newest_idx. It added no coordinate column
 -- anywhere and altered nothing that existed.
 --
 -- WHAT THIS ROLLBACK DOES: reports the row count first, then drops the four
--- policies, the index and the table, then 3514's ledger row. Dropping it
--- returns the precision ladder to the state 3514 found it in — an absent grant
+-- policies, the index and the table, then 3516's ledger row. Dropping it
+-- returns the precision ladder to the state 3516 found it in — an absent grant
 -- store reads as `never_granted`, so `locationPrecisionFor` answers `none` and
--- `meeting_point` only, which is what every caller already got before 3514.
+-- `meeting_point` only, which is what every caller already got before 3516.
 -- 2984's postcondition asserting the crew tables hold no coordinate is not
 -- touched and stays standing.
 --
@@ -68,9 +68,9 @@ BEGIN
   IF to_regclass('public.layover_crew_location_grants') IS NOT NULL THEN
     EXECUTE 'SELECT count(*), count(*) FILTER (WHERE revoked_at IS NULL) FROM public.layover_crew_location_grants'
       INTO n_total, n_live;
-    RAISE NOTICE '3514 rollback: dropping public.layover_crew_location_grants with % recorded act(s) of consent, of which % unrevoked. Each row is a traveller''s own decision to share their live location; nothing derives them and nothing rebuilds them.', n_total, n_live;
+    RAISE NOTICE '3516 rollback: dropping public.layover_crew_location_grants with % recorded act(s) of consent, of which % unrevoked. Each row is a traveller''s own decision to share their live location; nothing derives them and nothing rebuilds them.', n_total, n_live;
   ELSE
-    RAISE NOTICE '3514 rollback: public.layover_crew_location_grants does not exist; nothing to drop.';
+    RAISE NOTICE '3516 rollback: public.layover_crew_location_grants does not exist; nothing to drop.';
   END IF;
 END $$;
 
@@ -88,31 +88,31 @@ DROP TABLE IF EXISTS public.layover_crew_location_grants;
 DO $$
 BEGIN
   IF to_regclass('public.schema_migration_ledger') IS NOT NULL THEN
-    DELETE FROM public.schema_migration_ledger WHERE filename = '3514_layover_crew_location_grants.sql';
+    DELETE FROM public.schema_migration_ledger WHERE filename = '3516_layover_crew_location_grants.sql';
   END IF;
 END $$;
 
 COMMIT;
 
 -- ── Postconditions ──────────────────────────────────────────────────────────
--- AFTER `COMMIT`, as 3514's own are: catalog state only, no row written and no
+-- AFTER `COMMIT`, as 3516's own are: catalog state only, no row written and no
 -- role assumed, so a failing assertion cannot roll back the DDL it asserts
 -- about and the block can be re-run standalone.
 DO $post$
 DECLARE leftover INTEGER; coord_cols INTEGER;
 BEGIN
   IF to_regclass('public.layover_crew_location_grants') IS NOT NULL THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3514 rollback): layover_crew_location_grants still exists.';
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3516 rollback): layover_crew_location_grants still exists.';
   END IF;
 
   SELECT count(*) INTO leftover
     FROM pg_policies
    WHERE schemaname = 'public' AND tablename = 'layover_crew_location_grants';
   IF leftover <> 0 THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3514 rollback): % policy/policies remain on layover_crew_location_grants.', leftover;
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3516 rollback): % policy/policies remain on layover_crew_location_grants.', leftover;
   END IF;
 
-  -- 2984's assertion, re-checked here as 3514 re-checked it: removing the thing
+  -- 2984's assertion, re-checked here as 3516 re-checked it: removing the thing
   -- that decides whether a position may be shown is the last moment at which a
   -- column to hold one should be allowed to appear next door.
   SELECT count(*) INTO coord_cols
@@ -121,11 +121,11 @@ BEGIN
      AND table_name IN ('layover_crews','layover_crew_members')
      AND column_name IN ('lat','lng','latitude','longitude','location','geog','geom','point','coords');
   IF coord_cols <> 0 THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3514 rollback): % coordinate column(s) on 2984''s crew tables. With the grant store gone there is nothing left to decide whether a position may be shown.', coord_cols;
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3516 rollback): % coordinate column(s) on 2984''s crew tables. With the grant store gone there is nothing left to decide whether a position may be shown.', coord_cols;
   END IF;
 
   IF to_regclass('public.schema_migration_ledger') IS NOT NULL
-     AND EXISTS (SELECT 1 FROM public.schema_migration_ledger WHERE filename = '3514_layover_crew_location_grants.sql') THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3514 rollback): the ledger still records 3514 as applied.';
+     AND EXISTS (SELECT 1 FROM public.schema_migration_ledger WHERE filename = '3516_layover_crew_location_grants.sql') THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3516 rollback): the ledger still records 3516 as applied.';
   END IF;
 END $post$;

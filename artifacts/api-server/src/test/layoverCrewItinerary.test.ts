@@ -6,7 +6,7 @@
  * called it with `unsplitPlan(members, [])`: one branch, everybody, NO STOPS.
  * With no stops `branchNeededMinutes` is 0, so `plan_exceeds_usable_minutes`
  * and `plan_ends_after_shared_return` could not fire and `split` was always
- * false. Migration 3513, `LayoverCrewItineraryStore` and five routes give it a
+ * false. Migration 3515, `LayoverCrewItineraryStore` and five routes give it a
  * plan.
  *
  * The properties below are the ones that make this a certified itinerary rather

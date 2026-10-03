@@ -11,10 +11,10 @@
  * Every caller has had to pass `grant: null`, which the ladder reads as
  * `never_granted` — so its only reachable answers were `none` and
  * `meeting_point`, and census L124/L132 stay N. This module is the row source.
- * Storage is migration 3514.
+ * Storage is migration 3516.
  *
  * ── IT SUPPLIES PERMISSION, AND NOTHING SUPPLIES A POSITION ──────────────────
- * 3514 holds no coordinate and 2984's postcondition asserting the crew tables
+ * 3516 holds no coordinate and 2984's postcondition asserting the crew tables
  * hold none is left standing. So wiring this in does not put a traveller's
  * position on the wire; it makes the RUNG publishable, which is what the §13
  * map element and every meet-action gate are actually keyed on. Where a
@@ -52,8 +52,8 @@
  * made.
  *
  * ── STORAGE ──────────────────────────────────────────────────────────────────
- * `layover_crew_location_grants`, created by migration 3514. NOT APPLIED to any
- * shared database as this file lands — see 3514's header; until it is, every
+ * `layover_crew_location_grants`, created by migration 3516. NOT APPLIED to any
+ * shared database as this file lands — see 3516's header; until it is, every
  * read here is a refusal and the ladder answers exactly what it answers today.
  * That is stated rather than assumed because the opposite claim is how
  * `LayoverCrewStore`'s header went stale for three months.
@@ -80,7 +80,7 @@ const logger = rootLogger.child({ service: "LayoverCrewLocationGrantStore" });
 export const CREW_LOCATION_GRANT_TABLE = "layover_crew_location_grants";
 
 /**
- * The largest crew 3514's sibling will assemble grants for. Mirrors
+ * The largest crew 3516's sibling will assemble grants for. Mirrors
  * `LayoverCrewStore.CREW_READ_LIMIT` deliberately: a crew is at most 12 people
  * (2984's `max_members` CHECK), so a read that could return more than one row
  * per member per crew is reading something it did not mean to.
@@ -197,7 +197,7 @@ export async function newestGrantsForCrew(
     if (grantedAtMs === null || expiresAtMs === null) {
       // A row whose window cannot be read is not a grant. Dropping it means the
       // ladder answers `never_granted` for this member, which discloses less
-      // than any guess would. Logged because it means 3514's NOT NULL columns
+      // than any guess would. Logged because it means 3516's NOT NULL columns
       // hold something no reader understands.
       logger.warn(
         { crewId, grantId: row.id },
@@ -256,7 +256,7 @@ export type GrantWrite<T> =
  *
  * REFUSED, not clamped, when the bound is already in the past or unreadable:
  * `min(...)` at or before now would produce a grant whose window is empty,
- * which 3514's `expires_at > granted_at` CHECK refuses at the database and
+ * which 3516's `expires_at > granted_at` CHECK refuses at the database and
  * which `locationPrecisionFor` would report as `ttl_elapsed` — blaming the TTL
  * for a write that was never valid. "There is no time left to share for" is a
  * real answer and this returns it instead.
@@ -303,7 +303,7 @@ export interface GrantCrewLocationInput {
  * Record one act of consent.
  *
  * MEMBERSHIP IS CHECKED HERE AND IT IS A READ, SO A FAILED READ REFUSES THE
- * GRANT. 3514 cascades `crew_id` but has no way to assert that the granter is
+ * GRANT. 3516 cascades `crew_id` but has no way to assert that the granter is
  * in the crew — a row count is not something a CHECK can see — so an unreadable
  * membership list is an unenforced scope, and the write must not proceed on
  * one. This is the rule `joinCrew` already applies to `max_members` and the
@@ -316,7 +316,7 @@ export interface GrantCrewLocationInput {
  * is a question only this write can answer, and it answers it before writing.
  *
  * NOT AN UPSERT, and no row is ever modified. Each grant is a new row, which is
- * what keeps the history of consent readable — see 3514's REVOCATION IS A
+ * what keeps the history of consent readable — see 3516's REVOCATION IS A
  * COLUMN.
  */
 export async function grantCrewLocation(

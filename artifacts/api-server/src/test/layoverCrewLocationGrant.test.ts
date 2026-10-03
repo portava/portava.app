@@ -7,7 +7,7 @@
  * target-issued, crew-scoped grant yields `precise`. Every caller has had to
  * pass `grant: null`, which the ladder reads as `never_granted` — so its only
  * reachable answers were `none` and `meeting_point`, and census L124/L132 stay
- * N. Migration 3514, `LayoverCrewLocationGrantStore` and two routes give it
+ * N. Migration 3516, `LayoverCrewLocationGrantStore` and two routes give it
  * grants.
  *
  * THIS FILE DOES NOT RE-TEST THE LADDER. That arithmetic is swept elsewhere and
@@ -33,7 +33,7 @@
  *      (`layover_checkpoints`, migration 2992, is absent from the production
  *      schema snapshot). The signal is deliberately never set, and that is
  *      pinned here so it cannot quietly acquire a guessed value.
- *   5. NOTHING PUBLISHES A POSITION. 3514 holds permission; there is no
+ *   5. NOTHING PUBLISHES A POSITION. 3516 holds permission; there is no
  *      coordinate in the schema or on the wire.
  *
  * Run: SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy \
@@ -104,7 +104,7 @@ describe("boundedGrantWindow derives the ceiling and invents no duration", () =>
   });
 
   /**
-   * A grant whose window is empty is refused rather than written. 3514's
+   * A grant whose window is empty is refused rather than written. 3516's
    * `expires_at > granted_at` CHECK would refuse it at the database anyway, and
    * `locationPrecisionFor` would report `ttl_elapsed` — blaming the TTL for a
    * write that was never valid. "There is no time left" is a real answer.
@@ -459,7 +459,7 @@ describe("the ladder's answers are finally reachable from a stored grant", () =>
   });
 
   /**
-   * THE RUNG THAT WAS UNREACHABLE. Before 3514 there was no argument a caller
+   * THE RUNG THAT WAS UNREACHABLE. Before 3516 there was no argument a caller
    * could pass that produced `precise` for anybody but the viewer themselves.
    */
   it("B grants, and A sees B as precise with a live scoped grant", async () => {
@@ -670,7 +670,7 @@ describe("the rung is published and a position is not", () => {
     for (const key of ["\"lat\"", "\"lng\"", "\"latitude\"", "\"longitude\"", "\"coords\""]) {
       assert.ok(
         !wire.includes(key),
-        `${key} reached the crew payload — 3514 stores permission, not position, and nothing here may publish one`,
+        `${key} reached the crew payload — 3516 stores permission, not position, and nothing here may publish one`,
       );
     }
   });

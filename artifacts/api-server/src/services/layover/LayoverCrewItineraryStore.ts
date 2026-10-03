@@ -11,7 +11,7 @@
  * With no stops `branchNeededMinutes` is 0, so `plan_exceeds_usable_minutes`
  * and `plan_ends_after_shared_return` can never fire and `split` is always
  * false. The two verdicts the spec asks for have been reachable and unexercised.
- * This module supplies the rows that exercise them. Storage is migration 3513.
+ * This module supplies the rows that exercise them. Storage is migration 3515.
  *
  * It does four things and decides nothing: read the plan, propose a stop, drop
  * a stop, assign a branch. Every judgement about whether a plan WORKS belongs
@@ -60,19 +60,19 @@
  * NO VOTING, NO APPROVAL STATE. "Propose" means "add to the crew's plan,
  * attributed". Whether a stop needs assent, and from whom, is a product
  * decision nobody has taken; a `status` column defaulted to 'accepted' would
- * answer it silently. 3513 ships no such column and says so.
+ * answer it silently. 3515 ships no such column and says so.
  *
  * NO CHAT. §14's "shared chat" half of L131 belongs to Telegraph's threads,
  * which exist and already handle E2EE. 2984 refused to mint a second message
  * store and so does this.
  *
- * NO COORDINATES. 3513 holds none and asserts it; `CrewPlanStop` reads
+ * NO COORDINATES. 3515 holds none and asserts it; `CrewPlanStop` reads
  * `{ title, durationMin, travelMin, insideAirport }` and nothing else.
  *
  * ── STORAGE ──────────────────────────────────────────────────────────────────
  * `layover_crew_stops` and `layover_crew_branch_assignments`, created by
- * migration 3513. NOT APPLIED to any shared database as this file lands — see
- * 3513's header. Until it is, every read here is a refusal, which the route
+ * migration 3515. NOT APPLIED to any shared database as this file lands — see
+ * 3515's header. Until it is, every read here is a refusal, which the route
  * publishes as a degrade rather than as an empty itinerary.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -379,7 +379,7 @@ export interface ProposeCrewStopInput {
  * Propose a stop.
  *
  * MEMBERSHIP IS CHECKED HERE AND IT IS A READ, SO A FAILED READ REFUSES THE
- * WRITE. 3513 cascades `crew_id` but cannot assert that the proposer is in the
+ * WRITE. 3515 cascades `crew_id` but cannot assert that the proposer is in the
  * crew — a row count is not something a CHECK can see — so an unreadable
  * membership list is an unenforced scope. A crew's plan is a shared object:
  * without this check a crew id would be enough to write an itinerary into
@@ -392,7 +392,7 @@ export interface ProposeCrewStopInput {
  *
  * `stop_order` IS DERIVED FROM THE READ BUT IS NOT A UNIQUENESS CLAIM. Two
  * members proposing at the same instant both read the same length and both
- * write that order, and 3513 deliberately has no unique index to turn the
+ * write that order, and 3515 deliberately has no unique index to turn the
  * second one into a 23505 for a traveller who did nothing wrong. Display order
  * falls back to `created_at`, and `branchNeededMinutes` folds over the stops
  * order-independently, so a duplicated order costs nothing anyone can see.

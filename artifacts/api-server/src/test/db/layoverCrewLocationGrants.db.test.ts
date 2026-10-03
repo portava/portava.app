@@ -1,12 +1,12 @@
 /**
  * layoverCrewLocationGrants — spec §14 L4 / census-layover L124, L132: migration
- * 3514's grant store, probed against real PostgreSQL with real rows and real roles.
+ * 3516's grant store, probed against real PostgreSQL with real rows and real roles.
  *
  * Run: LOCAL_DB_URL=postgresql://… node --import tsx/esm --test src/test/db/layoverCrewLocationGrants.db.test.ts
  *      (or pnpm run test:db-local). Skips without a database, like every
  *      src/test/db suite; scripts/local-db/run-tests.sh refuses a skipped run.
  *
- * THIS FILE IS NAMED BY 3514 ITSELF, in WHERE THE REAL-RLS EVIDENCE LIVES: the
+ * THIS FILE IS NAMED BY 3516 ITSELF, in WHERE THE REAL-RLS EVIDENCE LIVES: the
  * migration inserts nothing and assumes no role, because a probe inside its own
  * transaction can only undo itself by aborting — which rolls back the DDL
  * batched with it while the migration still reports success (2195's defect,
@@ -31,7 +31,7 @@
  *       SELECT / INSERT / UPDATE / DELETE is refused with SQLSTATE 42501
  *       ("permission denied for table"), and the table's whole contents are
  *       byte-identical before and after EACH attempt.
- *   G2  the write boundary, policy layer — the part that matters. 3514's header
+ *   G2  the write boundary, policy layer — the part that matters. 3516's header
  *       names the policy somebody will plausibly add later: "a traveller may read
  *       and write their own grants", `granted_by_user_id = auth.uid()`. This
  *       property COMMITS exactly that policy and re-GRANTs the four privileges —
@@ -64,7 +64,7 @@
  *   G10 ON DELETE CASCADE from `layover_crews`, from `profiles` and from
  *       `layover_sessions` each remove the grant, observed one FK at a time.
  *   G11 NO COORDINATE COLUMN: not on this table, and not on `layover_crews` or
- *       `layover_crew_members` either. 3514's postcondition asserts the latter so
+ *       `layover_crew_members` either. 3516's postcondition asserts the latter so
  *       that applying this file is not read as licence to add one next door.
  */
 import { describe, it, before, after } from "node:test";
@@ -161,7 +161,7 @@ let SESSION_A = ""; // A's layover session
 let CREW = "";      // the crew the grants are scoped to
 let BASELINE: string[] = [];
 
-describe("spec §14 L4 — 3514: the crew location grant store, on real PostgreSQL", { skip: !HAVE_DB }, () => {
+describe("spec §14 L4 — 3516: the crew location grant store, on real PostgreSQL", { skip: !HAVE_DB }, () => {
   before(() => {
     // exec() throws on any psql failure, so a half-built fixture fails the suite
     // rather than letting a later assertion pass against nothing. The explicit
@@ -318,7 +318,7 @@ describe("spec §14 L4 — 3514: the crew location grant store, on real PostgreS
 
   // ── G2 ────────────────────────────────────────────────────────────────────
   it("G2. the write boundary, policy layer: the plausible own-rows policy plus the privileges back does NOT reopen the write", () => {
-    // 3514's WRITE BOUNDARY names the policy somebody will add later verbatim:
+    // 3516's WRITE BOUNDARY names the policy somebody will add later verbatim:
     // "a traveller may read and write their own grants", granted_by_user_id =
     // auth.uid(), "which looks unimpeachable. It is not." So add exactly that,
     // re-GRANT what the migration revoked, and show the restrictive denials
@@ -333,7 +333,7 @@ describe("spec §14 L4 — 3514: the crew location grant store, on real PostgreS
     // is read back on yet another connection, and the reopening is undone in a
     // `finally` whose effect is re-asserted at the end of the test.
     //
-    // AND WHY THE REOPENING IS NECESSARY AT ALL: 3514 revokes every client
+    // AND WHY THE REOPENING IS NECESSARY AT ALL: 3516 revokes every client
     // privilege, so without it every attempt dies at `42501 permission denied
     // for table` BEFORE any policy is consulted (that is G1). The policies would
     // be unevidenced. Note also that dropping a restrictive deny is INVISIBLE to
@@ -391,7 +391,7 @@ describe("spec §14 L4 — 3514: the crew location grant store, on real PostgreS
           // predicate, so the row is invisible. Who may learn that A shares
           // their location with a crew is the composed question the route layer
           // answers; a membership-scoped policy would be the weaker second
-          // answer underneath it, and 3514 declined one.
+          // answer underneath it, and 3516 declined one.
           const sel = attemptAs(who, `SELECT 'visible:' || count(*) FROM public.${TABLE};`);
           assert.equal(sel.ok, true, `${at}: the SELECT must run now that the privilege is back\n${sel.stderr}`);
           assert.deepEqual(sel.stdout, ["visible:0"], `${at}: the client must still see NO grant`);
@@ -423,7 +423,7 @@ describe("spec §14 L4 — 3514: the crew location grant store, on real PostgreS
           // reported unnamed.
           assert.match(forged.stderr,
             new RegExp(`new row violates row-level security policy "${TABLE}_deny_insert_clients" for table "${TABLE}"`),
-            `${at}: the refusal must come from 3514's restrictive deny policy, BY NAME — a refusal from the absent privilege would not prove the policy carries it\n${forged.stderr}`);
+            `${at}: the refusal must come from 3516's restrictive deny policy, BY NAME — a refusal from the absent privilege would not prove the policy carries it\n${forged.stderr}`);
           assert.deepEqual(snapshot(), BASELINE, `${at}: the refused INSERT left a row behind`);
         }
       } finally {
@@ -437,7 +437,7 @@ describe("spec §14 L4 — 3514: the crew location grant store, on real PostgreS
     // the live catalogue, and leaving a client grant behind would be a worse
     // defect than the one it was probing for.
     assert.equal(Number(scalar(`SELECT count(*) FROM pg_policy WHERE polrelid = 'public.${TABLE}'::regclass`)), 4,
-      "the probe's permissive policy must be gone again: exactly 3514's four restrictive denials remain");
+      "the probe's permissive policy must be gone again: exactly 3516's four restrictive denials remain");
     assert.equal(Number(scalar(`SELECT count(*) FROM pg_policies WHERE schemaname = 'public' AND tablename = '${TABLE}' AND permissive = 'PERMISSIVE'`)), 0,
       "no permissive policy may remain");
     for (const role of ROLES) {
@@ -524,9 +524,9 @@ describe("spec §14 L4 — 3514: the crew location grant store, on real PostgreS
     }
 
     // One microsecond of window is admitted: the CHECK is the stated predicate
-    // and not a disguised minimum TTL. 3514 chooses no duration.
+    // and not a disguised minimum TTL. 3516 chooses no duration.
     const ok = asService(insertGrant({ granted_at: `'2026-10-03T12:00:00Z'`, expires_at: `'2026-10-03T12:00:00.000001Z'` }));
-    assert.equal(ok.ok, true, `a positive window of one microsecond must be admitted — 3514 states no minimum TTL\n${ok.stderr}`);
+    assert.equal(ok.ok, true, `a positive window of one microsecond must be admitted — 3516 states no minimum TTL\n${ok.stderr}`);
     serviceOk(`DELETE FROM public.${TABLE} WHERE id = '${ok.stdout[0]}';`, "cleanup of the positive-window control");
     assert.deepEqual(snapshot(), before, "the control row must be gone again");
   });
@@ -735,7 +735,7 @@ describe("spec §14 L4 — 3514: the crew location grant store, on real PostgreS
     // THIS FILE STORES PERMISSION, NOT POSITION. A stale grant grants nothing,
     // because evaluateCrewLocationShare is evaluated against the clock at read
     // time; a stale POSITION is a traveller's whereabouts, published for as long
-    // as nothing deletes it. 3514's postcondition re-checks 2984's tables from
+    // as nothing deletes it. 3516's postcondition re-checks 2984's tables from
     // here so that applying the grant store is not read as licence to add one
     // next door, and this is the same assertion against the live database.
     const TABLES = [TABLE, "layover_crews", "layover_crew_members"] as const;

@@ -1,8 +1,8 @@
--- 3513_layover_crew_itinerary.sql
+-- 3515_layover_crew_itinerary.sql
 --
 -- THE CREW ITINERARY: `layover_crew_stops`, `layover_crew_branch_assignments`.
 --
--- POST-CUTOVER CANONICAL FORWARD MIGRATION (3000-3999 band). Lane 3513 (layover).
+-- POST-CUTOVER CANONICAL FORWARD MIGRATION (3000-3999 band). Lane 3515 (layover).
 -- Creates TWO new tables. Alters nothing that exists. Moves no row. Seeds no
 -- feature flag. Adds no column to 2984's tables.
 --
@@ -171,7 +171,7 @@
 -- ══════════════════════════════════════════════════════════════════════════════
 -- APPLY ORDER
 -- ══════════════════════════════════════════════════════════════════════════════
--- Depends on 2984 (`layover_crews`) and on `profiles`. INDEPENDENT of 3514
+-- Depends on 2984 (`layover_crews`) and on `profiles`. INDEPENDENT of 3516
 -- (the crew location-grant store), of 2985, and of everything in the 35xx band.
 -- Safe to apply at any time. Applying it alone changes nothing a traveller sees:
 -- the crew payload publishes an itinerary only once the routes ship, and they
@@ -180,7 +180,7 @@
 -- ══════════════════════════════════════════════════════════════════════════════
 -- REVERSIBLE BY
 -- ══════════════════════════════════════════════════════════════════════════════
--- Rollback: db/rollback/2026-10-03-3513-layover-crew-itinerary-rollback.sql
+-- Rollback: db/rollback/2026-10-03-3515-layover-crew-itinerary-rollback.sql
 --   DROP TABLE IF EXISTS public.layover_crew_branch_assignments;
 --   DROP TABLE IF EXISTS public.layover_crew_stops;
 -- In either order (no FK between them). Nothing else is touched. Both tables
@@ -205,10 +205,10 @@ BEGIN;
 DO $$
 BEGIN
   IF to_regclass('public.layover_crews') IS NULL THEN
-    RAISE EXCEPTION 'PRECONDITION FAILED (3513): public.layover_crews does not exist. Apply 2984_layover_crews.sql first.';
+    RAISE EXCEPTION 'PRECONDITION FAILED (3515): public.layover_crews does not exist. Apply 2984_layover_crews.sql first.';
   END IF;
   IF to_regclass('public.profiles') IS NULL THEN
-    RAISE EXCEPTION 'PRECONDITION FAILED (3513): public.profiles does not exist.';
+    RAISE EXCEPTION 'PRECONDITION FAILED (3515): public.profiles does not exist.';
   END IF;
 END $$;
 
@@ -260,7 +260,7 @@ CREATE INDEX IF NOT EXISTS layover_crew_stops_crew_idx
   ON layover_crew_stops(crew_id, branch_id, stop_order, created_at);
 
 COMMENT ON TABLE public.layover_crew_stops IS
-  'census-layover L135 / spec §14.1 (3513): the stops of one crew''s itinerary, per branch. Written and read only by the crew routes on the service role; RLS on with four restrictive client-deny policies and no permissive policy. Holds no coordinate: branchNeededMinutes reads only title/duration/travel/inside_airport.';
+  'census-layover L135 / spec §14.1 (3515): the stops of one crew''s itinerary, per branch. Written and read only by the crew routes on the service role; RLS on with four restrictive client-deny policies and no permissive policy. Holds no coordinate: branchNeededMinutes reads only title/duration/travel/inside_airport.';
 
 ALTER TABLE public.layover_crew_stops ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.layover_crew_stops FROM PUBLIC, anon, authenticated;
@@ -289,7 +289,7 @@ CREATE INDEX IF NOT EXISTS layover_crew_branch_assignments_crew_idx
   ON layover_crew_branch_assignments(crew_id, branch_id);
 
 COMMENT ON TABLE public.layover_crew_branch_assignments IS
-  'spec §14.1 "unless an explicit split plan exists" (3513): which branch each crew member is on. No rows means the unsplit case — one branch ''all'', everybody — matching unsplitPlan. One branch per person per crew (composite PK). Service role only.';
+  'spec §14.1 "unless an explicit split plan exists" (3515): which branch each crew member is on. No rows means the unsplit case — one branch ''all'', everybody — matching unsplitPlan. One branch per person per crew (composite PK). Service role only.';
 
 ALTER TABLE public.layover_crew_branch_assignments ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.layover_crew_branch_assignments FROM PUBLIC, anon, authenticated;
@@ -342,10 +342,10 @@ DECLARE
   uniq_order INTEGER;
 BEGIN
   IF to_regclass('public.layover_crew_stops') IS NULL THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3513): layover_crew_stops missing';
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3515): layover_crew_stops missing';
   END IF;
   IF to_regclass('public.layover_crew_branch_assignments') IS NULL THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3513): layover_crew_branch_assignments missing';
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3515): layover_crew_branch_assignments missing';
   END IF;
 
   -- RLS on, or every revoke below is decoration and the service role's bypass
@@ -354,13 +354,13 @@ BEGIN
     SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
      WHERE n.nspname = 'public' AND c.relname = 'layover_crew_stops' AND c.relrowsecurity = TRUE
   ) THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3513): RLS not enabled on layover_crew_stops';
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3515): RLS not enabled on layover_crew_stops';
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
      WHERE n.nspname = 'public' AND c.relname = 'layover_crew_branch_assignments' AND c.relrowsecurity = TRUE
   ) THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3513): RLS not enabled on layover_crew_branch_assignments';
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3515): RLS not enabled on layover_crew_branch_assignments';
   END IF;
 
   -- NO PERMISSIVE POLICY, the L201 check, for the reason 2984 gives and this
@@ -374,7 +374,7 @@ BEGIN
      AND tablename IN ('layover_crew_stops','layover_crew_branch_assignments')
      AND permissive = 'PERMISSIVE';
   IF permissive_count <> 0 THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3513): % permissive policy/policies on the crew itinerary tables, expected 0. These tables are server-mediated; a permissive policy here would admit a crewmate the route layer''s blocks and sharing-preference gates would have excluded.', permissive_count;
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3515): % permissive policy/policies on the crew itinerary tables, expected 0. These tables are server-mediated; a permissive policy here would admit a crewmate the route layer''s blocks and sharing-preference gates would have excluded.', permissive_count;
   END IF;
 
   -- AND THE DENIALS ARE WRITTEN DOWN. Eight: four operations on each of two
@@ -387,7 +387,7 @@ BEGIN
      AND tablename IN ('layover_crew_stops','layover_crew_branch_assignments')
      AND permissive = 'RESTRICTIVE';
   IF restrictive_count <> 8 THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3513): % restrictive client-deny policy/policies on the crew itinerary tables, expected 8 (SELECT/INSERT/UPDATE/DELETE on each of two tables)', restrictive_count;
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3515): % restrictive client-deny policy/policies on the crew itinerary tables, expected 8 (SELECT/INSERT/UPDATE/DELETE on each of two tables)', restrictive_count;
   END IF;
 
   -- The service role must actually be able to work, or the routes fail closed
@@ -402,7 +402,7 @@ BEGIN
     AND has_table_privilege('service_role', 'public.layover_crew_branch_assignments', 'INSERT')
     AND has_table_privilege('service_role', 'public.layover_crew_branch_assignments', 'DELETE')
   ) THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3513): service_role lacks SELECT/INSERT/DELETE on one of the crew itinerary tables; the routes would refuse every itinerary read and write.';
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3515): service_role lacks SELECT/INSERT/DELETE on one of the crew itinerary tables; the routes would refuse every itinerary read and write.';
   END IF;
 
   -- No client grant of ANY kind, read included.
@@ -412,7 +412,7 @@ BEGIN
      AND table_name IN ('layover_crew_stops','layover_crew_branch_assignments')
      AND grantee IN ('anon','authenticated');
   IF client_cols <> 0 THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3513): % client column grant(s) on the crew itinerary tables, expected 0 (RLS is on and there is no policy, so a grant is inert today and a trap the day someone adds one)', client_cols;
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3515): % client column grant(s) on the crew itinerary tables, expected 0 (RLS is on and there is no policy, so a grant is inert today and a trap the day someone adds one)', client_cols;
   END IF;
 
   -- ONE BRANCH PER PERSON PER CREW, asserted as the composite PK it must be. A
@@ -427,7 +427,7 @@ BEGIN
    WHERE n.nspname = 'public' AND t.relname = 'layover_crew_branch_assignments' AND c.contype = 'p'
    GROUP BY c.oid;
   IF pk_cols IS DISTINCT FROM 'crew_id,user_id' THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3513): layover_crew_branch_assignments primary key is (%), expected (crew_id,user_id) -- one branch per person per crew, so certifyCrewPlan''s member_assigned_twice cannot be reached by a double tap', coalesce(pk_cols, 'none');
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3515): layover_crew_branch_assignments primary key is (%), expected (crew_id,user_id) -- one branch per person per crew, so certifyCrewPlan''s member_assigned_twice cannot be reached by a double tap', coalesce(pk_cols, 'none');
   END IF;
 
   -- `travel_min` MUST NOT acquire a default. The whole point of dropping
@@ -439,7 +439,7 @@ BEGIN
     FROM information_schema.columns
    WHERE table_schema = 'public' AND table_name = 'layover_crew_stops' AND column_name = 'travel_min';
   IF travel_default IS NOT NULL THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3513): layover_crew_stops.travel_min has default %, expected none. A default here turns an omitted landside journey into a measured zero (census L47).', travel_default;
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3515): layover_crew_stops.travel_min has default %, expected none. A default here turns an omitted landside journey into a measured zero (census L47).', travel_default;
   END IF;
 
   -- `stop_order` MUST NOT be unique. A uniqueness race between two members
@@ -456,7 +456,7 @@ BEGIN
         WHERE a.attrelid = t.oid AND a.attnum = ANY (i.indkey::int[]) AND a.attname = 'stop_order'
      );
   IF uniq_order <> 0 THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3513): % unique index/indexes cover layover_crew_stops.stop_order, expected 0. A crew has several writers; see STOP ORDER, AND WHY IT IS NOT UNIQUE.', uniq_order;
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3515): % unique index/indexes cover layover_crew_stops.stop_order, expected 0. A crew has several writers; see STOP ORDER, AND WHY IT IS NOT UNIQUE.', uniq_order;
   END IF;
 
   -- NO COORDINATES, for this file's own narrower reason rather than 2984's:
@@ -469,7 +469,7 @@ BEGIN
      AND table_name IN ('layover_crew_stops','layover_crew_branch_assignments')
      AND column_name IN ('lat','lng','latitude','longitude','location','geog','geom','point','coords');
   IF coord_cols <> 0 THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3513): % coordinate column(s) on the crew itinerary tables. Nothing in the §14.1 solver reads one; a crew map pin is a further build and should argue with this file rather than find a column waiting for it.', coord_cols;
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3515): % coordinate column(s) on the crew itinerary tables. Nothing in the §14.1 solver reads one; a crew map pin is a further build and should argue with this file rather than find a column waiting for it.', coord_cols;
   END IF;
 END
 $post$;

@@ -98,7 +98,7 @@ import {
   type CrewShareSignals,
   type LocationPrecision,
 } from "../services/airport/LayoverCrewService.js";
-// §14.1 the crew's own itinerary (3513) and §14 L4's grant store (3514). Both
+// §14.1 the crew's own itinerary (3515) and §14 L4's grant store (3516). Both
 // are row sources for arithmetic that already existed: `certifyCrewPlan` has
 // been called with the empty unsplit plan, and `locationPrecisionFor` has had
 // nowhere to read a grant from, so its only reachable answers were `none` and
@@ -3086,7 +3086,7 @@ async function crewPayload(
   const solver = await crewSolverMembers(sc, members, nowMs);
   if (!solver.ok) return { ok: false };
 
-  // THE CREW'S OWN ITINERARY (3513), WHICH IS WHAT FINALLY EXERCISES §14.1.
+  // THE CREW'S OWN ITINERARY (3515), WHICH IS WHAT FINALLY EXERCISES §14.1.
   //
   // This call site used to be `unsplitPlan(solver.members, [])` — one branch,
   // everybody, NO STOPS — and the comment here explained that the empty plan
@@ -3118,7 +3118,7 @@ async function crewPayload(
   });
   const solution = certifyCrewPlan(plan, solver.members, { nowMs });
 
-  // §14 L4, the precision ladder's row source (3514).
+  // §14 L4, the precision ladder's row source (3516).
   //
   // A FAILED READ DEGRADES RATHER THAN REFUSING, which is the opposite of the
   // two reads above, and the difference is which way the error points. An
@@ -3236,7 +3236,7 @@ async function crewPayload(
  * guarantee is only worth something if the call site adds no rules of its own.
  *
  * ── WHAT IS PUBLISHED IS THE RUNG, NOT A POSITION ────────────────────────────
- * There is no coordinate anywhere in this response and none in the schema: 3514
+ * There is no coordinate anywhere in this response and none in the schema: 3516
  * stores permission, and 2984's postcondition asserting the crew tables hold no
  * coordinate is untouched. The rung is what the §13 map element and the
  * meet-action gates are keyed on, so publishing it is what makes them
@@ -3646,7 +3646,7 @@ router.post("/airport/sessions/:id/crew/leave", async (req, res) => {
 // before `layover_crews` existed, and was being called with
 // `unsplitPlan(members, [])`; `locationPrecisionFor` has implemented §14's
 // disclosure ladder with an exhaustive sweep behind it, and was being called
-// with `grant: null`. Storage is 3513 and 3514.
+// with `grant: null`. Storage is 3515 and 3516.
 //
 // ── EVERY ONE OF THEM ANSWERS WITH THE WHOLE CERTIFIED CREW ──────────────────
 // Not with the row that was written. `respondWithCrew` re-reads and re-certifies
@@ -3661,7 +3661,7 @@ router.post("/airport/sessions/:id/crew/leave", async (req, res) => {
 // The solo stops route emits `plan_stop_added`, so the symmetry would be to
 // emit here too. Two reasons not to, one per surface:
 //
-// THE ITINERARY ALREADY CARRIES ITS OWN RECORD. 3513 stores `proposed_by` on
+// THE ITINERARY ALREADY CARRIES ITS OWN RECORD. 3515 stores `proposed_by` on
 // every stop and `assigned_by` on every assignment, and both are published. An
 // event row would re-record a fact the row itself already states, and
 // `check:enum-literals` cannot see an event type passed as an ARGUMENT to
@@ -3672,7 +3672,7 @@ router.post("/airport/sessions/:id/crew/leave", async (req, res) => {
 // THE GRANT MUST NOT BE RE-RECORDED ANYWHERE WITH A LONGER LIFE. A
 // `crew_location_granted` event would be a user-linked row naming who shared
 // their location and when, in a table keyed on `session_id` and NOT cascaded by
-// the crew's deletion. 3514's rows die with their crew (2984 cascades
+// the crew's deletion. 3516's rows die with their crew (2984 cascades
 // `crew_id`, and `layoverCrewExpiryScheduler` deletes expired crews), so
 // minting an event would move the same personal fact into a table that outlives
 // it. `layoverCrewExpiryScheduler`'s header makes this exact argument for

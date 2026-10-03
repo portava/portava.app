@@ -1,8 +1,8 @@
--- 3514_layover_crew_location_grants.sql
+-- 3516_layover_crew_location_grants.sql
 --
 -- THE §14 L4 GRANT STORE: `layover_crew_location_grants`.
 --
--- POST-CUTOVER CANONICAL FORWARD MIGRATION (3000-3999 band). Lane 3514 (layover).
+-- POST-CUTOVER CANONICAL FORWARD MIGRATION (3000-3999 band). Lane 3516 (layover).
 -- Creates ONE new table. Alters nothing that exists. Moves no row. Seeds no
 -- feature flag. ADDS NO COORDINATE COLUMN ANYWHERE — see THIS FILE STORES
 -- PERMISSION, NOT POSITION.
@@ -162,7 +162,7 @@
 -- APPLY ORDER
 -- ══════════════════════════════════════════════════════════════════════════════
 -- Depends on 2984 (`layover_crews`), 0127 (`layover_sessions`) and `profiles`.
--- INDEPENDENT of 3513 (the crew itinerary) and of everything in the 35xx band.
+-- INDEPENDENT of 3515 (the crew itinerary) and of everything in the 35xx band.
 -- Safe to apply at any time. Applying it alone changes nothing a traveller sees
 -- and grants nothing: an empty table is read as `never_granted`, which is what
 -- every caller already gets today.
@@ -170,7 +170,7 @@
 -- ══════════════════════════════════════════════════════════════════════════════
 -- REVERSIBLE BY
 -- ══════════════════════════════════════════════════════════════════════════════
--- Rollback: db/rollback/2026-10-03-3514-layover-crew-location-grants-rollback.sql
+-- Rollback: db/rollback/2026-10-03-3516-layover-crew-location-grants-rollback.sql
 --   DROP TABLE IF EXISTS public.layover_crew_location_grants;
 -- Nothing else is touched. Dropping it returns the precision ladder to the
 -- state this file found it in: `none` and `meeting_point` only. The rollback
@@ -199,13 +199,13 @@ BEGIN;
 DO $$
 BEGIN
   IF to_regclass('public.layover_crews') IS NULL THEN
-    RAISE EXCEPTION 'PRECONDITION FAILED (3514): public.layover_crews does not exist. Apply 2984_layover_crews.sql first.';
+    RAISE EXCEPTION 'PRECONDITION FAILED (3516): public.layover_crews does not exist. Apply 2984_layover_crews.sql first.';
   END IF;
   IF to_regclass('public.layover_sessions') IS NULL THEN
-    RAISE EXCEPTION 'PRECONDITION FAILED (3514): public.layover_sessions does not exist. Apply 0127_layover_system.sql first.';
+    RAISE EXCEPTION 'PRECONDITION FAILED (3516): public.layover_sessions does not exist. Apply 0127_layover_system.sql first.';
   END IF;
   IF to_regclass('public.profiles') IS NULL THEN
-    RAISE EXCEPTION 'PRECONDITION FAILED (3514): public.profiles does not exist.';
+    RAISE EXCEPTION 'PRECONDITION FAILED (3516): public.profiles does not exist.';
   END IF;
 END $$;
 
@@ -274,7 +274,7 @@ CREATE INDEX IF NOT EXISTS layover_crew_location_grants_newest_idx
   ON layover_crew_location_grants(crew_id, granted_by_user_id, granted_at DESC);
 
 COMMENT ON TABLE public.layover_crew_location_grants IS
-  'spec §14 L4 / census-layover L124, L132 (3514): the explicit, scoped, auto-expiring permission CrewLocationGrant describes — who said yes, to which crew, from when, until when, and whether they revoked. Holds PERMISSION, not position: no coordinate column, here or on 2984''s tables. Service role only; the bound on a grant''s life is derived in the route from the crew''s life and the granter''s certified hard return.';
+  'spec §14 L4 / census-layover L124, L132 (3516): the explicit, scoped, auto-expiring permission CrewLocationGrant describes — who said yes, to which crew, from when, until when, and whether they revoked. Holds PERMISSION, not position: no coordinate column, here or on 2984''s tables. Service role only; the bound on a grant''s life is derived in the route from the crew''s life and the granter''s certified hard return.';
 
 ALTER TABLE public.layover_crew_location_grants ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.layover_crew_location_grants FROM PUBLIC, anon, authenticated;
@@ -324,7 +324,7 @@ DECLARE
   window_check INTEGER;
 BEGIN
   IF to_regclass('public.layover_crew_location_grants') IS NULL THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3514): layover_crew_location_grants missing';
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3516): layover_crew_location_grants missing';
   END IF;
 
   -- RLS on, or every revoke below is decoration and the service role's bypass
@@ -333,7 +333,7 @@ BEGIN
     SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
      WHERE n.nspname = 'public' AND c.relname = 'layover_crew_location_grants' AND c.relrowsecurity = TRUE
   ) THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3514): RLS not enabled on layover_crew_location_grants';
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3516): RLS not enabled on layover_crew_location_grants';
   END IF;
 
   -- NO PERMISSIVE POLICY. The argument is stronger here than on 2984's tables:
@@ -346,7 +346,7 @@ BEGIN
    WHERE schemaname = 'public' AND tablename = 'layover_crew_location_grants'
      AND permissive = 'PERMISSIVE';
   IF permissive_count <> 0 THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3514): % permissive policy/policies on layover_crew_location_grants, expected 0. Even an own-rows policy lets a client choose its own expires_at, and the derived bound on a grant''s life exists only in the route; the write must be server-mediated or a grant is not bounded at all.', permissive_count;
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3516): % permissive policy/policies on layover_crew_location_grants, expected 0. Even an own-rows policy lets a client choose its own expires_at, and the derived bound on a grant''s life exists only in the route; the write must be server-mediated or a grant is not bounded at all.', permissive_count;
   END IF;
 
   -- AND THE DENIALS ARE WRITTEN DOWN, one per operation.
@@ -355,7 +355,7 @@ BEGIN
    WHERE schemaname = 'public' AND tablename = 'layover_crew_location_grants'
      AND permissive = 'RESTRICTIVE';
   IF restrictive_count <> 4 THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3514): % restrictive client-deny policy/policies on layover_crew_location_grants, expected 4 (SELECT/INSERT/UPDATE/DELETE)', restrictive_count;
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3516): % restrictive client-deny policy/policies on layover_crew_location_grants, expected 4 (SELECT/INSERT/UPDATE/DELETE)', restrictive_count;
   END IF;
 
   -- The service role must actually be able to work, or the ladder loses its row
@@ -365,7 +365,7 @@ BEGIN
     AND has_table_privilege('service_role', 'public.layover_crew_location_grants', 'INSERT')
     AND has_table_privilege('service_role', 'public.layover_crew_location_grants', 'UPDATE')
   ) THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3514): service_role lacks SELECT/INSERT/UPDATE on layover_crew_location_grants; granting and revoking would both refuse, and the ladder would read every traveller as never_granted.';
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3516): service_role lacks SELECT/INSERT/UPDATE on layover_crew_location_grants; granting and revoking would both refuse, and the ladder would read every traveller as never_granted.';
   END IF;
 
   -- No client grant of ANY kind, read included.
@@ -375,7 +375,7 @@ BEGIN
      AND table_name = 'layover_crew_location_grants'
      AND grantee IN ('anon','authenticated');
   IF client_cols <> 0 THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3514): % client column grant(s) on layover_crew_location_grants, expected 0', client_cols;
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3516): % client column grant(s) on layover_crew_location_grants, expected 0', client_cols;
   END IF;
 
   -- "AUTO-EXPIRING" AS A SCHEMA FACT. Both halves are asserted because either
@@ -386,10 +386,10 @@ BEGIN
    WHERE table_schema = 'public' AND table_name = 'layover_crew_location_grants'
      AND column_name = 'expires_at';
   IF expires_nullable IS DISTINCT FROM 'NO' THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3514): layover_crew_location_grants.expires_at is nullable. NULL would be a grant that never expires, which §14 L4 ("auto-expiring") has no word for and CrewLocationGrant''s type cannot express.';
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3516): layover_crew_location_grants.expires_at is nullable. NULL would be a grant that never expires, which §14 L4 ("auto-expiring") has no word for and CrewLocationGrant''s type cannot express.';
   END IF;
   IF expires_default IS NOT NULL THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3514): layover_crew_location_grants.expires_at has default %, expected none. A default is a duration, and no duration has been chosen for a §14 L4 grant; the bound is derived per grant in the route.', expires_default;
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3516): layover_crew_location_grants.expires_at has default %, expected none. A default is a duration, and no duration has been chosen for a §14 L4 grant; the bound is derived per grant in the route.', expires_default;
   END IF;
 
   -- The positive-window CHECK, asserted by name so dropping it is a visible
@@ -402,7 +402,7 @@ BEGIN
      AND c.contype = 'c'
      AND c.conname = 'layover_crew_location_grants_positive_window';
   IF window_check <> 1 THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3514): the positive-window CHECK (expires_at > granted_at) is absent. Without it a row can read as a grant while authorising nothing, reported as ttl_elapsed.';
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3516): the positive-window CHECK (expires_at > granted_at) is absent. Without it a row can read as a grant while authorising nothing, reported as ttl_elapsed.';
   END IF;
 
   -- NO COORDINATE, HERE OF ALL PLACES. This table is the thing that decides
@@ -414,7 +414,7 @@ BEGIN
      AND table_name = 'layover_crew_location_grants'
      AND column_name IN ('lat','lng','latitude','longitude','location','geog','geom','point','coords');
   IF coord_cols <> 0 THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3514): % coordinate column(s) on layover_crew_location_grants. This table stores PERMISSION, not position: a stale grant grants nothing, a stale position is someone''s whereabouts.', coord_cols;
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3516): % coordinate column(s) on layover_crew_location_grants. This table stores PERMISSION, not position: a stale grant grants nothing, a stale position is someone''s whereabouts.', coord_cols;
   END IF;
 
   -- 2984's assertion is left standing, and re-checked from here so that
@@ -425,7 +425,7 @@ BEGIN
      AND table_name IN ('layover_crews','layover_crew_members')
      AND column_name IN ('lat','lng','latitude','longitude','location','geog','geom','point','coords');
   IF coord_cols <> 0 THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3514): % coordinate column(s) appeared on 2984''s crew tables. The grant store existing is not licence to add one; where a position is held is a separate decision with its own retention answer.', coord_cols;
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3516): % coordinate column(s) appeared on 2984''s crew tables. The grant store existing is not licence to add one; where a position is held is a separate decision with its own retention answer.', coord_cols;
   END IF;
 END
 $post$;

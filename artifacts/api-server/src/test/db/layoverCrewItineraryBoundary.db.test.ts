@@ -1,5 +1,5 @@
 /**
- * layoverCrewItineraryBoundary — the probe migration 3513 names in its own
+ * layoverCrewItineraryBoundary — the probe migration 3515 names in its own
  * header section "WHERE THE REAL-RLS EVIDENCE LIVES", run against real
  * PostgreSQL with real rows and real roles.
  *
@@ -10,10 +10,10 @@
  * scripts/local-db/run-tests.sh is the run that refuses skipped > 0.
  *
  * ── WHY IT IS NOT IN THE MIGRATION ───────────────────────────────────────────
- * 3513's own header: a probe inside the migration's transaction can only undo
+ * 3515's own header: a probe inside the migration's transaction can only undo
  * itself by aborting, which rolls back the DDL batched with it while the
  * migration still reports success (2195's defect, which
- * src/test/migrationDeployability.test.ts forbids). So 3513 inserts nothing and
+ * src/test/migrationDeployability.test.ts forbids). So 3515 inserts nothing and
  * assumes no role, and every assertion here is made from a SEPARATE psql
  * connection — localDb.psql() is one process per call — against the committed
  * database, never from inside an aborted transaction.
@@ -22,7 +22,7 @@
  * CONTRIBUTING.md: "verify the resulting STATE, not the return value", and a
  * check that cannot establish its result must FAIL. So every refusal here is
  * checked twice: the statement is refused with the SQLSTATE and the constraint
- * or policy NAME that 3513 relies on (a refusal for the wrong reason is not
+ * or policy NAME that 3515 relies on (a refusal for the wrong reason is not
  * evidence), AND the table's contents are re-read afterwards and asserted
  * unchanged. Every admitted write is read back before it is believed.
  *
@@ -36,7 +36,7 @@
  *       privilege GRANTed back, the client still reads no row, writes nothing
  *       and is refused its INSERT by policy name. (B1 alone would still pass if
  *       the policies were missing and only the grants were revoked, which is
- *       exactly the failure 3513's header says a bare "no policy" cannot cover.)
+ *       exactly the failure 3515's header says a bare "no policy" cannot cover.)
  *   B3  NON-VACUITY: service_role performs every write the crew routes need and
  *       the row is read back from another connection. Without this, "nothing can
  *       write" would pass against a table that simply does not work.
@@ -187,19 +187,19 @@ function clientAttempt(table: string, op: Op): string {
   }
 }
 
-describe("3513 — the crew itinerary's write boundary, on a real database", { skip: !HAVE_DB }, () => {
+describe("3515 — the crew itinerary's write boundary, on a real database", { skip: !HAVE_DB }, () => {
   before(() => {
     // The chain must already be applied. A missing table is a SETUP FAILURE and
     // must not look like a pass, so it throws here rather than skipping.
     for (const t of [STOPS, ASSIGNMENTS]) {
       assert.equal(
         scalar(`SELECT to_regclass('public.${t}')::text;`), t,
-        `${t} does not exist — apply 3513 before running this suite; this suite must not pass without it`,
+        `${t} does not exist — apply 3515 before running this suite; this suite must not pass without it`,
       );
     }
 
-    A = seedUser("l3513_a");
-    B = seedUser("l3513_b");
+    A = seedUser("l3515_a");
+    B = seedUser("l3515_b");
     SESSION = randomUUID();
     CREW = randomUUID();
     BASE_STOP = randomUUID();
@@ -207,7 +207,7 @@ describe("3513 — the crew itinerary's write boundary, on a real database", { s
       `INSERT INTO public.layover_sessions (id, user_id, arrival_time, departure_time)
          VALUES ('${SESSION}', '${A}', NOW(), NOW() + INTERVAL '8 hours');
        INSERT INTO public.layover_crews (id, city, created_by, created_session_id, title, expires_at)
-         VALUES ('${CREW}', 'doha', '${A}', '${SESSION}', '3513 probe crew', NOW() + INTERVAL '8 hours');`,
+         VALUES ('${CREW}', 'doha', '${A}', '${SESSION}', '3515 probe crew', NOW() + INTERVAL '8 hours');`,
     );
     // The baseline itinerary, written through the role the routes use, so the
     // deny probes below have a REAL row to fail to read, change or remove.
@@ -231,17 +231,17 @@ describe("3513 — the crew itinerary's write boundary, on a real database", { s
   });
 
   it("B0. the catalogue states what only the catalogue can: no coordinate, no travel_min default, no unique stop_order, the composite PK, eight restrictive denials", () => {
-    // NO COORDINATES — the one claim in 3513's WHAT IS DELIBERATELY NOT IN
+    // NO COORDINATES — the one claim in 3515's WHAT IS DELIBERATELY NOT IN
     // THESE TABLES that no row can evidence: an absent column cannot be probed.
     const coords = rows<{ table_name: string; column_name: string }>(
       `SELECT table_name, column_name FROM information_schema.columns
         WHERE table_schema = 'public' AND table_name IN ('${STOPS}', '${ASSIGNMENTS}')
           AND column_name IN ('lat','lng','latitude','longitude','location','geog','geom','point','coords')`,
     );
-    assert.deepEqual(coords, [], "3513 carries no coordinate column: branchNeededMinutes reads none");
+    assert.deepEqual(coords, [], "3515 carries no coordinate column: branchNeededMinutes reads none");
 
     // travel_min: NO DEFAULT. `layover_plan_stops` carries DEFAULT 0 and that
-    // difference is the whole of 3513's TRAVEL TIME section, so both are read.
+    // difference is the whole of 3515's TRAVEL TIME section, so both are read.
     assert.equal(
       scalar(`SELECT coalesce(column_default, '<none>') FROM information_schema.columns
                WHERE table_schema='public' AND table_name='${STOPS}' AND column_name='travel_min';`),
@@ -250,7 +250,7 @@ describe("3513 — the crew itinerary's write boundary, on a real database", { s
     assert.equal(
       scalar(`SELECT coalesce(column_default, '<none>') FROM information_schema.columns
                WHERE table_schema='public' AND table_name='layover_plan_stops' AND column_name='travel_min';`),
-      "0", "the contrast 3513 argues with: the solo table does default travel_min to 0",
+      "0", "the contrast 3515 argues with: the solo table does default travel_min to 0",
     );
 
     // stop_order: NOT unique, and the index that does exist is the itinerary read.
@@ -327,7 +327,7 @@ describe("3513 — the crew itinerary's write boundary, on a real database", { s
   }
 
   it("B2. the four RESTRICTIVE policies bite on their own: with the revoked privileges GRANTed back, a client still reads nothing, writes nothing and is refused by policy name", () => {
-    // B1 passes on revoked grants alone. 3513's header is explicit that denial
+    // B1 passes on revoked grants alone. 3515's header is explicit that denial
     // by ABSENCE is the failure mode a later permissive policy reopens, so the
     // policies are probed with the privilege present. The GRANT is COMMITTED
     // (an assertion inside an aborted transaction proves nothing) and taken
@@ -362,7 +362,7 @@ describe("3513 — the crew itinerary's write boundary, on a real database", { s
           // row; with no permissive policy to combine with, the restrictive set
           // is reported unnamed. Both shapes are accepted and nothing else is:
           // the message must be the ROW-LEVEL SECURITY refusal for THIS table,
-          // and when a name is given it must be 3513's deny policy. (A
+          // and when a name is given it must be 3515's deny policy. (A
           // "permission denied" here would mean the grant never came back and
           // this test proved nothing; B0 pins the four policies by name.)
           assert.match(refusal.message,
@@ -385,7 +385,7 @@ describe("3513 — the crew itinerary's write boundary, on a real database", { s
     } finally {
       for (const t of granted) exec(`REVOKE ALL ON public.${t} FROM PUBLIC, anon, authenticated;`);
     }
-    // The posture 3513 commits to is back, asserted rather than assumed.
+    // The posture 3515 commits to is back, asserted rather than assumed.
     assert.equal(
       scalar(`SELECT count(*) FROM information_schema.role_table_grants
                WHERE table_schema='public' AND table_name IN ('${STOPS}','${ASSIGNMENTS}') AND grantee IN ('anon','authenticated');`),
@@ -427,7 +427,7 @@ describe("3513 — the crew itinerary's write boundary, on a real database", { s
     assert.deepEqual(assignmentsOf(CREW).map((a) => a.user_id), [A], "the baseline assignment must survive");
   });
 
-  it("B4. the CHECK constraints refuse the values 3513 says they refuse, and nothing lands", () => {
+  it("B4. the CHECK constraints refuse the values 3515 says they refuse, and nothing lands", () => {
     const cases: Array<{ what: string; sql: string; constraint: string }> = [
       { what: "stop_order below 0", sql: `${insertStop({ stop_order: "-1" })};`, constraint: `${STOPS}_stop_order_check` },
       { what: "stop_order above 999", sql: `${insertStop({ stop_order: "1000" })};`, constraint: `${STOPS}_stop_order_check` },
@@ -520,7 +520,7 @@ describe("3513 — the crew itinerary's write boundary, on a real database", { s
     // person in THIS crew, are both fine.
     const otherCrew = randomUUID();
     exec(`INSERT INTO public.layover_crews (id, city, created_by, created_session_id, title, expires_at)
-            VALUES ('${otherCrew}', 'doha', '${A}', '${SESSION}', '3513 probe crew 2', NOW() + INTERVAL '8 hours');`);
+            VALUES ('${otherCrew}', 'doha', '${A}', '${SESSION}', '3515 probe crew 2', NOW() + INTERVAL '8 hours');`);
     serviceOk(`${insertAssignment({ crew_id: `'${otherCrew}'`, user_id: `'${A}'`, branch_id: `'north'` })};`);
     serviceOk(`${insertAssignment({ user_id: `'${B}'`, branch_id: `'north'` })};`);
     assert.equal(assignmentsOf(otherCrew).length, 1, "the same member in a different crew is a different key");
@@ -535,7 +535,7 @@ describe("3513 — the crew itinerary's write boundary, on a real database", { s
     const baseline = world();
     const crew = randomUUID();
     exec(`INSERT INTO public.layover_crews (id, city, created_by, created_session_id, title, expires_at)
-            VALUES ('${crew}', 'doha', '${A}', '${SESSION}', '3513 cascade crew', NOW() + INTERVAL '8 hours');`);
+            VALUES ('${crew}', 'doha', '${A}', '${SESSION}', '3515 cascade crew', NOW() + INTERVAL '8 hours');`);
     serviceOk(
       `${insertStop({ crew_id: `'${crew}'`, title: `'cascade stop one'` })};
        ${insertStop({ crew_id: `'${crew}'`, stop_order: "1", title: `'cascade stop two'`, branch_id: `'north'` })};
