@@ -22,6 +22,8 @@
  *       earlier read; the failure is said
  *   FF8 (sweep) the drafts read answers a draft; the next load's FAILS → "Your drafts" is not drawn from the earlier
  *       read; the failure is said
+ *   FF9 (sweep) events are drawn under the new chip and only the invites read FAILS → the lists-unread note says a list
+ *       failed beside what is drawn
  */
 import React from 'react';
 import { render, waitFor, fireEvent, act } from '@testing-library/react-native';
@@ -222,5 +224,16 @@ describe('census-discovery §119 (B30): a failed read for the chip on screen nev
   it('FF8 (sweep) the drafts read FAILS on the next load → the earlier "Your drafts" is not drawn; said', async () => {
     const seen = await refetchFails((m) => (svc.getMyDrafts as jest.Mock).mockImplementation(() => (m === 'ok' ? ok({ drafts: [{ id: 'd1', title: DRAFT, updatedAt: '2026-09-01T00:00:00Z' }] }) : FAIL())), (r) => r.queryAllByText(DRAFT).length > 0);
     expect(seen).toEqual({ stillDrawn: false, said: true });
+  });
+  it('FF9 (sweep) events drawn, only the invites read FAILS on the next load → the lists-unread note says so', async () => {
+    lists();
+    (svc.listEvents as jest.Mock).mockImplementation((p: { limit?: number }) => (p.limit === 10 ? ok({ events: [event('ev-old', OLD)] }) : ok({ events: [] })));
+    const r = await render(<EventsTab />);
+    await waitFor(() => expect(r.queryAllByText(OLD).length).toBeGreaterThan(0));
+    (svc.getMyEventInvites as jest.Mock).mockImplementation(() => FAIL());
+    await act(async () => { fireEvent.press(r.getByLabelText('Filters')); });
+    await act(async () => { fireEvent.press(r.getByText('Music')); });
+    await act(async () => {}); await act(async () => {});
+    expect({ drawn: r.queryAllByText(OLD).length > 0, note: r.queryByTestId('events-lists-unread') !== null }).toEqual({ drawn: true, note: true });
   });
 });
