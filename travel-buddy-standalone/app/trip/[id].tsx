@@ -603,7 +603,7 @@ function TripDetailScreen() {
             and nothing displayed it. Stale rows are shown rather than hidden —
             §10.4 needs last-known data to remain available — but never drawn
             like live ones. */}
-        {live && trip.id ? <TripCrewPresenceCard tripId={trip.id} /> : null}{live && trip.id && realTrip.ownerId === userId ? <JoinRequestsList tripId={trip.id} onOpenAll={() => router.push('/trip/join-requests' as any)} onApproved={() => setCrewRefreshKey((k) => k + 1)} /> : null}{live && trip.id ? <TripRegroupCard tripId={trip.id} /> : null}{/* TM-live TRIP-F19: regroup + meeting checkpoints */}
+        {live && trip.id ? <TripCrewPresenceCard tripId={trip.id} /> : null}{live && trip.id && (realTrip.ownerId === userId || memberRole === 'co_host') ? <JoinRequestsList tripId={trip.id} onOpenAll={() => router.push('/trip/join-requests' as any)} onApproved={() => setCrewRefreshKey((k) => k + 1)} /> : null}{live && trip.id ? <TripRegroupCard tripId={trip.id} /> : null}{/* TM-live TRIP-F19: regroup + meeting checkpoints */}
 
         {/* ── §8 decisions and risks ───────────────────────────────────────
             The chain §8 describes — goal, decision task, proposals, §7
