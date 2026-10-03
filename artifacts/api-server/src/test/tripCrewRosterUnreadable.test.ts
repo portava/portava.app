@@ -74,15 +74,9 @@ interface State {
   flags?: Record<string, boolean>;
   trips?: any[];
   tripMembers?: any[];
-  crewSessions?: any[];
-  /** trust_restrictions rows (census-trust §31's gate cases). */
-  trustRestrictions?: any[];
-  /** Tables whose reads RESOLVE with an error — the real supabase-js shape. */
-  errorTables?: string[];
-  /** Per-table override of the resolved error (default: a coded PGRST999). */
-  errorFor?: Record<string, { code: string; message: string }>;
-  /** Every table a write was ISSUED against, in order. */
-  writes?: string[];
+  crewSessions?: any[]; /** trust_restrictions rows (census-trust §31's gate cases; kept on this line so cited lines below keep their numbers). */ trustRestrictions?: any[];
+  /** Tables whose reads RESOLVE with an error — the real supabase-js shape. §31: `errorFor` overrides the resolved error per table (default: a coded PGRST999); `writes` records every table a write was ISSUED against, in order. */
+  errorTables?: string[]; errorFor?: Record<string, { code: string; message: string }>; writes?: string[];
 }
 
 function makeClient(state: State = {}) {
@@ -94,8 +88,7 @@ function makeClient(state: State = {}) {
     }
     if (table === "trips") return state.trips ?? [];
     if (table === "trip_members") return state.tripMembers ?? [];
-    if (table === "trip_crew_location_sessions") return state.crewSessions ?? [];
-    if (table === "trust_restrictions") return state.trustRestrictions ?? [];
+    if (table === "trip_crew_location_sessions") return state.crewSessions ?? []; if (table === "trust_restrictions") return state.trustRestrictions ?? [];
     return [];
   }
 

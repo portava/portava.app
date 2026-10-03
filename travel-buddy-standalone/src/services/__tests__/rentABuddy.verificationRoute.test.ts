@@ -47,10 +47,7 @@
  * Run: node --import tsx --test src/services/__tests__/rentABuddy.verificationRoute.test.ts
  */
 import { describe, it } from 'node:test';
-import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import assert from 'node:assert/strict'; import { readFileSync } from 'node:fs'; import { dirname, resolve } from 'node:path'; import { fileURLToPath } from 'node:url'; // census-trust §31: one line, so cited lines keep their numbers
 
 import {
   bookingErrorCopy,
@@ -59,9 +56,6 @@ import {
   classifyBookingRefusal,
 } from '../rentABuddyBookingErrors.ts';
 import { PORTAVA_ROUTES } from '../../navigation/portavaRoutes.ts';
-
-/** travel-buddy-standalone/, from src/services/__tests__/. */
-const APP_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 
 /** The exact sentence the generic fallback produces, quoted so V1 cannot drift. */
 const GENERIC = "Something went wrong on our side and we couldn't complete that. Please try again.";
@@ -165,6 +159,9 @@ describe('classifyBookingRefusal — the three-way decision, out of the screen',
     }
   });
 });
+
+/** travel-buddy-standalone/, from src/services/__tests__/. */
+const APP_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 
 // ── census-trust §31 — TV-5b: the AGE refusals name themselves ───────────────
 //

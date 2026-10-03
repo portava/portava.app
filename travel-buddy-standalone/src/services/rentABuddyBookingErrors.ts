@@ -55,41 +55,6 @@ const BOOKING_UNAVAILABLE_COPY: Record<string, string> = {
 const GENERIC_BOOKING_ERROR =
   "Something went wrong on our side and we couldn't complete that. Please try again.";
 
-// ── The fourth class: a requirement this account does not meet ───────────────
-//
-// census-trust §31 (TV-5b). The server refuses a traveller whose identity check
-// says they are under 18 — or who is under the location's minimum age — with
-// 403 `age_requirement` (routes/rentABuddy.ts). The code was in no map here, so
-// it fell through to GENERIC_BOOKING_ERROR: "Something went wrong on our side …
-// Please try again." For a verified minor that is false three times over AND it
-// invites the retry the age gate exists to stop.
-//
-// Not "unavailable" (the feature is not closed, there is nothing to wait for),
-// not "actionable" (no screen clears an age result), not "failure" (retrying
-// changes nothing). The copy states the requirement; it does not say which
-// requirement failed or why, because apiFetch drops the server's message and
-// the client cannot tell a verified-minor refusal from an under-minimum one —
-// and it never discloses what an identity document said.
-//
-// (A MISSING date of birth, 403 `age_verification_required`, is not here: the
-// person can add one, so it is in the actionable class below.)
-const BOOKING_INELIGIBLE_COPY: Record<string, string> = {
-  age_requirement:
-    "You don't meet the age requirement for Rent a Buddy bookings here, so this booking can't go through.",
-};
-
-/** A refusal about the account that no retry, wait or screen will clear. */
-export function isBookingIneligible(code: string | null | undefined): boolean {
-  return typeof code === 'string' && Object.prototype.hasOwnProperty.call(BOOKING_INELIGIBLE_COPY, code);
-}
-
-// Failures whose cause is KNOWN: still the retry arm (retrying is honest), but
-// the sentence says what failed instead of a generic "on our side".
-const BOOKING_FAILURE_COPY: Record<string, string> = {
-  age_verification_unavailable:
-    "We couldn't check your age just now, so the booking wasn't sent. Please try again in a moment.",
-};
-
 // ── The third class: a refusal the traveller can actually clear ──────────────
 //
 // census-trust TV-2a: *"the server-side gate exists … but a user it refuses is
@@ -112,12 +77,7 @@ const BOOKING_FAILURE_COPY: Record<string, string> = {
 const BOOKING_ACTIONABLE_COPY: Record<string, string> = {
   verification_required:
     "Your ID isn't verified yet, and Rent a Buddy needs it before a booking can go through — it's how we can tell you who you're meeting. Verify once and you can come straight back here.",
-  // census-trust §31 (TV-5b): 403 `age_verification_required` — the location
-  // checks age and no date of birth was found on the profile. "Couldn't find",
-  // not "has none": the server sends the same code when it could not read one.
-  age_verification_required:
-    "This location checks your age before a booking can go through, and we couldn't find a date of birth on your profile. Add it and you can come straight back here.",
-};
+  age_verification_required: "This location checks your age before a booking can go through, and we couldn't find a date of birth on your profile. Add it and you can come straight back here.", }; // census-trust §31 (TV-5b), 403 `age_verification_required`: see the note at the foot of this file. On the closing line so cited lines keep their numbers.
 
 /** A refusal the user can clear, and the screen that clears it. */
 export interface BookingRefusalAction {
@@ -129,8 +89,7 @@ export interface BookingRefusalAction {
 
 const BOOKING_REFUSAL_ACTIONS: Record<string, BookingRefusalAction> = {
   verification_required: { label: 'Verify my ID', route: '/profile/verification' },
-  age_verification_required: { label: 'Add my date of birth', route: '/profile/edit/identity' },
-};
+  age_verification_required: { label: 'Add my date of birth', route: '/profile/edit/identity' }, }; // census-trust §31 (TV-5b); closing line, so cited lines keep their numbers
 
 /**
  * The screen that satisfies this refusal, or `null` when there is nothing the
@@ -174,11 +133,7 @@ export function bookingErrorCopy(
     const known = BOOKING_UNAVAILABLE_COPY[code];
     if (known) return known;
     const actionable = BOOKING_ACTIONABLE_COPY[code];
-    if (actionable) return actionable;
-    const ineligible = BOOKING_INELIGIBLE_COPY[code];
-    if (ineligible) return ineligible;
-    const knownFailure = BOOKING_FAILURE_COPY[code];
-    if (knownFailure) return knownFailure;
+    if (actionable) return actionable; const ineligible = BOOKING_INELIGIBLE_COPY[code]; if (ineligible) return ineligible; const knownFailure = BOOKING_FAILURE_COPY[code]; if (knownFailure) return knownFailure; // census-trust §31: one line, so cited lines keep their numbers
   }
   return errorCopy(code, fallback ?? GENERIC_BOOKING_ERROR);
 }
@@ -196,9 +151,7 @@ export type BookingRefusal =
   /** The person can clear this themselves. Persistent, and it carries the route. */
   | { kind: 'actionable'; body: string; action: BookingRefusalAction }
   /** The feature is closed. Persistent, and the Book button goes down with it. */
-  | { kind: 'unavailable'; body: string }
-  /** A requirement this account does not meet (census-trust §31). Persistent, no action, no retry. */
-  | { kind: 'ineligible'; body: string }
+  | { kind: 'unavailable'; body: string } /** …or a requirement this account does not meet (census-trust §31): persistent, no action, no retry. */ | { kind: 'ineligible'; body: string }
   /** Something actually failed. An Alert, and a retry is a reasonable thing to offer. */
   | { kind: 'failure'; body: string };
 
@@ -219,3 +172,43 @@ export function classifyBookingRefusal(
   if (isBookingIneligible(code)) return { kind: 'ineligible', body: bookingErrorCopy(code) };
   return { kind: 'failure', body: bookingErrorCopy(code, fallback) };
 }
+
+// ── The fourth class: a requirement this account does not meet ───────────────
+//
+// census-trust §31 (TV-5b). The server refuses a traveller whose identity check
+// says they are under 18 — or who is under the location's minimum age — with
+// 403 `age_requirement` (routes/rentABuddy.ts). The code was in no map here, so
+// it fell through to GENERIC_BOOKING_ERROR: "Something went wrong on our side …
+// Please try again." For a verified minor that is false three times over AND it
+// invites the retry the age gate exists to stop.
+//
+// Not "unavailable" (the feature is not closed, there is nothing to wait for),
+// not "actionable" (no screen clears an age result), not "failure" (retrying
+// changes nothing). The copy states the requirement; it does not say which
+// requirement failed or why, because apiFetch drops the server's message and
+// the client cannot tell a verified-minor refusal from an under-minimum one —
+// and it never discloses what an identity document said.
+//
+// (A MISSING date of birth, 403 `age_verification_required`, is not here: the
+// person can add one, so it is in the actionable class below.)
+const BOOKING_INELIGIBLE_COPY: Record<string, string> = {
+  age_requirement:
+    "You don't meet the age requirement for Rent a Buddy bookings here, so this booking can't go through.",
+};
+
+/** A refusal about the account that no retry, wait or screen will clear. */
+export function isBookingIneligible(code: string | null | undefined): boolean {
+  return typeof code === 'string' && Object.prototype.hasOwnProperty.call(BOOKING_INELIGIBLE_COPY, code);
+}
+
+// Failures whose cause is KNOWN: still the retry arm (retrying is honest), but
+// the sentence says what failed instead of a generic "on our side".
+const BOOKING_FAILURE_COPY: Record<string, string> = {
+  age_verification_unavailable:
+    "We couldn't check your age just now, so the booking wasn't sent. Please try again in a moment.",
+};
+
+// census-trust §31 (TV-5b): 403 `age_verification_required` (in
+// BOOKING_ACTIONABLE_COPY above) — the location checks age and no date of
+// birth was found on the profile. "Couldn't find", not "has none": the server
+// sends the same code when it could not read one.
