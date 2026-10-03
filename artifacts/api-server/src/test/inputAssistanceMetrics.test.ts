@@ -17,8 +17,8 @@
  * documented hole.
  *
  * WHAT THEY DO NOT CLAIM. Nothing here touches a database. Migration 2950 is
- * unapplied on every deployment, so no production number exists for any of these
- * and none is claimed. These tests prove the DEFINITION is right; the census
+ * applied in hosted but its table holds no rows (census §31, §35), so no
+ * production number exists for any of these and none is claimed. These tests prove the DEFINITION is right; the census
  * rows they support are correspondingly marked inert-in-production.
  *
  * EVERY TEST NAMES ITS MUTATION, and each was applied and watched go RED.
@@ -457,7 +457,7 @@ describe("§57 — scoping", () => {
   });
 
   it("an empty table produces no numbers at all — which is the state today", () => {
-    // Migration 2950 is unapplied everywhere, so this is what a real run
+    // 2950 is applied in hosted and its table holds no rows, so this is what a real run
     // reports. It must not look like a measurement of a healthy product.
     const m = computeInputSuccessMetrics([]);
     assert.equal(m.rowsRead, 0);

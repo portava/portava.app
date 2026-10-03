@@ -5387,16 +5387,16 @@ unavailable arm since §33.3
 (`travel-buddy-standalone/src/platform/input-assistance/hooks/useInputAssistance.ts:455#degraded: true`).
 The ingest rebuilds every event from its allow-list and dropped the flag. It now
 names it
-(`artifacts/api-server/src/lib/inputAssistance/telemetry.ts:180#degraded: 'bool'`),
+(`artifacts/api-server/src/lib/inputAssistance/telemetry.ts:175#degraded: 'bool'`),
 a literal bool only, and none of 2950's thirteen refused keys. No migration is
 needed: the event name is already in `iate_event_name_known`. The reader is
 `offlineCompletionRate`
-(`artifacts/api-server/src/lib/inputAssistance/metrics.ts:342#offlineCompletionRate: rate(completedDegraded, degradedEpisodes)`).
+(`artifacts/api-server/src/lib/inputAssistance/metrics.ts:344#offlineCompletionRate: rate(completedDegraded, degradedEpisodes)`).
 It is the share of degraded episodes with a `suggestion_selected` AFTER their
 first degraded serve
-(`artifacts/api-server/src/lib/inputAssistance/metrics.ts:309#const firstDegraded`).
+(`artifacts/api-server/src/lib/inputAssistance/metrics.ts:311#const firstDegraded`).
 A degraded row is kept out of G372's latency even if it carries a round trip
-(`artifacts/api-server/src/lib/inputAssistance/metrics.ts:323#if (r.props.degraded === true) continue;`),
+(`artifacts/api-server/src/lib/inputAssistance/metrics.ts:325#if (r.props.degraded === true) continue;`),
 which is the hazard §33.3 named. Three of §57's nine stay refused: G368, G370
 and G371.
 

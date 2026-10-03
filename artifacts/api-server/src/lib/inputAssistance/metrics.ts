@@ -11,9 +11,9 @@
  * 2950 are the store. This file is the third: the definition of each metric, as
  * code, over the rows that store holds.
  *
- * It does NOT produce a production number. Migration 2950 is unapplied to
- * production and to portava-ci (`checkProductionDrift.ts:615`), so the table is
- * empty everywhere and `reportInputMetrics.ts` run today reports zero rows. A
+ * It does NOT produce a production number. Migration 2950 IS applied in hosted
+ * (object-probed 2026-09-21 and 2026-10-03, census §31/§35) and the table held
+ * ZERO rows both times, so `reportInputMetrics.ts` run today reports zero rows. A
  * definition that can be computed is not a measurement that has been taken, and
  * nothing here should be read as claiming otherwise.
  *
@@ -40,7 +40,9 @@
  *     security/audit-log question and this module must not pretend otherwise.
  *
  * (A fourth, offline completion (G373), was refused here until the ingest
- * admitted the client's `degraded` flag; it is computed below.)
+ * admitted the client's `degraded` flag; it is computed below, over episodes
+ * that were served degraded, and a degraded row is kept out of G372's latency
+ * — a round trip that never reached the network is not a serve's latency.)
  *
  * A rate of 0/0 reported as 0 would be a lie in all three cases, and a rate over
  * an event that no code emits is the worst kind: it looks green forever.
