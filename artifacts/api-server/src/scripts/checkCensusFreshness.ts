@@ -4674,6 +4674,15 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // census-discovery §117 (lane W11-X2, round 20): the files §117 grades.
     "artifacts/api-server/src/lib/privacy/eventSerializers.ts",  // §117 grades the list's served waitlist count (B20)
     "travel-buddy-standalone/src/components/HostDashboardPanel.tsx",  // §117 grades the attendees tab over a failed read (B19)
+    "artifacts/api-server/src/lib/pagedRead.ts",  // §117 grades the whole-or-refused paged read every count uses (B21, SW19)
+    "artifacts/api-server/src/lib/eventRowReads.ts",  // §117 grades the live counters and the paged event row reads (B20, B21, SW18)
+    "travel-buddy-standalone/src/lib/eventAttendeesUnread.ts",  // §117 grades how the event screens read a failed attendee read (B19)
+    "travel-buddy-standalone/src/lib/eventListMarks.ts",  // §117 grades how every events list's marks are read (SW17)
+    "travel-buddy-standalone/app/(tabs)/events.tsx",  // §117 grades the events tab over a failed or cut list (SW17)
+    "travel-buddy-standalone/app/events/list.tsx",  // §117 grades /events/list over a failed or cut list (SW17)
+    "travel-buddy-standalone/src/hooks/useCityPulse.ts",  // §117 grades the Pulse city feed's unread mark (SW17)
+    "travel-buddy-standalone/src/components/ExploreTodaySection.tsx",  // §117 grades Explore Today over an unread feed (SW17)
+    "travel-buddy-standalone/app/(tabs)/index.tsx",  // §117 grades Pulse's "Fits your time" over an unread feed (SW17)
     "travel-buddy-standalone/src/hooks/__tests__/useMapEntities.unreadOptional.component.test.tsx",
     "travel-buddy-standalone/src/hooks/__tests__/useMapEntities.legacyGemsCut.component.test.tsx",
     "travel-buddy-standalone/app/map/__tests__/mapScreen.unreadLayers.component.test.tsx",

@@ -19728,6 +19728,100 @@ If B, **how long** is the period? No spec gives a value (`04` §11), and 3512 bu
 - 3510 deleting or rewriting a row (E2, G1–G6).
 - Either answer diverging from 3510's guard on rollback (E3).
 
+### 117.2 Round 20: what this lane did
+
+*Written 2026-10-02 by lane W11-X2 (round 20) on `disc-w11-x2-r20`, from `9376df787` (PR #530's head: round 19 plus the featureFlags.ts follow-up) and §117.1, with `7944e962a` (#530's merge of origin/main `96f6d594e`) merged in at `ca7f89881`. It closes §117.1's three breaks (B19–B21), each with the verifier's probes adapted into registered tests and seen red first; makes GET /events use `lib/nearBox.ts` and registers the verifier's NS1 and NA0 (V8, V9); makes the consumer guard look through every wrapper Babel strips around `require` and a specifier (GH45–GH49, and GH50–GH52 beside them); corrects D-W11X2-153, -155, -156 and -158 in D-W11X2-159 to -165 and records the verifier's X12 note; and sweeps once more. The sweep found and closed four more paths (SW16–SW19).*
+
+*No migration and no new flag. Every change alters what is said only when a read failed, was cut, or covered part of what was asked; with every read healthy and whole, every screen renders as before and every served body is byte-identical but for counts that were stale (controls DA0, DA0b, HA0, HA3, ED0, ED0b, CH0, UR0, WL0, WL0c, GC0, GW0, GW2c, RV0, NS0, NA2, BM0, BM0b, LC ×11, EL0, EL0b, SM0 ×5, ET0, ET0b, DE0, HP0, HP0b, XT0, XT0b, CP0, UP0). Server bodies gain keys only on the failed arm: `failedSources` naming `profiles` on GET /events/:id, and `event_rsvps` / `event_waitlist` on every events list; a failed own-state read on GET /events/:id answers 503. Three behaviours change on a healthy read, each to stop serving a value that was not measured: every events list serves the live going and waitlist counts rather than the cached columns (B20, SW18); the review recount stamps the whole count (SW19); and the NOW buddies layer keeps buddies inside its radius it used to drop (SW16). Every edit in a cited file is line-neutral: lines are changed in place, and new code is appended at a file's foot or lives in a new module (`lib/pagedRead.ts`, `lib/eventRowReads.ts`, `lib/eventAttendeesUnread.ts`, `lib/eventListMarks.ts`).*
+
+*All evidence is controlled: node suites over the real routes and PostgREST-shaped doubles (one of which, `dbMaxRows`, caps every answer and honours `.range()` as the real server does), jest over the real services, hooks, components and screens, and the static guard over an in-memory overlay. None of it is production evidence, and no client build carrying the change has shipped.*
+
+### 117.3 GET /events/:id's attendees and the viewer's own state (§117.1 B19; D-W11X2-159)
+
+GET /events/:id answers 503 `degraded_unavailable` when the viewer's own RSVP, role, waitlist place, join request or check-in cannot be read, and names a failed profiles read (`profiles`) beside `goingAttendees` or `host` (`artifacts/api-server/src/routes/events.ts`). The client reads `failedSources` (`travel-buddy-standalone/src/lib/eventAttendeesUnread.ts`): the event screen says "Couldn't load who's going", "Couldn't load the host" and "Going count unavailable"; the host Attendees tab says "Couldn't load attendees" (`travel-buddy-standalone/src/components/HostDashboardPanel.tsx`); the co-host picker says it cannot add anyone; an RSVP keeps an unread count unread. **D-W11X2-153 is corrected.**
+
+### 117.4 The counters every list serves, read whole (§117.1 B20, B21; sweep SW18, SW19; D-W11X2-160, -161)
+
+- **B20, SW18.** Every events read that serves `goingCount` and `waitlistCount` recounts them live (`liveEventCounters`, `artifacts/api-server/src/lib/eventRowReads.ts`): GET /events, its city alias and /events/nearby (B20), and eleven more (SW18). A failed or cut live read keeps the cached count and is named in `failedSources`.
+- **B21, SW19.** Every count read over RSVP, waitlist or review rows reads through `readAllPages` (`artifacts/api-server/src/lib/pagedRead.ts`): ordered pages with an exact count, so a read cut at db-max-rows is an error the failed-read arm keeps cached and names, never a cut count served, ranked or stamped.
+
+### 117.5 The near box, shared (§117.1 V8, V9; sweep SW16; D-W11X2-162)
+
+GET /events builds its box with `nearBox` + `applyNearBox` (`artifacts/api-server/src/lib/nearBox.ts`); the copy at events.ts' foot is gone, and the verifier's NS1 and NA0 are registered. The NOW buddies layer (`artifacts/api-server/src/lib/buddyMapRead.ts`) did the same: its box was narrower than the circle everywhere, did not wrap and was clamped near a pole (SW16). **D-W11X2-155 and D-W11X2-158 are corrected.**
+
+### 117.6 The guard looks through wrappers (GH45–GH52; D-W11X2-163)
+
+`moduleLoads` reads the callee and the specifier through `unwrapOuter` (parentheses, non-null, `as`, `satisfies`, angle-bracket assertions, instantiation expressions) in `travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts` (the cited lines kept in place, new code at the foot). G13 GH45–GH49 were red over HEAD's guard code; GH50, GH45c, GH51 and GH52 pin the nesting, the member case and the last two wrappers. The whole guard: 115 of 115. **D-W11X2-156 is corrected.**
+
+### 117.7 The sweep (SW16–SW19; D-W11X2-162, -160, -161, -164, -165)
+
+Every unbounded multi-row read that computes a count, a rank or a "none"; every server field such as `failedSources` and `truncated`; every write path that leaves a cached counter stale and every read that serves one; and every private copy of a geometry helper on these surfaces were read again:
+
+- **SW16.** The NOW buddies layer's own box (§117.5).
+- **SW17.** No client read GET /events' `failedSources`, and only the map read its `truncated`. `travel-buddy-standalone/src/lib/eventListMarks.ts` marks each listed event's unread counts in the list services; the cards say them "(last known)"; the events tab (`travel-buddy-standalone/app/(tabs)/events.tsx`), /events/list (`travel-buddy-standalone/app/events/list.tsx`) and the destination page (`travel-buddy-standalone/app/destination/[slug].tsx`) never say "No events" over a list that failed or was cut; the Pulse city feed (`travel-buddy-standalone/src/hooks/useCityPulse.ts`) answered a failed read `[]` in production, so Explore Today (`travel-buddy-standalone/src/components/ExploreTodaySection.tsx`) said "Nothing on the calendar" and Pulse (`travel-buddy-standalone/app/(tabs)/index.tsx`) "No plans fit your availability yet."; both now say they could not load.
+- **SW18.** Eleven more events reads served the cached counters as measured (§117.4).
+- **SW19.** The review recount stamped `review_count` and `avg_rating` from one unbounded read (§117.4).
+- **Swept and sound; seen and left for their owners** — D-W11X2-165 lists both, and records the verifier's X12 note.
+
+### 117.8 Tests, seen red, and mutations
+
+**Seen red first**, run against the code before each fix (logs in the lane's `r20/red/` scratch directory; SW16's over HEAD's `buddyMapRead.ts`, placed and restored by sha256 after a container restart had interrupted the lane before its red run was recorded):
+
+| Area | Red | Controls, green |
+|---|---|---|
+| B19 the attendees and own state | DA2–DA8, HA1, HA2, ED1–ED3 | DA0, DA0b, DA1 (the contract), HA0, HA3, ED0, ED0b |
+| B20 the stale waitlist counter | WL1–WL4c, WL0c | WL0 |
+| B21 the cut count read | GC1, GC2, GC3, GD1–GD3, GG1, GG2, GW1 | GC0, GW0 |
+| V8, V9 the near box (on the old copy) | NS1, NA0 | NS0, NA2 |
+| The guard's reach (G13) | GH45–GH49 | the tree's own pass |
+| SW16 the buddies box | BM1–BM3 | BM0, BM0b |
+| SW17 the list marks | EL1–EL3, SM1 ×5, ET1–ET3, DE1, HP1, HP2, XT1–XT6, CP1, CP2, UP1–UP3 | EL0, EL0b, SM0 ×5, ET0, ET0b, DE0, HP0, HP0b, XT0, XT0b, CP0, UP0 |
+| SW18 the counters on eleven more reads | LS ×11, LF ×11 | LC ×11 |
+| SW19 the review recount | RV1 | RV0 |
+
+**Written against the fixed code**, each shown to bite by a mutation that removes what it pins: PR1–PR9 (B21a–f, over the new `lib/pagedRead.ts`), NA1, BM4 (SW16a), GH50, GH45c, GH51, GH52 (Gu5, Gu6), CH1, CH2 (B19n), UR1 (B19o), ER1–ER4 (B21g), GW2 (B21i), RV2, RV3 (SW19-order, SW19-count), ET5 (Y11), UP4 (Y25), UP5 (Y24b), LM0–LM5 (Y4, Y5).
+
+**Mutations.** Each was applied alone, its pin group run (the server groups: the events, paged-read and near-box suites; the client groups: the screen, component, hook and service suites; the guard group: the G13 cases), and the file restored byte-identically; the sha256 matched the pre-image after every application, and `git show HEAD:` wherever the file was committed. Runner and logs: the lane's `r20/muts/` scratch directory (`mut.py`, `*.json`, one log per mutation).
+
+- **99 mutations:** V8 and V9 on the old copy (V8pre, V9pre); B19 ×15 (B19a–o, server and client); B20 ×5 (B20a–d and the nearby recount); B21 ×12 (B21a–l: `readAllPages`' every arm, the readers' order, and each call site); V8, V9 and X12 on lib/nearBox; the guard ×8 (Gu1–Gu8: each wrapper `unwrapOuter` looks through, and both call sites); SW16 ×4; SW17 ×34 (Y1–Y33, Y24b); SW18 ×13; SW19 ×3.
+- **Result: 99 killed, 0 equivalent, 0 non-equivalent survivors** on DV-83 lines and on guard lines. **Survivors on a first run, each closed:** B21i (`recountEventWaitlist` unpaged; GW2 pins it), Y24b (the no-city reset of `eventsUnread`; UP5), and SW18's run of the B20 /events/nearby line under the SW18 suite alone (it is B20's line, killed by WL3 and WL4c). **The verifier's survivors:** V8 and V9 are killed by NS1 and NA0 on the old copy and on lib/nearBox. **X12** is recorded as not strictly equivalent (D-W11X2-165) and, on lib/nearBox, killed.
+- *Naming.* This round's series are B19–B21 and V8, V9 (the verifier's names, on the fixed lines), SW16–SW19 and Y (the sweep), and Gu (the guard).
+
+### 117.9 Checks
+
+- **Line-neutral in every cited file** (`routes/events.ts`, `lib/buddyMapRead.ts`, `services/events.ts`, `travel-buddy-standalone/app/destination/[slug].tsx`, the guard's cited lines): lines changed in place, new code at a file's foot or in a new module, so `check:doc-citations`, `check:citation-targets` and `check:citation-symbols` are clean.
+- **Scope.** This round's touched sources join this census's `CENSUS_SCOPE`; the acknowledgement for every census the freshness check named carries a §117 paragraph with its "why it cannot move a verdict".
+- **Suites.** The new api-server suites are on the `test` line (`check:test-registration`); the new client suites are jest component suites or node suites under `src/`, none on KNOWN_BROKEN, none orphaned.
+- **Silent reads.** `check:silent-supabase-reads` reports no new site; no baseline count was raised.
+
+### 117.10 DV-83, restated
+
+§117.1's three breaks are closed, each with the verifier's probes adapted into registered tests, red first and green now. GH45–GH49 are caught, and V8 and V9 are killed. D-W11X2-153, -155, -156 and -158 are corrected in D-W11X2-159 to -165, which records the verifier's X12 note. The sweep closed four more paths. Every clause of DV-83's criterion holds on every path this lane examined:
+
+1. **Producers send the refusal envelope or a named failure.** GET /events/:id names a failed profiles read and refuses a failed own-state read; every events list names a live count it could not recount.
+2. **Nothing refused or partial is cached as complete.** No count read cut at db-max-rows is stamped into a counter; a failed recount writes nothing.
+3. **Nothing refused is rendered as empty, as complete, or over the wrong rows.** No screen says "No attendees yet", "No events", "Nothing on the calendar" or "No plans fit your availability" over a read that failed or was cut; an unrecounted count is "(last known)"; every near read keeps the rows inside its radius.
+4. **A Compass tool never states a failed or partial read to the model as a fact.** Unchanged this round.
+5. **Consumers branch on coverage**, and the static guard reads every module load through every wrapper the bundler strips.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§117.1's three breaks are closed, each with its verifier probes adapted and red first; GH45–GH49 are caught and V8, V9 killed (NS1, NA0); the sweep closed four more paths (SW16–SW19); 99 mutations: 99 killed, 0 equivalent (§117.8). CONTROLLED EVIDENCE ONLY — this row awaits independent re-verification.** **GET /events/:id names a failed attendee or host read and refuses a failed own-state read, and the clients read it** (`artifacts/api-server/src/routes/events.ts`, `travel-buddy-standalone/src/components/HostDashboardPanel.tsx`; DA2–DA8, HA1, HA2, ED1–ED3). **Every list recounts the drifting counters live** (`artifacts/api-server/src/lib/eventRowReads.ts`; WL1–WL4c, LS, LF). **Every count read is read whole** (`artifacts/api-server/src/lib/pagedRead.ts`; GC1–GC3, GD1–GD3, GG1, GG2, GW1, GW2, RV1). **The near box is shared** (`artifacts/api-server/src/lib/nearBox.ts`, `artifacts/api-server/src/lib/buddyMapRead.ts`; NS1, NA0, BM1–BM3). **The guard looks through every wrapper** (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts`; G13 GH45–GH52). **Every client of GET /events reads its marks** (`travel-buddy-standalone/src/lib/eventListMarks.ts`; EL1–EL3, ET1–ET3, DE1, HP1, HP2, XT1–XT6, UP1–UP3). |
+
+**Headline.** DV-83 moves W → C. `check:census-integrity` counts **C 101 / W 85 / N 2 / X 0** over 188: CONSTRUCTED 186 / 188 = **98.9 %**, CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged. The move is on controlled evidence and awaits independent re-verification.
+
+### 117.11 Left open, and what would turn this red
+
+- **Seen and not built (other owners; D-W11X2-165).** The events tab's own lists answer their own failed server reads as fewer or no events (`/events/me`, `/following`, `/circles`, `/saved`, `/search`, `/joined`); the tab now says a list that failed outright, but those reads are outside this census's graded surfaces. D-W11X2-158's list stands.
+- **Product effect, stated.** Every events list serves the live going and waitlist counts (one paged read per list, two when both are recounted); a count the server could not recount reads "12 going (last known)"; a list that failed or was cut says "Couldn't load every event"; Pulse says "Couldn't load today's events" over a failed read in production, where it said "Nothing on the calendar"; GET /events/:id answers 503 when the viewer's own state cannot be read; the NOW map shows buddies inside its radius it used to drop.
+- **What would turn DV-83 red again:**
+  - an attendee list built from a failed read, or a viewer's own state served as measured over a failed read (DA2–DA8, HA1, HA2, ED1–ED3, CH1, UR1);
+  - a cached counter served as measured on any list (WL1–WL4c, LS, LF), or a count read cut at db-max-rows served, ranked or stamped (GC1–GC3, GD1–GD3, GG1, GG2, GW1, GW2, RV1);
+  - a near read that drops rows inside its radius (NS1, NA0, BM1–BM3);
+  - a module load behind a wrapper the guard cannot see (G13 GH45–GH52);
+  - a client that says a failed or cut events list as empty or its counts as measured (EL1–EL3, SM1, ET1–ET3, ET5, DE1, HP1, HP2, XT1–XT6, CP1, CP2, UP1–UP5);
+  - any path §116.11 lists.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/lib/calls/callGatewayAdapter.ts — §113.8 names it for N1, outside DV-83: census-telegraph §40 records the call gateway's unread-gate outcome, and no Discovery verdict rests on it.
