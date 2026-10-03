@@ -1376,19 +1376,19 @@ router.get("/events/city/:city", async (req, res) => {
   const { data: events, error } = await query;
   if (error) { req.log.error({ err: error }, "city events"); sendError(res, "db_error", error.message); return; }
 
-  const filtered: any[] = [];
+  const filtered: any[] = []; let withheldUnread = false;  // census-discovery §122 (DV-83 round 23, SW28): an event withheld over a failed read is said, as /search says it (§118 B28)
   for (const ev of (events as any[]) ?? []) {
-    if (await isBlocked(sc, user.id, (ev as any).host_id)) continue;
+    { const blk = await readBlockBetween(sc, user.id, (ev as any).host_id); if (blk.unread) withheldUnread = true; if (blk.blocked) continue; }  // §122 (SW28)
     if ((ev as any).visibility === "friends_only" && (ev as any).host_id !== user.id) {
-      const { data: friendship } = await sc
+      const { data: friendship, error: friendshipErr } = await sc
         .from("user_friendships")
         .select("user_a")
         .or(`and(user_a.eq.${user.id},user_b.eq.${(ev as any).host_id}),and(user_b.eq.${user.id},user_a.eq.${(ev as any).host_id})`)
-        .maybeSingle();
+        .maybeSingle(); if (friendshipErr) withheldUnread = true;  // §122 (SW28)
       if (!friendship) continue;
     }
     const elig = await checkEventEligibility(sc, ev as any, user.id);
-    if (!elig.ok) continue;
+    if (!elig.ok) { if ((elig as any).unread) withheldUnread = true; continue; }  // §122 (SW28): a verdict that could not be read
     filtered.push(ev);
   }
 
@@ -1434,7 +1434,7 @@ router.get("/events/city/:city", async (req, res) => {
       myWaitlistPosition: cityWaitlistPositionMap[e.id] ?? null,
     })),
     page,
-    limit, ...(cityGoingUnread || cityWaitlistUnread.length > 0 ? { failedSources: [...(cityGoingUnread ? ["event_rsvps"] : []), ...cityWaitlistUnread] } : {}),  // §116 (B14); §117 (B20)
+    limit, ...(cityGoingUnread || cityWaitlistUnread.length > 0 ? { failedSources: [...(cityGoingUnread ? ["event_rsvps"] : []), ...cityWaitlistUnread] } : {}), ...(withheldUnread ? { truncated: true as const } : {}),  // §116 (B14); §117 (B20); §122 (SW28)
   });
 });
 
@@ -1479,19 +1479,19 @@ router.get("/events/nearby", async (req, res) => {
 
   if (error) { req.log.error({ err: error }, "nearby events"); sendError(res, "db_error", error.message); return; }
 
-  const filtered: any[] = [];
+  const filtered: any[] = []; let withheldUnread = false;  // census-discovery §122 (DV-83 round 23, SW28): an event withheld over a failed read is said, as /search says it (§118 B28)
   for (const ev of (events as any[]) ?? []) {
-    if (await isBlocked(sc, user.id, (ev as any).host_id)) continue;
+    { const blk = await readBlockBetween(sc, user.id, (ev as any).host_id); if (blk.unread) withheldUnread = true; if (blk.blocked) continue; }  // §122 (SW28)
     if ((ev as any).visibility === "friends_only" && (ev as any).host_id !== user.id) {
-      const { data: friendship } = await sc
+      const { data: friendship, error: friendshipErr } = await sc
         .from("user_friendships")
         .select("user_a")
         .or(`and(user_a.eq.${user.id},user_b.eq.${(ev as any).host_id}),and(user_b.eq.${user.id},user_a.eq.${(ev as any).host_id})`)
-        .maybeSingle();
+        .maybeSingle(); if (friendshipErr) withheldUnread = true;  // §122 (SW28)
       if (!friendship) continue;
     }
     const elig = await checkEventEligibility(sc, ev as any, user.id);
-    if (!elig.ok) continue;
+    if (!elig.ok) { if ((elig as any).unread) withheldUnread = true; continue; }  // §122 (SW28): a verdict that could not be read
     filtered.push(ev);
   }
 
@@ -1518,7 +1518,7 @@ router.get("/events/nearby", async (req, res) => {
       myWaitlistPosition: nearbyWaitlistPositionMap[e.id] ?? null,
     })),
     page,
-    limit, ...(nearbyCountsUnread.length > 0 ? { failedSources: nearbyCountsUnread } : {}),  // §117 (B20)
+    limit, ...(nearbyCountsUnread.length > 0 ? { failedSources: nearbyCountsUnread } : {}), ...(withheldUnread ? { truncated: true as const } : {}),  // §117 (B20); §122 (SW28)
   });
 });
 
@@ -2268,15 +2268,15 @@ router.get("/events/near-trip/:tripId", async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
   // Caller must be an accepted trip member
-  const { data: mem } = await sc.from("trip_members").select("role")
-    .eq("trip_id", tripId).eq("user_id", user.id).maybeSingle();
+  const { data: mem, error: memErr } = await sc.from("trip_members").select("role")
+    .eq("trip_id", tripId).eq("user_id", user.id).maybeSingle(); if (memErr) { req.log?.error({ err: memErr }, "near-trip events: the membership read failed — refusing"); sendError(res, "degraded_unavailable", EVENT_LIST_UNAVAILABLE); return; }  // census-discovery §122 (DV-83 round 23, B38): never "not a member" over a failed read
   if (!mem || !["owner", "member"].includes((mem as any).role)) {
     sendError(res, "forbidden", "Must be a trip member to see nearby events"); return;
   }
 
-  const { data: trip } = await sc.from("trips")
+  const { data: trip, error: tripErr } = await sc.from("trips")
     .select("destination_city, start_date, end_date")
-    .eq("id", tripId).maybeSingle();
+    .eq("id", tripId).maybeSingle(); if (tripErr) { req.log?.error({ err: tripErr }, "near-trip events: the trip read failed — refusing"); sendError(res, "degraded_unavailable", EVENT_LIST_UNAVAILABLE); return; }  // §122 (B38): never `events: []` over a failed read
   if (!trip || !(trip as any).destination_city) {
     res.json({ events: [] }); return;
   }
@@ -2299,16 +2299,16 @@ router.get("/events/near-trip/:tripId", async (req, res) => {
   const { data: events, error } = await query;
   if (error) { req.log.error({ err: error }, "near-trip events"); sendError(res, "db_error", error.message); return; }
 
-  const filtered: any[] = [];
+  const filtered: any[] = []; let withheldUnread = false;  // census-discovery §122 (DV-83 round 23, SW28): an event withheld over a failed read is said, as /search says it (§118 B28)
   for (const ev of (events as any[]) ?? []) {
-    if (await isBlocked(sc, user.id, (ev as any).host_id)) continue;
+    { const blk = await readBlockBetween(sc, user.id, (ev as any).host_id); if (blk.unread) withheldUnread = true; if (blk.blocked) continue; }  // §122 (SW28)
     // Enforce friends_only: viewer must be friends with the host
     if ((ev as any).visibility === "friends_only" && (ev as any).host_id !== user.id) {
-      const { data: friendship } = await sc
+      const { data: friendship, error: friendshipErr } = await sc
         .from("user_friendships")
         .select("user_a")
         .or(`and(user_a.eq.${user.id},user_b.eq.${(ev as any).host_id}),and(user_b.eq.${user.id},user_a.eq.${(ev as any).host_id})`)
-        .maybeSingle();
+        .maybeSingle(); if (friendshipErr) withheldUnread = true;  // §122 (SW28)
       if (!friendship) continue;
     }
     // Same eligibility gate the sibling browse routes apply (ban / trust /
@@ -2317,11 +2317,11 @@ router.get("/events/near-trip/:tripId", async (req, res) => {
     // they tap it — the list and the detail view disagreed about who may see
     // the event.
     const elig = await checkEventEligibility(sc, ev as any, user.id);
-    if (!elig.ok) continue;
+    if (!elig.ok) { if ((elig as any).unread) withheldUnread = true; continue; }  // §122 (SW28): a verdict that could not be read
     filtered.push(ev);
   }
 
-  const nearTripCountsUnread = await liveEventCounters(sc, filtered); res.json({ events: filtered.map((e) => formatEvent(e, user.id)), tripId, city, ...countsUnreadKey(nearTripCountsUnread) });  // census-discovery §117 (DV-83, sweep SW18): the cached counters recounted live; a failed read keeps them, named
+  const nearTripCountsUnread = await liveEventCounters(sc, filtered); res.json({ events: filtered.map((e) => formatEvent(e, user.id)), tripId, city, ...countsUnreadKey(nearTripCountsUnread), ...(withheldUnread ? { truncated: true as const } : {}) });  // census-discovery §117 (DV-83, sweep SW18): the cached counters recounted live; a failed read keeps them, named
 });
 
 // ── GET /api/events/:id ───────────────────────────────────────────────────────
