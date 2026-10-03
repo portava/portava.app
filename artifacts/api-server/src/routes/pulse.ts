@@ -152,14 +152,14 @@ router.get("/pulse", async (req, res) => {
   // Fetch caller's hidden post IDs before the main query so the DB-level LIMIT
   // applies to visible posts only — avoiding premature hasMore=false for pages
   // that happen to contain hidden entries.
-  const hiddenPostIds: string[] = [];
+  const hiddenPostIds: string[] = []; let hidesFetchFailed = false;
   try {
-    const { data: hiddenRows } = await sc
+    const { data: hiddenRows, error: hiddenRowsErr } = await sc
       .from("post_hides")
       .select("post_id")
-      .eq("user_id", user.id);
+      .eq("user_id", user.id); if (hiddenRowsErr) hidesFetchFailed = true;
     for (const r of hiddenRows ?? []) hiddenPostIds.push((r as any).post_id);
-  } catch { /* best-effort: feed continues even if the hide table is unreachable */ }
+  } catch { hidesFetchFailed = true; } if (hidesFetchFailed) { req.log.warn({ userId: user.id }, "pulse: hide list unknown — returning empty feed (fail-closed)"); res.json({ posts: [], total: 0, tab, failedSources: ["post_hides"] }); return; }  // census-discovery §122 (DV-83 round 23, B40): a failed hide read is never "you hid nothing" — fail closed, as the block read does, and say so
 
   let query = sc
     .from("posts")
