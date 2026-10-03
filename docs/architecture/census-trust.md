@@ -3312,3 +3312,206 @@ Cited in this section, graded by no row of this census:
 - NOT-GRADED: artifacts/api-server/src/lib/eventWaitlistSweeper.ts — §30.6 names it as the second promoter the eligibility gate now covers; waitlist seating is graded by no row of this census.
 - NOT-GRADED: artifacts/api-server/src/test/eventWaitlistSweeper.test.ts — §30.10 names it only because its double was taught the new eligibility reads; no Trust verdict moves on it.
 - NOT-GRADED: docs/architecture/mobile-reachability-ledger.json — §30.9 cites its `DEAD ENDPOINT` classification of the safety summary as a reachability fact; it is a generated ledger, not a Trust surface.
+
+## §31 (sensing-trust lane) — 2026-10-03 · Five trust reads that granted on a failed read now refuse; the identity-check screen, its failure copy and the verification write are finished. **THREE ROWS MOVE: TV-2b, TV-2d and TV-U8, each W → C.**
+
+Sensing-trust lane, branch `claude/lane-sensing-trust-20261003` cut from `main` at `0fa752ece`.
+`head_commit` is **not** re-declared: this section records fixes and grades three rows. It does not
+re-measure 108 requirements. The server and client evidence is controlled: node:test route suites over
+fakes that answer a failed read `{ data: null, error }` exactly as supabase-js does, and jest component
+tests with only the network faked. The one database suite (§31.3) runs on real PostgreSQL carrying the
+repository's migration chain, so it certifies the chain and the code, not a deployment. No flag was
+touched, no migration was added, and nothing was written to any hosted database. Production
+(`ajrurzioarfkagpuxfnb`) was read with aggregate `SELECT`s only, on 2026-10-03:
+`profiles_verification_level_check` still holds the five-value list (2870 not applied);
+`identity_verifications` 0 rows, `trust_restrictions` 0, `user_interaction_cooldowns` 0, active
+`safe_return_sessions` 0, held delayed posts 0, age-limited meetups 0. **No production user was in a
+position to be harmed by any fail-open below on that date.** That is a statement about the data, not
+about the code: each defect fired the moment its input existed.
+
+### §31.1 Fail-opens closed (the lane's first priority)
+
+Each of these granted access on a read that never answered. Each is now closed, and each was RED on
+`0fa752ece` before its fix.
+
+1. **Trust restrictions, two ways** (`TrustRestrictionService.getRestrictionState`).
+   (a) Its "table missing" classifier matched `42P01`, `PGRST204` (PostgREST's COLUMN-not-found code)
+   and ANY message containing "does not exist". A dropped column (`42703`), an operator drift (`42883`)
+   or a missing function was therefore read as "never migrated", and every restriction stopped being
+   enforced. The narrow rule now lives in one place,
+   `artifacts/api-server/src/lib/absentTableError.ts:42#export function isAbsentTableError(error: unknown): boolean {`:
+   `42P01`/`PGRST205`, or a code-less error with the exact table wording, and nothing else.
+   (b) Its fail-closed branch closed hosting and messaging but LEFT `private_plan_access` and
+   `location_plan_join` OPEN as "low-risk". The second gates the START of a live LOCATION broadcast to
+   a trip crew. Measured on `0fa752ece` with `trust_restrictions` unreadable: a restricted user's
+   `POST /trips/:id/crew/live-share/start` answered `201` (share started) and
+   `POST /trips/:id/accept-invite` answered `200`. All four types now close
+   (`artifacts/api-server/src/services/trust/TrustRestrictionService.ts:245#canJoinLocationPlans: false,`),
+   and both gates refuse retryably BEFORE the restriction message, because an outage is not a
+   restriction on this person (`artifacts/api-server/src/routes/tripCrewLocation.ts:486#sendError(res, "degraded_unavailable",`,
+   `artifacts/api-server/src/routes/trips.ts:1339#sendError(res, "degraded_unavailable",`).
+2. **Interaction permissions, two ways** (`resolveInteractionPermissions`, the gate 15+ routes call).
+   (a) The same broad "does not exist" classifier turned column drift on a DENY table into "nobody has
+   one of these". A banned or deleted target became interactable, a suspended viewer was unsuspended,
+   an age-restricted target became invitable, a follow or friend-request opt-out was ignored, and a
+   `no_one` message privacy was bypassed. It now uses `isAbsentTableError`
+   (`artifacts/api-server/src/services/interactionPermissions.ts:165#return isAbsentTableError(error);`).
+   (b) `isActiveCooldown` answered `false` on a read error. The engine documented this as a known
+   fail-OPEN and left it, so an unreadable `user_interaction_cooldowns` let a viewer inside the 90-day
+   post-block cooldown follow and friend-request again. The cooldown is now assumed in force, the
+   failure is named in `degradedReads`, and the verdict is marked degraded
+   (`artifacts/api-server/src/services/interactionPermissions.ts:552#if ((res as any).error && !isTableMissingError((res as any).error)) return true;`).
+   An ABSENT table still means no cooldown exists.
+3. **Meetup age gate, create path** (`POST /meetups`). The create path invited from `inviteeIds` and
+   applied the trip, circle and friend scope rules, but SKIPPED the age rule that
+   `POST /meetups/:id/invites` applies. The invite row is what `canAccessMeetup` admits on. Measured on
+   `0fa752ece`: a 19-year-old and a verified minor were both invited into 21+/18+ meetups. Both paths
+   now share one batched pre-check through the `lib/gateAge.ts` seam
+   (`artifacts/api-server/src/routes/meetups.ts:1567#async function partitionInviteesByAge(`), which
+   withholds `verified_minor` and `unreadable`. The `/invites` pre-check was `if (sc) { … }` with no
+   else, so a missing service client skipped it; it now refuses `503`. The scope reads now bind their
+   errors (`SILENT_SUPABASE_READS_BASELINE.json`: `meetups.ts::S4` 2 → 0).
+4. **The verified-minor signal past its scan window** (`readVerifiedAgeSignal`). It read the newest 50
+   `identity_verifications` rows. A verified minor who opened 50 undecided sessions after the underage
+   result pushed it out of the window, and the read answered "no contradiction": every 18+ gate fell
+   back to the adult birthday they had typed. A full window with no decided row is now followed by one
+   direct read for the newest decided row
+   (`artifacts/api-server/src/lib/travelerVerification.ts:264#.not("is_over_18", "is", null)`), and a
+   failure of that read is `unreadable`, never "clean".
+5. **Delayed geotag during Safe Return** (`hasActiveSafeReturn`). It answered `false` on a read error
+   ("fail open — don't hold post forever"), so an unreadable `safe_return_sessions` PUBLISHED a held
+   post, copying its original coordinates to the public columns, for an author who might be mid-Safe
+   Return. That is the one window the hold exists to protect. It now answers `null`, and the worker
+   holds the post for that tick
+   (`artifacts/api-server/src/lib/delayedPostPublisher.ts:154#async function hasActiveSafeReturn(db: any, userId: string): Promise<boolean | null> {`).
+   The post stays eligible, and the next tick publishes it once the read answers.
+
+And one client-side fail-open, in the same class:
+
+6. **The client's block list belonged to the wrong account.** `BlockedIdsProvider` loaded once per
+   app session, behind a ref that nothing reset. After a sign-out, the next account on the device
+   filtered every client-side people list (crew map, circle members, saved people, trips, reviews)
+   against the PREVIOUS account's blocks and showed the people it had blocked itself. A slow response
+   could also land after a switch, and a failed load looked the same as "you have blocked nobody". The
+   lists are now keyed to the signed-in account, superseded responses are dropped, and `loadFailed`
+   says when a load did not read both lists
+   (`travel-buddy-standalone/src/context/BlockedIdsContext.tsx:50#const requestSeq = useRef(0);`). The
+   server still enforces every block; this fixes the client's copy.
+
+### §31.2 Row moves
+
+| **ID** | **was** | **now** | why |
+|---|---|---|---|
+| TV-2b | W | **C** | The one missing clause was §13's bolded *"what we never store"*. `travel-buddy-standalone/app/profile/verification.tsx:323#function PrivacyDisclosure() {` renders a WHAT WE NEVER STORE list and a WHAT WE KEEP list above the GET VERIFIED buttons (`travel-buddy-standalone/app/profile/verification.tsx:240#<PrivacyDisclosure />`), so they are read before the hand-off. The lists live in `travel-buddy-standalone/src/lib/verificationDisclosure.ts:45#export const VERIFICATION_NEVER_STORED: readonly NeverStoredItem[] = [`. They are facts about the schema, not policy: `verificationDisclosure.test.ts` reads `identity_verifications`' DDL and the server's `VerificationResult` type, and fails if a never-stored item gains a column or a kept item loses one. Hand-off, pending and success/failure were already ✓ in the row's own evidence. |
+| TV-2d | W | **C** | Both halves of §13's settlement condition. Human copy: each normalized reason has a sentence (`travel-buddy-standalone/src/lib/verificationDisclosure.ts:85#export function verificationFailureCopy(`), using the plan's own wording for the two it names, and the raw `failureReason.replace(/_/g,' ')` is gone. Underage: a FAILED check whose reason is `underage` does not re-offer either check button (`travel-buddy-standalone/src/lib/verificationDisclosure.ts:98#export function verificationRetryAllowed(`). It routes to a new age-requirements screen (`travel-buddy-standalone/app/profile/verification.tsx:275#AGE REQUIREMENT`, `travel-buddy-standalone/app/profile/age-policy.tsx`, registered in `PORTAVA_ROUTES`), which states only behaviour the server already enforces. The server's rate limit (3 sessions a day) is unchanged, and §13 placed this row in the client lane. |
+| TV-U8 | W | **C** | The row's database half, which was the only half missing. `artifacts/api-server/src/test/db/trustVerificationWrite.db.test.ts` runs the route's OWN `persistResult` (and through it `applyVerifiedProfile`) through the real supabase-js client against real PostgreSQL, so every write is answered by the database's CHECKs, unique index, RLS and grants. U8-1 checks that a verified result is stored with the level `toVerificationLevel` returns, for both values. U8-2 checks that an underage failure is stored as the verified-minor evidence without raising the level. U8-3 checks that the constraints refuse an unknown status, an unknown level and a second active session. U8-4 checks RLS: a user reads only their own rows, cannot write any, and anon reads nothing. U8-5 checks that 2370 refuses anon and authenticated every trust table with `42501`. CI's `test:db-local` job replays the chain (2370 and 2870 included; neither is in `KNOWN_UNREPLAYABLE.json`), runs every `src/test/db/*.db.test.ts` and refuses a skipped run, so this is a standing gate, not a one-off. §17's *"TV-U8's database half cannot be exercised until 2870 applies"* is superseded: it can be, and is, on the replayed chain. |
+
+**Not moved, and why.** `TV-5b` stays **W**. Its §19.5 condition now holds: every age refusal the server
+sends is named on a client surface. Rent a Buddy checkout gives `age_requirement` a fourth, persistent
+`ineligible` class (`travel-buddy-standalone/src/services/rentABuddyBookingErrors.ts:200#export function isBookingIneligible(`).
+The meetup screen and the circle-invite pane name `not_verified_adult`
+(`travel-buddy-standalone/src/lib/ageRefusal.ts:56#export function ageRefusalPresentation(`), and event
+refusals carry the server's own sentence through `json.message`. But §19.5 called that condition
+necessary ("only when"), and the row's second conjunct is wider: *"unverified users see a 'verify to
+access' gate, not silent hiding"*. `GET /events` still drops `verified_only` and age-limited events,
+with no prompt, for a viewer it cannot age or who is unverified. That is the `if (viewerAge == null) return false;`
+arm of the list filter in `routes/events.ts`. Changing it is a product decision tied to D-DOB, and the
+file is outside this lane's zone. **TV-5b's remaining gap is that one surface.**
+`TV-1c` stays **W**: 2870 is still applied to no hosted database, and U8-1 is what will fail there
+until it is.
+
+### §31.3 Tests (seen RED first) and mutations
+
+Server, all registered in the api-server `test` script. Each was RED on `0fa752ece` before its fix:
+`trustRestrictionEnforcement.test.ts` and `trust.test.ts` (the classifier and the four-type close),
+`tripCrewRosterUnreadable.test.ts` T3/T4 and `tripInviteRespond.test.ts` (the two gates; T1, T2 and T5
+are controls), `interactionPermissionsReadFailures.test.ts` (7 red, each paired with its readable and
+`42P01` controls), `meetups.test.ts` A1–A6 and I1–I3 (6 red), `verifiedMinorGate.test.ts` (2 red, 2
+controls), and `delayedGeotag.test.ts` (1 red, 1 control). Client: `verificationDisclosure.test.ts`
+(10) and `verification.failureUx.component.test.tsx` (5), red before (raw enum shown, underage
+re-offered, no disclosure); `rentABuddy.verificationRoute.test.ts` V10–V14 (4 red);
+`ageRefusal.test.ts` (8; the module did not exist); `checkout.ageRefusal` (3 red of 3),
+`MeetupDetail.ageRefusal` (2 red of 4), `notifications.ageRefusal` (2 red of 4); and
+`BlockedIdsContext.identity` (4 red of 4, plus 2 added for mutation survivors). Database:
+`trustVerificationWrite.db.test.ts`, 6/6 on real PostgreSQL. It pins no code fix, so its "red" is the
+mutation proof below.
+
+Mutations, each applied alone and restored byte-identically, with sha256 checked after each:
+
+- **Server fixes:** 18 applied, 18 killed.
+- **Client fixes:** 30 applied. The first pass left 3 survivors, each a real arm with no test (a
+  block-list load that THROWS, a slow response after sign-out, and a code or `API <status>` placeholder
+  shown as an age-refusal body). One test each was added, and all 3 are now killed: 30/30.
+- **The four booking-error mutations, rerun** after the code moved to keep cited lines at their
+  numbers: 4/4 killed.
+- **TV-U8:** 8 applied, 8 killed. Code side: the profile write skipped (U8-1), the redaction handle
+  dropped (U8-1, U8-2), the level hard-coded (U8-1), and the failure reason dropped (U8-2). Database
+  side, on the lane's own database and restored after each: production's pre-2870 five-value CHECK
+  (U8-0, U8-1; this is the H5 refusal, reproduced), RLS off on `identity_verifications` (U8-0, U8-4),
+  2370 undone for `trust_settings` (U8-0, U8-5), and the one-active-session index dropped (U8-3).
+
+**0 non-equivalent survivors.**
+
+### §31.4 Headline, restated from the rows
+
+Three requirements move from BUILT-BUT-WRONG to BUILT-AND-CORRECT. CONSTRUCTED does not move, because
+all three were already built; CORRECT rises by three.
+
+> **Trust, at this tree: 108 requirements · 89 BUILT-AND-CORRECT · 12 BUILT-BUT-WRONG ·
+> 5 NOT-BUILT · 2 CANNOT-VERIFY → CONSTRUCTED 101 / 108 = 93.5 % · CORRECT 89 / 108 = 82.4 %.**
+>
+> Against §21.4's 108 · 86 / 15 / 5 / 2 → CONSTRUCTED 93.5 % · CORRECT 79.6 %:
+> **CONSTRUCTED UNCHANGED, CORRECT +2.8 points.**
+
+| BUILT-AND-CORRECT | **89** |
+|---|---|
+| BUILT-BUT-WRONG | **12** |
+| NOT-BUILT | **5** |
+| CANNOT-VERIFY | **2** |
+
+*This supersedes §21.4's table and supersedes nothing else. The denominator is unchanged at 108. None
+of §31.1's fixes moves a verdict: rows A17, TRV2-08 and TV-P2 grade WHICH reads exist and who calls
+them, and none of that changed. What changed is that a failed read no longer grants.*
+
+### §31.5 What this does NOT claim, and what would turn it red
+
+- **Nothing here is production evidence.** TV-U8's database half runs on the replayed chain. Production
+  still carries the pre-2870 CHECK, and the verified-profile write U8-1 proves storable here is
+  rejected there until 2870 is applied (TV-1c, D-2870-APPLY).
+- **The remaining non-C rows are not code-actionable here.** All 19 are owner-gated (D-DOB,
+  D-PROVIDER, D-BADGE, D-MODACTION-*, D-SUSPENSION-UX, D-RESTRICTION-REACH, D-REVERSAL, D-SCORING, and
+  legal content for TV-5a/TV-7c) or await a deployment (A6, TV-1c), except TV-5b's one surface above.
+- **Recorded, not changed (outside this lane's zone or an owner decision):**
+  - The identity-verification retention purge removes `failed`/`expired` rows after 90 days, and an
+    underage result is a `failed` row. After 90 days, every age gate falls back to the typed date of
+    birth for a verified minor. The retention period is an owner decision.
+  - `POST /events/:id/waitlist` answers an unreadable age check `403 forbidden` rather than a
+    retryable `503`. It is closed, but not told apart (`routes/events.ts`, PR #530's zone).
+  - `optionalUser` (`lib/http.ts`) treats a banned account's still-valid token as signed in on the
+    optional-auth routes.
+  - Other "does not exist" classifiers in other lanes' files have the same breadth that §31.1(1a)
+    removed here: `lib/capability/schemaCapability.ts` (where `42703` can fall through to
+    table-missing), `lib/liveReferenceMessages.ts` and `lib/wallMomentRead.ts`.
+- **Red if:** a restricted user starts a crew location share or accepts a private-trip invite while
+  `trust_restrictions` is unreadable; column drift on a DENY table or an unread cooldown lets an
+  interaction through; a meetup created with invitees seats an age-ineligible one; an underage result
+  older than 50 newer sessions stops refusing; a held post publishes coordinates while
+  `safe_return_sessions` is unreadable; the verification screen loses its never-stored list or
+  re-offers the check after `underage`; the verification write or the trust tables' grants drift from
+  what U8-0..U8-5 pin.
+
+Cited in this section, graded by no row of this census:
+
+- NOT-GRADED: artifacts/api-server/src/lib/delayedPostPublisher.ts — §31.1(5)'s Safe Return hold; the delayed-geotag hold is graded by no Trust row, and the fix moves no verdict.
+- NOT-GRADED: travel-buddy-standalone/src/context/BlockedIdsContext.tsx — §31.1(6)'s client block-list copy; the server enforces every block, and no Trust row grades the client's copy.
+- NOT-GRADED: artifacts/api-server/scripts/SILENT_SUPABASE_READS_BASELINE.json — §31.1(3) names the lowered `meetups.ts::S4` count; a guard's baseline, not a Trust surface.
+- NOT-GRADED: artifacts/api-server/src/test/tripCrewRosterUnreadable.test.ts — §31.3's controlled evidence for the crew live-share gate; no Trust verdict moves on it.
+- NOT-GRADED: artifacts/api-server/src/test/tripInviteRespond.test.ts — §31.3's controlled evidence for the private-trip invite gate; no Trust verdict moves on it.
+- NOT-GRADED: artifacts/api-server/src/test/interactionPermissionsReadFailures.test.ts — §31.3's controlled evidence for the interaction-permission fixes; no Trust verdict moves on it.
+- NOT-GRADED: artifacts/api-server/src/test/meetups.test.ts — §31.3's controlled evidence for the meetup create-path age pre-check; no Trust verdict moves on it.
+- NOT-GRADED: artifacts/api-server/src/test/verifiedMinorGate.test.ts — §31.3's controlled evidence for the scan-window fix; no Trust verdict moves on it.
+- NOT-GRADED: artifacts/api-server/src/test/delayedGeotag.test.ts — §31.3's controlled evidence for the Safe Return hold; no Trust verdict moves on it.
+- NOT-GRADED: travel-buddy-standalone/src/lib/__tests__/ageRefusal.test.ts — §31.3's suite for the client age-refusal copy; TV-5b does not move on it (§31.2).
+- NOT-GRADED: artifacts/api-server/src/lib/capability/schemaCapability.ts — another lane's file, named in §31.5 only as a finding; not changed here.
+- NOT-GRADED: artifacts/api-server/src/lib/liveReferenceMessages.ts — another lane's file, named in §31.5 only as a finding; not changed here.
+- NOT-GRADED: artifacts/api-server/src/lib/wallMomentRead.ts — another lane's file, named in §31.5 only as a finding; not changed here.

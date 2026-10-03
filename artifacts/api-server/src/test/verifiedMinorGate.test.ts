@@ -162,6 +162,13 @@ function makeClient(state: FakeState, errorTables: string[] = []) {
       neq(c: string, v: any) { filters.push((r) => (r[c] ?? null) !== v); return b; },
       is(c: string, v: any) { filters.push((r) => (r[c] ?? null) === v); return b; },
       in(c: string, vs: any[]) { filters.push((r) => vs.includes(r[c])); return b; },
+      // PostgREST's `.not(col, "is", null)` — what the §31 follow-up read uses to
+      // find the newest DECIDED row past the scan window.
+      not(c: string, op: string, v: any) {
+        if (op === "is" && v === null) filters.push((r) => (r[c] ?? null) !== null);
+        else filters.push((r) => (r[c] ?? null) !== v);
+        return b;
+      },
       or() { return b; },
       ilike(c: string, v: any) {
         filters.push((r) => String(r[c] ?? "").toLowerCase() === String(v).toLowerCase());
@@ -411,5 +418,87 @@ describe("IDF-27: the Rent-a-Buddy booking gate refuses a verified minor", () =>
     assert.equal(allowed, false);
     assert.equal(status, 503, "an unknown answer is an outage, not a verdict about the user");
     assert.equal(body?.error, "age_verification_unavailable");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// census-trust §31 — the decided row must not fall out of the scan window
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// readVerifiedAgeSignal reads the newest VERIFIED_AGE_SCAN_LIMIT (50) rows and
+// lets the newest DECIDED one win. Undecided rows (`is_over_18` null: a session
+// that was created, abandoned, canceled or expired) are skipped — so a verified
+// minor who opened 50 more sessions after the underage result pushed that
+// result past the window, the read answered "no contradiction", and every 18+
+// gate reverted to the adult birthday they typed. The rate limit (3 sessions a
+// day, held in memory per process) bounds how fast that can be done, not
+// whether. A full window with no decided row now asks for the newest decided
+// row directly; it never reads "nothing found in the first 50" as "nothing".
+
+function undecidedRows(n: number, newestFirstFrom: number) {
+  return Array.from({ length: n }, (_, i) => ({
+    id: `iv-undecided-${i}`,
+    user_id: TRAVELER,
+    provider: "stripe",
+    status: "canceled",
+    failure_reason: null,
+    is_over_18: null,
+    created_at: new Date(Date.UTC(2026, 6, 1) + (newestFirstFrom + i) * 3_600_000).toISOString(),
+  }));
+}
+
+describe("census-trust §31: a verified-minor result past the 50-row scan window still refuses", () => {
+  it("50 NEWER undecided sessions do not bury the underage result — the traveller is still a verified minor", async () => {
+    const state = emptyState();
+    state.profiles.push(adultProfileRow());
+    state.identity_verifications.push(underageVerificationRow("2026-05-01T00:00:00Z"));
+    state.identity_verifications.push(...undecidedRows(50, 0));
+
+    const identity: any = await loadTravelerIdentity(makeClient(state), TRAVELER);
+    assert.equal(identity.verifiedMinor, true, "the underage result past the window must still be found");
+    assert.equal(identity.age, null, "the typed adult birthday must not come back");
+    assert.equal(identity.verificationUnreadable, false);
+  });
+
+  it("CONTROL — 49 newer undecided sessions: the underage result is inside the window and refuses as before", async () => {
+    const state = emptyState();
+    state.profiles.push(adultProfileRow());
+    state.identity_verifications.push(underageVerificationRow("2026-05-01T00:00:00Z"));
+    state.identity_verifications.push(...undecidedRows(49, 0));
+
+    const identity: any = await loadTravelerIdentity(makeClient(state), TRAVELER);
+    assert.equal(identity.verifiedMinor, true);
+    assert.equal(identity.age, null);
+  });
+
+  it("CONTROL — 60 undecided sessions and NO decided result anywhere is not a minor, and not an outage", async () => {
+    const state = emptyState();
+    state.profiles.push(adultProfileRow());
+    state.identity_verifications.push(...undecidedRows(60, 0));
+
+    const identity: any = await loadTravelerIdentity(makeClient(state), TRAVELER);
+    assert.equal(identity.verifiedMinor, false);
+    assert.equal(identity.verificationUnreadable, false);
+    assert.ok(identity.age !== null && identity.age >= 18, "absence of a decided result is not evidence of minority");
+  });
+
+  it("a full window whose follow-up read FAILS is an outage (refuses), never 'no contradiction'", async () => {
+    const state = emptyState();
+    state.profiles.push(adultProfileRow());
+    state.identity_verifications.push(underageVerificationRow("2026-05-01T00:00:00Z"));
+    state.identity_verifications.push(...undecidedRows(50, 0));
+    const base = makeClient(state);
+    let calls = 0;
+    const client = {
+      from(t: string) {
+        if (t !== "identity_verifications") return base.from(t);
+        calls += 1;
+        // The first (window) read answers; the follow-up read fails.
+        return calls === 1 ? base.from(t) : makeClient(state, ["identity_verifications"]).from(t);
+      },
+    };
+    const identity: any = await loadTravelerIdentity(client, TRAVELER);
+    assert.equal(identity.verificationUnreadable, true);
+    assert.equal(identity.age, null);
   });
 });
