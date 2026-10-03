@@ -6394,7 +6394,7 @@ A crew is a CITY-level thing, and before this pass the route layer said so in
 three places and enforced it in none of the ones that mattered:
 
 - `openCrewsInCity` filters `.eq("city", canonCity(city))`
-  (`artifacts/api-server/src/services/layover/LayoverCrewStore.ts:227#.eq("city", canonCity(city))`);
+  (`artifacts/api-server/src/services/layover/LayoverCrewStore.ts:277#.eq("city", canonCity(city))`);
 - `POST /crew` refuses to FORM a crew when the city is unknown —
   *"We do not know which city this layover is in"*;
 - `GET /crew` refuses to LIST crews when the city is unknown, and says why in a
@@ -6439,7 +6439,7 @@ load-bearing rather than belt-and-braces.
 
 | where | what |
 | --- | --- |
-| `artifacts/api-server/src/services/layover/LayoverCrewStore.ts:401#if (crew.city !== canonCity(input.city)) {` | `joinCrew` takes the joiner's city and refuses a crew in any other, with a new `city_mismatch` reason. Placed directly after the crew row is read and BEFORE the capacity read and any write, so a mismatched join costs one read and leaves nothing behind. It applies to a re-join exactly as to a first join: a membership that should never have existed is not re-confirmed by tapping again. |
+| `artifacts/api-server/src/services/layover/LayoverCrewStore.ts:472#if (crew.city !== canonCity(input.city)) {` | `joinCrew` takes the joiner's city and refuses a crew in any other, with a new `city_mismatch` reason. Placed directly after the crew row is read and BEFORE the capacity read and any write, so a mismatched join costs one read and leaves nothing behind. It applies to a re-join exactly as to a first join: a membership that should never have existed is not re-confirmed by tapping again. |
 | `artifacts/api-server/src/routes/airport.ts:3280#const city = crewCityFor(airport, session);` | The join route resolves the joiner's city the SAME way `GET /crew` and `POST /crew` resolve it, and refuses outright when it is unknown — symmetric with both. |
 
 The comparison runs through `canonCity` on both sides. The stored city is
@@ -6486,9 +6486,9 @@ while the route keeps refusing rather than coercing.
 
 | id | was | now | Evidence |
 | --- | --- | --- | --- |
-| L185 | N | **C** | `LayoverCrewService.join`. Route `POST /airport/sessions/:id/crew/:crewId/join` → `joinCrew` (`artifacts/api-server/src/services/layover/LayoverCrewStore.ts:374#export async function joinCrew`). Storage applied to two databases (§26.1). Requires a live session, is scoped to the joiner's city (27.1, new), enforces `max_members` from a read and REFUSES on an unreadable member list rather than joining past an unenforced limit, is idempotent on a double tap (23505 reported as success), and audits `crew_joined` through the 2985 vocabulary. Client wired and mounted (27.2). |
-| L186 | N | **C** | `LayoverCrewService.create`. Route `POST /airport/sessions/:id/crew` → `createCrew` (`artifacts/api-server/src/services/layover/LayoverCrewStore.ts:286#export async function createCrew`). Payload validated by `crewCreateSchema`; requires a live session AND a known city; expiry is bounded by the founder's own certified record rather than a bare TTL (`crewExpiryFor`), so no crew outlives the layover that made it; the non-transactional two-step is handled, not hoped away — a failed owner-membership insert DISBANDS the crew rather than leaving an ownerless one open and joinable. Audits `crew_created`. |
-| L188 | N | **C** | `LayoverCrewService.leave`. Route `POST /airport/sessions/:id/crew/leave` → `leaveCrew` (`artifacts/api-server/src/services/layover/LayoverCrewStore.ts:448#export async function leaveCrew`). Sets `left_at`; the owner leaving DISBANDS rather than promoting a successor, because `created_session_id` and `expires_at` are the founder's and a re-derivation is a decision about whose deadline binds. A disband that fails after the owner is already out is reported as a FAILURE even though half of it worked. Audits `crew_left` with `disbanded`. |
+| L185 | N | **C** | `LayoverCrewService.join`. Route `POST /airport/sessions/:id/crew/:crewId/join` → `joinCrew` (`artifacts/api-server/src/services/layover/LayoverCrewStore.ts:445#export async function joinCrew`). Storage applied to two databases (§26.1). Requires a live session, is scoped to the joiner's city (27.1, new), enforces `max_members` from a read and REFUSES on an unreadable member list rather than joining past an unenforced limit, is idempotent on a double tap (23505 reported as success), and audits `crew_joined` through the 2985 vocabulary. Client wired and mounted (27.2). |
+| L186 | N | **C** | `LayoverCrewService.create`. Route `POST /airport/sessions/:id/crew` → `createCrew` (`artifacts/api-server/src/services/layover/LayoverCrewStore.ts:336#export async function createCrew`). Payload validated by `crewCreateSchema`; requires a live session AND a known city; expiry is bounded by the founder's own certified record rather than a bare TTL (`crewExpiryFor`), so no crew outlives the layover that made it; the non-transactional two-step is handled, not hoped away — a failed owner-membership insert DISBANDS the crew rather than leaving an ownerless one open and joinable. Audits `crew_created`. |
+| L188 | N | **C** | `LayoverCrewService.leave`. Route `POST /airport/sessions/:id/crew/leave` → `leaveCrew` (`artifacts/api-server/src/services/layover/LayoverCrewStore.ts:536#export async function leaveCrew`). Sets `left_at`; the owner leaving DISBANDS rather than promoting a successor, because `created_session_id` and `expires_at` are the founder's and a re-derivation is a decision about whose deadline binds. A disband that fails after the owner is already out is reported as a FAILURE even though half of it worked. Audits `crew_left` with `disbanded`. |
 
 **ACCEPTANCE EVIDENCE.** `src/services/layover/__tests__/layoverCrewSurface.test.ts`
 (9 cases, pre-existing) and the new

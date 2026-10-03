@@ -95,14 +95,14 @@ import {
   type CrewMember,
 } from "../services/airport/LayoverCrewService.js";
 import {
-  CREW_TTL_MINUTES,
-  activeCrewForUser,
-  crewMembers,
-  createCrew,
-  joinCrew,
-  leaveCrew,
-  openCrewsInCity,
+  CREW_TTL_MINUTES, activeCrewForUser, crewMembers, createCrew, joinCrew, leaveCrew,
 } from "../services/layover/LayoverCrewStore.js";
+// §14 × the block list (census-layover §48): which crews a traveller may be
+// OFFERED, whether they may JOIN one, and which crewmates the solver may NAME —
+// one module, shared with the Compass crew tool so the two cannot disagree.
+// `readBlockExclusions` scopes the member-card block read to the crew itself.
+import { blockAdmission, openCrewsVisibleTo, publishedCrewSolution } from "../services/layover/LayoverCrewVisibility.js";
+import { readBlockExclusions } from "../lib/exclusionSet.js";
 import { safetyLabel, type TravelTimeSource } from "../services/airport/LayoverSafetyEngine.js";
 // §10 the traveller observation channel (census L82). The DECISION rules live
 // in services/airport/LayoverAirportTruth.ts and are pure; this import is the
@@ -3067,21 +3067,21 @@ async function crewPayload(
         youAreOwner: crew.createdBy === viewerId,
         memberCount: members.length,
       },
-      // §14.1, server-certified. Every field here is `certifyCrewPlan`'s.
-      solution: {
-        crewVersion: solution.crewVersion,
-        sharedReturnBy: solution.sharedReturnBy,
-        bindingMemberIds: solution.bindingMemberIds,
-        feasible: solution.feasible,
-        reasons: solution.reasons,
-        split: solution.split,
-        members: solution.members.map((m) => ({
-          userId: m.userId,
-          requiredReturnBy: m.requiredReturnBy,
-          usableMinutes: m.usableMinutes,
-          returnState: m.returnState,
-        })),
-      },
+      // §14.1, server-certified. Every field here is `certifyCrewPlan`'s,
+      // published through `publishedCrewSolution`: the crew's deadline,
+      // feasibility and reasons whole, and the PER-MEMBER half (user ids,
+      // personal deadlines, who binds) only for the viewer and the crewmates
+      // `crewMemberCards` cleared. Those ids used to be printed for every
+      // member, which undid the block and sharing gates on the cards beside
+      // them (census-layover §48). A binding deadline that belongs to a
+      // crewmate the viewer may not see arrives as `bindingMemberHidden: true`
+      // rather than as that person's id — the count and the deadline stay
+      // true, the person does not become identifiable. `cards.visibleIds` is
+      // `[]` on every branch that could not establish a card, so an unread
+      // block list names nobody but the viewer. The solver's own fields that
+      // carry ids and are NOT published (`branches`, `certifiedOver`) stay off
+      // the wire, as they always were.
+      solution: publishedCrewSolution(solution, viewerId, cards.visibleIds),
       members: cards.cards,
       degraded: cards.degraded,
       degradedReasons: cards.degradedReasons,
@@ -3101,30 +3101,30 @@ async function crewMemberCards(
   sc: any,
   viewerId: string,
   otherIds: string[],
-): Promise<{ cards: Array<Record<string, unknown>>; degraded: boolean; degradedReasons: string[] }> {
-  if (otherIds.length === 0) return { cards: [], degraded: false, degradedReasons: [] };
+): Promise<{ cards: Array<Record<string, unknown>>; visibleIds: string[]; degraded: boolean; degradedReasons: string[] }> {
+  if (otherIds.length === 0) return { cards: [], visibleIds: [], degraded: false, degradedReasons: [] };
   const reasons: string[] = [];
   try {
-    const { data: blockRows, error: blockErr } = await sc
-      .from("blocks")
-      .select("blocker_id, blocked_id")
-      .or(`blocker_id.eq.${viewerId},blocked_id.eq.${viewerId}`);
-    if (blockErr) {
+    // Scoped to the crew (`among`): two `.in()` reads that can only return a
+    // row involving the viewer AND a crewmate — never anybody else's block.
+    const blocked = await readBlockExclusions(sc, viewerId, { among: otherIds });
+    if (!blocked.ok) {
       // FAIL CLOSED. An unreadable block list served as "nobody is blocked" is
-      // precisely the defect census §23.1 found on /buddies.
-      logger.warn({ err: blockErr }, "layover crew: blocks unreadable — no member cards published");
-      return { cards: [], degraded: true, degradedReasons: ["blocks_unreadable"] };
+      // precisely the defect census §23.1 found on /buddies. `visibleIds: []`
+      // is the same rule for the solver: no card, no identity (census §48).
+      logger.warn({ reason: blocked.reason }, "layover crew: blocks unreadable — no member cards published");
+      return { cards: [], visibleIds: [], degraded: true, degradedReasons: ["blocks_unreadable"] };
     }
-    const excluded = new Set<string>();
-    for (const b of (blockRows ?? []) as any[]) {
-      excluded.add(b.blocker_id === viewerId ? b.blocked_id : b.blocker_id);
-    }
-    const notBlocked = otherIds.filter((id) => !excluded.has(id));
+    // `visibleIds` is what `publishedCrewSolution` scopes the solver's
+    // per-member identities to: no block relation, sharing allowed, AND every
+    // read that establishes a card succeeded. A branch that cannot stand
+    // behind a card answers `[]`, so the solver never names that crewmate.
+    const notBlocked = otherIds.filter((id) => !blocked.ids.has(id));
 
     const publishable = await publishableUserIds(sc, notBlocked);
     if (publishable.degraded) reasons.push("sharing_preferences_unreadable");
     const visible = publishable.allowed;
-    if (visible.length === 0) return { cards: [], degraded: reasons.length > 0, degradedReasons: reasons };
+    if (visible.length === 0) return { cards: [], visibleIds: [], degraded: reasons.length > 0, degradedReasons: reasons };
 
     const { data: profiles, error: profErr } = await sc
       .from("profiles")
@@ -3132,7 +3132,7 @@ async function crewMemberCards(
       .in("id", visible);
     if (profErr) {
       logger.warn({ err: profErr }, "layover crew: profiles unreadable — crew served without member cards");
-      return { cards: [], degraded: true, degradedReasons: [...reasons, "member_cards_unreadable"] };
+      return { cards: [], visibleIds: [], degraded: true, degradedReasons: [...reasons, "member_cards_unreadable"] };
     }
     const allowedNames = await nameVisibilitySet(sc, visible);
     return {
@@ -3142,12 +3142,12 @@ async function crewMemberCards(
         name: allowedNames.has(p.id as string) ? (p.name ?? null) : null,
         avatarUrl: p.avatar_url ?? null,
       })),
-      degraded: reasons.length > 0,
+      visibleIds: visible, degraded: reasons.length > 0,
       degradedReasons: reasons,
     };
   } catch (err) {
     logger.warn({ err, viewerId }, "layover crew member cards threw — crew served without them");
-    return { cards: [], degraded: true, degradedReasons: ["member_cards_unreadable"] };
+    return { cards: [], visibleIds: [], degraded: true, degradedReasons: ["member_cards_unreadable"] };
   }
 }
 
@@ -3188,7 +3188,7 @@ router.get("/airport/sessions/:id/crew", async (req, res) => {
     return;
   }
 
-  const open = await openCrewsInCity(sc, city, nowIso);
+  const open = await openCrewsVisibleTo(sc, user.id, city, nowIso); // §48: block-cleared; refuses when unreadable
   if (!open.ok) { sendError(res, "degraded_unavailable", "Crews here could not be loaded. Please try again."); return; }
 
   res.json({
@@ -3289,7 +3289,7 @@ router.post("/airport/sessions/:id/crew/:crewId/join", async (req, res) => {
   const nowMs = Date.now();
   const nowIso = new Date(nowMs).toISOString();
 
-  const joined = await joinCrew(sc, { userId: user.id, sessionId: session.id, crewId: req.params.crewId, city }, nowIso);
+  const joined = await joinCrew(sc, { userId: user.id, sessionId: session.id, crewId: req.params.crewId, city, admit: blockAdmission(sc, user.id) }, nowIso); // §48
   if (!joined.ok) {
     if (joined.reason === "already_in_a_crew") {
       sendError(res, "invalid_payload", "You are already in another crew. Leave it first."); return;
