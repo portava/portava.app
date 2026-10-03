@@ -92,7 +92,8 @@ export type EventPassportRefusal =
   | "revoked"
   | "expired"
   | "not_attending"     // the VIEWER is not at this event
-  | "no_passport";      // the owner has no passport at all
+  | "no_passport"       // the owner has no passport at all
+  | "unavailable";      // a read or write FAILED — "could not check", never a fact about the world
 
 export type EventPassportResult<T> =
   | { ok: true; value: T }
@@ -123,27 +124,32 @@ interface EventFacts {
   hostId: string | null;
 }
 
-/** Load the event facts the share rules depend on. Never throws. */
-async function loadEvent(sc: SupabaseClient, eventId: string): Promise<EventFacts | null> {
-  try {
-    const { data } = await sc
-      .from("events")
-      .select("id, city, starts_at, ends_at, state, host_id")
-      .eq("id", eventId)
-      .maybeSingle();
-    if (!data) return null;
-    const e = data as any;
-    return {
-      id: e.id,
-      city: e.city ?? null,
-      startsAt: e.starts_at ?? null,
-      endsAt: e.ends_at ?? null,
-      state: String(e.state ?? ""),
-      hostId: e.host_id ?? null,
-    };
-  } catch {
-    return null;
-  }
+/**
+ * Load the event facts the share rules depend on. Never throws.
+ *
+ * Three answers, not two: `UNREADABLE` is a failed read, which every caller
+ * refuses as `unavailable`. It used to be `null` — the same value as a missing
+ * event — so a database blip told an attendee their event did not exist. (The
+ * old try/catch was dead code: supabase-js RESOLVES on a database error.)
+ */
+const UNREADABLE = Symbol("unreadable");
+async function loadEvent(sc: SupabaseClient, eventId: string): Promise<EventFacts | null | typeof UNREADABLE> {
+  const { data, error } = await sc
+    .from("events")
+    .select("id, city, starts_at, ends_at, state, host_id")
+    .eq("id", eventId)
+    .maybeSingle();
+  if (error) return UNREADABLE;
+  if (!data) return null;
+  const e = data as any;
+  return {
+    id: e.id,
+    city: e.city ?? null,
+    startsAt: e.starts_at ?? null,
+    endsAt: e.ends_at ?? null,
+    state: String(e.state ?? ""),
+    hostId: e.host_id ?? null,
+  };
 }
 
 /**
@@ -161,27 +167,24 @@ export function eventIsShareable(e: EventFacts, nowMs: number): boolean {
 
 /**
  * Attendance, fail-closed: the event's host counts, an RSVP of going/interested
- * counts, and ANY read failure counts as NOT attending.
+ * counts. A read failure is `UNREADABLE` — still never "attending", but no
+ * longer reported to the person as "you are not at this event" either.
  */
 async function isAttending(
   sc: SupabaseClient,
   e: EventFacts,
   userId: string,
-): Promise<boolean> {
+): Promise<boolean | typeof UNREADABLE> {
   if (e.hostId && e.hostId === userId) return true;
-  try {
-    const { data, error } = await sc
-      .from("event_rsvps")
-      .select("status")
-      .eq("event_id", e.id)
-      .eq("user_id", userId)
-      .maybeSingle();
-    if (error) return false;
-    if (!data) return false;
-    return ATTENDING_RSVP_STATUSES.has(String((data as any).status));
-  } catch {
-    return false;
-  }
+  const { data, error } = await sc
+    .from("event_rsvps")
+    .select("status")
+    .eq("event_id", e.id)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) return UNREADABLE;
+  if (!data) return false;
+  return ATTENDING_RSVP_STATUSES.has(String((data as any).status));
 }
 
 /**
@@ -221,9 +224,12 @@ export async function createEventPassportShare(
   if (!(await isFlagEnabled(sc, "passport_event_share_enabled"))) return refuse("disabled");
 
   const event = await loadEvent(sc, eventId);
+  if (event === UNREADABLE) return refuse("unavailable");
   if (!event) return refuse("event_not_found");
   if (!eventIsShareable(event, nowMs)) return refuse("event_not_live");
-  if (!(await isAttending(sc, event, ownerId))) return refuse("owner_not_attending");
+  const ownerAttending = await isAttending(sc, event, ownerId);
+  if (ownerAttending === UNREADABLE) return refuse("unavailable");
+  if (!ownerAttending) return refuse("owner_not_attending");
 
   const nowIso = new Date(nowMs).toISOString();
   // Revoke any live share for this (owner, event) BEFORE inserting: 2294's
@@ -239,7 +245,7 @@ export async function createEventPassportShare(
     .eq("event_id", eventId)
     .is("revoked_at", null)
     .select("id");
-  if (revokeRes?.error) return refuse("not_found");
+  if (revokeRes?.error) return refuse("unavailable");
   const revokedIds: string[] = Array.isArray(revokeRes?.data)
     ? revokeRes.data.map((r: any) => r?.id).filter((id: any) => typeof id === "string")
     : [];
@@ -268,22 +274,27 @@ export async function createEventPassportShare(
     // `revoked_at = nowIso` predicate keeps us from resurrecting a share that
     // someone (or something) else revoked in between.
     if (revokedIds.length > 0) {
-      try {
-        await sc
-          .from("event_passport_shares")
-          .update({ revoked_at: null })
-          .in("id", revokedIds)
-          .eq("revoked_at", nowIso);
-      } catch {
-        // resolves-not-throws-ok: this IS the failure path — the caller is
-        // already being refused below, and there is nothing further to escalate
-        // to from here. A restore that itself fails leaves the owner with no
-        // live share, which is the same place a bare revoke-then-failed-insert
-        // would have left them; it never invents a live share or resurrects a
-        // deliberately revoked one (the revoked_at = nowIso predicate).
+      // This IS the failure path — the caller is already being refused below.
+      // A restore that itself fails leaves the owner with no live share, which
+      // is the same place a bare revoke-then-failed-insert would have left
+      // them; it never invents a live share or resurrects a deliberately
+      // revoked one (the revoked_at = nowIso predicate). Its error is BOUND and
+      // logged rather than swallowed by a try/catch supabase-js never reaches.
+      const { error: restoreErr } = await sc
+        .from("event_passport_shares")
+        .update({ revoked_at: null })
+        .in("id", revokedIds)
+        .eq("revoked_at", nowIso);
+      if (restoreErr) {
+        console.error(JSON.stringify({
+          event: "event_passport.share.restore_failed",
+          owner_id: ownerId,
+          event_id: eventId,
+          error: restoreErr.message,
+        }));
       }
     }
-    return refuse("not_found");
+    return refuse("unavailable");
   }
   return { ok: true, value: rowToShare(data) };
 }
@@ -311,7 +322,7 @@ export async function revokeEventPassportShare(
     .eq("event_id", eventId)
     .is("revoked_at", null)
     .select(SHARE_COLUMNS);
-  if (error) return refuse("not_found");
+  if (error) return refuse("unavailable");
   return { ok: true, value: { revoked: Array.isArray(data) && data.length > 0 } };
 }
 
@@ -328,6 +339,10 @@ export async function revokeEventPassportShare(
  * the first would leave the owner's card reading "sharing until…" after an
  * event was cancelled, while every scan of that same token refuses. The owner's
  * view of their own share must agree with what viewers actually get.
+ *
+ * A failed read REJECTS (`event_passport_share_unreadable`) rather than
+ * answering null: null is "you are not sharing", and showing the owner that
+ * while a live share may exist is the failed-read-as-empty defect.
  */
 export async function getOwnEventPassportShare(
   sc: SupabaseClient,
@@ -335,24 +350,22 @@ export async function getOwnEventPassportShare(
   eventId: string,
   nowMs: number = Date.now(),
 ): Promise<EventPassportShare | null> {
-  try {
-    const { data } = await sc
-      .from("event_passport_shares")
-      .select(SHARE_COLUMNS)
-      .eq("user_id", ownerId)
-      .eq("event_id", eventId)
-      .is("revoked_at", null)
-      .maybeSingle();
-    if (!data) return null;
-    const share = rowToShare(data);
-    if (Date.parse(share.expiresAt) <= nowMs) return null;
-    // The event's own end / state, exactly as the resolve path re-checks them.
-    const event = await loadEvent(sc, share.eventId);
-    if (!event || !eventIsShareable(event, nowMs)) return null;
-    return share;
-  } catch {
-    return null;
-  }
+  const { data, error } = await sc
+    .from("event_passport_shares")
+    .select(SHARE_COLUMNS)
+    .eq("user_id", ownerId)
+    .eq("event_id", eventId)
+    .is("revoked_at", null)
+    .maybeSingle();
+  if (error) throw new Error(`event_passport_share_unreadable: ${error.message}`);
+  if (!data) return null;
+  const share = rowToShare(data);
+  if (Date.parse(share.expiresAt) <= nowMs) return null;
+  // The event's own end / state, exactly as the resolve path re-checks them.
+  const event = await loadEvent(sc, share.eventId);
+  if (event === UNREADABLE) throw new Error("event_passport_share_unreadable: events read failed");
+  if (!event || !eventIsShareable(event, nowMs)) return null;
+  return share;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -388,17 +401,12 @@ export async function resolveEventPassport(
   const raw = String(token ?? "").trim();
   if (!raw) return refuse("not_found");
 
-  let row: any = null;
-  try {
-    const { data } = await sc
-      .from("event_passport_shares")
-      .select(SHARE_COLUMNS)
-      .eq("token", raw)
-      .maybeSingle();
-    row = data ?? null;
-  } catch {
-    return refuse("not_found");
-  }
+  const { data: row, error: rowErr } = await sc
+    .from("event_passport_shares")
+    .select(SHARE_COLUMNS)
+    .eq("token", raw)
+    .maybeSingle();
+  if (rowErr) return refuse("unavailable");
   if (!row) return refuse("not_found");
   const share = rowToShare(row);
 
@@ -409,6 +417,7 @@ export async function resolveEventPassport(
   if (!Number.isFinite(expires) || expires <= nowMs) return refuse("expired");
 
   const event = await loadEvent(sc, share.eventId);
+  if (event === UNREADABLE) return refuse("unavailable");
   if (!event) return refuse("event_not_found");
   // The share expires WITH the event, independently of its own TTL.
   if (!eventIsShareable(event, nowMs)) return refuse("expired");
@@ -416,7 +425,11 @@ export async function resolveEventPassport(
   // Event-scoped, fail-closed: the viewer must be at this event too.
   if (!viewerId) return refuse("not_attending");
   const viewerIsOwner = viewerId === share.userId;
-  if (!viewerIsOwner && !(await isAttending(sc, event, viewerId))) return refuse("not_attending");
+  if (!viewerIsOwner) {
+    const viewerAttending = await isAttending(sc, event, viewerId);
+    if (viewerAttending === UNREADABLE) return refuse("unavailable");
+    if (!viewerAttending) return refuse("not_attending");
+  }
 
   // The ORDINARY projection for this viewer, narrowed to the event allow-list.
   // No forced context, no elevated permissions: the share cannot widen.
