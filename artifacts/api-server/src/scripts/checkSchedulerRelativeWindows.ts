@@ -356,11 +356,15 @@ export const ALLOWLIST: readonly AllowEntry[] = [
     requires: ["WINDOW_LOWER_HRS", "WINDOW_UPPER_HRS"],
     reason:
       "LOSES-DATA: the reminder band is `start_date` between `now + WINDOW_LOWER_HRS` (22 h) and " +
-      "`now + WINDOW_UPPER_HRS` (26 h), which is a window relative to now even though it points FORWARD — a trip " +
-      "is inside it for roughly four hours of wall-clock time and then the band moves past it. `reminder_sent_at " +
-      "IS NULL` keeps the work pending but nothing ever looks outside the band, so a stall longer than the band " +
-      "means that trip's reminder is sent by no later pass. recoverStaleClaims does not cover it: that sweep " +
-      "requires `reminder_sent_at IS NOT NULL`, which is exactly what never happened here.",
+      "`now + WINDOW_UPPER_HRS` (26 h), which is a window relative to now even though it points FORWARD — the " +
+      "band moves past a trip and no later pass looks back. The four-hour span of the bounds is NOT how long a " +
+      "trip stays inside it: `start_date` is a DATE column (migration 2450 casts it) and both bounds are " +
+      "truncated with `.slice(0, 10)`, so the band is compared date-to-date. Simulated minute by minute, a trip " +
+      "starting 2026-10-09 is selected from 2026-10-07T22:00Z through 2026-10-09T01:59Z, contiguously: 28 hours, " +
+      "not 4. That is outage-scale, not quiet-night-scale — the fifteen-minute idle suspend cannot reach it, the " +
+      "54-hour stall of 2026-10-02 would have. `reminder_sent_at IS NULL` keeps the work pending but nothing " +
+      "ever looks outside the band. recoverStaleClaims does not cover it: that sweep requires `reminder_sent_at " +
+      "IS NOT NULL`, which is exactly what never happened here.",
   },
   {
     key: 'server/trips/projectionWorkers/tripReminderScheduler.ts::recoverStaleClaims::trips.gte("start_date")',
