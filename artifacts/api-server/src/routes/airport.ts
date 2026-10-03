@@ -1197,10 +1197,10 @@ router.post("/airport/sessions/:id/compass", async (req, res) => {
   // nothing to do here" and "your plan fits" out of a connection reset
   // (census L294, census L47).
   const recsRead = await getRecommendations(sc, session.id);
-  const stopsRead = await loadStops(sc, session.id); const crewRead = await compassCrewCandidates(sc, user.id, crewCityFor(airport, session), new Date().toISOString()); // §48 L110: block-cleared, as GET /:id/crew; a failed read travels as a reason
+  const stopsRead = await loadStops(sc, session.id); const nowMs = Date.now(); const crewRead = await compassCrewCandidates(sc, user.id, crewCityFor(airport, session), new Date(nowMs).toISOString()); // §48 L110: block-cleared, as GET /:id/crew; a failed read travels as a reason
   const answer = await answerLayoverQuestion(sc, {
     question: parsed.data.question,
-    session, snapshot: await consumerLayoverSnapshot(sc, airport, session, Date.now()), // census-discovery §81: null (flag off) keeps the legacy certification below
+    session, snapshot: await consumerLayoverSnapshot(sc, airport, session, nowMs), // census-discovery §81: null (flag off) keeps the legacy certification below
     airport, entry: await sessionEntry(sc, airport, session), // census-discovery §65: the answer certifies with the snapshot's entry input
     recommendations: recsRead.ok ? (recsRead.recommendations as unknown as Array<Record<string, unknown>>) : undefined,
     recommendationsUnavailableReason: recsRead.ok ? null : "layover_recommendations_unreadable",
@@ -2282,7 +2282,7 @@ router.get("/airport/sessions/:id/overview", async (req, res) => {
       airport,
       record,
       hardReturnLocal: formatLocalTime(tz, record.deadline.hardReturnTime),
-      stops, crew: await activeCrewForUser(sc, user.id, new Date().toISOString()), // §48 L154: the owner's OWN crew; a failed read is "crew_unreadable", not "no crew"
+      stops, crew: await activeCrewForUser(sc, user.id, new Date(nowMs).toISOString()), // §48 L154: the owner's OWN crew; a failed read is "crew_unreadable", not "no crew"
     }),
     returnReminderAt: session.returnReminderAt,
     // §24 L265 — the material-change threshold, published on the read the
