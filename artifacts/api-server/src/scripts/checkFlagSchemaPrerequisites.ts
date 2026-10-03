@@ -428,6 +428,18 @@ export const KNOWN: Record<string, Known> = {
   //
   //
   //
+  // ── Added 2026-10-03: 3560 is in the tree, not yet in production ───────────
+  //
+  // 3560_creator_fatigue_increment_rpc.sql brings increment_creator_fatigue_batch()
+  // into the canonical chain; until now it existed only in the frozen root, so this
+  // scan could not resolve the name and never charged it. discovery_serve_log_enabled
+  // is ON in production and its closure reaches lib/rankLog.ts upsertCreatorFatigueAsync.
+  discovery_serve_log_enabled: {
+    classification: "unguarded",
+    objects: ["increment_creator_fatigue_batch()"],
+    note:
+      "No lib/capability probe stands before the call, hence `unguarded`; the protection is a flag gate the scan does not model. lib/rankLog.ts names public.increment_creator_fatigue_batch() only inside `if (fatigueEnabled)`, where fatigueEnabled is CREATOR_FATIGUE_ENABLED read from feature_flags (an unread flag keeps the last value, which starts false). CREATOR_FATIGUE_ENABLED is FALSE in the 2026-09-22 production snapshot, so production never issues the call; were it reached, the RPC is fire-and-forget and a rejection is reported at warn (reportFatigueWriteFailure) without touching the impression path. 3560_creator_fatigue_increment_rpc.sql is IN THE TREE, NOT APPLIED to production (hosted writes are blocked from this environment; the owner's apply is pending). STRIKE THIS ENTRY when 3560 is applied and recorded in the migration ledger, and only then turn CREATOR_FATIGUE_ENABLED on — the ratchet will report this entry STALE first.",
+  },
 };
 
 // ── Declared-by-a-migration ──────────────────────────────────────────────────
