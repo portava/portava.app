@@ -39,7 +39,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { awardStamp } from "../services/passport/StampAwardEngine.js";
 import { evaluateAndAwardCriteria } from "../lib/stamps/criteria/index.js";
 import { getServiceClient } from "../lib/supabase";
-import { stampEntity, unstampEntity } from "../services/stamps/ContentStampService.js";
+import { stampEntity, unstampEntity } from "../services/stamps/ContentStampService.js"; import { recountPostCounter } from "../lib/postCounters.js"; // census-media §47: counters recounted exactly, never stamped over a failed read
 import { stampOverlayCol, feedVariantCol } from "../lib/postMediaOverlay";
 import { checkRateLimit } from "../lib/rateLimit";
 import { writePulseGeoTag } from "../services/location/PulseGeoTagService";
@@ -2523,10 +2523,10 @@ router.post("/posts/:postId/save", async (req, res) => {
     .upsert({ post_id: postId, user_id: user.id }, { onConflict: "post_id,user_id", ignoreDuplicates: true });
   if (upsertErr) { sendError(res, "db_error", upsertErr.message); return; }
 
-  const { count } = await sc.from("post_saves").select("post_id", { count: "exact", head: true }).eq("post_id", postId);
-  await sc.from("posts").update({ save_count: count ?? 0 }).eq("id", postId);
+  // census-media §47 (defect 1): an exact recount; an unread count is answered null and named, and is never stamped over the cached save_count.
+  const { count, failed } = await recountPostCounter(sc, postId, "save", req.log);
 
-  res.status(200).json({ savedByMe: true, saveCount: count ?? 0 });
+  res.status(200).json({ savedByMe: true, saveCount: count, ...failed.body() });
 });
 
 router.delete("/posts/:postId/save", async (req, res) => {
@@ -2548,10 +2548,10 @@ router.delete("/posts/:postId/save", async (req, res) => {
     .from("post_saves").delete().eq("post_id", postId).eq("user_id", user.id);
   if (delErr) { sendError(res, "db_error", delErr.message); return; }
 
-  const { count } = await sc.from("post_saves").select("post_id", { count: "exact", head: true }).eq("post_id", postId);
-  await sc.from("posts").update({ save_count: count ?? 0 }).eq("id", postId);
+  // census-media §47 (defect 1): as the save above — exact, or null and named; never `count ?? 0` stamped.
+  const { count, failed } = await recountPostCounter(sc, postId, "save", req.log);
 
-  res.status(200).json({ savedByMe: false, saveCount: count ?? 0 });
+  res.status(200).json({ savedByMe: false, saveCount: count, ...failed.body() });
 });
 
 /* ============================================================================
@@ -2826,10 +2826,10 @@ router.post("/posts/:postId/comments", async (req, res) => {
     .single();
   if (insertErr) { sendError(res, "db_error", insertErr.message); return; }
 
-  // Accurate count + sync
-  const { count } = await sc.from("posts_comments").select("id", { count: "exact", head: true })
-    .eq("post_id", postId).is("deleted_at", null);
-  await sc.from("posts").update({ comment_count: count ?? 0 }).eq("id", postId);
+  // Accurate count + sync — census-media §47: exact, and an unread count is answered null and named,
+  // never stamped over the cached comment_count.
+  const { count, failed: commentCountFailed } = await recountPostCounter(sc, postId, "comment", req.log);
+  //
 
   // Fetch author profile for response
   const { data: profile } = await sc.from("profiles").select("id, handle, name, avatar_url").eq("id", user.id).single();
@@ -2884,7 +2884,7 @@ router.post("/posts/:postId/comments", async (req, res) => {
         ? { id: profile.id, handle: profile.handle, name: profile.name, avatarUrl: profile.avatar_url ?? null }
         : { id: user.id, handle: "traveler", name: "Traveler", avatarUrl: null },
     },
-    commentCount: count ?? 0,
+    commentCount: count, ...commentCountFailed.body(),
   });
 
   // Language detection for comment — fire-and-forget.
@@ -2950,26 +2950,26 @@ router.delete("/posts/:postId/comments/:commentId", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: existing } = await sc
+  const { data: existing, error: existingErr } = await sc
     .from("posts_comments").select("id, user_id")
     .eq("id", commentId).eq("post_id", postId).is("deleted_at", null).maybeSingle();
-  if (!existing) { sendError(res, "not_found", "Comment not found"); return; }
+  if (existingErr) { req.log.error({ err: existingErr }, "comment delete: comment read failed"); sendError(res, "db_error", existingErr.message); return; } if (!existing) { sendError(res, "not_found", "Comment not found"); return; } // census-media §47: an unread comment is not "not found"
 
   // Allow: comment author OR post owner
   if ((existing as any).user_id !== user.id) {
-    const { data: postRow } = await sc.from("posts").select("author_id").eq("id", postId).maybeSingle();
+    const { data: postRow, error: postRowErr } = await sc.from("posts").select("author_id").eq("id", postId).maybeSingle(); if (postRowErr) { req.log.error({ err: postRowErr }, "comment delete: post read failed"); sendError(res, "db_error", postRowErr.message); return; } // §47: an unread post is not "forbidden"
     if (!postRow || (postRow as any).author_id !== user.id) {
       sendError(res, "forbidden", "Cannot delete someone else's comment"); return;
     }
   }
 
-  await sc.from("posts_comments").update({ deleted_at: new Date().toISOString() }).eq("id", commentId);
+  const { error: softDeleteErr } = await sc.from("posts_comments").update({ deleted_at: new Date().toISOString() }).eq("id", commentId); if (softDeleteErr) { req.log.error({ err: softDeleteErr }, "comment delete: soft-delete refused"); sendError(res, "db_error", softDeleteErr.message); return; } // census-media §47: a refused delete is never ok:true
 
-  const { count } = await sc.from("posts_comments").select("id", { count: "exact", head: true })
-    .eq("post_id", postId).is("deleted_at", null);
-  await sc.from("posts").update({ comment_count: count ?? 0 }).eq("id", postId);
+  // census-media §47: an exact recount; an unread count is answered null and named, and is never stamped over
+  // the cached comment_count.
+  const { count, failed } = await recountPostCounter(sc, postId, "comment", req.log);
 
-  res.status(200).json({ ok: true, commentCount: count ?? 0 });
+  res.status(200).json({ ok: true, commentCount: count, ...failed.body() });
 });
 
 /* ============================================================================
