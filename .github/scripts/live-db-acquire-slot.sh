@@ -372,6 +372,11 @@ while :; do
   # REPOSITORY. The backoff below cannot prevent that — exhaustion arrives
   # before the first 403 does.
   #
+  # #583 measured the consequence from the other end, on the same day: with
+  # ~12 runs queued the repository hit GitHub's rate limit, every call returned
+  # 403, the error was swallowed into an empty listing, and every waiter timed
+  # out having certified nothing (PRs #570-#579, 09:40-12:15 UTC).
+  #
   # `?status=` is applied by the API across all runs, so this is strictly more
   # precise than the walk it replaces, not a bounded approximation of it: it
   # CANNOT miss an older holder, however long that holder has been running.
@@ -401,7 +406,7 @@ while :; do
   for RUN_STATUS in queued in_progress; do
     STATUS_PAGE="$(gh api --paginate \
               "repos/${GITHUB_REPOSITORY}/actions/workflows/${WF_ID}/runs?status=${RUN_STATUS}&per_page=100" \
-              --jq '.workflow_runs[] | "\(.run_started_at // .created_at) \(.id)"' \
+              --jq '.workflow_runs[] | select(.status == "in_progress" or .status == "queued") | "\(.run_started_at // .created_at) \(.id)"' \
             2>>"$GH_STDERR")"
     STATUS_RC=$?
     # Either call failing means we do not have the queue. Fail closed: keep the
@@ -409,15 +414,31 @@ while :; do
     [ "$STATUS_RC" -ne 0 ] && GH_RC="$STATUS_RC"
     RAW_RUNS="${RAW_RUNS}${STATUS_PAGE}"$'\n'
   done
-  # First sighting of each run id wins. Lines that do not parse are passed
-  # through untouched, because the decider must still refuse them.
-  RAW_RUNS="$(printf '%s\n' "$RAW_RUNS" | awk 'NF == 0 { next } NF < 2 { print; next } !seen[$2]++')"
+  # Sorted by timestamp, then first sighting of each run id wins, so a run that
+  # transitioned mid-poll is kept at its EARLIEST timestamp whatever order the
+  # answers arrived in (#583). Lines that do not parse are passed through
+  # untouched, because the decider must still refuse them.
+  RAW_RUNS="$(
+    # Malformed lines first, untouched and never sorted: a sentinel inside the
+    # sort key would be a line the API could forge. The decider must refuse
+    # these, so it should meet them before anything else.
+    printf '%s\n' "$RAW_RUNS" | awk 'NF > 0 && NF < 2'
+    printf '%s\n' "$RAW_RUNS" | awk 'NF >= 2' | LC_ALL=C sort -k1,1 | awk '!seen[$2]++'
+  )"
   POLLS=$(( POLLS + 1 ))
   ASKED=1
 
   # A non-zero exit, or an error body on stdout, means we were refused. Both are
   # checked: the exit code is authoritative, and the body names the reason.
-  if [ "$GH_RC" -ne 0 ] || printf '%s' "$RAW_RUNS" | grep -q '"status": *"[45][0-9][0-9]"'; then
+  # ALL OR NOTHING (#583). If either query failed we do not have the queue, so
+  # the half-listing is dropped HERE rather than relying on the `continue`
+  # below staying where it is. A listing missing its in-progress half would let
+  # this run believe it is the oldest while another one holds the database.
+  # The text is kept in GH_BODY, because the classifier needs the error body.
+  GH_BODY="$RAW_RUNS"
+  [ "$GH_RC" -ne 0 ] && RAW_RUNS=""
+
+  if [ "$GH_RC" -ne 0 ] || printf '%s' "$GH_BODY" | grep -q '"status": *"[45][0-9][0-9]"'; then
     API_REFUSALS=$(( API_REFUSALS + 1 ))
     # Why we were refused, in descending order of specificity. The exit code
     # alone is NOT an answer: run 37122355417 reported `exit 1` on all twelve
@@ -434,7 +455,7 @@ while :; do
     # code-only detector misses the commonest refusal), a `"status": "4xx"`
     # field, and gh's own one-line `... (HTTP 4xx)` summary.
     GH_SAID="$(tr -d '\r' < "$GH_STDERR" | grep -v '^[[:space:]]*$' | head -1 | cut -c1-200)"
-    GH_ANY="$(printf '%s\n' "$RAW_RUNS"; tr -d '\r' < "$GH_STDERR")"
+    GH_ANY="$(printf '%s\n' "$GH_BODY"; tr -d '\r' < "$GH_STDERR")"
     WHY="exit ${GH_RC}"
     if printf '%s' "$GH_ANY" | grep -qi 'rate.limit'; then
       WHY="HTTP 403, rate limit"

@@ -92,6 +92,11 @@ interface FakeOpts {
   blocks?: Row[];
   blocksError?: boolean;
   observations?: Row[];
+  /**
+   * PostgREST's db-max-rows: EVERY select answers at most this many rows, an
+   * explicit .limit() included, with no error. Opt-in; unset means uncapped.
+   */
+  serverMaxRows?: number;
 }
 
 function makeDb(opts: FakeOpts) {
@@ -116,6 +121,8 @@ function makeDb(opts: FakeOpts) {
     let payload: any = null;
     const filters: Array<{ col: string; val: any; kind: string }> = [];
     let orClause: string | null = null;
+    let orderBy: [string, boolean] | null = null;
+    let limitN: number | null = null;
 
     const orMatch = (row: Row) =>
       orClause === null ||
@@ -132,6 +139,7 @@ function makeDb(opts: FakeOpts) {
           case "is": return (cell ?? null) === f.val;
           case "lte": return String(cell ?? "") <= String(f.val);
           case "gte": return String(cell ?? "") >= String(f.val);
+          case "gt": return cell != null && String(cell) > String(f.val);
           default: return cell === f.val;
         }
       });
@@ -151,7 +159,11 @@ function makeDb(opts: FakeOpts) {
         for (const r of store) if (match(r)) { Object.assign(r, payload); updated.push(r); }
         return { data: op === "update_select" ? updated : null, error: null };
       }
-      return { data: store.filter(match), error: null };
+      let out = store.filter(match);
+      if (orderBy) { const [c, asc] = orderBy; out = [...out].sort((x, y) => (String(x[c]) < String(y[c]) ? -1 : String(x[c]) > String(y[c]) ? 1 : 0) * (asc ? 1 : -1)); }
+      if (limitN !== null) out = out.slice(0, limitN);
+      if (opts.serverMaxRows !== undefined) out = out.slice(0, opts.serverMaxRows);
+      return { data: out, error: null };
     }
     const one = () => {
       const r = run();
@@ -168,8 +180,9 @@ function makeDb(opts: FakeOpts) {
       lte(c: string, v: any) { filters.push({ col: c, val: v, kind: "lte" }); return b; },
       gte(c: string, v: any) { filters.push({ col: c, val: v, kind: "gte" }); return b; },
       or(clause: string) { orClause = clause; return b; },
-      order() { return b; },
-      limit() { return b; },
+      gt(c: string, v: any) { filters.push({ col: c, val: v, kind: "gt" }); return b; },
+      order(c: string, o?: { ascending?: boolean }) { orderBy = [c, o?.ascending !== false]; return b; },
+      limit(n: number) { limitN = n; return b; },
       maybeSingle: one,
       single: one,
       then(resolve: (r: any) => any, reject?: (e: any) => any) { return Promise.resolve(run()).then(resolve, reject); },
@@ -371,7 +384,10 @@ describe("IG-06 — POST /v1/intel/observations reaches the trail surface", () =
 });
 
 // ── Serve path: lib/trailServe ────────────────────────────────────────────────
+// Every stored row has a primary key; the serve path pages by it (lib/keysetRead).
+let nextMoveSeq = 0;
 const nextMoveRow = (actor: string, over: Row = {}): Row => ({
+  id: `nm-${String(++nextMoveSeq).padStart(6, "0")}`,
   actor_id: actor,
   subject_id: PLACE,
   claim_type: "experience.next_move",
@@ -522,7 +538,12 @@ describe("IG-06 — lib/trailServe is the production caller of the aggregate + A
     assert.ok(!JSON.stringify(read).includes("droppedUngrouped"));
   });
 
-  it("empties the cohort (rather than refusing) when the consent read fails", async () => {
+  // DV-83: a failed read presented as an answer. This case used to pin
+  // `refusal: null, buckets: [], anyDroppedIneligible: true` — an OUTAGE served
+  // as "these rows had no consent", on the bit the module calls the operator's
+  // only view of consent coverage. It is still empty (nothing is shown that the
+  // consent gate could not clear), and now it says why.
+  it("REFUSES with consent_unreadable when the consent read fails — an outage is not 'nobody consented'", async () => {
     const db = serveDb({ intel_trail_followup: true }, { observations: [nextMoveRow(A)] });
     const realFrom = db.from;
     (db as any).from = (table: string) =>
@@ -530,13 +551,44 @@ describe("IG-06 — lib/trailServe is the production caller of the aggregate + A
         ? { select: () => ({ in: () => ({ eq: () => ({ is: () => Promise.resolve({ data: null, error: { message: "consent down" } }) }) }) }) }
         : realFrom(table);
     const read = await readTrailMovement(db as any, VIEWER, { now: NOW });
-    assert.equal(read.refusal, null);
+    assert.equal(read.refusal, "consent_unreadable");
     assert.deepEqual(read.buckets, []);
-    assert.equal(read.anyDroppedIneligible, true);
-    // Nothing reached aggregation, so nothing was withheld BY THE FLOOR. The two
-    // reasons stay distinct: `anyDroppedIneligible` is the consent pipeline,
-    // `withheldBelowFloor` is the §13 gate.
+    // A refusal looked at nothing it can vouch for, so neither existence bit is set.
+    assert.equal(read.anyDroppedIneligible, false, "an outage must not be reported as rows dropped for want of consent");
     assert.equal(read.withheldBelowFloor, false);
+  });
+
+  it("the admin route answers a consent outage as a 500 db_error, not as a 200 with an empty cohort", async () => {
+    const db = serveDb({ intel_trail_followup: true }, { observations: [nextMoveRow(A)], profiles: { [ADMIN]: { role: "admin" } } });
+    const realFrom = db.from;
+    (db as any).from = (table: string) =>
+      table === "intel_contribution_consent"
+        ? { select: () => ({ in: () => ({ eq: () => ({ is: () => Promise.resolve({ data: null, error: { message: "consent down" } }) }) }) }) }
+        : realFrom(table);
+    _setTestClient(db as any, true);
+    const r = await get("/v1/internal/intel/trail/movement", ADMIN);
+    // sendError replaces a db_error's detail with generic copy on the wire; the
+    // refusal reason is in the server log. What the admin must not get is a 200.
+    assert.equal(r.status, 500, JSON.stringify(r.body));
+    assert.equal(r.body.error, "db_error");
+    assert.ok(!("buckets" in r.body), "no cohort payload rides an outage");
+  });
+
+  it("reads EVERY fresh next_move row past the server's 1000-row cap (an unscoped read is not cut)", async () => {
+    // 1000 rows from ONE person at another origin (never a cohort) sort FIRST by
+    // id; a clearing cohort at PLACE sorts after them. A single capped read sees
+    // only the filler and serves nothing — "nobody is moving" — while the cohort
+    // is real.
+    const filler = Array.from({ length: 1000 }, (_, i) =>
+      nextMoveRow(cohortActor(9000), { id: `obs-a-${String(i).padStart(5, "0")}`, subject_id: PLACE_2 }));
+    const cohort = CLEARING_ROWS.map((r, i) => ({ ...r, id: `obs-b-${String(i).padStart(5, "0")}` }));
+    const rows = [...filler, ...cohort];
+    const db = serveDb({ intel_trail_followup: true }, { consent: consentFor(rows), observations: rows, serverMaxRows: 1000 });
+    const read = await readTrailMovement(db as any, VIEWER, { now: NOW });
+    assert.equal(read.refusal, null);
+    assert.equal(read.buckets.length, 1, "the cohort past row 1000 is read and served");
+    assert.equal(read.buckets[0].originId, PLACE);
+    assert.equal(read.buckets[0].uniqueActors, MOVEMENT_PRIVACY_V1.minUniqueActors);
   });
 
   it("scopes to an origin place when asked, and the freshness window is the next_move TTL", async () => {
