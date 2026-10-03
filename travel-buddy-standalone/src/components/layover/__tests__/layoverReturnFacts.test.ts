@@ -375,3 +375,19 @@ test('L154: the cached point itself still reads verbatim from the new server', (
   });
   assert.equal(m.sentence, 'Meet your crew at Terminal 2 food court.');
 });
+
+// ── §15.1 L144 — the server's TRUE reason the crew was not told (§48) ───────
+//
+// The server said `no_crew_storage` on every abort, false since 2984. It now
+// says `crew_notify_not_enabled`: crews exist, and telling one that a member
+// turned back is a disclosure the owner has not switched on (L144 stays
+// owner-gated). The traveller is told the practical consequence — nobody was
+// messaged for them — not an excuse about storage.
+
+test('L144: "not enabled" tells the traveller to let their crew know themselves', () => {
+  const line = describeCrewNotification({ crewNotified: [], crewNotifyUnavailableReason: 'crew_notify_not_enabled' });
+  assert.ok(line);
+  assert.match(line, /not told/i);
+  assert.match(line, /let them know yourself/i);
+  assert.doesNotMatch(line, /nothing set up/i);
+});

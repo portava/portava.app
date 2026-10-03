@@ -365,6 +365,7 @@ export function describeCrewMeetingPointCapability(
  */
 const CREW_NOTIFY_REASON_TEXT: Record<string, string> = {
   no_crew_storage: 'there is nothing set up to reach them',
+  crew_notify_not_enabled: 'Portava does not message your crew for you, so let them know yourself',
 };
 
 /**

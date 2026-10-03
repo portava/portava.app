@@ -406,9 +406,9 @@ export type ReturnNowStatusCapability = 'enabled' | 'flag_on_readers_not_widened
  * it had not been taught, and `returnToAirportNow` casts the body whole, so a
  * narrowed union would be a lie the compiler could not catch.
  *
- * KNOWN MEMBERS TODAY, and neither is a policy decision:
- *   `no_crew_storage`  what the server still sends unconditionally
- *                      (LayoverSafeReturnService.ts:383), now stale.
+ * KNOWN MEMBERS TODAY (the first names an owner decision; this client takes none):
+ *   `crew_notify_not_enabled`  what the server sends since §48; the owner has
+ *                      not enabled the L144 disclosure. (`no_crew_storage`: pre-§48.)
  *
  * ── WHAT THIS CLIENT DELIBERATELY DOES NOT DECIDE ────────────────────────────
  * Whether a crew SHOULD be told that one of its members aborted is a

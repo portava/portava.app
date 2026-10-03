@@ -3623,7 +3623,7 @@ describes can disagree with them, which is the duplicate-derivation defect this
 module exists to prevent. `GET /:id/safety` and `GET /overview` publish it
 (`artifacts/api-server/src/routes/airport.ts:1151#airportIntelligence: airportIntelligence(record)`),
 `summarizeAirportIntelligence`
-(`travel-buddy-standalone/src/components/layover/layoverReturnFacts.ts:446#export function summarizeAirportIntelligence`)
+(`travel-buddy-standalone/src/components/layover/layoverReturnFacts.ts:447#export function summarizeAirportIntelligence`)
 turns the rung into words, and `CanILeaveCard` renders them INSIDE the
 always-visible unknowns box
 (`travel-buddy-standalone/src/components/layover/CanILeaveCard.tsx:197#layover-airport-intelligence`)
@@ -6732,7 +6732,7 @@ census exists to find.
 
 | where | what it still says |
 | --- | --- |
-| `artifacts/api-server/src/services/airport/LayoverSafeReturnService.ts:383#crewNotifyUnavailableReason: "no_crew_storage",` | abort returns `crewNotified: []` with this reason, hard-coded — the field is typed `"no_crew_storage" \| null`, so the *type* says no other reason is possible (L144) |
+| `artifacts/api-server/src/services/airport/LayoverSafeReturnService.ts:383#crewNotifyUnavailableReason: "crew_notify_not_enabled",` | abort returns `crewNotified: []` with this reason, hard-coded — the field is typed `"no_crew_storage" \| null`, so the *type* says no other reason is possible (L144) — **SUPERSEDED by §48**: the reason was `"no_crew_storage"`; it now names the owner's undecided disclosure. Anchor re-pointed |
 | `artifacts/api-server/src/services/airport/LayoverDegradedService.ts:171#crewMeetingPoint: crewMeetingPointOf(input.crew),` | the offline bundle publishes no meeting point, though `layover_crews.meeting_point_label` now exists and is already shown on the online crew screen (L154) — **SUPERSEDED by §48**: this line read `unavailable("no_crew_storage")`; anchor re-pointed at what replaced it |
 | `artifacts/api-server/src/services/airport/LayoverDegradedService.ts:122#crewMeetingPoint: OfflineCapability<string>;` | and types it so a value can never be supplied — **SUPERSEDED by §48**: this line read `OfflineCapability<never>`; anchor re-pointed |
 
