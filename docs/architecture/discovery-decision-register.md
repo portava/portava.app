@@ -3361,7 +3361,7 @@ No APPROVAL REQUIRED entry is added. Arming the stop (D-W10-O-3) and gate 2 (D-W
 
 - **Corrected.** D-W11X2-179 left GET /pulse's `post_hides` read "for its owners" as best-effort ("it shows more, never says there is less"). The round-22 verifier rules it inside DV-83: a failed read taken as complete ("you hid nothing") on a graded Discovery surface is the criterion's first clause, and showing the viewer a post they hid is a safety fail-open, not a defence. Round 14 placed the Compass mute fail-open outside DV-83 because it was a fallback path; this is the route's own filter read.
 - **Decision.** The hide read's error is bound and a thrown read is caught as a failure; either answers `posts: []`, `failedSources: ["post_hides"]`, as the block read does. The client already says such a body as a feed it could not load.
-- **Tests.** `pulseHidesUnread` PH1, PH2 (the verifier's PH1, red first); PH0, PH3 controls.
+- **Tests.** `pulseHidesUnread` PH1, PH2 (the verifier's PH1, red first); PH0, PH3 controls. `silentSchemaErrorCatches` no longer allowlists the read; it pins the fail-closed marker under FIXED_SITES (M98).
 
 ### D-W11X2-181 — the events tab's bookmarks are each list's measured `isSaved`, measured from the store the bookmark writes; D-W11X2-176 corrected for the bookmarks (§119.16 B35, X19)
 
