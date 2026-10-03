@@ -2282,7 +2282,7 @@ router.get("/airport/sessions/:id/overview", async (req, res) => {
       airport,
       record,
       hardReturnLocal: formatLocalTime(tz, record.deadline.hardReturnTime),
-      stops,
+      stops, crew: await activeCrewForUser(sc, user.id, new Date().toISOString()), // §48 L154: the owner's OWN crew; a failed read is "crew_unreadable", not "no crew"
     }),
     returnReminderAt: session.returnReminderAt,
     // §24 L265 — the material-change threshold, published on the read the

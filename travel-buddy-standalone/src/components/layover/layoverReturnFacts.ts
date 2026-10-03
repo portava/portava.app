@@ -275,16 +275,21 @@ export function statusCapabilityNote(
  * every one of these is a true state of the bundle and none of them is a
  * fault, so showing the raw code would make an honest absence look like a bug.
  *
- * EACH SENTENCE IS ABOUT THE BUNDLE, NOT ABOUT THE WORLD. `no_crew_storage`
- * says nothing is cached here; it does NOT say the traveller has no crew or
- * that their crew has no meeting point. The bundle is not in a position to
- * know either, and the online crew section — which is — answers those.
+ * EACH SENTENCE SAYS ONLY WHAT THE REASON KNOWS. `no_crew_storage` (what a
+ * bundle cached before §48 still carries) and `crew_not_read` say nothing is
+ * cached here; they do NOT say the traveller has no crew. Since §48 the server
+ * reads the traveller's own crew and says which "no" it is — and
+ * `crew_unreadable` is said as a failed read, never as "you are not in a crew".
  */
 const OFFLINE_REASON_TEXT: Record<OfflineUnavailableReason, string> = {
   no_routing_provider: 'no route was cached with it',
   no_envelope_geometry: 'no map area was cached with it',
   no_flight_feed: 'no confirmed flight status was cached with it',
   no_crew_storage: 'none was cached with this layover',
+  crew_not_read: 'none was cached with this layover',
+  not_in_crew: 'you were not in a crew when this was saved',
+  no_meeting_point_set: 'your crew has not set one',
+  crew_unreadable: 'your crew could not be read when this was saved',
   no_phrase_catalogue: 'no phrases were cached with it',
 };
 
@@ -315,7 +320,17 @@ export interface CrewMeetingPointFacts {
 export function describeCrewMeetingPoint(
   bundle: LayoverOfflineBundle | null | undefined,
 ): CrewMeetingPointFacts {
-  const cap = bundle?.crewMeetingPoint;
+  return describeCrewMeetingPointCapability(bundle?.crewMeetingPoint);
+}
+
+/**
+ * The same three outcomes from the capability alone — what the device cache
+ * keeps (`CachedLayoverPlan.crewMeetingPoint`), so the offline card and the
+ * online card say a meeting point, or its absence, in the same words.
+ */
+export function describeCrewMeetingPointCapability(
+  cap: LayoverOfflineBundle['crewMeetingPoint'] | null | undefined,
+): CrewMeetingPointFacts {
   if (!cap) {
     return {
       label: null,

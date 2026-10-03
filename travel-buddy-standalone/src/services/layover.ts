@@ -311,7 +311,7 @@ export type OfflineUnavailableReason =
   | 'no_routing_provider'
   | 'no_envelope_geometry'
   | 'no_flight_feed'
-  | 'no_crew_storage'
+  | 'no_crew_storage' | 'crew_not_read' | 'not_in_crew' | 'no_meeting_point_set' | 'crew_unreadable' // §48 L154; the first is what pre-§48 cached bundles carry
   | 'no_phrase_catalogue';
 
 export interface OfflineCapability<T> {
@@ -362,12 +362,12 @@ export interface LayoverOfflineBundle {
    * OFFLINE half: the one thing about a crew worth surviving the network dying
    * is where to meet them.
    *
-   * NOT YET SERVED. `buildOfflineBundle`
-   * (artifacts/api-server/src/services/airport/LayoverDegradedService.ts) still
-   * returns `unavailable("no_crew_storage")` unconditionally, and its own type
-   * is still `<never>`. So today every response makes this unavailable and the
-   * card renders the unavailable branch. The client is ready; the server is one
-   * `available(label)` call away. See the report for LO-API.
+   * SERVED SINCE census-layover §48. `buildOfflineBundle`
+   * (artifacts/api-server/src/services/airport/LayoverDegradedService.ts) reads
+   * the traveller's OWN crew and answers its label, or why not: `not_in_crew`,
+   * `no_meeting_point_set`, `crew_unreadable` (a failed read, never "no crew")
+   * or `crew_not_read`. `layoverPlanCache` keeps it, so the offline card can
+   * still say where to meet when the network has gone.
    */
   crewMeetingPoint: OfflineCapability<string>;
   translationPhrases: OfflineCapability<never>;
