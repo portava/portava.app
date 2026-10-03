@@ -735,15 +735,19 @@ router.get("/me/trip-invites/pending", async (req, res) => {
   const tripMap: Record<string, any> = {};
   for (const t of trips ?? []) tripMap[(t as any).id] = t;
 
-  // Count accepted members per trip (for invite preview)
-  const { data: memberCountData } = await sc
+  // Count accepted members per trip (for invite preview). Accepted crew is
+  // requireTripMember's rule — any accepted role, a status still on the trip
+  // (census-trips §79: co-hosts were not counted, members who left were). An
+  // unreadable count leaves memberCount null ("unknown"), never a number.
+  const { data: memberCountData, error: memberCountErr } = await sc
     .from("trip_members")
-    .select("trip_id")
+    .select("trip_id, status")
     .in("trip_id", tripIds)
-    .in("role", ["owner", "member"]);
+    .in("role", ["owner", "co_host", "member", "viewer"]);
 
   const memberCountMap: Record<string, number> = {};
-  for (const mr of memberCountData ?? []) {
+  if (memberCountErr) req.log.warn({ err: memberCountErr }, "pending invites: member counts unreadable — memberCount null");
+  for (const mr of (memberCountErr ? [] : (memberCountData ?? []) as any[]).filter((r) => r.status == null || r.status === "accepted")) {
     const tid = (mr as any).trip_id as string;
     memberCountMap[tid] = (memberCountMap[tid] ?? 0) + 1;
   }

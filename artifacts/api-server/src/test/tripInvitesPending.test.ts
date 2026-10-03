@@ -312,6 +312,23 @@ describe("GET /api/me/trip-invites/pending", () => {
     await close();
   });
 
+  it("7. memberCount is the accepted crew: a co-host counts, a member who left does not (census-trips §79)", async () => {
+    const s = baseState();
+    s.trip_members.push(
+      { trip_id: TRIP_ID, user_id: BOB_ID,   role: "invited", created_at: "2026-08-01T12:00:00Z" },
+      { trip_id: TRIP_ID, user_id: ALICE_ID, role: "owner",   created_at: "2026-07-01T10:00:00Z" },
+      { trip_id: TRIP_ID, user_id: CAROL_ID, role: "co_host", created_at: "2026-07-02T10:00:00Z" },
+      { trip_id: TRIP_ID, user_id: "ffffffff-0000-0000-0000-000000000006", role: "co_host", status: "accepted", created_at: "2026-07-02T11:00:00Z" } as any,
+      { trip_id: TRIP_ID, user_id: "dddddddd-0000-0000-0000-000000000004", role: "member", created_at: "2026-07-03T10:00:00Z" },
+      { trip_id: TRIP_ID, user_id: "eeeeeeee-0000-0000-0000-000000000005", role: "member", status: "left", created_at: "2026-07-04T10:00:00Z" } as any,
+    );
+    const { port, close } = await startServer(s);
+    const r = await get(port, "/api/me/trip-invites/pending", "bob-tok");
+    assert.equal(r.status, 200);
+    assert.equal(r.body.invites[0].memberCount, 4, "owner + two co-hosts + member; the member who left is not crew");
+    await close();
+  });
+
   it("6. missing inviter profile row returns 200 with inviter: null — no 500", async () => {
     const s = baseState();
     // Bob is invited to TRIP_ID3, which is owned by Carol.
