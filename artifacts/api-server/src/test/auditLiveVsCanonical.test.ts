@@ -22,6 +22,8 @@ import {
   extractColumnGrants,
   extractEnumValues,
   extractConstraintBackedIndexes,
+  blankSqlComments,
+  deriveImplicitConstraints,
 } from "../scripts/lib/liveVsCanonicalCore.js";
 import type {
   LiveInventory,
@@ -554,6 +556,153 @@ describe("extractors — golden cases", () => {
   it("extractConstraints reads ALTER TABLE ... ADD CONSTRAINT keyed by table.conname", () => {
     const s = "ALTER TABLE ONLY public.foo\n    ADD CONSTRAINT foo_pkey PRIMARY KEY (id);";
     assert.ok(extractConstraints(s).has("foo.foo_pkey"));
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // THE TWO GAPS THAT KEPT THIS AUDIT RED FOR 23 CONSECUTIVE SCHEDULED RUNS.
+  //
+  // Every fixture above is written the way a fixture is written: no prose, no
+  // unnamed constraints. The real migrations are the opposite, and the whole
+  // suite stayed green while the job found 672 unexplained constraints on
+  // every run. The cases below are transcribed from the migrations that
+  // produced those findings, prose and all, so a regression shows up here
+  // instead of at 03:47 the next morning.
+  // ───────────────────────────────────────────────────────────────────────────
+
+  it("blankSqlComments blanks a line comment without moving any offset", () => {
+    const sql = "CREATE TABLE t ( -- it's here\n  id uuid\n);";
+    const out = blankSqlComments(sql);
+    assert.equal(out.length, sql.length, "offsets must be preserved");
+    assert.ok(!out.includes("it's here"));
+    assert.ok(out.includes("CREATE TABLE t ("));
+    assert.ok(out.includes("id uuid"));
+  });
+
+  it("blankSqlComments leaves string literals, quoted identifiers and $$ bodies alone", () => {
+    assert.ok(blankSqlComments("SELECT '-- not a comment';").includes("-- not a comment"));
+    assert.ok(blankSqlComments('SELECT "a--b" FROM t;').includes("a--b"));
+    const fn = "CREATE FUNCTION f() AS $$ begin -- real comment\n  return 1; end $$;";
+    assert.ok(blankSqlComments(fn).includes("-- real comment"), "a $$ body is data, not SQL to clean");
+  });
+
+  it("blankSqlComments blanks nested block comments", () => {
+    const out = blankSqlComments("CREATE /* a /* b */ c */ TABLE t (id uuid);");
+    assert.ok(!out.includes("a"), "the whole nested comment must go");
+    assert.ok(out.includes("TABLE t (id uuid)"));
+  });
+
+  it("extractConstraints survives an apostrophe in a comment inside the table body", () => {
+    // Transcribed from 2860_layover_airport_truth_and_events.sql. The
+    // apostrophe in "0127's vocabularies" (line 165) opened a string literal
+    // that ran into the next real CHECK literal, reversing the polarity of
+    // every quote after it; the body ended unbalanced, balancedParenBody
+    // returned null, and EVERY constraint of this table left the model.
+    const sql = `
+CREATE TABLE IF NOT EXISTS airport_fact_observations (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  -- Stored rather than computed, for consistency with 0127's vocabularies.
+  observed_at   timestamptz NOT NULL,
+  expires_at    timestamptz NOT NULL,
+  CONSTRAINT airport_fact_observations_ttl_forward CHECK (expires_at > observed_at)
+);`;
+    const got = extractConstraints(sql);
+    assert.ok(
+      got.has("airport_fact_observations.airport_fact_observations_ttl_forward"),
+      "the explicitly named constraint must survive the comment",
+    );
+    assert.ok(
+      got.has("airport_fact_observations.airport_fact_observations_pkey"),
+      "and so must the generated primary-key name",
+    );
+  });
+
+  it("deriveImplicitConstraints names the constraints a hand-written CREATE TABLE leaves unnamed", () => {
+    // Transcribed from 2992_layover_decision_record_and_operational_tables.sql.
+    // Not one of these seven constraints is named in the migration; all seven
+    // are named in pg_constraint.
+    const sql = `
+CREATE TABLE IF NOT EXISTS layover_checkpoints (
+  id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  session_id      UUID        NOT NULL REFERENCES layover_sessions(id) ON DELETE CASCADE,
+  checkpoint_type TEXT        NOT NULL CHECK (checkpoint_type IN ('SECURITY','GATE')),
+  source          TEXT        NOT NULL DEFAULT 'TRAVELLER' CHECK (source IN ('TRAVELLER','DEVICE')),
+  dedup_key       TEXT        NOT NULL CHECK (length(dedup_key) BETWEEN 1 AND 200),
+  UNIQUE (session_id, dedup_key)
+);`;
+    const { constraints, indexes } = deriveImplicitConstraints(sql);
+    for (const expected of [
+      "layover_checkpoints.layover_checkpoints_pkey",
+      "layover_checkpoints.layover_checkpoints_session_id_fkey",
+      "layover_checkpoints.layover_checkpoints_checkpoint_type_check",
+      "layover_checkpoints.layover_checkpoints_source_check",
+      "layover_checkpoints.layover_checkpoints_dedup_key_check",
+      "layover_checkpoints.layover_checkpoints_session_id_dedup_key_key",
+    ]) {
+      assert.ok(constraints.has(expected), `missing derived constraint ${expected}`);
+    }
+    // PK and UNIQUE also create an index that pg_indexes lists live.
+    assert.ok(indexes.has("layover_checkpoints_pkey"));
+    assert.ok(indexes.has("layover_checkpoints_session_id_dedup_key_key"));
+    assert.ok(
+      extractConstraintBackedIndexes(sql).has("layover_checkpoints_pkey"),
+      "the index inventory must carry them too",
+    );
+  });
+
+  it("deriveImplicitConstraints does not read a CHECK literal as a keyword", () => {
+    // 'primary' and 'unique' appear only inside the IN-list; neither declares
+    // anything, and a naive keyword scan would invent two constraints here.
+    const sql =
+      "CREATE TABLE t (\n  kind text CHECK (kind IN ('primary','unique','check')),\n  id uuid\n);";
+    const { constraints } = deriveImplicitConstraints(sql);
+    assert.deepEqual([...constraints].sort(), ["t.t_kind_check"]);
+  });
+
+  it("deriveImplicitConstraints suffixes a second unnamed CHECK on one column, as Postgres does", () => {
+    const sql = "CREATE TABLE t (n integer CHECK (n >= 0) CHECK (n <= 10));";
+    const { constraints } = deriveImplicitConstraints(sql);
+    assert.deepEqual([...constraints].sort(), ["t.t_n_check", "t.t_n_check1"]);
+  });
+
+  it("deriveImplicitConstraints names constraints arriving by ALTER TABLE ADD COLUMN", () => {
+    // 2952 (media_assets.purge_status) and 2996 (compass_conversations.trip_id):
+    // a constraint on a BASELINE table, declared with no name, by ADD COLUMN.
+    const check = deriveImplicitConstraints(
+      "ALTER TABLE public.media_assets\n  ADD COLUMN IF NOT EXISTS purge_status TEXT NOT NULL DEFAULT 'not_requested'\n    CHECK (purge_status IN ('not_requested','pending'));",
+    );
+    assert.ok(check.constraints.has("media_assets.media_assets_purge_status_check"));
+    const fk = deriveImplicitConstraints(
+      "ALTER TABLE public.compass_conversations\n  ADD COLUMN IF NOT EXISTS trip_id UUID NULL REFERENCES public.trips(id) ON DELETE SET NULL;",
+    );
+    assert.ok(fk.constraints.has("compass_conversations.compass_conversations_trip_id_fkey"));
+  });
+
+  it("deriveImplicitConstraints reads CREATE CONSTRAINT TRIGGER as a pg_constraint row", () => {
+    // 3387's cee_transaction_balances is contype 't': one object in two
+    // inventories, and the constraint inventory was blind to it.
+    const sql =
+      "CREATE CONSTRAINT TRIGGER cee_transaction_balances\n  AFTER INSERT ON public.creator_earning_entries\n  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION f();";
+    assert.ok(
+      deriveImplicitConstraints(sql).constraints.has(
+        "creator_earning_entries.cee_transaction_balances",
+      ),
+    );
+  });
+
+  it("deriveImplicitConstraints does not read a CTAS or a partition clause as a column list", () => {
+    assert.equal(deriveImplicitConstraints("CREATE TABLE t AS SELECT max(id) FROM u;").constraints.size, 0);
+    assert.equal(
+      deriveImplicitConstraints("CREATE TABLE t PARTITION OF u FOR VALUES IN ('a');").constraints.size,
+      0,
+    );
+  });
+
+  it("deriveImplicitConstraints emits nothing rather than a guess when the name would not fit", () => {
+    const col = "c".repeat(70);
+    const sql = `CREATE TABLE t (${col} integer CHECK (${col} >= 0));`;
+    const { constraints, skippedTooLong } = deriveImplicitConstraints(sql);
+    assert.equal(constraints.size, 0, "a name over 63 bytes must not be guessed at");
+    assert.equal(skippedTooLong.length, 1);
   });
 
   it("extractExtensions reads CREATE EXTENSION (baseline has none, canonical may add)", () => {

@@ -148,3 +148,120 @@ Grant-role scoping dropped 70,783 → 20,186. Diagnosed the rest from the saved
   `{pgcrypto, plpgsql, pg_stat_statements, uuid-ossp, supabase_vault, postgis, unaccent}`.
 
 Suite 38/38. Predicted next run: **exit 0**, or a tiny handful of genuine drift.
+
+## The prediction above was wrong for 23 runs (corrected 2026-10-03)
+
+`Predicted next run: exit 0` (line 150) has not held once. `.github/workflows/
+clean-build-proof.yml` runs this audit on a nightly schedule and runs 1 through
+23 (2026-09-10 → 2026-10-02) are all `failure`. It has never passed. It runs on
+`schedule` only, so it gates no merge and no branch — which is why a
+permanently-red check went 23 runs without an owner.
+
+Run 23 (`b99787c8`, 2026-10-02) reported **2087 findings**:
+
+| code | count |
+|---|---|
+| UNEXPLAINED_LIVE | 980 |
+| EXCESS_PRIVILEGE | 912 |
+| DISPOSITION_MISSING | 135 |
+| POLICY_PREDICATE_DRIFT | 58 |
+| STALE_LEDGER_ENTRY | 1 |
+| DISPOSITION_STALE | 1 |
+
+and the 980 `UNEXPLAINED_LIVE` break down as 672 constraints, 164 indexes, 104
+policies, 17 columns, 15 triggers, 5 functions, 3 relations.
+
+### It was not drift. The MODEL could not read the migrations.
+
+Three model-side defects, none of them a property of the database:
+
+1. **The SQL scanners were comment-blind.** `balancedParenBody`, `splitTopLevel`
+   and `readStatement` tracked single-quoted literals but not comments. An
+   APOSTROPHE IN A COMMENT — `0127's vocabularies`, in
+   `2860_layover_airport_truth_and_events.sql:165`, inside the body of
+   `CREATE TABLE airport_fact_observations` — therefore opened a string literal.
+   It ran to the next apostrophe, the opening quote of a real CHECK literal
+   three lines down, and from there every quote in the body was read with its
+   polarity reversed: real literals counted as prose and comment apostrophes as
+   delimiters. The paren depth ended at 2, `balancedParenBody` returned null on
+   the unbalanced result, and the whole `CREATE TABLE` body was skipped — so
+   every constraint that table declared, named or not, was absent from the
+   model. Closed by
+   `blankSqlComments`, which blanks comment bytes to spaces (length-preserving,
+   so every index-based scan is unaffected) while passing string literals,
+   quoted identifiers and `$$` bodies through untouched.
+
+2. **Postgres-generated constraint names were not derived.** pg_dump writes
+   every constraint as `ALTER TABLE … ADD CONSTRAINT <name>`, so the baseline
+   names them all. A hand-written migration names almost none: `id uuid PRIMARY
+   KEY`, `session_id uuid REFERENCES …`, `status text CHECK (…)` and `UNIQUE
+   (session_id, dedup_key)` declare four constraints and name zero. Postgres
+   names them itself and pg_constraint carries those names. `deriveImplicit
+   Constraints` now reproduces the `ChooseConstraintName`/`makeObjectName`
+   rules, including the numeric label suffix on a collision, the backing index a
+   PK/UNIQUE creates, the `ALTER TABLE … ADD COLUMN … CHECK/REFERENCES` form
+   (how a constraint reaches a BASELINE table — `media_assets_purge_status_
+   check` from 2952, `compass_conversations_trip_id_fkey` from 2996) and
+   `CREATE CONSTRAINT TRIGGER`, which is a contype-`t` pg_constraint row as well
+   as a pg_trigger row (`cee_transaction_balances`, 3387).
+
+3. **The canonical band had an off-by-one that no number can fix.** The file
+   filter read `f.slice(0, 4) >= "2100"` on this document's own premise that
+   nothing below 2100 post-dates the baseline. `2095_discovery_place_photos.sql`
+   is the counter-example: the 2026-08-19 baseline dump contains no `CREATE
+   TABLE public.discovery_place_photos`, so 2095 post-dates the capture, sat
+   below the band, and its relation, its primary key and its two CHECK
+   constraints were unexplainable by construction. No prefix encodes a date, so
+   there is no boundary to move the band to — only the next off-by-one. The band
+   is removed: the canonical set is every migration file.
+
+### Measured, not predicted
+
+Each of the 672 live constraint keys and 164 live index keys was read off run
+23's log and replayed against the model built from the real baseline plus the
+real migration set. **666 of 672 constraint findings and 160 of 164 index
+findings are explained by the model after these three fixes.** The suite is
+49/49, with 12 new cases transcribed from the migrations that produced the
+findings — prose, unnamed constraints and all, because every fixture that
+existed was written without either and that is why 23 red runs never reached
+this file.
+
+### What remains is NOT model-side, and some of it is real drift
+
+* **6 constraints, 3 relations and 4 functions are genuine drift on
+  portava-ci** — live objects no migration in the tree declares and the baseline
+  does not contain. `sensing_anon_publications` and `sensing_anon_projection`
+  (2 tables, 5 constraints, `sensing_record_contribution`,
+  `sensing_publication_cas`, `purge_sensing_expired`) appear in no `.sql` file in
+  the repository at all; so does `record_distribution_negative_signal`. And
+  `highlights.highlights_expiry_is_permanent_or_dated` is a constraint on a
+  BASELINE table that no migration declares. Nothing here drops or alters them:
+  they are reported, and whoever owns that feature reconciles them into a
+  migration or into the EXPLAINED ledger. The permanent-Highlights constraint
+  overlaps the production-rollout work on 3502/2975 and is flagged to it rather
+  than touched.
+
+* **101 of the 104 policy findings are dynamic DDL and cannot be parsed from
+  text, by nature.** `3390_discovery_rls_explicit_policies.sql:200-226` creates
+  them in a plpgsql loop with `EXECUTE format('CREATE POLICY %I ON public.%I …')`
+  over a temp table, and the `_clients`/`_anon` suffix of each name is decided at
+  run time by a query against another temp table. No text parser can derive those
+  names, and a parser that tried to interpret the loop would be guessing. The
+  EXPLAINED ledger is the right home for them — that is what the ledger is for —
+  and populating it is separate work, not a parser fix.
+
+* `EXCESS_PRIVILEGE` (912), `DISPOSITION_MISSING` (135) and
+  `POLICY_PREDICATE_DRIFT` (58) are untouched here and unmeasured against this
+  change. The 135 missing dispositions are a consequence of the same tables
+  being invisible to the model and should be re-measured after this lands rather
+  than reasoned about.
+
+* **`creator_ledger_erasure_policy_undecided()` was a clock artefact, not
+  drift.** Run 23 checked out `b99787c8`, which predates the merge of #559;
+  3510 declares that function and is on `main` now.
+
+* **A PG 17 upgrade of portava-ci will turn this red again, loudly.** From 17,
+  NOT NULL constraints are pg_constraint rows named `<table>_<column>_not_null`,
+  and the live census filters no `contype`. Nothing in any migration text
+  corresponds to them. That is a server-version fact to handle when the upgrade
+  happens; `deriveImplicitConstraints` deliberately does not guess the names now.
