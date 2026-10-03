@@ -242,18 +242,18 @@ function EventsTabScreen() {
     if (myRes.ok) { setMyEvents(rawMy); setMyEventsError(false); }
     else { setMyEventsError(true); setMyEvents([]); }
 
-    setTodayEvents(mainRes.ok ? dedupedToday : []); setListsNotWhole([mainRes, tomorrowRes, weekendRes, followRes, circleRes, savedRes, myRes].some((r) => !r.ok || eventListNotWhole(r.data))); setListsFailed([mainRes, tomorrowRes, weekendRes, followRes, circleRes, savedRes, myRes].some((r) => !r.ok));  // census-discovery §117 (SW17): an empty tab over a failed or cut list is not "No events yet"
+    setTodayEvents(mainRes.ok ? dedupedToday : []); setListsNotWhole([mainRes, tomorrowRes, weekendRes, followRes, circleRes, savedRes, myRes, draftsRes, invitesRes].some((r) => !r.ok || eventListNotWhole(r.data))); setListsFailed([mainRes, tomorrowRes, weekendRes, followRes, circleRes, savedRes, myRes, draftsRes, invitesRes].some((r) => !r.ok));  // census-discovery §117 (SW17): an empty tab over a failed or cut list is not "No events yet"
     setTomorrowEvents(tomorrowRes.ok ? dedupedTomorrow : []);  // census-discovery §119 (DV-83 round 22, B30): a section whose read failed is cleared, never the last filter's rows; the failure is said (error / lists-unread note)
     setWeekendEvents(weekendRes.ok ? dedupedWeekend : []);  // §119 (B30)
     setFollowingEvents(followRes.ok ? dedupedFollowing : []);  // §119 (B30, sweep)
     setCircleEvents(circleRes.ok ? dedupedCircle : []);  // §119 (B30, sweep)
-    if (savedRes.ok) {
-      const evs = savedRes.data?.events ?? [];
+    {
+      const evs = savedRes.ok ? (savedRes.data?.events ?? []) : [];  // census-discovery §119 (DV-83 round 22, sweep): a failed saved read clears the Saved section, and is said
       setSavedEvents(evs);
-      setSavedIds(new Set(evs.map((e) => e.id)));
+      if (savedRes.ok) setSavedIds(new Set(evs.map((e) => e.id)));  // §119: the bookmarks keep their last answer (clearing them would say every event is unsaved)
     }
-    if (draftsRes.ok) setDrafts(draftsRes.data?.drafts ?? []);
-    if (invitesRes.ok) setPendingInvites((invitesRes.data?.invites ?? []).filter((i) => i.status === 'pending'));
+    setDrafts(draftsRes.ok ? (draftsRes.data?.drafts ?? []) : []);  // §119 (sweep): a failed drafts read is not the last load's drafts; it is said (draftsRes is in the lists above)
+    setPendingInvites(invitesRes.ok ? (invitesRes.data?.invites ?? []).filter((i) => i.status === 'pending') : []);  // §119 (sweep): never an earlier read's "N pending invites"; said
 
     // Category discovery rows — only when no category filter and no date preset
     if (datePreset === 'all' && category === 'All') {

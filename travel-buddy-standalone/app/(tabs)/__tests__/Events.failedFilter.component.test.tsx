@@ -16,6 +16,12 @@
  *   FF4 Upcoming alone answers OLD under "All" (Tomorrow and This Weekend are empty, so nothing dedups it away); tap
  *       "Music", the Upcoming read FAILS → OLD is not drawn; the failure is said
  *   FF5 (sweep) FF3 for Circles
+ *   FF6 (sweep) the invites read answers 2 pending; the next load's FAILS → never "You have 2 pending event invites"
+ *       from the earlier read; the failure is said
+ *   FF7 (sweep) the saved read answers a saved event; the next load's FAILS → the Saved section is not drawn from the
+ *       earlier read; the failure is said
+ *   FF8 (sweep) the drafts read answers a draft; the next load's FAILS → "Your drafts" is not drawn from the earlier
+ *       read; the failure is said
  */
 import React from 'react';
 import { render, waitFor, fireEvent, act } from '@testing-library/react-native';
@@ -112,6 +118,8 @@ const ROCK = 'Rock night (Music)';
 const OLD = 'Any-category picnic (not Music)';
 const FOLLOWED = 'A followed host\'s supper club';
 const CIRCLED = 'A circle\'s harbour swim';
+const SAVED = 'A saved lantern walk';
+const DRAFT = 'My half-planned picnic';
 async function filterFails(mode: 'ok' | 'allFail' | 'weekendFail') {
   lists();
   (svc.listEvents as jest.Mock).mockImplementation((p: { category?: string; limit?: number; startsAfter?: string; startsBefore?: string; nearRadiusKm?: number }) => {
@@ -188,5 +196,31 @@ describe('census-discovery §119 (B30): a failed read for the chip on screen nev
     await act(async () => {}); await act(async () => {});
     expect((svc.listCircleEvents as jest.Mock).mock.calls.length).toBeGreaterThan(1);
     expect({ circledDrawn: r.queryAllByText(CIRCLED).length > 0, note: r.queryAllByText(/Failed to load events|couldn't be loaded|Couldn't load every event/).length > 0 }).toEqual({ circledDrawn: false, note: true });
+  });
+  async function refetchFails(arm: (mode: 'ok' | 'fail') => void, seen: (r: any) => boolean) {
+    lists();
+    (svc.listEvents as jest.Mock).mockImplementation((p: { category?: string; limit?: number }) => (p.limit === 10 && p.category !== 'Music' ? ok({ events: [event('ev-old', OLD)] }) : ok({ events: [] })));
+    arm('ok');
+    const r = await render(<EventsTab />);
+    await waitFor(() => expect(seen(r)).toBe(true));
+    arm('fail');
+    await act(async () => { fireEvent.press(r.getByLabelText('Filters')); });
+    await act(async () => { fireEvent.press(r.getByText('Music')); });
+    await act(async () => {}); await act(async () => {});
+    return { stillDrawn: seen(r), said: r.queryAllByText(/Failed to load events|couldn't be loaded|Couldn't load every event/).length > 0 };
+  }
+  const FAIL = () => Promise.resolve({ ok: false, message: 'HTTP 503' });
+  it('FF6 (sweep) the invites read FAILS on the next load → never the earlier "2 pending event invites"; said', async () => {
+    const inv = (id: string) => ({ id, eventId: 'ev-x', status: 'pending', invitedAt: '2026-09-01T00:00:00Z' });
+    const seen = await refetchFails((m) => (svc.getMyEventInvites as jest.Mock).mockImplementation(() => (m === 'ok' ? ok({ invites: [inv('i1'), inv('i2')] }) : FAIL())), (r) => r.queryByText('You have 2 pending event invites') !== null);
+    expect(seen).toEqual({ stillDrawn: false, said: true });
+  });
+  it('FF7 (sweep) the saved read FAILS on the next load → the earlier Saved rows are not drawn; said', async () => {
+    const seen = await refetchFails((m) => (svc.getSavedEvents as jest.Mock).mockImplementation(() => (m === 'ok' ? ok({ events: [event('ev-sav', SAVED)], page: 1 }) : FAIL())), (r) => r.queryAllByText(SAVED).length > 0);
+    expect(seen).toEqual({ stillDrawn: false, said: true });
+  });
+  it('FF8 (sweep) the drafts read FAILS on the next load → the earlier "Your drafts" is not drawn; said', async () => {
+    const seen = await refetchFails((m) => (svc.getMyDrafts as jest.Mock).mockImplementation(() => (m === 'ok' ? ok({ drafts: [{ id: 'd1', title: DRAFT, updatedAt: '2026-09-01T00:00:00Z' }] }) : FAIL())), (r) => r.queryAllByText(DRAFT).length > 0);
+    expect(seen).toEqual({ stillDrawn: false, said: true });
   });
 });
