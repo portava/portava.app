@@ -1471,6 +1471,15 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): TV-3a cites `app/post/[id].tsx`, which the guard resolves to the legacy repo-root mock (22 lines); the report entry point it means is travel-buddy-standalone's, so both are watched rather than one chosen.
     "travel-buddy-standalone/app/post/[id].tsx",
     "app/post/[id].tsx",
+    // WIDENED 2026-10-03 by the sensing-trust lane (census-trust §31): the evidence of the TV-2b, TV-2d and TV-U8 moves (the disclosure module, its schema-pinning suite, the failure-UX suite, the age-policy screen, the real-PostgreSQL verification suite and the replay list that suite depends on), TV-5b's client refusal module, and the absent-table classifier every trust-restriction read now decides through.
+    "travel-buddy-standalone/src/lib/verificationDisclosure.ts",
+    "travel-buddy-standalone/src/lib/__tests__/verificationDisclosure.test.ts",
+    "travel-buddy-standalone/app/profile/__tests__/verification.failureUx.component.test.tsx",
+    "travel-buddy-standalone/app/profile/age-policy.tsx",
+    "artifacts/api-server/src/test/db/trustVerificationWrite.db.test.ts",
+    "artifacts/api-server/scripts/local-db/KNOWN_UNREPLAYABLE.json",
+    "travel-buddy-standalone/src/lib/ageRefusal.ts",
+    "artifacts/api-server/src/lib/absentTableError.ts",
   ],
   // The Wall's 205 requirements are graded against a scope DELIBERATELY wider
   // than services/wall/ + features/wall/, for the reason §3 of that census
