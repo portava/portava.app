@@ -32,7 +32,12 @@ import { fileURLToPath } from "node:url";
 import {
   runGamingDetectionScan,
   CHECKIN_CLUSTER_EVENT_TYPES,
+  CHECKIN_CLUSTER_WATERMARK_JOB,
+  RAPID_JUMP_WATERMARK_JOB,
+  DEFAULT_LOOKBACK_MS,
+  MAX_CATCHUP_MS,
 } from "../services/trust/TrustGamingDetectionService.js";
+import { COUNTERPARTY_METADATA_KEY } from "../services/trust/TrustEventService.js";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const API_ROOT = resolve(__dir, "../..");
@@ -389,5 +394,523 @@ describe("TrustGamingDetectionService — check-in cluster scan", () => {
       tables.trust_reviews.filter((r) => r.metadata?.pattern === "checkin_cluster").length,
       0,
     );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The scan watermark: the gap these detectors used to forget
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// WHY HERE. This file is the registered suite that exercises
+// TrustGamingDetectionService's behaviour (see `pnpm test` / `test:trust-lane`
+// in package.json), and the check-in-cluster detector it already drives is one
+// of the two the watermark applies to. The fixtures below use their own fake
+// client rather than extending the constraint-enforcing one above, so nothing
+// here can relax the CHECK-constraint modelling those tests depend on.
+//
+// ── THE DEFECT THESE EXIST FOR ──────────────────────────────────────────────
+//
+// The maintenance pass runs every six hours and two of the three detectors
+// selected evidence with a bare `created_at > now - 24h`. A window forgets: as
+// soon as the gap between passes exceeds the window, every row inside the gap
+// is older than the next pass's `since` and is examined by NO later pass. After
+// a 54-hour outage roughly 30 hours of check-in clusters and rapid score jumps
+// were skipped permanently and a score gamed inside the gap simply stood.
+//
+// Each test below therefore asserts the RESULTING STATE — the review rows, and
+// the watermark row afterwards — never that a call returned ok
+// (CONTRIBUTING.md: "assert the resulting state"). Three of them carry an
+// explicit CONTROL arm proving the fixture is genuinely outside the old 24h
+// window, so a regression that silently restored the window cannot pass by
+// flagging evidence that was in range all along.
+
+const WM_TABLE = "scheduler_watermarks";
+const HOUR = 60 * 60 * 1_000;
+
+/** The outage in the production report: 54 hours, against a 24h window. */
+const GAP_MS = 54 * HOUR;
+/** Inside that gap and comfortably outside the old window. */
+const INSIDE_GAP_MS = 40 * HOUR;
+
+const JUMP_THRESHOLD = 20;
+/** Above anything any fixture here accumulates, to park a detector that must stay quiet. */
+const UNREACHABLE = 1_000_000;
+
+interface WmTables {
+  feature_flags: any[];
+  trust_settings: any[];
+  trust_events: any[];
+  trust_reviews: any[];
+  plan_attendance_events: any[];
+  scheduler_watermarks: any[];
+}
+
+function makeWmTables(opts?: { clusterLimit?: number; jumpPoints?: number; mutualRate?: number }): WmTables {
+  return {
+    feature_flags: [
+      { flag: "trust_engine_enabled", enabled: true },
+      { flag: "trust_gaming_detection_enabled", enabled: true },
+    ],
+    trust_settings: [{
+      id: 1,
+      gaming_checkin_cluster_limit: opts?.clusterLimit ?? CLUSTER_LIMIT,
+      gaming_mutual_rate_threshold: opts?.mutualRate ?? 0.8,
+      gaming_rapid_jump_points: opts?.jumpPoints ?? JUMP_THRESHOLD,
+    }],
+    trust_events: [],
+    trust_reviews: [],
+    plan_attendance_events: [],
+    scheduler_watermarks: [],
+  };
+}
+
+type Op = "select" | "insert" | "upsert";
+
+/**
+ * A fake client that models the watermark row and the ONE postgrest behaviour
+ * every assertion here turns on: a database error RESOLVES with `{ error }`, it
+ * does not throw. `fail(table, op)` injects that tuple for every matching call,
+ * which is how "the read failed" is distinguished from "there is no row" — the
+ * two are identical in the data and mean opposite things.
+ */
+function makeWmClient(tables: WmTables) {
+  let seq = 1;
+  interface Rule { table: string; op: Op; job?: string; times?: number }
+  const failures: Rule[] = [];
+
+  function from(table: string) {
+    const store = ((tables as any)[table] ??= []) as any[];
+    const filters: Array<(r: any) => boolean> = [];
+    const eqs: Record<string, any> = {};
+    let op: Op = "select";
+    let pending: any = null;
+
+    /**
+     * A rule may be scoped to one `job` and limited to a number of calls, so a
+     * TRANSIENT failure can be modelled. That matters: a permanent failure of
+     * the watermark table makes `commitWatermark` refuse on its own internal
+     * re-read, which masks whether the CALLER withheld the commit. A failure
+     * that clears between the two reads isolates the caller's own decision.
+     */
+    const failing = () => {
+      const r = failures.find((f) =>
+        f.table === table && f.op === op &&
+        (f.job === undefined || f.job === eqs["job"]) &&
+        (f.times === undefined || f.times > 0));
+      if (!r) return false;
+      if (r.times !== undefined) r.times -= 1;
+      return true;
+    };
+    const errTuple = () => ({
+      data: null,
+      error: { code: "57014", message: `injected ${op} failure on ${table}` },
+    });
+
+    const builder: any = {
+      select() { return builder; },
+      insert(row: any) {
+        op = "insert";
+        if (failing()) return builder;
+        const r = { id: `wm-${seq++}`, created_at: new Date().toISOString(), ...row };
+        store.push(r);
+        pending = r;
+        return builder;
+      },
+      upsert(row: any, _opts?: any) {
+        op = "upsert";
+        if (failing()) return builder;
+        const i = store.findIndex((r) => r.job === row.job);
+        if (i >= 0) store[i] = { ...store[i], ...row };
+        else store.push({ ...row });
+        pending = row;
+        return builder;
+      },
+      eq(col: string, val: any) { eqs[col] = val; filters.push((r) => r[col] === val); return builder; },
+      in(col: string, vals: any[]) { filters.push((r) => vals.includes(r[col])); return builder; },
+      gt(col: string, val: any) { filters.push((r) => r[col] > val); return builder; },
+      order() { return builder; },
+      limit() { return builder; },
+      maybeSingle() { return single(); },
+      single() { return single(); },
+      then(onF: any, onR: any) { return list().then(onF, onR); },
+    };
+
+    async function single() {
+      if (failing()) return errTuple();
+      if (pending) return { data: pending, error: null };
+      const rows = store.filter((r) => filters.every((f) => f(r)));
+      return { data: rows[0] ?? null, error: null };
+    }
+    async function list() {
+      if (failing()) return errTuple();
+      if (pending) return { data: [pending], error: null };
+      const rows = store.filter((r) => filters.every((f) => f(r)));
+      return { data: rows, error: null, count: rows.length };
+    }
+    return builder;
+  }
+
+  return {
+    client: { from } as any,
+    fail(table: string, op: Op) { failures.push({ table, op }); },
+    /** Fail the next `times` matching calls for one job, then recover. */
+    failTransiently(table: string, op: Op, job: string, times: number) {
+      failures.push({ table, op, job, times });
+    },
+  };
+}
+
+/** Put a mark for `job` at `agoMs` before now. */
+function setMark(tables: WmTables, job: string, agoMs: number) {
+  tables.scheduler_watermarks.push({
+    job,
+    processed_through: new Date(Date.now() - agoMs).toISOString(),
+    updated_at: new Date(Date.now() - agoMs).toISOString(),
+  });
+}
+
+function markAt(tables: WmTables, job: string): string | undefined {
+  return tables.scheduler_watermarks.find((r) => r.job === job)?.processed_through;
+}
+
+function seedArrivalAt(tables: WmTables, userId: string, geofenceId: string, agoMs: number) {
+  tables.plan_attendance_events.push({
+    id: `pae-${tables.plan_attendance_events.length + 1}`,
+    user_id: userId,
+    geofence_id: geofenceId,
+    event_type: CHECKIN_CLUSTER_EVENT_TYPES[0],
+    created_at: new Date(Date.now() - agoMs).toISOString(),
+  });
+}
+
+function seedScoredEventAt(tables: WmTables, userId: string, delta: number, agoMs: number) {
+  tables.trust_events.push({
+    id: `te-${tables.trust_events.length + 1}`,
+    user_id: userId,
+    delta,
+    status: "applied",
+    source_type: "review",
+    source_id: `src-${tables.trust_events.length + 1}`,
+    metadata: {},
+    created_at: new Date(Date.now() - agoMs).toISOString(),
+  });
+}
+
+const clusterReviews = (t: WmTables) => t.trust_reviews.filter((r) => r.metadata?.pattern === "checkin_cluster");
+const jumpReviews = (t: WmTables) => t.trust_reviews.filter((r) => r.metadata?.pattern === "rapid_jump");
+const ringReviews = (t: WmTables) => t.trust_reviews.filter((r) => r.metadata?.pattern === "mutual_ring");
+
+// (a) Evidence inside a 54-hour gap is examined.
+
+describe("gaming scan watermark — evidence inside an outage gap is examined", () => {
+  it("CONTROL: with no mark, 40-hour-old check-ins are invisible — the defect, reproduced", async () => {
+    // This is the arm that gives the next test its meaning. If a future change
+    // restored the bare 24h window, the next test would still pass unless this
+    // one proves the fixture sits OUTSIDE that window.
+    const tables = makeWmTables({ jumpPoints: UNREACHABLE });
+    const { client } = makeWmClient(tables);
+    for (let i = 0; i < CLUSTER_LIMIT + 1; i++) seedArrivalAt(tables, USER_A, "gf-gap", INSIDE_GAP_MS);
+
+    const r = await runGamingDetectionScan(client);
+    assert.equal(r.inputs!.checkins, 0, "a 24h lookback cannot see 40-hour-old rows");
+    assert.equal(clusterReviews(tables).length, 0);
+  });
+
+  it("a mark from before a 54-hour gap makes the check-in cluster inside it visible", async () => {
+    const tables = makeWmTables({ jumpPoints: UNREACHABLE });
+    const { client } = makeWmClient(tables);
+    setMark(tables, CHECKIN_CLUSTER_WATERMARK_JOB, GAP_MS);
+    for (let i = 0; i < CLUSTER_LIMIT + 1; i++) seedArrivalAt(tables, USER_A, "gf-gap", INSIDE_GAP_MS);
+
+    const r = await runGamingDetectionScan(client);
+    assert.equal(r.inputs!.checkins, CLUSTER_LIMIT + 1, "the whole cluster must be inside the scanned span");
+    const review = clusterReviews(tables)[0];
+    assert.ok(review, "the cluster farmed during the outage must raise a review");
+    assert.equal(review.user_id, USER_A);
+    assert.equal(review.metadata.checkinCount, CLUSTER_LIMIT + 1);
+    // And the span is now covered, so the next pass starts from here.
+    const after = markAt(tables, CHECKIN_CLUSTER_WATERMARK_JOB);
+    assert.ok(after, "a successful scan must leave a mark");
+    assert.ok(
+      Date.now() - new Date(after!).getTime() < HOUR,
+      `mark should have advanced to ~now, got ${after}`,
+    );
+  });
+
+  it("CONTROL: with no mark, a 40-hour-old score jump is invisible", async () => {
+    const tables = makeWmTables({ clusterLimit: UNREACHABLE });
+    const { client } = makeWmClient(tables);
+    seedScoredEventAt(tables, "user-jump", JUMP_THRESHOLD + 5, INSIDE_GAP_MS);
+
+    const r = await runGamingDetectionScan(client);
+    assert.equal(r.inputs!.scoredEvents, 0);
+    assert.equal(jumpReviews(tables).length, 0);
+  });
+
+  it("a mark from before a 54-hour gap makes the rapid jump inside it visible", async () => {
+    const tables = makeWmTables({ clusterLimit: UNREACHABLE });
+    const { client } = makeWmClient(tables);
+    setMark(tables, RAPID_JUMP_WATERMARK_JOB, GAP_MS);
+    seedScoredEventAt(tables, "user-jump", JUMP_THRESHOLD + 5, INSIDE_GAP_MS);
+
+    const r = await runGamingDetectionScan(client);
+    assert.equal(r.inputs!.scoredEvents, 1);
+    const review = jumpReviews(tables)[0];
+    assert.ok(review, "the score jump farmed during the outage must raise a review");
+    assert.equal(review.user_id, "user-jump");
+    assert.equal(review.metadata.deltaIn24h, JUMP_THRESHOLD + 5);
+  });
+
+  it("each detector carries its OWN mark — one failing cannot advance the other's coverage", async () => {
+    // A single shared key would let the detector that succeeded certify the span
+    // the detector that FAILED never examined, manufacturing the same permanent
+    // skip out of a transient error. Both marks start before the gap; only the
+    // check-in table is broken.
+    const tables = makeWmTables();
+    const h = makeWmClient(tables);
+    h.fail("plan_attendance_events", "select");
+    setMark(tables, CHECKIN_CLUSTER_WATERMARK_JOB, GAP_MS);
+    setMark(tables, RAPID_JUMP_WATERMARK_JOB, GAP_MS);
+    const clusterBefore = markAt(tables, CHECKIN_CLUSTER_WATERMARK_JOB);
+    seedScoredEventAt(tables, "user-jump", JUMP_THRESHOLD + 5, INSIDE_GAP_MS);
+
+    const r = await runGamingDetectionScan(h.client);
+    assert.equal(r.inputs!.checkins, null, "the cluster query failed — 'could not look', not 'saw nothing'");
+    assert.equal(
+      markAt(tables, CHECKIN_CLUSTER_WATERMARK_JOB),
+      clusterBefore,
+      "the failed detector's mark must not move",
+    );
+    assert.ok(
+      Date.now() - new Date(markAt(tables, RAPID_JUMP_WATERMARK_JOB)!).getTime() < HOUR,
+      "the detector that DID succeed advances its own mark",
+    );
+  });
+});
+
+// (b) An unreadable mark is a refusal, not an absence.
+
+describe("gaming scan watermark — an unreadable mark neither widens nor commits", () => {
+  it("a failed mark read keeps the 24h lookback and leaves the stored mark alone", async () => {
+    const tables = makeWmTables({ jumpPoints: UNREACHABLE });
+    const h = makeWmClient(tables);
+    // The mark exists and WOULD have widened the scan — but it cannot be read,
+    // and a read this process cannot establish must not be acted on in either
+    // direction (CONTRIBUTING.md:33-66).
+    setMark(tables, CHECKIN_CLUSTER_WATERMARK_JOB, GAP_MS);
+    const before = markAt(tables, CHECKIN_CLUSTER_WATERMARK_JOB);
+    h.fail(WM_TABLE, "select");
+    for (let i = 0; i < CLUSTER_LIMIT + 1; i++) seedArrivalAt(tables, USER_A, "gf-gap", INSIDE_GAP_MS);
+
+    const r = await runGamingDetectionScan(h.client);
+
+    // NOT widened: the scan fell back to exactly the 24h window it used before
+    // the watermark existed, so the gap evidence is out of range.
+    assert.equal(r.inputs!.checkins, 0, "an unreadable mark must not widen the scan");
+    assert.equal(clusterReviews(tables).length, 0);
+    // NOT committed: a blip cannot move coverage it could not account for.
+    assert.equal(markAt(tables, CHECKIN_CLUSTER_WATERMARK_JOB), before, "the mark must not move");
+    assert.equal(tables.scheduler_watermarks.length, 1, "and no second row may appear");
+  });
+
+  it("a TRANSIENT mark-read failure still withholds the commit — isolating the caller's own refusal", async () => {
+    // Why this exists as well as the test above. When the watermark table is
+    // permanently unreadable, `commitWatermark` refuses on its own internal
+    // re-read, so "the mark did not move" proves nothing about the caller. Here
+    // only the FIRST read for this job fails; a commit, had the caller made
+    // one, would have read successfully and landed. The mark staying put is
+    // therefore evidence that THIS detector declined to certify a span whose
+    // starting point it could not establish — and not a side effect of the
+    // shared module's clamp.
+    const tables = makeWmTables({ jumpPoints: UNREACHABLE });
+    const h = makeWmClient(tables);
+    setMark(tables, CHECKIN_CLUSTER_WATERMARK_JOB, GAP_MS);
+    const before = markAt(tables, CHECKIN_CLUSTER_WATERMARK_JOB);
+    h.failTransiently(WM_TABLE, "select", CHECKIN_CLUSTER_WATERMARK_JOB, 1);
+    // Evidence well inside the fallback 24h, so the scan itself succeeds and
+    // the commit is the ONLY thing being withheld.
+    for (let i = 0; i < CLUSTER_LIMIT + 1; i++) seedArrivalAt(tables, USER_A, "gf-now", 2 * HOUR);
+
+    const r = await runGamingDetectionScan(h.client);
+    assert.equal(r.inputs!.checkins, CLUSTER_LIMIT + 1, "the scan ran and succeeded");
+    assert.equal(clusterReviews(tables).length, 1, "and raised its flag");
+    assert.equal(
+      markAt(tables, CHECKIN_CLUSTER_WATERMARK_JOB),
+      before,
+      "but the span is unaccounted for, so the mark must not move — an unreadable mark is a " +
+      "REFUSAL, not an absence (CONTRIBUTING.md:33-66)",
+    );
+  });
+
+  it("a missing mark is NOT a refusal — it scans the default 24h and commits", async () => {
+    // The other half of the same distinction: `{at: null, ok: true}` means
+    // "fresh install", and collapsing the two is what would make a blip look
+    // like one. Evidence inside 24h, so the default lookback is enough.
+    const tables = makeWmTables({ jumpPoints: UNREACHABLE });
+    const { client } = makeWmClient(tables);
+    for (let i = 0; i < CLUSTER_LIMIT + 1; i++) seedArrivalAt(tables, USER_A, "gf-now", 2 * HOUR);
+
+    await runGamingDetectionScan(client);
+    assert.equal(clusterReviews(tables).length, 1, "first-run behaviour is the unchanged 24h lookback");
+    assert.ok(markAt(tables, CHECKIN_CLUSTER_WATERMARK_JOB), "a first successful scan establishes the mark");
+  });
+
+  it("the fallback span is the 24h the detectors have always used, not a new number", () => {
+    assert.equal(DEFAULT_LOOKBACK_MS, 24 * HOUR, "changing this changes first-run behaviour");
+  });
+});
+
+// (c) The catch-up cap bounds how far one pass reaches back.
+
+describe("gaming scan watermark — the catch-up cap bounds the span", () => {
+  it("a mark older than the cap scans back exactly to the cap, and no further", async () => {
+    const tables = makeWmTables({ jumpPoints: UNREACHABLE });
+    const { client } = makeWmClient(tables);
+    // A mark from well before the cap: an uncapped catch-up would reach it.
+    setMark(tables, CHECKIN_CLUSTER_WATERMARK_JOB, MAX_CATCHUP_MS + 72 * HOUR);
+    // Two clusters, sized off the cap rather than hardcoded so this keeps
+    // testing the cap if the constant moves: one just inside, one just outside.
+    for (let i = 0; i < CLUSTER_LIMIT + 1; i++) {
+      seedArrivalAt(tables, "user-inside-cap", "gf-in", MAX_CATCHUP_MS - 24 * HOUR);
+      seedArrivalAt(tables, "user-beyond-cap", "gf-out", MAX_CATCHUP_MS + 24 * HOUR);
+    }
+
+    const r = await runGamingDetectionScan(client);
+    assert.equal(r.inputs!.checkins, CLUSTER_LIMIT + 1, "only the rows inside the cap may be examined");
+    const flagged = clusterReviews(tables).map((x) => x.user_id);
+    assert.deepEqual(flagged, ["user-inside-cap"]);
+    assert.ok(
+      !flagged.includes("user-beyond-cap"),
+      "the cap is a real bound: evidence older than it is NOT covered by this pass",
+    );
+  });
+
+  it("the cap is at least wide enough for the 54-hour outage that exposed this", () => {
+    // The whole point of the change. A cap below the observed gap would leave
+    // the original defect in place for exactly the case it was reported for.
+    assert.ok(
+      MAX_CATCHUP_MS > GAP_MS,
+      `maxCatchupMs (${MAX_CATCHUP_MS / HOUR}h) must exceed the 54h production gap`,
+    );
+    // And never narrower than the window it replaces — this path may only ever
+    // see MORE than it did before.
+    assert.ok(MAX_CATCHUP_MS >= DEFAULT_LOOKBACK_MS, "the cap must not narrow the existing lookback");
+  });
+});
+
+// (d) A failed or unaccounted-for pass does not advance the mark.
+
+describe("gaming scan watermark — a pass that did not cover the span does not advance", () => {
+  it("a failed detector query leaves the mark where it was", async () => {
+    const tables = makeWmTables();
+    const h = makeWmClient(tables);
+    setMark(tables, RAPID_JUMP_WATERMARK_JOB, GAP_MS);
+    const before = markAt(tables, RAPID_JUMP_WATERMARK_JOB);
+    h.fail("trust_events", "select");
+
+    const r = await runGamingDetectionScan(h.client);
+    assert.equal(r.inputs!.scoredEvents, null);
+    assert.equal(
+      markAt(tables, RAPID_JUMP_WATERMARK_JOB),
+      before,
+      "advancing here would skip the span forever — the exact defect",
+    );
+  });
+
+  it("a flag that never reached trust_reviews withholds the commit, so the next pass re-raises it", async () => {
+    // The same defect from the other end: the evidence WAS examined, but the
+    // review insert was rejected. Advancing over that span would lose the flag
+    // permanently, and `createGamingReview` swallows its own insert errors.
+    const tables = makeWmTables({ jumpPoints: UNREACHABLE });
+    const h = makeWmClient(tables);
+    setMark(tables, CHECKIN_CLUSTER_WATERMARK_JOB, GAP_MS);
+    const before = markAt(tables, CHECKIN_CLUSTER_WATERMARK_JOB);
+    h.fail("trust_reviews", "insert");
+    for (let i = 0; i < CLUSTER_LIMIT + 1; i++) seedArrivalAt(tables, USER_A, "gf-gap", INSIDE_GAP_MS);
+
+    const r = await runGamingDetectionScan(h.client);
+    assert.equal(r.inputs!.checkins, CLUSTER_LIMIT + 1, "the evidence was examined");
+    assert.equal(tables.trust_reviews.length, 0, "but no review row exists");
+    assert.equal(
+      markAt(tables, CHECKIN_CLUSTER_WATERMARK_JOB),
+      before,
+      "so the span still owes a review and the mark must not move",
+    );
+  });
+
+  it("a commit that cannot land is not reported as coverage — the mark simply stays put", async () => {
+    const tables = makeWmTables({ jumpPoints: UNREACHABLE });
+    const h = makeWmClient(tables);
+    setMark(tables, CHECKIN_CLUSTER_WATERMARK_JOB, GAP_MS);
+    const before = markAt(tables, CHECKIN_CLUSTER_WATERMARK_JOB);
+    h.fail(WM_TABLE, "upsert");
+    for (let i = 0; i < CLUSTER_LIMIT + 1; i++) seedArrivalAt(tables, USER_A, "gf-gap", INSIDE_GAP_MS);
+
+    await runGamingDetectionScan(h.client);
+    assert.equal(clusterReviews(tables).length, 1, "the flag is still raised");
+    assert.equal(markAt(tables, CHECKIN_CLUSTER_WATERMARK_JOB), before, "re-scanning is the safe direction");
+  });
+});
+
+// (e) detectMutualRings is untouched.
+
+describe("detectMutualRings is deliberately NOT watermarked", () => {
+  it("still spans 7 days, with no watermark job of its own", () => {
+    const src = readFileSync(resolve(API_ROOT, "src/services/trust/TrustGamingDetectionService.ts"), "utf8");
+    const start = src.indexOf("async function detectMutualRings(");
+    assert.ok(start > 0, "detectMutualRings not found — update this extractor");
+    const end = src.indexOf("async function detectRapidJumps(", start);
+    assert.ok(end > start, "detectRapidJumps not found after detectMutualRings");
+    const body = src.slice(start, end);
+
+    assert.match(
+      body,
+      /const since = new Date\(Date\.now\(\) - 7 \* 24 \* 60 \* 60 \* 1000\)/,
+      "the ring scan's 7-day window must stay exactly as it was",
+    );
+    assert.ok(
+      !body.includes("detectorWindow("),
+      "detectMutualRings must not take a watermark: 7 days already exceeds any gap this scheduler " +
+      "produces, and a ring is a RATIO over a population — moving its span moves what the ratio means",
+    );
+    assert.ok(
+      !body.includes("advanceDetectorWatermark("),
+      "detectMutualRings must not commit a watermark",
+    );
+    // And the other two must, or this suite is asserting against nothing.
+    for (const fn of ["detectCheckinClusters", "detectRapidJumps"]) {
+      const s2 = src.indexOf(`async function ${fn}(`);
+      assert.ok(s2 > 0, `${fn} not found`);
+      const b2 = src.slice(s2, s2 + 3_000);
+      assert.ok(b2.includes("detectorWindow("), `${fn} must resolve a watermarked span`);
+      assert.ok(b2.includes("advanceDetectorWatermark("), `${fn} must commit its span on success`);
+    }
+  });
+
+  it("flags a 3-day-old ring even while the watermark table is unreadable", async () => {
+    // Behavioural proof that the ring scan's reach does not depend on the
+    // watermark at all: with every mark read failing, the two watermarked
+    // detectors fall back to 24h, and the ring scan still sees 3 days back.
+    const tables = makeWmTables({ clusterLimit: UNREACHABLE, jumpPoints: UNREACHABLE });
+    const h = makeWmClient(tables);
+    h.fail(WM_TABLE, "select");
+    const A = "ring-a";
+    const B = "ring-b";
+    const pushRing = (userId: string, other: string, i: number) => {
+      tables.trust_events.push({
+        id: `ring-${userId}-${i}`,
+        user_id: userId,
+        delta: 4,
+        status: "applied",
+        source_type: "review",
+        source_id: `obj-${userId}-${i}`,
+        metadata: { [COUNTERPARTY_METADATA_KEY]: other },
+        created_at: new Date(Date.now() - 3 * 24 * HOUR).toISOString(),
+      });
+    };
+    for (let i = 0; i < 9; i++) { pushRing(A, B, i); pushRing(B, A, i); }
+
+    await runGamingDetectionScan(h.client);
+    assert.ok(ringReviews(tables).length > 0, "the 7-day ring window is unchanged by the watermark work");
   });
 });
