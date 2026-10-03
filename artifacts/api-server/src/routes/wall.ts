@@ -251,10 +251,10 @@ export async function loadViewerContext(sc: any, viewerId: string): Promise<Wall
   // fine and is said so per read; where it is a CLAIM (the follow graph, in
   // Following) the failure is recorded instead of being absorbed (spec §34).
   try {
-    const { data, error } = await sc
-      .from("user_follows")
-      .select("following_id")
-      .eq("follower_id", viewerId);
+    // census-wall §19: the WHOLE graph, keyset-paged — a range-less read stopped at PostgREST's
+    // 1,000-row db-max-rows and said nothing. `error` is also set when the graph outgrows
+    const { data, error } = await readWholeFollowGraph(sc, viewerId); // the bounded read
+    // (FOLLOW_GRAPH_MAX_ROWS); `data` then still carries every follow that WAS read.
     if (error) {
       // NOT "degrades ranking quality, never the feed". In Following an empty
       // followedCreatorIds is taken as the true end of the feed and becomes
@@ -265,7 +265,7 @@ export async function loadViewerContext(sc: any, viewerId: string): Promise<Wall
         { err: error, viewerId, code: "wall_follow_graph_unknown" },
         "wall: follow graph read failed — Following will not claim caughtUp",
       );
-    } else {
+    } if (Array.isArray(data)) { // a partial graph (over the bound, or a later page failed) still serves what was read
       for (const r of (data as any[]) ?? []) ctx.followedCreatorIds.add(String(r.following_id));
     }
   } catch (err) {
@@ -446,7 +446,7 @@ export async function loadViewerSuppressions(
       .eq("surface", "wall")
       .eq("event_type", RankingEvent.ITEM_HIDDEN)
       .gte("served_at", since)
-      .limit(MAX_SUPPRESSIONS);
+      .order("served_at", { ascending: false }).limit(MAX_SUPPRESSIONS); // census-wall §19: capped ⇒ the NEWEST hides
     if (error) {
       logger.warn({ err: error }, "wall: suppression read failed — nothing suppressed this request");
       return out;
@@ -594,14 +594,14 @@ export async function loadCandidates(
     // author's own posts belong on their profile; the Wall's Following is other
     // people). For You starts from the same followed set.
     if (followed.length > 0) {
-      let q = sc
+      const spineChunk = (authors: string[]) => { let q = sc
         .from("posts")
         .select(POST_COLUMNS)
         .eq("status", "active")
         // Delayed-publish gate — the same DB predicate the Following / global
         // feeds apply (routes/posts.ts). Re-checked in memory below.
         .eq("post_status", "published")
-        .in("author_id", followed.slice(0, 500))
+        .in("author_id", authors)
         .order("created_at", { ascending: false })
         .limit(CANDIDATE_FETCH);
       if (opts.snapshotAtIso) q = q.lte("created_at", opts.snapshotAtIso);
@@ -612,10 +612,10 @@ export async function loadCandidates(
       // was unreachable — and falsely reported as "caught up".
       if (mode === "following" && opts.followingCursorPublishedAt) {
         q = q.lte("created_at", opts.followingCursorPublishedAt);
-      }
-      const primary = rowsOrThrow(await q);
-      // True end of the followed spine iff the fetch came back short of its cap.
-      if (mode === "following") followingReachedEnd = primary.length < CANDIDATE_FETCH;
+      } return q; }; // census-wall §19: one query per ≤SPINE_AUTHOR_CHUNK followed authors, merged at the tail
+      const spine = await readFollowedSpine(followed, spineChunk); const primary = spine.rows;
+      // True end iff no chunk came back full, the merge cut nothing, and no followed author went unread.
+      if (mode === "following") followingReachedEnd = spine.reachedEnd;
       rows = primary.map((r) => ({ ...r, __outside: false }));
     }
 
@@ -1626,22 +1626,22 @@ router.post(
       return;
     }
 
-    // Author account status — the eligibility allowlist (§23). A read failure
-    // leaves the status absent, and `passesEligibility` reads absence as
-    // 'active'; that is the loaders' own documented fail-soft default and is why
-    // the tombstone/moderation predicate above is applied independently of it.
+    // Author account status — the eligibility allowlist (§23). `passesEligibility`
+    // reads an ABSENT status as 'active', so a FAILED read here must not leave the
+    // statuses absent: that re-admitted a deactivated author's object on an outage
+    // (census-wall §19). An unreadable status confirms nothing — fail closed.
     const authorIds = [...new Set(live.map((r) => String(r.author_id)))];
     const accountStatus = new Map<string, string>();
     try {
-      const { data } = await sc
+      const { data, error } = await sc
         .from("profiles")
         .select("id, account_status")
         .in("id", authorIds.slice(0, 500));
-      for (const p of (data as any[]) ?? []) {
-        if (p?.id) accountStatus.set(String(p.id), String(p.account_status ?? "active"));
-      }
+      if (error) throw error; // supabase-js RESOLVES on error; the catch below is only reachable this way
+      for (const p of (data as any[]) ?? []) { if (p?.id) accountStatus.set(String(p.id), String(p.account_status ?? "active")); }
     } catch (err) {
-      logger.warn({ err }, "wall: revalidate profile read failed");
+      logger.warn({ err }, "wall: revalidate author-status read failed — nothing re-admitted");
+      res.status(200).json({ eligibleObjectIds: [], generatedAt }); return;
     }
 
     const candidates: WallCandidate[] = live.map((r) => ({
@@ -1751,4 +1751,112 @@ export function wallLiveStripForViewer(
   }
   if (withheld.size === 0) return strip;
   return strip.filter((i) => !(withheld.has(i.subjectId) && !disclosed.has(i.subjectId)));
+}
+
+// ── census-wall §19: the whole follow graph, and a spine over all of it ───────
+// Appended at the tail so no cited line above moves (the §43 convention above).
+
+/**
+ * PostgREST's `db-max-rows` (Supabase ships 1,000). A range-less read is cut
+ * here without any signal in the response, which is how the follow graph was
+ * silently truncated. Pages are never asked to be larger than this.
+ */
+const FOLLOW_GRAPH_PAGE = 1000;
+/**
+ * The most follows one request reads. Past it the graph is served as far as it
+ * was read and reported NOT known, so Following withholds `caughtUp` instead of
+ * asserting it over follows nobody looked at. Five sequential keyset pages.
+ */
+export const FOLLOW_GRAPH_MAX_ROWS = 5000;
+
+/**
+ * Every `user_follows` row of `viewerId`, keyset-paged on `following_id` (the
+ * second column of the table's primary key, so each page is an index range
+ * scan and a concurrent insert cannot shift a later page the way an OFFSET
+ * would). Same envelope as one supabase-js read:
+ *   - `error` set and `data` null: the FIRST page failed — nothing is known;
+ *   - `error` set and `data` an array: a later page failed, or the graph is
+ *     larger than FOLLOW_GRAPH_MAX_ROWS — `data` is what WAS read;
+ *   - `error` null: `data` is the whole graph.
+ */
+async function readWholeFollowGraph(
+  sc: any,
+  viewerId: string,
+): Promise<{ data: Array<{ following_id: string }> | null; error: unknown }> {
+  const out: Array<{ following_id: string }> = [];
+  let after: string | null = null;
+  for (;;) {
+    let q = sc
+      .from("user_follows")
+      .select("following_id")
+      .eq("follower_id", viewerId)
+      .order("following_id", { ascending: true });
+    if (after !== null) q = q.gt("following_id", after);
+    const { data, error } = await q.limit(FOLLOW_GRAPH_PAGE);
+    if (error) return { data: after === null ? null : out, error };
+    const page = ((data as any[]) ?? []).filter((r) => r && r.following_id != null);
+    for (const r of page) {
+      if (out.length >= FOLLOW_GRAPH_MAX_ROWS) {
+        return {
+          data: out,
+          error: {
+            code: "wall_follow_graph_over_bound",
+            message: `follow graph is larger than the ${FOLLOW_GRAPH_MAX_ROWS} follows one request reads`,
+          },
+        };
+      }
+      out.push({ following_id: String(r.following_id) });
+    }
+    // A short page is the end. A full one is not evidence of more — the next
+    // (possibly empty) page answers that.
+    if (page.length < FOLLOW_GRAPH_PAGE) return { data: out, error: null };
+    after = String(page[page.length - 1].following_id);
+  }
+}
+
+/** Followed authors per spine query: keeps each `author_id=in.(…)` filter bounded. */
+export const SPINE_AUTHOR_CHUNK = 500;
+/**
+ * The most followed authors the spine reads in one request — SPINE_MAX_AUTHORS /
+ * SPINE_AUTHOR_CHUNK concurrent queries, so the page's serialized depth does not
+ * grow with the graph. Past it, Following never claims the end.
+ */
+export const SPINE_MAX_AUTHORS = 2000;
+
+/**
+ * The followed spine over EVERY followed author, not the first 500. Each chunk
+ * is the caller's own query (`chunkQuery`), so every chunk carries identical
+ * filters; the chunks run concurrently and are merged newest-first. Because
+ * each chunk returns its newest CANDIDATE_FETCH, the newest CANDIDATE_FETCH of
+ * the union are always inside the merge. Any chunk failing throws — a spine
+ * with a chunk missing is a failed spine, not a shorter one.
+ *
+ * `reachedEnd` — the only basis for Following's `caughtUp` — holds only when
+ * no chunk came back full, the merge cut nothing, and no author was left out.
+ * With one chunk this is exactly the previous `rows.length < CANDIDATE_FETCH`.
+ */
+async function readFollowedSpine(
+  followed: string[],
+  chunkQuery: (authors: string[]) => PromiseLike<unknown>,
+): Promise<{ rows: any[]; reachedEnd: boolean }> {
+  const authors = followed.slice(0, SPINE_MAX_AUTHORS);
+  const chunks: string[][] = [];
+  for (let i = 0; i < authors.length; i += SPINE_AUTHOR_CHUNK) chunks.push(authors.slice(i, i + SPINE_AUTHOR_CHUNK));
+  const pages = await Promise.all(
+    chunks.map(async (c) => rowsOrThrow((await chunkQuery(c)) as { data?: unknown; error?: unknown })),
+  );
+  const everyAuthorRead = followed.length <= SPINE_MAX_AUTHORS;
+  if (pages.length === 1) {
+    return { rows: pages[0], reachedEnd: everyAuthorRead && pages[0].length < CANDIDATE_FETCH };
+  }
+  const at = (r: any) => {
+    const t = Date.parse(String(r?.created_at ?? ""));
+    return Number.isFinite(t) ? t : 0;
+  };
+  const merged = pages.flat().sort((a, b) => at(b) - at(a) || (String(b.id) < String(a.id) ? -1 : String(b.id) > String(a.id) ? 1 : 0));
+  return {
+    rows: merged.slice(0, CANDIDATE_FETCH),
+    reachedEnd:
+      everyAuthorRead && pages.every((p) => p.length < CANDIDATE_FETCH) && merged.length <= CANDIDATE_FETCH,
+  };
 }
