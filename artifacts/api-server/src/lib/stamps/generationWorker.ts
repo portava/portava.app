@@ -1427,6 +1427,47 @@ export function evaluateWorkerHealth(
 const HEALTH_MONITOR_INTERVAL_MS = 15 * 60 * 1_000; // 15 min between checks
 const WARN_COOLDOWN_MS = 60 * 60 * 1_000; // at most one warning per type per hour
 
+/**
+ * The `public.job_health` key this monitor writes.
+ *
+ * ── WHY THE ROW EXISTS ─────────────────────────────────────────────────────
+ * This monitor reported its outcome to the LOGGER ONLY. Logs on this host are
+ * not retained anywhere queryable, so from outside the process a monitor that
+ * has been dead since the last deploy and one that passed cleanly a minute ago
+ * produced the same observable: nothing. The row is the surface that survives
+ * the restart which clears every in-memory counter, and it is what
+ * `lib/schedulerCoverage.ts` counts as durable health.
+ *
+ * ── THE TWO RULES ──────────────────────────────────────────────────────────
+ *  1. `last_run_at` records the ATTEMPT. `last_success_at` is written ONLY
+ *     after a pass actually completed and is simply OMITTED from the upsert
+ *     otherwise, so a failing monitor cannot launder the success column
+ *     forward. Same shape, for the same reason, as
+ *     `lib/storyRetentionScheduler.ts`.
+ *  2. A pass that could not read the snapshot is not a pass. `queryHealth()`
+ *     returning null (no service client) and `queryHealth()` throwing both
+ *     yield ZERO warnings, which is indistinguishable from a clean pass —
+ *     reporting that zero work as success is exactly the defect
+ *     CONTRIBUTING.md:33-66 is about. Both record the attempt and nothing more.
+ */
+export const HEALTH_MONITOR_JOB_KEY = "stamp_health_monitor";
+
+/**
+ * The only client surface persisting job health needs. Declared structurally so
+ * the tick can be driven with a fake in tests without widening anything to
+ * `any`; `job_health.last_success_at` exists live (migration 2998) but is
+ * absent from the generated `database.types.ts`, which is why the row is built
+ * as a plain record.
+ */
+type JobHealthWriter = {
+  from: (table: string) => {
+    upsert: (
+      row: Record<string, unknown>,
+      opts: { onConflict: string },
+    ) => PromiseLike<{ error: { message?: string } | null }>;
+  };
+};
+
 let _monitorInterval: ReturnType<typeof setInterval> | null = null;
 let _prevQueuedDepth: number | null = null;
 const _lastWarnedAt = new Map<string, number>();
@@ -1444,9 +1485,27 @@ export async function runHealthMonitorTick(
   log: HealthLogger,
   queryHealth: () => Promise<StampWorkerHealth | null> = queryStampWorkerHealth,
   now: () => number = Date.now,
+  db?: JobHealthWriter | null,
 ): Promise<HealthWarning[]> {
-  const health = await queryHealth();
-  if (!health) return []; // service client not configured — skip
+  const attemptAt = new Date(now()).toISOString();
+
+  let health: StampWorkerHealth | null;
+  try {
+    health = await queryHealth();
+  } catch (err) {
+    // The pass did not complete, so the ATTEMPT is all that may be recorded.
+    // The throw is preserved so `startHealthMonitorLoop` logs exactly what it
+    // logged before this row existed.
+    await persistMonitorHealth(log, attemptAt, false, db);
+    throw err;
+  }
+
+  if (!health) {
+    // Service client not configured: no snapshot was read, so no pass happened.
+    // Recorded as an attempt — never as a success (rule 2 above).
+    await persistMonitorHealth(log, attemptAt, false, db);
+    return [];
+  }
 
   const warnings = evaluateWorkerHealth(health, _prevQueuedDepth);
   _prevQueuedDepth = health.queue_depth["queued"] ?? 0;
@@ -1459,7 +1518,65 @@ export async function runHealthMonitorTick(
     log.warn(w.details, `stamp worker health: ${w.message}`);
     emitted.push(w);
   }
+
+  // The snapshot was read and evaluated: this pass succeeded. Warnings it
+  // emitted are findings about the WORKER, not failures of the monitor, so they
+  // do not change this — and nothing above this line alters what is detected.
+  await persistMonitorHealth(log, attemptAt, true, db);
   return emitted;
+}
+
+/**
+ * Write the monitor's own `job_health` row.
+ *
+ * `succeeded: false` omits `last_success_at` from the upsert rather than
+ * writing any value for it, so a previously recorded success keeps its real
+ * timestamp and ages out instead of being refreshed by a pass that failed.
+ *
+ * Never throws: failing to record health must not break the pass being
+ * recorded. It IS logged, because a silent persistence failure puts the monitor
+ * back where it started — invisible.
+ */
+async function persistMonitorHealth(
+  log: HealthLogger,
+  at: string,
+  succeeded: boolean,
+  db?: JobHealthWriter | null,
+): Promise<void> {
+  // NO ambient fallback to getServiceClient() here, deliberately. Resolving
+  // the client inside the tick made whether a row is written — and therefore
+  // whether a persistence failure is logged — depend on module state this
+  // function cannot see: running this suite alone wrote nothing, running it
+  // after a suite that had initialised the service client wrote and warned,
+  // which broke four pre-existing tests that count warnings. The loop below
+  // resolves the client on every tick and hands it over, so production keeps
+  // its lazy resolution and a caller with no writer writes nothing, always.
+  if (!db) return; // nowhere to write; no row at all beats a fabricated one
+  const client = db;
+
+  const row: Record<string, unknown> = {
+    job: HEALTH_MONITOR_JOB_KEY,
+    last_run_at: at,
+    updated_at: at,
+  };
+  if (succeeded) row.last_success_at = at;
+
+  try {
+    // supabase-js RESOLVES on a database error, so `error` is destructured and
+    // inspected rather than relying on a throw (CONTRIBUTING.md:33-66).
+    const { error } = await client.from("job_health").upsert(row, { onConflict: "job" });
+    if (error) {
+      log.warn(
+        { job: HEALTH_MONITOR_JOB_KEY, err: error.message ?? String(error) },
+        "stamp worker health: could not persist job health",
+      );
+    }
+  } catch (e: unknown) {
+    log.warn(
+      { job: HEALTH_MONITOR_JOB_KEY, err: (e as Error)?.message ?? String(e) },
+      "stamp worker health: could not persist job health",
+    );
+  }
 }
 
 /**
@@ -1496,7 +1613,10 @@ export function startHealthMonitorLoop(
   }));
 
   _monitorInterval = setInterval(() => {
-    runHealthMonitorTick(log).catch((e) =>
+    // Resolved per tick, not once at start: a service client that only becomes
+    // available after boot is still picked up, which is why this is not hoisted.
+    const db = getServiceClient() as unknown as JobHealthWriter | null;
+    runHealthMonitorTick(log, queryStampWorkerHealth, Date.now, db).catch((e) =>
       log.warn({ err: e?.message ?? String(e) }, "stamp worker health: periodic check failed"),
     );
   }, intervalMs);

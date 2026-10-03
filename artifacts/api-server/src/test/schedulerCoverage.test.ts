@@ -3,7 +3,7 @@
  *
  * WHY THIS EXISTS. `lib/schedulerCoverage.ts` is the denominator
  * `GET /healthz/schedulers` reports its own scope from: 58 schedulers started,
- * 11 reported, 4 writing a durable `job_health` row, 46 leaving no trace at
+ * 11 reported, 5 writing a durable `job_health` row, 45 leaving no trace at
  * all. A denominator nobody checks drifts, and a drifted denominator is worse
  * than none — it is what makes an aggregate over 11 jobs read as an aggregate
  * over all of them.
@@ -45,7 +45,7 @@ describe("what index.ts starts", () => {
 
   /**
    * THE DRIFT THAT MATTERS. A scheduler added to index.ts with no row would
-   * join the 46 unobservable jobs silently, and the coverage count would still
+   * join the 45 unobservable jobs silently, and the coverage count would still
    * read as though someone had looked at it.
    */
   it("the registry is EXACTLY what index.ts starts, in both directions", () => {
@@ -122,13 +122,34 @@ describe("what the coverage count says", () => {
    * fails because a scheduler gained health reporting, that is good news and
    * the number moves DOWN; update it and say so.
    */
-  it("pins today's real coverage: 58 started, 11 reported, 4 durable, 46 invisible", () => {
+  it("pins today's real coverage: 58 started, 11 reported, 5 durable, 45 invisible", () => {
     const cov = schedulerCoverage();
     assert.equal(cov.started, 58);
     assert.equal(cov.reported, 11);
-    assert.equal(cov.persisted, 4);
-    assert.equal(cov.unobservable.length, 46);
-    assert.equal(cov.started, cov.unobservable.length + 12, "11 reported + 4 durable overlap on 3 rows");
+    // Moved DOWN on 2026-10-03: startHealthMonitorLoop now writes its own
+    // `stamp_health_monitor` job_health row, so the stamp health monitor is no
+    // longer one of the jobs whose stopping leaves no trace. 4 durable -> 5,
+    // 46 invisible -> 45.
+    assert.equal(cov.persisted, 5);
+    assert.equal(cov.unobservable.length, 45);
+    assert.equal(cov.started, cov.unobservable.length + 13, "11 reported + 5 durable overlap on 3 rows");
+  });
+
+  /**
+   * The monitor's row specifically, so the fix cannot be undone by deleting one
+   * field from the registry and still pass the counts above by coincidence.
+   */
+  it("the stamp health monitor is registered as durable, not unobservable", () => {
+    const cov = schedulerCoverage();
+    const row = (STARTED_SCHEDULERS as readonly SchedulerRow[]).find(
+      (r) => r.start === "startHealthMonitorLoop",
+    );
+    assert.ok(row, "index.ts starts startHealthMonitorLoop; it must have a row");
+    assert.deepEqual(row.persists, ["stamp_health_monitor"]);
+    assert.ok(
+      !cov.unobservable.includes("startHealthMonitorLoop"),
+      "the monitor writes job_health; it must not be counted as leaving no trace",
+    );
   });
 
   it("names the unobservable jobs rather than only counting them", () => {
