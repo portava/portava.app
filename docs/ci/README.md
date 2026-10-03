@@ -1010,6 +1010,23 @@ told them certification had stopped. A PR can go from certified to silently
 uncertified on one of its own pushes, with no event anywhere saying so, and
 the author's next signal is three green checks.
 
+The same hole opens without the branch touching the conflicting file at all,
+and that is the form most likely to be met on a busy day. On 2026-10-03 PR
+#562 was merged up to `main` at `ce7fd05e9`, validated, and pushed as
+`33b32fd13` at 14:05Z. Between the merge and the push `main` moved to
+`05c5a86fe` (PR #574), which made the branch conflict again; the API reported
+`mergeable_state: "dirty"` for the PR at that moment, and the push got `CI`
+and `Unwired checks (probation)` on the `push` event and **no `CI (live DB)`
+run of any kind**. Nothing on the branch had changed since it merged clean.
+
+So "merge `main` promptly" is necessary and not sufficient: on a day when
+`main` takes several merges an hour, a branch can be conflict-free when
+validation starts and conflicted by the time the push lands, and the push that
+carries the validated work is the one that goes uncertified. The only reliable
+signal is to read the PR's `mergeable_state` AFTER pushing and, if it is
+`dirty`, merge `main` again and push again — not to infer from a local
+`git merge-tree` that was true a moment earlier.
+
 The question to ask of a head sha is therefore whether a `CI (live DB)` run
 exists for it at all, and then whether
 `api-server · check:all + live_pulse gate` reached a conclusion of its own —
