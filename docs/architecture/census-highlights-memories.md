@@ -6549,6 +6549,9 @@ All of this is controlled evidence: fakes and component tests, never production.
 | --- | --- | --- | --- |
 | `memoriesTripMemoryDegraded` | 4 | 2 | 9/9 |
 | `storyHighlightVisibility` | 4 | 2 | 21/21 |
+| `memories` (fixture corrected, assertions unchanged) | 1 | — | 65/65 |
+
+`memories.test.ts`'s shared fixture already held this owner's live Memory for the trip. Under TM-HL-D1, its "creates memory from trip" case now unlinks that Memory first, and a sibling case pins the existing-Memory answer.
 
 **Client** (jest):
 

@@ -653,13 +653,34 @@ describe("POST /api/trips/:tripId/memory", () => {
   });
 
   it("creates memory from trip for owner", async () => {
-    const app = await startApp(baseState());
+    // FIXTURE CORRECTED 2026-10-03 (lane highlights), assertions unchanged:
+    // baseState's MEM_ID is already this owner's live Memory for TRIP_ID, and
+    // since census-highlights-memories §AB a trip has ONE live trip Memory, so
+    // "create" is only a create when the trip has none. Unlink it here; the
+    // existing-Memory answer has its own case below.
+    const state = baseState();
+    state.memories[0].trip_id = null;
+    const app = await startApp(state);
     try {
       const { status, body } = await post(app.baseUrl, `/api/trips/${TRIP_ID}/memory`, auth("owner-tok"));
       assert.equal(status, 201);
       assert.ok(body?.memory?.tripId === TRIP_ID);
       assert.ok(body?.memory?.state === "draft");
       assert.ok(typeof body?.taggedCount === "number");
+    } finally { await app.close(); }
+  });
+
+  it("answers the trip's existing live Memory instead of writing a second one", async () => {
+    const state = baseState();
+    const before = state.memories.length;
+    const app = await startApp(state);
+    try {
+      const { status, body } = await post(app.baseUrl, `/api/trips/${TRIP_ID}/memory`, auth("owner-tok"));
+      assert.equal(status, 200);
+      assert.equal(body?.memory?.id, MEM_ID);
+      assert.equal(body?.existing, true);
+      assert.equal(body?.taggedCount, 0);
+      assert.equal(state.memories.length, before, "no second trip Memory may be written");
     } finally { await app.close(); }
   });
 
