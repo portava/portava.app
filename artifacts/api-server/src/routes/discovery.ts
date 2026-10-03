@@ -3118,7 +3118,7 @@ router.get("/discovery/community", async (req, res) => {
     const layoverGate = items.length > 0 ? await discoveryLayoverGate(sc, await resolveCommunityViewer(), items, "GET /discovery/community") : null;  if (layoverGate && !layoverGate.ok) { sendDiscoveryRefusal(res, { items: [], city, total: 0 }, layoverGate.refusal); return; }  const servedItems = layoverGate ? serveUnderLayoverGate(layoverGate, items) : items;  // A14 — only the certified action universe may be shown; a FAILED read refuses instead of shipping a shorter list. See lib/discoveryLayoverMode.ts.
     // Batch-fetch saved state and vote/review aggregates in parallel (both non-fatal)
     const placeIds = servedItems.map((i) => i.id);
-    const savedPlaceIds = new Set<string>();
+    const savedPlaceIds = new Set<string>(); let savedReadFailed: string | null = null;  // census-discovery §122 (DV-83 round 23, B36): the read that left the viewer's saved state unknown
     // Identity comes from resolveCommunityViewer above — this block used to own
     // the route's single auth.getUser, and the serve log below reads the same
     // memoised value. Keeping the resolution in one place is what stops the
@@ -3128,23 +3128,23 @@ router.get("/discovery/community", async (req, res) => {
         try {
           const commSc   = getServiceClient();
           const viewerId = placeIds.length > 0 ? await resolveCommunityViewer() : null;
-          if (viewerId && commSc) {
-            const { data: userCols } = await commSc
+          if (viewerId && !commSc) savedReadFailed = "collections"; if (viewerId && commSc) {
+            const { data: userCols, error: userColsErr } = await commSc
               .from("collections")
               .select("id")
-              .eq("owner_id", viewerId);
+              .eq("owner_id", viewerId); if (userColsErr) savedReadFailed = "collections";
             const colIds = ((userCols ?? []) as any[]).map((c) => c.id as string);
             if (colIds.length > 0) {
-              const { data: savedItems } = await commSc
+              const { data: savedItems, error: savedItemsErr } = await commSc
                 .from("collection_items")
                 .select("entity_id")
                 .eq("entity_type", "place")
                 .in("collection_id", colIds)
-                .in("entity_id", placeIds);
+                .in("entity_id", placeIds); if (savedItemsErr) savedReadFailed = "collection_items";
               for (const s of (savedItems ?? []) as any[]) savedPlaceIds.add((s as any).entity_id as string);
             }
           }
-        } catch { /* non-fatal */ }
+        } catch { savedReadFailed = savedReadFailed ?? "collections"; }  // §122 (B36): a thrown read is unknown, never "not saved"
       })(),
       batchFetchVoteAndRatingAggregates(getServiceClient(), placeIds, "place"),
     ]);
@@ -3154,12 +3154,12 @@ router.get("/discovery/community", async (req, res) => {
         const a = voteAgg.get(i.id);
         return {
           ...i,
-          isSaved: savedPlaceIds.has(i.id),
+          isSaved: savedReadFailed ? null : savedPlaceIds.has(i.id),  // §122 (B36): unknown over a failed read
           ...(a ? { worthItCount: a.worthItCount, avgRating: a.avgRating, reviewCount: a.reviewCount } : {}),
         };
       }),
       city,
-      total: servedItems.length,
+      total: servedItems.length, ...(savedReadFailed ? { failedSources: [savedReadFailed] } : {}),  // §122 (B36): the viewer's saved state could not be read; the cards are whole
       ageFilterMeta: {
         ageFilter:         ageFilterComm,
         callerDobMissing:  ageFilterComm === "open_to_me" ? commCallerDobMissing : false,

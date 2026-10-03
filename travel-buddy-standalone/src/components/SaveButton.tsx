@@ -144,7 +144,7 @@ export function SaveButton({
     <>
       <Pressable
         onPress={loading || unknown ? undefined : toggle}
-        onLongPress={loading || unknown ? undefined : () => setPickerOpen(true)}
+        onLongPress={loading ? undefined : () => setPickerOpen(true)}
         hitSlop={12}
         style={({ pressed }) => [s.btn, pressed && { opacity: 0.65 }]}
         accessibilityLabel={unknown ? "Couldn't check if saved" : saved ? 'Unsave' : 'Save'}
@@ -170,6 +170,7 @@ export function SaveButton({
         entityId={entityId}
         onClose={() => setPickerOpen(false)}
         onSaved={(colId) => {
+          hasInteracted.current = true;  // §122 (B36): the viewer's own save from the picker is measured; it ends an unknown state
           setSaved(true);
           if (entityType === 'post' && userId) writeSavedCache(userId, entityId, true);
           onSavedChange?.(true);

@@ -212,14 +212,14 @@ export async function listGems(opts: ListGemsOptions = {}): Promise<HiddenGem[]>
 export async function getGem(
   gemId: string,
   tripId?: string,
-): Promise<{ gem: HiddenGem; savedByMe: boolean; guideProfile: GuideProfile | null }> {
+): Promise<{ gem: HiddenGem; savedByMe: boolean | null; guideProfile: GuideProfile | null }> {  // census-discovery §122 (B36): null when the server could not read the viewer's save
   const qs = tripId ? `?tripId=${tripId}` : '';
-  const data = await apiFetch<{ gem: any; savedByMe: boolean; guideProfile: any | null }>(
+  const data = await apiFetch<{ gem: any; savedByMe: boolean | null; guideProfile: any | null }>(
     `/api/hidden-gems/${gemId}${qs}`,
   );
   return {
     gem: mapGem(data.gem),
-    savedByMe: data.savedByMe ?? false,
+    savedByMe: typeof data.savedByMe === 'boolean' ? data.savedByMe : null,  // §122 (B36): unknown, never "not saved"
     // Normalised, not passed through: the route sends the raw snake_case row.
     guideProfile: normalizeGuideProfile(data.guideProfile),
   };

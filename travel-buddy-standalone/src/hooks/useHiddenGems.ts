@@ -59,7 +59,7 @@ export function useGemList(opts: ListGemsOptions = {}) {
 
 export function useGemDetail(gemId: string, tripId?: string) {
   const [gem, setGem]                 = useState<HiddenGem | null>(null);
-  const [savedByMe, setSavedByMe]     = useState(false);
+  const [savedByMe, setSavedByMe]     = useState<boolean | null>(false);  // census-discovery §122 (B36): null = the server could not read it
   const [guideProfile, setGuideProfile] = useState<GuideProfile | null>(null);
   const [loading, setLoading]         = useState(true);
   const [error, setError]             = useState<string | null>(null);
@@ -89,7 +89,7 @@ export function useGemDetail(gemId: string, tripId?: string) {
   useEffect(() => { load(); }, [load]);
 
   const toggleSave = useCallback(async () => {
-    if (!gem) return;
+    if (!gem || savedByMe === null) return;  // §122 (B36): an unknown save state is not a toggle — a tap cannot know which way it would go
     try {
       if (savedByMe) {
         await unsaveGem(gem.id);

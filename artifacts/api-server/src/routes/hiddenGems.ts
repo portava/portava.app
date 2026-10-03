@@ -792,18 +792,18 @@ router.get("/hidden-gems/:id", async (req, res) => {
     }
 
     // Attach saved state for authenticated callers
-    let savedByMe = false;
+    let savedByMe: boolean | null = false; let savedUnread: string | null = callerId || !String(req.headers.authorization ?? "").startsWith("Bearer ") ? null : "viewer";  // census-discovery §122 (DV-83 round 23, B36): a token with no resolved viewer is not "not saved"
     if (callerId) {
-      const { data: saveRow } = await sc
+      const { data: saveRow, error: saveRowErr } = await sc
         .from("hidden_gem_saves")
         .select("gem_id")
         .eq("gem_id", req.params.id)
         .eq("user_id", callerId)
-        .maybeSingle();
-      savedByMe = !!saveRow;
-    }
+        .maybeSingle(); if (saveRowErr) savedUnread = "hidden_gem_saves";
+      savedByMe = savedUnread ? null : !!saveRow;
+    } else if (savedUnread) savedByMe = null;
 
-    res.json({ gem: safe, guideProfile, savedByMe });
+    res.json({ gem: safe, guideProfile, savedByMe, ...(savedUnread ? { failedSources: [savedUnread] } : {}) });  // §122 (B36): the viewer's saved state is unknown over a failed read, and the read is named
   } catch (err: any) {
     sendError(res, "db_error", err.message);
   }
