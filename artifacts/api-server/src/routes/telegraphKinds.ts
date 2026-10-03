@@ -120,6 +120,65 @@ interface DrawerRow {
   links: string[];
 }
 
+/**
+ * A voice note's display title: its MEASURED length as `m:ss`, or null.
+ *
+ * ── WHY VOICE NEEDS ITS OWN TITLE AT ALL ────────────────────────────────────
+ * Every other tab's title comes from `searchableTextOf`, which is the right
+ * answer for every other tab: there is sender-authored text in the row (a
+ * caption, a label, a body) and that text is what a person is scanning the
+ * drawer for. A voice note has none. `searchableTextOf` returns null for it
+ * and that null is CORRECT, not a bug — there is no speech-to-text provider
+ * configured in this tree or reachable from it (see the "WHY THERE IS NO
+ * TRANSCRIPT FIELD" note in `services/telegraph/voice.ts`), so there is no
+ * text to index. The drawer row therefore arrived with no title at all and
+ * the VOICE tab rendered a column of blanks.
+ *
+ * The one fact we DO hold about a voice note is how long it is:
+ * `messages.media_duration_seconds`, written by the voice route and already in
+ * `DRAWER_COLUMNS`. A length is what a person picks a recording out of a list
+ * by ("the long one from last night"), so that is the title.
+ *
+ * ── WHY A MISSING DURATION STAYS NULL ───────────────────────────────────────
+ * This is the whole point of the function returning `string | null` rather
+ * than always returning something. If the column is null, absent, zero,
+ * negative, NaN or Infinity then we DID NOT MEASURE this recording, and
+ * `"0:00"` is not the honest rendering of that — it is a measurement we never
+ * took, printed in the format of one, in a field a reader will trust. A
+ * caller who sees null knows it has no duration; a caller who sees `0:00`
+ * believes the note is empty. So an unmeasured note's title stays exactly
+ * what it is today: null. The client still knows the row is a voice note —
+ * `tab` is `VOICE` and `msgType` is `voice` — and can render its own chrome
+ * for it. We do not put server-authored English into `title`, which on every
+ * other row carries the SENDER's words.
+ *
+ * ── THE THREE FORMATTING DECISIONS, STATED ──────────────────────────────────
+ * • A NON-INTEGER value is rounded to the nearest whole second. The column is
+ *   whole seconds by contract (`VoicePayload.durationSeconds` is `.int()`), so
+ *   a fractional value came from a writer that did not honour that; the
+ *   closest second is the least-wrong reading of it.
+ * • ZERO, negative, and anything that rounds BELOW ONE SECOND are all the
+ *   no-title case. `VoicePayload` sets its floor at 1 second and says why: "a
+ *   zero-second voice note is a mis-fire, not a message". A duration under
+ *   that floor is not a length this product considers real, so we do not
+ *   report one, and we do not clamp it up to `0:01` either — clamping would
+ *   be inventing the very measurement this branch exists to admit we lack.
+ * • SIXTY MINUTES AND OVER does not wrap and grows no hour field: 3665s is
+ *   `"61:05"`, not `"1:05"`. The ceiling is `VOICE_MAX_DURATION_SECONDS` (300)
+ *   so this is unreachable through the voice route, but a row written before
+ *   that ceiling, or by some other writer, must not be rendered as a lie that
+ *   happens to look plausible. Minutes carry.
+ */
+function voiceDurationTitle(raw: unknown): string | null {
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return null;
+  const seconds = Math.round(raw);
+  // Below §6.2's own one-second floor there is nothing credible to report.
+  if (seconds < 1) return null;
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return `${minutes}:${String(rest).padStart(2, "0")}`;
+}
+
 function toDrawerRow(row: any, tab: DrawerTab): DrawerRow {
   return {
     id: row.id as string,
@@ -129,7 +188,15 @@ function toDrawerRow(row: any, tab: DrawerTab): DrawerRow {
     msgType: (row.msg_type as string) ?? "text",
     subtype: (row.subtype as string) ?? null,
     previewUrl: (row.media_thumbnail_url as string) ?? (row.media_url as string) ?? null,
-    title: searchableTextOf(row)?.slice(0, 120) ?? null,
+    /**
+     * VOICE is the one tab whose title is not sender-authored text, because a
+     * voice note has none to give. `tab === "VOICE"` is exactly
+     * `kindOfMsgType(msg_type) === "VOICE"` — `drawerTabFor` admits nothing
+     * else to this tab — so no other kind's title changes shape here.
+     */
+    title: tab === "VOICE"
+      ? voiceDurationTitle(row.media_duration_seconds)
+      : searchableTextOf(row)?.slice(0, 120) ?? null,
     links: tab === "LINKS" ? extractLinks(row.body as string) : [],
   };
 }

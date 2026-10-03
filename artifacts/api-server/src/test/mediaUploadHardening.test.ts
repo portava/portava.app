@@ -516,7 +516,7 @@ describe("POST /api/postcards/:id/media/:mediaId/complete — null-dim guard rej
           return {
             async upload() { return { data: null, error: null }; },
             getPublicUrl() { return { data: { publicUrl: "" } }; },
-            async download() { return { data: { arrayBuffer: async () => new Uint8Array(AUDIO_ONLY_M4A).buffer }, error: null }; }, // census-media §37.8: the stored container states NO display size, so neither source gives one
+            async download() { return { data: { arrayBuffer: async () => new Uint8Array(DIMENSIONLESS_MP4).buffer }, error: null }; }, // census-media §37.8: the stored container states NO display size, so neither source gives one. DIMENSIONLESS_MP4 rather than AUDIO_ONLY_M4A: this fixture must reach the dimension guard, and sniffMedia now refuses an audio-only container upstream for having no video track.
             // /complete range-reads the uploaded video's first 64 bytes to
             // verify them, since the client wrote straight to Storage and the
             // declared fileSizeBytes proves nothing. The video here is VALID —
@@ -845,7 +845,7 @@ describe("census-media §28.10 — /media/upload refuses before reading the body
 import { checkRateLimit, _resetRateLimit } from "../lib/rateLimit.js";
 import { UPLOAD_RATE_WINDOW_MS } from "../lib/mediaPipeline.js";
 // census-media §37.8: a real container that states no display size (an audio-only M4A).
-import { AUDIO_ONLY_M4A } from "./videoProbeFixtures.js";
+import { DIMENSIONLESS_MP4 } from "./videoProbeFixtures.js";
 
 // ── TM-create (testing mode, 2026-09-29): POST /events/:id/posts ─────────────
 // The post route took `mediaUrls: z.array(z.string().url())` — ANY external URL

@@ -300,6 +300,18 @@ export async function resolveMentionSuggestions(
   ]);
   if (blockedSet === null || ageRestrictedSet === null) return [];
 
+  // DELIBERATELY the bare-array `dispatchSearch` and not the coverage form the
+  // gateway's own dispatch sites took in A1. Nothing here could carry a coverage:
+  // this resolver returns `InputSuggestion[]`, it is a full TAKEOVER branch in
+  // the gateway (./gateway.ts, the WRITING_CONTEXTS @-sigil path) that returns
+  // before the serve's coverage sink is read, and it has no sink parameter of its
+  // own. Taking the coverage form here would mean destructuring `degradedSources`
+  // and dropping it one line later, which says less than calling the wrapper that
+  // documents the drop. It is also empty by construction today: `travelers` reads
+  // one corpus, and `saved` — the only type whose rows come from two
+  // independently-failing tables — is not reachable from this file. If a mention
+  // ever resolves against a multi-source corpus, the fix is a coverage sink on
+  // `MentionParams` threaded from the gateway branch above, not a destructure.
   const results = await dispatchSearch(
     sc, q, userId, blockedSet, ageRestrictedSet, 'travelers', 0, Math.max(1, max), ctx,
   ).catch(() => [] as SearchResult[]);

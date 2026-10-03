@@ -44,6 +44,41 @@
  * Like check:schema-references, this needs no network and no credentials, so it
  * cannot be starved by the live-DB lane.
  *
+ * THE ARGUMENT-SHAPED WRITE — why this file knows about `emitLayoverEvent`
+ * ------------------------------------------------------------------------
+ * `writeLiteralExtract.ts` attributes a literal to the exact property inside
+ * the exact `.from(T).insert({ … })` it lands in, and forwards up to two hops
+ * through `event_type: opts.eventType`. Neither reaches this shape:
+ *
+ *     // services/airport/LayoverSessionService.ts
+ *     async function emitEvent(db, sessionId, userId, eventType, metadata) {
+ *       await db.from("layover_events").insert({ event_type: eventType, … })
+ *     }
+ *     export async function emitLayoverEvent(db, sessionId, userId, eventType, md) {
+ *       await emitEvent(db, sessionId, userId, eventType, md)
+ *     }
+ *
+ * The payload value is a BARE PARAMETER, not `<param>.<prop>`, so the write
+ * extractor's forwarding never engages; and `emitLayoverEvent` is exported, so
+ * even if it did it would refuse at the export boundary. Every layover audit
+ * literal in the repo is therefore passed POSITIONALLY, as the fourth argument
+ * at a call site in another file, and was invisible to this check.
+ *
+ * That invisibility is recorded in the tree twice over — migrations 2983 and
+ * 2985 each say in their own header that `check:enum-literals` "cannot see it
+ * either: the literal is an ARGUMENT to `emitLayoverEvent`" — and the cost is
+ * exactly what those headers describe: `emitEvent` ends in
+ * `logger.warn(…, "layover event write failed (non-fatal)")`, so an event type
+ * the CHECK does not admit is rejected 23514, swallowed into a log, and the
+ * feature looks built while auditing nothing.
+ *
+ * So the call shape is declared below (`ARGUMENT_LITERAL_EMITTERS`) and its
+ * callers' literals are collected and judged exactly like an
+ * `.insert({ event_type: … })` literal. The declaration is deliberately a
+ * TABLE and not a special case: a second emitter of this shape is one row.
+ * Each row must yield at least one site, so renaming or deleting the emitter
+ * fails the check instead of silently returning the blind spot.
+ *
  * FAILURE POSTURE
  * ---------------
  * Over-permissive by construction: a column with no enum type and no parseable
@@ -59,10 +94,17 @@
  * Exit 0 → every judged literal is a declared value (or is on the ratchet).
  * Exit 1 → at least one literal names a value the column cannot hold.
  */
-import { resolve, dirname } from "node:path";
+import { readFileSync } from "node:fs";
+import { resolve, dirname, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { extractFilterLiterals, type LiteralSite } from "./lib/filterLiteralExtract.js";
-import { extractWriteLiterals } from "./lib/writeLiteralExtract.js";
+import ts from "typescript";
+import {
+  extractFilterLiterals,
+  listTsFiles,
+  unwrap,
+  type LiteralSite,
+} from "./lib/filterLiteralExtract.js";
+import { extractWriteLiterals, stringsOf } from "./lib/writeLiteralExtract.js";
 import {
   buildCanonicalVocabulary,
   type CanonicalVocabulary,
@@ -84,6 +126,202 @@ export const MIGRATION_DIRS = [
   resolve(API_ROOT, "migrations"),
   resolve(API_ROOT, "src/migrations"),
 ];
+
+/**
+ * Call shapes that carry a column's literal as a POSITIONAL ARGUMENT.
+ *
+ * See "THE ARGUMENT-SHAPED WRITE" in the header. The write extractor reads
+ * payload objects; these functions never put the literal in one — the caller
+ * hands it over as an argument and a helper two frames down writes it into
+ * `.insert({ … })`. Judged against the same vocabulary, reported with the same
+ * machinery, placed on the same ratchets.
+ *
+ * `argIndex` is 0-based and counted at the CALL SITE. `op` keeps the `insert.`
+ * prefix so `isWriteOp` classifies these as writes, which they are — a rejected
+ * row, not a query that returns nothing — and the `.arg` suffix says the
+ * literal was read off an argument rather than out of a payload, the same way
+ * `.fwd1` says it was inferred through a call.
+ */
+export interface ArgumentEmitter {
+  /** Callee name as written at the call site. */
+  fn: string;
+  /** 0-based argument index that carries the literal. */
+  argIndex: number;
+  table: string;
+  column: string;
+  /** Where the emitter is declared — for the failure message when it vanishes. */
+  declaredIn: string;
+  op: string;
+}
+
+export const ARGUMENT_LITERAL_EMITTERS: ArgumentEmitter[] = [
+  {
+    fn: "emitLayoverEvent",
+    argIndex: 3,
+    table: "layover_events",
+    column: "event_type",
+    declaredIn: "src/services/airport/LayoverSessionService.ts",
+    op: "insert.arg",
+  },
+];
+
+/**
+ * Collect the literals every caller of an `ARGUMENT_LITERAL_EMITTERS` row hands
+ * to it.
+ *
+ * Same posture as the rest of this check: a non-literal argument (a variable, a
+ * computed value, a template with a substitution) yields NOTHING rather than a
+ * guess. A ternary of literals yields every branch, via the write extractor's
+ * own `stringsOf`, so the two sides cannot disagree about what a literal is.
+ *
+ * A bare-identifier callee and a `ns.emitLayoverEvent(…)` member callee both
+ * count; the emitter's own DECLARATION is not a call and is therefore never
+ * collected from, so the helper file needs no exclusion.
+ */
+export function extractArgumentLiterals(
+  dirs: string[],
+  apiRoot: string,
+  emitters: ArgumentEmitter[] = ARGUMENT_LITERAL_EMITTERS,
+): { sites: LiteralSite[]; perEmitter: Map<string, number> } {
+  const byName = new Map<string, ArgumentEmitter>();
+  for (const e of emitters) byName.set(e.fn, e);
+  const sites: LiteralSite[] = [];
+  const perEmitter = new Map<string, number>(emitters.map((e) => [e.fn, 0]));
+
+  const files: string[] = [];
+  for (const d of dirs) files.push(...listTsFiles(d));
+
+  for (const file of files) {
+    const text = readFileSync(file, "utf8");
+    // Cheap pre-filter: parsing ~1300 files for a handful of names is waste.
+    if (![...byName.keys()].some((n) => text.includes(n))) continue;
+    const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+    const rel = relative(apiRoot, file);
+
+    const visit = (node: ts.Node): void => {
+      if (ts.isCallExpression(node)) {
+        const callee = unwrap(node.expression);
+        const name = ts.isIdentifier(callee)
+          ? callee.text
+          : ts.isPropertyAccessExpression(callee)
+            ? callee.name.text
+            : null;
+        const emitter = name === null ? undefined : byName.get(name);
+        if (emitter) {
+          for (const lit of stringsOf(node.arguments[emitter.argIndex])) {
+            sites.push({
+              file: rel,
+              line: sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1,
+              table: emitter.table,
+              column: emitter.column,
+              literal: lit,
+              op: emitter.op,
+            });
+            perEmitter.set(emitter.fn, (perEmitter.get(emitter.fn) ?? 0) + 1);
+          }
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sf);
+  }
+
+  return { sites, perEmitter };
+}
+
+/**
+ * Values the DECLARED schema admits but `canonicalVocabulary.ts` provably
+ * cannot read — a vocabulary REPAIR, not an exemption.
+ *
+ * This list does not excuse a literal. It corrects the allowed SET, so the
+ * literal is judged against what the column genuinely holds and would still
+ * fail if it named anything else. Nothing goes here without a migration that
+ * adds the value, named in the entry.
+ *
+ * THE ONE PARSER GAP THIS COVERS. `canonicalVocabulary.ts` reads CHECK bodies
+ * textually (`col IN ('a','b')` / `col = ANY (ARRAY[…])`). Migrations 2983 and
+ * 2985 deliberately widen `layover_events.event_type` WITHOUT restating the
+ * vocabulary: each reads the constraint that is actually on the table out of
+ * `pg_constraint`, unions its own members in, and writes the result back with a
+ * dynamic `EXECUTE format(… CHECK (event_type IN (%s)))`. Their own headers
+ * explain why — four files in this repo want to widen this one CHECK, and any
+ * two that each restate a hard-coded copy are order-dependent, whichever
+ * applies last silently deleting the others' values. So the hard-coded list the
+ * parser needs is exactly what those files refuse to contain, and `%s` carries
+ * no quoted value for it to find.
+ *
+ * Both are APPLIED to production (src/lib/capability/
+ * production-applied-migrations.json, versions 20260916121304 and
+ * 20260916120956), so these four values are live labels of the live constraint.
+ *
+ * The honest long-term fix is for the vocabulary builder to understand the
+ * catalog-rebuild form; until it does, this says so in one place with the
+ * migration named, instead of four legal literals reading as dead.
+ *
+ * STALENESS IS A FAILURE. An entry whose value the parser has since learned on
+ * its own fails this check, exactly as a stale ratchet entry does — so this
+ * list cannot outlive the gap it documents.
+ */
+export const VOCABULARY_GAPS: Record<string, Array<{ value: string; note: string }>> = {
+  "layover_events.event_type": [
+    {
+      value: "airport_observation_reported",
+      note:
+        "Added by src/migrations/2983_layover_events_observation_reported.sql, " +
+        "applied to production 20260916121304. The §10 traveller-observation " +
+        "audit row (routes/airport.ts, POST /sessions/:id/observations). 2983 " +
+        "widens the CHECK from the catalog with a dynamic EXECUTE, so the value " +
+        "appears nowhere as a parseable literal.",
+    },
+    {
+      value: "crew_created",
+      note:
+        "Added by src/migrations/2985_layover_events_crew_vocabulary.sql, applied " +
+        "to production 20260916120956, for §14 Layover Crew (POST /sessions/:id/" +
+        "crew). Same catalog-rebuild form as 2983.",
+    },
+    {
+      value: "crew_joined",
+      note:
+        "Added by 2985 (same file, same apply) for POST /sessions/:id/crew/:crewId/join.",
+    },
+    {
+      value: "crew_left",
+      note:
+        "Added by 2985 (same file, same apply) for POST /sessions/:id/crew/leave.",
+    },
+  ],
+};
+
+/**
+ * Apply `VOCABULARY_GAPS` to a built vocabulary. Returns the keys that were
+ * already known to the parser — a stale entry, which must fail.
+ */
+export function applyVocabularyGaps(
+  vocab: CanonicalVocabulary,
+  gaps: Record<string, Array<{ value: string; note: string }>> = VOCABULARY_GAPS,
+): string[] {
+  const stale: string[] = [];
+  for (const [key, entries] of Object.entries(gaps)) {
+    const allowed = vocab.values.get(key);
+    if (!allowed) {
+      // The column is not modelled at all, so nothing is judged against it and
+      // the entry is doing no work. That is as stale as a value the parser
+      // learned: say so rather than creating a vocabulary out of this list.
+      stale.push(`${key} — column has no parsed vocabulary at all; nothing to repair`);
+      continue;
+    }
+    for (const { value } of entries) {
+      if (allowed.has(value)) {
+        stale.push(`${key}:${value} — the parser now reads this value itself`);
+        continue;
+      }
+      allowed.add(value);
+    }
+    vocab.origin.set(key, `${vocab.origin.get(key) ?? "unknown"} + VOCABULARY_GAPS`);
+  }
+  return stale;
+}
 
 /**
  * Dead literals that survive this check — a RATCHET, not an allowlist.
@@ -351,9 +589,11 @@ export function partition(
 async function main(): Promise<void> {
   const verbose = process.argv.includes("--verbose");
   const vocab = buildCanonicalVocabulary(BASELINE, MIGRATION_DIRS);
+  const staleGaps = applyVocabularyGaps(vocab);
   const filters = extractFilterLiterals(SCAN_DIRS, API_ROOT);
   const writes = extractWriteLiterals(SCAN_DIRS, API_ROOT);
-  const sites = [...filters.sites, ...writes.sites];
+  const args = extractArgumentLiterals(SCAN_DIRS, API_ROOT);
+  const sites = [...filters.sites, ...writes.sites, ...args.sites];
   const filesScanned = filters.filesScanned;
   const judged = sites.filter((s) => vocab.values.has(`${s.table}.${s.column}`));
 
@@ -362,10 +602,16 @@ async function main(): Promise<void> {
       `(baseline + ${vocab.sources.migrationFiles} migrations).`,
   );
   console.log(
-    `Extracted ${filters.sites.length} filter literal(s) and ${writes.sites.length} write ` +
-      `literal(s) across ${filesScanned} file(s); ${judged.length} sit on a column whose ` +
-      `vocabulary is known.`,
+    `Extracted ${filters.sites.length} filter literal(s), ${writes.sites.length} write ` +
+      `literal(s) and ${args.sites.length} argument literal(s) across ${filesScanned} ` +
+      `file(s); ${judged.length} sit on a column whose vocabulary is known.`,
   );
+  for (const e of ARGUMENT_LITERAL_EMITTERS) {
+    console.log(
+      `    ${e.fn}(…, arg${e.argIndex}, …) -> ${e.table}.${e.column}: ` +
+        `${args.perEmitter.get(e.fn) ?? 0} literal(s) at call sites.`,
+    );
+  }
 
   // ── LIVENESS FLOORS — the script must not be able to pass by scanning nothing.
   //
@@ -397,6 +643,41 @@ async function main(): Promise<void> {
       "  A run that reaches nothing finds nothing, and with an empty ratchet that is\n" +
       "  indistinguishable from a clean tree. Check SCAN_DIRS, the baseline path and the\n" +
       "  migration directories before touching these floors.",
+    );
+    process.exit(1);
+  }
+
+  // ── EMITTER LIVENESS — every declared call shape must still find callers.
+  //
+  // `extractArgumentLiterals` matches on a NAME. Rename `emitLayoverEvent`,
+  // delete it, or move its callers to a wrapper, and this returns zero sites
+  // with no error — restoring in silence exactly the blind spot it was added to
+  // close. A row that finds nothing is therefore a failure, not a quiet zero.
+  const deadEmitters = ARGUMENT_LITERAL_EMITTERS.filter(
+    (e) => (args.perEmitter.get(e.fn) ?? 0) === 0,
+  );
+  if (deadEmitters.length > 0) {
+    console.error("");
+    console.error("✗ a declared argument-literal emitter matched no call site:");
+    for (const e of deadEmitters) {
+      console.error(`    ${e.fn} (declared in ${e.declaredIn}) -> ${e.table}.${e.column}`);
+    }
+    console.error(
+      "  This row exists because the literal reaches the column as an ARGUMENT and no\n" +
+      "  payload scan can see it. Zero call sites means either the emitter was renamed\n" +
+      "  (update ARGUMENT_LITERAL_EMITTERS) or it is gone (remove the row) — leaving it\n" +
+      "  matching nothing reinstates the blind spot without saying so.",
+    );
+    process.exit(1);
+  }
+
+  if (staleGaps.length > 0) {
+    console.error("");
+    console.error("✗ VOCABULARY_GAPS entries are stale — the gap they document is closed:");
+    for (const g of staleGaps) console.error(`    ${g}`);
+    console.error(
+      "  Each entry repairs a vocabulary the SQL parser cannot read. Once the parser\n" +
+      "  reads it, the entry is a second source of truth for the same values; strike it.",
     );
     process.exit(1);
   }

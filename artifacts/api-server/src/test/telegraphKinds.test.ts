@@ -127,6 +127,18 @@ function fixture(state: State): Record<string, any[]> {
       msg("m-loc", { msg_type: "location", subtype: "area", body: envelope("LOCATION", { label: "An Thuong", precision: "area", mediaAssetIds: [] }) }),
       msg("m-portava-place", { msg_type: "portava_object", subtype: "hidden_gem", body: JSON.stringify({ kind: "PORTAVA_OBJECT", objectType: "HIDDEN_GEM", objectId: "g1", caption: "here", shareProjectionVersion: "1" }) }),
       msg("m-portava-post", { msg_type: "portava_object", subtype: "post", body: JSON.stringify({ kind: "PORTAVA_OBJECT", objectType: "POST", objectId: "p1", caption: null, shareProjectionVersion: "1" }) }),
+      // §6.2 VOICE rows for the drawer title. `media_type` is "audio" on
+      // purpose: `drawerTabFor` tests the image/video media pair BEFORE the
+      // kind, so an audio asset is what actually reaches the VOICE tab.
+      msg("m-voice", { msg_type: "voice", media_url: "https://x/v1.m4a", media_type: "audio", media_duration_seconds: 95, body: envelope("VOICE", { url: "https://x/v1.m4a", durationSeconds: 95, waveform: [], mimeType: "audio/mp4" }) }),
+      msg("m-voice-short", { msg_type: "voice", media_url: "https://x/v2.m4a", media_type: "audio", media_duration_seconds: 7, body: envelope("VOICE", { url: "https://x/v2.m4a", durationSeconds: 7, waveform: [], mimeType: "audio/mp4" }) }),
+      msg("m-voice-fractional", { msg_type: "voice", media_url: "https://x/v3.m4a", media_type: "audio", media_duration_seconds: 12.4, body: envelope("VOICE", { url: "https://x/v3.m4a", durationSeconds: 12, waveform: [], mimeType: "audio/mp4" }) }),
+      msg("m-voice-hour", { msg_type: "voice", media_url: "https://x/v4.m4a", media_type: "audio", media_duration_seconds: 3665, body: envelope("VOICE", { url: "https://x/v4.m4a", durationSeconds: 3665, waveform: [], mimeType: "audio/mp4" }) }),
+      // Unmeasured, in the four ways the column can fail to hold a length.
+      msg("m-voice-null", { msg_type: "voice", media_url: "https://x/v5.m4a", media_type: "audio", media_duration_seconds: null, body: envelope("VOICE", { url: "https://x/v5.m4a", durationSeconds: 5, waveform: [], mimeType: "audio/mp4" }) }),
+      msg("m-voice-zero", { msg_type: "voice", media_url: "https://x/v6.m4a", media_type: "audio", media_duration_seconds: 0, body: envelope("VOICE", { url: "https://x/v6.m4a", durationSeconds: 5, waveform: [], mimeType: "audio/mp4" }) }),
+      msg("m-voice-negative", { msg_type: "voice", media_url: "https://x/v7.m4a", media_type: "audio", media_duration_seconds: -30, body: envelope("VOICE", { url: "https://x/v7.m4a", durationSeconds: 5, waveform: [], mimeType: "audio/mp4" }) }),
+      msg("m-voice-nan", { msg_type: "voice", media_url: "https://x/v8.m4a", media_type: "audio", media_duration_seconds: Number.NaN, body: envelope("VOICE", { url: "https://x/v8.m4a", durationSeconds: 5, waveform: [], mimeType: "audio/mp4" }) }),
       msg("m-link", { body: "look at https://example.com/bar and tell me" }),
       msg("m-text", { body: "the rooftop with no sign" }),
       msg("m-deleted", { body: "the rooftop secret", deleted_at: AFTER }),
@@ -508,7 +520,7 @@ describe("GET /threads/:id/drawer", () => {
     assert.equal(r.body.counts.PLACES, 3, "a location, a shared gem and a legacy discovery card");
     assert.equal(r.body.counts.PORTAVA, 1);
     assert.equal(r.body.counts.LINKS, 1);
-    assert.equal(r.body.counts.VOICE, 0);
+    assert.equal(r.body.counts.VOICE, 8, "every voice note is indexed, measured or not");
     assert.equal(r.body.indexOnly, true);
   });
 
@@ -573,6 +585,85 @@ describe("GET /threads/:id/drawer", () => {
     const r = await get(`/threads/${THREAD}/drawer?tab=SOUNDS`, ALICE);
     assert.equal(r.status, 400);
     assert.ok(String(r.body.message).includes("PORTAVA"));
+  });
+});
+
+// ── the VOICE row's display title ────────────────────────────────────────────
+
+/**
+ * §6.2 VOICE has no sender-authored text — there is no transcription provider
+ * in this tree — so `searchableTextOf` returns null for it and the VOICE tab
+ * used to render a column of blank titles. Its title is now its MEASURED
+ * length as `m:ss`, and, where there is no measurement, still nothing.
+ *
+ * These assert the ROW the drawer actually returns, not that a helper was
+ * called: the title is what a client renders, so the row is the contract.
+ *
+ * What these would catch:
+ *   • `toDrawerRow` going back to `searchableTextOf` for VOICE → 3 fail.
+ *   • printing `"0:00"` for an unmeasured note → the honest-null test fails.
+ *   • `padStart` dropped, or minutes wrapped at 60 → the `m:ss` tests fail.
+ *   • the VOICE branch widened to other tabs → the unchanged-title test fails.
+ */
+describe("§6.4 the VOICE drawer title", () => {
+  const titles = async () => {
+    useState({});
+    const r = await get(`/threads/${THREAD}/drawer?tab=VOICE`, ALICE);
+    assert.equal(r.status, 200);
+    return new Map<string, any>(r.body.items.map((i: any) => [i.id, i]));
+  };
+
+  it("a MEASURED voice note is titled m:ss, seconds zero-padded", async () => {
+    const byId = await titles();
+    assert.equal(byId.get("m-voice").title, "1:35", "95s is one thirty-five");
+    assert.equal(byId.get("m-voice-short").title, "0:07", "seconds pad to two digits");
+  });
+
+  it("a non-integer duration is read as the nearest whole second", async () => {
+    const byId = await titles();
+    assert.equal(byId.get("m-voice-fractional").title, "0:12");
+  });
+
+  it("sixty minutes and over carries the minutes rather than wrapping", async () => {
+    const byId = await titles();
+    assert.equal(byId.get("m-voice-hour").title, "61:05", "3665s must not render as 1:05");
+  });
+
+  it("an UNMEASURED voice note gets no title — never a fabricated 0:00", async () => {
+    const byId = await titles();
+    for (const id of ["m-voice-null", "m-voice-zero", "m-voice-negative", "m-voice-nan"]) {
+      const row = byId.get(id);
+      assert.ok(row, `${id} must still be indexed`);
+      assert.equal(row.title, null, `${id}: a length we did not measure is not a length`);
+      // Still recognisably a voice note, so the client can render its own
+      // chrome without the server inventing a duration or English copy.
+      assert.equal(row.tab, "VOICE");
+      assert.equal(row.msgType, "voice");
+    }
+  });
+
+  it("every other tab's title still comes from the sender's own words", async () => {
+    useState({});
+    const r = await get(`/threads/${THREAD}/drawer`, ALICE);
+    assert.equal(r.status, 200);
+    const byId = new Map<string, any>(r.body.items.map((i: any) => [i.id, i]));
+    assert.equal(byId.get("m-photo").title, "the rooftop");
+    assert.equal(byId.get("m-album").title, "the whole night");
+    assert.equal(byId.get("m-gif").title, "dancing cat");
+    assert.equal(byId.get("m-loc").title, "An Thuong");
+    // A SYSTEM-kind row's searchable text is its body verbatim, so the legacy
+    // card's title is the whole JSON blob. That is pre-existing behaviour and
+    // deliberately NOT touched here — A4 changes VOICE and nothing else, and
+    // this assertion pins that it stayed as it was.
+    assert.equal(
+      byId.get("m-legacy-card").title,
+      '{"sourceId":"g9","sourceType":"hidden_gem","title":"Old card","category":"bar","city":"Hue"}',
+    );
+    // And no non-VOICE row picked up a duration-shaped title.
+    for (const [id, row] of byId) {
+      if (row.tab === "VOICE") continue;
+      assert.ok(!/^\d+:\d{2}$/.test(String(row.title ?? "")), `${id} must not be titled m:ss`);
+    }
   });
 });
 
