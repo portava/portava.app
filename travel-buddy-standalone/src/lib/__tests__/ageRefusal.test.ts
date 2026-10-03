@@ -57,6 +57,16 @@ describe('ageRefusalPresentation — every age reason the server sends is named'
     assert.match(q.body, /age limit/i);
   });
 
+  it('a server "message" that is a code or an HTTP placeholder is never shown — the fallback sentence is', () => {
+    // services/meetups.ts fills `message` with `API <status>` when the body has
+    // none; a code-shaped string is not a sentence either.
+    for (const raw of ['API 403', 'age_not_eligible', '', '   ']) {
+      const p = ageRefusalPresentation('below_min_age', raw, 'meetup');
+      assert.ok(p);
+      assert.equal(p.body, "You're outside this meetup's age limit, so you can't join it.", JSON.stringify(raw));
+    }
+  });
+
   it('a missing date of birth carries the profile route the existing alerts already offered', () => {
     const p = ageRefusalPresentation('dob_missing', undefined, 'circle');
     assert.ok(p);

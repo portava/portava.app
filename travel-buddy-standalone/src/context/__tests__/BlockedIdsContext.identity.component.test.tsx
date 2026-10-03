@@ -112,4 +112,25 @@ describe('BlockedIdsProvider — the list follows the signed-in account', () => 
     await render(<BlockedIdsProvider><Probe /></BlockedIdsProvider>);
     await waitFor(() => expect(probe()).toBe('||true'));
   });
+
+  it('a load that THROWS is reported as failed too', async () => {
+    mockGetBlockList.mockImplementation(async () => { throw new Error('socket hang up'); });
+    mockGetBlockerIds.mockImplementation(async () => ({ ok: true, data: [] }));
+    await render(<BlockedIdsProvider><Probe /></BlockedIdsProvider>);
+    await waitFor(() => expect(probe()).toBe('||true'));
+  });
+
+  it('a SLOW response that lands after SIGN-OUT is dropped — nobody signed in holds a list', async () => {
+    let resolveA: (v: unknown) => void = () => {};
+    mockGetBlockList.mockImplementationOnce(() => new Promise((r) => { resolveA = r; }));
+    mockGetBlockerIds.mockImplementationOnce(async () => ({ ok: true, data: [] }));
+    const { rerender } = await render(<BlockedIdsProvider><Probe /></BlockedIdsProvider>);
+
+    mockSession = { isAuthed: false, configured: true, userId: null };
+    await act(async () => { rerender(<BlockedIdsProvider><Probe /></BlockedIdsProvider>); });
+    await waitFor(() => expect(probe()).toBe('||false'));
+
+    await act(async () => { resolveA({ ok: true, data: [{ id: 'x-blocked-by-a' }] }); });
+    expect(probe()).toBe('||false');
+  });
 });
