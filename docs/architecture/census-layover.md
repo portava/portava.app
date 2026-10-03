@@ -8436,6 +8436,157 @@ failed profile read rendered as "no airport profile exists yet" (1 red), restore
 - Red if: the screen shows an empty list for a failed read, or sends a profile the route's schema
   would refuse.
 
+## §48 — 2026-10-03 (lane LAYOVER): crews across a block, the honest failure states, and `no_crew_storage` retired. TWO ROWS MOVE
+
+Branch `claude/lane-layover-20261003`, cut from `main` at `0fa752ece`. `head_commit` is NOT re-declared
+(see 48.8). **Controlled evidence only**: every test below runs against `fakeLayoverDb`, a scripted
+model double or jest's in-memory AsyncStorage. No flag was touched, no migration was added, and nothing
+was written to any hosted database. Paths are repository-relative, as in §41.
+
+### 48.1 What was wrong, and is now fixed
+
+1. **Crews ignored the block list** (L185, L202). Discovery served every open crew in the city — its
+   title and meeting point — whoever was in it. The join asked only the city and the capacity. The solver
+   payload printed every member's user id and personal deadline beside the cards that the block gate had
+   hidden. So a traveller somebody had blocked could be shown that person's crew, join it and walk to
+   where it was meeting. Discovery now goes through
+   `artifacts/api-server/src/services/layover/LayoverCrewVisibility.ts:55#export async function openCrewsVisibleTo(`
+   (`artifacts/api-server/src/routes/airport.ts:3191#const open = await openCrewsVisibleTo(`). The join
+   takes a required admission
+   (`artifacts/api-server/src/services/layover/LayoverCrewStore.ts:443#export type CrewAdmission`,
+   `artifacts/api-server/src/routes/airport.ts:3292#admit: blockAdmission(sc, user.id)`). A join across a
+   block is refused with the same answer as a closed crew, and an unreadable block list refuses rather
+   than admits. Identities in the solver payload are scoped by
+   `artifacts/api-server/src/services/layover/LayoverCrewVisibility.ts:99#export function publishedCrewSolution(`;
+   the deadline stays whole, and a hidden binder is disclosed as `bindingMemberHidden`.
+2. **The buddies list arrived as `[]`** (L254, L273, L294; §23.8's open client half). The client dropped
+   the server's `safetyGate`, `reason` and `degraded` fields, threw on an offline fetch and stored `[]`.
+   So an outage, the gate's refusal and a switched-off marketplace all rendered as no section at all.
+   `travel-buddy-standalone/src/services/layover.ts:1498#export async function getLayoverBuddies(` now
+   resolves the whole answer, and
+   `travel-buddy-standalone/src/components/layover/LayoverPeopleSection.tsx:220#function BuddiesNotice(`
+   says which case it is. `availableDuringLayover: null` reads as "not checked", not as false.
+3. **Starting a layover hid the server's sentence** (L294). Every refusal, including "already departed",
+   read "Please try again". A failed airport search read "no airport matches", and a slow answer to "TP"
+   could replace the list for "TPE".
+   `travel-buddy-standalone/src/services/layover.ts:897#export async function createLayoverSession(` and
+   `travel-buddy-standalone/src/services/layover.ts:845#export async function searchAirports(` now resolve
+   outcomes, and the sheet tickets its searches
+   (`travel-buddy-standalone/src/components/layover/LayoverModeSheet.tsx:142#if (ticket !== searchTicket.current) return;`).
+4. **A layover started from a trip was not linked to it** (L267).
+   `travel-buddy-standalone/app/trip/[id].tsx:869#tripId={trip.id}`. Detection from the trip's segments
+   (L169) is still unbuilt.
+5. **The crew card spun forever offline** (L294). `getLayoverCrew` had no `try`, so the rejection escaped
+   a floated `refresh()`. The card now says "could not be loaded" with a retry, and only the newest of
+   overlapping reads may land
+   (`travel-buddy-standalone/src/components/layover/LayoverCrewSection.tsx:96#const readTicket = useRef(0);`).
+6. **`getCrewCandidates` said crews do not exist** (L110). It answered `no_crew_storage` to everyone. It
+   now answers from the crew store through the same block filter as the card:
+   `artifacts/api-server/src/services/layover/LayoverCrewVisibility.ts:201#export async function compassCrewCandidates(`,
+   read by the route at
+   `artifacts/api-server/src/routes/airport.ts:1200#const crewRead = await compassCrewCandidates(` and
+   handed to `artifacts/api-server/src/services/airport/LayoverCompassService.ts:986#case "getCrewCandidates":`
+   as a read outcome. A failed read is a refusal, never `[]`, and no user id or session id reaches the
+   model.
+7. **The crew meeting point was never cached** (L154). The bundle builder now reads the traveller's OWN
+   crew (`artifacts/api-server/src/routes/airport.ts:2285#stops, crew: await activeCrewForUser(`,
+   `artifacts/api-server/src/services/airport/LayoverDegradedService.ts:353#function crewMeetingPointOf(`).
+   The device keeps it
+   (`travel-buddy-standalone/src/lib/layoverPlanCache.ts:161#function normaliseCrewPoint(`), and the
+   offline card says it
+   (`travel-buddy-standalone/src/components/layover/LayoverOfflinePlanCard.tsx:150#layover-cached-plan-crew-point`).
+   `crew_unreadable` is said as a failed read, never as "you are not in a crew".
+8. **The abort said the wrong reason** (L144).
+   `artifacts/api-server/src/services/airport/LayoverSafeReturnService.ts:383#crewNotifyUnavailableReason: "crew_notify_not_enabled",`.
+   Nothing is sent; see 48.3.
+
+### 48.2 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L110 | W | C | §22.2 held this at W for one stated reason only: *"a tool that can only ever answer 'unavailable' has delivered its contract and not its capability"*. The capability now exists. `getCrewCandidates` answers the traveller's own crew, or the open crews in their city cleared of block relations (`artifacts/api-server/src/services/layover/LayoverCrewVisibility.ts:201#export async function compassCrewCandidates(`), over the crew tables 2984 created. It is offered, invoked and fed back exactly as the ten tools §22 moved to C. Proven over the real router in `artifacts/api-server/src/services/airport/__tests__/layoverCompassCrewCandidates.test.ts` (12 cases, 9 red at HEAD); 14/14 mutations were killed. The same caveat as the other ten applies (§22.4): verified against a model double, not a live provider. |
+| L154 | N | W | *"Crew — cache meeting point; optional peer proximity."* The meeting point is now served on the bundle, kept on the device and shown offline (48.1 item 7). Tests: `artifacts/api-server/src/services/airport/__tests__/layoverOfflineCrewMeetingPoint.test.ts` (7, all red at HEAD), `travel-buddy-standalone/src/lib/__tests__/layoverPlanCache.component.test.ts` (+4), `travel-buddy-standalone/src/components/layover/__tests__/LayoverOfflinePlanCard.crewPoint.component.test.tsx` (4); 13/13 mutations were killed. W, not C: peer proximity needs precise crew location, an owner consent decision (L158, L166), and is unbuilt. |
+
+### 48.3 Re-measured, verdict held
+
+- **L185 stays C, and the reason it is C is now true.** §27's C for the join rested on the city and
+  capacity checks, and the join was fail-open on blocks. It is now fail-closed:
+  `artifacts/api-server/src/services/layover/__tests__/layoverCrewBlocks.test.ts` has 18 cases, 13 of them
+  red at HEAD, and 14/14 mutations were killed.
+- **L202 stays W.** Crew discovery and join are now block-filtered (48.1 item 1). The row's other half,
+  presence policy enforced at the database rather than in application code, is unchanged.
+- **L203 stays N.** The membership half is enforced in application code. The location half still has no
+  grant store (§28.2), and that is an owner consent decision.
+- **L254, L273 and L294 stay W.** The client half of §23.8 is closed (48.1 items 2, 3 and 5). §19.4's
+  night arm, the `layover` category credential and C2's handler-unskippable degraded confidence are
+  untouched.
+- **L267 stays W.** The trip link is real (48.1 item 4). Passing flight segments into session creation
+  is L169's detection, which is unbuilt.
+- **L144 stays N and stays owner-gated.** Only the false reason string changed. Whether a crew is told
+  that a member turned back is a disclosure the owner has not decided. The traveller is now told to let
+  their crew know themselves.
+- **L131 stays N.** The meeting point is real; the shared crew chat belongs to Telegraph threads.
+
+### 48.4 Tests that asserted the old answer, and what they assert now
+
+- `artifacts/api-server/src/services/layover/__tests__/layoverCrewSurface.test.ts` asserted
+  `bindingMemberIds == [USER_B]` across a block, which pinned the leak itself. It now proves the binding
+  by the deadline, and asserts `bindingMemberHidden`.
+- `artifacts/api-server/src/test/layoverPrivacyCompassContract.test.ts`,
+  `artifacts/api-server/src/test/layoverDegradedOffline.test.ts` and
+  `artifacts/api-server/src/test/layoverSafeReturnAbort.test.ts` asserted `"no_crew_storage"`, a reason
+  that has been false since 2984. They now assert `crew_candidates_not_read`, `crew_not_read` and
+  `crew_notify_not_enabled`. Each of those is what the code under test is actually handed.
+- Ten `app/layover` dashboard mocks and two presence-card inputs moved to the new buddies contract. No
+  assertion in them was weakened.
+
+### 48.5 Mutations
+
+**73 mutants were run against the committed code, and all 73 were killed**: crews/blocks 14, buddies 14,
+start 12, trip link 1, crew card 3, Compass crew tool 14, offline meeting point 13, abort reason 2. Another
+12 were run on the crew fix's first, non-line-neutral draft, and all were killed. Every restore was
+verified by sha256 against a PRE hash recorded first. None survived, and none was dismissed as
+equivalent. One case was added to KILL a mutant rather than to describe a behaviour: the mixed-crew
+case in `layoverCrewBlocks`. Two cases (8b and 8c in `layoverCompassCrewCandidates`) were added so that
+the in-crew roster read can fail on its own. The fake fails per `table:op`, and both reads select from
+`layover_crew_members`.
+
+### 48.6 Anchors that quoted code which no longer exists
+
+§28.3's table (*"what it still says"*) quoted three lines verbatim:
+`crewNotifyUnavailableReason: "no_crew_storage",`, `crewMeetingPoint: unavailable("no_crew_storage"),`
+and `crewMeetingPoint: OfflineCapability<never>;`. This section replaces all three. Their anchors were
+re-pointed at the lines that replaced them, and each row is marked **SUPERSEDED by §48**; §28.3's prose
+is otherwise untouched. Every other citation into a file this lane changed was repointed from
+`check:doc-citations` output, in the commit that shifted it.
+
+### 48.7 The headline, restated from the rows
+
+`check:census-integrity` reads **C=83 W=144 N=69 X=0** across 296 rows (§46: 82 / 144 / 70; L110
+`W → C` and L154 `N → W`).
+
+| Measure | §46 (merged) | **§48** |
+| --- | ---: | ---: |
+| BUILT-AND-CORRECT | 82 | **83** |
+| BUILT-BUT-WRONG | 144 | **144** |
+| NOT-BUILT | 70 | **69** |
+| CANNOT-VERIFY | 0 | **0** |
+| CONSTRUCTED% | 76.4 % | **76.7 %** |
+| CORRECT% raw | 27.7 % | **28.0 %** |
+
+### 48.8 Freshness, and what this does NOT claim
+
+`head_commit` stays `4f89330b9`. This is a lane branch that will be squashed, so declaring one of its
+commits would leave an orphan, the hazard every declaration in this row records. The counted files this
+lane changed are instead NAMED in the census-layover acknowledgement in
+`artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`. Its 2026-10-03 paragraph says
+plainly that they are not harmless: they are graded HERE. Whoever integrates should re-declare
+`head_commit` at the squash and retire that entry.
+
+This section does not certify any other row, does not touch a flag, and proves nothing against
+production. The crew tables are applied (§26.1), so the code paths above are live wherever their routes
+are. The rows' remaining blockers are named in 48.2 and 48.3.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/test/docCitations.test.ts — The citation guard's own suite. §27.10 names its case 9 and §30.4 names it as npm test's one failing test; both report on the guard that measured this census. It is machinery this census reports on, not a subject it grades.
