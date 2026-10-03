@@ -3922,6 +3922,18 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/db/creatorLedgerLifecycle.db.test.ts",
     "artifacts/api-server/src/test/db/creatorLedgerRoutes.db.test.ts",
     "artifacts/api-server/src/test/db/creatorLedgerPsqlClient.ts",
+    // WIDENED 2026-09-30 by census-discovery §107 (C-11, creator-ledger lane): DV-56..60, DV-63..69
+    // and DC-23 are restated on the erasure guard in the chain (3510), the two HELD answers in
+    // reconciliation-staging/ (3511 delete, 3512 retain pseudonymised) with their rollbacks, and the
+    // synthetic-account suites that execute all three. Each §107 row cites them, so each is watched.
+    "artifacts/api-server/src/migrations/3510_creator_ledger_erasure_policy_undecided.sql",
+    "db/rollback/2026-09-30-3510-creator-ledger-erasure-policy-undecided-rollback.sql",
+    "reconciliation-staging/3511_creator_ledger_erasure_delete_on_erasure.sql",
+    "reconciliation-staging/2026-09-30-3511-creator-ledger-erasure-delete-on-erasure-rollback.sql",
+    "reconciliation-staging/3512_creator_ledger_erasure_retain_pseudonymised.sql",
+    "reconciliation-staging/2026-09-30-3512-creator-ledger-erasure-retain-pseudonymised-rollback.sql",
+    "artifacts/api-server/src/test/db/creatorLedgerErasurePolicy.db.test.ts",
+    "artifacts/api-server/src/test/creatorLedgerErasurePolicyShape.test.ts",
     // WIDENED 2026-09-27 by census-discovery §53 (people privacy adapters, lane P5x): A24 moves
     // N -> C on the Invisible gate for every Discovery people surface; B03 stays W with four of
     // its five legs built on the marketplace reader; the /community byline avatar gate and the
