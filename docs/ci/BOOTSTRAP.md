@@ -1189,6 +1189,13 @@ meaningless `check:media-objects`.
 - **Any commit whose run was evicted.** Global concurrency plus non-queueing eviction
   means a commit can have no live-DB verdict at all (`:104`–`:126`). Cancelled never
   reads as success, but absence of red is not presence of green.
+- **Every commit on a CONFLICTED pull request.** A PR whose `mergeable_state` is
+  `dirty` gets no `pull_request` event, because GitHub cannot build the merge ref the
+  workflow runs against, and feature-branch pushes no longer start a DB run. The run
+  is therefore never created rather than cancelled — nothing is rendered at all, so
+  this one does not even leave a grey check. Measured 2026-10-03 on four open PRs; see
+  `docs/ci/README.md` § *The hole the narrowing left: a conflicted PR gets no run at
+  all*.
 
 ### The one-sentence version
 

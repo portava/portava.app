@@ -955,6 +955,42 @@ and unit-tests the verdict classifier's and the slot decider's behaviour rather
 than grepping the YAML for a word — an earlier version did grep, and a mutation
 that collapsed NOT_EXECUTED into FAIL survived it.
 
+#### The hole the narrowing left: a conflicted PR gets no run at all
+
+The trigger narrowing above has a case it does not cover, measured 2026-10-03.
+A pull request whose `mergeable_state` is `dirty` receives **no `pull_request`
+event**, because GitHub cannot build the merge ref the workflow would run
+against. Feature-branch pushes deliberately no longer start a DB run. So the
+moment a PR conflicts with its base, its live-DB certification simply stops
+being produced, and `ci.yml` and `unwired-checks.yml` keep reporting green on
+every subsequent push.
+
+Nothing in this file previously said so. The 45%-no-verdict measurement above
+blamed eviction, eviction was fixed, and this cause was never enumerated — so
+the symptom it documents ("a commit with no verdict is indistinguishable, in
+GitHub's check list, from one that passed") came back through a different door.
+
+Measured on PR #562 at `b3293929c`: `CI` green, `Unwired checks` green, both
+verdict jobs green, and **no `CI (live DB)` run existed for the sha at all** —
+on a commit whose entire subject was a fix to two gates that execute only
+inside `api-server · check:all + live_pulse gate`. Three other open PRs were in
+the same state when this was written, their current heads carrying zero
+live-DB runs: #561 and #530 (both `dirty` against the 2026-10-03 advance of
+`main`) and #393, which has been `dirty` since 2026-09-05 and has therefore
+never been certified at its head at all.
+
+There is no fix in the workflow to make here: a `pull_request` event for an
+unbuildable merge ref is not something a repository can ask for. What is
+actionable is the reading rule, which is why it is written down:
+
+- **Greenness in the check list is not certification.** Confirm a `CI (live DB)`
+  run EXISTS for the CURRENT head sha
+  (`actions/runs?head_sha=<sha>`), and that the check:all job RAN.
+- **`mergeable_state` is part of CI status.** A `dirty` PR is not merely
+  awkward to merge; it is uncertified from that moment on, and every commit
+  pushed to it afterwards is uncertified too.
+- Merging the base branch back in restores the event, and with it the run.
+
 #### The re-run bypass (fixed 2026-09-05)
 
 `gh run rerun --failed` re-runs only the jobs that **failed**. The
