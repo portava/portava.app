@@ -4693,6 +4693,9 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/services/livePulse.ts",  // §118 grades how the Live service carries failedSources (SW20)
     // census-discovery §119 (lane W11-X2, round 22): the files §119 grades.
     "artifacts/api-server/src/compass/CompassEligibilityEngine.ts",  // §119 grades the candidate pool's capacity gate over an unread going count (B34)
+    "travel-buddy-standalone/src/components/map/LivePulseCard.tsx",  // §119 grades the NOW map card's line over an unread section (B31)
+    "travel-buddy-standalone/src/features/map/pulse/pulseCardAnswer.ts",  // §119 grades what the map keeps from a /pulse/live answer (B31)
+    "travel-buddy-standalone/src/services/pulse.ts",  // §119 grades how getPulseData reads a named failed read (SW27)
     "travel-buddy-standalone/src/hooks/__tests__/useMapEntities.unreadOptional.component.test.tsx",
     "travel-buddy-standalone/src/hooks/__tests__/useMapEntities.legacyGemsCut.component.test.tsx",
     "travel-buddy-standalone/app/map/__tests__/mapScreen.unreadLayers.component.test.tsx",

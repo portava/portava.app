@@ -19997,6 +19997,119 @@ The code is final at `8a08dda63` (a NOTE comment on one test's stand-in, which t
 
 Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
 
+### 119.2 Round 22: what this lane did
+
+*Written 2026-10-03 by lane W11-X2 (round 22) on `disc-w11-x2-r22`, from `0cb20f42f` (PR #530's head: round 21) and §119.1. It closes §119.1's six break groups (B29–B34), each with the verifier's probes adapted into registered tests and seen red first; registers the verifier's fixtures for its 23 surviving mutations (V5, V7–V14, V18–V26, V28–V32), each green at the fixed head and red under its mutation; closes the two residuals D-W11X2-172 left inside DV-83 (`CompassSocialEngine.contextMemberIds`, `CompassGraphEngine`'s offset-paged support reads) and the wishlist's lost saved_count write; corrects D-W11X2-166, -167, -169, -170 and -172 in D-W11X2-173 to -179; and sweeps once more. The sweep found and closed four more paths (SW24–SW27). Main (`db657b73b`, #563) is merged in.*
+
+*No migration and no new flag. Every change alters what is said only when a read failed, was cut, or was answered for something no longer shown; with every read healthy and whole, every screen renders as before and every served body is byte-identical (controls AN0, AU0, FF0, MP0, PA0, PC0, PC3, PC4, OS0, OS3, OC0, ON0, CE0, CE3, CM0, CM3, KG0, SC0, SC3, CS0, PF0, PF3, PD0, PD2, KC0, SB0, CR0, NU0, GS0, PS0, LI0). Server bodies gain keys only on a failed or cut arm: `truncated` and a cursor on /following and /circles over a full pool their filter emptied, `failedSources` on GET /pulse over a fail-closed empty feed; GET /events, its city alias and /events/nearby answer 503 over a failed read of the viewer's own state. Two behaviours change on a healthy read: /following and /circles order their pool by `(starts_at, id)` and answer the cursor `<starts_at>|<id>` (an earlier server's cursor is read as before), and a save writes the measured number of savers to `saved_count` rather than snapshot + 1. Every edit in a cited file is line-neutral: lines are changed in place, and new code is appended at a file's foot or lives in a new module (`travel-buddy-standalone/src/features/map/pulse/pulseCardAnswer.ts`).*
+
+*All evidence is controlled: node suites over the real routes, services and loaders and PostgREST-shaped doubles (live tables that honour every filter, the `.or()` keyset, every order, `.range()`, the exact count and db-max-rows, written between pages), and jest over the real services, hooks, components and screens. None of it is production evidence, and no client build carrying the change has shipped.*
+
+### 119.3 A slice of who is going, said beside any other named read (§119.1 B29; D-W11X2-173)
+
+`attendeesListCut` (`travel-buddy-standalone/src/lib/eventAttendeesUnread.ts`) sets the route's slice mark aside only when the going list itself could not be read (`goingListUnread`), never because the full RSVP count read or the host's profile read is named beside it; the host's Attendees tab (`travel-buddy-standalone/src/components/HostDashboardPanel.tsx`) says "Showing 4 of 6 going". **D-W11X2-166 is corrected.**
+
+### 119.4 No list keeps an earlier read's rows over a failed one (§119.1 B30; sweep SW25; D-W11X2-176)
+
+The events tab (`travel-buddy-standalone/app/(tabs)/events.tsx`) clears Upcoming, Tomorrow, This Weekend, Following, Circles, the Saved section, "Your drafts" and the invites banner over a failed read, and says it; the drafts and invites reads count among the lists it says it could not load. The saved bookmarks keep their last answer. **D-W11X2-169 is corrected.**
+
+### 119.5 The NOW map's Live Pulse card says what /pulse/live could not read (§119.1 B31; D-W11X2-177)
+
+The map screen (`travel-buddy-standalone/app/map/index.tsx`) reads GET /pulse/live through `pulseCardAnswer`; the card (`travel-buddy-standalone/src/components/map/LivePulseCard.tsx`) says "Couldn't check your Safe Return sessions", "Some live updates couldn't be loaded" or "Couldn't load live updates here", also when nothing is left to headline, and a failed read keeps no earlier camera's items.
+
+### 119.6 The events lists: an emptied pool is not the end, and the viewer's own state is never served over a failed read (§119.1 B32, B33; sweep SW24; D-W11X2-177)
+
+GET /events/following and /circles (`artifacts/api-server/src/routes/events.ts`) answer `truncated: true` and a cursor over a full pool their filter emptied, and page by `(starts_at, id)`. GET /events, its city alias and /events/nearby answer 503 `degraded_unavailable` over a failed read of the viewer's own RSVP or waitlist place, and GET /events over a failed saved-events read. **D-W11X2-170 is corrected.**
+
+### 119.7 Compass's pool never offers a capped event as open over an unread count (§119.1 B34; D-W11X2-174)
+
+`runEligibilityCheck` (`artifacts/api-server/src/compass/CompassEligibilityEngine.ts`) holds a capped event whose going count could not be read back as `capacity_could_not_be_checked`, and the hydrator (`artifacts/api-server/src/compass/CompassItemHydrator.ts`) names `event_rsvps` for a pool holding one. **D-W11X2-167 is corrected.**
+
+### 119.8 The verifier's 23 survivors, pinned (D-W11X2-174 to -177)
+
+Each fixture is registered and is green at the fixed head and red under its mutation: V5 (`eventRowReadsKeysetColumns` KC1, KC2: worlds whose later events' travellers sort below the earlier event's), V7–V14 (`eventsWithheldUnsaid`), V18–V25 (`livePulseMarksPinned`), V26 (`compassPoolCapacityUnread` CE2), V28, V29 (`Events.sequenceAndNearUnread`), V30, V31 (`destination.gemsPostsRace`) and V32 (`LayoverDiscoveryCard.closedWindow`). **D-W11X2-168 is pinned.**
+
+### 119.9 The residuals D-W11X2-172 left inside DV-83, closed (D-W11X2-175, -178)
+
+- **The presence walk's members.** `contextMemberIds` (`artifacts/api-server/src/compass/CompassSocialEngine.ts`) asks each of its two reads for the exact count and reads a read the server cut at its row cap whole, by key; a failed page fails it, and the walk says it could not check.
+- **The graph's support reads.** `readAllPages` (`artifacts/api-server/src/compass/CompassGraphEngine.ts`) takes each page after the last key received; a page with more rows than asked, a row without its key, or a row the cursor already passed is not read whole; every support read selects its key.
+- **saved_count.** Both save paths (`artifacts/api-server/src/routes/wishlist.ts`, `artifacts/api-server/src/routes/discovery.ts`) write the measured number of savers, so a lost or raced write is repaired by the next save. **D-W11X2-172 is corrected.**
+
+### 119.10 The sweep (SW24–SW27; D-W11X2-176, -177, -178, -179)
+
+Every `?? 0` or `?? false` over a count, capacity or own-state value; every server list on these surfaces that answers a filtered pool; every client screen that redraws on a refetch or reads `failedSources`; and every keyed or ordered read a test world might not vary were read again:
+
+- **SW24.** /following and /circles paged by `starts_at` alone, skipping an event that starts at the same instant as the last one served, and never reaching an undated event past the first page (§119.6).
+- **SW25.** The events tab's Following, Circles, Saved, drafts and invites kept an earlier read's rows over a failed refresh (§119.4).
+- **SW26.** POST /discovery/community/:placeId/save lost a saved_count write for good when its update failed after the save row had committed (§119.9).
+- **SW27.** GET /pulse (`artifacts/api-server/src/routes/pulse.ts`) answered a failed block or crew-follows read as an empty feed, unnamed; it keeps its fail-closed answer, names `blocks` or `user_follows`, and the client (`travel-buddy-standalone/src/services/pulse.ts`) treats such a body as a failed load.
+- **Swept and sound, and left for their owners** — D-W11X2-179. The three `rank_events` momentum reads were mutated with their key columns swapped (RK1–RK3); the existing suites kill each.
+
+### 119.11 Tests, seen red, and mutations
+
+**Seen red first**, run against the code before each fix (logs in the lane's `r22/red/` scratch directory; for B32 and B33, HEAD's `routes/events.ts` and `lib/pagedRead.ts` were placed over the working copy and restored by sha256):
+
+| Area | Red | Controls, green |
+|---|---|---|
+| B29 the attendee slice | AN1, AN2, AN3, GL1 | AN0, AN4, AN5 (AU0–AU2 the reach) |
+| B30 the tab's sections | FF1, FF2, FF3 | FF0 |
+| B31 the map card | MP1, MP2, MP3, PA (the module) | MP0 |
+| B32 the emptied pool | PC1, PC2 | PC0, PC3 |
+| B33 the viewer's own state | OS1, OS2, OS4, OS5, OC1, OC2, ON1, ON2, EV2c | OS0, OS3, OC0, ON0 |
+| B34 the Compass pool | CE1, CE4 | CE0, CE3 |
+| The presence walk's members | CM1, CM2, CM4 | CM0, CM3 |
+| The graph's support reads | KG1, KG3 | KG0, KG2 |
+| saved_count, the wishlist | SC1, SC2, SC4 | SC0, SC3 |
+| SW24 the pool cursor | PT1, PT2 | PT3 |
+| SW25 the tab's own lists | FF6, FF7, FF8 | — |
+| SW26 the community save | CS1, CS2, CS3 | CS0 |
+| SW27 GET /pulse | PF1, PF2, PD1 | PF0, PF3, PD0, PD2 |
+
+**Registered from the verifier's fixtures** (green at the fixed head, red under their mutation): KC0–KC2, SB0, SB1, CB1, CE1, FE1, FV1, ME3, SV2, SC1, PJ1, PJ2, PG1, PB1, PA1, PC1, PP1, PK1, CE2, CR0, CR1, NU0, NU1, GS0, GS1, PS0, PS1, LI0, LI1, AU0–AU2. **Written against the fixed code**, each shown to bite by the mutation it pins: PC4 (R32g), FF4 (R30a), FF5 (R30e), FF9 (RT4), KG0's examined count and KG4 (RG4, RG3).
+
+**Mutations.** Each was applied alone, its pin group run (the fixture's suite and its nearest neighbours: node over the real routes and services, jest over the real screens), and the file restored byte-identically; the sha256 matched `git show HEAD:` before every application and after every restore, and each PRE sha256 was written to the lane's progress notes before the mutation was applied. Runner and logs: the lane's `r22/muts/` scratch directory (`run.py`, `defs.py`, one log per mutation, `summary.txt`).
+
+- **91 mutations:** the verifier's 23 survivors (V5, V7–V14, V18–V26, V28–V32), re-applied over the registered fixtures; B34 ×4 (R34a–d); B33 ×7 (R33a–g); B32 and SW24 ×11 (R32a–k); B29 ×5 (R29a–e); B30 ×5 (R30a–e); B31 ×8 (R31a–h); the residuals ×14 (RS1–RS4, RG1–RG6, RW1–RW4); the momentum keys ×3 (RK1–RK3); SW25 ×5 (RT1–RT5); SW26 ×3 (RC1–RC3); SW27 ×3 (RP1–RP3).
+- **Result: 91 killed, 0 equivalent, 0 non-equivalent survivors** on DV-83 lines. **Survivors on a first run, each closed:** R32g (PC4), R30a (FF4), R30e (FF5), RG3 and RG4 (KG4, KG0), RT4 (FF9). The verifier's five equivalent or fail-closed mutations (V1, V4, V16, V17, V34) stand as it ruled them. No guard line changed this round.
+- *Naming.* This round's series are B29–B34, V5–V32 and AN, AU, FF, MP, PC, OS, CE, KC, SB, PJ, CR, GS, LI (the verifier's names, kept), SW24–SW27 (the sweep), and R29–R34, RS, RG, RW, RK, RT, RC, RP (the mutations).
+
+### 119.12 Checks
+
+- **Line-neutral in every cited file** (`routes/events.ts`, `routes/pulse.ts`, `routes/discovery.ts`, `routes/wishlist.ts`, `compass/CompassEligibilityEngine.ts`, `compass/CompassItemHydrator.ts`, `compass/CompassSocialEngine.ts`, `compass/CompassGraphEngine.ts`, `lib/pagedRead.ts`, and the client's `eventAttendeesUnread.ts`, `(tabs)/events.tsx`, `map/index.tsx`, `map/LivePulseCard.tsx`, `services/pulse.ts`): lines changed in place, new code at a file's foot or in a new module, so `check:doc-citations`, `check:citation-targets` and `check:citation-symbols` are clean.
+- **Scope and freshness.** This census's `CENSUS_SCOPE` gains the files §119 grades that it did not watch (`compass/CompassEligibilityEngine.ts`, the map's `LivePulseCard.tsx`, `pulseCardAnswer.ts`, the client's `services/pulse.ts`). The acknowledgements for census-discovery and census-compass name them with a §119 paragraph; census-map's names the card, `pulseCardAnswer.ts` and their suites, census-layover's the closed-window suite, each with its "why it cannot move a verdict".
+- **Suites.** The new api-server suites are on the `test` line (`check:test-registration`); the new client suites are jest component suites or node suites under `src/`, none on KNOWN_BROKEN, none orphaned.
+- **Silent reads.** `check:silent-supabase-reads` reports no new site; `routes/events.ts` S2 was lowered 8 → 7 for the site B33 fixed; none was raised.
+
+### 119.13 DV-83, restated
+
+§119.1's six break groups are closed, each with the verifier's probes adapted into registered tests, red first and green now. The verifier's 23 surviving mutations are killed by its fixtures, registered. The two residuals D-W11X2-172 left inside DV-83 and the saved_count write are closed. D-W11X2-166, -167, -169, -170 and -172 are corrected in D-W11X2-173 to -179; D-W11X2-168 is pinned. The sweep closed four more paths. Every clause of DV-83's criterion holds on every path this lane examined:
+
+1. **Producers send the refusal envelope or a named failure.** The events lists refuse a failed read of the viewer's own state and mark a pool their filter emptied; GET /pulse names the read it could not make; Compass's pool names an unread going count.
+2. **Nothing refused or partial is cached as complete.** No keyed read pages on columns out of order with its `ORDER BY` unseen; the presence walk and the graph read whole or say they could not; no saved_count keeps a lost write.
+3. **Nothing refused is rendered as empty, as complete, or over the wrong rows.** No screen says a slice as the attendees beside another named read, an earlier filter's or load's rows under the one on screen, or a map card headline over a section it could not read, unsaid.
+4. **A Compass tool never states a failed or partial read to the model as a fact.** A capped event over an unread count is never offered as open, and `get_whos_around` never says "Nobody … is sharing" over a member read the server cut.
+5. **Consumers branch on coverage**, and the static guard is unchanged (65 of 65 fixtures killed, §119.15).
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§119.1's six break groups are closed, each with its verifier probes adapted and red first; the verifier's 23 surviving mutations are killed by its fixtures, registered; the two residuals and the saved_count write are closed; the sweep closed four more paths (SW24–SW27); 91 mutations: 91 killed, 0 non-equivalent survivors (§119.11). CONTROLLED EVIDENCE ONLY — this row awaits independent re-verification.** **A slice of who is going is said beside any other named read** (`travel-buddy-standalone/src/lib/eventAttendeesUnread.ts`; AN1–AN3, GL1). **No section keeps an earlier read's rows over a failed one** (`travel-buddy-standalone/app/(tabs)/events.tsx`; FF1–FF9). **The NOW map's card says what it could not read** (`travel-buddy-standalone/app/map/index.tsx`, `travel-buddy-standalone/src/components/map/LivePulseCard.tsx`; MP1–MP3, PA0–PA4). **The events lists never end at an emptied pool, never skip a tie, and never serve the viewer's own state over a failed read** (`artifacts/api-server/src/routes/events.ts`; PC1, PC2, PC4, PT1–PT3, OS1–OS5, OC1, OC2, ON1, ON2, EV2c). **Compass's pool holds a capped event back over an unread count** (`artifacts/api-server/src/compass/CompassEligibilityEngine.ts`; CE1, CE4). **Every keyed read is pinned, and the presence walk and the graph page by key** (`artifacts/api-server/src/compass/CompassSocialEngine.ts`, `artifacts/api-server/src/compass/CompassGraphEngine.ts`; KC1, KC2, CM1, CM2, CM4, KG1, KG3, KG4). **GET /pulse names a fail-closed empty feed, and saved_count is measured** (`artifacts/api-server/src/routes/pulse.ts`, `artifacts/api-server/src/routes/wishlist.ts`, `artifacts/api-server/src/routes/discovery.ts`; PF1, PF2, PD1, SC1, SC2, SC4, CS1–CS3). |
+
+**Headline.** DV-83 moves W → C. `check:census-integrity` counts **C 101 / W 85 / N 2 / X 0** over 188: CONSTRUCTED 186 / 188 = **98.9 %**, CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged. The move is on controlled evidence and awaits independent re-verification.
+
+### 119.14 Left open, and what would turn this red
+
+- **Left for their owners (D-W11X2-179).** GET /pulse shows a post the viewer hid when its `post_hides` read fails (it shows more, never says there is less); GET /admin's events list; POST/DELETE /posts/:id/save's `count ?? 0`; `cityConfidenceWindowedReads` (flag seeded FALSE). The co-host picker says it cannot add anyone whenever `event_rsvps` or `profiles` is named: an over-refusal, never a statement that everyone going is a co-host.
+- **Product effect, stated.** GET /events, its city alias and /events/nearby answer 503 when the viewer's own state cannot be read; /following and /circles may answer `truncated` with a cursor and an empty page; the events tab clears a section whose read failed; the NOW map's card can carry one line saying what it could not read; GET /pulse may carry `failedSources` on its empty answer; contextMemberIds asks for an exact count (and pages only past the row cap); the graph's support reads page by key; each save of a place counts its savers.
+- **What would turn DV-83 red again:**
+  - a slice of who is going said as the whole list beside a named read (AN1–AN3, GL1);
+  - a section drawn from an earlier filter's or load's read over a failed one (FF1–FF9);
+  - the map card headlining over a section it could not read, unsaid, or keeping a failed read's predecessor (MP1–MP3, PA2);
+  - a full pool the filter emptied answered as the end, a tie skipped, or the viewer's own state served over a failed read (PC1, PC2, PC4, PT1, PT2, OS1–OS5, OC1, OC2, ON1, ON2, EV2c);
+  - a capped event offered as open over an unread count (CE1, CE4);
+  - a keyed read on columns out of order with its `ORDER BY`, a member read cut at the row cap, or a support read by offset (KC1, KC2, CM1, CM2, CM4, KG1, KG3, KG4);
+  - a fail-closed empty feed unnamed, or a lost saved_count write kept (PF1, PF2, PD1, SC1, SC2, SC4, CS1–CS3);
+  - any of the verifier's fixtures (V5–V32) failing, or any path §118.13 lists.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/test/helpers/postgrestKeyset.ts — §118.2 names it only as the shared test machinery that lets a PostgREST-shaped double answer a keyset page (the `.or()` cursor and every `.order()`); no verdict rests on it, and the suites that use it are watched.
