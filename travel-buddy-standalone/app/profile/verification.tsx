@@ -15,7 +15,7 @@ import {
   type VerificationStatusResult, type VerificationLevel, type NormalizedVerificationStatus,
 } from '../../src/services/verification';
 import { PP, PP_LABEL } from '../../src/theme/passportTokens';
-import { space } from '../../src/theme/tokens';
+import { space } from '../../src/theme/tokens'; import { verificationFailureCopy, verificationRetryAllowed, VERIFICATION_NEVER_STORED, VERIFICATION_KEPT, AGE_POLICY_ROUTE } from '../../src/lib/verificationDisclosure'; // one line: census-trust cites this file by line
 
 // ── Status helpers ────────────────────────────────────────────────────────────
 
@@ -124,7 +124,7 @@ export default function VerificationScreen() {
   const row = status?.verificationRow ?? null;
   const isActive = row?.status ? ACTIVE_STATUSES.includes(row.status) : false;
   const isFailed = row?.status === 'failed' || row?.status === 'expired';
-  const isVerified = level !== 'none';
+  const isVerified = level !== 'none'; const retryAllowed = verificationRetryAllowed(row); // census-trust §31 (TV-2d): an underage result is not re-offered
 
   return (
     <View style={[v.root, { backgroundColor: PP.paper }]}>
@@ -201,7 +201,7 @@ export default function VerificationScreen() {
                     </Text>
                     {row.failureReason ? (
                       <Text style={v.sessionHint}>
-                        Reason: {row.failureReason.replace(/_/g, ' ')}
+                        {verificationFailureCopy(row.failureReason)}
                       </Text>
                     ) : null}
                     {isActive ? (
@@ -237,9 +237,9 @@ export default function VerificationScreen() {
               ))}
             </View>
           </View>
-
+          <PrivacyDisclosure />
           {/* CTA */}
-          {!isActive && (!isVerified || isFailed) ? (
+          {!isActive && (!isVerified || isFailed) && retryAllowed ? (
             <View style={v.section}>
               <Text style={v.sectionTitle}>GET VERIFIED</Text>
               <Text style={v.ctaHint}>
@@ -270,7 +270,23 @@ export default function VerificationScreen() {
             </View>
           ) : null}
 
-          {isVerified && !isActive ? (
+          {!retryAllowed && !isActive ? (
+            <View style={v.section}>
+              <Text style={v.sectionTitle}>AGE REQUIREMENT</Text>
+              <Text style={v.ctaHint}>
+                Running the check again won't change this result, so it isn't offered here.
+              </Text>
+              <Pressable
+                style={v.ctaBtn}
+                onPress={() => router.push(AGE_POLICY_ROUTE as any)}
+                accessibilityRole="button"
+              >
+                <Text style={v.ctaBtnText}>See age requirements</Text>
+              </Pressable>
+            </View>
+          ) : null}
+
+          {isVerified && !isActive && retryAllowed ? (
             <View style={v.section}>
               <Text style={v.ctaHint}>
                 Your identity is verified. You can re-verify to upgrade your verification level.
@@ -294,6 +310,48 @@ export default function VerificationScreen() {
         </ScrollView>
       )}
     </View>
+  );
+}
+
+/**
+ * "What we never store" (census-trust §31, TV-2b) — the plan's intro is
+ * what / why / WHAT WE NEVER STORE, and the screen had no privacy disclosure.
+ * Rendered above the GET VERIFIED buttons, so it is read before the hand-off.
+ * The lists are facts about the identity_verifications schema, pinned by
+ * src/lib/__tests__/verificationDisclosure.test.ts.
+ */
+function PrivacyDisclosure() {
+  return (
+    <>
+      <View style={v.section}>
+        <Text style={v.sectionTitle}>WHAT WE NEVER STORE</Text>
+        <View style={v.card}>
+          {VERIFICATION_NEVER_STORED.map((item, i, arr) => (
+            <View key={item.label}>
+              <View style={v.benefitRow}>
+                <Text style={v.benefitIcon}>🚫</Text>
+                <Text style={v.benefitText}>{item.label}</Text>
+              </View>
+              {i < arr.length - 1 && <View style={v.divider} />}
+            </View>
+          ))}
+        </View>
+      </View>
+      <View style={v.section}>
+        <Text style={v.sectionTitle}>WHAT WE KEEP</Text>
+        <View style={v.card}>
+          {VERIFICATION_KEPT.map((item, i, arr) => (
+            <View key={item.label}>
+              <View style={v.benefitRow}>
+                <Text style={v.benefitIcon}>•</Text>
+                <Text style={v.benefitText}>{item.label}</Text>
+              </View>
+              {i < arr.length - 1 && <View style={v.divider} />}
+            </View>
+          ))}
+        </View>
+      </View>
+    </>
   );
 }
 

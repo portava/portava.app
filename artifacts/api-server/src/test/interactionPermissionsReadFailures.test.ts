@@ -319,6 +319,158 @@ describe("context queries: sharedTrip / sharedCircle / rabPreBooking", () => {
 });
 
 // ===========================================================================
+// census-trust §31 — a column that "does not exist" is an UNREAD state, not
+// an unmigrated table
+// ===========================================================================
+//
+// The engine's absent-table classifier answered "missing table" for ANY error
+// whose message contained "does not exist". Postgres says exactly that for a
+// dropped or renamed COLUMN (42703: `column user_account_states.state does not
+// exist`), so column drift on a Phase-2 table was read as "nobody has one of
+// these" and every DENY signal that table carries went quietly PERMISSIVE: a
+// banned target became interactable, an age-restricted target invitable, an
+// allow_follow=false opt-out followable, a message_privacy='no_one' target
+// messageable. Each case below is paired with the readable answer it must be
+// told apart from, and with the genuinely ABSENT table (42P01), which keeps its
+// Phase-2 meaning.
+
+/** Postgres's own wording for a dropped/renamed column, as PostgREST passes it through. */
+const columnMissing = (table: string, col: string) =>
+  ({ code: "42703", message: `column ${table}.${col} does not exist` });
+
+describe("census-trust §31: column drift on a DENY table is an unread state, never a permissive answer", () => {
+  it("user_account_states COLUMN drift → the resolution REFUSES (rejects), it does not read the target as 'not banned'", async () => {
+    scenarios++;
+    await assert.rejects(
+      resolve(baseRows(), { user_account_states: columnMissing("user_account_states", "state") }),
+      "a ban state that could not be read must not resolve to an interactable target",
+    );
+  });
+
+  it("PAIR — user_account_states readable with a BANNED target → ALL-FALSE, target_banned", async () => {
+    const p = ran(await resolve(baseRows({ user_account_states: [{ user_id: TARGET, state: "banned" }] })));
+    assert.ok(p.reasonCodes.includes("target_banned"), JSON.stringify(p.reasonCodes));
+    assert.equal(p.canMessage, false);
+    assert.equal(p.canFollow, false);
+  });
+
+  it("PAIR — user_account_states genuinely ABSENT (42P01) → Phase-2 'no state', the pair is interactable", async () => {
+    const p = ran(await resolve(baseRows(), { user_account_states: TABLE_MISSING }));
+    assert.equal(p.canMessage, true);
+    assert.notEqual(p.degraded, true);
+  });
+
+  it("user_privacy_settings COLUMN drift → REFUSES; an age restriction that could not be read is not 'unrestricted'", async () => {
+    scenarios++;
+    await assert.rejects(resolve(baseRows(), {
+      user_privacy_settings: columnMissing("user_privacy_settings", "age_restriction_enabled"),
+    }));
+  });
+
+  it("PAIR — user_privacy_settings readable with age_restriction_enabled → invites refused", async () => {
+    const p = ran(await resolve(baseRows({
+      user_privacy_settings: [{ user_id: TARGET, age_restriction_enabled: true, profile_visibility: "public", who_can_tag: null }],
+    })));
+    assert.equal(p.canInviteToEvent, false);
+    assert.ok(p.reasonCodes.includes("age_restricted"));
+  });
+
+  it("profile_privacy_settings COLUMN drift → REFUSES; allow_follow=false is not silently 'allowed'", async () => {
+    scenarios++;
+    await assert.rejects(resolve(baseRows(), {
+      profile_privacy_settings: columnMissing("profile_privacy_settings", "allow_follow"),
+    }));
+  });
+
+  it("PAIR — profile_privacy_settings readable with allow_follow=false → canFollow false", async () => {
+    const p = ran(await resolve(baseRows({
+      profile_privacy_settings: [{ user_id: TARGET, allow_follow: false, allow_friend_requests: true, allow_tagging: true }],
+    })));
+    assert.equal(p.canFollow, false);
+  });
+
+  it("user_message_settings COLUMN drift → REFUSES; message_privacy='no_one' is not silently 'everyone'", async () => {
+    scenarios++;
+    await assert.rejects(resolve(baseRows(), {
+      user_message_settings: columnMissing("user_message_settings", "message_privacy"),
+    }));
+  });
+
+  it("PAIR — user_message_settings readable with message_privacy='no_one' → canMessage false", async () => {
+    const p = ran(await resolve(baseRows({
+      user_message_settings: [{ user_id: TARGET, message_privacy: "no_one", allow_message_requests: false }],
+    })));
+    assert.equal(p.canMessage, false);
+    assert.equal(p.canSendMessageRequest, false);
+  });
+
+  it("user_restrictions COLUMN drift → assumed restricted AND degraded (it used to read 'not restricted', undeclared)", async () => {
+    const p = ran(await resolve(baseRows(), { user_restrictions: columnMissing("user_restrictions", "restricted_id") }));
+    assert.equal(p.context.readReceiptsHidden, true);
+    assert.equal(p.degraded, true);
+    assert.ok(p.degradedReads?.includes("user_restrictions"), JSON.stringify(p.degradedReads));
+  });
+});
+
+// ===========================================================================
+// census-trust §31 — an unreadable COOLDOWN is not an expired one
+// ===========================================================================
+//
+// A cooldown row is a DENY signal: the follow and friend-request cooldowns are
+// written for 90 days after a block, a friend-request cooldown after a decline.
+// `isActiveCooldown` answered `false` on a read error — documented in the
+// engine as a known fail-OPEN and left in place — so during an outage a viewer
+// who had been blocked could follow and friend-request again, which is the
+// churn the cooldown exists to stop. It now fails CLOSED in its own direction
+// (the cooldown is assumed in force) and the verdict says degraded, exactly the
+// posture user_restrictions already takes.
+
+describe("census-trust §31: user_interaction_cooldowns unreadable → the cooldowns are assumed in force", () => {
+  it("UNREADABLE (a real database error) → follow and friend request are refused, and DEGRADED", async () => {
+    const p = ran(await resolve(baseRows(), { user_interaction_cooldowns: DB_ERROR }));
+    assert.equal(p.canFollow, false, "an unread follow cooldown must not admit a follow");
+    assert.equal(p.canAddFriend, false, "an unread friend-request cooldown must not admit a request");
+    assert.equal(p.degraded, true);
+    assert.ok(p.degradedReads?.some((r) => r.startsWith("user_interaction_cooldowns")), JSON.stringify(p.degradedReads));
+  });
+
+  it("COLUMN drift (42703) is the same unread state — refused and degraded, not an expired cooldown", async () => {
+    const p = ran(await resolve(baseRows(), {
+      user_interaction_cooldowns: columnMissing("user_interaction_cooldowns", "expires_at"),
+    }));
+    assert.equal(p.canFollow, false);
+    assert.equal(p.canAddFriend, false);
+    assert.equal(p.degraded, true);
+  });
+
+  it("PAIR — readable with NO cooldown → follow and friend request allowed, NOT degraded", async () => {
+    const p = ran(await resolve(baseRows()));
+    assert.equal(p.canFollow, true);
+    assert.equal(p.canAddFriend, true);
+    assert.notEqual(p.degraded, true);
+  });
+
+  it("PAIR — readable with an ACTIVE follow cooldown → follow refused, friend request allowed, NOT degraded", async () => {
+    const p = ran(await resolve(baseRows({
+      user_interaction_cooldowns: [{
+        user_id: VIEWER, target_user_id: TARGET, cooldown_type: "follow",
+        expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+      }],
+    })));
+    assert.equal(p.canFollow, false);
+    assert.equal(p.canAddFriend, true);
+    assert.notEqual(p.degraded, true, "a cooldown READ cleanly is an observation, not a precaution");
+  });
+
+  it("PAIR — the table genuinely ABSENT (42P01) → no cooldown exists: allowed, NOT degraded", async () => {
+    const p = ran(await resolve(baseRows(), { user_interaction_cooldowns: TABLE_MISSING }));
+    assert.equal(p.canFollow, true);
+    assert.equal(p.canAddFriend, true);
+    assert.notEqual(p.degraded, true);
+  });
+});
+
+// ===========================================================================
 // Vacuity
 // ===========================================================================
 

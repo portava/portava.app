@@ -971,3 +971,105 @@ describe("CI architecture — the schema-drift job rehearses migrations (census-
     assert.equal(rehearsalSteps(noCertify).certify, -1, "removing the certify line must be seen");
   });
 });
+
+/**
+ * The run listing the slot loop polls, measured 2026-10-03.
+ *
+ * The loop used to page through the workflow's WHOLE run history every poll
+ * (`runs?per_page=100` with --paginate) and filter in jq. With ~12 runs queued
+ * that exhausted GitHub's API rate limit; every call answered 403, the error
+ * was swallowed into an empty listing, and every waiter timed out having
+ * certified nothing (PRs #570–#579, 09:40–12:15 UTC). These run the real script
+ * against a stub `gh` that records what it was asked.
+ */
+describe("CI architecture — the slot listing asks only for runs that can hold the slot", () => {
+  const runWithStub = (opts: {
+    runId: string;
+    queued: string;
+    inProgress: string | "FAIL";
+    unfiltered?: string;
+  }) => {
+    const dir = mkdtempSync(join(tmpdir(), "portava-slot-list-"));
+    const log = join(dir, "calls.log");
+    writeFileSync(join(dir, "q.txt"), opts.queued);
+    writeFileSync(join(dir, "p.txt"), opts.inProgress === "FAIL" ? "" : opts.inProgress);
+    writeFileSync(join(dir, "u.txt"), opts.unfiltered ?? "");
+    writeFileSync(
+      join(dir, "gh"),
+      "#!/usr/bin/env bash\n" +
+        `echo "$*" >> ${JSON.stringify(log)}\n` +
+        'if [[ "$*" == *"/actions/workflows/"* ]]; then\n' +
+        '  if [[ "$*" == *"status=queued"* ]]; then cat ' + JSON.stringify(join(dir, "q.txt")) + "; exit 0; fi\n" +
+        '  if [[ "$*" == *"status=in_progress"* ]]; then\n' +
+        (opts.inProgress === "FAIL"
+          ? '    echo "gh: API rate limit exceeded (HTTP 403)" >&2; exit 1\n'
+          : "    cat " + JSON.stringify(join(dir, "p.txt")) + "; exit 0\n") +
+        "  fi\n" +
+        "  cat " + JSON.stringify(join(dir, "u.txt")) + "; exit 0\n" +
+        "fi\n" +
+        "echo 424242\n",
+      { mode: 0o755 },
+    );
+    const r = spawnSync("bash", [resolve(REPO_ROOT, ".github/scripts/live-db-acquire-slot.sh")], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${dir}:${process.env.PATH ?? ""}`,
+        GH_TOKEN: "stub",
+        GITHUB_REPOSITORY: "portava/portava.app",
+        GITHUB_RUN_ID: opts.runId,
+        GITHUB_RUN_ATTEMPT: "1",
+        GITHUB_OUTPUT: join(dir, "out"),
+        LIVE_DB_SLOT_ROLE: "verify",
+        LIVE_DB_SLOT_TIMEOUT_SECONDS: "1",
+        LIVE_DB_SLOT_POLL_SECONDS: "1",
+      },
+    });
+    const calls = existsSync(log) ? readFileSync(log, "utf8").split("\n").filter(Boolean) : [];
+    rmSync(dir, { recursive: true, force: true });
+    return { code: r.status, out: `${r.stdout}${r.stderr}`, calls };
+  };
+
+  it("never pages through the workflow's whole run history; it asks for queued and in-progress runs only", () => {
+    const r = runWithStub({
+      runId: "200",
+      queued: "",
+      inProgress: "2026-10-03T10:00:00Z 200\n",
+      unfiltered: "2026-10-03T10:00:00Z 200\n",
+    });
+    const listings = r.calls.filter((c) => c.includes("/actions/workflows/"));
+    assert.ok(listings.length > 0, `the loop must list runs. Calls:\n${r.calls.join("\n")}`);
+    for (const c of listings) {
+      assert.match(
+        c, /[?&]status=(queued|in_progress)(&|\s|$)/,
+        `an unfiltered run listing pages the whole history every poll and exhausts the rate limit: ${c}`,
+      );
+    }
+    assert.ok(listings.some((c) => c.includes("status=queued")), "queued runs must be listed");
+    assert.ok(listings.some((c) => c.includes("status=in_progress")), "in-progress runs must be listed");
+    assert.equal(r.code, 0, `the only active run must acquire. Got ${r.code}:\n${r.out}`);
+  });
+
+  it("a failed in-progress query is NOT a free slot, even when the queued half lists only this run", () => {
+    // The holder (100) is visible only to the query that fails. A listing built
+    // from the queued half alone would make 200 the oldest and let it in.
+    const r = runWithStub({
+      runId: "200",
+      queued: "2026-10-03T10:05:00Z 200\n",
+      inProgress: "FAIL",
+      unfiltered: "2026-10-03T10:00:00Z 100\n2026-10-03T10:05:00Z 200\n",
+    });
+    assert.equal(r.code, 75, `half a listing must refuse, not acquire. Got ${r.code}:\n${r.out}`);
+    assert.doesNotMatch(r.out, /ACQUIRED/);
+  });
+
+  it("a run that appears in both answers (it started between the two queries) is counted once and still ordered", () => {
+    const r = runWithStub({
+      runId: "100",
+      queued: "2026-10-03T10:00:00Z 100\n",
+      inProgress: "2026-10-03T10:00:00Z 100\n2026-10-03T10:05:00Z 200\n",
+    });
+    assert.equal(r.code, 0, `the oldest run must acquire. Got ${r.code}:\n${r.out}`);
+    assert.match(r.out, /oldest of 2 active/, "a run listed twice must be counted once");
+  });
+});

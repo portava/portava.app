@@ -35,7 +35,6 @@
   "artifacts/api-server/src/routes/location.ts::S2": 1,
   "artifacts/api-server/src/routes/mediaFeed.ts::S2": 22,
   "artifacts/api-server/src/routes/mediaFeed.ts::S4": 4,
-  "artifacts/api-server/src/routes/meetups.ts::S4": 2,
   "artifacts/api-server/src/routes/memories.ts::S2": 1,
   "artifacts/api-server/src/routes/passport.ts::S2": 6,
   "artifacts/api-server/src/routes/passportStamps.ts::S2": 1,

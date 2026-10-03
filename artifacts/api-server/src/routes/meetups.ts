@@ -206,55 +206,58 @@ router.post("/meetups", async (req, res) => {
 
   const meetupId = (meetup as any).id;
 
-  // Bulk-invite if provided — apply same scope eligibility as /invites endpoint
+  // Bulk-invite: same scope eligibility AND (census-trust §31) the same AGE pre-check as /invites —
+  // this path skipped it, inviting age-ineligible users (a verified minor included) into an 18+
+  // meetup; an invite row is what canAccessMeetup admits on. A failed read invites nobody, and says so.
   let inviteErrors: string[] = [];
+  const ageIneligible: string[] = [];
   if (b.inviteeIds && b.inviteeIds.length > 0) {
     let candidateIds = b.inviteeIds.filter((id) => id !== user.id);
-
     // Trip-scoped: only accepted trip members may be invited
     if (b.tripId && candidateIds.length > 0) {
-      const { data: tripMemberRows } = await client
+      const { data: tripMemberRows, error: tripMembersErr } = await client
         .from("trip_members")
         .select("user_id")
         .eq("trip_id", b.tripId)
         .in("role", ["owner", "member"])
         .in("user_id", candidateIds);
-      const eligible = new Set((tripMemberRows ?? []).map((r: any) => r.user_id as string));
+      if (tripMembersErr) inviteErrors.push(INVITE_SCOPE_UNREADABLE);
+      const eligible = new Set((tripMembersErr ? [] : ((tripMemberRows as any[] | null) ?? [])).map((r: any) => r.user_id as string));
       candidateIds = candidateIds.filter((id) => eligible.has(id));
     }
-
     // Circle-scoped: only circle members (+ owner) may be invited
     if (b.circleOwnerId && !b.tripId && candidateIds.length > 0) {
-      const { data: circleMemberRows } = await client
+      const { data: circleMemberRows, error: circleErr } = await client
         .from("circle_memberships")
         .select("other_id")
         .eq("user_id", b.circleOwnerId)
         .in("other_id", candidateIds);
-      const eligible = new Set([
-        b.circleOwnerId,
-        ...((circleMemberRows ?? []).map((r: any) => r.other_id as string)),
-      ]);
+      if (circleErr) inviteErrors.push(INVITE_SCOPE_UNREADABLE);
+      const eligible = new Set(circleErr ? [] : [b.circleOwnerId, ...(((circleMemberRows as any[] | null) ?? []).map((r: any) => r.other_id as string))]);
       candidateIds = candidateIds.filter((id) => eligible.has(id));
     }
-
     // Plain meetup: only mutual friends of the creator may be invited
     if (!b.tripId && !b.circleOwnerId && candidateIds.length > 0) {
       const orParts = candidateIds.flatMap((id) => [
         `and(user_a.eq.${user.id},user_b.eq.${id})`,
         `and(user_b.eq.${user.id},user_a.eq.${id})`,
       ]).join(",");
-      const { data: friendships } = await client
+      const { data: friendships, error: friendErr } = await client
         .from("user_friendships")
         .select("user_a, user_b")
         .or(orParts);
-      const friendSet = new Set(
-        (friendships ?? [])
-          .flatMap((f: any) => [f.user_a as string, f.user_b as string])
-          .filter((id) => id !== user.id),
-      );
+      if (friendErr) inviteErrors.push(INVITE_SCOPE_UNREADABLE);
+      const friendSet = new Set((friendErr ? [] : ((friendships as any[] | null) ?? []))
+        .flatMap((f: any) => [f.user_a as string, f.user_b as string]).filter((id) => id !== user.id));
       candidateIds = candidateIds.filter((id) => friendSet.has(id));
     }
-
+    // The age seam, batched, exactly as /invites applies it (partitionInviteesByAge).
+    if (b.ageLimitEnabled && candidateIds.length > 0) {
+      const aged = await partitionInviteesByAge(getServiceClient(), meetup, candidateIds);
+      if (aged === null) inviteErrors.push(AGE_CHECK_UNAVAILABLE_MESSAGE);
+      ageIneligible.push(...(aged?.ageIneligible ?? []));
+      candidateIds = aged?.eligible ?? [];
+    }
     const inviteRows = candidateIds.map((uid) => ({ meetup_id: meetupId, user_id: uid }));
     if (inviteRows.length > 0) {
       const { error: iErr } = await client
@@ -294,7 +297,7 @@ router.post("/meetups", async (req, res) => {
     }
   }
 
-  res.status(201).json({ ...(meetup as any), inviteErrors });
+  res.status(201).json({ ...(meetup as any), inviteErrors, ageIneligible });
 });
 
 // ── GET /api/meetups/:meetupId ────────────────────────────────────────────────
@@ -597,22 +600,24 @@ router.post("/meetups/:meetupId/invites", async (req, res) => {
 
   if (tripId) {
     // Only accepted trip members may be invited to a trip-scoped meetup
-    const { data: tripMembers } = await client
+    const { data: tripMembers, error: tripMembersErr } = await client
       .from("trip_members")
       .select("user_id")
       .eq("trip_id", tripId)
       .in("role", ["owner", "member"])
       .in("user_id", candidateIds);
+    if (tripMembersErr) { sendError(res, "degraded_unavailable", INVITE_SCOPE_UNREADABLE); return; }
     const eligibleSet = new Set((tripMembers ?? []).map((r: any) => r.user_id as string));
     ineligible = candidateIds.filter((id) => !eligibleSet.has(id));
     candidateIds = candidateIds.filter((id) => eligibleSet.has(id));
   } else if (circleOwnerId) {
     // Only circle members (+ owner) may be invited to a circle-scoped meetup
-    const { data: circleMembers } = await client
+    const { data: circleMembers, error: circleErr } = await client
       .from("circle_memberships")
       .select("other_id")
       .eq("user_id", circleOwnerId)
       .in("other_id", candidateIds);
+    if (circleErr) { sendError(res, "degraded_unavailable", INVITE_SCOPE_UNREADABLE); return; }
     const eligibleSet = new Set([
       circleOwnerId,
       ...((circleMembers ?? []).map((r: any) => r.other_id as string)),
@@ -627,12 +632,13 @@ router.post("/meetups/:meetupId/invites", async (req, res) => {
         `and(user_a.eq.${creatorId},user_b.eq.${id})`,
         `and(user_b.eq.${creatorId},user_a.eq.${id})`,
       ]).join(",");
-      const { data: friendships } = await client
+      const { data: friendships, error: friendErr } = await client
         .from("user_friendships")
         .select("user_a, user_b")
         .or(orParts);
+      if (friendErr) { sendError(res, "degraded_unavailable", INVITE_SCOPE_UNREADABLE); return; }
       const friendSet = new Set(
-        (friendships ?? [])
+        ((friendships as any[] | null) ?? [])
           .flatMap((f: any) => [f.user_a as string, f.user_b as string])
           .filter((id) => id !== creatorId),
       );
@@ -656,15 +662,9 @@ router.post("/meetups/:meetupId/invites", async (req, res) => {
   let ageIneligible: string[] = [];
   if ((meetup as any).age_limit_enabled && toInvite.length > 0) {
     const sc = getServiceClient();
-    if (sc) {
-      // THROUGH THE SEAM (lib/gateAge.ts), and batched: ONE profiles read and
-      // ONE identity_verifications read for the whole invitee list, whatever
-      // its length. Reading the verification per invitee would have been the
-      // N+1 the batched `profiles` read here already avoids.
-      //
-      // An invitee whose government document says they are a minor is
-      // age-ineligible for an 18+ meetup no matter what birthday they typed —
-      // which is what this pre-check missed entirely until the seam existed.
+    // THROUGH THE SEAM (lib/gateAge.ts), batched; a verified minor is age-ineligible whatever DOB they typed.
+    // census-trust §31: this was `if (sc) {` with no else — no service client SKIPPED the age check entirely.
+    if (!sc) { sendError(res, "degraded_unavailable", AGE_CHECK_UNAVAILABLE_MESSAGE); return; } else {
       const resolved = await resolveGateAges(sc, toInvite);
       const eligible: string[] = [];
       for (const uid of toInvite) {
@@ -1535,5 +1535,51 @@ router.get("/me/frequent-invitees", async (req, res) => {
   freqCache.set(user.id, { data: invitees, cachedAt: Date.now() });
   res.json({ invitees });
 });
+
+// ── census-trust §31 — the invite paths' shared refusals ─────────────────────
+
+/**
+ * What an invite path says when a SCOPE read (trip crew, circle, mutual
+ * friends) failed. Those reads decide who MAY be invited; supabase-js resolves
+ * on a database error, so an unbound one read as "nobody is in scope" — the
+ * create path then invited no one and said nothing, and /invites answered 200
+ * listing real crew members and friends as `ineligible`. Neither is true of
+ * the people named, and the second is a statement about them.
+ */
+const INVITE_SCOPE_UNREADABLE =
+  "We could not check who can be invited right now, so no invitation was sent. Please try again shortly.";
+
+/**
+ * The age pre-check for an age-limited meetup, shared by BOTH invite paths.
+ *
+ * POST /meetups/:id/invites applied it inline; POST /meetups — which also
+ * invites, from `inviteeIds` — applied the scope rules and skipped the age
+ * rule, so an age-ineligible invitee (a verified minor included) received an
+ * invitation to an 18+ meetup, and the invite row is what `canAccessMeetup`
+ * admits on. This is that inline rule, unchanged, for the create path:
+ * through the seam (lib/gateAge.ts), batched, and anything that is not
+ * `ok`-and-eligible is withheld — `verified_minor` and `unreadable` included.
+ *
+ * Returns null when the check cannot run at all (no service client): the
+ * caller sends no invitation on it and says so. It never admits on a check
+ * that did not run.
+ */
+async function partitionInviteesByAge(
+  sc: ReturnType<typeof getServiceClient>,
+  meetup: unknown,
+  ids: readonly string[],
+): Promise<{ eligible: string[]; ageIneligible: string[] } | null> {
+  if (!sc) return null;
+  const m = meetup as { min_age?: number | null; max_age?: number | null };
+  const resolved = await resolveGateAges(sc, [...ids]);
+  const eligible: string[] = [];
+  const ageIneligible: string[] = [];
+  for (const uid of ids) {
+    const gate = resolved.get(uid) ?? { state: "unreadable" as const };
+    const ok = gate.state === "ok" && getAgeEligibilityReason(gate.dateOfBirth, true, m.min_age ?? null, m.max_age ?? null).eligible;
+    (ok ? eligible : ageIneligible).push(uid);
+  }
+  return { eligible, ageIneligible };
+}
 
 export default router;
