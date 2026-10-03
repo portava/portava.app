@@ -126,6 +126,8 @@ function makeFakeBuilder(resolveValue: any) {
 interface FakeStore {
   posts?: any[];
   safe_return_sessions?: any[];
+  /** census-trust §31: make the Safe Return read RESOLVE `{ data: null, error }`, as supabase-js does. */
+  safeReturnReadError?: { code: string; message: string };
   delayed_post_location_events?: any[];
   job_health?: any[];
   places?: any[];
@@ -166,7 +168,10 @@ function makeFakeClient(store: FakeStore = {}) {
           in: (_column: string, _values: any[]) => builder,
           lte: (_column: string, _value: any) => Promise.resolve({ data: store.posts ?? [], error: null }),
           limit: (_count: number) => builder,
-          maybeSingle: async () => ({ data: filteredRows()[0] ?? null, error: null }),
+          maybeSingle: async () =>
+            table === "safe_return_sessions" && store.safeReturnReadError
+              ? { data: null, error: store.safeReturnReadError }
+              : { data: filteredRows()[0] ?? null, error: null },
         };
         return builder;
       };
@@ -284,6 +289,60 @@ describe("runDelayedPostPublisher — safe return hold", () => {
       (u: any) => u.table === "posts" && u.patch.post_status === "published"
     );
     assert.equal(postUpdates.length, 0, "should NOT have published the post");
+    _setTestClient(null);
+  });
+});
+
+// census-trust §31 — the hold exists so a post does not reveal where someone is
+// while a Safe Return is running. `hasActiveSafeReturn` answered `false` on a
+// read error ("fail open — don't hold post forever on a DB error"), so an
+// unreadable safe_return_sessions PUBLISHED the post — copying its original
+// coordinates to public_lat/lng — for a user who might be mid-session. The
+// worker runs every few minutes and the post stays eligible, so holding it on
+// an unread state costs one tick, not forever.
+describe("runDelayedPostPublisher — an UNREAD Safe Return state holds the post (census-trust §31)", () => {
+  it("does NOT publish (or reveal coordinates) when safe_return_sessions cannot be read, and counts it", async () => {
+    const posts = [
+      {
+        id: "post-sr-unread",
+        author_id: "user-sr",
+        location_privacy_mode: "delayed_until_exit",
+        original_lat: 41.9,
+        original_lng: 12.5,
+        post_status: "pending_location_exit",
+      },
+    ];
+    const client = makeFakeClient({
+      posts,
+      safeReturnReadError: { code: "57014", message: "canceling statement due to statement timeout" },
+    });
+    _setTestClient(client);
+    const result = await runDelayedPostPublisher({ client });
+    assert.equal(result.published, 0, "an unread Safe Return state must not publish the post");
+    assert.equal(result.errors, 1, "the failed check is counted, not swallowed");
+    const reveal = client._updates.find((u: any) => u.table === "posts" && u.patch.public_lat === 41.9);
+    assert.equal(reveal, undefined, "the original coordinates must not be copied to the public columns");
+    const published = client._updates.find((u: any) => u.table === "posts" && u.patch.post_status === "published");
+    assert.equal(published, undefined);
+    _setTestClient(null);
+  });
+
+  it("CONTROL — the same post publishes on the next tick once the read answers 'no active session'", async () => {
+    const posts = [
+      {
+        id: "post-sr-unread",
+        author_id: "user-sr",
+        location_privacy_mode: "delayed_until_exit",
+        original_lat: 41.9,
+        original_lng: 12.5,
+        post_status: "pending_location_exit",
+      },
+    ];
+    const client = makeFakeClient({ posts, safe_return_sessions: [] });
+    _setTestClient(client);
+    const result = await runDelayedPostPublisher({ client });
+    assert.equal(result.published, 1);
+    assert.equal(result.errors, 0);
     _setTestClient(null);
   });
 });

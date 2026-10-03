@@ -142,8 +142,16 @@ async function publishPost(db: any, post: any): Promise<boolean> {
 /**
  * Check whether the post author has an active Safe Return session.
  * If so, the post is held until Safe Return completes or expires.
+ *
+ * `null` = the check could not be made, and the caller HOLDS the post for
+ * this tick (census-trust §31). This used to answer `false` on a read error —
+ * "fail open — don't hold post forever on a DB error" — so an unreadable
+ * safe_return_sessions published the post, copying its original coordinates
+ * to the public columns, for a user who might be in the middle of a Safe
+ * Return. The post is not held forever: it stays eligible, and the next tick
+ * (every few minutes) publishes it as soon as the read answers.
  */
-async function hasActiveSafeReturn(db: any, userId: string): Promise<boolean> {
+async function hasActiveSafeReturn(db: any, userId: string): Promise<boolean | null> {
   const { data, error } = await db
     .from("safe_return_sessions")
     .select("id")
@@ -152,9 +160,8 @@ async function hasActiveSafeReturn(db: any, userId: string): Promise<boolean> {
     .limit(1)
     .maybeSingle();
   if (error) {
-    // fail open — don't hold post forever on a DB error
-    logger.warn({ err: error, userId }, "delayedPostPublisher: Safe Return check failed — failing open");
-    return false;
+    logger.warn({ err: error, userId }, "delayedPostPublisher: Safe Return check failed — HOLDING the post this tick");
+    return null;
   }
   return !!data;
 }
@@ -198,8 +205,12 @@ export async function runDelayedPostPublisher(opts?: { client?: any }): Promise<
 
   for (const post of eligible) {
     try {
-      // Hold post if user has active Safe Return
+      // Hold post if user has active Safe Return — or if that cannot be read.
       const held = await hasActiveSafeReturn(db, post.author_id);
+      if (held === null) {
+        errors++;
+        continue;
+      }
       if (held) {
         logger.info({ postId: post.id }, "delayedPostPublisher: holding — Safe Return active");
         skipped++;
