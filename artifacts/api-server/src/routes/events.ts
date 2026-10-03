@@ -1204,7 +1204,7 @@ router.get("/events", async (req, res) => {
     const [rsvpResult, waitlistResult] = await Promise.all([
       sc.from("event_rsvps").select("event_id, status").eq("user_id", user.id).in("event_id", eventIds),
       sc.from("event_waitlist").select("event_id, position").eq("user_id", user.id).in("event_id", eventIds),
-    ]);
+    ]); if ((rsvpResult as any).error || (waitlistResult as any).error) { req.log?.error({ err: (rsvpResult as any).error ?? (waitlistResult as any).error }, "list events: the viewer's own RSVP or waitlist read failed — refusing"); sendError(res, "degraded_unavailable", EVENT_LIST_UNAVAILABLE); return; }  // census-discovery §119 (DV-83 round 22, B33): never "not going" or "not waitlisted" on every card
     for (const r of ((rsvpResult as any).data as any[]) ?? []) {
       rsvpMap[(r as any).event_id as string] = (r as any).status as string;
     }
@@ -1217,22 +1217,22 @@ router.get("/events", async (req, res) => {
   let savedEventIds = new Set<string>();
   if (eventIds.length > 0) {
     try {
-      const { data: userCols } = await sc
+      const { data: userCols, error: userColsErr } = await sc
         .from("collections")
         .select("id")
-        .eq("owner_id", user.id);
+        .eq("owner_id", user.id); if (userColsErr) throw userColsErr;  // §119 (B33)
       const colIds = ((userCols ?? []) as any[]).map((c) => c.id as string);
       if (colIds.length > 0) {
-        const { data: savedItems } = await sc
+        const { data: savedItems, error: savedItemsErr } = await sc
           .from("collection_items")
           .select("entity_id")
           .eq("entity_type", "event")
           .in("collection_id", colIds)
-          .in("entity_id", eventIds);
+          .in("entity_id", eventIds); if (savedItemsErr) throw savedItemsErr;  // §119 (B33)
         for (const s of (savedItems ?? []) as any[]) savedEventIds.add(s.entity_id as string);
       }
-    } catch {
-      // non-fatal — isSaved defaults to false
+    } catch (err) {
+      req.log?.error({ err }, "list events: the viewer's saved events read failed — refusing"); sendError(res, "degraded_unavailable", EVENT_LIST_UNAVAILABLE); return;  // census-discovery §119 (DV-83 round 22, B33): never isSaved false on every card over a failed read
     }
   }
 
@@ -1399,7 +1399,7 @@ router.get("/events/city/:city", async (req, res) => {
     const [cityRsvpResult, cityWaitlistResult] = await Promise.all([
       sc.from("event_rsvps").select("event_id, status").eq("user_id", user.id).in("event_id", cityEventIds),
       sc.from("event_waitlist").select("event_id, position").eq("user_id", user.id).in("event_id", cityEventIds),
-    ]);
+    ]); if ((cityRsvpResult as any).error || (cityWaitlistResult as any).error) { req.log?.error({ err: (cityRsvpResult as any).error ?? (cityWaitlistResult as any).error }, "city events: the viewer's own RSVP or waitlist read failed — refusing"); sendError(res, "degraded_unavailable", EVENT_LIST_UNAVAILABLE); return; }  // §119 (B33)
     for (const r of ((cityRsvpResult as any).data as any[]) ?? []) {
       cityRsvpMap[(r as any).event_id as string] = (r as any).status as string;
     }
@@ -1502,7 +1502,7 @@ router.get("/events/nearby", async (req, res) => {
     const [nearbyRsvpResult, nearbyWaitlistResult] = await Promise.all([
       sc.from("event_rsvps").select("event_id, status").eq("user_id", user.id).in("event_id", nearbyEventIds),
       sc.from("event_waitlist").select("event_id, position").eq("user_id", user.id).in("event_id", nearbyEventIds),
-    ]);
+    ]); if ((nearbyRsvpResult as any).error || (nearbyWaitlistResult as any).error) { req.log?.error({ err: (nearbyRsvpResult as any).error ?? (nearbyWaitlistResult as any).error }, "nearby events: the viewer's own RSVP or waitlist read failed — refusing"); sendError(res, "degraded_unavailable", EVENT_LIST_UNAVAILABLE); return; }  // §119 (B33)
     for (const r of ((nearbyRsvpResult as any).data as any[]) ?? []) {
       nearbyRsvpMap[(r as any).event_id as string] = (r as any).status as string;
     }
@@ -1723,10 +1723,10 @@ router.get("/events/circles", async (req, res) => {
     .select("*")
     .in("circle_id", circleIds)
     .not("state", "in", '("cancelled","archived","draft")')
-    .order("starts_at", { ascending: true, nullsFirst: false })
+    .order("starts_at", { ascending: true, nullsFirst: false }).order("id", { ascending: true })  // census-discovery §119 (DV-83 round 22, sweep): a total order, so events that start together are paged, never skipped
     .limit(limit * 3); // over-fetch to allow for post-filter attrition
 
-  if (cursor) query = query.gt("starts_at", cursor);
+  if (cursor) query = eventsAfterCursor(query, cursor);  // §119: after (starts_at, id); an earlier server's cursor as before
 
   const { data: events, error } = await query;
   if (error) { req.log.error({ err: error }, "circle events"); sendError(res, "db_error", error.message); return; }
@@ -1768,16 +1768,16 @@ router.get("/events/circles", async (req, res) => {
     for (const r of (rsvps as any[]) ?? []) rsvpMap[(r as any).event_id as string] = (r as any).status as string;
   }
 
-  const nextCursor = filtered.length === limit
-    ? (filtered[filtered.length - 1].starts_at ?? null)
-    : null; const circleCountsUnread = await liveEventCounters(sc, filtered);  // census-discovery §117 (DV-83, sweep SW18): the cached counters recounted live; a failed read keeps them, named
+  const circlesPool = (events as any[]) ?? []; const circlesPoolCut = filtered.length < limit && circlesPool.length >= limit * 3; const nextCursor = filtered.length === limit  // census-discovery §119 (DV-83 round 22, B32): a full pool the filter emptied is not the end
+    ? eventsCursorOf(filtered[filtered.length - 1])
+    : circlesPoolCut ? eventsCursorOf(circlesPool[circlesPool.length - 1]) : null; const circleCountsUnread = await liveEventCounters(sc, filtered);  // census-discovery §117 (DV-83, sweep SW18): the cached counters recounted live; a failed read keeps them, named
 
   res.json({ ...countsUnreadKey(circleCountsUnread),
     events: filtered.map((e: any) => ({
       ...formatEvent(e, user.id, { hostProfile: hpMap[e.host_id as string] }),
       myRsvp: rsvpMap[e.id as string] ?? null,
     })),
-    cursor: nextCursor, ...(circlesCut ? { truncated: true as const } : {}),
+    cursor: nextCursor, ...(circlesCut || circlesPoolCut ? { truncated: true as const } : {}),  // §119 (B32)
   });
 });
 
@@ -2352,9 +2352,9 @@ router.get("/events/following", async (req, res) => {
     .select("*")
     .in("host_id", hostIds)
     .not("state", "in", '("cancelled","archived","draft")')
-    .order("starts_at", { ascending: true, nullsFirst: false })
+    .order("starts_at", { ascending: true, nullsFirst: false }).order("id", { ascending: true })  // census-discovery §119 (DV-83 round 22, sweep): a total order
     .limit(limit * 3);
-  if (cursor) query = query.gt("starts_at", cursor);
+  if (cursor) query = eventsAfterCursor(query, cursor);  // §119: after (starts_at, id); an earlier server's cursor as before
 
   const { data: events, error } = await query;
   if (error) { req.log.error({ err: error }, "following events"); sendError(res, "db_error", error.message); return; }
@@ -2385,14 +2385,14 @@ router.get("/events/following", async (req, res) => {
     for (const r of (rsvps as any[]) ?? []) rsvpMap[(r as any).event_id as string] = (r as any).status as string;
   }
 
-  const nextCursor = filtered.length === limit ? (filtered[filtered.length - 1].starts_at ?? null) : null; const followingCountsUnread = await liveEventCounters(sc, filtered);  // census-discovery §117 (DV-83, sweep SW18): the cached counters recounted live; a failed read keeps them, named
+  const followingPool = (events as any[]) ?? []; const followingPoolCut = filtered.length < limit && followingPool.length >= limit * 3; const nextCursor = filtered.length === limit ? eventsCursorOf(filtered[filtered.length - 1]) : followingPoolCut ? eventsCursorOf(followingPool[followingPool.length - 1]) : null; const followingCountsUnread = await liveEventCounters(sc, filtered);  // census-discovery §117 (DV-83, sweep SW18): the cached counters recounted live; a failed read keeps them, named
 
   res.json({ ...countsUnreadKey(followingCountsUnread),
     events: filtered.map((e: any) => ({
       ...formatEvent(e, user.id, { hostProfile: hpMap[e.host_id as string] }),
       myRsvp: rsvpMap[e.id as string] ?? null,
     })),
-    cursor: nextCursor, ...(followingCut ? { truncated: true as const } : {}),
+    cursor: nextCursor, ...(followingCut || followingPoolCut ? { truncated: true as const } : {}),  // census-discovery §119 (DV-83 round 22, B32): a full pool the filter emptied is not the end
   });
 });
 
@@ -7138,3 +7138,25 @@ function countsUnreadKey(unread: string[]): { failedSources?: string[] } {
 const EVENT_LIST_UNAVAILABLE = "We could not load these events right now. Please try again shortly.";
 /** Rows each event-search read gathers before it is a cut read (one more is asked for, so the cut is known). */
 const EVENTS_SEARCH_POOL = 500;
+
+// ── census-discovery §119 (DV-83 round 22, lane W11-X2; the round-21 verifier's B32, and sweep) ──────────────────────
+// GET /events/following and /circles page their pool by a cursor. It was the last event's `starts_at` alone, read back
+// with `starts_at > cursor`, so an event starting at the same instant as the last one served (events start on the
+// hour) was skipped by the next page, unsaid, and an undated event past the first page was never read (`null > x` is
+// not true). The pool is now ordered by `(starts_at, id)` (undated last, as before) and the cursor is that pair:
+// `<starts_at>|<id>`, or `|<id>` for an undated event. A cursor an earlier server answered (no `|`) is read as before.
+import { pgrstValue } from "../lib/pagedRead.js";  // appended at the foot so no cited line above moves; ESM hoists imports
+
+/** The cursor after this event: `<starts_at>|<id>`, `|<id>` when it has no start time. */
+function eventsCursorOf(ev: any): string | null {
+  return ev && typeof ev.id === "string" ? `${ev.starts_at ?? ""}|${ev.id}` : null;
+}
+
+/** Narrow an events read ordered by `(starts_at, id)`, undated last, to the events after `cursor`. */
+function eventsAfterCursor(q: any, cursor: string): any {
+  const bar = cursor.lastIndexOf("|");
+  if (bar < 0) return q.gt("starts_at", cursor);  // an earlier server's cursor: the start time alone, read as before
+  const ts = cursor.slice(0, bar); const id = pgrstValue(cursor.slice(bar + 1));
+  if (ts === "") return q.is("starts_at", null).gt("id", cursor.slice(bar + 1));  // past every dated event: the undated ones, by id
+  return q.or(`starts_at.gt.${pgrstValue(ts)},and(starts_at.eq.${pgrstValue(ts)},id.gt.${id}),starts_at.is.null`);
+}

@@ -44,6 +44,7 @@ function term(t: string): Pred | null {
     const ps = parts as Pred[];
     return m[1] === "and" ? (r) => ps.every((p) => p(r)) : (r) => ps.some((p) => p(r));
   }
+  const tn = /^([A-Za-z_][A-Za-z0-9_]*)\.is\.null$/.exec(t); if (tn) return (r) => r[tn[1]] === null || r[tn[1]] === undefined;  // census-discovery §119: `col.is.null`
   const t2 = /^([A-Za-z_][A-Za-z0-9_]*)\.(eq|neq|gt|gte|lt|lte)\.(.*)$/s.exec(t);
   if (!t2) return null;
   const [, col, op, raw] = t2;

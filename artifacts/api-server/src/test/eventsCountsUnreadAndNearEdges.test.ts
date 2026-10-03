@@ -9,7 +9,8 @@
  * `failedSources`; a healthy answer is byte-identical (no new key).
  *
  *   EV2   the rsvps read FAILS → the cached count (12), never 0; `failedSources: ["event_rsvps"]`
- *   EV2b  the same on GET /events/city/:city
+ *   EV2b  the same on GET /events/city/:city (each fails the live recount alone: §119 B33 refuses a failed own RSVP read)
+ *   EV2c  every event_rsvps read FAILS, the viewer's own too → 503 on both (census-discovery §119, B33)
  *   EV0c  CONTROL: the rsvps read answers 3 going → goingCount 3, the body keeps its keys
  *   EV0d  CONTROL: the same on GET /events/city/:city
  *
@@ -43,7 +44,7 @@ import { _setTestClient } from "../lib/http.js";
 import eventsRouter from "../routes/events.js";
 
 interface Row { [k: string]: unknown }
-type Tables = Record<string, { rows: Row[]; error?: { message: string } }>;
+type Tables = Record<string, { rows: Row[]; error?: { message: string }; /** census-discovery §119 (B33): fail only the reads that ask for a count (the live recount), not the viewer's own RSVP read */ countedOnly?: boolean }>;
 
 const VIEWER = "00000000-0000-0000-0002-0000000000e1";
 const HOST = "00000000-0000-0000-0001-0000000000e1";
@@ -73,9 +74,9 @@ function makeClient(tables: Tables) {
   function chain(name: string) {
     const spec = tables[name] ?? { rows: [] };
     let rows = [...spec.rows];
-    let limit: number | null = null;
+    let limit: number | null = null; let counted = false; const failing = () => Boolean(spec.error) && (!spec.countedOnly || counted);  // §119 (B33)
     const q: Record<string, unknown> & { then: (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) => Promise<unknown> } = {
-      select: () => q,
+      select: (_c?: string, o?: { count?: string }) => { counted = o?.count === "exact"; return q; },
       eq: (c: string, v: unknown) => { rows = rows.filter((r) => r[c] === v); return q; },
       neq: (c: string, v: unknown) => { rows = rows.filter((r) => r[c] !== v); return q; },
       in: (c: string, vs: unknown[]) => { rows = rows.filter((r) => vs.includes(r[c])); return q; },
@@ -89,9 +90,9 @@ function makeClient(tables: Tables) {
       limit: (n: number) => { limit = n; return q; },
       range: (a: number, b: number) => { rows = rows.slice(a, b + 1); return q; },
       insert: () => Promise.resolve({ data: null, error: null }),
-      maybeSingle: () => Promise.resolve(spec.error ? { data: null, error: spec.error } : { data: rows[0] ?? null, error: null }),
-      single: () => Promise.resolve(spec.error ? { data: null, error: spec.error } : { data: rows[0] ?? null, error: rows[0] ? null : { message: "No rows" } }),
-      then: (res, rej) => Promise.resolve(spec.error ? { data: null, error: spec.error } : { data: limit === null ? rows : rows.slice(0, limit), error: null }).then(res, rej),
+      maybeSingle: () => Promise.resolve(failing() ? { data: null, error: spec.error } : { data: rows[0] ?? null, error: null }),
+      single: () => Promise.resolve(failing() ? { data: null, error: spec.error } : { data: rows[0] ?? null, error: rows[0] ? null : { message: "No rows" } }),
+      then: (res, rej) => Promise.resolve(failing() ? { data: null, error: spec.error } : { data: limit === null ? rows : rows.slice(0, limit), error: null }).then(res, rej),
     };
     return q;
   }
@@ -113,7 +114,7 @@ function event(i: number, at: { lat: number; lng: number } | null, over: Row = {
   };
 }
 const FLAGS = { rows: [{ flag: "events_enabled", enabled: true }, { flag: "events_trust_gates_enabled", enabled: true }] };
-const RSVPS_FAIL = { rows: [], error: { message: "canceling statement due to statement timeout" } };
+const RSVPS_FAIL = { rows: [], error: { message: "canceling statement due to statement timeout" }, countedOnly: true }; const RSVPS_ALL_FAIL = { rows: [], error: RSVPS_FAIL.error };  // §119 (B33): the live recount fails; the viewer's own RSVP read failing too is a refusal (EV2c)
 
 let server: http.Server | null = null;
 afterEach(async () => { if (server) await new Promise<void>((r) => server!.close(() => r())); server = null; });
@@ -158,6 +159,12 @@ describe("census-discovery §116 (B14): a failed RSVP count is never served as a
     assert.equal(r.body.events?.[0]?.goingCount, 12, `a failed count read served as a measured value: ${r.seen}`);
     assert.deepEqual(r.body.failedSources, ["event_rsvps"], r.seen);
   });
+  for (const path of ["events?limit=50", "events/city/Lisbon"]) {
+    it(`EV2c ${path}: every event_rsvps read FAILS, the viewer's own RSVP read too → 503, never "not going" (§119, B33)`, async () => {
+      const r = await get({ events: { rows: [e0()] }, event_rsvps: RSVPS_ALL_FAIL }, path);
+      assert.equal(r.status, 503, `${path}: ${r.seen}`);
+    });
+  }
 });
 
 describe("census-discovery §116 (B18): GET /events' near filter keeps every event within the radius", () => {

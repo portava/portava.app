@@ -117,3 +117,6 @@ export function keysetBefore<Q>(q: Q, cols: readonly string[], after: Record<str
 export function keySortsBefore(row: Record<string, unknown>, after: Record<string, unknown>, cols: readonly string[]): boolean {
   return keyAfter(cols.map((c) => String(after[c] ?? "")), cols.map((c) => String(row[c] ?? "")));
 }
+
+/** census-discovery §119 (DV-83 round 22): the logic-tree quoting, for a caller that spells its own keyset (GET /events/following and /circles page by `(starts_at, id)` with undated events last). */
+export { pgrstValue };
