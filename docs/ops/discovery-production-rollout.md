@@ -105,16 +105,16 @@ SELECT public.input_normalize_city_key('Ǿresund') AS acute, public.input_normal
 
 ### 1.5 Batch P2 — the creator ledger (waits on W10D-B0, C-11 erasure retention)
 
-**2901 goes first, before any ledger row can exist,** because 2930's view and 3387's one-earning rule read `rent_buddy_earnings_entries`. 2901 as written carries the erasure defect of census §52.2 item 3: its `beneficiary_user_id … ON DELETE SET NULL` is an UPDATE on an append-only table, so erasing any buddy with an earning fails. So **P2 cannot start until W10D-B0 (C-11) is answered**, and the answer decides a fix migration for 2901:
+**2901 goes first, before any ledger row can exist,** because 2930's view and 3387's one-earning rule read `rent_buddy_earnings_entries`. 2901 as written carries the erasure defect of census §52.2 item 3: its `beneficiary_user_id … ON DELETE SET NULL` is an UPDATE on an append-only table, so erasing any buddy with an earning fails; and 3387's cascades delete a creator's ledger on erasure, i.e. answer C-11 by default. **Since census §107 (2026-09-30), `3510_creator_ledger_erasure_policy_undecided.sql` closes both without answering:** it makes 2901's key CASCADE and puts a row-level guard on all four ledgers that refuses every DELETE (SQLSTATE CL451) until the owner chooses, so P2 followed by 3510 imposes no erasure policy. W10D-B0 (C-11) then selects one of the two answers, both written, rehearsed and HELD in `reconciliation-staging/`:
 
 | C-11 answer | what must be written before P2 | then |
 |---|---|---|
-| **delete on erasure** (3387's current cascade) | one new migration after 2901 making `rent_buddy_earnings_entries`' beneficiary FK `ON DELETE CASCADE`, as 3387 does for `creator_earning_entries` | P2 as listed |
-| **retain, anonymised** | a migration replacing both CASCADEs (2901's and 3387's) with an erasure path that keeps the rows and removes the identity (an audited pseudonymisation through a SECURITY DEFINER door, not a SET NULL) | 3387 changes too; the harness rehearsal is re-run |
+| **delete on erasure** | `reconciliation-staging/3511_creator_ledger_erasure_delete_on_erasure.sql`: a ledger row is deleted only in its own beneficiary's erasure, as whole transactions (a counterparty's erasure is refused), through an audited SECURITY DEFINER door for the tombstone flow; service_role loses DELETE | promote it into the chain after 3510, with its rollback |
+| **retain, pseudonymised** (not anonymous: census §107.4) | `reconciliation-staging/3512_creator_ledger_erasure_retain_pseudonymised.sql`: rows are never deleted; an audited SECURITY DEFINER door replaces the person's id with one random pseudonym in every column of the four ledgers; a pseudonymised record is frozen | promote it into the chain after 3510, with its rollback |
 
 | step | file | production state | prerequisite |
 |---|---|---|---|
-| P2.1 | `2901_rent_buddy_earnings_entries.sql` + the C-11 fix | unapplied (snapshot: table absent) | W10D-B0 |
+| P2.1 | `2901_rent_buddy_earnings_entries.sql` (its SET NULL is replaced by 3510, after P2.8) | unapplied (snapshot: table absent) | W10D-A1 |
 | P2.2 | `2920_creator_attributions.sql` | unapplied (§47.1) | W10D-B0 |
 | P2.3 | `2921_creator_earning_entries.sql` | unapplied (§47.1) | P2.2 |
 | P2.4 | `2922_creator_attribution_flag.sql` | unapplied (flag absent) | — (flag FALSE) |
@@ -123,7 +123,7 @@ SELECT public.input_normalize_city_key('Ǿresund') AS acute, public.input_normal
 | P2.7 | `3386_creator_attribution_recommendation_link.sql` | unapplied | P2.2; 2891 |
 | P2.8 | `3387_creator_ledger_integrity_and_audit.sql` | unapplied | P2.1, P2.3, P2.7 |
 
-Every table in P2 ships empty, and `creator_attribution_enabled` (2922) stays FALSE. Turning it on needs C-1 (the published percentages) at the least. **Approval: W10D-B0, then W10D-A1 for the batch.**
+Every table in P2 ships empty, and `creator_attribution_enabled` (2922) stays FALSE. **P2.9 is `3510_creator_ledger_erasure_policy_undecided.sql`, applied in the same run right after P2.8** (it requires 3387's audit table); with it the batch decides nothing about erasure. Turning the flag on needs C-1 (the published percentages) at the least. **Approval: W10D-A1 for the batch (P2.1–P2.9); W10D-B0 only to promote 3511 or 3512.**
 
 ### 1.6 Batch P3 — optional, last or never
 

@@ -21,10 +21,27 @@ export const HAVE_DB = LOCAL_DB_URL !== "";
 
 export interface PsqlResult { status: number; stdout: string; stderr: string }
 
+let databaseUrlOverride: string | null = null;
+
+/**
+ * Point every call made by THIS test process at another database on the same
+ * server — a throwaway clone a suite created as an isolated fixture — or back
+ * at LOCAL_DB_URL with null. node:test runs each file in its own process, so
+ * the override never reaches another suite.
+ */
+export function useDatabase(url: string | null): void {
+  databaseUrlOverride = url;
+}
+
+/** The database the next call will reach. */
+export function currentDatabaseUrl(): string {
+  return databaseUrlOverride ?? LOCAL_DB_URL;
+}
+
 /** One psql invocation over stdin. `single` wraps the script in one transaction (-1). */
 export function psql(script: string, opts: { single?: boolean } = {}): PsqlResult {
   if (!HAVE_DB) throw new Error("localDb: LOCAL_DB_URL is not set");
-  const args = ["-X", "-q", "-v", "ON_ERROR_STOP=1", "-At", LOCAL_DB_URL];
+  const args = ["-X", "-q", "-v", "ON_ERROR_STOP=1", "-At", currentDatabaseUrl()];
   if (opts.single) args.splice(1, 0, "-1");
   const r = spawnSync("psql", args, { input: script, encoding: "utf8", timeout: 60_000 });
   return { status: r.status ?? -1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
@@ -117,5 +134,27 @@ export function deleteUser(id: string): void {
   exec(
     `SET LOCAL ROLE service_role;\nDELETE FROM public.trips WHERE owner_id = '${id}';\nDELETE FROM public.profiles WHERE id = '${id}';\nRESET ROLE;\nDELETE FROM auth.users WHERE id = '${id}';`,
     { single: true },
+  );
+}
+
+/**
+ * SQL that removes a suite's OWN synthetic creator-ledger rows, for an after()
+ * hook on the throwaway harness. 3510 refuses every DELETE of a ledger row while
+ * C-11 is undecided — that refusal is what it is for — so cleanup switches
+ * session_replication_role to `replica` for these statements: superuser-only
+ * (Supabase's service_role cannot), and it also skips FK cascades, so children
+ * are deleted first and `origin` is restored before anything else runs.
+ */
+export function creatorLedgerPurgeSql(beneficiaryIds: readonly string[], bookingIds: readonly string[] = []): string {
+  const ids = (xs: readonly string[]) => (xs.length ? xs : ["00000000-0000-0000-0000-000000000000"]).map((x) => `'${x}'`).join(",");
+  const who = ids(beneficiaryIds);
+  const atts = `(SELECT id FROM public.creator_attributions WHERE beneficiary_user_id IN (${who}))`;
+  return (
+    "SET session_replication_role = replica; " +
+    `DELETE FROM public.creator_ledger_audit_events WHERE attribution_id IN ${atts} OR resulting_attribution_id IN ${atts}; ` +
+    `DELETE FROM public.creator_earning_entries WHERE attribution_id IN ${atts} OR beneficiary_user_id IN (${who}); ` +
+    `DELETE FROM public.creator_attributions WHERE beneficiary_user_id IN (${who}); ` +
+    `DELETE FROM public.rent_buddy_earnings_entries WHERE beneficiary_user_id IN (${who}) OR booking_id IN (${ids(bookingIds)}); ` +
+    "SET session_replication_role = origin;"
   );
 }

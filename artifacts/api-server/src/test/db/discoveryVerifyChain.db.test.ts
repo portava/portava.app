@@ -55,7 +55,7 @@ import { createServer, type Server } from "node:http";
 import { randomUUID } from "node:crypto";
 import express from "express";
 import pino from "pino";
-import { HAVE_DB, exec, rows, scalar, seedUser } from "./localDb.js";
+import { HAVE_DB, creatorLedgerPurgeSql, exec, rows, scalar, seedUser } from "./localDb.js";
 import { bridge, lit, type Bridge } from "./discoveryVerifyBridge.js";
 import { _setTestClient } from "../../lib/http.js";
 import { _setTestServiceClient } from "../../lib/supabase.js";
@@ -195,7 +195,7 @@ describe("DC-26 — recommendation → behaviour → attribution, across lanes, 
     _setTestServiceClient(null as any);
     const u = users.map(lit).join(",");
     exec(
-      `DELETE FROM public.creator_attributions WHERE beneficiary_user_id IN (${u});\n` +
+      `${creatorLedgerPurgeSql(users)}\n` +
       `DELETE FROM public.rank_events WHERE user_id IN (${u});\n` +
       `DELETE FROM public.recommendations WHERE user_id IN (${u}) OR item_ids && ARRAY[${placeIds.map((p) => lit(`db/${p}`)).join(",")}]::text[];\n` +
       `DELETE FROM public.creator_rule_versions WHERE rule_version = ${lit(RULE_VERSION)};\n` +
