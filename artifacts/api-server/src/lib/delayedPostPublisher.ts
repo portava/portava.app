@@ -18,7 +18,7 @@
 import { getServiceClient, isServiceClientReady } from "./supabase.js";
 import { logger as rootLogger } from "./logger.js";
 import { sendPushWithRetry } from "./pushWithRetry.js";
-import { ensurePlaceDay, isEligiblePlaceDayPost } from "./places/placeDays.js";
+import { ensurePlaceDay, isEligiblePlaceDayPost } from "./places/placeDays.js"; import { resolveAccountRestriction } from "./accountStateGate.js"; // same line: cited by line
 
 const logger = rootLogger.child({ job: "DelayedPostPublisher" });
 
@@ -198,6 +198,22 @@ export async function runDelayedPostPublisher(opts?: { client?: any }): Promise<
 
   for (const post of eligible) {
     try {
+      // HOLD a banned or suspended author's post. This job publishes on the
+      // author's behalf, so a restriction must stop it exactly as the gate stops
+      // the author's own request (lib/accountStateGate.ts — the same read). The
+      // post stays pending and publishes on a later tick once the restriction
+      // expires or is lifted. An UNREADABLE state holds too, retried next tick:
+      // publishing on an unread ban is the failure this read exists to prevent.
+      // Logged, not written as an event row: a ban can last indefinitely and
+      // this runs every tick.
+      const authorState = await resolveAccountRestriction(db, post.author_id);
+      if (authorState.state === "unavailable" || authorState.restriction.kind !== "none") {
+        const reason = authorState.state === "unavailable" ? "account_state_unavailable" : `account_${authorState.restriction.kind}`;
+        logger.warn({ postId: post.id, reason }, "delayedPostPublisher: holding — author restricted, or account state unreadable");
+        skipped++;
+        continue;
+      }
+
       // Hold post if user has active Safe Return
       const held = await hasActiveSafeReturn(db, post.author_id);
       if (held) {
