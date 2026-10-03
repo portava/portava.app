@@ -61,6 +61,12 @@
  *   R5  an unsend behind an uncommitted hard DELETE of the row: 'not_found',
  *       and the row is not resurrected. This is the `IF NOT FOUND` branch,
  *       which is reachable ONLY under contention.
+ *   R6  all of the above are READ COMMITTED's guarantees. 3000 does not assert
+ *       its isolation level the way 3415's `trail_propose` does, and at
+ *       REPEATABLE READ a losing unsend raises SQLSTATE 40001 instead of
+ *       answering 'already_unsent'. The row is still written exactly once, so
+ *       this is noise and not corruption — but it is a constraint on the route,
+ *       and before this file nothing recorded it.
  *
  * HOW "EXACTLY ONE WRITE" IS ESTABLISHED FROM RESULTING STATE
  * ==========================================================
@@ -703,4 +709,78 @@ describe(`3000 / ${FN} — two connections in real contention`, { skip: SKIP }, 
       "not_found is returned before the roster is counted, and must not invent a number",
     );
   });
+  it("R6. the guarantees above are READ COMMITTED's: at a stricter level the loser ERRORS rather than refusing", async () => {
+    const id = seedMessage("r6 isolation level");
+
+    // ── First: the function does NOT assert its own isolation level ────────────
+    // 3415's `trail_propose` does, and this directory's trailsProposalRace P4
+    // pins that refusal ("requires READ COMMITTED"). 2325 and 3000 do not. So a
+    // caller CAN enter at a stricter level, and what happens then is worth a
+    // sentence in a file about concurrency rather than a surprise during a
+    // rollout. Measured, on an uncontended call: it simply succeeds.
+    const uncontended = seedMessage("r6 uncontended at serializable");
+    for (const level of ["REPEATABLE READ", "SERIALIZABLE"]) {
+      const s = session(app("r6_iso"));
+      const r = await s.finish(
+        `BEGIN ISOLATION LEVEL ${level};\nSET LOCAL ROLE service_role;\n${call(uncontended)}\nROLLBACK;`,
+      );
+      assert.equal(
+        r.status,
+        0,
+        `${level} is accepted, not refused — recorded so that a later migration ADDING an ` +
+          `isolation assertion is a deliberate change to this expectation, not a silent one:\n${r.stderr}`,
+      );
+      open.length = 0;
+    }
+
+    // ── Then: under CONTENTION, a stricter level changes the loser's fate ──────
+    const winner = session(app("r6_win"));
+    winner.send(`BEGIN;\nSET LOCAL ROLE service_role;\n${call(id)}`);
+    const held = await holdingLocks(app("r6_win"));
+
+    const loser = session(app("r6_lose"));
+    const pending = loser.finish(
+      `\\set VERBOSITY verbose\nBEGIN ISOLATION LEVEL REPEATABLE READ;\n` +
+        `SET LOCAL ROLE service_role;\n${call(id)}\nCOMMIT;`,
+    );
+    await blockedBehind(app("r6_lose"), held.pid, FN);
+
+    await winner.finish("COMMIT;");
+    const result = await pending;
+
+    // ── resulting state: ONE write, by the winner, exactly as at READ COMMITTED ─
+    const row = messageRow(id);
+    assert.ok(row.unsent_at, "the winner's unsend landed");
+    assert.equal(row.lifecycle_state, "unsent");
+    assert.equal(
+      row.xmin,
+      held.xid,
+      "the erroring loser must write NOTHING. This is the half that matters: at either isolation " +
+        "level the row is written once, so a stricter caller is noisy, never wrong",
+    );
+
+    // ── and the loser's fate, which is an ERROR and not a refusal ──────────────
+    assert.notEqual(
+      result.status,
+      0,
+      "at REPEATABLE READ the loser cannot re-read the row the winner rewrote, so the FOR UPDATE " +
+        "raises instead of returning 'already_unsent'",
+    );
+    assert.match(
+      result.stderr,
+      /ERROR:\s+40001:\s+could not serialize access due to concurrent update/,
+      `expected SQLSTATE 40001 from the message FOR UPDATE; psql said:\n${result.stderr}`,
+    );
+
+    // WHAT THIS MEANS FOR THE ROUTE, said here because nothing else says it:
+    // 40001 is retryable and the API's service client runs at the default READ
+    // COMMITTED, so this is not a live hazard today. It is a CONSTRAINT: the
+    // idempotent 'already_unsent' answer the command route maps to
+    // TELEGRAPH_LIFECYCLE_ALREADY_UNSENT exists only at READ COMMITTED. A route
+    // that one day opens its transaction at a stricter level would turn a
+    // refusal into a 500 unless it retries. Pinned, not fixed — adding an
+    // isolation assertion to the function is a migration, and this file's job is
+    // to record what the function does, not to decide that.
+  });
+
 });
