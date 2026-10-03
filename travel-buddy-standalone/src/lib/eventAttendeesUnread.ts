@@ -52,7 +52,7 @@ export function goingCountUnread(e: EventAttendeeMarks | null | undefined): bool
  * known. An unread list is `attendeesUnread`'s, not a slice.
  */
 export function attendeesListCut(e: EventAttendeeMarks | null | undefined): { cut: boolean; total: number | null } {
-  if (!e || attendeesUnread(e)) return { cut: false, total: null };
+  if (!e || goingListUnread(e)) return { cut: false, total: null };  // census-discovery §119 (B29): only the going list's own failure steps aside
   const listed = Array.isArray(e.goingAttendees) ? e.goingAttendees.length : 0;
   const total = typeof e.goingAttendeesTotal === 'number' ? e.goingAttendeesTotal
     : typeof e.counts?.going === 'number' ? e.counts.going : null;
@@ -70,4 +70,20 @@ export function attendeesCutText(e: EventAttendeeMarks | null | undefined): stri
 /** The waitlist count could not be read live: the route served the cached `waitlistCount` and named `event_waitlist`. */
 export function waitlistCountUnread(e: EventReadMarks | null | undefined): boolean {
   return named(e, 'event_waitlist');
+}
+
+// ── census-discovery §119 (DV-83 round 22, lane W11-X2; the round-21 verifier's B29) ──────────────────────────────────
+
+/**
+ * The going list ITSELF could not be read, so whether it is a slice is not known: the going/maybe read failed (the
+ * route served the cached count, `goingCountUnread`), or nobody is listed beside a failed profiles read although
+ * travellers are going or the going count is unknown. Another read named beside a list that arrived (the full RSVP
+ * count's `event_rsvps`, the host's `profiles`) is not the list's: the route's slice mark still holds.
+ */
+export function goingListUnread(e: EventAttendeeMarks | null | undefined): boolean {
+  if (!e) return false;
+  if (goingCountUnread(e)) return true;
+  const listed = Array.isArray(e.goingAttendees) ? e.goingAttendees.length : 0;
+  const going = e.counts?.going;
+  return listed === 0 && named(e, 'profiles') && !(typeof going === 'number' && going === 0);
 }
