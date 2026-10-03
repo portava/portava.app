@@ -3406,13 +3406,13 @@ router.post("/discovery/community/:placeId/save", async (req, res) => {
       .from("discovery_place_saves")
       .upsert({ user_id: user.id, place_id: placeId }, { onConflict: "user_id,place_id" });
     if (upsertErr) { res.json({ ok: false, reason: "unavailable" }); return; }
-    if (!existingSave) {
-      // First save by this user — bump the aggregate. (Two truly-concurrent
-      // first saves can still race to +1 each, a bounded, benign over-count
-      // versus the previous unbounded self-inflation.)
+    const measured = await communitySaversCount(sc, placeId); if (!measured.ok) { res.json({ ok: false, reason: "unavailable" }); return; } if (!existingSave || measured.count !== null) {  // census-discovery §119 (DV-83 round 22, sweep): every save writes the measured number of savers
+      // A first save bumps the aggregate; a repeat writes it only as measured,
+      // which repairs a count whose write was lost after the save row committed
+      // (the retry used to find the save and never write it).
       const { error: updateErr } = await sc
         .from("discovery_places")
-        .update({ saved_count: ((place as any).saved_count ?? 0) + 1 })
+        .update({ saved_count: measured.count ?? ((place as any).saved_count ?? 0) + 1 })  // §119: snapshot + 1 only where the server answers no count (one saver per account either way)
         .eq("id", placeId);
       if (updateErr) { res.json({ ok: false, reason: "unavailable" }); return; }
     }
@@ -4723,4 +4723,12 @@ const DISCOVERY_COMPASS_GATE_SOURCE = "compass_flags";
 
 function compassGateRefusal() {
   return discoveryRefusal("transient_db", "compass_gate_unreadable", "GET /discovery", "nothing", [DISCOVERY_COMPASS_GATE_SOURCE]);
+}
+
+// ── census-discovery §119 (DV-83 round 22, lane W11-X2; sweep of D-W11X2-172's saved_count class) ────────────────────
+/** How many travellers have saved community place `placeId`: `count` null when the server answers no count; `ok` false when the read failed. */
+async function communitySaversCount(sc: NonNullable<ReturnType<typeof getServiceClient>>, placeId: string): Promise<{ ok: boolean; count: number | null }> {
+  const { count, error } = await sc.from("discovery_place_saves").select("place_id", { count: "exact", head: true }).eq("place_id", placeId);
+  if (error) return { ok: false, count: null };
+  return { ok: true, count: typeof count === "number" ? count : null };
 }
