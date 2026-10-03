@@ -460,6 +460,16 @@ run_check "check:telegraph-inventory" pnpm run check:telegraph-inventory
 # docs/discovery/query-paths.md carries them; this fails when a migration creates
 # a Discovery table or index with no registry row there, or a row goes stale.
 run_check "check:discovery-query-paths" pnpm run check:discovery-query-paths
+# check:scheduler-coverage — `lib/schedulerCoverage.ts` is the denominator
+# GET /healthz/schedulers reports its own scope from: how many schedulers
+# index.ts starts, how many the endpoint reports, how many write a durable
+# job_health row, and how many leave no trace at all. A denominator nobody
+# checks drifts, and a drifted one is what makes a partial aggregate read as a
+# complete one. This fails when a scheduler is started with no row, when a row
+# outlives its scheduler, when a row claims reporting the code does not do, or
+# when a new job_health writer goes unrecorded.
+run_check "check:scheduler-coverage" pnpm run check:scheduler-coverage
+
 run_gate  "check:rank-events-surfaces" pnpm run check:rank-events-surfaces
 
 echo ""

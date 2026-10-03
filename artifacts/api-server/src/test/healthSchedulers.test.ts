@@ -39,6 +39,7 @@
  */
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
+import { schedulerCoverage } from "../lib/schedulerCoverage.js";
 import http from "node:http";
 import { readFileSync } from "node:fs";
 import express, { type Express } from "express";
@@ -161,6 +162,54 @@ describe("the aggregate covers every job — vacuity is failure", () => {
     assert.equal(jobs.length, EXPECTED_JOBS.length);
     assert.deepEqual(jobs.map((j) => j.job).sort(), EXPECTED_JOBS);
     assert.equal(r.body.jobCount, EXPECTED_JOBS.length);
+  });
+});
+
+/**
+ * THE SCOPE OF THE VERDICT. The aggregate above is honest about the jobs it can
+ * see, and that was the whole defect one level up: it could not say how many it
+ * could not see. `index.ts` starts 58 schedulers; this endpoint reports 11.
+ * "overall: healthy" over 11 reads exactly like "overall: healthy" over 58.
+ */
+describe("the body says what it is NOT looking at", () => {
+  it("states the denominator next to the verdict, and names the jobs it cannot see", async () => {
+    const r = await get(base, PATH);
+    assert.equal(r.status, 200);
+    const cov = schedulerCoverage();
+
+    assert.equal(
+      r.body.reportsOn,
+      `${EXPECTED_JOBS.length} of ${cov.started} schedulers this process starts`,
+      "an operator reading only the first two fields must learn the scope",
+    );
+    assert.equal(r.body.coverage.started, cov.started);
+    assert.equal(r.body.coverage.reported, cov.reported);
+    assert.equal(r.body.coverage.persisted, cov.persisted);
+    assert.equal(r.body.coverage.unobservableCount, cov.unobservable.length);
+    assert.deepEqual(r.body.coverage.unobservable, cov.unobservable, "named, not just counted");
+
+    // The numbers must be a real gap, not a formality: if reported ever equals
+    // started this assertion is the thing that tells us to delete the field.
+    assert.ok(
+      r.body.coverage.unobservableCount > 0,
+      "if nothing is unobservable any more, this disclosure has done its job and should go",
+    );
+    assert.ok(
+      r.body.coverage.persisted <= r.body.coverage.started,
+      "durable health cannot cover more jobs than are started",
+    );
+  });
+
+  /**
+   * A disclosure, not an alarm. A probe that answers 503 forever gets muted,
+   * which is the same reasoning that keeps `never_ran` at 200 — and muting this
+   * probe would lose the failing/stale signals that DO need acting on.
+   */
+  it("46 unobservable jobs does not by itself make the endpoint 503", async () => {
+    const r = await get(base, PATH);
+    assert.ok(r.body.coverage.unobservableCount > 0, "there is a gap to disclose");
+    assert.equal(r.status, 200, "a standing property of the deployment is not an incident");
+    assert.notEqual(r.body.overall, "failing");
   });
 });
 
