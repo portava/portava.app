@@ -866,7 +866,7 @@ function TripDetailScreen() {
       <LayoverModeSheet
         visible={layoverOpen}
         onClose={() => setLayoverOpen(false)}
-        initialCity={trip.destinationCity ?? undefined}
+        initialCity={trip.destinationCity ?? undefined} tripId={trip.id} /* census-layover L267: started here = linked here */
       />
 
       {/* Meetup creation — triggered from availability grid "Plan meetup this day" */}

@@ -180,3 +180,44 @@ test('a bundle without certification instants is refused rather than half-stored
   );
   assert.equal(await readCachedPlan('sess-1'), null);
 });
+
+// ── §16 L154 — the crew meeting point survives the network dying (§48) ───────
+//
+// WHAT WOULD TURN THIS RED. The server now puts the traveller's own crew
+// meeting point on the bundle, but the cache stored only the plan, the airport
+// and the area — so the one crew fact worth having offline was dropped at the
+// moment it mattered. And each "no" must survive too: a crew read that FAILED
+// (`crew_unreadable`) re-read as "nothing saved" is the failed-read-as-empty
+// defect, offline, where it cannot be checked.
+
+test('L154: a cached crew meeting point reads back verbatim', async () => {
+  const b = bundle({ crewMeetingPoint: { available: true, value: 'Gate D4 Starbucks', reason: null } });
+  assert.equal(await cacheCertifiedPlan('sess-1', b, ENVELOPE, SCHEDULE), true);
+  const rec = await readCachedPlan('sess-1');
+  assert.deepEqual(rec?.crewMeetingPoint, { available: true, value: 'Gate D4 Starbucks', reason: null });
+});
+
+test('L154: the server’s reason for no meeting point is kept, not flattened to "nothing"', async () => {
+  const b = bundle({ crewMeetingPoint: { available: false, value: null, reason: 'crew_unreadable' as never } });
+  assert.equal(await cacheCertifiedPlan('sess-1', b, ENVELOPE, SCHEDULE), true);
+  const rec = await readCachedPlan('sess-1');
+  assert.deepEqual(rec?.crewMeetingPoint, { available: false, value: null, reason: 'crew_unreadable' });
+});
+
+test('L154: an available point with a blank label is stored as no label', async () => {
+  const b = bundle({ crewMeetingPoint: { available: true, value: '   ', reason: null } });
+  assert.equal(await cacheCertifiedPlan('sess-1', b, ENVELOPE, SCHEDULE), true);
+  const rec = await readCachedPlan('sess-1');
+  assert.equal(rec?.crewMeetingPoint?.available, false);
+  assert.equal(rec?.crewMeetingPoint?.value, null);
+});
+
+test('L154: a record written before the field existed reads with the point ABSENT, not invented', async () => {
+  assert.equal(await cacheCertifiedPlan('sess-1', bundle(), ENVELOPE, SCHEDULE), true);
+  const raw = JSON.parse((await AsyncStorage.getItem(cachedPlanKey('sess-1')))!);
+  delete raw.crewMeetingPoint;
+  await AsyncStorage.setItem(cachedPlanKey('sess-1'), JSON.stringify(raw));
+  const rec = await readCachedPlan('sess-1');
+  assert.ok(rec, 'the rest of an older record is still served');
+  assert.equal(rec.crewMeetingPoint, null);
+});
