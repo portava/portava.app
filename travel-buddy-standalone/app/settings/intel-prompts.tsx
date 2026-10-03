@@ -17,12 +17,13 @@ import {
   SettingsDivider,
   ToggleRow,
   SettingsRow,
+  FieldHint,
 } from '../../src/components/settings/SettingsUI';
 import { PP } from '../../src/theme/passportTokens';
 import { useIntelPrompts } from '../../src/hooks/useIntelPrompts';
 import { VENUE_CATEGORIES, VENUE_LABELS } from '../../src/lib/intel/contracts';
 import { isCategoryPaused } from '../../src/lib/intel/promptPauseStorage';
-import { getIntelConsent, setIntelConsent, hasValidConsent, type IntelConsentState } from '../../src/services/intelConsent';
+import { readIntelConsent, setIntelConsent, hasValidConsent, type IntelConsentRead, type IntelConsentState } from '../../src/services/intelConsent';
 import { disclosureFor, needsReconsent } from '../../src/lib/sensing/consentDisclosure';
 import {
   ACOUSTIC_PERMISSION_DENIED,
@@ -49,12 +50,26 @@ export default function IntelPromptsSettingsScreen() {
 
   // D4 Intelligence Contributions consent — a persistent, separate control. The
   // server is authoritative; this row reflects and updates that state.
-  const [consent, setConsent] = React.useState<IntelConsentState | null | undefined>(undefined);
+  //
+  // An UNREADABLE consent is shown as one, with a retry, and the switch is
+  // disabled. It used to read as `null` — rendered "Off", with copy telling the
+  // person to UPDATE THE APP (no version → no words), and a live switch whose
+  // "on" re-stamped a consent they may already have given.
+  const [consentRead, setConsentRead] = React.useState<IntelConsentRead | undefined>(undefined);
+  const [consentAttempt, setConsentAttempt] = React.useState(0);
+  // A toggle whose write was refused stays where it was AND says so; before, the
+  // switch snapped back with no word about why.
+  const [consentWriteFailed, setConsentWriteFailed] = React.useState(false);
   React.useEffect(() => {
     let alive = true;
-    getIntelConsent().then((s) => { if (alive) setConsent(s); }).catch(() => { if (alive) setConsent(null); });
+    setConsentRead(undefined);
+    readIntelConsent()
+      .then((r) => { if (alive) setConsentRead(r); })
+      .catch(() => { if (alive) setConsentRead({ status: 'unreadable', reason: 'network' }); });
     return () => { alive = false; };
-  }, []);
+  }, [consentAttempt]);
+  const consent: IntelConsentState | undefined = consentRead?.status === 'ok' ? consentRead.state : undefined;
+  const consentUnreadable = consentRead?.status === 'unreadable';
   const consentOn = hasValidConsent(consent);
   // The words shown are the words of a VERSION: what the person agreed to when
   // on, what a grant would record when off. A version this build has no text
@@ -63,8 +78,10 @@ export default function IntelPromptsSettingsScreen() {
   const offered = disclosureFor(consent?.currentDisclosureVersion);
   const reconsent = needsReconsent(consent);
   const toggleConsent = React.useCallback(async (v: boolean) => {
+    setConsentWriteFailed(false);
     const next = await setIntelConsent(v, v ? offered?.version : undefined);
-    if (next) setConsent(next);
+    if (next) setConsentRead({ status: 'ok', state: next });
+    else setConsentWriteFailed(true);
   }, [offered]);
 
   // §4.1's SEPARATE acoustic permission. Not the call/video microphone: its own
@@ -91,7 +108,9 @@ export default function IntelPromptsSettingsScreen() {
         <ToggleRow
           title="Contribute to live place intelligence"
           subtitle={
-            consentOn
+            consentUnreadable
+              ? "Couldn't load this setting, so it can't be changed right now. Your choice hasn't been changed."
+              : consentOn
               ? `On — ${recorded?.summary ?? offered?.summary ?? 'your signals count toward aggregated intelligence.'}${
                   reconsent ? ' The terms have changed since you agreed; turn this off and on again to review them.' : ''
                 }`
@@ -102,7 +121,20 @@ export default function IntelPromptsSettingsScreen() {
           value={consentOn}
           onValueChange={toggleConsent}
           disabled={consent === undefined || (!consentOn && !offered)}
+          switchTestID="intel-consent-switch"
         />
+        {consentUnreadable ? (
+          <SettingsRow
+            title="Try again"
+            subtitle={consentRead?.status === 'unreadable' && consentRead.reason === 'not_configured' ? 'This build is not connected to Portava.' : undefined}
+            onPress={() => setConsentAttempt((n) => n + 1)}
+            chevron={false}
+            testID="intel-consent-retry"
+          />
+        ) : null}
+        {consentWriteFailed ? (
+          <FieldHint tone="error">Couldn&apos;t save that change — your setting is unchanged. Please try again.</FieldHint>
+        ) : null}
       </SettingsSection>
 
       {/*

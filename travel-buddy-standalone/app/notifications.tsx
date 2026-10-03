@@ -28,7 +28,7 @@ import { markNotificationsRead } from '../src/services/messaging';
 import type { AppNotification, NotificationCategory } from '../src/services/notifications';
 import { freshToken } from '../src/services/apiToken';
 import { useRequests } from '../src/hooks/useRequests';
-import { acceptRequest, declineRequest } from '../src/services/requests';
+import { acceptRequest, declineRequest } from '../src/services/requests'; import { ageRefusalPresentation } from '../src/lib/ageRefusal'; // one line: this file is cited by line
 import type { InboxItem } from '../src/services/requests';
 import { useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
 import { NavBarFiller } from '../src/hooks/useNavBarCollapse';
@@ -432,22 +432,24 @@ function SocialRequestsPane({
       onReload();
       return;
     }
-    if (res.reason === 'dob_missing') {
+    // census-trust §31 (TV-5b). The age branch used to test
+    // `res.reason === 'age_not_eligible'` — but that is the ERROR code; the
+    // reason is `below_min_age`, `above_max_age`, `not_verified_adult` or
+    // `dob_missing`. So every age refusal but dob_missing landed in an alert
+    // titled "Error", and the verified-minor refusal was never named.
+    const age = ageRefusalPresentation(res.reason, res.message, 'circle');
+    if (age) {
+      const action = age.action;
       Alert.alert(
-        'Date of birth required',
-        'This circle requires age verification. Add your date of birth to your profile to join.',
-        [
-          { text: 'Not now', style: 'cancel' },
-          {
-            text: 'Go to profile',
-            onPress: () => router.push('/profile/edit' as any),
-          },
-        ],
+        age.title,
+        age.body,
+        action
+          ? [
+              { text: 'Not now', style: 'cancel' },
+              { text: action.label, onPress: () => router.push(action.route as any) },
+            ]
+          : undefined,
       );
-      return;
-    }
-    if (res.reason === 'age_not_eligible') {
-      Alert.alert('Age limit', res.message ?? 'You do not meet the age requirement for this circle.');
       return;
     }
     Alert.alert('Error', res.message ?? 'Could not accept request.');

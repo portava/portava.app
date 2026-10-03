@@ -30,6 +30,7 @@ import {
   type ConfirmStance,
 } from '../../src/lib/intel/contracts';
 import { claimTypeLabel, formatClaimValue } from '../../src/lib/intel/display';
+import { intelWriteErrorCopy } from '../../src/lib/intel/captureErrors';
 
 export default function MomentScreen() {
   const params = useLocalSearchParams<{
@@ -49,6 +50,12 @@ export default function MomentScreen() {
   // Author lifecycle
   const [claimId, setClaimId] = useState<string | null>(typeof params.claimId === 'string' ? params.claimId : null);
   const [approved, setApproved] = useState(false);
+  // APPROVAL IS THE ADMIN TRUST GATE (routes/intel.ts handleApproveClaim →
+  // requireAdmin). A traveller who presses it gets 403 `forbidden`, which this
+  // screen used to answer "Could not approve — try again": a retry that can never
+  // succeed, on a step the screen said was theirs to take. The claim IS proposed;
+  // what it waits for is a reviewer, and the screen now says so.
+  const [inReview, setInReview] = useState(false);
   const [busy, setBusy] = useState<null | 'propose' | 'approve'>(null);
   const [authorError, setAuthorError] = useState<string | null>(null);
 
@@ -59,7 +66,7 @@ export default function MomentScreen() {
     const res = await proposeClaim(observationId);
     setBusy(null);
     if (res.ok && res.claim?.id) setClaimId(res.claim.id);
-    else setAuthorError(res.code === 'feature_disabled' ? 'Capture is turned off.' : 'Could not propose — try again.');
+    else setAuthorError(intelWriteErrorCopy(res, 'propose').message);
   }, [observationId]);
 
   const approve = useCallback(async () => {
@@ -69,7 +76,8 @@ export default function MomentScreen() {
     const res = await approveClaim(observationId, claimId);
     setBusy(null);
     if (res.ok) setApproved(true);
-    else setAuthorError(res.code === 'feature_disabled' ? 'Capture is turned off.' : 'Could not approve — try again.');
+    else if (res.code === 'forbidden') setInReview(true);
+    else setAuthorError(intelWriteErrorCopy(res, 'submit').message);
   }, [observationId, claimId]);
 
   const canActOnClaim = !!claimId && (approved || !observationId); // active claim available
@@ -106,10 +114,18 @@ export default function MomentScreen() {
 
             <StepRow
               index={2}
-              title="Approve & make it live"
-              state={approved ? 'done' : busy === 'approve' ? 'busy' : claimId ? 'todo' : 'blocked'}
+              title={inReview ? 'Waiting for a reviewer' : 'Approve & make it live'}
+              state={approved ? 'done' : inReview ? 'blocked' : busy === 'approve' ? 'busy' : claimId ? 'todo' : 'blocked'}
             />
-            {claimId && !approved ? (
+            {inReview ? (
+              <View style={styles.reviewBanner} testID="intel-moment-in-review">
+                <Text style={styles.reviewBannerText}>
+                  Proposed. A Portava reviewer makes Moments live — you don’t need to do anything else. Your report
+                  already counts toward this place’s live picture.
+                </Text>
+              </View>
+            ) : null}
+            {claimId && !approved && !inReview ? (
               <TravelButton label="Approve & publish" variant="primary" icon={<Check size={16} color={color.onInk} />} onPress={approve} />
             ) : null}
 
@@ -172,7 +188,7 @@ function ConfirmSection({ claimId }: { claimId: string }) {
       const res = await confirmClaim(claimId, stance);
       setBusy(null);
       if (res.ok) setSelected(stance);
-      else setError(res.code === 'feature_disabled' ? 'Capture is turned off.' : 'Could not record — try again.');
+      else setError(intelWriteErrorCopy(res, 'record').message);
     },
     [claimId],
   );
@@ -213,7 +229,7 @@ function CorrectionSection({ claimId, subjectId, claimType }: { claimId: string;
       const res = await correctClaim(claimId, { subjectId, claimType, value });
       setBusyOption(null);
       if (res.ok) setCorrected(option);
-      else setError(res.code === 'feature_disabled' ? 'Capture is turned off.' : 'Could not submit — try again.');
+      else setError(intelWriteErrorCopy(res, 'submit').message);
     },
     [claimId, subjectId, claimType],
   );
@@ -289,6 +305,8 @@ const styles = StyleSheet.create({
     backgroundColor: color.success + '14',
   },
   doneBannerText: { ...typography.caption, color: color.success, flexShrink: 1 },
+  reviewBanner: { padding: space.md, borderRadius: radius.sm, backgroundColor: color.haze },
+  reviewBannerText: { ...typography.caption, color: color.ink, lineHeight: 19 },
   confirmedNote: { ...typography.caption, color: color.success },
   plannedNote: { ...typography.caption, color: color.faint, fontStyle: 'italic' },
   errorRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },

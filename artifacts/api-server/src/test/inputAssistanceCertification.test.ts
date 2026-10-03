@@ -822,6 +822,23 @@ describe("§44 telemetry ingest — the serve log the client had no destination 
     assert.ok(!("label" in row.props), "a label must never survive the rebuild");
   });
 
+  it("G373: `degraded: true` on suggestion_request_completed SURVIVES the rebuild; a non-boolean does not", () => {
+    const policy = resolvePolicy("city_picker")!;
+    const rebuild = (degraded: unknown) => rebuildTelemetryEvent(
+      { name: "suggestion_request_completed", context: "city_picker", fieldId: "trip.city", at: Date.now(), props: { count: 3, degraded } },
+      "sess-abc", policy, POLICY_VERSION, Date.now(),
+    );
+    const ok = rebuild(true);
+    assert.equal(ok.ok, true);
+    // MUTATION: without `degraded: 'bool'` in TELEMETRY_EVENT_PROPS this is
+    // undefined, and the stored row cannot be told from an online serve.
+    assert.equal((ok as { row: { props: Record<string, unknown> } }).row.props["degraded"], true);
+    assert.equal((ok as { row: { props: Record<string, unknown> } }).row.props["count"], 3);
+    const coerced = rebuild("true");
+    assert.equal(coerced.ok, true);
+    assert.ok(!("degraded" in (coerced as { row: { props: Record<string, unknown> } }).row.props), "a string is not a bool");
+  });
+
   it("a non-boolean `resolvedExisting` is dropped, never coerced to a duplicate", () => {
     const policy = resolvePolicy("hidden_gem_name")!;
     const out = rebuildTelemetryEvent(

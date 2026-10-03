@@ -6222,3 +6222,33 @@ Declared 2026-09-27 by the coverage-guard fix (census-media §32.14). Each line 
 - NOT-GRADED: travel-buddy-standalone/src/features/live/PlaceLivePanel.tsx — §28's place-screen panel, built work; no sensing row grades a client surface for these read models
 - NOT-GRADED: artifacts/api-server/src/lib/intelPulse.ts — named in §29.2 only for its deliberate `no_data` spelling when Live is off, which this lane left unchanged; no sensing verdict rests on it here
 - NOT-GRADED: travel-buddy-standalone/src/features/live/__tests__/PlaceLivePanel.component.test.tsx — §29.4's suite for the place panel; no verdict rests on it
+
+## §30 — 2026-10-03: the fourteen non-C rows re-classified at `0fa752ece`; the location-adjacent fail-opens this lane closed are graded in census-trust §31. MOVES NOTHING
+
+Sensing-trust lane, branch `claude/lane-sensing-trust-20261003` cut from `main` at `0fa752ece`.
+`head_commit` is **NOT** re-declared, and no counted file of this census was changed. No flag was
+touched, no migration was added, and nothing was written to any database outside the lane's local one.
+
+**No row moves.** The census's own parser gives 127 rows: C 113 · W 13 · N 0 · X 1. Each of the
+fourteen non-C rows was classified by what would move it, against §27.5's acceptance criteria:
+
+| class | rows | what moves them |
+|---|---|---|
+| implementation complete; awaits a hosted apply, a flag or production evidence | S112, S19, S97, S111, S118, S49, S92, S66 | the identity cutover chain applied to production; `memory_projection`, `experience_session_enabled` and `discovery_candidate_projection_enabled` ON where measured; a real `unsafe_density` state |
+| owner-gated | S39, S24, S18, S32, S26 | consent v2 approval (an owner consent act) and the identified-retention ruling; `SENSING_CONTRIBUTOR_PEPPER` is ops |
+| external | S17 | served TLS/HSTS headers from outside the proxy, and Supabase's at-rest attestation |
+
+None is code-actionable without an owner decision or a hosted apply. This lane chose no consent
+default and no retention period.
+
+**What this lane did that touches location, and where it is graded.** Two fail-opens sat on location
+paths. Neither is graded by a sensing row, so neither moves a verdict here:
+
+- a restricted user could START a live crew location share while the restriction state was unreadable;
+- a held delayed-geotag post was PUBLISHED, copying its coordinates to the public columns, while
+  `safe_return_sessions` was unreadable.
+
+Both now refuse or hold. census-trust §31.1 (items 1b and 5) records the fixes, their red-first tests
+and their mutations.
+
+The headline is unchanged: §27's figures stand exactly as written.
