@@ -458,9 +458,9 @@ export async function hydrateCompassItems(
 
   // Exclude blocked users
   const blockedSet = new Set([...profile.blockedUserIds, ...profile.blockerUserIds]);
-  return stampCompassHydration(allItems.filter(
+  const served = allItems.filter(
     (item) => !item.authorId || !blockedSet.has(item.authorId),
-  ), failed);
+  ); return stampCompassHydration(served, [...failed, ...eventCountsUnread(served)]);  // census-discovery §119 (DV-83 round 22, B34): a capped event over an unread going count is withheld, so the read is named
 }
 
 // census-media §43 — appended at the tail so no cited line above moves; ESM hoists imports.
@@ -490,4 +490,16 @@ function stampCompassHydration(items: CompassItem[], failed: readonly string[]):
 /** The candidate sources whose read FAILED for this pool (table names); empty when every source was read. */
 export function compassHydrationFailedSources(items: readonly CompassItem[]): readonly string[] {
   return _compassHydrationFailed.get(items) ?? [];
+}
+
+// ── census-discovery §119 (DV-83 round 22, lane W11-X2; the round-21 verifier's B34) ──
+//
+// fetchEvents states no attendee count when the live going read fails (§118, B22), and the
+// eligibility engine withholds a CAPPED event whose count it could not read
+// (`capacity_could_not_be_checked`), as the group tool does. A pool with such an event is
+// therefore not whole: the RSVP read is named beside the sources, so no caller serves or
+// caches it as complete. An event with no capacity withholds nothing over the read (its
+// count only ranks), so it names nothing.
+function eventCountsUnread(items: readonly CompassItem[]): string[] {
+  return items.some((i) => i.type === "event" && i.capacity != null && i.currentAttendees == null) ? ["event_rsvps"] : [];
 }
