@@ -17,10 +17,15 @@
  *
  * THE POSTURE, per state of the read
  * ----------------------------------
- *   banned / suspended / deleted → ANONYMOUS (null). Every optional route
- *       already serves an anonymous caller, so anonymous is always a legal,
- *       truthful answer there: the account gets exactly what a signed-out
- *       visitor gets, which is what it could get anyway by dropping its token.
+ *   banned / suspended → REFUSED: THROW AccountRestrictedError (403 `forbidden`,
+ *       reason account_banned / account_suspended, via the global handler).
+ *       PR #580 first mapped these to anonymous; the owner's ruling of
+ *       2026-10-03 reverses that — an optional-auth route must not silently
+ *       treat an identified, restricted caller as a visitor (that is the
+ *       restriction not applying). A ban is a `user_account_states` row,
+ *       embedded on the gate's profiles read; `profiles.account_status` cannot
+ *       hold 'banned' or 'suspended' (its CHECK), so the fixtures use the row.
+ *   deleted → ANONYMOUS (null), unchanged: a tombstone, not a restriction.
  *   unreadable → THROW AccountStatusUnavailableError (503 degraded_unavailable,
  *       retryable, via the global handler). NOT anonymous: an ordinary signed-in
  *       user whose state merely could not be read would silently lose their
@@ -95,19 +100,36 @@ function req(token: string | null = "tok"): Request {
 }
 
 const USER = { id: "11111111-1111-4111-8111-111111111111" };
-const profiles = (account_status: string): TableBehaviour => ({ rows: [{ id: USER.id, account_status }] });
+/** The gate's profiles read: banned / suspended are an embedded user_account_states row (in force: no end). */
+const profiles = (state: string): TableBehaviour => (state === "banned" || state === "suspended"
+  ? { rows: [{ id: USER.id, account_status: "active", user_account_states: [{ state, expires_at: null }] }] }
+  : { rows: [{ id: USER.id, account_status: state }] });
 const UNREADABLE: TableBehaviour = { error: { message: "permission denied for table profiles", code: "42501" } };
 
 describe("optionalUser — the account-state gate", () => {
   afterEach(() => _clearTestClient());
 
-  for (const status of ["banned", "suspended", "deleted"]) {
-    it(`a ${status} account's valid token is treated as ANONYMOUS, not signed in`, async () => {
+  for (const status of ["banned", "suspended"]) {
+    it(`a ${status} account's valid token is REFUSED 403 — neither signed in nor anonymous`, async () => {
       _setTestClient(makeClient({ user: USER, tables: { profiles: profiles(status) } }), true);
-      const out = await optionalUser(req());
-      assert.equal(out, null, `a ${status} account must not be signed in on an optional route`);
+      await assert.rejects(
+        () => optionalUser(req()),
+        (err: any) => {
+          assert.equal(err?.status, 403, "the global handler reads `status` off the error");
+          assert.equal(err?.code, "forbidden");
+          assert.equal(err?.reason, `account_${status}`);
+          assert.equal(err?.name, "AccountRestrictedError");
+          return true;
+        },
+        `a ${status} account must be refused on an optional route, not downgraded to a visitor`,
+      );
     });
   }
+
+  it("a deleted account's valid token is ANONYMOUS (a tombstone, not a restriction — unchanged)", async () => {
+    _setTestClient(makeClient({ user: USER, tables: { profiles: profiles("deleted") } }), true);
+    assert.equal(await optionalUser(req()), null);
+  });
 
   it("an UNREADABLE account state is refused with a 503 degraded_unavailable error, never signed in", async () => {
     _setTestClient(makeClient({ user: USER, tables: { profiles: UNREADABLE } }), true);
@@ -194,12 +216,14 @@ function tripWorld(profilesB: TableBehaviour) {
 describe("GET /api/trips/:tripId — a banned owner's token on a PRIVATE trip", () => {
   afterEach(() => _clearTestClient());
 
-  it("a banned owner gets the anonymous locked preview, not the full authorized view", async () => {
+  it("a banned owner is REFUSED 403 account_banned — neither the authorized view nor the anonymous preview", async () => {
     _setTestClient(tripWorld(profiles("banned")), true);
     const r = await call(tripsExpansionRouter, `/api/trips/${TRIP_ID}`, "tok");
-    assert.equal(r.status, 200, JSON.stringify(r.body));
-    assert.equal(r.body.locked, true, `a banned token must not unlock a private trip: ${JSON.stringify(r.body)}`);
+    assert.equal(r.status, 403, JSON.stringify(r.body));
+    assert.equal(r.body.error, "forbidden");
+    assert.equal(r.body.reason, "account_banned");
     assert.equal(r.body.title, undefined, "no trip content may leak");
+    assert.equal(r.body.locked, undefined, "not served as an anonymous visitor either");
   });
 
   it("an unreadable account state answers 503 degraded_unavailable, retryable, with no trip content", async () => {
@@ -242,12 +266,12 @@ describe("GET /api/places/:id/votes — viewer personalisation", () => {
     assert.equal(r.body.error, "degraded_unavailable");
   });
 
-  it("a banned token sees the anonymous tallies (myVote null)", async () => {
+  it("a banned token is REFUSED 403 — not served the anonymous tallies", async () => {
     _setTestClient(votesWorld(profiles("banned")), true);
     const r = await call(reviewsRouter, `/api/places/${PLACE}/votes`, "tok");
-    assert.equal(r.status, 200);
-    assert.equal(r.body.worthItCount, 1);
-    assert.equal(r.body.myVote, null);
+    assert.equal(r.status, 403, JSON.stringify(r.body));
+    assert.equal(r.body.reason, "account_banned");
+    assert.equal(r.body.worthItCount, undefined);
   });
 
   it("CONTROL — an active viewer still sees their own vote", async () => {

@@ -32,6 +32,12 @@
  * change; they are pinned as KNOWN OPEN with an at-most count, so they may only
  * go down.
  *
+ * SINCE 2026-10-03 (owner decision, moderation lane): a ban or suspension is a
+ * `user_account_states` row — embedded on the gate's one `profiles` read — not
+ * a `profiles.account_status` value (its CHECK cannot hold either), and an
+ * OPTIONAL-auth site refuses a banned / suspended caller with 403 instead of
+ * serving them as anonymous. The fixtures below express a ban as that row.
+ *
  * Synthetic: in-memory supabase-js shaped fakes that RESOLVE `{ data: null,
  * error }` on failure, as the real client does.
  */
@@ -92,7 +98,10 @@ function makeClient(opts: { user?: { id: string } | null; tables?: Record<string
 }
 
 const USER = { id: "11111111-1111-4111-8111-111111111111" };
-const profileRow = (account_status: string) => ({ id: USER.id, username: "owner", account_status, passport_visibility: "public" });
+/** A profile row as the gate's read returns it: banned / suspended are an embedded user_account_states row. */
+const profileRow = (state: string) => (state === "banned" || state === "suspended"
+  ? { id: USER.id, username: "owner", account_status: "active", passport_visibility: "public", user_account_states: [{ state, expires_at: null }] }
+  : { id: USER.id, username: "owner", account_status: state, passport_visibility: "public" });
 const UNREADABLE: TableBehaviour = { error: { message: "permission denied for table profiles", code: "42501" } };
 
 async function withServer<T>(router: any, fn: (port: number) => Promise<T>): Promise<T> {
@@ -209,12 +218,19 @@ describe("optionalUserFromToken — the gate for a site that extracts its own to
 
   it("is exported", () => assert.equal(typeof fn, "function"));
 
-  for (const s of ["banned", "suspended", "deleted"]) {
-    it(`${s} → anonymous (null)`, async () => {
+  for (const s of ["banned", "suspended"]) {
+    it(`${s} → REFUSED (throws 403 forbidden, reason account_${s}), never anonymous`, async () => {
       const c = makeClient({ user: USER, tables: { profiles: { rows: [profileRow(s)] } } });
-      assert.equal(await fn!(c, "tok"), null);
+      await assert.rejects(() => fn!(c, "tok"), (e: any) => e?.status === 403 && e?.code === "forbidden" && e?.reason === `account_${s}`);
+      // authThrowIsAnonymous covers a THROWING Auth call only, never a confirmed restriction.
+      await assert.rejects(() => fn!(c, "tok", { authThrowIsAnonymous: true }), (e: any) => e?.status === 403);
     });
   }
+
+  it("deleted → anonymous (null): a tombstone, not a moderation restriction (unchanged)", async () => {
+    const c = makeClient({ user: USER, tables: { profiles: { rows: [profileRow("deleted")] } } });
+    assert.equal(await fn!(c, "tok"), null);
+  });
 
   it("unreadable → throws AccountStatusUnavailableError (503), never a user", async () => {
     const c = makeClient({ user: USER, tables: { profiles: UNREADABLE } });
@@ -297,11 +313,13 @@ describe("GET /api/stamps/profile/:username — owner context", () => {
   // same table; the fake serves both from one row set.
   const ids = (b: any) => (b?.stamps ?? []).map((s: any) => s.id).sort();
 
-  it("a banned owner's token gets the PUBLIC view, not the owner view of revoked/hidden stamps", async () => {
+  it("a banned owner's token is REFUSED 403 — neither the owner view of revoked/hidden stamps nor an anonymous view", async () => {
     _setTestClient(world({ rows: [profileRow("banned")] }), true);
     const r = await withServer(stampsRouter, (port) => open(port, "/api/stamps/profile/owner", "tok"));
-    assert.equal(r.status, 200, JSON.stringify(r.body));
-    assert.deepEqual(ids(r.body), ["s-pub"]);
+    assert.equal(r.status, 403, JSON.stringify(r.body));
+    assert.equal(r.body.error, "forbidden");
+    assert.equal(r.body.reason, "account_banned");
+    assert.equal(r.body.stamps, undefined, "no stamps are served to a refused caller");
   });
 
   it("CONTROL — an active owner still gets the owner view", async () => {
@@ -320,9 +338,8 @@ describe("GET /api/stamps/profile/:username — owner context", () => {
 
 describe("parity — requireUserFromToken answers exactly what requireUser answers, state by state", () => {
   afterEach(() => _clearTestClient());
-  // requireUser keeps its own inline ban gate (lib/http.ts is cited by line and
-  // was not restructured); enforceAccountState in lib/accountStateGate.ts is
-  // the copy the hand-rolled required-auth path uses. This holds them together.
+  // requireUser and requireUserFromToken both answer through enforceAccountState
+  // (lib/accountStateGate.ts) since 2026-10-03; this holds them together.
   const cases: Array<[string, TableBehaviour]> = [
     ["banned", { rows: [profileRow("banned")] }],
     ["suspended", { rows: [profileRow("suspended")] }],

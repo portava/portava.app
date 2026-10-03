@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import type { Request, Response } from "express";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { getServiceClient, isServiceClientReady, _setTestServiceClient } from "./supabase";
-export { _setTestServiceClient } from "./supabase"; import { optionalUserFromToken } from "./accountStateGate.js"; export { AccountStatusUnavailableError, optionalUserFromToken, requireUserFromToken, enforceAccountState } from "./accountStateGate.js"; // one line: census docs cite this file by line
+export { _setTestServiceClient } from "./supabase"; import { optionalUserFromToken, sendTokenRefusal, resolveAccountRestriction, restrictionRefusal, withRefusalReason } from "./accountStateGate.js"; export { AccountStatusUnavailableError, AccountRestrictedError, optionalUserFromToken, requireUserFromToken, enforceAccountState, resolveAccountRestriction } from "./accountStateGate.js"; // one line: census docs cite this file by line
 
 /**
  * Constant-time comparison for shared secrets (internal API keys, webhook
@@ -182,9 +182,9 @@ export function sendError(
 }
 
 /**
- * Like requireUser but returns null (without writing a 401) when the request has no auth header — and
- * now ALSO for a banned / suspended / deleted account's valid token, and THROWS a 503 when the account
- * state cannot be read: the ban gate, which this path used to skip (lib/accountStateGate.ts, per state).
+ * Like requireUser but returns null (without writing a 401) when the request has no auth header, or for a
+ * deleted account's token. A banned / suspended account is REFUSED (THROWS a 403, never anonymous) and an
+ * unreadable account state THROWS a 503 — requireUser's gate, per state in lib/accountStateGate.ts.
  */
 export async function optionalUser(
   req: Request,
@@ -293,17 +293,17 @@ export async function requireUser(
   const client = (_testClient ?? getServiceClient()!) as SupabaseClient;
   const { data, error } = await client.auth.getUser(token);
   if (error || !data?.user) {
-    sendError(res, "unauthenticated", error?.message ?? "Invalid or expired token");
+    sendTokenRefusal(res, error); // 401 — or 403 `account_restricted` when the auth service refuses the token as banned
     return null;
   }
 
   // ── THE BAN GATE ─────────────────────────────────────────────────────────
-  // Banning writes `profiles.account_status` AND NOTHING ELSE. There is no
-  // session revocation anywhere in this system — no token blocklist, no
-  // `auth.users` ban, no refresh-token purge — so this read is the ONLY place a
-  // ban is enforced, on every authenticated request, for as long as the ban
-  // lasts.
-  //
+  // A ban or suspension is a row in `user_account_states` (the one
+  // authoritative moderation state, owner decision 2026-10-03). Admin moderation
+  // also locks the auth session (GoTrue `banned_until`, lib/accountModeration.ts)
+  // so refresh stops working — but THIS read is what refuses an access token
+  // still in hand, on every authenticated request, for as long as the
+  // restriction is in force.
   // WHAT THIS USED TO DO. The read discarded `error` and defaulted to "active",
   // under the comment "Fail-open: if the profile query errors we still allow
   // the request through so a DB outage doesn't lock out all users". supabase-js
@@ -338,8 +338,8 @@ export async function requireUser(
   //     and asks the client to try again.
   //
   // The blast radius is bounded to requests that ALREADY carry a valid bearer
-  // token. `optionalUser` — the public and anonymous path — is untouched, so
-  // unauthenticated reads keep serving throughout.
+  // token. A request with NO token never reaches this read, so anonymous
+  // traffic keeps serving throughout (optionalUser reads only for a token).
   //
   // NO EXCEPTION IS CARVED OUT FOR A MISSING TABLE OR COLUMN, unlike
   // `profileVisibility.ts`, which skips a genuinely absent
@@ -348,11 +348,11 @@ export async function requireUser(
   // ban enforcement has been switched off system-wide, and `10` B-4 records
   // that this schema drifts in BOTH directions. Waiving the one error that
   // signals it is how it would go unnoticed.
-  const statusRead = await readAccountStatus(client, data.user.id);
+  const statusRead = await resolveAccountRestriction(client, data.user.id); // the ONE read path: profiles + user_account_states
   if (statusRead.state === "unavailable") {
     (req as any).log?.error?.(
       { userId: data.user.id, reason: statusRead.reason },
-      "account_status unreadable — refusing to serve an unchecked request",
+      "account state unreadable — refusing to serve an unchecked request",
     );
     sendError(
       res,
@@ -362,17 +362,17 @@ export async function requireUser(
     return null;
   }
 
-  // `absent` is a successful read that found no ban state, so the account is
-  // active. Keeping it distinct from `ok` is what lets this stay safe: folding
-  // it into the refusal would lock out every brand-new account, whose auth user
-  // exists before its profile row does.
-  const accountStatus: string = statusRead.state === "ok" ? statusRead.status : "active";
+  // An IN-FORCE user_account_states row (expires_at NULL or future; an unban
+  // revokes by setting it to now) refuses with 403, read per request — so a token
+  // issued before the ban is refused too. deleted / deactivated / pending_deletion / no profile row are served.
+  const accountStatus = statusRead.restriction.kind; // the MODERATION restriction ("none" | "banned" | "suspended"), not profiles.account_status
+  if (accountStatus !== "none") res = withRefusalReason(res, statusRead.restriction); // the 403 below also carries `reason` (lib/accountStateGate.ts)
   if (accountStatus === "banned") {
     sendError(res, "forbidden", "Your account has been banned");
     return null;
   }
   if (accountStatus === "suspended") {
-    sendError(res, "forbidden", "Your account is temporarily suspended");
+    sendError(res, "forbidden", restrictionRefusal(statusRead.restriction)!.message); // names the suspension's end when it has one
     return null;
   }
 
