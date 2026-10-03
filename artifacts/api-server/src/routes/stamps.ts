@@ -25,7 +25,7 @@
 
 import { Router } from "express";
 import { z } from "zod";
-import { requireUser, sendError, safeSecretEquals } from "../lib/http.js";
+import { requireUser, sendError, safeSecretEquals, optionalUserFromToken } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import type { CallerContext } from "../services/passport/PassportPrivacyGuard.js";
 import { filterStampsV2 } from "../services/passport/PassportPrivacyGuard.js";
@@ -492,8 +492,10 @@ router.get("/stamps/profile/:username", async (req, res) => {
   let callerId: string | null = null;
 
   if (token) {
-    const { data: authData } = await sc.auth.getUser(token);
-    callerId = authData?.user?.id ?? null;
+    // optionalUserFromToken, not a bare auth.getUser: the bare call skipped the
+    // account-state gate, so a banned/suspended owner's token kept the OWNER
+    // view (revoked and hidden stamps) here.
+    callerId = (await optionalUserFromToken(sc, token, { log: req.log }))?.id ?? null;
 
     if (callerId === targetUserId) {
       callerCtx = "owner";

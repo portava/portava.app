@@ -16,7 +16,7 @@
  */
 
 import { Router } from "express";
-import { sendError } from "../lib/http";
+import { sendError, optionalUserFromToken } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
 import { resolveMediaForPosts } from "../lib/postMediaResolve.js";
 import { nameVisibilitySet } from "../lib/publicIdentity"; import { fetchBlockedSet } from "../lib/blocks.js"; import { profilePostTiers } from "../lib/profilePostTiers.js";
@@ -39,13 +39,12 @@ function parseLimit(raw: unknown): number {
 async function getOptionalViewerId(sc: any, req: { headers: { authorization?: string } }): Promise<string | null> {
   const token = extractBearerToken(req);
   if (!token) return null;
-  try {
-    const { data: { user }, error } = await sc.auth.getUser(token);
-    if (error || !user) return null;
-    return user.id;
-  } catch {
-    return null;
-  }
+  // optionalUserFromToken, not a bare auth.getUser: the bare call skipped the
+  // account-state gate, so a banned/suspended token kept its viewer standing.
+  // `authThrowIsAnonymous` keeps the old catch for an Auth call that throws;
+  // an unreadable account state still throws (503 via the global handler).
+  const user = await optionalUserFromToken(sc, token, { authThrowIsAnonymous: true });
+  return user?.id ?? null;
 }
 
 const UUID_RE = /^[0-9a-f-]{36}$/i;

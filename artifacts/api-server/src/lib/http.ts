@@ -250,19 +250,52 @@ export async function optionalUser(
 
   const client = (_testClient ?? getServiceClient()) as SupabaseClient | null;
   if (!client) return null;
-  const { data, error } = await client.auth.getUser(token);
+  const user = await optionalUserFromToken(client, token, { log: (req as any).log });
+  return user ? { client, user } : null;
+}
+
+/**
+ * optionalUser's gate, for a route that extracts its own bearer token (a
+ * case-insensitive scheme, a `?token=` query, …) and so cannot call
+ * optionalUser. Same answers, per account state, as optionalUser above:
+ * `null` for no user / banned / suspended / deleted, the user otherwise, and a
+ * THROWN AccountStatusUnavailableError when the state cannot be read.
+ *
+ * Every route that used to call `sc.auth.getUser(token)` by hand skipped the
+ * account-state read entirely, which is the bypass this exists to close;
+ * `handRolledAuthAccountState.test.ts` pins that no file outside this one
+ * calls `.auth.getUser(` again.
+ *
+ * `authThrowIsAnonymous` preserves what the hand-rolled sites that wrapped
+ * `getUser` in a try/catch did when the Auth CALL ITSELF threw (network, DNS):
+ * treat the caller as anonymous. It never covers the account-state read — an
+ * unreadable ban is thrown whatever the option says.
+ */
+export async function optionalUserFromToken(
+  client: SupabaseClient,
+  token: string,
+  opts: { log?: any; authThrowIsAnonymous?: boolean } = {},
+): Promise<User | null> {
+  let data: any;
+  let error: any;
+  try {
+    ({ data, error } = await client.auth.getUser(token));
+  } catch (err) {
+    if (opts.authThrowIsAnonymous) return null;
+    throw err;
+  }
   if (error || !data?.user) return null;
 
   const statusRead = await readAccountStatus(client, data.user.id);
   if (statusRead.state === "unavailable") {
-    (req as any).log?.error?.(
+    opts.log?.error?.(
       { userId: data.user.id, reason: statusRead.reason },
       "account_status unreadable on an optional-auth route — refusing rather than guessing",
     );
     throw new AccountStatusUnavailableError(statusRead.reason);
   }
   if (statusRead.state === "ok" && OPTIONAL_AUTH_ANONYMOUS_STATUSES.has(statusRead.status)) return null;
-  return { client, user: data.user as User };
+  return data.user as User;
 }
 
 // ---------------------------------------------------------------------------
@@ -412,10 +445,49 @@ export async function requireUser(
   // ban enforcement has been switched off system-wide, and `10` B-4 records
   // that this schema drifts in BOTH directions. Waiving the one error that
   // signals it is how it would go unnoticed.
-  const statusRead = await readAccountStatus(client, data.user.id);
+  if (!(await enforceAccountState(req, res, client, data.user.id))) return null;
+
+  return { client, user: data.user as User };
+}
+
+/**
+ * requireUser for a REQUIRED-auth route that extracts its own token (the
+ * Telegraph SSE stream's `?token=`): verify it, then apply the same ban gate.
+ * Returns the user, or null after writing 401 / 403 / 503.
+ */
+export async function requireUserFromToken(
+  req: Request,
+  res: Response,
+  client: SupabaseClient,
+  token: string,
+): Promise<User | null> {
+  const { data, error } = await client.auth.getUser(token);
+  if (error || !data?.user) {
+    sendError(res, "unauthenticated", "Invalid token");
+    return null;
+  }
+  if (!(await enforceAccountState(req, res, client, data.user.id))) return null;
+  return data.user as User;
+}
+
+/**
+ * requireUser's ban gate (the block comment above), for a REQUIRED-auth route
+ * that verifies its own token and so cannot call requireUser — today the
+ * Telegraph SSE stream, whose EventSource client can only send `?token=`.
+ * Returns true when the request may be served; otherwise it has already
+ * written 503 degraded_unavailable (state unreadable) or 403 forbidden
+ * (banned / suspended) and the caller must return.
+ */
+export async function enforceAccountState(
+  req: Request,
+  res: Response,
+  client: SupabaseClient,
+  userId: string,
+): Promise<boolean> {
+  const statusRead = await readAccountStatus(client, userId);
   if (statusRead.state === "unavailable") {
     (req as any).log?.error?.(
-      { userId: data.user.id, reason: statusRead.reason },
+      { userId, reason: statusRead.reason },
       "account_status unreadable — refusing to serve an unchecked request",
     );
     sendError(
@@ -423,7 +495,7 @@ export async function requireUser(
       "degraded_unavailable",
       "Could not verify account status. Please try again.",
     );
-    return null;
+    return false;
   }
 
   // `absent` is a successful read that found no ban state, so the account is
@@ -433,14 +505,13 @@ export async function requireUser(
   const accountStatus: string = statusRead.state === "ok" ? statusRead.status : "active";
   if (accountStatus === "banned") {
     sendError(res, "forbidden", "Your account has been banned");
-    return null;
+    return false;
   }
   if (accountStatus === "suspended") {
     sendError(res, "forbidden", "Your account is temporarily suspended");
-    return null;
+    return false;
   }
-
-  return { client, user: data.user as User };
+  return true;
 }
 
 // ---------------------------------------------------------------------------

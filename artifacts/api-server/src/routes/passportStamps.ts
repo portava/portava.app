@@ -21,7 +21,7 @@
 
 import { Router } from "express";
 import { z } from "zod";
-import { requireUser, sendError } from "../lib/http.js";
+import { requireUser, sendError, optionalUserFromToken } from "../lib/http.js";
 import { normalizedFriendshipPair } from "../lib/friendDecisions.js";
 import { getServiceClient } from "../lib/supabase.js";
 import {
@@ -684,8 +684,9 @@ router.get("/users/:username/passport/memories", async (req, res) => {
   const authHeader = req.headers.authorization ?? "";
   const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
   if (token) {
-    const { data: authData } = await sc.auth.getUser(token);
-    const callerId = authData?.user?.id;
+    // optionalUserFromToken, not a bare auth.getUser: the bare call skipped the
+    // account-state gate, so a banned/suspended token kept its circle context.
+    const callerId = (await optionalUserFromToken(sc, token, { log: req.log }))?.id;
     if (callerId && callerId !== (profile as any).id) {
       // Check friendship (grants "circle" visibility context).
       // TODO: friends system not in spec (follow-only) — repointed from the
@@ -760,8 +761,9 @@ router.get("/users/:username/passport/stamps", async (req, res) => {
   const authHeader2 = req.headers.authorization ?? "";
   const token2 = authHeader2.startsWith("Bearer ") ? authHeader2.slice(7) : null;
   if (token2) {
-    const { data: authData2 } = await sc.auth.getUser(token2);
-    const callerId2 = authData2?.user?.id;
+    // optionalUserFromToken, not a bare auth.getUser: the bare call skipped the
+    // account-state gate, so a banned/suspended token kept its owner/circle context.
+    const callerId2 = (await optionalUserFromToken(sc, token2, { log: req.log }))?.id;
     if (callerId2 === (profile as any).id) {
       callerCtx = "owner";
     } else if (callerId2) {

@@ -50,7 +50,7 @@
 
 import { Router } from "express";
 import { getServiceClient } from "../lib/supabase";
-import { requireUser, sendError } from "../lib/http";
+import { requireUser, sendError, requireUserFromToken } from "../lib/http";
 import { logger as rootLogger } from "../lib/logger.js";
 import {
   subscribe,
@@ -279,12 +279,15 @@ router.get("/telegraph/stream", async (req, res) => {
     return;
   }
 
-  const { data, error } = await sc.auth.getUser(token);
-  if (error || !data?.user) {
-    sendError(res, "unauthenticated", "Invalid token");
-    return;
-  }
-  const userId = data.user.id;
+  // This route extracts its own token (an EventSource can only send
+  // `?token=`), so it cannot call requireUser. It used to verify the token
+  // with a bare `sc.auth.getUser`, which skipped the ban gate: a banned or
+  // suspended account kept a LIVE feed of its threads, plus history resume.
+  // requireUserFromToken is requireUser's gate for exactly this shape — 401 on
+  // a bad token, 403 banned/suspended, 503 when the state cannot be read.
+  const authUser = await requireUserFromToken(req, res, sc, token);
+  if (!authUser) return;
+  const userId = authUser.id;
 
   // Open the SSE stream.
   res.writeHead(200, {
