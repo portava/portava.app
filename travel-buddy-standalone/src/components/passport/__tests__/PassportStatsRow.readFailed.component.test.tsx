@@ -20,7 +20,7 @@ jest.mock('../../../services/passportStamps', () => ({
 }));
 
 import { PassportStatsRow } from '../PassportIdentityCard.tsx';
-const { getPassportStats } = require('../../../services/passportStamps');
+const { getPassportStats } = require('../../../services/passportStamps.ts');
 const mockStats = getPassportStats as jest.Mock;
 
 const PROFILE = { id: 'me', username: 'me', tripCount: 2, followersCount: 3, followingCount: 4 } as any;
