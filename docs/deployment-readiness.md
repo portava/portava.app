@@ -49,9 +49,9 @@ what the deployment *does*.
 - `.github/workflows/live-db.yml` — jobs `preflight`, `live-db-slot`,
   `api-server-check-all`, `schema-drift`, `post-media-revocation-rehearsal`,
   `live-db-security-suites`, `live-db-verdict`. `contents: read` plus
-  `actions: read` (`.github/workflows/live-db.yml:111#permissions`). It
+  `actions: read` (`.github/workflows/live-db.yml:140#permissions`). It
   contains the phrase "the live_pulse deploy **gate**"
-  (`.github/workflows/live-db.yml:507#deploy`) — that is a *check* named
+  (`.github/workflows/live-db.yml:237#the live_pulse deploy gate`) — that is a *check* named
   `check:rank-events-surfaces`, not a deployment step.
 - `.github/workflows/clean-build-proof.yml` — jobs `preflight`,
   `live-unexplained`, `clean-build-proof`, `verdict`. "Clean build" here means

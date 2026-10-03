@@ -494,7 +494,7 @@ production press is a separate, deliberate human act (`10` §12). `2182` has bee
 | `run-all-checks.sh:177` | `check:rank-events-surfaces` | a gate, not a check |
 | `live-db.yml:690` | `db:apply-migrations:dry-run` | **every ref including PRs** — turns "cannot be applied atomically" into a red on the PR that introduces it |
 | `live-db.yml:705` | `db:apply-migrations` | main only |
-| `live-db.yml:716` | `certify:migrations` | main only; re-runs each migration's **own postcondition `DO` blocks after the commit** |
+| `live-db.yml:818#migrations — certify the apply landed` | `certify:migrations` | main only; re-runs each migration's **own postcondition `DO` blocks after the commit** |
 | `live-db.yml:727` | `audit:schema` | every ref — §5.2 |
 | `live-db.yml:755` | `audit:shadow-append-only` | asserts the **exact** grant set, not a claimed subset |
 | `unwired-checks.yml:247` | `check:api-prefix` | **probation workflow; its verdict is not yet a required status check** — A6 |

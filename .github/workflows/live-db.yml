@@ -283,6 +283,16 @@ jobs:
       # verify step below. Diagnostic only — the verify step re-decides from the
       # API and does not trust this either way.
       attempt: ${{ steps.acquire.outputs.live_db_slot_attempt }}
+      # WHY A TIMEOUT HAPPENED, which `waited` alone cannot say. The script
+      # emitted these three from the day it learned to tell the three cases
+      # apart, but this job did not declare them, so run 37122355417's forty-five
+      # minutes reached the telemetry as a bare `2700` and the reason stayed in a
+      # 600-line log. `refusals` is `<refused>/<polls>`; `holders` names the runs
+      # this one actually queued behind; `undecided` counts the polls whose
+      # listing the decider could not reach a verdict from.
+      refusals: ${{ steps.acquire.outputs.live_db_slot_api_refusals }}
+      holders: ${{ steps.acquire.outputs.live_db_slot_holders }}
+      undecided: ${{ steps.acquire.outputs.live_db_slot_undecided }}
     steps:
       - uses: actions/checkout@v4
       - name: Wait for the shared Supabase project
@@ -314,6 +324,9 @@ jobs:
         env:
           SLOT: ${{ steps.acquire.outputs.live_db_slot }}
           WAITED: ${{ steps.acquire.outputs.live_db_slot_wait_seconds }}
+          REFUSALS: ${{ steps.acquire.outputs.live_db_slot_api_refusals }}
+          HOLDERS: ${{ steps.acquire.outputs.live_db_slot_holders }}
+          UNDECIDED: ${{ steps.acquire.outputs.live_db_slot_undecided }}
         run: |
           set -uo pipefail
           mkdir -p .live-db-telemetry
@@ -325,7 +338,10 @@ jobs:
             "ref": "${GITHUB_REF}",
             "sha": "${GITHUB_SHA}",
             "slot": "${SLOT:-not_acquired}",
-            "queue_wait_seconds": "${WAITED:-null}"
+            "queue_wait_seconds": "${WAITED:-null}",
+            "api_refusals": "${REFUSALS:-null}",
+            "holders_seen": "${HOLDERS:-null}",
+            "undecided_polls": "${UNDECIDED:-null}"
           }
           EOF
           {
@@ -335,6 +351,9 @@ jobs:
             echo "| --- | --- |"
             echo "| slot | ${SLOT:-not_acquired} |"
             echo "| queue wait (s) | ${WAITED:-n/a} |"
+            echo "| API refusals | ${REFUSALS:-n/a} |"
+            echo "| holders seen | ${HOLDERS:-none} |"
+            echo "| undecided polls | ${UNDECIDED:-n/a} |"
             echo "| event | ${GITHUB_EVENT_NAME} |"
           } >> "$GITHUB_STEP_SUMMARY"
 

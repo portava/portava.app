@@ -493,6 +493,13 @@ describe("CI architecture — a re-run cannot inherit somebody else's slot", () 
     /** Serve the fixture listing for BOTH status queries, reproducing a run
      *  that moved queued -> in_progress between the two calls. */
     bothStatuses?: boolean;
+    /** Refuse with NOTHING on stdout and this one line on stderr, which is how
+     *  `gh api --jq` answers an HTTP error it could not parse a body out of:
+     *  the filter never runs, so stdout is empty and the only account of the
+     *  cause is the summary line. Run 37122355417 refused twelve times and the
+     *  script printed `exit 1` twelve times, because it was reading the stream
+     *  that was empty and discarding the one that was not. */
+    refusalStderr?: string;
   }) => {
     const dir = mkdtempSync(join(tmpdir(), "portava-slot-"));
     writeFileSync(join(dir, "listing.txt"), opts.listing ?? "");
@@ -522,15 +529,18 @@ describe("CI architecture — a re-run cannot inherit somebody else's slot", () 
         'if [[ "$*" == *"/actions/workflows/"* ]]; then\n' +
         `  n=$(cat ${calls} 2>/dev/null || echo 0); n=$((n + 1)); echo $n > ${calls}\n` +
         `  if [ "$n" -le ${opts.apiRefusals ?? 0} ]; then\n` +
-        // The real shape: an error object on stdout, non-zero exit. Nothing
-        // here is a run listing, and nothing here says the database is free.
-        "    cat <<'J'\n" +
-        "{\n" +
-        '"message": "API rate limit exceeded for installation ID 1.",\n' +
-        '"documentation_url": "https://docs.github.com/en/rest/using-the-rest-api/getting-started-with-the-rest-api#rate-limiting",\n' +
-        '"status": "403"\n' +
-        "}\n" +
-        "J\n" +
+        // Two real shapes, both exiting non-zero and neither saying the
+        // database is free: an error object on stdout, or an empty stdout with
+        // one summary line on stderr.
+        (opts.refusalStderr
+          ? `    printf '%s\\n' ${JSON.stringify(opts.refusalStderr)} >&2\n`
+          : "    cat <<'J'\n" +
+            "{\n" +
+            '"message": "API rate limit exceeded for installation ID 1.",\n' +
+            '"documentation_url": "https://docs.github.com/en/rest/using-the-rest-api/getting-started-with-the-rest-api#rate-limiting",\n' +
+            '"status": "403"\n' +
+            "}\n" +
+            "J\n") +
         "    exit 1\n" +
         "  fi\n" +
         `  cat ${JSON.stringify(join(dir, "listing.txt"))}\n` +
@@ -727,15 +737,98 @@ describe("CI architecture — a re-run cannot inherit somebody else's slot", () 
     );
   });
 
+  it("quotes gh's own account of a refusal, rather than reporting a bare exit code", () => {
+    // The first version of this fix named the right CATEGORY and not the cause.
+    // Run 37122355417 waited 2700s and printed `(exit 1)` on all twelve polls:
+    // stdout was empty, so the body-detector never fired, and the one line that
+    // said what had happened went to a stream the script dropped. A number is
+    // not a diagnosis — whoever reads the next timeout needs the reason.
+    const r = runSlotScript({
+      role: "verify",
+      runId: "37122355417",
+      listing: "2026-10-03T12:17:54Z 37122355417\n",
+      apiRefusals: 99,
+      refusalStderr: "gh: Resource not accessible by integration (HTTP 403)",
+      timeoutSeconds: 3,
+    });
+    assert.equal(r.code, 75, `a job that never got a listing must exit 75. Got ${r.code}:\n${r.out}`);
+    assert.match(
+      r.out, /Resource not accessible by integration \(HTTP 403\)/,
+      `the refusal must carry gh's own words. Got:\n${r.out}`,
+    );
+    assert.doesNotMatch(
+      r.out, /REFUSED the run listing \(exit 1\) —? ?this says/,
+      "a bare exit code is what sent the last reader back to the logs with nothing",
+    );
+    assert.match(r.out, /refused ALL/, "the final error must still blame the API, not a queue");
+  });
+
+  it("classifies a rate limit it can only see on stderr", () => {
+    // The rate-limit body carries no `status` key, and with `--jq` it may not
+    // reach stdout at all. A detector that reads one stream and one key calls
+    // the commonest refusal "exit 1" — which is what run 37122355417 printed
+    // twelve times while the cause sat one redirect away.
+    const r = runSlotScript({
+      role: "verify",
+      runId: "37122355417",
+      listing: "2026-10-03T12:17:54Z 37122355417\n",
+      apiRefusals: 99,
+      refusalStderr: "gh: API rate limit exceeded for installation ID 1. (HTTP 403)",
+      timeoutSeconds: 3,
+    });
+    assert.equal(r.code, 75, `must still fail closed. Got ${r.code}:\n${r.out}`);
+    assert.match(
+      r.out, /REFUSED the run listing \(HTTP 403, rate limit/,
+      `a rate limit visible only on stderr must still be named one. Got:\n${r.out}`,
+    );
+  });
+
+  it("declares every slot diagnostic the script emits as a job output", () => {
+    // A value written to $GITHUB_OUTPUT that the job does not declare goes
+    // nowhere. The script learned to emit the refusal count, the holders and
+    // the undecided-poll count, and for one run it emitted all three into a
+    // void: run 37122355417's telemetry recorded a 2700s wait and said nothing
+    // about why, because `live-db-slot` declared only slot/waited/attempt. The
+    // reason sat in a 600-line log instead of the artifact built to carry it.
+    const script = readFileSync(resolve(REPO_ROOT, ".github/scripts/live-db-acquire-slot.sh"), "utf8");
+    const emitted = [...script.matchAll(/emit "(live_db_slot[a-z_]*)=/g)].map((m) => m[1]);
+    assert.ok(emitted.length >= 6, `expected the script to emit several slot facts, found ${emitted.length}`);
+
+    const jobStart = liveDb.indexOf("\n  live-db-slot:\n");
+    assert.ok(jobStart !== -1, "live-db.yml no longer defines a live-db-slot job");
+    const outStart = liveDb.indexOf("\n    outputs:\n", jobStart);
+    const outEnd = liveDb.indexOf("\n    steps:\n", jobStart);
+    assert.ok(
+      outStart !== -1 && outEnd !== -1 && outStart < outEnd,
+      "live-db-slot has no outputs: block before its steps:",
+    );
+    const outputs = liveDb.slice(outStart, outEnd);
+
+    const undeclared = [...new Set(emitted)].filter((k) => !outputs.includes(k));
+    assert.deepEqual(
+      undeclared, [],
+      `live-db-slot emits ${undeclared.join(", ")} but does not declare them as job outputs, ` +
+        "so nothing downstream — the telemetry artifact, the step summary, the verdict — can read them",
+    );
+  });
+
   it("backs off while the API refuses, rather than polling it at a fixed interval", () => {
     // A fixed interval under a rate limit is self-defeating: every waiting lane
     // keeps spending the budget that none of them can get an answer without.
+    //
+    // The budget is deliberately far larger than the three waits measured here.
+    // At 5s it was not: each poll spends real time spawning two `gh` calls, so
+    // the remaining budget fell under the ceiling by the third poll and the
+    // clamp — correct behaviour, pinned by its own test below — rewrote the
+    // very numbers this test reads. That made a timing-sensitive test out of a
+    // question about growth. 12s leaves seconds of slack, so a failure here
+    // means the backoff stopped growing.
     const r = runSlotScript({
       role: "verify",
       runId: "37113934334",
       listing: "2026-10-03T09:42:05Z 37113934334\n",
       apiRefusals: 99,
-      timeoutSeconds: 5,
+      timeoutSeconds: 12,
       pollMaxSeconds: 2,
     });
     const waits = [...r.out.matchAll(/Backing off (\d+)s/g)].map((m) => Number(m[1]));

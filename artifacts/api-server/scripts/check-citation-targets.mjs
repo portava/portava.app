@@ -583,7 +583,24 @@ import {
  * isolated (the lane's edits in cited files are line-neutral, so the likeliest
  * is a cited line that was blank or a bare brace and now carries code). Same
  * rule as above. */
-export const MAX_DEAD_TARGETS = 163;
+/* RATCHETED 2026-10-03 163 -> 162 on the live-DB slot-diagnostics lane, and
+ * this one IS isolated, because the arithmetic did not add up until it was.
+ * HEAD measured 163 / 2946. Declaring the slot job's new outputs shifted
+ * live-db.yml by 19 lines and the guard then said 166, which is +4 -1, not +3:
+ *   +4  four `live-db.yml:757` pointers (blocker-ledger, trips-state-report
+ *       x3) landed on a blank line. All four were ALREADY wrong before the
+ *       shift — they claim the apply and the certification are main-only and
+ *       pointed at a comment about exit codes.
+ *   -1  `12_Claude_Code_Implementation.md:497 -> live-db.yml:716` was dead at
+ *       HEAD, and the shift slid an unrelated comment under it, so it went
+ *       silently ALIVE while pointing no closer to the `certify:migrations`
+ *       step it describes. A ceiling cannot see that, which is what the
+ *       DOES NOT COVER note above means in practice.
+ * All five were repointed by reading the claim, onto the two step names that
+ * carry the `github.ref == 'refs/heads/main'` gate, with `#anchor`s so
+ * doc-citations holds them from here. The retired dead target is the 716 one,
+ * found only because the shift disguised it. Same rule as above. */
+export const MAX_DEAD_TARGETS = 162;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);

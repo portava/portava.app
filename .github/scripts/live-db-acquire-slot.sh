@@ -176,7 +176,13 @@ ATTEMPT="${GITHUB_RUN_ATTEMPT:-1}"
 # EXCLUSION. A refused poll still never counts as "the slot is free"; the loop
 # still ends in exit 75 having certified nothing. It fails closed more slowly
 # and says why.
-POLL_MAX="${LIVE_DB_SLOT_POLL_MAX_SECONDS:-300}"
+# 60s, not the 300s this first shipped with. Measured on run 37122355417: a
+# 2700s wait at a 300s ceiling asked only TWELVE times, so a cause that cleared
+# at minute 20 would not have been noticed for five more. The ceiling exists to
+# stop a refused poller making exhaustion worse, and with the listing down to
+# two server-filtered requests (and no annotation calls on a refused poll) that
+# costs ~2 requests a minute — cheap enough to keep asking.
+POLL_MAX="${LIVE_DB_SLOT_POLL_MAX_SECONDS:-60}"
 SLEEP_FOR="$POLL"
 API_REFUSALS=0
 POLLS=0
@@ -294,6 +300,11 @@ emit() {
   echo "$1" >> "${GITHUB_OUTPUT:-/dev/null}"
 }
 
+# One file, truncated per poll, so a refusal can quote gh's own words. Keeping
+# stderr was the difference between "exit 1" and a cause.
+GH_STDERR="$(mktemp)"
+trap 'rm -f "$GH_STDERR"' EXIT
+
 # The clock starts HERE, not at the top of the script: the budget is named
 # "how long am I willing to WAIT for the database", and the workflow-id lookup
 # above is setup, not waiting. Starting it earlier meant a slow first API call
@@ -386,11 +397,12 @@ while :; do
   # FILTERED SET, which is the queue depth, not the run history.
   RAW_RUNS=""
   GH_RC=0
+  : > "$GH_STDERR"
   for RUN_STATUS in queued in_progress; do
     STATUS_PAGE="$(gh api --paginate \
               "repos/${GITHUB_REPOSITORY}/actions/workflows/${WF_ID}/runs?status=${RUN_STATUS}&per_page=100" \
               --jq '.workflow_runs[] | "\(.run_started_at // .created_at) \(.id)"' \
-            2>/dev/null)"
+            2>>"$GH_STDERR")"
     STATUS_RC=$?
     # Either call failing means we do not have the queue. Fail closed: keep the
     # non-zero status so the refusal branch below owns this poll.
@@ -407,11 +419,32 @@ while :; do
   # checked: the exit code is authoritative, and the body names the reason.
   if [ "$GH_RC" -ne 0 ] || printf '%s' "$RAW_RUNS" | grep -q '"status": *"[45][0-9][0-9]"'; then
     API_REFUSALS=$(( API_REFUSALS + 1 ))
+    # Why we were refused, in descending order of specificity. The exit code
+    # alone is NOT an answer: run 37122355417 reported `exit 1` on all twelve
+    # of its polls over 2700s, and a number is not a diagnosis.
+    #
+    # What went wrong there was not the detector but the plumbing: the listing
+    # call ended `2>/dev/null`, and with `--jq` the filter does not run on an
+    # HTTP error, so stdout was empty too. Both greps below ran against an
+    # empty string, and the job log contains no `gh:` line at all — the reason
+    # was discarded at the call site, so which refusal it was is STILL unknown.
+    #
+    # So read both streams and match all three shapes a reason arrives in:
+    # `rate.limit` in prose (GitHub's rate-limit body has NO `status` key, so a
+    # code-only detector misses the commonest refusal), a `"status": "4xx"`
+    # field, and gh's own one-line `... (HTTP 4xx)` summary.
+    GH_SAID="$(tr -d '\r' < "$GH_STDERR" | grep -v '^[[:space:]]*$' | head -1 | cut -c1-200)"
+    GH_ANY="$(printf '%s\n' "$RAW_RUNS"; tr -d '\r' < "$GH_STDERR")"
     WHY="exit ${GH_RC}"
-    if printf '%s' "$RAW_RUNS" | grep -qi 'rate.limit'; then
+    if printf '%s' "$GH_ANY" | grep -qi 'rate.limit'; then
       WHY="HTTP 403, rate limit"
-    elif printf '%s' "$RAW_RUNS" | grep -q '"status": *"[45][0-9][0-9]"'; then
-      WHY="HTTP $(printf '%s' "$RAW_RUNS" | sed -n 's/.*"status": *"\([45][0-9][0-9]\)".*/\1/p' | head -1)"
+    elif printf '%s' "$GH_ANY" | grep -q '"status": *"[45][0-9][0-9]"'; then
+      WHY="HTTP $(printf '%s' "$GH_ANY" | sed -n 's/.*"status": *"\([45][0-9][0-9]\)".*/\1/p' | head -1)"
+    elif printf '%s' "$GH_ANY" | grep -qE '\(HTTP [45][0-9][0-9]\)'; then
+      WHY="HTTP $(printf '%s' "$GH_ANY" | sed -n 's/.*(HTTP \([45][0-9][0-9]\)).*/\1/p' | head -1)"
+    fi
+    if [ -n "$GH_SAID" ]; then
+      WHY="${WHY} — gh said: ${GH_SAID}"
     fi
     # Never sleep past the budget. The deadline is checked at the top of the
     # loop, so an unclamped backoff would overshoot the job's stated wait by up
@@ -445,6 +478,14 @@ while :; do
       emit "live_db_slot=acquired"
       emit "live_db_slot_wait_seconds=${ELAPSED}"
       emit "live_db_slot_attempt=${ATTEMPT}"
+      # Also on the SUCCESS path. A run that queued 738s behind two named
+      # holders and then acquired is the case where these matter most: the wait
+      # is real, nothing is broken, and the only way to tell that apart from a
+      # refused poller is to say who was ahead. An acquisition that reports a
+      # long wait and no holder is a finding, not a queue.
+      emit "live_db_slot_api_refusals=${API_REFUSALS}/${POLLS}"
+      emit "live_db_slot_holders=${HOLDERS_SEEN}"
+      emit "live_db_slot_undecided=${UNDECIDED}"
       exit 0
       ;;
     1)
