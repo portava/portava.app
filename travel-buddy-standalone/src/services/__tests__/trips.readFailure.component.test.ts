@@ -45,7 +45,7 @@ jest.mock('../../lib/supabase', () => ({
   },
 }));
 
-import { getTrip, getTripMemberRole, TripsReadUnavailableError } from '../trips';
+import { getTrip, getTripMemberRole, TripsReadUnavailableError } from '../trips.ts';
 
 const ROW = {
   id: 't1', owner_id: 'u1', title: 'Lisbon', destination_city: 'Lisbon', destination_country: 'PT',
