@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { requireUser, sendError } from "../lib/http";
+import { requireUser, sendError, optionalUserFromToken } from "../lib/http";
 import { nameVisibilitySet, nameVisibleFor, readNameVisibilitySet } from "../lib/publicIdentity";
 import { decideUnfollow, isUuid } from "../lib/followDecisions";
 import { normalizedFriendshipPair } from "../lib/friendDecisions";
@@ -526,10 +526,10 @@ router.get("/users/:userId/followers", async (req, res) => {
   let viewerId: string | null = null;
   const token = extractBearerToken(req);
   if (token) {
-    try {
-      const { data: { user } } = await sc.auth.getUser(token);
-      viewerId = user?.id ?? null;
-    } catch { /* unauthenticated */ }
+    // optionalUserFromToken, not a bare auth.getUser, which skipped the ban gate: a banned token kept its viewer
+    // standing on a private profile's list. `authThrowIsAnonymous` keeps the old catch for a THROWING Auth call;
+    // an unreadable account state still throws.
+    viewerId = (await optionalUserFromToken(sc, token, { log: req.log, authThrowIsAnonymous: true }))?.id ?? null;
   }
   const isMe = viewerId === target;
 
@@ -602,10 +602,10 @@ router.get("/users/:userId/following", async (req, res) => {
   let viewerId: string | null = null;
   const token = extractBearerToken(req);
   if (token) {
-    try {
-      const { data: { user } } = await sc.auth.getUser(token);
-      viewerId = user?.id ?? null;
-    } catch { /* unauthenticated */ }
+    // optionalUserFromToken, not a bare auth.getUser, which skipped the ban gate: a banned token kept its viewer
+    // standing on a private profile's list. `authThrowIsAnonymous` keeps the old catch for a THROWING Auth call;
+    // an unreadable account state still throws.
+    viewerId = (await optionalUserFromToken(sc, token, { log: req.log, authThrowIsAnonymous: true }))?.id ?? null;
   }
   const isMe = viewerId === target;
 
@@ -1750,8 +1750,8 @@ router.get("/users/:userId", async (req, res) => {
   // Resolve caller identity (best-effort; null if unauthenticated or token invalid).
   let callerId: string | null = null;
   if (token) {
-    const { data } = await sc.auth.getUser(token);
-    callerId = data?.user?.id ?? null;
+    // optionalUserFromToken, not a bare auth.getUser, which skipped the ban gate: a banned token kept its caller standing.
+    callerId = (await optionalUserFromToken(sc as any, token, { log: req.log }))?.id ?? null;
   }
 
   const isOwnProfile = callerId === target;
@@ -1886,8 +1886,8 @@ router.get("/users/by-handle/:handle", async (req, res) => {
 
   let callerId: string | null = null;
   if (token) {
-    const { data } = await sc.auth.getUser(token);
-    callerId = data?.user?.id ?? null;
+    // optionalUserFromToken, not a bare auth.getUser, which skipped the ban gate: a banned token kept its caller standing.
+    callerId = (await optionalUserFromToken(sc as any, token, { log: req.log }))?.id ?? null;
   }
 
   const profileRes = await sc

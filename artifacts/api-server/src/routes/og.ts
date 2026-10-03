@@ -41,7 +41,7 @@
 import { Router } from "express";
 import { getServiceClient } from "../lib/supabase.js";
 import { resolveProfileVisibility, extractBearerToken } from "../lib/profileVisibility.js";
-import { asyncHandler } from "../lib/asyncHandler.js";
+import { asyncHandler } from "../lib/asyncHandler.js"; import { optionalUserFromToken } from "../lib/http.js"; // one line: cited by line
 import {
   OG_IMAGE_WIDTH,
   OG_IMAGE_HEIGHT,
@@ -74,13 +74,13 @@ async function getViewerId(
 ): Promise<string | null> {
   const token = extractBearerToken(req);
   if (!token) return null;
-  try {
-    const { data: { user }, error } = await sc.auth.getUser(token);
-    if (error || !user) return null;
-    return user.id;
-  } catch {
-    return null;
-  }
+  // optionalUserFromToken, not a bare auth.getUser: the bare call skipped the
+  // account-state gate, so a banned/suspended token kept its viewer standing.
+  // `authThrowIsAnonymous` keeps the old catch for an Auth call that throws;
+  // an unreadable account state still throws (503 via the global handler).
+  // Same line count as before: the census documents cite this file by line.
+  const user = await optionalUserFromToken(sc, token, { authThrowIsAnonymous: true });
+  return user?.id ?? null;
 }
 
 /**

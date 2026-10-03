@@ -45,7 +45,7 @@
  *     in the edit path where it could bite.
  *
  * ── WHY `isEditHistorySchemaAbsent` IS NARROW ───────────────────────────────
- * Only a genuinely absent relation or column earns the degraded path. A
+ * Only a genuinely absent relation earns the degraded path (not a column). A
  * deadlock (40P01), a permission denial (42501), a unique violation (23505) or
  * an unclassified server error (XX000) are NOT "2811 is unapplied": they are
  * failures that a retry might survive, and treating them as the schema gap
@@ -54,11 +54,11 @@
  * an explicit allowlist rather than a substring match on a message.
  */
 
-/** PostgREST / Postgres codes that mean "this relation or column is not here". */
+/** PostgREST / Postgres codes that mean "this relation is not here" (2811 unapplied). */
 export const EDIT_HISTORY_SCHEMA_CODES: ReadonlySet<string> = new Set([
   "42P01", // undefined_table
-  "42703", // undefined_column
-  "PGRST204", // column not found in schema cache
+  // NOT 42703 / PGRST204 (a missing COLUMN): message_edits EXISTS then, the edit was NOT recorded, and
+  // letting it through overwrote messages.body with the previous text recorded nowhere (lib/tableAbsence rule).
   "PGRST205", // relation not found in schema cache
 ]);
 

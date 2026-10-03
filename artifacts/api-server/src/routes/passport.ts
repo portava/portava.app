@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { createHash } from "node:crypto";
-import { requireUser, sendError } from "../lib/http";
+import { requireUser, sendError, optionalUserFromToken } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
 import { stampOverlayCol, feedVariantCol } from "../lib/postMediaOverlay";
 import { resolveInteractionPermissions } from "../services/interactionPermissions";
@@ -127,13 +127,13 @@ async function getOptionalViewerId(
 ): Promise<string | null> {
   const token = extractBearerToken(req);
   if (!token) return null;
-  try {
-    const { data: { user }, error } = await sc.auth.getUser(token);
-    if (error || !user) return null;
-    return user.id;
-  } catch {
-    return null;
-  }
+  // optionalUserFromToken, not a bare auth.getUser: the bare call skipped the
+  // account-state gate, so a banned/suspended token kept its viewer standing.
+  // `authThrowIsAnonymous` keeps the old catch for an Auth call that throws;
+  // an unreadable account state still throws (503 via the global handler).
+  // Same line count as before: the census documents cite this file by line.
+  const user = await optionalUserFromToken(sc, token, { authThrowIsAnonymous: true });
+  return user?.id ?? null;
 }
 
 /** Build the default viewer object for unauthenticated callers or own-profile access. */
