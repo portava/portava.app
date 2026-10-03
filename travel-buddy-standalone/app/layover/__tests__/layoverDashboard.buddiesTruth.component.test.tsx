@@ -1,34 +1,20 @@
 /**
- * census-layover L127 / L128 / L294 — THE WIRING HALF.
+ * census-layover L273 / L254 / L294 — THE WIRING HALF of the buddy list.
  *
- * `LayoverPeopleSection.presenceTruth.component.test.tsx` proves the CARD can
- * tell a refusal from a measured zero. This file proves the SCREEN hands it the
- * fields to do it with, which is where the defect actually lived:
+ * `LayoverPeopleSection.buddiesTruth.component.test.tsx` proves the CARD can
+ * tell a failed read, a safety-gate refusal and a measured list apart. This
+ * file proves the SCREEN hands it the answer to do it with. The dashboard
+ * used to store
  *
- *   const res = await getLayoverPresence(sessionId);
- *   if (res?.sharing) setPresence({ count: res.count, travelers: res.travelers });
- *   else setPresence({ count: 0, travelers: [] });
+ *   setBuddies(buddyRes?.buddies ?? []);
  *
- * Three server answers collapsed into `{ count: 0, travelers: [] }` there:
- *   - `null`      — the HTTP read itself failed (503 `degraded_unavailable`,
- *                   or `fetch` rejected because the device is offline)
- *   - `degraded`  — the route answered, and said its count is not a measurement
- *   - `withheld`  — the gate refused on the traveller's own stored settings
+ * so a 503 or an offline device became an empty list, and the gate's refusal
+ * — `reason: "safety_gate_not_passed"`, computed so that a traveller who
+ * cannot leave is not handed people to go and meet — was dropped on the floor
+ * with every other field the route publishes.
  *
- * and the card then printed "No other shared layovers here right now — you're
- * the first." for all three. A traveller in ghost mode, and a traveller during
- * a Supabase outage, were both told the city was empty.
- *
- * ── WHAT WOULD TURN THIS RED ─────────────────────────────────────────────────
- * Case 4 is the control: a genuinely measured zero must still produce the
- * claim, so a fix that simply stops the screen from ever asserting anything
- * fails here. Case 5 keeps the real count rendering.
- *
- * `LayoverPeopleSection` is deliberately NOT stubbed in this file — the point
- * is the value crossing the prop boundary, and a stub would assert nothing.
- *
- * NO PINNED DATES. Every instant is derived from `Date.now()` at module load,
- * so nothing here expires.
+ * `LayoverPeopleSection` is deliberately NOT stubbed: the point is the value
+ * crossing the prop boundary.
  */
 import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react-native';
@@ -87,7 +73,7 @@ jest.mock('../../../src/components/layover/LayoverFlightChangeCard', () => ({ La
 jest.mock('../../../src/services/layover', () => ({
   getLayoverOverview: jest.fn(async () => ({ ok: true, overview: (global as any).__overview })),
   getRecommendations: jest.fn(async () => ({ ok: true, recommendations: [] })),
-  getLayoverBuddies: jest.fn(async () => ({ ok: true, city: 'Bangkok', buddies: [], refusal: null, safetyGate: null, trustRequirement: null, degraded: false, degradedReasons: [] })),
+  getLayoverBuddies: jest.fn(async () => (global as any).__buddies),
   getLayoverPresence: jest.fn(async () => (global as any).__presence),
   // census L269 — the screen mounts LayoverDiscoveryCard, which reads through
   // this module. Kept in step with the exhaustive list above: an omission here
@@ -113,7 +99,6 @@ const HOUR = 3_600_000;
 const NOW = Date.now();
 const HARD_RETURN = new Date(NOW + 4 * HOUR).toISOString();
 
-const FIRST = /you're the first/i;
 
 /** Sharing is ON, so the screen calls `getLayoverPresence` and renders the box. */
 function overviewBody() {
@@ -161,57 +146,43 @@ function overviewBody() {
   };
 }
 
-async function mount(presence: unknown) {
+async function mount(buddies: unknown) {
   (global as any).__overview = overviewBody();
-  (global as any).__presence = presence;
+  (global as any).__presence = null;
+  (global as any).__buddies = buddies;
   await render(<LayoverDashboardScreen />);
   await waitFor(() => expect(screen.getByTestId('layover-hero-stub')).toBeTruthy());
 }
 
-describe('the presence read reaches the card with its confidence intact', () => {
-  it('1. a null read (503 / offline) is NOT rendered as an empty city', async () => {
-    await mount(null);
-    await waitFor(() => expect(screen.getByTestId('layover-presence-unmeasured')).toBeTruthy());
-    expect(screen.queryByText(FIRST)).toBeNull();
+const BUDDY = {
+  id: 'b-1', userId: 'u-9', displayName: 'Mai', tagline: null, city: 'Bangkok', country: 'Thailand',
+  categories: ['city'], hourlyRateUsd: 20, averageRating: 4.8, reviewCount: 12, verified: true,
+  coverPhotoUrl: null, buddyLevel: 'pro', availableNow: false, availableDuringLayover: true,
+};
+
+describe('the buddy answer reaches the card whole', () => {
+  it('1. a FAILED read is shown as one — not as an empty marketplace', async () => {
+    await mount({ ok: false, message: 'Local buddies could not be loaded. Please try again.' });
+    await waitFor(() => expect(screen.getByTestId('layover-buddies-unavailable')).toBeTruthy());
   });
 
-  it('2. a degraded answer is NOT rendered as an empty city', async () => {
+  it('2. the safety gate\'s refusal reaches the card', async () => {
     await mount({
-      sharing: true, city: 'Bangkok', count: 0, travelers: [],
-      level: 'L2_DISCOVERY', degraded: true, degradedReasons: ['presence_unreadable'],
+      ok: true, city: 'Bangkok', buddies: [], refusal: 'safety_gate_not_passed',
+      safetyGate: { passed: false, verdict: 'no', usableMinutes: 20, returnState: 'NORMAL' },
+      trustRequirement: null, degraded: false, degradedReasons: [],
     });
-    await waitFor(() => expect(screen.getByTestId('layover-presence-unmeasured')).toBeTruthy());
-    expect(screen.queryByText(FIRST)).toBeNull();
+    await waitFor(() => expect(screen.getByTestId('layover-buddies-gate')).toBeTruthy());
   });
 
-  it('3. a gate refusal on the traveller\'s own settings is named, not hidden', async () => {
-    // The route's non-opted-in / gate-refused branch: `sharing: false` with the
-    // reasons in `withheld`. The screen used to drop the whole body here.
+  it('3. CONTROL: a measured list is rendered as a list', async () => {
     await mount({
-      sharing: false, count: 0, travelers: [],
-      level: 'L0_AGGREGATE', withheld: ['ghost_mode'],
+      ok: true, city: 'Bangkok', buddies: [BUDDY], refusal: null,
+      safetyGate: { passed: true, verdict: 'yes', usableMinutes: 240, returnState: 'NORMAL' },
+      trustRequirement: { applied: false, reason: null, requires: [] },
       degraded: false, degradedReasons: [],
     });
-    await waitFor(() => expect(screen.getByTestId('layover-presence-withheld')).toBeTruthy());
-    expect(screen.queryByText(FIRST)).toBeNull();
-  });
-
-  it('4. a measured zero still says "you\'re the first"', async () => {
-    await mount({
-      sharing: true, city: 'Bangkok', count: 0, travelers: [],
-      level: 'L2_DISCOVERY', degraded: false, degradedReasons: [],
-    });
-    await waitFor(() => expect(screen.getByText(FIRST)).toBeTruthy());
-    expect(screen.queryByTestId('layover-presence-unmeasured')).toBeNull();
-    expect(screen.queryByTestId('layover-presence-withheld')).toBeNull();
-  });
-
-  it('5. a measured count is still rendered as a count', async () => {
-    await mount({
-      sharing: true, city: 'Bangkok', count: 3, travelers: [],
-      level: 'L0_AGGREGATE', degraded: false, degradedReasons: [],
-    });
-    await waitFor(() =>
-      expect(screen.getByText(/3 travelers are also on a layover here/i)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Mai')).toBeTruthy());
+    expect(screen.queryByTestId('layover-buddies-unavailable')).toBeNull();
   });
 });

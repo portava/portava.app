@@ -614,8 +614,61 @@ export interface LayoverBuddy {
   coverPhotoUrl: string | null;
   buddyLevel: string | null;
   availableNow: boolean;
-  availableDuringLayover: boolean;
+  /**
+   * `null` means NOBODY CHECKED — the availability table could not be read —
+   * and the route says so in `degradedReasons`. It is not `false`: `false` is
+   * a measured "not marked available during your layover", a claim about this
+   * person. Census §23.8 recorded the route half of this; the type is the
+   * client half, so a truthiness test cannot fold the two back together.
+   */
+  availableDuringLayover: boolean | null;
+  /** TRUE when the profile positively declares a service a layover can use. */
+  layoverCompatible?: boolean;
 }
+
+/**
+ * The certified answer the route gates the list on (`LayoverBuddyGate.ts`).
+ * Its vocabulary, not ours: the verdict is the same §9 verdict the countdown on
+ * this screen shows, so the list and the countdown cannot disagree.
+ */
+export interface LayoverBuddySafetyGate {
+  passed: boolean;
+  verdict: LeaveAdvice['verdict'] | string;
+  usableMinutes: number;
+  returnState: LayoverReturnState | string;
+}
+
+/** What a high-risk (tight) layover requires of a buddy profile. */
+export interface LayoverBuddyTrustRequirement {
+  applied: boolean;
+  reason: 'tight_window' | string | null;
+  requires: string[];
+}
+
+/**
+ * census-layover L273 / L254 / L294 — the buddy list, or the reason there is
+ * none. Never an empty array standing in for either.
+ *
+ * `ok: true` is an answer from the route. `refusal` is null when it served a
+ * list (possibly empty) and names why when it declined to:
+ * `safety_gate_not_passed` (the certified window — see `safetyGate`) or
+ * `rent_buddy_not_enabled` (the marketplace is off). `degraded` means a read
+ * the route made fell closed; `blocks_unreadable` serves nobody by design.
+ * `ok: false` is the absence of an answer, with the server's sentence when it
+ * wrote one.
+ */
+export type LayoverBuddiesAnswer =
+  | {
+      ok: true;
+      city: string | null;
+      buddies: LayoverBuddy[];
+      refusal: string | null;
+      safetyGate: LayoverBuddySafetyGate | null;
+      trustRequirement: LayoverBuddyTrustRequirement | null;
+      degraded: boolean;
+      degradedReasons: string[];
+    }
+  | { ok: false; message: string };
 
 export interface CreateSessionPayload {
   airportId?: string | null;
@@ -1373,13 +1426,44 @@ export async function getLayoverPresence(sessionId: string): Promise<LayoverPres
   };
 }
 
-export async function getLayoverBuddies(sessionId: string): Promise<{
-  city: string | null;
-  buddies: LayoverBuddy[];
-} | null> {
-  const res = await authedFetch(airportUrl('sessions', sessionId, 'buddies'));
-  if (!res.ok) return null;
-  return res.json();
+/** What a failed buddy read says when the server said nothing (offline, unparseable). */
+const BUDDIES_UNREACHABLE = 'Local buddies could not be loaded. Please try again.';
+
+/**
+ * Resolves in EVERY case — it used to throw on an offline `fetch` into the
+ * dashboard's `Promise.all`, and to answer a 503 with `null`, which the screen
+ * stored as `[]`. Every field the route publishes is named here, so no caller
+ * has to decide what an absent confidence flag means.
+ */
+export async function getLayoverBuddies(sessionId: string): Promise<LayoverBuddiesAnswer> {
+  let res: Response;
+  try {
+    res = await authedFetch(airportUrl('sessions', sessionId, 'buddies'));
+  } catch {
+    return { ok: false, message: BUDDIES_UNREACHABLE };
+  }
+  let json: Record<string, any> = {};
+  try { json = await res.json(); } catch { /* falls through to the status check */ }
+  if (!res.ok || json.ok === false) {
+    return { ok: false, message: typeof json.message === 'string' ? json.message : BUDDIES_UNREACHABLE };
+  }
+  return {
+    ok: true,
+    city: typeof json.city === 'string' ? json.city : null,
+    buddies: Array.isArray(json.buddies)
+      ? (json.buddies as LayoverBuddy[]).map((b) => ({
+          ...b,
+          // An older server sent `false` for an unread table; this one sends
+          // `null`. Anything that is not a boolean is "not checked".
+          availableDuringLayover: typeof b.availableDuringLayover === 'boolean' ? b.availableDuringLayover : null,
+        }))
+      : [],
+    refusal: typeof json.reason === 'string' ? json.reason : null,
+    safetyGate: json.safetyGate ?? null,
+    trustRequirement: json.trustRequirement ?? null,
+    degraded: json.degraded === true,
+    degradedReasons: Array.isArray(json.degradedReasons) ? (json.degradedReasons as string[]) : [],
+  };
 }
 
 // ── Telegraph ─────────────────────────────────────────────────────────────────
