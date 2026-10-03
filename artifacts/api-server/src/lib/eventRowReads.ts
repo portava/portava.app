@@ -5,36 +5,36 @@
  * caller's failed-read arm (keep the cached count and name the read, or leave the counter alone) takes it.
  *
  * Every read is ordered by a key that partitions the set (`event_rsvps` and `event_waitlist` are unique on
- * `(event_id, user_id)`), so the pages neither overlap nor skip rows.
+ * `(event_id, user_id)`) and pages BY that key (§118, B23: each page asks for the rows after the last one received), so the pages neither overlap nor skip a row that existed throughout, whatever is written between them.
  */
-import { readAllPages, type PagedRead } from "./pagedRead.js";
+import { readAllPages, keysetAfter, type PagedRead } from "./pagedRead.js";
 
 /** The going RSVPs of these events (`event_id, user_id`): the list's live going recount. */
 export function readGoingRsvpsForEvents(sc: any, eventIds: string[]): Promise<PagedRead<{ event_id: string; user_id: string }>> {
-  return readAllPages((from, to) => sc.from("event_rsvps").select("event_id, user_id", { count: "exact" })
-    .in("event_id", eventIds).eq("status", "going").order("event_id").order("user_id").range(from, to));
+  return readAllPages((from, to, after) => keysetAfter(sc.from("event_rsvps").select("event_id, user_id", { count: "exact" })
+    .in("event_id", eventIds).eq("status", "going"), ["event_id", "user_id"], after).order("event_id").order("user_id").range(from, to), { key: (r) => [r.event_id, r.user_id] });
 }
 
 /** The waitlist rows of these events (`event_id, user_id`): the list's live waitlist recount. */
 export function readWaitlistForEvents(sc: any, eventIds: string[]): Promise<PagedRead<{ event_id: string; user_id: string }>> {
-  return readAllPages((from, to) => sc.from("event_waitlist").select("event_id, user_id", { count: "exact" })
-    .in("event_id", eventIds).order("event_id").order("user_id").range(from, to));
+  return readAllPages((from, to, after) => keysetAfter(sc.from("event_waitlist").select("event_id, user_id", { count: "exact" })
+    .in("event_id", eventIds), ["event_id", "user_id"], after).order("event_id").order("user_id").range(from, to), { key: (r) => [r.event_id, r.user_id] });
 }
 
 /** One event's RSVPs (`user_id, status`): of one status (`eq`), of several (`in`), or all. */
 export function readEventRsvps(sc: any, eventId: string, only: { status?: string; statuses?: string[] } = {}): Promise<PagedRead<{ user_id: string; status: string }>> {
-  return readAllPages((from, to) => {
+  return readAllPages((from, to, after) => {
     let q = sc.from("event_rsvps").select("user_id, status", { count: "exact" }).eq("event_id", eventId);
     if (only.status !== undefined) q = q.eq("status", only.status);
     if (only.statuses !== undefined) q = q.in("status", only.statuses);
-    return q.order("user_id").range(from, to);
-  });
+    return keysetAfter(q, ["user_id"], after).order("user_id").range(from, to);
+  }, { key: (r) => [r.user_id] });
 }
 
 /** One event's waitlist rows (`user_id`). */
 export function readEventWaitlist(sc: any, eventId: string): Promise<PagedRead<{ user_id: string }>> {
-  return readAllPages((from, to) => sc.from("event_waitlist").select("user_id", { count: "exact" })
-    .eq("event_id", eventId).order("user_id").range(from, to));
+  return readAllPages((from, to, after) => keysetAfter(sc.from("event_waitlist").select("user_id", { count: "exact" })
+    .eq("event_id", eventId), ["user_id"], after).order("user_id").range(from, to), { key: (r) => [r.user_id] });
 }
 
 /**
@@ -69,7 +69,7 @@ export async function liveEventCounters(sc: any, rows: any[], which: { going?: b
  * POST /events/:id/reviews stamps `review_count` and `avg_rating` from. `event_reviews` is unique on
  * `(event_id, reviewer_id)`, so ordering by `reviewer_id` partitions the pages.
  */
-export function readEventRatings(sc: any, eventId: string): Promise<PagedRead<{ rating: number }>> {
-  return readAllPages((from, to) => sc.from("event_reviews").select("rating", { count: "exact" })
-    .eq("event_id", eventId).order("reviewer_id").range(from, to));
+export function readEventRatings(sc: any, eventId: string): Promise<PagedRead<{ rating: number; reviewer_id?: string }>> {
+  return readAllPages((from, to, after) => keysetAfter(sc.from("event_reviews").select("reviewer_id, rating", { count: "exact" })
+    .eq("event_id", eventId), ["reviewer_id"], after).order("reviewer_id").range(from, to), { key: (r) => [String(r.reviewer_id ?? "")] });
 }

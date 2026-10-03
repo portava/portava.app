@@ -32,6 +32,7 @@ import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import eventsRouter from "../routes/events.js";
 import { world, eventsServer, eventRow, stamps, eventsUpdates, offerRow, EVENT, VIEWER as W_VIEWER, W1 } from "./helpers/eventsWorld.js";
+import { logicFilter, sortByOrders } from "./helpers/postgrestKeyset.js";
 
 interface Row { [k: string]: unknown }
 type Tables = Record<string, { rows: Row[]; error?: { message: string } }>;
@@ -46,6 +47,7 @@ function makeClient(tables: Tables) {
     const spec = tables[name] ?? { rows: [] };
     let rows = [...spec.rows];
     let limit: number | null = null;
+    const orders: Array<{ col: string; asc?: boolean }> = [];
     const capped = () => rows.slice(0, Math.min(limit ?? DB_MAX_ROWS, DB_MAX_ROWS));
     const q: Record<string, unknown> & { then: (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) => Promise<unknown> } = {
       select: () => q,
@@ -57,10 +59,11 @@ function makeClient(tables: Tables) {
       ilike: (c: string, p: string) => { const n = p.replace(/%/g, "").toLowerCase(); rows = rows.filter((r) => String(r[c] ?? "").toLowerCase().includes(n)); return q; },
       is: (c: string, v: unknown) => { rows = rows.filter((r) => (v === null ? r[c] == null : r[c] === v)); return q; },
       not: (c: string) => { rows = rows.filter((r) => r[c] != null); return q; },
-      or: () => q,
-      order: () => q,
+      or: (expr: string) => { const p = logicFilter(expr); if (p) rows = rows.filter(p); return q; },  // §118 (B23): a keyset page's cursor, as PostgREST reads it
+      gt: (c: string, v: string) => { rows = rows.filter((r) => r[c] != null && String(r[c]) > v); return q; },
+      order: (c: string, o?: { ascending?: boolean }) => { orders.push({ col: c, asc: o?.ascending !== false }); return q; },
       limit: (n: number) => { limit = n; return q; },
-      range: (a: number, b: number) => { rows = rows.slice(a, b + 1); return q; },
+      range: (a: number, b: number) => { rows = sortByOrders(rows, orders).slice(a, b + 1); return q; },
       insert: () => Promise.resolve({ data: null, error: null }),
       maybeSingle: () => Promise.resolve(spec.error ? { data: null, error: spec.error } : { data: rows[0] ?? null, error: null }),
       single: () => Promise.resolve(spec.error ? { data: null, error: spec.error } : { data: rows[0] ?? null, error: rows[0] ? null : { message: "No rows" } }),

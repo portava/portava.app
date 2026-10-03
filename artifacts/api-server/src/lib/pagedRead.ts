@@ -29,34 +29,69 @@ export const PAGED_READ_CUT = "PAGED_READ_CUT";
 export interface PagedReadError { message: string; code?: string }
 export interface PagedRead<T> { data: T[] | null; error: PagedReadError | null }
 
-/** One page of the read: rows `from`..`to` inclusive, as `.range(from, to)` asks. */
-export type PageFn = (from: number, to: number) => PromiseLike<{ data?: unknown; error?: unknown; count?: number | null }>;
+/** One page of the read: rows `from`..`to` inclusive, as `.range(from, to)` asks; a KEYED read (`opts.key`) asks instead for up to `to - from + 1` rows after `after`, the last row received (§118, B23: `keysetAfter`). */
+export type PageFn<T = any> = (from: number, to: number, after: T | null) => PromiseLike<{ data?: unknown; error?: unknown; count?: number | null }>;
 
 function cut(message: string): PagedRead<never> {
   return { data: null, error: { message, code: PAGED_READ_CUT } };
 }
 
 export async function readAllPages<T = any>(
-  page: PageFn,
-  opts: { pageSize?: number; maxRows?: number } = {},
+  page: PageFn<T>,
+  opts: { pageSize?: number; maxRows?: number; key?: (row: T) => readonly string[] } = {},
 ): Promise<PagedRead<T>> {
   const pageSize = opts.pageSize ?? PAGED_READ_PAGE_SIZE;
   const maxRows = opts.maxRows ?? PAGED_READ_MAX_ROWS;
-  const out: T[] = [];
+  const out: T[] = []; let after: T | null = null; let firstTotal: number | null = null;  // §118 (B23): the keyset cursor, and an unkeyed read's first total
   for (;;) {
-    const from = out.length;
-    const res = await page(from, from + pageSize - 1);
+    const from = opts.key ? 0 : out.length;  // §118 (B23): a keyed page starts after the last row received, never at an offset a write can shift
+    const res = await page(from, from + pageSize - 1, after);
     if (res?.error) return { data: null, error: res.error as PagedReadError };
     if (!Array.isArray(res?.data)) return cut("a page answered without rows");
-    const rows = res.data as T[];
+    const rows = res.data as T[]; if (opts.key && after !== null && rows.length > 0 && !keyAfter(opts.key(rows[0]), opts.key(after))) return cut("a page repeated a row the read already received");
     out.push(...rows);
-    if (out.length > maxRows) return cut(`more than ${maxRows} rows`);
-    const total = typeof res.count === "number" ? res.count : null;
+    if (out.length > maxRows) return cut(`more than ${maxRows} rows`); if (rows.length > 0) after = rows[rows.length - 1];
+    const total = typeof res.count === "number" ? res.count : null; if (total !== null && !opts.key) { if (firstTotal === null) firstTotal = total; else if (total !== firstTotal) return cut(`the total moved from ${firstTotal} to ${total} between pages`); }
     if (total !== null) {
-      if (out.length >= total) return { data: out, error: null };
+      if ((opts.key ? rows.length : out.length) >= total) return { data: out, error: null };  // §118 (B23): a keyed page's count is the rows from its cursor on
       if (rows.length === 0) return cut(`${out.length} of ${total} rows read`);
     } else if (rows.length < pageSize) {
       return { data: out, error: null };
     }
   }
+}
+
+/**
+ * census-discovery §118 (DV-83 round 21, B23): whether key `a` sorts strictly after key `b`, column by column, as
+ * PostgreSQL orders the uuid keys these reads page on (lowercase hex, so string order is byte order).
+ */
+function keyAfter(a: readonly string[], b: readonly string[]): boolean {
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const x = a[i] ?? "", y = b[i] ?? "";
+    if (x !== y) return x > y;
+  }
+  return false;
+}
+
+/** A filter value as PostgREST's logic-tree grammar reads it: double-quoted, with `"` and `\` escaped, when it holds a reserved character. */
+function pgrstValue(v: string): string {
+  return /^[A-Za-z0-9_-]+$/.test(v) ? v : `"${v.replace(/[\\"]/g, (c) => `\\${c}`)}"`;
+}
+
+/**
+ * census-discovery §118 (DV-83 round 21, B23): narrow query `q` to the rows whose key `(cols[0], cols[1], …)` sorts
+ * after `after`'s, so a keyed `readAllPages` page starts where the last one ended whatever was written meanwhile. One
+ * column is `.gt(col, v)`; a composite key is PostgREST's row comparison spelt as a logic tree, for two columns
+ * `.or("a.gt.v,and(a.eq.v,b.gt.w)")`. `after === null` (the first page) leaves `q` as it is.
+ */
+export function keysetAfter<Q>(q: Q, cols: readonly string[], after: Record<string, unknown> | null): Q {
+  if (after === null) return q;
+  const v = cols.map((c) => String(after[c] ?? ""));
+  if (cols.length === 1) return (q as any).gt(cols[0], v[0]);
+  const terms = cols.map((c, i) => {
+    const eqs = cols.slice(0, i).map((p, j) => `${p}.eq.${pgrstValue(v[j])}`);
+    const gt = `${c}.gt.${pgrstValue(v[i])}`;
+    return eqs.length === 0 ? gt : `and(${[...eqs, gt].join(",")})`;
+  });
+  return (q as any).or(terms.join(","));
 }

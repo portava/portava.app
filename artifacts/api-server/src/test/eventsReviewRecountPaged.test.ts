@@ -10,7 +10,8 @@
  *
  *   RV1  1200 reviews (1000 of 5, 200 of 1), the server caps at 1000 → the stamp is the uncapped one (count and average)
  *   RV0  CONTROL: 3 reviews, capped at 1000 → the stamp equals the uncapped one
- *   RV2  the pages are ordered by `reviewer_id`, the key that partitions them, and ask for an exact count
+ *   RV2  the pages are ordered by `reviewer_id`, the key that partitions them, and ask for an exact count (and select it: §118's
+ *        keyed pages start after the last reviewer received)
  *   RV3  a server whose cap (500) is below the page size → still the uncapped stamp (the count, not a short page, ends it)
  */
 import { describe, it, before, after } from "node:test";
@@ -58,7 +59,7 @@ describe("census-discovery §117 (SW19): the review recount reads every rating",
       : (...a: unknown[]) => { calls.push(`${k}(${JSON.stringify(a)})`); return q; } });
     const r = await readEventRatings({ from: (t: string) => { calls.push(`from(${t})`); return q; } }, EVENT);
     assert.deepEqual(r, { data: [{ rating: 4 }], error: null });
-    assert.ok(calls.includes('select(["rating",{"count":"exact"}])'), calls.join(" "));
+    assert.ok(calls.includes('select(["reviewer_id, rating",{"count":"exact"}])'), calls.join(" "));  // §118 (B23): the read selects the key it pages by
     assert.ok(calls.includes('order(["reviewer_id"])'), calls.join(" "));
     assert.ok(calls.indexOf('order(["reviewer_id"])') < calls.findIndex((c) => c.startsWith("range(")), calls.join(" "));
   });
