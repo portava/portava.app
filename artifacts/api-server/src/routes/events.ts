@@ -1216,7 +1216,7 @@ router.get("/events", async (req, res) => {
   // Batch-fetch saved state for this user across these events
   let savedEventIds = new Set<string>();
   if (eventIds.length > 0) {
-    try {
+    try { const { data: evSaves, error: evSavesErr } = await sc.from("event_saves").select("event_id").eq("user_id", user.id).in("event_id", eventIds); if (evSavesErr) throw evSavesErr; for (const s of (evSaves ?? []) as any[]) savedEventIds.add(s.event_id as string);  // census-discovery §122 (DV-83 round 23, B35): the store the events bookmark writes counts too
       const { data: userCols, error: userColsErr } = await sc
         .from("collections")
         .select("id")
@@ -1623,10 +1623,10 @@ router.get("/events/me", async (req, res) => {
   // All events here are ones the viewer hosts or attends → always participant view.
   // Include myRsvp so the response matches the EventListItem contract used by list cards.
   const goingSet = new Set(rsvpIds); const meCountsUnread = await liveEventCounters(sc, combined);  // census-discovery §117 (DV-83, sweep SW18): the cached counters recounted live; a failed read keeps them, named
-  res.json({ ...countsUnreadKey(meCountsUnread),
+  const meSaved = await viewerSavedEventIds(sc, user.id, combined.map((e: any) => e.id as string)); if (!meSaved) { req.log?.error("my events: the viewer's saved read failed — refusing"); sendError(res, "degraded_unavailable", EVENT_LIST_UNAVAILABLE); return; } res.json({ ...countsUnreadKey(meCountsUnread),  // census-discovery §122 (B35)
     events: combined.map((e: any) => ({
       ...formatEvent(e, user.id, { goingRsvp: true }),
-      myRsvp: goingSet.has(e.id as string) ? "going" : null,
+      myRsvp: goingSet.has(e.id as string) ? "going" : null, isSaved: meSaved.has(e.id as string),
     })),
   });
 });
@@ -1772,10 +1772,10 @@ router.get("/events/circles", async (req, res) => {
     ? eventsCursorOf(filtered[filtered.length - 1])
     : circlesPoolCut ? eventsCursorOf(circlesPool[circlesPool.length - 1]) : null; const circleCountsUnread = await liveEventCounters(sc, filtered);  // census-discovery §117 (DV-83, sweep SW18): the cached counters recounted live; a failed read keeps them, named
 
-  res.json({ ...countsUnreadKey(circleCountsUnread),
+  const circleSaved = await viewerSavedEventIds(sc, user.id, filteredIds); if (!circleSaved) { req.log?.error("circle events: the viewer's saved read failed — refusing"); sendError(res, "degraded_unavailable", EVENT_LIST_UNAVAILABLE); return; } res.json({ ...countsUnreadKey(circleCountsUnread),  // census-discovery §122 (B35)
     events: filtered.map((e: any) => ({
       ...formatEvent(e, user.id, { hostProfile: hpMap[e.host_id as string] }),
-      myRsvp: rsvpMap[e.id as string] ?? null,
+      myRsvp: rsvpMap[e.id as string] ?? null, isSaved: circleSaved.has(e.id as string),
     })),
     cursor: nextCursor, ...(circlesCut || circlesPoolCut ? { truncated: true as const } : {}),  // §119 (B32)
   });
@@ -1817,7 +1817,7 @@ router.get("/events/saved", async (req, res) => {
 
   res.json({ ...countsUnreadKey(savedCountsUnread),
     events: ((events as any[]) ?? []).map((e: any) =>
-      formatEvent(e, user.id, { goingRsvp: savedRsvpSet.has(e.id as string) }),
+      ({ ...formatEvent(e, user.id, { goingRsvp: savedRsvpSet.has(e.id as string) }), isSaved: true }),  // census-discovery §122 (B35): every event this list reads is in event_saves
     ),
     page,
     limit,
@@ -2387,10 +2387,10 @@ router.get("/events/following", async (req, res) => {
 
   const followingPool = (events as any[]) ?? []; const followingPoolCut = filtered.length < limit && followingPool.length >= limit * 3; const nextCursor = filtered.length === limit ? eventsCursorOf(filtered[filtered.length - 1]) : followingPoolCut ? eventsCursorOf(followingPool[followingPool.length - 1]) : null; const followingCountsUnread = await liveEventCounters(sc, filtered);  // census-discovery §117 (DV-83, sweep SW18): the cached counters recounted live; a failed read keeps them, named
 
-  res.json({ ...countsUnreadKey(followingCountsUnread),
+  const followingSaved = await viewerSavedEventIds(sc, user.id, filteredIds); if (!followingSaved) { req.log?.error("following events: the viewer's saved read failed — refusing"); sendError(res, "degraded_unavailable", EVENT_LIST_UNAVAILABLE); return; } res.json({ ...countsUnreadKey(followingCountsUnread),  // census-discovery §122 (B35)
     events: filtered.map((e: any) => ({
       ...formatEvent(e, user.id, { hostProfile: hpMap[e.host_id as string] }),
-      myRsvp: rsvpMap[e.id as string] ?? null,
+      myRsvp: rsvpMap[e.id as string] ?? null, isSaved: followingSaved.has(e.id as string),
     })),
     cursor: nextCursor, ...(followingCut || followingPoolCut ? { truncated: true as const } : {}),  // census-discovery §119 (DV-83 round 22, B32): a full pool the filter emptied is not the end
   });
@@ -7159,4 +7159,30 @@ function eventsAfterCursor(q: any, cursor: string): any {
   const ts = cursor.slice(0, bar); const id = pgrstValue(cursor.slice(bar + 1));
   if (ts === "") return q.is("starts_at", null).gt("id", cursor.slice(bar + 1));  // past every dated event: the undated ones, by id
   return q.or(`starts_at.gt.${pgrstValue(ts)},and(starts_at.eq.${pgrstValue(ts)},id.gt.${id}),starts_at.is.null`);
+}
+
+// ── census-discovery §122 (DV-83 round 23, lane W11-X2; §119.16 B35) ─────────────────────────────────────────────────
+// The viewer's own saved state for an events list: the events the viewer saved with the events bookmark
+// (`event_saves`, what POST/DELETE /events/:id/save write and GET /events/saved lists) or put in one of their
+// collections (`collection_items`, entity_type "event", what GET /events already read). `null` when any of the reads
+// failed or threw: the caller refuses rather than serve `isSaved: false` ("not saved") over a read it could not make.
+async function viewerSavedEventIds(sc: any, userId: string, eventIds: readonly string[]): Promise<Set<string> | null> {
+  const ids = [...new Set(eventIds)];
+  const saved = new Set<string>();
+  if (ids.length === 0) return saved;
+  try {
+    const { data: saves, error: savesErr } = await sc.from("event_saves").select("event_id").eq("user_id", userId).in("event_id", ids);
+    if (savesErr) return null;
+    for (const r of (saves ?? []) as any[]) saved.add(String(r.event_id));
+    const { data: cols, error: colsErr } = await sc.from("collections").select("id").eq("owner_id", userId);
+    if (colsErr) return null;
+    const colIds = ((cols ?? []) as any[]).map((c) => String(c.id));
+    if (colIds.length === 0) return saved;
+    const { data: items, error: itemsErr } = await sc.from("collection_items").select("entity_id").eq("entity_type", "event").in("collection_id", colIds).in("entity_id", ids);
+    if (itemsErr) return null;
+    for (const r of (items ?? []) as any[]) saved.add(String(r.entity_id));
+    return saved;
+  } catch {
+    return null;
+  }
 }

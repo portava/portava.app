@@ -137,7 +137,7 @@ function EventsTabScreen() {
   const [nearMeLoading, setNearMeLoading]     = useState(false); const [nearMeUnread, setNearMeUnread] = useState(false); const nearSeq = useRef(0);  // §118 (B27): a failed near read is said; only the latest near read is drawn
 
   // ── Optimistic save state ──────────────────────────────────────────────────
-  const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
+  const [savedToggles, setSavedToggles] = useState<Map<string, boolean>>(new Map()); const [savedUnread, setSavedUnread] = useState(false); const savedStateOf = (ev: EventListItem): boolean | null => (savedToggles.has(ev.id) ? savedToggles.get(ev.id)! : typeof ev.isSaved === 'boolean' ? ev.isSaved : null);  // census-discovery §122 (DV-83 round 23, B35): each card's bookmark is its list's measured isSaved; only the viewer's own taps sit beside it; no measured state is unknown
   // Per-event in-flight lock — Set so different events can be saved concurrently
   const savingLockRef = useRef(new Set<string>());
 
@@ -250,7 +250,7 @@ function EventsTabScreen() {
     {
       const evs = savedRes.ok ? (savedRes.data?.events ?? []) : [];  // census-discovery §119 (DV-83 round 22, sweep): a failed saved read clears the Saved section, and is said
       setSavedEvents(evs);
-      if (savedRes.ok) setSavedIds(new Set(evs.map((e) => e.id)));  // §119: the bookmarks keep their last answer (clearing them would say every event is unsaved)
+      setSavedUnread(!savedRes.ok);  // §122 (B35): the bookmarks no longer come from this read (it is page 1, and may fail); its failure is said
     }
     setDrafts(draftsRes.ok ? (draftsRes.data?.drafts ?? []) : []);  // §119 (sweep): a failed drafts read is not the last load's drafts; it is said (draftsRes is in the lists above)
     setPendingInvites(invitesRes.ok ? (invitesRes.data?.invites ?? []).filter((i) => i.status === 'pending') : []);  // §119 (sweep): never an earlier read's "N pending invites"; said
@@ -351,20 +351,20 @@ function EventsTabScreen() {
 
   // ── Save toggle ────────────────────────────────────────────────────────────
   async function handleSaveToggle(ev: EventListItem) {
-    if (savingLockRef.current.has(ev.id)) return;
+    if (savingLockRef.current.has(ev.id) || savedStateOf(ev) === null) return;  // §122 (B35): an unknown saved state is not a toggle
     savingLockRef.current.add(ev.id);
-    const wasSaved = savedIds.has(ev.id);
-    setSavedIds((prev) => {
-      const next = new Set(prev);
-      if (wasSaved) next.delete(ev.id); else next.add(ev.id);
+    const wasSaved = savedStateOf(ev) === true;
+    setSavedToggles((prev) => {
+      const next = new Map(prev);
+      next.set(ev.id, !wasSaved);
       return next;
     });
     try {
       if (wasSaved) {
-        await unsaveEvent(ev.id);
-        setSavedEvents((prev) => prev.filter((e) => e.id !== ev.id));
+        const r = await unsaveEvent(ev.id); if (!r.ok) setSavedToggles((prev) => new Map(prev).set(ev.id, true));  // §122 (B35): a write that failed is not the viewer's toggle
+        if (r.ok) setSavedEvents((prev) => prev.filter((e) => e.id !== ev.id));
       } else {
-        await saveEvent(ev.id);
+        const r = await saveEvent(ev.id); if (!r.ok) setSavedToggles((prev) => new Map(prev).set(ev.id, false));  // §122 (B35)
       }
     } finally {
       savingLockRef.current.delete(ev.id);
@@ -436,7 +436,7 @@ function EventsTabScreen() {
                 category={item.category}
                 state={item.state}
                 myRsvp={item.myRsvp ?? undefined}
-                isSaved={savedIds.has(item.id)}
+                isSaved={savedStateOf(item) === true} savedUnknown={savedStateOf(item) === null}
                 coverDisclaimerRequired={item.coverDisclaimerRequired}
                 coverDisclaimerText={item.coverDisclaimerText}
                 onPress={() => router.push(`/event/${item.id}` as any)}
@@ -900,7 +900,7 @@ function EventsTabScreen() {
             savedEvents,
           )}
 
-          {listsFailed && hasContent ? <Text style={styles.yourEventsErrorText} testID="events-lists-unread">Some event lists couldn't be loaded. Pull down to try again.</Text> : null}{/* Empty states — §118 (B28): a list that failed beside others drawn is said */}
+          {listsFailed && hasContent ? <Text style={styles.yourEventsErrorText} testID="events-lists-unread">Some event lists couldn't be loaded. Pull down to try again.</Text> : null}{savedUnread ? <Text style={styles.yourEventsErrorText} testID="events-saved-unread">Couldn't load your saved events.</Text> : null}{/* Empty states — §118 (B28): a list that failed beside others drawn is said */}
           {!loading && !hasContent && drafts.length === 0 && (
             error ? (
               <ErrorState message={error} onRetry={() => load(false)} />

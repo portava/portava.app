@@ -28,7 +28,7 @@ export interface EventCardProps {
   category?: string | null;
   state?: string;
   myRsvp?: string | null;
-  isSaved?: boolean;
+  isSaved?: boolean; /** census-discovery §122 (DV-83 round 23, B35): the list could not say whether the viewer saved it — drawn as unknown, not a toggle */ savedUnknown?: boolean;
   /** Whether the cover image requires a provenance disclaimer (AI/illustrative) */
   coverDisclaimerRequired?: boolean | null;
   /** Disclaimer copy to show when coverDisclaimerRequired is true */
@@ -59,7 +59,7 @@ const STATE_COLOR: Record<string, string> = {
 
 export function EventCard({
   title, startsAt, locationName, city, coverUrl, goingCount, goingCountUnread, maxAttendees,
-  category, state, myRsvp, isSaved, coverDisclaimerRequired, coverDisclaimerText,
+  category, state, myRsvp, isSaved, savedUnknown, coverDisclaimerRequired, coverDisclaimerText,
   onPress, onRsvp, onToggleSave,
 }: EventCardProps) {
   const [imgFailed, setImgFailed] = useState(false);
@@ -150,7 +150,7 @@ export function EventCard({
               style={({ pressed }) => [styles.saveBtn, pressed && { opacity: 0.6 }]}
               onPress={(e) => { e.stopPropagation?.(); onToggleSave(); }}
               accessibilityRole="button"
-              accessibilityLabel={isSaved ? 'Unsave event' : 'Save event'}
+              accessibilityLabel={savedUnknown ? "Couldn't check if saved" : isSaved ? 'Unsave event' : 'Save event'}
               hitSlop={8}
             >
               <Bookmark
