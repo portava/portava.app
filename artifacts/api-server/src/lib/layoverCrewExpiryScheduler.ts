@@ -333,12 +333,12 @@ export async function runLayoverCrewExpirySweep(
  * indefinitely while expired crew rows accumulated. The counter resets ONLY on
  * a pass that actually ran.
  *
- * `tables_absent` is deliberately NOT a failure. 2984 is applied to no database
- * in this repository's capability snapshot, so counting it would put this
- * scheduler into sustained-failure escalation on boot, every boot, everywhere —
- * and an alert that is always on is an alert nobody reads by the time the real
- * one fires. `no_client` IS counted: a process with no service client is a
- * misconfiguration, not a documented resting state.
+ * `tables_absent` is deliberately NOT a failure — though NOT for the reason an
+ * earlier version of this comment gave: 2984 IS applied to production, as the
+ * header records. It is that `crewTablesPresent` answers "absent" on any error
+ * or throw, so the state covers both a transient probe failure and a database
+ * where 2984 is simply not applied — a resting state this scheduler idles in.
+ * `no_client` IS counted: a missing service client is a misconfiguration.
  */
 let _consecutiveFailures = 0;
 let _lastError: string | null = null;

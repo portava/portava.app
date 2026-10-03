@@ -1587,6 +1587,36 @@ export type CrewInfeasibilityReason =
  * must never substitute its own earliest time: that is the duplicate
  * time-budget derivation L2/L6 exist to forbid.
  */
+/**
+ * One branch's own verdict, as `certifyCrewPlan` computes it per branch.
+ *
+ * The solver has produced these all along and the payload published only the
+ * plan-level roll-up, so a crew whose split left ONE member short was told
+ * `feasible: false` with no way to see which branch or who. Every field here is
+ * the server's; nothing in this client takes a minimum or compares two instants
+ * to arrive at one.
+ *
+ * `branchReturnBy` and `usableMinutes` are NULL when any member of the branch
+ * is uncertified, for the same reason `sharedReturnBy` is — a minimum over the
+ * readable subset is a LATER deadline than the truth. Render null as "not
+ * certified", never as a figure this client worked out.
+ */
+export interface CrewBranchVerdict {
+  branchId: string;
+  memberIds: string[];
+  /** ISO. Null = a member of THIS branch could not be certified. */
+  branchReturnBy: string | null;
+  /** The member(s) whose deadline set `branchReturnBy`. */
+  bindingMemberIds: string[];
+  neededMinutes: number;
+  /** Null = a member of this branch could not be certified. */
+  usableMinutes: number | null;
+  feasible: boolean;
+  reasons: CrewInfeasibilityReason[];
+  /** Negative slack is a member who cannot make it. Null = uncertified. */
+  perMemberSlackMin: Array<{ userId: string; slackMin: number | null }>;
+}
+
 export interface CrewSolution {
   crewVersion: string;
   sharedReturnBy: string | null;
@@ -1595,7 +1625,105 @@ export interface CrewSolution {
   reasons: CrewInfeasibilityReason[];
   split: boolean;
   members: CrewMemberConstraint[];
+  /**
+   * OPTIONAL because a server that predates the per-branch publication sends no
+   * `branches` at all, and that is a different fact from a crew with no
+   * branches. Absent means "this server does not say"; the screen must render
+   * no branch verdicts rather than an empty split.
+   */
+  branches?: CrewBranchVerdict[];
 }
+
+/**
+ * One stop of the crew's own itinerary — the rows the branch verdicts above
+ * were certified OVER.
+ *
+ * `proposedBy` is a user id and travels because a shared plan with no
+ * attribution is one nobody can discuss. `locationLabel` is a LABEL: 3516
+ * stores permission and the crew tables hold no coordinate, so there is no
+ * position on this wire and none to render.
+ */
+export interface CrewItineraryStop {
+  id: string;
+  branchId: string;
+  title: string;
+  durationMin: number;
+  travelMin: number;
+  insideAirport: boolean;
+  locationLabel: string | null;
+  proposedBy: string;
+}
+
+export interface CrewItinerary {
+  stops: CrewItineraryStop[];
+  /** The server's own ceiling (`MAX_CREW_STOPS_PER_BRANCH`), not a client guess. */
+  maxStopsPerBranch: number;
+}
+
+/**
+ * §14's disclosure ladder, weakest first. Transcribed from
+ * `LayoverCrewService.ts#LOCATION_PRECISIONS`.
+ *
+ * NOTE WHAT IS NOT HERE: a position. The server publishes the RUNG a viewer has
+ * earned and never a coordinate, and this client must not imply it holds one.
+ * `precise` means "this crewmate has granted a live, crew-scoped share" — it
+ * does not come with a place, and rendering one would be a claim nobody made.
+ */
+export const CREW_LOCATION_PRECISIONS = ['none', 'city', 'meeting_point', 'precise'] as const;
+export type CrewLocationPrecision = (typeof CREW_LOCATION_PRECISIONS)[number];
+
+export interface CrewLocationRung {
+  userId: string;
+  precision: CrewLocationPrecision;
+  /**
+   * The server's own words for WHY that rung: `self`, `live_scoped_grant`,
+   * `grant_not_from_target`, `grant_scoped_to_another_crew`, or
+   * `no_live_grant:<terminator>`. Open on purpose — a newer server may name a
+   * terminator this build has never heard of, and it must survive as itself.
+   */
+  reason: string;
+}
+
+/**
+ * WHETHER THE VIEWER IS SHARING — the one question the rungs cannot answer.
+ *
+ * `locationPrecisionFor` returns `precise`/`self` for the viewer before it looks
+ * at a grant at all (a traveller's own position is theirs), so their own rung is
+ * a tautology and says nothing about whether they have shared anything. This
+ * block is judged by `evaluateCrewLocationShare` with no self short-circuit, so
+ * it applies the same five §14.1 terminators as everybody else's rung.
+ *
+ * `expiresAt` IS AN INSTANT ONLY WHILE THE SHARE IS LIVE and null otherwise. A
+ * past expiry on a dead grant reads as a countdown that has already run out —
+ * the same number meaning the opposite thing — so there is nothing to render for
+ * a dead share and nothing to extend here: the ceiling is
+ * `min(crew.expires_at, your certified hard return)` and it is the server's.
+ */
+export interface CrewOwnShare {
+  live: boolean;
+  /**
+   * `live_scoped_grant` when live; otherwise `no_live_grant:<terminator>` —
+   * `never_granted`, `user_revoked`, `ttl_elapsed`, `boarding`,
+   * `session_expired`, `crew_dissolved` — or `not_a_member`. Open on purpose:
+   * a newer server may name a terminator this build has never heard of, and it
+   * must survive as itself rather than be given invented copy.
+   */
+  reason: string;
+  /** ISO, and ONLY while `live`. Never rendered for a dead share. */
+  expiresAt: string | null;
+}
+
+/**
+ * The degraded reason that means THE GRANT TABLE COULD NOT BE READ.
+ *
+ * It matters enough to name. Every member then reads at the `meeting_point`
+ * rung — the same rung an entirely unshared crew sits at — so the rungs alone
+ * cannot tell "nobody is sharing" from "we could not tell". The server keeps
+ * them apart by reporting this reason, and a screen that renders the first when
+ * the server said the second tells the traveller who tapped "share my location"
+ * that it worked on nobody.
+ */
+export const CREW_LOCATION_GRANTS_UNREADABLE = 'location_grants_unreadable';
 
 export interface CrewMemberCard {
   id: string;
@@ -1618,10 +1746,158 @@ export type CrewState =
       crew: CrewSummary;
       solution: CrewSolution;
       members: CrewMemberCard[];
+      /**
+       * OPTIONAL for the same reason `solution.branches` is: a server that does
+       * not publish the crew's itinerary has said nothing about it, which is not
+       * the same as a crew with no stops. The screen must not render an absent
+       * block as "no stops proposed yet".
+       */
+      itinerary?: CrewItinerary;
+      /**
+       * §14's rung per member, the viewer's own row included (`self` →
+       * `precise`). OPTIONAL, and absent is "this server does not publish
+       * rungs" — NOT "nobody is sharing". See `CREW_LOCATION_GRANTS_UNREADABLE`
+       * for the other way those two can be confused.
+       */
+      locationRungs?: CrewLocationRung[];
+      /**
+       * THREE STATES, AND NONE OF THEM IS "NOT SHARING" BY DEFAULT.
+       *
+       *   an object  — the server judged it: `live` true or false
+       *   `null`     — the server could tell us IT COULD NOT TELL (the grant
+       *                table was unreadable; it always arrives with
+       *                `location_grants_unreadable` on the degrade)
+       *   absent     — this server does not publish the field at all
+       *
+       * The last two are kept apart because they are different facts, and both
+       * must render as UNKNOWN. Letting either fall through to a confident
+       * "Share my location" tells the traveller the answer is "no" — the same
+       * class of lie as "nobody is sharing", just about themselves.
+       */
+      yourShare?: CrewOwnShare | null;
       degraded: boolean;
       degradedReasons: string[];
     }
   | { inCrew: false; city: string | null; crews: CrewOpening[]; reason?: string };
+
+/**
+ * The crew payload, field by field, rather than a cast over the whole body.
+ *
+ * WHY A TRANSCRIPTION AND NOT `res.json() as CrewState`. The cast was honest
+ * while every field was required: a missing one showed up as `undefined` and
+ * the screen crashed or rendered nothing, loudly. It stopped being honest when
+ * the payload grew three blocks a previous server never sent, because a cast
+ * turns "this server does not publish branches" into `undefined` indistinguishably
+ * from "the server published nothing for them", and the screen then has no way
+ * to tell a crew that has not split from one it cannot ask about. Every
+ * optional block below is carried through as PRESENT-OR-ABSENT, and the absence
+ * is warned about once rather than smoothed into an empty array — the same
+ * argument `getLayoverOverview` makes about its own three fields.
+ */
+function transcribeCrewState(json: Record<string, unknown>): CrewState {
+  if (json.inCrew !== true) {
+    return {
+      inCrew: false,
+      city: (json.city as string | null | undefined) ?? null,
+      crews: Array.isArray(json.crews) ? (json.crews as CrewOpening[]) : [],
+      ...(typeof json.reason === 'string' ? { reason: json.reason } : {}),
+    };
+  }
+
+  const solution = (json.solution ?? {}) as Record<string, unknown>;
+  // Loud rather than silent: a section that renders a block ONLY when it is
+  // present looks perfectly correct against a server that never sends it.
+  for (const field of ['branches'] as const) {
+    if (solution[field] == null) {
+      console.warn(`[layover] crew solution is missing "${field}" — server contract mismatch`);
+    }
+  }
+  for (const field of ['itinerary', 'locationRungs'] as const) {
+    if (json[field] == null) {
+      console.warn(`[layover] crew payload is missing "${field}" — server contract mismatch`);
+    }
+  }
+  // `yourShare` is checked for ABSENCE and not for null, exactly as
+  // `getLayoverOverview` checks `safeEnvelope`. The server sends `null` ON
+  // PURPOSE when the grant table could not be read, so warning on that would
+  // train the warning to be ignored. `undefined` is the contract mismatch.
+  if (!('yourShare' in json)) {
+    console.warn('[layover] crew payload is missing "yourShare" — server contract mismatch');
+  }
+
+  const itinerary = json.itinerary as Record<string, unknown> | undefined | null;
+
+  return {
+    inCrew: true,
+    crew: json.crew as CrewSummary,
+    solution: {
+      crewVersion: solution.crewVersion as string,
+      sharedReturnBy: (solution.sharedReturnBy as string | null | undefined) ?? null,
+      bindingMemberIds: Array.isArray(solution.bindingMemberIds)
+        ? (solution.bindingMemberIds as string[])
+        : [],
+      feasible: solution.feasible === true,
+      reasons: Array.isArray(solution.reasons)
+        ? (solution.reasons as CrewInfeasibilityReason[])
+        : [],
+      split: solution.split === true,
+      members: Array.isArray(solution.members)
+        ? (solution.members as CrewMemberConstraint[])
+        : [],
+      // PRESENT-OR-ABSENT, never defaulted to `[]`. An empty branch list is a
+      // plan the server certified as having no branches; an absent one is a
+      // server that did not say.
+      ...(Array.isArray(solution.branches)
+        ? { branches: solution.branches as CrewBranchVerdict[] }
+        : {}),
+    },
+    members: Array.isArray(json.members) ? (json.members as CrewMemberCard[]) : [],
+    ...(itinerary && Array.isArray(itinerary.stops)
+      ? {
+          itinerary: {
+            stops: itinerary.stops as CrewItineraryStop[],
+            // The server's own ceiling. Zero when it did not state one — a
+            // number invented here would cap or uncap a plan the server governs.
+            maxStopsPerBranch:
+              typeof itinerary.maxStopsPerBranch === 'number' ? itinerary.maxStopsPerBranch : 0,
+          },
+        }
+      : {}),
+    ...(Array.isArray(json.locationRungs)
+      ? { locationRungs: json.locationRungs as CrewLocationRung[] }
+      : {}),
+    // PRESENT-AND-NULL IS KEPT APART FROM ABSENT, which is the whole point of
+    // the key test rather than a null check: `null` is the server stating that
+    // it could not tell, and absence is a server that does not state anything.
+    // Collapsing them would throw away a distinction the server went out of its
+    // way to make, and both must render as unknown either way.
+    ...('yourShare' in json
+      ? {
+          yourShare:
+            json.yourShare && typeof json.yourShare === 'object'
+              ? {
+                  live: (json.yourShare as Record<string, unknown>).live === true,
+                  reason:
+                    typeof (json.yourShare as Record<string, unknown>).reason === 'string'
+                      ? ((json.yourShare as Record<string, unknown>).reason as string)
+                      : '',
+                  // Only ever an instant while live; the server publishes null
+                  // otherwise and nothing here invents one.
+                  expiresAt:
+                    ((json.yourShare as Record<string, unknown>).expiresAt as
+                      | string
+                      | null
+                      | undefined) ?? null,
+                }
+              : null,
+        }
+      : {}),
+    degraded: json.degraded === true,
+    degradedReasons: Array.isArray(json.degradedReasons)
+      ? (json.degradedReasons as string[])
+      : [],
+  };
+}
 
 /**
  * The crew for this layover, or the open crews in this city.
@@ -1634,17 +1910,32 @@ export type CrewState =
 export async function getLayoverCrew(sessionId: string): Promise<CrewState | null> {
   const res = await authedFetch(airportUrl('sessions', sessionId, 'crew'));
   if (!res.ok) return null;
-  return res.json();
+  return transcribeCrewState(await res.json());
 }
 
 export type CrewActionOutcome =
   | { ok: true; state: CrewState }
   | { ok: false; message: string };
 
-async function crewAction(url: string, body?: unknown): Promise<CrewActionOutcome> {
+/**
+ * Every crew write answers with the WHOLE certified crew, not with the row it
+ * wrote (`respondWithCrew` re-reads and re-certifies after each one), so one
+ * helper covers all of them and the outcome always carries a `CrewState` a
+ * single certification actually saw.
+ *
+ * `method` defaults to POST — what the create/join/leave calls above it have
+ * always used — because the itinerary and grant routes need DELETE and PUT and
+ * a second copy of this body is how the error handling would come to differ
+ * between them.
+ */
+async function crewAction(
+  url: string,
+  body?: unknown,
+  method: 'POST' | 'PUT' | 'DELETE' = 'POST',
+): Promise<CrewActionOutcome> {
   let res: Response;
   try {
-    res = await authedFetch(url, { method: 'POST', ...(body ? { body: JSON.stringify(body) } : {}) });
+    res = await authedFetch(url, { method, ...(body ? { body: JSON.stringify(body) } : {}) });
   } catch {
     return { ok: false, message: 'That could not be sent. Please try again.' };
   }
@@ -1656,7 +1947,7 @@ async function crewAction(url: string, body?: unknown): Promise<CrewActionOutcom
       message: typeof parsed.message === 'string' ? parsed.message : 'That did not work. Please try again.',
     };
   }
-  return { ok: true, state: parsed as unknown as CrewState };
+  return { ok: true, state: transcribeCrewState(parsed) };
 }
 
 export function createLayoverCrew(
@@ -1672,6 +1963,101 @@ export function joinLayoverCrew(sessionId: string, crewId: string): Promise<Crew
 
 export function leaveLayoverCrew(sessionId: string): Promise<CrewActionOutcome> {
   return crewAction(airportUrl('sessions', sessionId, 'crew', 'leave'));
+}
+
+// ── §14.1 the crew's itinerary, and §14 L4's location grant ───────────────────
+
+/**
+ * A stop proposed for the crew, transcribed from `crewStopCreateSchema`.
+ *
+ * `travelMin` IS OPTIONAL HERE AND REQUIRED LANDSIDE, and the asymmetry is the
+ * server's: an airside stop's zero leg is a fact, so the route sets it; a
+ * landside stop with no stated travel time is REFUSED
+ * (`landsideTravelRefusal`), because a fabricated zero leg is what census L47
+ * cost. This client sends what the traveller stated and lets that refusal
+ * stand rather than defaulting the field.
+ *
+ * `branchId` is optional and defaults server-side to the unsplit branch, so an
+ * unsplit crew — the only state a crew is in before anybody splits it — needs
+ * no argument.
+ */
+export interface NewCrewStopInput {
+  title: string;
+  durationMin: number;
+  travelMin?: number;
+  insideAirport: boolean;
+  locationLabel?: string | null;
+  branchId?: string;
+}
+
+export function proposeCrewStop(
+  sessionId: string,
+  stop: NewCrewStopInput,
+): Promise<CrewActionOutcome> {
+  return crewAction(airportUrl('sessions', sessionId, 'crew', 'stops'), stop);
+}
+
+export function removeCrewStop(sessionId: string, stopId: string): Promise<CrewActionOutcome> {
+  return crewAction(
+    airportUrl('sessions', sessionId, 'crew', 'stops', stopId),
+    undefined,
+    'DELETE',
+  );
+}
+
+/**
+ * Split the crew — or put it back together.
+ *
+ * PUT AND THE WHOLE ASSIGNMENT AT ONCE, which is the server's shape and not a
+ * convenience: §14.1's split is a property of the PLAN, so a crew assigned one
+ * member per call passes through a half-split state on every re-split, and a
+ * read landing in the middle would publish `member_unassigned` for a crew
+ * nobody had broken.
+ *
+ * AN EMPTY ARRAY IS VALID AND MEANS "we are all going together again". It is
+ * the way back to unsplit, not a bad argument — see `assignCrewBranches` — so
+ * this function must not screen it out as an empty request.
+ */
+export function assignCrewBranches(
+  sessionId: string,
+  assignments: Array<{ userId: string; branchId: string }>,
+): Promise<CrewActionOutcome> {
+  return crewAction(
+    airportUrl('sessions', sessionId, 'crew', 'branches'),
+    // Sent unconditionally, INCLUDING when empty. `crewAction` omits a falsy
+    // body, and `[]` is truthy while `{ assignments: [] }` is the object the
+    // route's schema accepts — the return-to-unsplit request must reach it.
+    { assignments },
+    'PUT',
+  );
+}
+
+/**
+ * Share your precise location with this crew.
+ *
+ * NO DURATION IS CHOSEN HERE AND `expiresAt` IS OMITTED. The server derives the
+ * ceiling — `min(crew.expires_at, your own certified hard return)` via
+ * `boundedGrantWindow` — and there is no way to ask for longer. A duration
+ * picked on this client would be a second opinion about a §17 session-scoped
+ * grant, and the only direction it could move is the wrong one.
+ */
+export function grantCrewLocation(sessionId: string): Promise<CrewActionOutcome> {
+  return crewAction(airportUrl('sessions', sessionId, 'crew', 'location-grant'));
+}
+
+/**
+ * Stop sharing.
+ *
+ * A failed revoke is reported, never smoothed: the route's own sentence says
+ * the share is STILL LIVE, and a traveller shown "sharing stopped" over a live
+ * grant has been told the one thing they must not be told.
+ */
+export function revokeCrewLocation(sessionId: string): Promise<CrewActionOutcome> {
+  return crewAction(
+    airportUrl('sessions', sessionId, 'crew', 'location-grant'),
+    undefined,
+    'DELETE',
+  );
 }
 
 // ── §25.2 / census L269 — Layover Discovery ───────────────────────────────────

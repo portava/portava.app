@@ -96,6 +96,17 @@ export interface CrewRow {
   maxMembers: number;
   expiresAt: string;
   createdAt: string;
+  /**
+   * The crew's last write. Load-bearing beyond bookkeeping: for a crew whose
+   * status is `closed` or `disbanded` this IS the dissolution instant, because
+   * the only writers of the column are this module's two disband updates. §14.1
+   * names crew dissolution as a terminator of a location share and
+   * `crewShareSignalsFor` derives that instant from here, so A NEW WRITER OF
+   * `updated_at` WOULD MOVE THE DISSOLUTION INSTANT LATER and keep a share
+   * alive past the moment the crew ended. Add a dedicated `disbanded_at`
+   * column before adding one.
+   */
+  updatedAt: string;
 }
 
 export interface CrewMemberRow {
@@ -124,6 +135,7 @@ function toCrew(r: Record<string, any>): CrewRow {
     maxMembers: r.max_members,
     expiresAt: r.expires_at,
     createdAt: r.created_at,
+    updatedAt: r.updated_at,
   };
 }
 
@@ -175,7 +187,7 @@ export async function activeCrewForUser(
 
   const { data: crews, error: crewErr } = await db
     .from("layover_crews")
-    .select("id,city,airport_ref,created_by,created_session_id,title,meeting_point_label,status,max_members,expires_at,created_at")
+    .select("id,city,airport_ref,created_by,created_session_id,title,meeting_point_label,status,max_members,expires_at,created_at,updated_at")
     .in("id", memberships.map((m) => m.crewId))
     .gt("expires_at", nowIso)
     .neq("status", "disbanded")
@@ -223,7 +235,7 @@ export async function openCrewsInCity(
 ): Promise<CrewRead<CrewRow[]>> {
   const { data, error } = await db
     .from("layover_crews")
-    .select("id,city,airport_ref,created_by,created_session_id,title,meeting_point_label,status,max_members,expires_at,created_at")
+    .select("id,city,airport_ref,created_by,created_session_id,title,meeting_point_label,status,max_members,expires_at,created_at,updated_at")
     .eq("city", canonCity(city))
     .eq("status", "open")
     .gt("expires_at", nowIso)
@@ -305,7 +317,7 @@ export async function createCrew(
       max_members: input.maxMembers,
       expires_at: input.expiresAt,
     })
-    .select("id,city,airport_ref,created_by,created_session_id,title,meeting_point_label,status,max_members,expires_at,created_at")
+    .select("id,city,airport_ref,created_by,created_session_id,title,meeting_point_label,status,max_members,expires_at,created_at,updated_at")
     .maybeSingle();
   if (crewErr || !crewData) {
     logger.warn({ err: crewErr?.message }, "crew insert failed");
@@ -384,7 +396,7 @@ export async function joinCrew(
 
   const { data: crewData, error: crewErr } = await db
     .from("layover_crews")
-    .select("id,city,airport_ref,created_by,created_session_id,title,meeting_point_label,status,max_members,expires_at,created_at")
+    .select("id,city,airport_ref,created_by,created_session_id,title,meeting_point_label,status,max_members,expires_at,created_at,updated_at")
     .eq("id", input.crewId)
     .eq("status", "open")
     .gt("expires_at", nowIso)
