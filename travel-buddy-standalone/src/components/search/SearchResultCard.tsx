@@ -195,7 +195,7 @@ export function SearchResultCard({ result, onActionStateChange }: Props) {
   const [isWaitlisted, setIsWaitlisted] = useState(
     (result.actionState?.isWaitlisted as boolean | undefined) ?? false,
   );
-  const [rsvpToggling, setRsvpToggling] = useState(false);
+  const [rsvpToggling, setRsvpToggling] = useState(false); const attendanceUnknown = result.type === 'events' && result.actionState == null;  // census-discovery §122 (DV-83 round 23, SW29): the server could not read whether the viewer is going
 
   // ── Trip join state ────────────────────────────────────────────────────────
   // Trips have no server-side join API in the current mobile services layer.
@@ -259,7 +259,7 @@ export function SearchResultCard({ result, onActionStateChange }: Props) {
   // ── Event RSVP ──────────────────────────────────────────────────────────
   async function handleEventJoin() {
     if (rsvpToggling) return;
-    if (isAttending || isWaitlisted) {
+    if (isAttending || isWaitlisted || attendanceUnknown) {  // §122 (SW29): never RSVP from an unknown state; the detail reads it
       navigate();
       return;
     }
@@ -494,7 +494,7 @@ export function SearchResultCard({ result, onActionStateChange }: Props) {
             />
           ) : (
             <Text style={(isAttending || isWaitlisted) ? styles.actionBtnActiveText : styles.actionBtnText}>
-              {isAttending ? 'Attending' : isWaitlisted ? 'Waitlisted' : 'Join'}
+              {isAttending ? 'Attending' : isWaitlisted ? 'Waitlisted' : attendanceUnknown ? 'View' : 'Join'}
             </Text>
           )}
         </Pressable>

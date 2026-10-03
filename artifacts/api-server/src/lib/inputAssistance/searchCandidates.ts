@@ -744,12 +744,12 @@ async function searchEvents(
     if (activeRows.length === 0) return [];
 
     const eventIds = activeRows.map((e: any) => e.id as string);
-    const { data: rsvpRows } = await sc
+    const { data: rsvpRows, error: rsvpRowsErr } = await sc
       .from("event_rsvps")
       .select("event_id")
       .eq("user_id", userId)
       .eq("status", "going")
-      .in("event_id", eventIds);
+      .in("event_id", eventIds);  // census-discovery §122 (DV-83 round 23, SW29): a failed read leaves the venue gate closed (attendingSet empty) and the attendance unknown (actionState null), never "not going"
     const attendingSet = new Set<string>((rsvpRows ?? []).map((r: any) => r.event_id as string));
 
     const mapped: SearchResult[] = activeRows.map((e: any): SearchResult => {
@@ -774,7 +774,7 @@ async function searchEvents(
       fallbackInitials: initials((e.title as string) ?? ""),
       locationPreview: [(e.city as string | null), (e.country as string | null)].filter(Boolean).join(", ") || null,
       matchedReason: null,
-      actionState: { isAttending: attendingSet.has(e.id as string) },
+      actionState: rsvpRowsErr ? null : { isAttending: attendingSet.has(e.id as string) },  // §122 (SW29)
       privacyState: { isPublic: true },
       accessState: { canAccess: true },
       destinationRoute: `/event/${e.id as string}`,
