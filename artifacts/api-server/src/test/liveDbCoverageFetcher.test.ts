@@ -142,6 +142,16 @@ const GH_STUB = [
   '  echo "gh(stub): no fixture for \'$URL\'" >&2',
   "  exit 1",
   "fi",
+  // A refusal is NOT an empty answer. `gh api` on a non-2xx with a JSON body
+  // copies the BODY to stdout, does NOT apply `--jq` to it, writes
+  // `gh: <message>` to stderr and exits 1 — which is how a 403 rate-limit body
+  // reached live-db-slot-decide.sh as a run listing on 2026-10-03. A fixture
+  // whose first line is this sentinel reproduces exactly that shape.
+  'if [ "$(head -1 "$F")" = "__GH_HTTP_ERROR__" ]; then',
+  '  echo "gh: the API refused this call; the body is on stdout" >&2',
+  '  tail -n +2 "$F"',
+  '  exit 1',
+  "fi",
   'if [ -n "$FILTER" ]; then exec jq -r "$FILTER" "$F"; fi',
   'exec cat "$F"',
 ].join("\n");
@@ -237,6 +247,32 @@ function runFetcher(overrides: Overrides = {}, grace = "1800") {
 
 /** A `runs?head_sha=` response with no `CI (live DB)` run and no run at all. */
 const NO_RUNS_AT_ALL = JSON.stringify({ total_count: 0, workflow_runs: [] });
+
+/** A fixture the stub serves the way `gh api` serves a refusal. See GH_STUB. */
+const ghError = (body: string) => `__GH_HTTP_ERROR__\n${body}\n`;
+
+/**
+ * The 403 body the API returns when the installation is rate limited, as
+ * transcribed from the refusal that was fed to `live-db-slot-decide.sh` on
+ * 2026-10-03. It is the hardest failure shape in this file because it is NOT
+ * empty: `--jq` is skipped, so this JSON lands on stdout where a run listing,
+ * a count or a timestamp was expected.
+ */
+const RATE_LIMIT_403 = ghError(
+  JSON.stringify(
+    {
+      message: "API rate limit exceeded for installation ID 41775365.",
+      documentation_url:
+        "https://docs.github.com/en/rest/using-the-rest-api/getting-started-with-the-rest-api#rate-limiting",
+      status: "403",
+    },
+    null,
+    2,
+  ),
+);
+
+/** A call that SUCCEEDS and answers nothing: 204, empty 200, truncated body. */
+const EMPTY_BODY = "";
 
 describe("live-DB coverage fetcher — the network half, pinned offline", () => {
   it("the fetcher exists and is executable", () => {
@@ -529,6 +565,204 @@ describe("live-DB coverage fetcher — the network half, pinned offline", () => 
     // Still covered — (a) is yes. (b) is reported and does not gate.
     assert.match(r.lineOf(549) ?? "", /verdict=covered gate=unknown/, r.out);
     assert.doesNotMatch(r.uncertified ?? "", /#549@/, r.out);
+  });
+
+  // ── THE REFUSAL PATHS ─────────────────────────────────────────────────────
+  //
+  // Every one of the script's API calls carries `2>/dev/null`, which is where
+  // an error becomes an empty string that reads as "no run". The tests below
+  // feed each call the two shapes that are NOT an answer — a 403 rate-limit
+  // body (non-empty, exit 1) and an empty body (exit 0) — and assert the
+  // script fails closed AND names the cause it actually hit. The wrong cause
+  // is not cosmetic: a 403 body read as a run listing, and reported as a
+  // missing permission, is what cost the debugging time on 2026-10-03.
+
+  it("an EMPTY answer from the runs endpoint is not 'no run exists'", () => {
+    // The jq program emits exactly ONE line and its minimum is a single space
+    // (`"" + " " + ""`), so nothing at all cannot mean "no `CI (live DB)` run".
+    // jq exits 0 and prints nothing on empty input, so a 204, an empty 200 or
+    // a truncated body arrives as the same bytes as a genuine absence — and
+    // `#549`, which HAS a run, would be published as UNCERTIFIED. A false
+    // accusation, and the direction that reds main's board over nothing.
+    const r = runFetcher({ "runs_fd0a600e19c0d4c2fbd9d549770e7de421f485d6.json": EMPTY_BODY });
+    assert.equal(r.code, 1, `an answer that never arrived is not a verdict:\n${r.out}`);
+    assert.match(r.out, /came back EMPTY/, r.out);
+    assert.match(
+      r.out,
+      /fd0a600e19c0d4c2fbd9d549770e7de421f485d6 \(PR #549\)/,
+      `the PR whose listing did not arrive must be named:\n${r.out}`,
+    );
+    assert.doesNotMatch(
+      r.uncertified ?? "",
+      /#549@/,
+      `PR #549 HAS a live-DB run; an unanswered call must never accuse it:\n${r.out}`,
+    );
+    assert.equal(r.checked, null, `the decider must never have been reached:\n${r.out}`);
+  });
+
+  it("a 403 rate-limit body from the runs endpoint is named a rate limit, not a missing scope", () => {
+    const r = runFetcher({ "runs_fd0a600e19c0d4c2fbd9d549770e7de421f485d6.json": RATE_LIMIT_403 });
+    assert.equal(r.code, 1, `a refused call establishes nothing:\n${r.out}`);
+    assert.match(
+      r.out,
+      /listing workflow runs for fd0a600e19c0d4c2fbd9d549770e7de421f485d6 \(PR #549\) failed/,
+      r.out,
+    );
+    assert.match(
+      r.out,
+      /RATE LIMIT/,
+      `the actual cause must be in the message; \`actions: read\` is the wrong diagnosis for a 403 rate limit:\n${r.out}`,
+    );
+    assert.equal(r.checked, null, `the decider must never have been reached:\n${r.out}`);
+  });
+
+  it("a 403 on the open-pull-request listing is named a rate limit, not a missing permission", () => {
+    const r = runFetcher({ "pulls.json": RATE_LIMIT_403 });
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, /listing open pull requests failed/, r.out);
+    assert.match(r.out, /RATE LIMIT/, `a 403 rate limit is not a \`pull-requests: read\` problem:\n${r.out}`);
+    assert.equal(r.checked, null, r.out);
+  });
+
+  it("a 403 on the workflow listing is named a rate limit, not a rename", () => {
+    const r = runFetcher({ "workflows.json": RATE_LIMIT_403 });
+    assert.equal(r.code, 1, `an unresolvable workflow id must not read as 'all clear':\n${r.out}`);
+    assert.match(r.out, /could not resolve the workflow id for 'CI \(live DB\)'/, r.out);
+    assert.match(
+      r.out,
+      /RATE LIMIT/,
+      `sending the reader to rename WORKFLOW_NAME over a rate limit is the wrong cause:\n${r.out}`,
+    );
+    assert.equal(r.checked, null, r.out);
+  });
+
+  it("a 403 on the horizon call is named a rate limit, and an empty run history is named as that", () => {
+    // Both land on the same warning and both degrade UNCERTIFIED to
+    // UNMEASURABLE, so the warning is the only place the difference can be
+    // read. "There are no runs" and "I was not allowed to ask" are different
+    // facts and the remedies share nothing.
+    const r = runFetcher({ "wf_runs_total.json": RATE_LIMIT_403 });
+    assert.equal(r.code, 1, `a weaker claim is still a failure:\n${r.out}`);
+    assert.match(r.out, /::warning::live-db coverage: could not establish the oldest visible/, r.out);
+    assert.match(r.out, /RATE LIMIT/, `a refused horizon call must not read as an empty run history:\n${r.out}`);
+    assert.equal(r.uncertified, "", `nothing may be called UNCERTIFIED without a horizon:\n${r.out}`);
+    assert.equal(
+      r.unmeasurable,
+      "#530@846f58e7c12781d2633648354b25a5b7c98e4da7 #393@1b78d3b6a6e570aef6c1864b7b38a3e1a8bf80b6",
+      r.out,
+    );
+
+    // The SECOND horizon call — the oldest page — refused the same way. Its
+    // body is non-empty, so it reaches `date -d` and the job summary as the
+    // horizon unless it is shape-checked where it arrives.
+    const oldest = runFetcher({ "wf_runs_oldest.json": RATE_LIMIT_403 });
+    assert.equal(oldest.code, 1, oldest.out);
+    assert.match(oldest.out, /::warning::live-db coverage: could not establish the oldest visible/, oldest.out);
+    assert.match(oldest.out, /RATE LIMIT/, oldest.out);
+    assert.doesNotMatch(
+      oldest.out,
+      /did not parse as a date/,
+      `a refused call is not a malformed timestamp:\n${oldest.out}`,
+    );
+    assert.doesNotMatch(
+      oldest.stepSummary,
+      /rate limit exceeded/,
+      `the refusal body must never be published as the oldest visible run:\n${oldest.stepSummary}`,
+    );
+    assert.equal(oldest.uncertified, "", oldest.out);
+
+    const zero = runFetcher({ "wf_runs_total.json": JSON.stringify({ total_count: 0, workflow_runs: [] }) });
+    assert.equal(zero.code, 1, zero.out);
+    assert.match(
+      zero.out,
+      /EMPTY run history/,
+      `the API answering "0 runs" is not a failed call and must not be described as one:\n${zero.out}`,
+    );
+    assert.doesNotMatch(zero.out, /RATE LIMIT/, zero.out);
+  });
+
+  it("a 403 on the commit endpoint is not reported as an unparseable commit date", () => {
+    // With no run for the SHA there is no server timestamp, so the committer
+    // date is fetched. A refusal puts the 403 BODY in that variable — non-empty,
+    // so the "could not read" branch is skipped and the body is then quoted
+    // back at the reader as if it were a date.
+    const r = runFetcher({
+      "runs_846f58e7c12781d2633648354b25a5b7c98e4da7.json": NO_RUNS_AT_ALL,
+      "commit_846f58e7c12781d2633648354b25a5b7c98e4da7.json": RATE_LIMIT_403,
+    });
+    assert.equal(r.code, 1, `an unestablished age is not an exemption:\n${r.out}`);
+    assert.match(r.out, /could not read the head commit date for PR #530/, r.out);
+    assert.match(r.out, /RATE LIMIT/, r.out);
+    assert.doesNotMatch(
+      r.out,
+      /could not parse the head commit date/,
+      `a refusal is not a malformed date, and the body must not be quoted as one:\n${r.out}`,
+    );
+  });
+
+  it("a 403 on the repository cross-check is named a rate limit", () => {
+    const r = runFetcher({ "pulls.json": "[]", "repo.json": RATE_LIMIT_403 });
+    assert.equal(r.code, 1, `an unestablished zero is not a pass:\n${r.out}`);
+    assert.match(r.out, /own open-issue count could not be read/, r.out);
+    assert.match(r.out, /RATE LIMIT/, r.out);
+  });
+
+  it("an open-issue count that is not a whole number can NEVER produce a vacuous pass", () => {
+    // CONSTRUCTED to probe the guard, not transcribed: a refused call whose
+    // body happens to carry a line that is nothing but digits — the body of a
+    // refusal is whatever the server or a proxy in front of it emits, and this
+    // guard must not depend on it never looking like a number. The guard was
+    // `printf | grep -Eq '^[0-9]+$'`, and grep matches PER LINE, so such a body
+    // passes as "a number"; `[ "$OPEN_COUNT" -gt 0 ]` then exits 2 with
+    // "integer expression expected", and with no `set -e` that is simply a
+    // false condition — falling through to `exit 0` and the line "reports 0
+    // open issues-or-PRs", which is the literal 0 in the message and not
+    // anything the API said. The only false GREEN in the script: nothing is
+    // checked and the board goes green.
+    const r = runFetcher({
+      "pulls.json": "[]",
+      "repo.json": ghError("API rate limit exceeded for installation ID 41775365.\n17\n"),
+    });
+    assert.equal(
+      r.code,
+      1,
+      `a count that is not a whole number establishes no "there are no open pull requests":\n${r.out}`,
+    );
+    assert.doesNotMatch(
+      r.out,
+      /The two sources agree; there is nothing to certify/,
+      `the two sources did not agree — one of them never answered:\n${r.out}`,
+    );
+    assert.match(r.out, /own open-issue count could not be read/, r.out);
+  });
+
+  it("a 403 on the jobs endpoint does not red the board over a diagnostic-only field", () => {
+    // `gate` is the (b) half and is explicitly NEVER gating. But the call's
+    // exit status was unchecked and the 403 body's first line (`{`) went into
+    // the listing as the gate field, which the decider refuses as unparseable
+    // (exit 3) — so a refusal on the one field that must not change the verdict
+    // took the whole check down with "the decider exited 3", a false alarm
+    // whose message names neither the endpoint nor the rate limit.
+    const r = runFetcher({ "jobs_900549.json": RATE_LIMIT_403 });
+    assert.match(
+      r.lineOf(549) ?? "",
+      /verdict=covered gate=unknown/,
+      `#549 has a live-DB run; an unreadable gate job is reported as unknown:\n${r.out}`,
+    );
+    assert.doesNotMatch(
+      r.out,
+      /the decider exited/,
+      `a diagnostic-only fetch must never make the listing unparseable:\n${r.out}`,
+    );
+    assert.match(r.out, /::warning::live-db coverage: could not read the gate job/, r.out);
+    assert.match(r.out, /RATE LIMIT/, r.out);
+    // The verdict itself is untouched: still exactly the two measured PRs.
+    assert.equal(r.code, 1, r.out);
+    assert.equal(
+      r.uncertified,
+      "#530@846f58e7c12781d2633648354b25a5b7c98e4da7 #393@1b78d3b6a6e570aef6c1864b7b38a3e1a8bf80b6",
+      r.out,
+    );
   });
 
   it("the decider is invoked, not re-implemented inline", () => {

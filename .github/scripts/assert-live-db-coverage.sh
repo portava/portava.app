@@ -108,11 +108,49 @@ api() {
   gh api -H 'Accept: application/vnd.github+json' "$@"
 }
 
+# NAME THE CAUSE, NOT A GUESS AT IT.
+#
+# `gh api` does NOT apply `--jq` to a refusal: on a non-2xx with a JSON body it
+# copies the BODY to stdout, writes `gh: <message>` to stderr and exits
+# non-zero. So a failed call's captured output still carries the reason, and the
+# three facts that must never be merged are distinguishable from it — the API
+# refused (rate limit, credentials, scope), the API answered nothing at all
+# (transport, empty body), and the API answered something unusable.
+#
+# This is not cosmetic. On 2026-10-03 a 403 rate-limit body was fed to
+# live-db-slot-decide.sh as a run listing, and the message that came out named
+# the wrong cause; the debugging time went to the wrong place.
+why() {
+  local rc="$1" text="$2"
+  case "$text" in
+    *"rate limit"*|*"secondary rate"*|*"abuse detection"*)
+      echo "the API REFUSED the call with a RATE LIMIT (HTTP 403). This is not a missing permission and it is NOT an empty answer"; return ;;
+    *"Bad credentials"*|*"Requires authentication"*)
+      echo "the API rejected GH_TOKEN (bad credentials)"; return ;;
+    *"Resource not accessible"*|*"Not Found"*|*"must have admin"*)
+      echo "the API refused the call as forbidden or not found — the token is probably missing a scope"; return ;;
+  esac
+  if [ -z "${text//[[:space:]]/}" ]; then
+    if [ "$rc" -ne 0 ]; then
+      echo "the call FAILED and produced no output at all — a transport failure, or an empty body"
+    else
+      echo "the call exited 0 and answered NOTHING, which is not an answer"
+    fi
+  else
+    echo "$([ "$rc" -ne 0 ] && echo "the call failed" || echo "the call exited 0") and its answer names no API error: '$(printf '%s' "$text" | tr '\n\t' '  ' | cut -c1-200)'"
+  fi
+}
+
 # ── 1. THE WORKFLOW ──────────────────────────────────────────────────────────
-WF_ID="$(api --paginate "repos/${GITHUB_REPOSITORY}/actions/workflows?per_page=100" \
-           --jq ".workflows[] | select(.name == \"${WORKFLOW_NAME}\") | .id" 2>/dev/null | head -1)"
+# The output is captured BEFORE `head -1` so a refusal's body is still intact
+# when the cause is classified: the first line of a 403 body is `{`, which names
+# nothing.
+WF_RAW="$(api --paginate "repos/${GITHUB_REPOSITORY}/actions/workflows?per_page=100" \
+            --jq ".workflows[] | select(.name == \"${WORKFLOW_NAME}\") | .id" 2>/dev/null)"
+WF_RC=$?
+WF_ID="$(printf '%s' "${WF_RAW}" | head -1)"
 if ! printf '%s' "${WF_ID}" | grep -Eq '^[0-9]+$'; then
-  echo "::error::live-db coverage: could not resolve the workflow id for '${WORKFLOW_NAME}' in ${GITHUB_REPOSITORY}. Refusing to conclude that every PR is certified — this check establishes nothing without it. If the workflow was renamed, update WORKFLOW_NAME in this script and the required-status-check contexts in the same change."
+  echo "::error::live-db coverage: could not resolve the workflow id for '${WORKFLOW_NAME}' in ${GITHUB_REPOSITORY} (gh exit ${WF_RC}): $(why "${WF_RC}" "${WF_RAW}"). Refusing to conclude that every PR is certified — this check establishes nothing without it. If the workflow was renamed, update WORKFLOW_NAME in this script and the required-status-check contexts in the same change."
   exit 1
 fi
 echo "live-db coverage: '${WORKFLOW_NAME}' is workflow ${WF_ID}"
@@ -135,13 +173,39 @@ echo "live-db coverage: '${WORKFLOW_NAME}' is workflow ${WF_ID}"
 # missing run from UNCERTIFIED to UNMEASURABLE, and both fail. That is why it
 # sets `unknown` instead of exiting — the check still reports, and it reports
 # the weaker claim it can actually support.
+#
+# "There are no runs" and "I was not allowed to ask" both land on the warning
+# below and both degrade UNCERTIFIED to UNMEASURABLE, so the warning is the only
+# place the difference can be read — and the remedies share nothing. The numeric
+# test is `case`, not `grep -Eq '^[0-9]+$'`: grep matches PER LINE, so a refusal
+# body carrying a digits-only line would pass it, and the arithmetic test on a
+# multi-line value then exits 2 — which, with no `set -e`, is merely a false
+# condition.
 RUN_TOTAL="$(api "repos/${GITHUB_REPOSITORY}/actions/workflows/${WF_ID}/runs?per_page=1" \
                --jq '.total_count // 0' 2>/dev/null)"
+RUN_TOTAL_RC=$?
 HORIZON=""
-if printf '%s' "${RUN_TOTAL}" | grep -Eq '^[0-9]+$' && [ "${RUN_TOTAL}" -gt 0 ]; then
-  HORIZON="$(api "repos/${GITHUB_REPOSITORY}/actions/workflows/${WF_ID}/runs?per_page=1&page=${RUN_TOTAL}" \
-               --jq '.workflow_runs[0].created_at // ""' 2>/dev/null)"
-fi
+HORIZON_WHY=""
+case "${RUN_TOTAL}" in
+  ''|*[!0-9]*)
+    HORIZON_WHY="the run total for '${WORKFLOW_NAME}' could not be read (gh exit ${RUN_TOTAL_RC}): $(why "${RUN_TOTAL_RC}" "${RUN_TOTAL}")" ;;
+  0)
+    HORIZON_WHY="the API ANSWERED and reports 0 '${WORKFLOW_NAME}' runs — an EMPTY run history, which is a fact about the repository and not a failed call" ;;
+  *)
+    HORIZON="$(api "repos/${GITHUB_REPOSITORY}/actions/workflows/${WF_ID}/runs?per_page=1&page=${RUN_TOTAL}" \
+                 --jq '.workflow_runs[0].created_at // ""' 2>/dev/null)"
+    HORIZON_RC=$?
+    # The timestamp is SHAPE-CHECKED before it is used, for the same reason the
+    # commit date is: a refusal puts the error BODY here, which is non-empty, so
+    # an `-z` test alone carries it into `date -d` and then into the job summary
+    # as the horizon. Classified and blanked here instead, so the warning below
+    # names the refusal rather than reporting an unparseable date.
+    HORIZON_RE='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]+Z?$'
+    if [ "$HORIZON_RC" -ne 0 ] || ! [[ "${HORIZON}" =~ $HORIZON_RE ]]; then
+      HORIZON_WHY="the oldest page (page ${RUN_TOTAL} of ${RUN_TOTAL}) could not be read (gh exit ${HORIZON_RC}): $(why "${HORIZON_RC}" "${HORIZON}")"
+      HORIZON=""
+    fi ;;
+esac
 HORIZON_EPOCH=""
 if [ -n "${HORIZON}" ]; then
   HORIZON_EPOCH="$(date -u -d "${HORIZON}" +%s 2>/dev/null)"
@@ -150,7 +214,8 @@ if printf '%s' "${HORIZON_EPOCH}" | grep -Eq '^[0-9]+$'; then
   echo "live-db coverage: oldest visible '${WORKFLOW_NAME}' run is from ${HORIZON} (of ${RUN_TOTAL} run(s)); a head SHA older than that cannot be judged"
 else
   HORIZON_EPOCH=""
-  echo "::warning::live-db coverage: could not establish the oldest visible '${WORKFLOW_NAME}' run. Every missing run will be reported UNMEASURABLE rather than UNCERTIFIED — a weaker claim, and still a failure."
+  [ -n "${HORIZON_WHY}" ] || HORIZON_WHY="the oldest run's created_at '${HORIZON}' did not parse as a date"
+  echo "::warning::live-db coverage: could not establish the oldest visible '${WORKFLOW_NAME}' run — ${HORIZON_WHY}. Every missing run will be reported UNMEASURABLE rather than UNCERTIFIED — a weaker claim, and still a failure."
 fi
 
 # ── 3. THE OPEN PULL REQUESTS ────────────────────────────────────────────────
@@ -158,7 +223,7 @@ PR_RAW="$(api --paginate "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=1
             --jq '.[] | "\(.number) \(.head.sha)"' 2>/dev/null)"
 PR_RC=$?
 if [ "$PR_RC" -ne 0 ]; then
-  echo "::error::live-db coverage: listing open pull requests failed (gh exit ${PR_RC}). The job needs \`pull-requests: read\`. Not a pass."
+  echo "::error::live-db coverage: listing open pull requests failed (gh exit ${PR_RC}): $(why "${PR_RC}" "${PR_RAW}"). If the token is what failed, the job needs \`pull-requests: read\`. Not a pass."
   exit 1
 fi
 
@@ -179,10 +244,19 @@ fi
 # human, and that is a better failure than a green check that verified nothing.
 if [ -z "${PR_RAW//[[:space:]]/}" ]; then
   OPEN_COUNT="$(api "repos/${GITHUB_REPOSITORY}" --jq '.open_issues_count // -1' 2>/dev/null)"
-  if ! printf '%s' "${OPEN_COUNT}" | grep -Eq '^[0-9]+$'; then
-    echo "::error::live-db coverage: the open pull-request listing is empty and the repository's own open-issue count could not be read, so 'there are no open pull requests' is not established. Not a pass."
-    exit 1
-  fi
+  OPEN_RC=$?
+  # `case`, NOT `grep -Eq '^[0-9]+$'`. grep matches PER LINE, so a refusal body
+  # carrying one digits-only line passes as "a number"; `[ -gt 0 ]` then exits 2
+  # with "integer expression expected", and with no `set -e` that is simply a
+  # FALSE condition — falling through to the vacuous `exit 0` below, whose "0
+  # open issues-or-PRs" is a literal in this script and not anything the API
+  # said. That is the only path here that could go green while nothing was
+  # checked, which is the one outcome this file exists to prevent.
+  case "${OPEN_COUNT}" in
+    ''|*[!0-9]*)
+      echo "::error::live-db coverage: the open pull-request listing is empty and the repository's own open-issue count could not be read (gh exit ${OPEN_RC}): $(why "${OPEN_RC}" "${OPEN_COUNT}"). So 'there are no open pull requests' is not established. Not a pass."
+      exit 1 ;;
+  esac
   if [ "${OPEN_COUNT}" -gt 0 ]; then
     echo "::error::live-db coverage: the pull-request listing is EMPTY but the API answered, and ${GITHUB_REPOSITORY} reports ${OPEN_COUNT} open issue(s)-or-pull-request(s). Nothing was checked, and a count of zero from one source is exactly what a broken listing looks like. If this repository really has open issues and no open pull requests, that is the one legitimate case and it needs a human to say so."
     exit 1
@@ -226,7 +300,7 @@ while IFS= read -r prline; do
               2>/dev/null)"
   SHA_RC=$?
   if [ "$SHA_RC" -ne 0 ]; then
-    echo "::error::live-db coverage: listing workflow runs for ${SHA} (PR #${PR}) failed (gh exit ${SHA_RC}). The job needs \`actions: read\`. Not a pass."
+    echo "::error::live-db coverage: listing workflow runs for ${SHA} (PR #${PR}) failed (gh exit ${SHA_RC}): $(why "${SHA_RC}" "${SHA_RUNS}"). If the token is what failed, the job needs \`actions: read\`. Not a pass."
     exit 1
   fi
   # `cut`, NOT `awk`. When no live-DB run exists the first field is EMPTY and
@@ -234,6 +308,25 @@ while IFS= read -r prline; do
   # TIMESTAMP as the run id — a missing run read as a present one, which is the
   # exact failure this whole check exists to catch. Caught by fixture, not by
   # reasoning.
+  # AN ANSWER THAT NEVER ARRIVED IS NOT "NO RUN EXISTS".
+  #
+  # The jq program emits exactly ONE line and its minimum is a single space
+  # (`"" + " " + ""`), so an empty capture cannot mean "no `CI (live DB)` run".
+  # jq exits 0 and prints nothing on empty input (verified: `printf '' | jq -r
+  # '<the program above>'` exits 0 with no output), so a 204, an empty 200 or a
+  # truncated body would otherwise read as an absence and publish a PR that HAS
+  # a run as UNCERTIFIED. The shape is checked as a WHOLE string — `[[ =~ ]]`
+  # anchors across newlines, where `grep` would match any one line — so a body
+  # that arrived instead of an answer cannot be split into fields either.
+  SHA_RUNS_RE='^[0-9]* [0-9A-Za-z:.+-]*$'
+  if ! [[ "$SHA_RUNS" =~ $SHA_RUNS_RE ]]; then
+    if [ -z "${SHA_RUNS//[[:space:]]/}" ]; then
+      echo "::error::live-db coverage: the workflow-run listing for ${SHA} (PR #${PR}) came back EMPTY while gh exited ${SHA_RC}: $(why "${SHA_RC}" "${SHA_RUNS}"). 'No ${WORKFLOW_NAME} run exists for this SHA' is NOT established by an answer that never arrived. Not a pass."
+    else
+      echo "::error::live-db coverage: the workflow-run listing for ${SHA} (PR #${PR}) came back in a shape this script cannot read: $(why "${SHA_RC}" "${SHA_RUNS}"). Not a pass."
+    fi
+    exit 1
+  fi
   RUN_ID="$(printf '%s' "$SHA_RUNS" | cut -d' ' -f1)"
   FIRST_SEEN="$(printf '%s' "$SHA_RUNS" | cut -d' ' -f2)"
 
@@ -251,8 +344,14 @@ while IFS= read -r prline; do
     AGE_SOURCE="commit-date"
     COMMIT_DATE="$(api "repos/${GITHUB_REPOSITORY}/commits/${SHA}" \
                      --jq '.commit.committer.date' 2>/dev/null)"
-    if [ -z "$COMMIT_DATE" ]; then
-      echo "::error::live-db coverage: could not read the head commit date for PR #${PR} (${SHA}), and no workflow run exists for that SHA to date it from. An unestablished age is not an exemption. Not a pass."
+    COMMIT_RC=$?
+    # A REFUSAL IS NOT A MALFORMED DATE. On a non-2xx the error BODY lands in
+    # this variable — non-empty, so an `-z` test alone waves it through to the
+    # parse failure below, which then quotes the 403 body back at the reader as
+    # if an author had written it into a commit. The exit status and the shape
+    # are both checked here so the cause is named where it happened.
+    if [ "$COMMIT_RC" -ne 0 ] || [ -z "${COMMIT_DATE//[[:space:]]/}" ] || [ "$COMMIT_DATE" = "null" ]; then
+      echo "::error::live-db coverage: could not read the head commit date for PR #${PR} (${SHA}) (gh exit ${COMMIT_RC}): $(why "${COMMIT_RC}" "${COMMIT_DATE}"). No workflow run exists for that SHA to date it from either. An unestablished age is not an exemption. Not a pass."
       exit 1
     fi
     SHA_EPOCH="$(date -u -d "$COMMIT_DATE" +%s 2>/dev/null)"
@@ -279,10 +378,24 @@ while IFS= read -r prline; do
   fi
 
   # (b) DID THE GATE JOB REACH A CONCLUSION OF ITS OWN. Reported, never gating.
-  GATE="$(api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/jobs?per_page=100" \
-            --jq ".jobs[] | select(.name | startswith(\"${GATE_JOB_PREFIX}\")) | .conclusion // \"none\"" \
-          2>/dev/null | head -1)"
+  GATE_RAW="$(api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/jobs?per_page=100" \
+                --jq ".jobs[] | select(.name | startswith(\"${GATE_JOB_PREFIX}\")) | .conclusion // \"none\"" \
+              2>/dev/null)"
+  GATE_RC=$?
+  GATE="$(printf '%s' "$GATE_RAW" | head -1)"
   GATE="${GATE//[[:space:]]/}"
+  # THIS FIELD IS DIAGNOSTIC AND MUST NOT CHANGE THE VERDICT IN EITHER
+  # DIRECTION. The exit status was unchecked here, and the first line of a 403
+  # body is `{` — which went into the listing as the gate field, which the
+  # decider correctly REFUSES as unparseable (exit 3). So a refusal on the one
+  # field that is never gating took the whole check down with "the decider
+  # exited 3": a false alarm, naming neither the endpoint nor the rate limit.
+  # It is reported as `unknown` with a warning instead, which is the value the
+  # decider already defines for "could not be determined".
+  if [ "$GATE_RC" -ne 0 ] || ! printf '%s' "$GATE" | grep -Eq '^[a-z_]*$'; then
+    echo "::warning::live-db coverage: could not read the gate job's conclusion for run ${RUN_ID} (PR #${PR}) (gh exit ${GATE_RC}): $(why "${GATE_RC}" "${GATE_RAW}"). Reporting gate=unknown. This half of the question is diagnostic only and does not change the verdict — see the decider's header."
+    GATE="unknown"
+  fi
   if [ -z "$GATE" ]; then
     # The run exists and the gate job is not in it — a legitimate state (the
     # slot job failed and the DB jobs were skipped out of the run's job list on
