@@ -67,7 +67,26 @@ const LIB = path.resolve(import.meta.dirname, "../lib");
  * this tree has used. Deliberately narrow: it matches the DEFECT, not every
  * mention of the function, so it cannot be satisfied by renaming a variable.
  */
-const FAIL_OPEN = /\b(\w+)\s*&&\s*await\s+isKillSwitchEngaged\s*\(\s*\1\b/;
+const FAIL_OPEN_AND = /\b(\w+)\s*&&\s*await\s+isKillSwitchEngaged\s*\(\s*\1\b/;
+
+/**
+ * The ternary spelling of the same defect, added 2026-10-03.
+ *
+ * `x ? await isKillSwitchEngaged(x, …) : false` is `x && await …` with a
+ * written-out else branch, and that `: false` is the whole bug stated as a
+ * literal: the stop reads DISENGAGED when its state could not be established.
+ * The `&&` pattern above could not see it, and a class ratchet that only knows
+ * one spelling of its class is a list of known sites wearing a regex.
+ *
+ * It was not hypothetical. `lib/discoveryStopGate.ts` carried it for the four
+ * Discovery rollout flag families (3450-3456, §78, §85) while this file was
+ * green, and this test stayed green through the commit that introduced it.
+ */
+const FAIL_OPEN_TERNARY = /\b(\w+)\s*\?\s*await\s+isKillSwitchEngaged\s*\(\s*\1\b/;
+
+function failsOpen(src: string): boolean {
+  return FAIL_OPEN_AND.test(src) || FAIL_OPEN_TERNARY.test(src);
+}
 
 function sourcesUnder(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true })
@@ -83,7 +102,7 @@ function sourcesUnder(dir: string): string[] {
 describe("a kill switch is never skipped because the service client is absent", () => {
   it("no route guards a stop read behind a truthiness test on the client", () => {
     const offenders = sourcesUnder(ROUTES)
-      .filter((f) => FAIL_OPEN.test(readFileSync(f, "utf8")))
+      .filter((f) => failsOpen(readFileSync(f, "utf8")))
       .map((f) => path.relative(ROUTES, f));
 
     assert.deepEqual(
@@ -98,10 +117,35 @@ describe("a kill switch is never skipped because the service client is absent", 
 
   it("no lib does either — the same shape is worse one layer down, where several routes inherit it", () => {
     const offenders = sourcesUnder(LIB)
-      .filter((f) => FAIL_OPEN.test(readFileSync(f, "utf8")))
+      .filter((f) => failsOpen(readFileSync(f, "utf8")))
       .map((f) => path.relative(LIB, f));
 
     assert.deepEqual(offenders, [], "see the message above; a shared guard multiplies the defect");
+  });
+
+  it("the ratchet can fail, and the `&&` half alone could not have caught the ternary", () => {
+    // Prove the check can fail. A guard that matches nothing passes by matching
+    // nothing, and the transcribed line below is the one lib/discoveryStopGate.ts
+    // actually carried while this file reported clean.
+    const theLineThatEscaped =
+      's.kill = { value: sc ? await isKillSwitchEngaged(sc, "disable_discovery_pde") : false, at: nowMs };';
+    assert.ok(failsOpen(theLineThatEscaped), "the widened predicate must see the ternary spelling");
+    assert.ok(
+      !FAIL_OPEN_AND.test(theLineThatEscaped),
+      "and the `&&` pattern alone must NOT see it — otherwise this commit changed nothing and the " +
+        "defect it closes was never reachable",
+    );
+
+    // Narrow, still: the same variable on both sides. A different variable is
+    // not this defect, and widening the pattern must not start flagging it.
+    assert.ok(
+      !failsOpen('const v = other ? await isKillSwitchEngaged(sc, "disable_posting") : false;'),
+      "a truthiness test on a DIFFERENT name is not this defect",
+    );
+    assert.ok(
+      !failsOpen('if (killSwitchStateUnknown(flagSc)) return;\n  const v = await isKillSwitchEngaged(flagSc, "x");'),
+      "the fixed shape must read clean, or every door would have to keep the defect to pass",
+    );
   });
 
   it("the predicate the doors are supposed to use still exists and still refuses a null client", async () => {
