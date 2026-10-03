@@ -249,3 +249,55 @@ describe("GET /trips/:tripId/memory — §28.11", () => {
     assert.equal(r.body?.error, "degraded_unavailable");
   });
 });
+
+// ── 4. One live trip Memory per trip (lane highlights, 2026-10-03) ───────────
+//
+// WHAT WAS WRONG. `memory_kernel_enabled` is false on the hosted testing
+// deployment (read 2026-10-03), so every create takes the legacy direct write
+// and §19's idempotency key dedupes NOTHING there (census H175). A retry after a
+// dropped response, or a second tap from another device, wrote a SECOND
+// trip-crew Memory for the same trip and tagged the whole crew a second time —
+// two pending tag requests and two notifications per person — while
+// GET /trips/:tripId/memory only ever shows the newest one. The create now
+// answers the trip's existing live Memory instead of writing another.
+
+describe("POST /trips/:tripId/memory — one live trip Memory per trip", () => {
+  it("a second create answers the existing Memory, writes no second row and tags nobody twice", async () => {
+    app = await startApp();
+    const first = await call(app, "POST", `/api/trips/${TRIP}/memory`, OWNER);
+    assert.equal(first.status, 201, JSON.stringify(first.body));
+    const second = await call(app, "POST", `/api/trips/${TRIP}/memory`, OWNER);
+    assert.equal(second.status, 200, `a repeat create must answer the existing Memory, got ${second.status} ${JSON.stringify(second.body)}`);
+    assert.equal(second.body?.memory?.id, first.body?.memory?.id, "the answer must be the SAME Memory");
+    assert.equal(second.body?.existing, true);
+    assert.equal(second.body?.taggedCount, 0, "a repeat create tags nobody");
+    assert.equal(app.store.memories.length, 1, "exactly one trip Memory may exist");
+    assert.equal(app.store.memory_tags.length, 1, "the crew member is tagged once, not twice");
+  });
+
+  it("a DELETED trip Memory does not block making a new one", async () => {
+    app = await startApp();
+    app.store.memories.push({ id: "old-trip-mem", owner_id: OWNER, trip_id: TRIP, state: "deleted", title: "Lisbon", created_at: "2026-01-09T00:00:00.000Z" });
+    const r = await call(app, "POST", `/api/trips/${TRIP}/memory`, OWNER);
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.notEqual(r.body?.memory?.id, "old-trip-mem");
+    assert.equal(app.store.memories.length, 2);
+  });
+
+  it("another person's Memory linked to the trip does not count as the owner's trip Memory", async () => {
+    app = await startApp();
+    app.store.memories.push({ id: "crew-own-mem", owner_id: CREW, trip_id: TRIP, state: "published", title: "Mine", created_at: "2026-01-09T00:00:00.000Z" });
+    const r = await call(app, "POST", `/api/trips/${TRIP}/memory`, OWNER);
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.notEqual(r.body?.memory?.id, "crew-own-mem");
+  });
+
+  it("an unreadable existing-Memory check refuses 503 and writes nothing — it never guesses 'none'", async () => {
+    app = await startApp(new Set(["memories"]));
+    const r = await call(app, "POST", `/api/trips/${TRIP}/memory`, OWNER);
+    assert.equal(r.status, 503, `expected degraded_unavailable, got ${r.status} ${JSON.stringify(r.body)}`);
+    assert.equal(r.body?.error, "degraded_unavailable");
+    assert.equal(app.store.memories.length, 0, "no Memory may be written when the existing one could not be looked for");
+    assert.equal(app.store.memory_tags.length, 0);
+  });
+});
