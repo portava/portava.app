@@ -1073,3 +1073,491 @@ describe("CI architecture — the slot listing asks only for runs that can hold 
     assert.match(r.out, /oldest of 2 active/, "a run listed twice must be counted once");
   });
 });
+
+/**
+ * A run that has FINISHED with the database releases the slot (2026-10-03).
+ *
+ * Measured ~14:52Z: run 37128138124 (PR #573) concluded every database job by
+ * 14:42:46Z — schema drift, RLS + role boundaries, api-server check:all +
+ * live_pulse gate, post-media revocation — but its verdict job, which touches no
+ * database, sat in GitHub's runner queue from 14:42:46Z. The run stayed
+ * `queued`, so it kept the slot, and other runs' `verify` steps timed out after
+ * 1200s (exit 75) having certified nothing — e.g. run 37128414250 for PR #570.
+ *
+ * The rule: a run RELEASES the slot once every job named in the workflow's
+ * LIVE_DB_SLOT_DB_JOBS is listed, in the run's CURRENT attempt, and concluded
+ * (any conclusion). Everything else — API failure, a DB job not yet listed, a
+ * DB job still running, a job from an older attempt — is `held`. A released run
+ * blocks nobody, like a forfeited one, but is logged as `released`.
+ */
+describe("CI architecture — a run that is done with the database releases the slot", () => {
+  const DECIDER = resolve(REPO_ROOT, ".github/scripts/live-db-slot-decide.sh");
+  const SLOT_JOB = "live DB · acquire the shared-database slot";
+  const VERDICT_JOB = "live DB · verdict (cancelled or skipped is not a pass)";
+  const PREFLIGHT_JOB = "preflight · every CI-invoked package script exists";
+
+  /** Comment lines removed, so a name in a comment can never satisfy a check. */
+  const stripYamlComments = (src: string) =>
+    src.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
+
+  /** `LIVE_DB_SLOT_DB_JOBS` from the workflow's top-level `env:`, one name per entry. */
+  const dbJobsFromWorkflow = (src: string): string[] => {
+    const text = stripYamlComments(src);
+    const envAt = text.indexOf("\nenv:\n");
+    assert.ok(envAt >= 0, "live-db.yml has no top-level `env:` block");
+    const envBlock = text.slice(envAt + 1).split(/\n(?=\S)/)[0] ?? "";
+    const m = /\n {2}LIVE_DB_SLOT_DB_JOBS: \|-?\n((?: {4}.*\n?)+)/.exec(envBlock);
+    assert.ok(
+      m,
+      "live-db.yml's top-level env does not define LIVE_DB_SLOT_DB_JOBS as a block scalar. " +
+        "Without it no run can ever RELEASE the slot, and a run whose only remaining job is a " +
+        "queued verdict blocks every other run until their verify steps time out.",
+    );
+    return m[1]!.split("\n").map((l) => l.trim()).filter(Boolean);
+  };
+
+  type Job = { id: string; name: string; block: string; needs: string[] };
+  /** Every job in the workflow: id, display name, comment-stripped block, needs. */
+  const workflowJobs = (src: string): Job[] => {
+    const text = stripYamlComments(src);
+    const jobsAt = text.indexOf("\njobs:\n");
+    assert.ok(jobsAt >= 0, "no `jobs:` block");
+    const body = text.slice(jobsAt + "\njobs:\n".length);
+    const parts = body.split(/\n(?= {2}[A-Za-z0-9_-]+:\s*$)/m);
+    const jobs: Job[] = [];
+    for (const part of parts) {
+      const head = /^ {2}([A-Za-z0-9_-]+):\s*$/m.exec(part);
+      if (!head) continue;
+      const name = /^ {4}name:\s*(.+?)\s*$/m.exec(part)?.[1]?.replace(/^(['"])(.*)\1$/, "$2") ?? "";
+      let needs: string[] = [];
+      const inline = /^ {4}needs:\s*\[([^\]]*)\]/m.exec(part);
+      const scalar = /^ {4}needs:\s*([A-Za-z0-9_-]+)\s*$/m.exec(part);
+      const list = /^ {4}needs:\s*\n((?: {6}- .+\n?)+)/m.exec(part);
+      if (inline) needs = inline[1]!.split(",").map((s) => s.trim()).filter(Boolean);
+      else if (scalar) needs = [scalar[1]!];
+      else if (list) needs = list[1]!.split("\n").map((l) => l.replace(/^\s*-\s*/, "").trim()).filter(Boolean);
+      jobs.push({ id: head[1]!, name, block: part, needs });
+    }
+    return jobs;
+  };
+
+  /** Ids `.github/scripts/assert-ci-scripts.mjs` declares credential-bearing. */
+  const requiredCredentialJobs = (): string[] => {
+    const src = readFileSync(resolve(REPO_ROOT, ".github/scripts/assert-ci-scripts.mjs"), "utf8");
+    const m = /const REQUIRED_CREDENTIAL_JOBS = \[([\s\S]*?)\];/.exec(src);
+    assert.ok(m, "REQUIRED_CREDENTIAL_JOBS not found in assert-ci-scripts.mjs");
+    return [...m[1]!.replace(/\/\/.*$/gm, "").matchAll(/'([^']+)'/g)].map((x) => x[1]!);
+  };
+
+  /**
+   * The database jobs as the WORKFLOW defines them, independently of the env
+   * var: every job that `needs: live-db-slot` AND can reach the database (it
+   * binds the credential environment, references a secret, or re-verifies the
+   * slot). Returns a list of problems; empty means no drift.
+   */
+  const dbJobDrift = (src: string): string[] => {
+    const problems: string[] = [];
+    const declared = dbJobsFromWorkflow(src);
+    const jobs = workflowJobs(src);
+    const reachesDb = (j: Job) =>
+      /^ {4}environment:/m.test(j.block) || /\bsecrets\./.test(j.block) ||
+      /LIVE_DB_SLOT_ROLE: verify/.test(j.block);
+    const derived = jobs.filter((j) => j.needs.includes("live-db-slot") && reachesDb(j));
+    const strays = jobs.filter((j) => !j.needs.includes("live-db-slot") && reachesDb(j) && j.id !== "live-db-slot");
+
+    const want = new Set(derived.map((j) => j.name));
+    const have = new Set(declared);
+    if (have.size !== declared.length) problems.push(`LIVE_DB_SLOT_DB_JOBS lists a name twice: ${declared.join(" | ")}`);
+    for (const n of want) if (!have.has(n)) problems.push(`database job "${n}" is missing from LIVE_DB_SLOT_DB_JOBS — a run would RELEASE the slot while it is still running`);
+    for (const n of have) if (!want.has(n)) problems.push(`LIVE_DB_SLOT_DB_JOBS names "${n}", which is not a slot-gated database job of live-db.yml (a typo here makes release impossible; a non-DB job here delays it)`);
+    for (const j of strays) problems.push(`job ${j.id} reaches the database but does not need live-db-slot`);
+    const creds = new Set(requiredCredentialJobs());
+    const derivedIds = new Set(derived.map((j) => j.id));
+    for (const id of creds) if (!derivedIds.has(id)) problems.push(`REQUIRED_CREDENTIAL_JOBS declares ${id}, which is not a slot-gated database job`);
+    for (const id of derivedIds) if (!creds.has(id)) problems.push(`database job ${id} is not in REQUIRED_CREDENTIAL_JOBS`);
+    return problems;
+  };
+
+  it("names the database jobs in ONE place, and that place matches the workflow exactly", () => {
+    assert.deepEqual(dbJobDrift(liveDb), [], "LIVE_DB_SLOT_DB_JOBS has drifted from live-db.yml");
+    const declared = dbJobsFromWorkflow(liveDb);
+    assert.ok(declared.length >= 4, `expected the four database jobs, got ${JSON.stringify(declared)}`);
+    for (const n of [SLOT_JOB, VERDICT_JOB, PREFLIGHT_JOB]) {
+      assert.ok(!declared.includes(n), `"${n}" touches no database and must not delay a release`);
+    }
+    // One definition. A job-level override would make that job's verify step
+    // judge other runs by a different list.
+    assert.equal(
+      (stripYamlComments(liveDb).match(/LIVE_DB_SLOT_DB_JOBS:/g) ?? []).length, 1,
+      "LIVE_DB_SLOT_DB_JOBS must be defined exactly once, at workflow level",
+    );
+  });
+
+  it("control: the drift check rejects a list with a job dropped, a job added, or a new unlisted DB job", () => {
+    const declared = dbJobsFromWorkflow(liveDb);
+    const dropped = liveDb.replace(`\n    ${declared[0]}\n`, "\n");
+    assert.notEqual(dropped, liveDb);
+    assert.ok(dbJobDrift(dropped).some((p) => p.includes("missing from LIVE_DB_SLOT_DB_JOBS")));
+
+    const added = liveDb.replace(`\n    ${declared[0]}\n`, `\n    ${declared[0]}\n    ${VERDICT_JOB}\n`);
+    assert.ok(dbJobDrift(added).some((p) => p.includes(VERDICT_JOB)));
+
+    const newJob = liveDb.replace(
+      "\n  live-db-verdict:\n",
+      "\n  new-db-job:\n    name: new · touches the database\n    runs-on: ubuntu-latest\n" +
+        "    needs: [preflight, live-db-slot]\n    environment: ci-nonprod-supabase\n" +
+        "    steps:\n      - run: true\n\n  live-db-verdict:\n",
+    );
+    assert.ok(dbJobDrift(newJob).some((p) => p.includes("new · touches the database")));
+  });
+
+  // ── The decider: `released` is a third claim value ─────────────────────────
+  const decide = (runId: string, listing: string) => {
+    const r = spawnSync("bash", [DECIDER], {
+      input: listing, encoding: "utf8", env: { ...process.env, GITHUB_RUN_ID: runId },
+    });
+    return {
+      holder: /holder=(\d*)/.exec(r.stdout)?.[1] ?? "",
+      released: /released=(\d+)/.exec(r.stdout)?.[1] ?? "",
+      forfeited: /forfeited=(\d+)/.exec(r.stdout)?.[1] ?? "",
+      code: r.status,
+    };
+  };
+
+  it("decider: a released run stops blocking, and is counted apart from forfeited ones", () => {
+    const listing =
+      "2026-10-03T14:00:39Z 37128138124 released\n" + "2026-10-03T14:05:21Z 37128414250 held\n";
+    assert.deepEqual(
+      decide("37128414250", listing),
+      { holder: "37128414250", released: "1", forfeited: "0", code: 0 },
+      "the run behind a released run must acquire",
+    );
+    const mixed =
+      "2026-10-03T13:00:00Z 1 forfeited\n2026-10-03T14:00:39Z 37128138124 released\n2026-10-03T14:05:21Z 37128414250 held\n";
+    assert.deepEqual(decide("37128414250", mixed), { holder: "37128414250", released: "1", forfeited: "1", code: 0 });
+  });
+
+  it("decider: a run marked released is never granted the slot itself, and all-released is not a free slot", () => {
+    const listing =
+      "2026-10-03T14:00:39Z 37128138124 released\n" + "2026-10-03T14:05:21Z 37128414250 held\n";
+    assert.equal(decide("37128138124", listing).code, 1);
+    const all = "2026-10-03T14:00:39Z 37128138124 released\n2026-10-03T14:05:21Z 37128414250 forfeited\n";
+    assert.equal(decide("37128414250", all).code, 1);
+  });
+
+  // ── The wait loop against a stub Actions API ───────────────────────────────
+
+  /** The DB job names the real workflow declares (red before the env var exists). */
+  const DB_JOBS = (() => {
+    try { return dbJobsFromWorkflow(liveDb); } catch { return [] as string[]; }
+  })();
+
+  type JobRow = { name: string; status: string; conclusion?: string; attempt?: number };
+  /** The jobs listing exactly as the script's `--jq` renders it: attempt, status, conclusion, name — tab-separated. */
+  const jobsTsv = (rows: JobRow[]) =>
+    rows.map((r) => `${r.attempt ?? 1}\t${r.status}\t${r.conclusion ?? ""}\t${r.name}`).join("\n") + "\n";
+
+  /** run 37128138124 as measured: every DB job concluded, the verdict queued. */
+  const HOLDER = "37128138124";
+  const WAITER = "37128414250";
+  const MEASURED: JobRow[] = [
+    { name: PREFLIGHT_JOB, status: "completed", conclusion: "success" },
+    { name: SLOT_JOB, status: "completed", conclusion: "success" },
+    { name: "schema drift · apply migrations, certify, then audit vs live (needs credentials)", status: "completed", conclusion: "success" },
+    { name: "live DB · RLS + role/is_official write boundaries (needs credentials)", status: "completed", conclusion: "success" },
+    { name: "api-server · check:all + live_pulse gate (needs credentials)", status: "completed", conclusion: "success" },
+    { name: "post-media revocation · before-proof, apply, after-proof", status: "completed", conclusion: "success" },
+    { name: VERDICT_JOB, status: "queued" },
+  ];
+  /** The waiter, mid-job: slot acquired, its DB jobs running. */
+  const WAITER_JOBS: JobRow[] = [
+    { name: PREFLIGHT_JOB, status: "completed", conclusion: "success" },
+    { name: SLOT_JOB, status: "completed", conclusion: "success" },
+    ...DB_JOBS.map((name) => ({ name, status: "in_progress" })),
+  ];
+  const LISTING =
+    `2026-10-03T14:00:39Z ${HOLDER} 1\n` + `2026-10-03T14:05:21Z ${WAITER} 1\n`;
+
+  const runRelease = (opts: {
+    runId?: string;
+    listing?: string;
+    jobs: Record<string, string>;
+    /** Run ids whose jobs query fails (non-zero exit) after printing its file. */
+    failJobs?: string[];
+  }) => {
+    const dir = mkdtempSync(join(tmpdir(), "portava-slot-release-"));
+    writeFileSync(join(dir, "listing.txt"), opts.listing ?? LISTING);
+    for (const [id, tsv] of Object.entries(opts.jobs)) writeFileSync(join(dir, `jobs-${id}.txt`), tsv);
+    for (const id of opts.failJobs ?? []) writeFileSync(join(dir, `jobs-${id}.fail`), "");
+    writeFileSync(
+      join(dir, "gh"),
+      "#!/usr/bin/env bash\n" +
+        `d=${JSON.stringify(dir)}\n` +
+        'if [[ "$*" == *"/actions/workflows/"* ]]; then cat "$d/listing.txt"; exit 0; fi\n' +
+        'if [[ "$*" =~ /actions/runs/([0-9]+)/jobs ]]; then\n' +
+        '  id="${BASH_REMATCH[1]}"\n' +
+        '  [ -f "$d/jobs-$id.txt" ] && cat "$d/jobs-$id.txt"\n' +
+        '  if [ -f "$d/jobs-$id.fail" ]; then echo "gh: HTTP 502 Bad Gateway" >&2; exit 1; fi\n' +
+        "  exit 0\n" +
+        "fi\n" +
+        "echo 424242\n",
+      { mode: 0o755 },
+    );
+    const r = spawnSync("bash", [resolve(REPO_ROOT, ".github/scripts/live-db-acquire-slot.sh")], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${dir}:${process.env.PATH ?? ""}`,
+        GH_TOKEN: "stub",
+        GITHUB_REPOSITORY: "portava/portava.app",
+        GITHUB_RUN_ID: opts.runId ?? WAITER,
+        GITHUB_RUN_ATTEMPT: "1",
+        GITHUB_OUTPUT: join(dir, "out"),
+        LIVE_DB_SLOT_ROLE: "verify",
+        LIVE_DB_SLOT_TIMEOUT_SECONDS: "1",
+        LIVE_DB_SLOT_POLL_SECONDS: "1",
+        LIVE_DB_SLOT_DB_JOBS: DB_JOBS.join("\n"),
+      },
+    });
+    rmSync(dir, { recursive: true, force: true });
+    return { code: r.status, out: `${r.stdout}${r.stderr}` };
+  };
+
+  const assertReleased = (jobs: JobRow[], why: string) => {
+    const r = runRelease({ jobs: { [HOLDER]: jobsTsv(jobs), [WAITER]: jobsTsv(WAITER_JOBS) } });
+    assert.equal(r.code, 0, `${why}: the waiter must acquire. Got ${r.code}:\n${r.out}`);
+    assert.match(r.out, /ACQUIRED/);
+    assert.match(r.out, /\b1 released\b/, `the log must say the run ahead was RELEASED:\n${r.out}`);
+    assert.match(r.out, /\b0 forfeited\b/, `a released run is not a forfeited one:\n${r.out}`);
+  };
+  const assertHeld = (r: { code: number | null; out: string }, why: string) => {
+    assert.equal(r.code, 75, `${why}: the holder must keep the slot and the waiter must time out. Got ${r.code}:\n${r.out}`);
+    assert.match(r.out, new RegExp(`holder=${HOLDER}`), `${why}: the log must name the holder:\n${r.out}`);
+    assert.doesNotMatch(r.out, /ACQUIRED/);
+  };
+  const withDbJob = (i: number, patch: Partial<JobRow> | null): JobRow[] => {
+    const name = DB_JOBS[i]!;
+    return MEASURED.flatMap((row) => (row.name !== name ? [row] : patch === null ? [] : [{ ...row, ...patch }]));
+  };
+
+  it("EXECUTES 37128138124: every DB job concluded, verdict queued ⇒ released, and the waiter acquires", () => {
+    assert.ok(DB_JOBS.length > 0, "LIVE_DB_SLOT_DB_JOBS is not defined in live-db.yml");
+    assertReleased(MEASURED, "the measured 2026-10-03 holder");
+    // ANY conclusion counts: a DB job that failed, was cancelled or was skipped
+    // is not touching the database either.
+    for (const conclusion of ["failure", "cancelled", "skipped"]) {
+      assertReleased(withDbJob(1, { conclusion }), `a DB job concluded ${conclusion}`);
+    }
+  });
+
+  it("EXECUTES: one DB job still in progress ⇒ held", () => {
+    assertReleased(MEASURED, "control");
+    for (let i = 0; i < DB_JOBS.length; i++) {
+      assertHeld(
+        runRelease({ jobs: { [HOLDER]: jobsTsv(withDbJob(i, { status: "in_progress", conclusion: "" })), [WAITER]: jobsTsv(WAITER_JOBS) } }),
+        `"${DB_JOBS[i]}" in progress`,
+      );
+    }
+    // in_progress is not concluded, whatever the conclusion field says
+    assertHeld(
+      runRelease({ jobs: { [HOLDER]: jobsTsv(withDbJob(3, { status: "in_progress" })), [WAITER]: jobsTsv(WAITER_JOBS) } }),
+      "a DB job in progress with a stale conclusion",
+    );
+    // completed with a null conclusion is not a conclusion
+    assertHeld(
+      runRelease({ jobs: { [HOLDER]: jobsTsv(withDbJob(0, { conclusion: "" })), [WAITER]: jobsTsv(WAITER_JOBS) } }),
+      "a DB job with a null conclusion",
+    );
+  });
+
+  it("EXECUTES: a DB job absent from the jobs listing (not yet queued behind `needs:`) ⇒ held", () => {
+    assertReleased(MEASURED, "control");
+    for (let i = 0; i < DB_JOBS.length; i++) {
+      assertHeld(
+        runRelease({ jobs: { [HOLDER]: jobsTsv(withDbJob(i, null)), [WAITER]: jobsTsv(WAITER_JOBS) } }),
+        `"${DB_JOBS[i]}" missing from the listing`,
+      );
+    }
+    // Only the slot job listed — the shape of a run still in its queue job.
+    assertHeld(
+      runRelease({ jobs: { [HOLDER]: jobsTsv(MEASURED.slice(0, 2)), [WAITER]: jobsTsv(WAITER_JOBS) } }),
+      "a run whose DB jobs have not been listed yet",
+    );
+  });
+
+  it("EXECUTES: DB jobs concluded in an OLDER attempt than the run's current one ⇒ held", () => {
+    assertReleased(MEASURED, "control");
+    // The run was re-run (attempt 2 in the listing) but the jobs listing still
+    // shows attempt 1's concluded jobs: attempt 2's will touch the database.
+    assertHeld(
+      runRelease({
+        listing: `2026-10-03T14:00:39Z ${HOLDER} 2\n2026-10-03T14:05:21Z ${WAITER} 1\n`,
+        jobs: { [HOLDER]: jobsTsv(MEASURED), [WAITER]: jobsTsv(WAITER_JOBS) },
+      }),
+      "attempt mismatch",
+    );
+    // A listing that does not say which attempt is current cannot prove it.
+    assertHeld(
+      runRelease({
+        listing: `2026-10-03T14:00:39Z ${HOLDER}\n2026-10-03T14:05:21Z ${WAITER}\n`,
+        jobs: { [HOLDER]: jobsTsv(MEASURED), [WAITER]: jobsTsv(WAITER_JOBS) },
+      }),
+      "attempt unknown",
+    );
+  });
+
+  it("EXECUTES: the jobs API failing ⇒ held, even if it printed a listing that would release", () => {
+    assertReleased(MEASURED, "control");
+    assertHeld(
+      runRelease({ jobs: { [HOLDER]: jobsTsv(MEASURED), [WAITER]: jobsTsv(WAITER_JOBS) }, failJobs: [HOLDER] }),
+      "jobs API exited non-zero after partial output",
+    );
+    assertHeld(
+      runRelease({ jobs: { [WAITER]: jobsTsv(WAITER_JOBS) }, failJobs: [HOLDER] }),
+      "jobs API exited non-zero with no output",
+    );
+    assertHeld(
+      runRelease({ jobs: { [HOLDER]: "<html>502</html>\n", [WAITER]: jobsTsv(WAITER_JOBS) } }),
+      "jobs API answered something unparseable",
+    );
+  });
+
+  it("EXECUTES: a forfeited run still FORFEITS (logged as forfeited, not released) and its own verify still fails", () => {
+    const forfeited: JobRow[] = MEASURED.map((row) =>
+      row.name === SLOT_JOB ? { ...row, conclusion: "failure" }
+        : DB_JOBS.includes(row.name) ? { ...row, conclusion: "skipped" } : row);
+    const r = runRelease({ jobs: { [HOLDER]: jobsTsv(forfeited), [WAITER]: jobsTsv(WAITER_JOBS) } });
+    assert.equal(r.code, 0, `the waiter must acquire behind a forfeited run. Got ${r.code}:\n${r.out}`);
+    assert.match(r.out, /\b1 forfeited\b/, `forfeiture takes precedence and is logged as such:\n${r.out}`);
+    assert.match(r.out, /\b0 released\b/, `a forfeited run must not be reported as released:\n${r.out}`);
+
+    // The forfeited run's own verify (api-server-check-all runs under
+    // `if: !cancelled()`) must still be refused.
+    const own = runRelease({
+      runId: HOLDER,
+      jobs: { [HOLDER]: jobsTsv(forfeited.map((row) => (row.name === DB_JOBS[2] ? { ...row, status: "in_progress", conclusion: "" } : row))), [WAITER]: jobsTsv(WAITER_JOBS) },
+    });
+    assert.equal(own.code, 75, `a forfeited run's own verify must fail. Got ${own.code}:\n${own.out}`);
+  });
+
+  it("EXECUTES: a run never treats ITSELF as released — its own verify step is still working", () => {
+    // Even handed a listing in which all of its own DB jobs look concluded,
+    // the oldest run asking for itself is `held`, so it is granted the slot
+    // rather than refused as if it had given it up.
+    const r = runRelease({ runId: HOLDER, jobs: { [HOLDER]: jobsTsv(MEASURED), [WAITER]: jobsTsv(WAITER_JOBS) } });
+    assert.equal(r.code, 0, `the oldest run must keep its own slot. Got ${r.code}:\n${r.out}`);
+    assert.match(r.out, /ACQUIRED/);
+    assert.match(r.out, /\b0 released\b/);
+  });
+
+  /**
+   * The stubs above hand back what the script's `--jq` filters WOULD print, so
+   * they cannot notice a filter that stops emitting a field the rule needs (the
+   * listing's run_attempt, the jobs' status). This one runs the script's REAL
+   * filters, through `jq -r` exactly as `gh api --jq` applies them, over Actions
+   * API JSON shaped like the 2026-10-03 measurement.
+   */
+  it("EXECUTES the script's real --jq filters over Actions API JSON", (t) => {
+    if (spawnSync("jq", ["--version"]).status !== 0) {
+      assert.ok(!process.env.CI, "jq is required in CI to execute the slot script's --jq filters");
+      t.skip("jq is not installed; this case runs in CI");
+      return;
+    }
+    const run = (holderAttemptInListing: number) => {
+      const dir = mkdtempSync(join(tmpdir(), "portava-slot-jq-"));
+      try {
+        const runObj = (id: number, status: string, started: string, attempt: number) =>
+          ({ id: Number(id), status, run_started_at: started, created_at: started, run_attempt: attempt });
+        writeFileSync(join(dir, "queued.json"), JSON.stringify({
+          workflow_runs: [runObj(Number(HOLDER), "queued", "2026-10-03T14:00:39Z", holderAttemptInListing)],
+        }));
+        writeFileSync(join(dir, "in_progress.json"), JSON.stringify({
+          workflow_runs: [runObj(Number(WAITER), "in_progress", "2026-10-03T14:05:21Z", 1)],
+        }));
+        const jobsJson = (rows: JobRow[]) => JSON.stringify({
+          jobs: rows.map((r, i) => ({
+            id: 111000000000 + i, name: r.name, status: r.status,
+            conclusion: r.conclusion ? r.conclusion : null, run_attempt: r.attempt ?? 1,
+          })),
+        });
+        writeFileSync(join(dir, `jobs-${HOLDER}.json`), jobsJson(MEASURED));
+        writeFileSync(join(dir, `jobs-${WAITER}.json`), jobsJson(WAITER_JOBS));
+        writeFileSync(join(dir, "run.json"), JSON.stringify({ workflow_id: 330887793 }));
+        writeFileSync(
+          join(dir, "gh"),
+          "#!/usr/bin/env bash\n" +
+            `d=${JSON.stringify(dir)}\n` +
+            'filter=""; ep=""; prev=""\n' +
+            'for a in "$@"; do [ "$prev" = "--jq" ] && filter="$a"; case "$a" in repos/*) ep="$a";; esac; prev="$a"; done\n' +
+            'case "$ep" in\n' +
+            '  *status=queued*) f="$d/queued.json" ;;\n' +
+            '  *status=in_progress*) f="$d/in_progress.json" ;;\n' +
+            '  */jobs*) id="${ep#*/actions/runs/}"; f="$d/jobs-${id%%/*}.json" ;;\n' +
+            '  *) f="$d/run.json" ;;\n' +
+            "esac\n" +
+            'jq -r "$filter" "$f"\n',
+          { mode: 0o755 },
+        );
+        const r = spawnSync("bash", [resolve(REPO_ROOT, ".github/scripts/live-db-acquire-slot.sh")], {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PATH: `${dir}:${process.env.PATH ?? ""}`,
+            GH_TOKEN: "stub",
+            GITHUB_REPOSITORY: "portava/portava.app",
+            GITHUB_RUN_ID: WAITER,
+            GITHUB_RUN_ATTEMPT: "1",
+            GITHUB_OUTPUT: join(dir, "out"),
+            LIVE_DB_SLOT_ROLE: "verify",
+            LIVE_DB_SLOT_TIMEOUT_SECONDS: "1",
+            LIVE_DB_SLOT_POLL_SECONDS: "1",
+            LIVE_DB_SLOT_DB_JOBS: DB_JOBS.join("\n"),
+          },
+        });
+        return { code: r.status, out: `${r.stdout}${r.stderr}` };
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    };
+    const released = run(1);
+    assert.equal(released.code, 0, `the measured holder must release. Got ${released.code}:\n${released.out}`);
+    assert.match(released.out, /\b1 released\b/);
+    // Same jobs, but the listing says the run is now on attempt 2: held.
+    assertHeld(run(2), "the listing's current attempt does not match the jobs'");
+  });
+
+  it("EXECUTES: with LIVE_DB_SLOT_DB_JOBS unset nothing is ever released (fail closed)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "portava-slot-release-unset-"));
+    try {
+      writeFileSync(join(dir, "listing.txt"), LISTING);
+      writeFileSync(join(dir, "holder.txt"), jobsTsv(MEASURED));
+      writeFileSync(
+        join(dir, "gh"),
+        "#!/usr/bin/env bash\n" +
+          `if [[ "$*" == *"/actions/workflows/"* ]]; then cat ${JSON.stringify(join(dir, "listing.txt"))}; exit 0; fi\n` +
+          `if [[ "$*" == *"/runs/${HOLDER}/jobs"* ]]; then cat ${JSON.stringify(join(dir, "holder.txt"))}; exit 0; fi\n` +
+          "echo 424242\n",
+        { mode: 0o755 },
+      );
+      const env = { ...process.env } as Record<string, string | undefined>;
+      delete env.LIVE_DB_SLOT_DB_JOBS;
+      const r = spawnSync("bash", [resolve(REPO_ROOT, ".github/scripts/live-db-acquire-slot.sh")], {
+        encoding: "utf8",
+        env: {
+          ...env,
+          PATH: `${dir}:${process.env.PATH ?? ""}`,
+          GH_TOKEN: "stub",
+          GITHUB_REPOSITORY: "portava/portava.app",
+          GITHUB_RUN_ID: WAITER,
+          GITHUB_OUTPUT: join(dir, "out"),
+          LIVE_DB_SLOT_ROLE: "verify",
+          LIVE_DB_SLOT_TIMEOUT_SECONDS: "1",
+          LIVE_DB_SLOT_POLL_SECONDS: "1",
+        },
+      });
+      assertHeld({ code: r.status, out: `${r.stdout}${r.stderr}` }, "no DB job list");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
