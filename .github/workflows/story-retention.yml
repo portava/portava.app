@@ -1,0 +1,160 @@
+# The story-retention purge's cadence, kept OUTSIDE the application process.
+#
+# WHY THIS FILE EXISTS, measured rather than assumed.
+#
+# The purge used to be scheduled by `setInterval(…, 1h)` inside the API server
+# (artifacts/api-server/src/lib/storyRetentionScheduler.ts). `.replit` declares
+# `deploymentTarget = "autoscale"`; an Autoscale host suspends a container that
+# has served no request for fifteen minutes, and a suspended container's event
+# loop does not advance. So the hourly timer only fired if traffic happened to
+# keep one instance awake across a whole hour.
+#
+# On production it stopped firing entirely. Every `public.job_health` row froze
+# at 2026-09-30T15:30:36Z: the last health upsert before that returned HTTP 200,
+# every other loop in the process stopped in the same two minutes, and Supabase
+# Realtime terminated the tenant at 15:40:14 for having no connected clients.
+# Zero requests reached the database in the two days that followed. The purge
+# did not fail. It did not run — and the health endpoint still read "healthy",
+# because a counter in a process that is not running counts nothing.
+#
+# A request is the one thing that reliably wakes an Autoscale container, which
+# makes an authenticated POST the right shape: the thing that triggers the pass
+# is also the thing that makes the pass possible.
+#
+# WHY GITHUB ACTIONS AND NOT A REPLIT SCHEDULED DEPLOYMENT. No new vendor, no
+# new spend (Actions minutes are free and unmetered on a public repository),
+# this repository already runs two scheduled workflows, and the secret
+# infrastructure is already here. The known costs are stated rather than
+# discovered later:
+#   - `schedule` can be DELAYED under load, and GitHub names the top of the
+#     hour as a high-load time, which is why the cron below is at :23 like
+#     live-db.yml's :17 and clean-build-proof.yml's :47. A late hour is
+#     harmless: the purge is idempotent and the next pass absorbs the backlog.
+#   - On a PUBLIC repository GitHub DISABLES a scheduled workflow after 60 days
+#     with no repository activity. That is structurally the same failure as the
+#     one above — a schedule that stops without telling anyone — so it is not
+#     the whole answer. The answer is the staleness check on the job itself:
+#     GET /api/healthz/schedulers answers 503 once `storyRetention` has not
+#     SUCCEEDED inside its window, whatever stopped the trigger.
+#
+# DUPLICATE RUNS ARE SAFE AND NOT RELIED ON. The in-process timer still exists
+# as a fallback, and an Autoscale deployment may run several instances, so more
+# than one caller can arrive at once. `claimStoryRetentionLease` makes exactly
+# one of them do the work and answers the others 409. Correctness under
+# duplication rests on `story_purge_queue` and its read-backs, not on the lease.
+
+name: Story retention purge
+
+on:
+  schedule:
+    # Hourly, per owner decision 4, and deliberately not on the hour — see the
+    # delay caveat in the header.
+    - cron: '23 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One pass at a time. In-progress runs are NOT cancelled: a cancelled run would
+# abandon a pass mid-ledger, and while the ledger is built to survive exactly
+# that, there is no reason to exercise it on purpose.
+concurrency:
+  group: story-retention
+  cancel-in-progress: false
+
+jobs:
+  purge:
+    name: Run one retention pass
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # FAIL CLOSED ON CONFIGURATION. A missing URL or secret must not look
+      # like a quiet success: this workflow's whole purpose is that somebody
+      # finds out when the purge is not happening.
+      - name: Refuse to run unconfigured
+        env:
+          APP_BASE_URL: ${{ vars.PORTAVA_APP_BASE_URL }}
+          CLEANUP_ADMIN_SECRET: ${{ secrets.CLEANUP_ADMIN_SECRET }}
+        run: |
+          set -euo pipefail
+          missing=0
+          if [ -z "${APP_BASE_URL}" ]; then
+            echo "::error::repository variable PORTAVA_APP_BASE_URL is not set (e.g. https://portava.replit.app)"
+            missing=1
+          fi
+          if [ -z "${CLEANUP_ADMIN_SECRET}" ]; then
+            echo "::error::repository secret CLEANUP_ADMIN_SECRET is not set; it must match the value in the Replit deployment"
+            missing=1
+          fi
+          exit "${missing}"
+
+      - name: POST /api/admin/jobs/story-retention
+        env:
+          APP_BASE_URL: ${{ vars.PORTAVA_APP_BASE_URL }}
+          CLEANUP_ADMIN_SECRET: ${{ secrets.CLEANUP_ADMIN_SECRET }}
+        run: |
+          set -euo pipefail
+
+          # The secret goes in a header from an env var, never on the command
+          # line and never echoed: an argv is visible to every process on the
+          # runner, and `set -x` output goes into a log.
+          body_file="$(mktemp)"
+          code="$(
+            curl --silent --show-error \
+                 --max-time 600 \
+                 --output "${body_file}" \
+                 --write-out '%{http_code}' \
+                 --request POST \
+                 --header "x-cleanup-secret: ${CLEANUP_ADMIN_SECRET}" \
+                 --header 'content-type: application/json' \
+                 "${APP_BASE_URL%/}/api/admin/jobs/story-retention"
+          )"
+
+          echo "HTTP ${code}"
+          # The body carries counters and timestamps only — no user data, no
+          # identifiers — so printing it is safe and is the record of the pass.
+          cat "${body_file}"
+          echo
+
+          case "${code}" in
+            200) ;;
+            409)
+              echo "::notice::another pass holds the lease; this run did no work, which is not a failure"
+              exit 0
+              ;;
+            000)
+              echo "::error::the app did not answer at all (timeout, DNS, or the deployment is not serving). The purge did not run."
+              exit 1
+              ;;
+            *)
+              echo "::error::the retention pass did not succeed (HTTP ${code}). See the failure list in the body above."
+              exit 1
+              ;;
+          esac
+
+          # A 200 is the server's verdict, and the server establishes it by
+          # reading storage and the rows back (CONTRIBUTING.md:33-66). This
+          # re-reads the body anyway, because a 200 carrying `succeeded: false`
+          # would be a contradiction worth failing on rather than trusting.
+          if ! jq -e '.succeeded == true' "${body_file}" >/dev/null; then
+            echo "::error::HTTP 200 but the body does not say succeeded: true"
+            exit 1
+          fi
+
+          # Surfaced in the run summary so the four outcomes the owner asked to
+          # be kept apart are visible without opening the log. `settled` is NOT
+          # a deletion count: an entry settles when the row is gone, including
+          # the cases where no bytes were deleted at all.
+          {
+            echo '### Story retention pass'
+            echo
+            jq -r '
+              "- settled: \(.report.completed // 0)",
+              "- objects deleted: \(.report.objectsDeleted // 0)",
+              "- kept for a live reference: \(.report.retained // 0)",
+              "- not ours: \(.report.external // 0)",
+              "- deferred to a later pass: \(.report.deferred // 0)",
+              "- backlog still in the ledger: \(.backlog // "unknown")",
+              "- last success: \(.lastSuccessAt // "never")"
+            ' "${body_file}"
+          } >> "${GITHUB_STEP_SUMMARY}"

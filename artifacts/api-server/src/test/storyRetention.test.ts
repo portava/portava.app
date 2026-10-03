@@ -46,6 +46,8 @@ import {
   purgeExpiredEngagement,
   runStoryRetention,
   findSurvivingReferences,
+  clientRoleClaim,
+  derivedStoragePaths,
   splitStoragePath,
 } from "../services/stories/storyRetention.js";
 import {
@@ -55,6 +57,7 @@ import {
 } from "../services/stories/storyRetentionPolicy.js";
 import {
   runStoryRetentionTick,
+  STORY_RETENTION_LEASE_MS,
   getStoryRetentionStatus,
   _resetStoryRetentionStatus,
 } from "../lib/storyRetentionScheduler.js";
@@ -292,6 +295,15 @@ const NOW = Date.parse("2026-09-22T12:00:00.000Z");
 const iso = (ms: number) => new Date(ms).toISOString();
 
 function storyPath(id: string) { return `stories/${OWNER}/${id}.jpg`; }
+/**
+ * A key shaped like a Supabase JWT, carrying one `role` claim. Unsigned on
+ * purpose: `clientRoleClaim` reads the claim back and verifies nothing, because
+ * it decides no trust — it only refuses a client whose reads RLS would filter.
+ */
+function roleKey(role: string): string {
+  const payload = Buffer.from(JSON.stringify({ role }), "utf8").toString("base64url");
+  return `header.${payload}.signature`;
+}
 function storyUrl(id: string) { return `post-media/${storyPath(id)}`; }
 
 function seedStory(db: FakeDb, id: string, over: Row = {}): Row {
@@ -577,7 +589,21 @@ describe("the reference guard", () => {
     assert.ok(db.objects("post-media").has(storyPath("p1")));
   });
 
-  it("FAILS CLOSED: an unreadable highlights table keeps the bytes rather than guessing", async () => {
+  /**
+   * THIS TEST USED TO PASS WHILE THE BEHAVIOUR IT NAMES WAS BROKEN, and the way
+   * it did is worth keeping on the record. It asserted `out.retained +
+   * out.deferred === 1` — true either way — and then guarded the only assertion
+   * that could have caught the defect behind `if (surviving)`. The defect was
+   * that the entry did NOT survive: an unreadable source was read as a
+   * surviving reference, so the pass kept the bytes, deleted the Story row,
+   * cleared the ledger entry and counted itself a success. `surviving` was
+   * therefore undefined, the `if` skipped, and the test went green on exactly
+   * the run it existed to redden.
+   *
+   * So every assertion below is unconditional, and each one names a separate
+   * part of the state rather than a sum that several different outcomes satisfy.
+   */
+  it("FAILS CLOSED: an unreadable highlights table keeps the bytes AND the row AND the ledger entry", async () => {
     seedStory(db, "s1");
     await enqueueDueStories(sc, CFG as any, NOW, 100);
     db.readErrors.highlights = { code: "57014", message: "statement timeout" };
@@ -585,9 +611,218 @@ describe("the reference guard", () => {
     const out = await processPurgeQueue(sc, NOW, 100);
 
     assert.ok(db.objects("post-media").has(storyPath("s1")), "an outage must never authorise a permanent delete");
-    assert.equal(out.retained + out.deferred, 1);
-    const surviving = db.rows("story_purge_queue")[0];
-    if (surviving) assert.match(String(surviving.object_retained_reason ?? ""), /unreadable/);
+    // The row is the only thing that points at the bytes. Keeping the bytes and
+    // deleting the row is the unrecoverable combination decision 7 names: the
+    // object becomes unreferenced, unfindable and permanent.
+    assert.equal(db.rows("stories").length, 1, "the Story row must survive an outage");
+    assert.equal(out.completed, 0, "an entry whose reference state is unknown is not settled");
+    assert.equal(out.objectsDeleted, 0);
+    assert.equal(out.retained, 0, "'could not read it' is not 'something references it'");
+    assert.equal(out.external, 0);
+    assert.equal(out.deferred, 1);
+
+    const entry = db.rows("story_purge_queue")[0];
+    assert.ok(entry, "the ledger entry must survive so a later pass can retry");
+    assert.equal(entry.storage_path, storyPath("s1"), "and must keep the path to retry from");
+    assert.equal(entry.object_retained_reason, null, "nothing was retained — this was a failure");
+    assert.match(String(entry.last_error ?? ""), /cannot establish whether the bytes are still referenced/);
+    assert.ok(
+      out.failures.some((f) => /highlights\.media_url unreadable/.test(f)),
+      `the pass must report the outage rather than zero work, got ${JSON.stringify(out.failures)}`,
+    );
+  });
+
+  it("a real reference is still the approved outcome: bytes kept, row purged, counted as retained", async () => {
+    seedStory(db, "h1");
+    db.rows("highlights").push({ id: "h", media_url: storyUrl("h1") });
+    await enqueueDueStories(sc, CFG as any, NOW, 100);
+
+    const out = await processPurgeQueue(sc, NOW, 100);
+
+    assert.ok(db.objects("post-media").has(storyPath("h1")), "the bytes belong to the Highlight now");
+    assert.equal(db.rows("stories").length, 0, "the Story row is still purged — decision 6");
+    assert.equal(out.retained, 1);
+    assert.equal(out.objectsDeleted, 0);
+    assert.equal(out.external, 0);
+    assert.equal(out.completed, 1);
+    assert.deepEqual(out.failures, [], "a retention for a live reference is not a failure");
+  });
+
+  /**
+   * DERIVATIVES. One upload writes up to three objects — the original, a
+   * `.thumb.jpg` and a `.feed.jpg` — and only the original is ever stored in
+   * `stories.media_url`. The purge used to delete that one, report success, and
+   * leave the other two behind with the Story row gone, so nothing pointed at
+   * them and nothing would ever look again.
+   */
+  it("deletes the thumbnail and the feed copy alongside the original", async () => {
+    seedStory(db, "d1");
+    db.objects("post-media").add(`stories/${OWNER}/d1.thumb.jpg`);
+    db.objects("post-media").add(`stories/${OWNER}/d1.feed.jpg`);
+    await enqueueDueStories(sc, CFG as any, NOW, 100);
+
+    const out = await processPurgeQueue(sc, NOW, 100);
+
+    assert.ok(!db.objects("post-media").has(storyPath("d1")), "the original must go");
+    assert.ok(!db.objects("post-media").has(`stories/${OWNER}/d1.thumb.jpg`), "and the thumbnail");
+    assert.ok(!db.objects("post-media").has(`stories/${OWNER}/d1.feed.jpg`), "and the feed copy");
+    assert.equal(out.objectsDeleted, 3, "three FILES went, and objectsDeleted counts files");
+    assert.equal(out.completed, 1, "from one settled entry, which is what completed counts");
+    assert.deepEqual(out.failures, []);
+  });
+
+  it("settles cleanly when an upload produced no derivatives at all", async () => {
+    // The fail-soft upload path leaves a story with only its original, so a
+    // derived name that was never created must not read as an unfinished
+    // delete — absent is absent, however it got that way.
+    seedStory(db, "d2");
+    await enqueueDueStories(sc, CFG as any, NOW, 100);
+
+    const out = await processPurgeQueue(sc, NOW, 100);
+
+    assert.equal(out.completed, 1);
+    assert.equal(out.objectsDeleted, 1, "one file existed and one went — never three");
+    assert.deepEqual(out.failures, []);
+  });
+
+  it("DEFERS the whole entry when a sibling survives the delete", async () => {
+    // removeIsALie: remove() resolves cleanly and the objects stay. The
+    // original and both siblings are all still listed, so nothing may be
+    // recorded as deleted — a partial delete that settled would strand the
+    // survivors with the row gone.
+    seedStory(db, "d3");
+    db.objects("post-media").add(`stories/${OWNER}/d3.thumb.jpg`);
+    await enqueueDueStories(sc, CFG as any, NOW, 100);
+    db.removeIsALie = true;
+
+    const out = await processPurgeQueue(sc, NOW, 100);
+
+    assert.equal(out.objectsDeleted, 0, "a remove() that changed nothing is not a delete");
+    assert.equal(out.deferred, 1);
+    assert.equal(db.rows("stories").length, 1, "and the row that points at them survives");
+    const entry = db.rows("story_purge_queue")[0];
+    assert.ok(entry, "the entry is kept for the retry");
+    assert.equal(entry.object_deleted_at, null);
+    assert.ok(
+      out.failures.some((f) => /d3\.thumb\.jpg is still listed/.test(f)),
+      `the surviving sibling must be named, got ${JSON.stringify(out.failures)}`,
+    );
+  });
+
+  /**
+   * The owner's rule, 2026-10-02: normal story expiry must preserve media that
+   * a permanent Highlight still references.
+   *
+   * The three reference columns are all client-supplied strings —
+   * `routes/highlights.ts` stores `d.mediaUrl`, `routes/memories.ts:2024`
+   * stores `parsed.data.mediaUrl`, `PassportMemoryService.ts:115` stores
+   * `input.photoUrl` — so nothing on the server constrains a saved reference to
+   * the ORIGINAL path. A save made from the feed-sized render stores the
+   * `.feed.jpg`. Deriving the sibling names and deleting them with the original
+   * therefore took bytes a live reference was rendering: the fix for deleting
+   * too little must not become a fix that deletes too much.
+   *
+   * A Story saved to a Highlight through its own route carries
+   * `saved_to_highlight_id` and never enqueues at all, so the case that reaches
+   * here is a reference created independently of the Story row.
+   */
+  it("keeps the derived copy a permanent Highlight points at, and deletes only what nothing claims", async () => {
+    seedStory(db, "d4");
+    db.objects("post-media").add(`stories/${OWNER}/d4.thumb.jpg`);
+    db.objects("post-media").add(`stories/${OWNER}/d4.feed.jpg`);
+    // Permanent: expires_at null. It points at the feed copy, NOT at the
+    // original that `stories.media_url` carries.
+    db.rows("highlights").push({
+      id: "h",
+      media_url: `post-media/stories/${OWNER}/d4.feed.jpg`,
+      expires_at: null,
+    });
+    await enqueueDueStories(sc, CFG as any, NOW, 100);
+
+    const out = await processPurgeQueue(sc, NOW, 100);
+
+    assert.ok(
+      db.objects("post-media").has(`stories/${OWNER}/d4.feed.jpg`),
+      "the permanent Highlight renders this file — expiry must not take it",
+    );
+    assert.ok(!db.objects("post-media").has(storyPath("d4")), "the original is claimed by nothing");
+    assert.ok(!db.objects("post-media").has(`stories/${OWNER}/d4.thumb.jpg`), "nor is the thumbnail");
+    assert.equal(out.objectsDeleted, 2, "two files went, and objectsDeleted counts files");
+    assert.equal(out.retained, 1, "the kept file is reported as kept, never as deleted");
+    assert.equal(out.completed, 1, "from one settled entry");
+    assert.equal(db.rows("stories").length, 0, "the Story row is still purged — decision 6");
+    assert.deepEqual(out.failures, [], "keeping a referenced file is the approved outcome, not a failure");
+    assert.equal(db.rows("story_purge_queue").length, 0, "and the ledger entry settles");
+  });
+
+  /**
+   * THE THREAD THE WHOLE GUARD HANGS BY. The reads above carry no visibility
+   * filter — no `expires_at`, no `deleted_at`, no `archived_at` — which is
+   * exactly why a PERMANENT Highlight's NULL expiry still counts as a surviving
+   * reference. But RLS on `highlights` hides a private Highlight from everyone
+   * but its owner, so the same read on a user key returns zero rows for a
+   * Highlight it cannot see, and zero rows here does not mean "hidden", it
+   * means "nothing references these bytes" — which deletes them.
+   *
+   * So the client is not assumed. A classifiable non-service key is refused
+   * before any read, loudly, rather than answering "no references" from behind
+   * a filter it cannot see.
+   */
+  it("refuses to decide what is safe to delete when handed a user-scoped client", async () => {
+    const user: any = makeClient(db);
+    user.supabaseKey = roleKey("authenticated");
+    await assert.rejects(
+      () => findSurvivingReferences(user, [storyUrl("r1")]),
+      /were handed a "authenticated" client/,
+      "a user key must stop the pass, not quietly report an empty reference set",
+    );
+
+    const anon: any = makeClient(db);
+    anon.supabaseKey = roleKey("anon");
+    await assert.rejects(() => findSurvivingReferences(anon, [storyUrl("r1")]), /"anon" client/);
+
+    // CONTROL: the client the job actually runs on is not refused.
+    const svc: any = makeClient(db);
+    svc.supabaseKey = roleKey("service_role");
+    const out = await findSurvivingReferences(svc, [storyUrl("r1")]);
+    assert.equal(out.size, 0, "no references seeded, and service_role is allowed to say so");
+  });
+
+  it("classifies only the keys it can actually read, and says so by returning null", () => {
+    assert.equal(clientRoleClaim({ supabaseKey: roleKey("service_role") } as any), "service_role");
+    // Not classifiable, and allowed through rather than guessed at: the newer
+    // key format carries no claims, a test double carries no key, and a
+    // three-part string is not necessarily a JWT.
+    assert.equal(clientRoleClaim({ supabaseKey: "sb_secret_not_a_jwt" } as any), null);
+    assert.equal(clientRoleClaim({} as any), null);
+    assert.equal(clientRoleClaim({ supabaseKey: "a.b.c" } as any), null);
+    assert.equal(clientRoleClaim({ supabaseKey: roleKey("") } as any), null);
+  });
+
+  it("never derives a sibling name from a name that is already a sibling", () => {
+    // `x.thumb.jpg` would give `x.thumb.thumb.jpg`, a path that has never
+    // existed — and a listing that does not show it would read as a confirmed
+    // delete of a file nobody ever made.
+    assert.deepEqual(derivedStoragePaths("u/1.thumb.jpg"), []);
+    assert.deepEqual(derivedStoragePaths("u/1.feed.jpg"), []);
+    assert.deepEqual(derivedStoragePaths("u/1.jpg"), ["u/1.thumb.jpg", "u/1.feed.jpg"]);
+    // No extension, and a dot that belongs to a directory, both give no base.
+    assert.deepEqual(derivedStoragePaths("u/1"), []);
+    assert.deepEqual(derivedStoragePaths("u.v/1"), []);
+  });
+
+  it("counts 'never ours' apart from 'ours, kept on purpose'", async () => {
+    // A media_url outside every app bucket: there is no object of ours to
+    // delete, which is not the same answer as choosing to keep one.
+    seedStory(db, "x1", { media_url: "https://images.example.com/not-ours.jpg" });
+    await enqueueDueStories(sc, CFG as any, NOW, 100);
+
+    const out = await processPurgeQueue(sc, NOW, 100);
+
+    assert.equal(out.external, 1, "an URL claiming no app object is external, not retained");
+    assert.equal(out.retained, 0);
+    assert.equal(out.objectsDeleted, 0);
+    assert.equal(out.completed, 1, "the entry still settles — there was nothing of ours to wait for");
   });
 
   it("treats a table that does not exist as an establishable absence of references", async () => {
@@ -602,10 +837,28 @@ describe("the reference guard", () => {
     assert.ok(!db.objects("post-media").has(storyPath("s1")));
   });
 
-  it("reports which table it could not read, rather than a bare boolean", async () => {
+  it("tags an outage as unverifiable, and names the table, rather than passing for a reference", async () => {
     db.readErrors.passport_memories = { code: "57014", message: "statement timeout" };
     const refs = await findSurvivingReferences(makeClient(db), [storyUrl("x")]);
-    assert.match(refs.get(storyUrl("x"))!, /passport_memories\.photo_url unreadable/);
+    const verdict = refs.get(storyUrl("x"))!;
+    // The tag is the whole point: a caller that only had the string could not
+    // tell this apart from "referenced by highlights.media_url", and did not.
+    assert.equal(verdict.kind, "unverifiable");
+    assert.match(verdict.detail, /passport_memories\.photo_url unreadable/);
+  });
+
+  it("a real reference found in a later source outranks an earlier source's outage", async () => {
+    // Order independence matters: `highlights` is read first and cannot answer,
+    // `memory_items` is read second and says yes. The settled answer must win,
+    // because retaining for a named reference lets the row be purged while an
+    // unverifiable verdict must not.
+    db.readErrors.highlights = { code: "57014", message: "statement timeout" };
+    db.rows("memory_items").push({ id: "mi", media_url: storyUrl("x") });
+
+    const refs = await findSurvivingReferences(makeClient(db), [storyUrl("x")]);
+
+    assert.equal(refs.get(storyUrl("x"))!.kind, "referenced");
+    assert.match(refs.get(storyUrl("x"))!.detail, /memory_items\.media_url/);
   });
 });
 
@@ -682,6 +935,66 @@ describe("the scheduler never launders an attempt into health", () => {
     assert.equal(st.consecutiveFailures, 1);
     assert.ok(st.lastFailures.length > 0, "and it reports the failure rather than zero work");
     assert.equal(db.rows("job_health")[0].last_success_at, undefined, "no success is persisted");
+  });
+
+  /**
+   * THE LEASE. The cadence no longer lives only in this process's timer: an
+   * Autoscale host suspends an idle container, so the schedule has to come from
+   * outside and two callers can now overlap. These cases are about the skip
+   * being its OWN outcome — a skip counted as a failure would make an ordinary
+   * overlap look like a broken purge, and a skip counted as an attempt would
+   * hide a missed hour.
+   */
+  it("a second concurrent tick does no work and is not a failure", async () => {
+    seedStory(db, "s1");
+    await runStoryRetentionTick(sc);
+    const afterFirst = getStoryRetentionStatus();
+    seedStory(db, "s2");
+
+    const st = await runStoryRetentionTick(sc);
+
+    assert.ok(st.lastSkippedAt, "the skip is recorded as itself");
+    assert.equal(st.consecutiveFailures, 0, "an overlap is not a failure");
+    assert.deepEqual(st.lastFailures, [], "and reports no failure text");
+    assert.equal(
+      st.lastAttemptAt, afterFirst.lastAttemptAt,
+      "a skipped tick must not claim an attempt it did not make",
+    );
+    assert.equal(
+      st.lastSuccessAt, afterFirst.lastSuccessAt,
+      "and must not move the success timestamp either",
+    );
+  });
+
+  it("claims the job once the lease has aged out, so a late trigger is never dropped", async () => {
+    seedStory(db, "s1");
+    await runStoryRetentionTick(sc);
+    // Age the claim past the lease window without touching the success stamp.
+    const stale = new Date(Date.now() - (STORY_RETENTION_LEASE_MS + 60_000)).toISOString();
+    db.rows("job_health")[0].last_run_at = stale;
+    seedStory(db, "s2");
+
+    const st = await runStoryRetentionTick(sc);
+
+    assert.notEqual(st.lastAttemptAt, stale, "an aged lease is claimable");
+    assert.equal(st.consecutiveFailures, 0);
+    assert.equal(db.rows("stories").length, 0, "and the second Story was actually purged");
+  });
+
+  it("runs anyway when the lease itself cannot be read — a broken ledger must not stop retention", async () => {
+    // Deliberately the opposite choice from the purge's own fail-closed rule:
+    // a purge that cannot establish a reference must not delete, but a
+    // scheduler that cannot read its own bookkeeping must still run, because a
+    // skipped hour is absorbed by nothing while a duplicate pass is absorbed by
+    // the ledger.
+    seedStory(db, "s1");
+    db.readErrors.job_health = { code: "57014", message: "statement timeout" };
+
+    const st = await runStoryRetentionTick(sc);
+
+    assert.ok(st.lastAttemptAt, "the pass ran");
+    assert.equal(st.lastSkippedAt, null, "an unreadable lease is not a held lease");
+    assert.equal(db.rows("stories").length, 0, "and it purged");
   });
 
   it("counts a configuration divergence as a failed pass, not a quiet substitution", async () => {
