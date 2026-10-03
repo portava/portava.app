@@ -264,10 +264,10 @@ function TripDetailScreen() {
     if (!live || !id || !realTrip || shareLoading) return;
     setShareLoading(true);
     try {
-      const link = await createInviteLink(id);
-      const inviteUrl = link
-        ? `travelbuddy://invite/${link.token}`
-        : canonicalUrl(`/trips/${id}`);
+      const link = await createInviteLink(id); // the button is the owner's; a failed link shares NOTHING (§79)
+      if (!link) { Alert.alert('Could not create an invite link', 'Your invite link could not be created right now, so nothing was shared. Try again.'); return; }
+      // It used to fall back to canonicalUrl(`/trips/${id}`), silently: a page a friend cannot join a private trip through.
+      const inviteUrl = `travelbuddy://invite/${link.token}`;
       const tripName = realTrip.title ?? realTrip.destinationCity ?? 'a trip';
       await Share.share({
         title: `Join my trip${realTrip.title ? ` — ${realTrip.title}` : ''}!`,
