@@ -27,7 +27,7 @@
   "artifacts/api-server/src/routes/discovery.ts::S2": 2,
   "artifacts/api-server/src/routes/engagement.ts::S4": 1,
   "artifacts/api-server/src/routes/events.ts::S2": 8,
-  "artifacts/api-server/src/routes/events.ts::S4": 2,
+  "artifacts/api-server/src/routes/events.ts::S4": 1,
   "artifacts/api-server/src/routes/follows.ts::S2": 7,
   "artifacts/api-server/src/routes/follows.ts::S4": 6,
   "artifacts/api-server/src/routes/friends.ts::S4": 1,
