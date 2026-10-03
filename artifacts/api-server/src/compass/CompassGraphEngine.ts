@@ -678,7 +678,7 @@ export async function buildGraphFromSources(
   try {
     const { data } = await db
       .from("user_stamps")
-      .select("user_id, city, country, earned_at, is_revoked, lat, lng, stamp_definitions(evidences_presence)")
+      .select("id, user_id, city, country, earned_at, is_revoked, lat, lng, stamp_definitions(evidences_presence)")
       .eq("is_revoked", false)
       .limit(BUILD_LIMIT);
     for (const r of (data as any[]) ?? []) {
@@ -787,7 +787,7 @@ export async function buildGraphFromSources(
   try {
     const { data } = await db
       .from("compass_outcome_events")
-      .select("user_id, item_id, item_type, stage, occurred_at")
+      .select("id, user_id, item_id, item_type, stage, occurred_at")
       .limit(BUILD_LIMIT);
     for (const r of (data as any[]) ?? []) {
       if (!r.user_id || !r.item_id || !r.stage) continue;
@@ -807,7 +807,7 @@ export async function buildGraphFromSources(
   try {
     const { data } = await db
       .from("rank_events")
-      .select("user_id, item_id, item_kind, outcome, served_at")
+      .select("id, user_id, item_id, item_kind, outcome, served_at")
       .neq("outcome", "impression")
       .limit(BUILD_LIMIT);
     for (const r of (data as any[]) ?? []) {
@@ -2268,7 +2268,7 @@ const SUPPORT_ANCHOR_CHUNK = 100;
 type SupportRow = Record<string, unknown>;
 interface PagedRead { rows: SupportRow[]; complete: boolean; failed: boolean }
 interface PageableQuery {
-  order(column: string, options?: { ascending?: boolean }): { range(from: number, to: number): PromiseLike<{ data: unknown; error: unknown }> };
+  order(column: string, options?: { ascending?: boolean }): { range(from: number, to: number): PromiseLike<{ data: unknown; error: unknown }>; /** §119: the keyset cursor */ gt(column: string, value: string): { range(from: number, to: number): PromiseLike<{ data: unknown; error: unknown }> } };
 }
 
 /**
@@ -2279,18 +2279,18 @@ interface PageableQuery {
  * is ever mistaken for an empty or finished result.
  */
 async function readAllPages(build: () => PageableQuery, maxPages: number, orderBy = "id"): Promise<PagedRead> {
-  const rows: SupportRow[] = [];
+  const rows: SupportRow[] = []; let after: string | null = null;  // census-discovery §119 (DV-83 round 22, residual): paged by key, never by an offset a write between two pages shifts
   for (let page = 0; page < maxPages; page++) {
-    const from = page * SUPPORT_PAGE;
+    const from = 0;  // §119: every page is the first SUPPORT_PAGE rows AFTER the last key received
     let got: SupportRow[];
     try {
-      const res = await build().order(orderBy, { ascending: true }).range(from, from + SUPPORT_PAGE - 1);
+      const ordered = build().order(orderBy, { ascending: true }); const res = await (after === null ? ordered : ordered.gt(orderBy, after)).range(from, from + SUPPORT_PAGE - 1);
       if (res?.error || !Array.isArray(res?.data)) return { rows, complete: false, failed: true };
       got = res.data as SupportRow[];
     } catch {
       return { rows, complete: false, failed: true };
     }
-    rows.push(...got);
+    rows.push(...got); if (got.length > SUPPORT_PAGE) return { rows, complete: false, failed: false }; const last = got.length > 0 ? got[got.length - 1][orderBy] : undefined; if (got.length > 0 && (last == null || (after !== null && got.some((r) => String(r[orderBy]) === after)))) return { rows, complete: false, failed: true }; if (last != null) after = String(last);  // §119: more rows than asked (a backend that ignores paging) is not read whole; a row without its key, or one the cursor already passed, fails the read
     if (got.length < SUPPORT_PAGE) return { rows, complete: true, failed: false };
   }
   return { rows, complete: false, failed: false };
@@ -2327,7 +2327,7 @@ async function retireRows(db: SupabaseClient, table: string, column: string, key
 const supportReads = {
   user_stamps: (db: SupabaseClient) => db
     .from("user_stamps")
-    .select("user_id, city, country, earned_at, is_revoked, lat, lng, stamp_definitions(evidences_presence)")
+    .select("id, user_id, city, country, earned_at, is_revoked, lat, lng, stamp_definitions(evidences_presence)")
     .eq("is_revoked", false),
   trips: (db: SupabaseClient) => db
     .from("trips")
@@ -2337,10 +2337,10 @@ const supportReads = {
     .select("id, city, category, starts_at, location_lat, location_lng, circle_id"),
   compass_outcome_events: (db: SupabaseClient) => db
     .from("compass_outcome_events")
-    .select("user_id, item_id, item_type, stage, occurred_at"),
+    .select("id, user_id, item_id, item_type, stage, occurred_at"),
   rank_events: (db: SupabaseClient) => db
     .from("rank_events")
-    .select("user_id, item_id, item_kind, outcome, served_at")
+    .select("id, user_id, item_id, item_kind, outcome, served_at")
     .neq("outcome", "impression"),
   circles: (db: SupabaseClient) => circleSourceRows(db),
   memories: (db: SupabaseClient) => db
