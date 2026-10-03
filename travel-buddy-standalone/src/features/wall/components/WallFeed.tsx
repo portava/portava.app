@@ -34,6 +34,7 @@ import type { WallMode, WallProjection } from '../types/wallProjection.ts';
 
 const VIEWABILITY_CONFIG = { itemVisiblePercentThreshold: 55 };
 const EMPTY_VISIBLE: ReadonlySet<string> = new Set();
+const NO_FAILED_LANES: readonly string[] = [];
 
 export function WallFeed({
   items,
@@ -44,6 +45,8 @@ export function WallFeed({
   caughtUp,
   stale = false,
   cachedAt = null,
+  error = null,
+  failedLanes = NO_FAILED_LANES,
   onEndReached,
   onRefresh,
   onHide,
@@ -59,6 +62,10 @@ export function WallFeed({
   stale?: boolean;
   /** Epoch-ms the cached page was saved, for the "saved N ago" label. */
   cachedAt?: number | null;
+  /** The last request's transport error, if any (kept items stay visible). */
+  error?: string | null;
+  /** Feed lanes the server could not read (census-wall §19). */
+  failedLanes?: readonly string[];
   onEndReached: () => void;
   onRefresh: () => void;
   /** Drop an object the viewer marked "not interested" (spec §7/§32). */
@@ -123,10 +130,27 @@ export function WallFeed({
       </View>
     ) : null;
 
+  // census-wall §19: a page the server could only PARTLY read says so. Without
+  // this, posts from the lanes that did answer were presented as the whole
+  // feed. Not shown over the offline page, whose own banner already says the
+  // feed is not live.
+  const partialBanner =
+    !stale && items.length > 0 && failedLanes.length > 0 ? (
+      <View style={s.staleBanner} testID="wall-partial-banner" accessibilityRole="text">
+        <Text style={s.staleText}>Some posts couldn't be loaded · Pull to refresh</Text>
+      </View>
+    ) : null;
+
+  // An empty list is "nothing here yet" ONLY when the last read answered in
+  // full. A request that failed, or an answer naming a failed lane, is an
+  // outage, and the empty state must not tell the viewer the Wall is quiet.
+  const couldNotLoad = error != null || failedLanes.length > 0;
+
   const header =
-    staleBanner != null ? (
+    staleBanner != null || partialBanner != null ? (
       <>
         {staleBanner}
+        {partialBanner}
         {ListHeaderComponent}
       </>
     ) : (
@@ -166,7 +190,7 @@ export function WallFeed({
             <ActivityIndicator color={color.signal} />
           </View>
         ) : (
-          <CaughtUpState variant="empty" onRefresh={onRefresh} />
+          <CaughtUpState variant={couldNotLoad ? 'unavailable' : 'empty'} onRefresh={onRefresh} />
         )
       }
       ListFooterComponent={

@@ -16,7 +16,7 @@
  * fires DELETE /wall/session-intent to clear any stored intent server-side.
  */
 
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { clearSessionIntent, setSessionIntent } from '../services/wallApi.ts';
 import type { IntentResolution } from '../services/wallApi.ts';
 import type { StructuredIntent, StructuredIntentFilter } from '../types/wallProjection.ts';
@@ -64,8 +64,13 @@ export function useWallSessionIntent(
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [resolution, setResolution] = useState<IntentResolution | null>(null);
+  // census-wall §19: only the answer to the LATEST setIntent may land. A newer
+  // steer, or a clear, makes every in-flight answer stale.
+  const generation = useRef(0);
 
   const clearIntent = useCallback(() => {
+    generation.current += 1;
+    setPending(false);
     // Restore prior state immediately — the feed hook sees a null steer and
     // starts a fresh, unsteered session.
     setIntentText(null);
@@ -83,6 +88,7 @@ export function useWallSessionIntent(
         clearIntent();
         return;
       }
+      const mine = ++generation.current;
       // Steer immediately with the resolved text (temporary per-request steer §17).
       setIntentText(trimmed);
       // A canonical entity picked from typeahead is a STRUCTURED filter, not a raw
@@ -102,6 +108,9 @@ export function useWallSessionIntent(
       setResolution(null);
       try {
         const res = await setSessionIntent(trimmed);
+        // A newer steer or a clear happened while this was in flight: its
+        // answer describes text the Wall is no longer steered by.
+        if (mine !== generation.current) return;
         if (res.ok) {
           // The server's interpretation is authoritative — it supersedes the seed.
           setStructuredIntent(res.sessionIntent);
@@ -123,7 +132,7 @@ export function useWallSessionIntent(
           setResolution(null);
         }
       } finally {
-        setPending(false);
+        if (mine === generation.current) setPending(false);
       }
     },
     [clearIntent],

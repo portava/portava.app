@@ -43,11 +43,17 @@ export function WallMomentsStrip({ liveItems, load = fetchWallMoments }: Props) 
   const names = useMemo(() => new Map(liveItems.map((i) => [i.subjectId, i.subject?.name ?? null])), [liveItems]);
   const [read, setRead] = useState<MomentsRead | undefined>(undefined);
   const seen = useRef<Set<string>>(new Set());
+  // census-wall §19: the places asked about change under this strip whenever the
+  // Live strip refreshes. Only the newest request may land; a slower answer about
+  // places no longer shown must not overwrite it.
+  const generation = useRef(0);
 
   const run = useCallback(async () => {
     if (key.length === 0) return;
+    const mine = ++generation.current;
     setRead(undefined);
     const r = await load(key.split(','), Array.from(seen.current));
+    if (mine !== generation.current) return;
     setRead(r);
   }, [key, load]);
 
