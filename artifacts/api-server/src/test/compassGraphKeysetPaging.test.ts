@@ -16,6 +16,8 @@
  *       kept (it was retired: the offset skipped C500's model)
  *   KG2 a backend that ignores `.range()` (every page is every row) → the read is not taken as whole; nothing retired
  *   KG3 every support read selects the key it is paged by (`id`), so the cursor is always known
+ *   KG4 a backend that ignores the cursor (every page starts at the first row) → the read fails at the second page,
+ *       never 400 pages of the same rows; nothing retired
  *
  * Harness: compassGraphRevocation's store-backed PostgREST fake (order, gt, range, like, delete), with a hook that runs
  * after a page is served.
@@ -28,7 +30,7 @@ import { retireUnsupportedCityRows } from "../compass/CompassGraphEngine.js";
 
 type Row = Record<string, unknown>;
 type Store = Record<string, Row[]>;
-interface Opts { ignoreRange?: Set<string>; afterPage?: (table: string, page: number, store: Store) => void }
+interface Opts { ignoreRange?: Set<string>; ignoreCursor?: Set<string>; afterPage?: (table: string, page: number, store: Store) => void }
 
 function makeDb(store: Store, o: Opts = {}): SupabaseClient {
   const served: Record<string, number> = {};
@@ -39,7 +41,7 @@ function makeDb(store: Store, o: Opts = {}): SupabaseClient {
       eq: (k: string, v: unknown) => { filters.push((r) => r[k] === v); return q; },
       in: (k: string, vs: readonly unknown[]) => { filters.push((r) => vs.includes(r[k])); return q; },
       like: (k: string, p: string) => { const re = new RegExp(`^${p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/%/g, ".*")}$`); filters.push((r) => re.test(String(r[k] ?? ""))); return q; },
-      gt: (k: string, v: unknown) => { filters.push((r) => String(r[k] ?? "") > String(v)); return q; },
+      gt: (k: string, v: unknown) => { if (!o.ignoreCursor?.has(table)) filters.push((r) => String(r[k] ?? "") > String(v)); return q; },
       order: (k: string) => { orderKey = k; return q; },
       range: (a: number, z: number) => { rng = [a, z]; return q; },
       delete: () => { del = true; return q; },
@@ -73,7 +75,7 @@ const confCities = (s: Store) => s.compass_city_confidence.map((r) => String(r.c
 describe("census-discovery §119 (residual): the graph's support reads page by key", () => {
   it("KG0 CONTROL: 502 cities, nothing written meanwhile → nothing retired", async () => {
     const s = world(502); const r = await retireUnsupportedCityRows(makeDb(s));
-    assert.deepEqual({ models: r.modelsRetired, conf: r.confidenceRetired, unresolved: r.unresolved, kept: confCities(s).length }, { models: 0, conf: 0, unresolved: false, kept: 502 });
+    assert.deepEqual({ examined: r.modelsExamined, models: r.modelsRetired, conf: r.confidenceRetired, unresolved: r.unresolved, kept: confCities(s).length }, { examined: 502, models: 0, conf: 0, unresolved: false, kept: 502 });
   });
   it("KG1 a model retired by another writer between the first and second page → C500's confidence row is kept", async () => {
     const s = world(502);
@@ -93,5 +95,10 @@ describe("census-discovery §119 (residual): the graph's support reads page by k
     const selects = [...(block + circles).matchAll(/\.select\("([^"]*)"\)/g)].map((m) => m[1]);
     assert.ok(selects.length >= 7, `the scan found ${selects.length} support selects`);
     for (const cols of selects) assert.ok(cols.split(",").map((c) => c.trim()).includes("id"), `a support read pages by id but does not select it: "${cols}"`);
+  });
+  it("KG4 a backend that ignores the cursor → the read fails at the second page; nothing retired", async () => {
+    const s = world(502); s.compass_city_confidence.push({ city: "ORPHAN" }); let pages = 0;
+    const r = await retireUnsupportedCityRows(makeDb(s, { ignoreCursor: new Set(["compass_city_models"]), afterPage: (t) => { if (t === "compass_city_models") pages++; } }));
+    assert.deepEqual({ unresolved: r.unresolved, conf: r.confidenceRetired, models: r.modelsRetired, pages }, { unresolved: true, conf: 0, models: 0, pages: 2 });
   });
 });
