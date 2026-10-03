@@ -66,11 +66,11 @@ export default function EventsScreen() {
   const [stateFilter, setStateFilter] = useState<EventState | 'all'>('open');
   const [cityFilter, setCityFilter] = useState(initialCity);
   const [datePreset, setDatePreset] = useState<DatePreset>(initialDatePreset);
-  const [showCreate, setShowCreate] = useState(false); const [notWhole, setNotWhole] = useState(false);  // §117 (SW17): GET /events said the list is not whole
+  const [showCreate, setShowCreate] = useState(false); const [notWhole, setNotWhole] = useState(false); const loadSeq = useRef(0);  // §117 (SW17): GET /events said the list is not whole; §118 (B26): only the latest load's answer is drawn
 
   const load = useCallback(async () => {
     if (!configured || !isAuthed) { setLoading(false); return; }
-    setLoading(true);
+    setLoading(true); const seq = ++loadSeq.current;  // census-discovery §118 (DV-83 round 21, B26): a later load supersedes this one
     setError(null);
     const dateRange = datePresetToRange(datePreset);
     const res = await listEvents({
@@ -78,7 +78,7 @@ export default function EventsScreen() {
       state: stateFilter,
       city: cityFilter.trim() || undefined,
       limit: 30,
-    });
+    }); if (seq !== loadSeq.current) return;  // §118 (B26): an answer for a filter no longer on screen is never drawn
     if (!res.ok) setError(res.message ?? 'Failed to load events');
     else { setEvents(res.data?.events ?? []); setNotWhole(eventListNotWhole(res.data)); }
     setLoading(false);

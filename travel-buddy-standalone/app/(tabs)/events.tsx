@@ -119,7 +119,7 @@ function EventsTabScreen() {
   const [categoryRows, setCategoryRows]       = useState<Record<string, EventListItem[]>>({});
   const [loading, setLoading]                 = useState(true);
   const [error, setError]                     = useState<string | null>(null);
-  const [myEventsError, setMyEventsError]     = useState(false); const [listsNotWhole, setListsNotWhole] = useState(false);  // §117 (SW17): a list failed or was cut
+  const [myEventsError, setMyEventsError]     = useState(false); const [listsNotWhole, setListsNotWhole] = useState(false); const [listsFailed, setListsFailed] = useState(false); const loadSeq = useRef(0);  // §117 (SW17): a list failed or was cut; §118 (B28): a list failed beside others drawn; (B26 shape) only the latest load is drawn
 
   // ── Filters ────────────────────────────────────────────────────────────────
   const [showFilters, setShowFilters]         = useState(false);
@@ -134,7 +134,7 @@ function EventsTabScreen() {
 
   // ── Near-me location request ───────────────────────────────────────────────
   const [nearMeRequested, setNearMeRequested] = useState(false);
-  const [nearMeLoading, setNearMeLoading]     = useState(false);
+  const [nearMeLoading, setNearMeLoading]     = useState(false); const [nearMeUnread, setNearMeUnread] = useState(false); const nearSeq = useRef(0);  // §118 (B27): a failed near read is said; only the latest near read is drawn
 
   // ── Optimistic save state ──────────────────────────────────────────────────
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
@@ -182,7 +182,7 @@ function EventsTabScreen() {
     if (!configured || !isAuthed) { setLoading(false); return; }
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
-    setError(null);
+    setError(null); const seq = ++loadSeq.current;  // census-discovery §118 (DV-83 round 21): a later load supersedes this one
 
     try {
     const cat = category !== 'All' ? category : undefined;
@@ -211,7 +211,7 @@ function EventsTabScreen() {
       getMyDrafts(),
       getMyEventInvites(),
       listMyEvents(10),
-    ]);
+    ]); if (seq !== loadSeq.current) return;  // §118: an answer for a filter no longer on screen is never drawn
 
     const rawTomorrow = tomorrowRes.ok ? (tomorrowRes.data?.events ?? []) : [];
     const rawMain = mainRes.ok ? (mainRes.data?.events ?? []) : [];
@@ -242,7 +242,7 @@ function EventsTabScreen() {
     if (myRes.ok) { setMyEvents(rawMy); setMyEventsError(false); }
     else { setMyEventsError(true); setMyEvents([]); }
 
-    if (mainRes.ok) setTodayEvents(dedupedToday); setListsNotWhole([mainRes, tomorrowRes, weekendRes, followRes, circleRes, savedRes, myRes].some((r) => !r.ok || eventListNotWhole(r.data)));  // census-discovery §117 (SW17): an empty tab over a failed or cut list is not "No events yet"
+    if (mainRes.ok) setTodayEvents(dedupedToday); setListsNotWhole([mainRes, tomorrowRes, weekendRes, followRes, circleRes, savedRes, myRes].some((r) => !r.ok || eventListNotWhole(r.data))); setListsFailed([mainRes, tomorrowRes, weekendRes, followRes, circleRes, savedRes, myRes].some((r) => !r.ok));  // census-discovery §117 (SW17): an empty tab over a failed or cut list is not "No events yet"
     if (tomorrowRes.ok) setTomorrowEvents(dedupedTomorrow);
     if (weekendRes.ok) setWeekendEvents(dedupedWeekend);
     if (followRes.ok) setFollowingEvents(dedupedFollowing);
@@ -259,7 +259,7 @@ function EventsTabScreen() {
     if (datePreset === 'all' && category === 'All') {
       const catResults = await Promise.all(
         FEATURED_CATEGORIES.map((c) => listEvents({ category: c, free: freeOnly || undefined, city, limit: 8 })),
-      );
+      ); if (seq !== loadSeq.current) return;
       const rows: Record<string, EventListItem[]> = {};
       FEATURED_CATEGORIES.forEach((c, i) => {
         if (catResults[i].ok) rows[c] = (catResults[i].data?.events ?? []).filter((e) => !myIds.has(e.id));
@@ -283,8 +283,8 @@ function EventsTabScreen() {
       // an infinite spinner with no recovery (beta-audit fix).
       setError('Failed to load events');
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (seq === loadSeq.current) setLoading(false);
+      if (seq === loadSeq.current) setRefreshing(false);
     }
   }, [configured, isAuthed, category, datePreset, cityFilter, freeOnly, verifiedHostOnly, capacityAvailable]);
 
@@ -317,7 +317,7 @@ function EventsTabScreen() {
   }, [loading, error, todayEvents, tomorrowEvents, weekendEvents, followingEvents, categoryRows, saveEventsSnapshot]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Near-me load ───────────────────────────────────────────────────────────
-  async function handleNearMeRequest() {
+  async function handleNearMeRequest(km: number = radiusKm) {  // census-discovery §118 (DV-83 round 21, B27): the radius asked for is passed, never read from the render that made this function
     if (!locationState.coords) {
       setNearMeRequested(true);
       await requestLocation();
@@ -331,14 +331,14 @@ function EventsTabScreen() {
       }
     }
     if (!locationState.coords) return;
-    setNearMeLoading(true);
+    setNearMeLoading(true); const seq = ++nearSeq.current;
     const res = await listEvents({
       nearLat: locationState.coords.lat,
       nearLng: locationState.coords.lng,
-      nearRadiusKm: radiusKm,
+      nearRadiusKm: km,
       limit: 15,
-    });
-    if (res.ok) setNearMeEvents((res.data?.events ?? []).filter((e) => !myEventIdsRef.current.has(e.id)));
+    }); if (seq !== nearSeq.current) return;  // §118 (B27): an answer for a radius no longer selected is never drawn
+    if (res.ok) setNearMeEvents((res.data?.events ?? []).filter((e) => !myEventIdsRef.current.has(e.id))); else setNearMeEvents([]); setNearMeUnread(!res.ok || (eventListNotWhole(res.data) && (res.data?.events ?? []).length === 0));  // §118 (B27): a failed near read clears the old radius's rows and is said
     setNearMeLoading(false);
   }
 
@@ -553,7 +553,7 @@ function EventsTabScreen() {
                 <Pressable
                   key={r.km}
                   style={[styles.chip, radiusKm === r.km && styles.chipActive]}
-                  onPress={() => { setRadiusKm(r.km); if (locationState.coords) handleNearMeRequest(); }}
+                  onPress={() => { setRadiusKm(r.km); if (locationState.coords) handleNearMeRequest(r.km); }}
                 >
                   <Text style={[styles.chipText, radiusKm === r.km && styles.chipTextActive]}>{r.label}</Text>
                 </Pressable>
@@ -846,7 +846,7 @@ function EventsTabScreen() {
                 </View>
                 <Pressable
                   style={styles.nearMePrompt}
-                  onPress={handleNearMeRequest}
+                  onPress={() => handleNearMeRequest()}
                   disabled={nearMeLoading}
                 >
                   {nearMeLoading ? (
@@ -855,8 +855,8 @@ function EventsTabScreen() {
                     <MapPin size={18} color={color.signal} />
                   )}
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.nearMeTitle}>
-                      {nearMeLoading ? 'Looking for events nearby…' : 'Find events near you'}
+                    <Text style={styles.nearMeTitle} testID={!nearMeLoading && nearMeUnread ? 'near-me-unread' : undefined}>
+                      {nearMeLoading ? 'Looking for events nearby…' : nearMeUnread ? "Couldn't load events near you. Tap to try again." : 'Find events near you'}
                     </Text>
                     {!nearMeLoading && (
                       <Text style={styles.nearMeSubtitle}>Tap to enable location and see what's happening close by</Text>
@@ -900,7 +900,7 @@ function EventsTabScreen() {
             savedEvents,
           )}
 
-          {/* Empty states */}
+          {listsFailed && hasContent ? <Text style={styles.yourEventsErrorText} testID="events-lists-unread">Some event lists couldn't be loaded. Pull down to try again.</Text> : null}{/* Empty states — §118 (B28): a list that failed beside others drawn is said */}
           {!loading && !hasContent && drafts.length === 0 && (
             error ? (
               <ErrorState message={error} onRetry={() => load(false)} />
