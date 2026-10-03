@@ -526,10 +526,9 @@ router.get("/users/:userId/followers", async (req, res) => {
   let viewerId: string | null = null;
   const token = extractBearerToken(req);
   if (token) {
-    // optionalUserFromToken, not a bare auth.getUser: the bare call skipped the
-    // account-state gate, so a banned/suspended token kept its viewer standing
-    // on a private profile's list. `authThrowIsAnonymous` keeps the old catch
-    // for an Auth call that throws; an unreadable account state still throws.
+    // optionalUserFromToken, not a bare auth.getUser, which skipped the ban gate: a banned token kept its viewer
+    // standing on a private profile's list. `authThrowIsAnonymous` keeps the old catch for a THROWING Auth call;
+    // an unreadable account state still throws.
     viewerId = (await optionalUserFromToken(sc, token, { log: req.log, authThrowIsAnonymous: true }))?.id ?? null;
   }
   const isMe = viewerId === target;
@@ -603,10 +602,9 @@ router.get("/users/:userId/following", async (req, res) => {
   let viewerId: string | null = null;
   const token = extractBearerToken(req);
   if (token) {
-    // optionalUserFromToken, not a bare auth.getUser: the bare call skipped the
-    // account-state gate, so a banned/suspended token kept its viewer standing
-    // on a private profile's list. `authThrowIsAnonymous` keeps the old catch
-    // for an Auth call that throws; an unreadable account state still throws.
+    // optionalUserFromToken, not a bare auth.getUser, which skipped the ban gate: a banned token kept its viewer
+    // standing on a private profile's list. `authThrowIsAnonymous` keeps the old catch for a THROWING Auth call;
+    // an unreadable account state still throws.
     viewerId = (await optionalUserFromToken(sc, token, { log: req.log, authThrowIsAnonymous: true }))?.id ?? null;
   }
   const isMe = viewerId === target;
@@ -1752,8 +1750,7 @@ router.get("/users/:userId", async (req, res) => {
   // Resolve caller identity (best-effort; null if unauthenticated or token invalid).
   let callerId: string | null = null;
   if (token) {
-    // optionalUserFromToken, not a bare auth.getUser: the bare call skipped the
-    // account-state gate, so a banned/suspended token kept its caller standing.
+    // optionalUserFromToken, not a bare auth.getUser, which skipped the ban gate: a banned token kept its caller standing.
     callerId = (await optionalUserFromToken(sc as any, token, { log: req.log }))?.id ?? null;
   }
 
@@ -1889,8 +1886,7 @@ router.get("/users/by-handle/:handle", async (req, res) => {
 
   let callerId: string | null = null;
   if (token) {
-    // optionalUserFromToken, not a bare auth.getUser: the bare call skipped the
-    // account-state gate, so a banned/suspended token kept its caller standing.
+    // optionalUserFromToken, not a bare auth.getUser, which skipped the ban gate: a banned token kept its caller standing.
     callerId = (await optionalUserFromToken(sc as any, token, { log: req.log }))?.id ?? null;
   }
 

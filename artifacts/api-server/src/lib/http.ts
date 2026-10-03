@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import type { Request, Response } from "express";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { getServiceClient, isServiceClientReady, _setTestServiceClient } from "./supabase";
-export { _setTestServiceClient } from "./supabase";
+export { _setTestServiceClient } from "./supabase"; import { optionalUserFromToken } from "./accountStateGate.js"; export { AccountStatusUnavailableError, optionalUserFromToken, requireUserFromToken, enforceAccountState } from "./accountStateGate.js"; // one line: census docs cite this file by line
 
 /**
  * Constant-time comparison for shared secrets (internal API keys, webhook
@@ -182,63 +182,9 @@ export function sendError(
 }
 
 /**
- * The account-state read behind an optional-auth request could not be made.
- * Thrown by `optionalUser`, read by the global error handler
- * (`lib/errorEnvelope.ts`) as 503 `degraded_unavailable`, retryable — the same
- * response requireUser writes by hand for the same failure. An exception rather
- * than a wider return type for the reason `TripAccessUnavailableError` gives
- * below: `optionalUser` returns `{ client, user } | null`, null already means
- * "anonymous", and there is no third slot for "unknown". Every caller is an
- * async Express 5 handler, which forwards the rejection with no route change.
- */
-export class AccountStatusUnavailableError extends Error {
-  /** Read by the global error handler. */
-  readonly status: number = 503;
-  /** Read by the global error handler. */
-  readonly code: ApiErrorCode = "degraded_unavailable";
-  constructor(detail: string) {
-    super(`Could not verify account status. Please try again. (${detail})`);
-    this.name = "AccountStatusUnavailableError";
-  }
-}
-
-/**
- * Account states that are NOT signed in on an optional-auth route. `banned` and
- * `suspended` are the two requireUser refuses with 403. `deleted` is added here
- * only: a tombstoned account whose auth user outlived the erasure (the
- * `auth.admin.deleteUser` step in AccountDeletionService is retryable, so the
- * window is real) has no standing to an owner bypass, and on an optional route
- * anonymous is always a legal answer. `deactivated` and `pending_deletion` stay
- * signed in, as requireUser keeps them, because both are reversible by the
- * account itself.
- */
-const OPTIONAL_AUTH_ANONYMOUS_STATUSES: ReadonlySet<string> = new Set(["banned", "suspended", "deleted"]);
-
-/**
- * Like requireUser but returns null (without writing a 401) when the request
- * has no auth header. Use for public endpoints that provide richer responses
- * to authenticated callers (e.g., public trip detail for visibility=public).
- *
- * THE ACCOUNT-STATE GATE. This used to return the token's user without reading
- * the account state at all, so a banned or suspended account's still-valid
- * token (nothing in this system revokes sessions) was SIGNED IN on every
- * optional-auth route — the owner/member view of a private trip on
- * GET /trips/:tripId, the owner bypass on the place-living pages, viewer
- * personalisation on reviews and votes. It now reads the same
- * `readAccountStatus` requireUser reads, and answers per state:
- *
- *   banned / suspended / deleted → null: ANONYMOUS. Every optional route already
- *     serves an anonymous caller, so this is always a truthful answer; the
- *     account gets exactly what dropping its token would get it.
- *   unavailable → THROWS AccountStatusUnavailableError (503, retryable). Never
- *     signed in — that is an unread ban treated as "not banned". And NOT
- *     anonymous either: an ordinary user whose state merely could not be read
- *     would silently lose their block filter (rent-a-buddy list, trip detail,
- *     place reviews) and be told they have no vote — a failed read presented
- *     as an answer. The 503 is the same refusal requireUser gives; a request
- *     with NO token never reaches this read, so anonymous traffic keeps serving
- *     through a profiles outage.
- *   active / deactivated / pending_deletion / no row → signed in, as requireUser.
+ * Like requireUser but returns null (without writing a 401) when the request has no auth header — and
+ * now ALSO for a banned / suspended / deleted account's valid token, and THROWS a 503 when the account
+ * state cannot be read: the ban gate, which this path used to skip (lib/accountStateGate.ts, per state).
  */
 export async function optionalUser(
   req: Request,
@@ -250,52 +196,9 @@ export async function optionalUser(
 
   const client = (_testClient ?? getServiceClient()) as SupabaseClient | null;
   if (!client) return null;
+  // Token verification AND the account-state gate (lib/accountStateGate.ts).
   const user = await optionalUserFromToken(client, token, { log: (req as any).log });
   return user ? { client, user } : null;
-}
-
-/**
- * optionalUser's gate, for a route that extracts its own bearer token (a
- * case-insensitive scheme, a `?token=` query, …) and so cannot call
- * optionalUser. Same answers, per account state, as optionalUser above:
- * `null` for no user / banned / suspended / deleted, the user otherwise, and a
- * THROWN AccountStatusUnavailableError when the state cannot be read.
- *
- * Every route that used to call `sc.auth.getUser(token)` by hand skipped the
- * account-state read entirely, which is the bypass this exists to close;
- * `handRolledAuthAccountState.test.ts` pins that no file outside this one
- * calls `.auth.getUser(` again.
- *
- * `authThrowIsAnonymous` preserves what the hand-rolled sites that wrapped
- * `getUser` in a try/catch did when the Auth CALL ITSELF threw (network, DNS):
- * treat the caller as anonymous. It never covers the account-state read — an
- * unreadable ban is thrown whatever the option says.
- */
-export async function optionalUserFromToken(
-  client: SupabaseClient,
-  token: string,
-  opts: { log?: any; authThrowIsAnonymous?: boolean } = {},
-): Promise<User | null> {
-  let data: any;
-  let error: any;
-  try {
-    ({ data, error } = await client.auth.getUser(token));
-  } catch (err) {
-    if (opts.authThrowIsAnonymous) return null;
-    throw err;
-  }
-  if (error || !data?.user) return null;
-
-  const statusRead = await readAccountStatus(client, data.user.id);
-  if (statusRead.state === "unavailable") {
-    opts.log?.error?.(
-      { userId: data.user.id, reason: statusRead.reason },
-      "account_status unreadable on an optional-auth route — refusing rather than guessing",
-    );
-    throw new AccountStatusUnavailableError(statusRead.reason);
-  }
-  if (statusRead.state === "ok" && OPTIONAL_AUTH_ANONYMOUS_STATUSES.has(statusRead.status)) return null;
-  return data.user as User;
 }
 
 // ---------------------------------------------------------------------------
@@ -445,49 +348,10 @@ export async function requireUser(
   // ban enforcement has been switched off system-wide, and `10` B-4 records
   // that this schema drifts in BOTH directions. Waiving the one error that
   // signals it is how it would go unnoticed.
-  if (!(await enforceAccountState(req, res, client, data.user.id))) return null;
-
-  return { client, user: data.user as User };
-}
-
-/**
- * requireUser for a REQUIRED-auth route that extracts its own token (the
- * Telegraph SSE stream's `?token=`): verify it, then apply the same ban gate.
- * Returns the user, or null after writing 401 / 403 / 503.
- */
-export async function requireUserFromToken(
-  req: Request,
-  res: Response,
-  client: SupabaseClient,
-  token: string,
-): Promise<User | null> {
-  const { data, error } = await client.auth.getUser(token);
-  if (error || !data?.user) {
-    sendError(res, "unauthenticated", "Invalid token");
-    return null;
-  }
-  if (!(await enforceAccountState(req, res, client, data.user.id))) return null;
-  return data.user as User;
-}
-
-/**
- * requireUser's ban gate (the block comment above), for a REQUIRED-auth route
- * that verifies its own token and so cannot call requireUser — today the
- * Telegraph SSE stream, whose EventSource client can only send `?token=`.
- * Returns true when the request may be served; otherwise it has already
- * written 503 degraded_unavailable (state unreadable) or 403 forbidden
- * (banned / suspended) and the caller must return.
- */
-export async function enforceAccountState(
-  req: Request,
-  res: Response,
-  client: SupabaseClient,
-  userId: string,
-): Promise<boolean> {
-  const statusRead = await readAccountStatus(client, userId);
+  const statusRead = await readAccountStatus(client, data.user.id);
   if (statusRead.state === "unavailable") {
     (req as any).log?.error?.(
-      { userId, reason: statusRead.reason },
+      { userId: data.user.id, reason: statusRead.reason },
       "account_status unreadable — refusing to serve an unchecked request",
     );
     sendError(
@@ -495,7 +359,7 @@ export async function enforceAccountState(
       "degraded_unavailable",
       "Could not verify account status. Please try again.",
     );
-    return false;
+    return null;
   }
 
   // `absent` is a successful read that found no ban state, so the account is
@@ -505,13 +369,14 @@ export async function enforceAccountState(
   const accountStatus: string = statusRead.state === "ok" ? statusRead.status : "active";
   if (accountStatus === "banned") {
     sendError(res, "forbidden", "Your account has been banned");
-    return false;
+    return null;
   }
   if (accountStatus === "suspended") {
     sendError(res, "forbidden", "Your account is temporarily suspended");
-    return false;
+    return null;
   }
-  return true;
+
+  return { client, user: data.user as User };
 }
 
 // ---------------------------------------------------------------------------

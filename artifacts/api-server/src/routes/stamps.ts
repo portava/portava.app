@@ -492,9 +492,7 @@ router.get("/stamps/profile/:username", async (req, res) => {
   let callerId: string | null = null;
 
   if (token) {
-    // optionalUserFromToken, not a bare auth.getUser: the bare call skipped the
-    // account-state gate, so a banned/suspended owner's token kept the OWNER
-    // view (revoked and hidden stamps) here.
+    // optionalUserFromToken, not a bare auth.getUser, which skipped the ban gate: a banned owner kept the OWNER view.
     callerId = (await optionalUserFromToken(sc, token, { log: req.log }))?.id ?? null;
 
     if (callerId === targetUserId) {

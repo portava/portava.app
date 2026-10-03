@@ -684,8 +684,7 @@ router.get("/users/:username/passport/memories", async (req, res) => {
   const authHeader = req.headers.authorization ?? "";
   const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
   if (token) {
-    // optionalUserFromToken, not a bare auth.getUser: the bare call skipped the
-    // account-state gate, so a banned/suspended token kept its circle context.
+    // optionalUserFromToken, not a bare auth.getUser, which skipped the ban gate: a banned token kept its circle context.
     const callerId = (await optionalUserFromToken(sc, token, { log: req.log }))?.id;
     if (callerId && callerId !== (profile as any).id) {
       // Check friendship (grants "circle" visibility context).
@@ -761,8 +760,7 @@ router.get("/users/:username/passport/stamps", async (req, res) => {
   const authHeader2 = req.headers.authorization ?? "";
   const token2 = authHeader2.startsWith("Bearer ") ? authHeader2.slice(7) : null;
   if (token2) {
-    // optionalUserFromToken, not a bare auth.getUser: the bare call skipped the
-    // account-state gate, so a banned/suspended token kept its owner/circle context.
+    // optionalUserFromToken, not a bare auth.getUser, which skipped the ban gate: a banned token kept owner/circle context.
     const callerId2 = (await optionalUserFromToken(sc, token2, { log: req.log }))?.id;
     if (callerId2 === (profile as any).id) {
       callerCtx = "owner";

@@ -26,7 +26,7 @@
  * shared helpers.
  *
  * THE STRUCTURAL PIN. A source scan asserts that no file in src/ outside
- * lib/http.ts calls `.auth.getUser(` — so the next hand-rolled verification
+ * lib/http.ts and lib/accountStateGate.ts calls `.auth.getUser(` — so the next hand-rolled verification
  * fails here instead of quietly re-opening the bypass. The four sites in PR
  * #530's zone (discovery.ts ×3, hiddenGems.ts ×1) cannot be edited by this
  * change; they are pinned as KNOWN OPEN with an at-most count, so they may only
@@ -137,7 +137,7 @@ function open(port: number, p: string, token: string | null): Promise<{ status: 
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("structural — no hand-rolled bearer verification outside lib/http.ts", () => {
+describe("structural — no hand-rolled bearer verification outside lib/http.ts + lib/accountStateGate.ts", () => {
   const SRC = path.resolve(import.meta.dirname, "..");
   // PR #530's zone: not editable by this change. At-most counts; may only fall.
   const KNOWN_OPEN_PR530: Record<string, number> = {
@@ -154,12 +154,12 @@ describe("structural — no hand-rolled bearer verification outside lib/http.ts"
     return out;
   }
 
-  it("every `.auth.getUser(` call lives in lib/http.ts (or is a pinned PR #530 site)", () => {
+  it("every `.auth.getUser(` call lives in lib/http.ts or lib/accountStateGate.ts (or is a pinned PR #530 site)", () => {
     const offenders: string[] = [];
     const counts: Record<string, number> = {};
     for (const file of walk(SRC)) {
       const rel = path.relative(SRC, file).split(path.sep).join("/");
-      if (rel === "lib/http.ts") continue;
+      if (rel === "lib/http.ts" || rel === "lib/accountStateGate.ts") continue;
       const lines = fs.readFileSync(file, "utf8").split("\n");
       lines.forEach((line, i) => {
         const t = line.trim();
@@ -316,4 +316,37 @@ describe("GET /api/stamps/profile/:username — owner context", () => {
     const r = await withServer(stampsRouter, (port) => open(port, "/api/stamps/profile/owner", null));
     assert.deepEqual(ids(r.body), ["s-pub"]);
   });
+});
+
+describe("parity — requireUserFromToken answers exactly what requireUser answers, state by state", () => {
+  afterEach(() => _clearTestClient());
+  // requireUser keeps its own inline ban gate (lib/http.ts is cited by line and
+  // was not restructured); enforceAccountState in lib/accountStateGate.ts is
+  // the copy the hand-rolled required-auth path uses. This holds them together.
+  const cases: Array<[string, TableBehaviour]> = [
+    ["banned", { rows: [profileRow("banned")] }],
+    ["suspended", { rows: [profileRow("suspended")] }],
+    ["deleted", { rows: [profileRow("deleted")] }],
+    ["deactivated", { rows: [profileRow("deactivated")] }],
+    ["active", { rows: [profileRow("active")] }],
+    ["no row", { rows: [] }],
+    ["unreadable", UNREADABLE],
+  ];
+  function sink() {
+    const out: { status: number | null; body: any } = { status: null, body: null };
+    const res: any = { status(c: number) { out.status = c; return res; }, json(b: any) { out.body = b; return res; } };
+    return { res, out };
+  }
+  for (const [label, profiles] of cases) {
+    it(label, async () => {
+      const client = makeClient({ user: USER, tables: { profiles } });
+      _setTestClient(client, true);
+      const a = sink();
+      const viaRequire = await httpLib.requireUser({ headers: { authorization: "Bearer tok" } } as any, a.res);
+      const b = sink();
+      const viaToken = await (httpLib as any).requireUserFromToken({ headers: {} } as any, b.res, client, "tok");
+      assert.equal(viaRequire === null, viaToken === null, "served vs refused must agree");
+      assert.deepEqual(b.out, a.out, "the written response must be identical");
+    });
+  }
 });

@@ -43,6 +43,7 @@ async function getOptionalViewerId(sc: any, req: { headers: { authorization?: st
   // account-state gate, so a banned/suspended token kept its viewer standing.
   // `authThrowIsAnonymous` keeps the old catch for an Auth call that throws;
   // an unreadable account state still throws (503 via the global handler).
+  // Same line count as before: the census documents cite this file by line.
   const user = await optionalUserFromToken(sc, token, { authThrowIsAnonymous: true });
   return user?.id ?? null;
 }

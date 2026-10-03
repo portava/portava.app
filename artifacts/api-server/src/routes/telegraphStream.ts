@@ -279,12 +279,9 @@ router.get("/telegraph/stream", async (req, res) => {
     return;
   }
 
-  // This route extracts its own token (an EventSource can only send
-  // `?token=`), so it cannot call requireUser. It used to verify the token
-  // with a bare `sc.auth.getUser`, which skipped the ban gate: a banned or
-  // suspended account kept a LIVE feed of its threads, plus history resume.
-  // requireUserFromToken is requireUser's gate for exactly this shape — 401 on
-  // a bad token, 403 banned/suspended, 503 when the state cannot be read.
+  // An EventSource can only send `?token=`, so this cannot call requireUser. A bare `sc.auth.getUser` here
+  // skipped the ban gate: a banned/suspended account kept a LIVE feed of its threads and history resume.
+  // requireUserFromToken (lib/accountStateGate.ts) = requireUser's answers: 401 / 403 banned / 503 unreadable.
   const authUser = await requireUserFromToken(req, res, sc, token);
   if (!authUser) return;
   const userId = authUser.id;
