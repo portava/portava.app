@@ -1,5 +1,5 @@
 /**
- * census-discovery §122 (DV-83 round 23, lane W11-X2; sweep SW29): a Discovery search event result whose attendance
+ * census-discovery §122 (DV-83 round 23, lane W11-X2; sweep SW29, SW32): a Discovery search event result whose attendance
  * the server could not read is never drawn as "not going".
  *
  * `searchEvents` now serves `actionState: null` on an event result when the viewer's RSVP read fails (api-server
@@ -112,5 +112,39 @@ describe('census-discovery §122 (SW29): an event result with unknown attendance
   it('SR2 CONTROL: isAttending true → "Attending"', async () => {
     const r = await render(<SearchResultCard result={makeEventResult({ actionState: { isAttending: true } })} />);
     expect(r.getByText('Attending')).toBeTruthy();
+  });
+});
+
+// census-discovery §122 (DV-83 round 23, SW32): a traveler result whose follow state the server could not read
+// (`actionState: null`, api-server discoverySearchSafetyContracts SF1, SF2) is drawn "View", never "Follow" / "Request".
+//   SR3 a public traveler, actionState null → "View"; a tap opens the profile, follows nobody
+//   SR4 a private traveler, actionState null → "View", never "Request"
+//   SR5 CONTROL: a public traveler, isFollowing false → "Follow"
+import { followUser } from '../../../services/follows.ts';
+function makeTraveler(overrides: Partial<UnifiedSearchResult> = {}): UnifiedSearchResult {
+  return {
+    id: 'user-1', type: 'travelers', title: 'Ana', subtitle: '@ana', avatarUrl: null, imageUrl: null, fallbackInitials: 'A',
+    locationPreview: null, matchedReason: null, actionState: { isFollowing: false }, privacyState: { isPrivate: false },
+    accessState: { canAccess: true }, destinationRoute: '/passport/ana', metadata: null, createdAt: null, startsAt: null,
+    ...overrides,
+  } as UnifiedSearchResult;
+}
+describe('census-discovery §122 (SW32): a traveler result with unknown follow state', () => {
+  afterEach(() => jest.clearAllMocks());
+  it('SR3 public, actionState null → "View"; a tap opens the profile, follows nobody', async () => {
+    const r = await render(<SearchResultCard result={makeTraveler({ actionState: null })} />);
+    expect(r.queryByText('Follow')).toBeNull();
+    await act(async () => { fireEvent.press(r.getByText('View')); });
+    expect(followUser).not.toHaveBeenCalled();
+    expect(router.push).toHaveBeenCalled();
+  });
+  it('SR4 private, actionState null → "View", never "Request"', async () => {
+    const r = await render(<SearchResultCard result={makeTraveler({ actionState: null, privacyState: { isPrivate: true }, accessState: { canAccess: false } })} />);
+    expect(r.queryByText('Request')).toBeNull();
+    expect(r.getByText('View')).toBeTruthy();
+  });
+  it('SR5 CONTROL: public, isFollowing false → "Follow"', async () => {
+    const r = await render(<SearchResultCard result={makeTraveler()} />);
+    expect(r.getByText('Follow')).toBeTruthy();
   });
 });

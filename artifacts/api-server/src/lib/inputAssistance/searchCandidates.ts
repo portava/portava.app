@@ -592,7 +592,7 @@ async function searchTravelers(
     if (nameSafe.length === 0) return [];
 
     const visibleIds = nameSafe.map((p: any) => p.id as string);
-    const [{ data: followEdges }, { data: pendingRequests }, { data: friendsAsA }, { data: friendsAsB }] = await Promise.all([
+    const [{ data: followEdges, error: followEdgesErr }, { data: pendingRequests, error: pendingRequestsErr }, { data: friendsAsA }, { data: friendsAsB }] = await Promise.all([
       sc.from("user_follows")
         .select("following_id")
         .eq("follower_id", userId)
@@ -609,7 +609,7 @@ async function searchTravelers(
       sc.from("user_friendships").select("user_b").eq("user_a", userId).in("user_b", visibleIds),
       sc.from("user_friendships").select("user_a").eq("user_b", userId).in("user_a", visibleIds),
     ]);
-    const followingSet = new Set<string>((followEdges ?? []).map((e: any) => e.following_id as string));
+    const followingSet = new Set<string>((followEdges ?? []).map((e: any) => e.following_id as string)); const followStateUnread = Boolean(followEdgesErr || pendingRequestsErr);  // census-discovery §122 (DV-83 round 23, SW32): the privacy rule still fails closed; the stated own state goes
     const pendingSet = new Set<string>((pendingRequests ?? []).map((e: any) => e.recipient_id as string));
     const friendSet = new Set<string>([
       ...(friendsAsA ?? []).map((e: any) => e.user_b as string),
@@ -654,7 +654,7 @@ async function searchTravelers(
           ? null
           : [(p.home_city as string | null), (p.home_country as string | null)].filter(Boolean).join(", ") || null,
         matchedReason: null,
-        actionState: isPrivate
+        actionState: followStateUnread ? null : isPrivate  // §122 (SW32): never "not following" / "not requested" over a failed read
           ? { isFollowing, isRequestSent: pendingSet.has(p.id as string) }
           : { isFollowing },
         privacyState: { isPrivate },
