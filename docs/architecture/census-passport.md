@@ -2290,7 +2290,7 @@ defects that path actually hits.
   Client: `travel-buddy-standalone/src/features/passport/eventPassport.ts:91#export function isOutageStatus(`,
   the card's retry state (`travel-buddy-standalone/src/features/passport/EventPassportShareCard.tsx:122#Couldn't check your event Passport.`)
   and the screen's (`travel-buddy-standalone/src/features/passport/EventPassportScreen.tsx:87#if (!res.ok && res.outage) { setState({ kind: 'failed' }); return; }`).
-- P169's citation into `EventPassportService.ts` moved from `:423` to `:436` with the code it
+- P169's citation into `EventPassportService.ts` moved from line 423 to line 436 with the code it
   names; the row's text and verdict are unchanged.
 
 ### 25.4 Tests, seen red, and mutations
@@ -2301,7 +2301,7 @@ defects that path actually hits.
   F (routes), G (`/me/profile`), H (whole stats read) — 15 red on the old code; suites A/B moved
   to the measurement shape with the same assertions.
 - `artifacts/api-server/src/test/eventPassport.test.ts:612#describe("event Passport — an outage is reported as an outage, still fail-closed"`
-  and the route twin at `:672` — 13 red; one existing expectation moved `not_found → unavailable`
+  and its route twin (`artifacts/api-server/src/test/eventPassport.test.ts:672#describe("event Passport routes — an outage is a retryable 500`) — 13 red; one existing expectation moved `not_found → unavailable`
   for a failed insert, which is the defect, not a weakening.
 - Client: `travel-buddy-standalone/app/u/__tests__/publicProfile.stampsEarned.component.test.tsx:193#describe('Public profile screen — Stamps Earned'`,
   `travel-buddy-standalone/src/components/passport/__tests__/PassportStatsRow.readFailed.component.test.tsx:38#describe('PassportStatsRow — unreadable stats are unknown, not zero'`,
