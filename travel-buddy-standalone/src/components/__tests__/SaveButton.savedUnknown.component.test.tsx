@@ -11,9 +11,10 @@
  *   SU2 CONTROL: known not saved → "Save"
  *   SU3 savedUnknown beside the viewer's own toggle in the cache → "Unsave" (the toggle is measured)
  *   SU4 savedUnknown with no initial value → unknown at once, no spinner and no round-trip whose failure would say "Save"
+ *   SU5 savedUnknown, then the viewer saves from the collection picker (long press) → "Unsave": their own save is measured
  */
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react-native';
+import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { SaveButton } from '../SaveButton.tsx';
 
 const mockSaveItem = jest.fn(async () => true);
@@ -35,8 +36,9 @@ jest.mock('../../context/SessionContext.tsx', () => ({
   ...jest.requireActual('../../context/SessionContext.tsx'),
   useSession: () => ({ userId: 'user-abc', isAuthed: true }),
 }));
-// NOTE: intentionally an exhaustive stub — SaveToCollectionSheet brings in heavy native dependencies.
-jest.mock('../SaveToCollectionSheet.tsx', () => ({ SaveToCollectionSheet: () => null }));
+// NOTE: intentionally an exhaustive stub — SaveToCollectionSheet brings in heavy native dependencies; the stub keeps its onSaved.
+let mockSheetOnSaved: ((colId: string) => void) | null = null;
+jest.mock('../SaveToCollectionSheet.tsx', () => ({ SaveToCollectionSheet: (p: { onSaved: (c: string) => void }) => { mockSheetOnSaved = p.onSaved; return null; } }));
 jest.mock('../../hooks/useRankOutcome.ts', () => ({
   ...jest.requireActual('../../hooks/useRankOutcome.ts'),
   fireRankOutcome: jest.fn(),
@@ -72,5 +74,11 @@ describe('census-discovery §122 (B36): SaveButton over an unread save state', (
     await render(<SaveButton entityType="post" entityId="p1" savedUnknown />);
     expect(screen.getByLabelText("Couldn't check if saved")).toBeTruthy();
     expect(mockCheckSaved).not.toHaveBeenCalled();
+  });
+  it('SU5 savedUnknown, then a save from the collection picker → "Unsave"', async () => {
+    await render(<SaveButton entityType="post" entityId="p1" initialSaved={false} savedUnknown />);
+    await fireEvent(screen.getByLabelText("Couldn't check if saved"), 'longPress');
+    await act(async () => { mockSheetOnSaved?.('col-1'); });
+    expect(screen.getByLabelText('Unsave')).toBeTruthy();
   });
 });
