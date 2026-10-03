@@ -22,14 +22,14 @@ Backend paths are relative to `artifacts/api-server/src/` unless prefixed
 | **Denominator (testable requirements) — v1.1** | **451** |
 | — of which shared with v1 | 378 |
 | — of which v1.1-only (§30A Addendum + §31) | 73 |
-| BUILT-AND-CORRECT | **209** |
-| BUILT-BUT-WRONG | **176** |
-| NOT-BUILT | **51** |
-| CANNOT-VERIFY | **3** |
-| **CONSTRUCTED%** = (209+176)/451 | **85.4 %** |
-| **CORRECT%** (raw) = 209/451 | **46.3 %** |
+| BUILT-AND-CORRECT | **239** — restated 2026-10-03 from the rows by `check:census-integrity` (§41.8); 209 on 2026-09-12 |
+| BUILT-BUT-WRONG | **177** (§41.8; 176 on 2026-09-12) |
+| NOT-BUILT | **33** (§41.8; 51 on 2026-09-12) |
+| CANNOT-VERIFY | **2** (§41.8; 3 on 2026-09-12) |
+| **CONSTRUCTED%** = (239+177)/451 | **92.2 %** (85.4 % on 2026-09-12) |
+| **CORRECT%** (raw) = 239/451 | **53.0 %** (46.3 % on 2026-09-12) |
 | **CORRECT% (spec-attributable)** = 0/451 | **0.0 %** (rows citing this spec; the rest are attribution-UNKNOWN — §4) |
-| CANNOT-VERIFY share | 3 / 451 = 0.7 % |
+| CANNOT-VERIFY share | 2 / 451 = 0.4 % |
 
 > **RESTATED A THIRD TIME 2026-09-12 BY THE INTEGRATOR, from the rows and not by
 > addition: 149 → 209 CORRECT, 183 → 176 WRONG, 98 → 51 NOT-BUILT. CONSTRUCTED
@@ -115,7 +115,7 @@ the entire v1.1 production-completion addendum. The messenger is a solid
    This is a live privacy divergence, not a missing feature.
 2. **`saved_messages` is write-only.** Both client surfaces offer "Save"
    (`travel-buddy-standalone/app/messages/[id].tsx:2227`,
-   `src/components/GroupChatScreen.tsx:1064`), the server persists it
+   `src/components/GroupChatScreen.tsx:988`), the server persists it
    (`routes/messaging.ts:4361#from('saved_messages').upsert(`) — and **nothing in the repository ever reads the
    table back.** Settled by reading call sites, not by grepping `from("…")`:
    the only other reference anywhere is the account-deletion cascade
@@ -644,7 +644,7 @@ Backend paths relative to `artifacts/api-server/src/`; client paths to
 | --- | --- | --- | --- |
 | T117 | `MemoryNoteShare` contract | N | No Memory Note type, table, route or renderer. |
 | T118 | A Memory Note is shareable/saveable/actionable without exposing the sender's canonical private Memory graph | N `∅` | Unguarded absence — no Memory Note exists to leak through. |
-| T119 | A user may explicitly save a message, voice note, place share or media item as a private Memory draft | W | **Persists into a hole.** Both client surfaces offer it (`app/messages/[id].tsx:2227`, `components/GroupChatScreen.tsx:1064`) and the server upserts (`routes/messaging.ts:2673-2710`), but **nothing reads `saved_messages` back** — settled by reading call sites, not greps: the only other references in the entire repository are the deletion cascade (`lib/deletionDispositions.ts:432`) and the RLS ledger (`scripts/rlsDispositions.ts:429`). There is no saved-messages route and no screen. It also lands in `saved_messages`, not in `memories`, so it is not a Memory draft. |
+| T119 | A user may explicitly save a message, voice note, place share or media item as a private Memory draft | W | **Persists into a hole.** Both client surfaces offer it (`app/messages/[id].tsx:2227`, `components/GroupChatScreen.tsx:988`) and the server upserts (`routes/messaging.ts:2673-2710`), but **nothing reads `saved_messages` back** — settled by reading call sites, not greps: the only other references in the entire repository are the deletion cascade (`lib/deletionDispositions.ts:432`) and the RLS ledger (`scripts/rlsDispositions.ts:429`). There is no saved-messages route and no screen. It also lands in `saved_messages`, not in `memories`, so it is not a Memory draft. |
 | T120 | Telegraph never automatically converts whole conversations into Memories | N `∅` | Unguarded absence. No conversation→Memory path exists, and nothing would refuse one. |
 | T121 | End-of-night recap surface | N | Nothing. |
 | T122 | Recap derived from confirmed session context and shared references — an invitation to curate, not automatic historical truth | N `∅` | No recap to be wrong about. |
@@ -1341,7 +1341,7 @@ depends on DDL no database has would stay W however good the code was.
   in a tree that has two of them:
   `travel-buddy-standalone/app/messages/[id].tsx:2089#SharedContextRail` (direct
   and booking threads) and
-  `travel-buddy-standalone/src/components/GroupChatScreen.tsx:815#SharedContextRail`
+  `travel-buddy-standalone/src/components/GroupChatScreen.tsx:740#SharedContextRail`
   (trip and circle threads).
 - **§11.2 row 5, the part that is easy to get wrong.** A critical change
   (a plan cancelled, a start time moved) is promoted until acknowledged, and
@@ -1375,7 +1375,7 @@ depends on DDL no database has would stay W however good the code was.
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| T13 | N | **C** | **Rail at the top of each conversation showing mutually relevant objects** — The component exists and is mounted on BOTH conversation surfaces — `travel-buddy-standalone/app/messages/[id].tsx:2089#SharedContextRail` and `travel-buddy-standalone/src/components/GroupChatScreen.tsx:815#SharedContextRail` — between the header and the message list, fed by a mounted route (`routes/index.ts:190#telegraphSharedContextRouter`). What would turn this red (P24): a third conversation surface appearing without it; nothing pins that. |
+| T13 | N | **C** | **Rail at the top of each conversation showing mutually relevant objects** — The component exists and is mounted on BOTH conversation surfaces — `travel-buddy-standalone/app/messages/[id].tsx:2089#SharedContextRail` and `travel-buddy-standalone/src/components/GroupChatScreen.tsx:740#SharedContextRail` — between the header and the message list, fed by a mounted route (`routes/index.ts:190#telegraphSharedContextRouter`). What would turn this red (P24): a third conversation surface appearing without it; nothing pins that. |
 | T14 | N | **C** | **Eligibility: created by me, joined/saved/attended by them** — `relationshipFor` reads the source object's own owner column and returns `CREATED_BY_ME_JOINED_BY_THEM` when the viewer created it and a conversation counterpart joined (`services/telegraph/sharedContext.ts:344#resolveSharedTrips`, `:405#resolveSharedMeetups`, `:467#resolveSharedEvents`). Asserted against a trip Alice owns and Bob joined, `test/telegraphSharedContext.test.ts:498`. |
 | T15 | N | **C** | **Eligibility: created by them, joined/saved/attended by me** — Same resolver, the other branch — asserted against a meetup Bob created and Alice accepted, `test/telegraphSharedContext.test.ts:498`. |
 | T16 | N | **C** | **Eligibility: both members of the same Trip, Plan, Crew, Event or booking** — Four resolvers, four canonical membership tables: `trip_members` (the crew table — a trip's crew IS `trip_members`; `circle_memberships` is a personal address book, not a shared crew, and is deliberately not read), `meetup_invites` (Plan), `event_attendees` (Event), `rent_buddy_bookings` (booking). `services/telegraph/sharedContext.ts:521#resolveSharedBookings` is the booking one. |
@@ -1529,7 +1529,7 @@ and it was being violated on every thread that had ever carried a card.
   (`travel-buddy-standalone/src/features/telegraph/sharing/PortavaObjectMessage.tsx:28#PortavaObjectMessage`)
   is the new kind, dispatched on both conversation surfaces
   (`travel-buddy-standalone/app/messages/[id].tsx:869#PortavaObjectMessage`,
-  `travel-buddy-standalone/src/components/GroupChatScreen.tsx:847#PortavaObjectMessage`).
+  `travel-buddy-standalone/src/components/GroupChatScreen.tsx:772#PortavaObjectMessage`).
 
 ### 10.6 §5 row moves
 
@@ -2359,7 +2359,7 @@ never reports an absence.
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| T73 | W | **W** | **Direct: Sent/Delivered/Seen. Groups: "Seen by N"** — unchanged verdict, corrected evidence. §10.22 cited a label function; the derivation is now MOUNTED on both chat surfaces (`travel-buddy-standalone/src/features/telegraph/lifecycle/lifecycleApi.ts:167#export function deriveReceiptState`, used at `travel-buddy-standalone/app/messages/[id].tsx:1624#deriveReceiptState` and `travel-buddy-standalone/src/components/GroupChatScreen.tsx:579#deriveReceiptState`), with "Seen by N" derived for groups (`travel-buddy-standalone/src/features/telegraph/lifecycle/lifecycleApi.ts:192#export function deriveSeenBy`). Still W, and now for a cleaner reason: two of three, because **DELIVERED cannot be reported and is no longer claimed**. |
+| T73 | W | **W** | **Direct: Sent/Delivered/Seen. Groups: "Seen by N"** — unchanged verdict, corrected evidence. §10.22 cited a label function; the derivation is now MOUNTED on both chat surfaces (`travel-buddy-standalone/src/features/telegraph/lifecycle/lifecycleApi.ts:167#export function deriveReceiptState`, used since 2026-10-03 only inside `travel-buddy-standalone/src/features/telegraph/lifecycle/useThreadReadState.ts:232#deriveReceiptState`, the hook both screens mount at `travel-buddy-standalone/app/messages/[id].tsx:1404#useThreadReadState` and `travel-buddy-standalone/src/components/GroupChatScreen.tsx:546#useThreadReadState` — see §41), with "Seen by N" derived for groups (`travel-buddy-standalone/src/features/telegraph/lifecycle/lifecycleApi.ts:192#export function deriveSeenBy`). Still W, and now for a cleaner reason: two of three, because **DELIVERED cannot be reported and is no longer claimed**. |
 
 **T69 is re-derived and stays W, but its evidence changes.** The census said
 "Two of six states … no DELIVERED concept anywhere". That was true of the
@@ -10012,3 +10012,182 @@ Declared 2026-09-27 by the coverage-guard fix (census-media §32.14). Each line 
 - NOT-GRADED: artifacts/api-server/src/lib/reportTargetAccess.ts — §39's reporter-visibility guard; it adds a refusal in front of the report write that T176 grades, and §39 moves no row, so no verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/reportReporterMembership.test.ts — §39's suite for the reporter-visibility guard; no verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/reports.test.ts — the unified report route's suite, named in §39.4 because two fixtures were restated; no Telegraph verdict rests on it.
+
+## §41 — TELEGRAPH lane (2026-10-03): an inbox that counts past 1,000 rows, read state that works while you look, and a connection that says when it is down
+
+Written 2026-10-03 by the TELEGRAPH lane (branch `claude/lane-telegraph-20261003`, cut from
+`main` at `0fa752ece`). `head_commit` is NOT re-declared: this section re-measures the rows it
+names and nothing else, and the files it changed are named in the census-telegraph acknowledgement
+with that argument. **All evidence is CONTROLLED** — in-process route tests over the certification
+harness's fake client, jest component tests against stubbed services, source-level wiring
+assertions and mutations. None of it is production evidence; no flag was touched, no migration was
+added, and nothing was written to any hosted database.
+
+The lane's scope rule was "messaging state a tester can trust": what a person sees in the inbox, on
+the badge and under their own messages must be something that was measured, and a failure must not
+look like an empty, quiet or finished state.
+
+### 41.1 What was wrong, verified before each fix
+
+| # | Defect (DV-83 class) | Where it was | What a tester saw |
+| --- | --- | --- | --- |
+| 1 | Unbounded "whole" read cut at PostgREST's 1,000 rows | `GET /me/threads` and `GET /me/unread-counts` read every message of every thread with no limit and took the newest per thread; the member roster likewise | Past 1,000 messages a quiet DM under a busy trip chat lost its preview and its unread count, the badge stopped counting it, and a DM's other person could fall off the roster |
+| 2 | Failed read presented as zero | the badge's notification / meetup / highlights sub-counts | One failed sub-read cleared a badge that had been showing a number |
+| 3 | Seen stamped once, on mount | `app/messages/[id].tsx` called `POST /threads/:id/read` from a mount effect; the trip/circle chat never marked anything read | A message that arrived while you watched stayed unread on your badge and "Sent" on its sender's screen |
+| 4 | Receipts read once, never refreshed | both screens read `message_thread_members.last_read_at` themselves when the thread opened | "Seen" appeared only after the sender left the thread and came back |
+| 5 | Failed read presented as a negative | the same read's error was never looked at | An outage rendered every message "Sent" — a claim that nobody had read it |
+| 6 | Wrong id | the trip chat's mute called `muteThread(id, …)` with the TRIP or CIRCLE id | Mute muted nothing, and the icon said it had |
+| 7 | Result ignored | three Block paths, two mute toggles, Leave, Delete-for-me and the conversation report | A block that failed looked like one that worked (the inbox even declined the request, so it vanished); a failed leave navigated away; a report said nothing either way |
+| 8 | State not carried | the thread screen's mute started `false` whatever the server held | A muted conversation opened looking unmuted |
+| 9 | No connection state at all | §30A.15 | A conversation that could not reach the server looked exactly like a quiet one |
+
+### 41.2 What was built
+
+- **Inbox and badge (server).** `artifacts/api-server/src/services/telegraph/inboxReads.ts` reads
+  one bounded newest-first page that states its own truncation, then reads the newest visible
+  message (or an exact count) directly for each thread the page could not answer; a failed
+  catch-up refuses rather than showing a thread empty or read. The roster is paged to its end.
+  `GET /me/unread-counts` names, in `degraded`, every bucket it could not count, and the client
+  badge keeps the last measured number for those buckets
+  (`travel-buddy-standalone/src/hooks/useMessaging.ts:634#const unknown = new Set(res.data.degraded`).
+- **Seen while you look.** `travel-buddy-standalone/src/features/telegraph/lifecycle/useThreadReadState.ts:93#export function useThreadReadState(`
+  marks the newest RENDERED server message through the message-anchored
+  `POST /threads/:id/seen`, only while the screen is focused and the app is in the foreground,
+  again whenever a newer message renders, never twice, and without hammering a mark that failed.
+  The threshold rule is `travel-buddy-standalone/src/features/telegraph/lifecycle/readState.ts:123#export function seenThreshold(`
+  (not deleted, not optimistic). Both screens mount it
+  (`travel-buddy-standalone/app/messages/[id].tsx:1404#useThreadReadState({ threadId: id`,
+  `travel-buddy-standalone/src/components/GroupChatScreen.tsx:546#useThreadReadState({ threadId: thread`),
+  and the thread screen no longer calls the legacy `POST /threads/:id/read` anywhere in the app.
+- **Receipts from the server, refreshed.** Receipts for the caller's own newest 100 messages come
+  from `GET /threads/:id/receipts`
+  (`travel-buddy-standalone/src/features/telegraph/lifecycle/lifecycleApi.ts:225#export async function fetchReceipts(`),
+  re-read on `read.updated` / `message.seen` for THIS thread, on a new own message, on return to the
+  foreground, and on a slow timer only while no realtime stream is open. Answers that arrive after a
+  newer request or a thread change are dropped (generation fence). A direct chat's `read.updated`
+  shows "Seen" before the refetch confirms it.
+- **What a status may say.** `travel-buddy-standalone/src/features/telegraph/lifecycle/readState.ts:70#export function ownMessageStatus(`:
+  Sending, Not sent, Sent, Delivered (only from the server's own live `message.delivered`),
+  "Sent · they were offline" (only for one named recipient, delivered to nobody, on a server that
+  said it held every socket), Seen / Seen by N, and "Sent · read status unavailable" when the
+  receipts read failed. A SEEN receipt survives a later failed read (the marker only moves forward);
+  a SENT one does not. Drawn by one component on both screens
+  (`travel-buddy-standalone/src/features/telegraph/lifecycle/OwnMessageStatusRow.tsx:20#export function OwnMessageStatusRow(`),
+  with the two "not known" states muted.
+- **Connection state.** `travel-buddy-standalone/src/features/telegraph/connection/connectionState.ts:56#export function deriveConnectionState(`
+  folds the messaging transport's own request outcomes (answered, unanswered, 5xx — a 403 is an
+  answer) and the realtime status into ONLINE / POOR_CONNECTION / OFFLINE / RECONNECTING. Every
+  transport verb reports (`travel-buddy-standalone/src/services/messaging.ts:294#noteTelegraphRequest(res.status >= 500`).
+  The banner (`travel-buddy-standalone/src/features/telegraph/connection/TelegraphConnectionBanner.tsx:15#export function TelegraphConnectionBanner(`)
+  is mounted on the inbox, the thread screen and the trip/circle chat and draws nothing while the
+  connection is fine. OFFLINE is worded "Can't reach Portava", because the app has no device
+  reachability API and does not claim one.
+- **Controls act on the answer.** Block (three paths), mute (three toggles), Leave, Delete-for-me
+  and the conversation report each act only on success and say so on failure
+  (`travel-buddy-standalone/src/features/telegraph/messageActions/messageActionRules.ts:63#export function blockFailedCopy(`);
+  the trip chat mutes the THREAD; the inbox passes the server's mute to the thread screen.
+
+### 41.3 Row moves
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T71 | X | **C** | §7.2 **push delivery, app launch and background rendering do not count as seen** — scored X because the client stamped "seen" from a mount effect and nothing exercised the background case. The rule now lives in one hook and is tested in each direction: nothing is marked while the app is in the background or another screen covers the thread, nothing from an empty or failed load, nothing from a realtime event or delivery receipt (only a rendered message is a threshold), and a mark follows on return (`travel-buddy-standalone/src/features/telegraph/__tests__/useThreadReadState.component.test.ts`). The server still cannot observe foreground — that is §7.2's design, not a defect here. The legacy `POST /threads/:id/read` is still mounted for older clients (since §23 it stamps the newest visible message's own `created_at`, not the clock); no surface of this app calls it any more. "Rendered" means loaded into the open, focused thread's list, not tracked per item in the viewport. |
+| T425 | N | **W** | §30A.15 **truthful ONLINE / POOR_CONNECTION / OFFLINE / RECONNECTING; distinguish local unsent, server accepted, recipient offline, receipt unavailable** — all four connection states exist, are derived only from what the client observed, and are drawn on all three Telegraph surfaces; all four send states are distinct (`travel-buddy-standalone/src/features/telegraph/__tests__/connectionState.component.test.ts`, `travel-buddy-standalone/src/features/telegraph/__tests__/telegraphConnectionBanner.component.test.tsx`, `travel-buddy-standalone/src/features/telegraph/__tests__/readState.component.test.ts`). W, not C, for two stated reasons: "recipient offline" is reportable only for a message sent while the sender watched, and never on a deployment where another instance could hold the socket (the server says `crossInstance`); and "local unsent" survives only as long as the screen — there is no durable outbox (T230, T231). |
+| T73 | W | W | **Direct: Sent/Delivered/Seen. Groups: "Seen by N"** — same verdict, new evidence. All three direct states now render from measured facts, and "Seen by N" from the server's receipts rather than a client copy of `last_read_at`. Still W: Delivered is an in-session observation of `message.delivered` and is stored nowhere, so a message sent before the screen opened carries Sent or Seen and never Delivered. `message_thread_members.delivered_sequence` exists in migration 2810 only and nothing writes it. |
+| T327 | N | **W** | §27.1 **any eligible recipient seen → unseen-unsend impossible** — the row's last statement, *"Same absence, same structural assertion"*, is stale (§37.2 named it; nobody re-graded it). Re-measured here against the code: migration 3000's function locks every eligible recipient's receipt row before reading it (`artifacts/api-server/src/migrations/3000_telegraph_unsend_authoritative.sql:224#FOR UPDATE;`) and refuses with `seen` when any one has read past the message (`artifacts/api-server/src/migrations/3000_telegraph_unsend_authoritative.sql:236#RETURN jsonb_build_object('outcome', 'seen'`); P-07 is `enforced` (`artifacts/api-server/src/domain/telegraph/invariants/propertyInvariants.ts:158#censusRow: "T327",`) and quantified (`artifacts/api-server/src/test/telegraphPropertyInvariants.test.ts:782#it("P-07: ANY eligible recipient has seen it`). Controlled evidence, run by this lane on 2026-10-03: the function EXECUTED on a local Postgres (`lane_telegraph`, with 3000 applied to it) — `artifacts/api-server/src/test/db/telegraphUnsend.db.test.ts` 12/12, including `artifacts/api-server/src/test/db/telegraphUnsend.db.test.ts:227#a recipient who has seen it closes the window for everyone` — and the property, fake and lifecycle suites, 98/98 together. Not C, as T326: the route calls a function production does not have, so every production unsend fails closed. IMPLEMENTATION-COMPLETE; awaits: migrations 2325 → 2810 → 3000 applied to production + one production unsend refused `seen` after a recipient read the message. |
+| T338 | N | **W** | §27 **unsend races recipient seen update** — *"there is no unsend, so there is no race to run"* is stale (§37.2). The race is closed by lock order in the database, not by the route: receipt rows are locked `FOR UPDATE` before `last_read_at` is read, so a concurrent mark-as-read waits for the unsend's transaction. Observed, on a real database, in the same run: `message_thread_members` carries no lock before the call and `RowShareLock` after it (`artifacts/api-server/src/test/db/telegraphUnsend.db.test.ts:353#the §7.4 receipt lock is observed in pg_locks`). What is NOT shown, stated as the suite states it: two connections in real contention — the blocking follows from Postgres semantics and was not reproduced. IMPLEMENTATION-COMPLETE; awaits: migrations 2325 → 2810 → 3000 applied to production. |
+| T387 | N | **W** | §30A **`UNSEND_BEFORE_SEEN` is race-safe and server-authoritative; in groups it succeeds only while no eligible recipient has seen the message** — the row still reads *"Implemented in PR #472, unmerged"*. All three clauses are now in this tree, each with an executed test: server-authoritative (the function is the only writer of an unsend and is granted to `service_role` only — the grant test in the same DB suite), race-safe (T338), and the group clause (T76's refusal, and P-07 above, which quantifies over two-recipient states where ONE has read it). Same blocker as T326/T327/T338. IMPLEMENTATION-COMPLETE; awaits: migrations 2325 → 2810 → 3000 applied to production. |
+| T295 | W | W | Same verdict, smaller: `check:telegraph-slos` now reports **3** client bypass sites, down from 6, and the shrink-only baseline was lowered to match. The three receipt reads of `message_thread_members` (two on the thread screen, one on the trip chat) are gone; a member count, the accepted-member gate and `is_e2ee` remain on the thread screen. |
+
+### 41.4 Tests, shown red first, and mutations
+
+Red-before was shown by putting the HEAD version of every changed source file in place (new files
+moved aside), running the suites, and restoring each file with a sha256 check.
+
+- `artifacts/api-server/src/test/telegraphInboxFailsLoud.test.ts` — +17 cases (30 total); the five
+  THE-POINT cases were red on the pre-change route. 22/22 mutations of `inboxReads.ts` and the route
+  killed.
+- `travel-buddy-standalone/src/features/telegraph/__tests__/threadScreenWiring.component.test.ts`
+  (11 cases) and `travel-buddy-standalone/src/features/telegraph/components/__tests__/TelegraphInboxBlockHonesty.component.test.tsx`
+  (6) — every non-CONTROL case red at HEAD; the two CONTROL cases green at HEAD by design.
+- `travel-buddy-standalone/src/hooks/__tests__/useUnreadCounts.degraded.component.test.ts` (8) —
+  6 red at HEAD, 2 CONTROL green.
+- `travel-buddy-standalone/src/features/telegraph/__tests__/lifecycleReadCalls.component.test.ts` (5) — 5 red at HEAD.
+- `readState`, `useThreadReadState`, `ownMessageStatusRow`, `connectionState` and
+  `telegraphConnectionBanner` component tests cover modules that did not exist at HEAD (red by
+  failing to import); their strength is the mutation run.
+- Mutations (client): 54 mutants, each applied alone and restored by sha256 — `readState.ts` 13,
+  `useThreadReadState.ts` 16, `connectionState.ts` 7, `connectionMonitor.ts` 2, the transport in
+  `services/messaging.ts` 3, `useMessaging.ts` 4, `TelegraphInboxScreen.tsx` 3, `lifecycleApi.ts` 2,
+  `OwnMessageStatusRow.tsx` 2 and the two screens 2. The first run killed 42. The 12 survivors were
+  real gaps in the tests, each closed with a case: an inconsistent receipt promoted to Seen (2); an
+  optimistic id, or a refused server id, taken as a seen threshold when only the other rule was
+  tested (2); a failed refresh still handing the long-press sheet a SENT receipt; the group fast
+  path; a failed mark not retried on refocus; someone else's message with a local `sent` flag; a
+  thread switch keeping the old thread's receipts; the first-connect-versus-reconnect flag; and an
+  absent `crossInstance`, which turned out to be a SOURCE defect — absence was read as "single
+  instance", which licenses "they were offline"; it is now read as "may be cross-instance". The
+  second run killed all 11 (that mutant restated against the new source). Net 54/54. Server, Unit 1:
+  22/22.
+
+### 41.4a Cited here, not graded
+
+- NOT-GRADED: travel-buddy-standalone/src/hooks/__tests__/useUnreadCounts.degraded.component.test.ts — the client half of §41.1 item 2 (the badge keeps a bucket the server could not count); no row in this census grades the unread badge, and no verdict in §41.3 rests on it.
+
+### 41.5 Checks
+
+Run on this branch, 2026-10-03, on the final tree:
+
+- **Guards** (`artifacts/api-server`): 23 of the integrator's 24 exit 0 — typecheck,
+  typecheck:tests, test-registration, census-integrity, doc-citations, citation-targets (163 / 163,
+  at the ceiling), citation-symbols, census-freshness, census-scope-coverage, census-row-move-labels
+  and the other thirteen. `check:telegraph-inventory` exits 1 **on `main` as well**: the committed
+  inventory says 681 migrations and the tree has 682 (line 35). That drift predates this lane and is
+  fixed by open PR #562; this lane added no migration and, per its instructions, did not regenerate
+  the file. The one row its own change moved (the trip chat's `message_thread_members` bypass) was
+  removed from the inventory by hand, so its section 4 matches the generator. Also exit 0:
+  check:silent-supabase-reads, check:silent-supabase-writes, check:not-null-writes,
+  check:telegraph-slos (3 client bypass sites).
+- **Client** (`travel-buddy-standalone`): `check:all` — node tests, typecheck, typecheck:tests and
+  every lint pass; the component suite ran 794 of 795 suites green (5,102 tests) and the 795th,
+  `PulseFeedCard.overflowOwner`, failed to START because another process cleared the shared jest
+  transform cache under it (`ENOENT … jest-transform-cache`); re-run alone it is 5/5, and the web
+  config, which the `&&` chain then skipped, is 4 suites / 12 tests green. `check-route-registry`
+  OK.
+- **Server suites**: telegraphInboxFailsLoud, messaging, telegraphLifecycle and
+  telegraphObservability 124/124; telegraphUnsend.db (on `lane_telegraph`), telegraphPropertyInvariants,
+  telegraphUnsendFunctionFake and telegraphLifecycle 98/98 together. Unit 1's importer sweep (45
+  suites, 893/893) is recorded in its commit.
+
+### 41.6 What would turn this red
+
+A screen that reads `last_read_at` from the client again (the slos ratchet and the wiring test);
+"seen" marked from a mount, a background state or a realtime event; a failed receipts read worded
+"Sent"; "Delivered" from anything but `message.delivered`; a banner that calls a 403 an outage or a
+run of 5xx "offline"; a control that navigates or flips before its call succeeded; an inbox read that
+lets PostgREST's row cap decide what is shown.
+
+### 41.7 Not done, and why
+
+- The legacy `POST /threads/:id/read` route is left mounted, because an older installed client may
+  still call it. It is message-anchored on the server since §23 (T70, C), so leaving it costs nothing
+  this section claims.
+- Durable Delivered (T73) needs a writer of `delivered_sequence` and 2810 on a database.
+- The trip/circle chat (`GroupChatScreen.tsx`) and the thread screen still cannot be mounted under
+  jest-expo; their wiring is held by source assertions, the hook's own tests and the ratchet.
+
+### 41.8 The headline, restated from the rows
+
+Five rows changed bucket: T71 `X → C`; T425, T327, T338 and T387 `N → W`. T73 and T295 were
+restated in place. Counted with `check:census-integrity`, not by arithmetic on §38.7:
+
+| bucket | count |
+| --- | --- |
+| BUILT-AND-CORRECT | **239** |
+| BUILT-BUT-WRONG | **177** |
+| NOT-BUILT | **33** |
+| CANNOT-VERIFY | **2** |
+
+451 rows. CONSTRUCTED (C + W) is 416 of 451 = 92.2 %; CORRECT is 239 of 451 = 53.0 %. Four of
+the five moves are to W and three of those wait only on migrations reaching production; the one
+move to C (T71) is a client rule with controlled evidence and no production observation.
