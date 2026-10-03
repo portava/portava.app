@@ -133,7 +133,7 @@ function makeClient(state: FakeState = {}, authUserId = ALICE_ID) {
     let _insertResult: any = null;
     let _inserted = false;
     let _deleted = false;
-    let _limit: number | null = null;
+    let _limit: number | null = null; let _range: [number, number] | null = null; // `.range()` modelled: the inbox pages its roster with it
 
     const b: any = {
       select()                     { return b; },
@@ -149,7 +149,7 @@ function makeClient(state: FakeState = {}, authUserId = ALICE_ID) {
         return b;
       },
       like()                       { return b; },
-      limit(n: number)             { _limit = n; return b; },
+      limit(n: number)             { _limit = n; return b; }, range(from: number, to: number) { _range = [from, to]; return b; },
       order()                      { return b; },
       insert(payload: any) {
         _inserted = true;
@@ -209,7 +209,7 @@ function makeClient(state: FakeState = {}, authUserId = ALICE_ID) {
         if (table === "blocks" && state.blocks_error) {
           return Promise.resolve({ data: null, error: state.blocks_error }).then(resolve, reject);
         }
-        const rows = (db[table] ?? []).filter((r) => filters.every((f) => f(r)));
+        const rows = ((all: any[]) => (_range !== null ? all.slice(_range[0], _range[1] + 1) : all))((db[table] ?? []).filter((r) => filters.every((f) => f(r))));
         const sliced = _limit !== null ? rows.slice(0, _limit) : rows;
         return Promise.resolve({ data: sliced, error: null }).then(resolve, reject);
       },

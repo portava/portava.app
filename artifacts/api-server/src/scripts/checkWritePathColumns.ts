@@ -281,7 +281,7 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   ["src/routes/telegraphKinds.ts|select|select list not statically resolvable", 1],
   ["src/routes/telegraphLifecycle.ts|select|select list not statically resolvable", 1],
   ["src/routes/telegraphMemory.ts|insert|payload not statically resolvable", 1],
-  ["src/routes/telegraphMemory.ts|select|select list not statically resolvable", 2],
+  ["src/routes/telegraphMemory.ts|select|select list not statically resolvable", 2], ["src/services/telegraph/inboxReads.ts|select|dynamic table name", 1], ["src/services/telegraph/inboxReads.ts|select|select list not statically resolvable", 3], // inboxReads (TELEGRAPH lane 2026-10-03): bounded/chunked/paged readers whose table+columns are their callers' literals in routes/messaging.ts ('thread_id, sender_id, created_at', 'user_id, thread_id', PROFILE_PUBLIC); one line so cited lines below hold
   // ── Creator ledger: the row MAPPERS (07 §2 / 09 §7.2) ────────────────────
   // `services/creators/CreatorAttributionService.ts` hands supabase a NAME at
   // two sites, because both payloads come from mappers in
