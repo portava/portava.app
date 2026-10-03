@@ -18,11 +18,11 @@
  * nothing here should be read as claiming otherwise.
  *
  * ══════════════════════════════════════════════════════════════════════════════
- * FOUR OF THE NINE ARE REFUSED, NOT ESTIMATED
+ * THREE OF THE NINE ARE REFUSED, NOT ESTIMATED
  * ══════════════════════════════════════════════════════════════════════════════
  * The temptation in a metrics module is to produce a plausible number for every
  * line of the spec, because a dashboard with a hole in it looks unfinished. That
- * is how a metric that measures nothing ends up being trusted. Four of §57's
+ * is how a metric that measures nothing ends up being trusted. Three of §57's
  * nine have NO PRODUCER in the taxonomy, and each is returned as an explicit
  * refusal naming what is missing rather than as a rate over an empty numerator:
  *
@@ -34,14 +34,15 @@
  *     exported emitter and no caller. The screens that complete a task —
  *     app/trip/new.tsx, app/events/create/index.tsx, app/telegraph/new.tsx —
  *     are the only places that can know, and none of them calls it.
- *   - offline completion (G373): nothing marks a serve as degraded. The hook
- *     sets `unavailable` state and emits no event for it.
  *   - privacy incident count (G371): this table is deliberately incapable of
  *     recording one. It stores no account id, so "an incident happened to
  *     someone" is not a fact it could hold. That metric is a production
  *     security/audit-log question and this module must not pretend otherwise.
  *
- * A rate of 0/0 reported as 0 would be a lie in all four cases, and a rate over
+ * (A fourth, offline completion (G373), was refused here until the ingest
+ * admitted the client's `degraded` flag; it is computed below.)
+ *
+ * A rate of 0/0 reported as 0 would be a lie in all three cases, and a rate over
  * an event that no code emits is the worst kind: it looks green forever.
  *
  * ══════════════════════════════════════════════════════════════════════════════
@@ -143,9 +144,6 @@ const BLOCKED_DOWNSTREAM =
   'downstream_task_completed has an exported emitter and no caller; only the screens ' +
   'that complete a task (app/trip/new.tsx, app/events/create/index.tsx, ' +
   'app/telegraph/new.tsx) can emit it (census G320/G370)';
-const BLOCKED_OFFLINE =
-  'nothing marks a serve as degraded — useInputAssistance sets `unavailable` state and ' +
-  'emits no event for it, so there is no offline denominator (census G373)';
 const BLOCKED_PRIVACY =
   'this table stores no account id by construction (migration 2950), so it cannot hold ' +
   'the fact that an incident happened to anyone; the answer lives in production ' +
@@ -298,11 +296,31 @@ export function computeInputSuccessMetrics(
     (r) => r.event_name === 'disambiguation_selected' && r.props.resolvedExisting === true,
   ).length;
 
+  // ── G373 offline completion rate ────────────────────────────────────────────
+  // Over episodes in which the field was served DEGRADED — the gateway was
+  // unavailable and the device's own tier answered (`degraded: true`, a literal
+  // bool; the ingest admits nothing else). Completed = a `suggestion_selected`
+  // AFTER the first degraded serve in the same episode: a pick made before the
+  // outage began did not complete anything offline. The population is what the
+  // log can see — an app run that ends offline sends nothing (census §33.4).
+  let degradedEpisodes = 0;
+  let completedDegraded = 0;
+  for (const ep of episodes) {
+    const firstDegraded = ep.events.findIndex(
+      (e) => e.event_name === 'suggestion_request_completed' && e.props.degraded === true,
+    );
+    if (firstDegraded < 0) continue;
+    degradedEpisodes += 1;
+    if (ep.events.slice(firstDegraded + 1).some((e) => e.event_name === 'suggestion_selected')) completedDegraded += 1;
+  }
+
   // ── G372 suggest latency ────────────────────────────────────────────────────
   const serverMs: number[] = [];
   const clientMs: number[] = [];
   for (const r of scoped) {
     if (r.event_name !== 'suggestion_request_completed') continue;
+    // A degraded serve never touched the network it would be timing (§33.3).
+    if (r.props.degraded === true) continue;
     const s = num(r.props.serverMs);
     const c = num(r.props.clientMs);
     if (s !== null) serverMs.push(s);
@@ -321,7 +339,7 @@ export function computeInputSuccessMetrics(
     privacyIncidents: { value: null, n: 0, blocked: BLOCKED_PRIVACY },
     suggestLatencyServerMs: latency(serverMs),
     suggestLatencyClientMs: latency(clientMs),
-    offlineCompletionRate: { value: null, n: 0, blocked: BLOCKED_OFFLINE },
+    offlineCompletionRate: rate(completedDegraded, degradedEpisodes),
     rowsRead: scoped.length,
   };
 }

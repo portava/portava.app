@@ -349,9 +349,14 @@ describe("§57 — the four metrics with no producer are REFUSED, not estimated"
     assert.match(m.downstreamTaskCompletionRate.blocked ?? "", /app\/trip\/new\.tsx/);
   });
 
-  it("G373 offline completion names why there is no denominator", () => {
+  it("G373 offline completion is NOT refused any more — with no degraded serve it is 0/0, null, and says nothing", () => {
+    // It was refused while the ingest dropped the `degraded` flag. The flag is
+    // now admitted (TELEMETRY_EVENT_PROPS) and read (below), so the honest
+    // answer over rows with no degraded serve is an EMPTY denominator, not a
+    // blocker and not a zero.
     assert.equal(m.offlineCompletionRate.value, null);
-    assert.match(m.offlineCompletionRate.blocked ?? "", /degraded/);
+    assert.equal(m.offlineCompletionRate.n, 0);
+    assert.equal(m.offlineCompletionRate.blocked, undefined);
   });
 
   it("G371 privacy incidents is refused BECAUSE the table stores no account id", () => {
@@ -367,12 +372,64 @@ describe("§57 — the four metrics with no producer are REFUSED, not estimated"
     for (const metric of [
       m.wrongSelectionReversalRate,
       m.downstreamTaskCompletionRate,
-      m.offlineCompletionRate,
       m.privacyIncidents,
     ]) {
       assert.equal(metric.value, null);
       assert.ok((metric.blocked ?? "").length > 40, "a blocker must say what is missing");
     }
+  });
+});
+
+describe("§57 G373 offline completion rate — over episodes that were served DEGRADED", () => {
+  // Episode A: a degraded serve (the device's own dictionary answered), then the
+  // person picked a row — completed offline. Episode B: degraded, nothing picked.
+  // Episode C: an ONLINE serve and a pick — not in this metric at all.
+  const rows = [
+    row(0, "input_opened", {}, { field_id: "a" }),
+    row(10, "suggestion_request_completed", { count: 4, degraded: true }, { field_id: "a" }),
+    row(20, "suggestion_selected", { suggestionType: "recent", source: "local" }, { field_id: "a" }),
+    row(0, "input_opened", {}, { field_id: "b" }),
+    row(10, "suggestion_request_completed", { count: 0, degraded: true }, { field_id: "b" }),
+    row(0, "input_opened", {}, { field_id: "c" }),
+    row(10, "suggestion_request_completed", { count: 3, serverMs: 40, clientMs: 90 }, { field_id: "c" }),
+    row(20, "suggestion_selected", { suggestionType: "entity" }, { field_id: "c" }),
+  ];
+  const m = computeInputSuccessMetrics(rows);
+
+  it("is completed-degraded episodes over degraded episodes — 1 of 2", () => {
+    // MUTATION: counting every episode with a selection as the numerator makes
+    // it 2/2; counting every episode as the denominator makes it 1/3.
+    assert.deepEqual(m.offlineCompletionRate, { value: 0.5, n: 2 });
+  });
+
+  it("a selection made BEFORE the degraded serve does not count as completing it", () => {
+    const early = computeInputSuccessMetrics([
+      row(0, "input_opened"),
+      row(5, "suggestion_selected", { suggestionType: "entity" }),
+      row(10, "suggestion_request_completed", { count: 2, degraded: true }),
+    ]);
+    assert.deepEqual(early.offlineCompletionRate, { value: 0, n: 1 });
+  });
+
+  it("only a literal `true` marks a serve degraded", () => {
+    const loose = computeInputSuccessMetrics([
+      row(0, "input_opened"),
+      row(10, "suggestion_request_completed", { count: 2, degraded: "true" }),
+      row(20, "suggestion_selected", { suggestionType: "entity" }),
+    ]);
+    assert.deepEqual(loose.offlineCompletionRate, { value: null, n: 0 });
+  });
+
+  it("a degraded row never enters G372's latency, even if one carries a round trip", () => {
+    // §33.3: a degraded round trip in the P95 drags it toward failures that
+    // never touched a network. The client sends none; the reader refuses one anyway.
+    const lat = computeInputSuccessMetrics([
+      row(0, "suggestion_request_completed", { count: 1, degraded: true, serverMs: 9000, clientMs: 9000 }),
+      row(10, "suggestion_request_completed", { count: 1, serverMs: 40, clientMs: 90 }),
+    ]);
+    assert.equal(lat.suggestLatencyClientMs.n, 1);
+    assert.equal(lat.suggestLatencyClientMs.p95, 90);
+    assert.equal(lat.suggestLatencyServerMs.p95, 40);
   });
 });
 
