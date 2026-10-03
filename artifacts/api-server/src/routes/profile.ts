@@ -15,7 +15,7 @@ import { invalidateCompassHomeCache } from "./compassHome";
 import { sniffMedia, processImage, type ProcessedImage, type SniffResult } from "../lib/mediaProcessing";
 import { appMediaRef } from "../lib/postSchemas";
 import { computeTrustScore } from "../lib/trustScore.js";
-import { countContentStampsReceived } from "../services/stamps/ContentStampService.js";
+import { measureStampsEarned } from "../services/stamps/ContentStampService.js";
 import { countUserTrips } from "../domain/trips/services/tripCounts.js";
 import { validateUsername, suggestUsernameAlternatives } from "../lib/usernameRules.js";
 
@@ -408,19 +408,18 @@ router.get("/me/profile", async (req, res) => {
   }
 
   // Completeness + trust + stamp count: parallel queries, still fail-open, but read out below through settledCount (foot of this file) — which BINDS the `error` an allSettled `fulfilled` hides, so a failed count is no longer a silent zero.
-  const [stampRes, tripRes, followersRes, followingRes, trustRes, stampsEarnedRes, contentStampsReceivedRes, ageSignalRes] = await Promise.allSettled([
+  const [stampRes, tripRes, followersRes, followingRes, trustRes, stampsEarnedRes, ageSignalRes] = await Promise.allSettled([
     sc ? sc.from("passport_stamps").select("user_id", { count: "exact", head: true }).eq("user_id", user.id).limit(1) : Promise.resolve({ count: 0 }),
     sc ? countUserTrips(sc, user.id) : Promise.resolve({ count: 0 }),
     sc ? sc.from("user_follows").select("follower_id", { count: "exact", head: true }).eq("following_id", user.id) : Promise.resolve({ count: 0 }),
     sc ? sc.from("user_follows").select("follower_id", { count: "exact", head: true }).eq("follower_id", user.id) : Promise.resolve({ count: 0 }),
     sc ? computeTrustScore(user.id, sc, data as Record<string, any>) : Promise.resolve(null),
-    // Lifetime passport milestone stamps (all entity types, excluding revoked). Fails silently if
-    // user_stamps table is absent (schema-drift safe).
-    sc ? sc.from("user_stamps").select("id", { count: "exact", head: true }).eq("user_id", user.id).eq("is_revoked", false) : Promise.resolve({ count: 0 }),
-    // Content stamps received: stamps placed by others on this user's posts.
-    // Uses the paginated/RPC counter so lifetime totals are exact for
-    // high-post-count users rather than capped by a single-page query.
-    sc ? countContentStampsReceived(sc, user.id) : Promise.resolve(0),
+    // Stamps Earned: lifetime non-revoked user_stamps + content stamps others
+    // placed on this user's posts, keyset-paged so it is exact for
+    // high-post-count users. NOT routed through settledCount: this one is shown
+    // to the person as a number, so an unreadable half is `stampsEarned: null`
+    // plus `stampsEarnedUnavailable: true`, not a silent 0 added into a total.
+    measureStampsEarned(sc, user.id),
     // THROUGH THE SEAM (lib/gateAge.ts), and inside the batch that was already
     // being awaited — so `ageGateRequired` costs one more read and not one more
     // round trip. The `profiles` row is already in hand as `data`, which is why
@@ -436,9 +435,10 @@ router.get("/me/profile", async (req, res) => {
   const trustResult  = trustRes.status === "fulfilled" ? trustRes.value : null;
   // STAMPS reflects both passport milestones and content reactions (Roam/Watch
   // stamps placed by others on this user's posts/media) — counted exactly once
-  // via the paginated countContentStampsReceived above.
-  const contentStampsReceived = contentStampsReceivedRes.status === "fulfilled" ? contentStampsReceivedRes.value : 0;
-  const stampsEarned = settledCount(stampsEarnedRes, "user_stamps", req.log) + contentStampsReceived;
+  // by measureStampsEarned above, which never rejects.
+  const stampsEarned = stampsEarnedRes.status === "fulfilled"
+    ? stampsEarnedRes.value
+    : { count: null, unavailable: true as const, reason: "rejected" };
 
   const completeness = computeCompleteness(data, hasStamp, hasTrip);
 
@@ -471,7 +471,8 @@ router.get("/me/profile", async (req, res) => {
     trustScore: trustResult?.score ?? null,
     trustLabel: trustResult?.label ?? null,
     trustScoreBreakdown: trustResult?.breakdown ?? null,
-    stampsEarned,
+    stampsEarned: stampsEarned.count,
+    ...(stampsEarned.unavailable ? { stampsEarnedUnavailable: true } : {}),
   });
 });
 

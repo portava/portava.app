@@ -32,10 +32,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import express, { type Express } from "express";
 import { _setTestClient } from "../lib/http.js";
-import {
-  countStampsReceived,
-  countContentStampsReceived,
-} from "../services/stamps/ContentStampService.js";
+import { measureContentStampsReceived } from "../services/stamps/ContentStampService.js";
 
 // ── Fixed test IDs ─────────────────────────────────────────────────────────────
 
@@ -128,9 +125,25 @@ function makeDB(overrides: Partial<FakeDB> = {}): FakeDB {
  * the paged-fallback path in countContentStampsReceived — the path that runs in
  * prod before the count_content_stamps_received migration is applied.
  */
-function makeFakeClient(db: FakeDB, userId: string = AUTHOR_ID) {
+interface FakeOpts {
+  /**
+   * PostgREST's `max-rows`: a non-head read returns at most this many rows and
+   * says nothing about the rest. Undefined = uncapped.
+   */
+  maxRows?: number;
+  /** Make one read RESOLVE an error, the way supabase-js does (never a throw). */
+  failOn?: (table: string, desc: string[]) => { message: string; code?: string } | null;
+  /** RPC answer; default is PGRST202 (function not in the schema cache). */
+  rpc?: (name: string, args: any) => { data: any; error: any };
+}
+
+function makeFakeClient(db: FakeDB, userId: string = AUTHOR_ID, opts: FakeOpts = {}) {
   function buildChain(table: string) {
     const _filters: Array<(r: any) => boolean> = [];
+    const _desc: string[] = [];
+    let _order: string | null = null;
+    let _limit: number | null = null;
+    let _range: [number, number] | null = null;
     let _count       = false;
     let _head        = false;
     let _single      = false;
@@ -165,9 +178,10 @@ function makeFakeClient(db: FakeDB, userId: string = AUTHOR_ID) {
         return chain;
       },
       delete()           { _isDelete = true; return chain; },
-      eq(col: string, val: any) { _filters.push((r) => r[col] === val); return chain; },
+      eq(col: string, val: any) { _desc.push(`eq:${col}`); _filters.push((r) => r[col] === val); return chain; },
       neq(col: string, val: any) { _filters.push((r) => r[col] !== val); return chain; },
       in(col: string, vals: any[]) {
+        _desc.push(`in:${col}`);
         _filters.push((r) => vals.includes(r[col]));
         return chain;
       },
@@ -178,11 +192,11 @@ function makeFakeClient(db: FakeDB, userId: string = AUTHOR_ID) {
       or()     { return chain; },
       gte()    { return chain; },
       lte()    { return chain; },
-      gt()     { return chain; },
+      gt(col: string, val: any) { _desc.push(`gt:${col}`); _filters.push((r) => String(r[col]) > String(val)); return chain; },
       ilike()  { return chain; },
-      order()  { return chain; },
-      range()  { return chain; },
-      limit()  { return chain; },
+      order(col: string) { _order = col; return chain; },
+      range(a: number, b: number) { _desc.push("range"); _range = [a, b]; return chain; },
+      limit(n: number) { _limit = n; return chain; },
       single()      { _single      = true; return chain; },
       maybeSingle() { _maybeSingle = true; return chain; },
       head()        { _head        = true; return chain; },
@@ -205,8 +219,20 @@ function makeFakeClient(db: FakeDB, userId: string = AUTHOR_ID) {
               return resolve({ data: _insert, error: null });
             }
 
+            const injected = opts.failOn?.(table, _desc) ?? null;
+            if (injected) return resolve({ data: null, error: injected, count: null });
+
             let results = applyFilters(arr).map((r) => ({ ...r }));
             const cnt   = results.length;
+            // Row order is insertion order unless asked; PostgREST promises
+            // none, which is exactly why an unordered offset walk is unsafe.
+            if (_order) {
+              const k = _order;
+              results.sort((a, b) => (String(a[k]) < String(b[k]) ? -1 : String(a[k]) > String(b[k]) ? 1 : 0));
+            }
+            if (_range) results = results.slice(_range[0], _range[1] + 1);
+            if (_limit != null) results = results.slice(0, _limit);
+            if (opts.maxRows != null && !_head) results = results.slice(0, opts.maxRows);
 
             if (_head)        return resolve({ data: null, error: null, count: cnt });
             if (_single)      return resolve({ data: results[0] ?? null, error: null, count: _count ? cnt : undefined });
@@ -231,10 +257,10 @@ function makeFakeClient(db: FakeDB, userId: string = AUTHOR_ID) {
     from: (table: string) => buildChain(table),
     // Always report PGRST202 so countContentStampsReceived always uses the
     // paged-fallback path rather than the RPC shortcut.
-    rpc: async (_name: string) => ({
-      data:  null,
-      error: { code: "PGRST202", message: "function not found" },
-    }),
+    rpc: async (name: string, args: any) =>
+      opts.rpc
+        ? opts.rpc(name, args)
+        : { data: null, error: { code: "PGRST202", message: "function not found" } },
   };
 }
 
@@ -266,83 +292,39 @@ function makeApp(router: any): Express {
   return app;
 }
 
-// ── A. countStampsReceived — direct service call ───────────────────────────────
+// ── A. measureContentStampsReceived — RPC path ─────────────────────────────────
 
-describe("A. countStampsReceived — direct service call", () => {
-  // A1. Author has a post with stamps → correct count returned
-
-  describe("A1. author's post has stamps — returns the stamp count", () => {
-    let result: number;
-
-    before(async () => {
-      const db = makeDB();
-      const sc = makeFakeClient(db) as any;
-      result = await countStampsReceived(sc, AUTHOR_ID);
-    });
-
-    it("returns 1 (matching the single content_stamp row)", () => {
-      assert.equal(result, 1);
-    });
+describe("A. measureContentStampsReceived — the RPC answers", () => {
+  it("A1. returns the RPC's number as a measurement", async () => {
+    const sc = makeFakeClient(makeDB(), AUTHOR_ID, {
+      rpc: (name, args) => {
+        assert.equal(name, "count_content_stamps_received");
+        assert.equal(args.p_user_id, AUTHOR_ID);
+        return { data: 7, error: null };
+      },
+    }) as any;
+    assert.deepEqual(await measureContentStampsReceived(sc, AUTHOR_ID), { count: 7, unavailable: false });
   });
 
-  // A2. Author has no posts → returns 0, not NaN or an error
-
-  describe("A2. author has no posts — returns 0, not NaN or an error", () => {
-    let result: number;
-
-    before(async () => {
-      const db = makeDB({ posts: [], content_stamps: [] });
-      const sc = makeFakeClient(db) as any;
-      result = await countStampsReceived(sc, AUTHOR_ID);
-    });
-
-    it("returns exactly 0", () => {
-      assert.equal(result, 0);
-    });
-
-    it("is a finite number (not NaN)", () => {
-      assert.ok(Number.isFinite(result), `Expected finite number, got ${result}`);
-    });
+  it("A2. a bigint arriving as a string is still a number", async () => {
+    const sc = makeFakeClient(makeDB(), AUTHOR_ID, { rpc: () => ({ data: "12", error: null }) }) as any;
+    assert.deepEqual(await measureContentStampsReceived(sc, AUTHOR_ID), { count: 12, unavailable: false });
   });
 });
 
-// ── B. countContentStampsReceived — paged-fallback path ───────────────────────
+// ── B. measureContentStampsReceived — paged-fallback path ─────────────────────
 
-describe("B. countContentStampsReceived — paged-fallback path (RPC returns PGRST202)", () => {
-  // B1. Author has a post with stamps → fallback counts it correctly
-
-  describe("B1. author's post has stamps — fallback path returns the count", () => {
-    let result: number;
-
-    before(async () => {
-      const db = makeDB();
-      const sc = makeFakeClient(db) as any;
-      result = await countContentStampsReceived(sc, AUTHOR_ID);
-    });
-
-    it("returns 1 via the paged fallback (same as the RPC would)", () => {
-      assert.equal(result, 1);
-    });
+describe("B. measureContentStampsReceived — paged-fallback path (RPC returns PGRST202)", () => {
+  it("B1. author's post has stamps — fallback path returns the count", async () => {
+    const sc = makeFakeClient(makeDB()) as any;
+    assert.deepEqual(await measureContentStampsReceived(sc, AUTHOR_ID), { count: 1, unavailable: false });
   });
 
-  // B2. Author has no posts → fallback returns 0, not NaN
-
-  describe("B2. zero-posts user — fallback returns 0, not NaN", () => {
-    let result: number;
-
-    before(async () => {
-      const db = makeDB({ posts: [], content_stamps: [] });
-      const sc = makeFakeClient(db) as any;
-      result = await countContentStampsReceived(sc, AUTHOR_ID);
-    });
-
-    it("returns exactly 0", () => {
-      assert.equal(result, 0);
-    });
-
-    it("is a finite number (not NaN)", () => {
-      assert.ok(Number.isFinite(result), `Expected finite number, got ${result}`);
-    });
+  it("B2. zero-posts user — fallback returns a MEASURED 0, not NaN", async () => {
+    const sc = makeFakeClient(makeDB({ posts: [], content_stamps: [] })) as any;
+    const r = await measureContentStampsReceived(sc, AUTHOR_ID);
+    assert.deepEqual(r, { count: 0, unavailable: false });
+    assert.ok(Number.isFinite(r.count));
   });
 });
 
@@ -497,4 +479,204 @@ describe("D. GET /me/passport/stats — stampsEarned includes content stamps", a
       );
     });
   });
+});
+
+// ── E. A failed or cut read is never a measured count (passport lane, 2026-10-03) ──
+//
+// `count_content_stamps_received` is NOT in the canonical chain and NOT on the
+// hosted testing database (read-only pg_proc SELECT, 2026-10-03), so the
+// fallback below is the path every "Stamps Earned" number takes there. It used
+// to walk `posts` by unordered OFFSET, treat a failed page as the end of the
+// data, skip a failed chunk count, stop at the first page shorter than ITS OWN
+// page size (a lower server max-rows cut it at page one), and answer 0 for any
+// throw. Each of those put a partial or zero count on the wire as a measurement.
+
+/** `n` posts by AUTHOR_ID, each stamped once by STAMPER_ID. */
+function manyPosts(n: number): Partial<FakeDB> {
+  const posts: any[] = [];
+  const content_stamps: any[] = [];
+  for (let i = 0; i < n; i++) {
+    const id = `cc000000-0000-4000-8000-${String(i).padStart(12, "0")}`;
+    posts.push({ id, author_id: AUTHOR_ID, visibility: "public", status: "active" });
+    content_stamps.push({ id: `st-${i}`, user_id: STAMPER_ID, entity_type: "post", entity_id: id });
+  }
+  return { posts, content_stamps };
+}
+
+describe("E. measureContentStampsReceived — failures and cuts are not counts", () => {
+  it("E1. 2,500 posts under a 1,000-row server cap are counted exactly", async () => {
+    const sc = makeFakeClient(makeDB(manyPosts(2500)), AUTHOR_ID, { maxRows: 1000 }) as any;
+    assert.deepEqual(await measureContentStampsReceived(sc, AUTHOR_ID), { count: 2500, unavailable: false });
+  });
+
+  it("E2. a server cap BELOW the walk's page size does not end the walk at page one", async () => {
+    const sc = makeFakeClient(makeDB(manyPosts(2500)), AUTHOR_ID, { maxRows: 300 }) as any;
+    assert.deepEqual(await measureContentStampsReceived(sc, AUTHOR_ID), { count: 2500, unavailable: false });
+  });
+
+  it("E3. a posts page failing mid-walk is unavailable, not the pages read so far", async () => {
+    let postsReads = 0;
+    const sc = makeFakeClient(makeDB(manyPosts(2500)), AUTHOR_ID, {
+      maxRows: 1000,
+      failOn: (t) => (t === "posts" && ++postsReads === 2 ? { message: "statement timeout", code: "57014" } : null),
+    }) as any;
+    const r = await measureContentStampsReceived(sc, AUTHOR_ID);
+    assert.equal(r.unavailable, true);
+    assert.equal(r.count, null);
+  });
+
+  it("E4. the first posts read failing is unavailable, not 0", async () => {
+    const sc = makeFakeClient(makeDB(), AUTHOR_ID, {
+      failOn: (t) => (t === "posts" ? { message: "connection reset" } : null),
+    }) as any;
+    const r = await measureContentStampsReceived(sc, AUTHOR_ID);
+    assert.equal(r.unavailable, true);
+    assert.equal(r.count, null);
+  });
+
+  it("E5. a content_stamps count failing is unavailable, not skipped", async () => {
+    const sc = makeFakeClient(makeDB(), AUTHOR_ID, {
+      failOn: (t) => (t === "content_stamps" ? { message: "connection reset" } : null),
+    }) as any;
+    const r = await measureContentStampsReceived(sc, AUTHOR_ID);
+    assert.equal(r.unavailable, true);
+    assert.equal(r.count, null);
+  });
+
+  it("E6. an RPC outage that the exact fallback survives is still a measurement", async () => {
+    const sc = makeFakeClient(makeDB(manyPosts(40)), AUTHOR_ID, {
+      rpc: () => ({ data: null, error: { code: "57014", message: "statement timeout" } }),
+    }) as any;
+    assert.deepEqual(await measureContentStampsReceived(sc, AUTHOR_ID), { count: 40, unavailable: false });
+  });
+
+  it("E7. an RPC outage AND a fallback outage is unavailable", async () => {
+    const sc = makeFakeClient(makeDB(), AUTHOR_ID, {
+      rpc: () => ({ data: null, error: { code: "57014", message: "statement timeout" } }),
+      failOn: (t) => (t === "posts" ? { message: "connection reset" } : null),
+    }) as any;
+    assert.equal((await measureContentStampsReceived(sc, AUTHOR_ID)).unavailable, true);
+  });
+});
+
+// ── F. The three routes that show "Stamps Earned" say when they could not count ──
+
+describe("F. stampsEarned on the wire — null plus stampsEarnedUnavailable, never a guessed number", async () => {
+  let passportSrv: { url: string; close: () => Promise<void> };
+  let statsSrv: { url: string; close: () => Promise<void> };
+
+  before(async () => {
+    const { default: passportRouter } = await import("../routes/passport.js");
+    const { default: passportStampsRouter } = await import("../routes/passportStamps.js");
+    passportSrv = await startServer(makeApp(passportRouter));
+    statsSrv = await startServer(makeApp(passportStampsRouter));
+  });
+  after(async () => { await passportSrv.close(); await statsSrv.close(); });
+
+  const contentDown = (t: string) => (t === "content_stamps" ? { message: "connection reset" } : null);
+  const milestonesDown = (t: string, d: string[]) =>
+    t === "user_stamps" && d.includes("eq:is_revoked") ? { message: "connection reset" } : null;
+
+  async function publicPassport(db: FakeDB, opts: FakeOpts) {
+    _setTestClient(makeFakeClient(db, AUTHOR_ID, opts) as any, true);
+    const res = await fetch(`${passportSrv.url}/api/users/${AUTHOR_HANDLE}/passport`);
+    return { status: res.status, body: await res.json() as any };
+  }
+  async function myStats(db: FakeDB, opts: FakeOpts) {
+    _setTestClient(makeFakeClient(db, AUTHOR_ID, opts) as any, true);
+    const res = await fetch(`${statsSrv.url}/api/me/passport/stats`, {
+      headers: { Authorization: `Bearer token-${AUTHOR_ID}` },
+    });
+    return { status: res.status, body: await res.json() as any };
+  }
+
+  for (const [name, failOn] of [["content stamps", contentDown], ["milestone stamps", milestonesDown]] as const) {
+    it(`F1. public passport: ${name} unreadable → 200, stampsEarned null, flagged`, async () => {
+      const { status, body } = await publicPassport(makeDB(), { failOn });
+      assert.equal(status, 200, JSON.stringify(body));
+      assert.equal(body.stampsEarned, null);
+      assert.equal(body.stampsEarnedUnavailable, true);
+    });
+
+    it(`F2. /me/passport/stats: ${name} unreadable → 200, stampsEarned null, flagged`, async () => {
+      const { status, body } = await myStats(makeDB(), { failOn });
+      assert.equal(status, 200, JSON.stringify(body));
+      assert.equal(body.stampsEarned, null);
+      assert.equal(body.stampsEarnedUnavailable, true);
+    });
+  }
+
+  it("F3. public passport: 1,500 stamped posts under a 1,000-row cap count 1,500, not 1,000", async () => {
+    const { status, body } = await publicPassport(makeDB(manyPosts(1500)), { maxRows: 1000 });
+    assert.equal(status, 200);
+    assert.equal(body.stampsEarned, 1500);
+    assert.equal(body.stampsEarnedUnavailable, undefined);
+  });
+
+  it("F4. healthy reads carry no flag on either route", async () => {
+    const a = await publicPassport(makeDB(), {});
+    const b = await myStats(makeDB(), {});
+    assert.equal(a.body.stampsEarned, 1);
+    assert.equal(b.body.stampsEarned, 1);
+    assert.equal(a.body.stampsEarnedUnavailable, undefined);
+    assert.equal(b.body.stampsEarnedUnavailable, undefined);
+  });
+});
+
+// ── G. GET /me/profile — the third surface that carries Stamps Earned ─────────
+
+describe("G. GET /me/profile — stampsEarned is a measurement or null + flag", async () => {
+  const { makeFailClosedClient } = await import("./helpers/failClosedSupabase.js");
+  const { _setTestServiceClient } = await import("../lib/supabase.js");
+  let srv: { url: string; close: () => Promise<void> };
+  before(async () => {
+    const { default: profileRouter } = await import("../routes/profile.js");
+    srv = await startServer(makeApp(profileRouter));
+  });
+  after(async () => {
+    await srv.close();
+    _setTestServiceClient(null);
+  });
+
+  const TOKEN = "tok-stamps-earned";
+  function install(failOn?: (table: string) => any) {
+    const client = makeFailClosedClient({
+      users: { [TOKEN]: AUTHOR_ID },
+      rows: {
+        profiles: [{ id: AUTHOR_ID, account_status: "active", username: "a", handle: "a", name: "A" }],
+        posts: [{ id: POST_ID, author_id: AUTHOR_ID }],
+        content_stamps: [{ id: "s1", user_id: STAMPER_ID, entity_type: "post", entity_id: POST_ID }],
+        user_stamps: [
+          { id: "u1", user_id: AUTHOR_ID, is_revoked: false },
+          { id: "u2", user_id: AUTHOR_ID, is_revoked: true },
+        ],
+      },
+      rpc: { count_content_stamps_received: () => ({ data: null, error: { code: "PGRST202", message: "not found" } }) },
+      failOn: (ctx) => failOn?.(ctx.table) ?? null,
+    });
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+  }
+  async function get() {
+    const res = await fetch(`${srv.url}/api/me/profile`, { headers: { authorization: `Bearer ${TOKEN}` } });
+    return { status: res.status, body: await res.json() as any };
+  }
+
+  it("G1. healthy: one owned (non-revoked) + one received = 2, no flag", async () => {
+    install();
+    const { status, body } = await get();
+    assert.equal(status, 200, JSON.stringify(body));
+    assert.equal(body.stampsEarned, 2);
+    assert.equal(body.stampsEarnedUnavailable, undefined);
+  });
+
+  for (const table of ["content_stamps", "user_stamps", "posts"]) {
+    it(`G2. ${table} unreadable: still 200, stampsEarned null + flag (not a partial sum)`, async () => {
+      install((t) => (t === table ? { message: "connection reset", code: "08006" } : null));
+      const { status, body } = await get();
+      assert.equal(status, 200, "GET /me/profile is the app's primary read");
+      assert.equal(body.stampsEarned, null);
+      assert.equal(body.stampsEarnedUnavailable, true);
+    });
+  }
 });

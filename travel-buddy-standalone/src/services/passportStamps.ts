@@ -142,8 +142,13 @@ export interface PassportStats {
   tripCount: number;
   followersCount: number;
   followingCount: number;
-  /** Lifetime stamps earned across all entity types (user_stamps, non-revoked). */
-  stampsEarned: number;
+  /**
+   * Lifetime stamps earned: non-revoked user_stamps + content stamps received.
+   * `null` with `stampsEarnedUnavailable: true` when the server could not count
+   * it — show that as unknown, never as 0.
+   */
+  stampsEarned: number | null;
+  stampsEarnedUnavailable?: true;
   /** Milestone history — 100 / 1,000 / 10,000. Empty when none crossed yet. */
   milestones: PassportMilestone[];
 }

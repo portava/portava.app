@@ -14,7 +14,7 @@ import {
   toFullProfileView,
 } from "../lib/privacy/profileSerializers.js";
 import { computeTrustScore } from "../lib/trustScore.js";
-import { countStampsReceived } from "../services/stamps/ContentStampService.js";
+import { measureStampsEarned, type ReceivedCount } from "../services/stamps/ContentStampService.js";
 import { countUserTrips } from "../domain/trips/services/tripCounts.js";
 import {
   buildPassportProjection,
@@ -369,9 +369,7 @@ router.get("/users/:username/passport", async (req, res) => {
   let trustScore: number | null = null;
   let trustLabel: string | null = null;
   let trustScoreBreakdown: import("../lib/trustScore.js").TrustScoreBreakdown | null = null;
-  let stampsEarned = 0;
-  let milestoneStampsEarned = 0;
-  let contentStampsReceivedForTarget = 0;
+  let stampsEarned: ReceivedCount = { count: null, unavailable: true, reason: "not_read" };
 
   await Promise.allSettled([
     (async () => {
@@ -394,31 +392,15 @@ router.get("/users/:username/passport", async (req, res) => {
       }
     })(),
     (async () => {
-      try {
-        // Lifetime total across all entity types, excluding revoked stamps.
-        // Fails silently: stamps_earned defaults to 0 if user_stamps table is
-        // absent or the query errors (schema-drift safe).
-        const { count } = await sc
-          .from("user_stamps")
-          .select("id", { count: "exact", head: true })
-          .eq("user_id", targetId)
-          .eq("is_revoked", false);
-        milestoneStampsEarned = count ?? 0;
-      } catch {
-        /* non-critical */
-      }
-    })(),
-    (async () => {
-      try {
-        // Stamps received on this user's own posts/media (Roam/Watch stamp
-        // reactions from others), so STAMPS reflects content reactions too.
-        contentStampsReceivedForTarget = await countStampsReceived(sc, targetId);
-      } catch {
-        /* non-critical */
-      }
+      // Lifetime non-revoked user_stamps + content stamps received on this
+      // user's posts/media. Either half unreadable is `stampsEarned: null` with
+      // `stampsEarnedUnavailable: true` — it used to be a silent 0 for a failed
+      // half, and the received half read `posts` unbounded, so PostgREST's
+      // 1,000-row cut undercounted anyone with more posts (passport lane,
+      // 2026-10-03). measureStampsEarned never rejects.
+      stampsEarned = await measureStampsEarned(sc, targetId);
     })(),
   ]);
-  stampsEarned = milestoneStampsEarned + contentStampsReceivedForTarget;
 
   res.status(200).json({
     ...profilePayload,
@@ -427,7 +409,8 @@ router.get("/users/:username/passport", async (req, res) => {
     trustScore,
     trustLabel,
     trustScoreBreakdown,
-    stampsEarned,
+    stampsEarned: stampsEarned.count,
+    ...(stampsEarned.unavailable ? { stampsEarnedUnavailable: true } : {}),
   });
 });
 

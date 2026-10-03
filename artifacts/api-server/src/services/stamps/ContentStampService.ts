@@ -125,36 +125,6 @@ export async function unstampEntity(
 }
 
 /**
- * Count content_stamps received on a user's own posts/media (i.e. stamps
- * *given by other people* on this user's content) — this is the "Stamps
- * Earned" signal for the Passport/profile STAMPS stat, separate from
- * passport_stamps/user_stamps (milestone awards like "first trip", "Bohol").
- *
- * Bug fix (2026-07-28): profile/passport "Stamps Earned" previously only
- * counted passport_stamps milestone rows, so stamping someone's Watch post
- * never moved their STAMPS counter. This closes that gap.
- */
-export async function countStampsReceived(
-  db: SupabaseClient,
-  userId: string,
-): Promise<number> {
-  const { data: myPosts, error: postsErr } = await db
-    .from("posts")
-    .select("id")
-    .eq("author_id", userId);
-  if (postsErr || !myPosts || myPosts.length === 0) return 0;
-
-  const postIds = myPosts.map((p: any) => p.id);
-  const { count, error } = await db
-    .from("content_stamps")
-    .select("id", { count: "exact", head: true })
-    .in("entity_type", ["post", "media"])
-    .in("entity_id", postIds);
-  if (error) return 0;
-  return count ?? 0;
-}
-
-/**
  * Fetch current stamp count + viewer state for a single entity.
  */
 export async function getStampState(
@@ -187,86 +157,118 @@ export async function getStampState(
 }
 
 /**
- * Count content stamps *received* by a user — i.e. stamps placed by anyone on
- * posts authored by that user. Used to compute the "Stamps Earned" profile stat
- * that reflects appreciation from peers, not just passport milestone awards.
- *
- * Primary path: delegates to the `count_content_stamps_received` Postgres RPC
- * which does the join server-side in a single query, giving an exact lifetime
- * total regardless of how many posts the user has.
- *
- * Fallback (schema-drift safe): if the RPC does not exist yet (PGRST202), the
- * function falls back to a paged traversal (1 000 IDs per page) so the result
- * is still an exact total rather than the old 500-row cap.
- *
- * Fails open: returns 0 on any DB error so callers never surface a 500 because
- * the content-stamp count couldn't be fetched.
+ * A "Stamps Earned" component: a MEASURED count, or an explicit statement that
+ * there is none. `count` is null exactly when `unavailable` is true, so a caller
+ * cannot add a placeholder into a total without first deciding what to do with
+ * the failure.
  */
-export async function countContentStampsReceived(
+export type ReceivedCount =
+  | { count: number; unavailable: false }
+  | { count: null; unavailable: true; reason: string };
+
+/** Ids per `content_stamps … in (entity_id)` count — keeps the request URL small. */
+const RECEIVED_ID_CHUNK = 150;
+/** Posts per keyset page. The walk ends on an EMPTY page, never a short one. */
+const RECEIVED_POST_PAGE = 1000;
+
+/**
+ * Count content stamps *received* by a user — i.e. stamps placed by anyone on
+ * posts authored by that user. Used to compute the "Stamps Earned" stat on the
+ * public passport, `/me/passport/stats` and `/me/profile`, alongside the
+ * caller's own non-revoked `user_stamps`.
+ *
+ * Primary path: the `count_content_stamps_received` RPC — one server-side join.
+ * It is in the FROZEN root folder (`supabase/migrations/20260811_…`) and not in
+ * the canonical chain, and the hosted testing database does not have it
+ * (read-only pg_proc SELECT, 2026-10-03), so the fallback is the live path there.
+ *
+ * Fallback: a keyset walk over the author's posts (ordered by id, `gt` the last
+ * id seen) that ends only on an EMPTY page — a server `max-rows` lower than the
+ * page size cannot end it early — with each page's ids counted in chunks.
+ *
+ * Every read's `error` is bound. ANY failed read makes the whole result
+ * `unavailable`: a total over the pages that happened to load is not a count.
+ * This used to walk by unordered OFFSET, break on a failed page, skip a failed
+ * chunk, stop at the first short page, and answer 0 for a throw — and the
+ * public passport used a second copy that read `posts` unbounded (PostgREST
+ * cuts it at 1,000) and mapped every error to 0.
+ */
+export async function measureContentStampsReceived(
   db: SupabaseClient,
   userId: string,
-): Promise<number> {
-  try {
-    // --- Primary path: single server-side join via RPC ---
-    const { data, error: rpcErr } = await db.rpc(
-      "count_content_stamps_received",
-      { p_user_id: userId },
-    );
-
-    // PGRST202 = function not found (migration not yet applied).
-    // Any other error is also handled by falling through to the paged loop so
-    // we never surface a 500 to callers.
-    if (!rpcErr) {
-      return typeof data === "number" ? data : Number(data ?? 0);
-    }
-
-    // If the error is NOT "function not found" we log and fall through anyway —
-    // the paged loop is an exact fallback, not a degraded one. (This comment
-    // used to promise a log that didn't exist; the RPC error vanished silently.)
-    if (rpcErr.code !== "PGRST202") {
-      logger.warn({ err: rpcErr, userId }, "countContentStampsReceived: RPC failed — using paged fallback");
-    }
-  } catch (err) {
-    // Unexpected throw — fall through to the paged loop.
-    logger.warn({ err, userId }, "countContentStampsReceived: unexpected throw — using paged fallback");
+): Promise<ReceivedCount> {
+  const { data, error: rpcErr } = await db.rpc("count_content_stamps_received", { p_user_id: userId });
+  if (!rpcErr) {
+    const n = typeof data === "number" ? data : typeof data === "string" ? Number(data) : NaN;
+    if (Number.isFinite(n)) return { count: n, unavailable: false };
+    logger.warn({ userId, data }, "measureContentStampsReceived: RPC returned a non-number — using paged fallback");
+  } else if ((rpcErr as any).code !== "PGRST202") {
+    logger.warn({ err: rpcErr, userId }, "measureContentStampsReceived: RPC failed — using paged fallback");
   }
 
-  // --- Fallback path: paged traversal (schema-drift safe) ---
-  const PAGE_SIZE = 1000;
-  let totalCount = 0;
-  let offset = 0;
+  const unavailable = (reason: string, err: unknown): ReceivedCount => {
+    logger.warn({ err, userId, reason }, "content stamps received UNREADABLE — Stamps Earned is unavailable, not a count");
+    return { count: null, unavailable: true, reason };
+  };
 
-  try {
-    while (true) {
-      const { data: posts, error: postsErr } = await db
-        .from("posts")
-        .select("id")
-        .eq("author_id", userId)
-        .range(offset, offset + PAGE_SIZE - 1);
+  let total = 0;
+  let after: string | null = null;
+  for (;;) {
+    let q = db.from("posts").select("id").eq("author_id", userId).order("id", { ascending: true });
+    if (after !== null) q = q.gt("id", after);
+    const { data: page, error: pageErr } = await q.limit(RECEIVED_POST_PAGE);
+    if (pageErr) return unavailable("posts_read_failed", pageErr);
+    if (!Array.isArray(page)) return unavailable("posts_read_no_rows", null);
+    if (page.length === 0) break;
 
-      if (postsErr || !posts || posts.length === 0) break;
-
-      const postIds = (posts as any[]).map((p) => p.id as string);
-
+    const ids = (page as any[]).map((p) => String(p.id));
+    for (let i = 0; i < ids.length; i += RECEIVED_ID_CHUNK) {
       const { count, error: countErr } = await db
         .from("content_stamps")
         .select("id", { count: "exact", head: true })
         .in("entity_type", ["post", "media"])
-        .in("entity_id", postIds);
-
-      if (!countErr) {
-        totalCount += count ?? 0;
-      }
-
-      if (posts.length < PAGE_SIZE) break;
-      offset += PAGE_SIZE;
+        .in("entity_id", ids.slice(i, i + RECEIVED_ID_CHUNK));
+      if (countErr) return unavailable("content_stamps_count_failed", countErr);
+      if (typeof count !== "number") return unavailable("content_stamps_count_missing", null);
+      total += count;
     }
-  } catch {
-    // Fail open — callers treat 0 as "unknown" rather than surfacing a 500.
-    return 0;
+    after = ids[ids.length - 1];
   }
+  return { count: total, unavailable: false };
+}
 
-  return totalCount;
+/**
+ * "Stamps Earned" as every surface shows it: the person's non-revoked
+ * `user_stamps` plus the content stamps they have received. Either half
+ * unreadable makes the TOTAL unavailable — a sum that silently dropped a failed
+ * half is the partial count this exists to stop. No service client is also
+ * unavailable, not 0. A throw (rather than a resolved error) is caught here and
+ * reported the same way, so a route can answer the rest of its payload.
+ */
+export async function measureStampsEarned(
+  sc: SupabaseClient | null | undefined,
+  userId: string,
+): Promise<ReceivedCount> {
+  if (!sc) return { count: null, unavailable: true, reason: "no_service_client" };
+  try {
+    const [owned, received] = await Promise.all([
+      sc
+        .from("user_stamps")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", userId)
+        .eq("is_revoked", false),
+      measureContentStampsReceived(sc, userId),
+    ]);
+    if ((owned as any).error || typeof (owned as any).count !== "number") {
+      logger.warn({ err: (owned as any).error, userId }, "user_stamps count UNREADABLE — Stamps Earned is unavailable, not a count");
+      return { count: null, unavailable: true, reason: "user_stamps_count_failed" };
+    }
+    if (received.unavailable) return received;
+    return { count: (owned as any).count + received.count, unavailable: false };
+  } catch (err) {
+    logger.warn({ err, userId }, "Stamps Earned read THREW — unavailable, not a count");
+    return { count: null, unavailable: true, reason: "threw" };
+  }
 }
 
 /**
