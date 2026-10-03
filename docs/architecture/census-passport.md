@@ -514,7 +514,7 @@ All eighteen named events exist, allow-listed on both sides (`routes/passport.ts
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
 | P168 | The complete loop: Passport → Availability → Trust → Shared Context → Compass → Map → Plan → Telegraph → real-world experience → Memory → Stamp → Passport | C | Every hop exists and is wired: availability (`OpenToPlansService`), trust (`buildTrust`), shared context (`SharedContextService`), Compass (`SharedContextScreen.tsx:217` → ai.tsx line 104 when written, now `travel-buddy-standalone/app/(tabs)/ai.tsx:118#send(prefillMessage,` after e0d858f28 moved it 14 lines down; corrected 2026-09-27, verdict unmoved), plan (`TripInvitePickerSheet`), Telegraph (messaging routes), memory (`PassportMemoryService`), stamp (`StampAwardEngine`, whose `safe_return`/`check_in` sources are literally experience-derived). Unlike the Wall's §41, the Passport loop's return leg **does** close: a real-world experience becomes a stamp through a deployed table (`user_stamps`, `stamp_award_events`). |
-| P169 | Other surfaces request the appropriate Passport projection instead of rebuilding identity, availability, trust and social context independently | **W** | **This row was badly stale and its replacement note (written earlier the same day) was wrong too; both are corrected here from the call sites.** It read "adoption is three of seven consumers — Trips, Buddy and Event". Every one of the seven now calls `buildConsumerProjection`: `routes/trips.ts:596#buildConsumerProjection`, `routes/rentABuddy.ts:1386#buildConsumerProjection`, `services/passport/EventPassportService.ts:423#buildConsumerProjection`, `routes/telegraph.ts:386#buildConsumerProjection`, `routes/safeReturn.ts:1215#buildConsumerProjection`, `routes/discoverySearch.ts:600#buildConsumerProjection` and `routes/compass.ts:4899#buildConsumerProjection`. **What actually remains is not four unadopted consumers — it is two BULK LIST endpoints**, which are different routes from the profile-card ones above and were being counted as the same thing: the discovery search list (`lib/inputAssistance/searchCandidates.ts:649#subtitle`) and the Compass traveler suggestions (`routes/compass.ts:4156#title: projectedName`). Both still build identity inline, and both do so for exactly the reason the map did — the per-user projection is ~34 reads per target and a list cannot pay it. **The batch path they need now exists** (P98's `buildMapPresenceProjections`), but it is not a drop-in for either: the map's projection is viewer-INDEPENDENT (a pin carries no follow/friend context), while both of these gate on the viewer relationship — Discovery suppresses the avatar unless `isFollowing || isFriend || show_profile_picture_publicly`, and Compass suppresses the title entirely for a private non-followed profile. Extending the batch projection with a viewer-relationship input is the remaining work, and it is one job, not two. **The row stays W**, but it is a much smaller and much better-specified W than "the single largest structural gap in Passport". |
+| P169 | Other surfaces request the appropriate Passport projection instead of rebuilding identity, availability, trust and social context independently | **W** | **This row was badly stale and its replacement note (written earlier the same day) was wrong too; both are corrected here from the call sites.** It read "adoption is three of seven consumers — Trips, Buddy and Event". Every one of the seven now calls `buildConsumerProjection`: `routes/trips.ts:596#buildConsumerProjection`, `routes/rentABuddy.ts:1386#buildConsumerProjection`, `services/passport/EventPassportService.ts:436#buildConsumerProjection`, `routes/telegraph.ts:386#buildConsumerProjection`, `routes/safeReturn.ts:1215#buildConsumerProjection`, `routes/discoverySearch.ts:600#buildConsumerProjection` and `routes/compass.ts:4899#buildConsumerProjection`. **What actually remains is not four unadopted consumers — it is two BULK LIST endpoints**, which are different routes from the profile-card ones above and were being counted as the same thing: the discovery search list (`lib/inputAssistance/searchCandidates.ts:649#subtitle`) and the Compass traveler suggestions (`routes/compass.ts:4156#title: projectedName`). Both still build identity inline, and both do so for exactly the reason the map did — the per-user projection is ~34 reads per target and a list cannot pay it. **The batch path they need now exists** (P98's `buildMapPresenceProjections`), but it is not a drop-in for either: the map's projection is viewer-INDEPENDENT (a pin carries no follow/friend context), while both of these gate on the viewer relationship — Discovery suppresses the avatar unless `isFollowing || isFriend || show_profile_picture_publicly`, and Compass suppresses the title entirely for a private non-followed profile. Extending the batch projection with a viewer-relationship input is the remaining work, and it is one job, not two. **The row stays W**, but it is a much smaller and much better-specified W than "the single largest structural gap in Passport". |
 
 ---
 
@@ -2222,6 +2222,111 @@ never be found again to restore.
 - Red if: the per-user route answers a list for a failed read, or answers a non-admin; the screen
   acts without a reason or shows an empty list for a failed read.
 
+## §25 — Passport lane, 2026-10-03: premium stamp rarity, an honest "Stamps Earned", whole passport stats, and an event Passport that tells an outage from a refusal. NO PASSPORT ROW MOVES
+
+Branch `claude/lane-passport-20261003`, cut from `main` at `db657b73b`. `head_commit` is **NOT**
+re-declared: this section records fixes on the tester's path (earn a stamp, see the passport,
+share an event Passport, fail honestly) and grades no row. Controlled evidence only — unit,
+route and component tests in this repository, plus read-only `SELECT`s against the hosted
+testing database for the facts marked *hosted*. No flag was touched, no migration was added,
+nothing was written to any hosted database.
+
+### 25.1 The non-C rows, classified — and why none of them is this pass's work
+
+Fifteen rows are not C (`check:census-integrity`: 158 C · 9 W · 1 N · 1 X; the §2 table still
+prints **W** on P129/P132, which §15.1 moved). **(c) owner-gated: 10** — P13, P128, P133
+(D-DESIGN, `brand-palette-decision.md`), P45, P50, P154 (D-WORD), P59 (`VISA_BUDDY_CAPABILITY`),
+P61 (Place needs 2880's label plus a D-STAMP earning rule), P42 (Discovery ranker on owner hold),
+P66 (a designer's "premium enough"). **(a) but a product-surface build, deferred for scope: 3** —
+P75 (journey events and recommendations), P126 (World → Trip → Places → Memories), P159 (an
+Experience Graph reader). **(a) blocked cross-lane: 2** — P77 (People needs memory-participant
+visibility, memory services) and P169 (two bulk list endpoints in the Discovery/Compass zone).
+**(b): 0. (d): 0.** No row on the tester's path was code-actionable, so the pass worked the
+defects that path actually hits.
+
+### 25.2 What was wrong, verified before it was fixed
+
+1. **Every premium stamp was framed "common".** `rarityForCatalog` filtered
+   `stamp_definitions.catalog_id`, a column that table has never had — not in the canonical chain,
+   not on the hosted database (*hosted* `information_schema`). PostgREST answered 42703, the catch
+   answered `"common"`. *Hosted:* `stamp_premium_rendering_enabled` is **true**, and 12 composed
+   artwork versions belong to rare (6) and uncommon (6) definitions, all composed common.
+2. **"Stamps Earned" could be partial or zero and look measured.** `count_content_stamps_received`
+   exists only in the frozen root folder; *hosted* `pg_proc` has no such function, so the fallback
+   was the live path. It walked `posts` by unordered offset, treated a failed page as the end,
+   skipped a failed chunk, stopped at the first page shorter than its own page size, and answered
+   0 for a throw. The public passport used a second copy that read `posts` unbounded (cut at
+   1,000) and mapped every error to 0; all three routes added a failed `user_stamps` count as 0.
+3. **Countries / Stamps on the passport home were a cut read.** `buildStats` read every
+   non-revoked `user_stamps` row in one request, and the owner's stats row rendered both a failed
+   request and the server's `readFailed` placeholder as "0 Countries · 0 Stamps".
+4. **The event Passport reported an outage as a fact about the world.** Every step failed closed,
+   but an unreadable event was "event not found", an unreadable RSVP "you are not attending", a
+   refused write 404 "Share not found", and the owner's unreadable share `share: null` ("not
+   sharing"). The client turned the NORMAL `share: null` into a failure for every owner not yet
+   sharing, hid the card on an outage, and told a scanning attendee "only for people at the event".
+
+### 25.3 What was built
+
+- `artifacts/api-server/src/lib/stamps/generationWorker.ts:757#export async function rarityForCatalog(`
+  reads the real link (`user_stamps`, the triggering award first), returns `"common"` only for
+  the two documented reasons with a `basis`, rejects `rarity_unresolved` on any failed read, and
+  is resolved before the paid generation call
+  (`artifacts/api-server/src/lib/stamps/generationWorker.ts:1039#const rarityResolution = premium`).
+- `artifacts/api-server/src/services/stamps/ContentStampService.ts:196#export async function measureContentStampsReceived(`
+  (keyset walk to an empty page, any failure `unavailable`, a stalled keyset refused) and
+  `artifacts/api-server/src/services/stamps/ContentStampService.ts:252#export async function measureStampsEarned(`.
+  The three routes answer 200 with `stampsEarned: null` and `stampsEarnedUnavailable: true`
+  (`artifacts/api-server/src/routes/passport.ts:430#...(stampsEarned.unavailable ? { stampsEarnedUnavailable: true } : {}),`,
+  `artifacts/api-server/src/routes/passportStamps.ts:558#...(stampsEarnedResult.unavailable ? { stampsEarnedUnavailable: true } : {}),`,
+  `artifacts/api-server/src/routes/profile.ts:474#stampsEarned: stampsEarned.count,`); the profile
+  screen shows "—" (`travel-buddy-standalone/app/u/[username].tsx:725#const stampsEarned: number | null`).
+- `artifacts/api-server/src/services/passport/PassportMapService.ts:434#async function readAllActiveUserStamps(`
+  — the whole read behind `buildStats`; the stats row shows "—" for a failed or `readFailed` read
+  (`travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:294#statsFailed ? '—'`).
+- `artifacts/api-server/src/services/passport/EventPassportService.ts:96#| "unavailable";` —
+  every failed read or write refuses as `unavailable` (still never a passport); the routes answer
+  it as a retryable 500 (`artifacts/api-server/src/routes/passport.ts:1893#case "unavailable": sendError(res, "db_error"`).
+  Client: `travel-buddy-standalone/src/features/passport/eventPassport.ts:91#export function isOutageStatus(`,
+  the card's retry state (`travel-buddy-standalone/src/features/passport/EventPassportShareCard.tsx:122#Couldn't check your event Passport.`)
+  and the screen's (`travel-buddy-standalone/src/features/passport/EventPassportScreen.tsx:87#if (!res.ok && res.outage) { setState({ kind: 'failed' }); return; }`).
+- P169's citation into `EventPassportService.ts` moved from line 423 to line 436 with the code it
+  names; the row's text and verdict are unchanged.
+
+### 25.4 Tests, seen red, and mutations
+
+- `artifacts/api-server/src/test/stampPremiumRarity.test.ts:46#describe("rarityForCatalog — reads only columns the live schema has"`
+  — 10 cases, all red on the old worker (the schema-strict double names the dead column).
+- `artifacts/api-server/src/test/contentStampEarnedCount.test.ts:512#describe("E. measureContentStampsReceived — failures and cuts are not counts"`,
+  F (routes), G (`/me/profile`), H (whole stats read) — 15 red on the old code; suites A/B moved
+  to the measurement shape with the same assertions.
+- `artifacts/api-server/src/test/eventPassport.test.ts:612#describe("event Passport — an outage is reported as an outage, still fail-closed"`
+  and its route twin (`artifacts/api-server/src/test/eventPassport.test.ts:672#describe("event Passport routes — an outage is a retryable 500`) — 13 red; one existing expectation moved `not_found → unavailable`
+  for a failed insert, which is the defect, not a weakening.
+- Client: `travel-buddy-standalone/app/u/__tests__/publicProfile.stampsEarned.component.test.tsx:193#describe('Public profile screen — Stamps Earned'`,
+  `travel-buddy-standalone/src/components/passport/__tests__/PassportStatsRow.readFailed.component.test.tsx:38#describe('PassportStatsRow — unreadable stats are unknown, not zero'`,
+  `travel-buddy-standalone/src/features/passport/__tests__/eventPassport.client.component.test.ts:35#describe('eventPassport client — no share, refusal, outage'`
+  and two new blocks in `EventPassport.component.test.tsx` — 15 red on the old client.
+- Mutations: 46 applied one at a time, each restored byte-identically by sha256; **0 survivors**.
+
+### 25.5 What awaits, and whose it is
+
+- **Event Passport sharing is IMPLEMENTATION-COMPLETE; awaits** migration 2294 on the hosted
+  database (*hosted*: `event_passport_shares` is absent and the `passport_event_share_enabled` row
+  is absent) and then the flag. Not applied here: no hosted writes.
+- **The 12 common-framed artwork versions** need recomposing after deploy; that is a hosted write.
+- **Porting `count_content_stamps_received`** into the canonical chain is NOT done. The fallback is
+  now exact and honest without it; the port would add a SECURITY DEFINER function, a privilege
+  decision best taken with its own PR.
+
+### 25.6 What this does not claim, and what would turn it red
+
+- No P row moves. None grades stamp rarity, a stat's failure state, or an outage's wording.
+- Red if: rarity is read from a column `user_stamps`/`stamp_definitions` does not have, or a
+  failed read composes as common; any Stamps Earned half is summed when unreadable; a stats walk
+  stops on a short page or survives a failed one; an event Passport outage answers 403/404 or
+  `share: null`; the client renders any of these as 0, "not sharing" or "not at the event".
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/scripts/lib/censusHeadCommit.ts — The head_commit parser that check:census-freshness imports. §18.2 reads the declaration shape out of it and §18.6 records why it is not scoped. It is guard machinery that the NOT_GRADED pattern stops short of (it lives in src/scripts/lib/), and no Passport row grades it.
@@ -2237,3 +2342,17 @@ never be found again to restore.
 - NOT-GRADED: travel-buddy-standalone/app/admin/user-stamps.tsx — §23's admin stamp screen; built work for PASS-F23, no Passport verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/tmAdminConsole.test.ts — the TM-admin lane's server suite, cited in §23.3 for the per-user stamp route; no verdict rests on it.
 - NOT-GRADED: travel-buddy-standalone/app/admin/__tests__/AdminConsoleScreens.component.test.tsx — §23.3's admin-screen suite; no verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/lib/stamps/generationWorker.ts — §25's premium rarity fix; no Passport verdict grades stamp artwork composition.
+- NOT-GRADED: artifacts/api-server/src/services/stamps/ContentStampService.ts — §25's Stamps Earned measurement; no Passport row grades the Stamps Earned stat.
+- NOT-GRADED: artifacts/api-server/src/routes/passportStamps.ts — §25 cites the stats route's unavailable flag; no Passport verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/routes/profile.ts — §25 cites /me/profile's unavailable flag; no Passport verdict rests on it.
+- NOT-GRADED: travel-buddy-standalone/app/u/[username].tsx — §25's Stamps Earned "—" on the public profile; no Passport verdict rests on it.
+- NOT-GRADED: travel-buddy-standalone/src/features/passport/eventPassport.ts — §25's outage/refusal split in the client bindings; no row grades an outage's wording.
+- NOT-GRADED: travel-buddy-standalone/src/features/passport/EventPassportShareCard.tsx — §25's retry state; no row grades an outage's wording.
+- NOT-GRADED: artifacts/api-server/src/test/stampPremiumRarity.test.ts — §25.4's suite; no verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/contentStampEarnedCount.test.ts — §25.4's suite; no verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/eventPassport.test.ts — §25.4 cites its outage blocks; no verdict rests on them.
+- NOT-GRADED: travel-buddy-standalone/app/u/__tests__/publicProfile.stampsEarned.component.test.tsx — §25.4's suite; no verdict rests on it.
+- NOT-GRADED: travel-buddy-standalone/src/components/passport/__tests__/PassportStatsRow.readFailed.component.test.tsx — §25.4's suite; no verdict rests on it.
+- NOT-GRADED: travel-buddy-standalone/src/features/passport/__tests__/eventPassport.client.component.test.ts — §25.4's suite; no verdict rests on it.
+- NOT-GRADED: travel-buddy-standalone/src/features/passport/__tests__/EventPassport.component.test.tsx — §25.4 cites its two new outage blocks; no verdict rests on them.

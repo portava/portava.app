@@ -42,6 +42,8 @@ export type ScreenState =
   | { kind: 'loading' }
   | { kind: 'ready'; passport: EventPassportProjectionView; expiresAt: string }
   | { kind: 'unavailable'; message: string }
+  /** The server could not check (5xx / network) — retryable, NOT a refusal. */
+  | { kind: 'failed' }
   | { kind: 'disabled' };
 
 /**
@@ -67,6 +69,7 @@ const REFUSAL_COPY = 'This event Passport is not available.';
 export default function EventPassportScreen({ token, initialState }: Props) {
   const insets = useSafeAreaInsets();
   const [state, setState] = React.useState<ScreenState>(initialState ?? { kind: 'loading' });
+  const [attempt, setAttempt] = React.useState(0);
 
   React.useEffect(() => {
     if (initialState) return;
@@ -79,6 +82,9 @@ export default function EventPassportScreen({ token, initialState }: Props) {
       const res = await resolveEventPassport(token);
       if (cancelled) return;
       if (res.ok && !res.enabled) { setState({ kind: 'disabled' }); return; }
+      // An outage is not a refusal: "only for people at the event" would be a
+      // false statement to an attendee whose request simply did not get through.
+      if (!res.ok && res.outage) { setState({ kind: 'failed' }); return; }
       if (!res.ok || !res.data) { setState({ kind: 'unavailable', message: REFUSAL_COPY }); return; }
       setState({
         kind: 'ready',
@@ -87,7 +93,7 @@ export default function EventPassportScreen({ token, initialState }: Props) {
       });
     })();
     return () => { cancelled = true; };
-  }, [token, initialState]);
+  }, [token, initialState, attempt]);
 
   const goBack = React.useCallback(() => {
     if (router.canGoBack?.()) router.back();
@@ -121,6 +127,21 @@ export default function EventPassportScreen({ token, initialState }: Props) {
           <Text style={s.msgSub}>
             Event Passports are only for people at the event, and they expire when it ends.
           </Text>
+        </View>
+      )}
+
+      {state.kind === 'failed' && (
+        <View style={s.center}>
+          <Text style={s.msg}>Couldn't load this event Passport.</Text>
+          <Text style={s.msgSub}>Check your connection and try again.</Text>
+          <Pressable
+            onPress={() => { setState({ kind: 'loading' }); setAttempt((n) => n + 1); }}
+            accessibilityRole="button"
+            accessibilityLabel="Try loading this event Passport again"
+            hitSlop={10}
+          >
+            <Text style={s.msg}>Try again</Text>
+          </Pressable>
         </View>
       )}
 
