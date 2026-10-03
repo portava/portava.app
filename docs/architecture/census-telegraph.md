@@ -3479,7 +3479,7 @@ rules; the fifth is the one that matters — the count of entries that are NOT
 `scripts/TELEGRAPH_CERTIFICATION_BASELINE.json:11` and may only shrink. A
 future change cannot make a red case green by reclassifying it. Wired at
 `scripts/run-all-checks.sh:390` and declared in
-`scripts/guardRegistry.ts:808-821`, with an inspection proof so a pass says how
+`scripts/guardRegistry.ts:837-850`, with an inspection proof so a pass says how
 much it looked at.
 
 **The share-authorization gate.** §26's private-Memory case and §29's Memory
@@ -3543,7 +3543,7 @@ reached.** `check:enum-literals` runs as its own static `ci.yml` step —
 deliberately, "needs no database and cannot be starved"
 (`.github/workflows/ci.yml:215`) — and `check:migration-ledger` appears in
 `live-db.yml` only inside a comment, its real reach being `certifyMigrations.ts`,
-which spawns it as a ledger gate (`scripts/guardRegistry.ts:263-269`). The
+which spawns it as a ledger gate (`scripts/guardRegistry.ts:283-289`). The
 first version of the §27.3 assertion checked `run-all-checks.sh` alone and went
 red on both. It now asks the question `guardRegistry.ts` asks — is this checker
 reached by anything — which is the right question and was not the obvious one.
