@@ -82,16 +82,16 @@ export function useLivePulse(opts: UseLivePulseOptions = {}): UseLivePulseResult
     if (paused) return;
     setLoading(true);
     setError(null);
-    const params: GetLivePulseParams = { context, citySlug, lat, lng }; const seq = ++fetchSeq.current; const key = `${context}|${citySlug ?? ''}|${lat ?? ''}|${lng ?? ''}`; if (itemsKey.current !== key) { itemsKey.current = key; setAllItems([]); setUnread([]); setSessionId(null); }  // census-discovery §122 (DV-83 round 23, B39): a new context keeps nothing of the old one's items, so a failed read never leaves them standing
+    const params: GetLivePulseParams = { context, citySlug, lat, lng }; const seq = ++fetchSeq.current; const key = `${context}|${citySlug ?? ''}|${lat ?? ''}|${lng ?? ''}`;  // census-discovery §122 (DV-83 round 23, B39): the context this read is for
     const result = await getLivePulseItems(params); if (seq !== fetchSeq.current) return;  // census-discovery §118 (SW20): an answer for a context no longer on screen is never drawn
     setLoading(false);
     if (result.ok) {
-      setAllItems(result.items); setUnread(result.failedSources ?? []);
+      setAllItems(result.items); setUnread(result.failedSources ?? []); itemsKey.current = key;
       setSessionId(result.sessionId);
     } else {
-      // Leave items AND sessionId untouched: on a failed refresh of the SAME context the previously
-      // served cards stay (and keep their session); a new context was cleared above (§122, B39).
-      setError(result.error);
+      // Leave items AND sessionId untouched only on a failed refresh of the SAME context: those cards stay (and keep their
+      // session). A failed read for a NEW context keeps nothing of the old one's (§122, B39).
+      if (itemsKey.current !== key) { itemsKey.current = key; setAllItems([]); setUnread([]); setSessionId(null); } setError(result.error);
     }
   }, [context, citySlug, lat, lng, paused]);
 
