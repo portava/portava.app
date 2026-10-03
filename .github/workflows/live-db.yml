@@ -146,35 +146,35 @@ permissions:
 #
 # These jobs create auth users, mutate profiles.role / profiles.is_official, and
 # attempt a (rolled-back) INSERT into public.rank_events. Two concurrent runs
-# would race on each other's fixtures, so the group is deliberately GLOBAL — not
-# keyed on github.ref — and in-progress runs are NOT cancelled, because
-# cancelling mid-fixture leaves orphaned rows behind.
+# would race on each other's fixtures, so exclusion is enforced by an explicit
+# WAIT in .github/scripts/live-db-acquire-slot.sh and NOT by the concurrency
+# group, which cannot express "queue" without evicting.
 #
-# WHAT THIS ACTUALLY DOES — corrected from an earlier comment (and doc) that
-# claimed runs "queue":
+# WHAT THIS ACTUALLY DOES — corrected 2026-10-03, because this comment still
+# described the GLOBAL group the concurrency block below replaced:
 #
-#   THEY DO NOT QUEUE. GitHub keeps at most ONE in-progress run and at most ONE
-#   pending run per concurrency group. When a third run arrives, the run that
-#   was pending is CANCELLED and the newcomer takes its place. Because the group
-#   is global, that eviction crosses refs: a push to branch B can cancel branch
-#   A's pending live-DB run.
+#   GitHub concurrency does not queue. It keeps at most ONE in-progress run and
+#   ONE pending run per group and CANCELS the rest, so a global group had to
+#   choose between serializing and preserving verdicts. The group is now keyed
+#   per PR, and the only run it can supersede is an obsolete run of the SAME
+#   PR. Nothing another branch does can take a verdict away.
 #
-# That eviction is ACCEPTED here, in exchange for never racing two runs against
-# one database. The consequence is stated rather than papered over:
+# Mutual exclusion is therefore a wait: a run proceeds when it is the OLDEST
+# in-progress run of this workflow. The consequences are stated, not papered over:
 #
-#   * An evicted run is CANCELLED. GitHub renders that as "cancelled", never as
-#     success, and a cancelled run does not satisfy a required status check. So
-#     eviction can never turn into a false green.
+#   * A SUPERSEDED run is CANCELLED. GitHub renders that as "cancelled", never
+#     as success, and a cancelled run satisfies no required status check. So
+#     supersession can never turn into a false green.
 #   * It CAN mean a commit has no live-DB verdict at all. "Not red" is not
-#     "verified" for this workflow. If you need a verdict for a specific
-#     commit that got evicted, re-run it (Actions -> Re-run all jobs) once the
-#     in-progress run finishes.
-#   * The `live-db-verdict` job at the bottom of this file runs with
-#     `if: always()` and fails unless every other job in the run SUCCEEDED, so a
-#     mid-run cancellation, or any skipped job, resolves to an explicit failure
-#     with a message instead of an ambiguous grey.
+#     "verified" for this workflow. If you need a verdict for a commit that was
+#     superseded, re-run it — and re-run ALL jobs, because a partial re-run does
+#     not re-execute the queue job and the attempt starts at the back.
+#   * A CONFLICTED PR gets no run at all. GitHub cannot build the merge ref a
+#     `pull_request` run needs, and feature-branch pushes do not start one, so
+#     certification stops being produced — see docs/ci/README.md § "The hole
+#     the narrowing left: a conflicted PR gets no run at all".
 #
-# See docs/ci/README.md § "Concurrency: runs are evicted, not queued".
+# See docs/ci/README.md § "Concurrency: the shared database is a queue, not a race".
 concurrency:
   # PER-PR, NOT GLOBAL. The old group was `live-db-shared-supabase-project` for
   # every ref, which made GitHub's eviction policy cross branches: a push to
@@ -407,15 +407,15 @@ jobs:
           fi
 
       # fetch-depth: 0, and this job alone needs it. check:census-freshness
-      # (src/scripts/checkCensusFreshness.ts) ages each census document by
-      # diffing `<its declared head_commit>..HEAD`. Under actions/checkout's
-      # default depth of 1 that commit is not in the clone, so `git diff` exits
-      # `Invalid revision range` for EVERY document that declares one, and the
-      # check reports "cannot be checked" and fails — correctly, since an
-      # unmeasurable census must never read as fresh, but permanently, in the
-      # only environment whose verdict counts. A guard that can be green only on
-      # a developer's full clone gets routed around. Full history makes it
-      # measure what it claims instead of weakening what it accepts.
+      # (src/scripts/checkCensusFreshness.ts) ages each census by asking whether
+      # its declared head_commit is an ancestor of HEAD, and ancestry is computed
+      # over the commits the clone HAS. Under actions/checkout's default depth of
+      # 1 it therefore fails at `cat-file -e` or `merge-base --is-ancestor` and
+      # reports the census STALE with a message blaming the DOCUMENT — it never
+      # mentions clone depth, which is how a shallow clone sent a reader to
+      # re-declare a head_commit that was perfectly fine (measured 2026-10-03).
+      # An unmeasurable census must never read as fresh, and full history is what
+      # makes this the one place the verdict can be about the document at all.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -505,7 +505,7 @@ jobs:
           set -euo pipefail
           pnpm install --frozen-lockfile
 
-      - name: 'check:all (7 checks incl. the live_pulse gate)'
+      - name: 'check:all (the full api-server suite, incl. the live_pulse gate)'
         shell: bash
         run: |
           set -uo pipefail
@@ -1418,11 +1418,11 @@ jobs:
   # ───────────────────────────────────────────────────────────────────────────
   # THE VERDICT. A cancelled, skipped or failed job must not read as a pass.
   #
-  # This workflow's concurrency group is global and does NOT queue: GitHub keeps
-  # one in-progress run and one pending run per group, and a newcomer CANCELS
-  # the pending one — across refs, because the group is not keyed on the ref.
-  # Eviction is accepted (see the concurrency block above), but its rendering
-  # must never be ambiguous.
+  # This workflow's concurrency group is keyed PER PR, and exclusion on the
+  # database is a WAIT rather than an eviction (see the concurrency block
+  # above), so the only run this one can supersede is an obsolete run of the
+  # same PR. Supersession is accepted, but its rendering must never be
+  # ambiguous.
   #
   # `if: always()` makes this job run even when an upstream job was cancelled or
   # skipped. It then asserts that every upstream job reported 'success' and
@@ -1433,9 +1433,9 @@ jobs:
   # The only way this job passes is if all three credential jobs and the
   # preflight actually ran and actually succeeded.
   #
-  # A run evicted while still PENDING never starts any job, so nothing here can
-  # execute for it; that run is rendered "cancelled" by GitHub and satisfies no
-  # required status check. That is the documented residual, not a silent one.
+  # A run superseded while still PENDING never starts any job, so nothing here
+  # can execute for it; that run is rendered "cancelled" by GitHub and satisfies
+  # no required status check. That is the documented residual, not a silent one.
   # ───────────────────────────────────────────────────────────────────────────
   live-db-verdict:
     name: live DB · verdict (cancelled or skipped is not a pass)

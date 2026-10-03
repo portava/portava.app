@@ -1186,9 +1186,12 @@ meaningless `check:media-objects`.
   design — and it must never reuse `scripts/pre-release-check.sh`, which soft-skips
   the audit to exit 0 when no token is present. `check:rank-events-surfaces` and the
   three RLS suites are **not** in that list and cannot be: they write.
-- **Any commit whose run was evicted.** Global concurrency plus non-queueing eviction
-  means a commit can have no live-DB verdict at all (`:104`–`:126`). Cancelled never
-  reads as success, but absence of red is not presence of green.
+- **Any commit whose run was superseded.** Concurrency is keyed per PR
+  (`.github/workflows/live-db.yml:192#group`), so a newer commit cancels only its own
+  PR's obsolete run and nothing another branch does can take a verdict away — but the
+  superseded commit still ends with no live-DB verdict. Cancelled never reads as
+  success, and absence of red is not presence of green. The earlier wording here said
+  "global concurrency plus non-queueing eviction", which the per-PR group replaced.
 - **Every commit on a CONFLICTED pull request.** A PR whose `mergeable_state` is
   `dirty` gets no `pull_request` event, because GitHub cannot build the merge ref the
   workflow runs against, and feature-branch pushes no longer start a DB run. The run
