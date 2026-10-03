@@ -6446,7 +6446,7 @@ The comparison runs through `canonCity` on both sides. The stored city is
 already canonical (`createCrew` writes it that way); the caller's is not.
 
 **No client change is required, and that is checked rather than assumed.**
-`crewAction` in `travel-buddy-standalone/src/services/layover.ts:1800#message: typeof parsed.message === 'string' ? parsed.message : 'That did not work. Please try again.',`
+`crewAction` in `travel-buddy-standalone/src/services/layover.ts:1817#message: typeof parsed.message === 'string' ? parsed.message : 'That did not work. Please try again.',`
 surfaces the server's own `message` on any non-ok response, so the new refusal
 renders as written. The surface is mounted, not dark:
 `travel-buddy-standalone/app/layover/[id].tsx:937#<LayoverCrewSection`. **No file

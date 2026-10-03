@@ -1734,7 +1734,17 @@ export type CrewInfeasibilityReason =
 export interface CrewSolution {
   crewVersion: string;
   sharedReturnBy: string | null;
+  /**
+   * Only crewmates this traveller may see a card for (census-layover §48):
+   * the server no longer names a member across a block or a paused share.
+   */
   bindingMemberIds: string[];
+  /**
+   * TRUE when the binding deadline belongs to a crewmate this traveller may
+   * not see. Optional: an older server does not publish it, and absent means
+   * UNREPORTED, not false.
+   */
+  bindingMemberHidden?: boolean;
   feasible: boolean;
   reasons: CrewInfeasibilityReason[];
   split: boolean;
@@ -1776,9 +1786,16 @@ export type CrewState =
  * are waiting for them.
  */
 export async function getLayoverCrew(sessionId: string): Promise<CrewState | null> {
-  const res = await authedFetch(airportUrl('sessions', sessionId, 'crew'));
-  if (!res.ok) return null;
-  return res.json();
+  // RESOLVES in every case. Without the `try`, an offline `fetch` rejected
+  // straight through the section's floated `refresh()`, and the card sat on
+  // its spinner instead of saying the crew could not be loaded.
+  try {
+    const res = await authedFetch(airportUrl('sessions', sessionId, 'crew'));
+    if (!res.ok) return null;
+    return (await res.json()) as CrewState;
+  } catch {
+    return null;
+  }
 }
 
 export type CrewActionOutcome =
