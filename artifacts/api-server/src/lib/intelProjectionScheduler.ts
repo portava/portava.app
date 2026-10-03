@@ -27,63 +27,13 @@ import { projectAndStore } from "./intelProjection.js";
 import { assembleClaimInput, type ClaimRow } from "./intelProjectionAggregator.js";
 import { LIVE_ELIGIBLE_CLAIM_STATUSES } from "./intelContracts.js";
 import { captureSnapshotStates, emitStateChangedEvents, type SnapshotRow } from "./intelDomainEvents.js";
+import { readAllByIdKeyset } from "./keysetRead.js";
 
 const STARTUP_DELAY_MS = 3 * 60 * 1000;
 const INTERVAL_MS = 5 * 60 * 1000; // spec §24: aggregate live state every five minutes
 const MAX_CLAIMS_PER_PASS = 5000;
 
 let _timer: ReturnType<typeof setTimeout> | null = null;
-
-/**
- * Keyset page size. NOT the end-of-set test: a page shorter than this proves
- * nothing, because the server's db-max-rows (Supabase "Max rows") caps every
- * response — an explicit .limit() cannot raise it, and a deployment that sets it
- * below this number makes EVERY page short. Only an EMPTY page ends a read.
- */
-const KEYSET_PAGE = 1000;
-
-/**
- * Read every row a filter matches, ordered by `id` and paged by keyset
- * (`id > last`), until a page comes back EMPTY — or until `maxRows` rows have
- * been read, which is reported as `truncated` rather than passed off as the set.
- *
- * WHY NOT OFFSET. These reads used `.range(offset, …)` with no ORDER BY. Without
- * one PostgreSQL promises no order, so two OFFSET windows may each see a
- * different order and the pages overlap and skip; and the loop ended on the first
- * page shorter than 1000, so a server cap below 1000 ended it after one page. The
- * live-key read is the input to a DELETE-shaped decision (expire every servable
- * snapshot whose key it did not see), so a skipped key force-expired live
- * intelligence — the exact outcome the reconciliation's own comment says it
- * prevents. A keyset walk over a unique key sees each row at most once and,
- * ending only on an empty page, cannot mistake a capped page for the last one.
- *
- * Any page error returns `{ ok: false }` and NO rows: a caller must not act on a
- * prefix of the set.
- */
-async function readAllByIdKeyset(
-  build: () => any,
-  maxRows = Number.POSITIVE_INFINITY,
-): Promise<{ ok: true; rows: any[]; truncated: boolean } | { ok: false; error: unknown }> {
-  const rows: any[] = [];
-  let last: string | null = null;
-  for (;;) {
-    let q = build().order("id", { ascending: true });
-    if (last !== null) q = q.gt("id", last);
-    const { data, error } = await q.limit(KEYSET_PAGE);
-    if (error) return { ok: false, error };
-    const page = (data as any[]) ?? [];
-    if (page.length === 0) return { ok: true, rows, truncated: false };
-    for (const r of page) {
-      if (rows.length >= maxRows) return { ok: true, rows, truncated: true };
-      rows.push(r);
-    }
-    const tail = page[page.length - 1]?.id;
-    // A row without an id cannot advance the cursor; looping on it would re-read
-    // the same page forever, and stopping would pass a prefix off as the set.
-    if (typeof tail !== "string" && typeof tail !== "number") return { ok: false, error: new Error("keyset read: row without an id") };
-    last = String(tail);
-  }
-}
 
 /**
  * Thrown ONLY to abandon the reconciliation block after a rejected expiry update
