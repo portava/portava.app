@@ -77,7 +77,7 @@ import { PlaceInfoSection } from '../../src/components/place/PlaceInfoSection';
 import { getVenueInfoByCoords, clearVenueInfoCache, getCanonicalPlace, type VenueContactInfo } from '../../src/services/places';
 import type { CanonicalPlace } from '../../src/types/canonicalPlace';
 import { canonicalUrl } from '../../src/constants/canonicalUrl';
-import { readFeedSession } from '../../src/lib/feedAttribution.ts'; import { attendeesUnread, hostUnread } from '../../src/lib/eventAttendeesUnread.ts';  // census-discovery §117 (B19)
+import { readFeedSession } from '../../src/lib/feedAttribution.ts'; import { attendeesUnread, hostUnread, goingCountUnread, waitlistCountUnread } from '../../src/lib/eventAttendeesUnread.ts';  // census-discovery §117 (B19); §118 (B25)
 
 /**
  * Composes the location subtitle line, avoiding a duplicated city when
@@ -905,8 +905,8 @@ export default function EventDetailScreen() {
             <View style={styles.metaRow}>
               <Users size={14} color={color.mute} />
               <Text style={styles.meta}>
-                {event.counts?.going == null ? 'Going count unavailable' : `${event.counts.going} going`}{event.maxAttendees ? ` · ${event.maxAttendees} max` : ''}
-                {(event.waitlistCount ?? 0) > 0 ? ` · ${event.waitlistCount} waitlisted` : ''}
+                {event.counts?.going == null ? 'Going count unavailable' : `${event.counts.going} going${goingCountUnread(event) ? ' (last known)' : ''}`}{event.maxAttendees ? ` · ${event.maxAttendees} max` : ''}{/* census-discovery §118 (B25): a count the route could not read is said as last known */}
+                {waitlistCountUnread(event) ? ((event.waitlistCount ?? 0) > 0 ? ` · ${event.waitlistCount} waitlisted (last known)` : ' · waitlist unavailable') : (event.waitlistCount ?? 0) > 0 ? ` · ${event.waitlistCount} waitlisted` : ''}
               </Text>
             </View>
 
@@ -981,9 +981,9 @@ export default function EventDetailScreen() {
                     <UserAvatarButton userId={a.id} handle={a.handle} avatarUrl={a.avatarUrl} size={32} />
                   </View>
                 ))}
-                {(event.counts?.going ?? 0) > 5 && (
+                {!goingCountUnread(event) && (event.counts?.going ?? 0) > Math.min(5, event.goingAttendees?.length ?? 0) && (  /* §118 (B24, B25): the travellers not shown, over a count that was read */
                   <View style={[styles.avatarOverlap, styles.avatarMore]}>
-                    <Text style={styles.avatarMoreText}>+{(event.counts?.going ?? 0) - 5}</Text>
+                    <Text style={styles.avatarMoreText}>+{(event.counts?.going ?? 0) - Math.min(5, event.goingAttendees?.length ?? 0)}</Text>
                   </View>
                 )}
               </View>

@@ -26,3 +26,48 @@ export function attendeesUnread(e: EventReadMarks | null | undefined): boolean {
 export function hostUnread(e: EventReadMarks | null | undefined): boolean {
   return !e?.host && named(e, 'profiles');
 }
+
+// ── census-discovery §118 (DV-83 round 21, lane W11-X2; the round-20 verifier's B24, B25) ─────────────────────────────
+
+/** What the event screens read about who is going beyond `failedSources`. */
+export interface EventAttendeeMarks extends EventReadMarks {
+  goingAttendees?: unknown[] | null;
+  counts?: { going?: number | null; maybe?: number | null } | null;
+  goingAttendeesTruncated?: boolean;
+  goingAttendeesTotal?: number | null;
+}
+
+/**
+ * The going count could not be read live: the route served the cached counter in `counts.going` and named
+ * `event_rsvps`. `event_rsvps` also names a failed full-RSVP read beside a live going count; the going/maybe read is the
+ * one that failed when `counts.maybe` is null, which the route serves only then.
+ */
+export function goingCountUnread(e: EventAttendeeMarks | null | undefined): boolean {
+  return named(e, 'event_rsvps') && e?.counts?.maybe == null;
+}
+
+/**
+ * `goingAttendees` is a slice of who is going: the route says so (`goingAttendeesTruncated`), or the live going count
+ * is more than the travellers listed (a body from a server that did not mark it). `total` is how many are going, when
+ * known. An unread list is `attendeesUnread`'s, not a slice.
+ */
+export function attendeesListCut(e: EventAttendeeMarks | null | undefined): { cut: boolean; total: number | null } {
+  if (!e || attendeesUnread(e)) return { cut: false, total: null };
+  const listed = Array.isArray(e.goingAttendees) ? e.goingAttendees.length : 0;
+  const total = typeof e.goingAttendeesTotal === 'number' ? e.goingAttendeesTotal
+    : typeof e.counts?.going === 'number' ? e.counts.going : null;
+  if (e.goingAttendeesTruncated === true) return { cut: true, total };
+  return { cut: total !== null && total > listed, total };
+}
+
+/** "Showing 4 of 6 going", or "Showing the first 4 going" when the total is not known. */
+export function attendeesCutText(e: EventAttendeeMarks | null | undefined): string {
+  const listed = Array.isArray(e?.goingAttendees) ? e!.goingAttendees!.length : 0;
+  const { total } = attendeesListCut(e);
+  return total !== null ? `Showing ${listed} of ${total} going` : `Showing the first ${listed} going`;
+}
+
+/** The waitlist count could not be read live: the route served the cached `waitlistCount` and named `event_waitlist`. */
+export function waitlistCountUnread(e: EventReadMarks | null | undefined): boolean {
+  return named(e, 'event_waitlist');
+}

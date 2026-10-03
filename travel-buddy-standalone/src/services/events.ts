@@ -110,7 +110,7 @@ export interface EventDetail extends EventSummary {
   myWaitlistOfferExpiresAt: string | null;
   myRole: EventRoleType | null;
   myAttendanceState: EventAttendeeState | null;
-  goingAttendees: EventAttendeeProfile[]; /** census-discovery §117 (B19): the reads that failed (`event_rsvps`, `event_waitlist`, `profiles`); see lib/eventAttendeesUnread */ failedSources?: string[];
+  goingAttendees: EventAttendeeProfile[]; /** census-discovery §117 (B19): the reads that failed (`event_rsvps`, `event_waitlist`, `profiles`); see lib/eventAttendeesUnread */ failedSources?: string[]; /** §118 (B24): `goingAttendees` is a slice of `goingAttendeesTotal` going (see attendeesListCut) */ goingAttendeesTruncated?: boolean; goingAttendeesTotal?: number;
 }
 
 export interface EventListItem extends EventSummary, EventCountMarks {  // §117 (SW17): the counts the list could not recount live

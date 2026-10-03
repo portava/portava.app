@@ -20,10 +20,10 @@ import {
   type EventCohost, type EventDetail,
 } from '../../services/events.ts';
 import { Avatar } from '../ui.tsx';
-import { color, space, radius, type as t } from '../../theme/tokens.ts'; import { attendeesUnread } from '../../lib/eventAttendeesUnread.ts';  // census-discovery §117 (B19)
+import { color, space, radius, type as t } from '../../theme/tokens.ts'; import { attendeesUnread, attendeesListCut } from '../../lib/eventAttendeesUnread.ts';  // census-discovery §117 (B19); §118 (B24)
 
 interface Props {
-  event: Pick<EventDetail, 'id' | 'hostId' | 'isHost' | 'myRole' | 'goingAttendees' | 'failedSources'>;
+  event: Pick<EventDetail, 'id' | 'hostId' | 'isHost' | 'myRole' | 'goingAttendees' | 'failedSources'> & Partial<Pick<EventDetail, 'counts' | 'goingAttendeesTruncated' | 'goingAttendeesTotal'>>;  // §118 (B24)
   /** Called after a change so the event (and the viewer's roles) refresh. */
   onChanged?: () => void;
 }
@@ -117,7 +117,7 @@ export function EventCohostsPanel({ event, onChanged }: Props) {
         <>
           <Text style={[s.section, { marginTop: space.md }]}>Add a co-host from people going</Text>
           {candidates.length === 0 ? (
-            <Text style={s.note}>{attendeesUnread(event) ? "Couldn't load who's going, so no one can be added right now." : 'Everyone going is already a co-host, or nobody else is going yet.'}</Text>
+            <Text style={s.note} testID={!attendeesUnread(event) && attendeesListCut(event).cut ? 'cohosts-candidates-cut' : undefined}>{attendeesUnread(event) ? "Couldn't load who's going, so no one can be added right now." : attendeesListCut(event).cut ? CANDIDATES_CUT_TEXT : 'Everyone going is already a co-host, or nobody else is going yet.'}</Text>
           ) : candidates.map((a) => (
             <View key={a.id} style={s.row}>
               <Avatar uri={a.avatarUrl ?? ''} size={36} />
@@ -155,3 +155,7 @@ const s = StyleSheet.create({
   addBtn:    { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: color.signal, borderRadius: radius.pill, paddingHorizontal: space.md, paddingVertical: 6 },
   addText:   { ...t.small, color: color.onInk, fontWeight: '700' },
 });
+
+// census-discovery §118 (DV-83 round 21, B24): GET /events/:id lists only the first few travellers going, so when every
+// listed one is already a co-host the picker cannot say everyone going is.
+const CANDIDATES_CUT_TEXT = 'Only the first few travellers going are listed here, and they are already co-hosts.';

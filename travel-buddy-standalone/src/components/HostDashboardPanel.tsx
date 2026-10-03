@@ -23,7 +23,7 @@ import {
 import { searchUsers, type TravelerSearchResult } from '../services/follows.ts';
 import { Avatar } from './ui.tsx';
 import { color, space, radius, type as t, avatar } from '../theme/tokens.ts';
-import { useFeatureFlags } from '../context/FeatureFlagsContext.tsx'; import { attendeesUnread } from '../lib/eventAttendeesUnread.ts';  // census-discovery §117 (B19)
+import { useFeatureFlags } from '../context/FeatureFlagsContext.tsx'; import { attendeesUnread, attendeesListCut, attendeesCutText } from '../lib/eventAttendeesUnread.ts';  // census-discovery §117 (B19); §118 (B24)
 import { GenerateHeaderSheet } from './events/GenerateHeaderSheet.tsx'; import { EventAttendancePanel } from './events/EventAttendancePanel.tsx'; import { EventCohostsPanel } from './events/EventCohostsPanel.tsx'; import { EventCancelControl } from './events/EventCancelControl.tsx';
 
 interface Props {
@@ -255,7 +255,7 @@ export function HostDashboardPanel({ event, onDismiss, onRefresh }: Props) {
             {/* ── Attendees tab ── */}
             {tab === 'attendees' && (
               <>
-                {event.goingAttendees.length === 0 ? (
+                {attendeesListCut(event).cut ? <Text style={s.emptyText} testID="host-attendees-cut">{attendeesCutText(event)}</Text> : null}{event.goingAttendees.length === 0 ? (  /* census-discovery §118 (B24): a slice is said */
                   <View style={s.empty}><Text style={s.emptyText}>{attendeesUnread(event) ? "Couldn't load attendees" : 'No attendees yet'}</Text></View>
                 ) : (
                   event.goingAttendees.map((a) => (
