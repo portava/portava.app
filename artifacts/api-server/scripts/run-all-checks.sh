@@ -470,6 +470,17 @@ run_check "check:discovery-query-paths" pnpm run check:discovery-query-paths
 # when a new job_health writer goes unrecorded.
 run_check "check:scheduler-coverage" pnpm run check:scheduler-coverage
 
+# check:scheduler-relative-windows — the query SHAPE that loses work on a quiet
+# night. A scheduled job that selects its work with a window relative to now and
+# keeps no watermark cannot see rows that fell inside a gap longer than the
+# window, and on an autoscale host that suspends after 15 idle minutes such a gap
+# is routine. An absolute predicate self-heals; a relative one forgets, silently.
+# This fails when a new scheduled job reaches a bare relative lower bound, and it
+# refuses rather than guesses when it cannot resolve one. The sites it allows are
+# named one by one with the mechanism that covers them, and the ones it cannot
+# defend are ledgered as known defects rather than allowed.
+run_check "check:scheduler-relative-windows" pnpm run check:scheduler-relative-windows
+
 run_gate  "check:rank-events-surfaces" pnpm run check:rank-events-surfaces
 
 echo ""
