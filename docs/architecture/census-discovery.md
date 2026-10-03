@@ -20078,7 +20078,7 @@ Every `?? 0` or `?? false` over a count, capacity or own-state value; every serv
 - **Line-neutral in every cited file** (`routes/events.ts`, `routes/pulse.ts`, `routes/discovery.ts`, `routes/wishlist.ts`, `compass/CompassEligibilityEngine.ts`, `compass/CompassItemHydrator.ts`, `compass/CompassSocialEngine.ts`, `compass/CompassGraphEngine.ts`, `lib/pagedRead.ts`, and the client's `eventAttendeesUnread.ts`, `(tabs)/events.tsx`, `map/index.tsx`, `map/LivePulseCard.tsx`, `services/pulse.ts`): lines changed in place, new code at a file's foot or in a new module, so `check:doc-citations`, `check:citation-targets` and `check:citation-symbols` are clean.
 - **Scope and freshness.** This census's `CENSUS_SCOPE` gains the files §119 grades that it did not watch (`compass/CompassEligibilityEngine.ts`, the map's `LivePulseCard.tsx`, `pulseCardAnswer.ts`, the client's `services/pulse.ts`). The acknowledgements for census-discovery and census-compass name them with a §119 paragraph; census-map's names the card, `pulseCardAnswer.ts` and their suites, census-layover's the closed-window suite, each with its "why it cannot move a verdict".
 - **Suites.** The new api-server suites are on the `test` line (`check:test-registration`); the new client suites are jest component suites or node suites under `src/`, none on KNOWN_BROKEN, none orphaned.
-- **Silent reads.** `check:silent-supabase-reads` reports no new site; `routes/events.ts` S2 was lowered 8 → 7 for the site B33 fixed; none was raised.
+- **Silent reads.** `check:silent-supabase-reads` reports no new site; two baseline counts were lowered for the sites this round fixed (`routes/events.ts` S2 8 → 7, B33; `routes/pulse.ts` S4 3 → 2, SW27); none was raised.
 
 ### 119.13 DV-83, restated
 
