@@ -169,10 +169,10 @@ export const TELEMETRY_EVENT_PROPS: Record<InputTelemetryEventName, Record<strin
   input_opened: {},
   query_length_changed: { length: 'int' },
   suggestion_request_started: {},
-  // `serverMs` is the value the suggest envelope now returns (census G372);
-  // `clientMs` is the round trip the device saw. Both, because the difference
-  // between them is the network and it is the part the server cannot see.
-  suggestion_request_completed: { count: 'int', serverMs: 'int', clientMs: 'int' },
+  // `serverMs` / `clientMs`: the serve's and the device's round trip (G372) — the gap is the network.
+  // `degraded` (G373): served from the device's own tier, gateway unavailable; one bool, no text,
+  // none of 2950's refused keys. metrics.ts reads it, and keeps those rows out of G372's latency.
+  suggestion_request_completed: { count: 'int', serverMs: 'int', clientMs: 'int', degraded: 'bool' },
   suggestion_rendered: { count: 'int', types: 'token' },
   suggestion_selected: { suggestionType: 'token', source: 'token' },
   suggestion_dismissed: { shownCount: 'int', reason: 'token' },

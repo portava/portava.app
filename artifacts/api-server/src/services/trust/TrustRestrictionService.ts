@@ -10,7 +10,7 @@
  * getRestrictionState() is the enforcement seam used by other routes.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { logger as rootLogger } from "../../lib/logger.js";
+import { logger as rootLogger } from "../../lib/logger.js"; import { isAbsentTableError } from "../../lib/absentTableError.js"; // folded onto one line: census-trust cites this file by line
 
 // Exported — unlike the module-private child loggers in sibling trust services —
 // so tests can assert which channel a degraded read reported on.
@@ -163,17 +163,17 @@ export async function liftRestrictionsByType(
 }
 
 /**
- * Same classifier as services/interactionPermissions.ts — it classifies this
- * very table, for the same reason: trust_restrictions may not be migrated yet.
+ * ABSENT TABLE ONLY (census-trust §31). This used to answer "missing" for
+ * 42P01, PGRST204 (PostgREST's COLUMN-not-found code) and ANY message holding
+ * "does not exist" — so a dropped column, a type drift in the expires_at filter
+ * or a missing function failed OPEN and stopped every restriction being
+ * enforced. lib/absentTableError.ts owns the narrow rule and says why.
  */
 function isTableMissingError(error: any): boolean {
-  if (!error) return false;
-  return (
-    error.code === "42P01" ||
-    error.code === "PGRST204" ||
-    String(error.message ?? "").toLowerCase().includes("does not exist")
-  );
+  return isAbsentTableError(error);
 }
+
+
 
 /**
  * Returns what the user can/cannot do.
@@ -230,19 +230,19 @@ export async function getRestrictionState(
       activeRestrictions:   [...activeTypes],
     };
   } catch (err) {
-    // Fail-safe: for high-risk actions (messaging, hosting) return false on DB error
-    // so a transient failure cannot bypass an active restriction.
-    // Low-risk actions (private_plan_access, location_plan_join) stay open.
-    // Logged at ERROR: a user losing messaging must leave server-side evidence.
+    // Fail-safe on ALL FOUR types (census-trust §31): an unread restriction state
+    // grants nothing. private_plan_access / location_plan_join used to stay OPEN
+    // here as "low-risk" — the second gates a live LOCATION broadcast to a crew.
+    // Logged at ERROR: a user losing an action must leave server-side evidence.
     trustRestrictionLogger.error(
       { err, userId },
-      "getRestrictionState failed — failing closed on hosting/messaging (degraded)",
+      "getRestrictionState failed — failing closed on every restriction type (degraded)",
     );
     return {
       canHost:              false,
-      canJoinPrivatePlans:  true,
+      canJoinPrivatePlans:  false,
       canMessage:           false,
-      canJoinLocationPlans: true,
+      canJoinLocationPlans: false,
       activeRestrictions:   [],
       degraded:             true,
       degradedReason:       "fail_closed",
