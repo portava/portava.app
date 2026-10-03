@@ -1135,7 +1135,10 @@ describe("POST /api/trips/:tripId/memory — the trip's existing Memory", () => 
     const before = state.memories.length;
     const app = await startApp(state);
     try {
-      const { status, body } = await post(app.baseUrl, `/api/trips/${TRIP_ID}/memory`, auth("owner-tok"));
+      const res = await post(app.baseUrl, `/api/trips/${TRIP_ID}/memory`, auth("owner-tok"));
+      const status = res.status;
+      // The route's answer for an existing trip Memory: the Memory, `existing`, and no tags.
+      const body = res.body as { memory?: { id?: string }; existing?: boolean; taggedCount?: number } | null;
       assert.equal(status, 200);
       assert.equal(body?.memory?.id, MEM_ID);
       assert.equal(body?.existing, true);
