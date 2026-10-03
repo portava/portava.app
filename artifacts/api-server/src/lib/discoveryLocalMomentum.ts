@@ -53,7 +53,7 @@
  * on entries. Under D5=B the ranker runs on every request; without this cache
  * every cache-A hit would pay a 30-day rank_events scan.
  */
-import { pruneAndBound } from "./boundedMapCache.js";
+import { pruneAndBound } from "./boundedMapCache.js"; import { keysetBefore, keySortsBefore } from "./pagedRead.js";  // census-discovery §118 (SW22)
 import { logger as rootLogger } from "./logger.js";
 // `03` §9's six place-momentum stages, computed from the SAME rows this module
 // already pages in. Separate module, separate function, and the scalar above is
@@ -246,24 +246,24 @@ export async function loadLocalMomentum(
     let failed = false;
     let truncated = false;
 
-    for (let offset = 0; offset < MOMENTUM_ROW_LIMIT; offset += MOMENTUM_PAGE_SIZE) {
-      // `served_at DESC, id DESC` is a stable total order AND the useful one:
+    let lastRow: Record<string, unknown> | null = null;  // census-discovery §118 (DV-83 round 21, SW22): the keyset cursor — each page asks for the rows after the last one received
+    for (let offset = 0; offset < MOMENTUM_ROW_LIMIT; offset += MOMENTUM_PAGE_SIZE) {  // `served_at DESC, id DESC` is a stable total order AND the useful one:
       // when the ceiling truncates, what survives is the most RECENT window,
       // which is the half the recent/baseline split actually turns on. Ordering
       // by served_at alone would not be total (timestamps collide), and paging
       // over a non-total order can return one row twice and skip another.
-      const { data, error } = await sc
+      const { data, error }: { data: any[] | null; error: unknown } = await keysetBefore(sc
         .from("rank_events")
-        .select(v2 ? "item_id, outcome, served_at, outcome_at, user_id" : "item_id, outcome, served_at, outcome_at")
+        .select(v2 ? "id, item_id, outcome, served_at, outcome_at, user_id" : "id, item_id, outcome, served_at, outcome_at")
         .eq("surface", "discovery")
         .neq("outcome", "analytics")
         .in("item_id", ids)
-        .gte("served_at", since)
+        .gte("served_at", since), ["served_at", "id"], lastRow)
         .order("served_at", { ascending: false })
         .order("id", { ascending: false })
-        .range(offset, Math.min(offset + MOMENTUM_PAGE_SIZE, MOMENTUM_ROW_LIMIT) - 1);
+        .range(0, Math.min(MOMENTUM_PAGE_SIZE, MOMENTUM_ROW_LIMIT - offset) - 1);  // §118 (SW22): by key, never at an offset a serve logged meanwhile shifts
 
-      if (error || !Array.isArray(data)) { failed = true; break; }
+      if (error || !Array.isArray(data) || (lastRow !== null && data.length > 0 && !keySortsBefore(data[0], lastRow, ["served_at", "id"]))) { failed = true; break; } if (data.length > 0) lastRow = data[data.length - 1];  // §118 (SW22): a page that repeats a row is a failed read
       rows.push(...(data as MomentumRow[]));
 
       // A short page is the end of the corpus, not a cap.

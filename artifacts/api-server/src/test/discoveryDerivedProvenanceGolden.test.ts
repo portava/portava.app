@@ -381,16 +381,18 @@ describe("§75 DC-17 (lane P33) — provenance-only: every value its hunks touch
 //   G12  the trend API (G6's corpus) through explainExposures with a Local Pulse
 //        argument: a v1 run ignores it
 // ════════════════════════════════════════════════════════════════════════════
-import { loadLocalMomentum, readLocalTrendStates } from "../lib/discoveryLocalMomentum.js";
+import { loadLocalMomentum, readLocalTrendStates } from "../lib/discoveryLocalMomentum.js"; import { logicFilter, sortByOrders } from "./helpers/postgrestKeyset.js";  // §118 (SW22)
 
 /** A client serving the corpus through the loader's paged read, with the v2 flag row as given. */
 function corpusClient(flag: "absent" | "false" | "error") {
-  const rows = corpus();
+  const rows = corpus().map((r, i) => ({ ...r, id: `r-${String(i).padStart(5, "0")}` }));  // census-discovery §118 (SW22): the loader pages by (served_at, id), so each row has its key
   return {
     from(table: string) {
-      let range: [number, number] = [0, rows.length - 1];
+      let range: [number, number] = [0, rows.length - 1]; const orders: Array<{ col: string; asc?: boolean }> = []; const preds: Array<(r: Record<string, unknown>) => boolean> = [];
       const b: any = {
-        select() { return b; }, eq() { return b; }, neq() { return b; }, in() { return b; }, gte() { return b; }, order() { return b; }, limit() { return b; },
+        select() { return b; }, eq() { return b; }, neq() { return b; }, in() { return b; }, gte() { return b; }, limit() { return b; },
+        order(col: string, o?: { ascending?: boolean }) { orders.push({ col, asc: o?.ascending !== false }); return b; },
+        or(expr: string) { const p = logicFilter(expr); if (!p) throw new Error(`corpusClient: .or(${expr})`); preds.push(p); return b; },  // §118 (SW22): the keyset cursor
         range(a: number, z: number) { range = [a, z]; return b; },
         maybeSingle() {
           if (table !== "feature_flags") throw new Error(`corpusClient: ${table}.maybeSingle`);
@@ -399,7 +401,7 @@ function corpusClient(flag: "absent" | "false" | "error") {
         },
         then(res: (v: unknown) => unknown, rej: (e: unknown) => unknown) {
           if (table === "trend_integrity_reviews") return Promise.resolve({ data: [], error: null }).then(res, rej); if (table !== "rank_events") throw new Error(`corpusClient: ${table}`);  // §93 (H-W10T-1): no review recorded
-          return Promise.resolve({ data: rows.filter((r) => r.outcome !== "analytics").slice(range[0], range[1] + 1), error: null }).then(res, rej);
+          return Promise.resolve({ data: sortByOrders(rows.filter((r) => r.outcome !== "analytics" && preds.every((p) => p(r))), orders).slice(range[0], range[1] + 1), error: null }).then(res, rej);
         },
       };
       return b;

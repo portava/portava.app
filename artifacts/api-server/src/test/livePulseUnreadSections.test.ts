@@ -21,6 +21,8 @@
  *   LP6  the Safe Return read FAILS (flag on) → `safe_return_sessions` named
  *   LP7  a flag read FAILS → `feature_flags` named
  *   LP8  the join-request read FAILS → `trip_join_requests` named
+ *   LP9  a Hidden Gem card's count is its live save count (cached save_count 12, 3 saves → 3), never the cached counter
+ *   LP10 the gem saves count read FAILS → no count on the card, `hidden_gem_saves` named
  *   SP1  GET /api/pulse recounts its event pool's going RSVPs live (one read over the pool's events)
  *   SP2  GET /api/pulse with that read FAILING → 200, the same posts served
  */
@@ -46,9 +48,11 @@ function makeClient(w: World) {
   function builder(table: string, rows: any[], cols = "") {
     let filtered = rows.map((r) => ({ ...r }));
     const read: Read = { table, cols, eqs: {}, ins: {} };
+    let counted = false;
     const settle = () => { w.reads?.push(read); return w.fail?.(read) ? { data: null, error: ERR } : null; };
     const b: any = {
-      select: (c?: string) => builder(table, filtered, c ?? ""),
+      select: (c?: string, o?: { count?: string }) => { const nb = builder(table, filtered, c ?? ""); if (o?.count === "exact") nb.__counted(); return nb; },
+      __counted: () => { counted = true; },
       eq: (col: string, val: any) => { read.eqs[col] = val; filtered = filtered.filter((r) => r[col] === val); return b; },
       neq: (col: string, val: any) => { filtered = filtered.filter((r) => r[col] !== val); return b; },
       in: (col: string, vals: any[]) => { read.ins[col] = vals; filtered = filtered.filter((r) => vals.includes(r[col])); return b; },
@@ -56,7 +60,7 @@ function makeClient(w: World) {
       is: (col: string, val: any) => { filtered = filtered.filter((r) => (val === null ? r[col] == null : r[col] === val)); return b; },
       maybeSingle: () => Promise.resolve(settle() ?? { data: filtered[0] ?? null, error: null }),
       single: () => Promise.resolve(settle() ?? { data: filtered[0] ?? null, error: null }),
-      then: (res: any, rej: any) => Promise.resolve(settle() ?? { data: [...filtered], error: null }).then(res, rej),
+      then: (res: any, rej: any) => Promise.resolve(settle() ?? { data: [...filtered], error: null, ...(counted ? { count: filtered.length } : {}) }).then(res, rej),
     };
     return b;
   }
@@ -171,5 +175,34 @@ describe("census-discovery §118 (B22): GET /api/pulse ranks its event pool on t
     const failed = await get({ tables: feedWorld(), fail: liveGoingRead }, "/api/pulse");
     assert.equal(failed.status, 200);
     assert.deepEqual((failed.body.posts ?? []).map((p: any) => p.id), (healthy.body.posts ?? []).map((p: any) => p.id));
+  });
+});
+
+const GEM = "9e000000-0000-4000-8000-000000000001";
+function gemWorld(): Record<string, any[]> {
+  return {
+    ...liveWorld(),
+    feature_flags: [{ flag: "safe_return_enabled", enabled: false }, { flag: "hidden_gems_enabled", enabled: true }, { flag: "find_your_circle_enabled", enabled: false }],
+    hidden_gems: [{ id: GEM, name: "Secret courtyard", city: "Manila", category: "garden", save_count: 12, sensitivity_level: "public", status: "active", submitted_by: BOB }],
+    hidden_gem_saves: [{ gem_id: GEM, user_id: "u1" }, { gem_id: GEM, user_id: "u2" }, { gem_id: GEM, user_id: "u3" }],
+  };
+}
+const gemCard = (body: any) => (body.items as any[] ?? []).find((i: any) => i.item_id === GEM);
+
+describe("census-discovery §118 (SW21): GET /api/pulse/live never serves the cached save_count as a gem's count", () => {
+  after(() => _setTestClient(null as any, false));
+  it("LP9 the card's count is the live save count (cached 12, 3 saves → 3)", async () => {
+    const { body } = await get({ tables: gemWorld() }, "/api/pulse/live?context=currentCity&citySlug=manila");
+    const c = gemCard(body);
+    assert.ok(c, JSON.stringify(body));
+    assert.equal(c.people_count, 3, JSON.stringify(c));
+    assert.equal("failedSources" in body, false, JSON.stringify(body));
+  });
+  it("LP10 the saves count read FAILS → no count, hidden_gem_saves named", async () => {
+    const { body } = await get({ tables: gemWorld(), fail: (r) => r.table === "hidden_gem_saves" }, "/api/pulse/live?context=currentCity&citySlug=manila");
+    const c = gemCard(body);
+    assert.ok(c, JSON.stringify(body));
+    assert.equal(c.people_count, null, JSON.stringify(c));
+    assert.ok(named(body).includes("hidden_gem_saves"), JSON.stringify(body));
   });
 });

@@ -379,7 +379,7 @@ describe("F — v1 unless v2 is asked for; the loader asks only when the flag is
       const sc = fakeSc(flag, { events });
       const m = await loadLocalMomentum(sc, ["db/f", "db/g"], { cacheKey: `k-${String(flag)}`, nowMs: NOW });
       assert.deepEqual(m, computeLocalMomentum(events, NOW));
-      assert.ok(sc.log.includes("rank_events:item_id, outcome, served_at, outcome_at"), sc.log.join("|"));
+      assert.ok(sc.log.includes("rank_events:id, item_id, outcome, served_at, outcome_at"), sc.log.join("|"));  // census-discovery §118 (SW22): the read selects the key it pages by; still no user_id under v1
       assert.ok(!sc.log.some((l) => l.startsWith("discovery_places")), "no context read with the flag off");
       assert.deepEqual(readRetestReadings(`k-${String(flag)}`, NOW), {});
     }
@@ -389,7 +389,7 @@ describe("F — v1 unless v2 is asked for; the loader asks only when the flag is
     _resetLocalMomentumCacheForTest();
     const sc = fakeSc(true, { events: corpus, places: [] });
     const m = await loadLocalMomentum(sc, ["db/f", "db/00000000-0000-4000-8000-000000000001"], { cacheKey: "on", nowMs: NOW });
-    assert.ok(sc.log.includes("rank_events:item_id, outcome, served_at, outcome_at, user_id"));
+    assert.ok(sc.log.includes("rank_events:id, item_id, outcome, served_at, outcome_at, user_id"));  // §118 (SW22): and the key it pages by
     assert.ok(sc.log.some((l) => l.startsWith("discovery_places:")), "the community id's context is read");
     assert.deepEqual(m.values, computeLocalMomentumV2(corpus, NOW));
     assert.equal(m.provenance.modelVersion, LOCAL_MOMENTUM_MODEL_VERSION_V2);

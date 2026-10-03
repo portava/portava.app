@@ -95,3 +95,25 @@ export function keysetAfter<Q>(q: Q, cols: readonly string[], after: Record<stri
   });
   return (q as any).or(terms.join(","));
 }
+
+/**
+ * census-discovery §118 (DV-83 round 21, sweep SW22): `keysetAfter` for a read ordered DESCENDING by `cols` — narrow
+ * `q` to the rows whose key sorts BEFORE `after`'s (`.lt()` for one column, the logic tree with `lt` for several), so an
+ * offset-paged read ordered newest first (where every concurrent insert lands ahead of the cursor) can page by key.
+ */
+export function keysetBefore<Q>(q: Q, cols: readonly string[], after: Record<string, unknown> | null): Q {
+  if (after === null) return q;
+  const v = cols.map((c) => String(after[c] ?? ""));
+  if (cols.length === 1) return (q as any).lt(cols[0], v[0]);
+  const terms = cols.map((c, i) => {
+    const eqs = cols.slice(0, i).map((p, j) => `${p}.eq.${pgrstValue(v[j])}`);
+    const lt = `${c}.lt.${pgrstValue(v[i])}`;
+    return eqs.length === 0 ? lt : `and(${[...eqs, lt].join(",")})`;
+  });
+  return (q as any).or(terms.join(","));
+}
+
+/** §118 (SW22): whether `row`'s key, over `cols`, sorts strictly before `after`'s — the next row of a descending keyed read. */
+export function keySortsBefore(row: Record<string, unknown>, after: Record<string, unknown>, cols: readonly string[]): boolean {
+  return keyAfter(cols.map((c) => String(after[c] ?? "")), cols.map((c) => String(row[c] ?? "")));
+}

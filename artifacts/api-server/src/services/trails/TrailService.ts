@@ -595,19 +595,19 @@ async function readMemberEvents(
   if (ids.length === 0) return { rows: [], truncated: false };
   const since = new Date(nowMs - MOMENTUM_BASELINE_WINDOW_MS).toISOString();
   const rows: MomentumRow[] = [];
-  let fetched = 0;
+  let fetched = 0; let lastRow: Record<string, unknown> | null = null;  // census-discovery §118 (DV-83 round 21, SW22): the keyset cursor
   try {
     for (let offset = 0; offset < MAX_TRAIL_EVENT_ROWS; offset += MOMENTUM_PAGE_SIZE) {
-      let q = sc.from("rank_events").select("item_id, outcome, served_at, outcome_at");
+      let q = sc.from("rank_events").select("id, item_id, outcome, served_at, outcome_at");
       if (surface) q = q.eq("surface", surface);
-      const { data, error } = await q
+      const { data, error }: { data: any[] | null; error: unknown } = await keysetBefore(q
         .neq("outcome", "analytics")
         .in("item_id", ids)
-        .gte("served_at", since)
+        .gte("served_at", since), ["served_at", "id"], lastRow)
         .order("served_at", { ascending: false })
         .order("id", { ascending: false })
-        .range(offset, Math.min(offset + MOMENTUM_PAGE_SIZE, MAX_TRAIL_EVENT_ROWS) - 1);
-      if (error || !Array.isArray(data)) return undefined;
+        .range(0, Math.min(MOMENTUM_PAGE_SIZE, MAX_TRAIL_EVENT_ROWS - offset) - 1);  // §118 (SW22): by key, never at an offset a serve logged meanwhile shifts
+      if (error || !Array.isArray(data) || (lastRow !== null && data.length > 0 && !keySortsBefore(data[0], lastRow, ["served_at", "id"]))) return undefined; if (data.length > 0) lastRow = data[data.length - 1];  // §118 (SW22): a page that repeats a row is a failed read
       fetched += data.length;
       for (const r of data as any[]) {
         if (typeof r?.item_id !== "string" || r.item_id.length === 0) continue;
@@ -1831,7 +1831,7 @@ import {
 import {
   diversifyTrailModule, healthDemotedRowIds, healthOrdered, creatorPageBoundRemovals, trailGeoCell,
 } from "../../lib/discoveryTrailHealth.js";
-import { isTrailContentState, TRAIL_SIGNALS } from "../../lib/discoveryTrailObject.js";
+import { isTrailContentState, TRAIL_SIGNALS } from "../../lib/discoveryTrailObject.js"; import { keysetBefore, keySortsBefore } from "../../lib/pagedRead.js";  // census-discovery §118 (SW22)
 import { normalizeLocationName, haversineKm } from "../../lib/canonicalLocations.js";
 import type { AttachSourceVerdict } from "./trailAttachIntegrity.js"; import { trailPersonalizedPicks } from "../../lib/discoverySurfaceObjectiveRank.js";  // §93 (W11-X1, DV-09)
 

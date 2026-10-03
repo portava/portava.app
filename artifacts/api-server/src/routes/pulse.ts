@@ -1683,7 +1683,7 @@ router.get("/pulse/live", async (req, res) => {
         }
       }
 
-      for (const gem of gems ?? []) {
+      const gemSaves = await liveGemSaveCounts(sc, (gems ?? []).map((g: any) => g.id as string)); if (!gemSaves) liveUnread.add("hidden_gem_saves"); for (const gem of gems ?? []) {  // census-discovery §118 (SW21): the live save count
         const distKm = (gem._distKm as number | null) ?? null;
         addItem({
           id:                `hidden_gem:${gem.id as string}`,
@@ -1697,7 +1697,7 @@ router.get("/pulse/live", async (req, res) => {
           city:              (gem.city as string | null) ?? null,
           starts_at:         null,
           ends_at:           null,
-          people_count:      (gem.save_count as number | null) ?? null,
+          people_count:      gemSaves ? (gemSaves.get(gem.id as string) ?? 0) : null,  // §118 (SW21): the live save count, never the cached save_count a lost increment leaves behind
           user_relationship: 'available',
           primary_action:    { label: 'Explore', type: 'navigate_gem' },
           secondary_action:  { label: 'Save', type: 'save_gem' },
@@ -1752,7 +1752,7 @@ router.get("/pulse/live", async (req, res) => {
         const disclosablePicks = ((picks as any[]) ?? [])
           .filter((g: any) => mayDiscloseGemIdentity(g, user.id))
           .slice(0, 2);
-        for (const gem of disclosablePicks) {
+        const gemSaves = await liveGemSaveCounts(sc, disclosablePicks.map((g: any) => g.id as string)); if (!gemSaves) liveUnread.add("hidden_gem_saves"); for (const gem of disclosablePicks) {  // §118 (SW21)
           addItem({
             id:                `compass:${gem.id as string}`,
             item_type:         'compass',
@@ -1763,7 +1763,7 @@ router.get("/pulse/live", async (req, res) => {
             city:              (gem.city as string | null) ?? null,
             starts_at:         null,
             ends_at:           null,
-            people_count:      (gem.save_count as number | null) ?? null,
+            people_count:      gemSaves ? (gemSaves.get(gem.id as string) ?? 0) : null,  // §118 (SW21)
             user_relationship: 'available',
             primary_action:    { label: 'Explore', type: 'navigate_gem' },
             secondary_action:  { label: 'Save', type: 'save_gem' },
@@ -2030,3 +2030,25 @@ export function pulsePostsForViewer<T extends { id?: unknown }>(rows: readonly a
 
 // census-discovery §78 H3 (DV-09), integrated by lane W10-I (§91): Pulse ranks on its own `01` §9 objective when the flag is on.
 import { surfaceObjectiveOptions } from "../lib/discoveryRankDesigns.js"; import { liveEventCounters } from "../lib/eventRowReads.js";  // census-discovery §118 (B22)
+
+// ── census-discovery §118 (DV-83 round 21, lane W11-X2; sweep SW21) ──────────────────────────────────────────────────
+// A Hidden Gem card's count was `hidden_gems.save_count`, a cached counter that nothing recomputes: HiddenGemService's
+// fallback increment is lost when its read fails (logged `save_count_increment_lost`), and the card served it as
+// measured. The rail shows at most a handful of gems, so each is counted live with an exact head count of its
+// `hidden_gem_saves` rows. `null` when any count could not be read: the cards then carry no count, and the read is named.
+async function liveGemSaveCounts(sc: any, gemIds: string[]): Promise<Map<string, number> | null> {
+  const ids = [...new Set(gemIds)];
+  const counts = new Map<string, number>();
+  if (ids.length === 0) return counts;
+  try {
+    const reads = await Promise.all(ids.map((id) => sc.from("hidden_gem_saves").select("gem_id", { count: "exact", head: true }).eq("gem_id", id)));
+    for (let i = 0; i < ids.length; i++) {
+      const r = reads[i] as { error?: unknown; count?: number | null };
+      if (r?.error || typeof r?.count !== "number") return null;
+      counts.set(ids[i]!, r.count);
+    }
+    return counts;
+  } catch {
+    return null;
+  }
+}
