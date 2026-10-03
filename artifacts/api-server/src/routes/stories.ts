@@ -875,7 +875,7 @@ router.post("/stories/:id/save-to-highlight", asyncHandler(async (req, res) => {
     sendError(res, "db_error", storyErr.message);
     return;
   }
-  if (!story) { sendError(res, "not_found", "Story not found"); return; }
+  if (!story || (story as any).state === "deleted" || (story as any).state === "removed") { sendError(res, "not_found", "Story not found"); return; } // a deleted or moderator-removed Story never becomes a Highlight
   if ((story as any).owner_id !== user.id) { sendError(res, "forbidden", "Only the owner can save this story"); return; }
   if ((story as any).saved_to_highlight_id) { res.status(200).json({ highlightId: (story as any).saved_to_highlight_id }); return; }
 
