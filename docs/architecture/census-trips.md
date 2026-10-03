@@ -6203,7 +6203,7 @@ is `app/trip/[id].tsx`. No server change, no migration.
   reaches `react-native` through `expo-secure-store`, which node:test cannot
   load (`scripts/run-node-tests.mjs`'s KNOWN_BROKEN records that shape and
   every service test that imports it directly is on the list).
-- **§11 Today on screen** (`travel-buddy-standalone/src/features/trips/today/TripTodayCard.tsx:42#export function TripTodayCard(`,
+- **§11 Today on screen** (`travel-buddy-standalone/src/features/trips/today/TripTodayCard.tsx:43#export function TripTodayCard(`,
   reading `travel-buddy-standalone/src/features/trips/today/tripToday.ts:93#export async function fetchTripToday(`):
   `GET /trips/:tripId/today` under §19.1's envelope — a stale or
   foreign-schema projection is refused with Appendix B's reason and
@@ -7119,8 +7119,8 @@ reason. §64 gives it a producer.
   card offers "Navigate to …" for a running plan that names a place, and
   resolves a pending journey every time it is opened — which is the only
   return event this path has
-  (`travel-buddy-standalone/src/features/trips/today/TripTodayCard.tsx:176#testID="trip-today-navigate"`,
-  `travel-buddy-standalone/src/features/trips/today/TripTodayCard.tsx:67#const r = await resolveNav(tripId);`).
+  (`travel-buddy-standalone/src/features/trips/today/TripTodayCard.tsx:183#testID="trip-today-navigate"`,
+  `travel-buddy-standalone/src/features/trips/today/TripTodayCard.tsx:74#const r = await resolveNav(tripId);`).
   A failure of the callback never takes Today down: it is a courtesy, and the
   five questions are the card's job.
 - **The write is a kernel command like every other.** The presence write goes
@@ -7206,7 +7206,7 @@ not the server's.
   low-value interruptions"* and DISRUPTED to be *"recovery-first ...
   entertainment/commercial surfaces are deprioritized"*. Both do, and the card
   prints what it withheld and why
-  (`travel-buddy-standalone/src/features/trips/today/TripTodayCard.tsx:151#trip-today-phase-withheld-`) —
+  (`travel-buddy-standalone/src/features/trips/today/TripTodayCard.tsx:158#trip-today-phase-withheld-`) —
   a card that quietly drops content and a card with nothing to show look
   identical, and only one of them is honest.
 - **§17.2 outranks §3.2, and the test is what found it.** The first version let
@@ -9357,7 +9357,7 @@ added here writes a table directly.
   (`travel-buddy-standalone/src/features/trips/joinRequests/tripJoinRequests.ts:52#export function approveJoinRequest`).
   The requester withdraws a pending request from the private-trip card
   (`travel-buddy-standalone/src/components/privacy/PrivateTripCard.tsx:83#async function handleCancel`).
-- **TRIP-F15 ballots.** `travel-buddy-standalone/src/features/trips/planning/TripBallotsCard.tsx:39#export function TripBallotsCard`
+- **TRIP-F15 ballots.** `travel-buddy-standalone/src/features/trips/planning/TripBallotsCard.tsx:40#export function TripBallotsCard`
   lists the open proposals with the server's tally and the viewer's own ballot,
   and votes through `travel-buddy-standalone/src/features/trips/planning/tripBallots.ts:68#export async function castBallot`.
   One key is minted per tap (`travel-buddy-standalone/src/features/trips/planning/tripBallots.ts:64#export function ballotKey`),
@@ -9381,7 +9381,7 @@ added here writes a table directly.
   registry draws
   (`travel-buddy-standalone/src/features/trips/lifecycle/tripLifecycle.ts:26#export function lifecycleActions`).
   Each action is confirmed, then sent with a key that a retry reuses.
-- **TRIP-F24 shared contents.** `travel-buddy-standalone/src/features/trips/sharedContent/TripSharedContentSection.tsx:339#export function TripSharedContentSection`
+- **TRIP-F24 shared contents.** `travel-buddy-standalone/src/features/trips/sharedContent/TripSharedContentSection.tsx:342#export function TripSharedContentSection`
   has five tabs — notes, documents, checklists, trip reminders, and the activity
   feed for hosts. Each tab draws loading, a failed read with retry, and a true
   empty state. A trip reminder is kept on the account, and its alert is

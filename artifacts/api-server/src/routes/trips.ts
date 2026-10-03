@@ -624,20 +624,11 @@ router.get("/trips/:tripId/invitable-users", async (req, res) => {
   if (!membership) { sendError(res, "forbidden", "Not a trip member"); return; }
 
   const [{ data: memberRows, error: memberRowsErr }, { data: friendsAsA, error: friendsAErr }, { data: friendsAsB, error: friendsBErr }, blockedSet] = await Promise.all([
-    sc.from("trip_members").select("user_id, status").eq("trip_id", tripId).in("role", ["owner", "co_host", "member", "viewer"]),
-    sc.from("user_friendships").select("user_b").eq("user_a", user.id),
-    sc.from("user_friendships").select("user_a").eq("user_b", user.id),
-    readBlockExclusions(sc, user.id),
-  ]);
-  // The same refusal for the three rosters the block set scopes (census-trips
-  // §79): an unread crew list offered the trip's own crew as people to invite,
-  // and an unread friend list said "nobody to invite". Neither is a picker.
+    sc.from("trip_members").select("user_id, status").eq("trip_id", tripId).in("role", ["owner", "co_host", "member", "viewer"]), sc.from("user_friendships").select("user_b").eq("user_a", user.id),
+    sc.from("user_friendships").select("user_a").eq("user_b", user.id), readBlockExclusions(sc, user.id)]);
+  // §79: an unread crew list offered the trip's own crew as invitees and an unread friend list said "nobody to invite" — refuse.
   const rosterErr = memberRowsErr ?? friendsAErr ?? friendsBErr;
-  if (rosterErr) {
-    req.log.error({ err: rosterErr }, "trips/invitable-users: roster unreadable");
-    sendError(res, "degraded_unavailable", "We could not load who you can invite right now. Please try again shortly.");
-    return;
-  }
+  if (rosterErr) { req.log.error({ err: rosterErr }, "trips/invitable-users: roster unreadable"); sendError(res, "degraded_unavailable", "We could not load who you can invite right now. Please try again shortly."); return; }
   //
   // FAIL-CLOSED, shape 3 (lib/exclusionSet.ts): both halves of this response —
   // groupMembers and otherFollowers — are rosters of people, and the block set
@@ -654,11 +645,7 @@ router.get("/trips/:tripId/invitable-users", async (req, res) => {
     return;
   }
 
-  // Accepted crew is requireTripMember's rule: any accepted role (a co-host was
-  // offered as someone to invite to their own trip) and a status that is still
-  // on the trip (null = pre-0078 row = accepted).
-  const groupMemberIds = (memberRows ?? [])
-    .filter((r: any) => r.status == null || r.status === "accepted")
+  const groupMemberIds = (memberRows ?? []).filter((r: any) => r.status == null || r.status === "accepted") // accepted crew, requireTripMember's rule (§79)
     .map((r: any) => r.user_id as string)
     .filter((id) => id !== user.id && !isExcluded(blockedSet, id));
 
@@ -668,17 +655,10 @@ router.get("/trips/:tripId/invitable-users", async (req, res) => {
     ...(friendsAsB ?? []).map((r: any) => r.user_a as string),
   ].filter((id) => id !== user.id && !groupMemberSet.has(id) && !isExcluded(blockedSet, id));
 
-  const allIds = [...groupMemberIds, ...otherFollowerIds];
-  const profileMap: Record<string, any> = {};
+  const allIds = [...groupMemberIds, ...otherFollowerIds]; const profileMap: Record<string, any> = {};
   if (allIds.length > 0) {
-    // NOT enrichment here: `toUser` drops every id without a profile, so an
-    // unread `profiles` emptied both lists (census-trips §79).
-    const { data: profiles, error: profilesErr } = await sc.from("profiles").select("id, handle, name, avatar_url").in("id", allIds);
-    if (profilesErr) {
-      req.log.error({ err: profilesErr }, "trips/invitable-users: profiles unreadable");
-      sendError(res, "degraded_unavailable", "We could not load who you can invite right now. Please try again shortly.");
-      return;
-    }
+    const { data: profiles, error: profilesErr } = await sc.from("profiles").select("id, handle, name, avatar_url").in("id", allIds); // NOT enrichment: toUser drops ids without one (§79)
+    if (profilesErr) { req.log.error({ err: profilesErr }, "trips/invitable-users: profiles unreadable"); sendError(res, "degraded_unavailable", "We could not load who you can invite right now. Please try again shortly."); return; }
     const allowedNames = await nameVisibilitySet(sc, allIds);
     for (const p of profiles ?? []) profileMap[(p as any).id] = sanitizeIdentity(p as any, allowedNames, user.id);
   }
@@ -735,14 +715,10 @@ router.get("/me/trip-invites/pending", async (req, res) => {
   const tripMap: Record<string, any> = {};
   for (const t of trips ?? []) tripMap[(t as any).id] = t;
 
-  // Count accepted members per trip (for invite preview). Accepted crew is
-  // requireTripMember's rule — any accepted role, a status still on the trip
-  // (census-trips §79: co-hosts were not counted, members who left were). An
-  // unreadable count leaves memberCount null ("unknown"), never a number.
+  // Count accepted members per trip (invite preview): any accepted role, status still on the trip — co-hosts were not counted, members who left were (§79).
   const { data: memberCountData, error: memberCountErr } = await sc
     .from("trip_members")
-    .select("trip_id, status")
-    .in("trip_id", tripIds)
+    .select("trip_id, status").in("trip_id", tripIds)
     .in("role", ["owner", "co_host", "member", "viewer"]);
 
   const memberCountMap: Record<string, number> = {};
@@ -1329,13 +1305,9 @@ router.post("/trips/:tripId/accept-invite", async (req, res) => {
   const { tripId } = req.params;
   if (!/^[0-9a-f-]{36}$/i.test(tripId)) { res.status(400).json({ error: "invalid_payload", message: "Invalid trip id" }); return; }
 
-  // `error` bound (census-trips §79): supabase-js RESOLVES on a database error,
-  // so an unread row was "No invitation found" — a 404 an invited traveller's
-  // app does not retry. Unreadable is 503 and retryable; absent stays 404.
-  const { data: membership, error: membershipErr } = await client
-    .from("trip_members").select("role").eq("trip_id", tripId).eq("user_id", user.id).maybeSingle();
+  // `error` bound (§79): an unread row was "No invitation found", a 404 the app does not retry. Unreadable is 503.
+  const { data: membership, error: membershipErr } = await client.from("trip_members").select("role").eq("trip_id", tripId).eq("user_id", user.id).maybeSingle();
   if (membershipErr) { req.log.error({ err: membershipErr }, "accept invite: invitation unreadable"); sendError(res, "degraded_unavailable", "We could not read your invitation right now. Please try again shortly."); return; }
-
   if (!membership) { res.status(404).json({ error: "not_found", message: "No invitation found for this trip" }); return; }
   if ((membership as any).role !== "invited") { res.status(400).json({ error: "invalid_payload", message: `Already a ${(membership as any).role}` }); return; }
 
@@ -1447,11 +1419,9 @@ router.post("/trips/:tripId/decline-invite", async (req, res) => {
   const { tripId } = req.params;
   if (!/^[0-9a-f-]{36}$/i.test(tripId)) { res.status(400).json({ error: "invalid_payload", message: "Invalid trip id" }); return; }
 
-  // `error` bound for accept-invite's reason (census-trips §79).
-  const { data: membership, error: membershipErr } = await client
-    .from("trip_members").select("role").eq("trip_id", tripId).eq("user_id", user.id).maybeSingle();
+  // `error` bound for accept-invite's reason (§79).
+  const { data: membership, error: membershipErr } = await client.from("trip_members").select("role").eq("trip_id", tripId).eq("user_id", user.id).maybeSingle();
   if (membershipErr) { req.log.error({ err: membershipErr }, "decline invite: invitation unreadable"); sendError(res, "degraded_unavailable", "We could not read your invitation right now. Please try again shortly."); return; }
-
   if (!membership) { res.status(404).json({ error: "not_found", message: "No invitation found for this trip" }); return; }
   if ((membership as any).role !== "invited") { res.status(400).json({ error: "invalid_payload", message: "Cannot decline — you are already a member" }); return; }
 
@@ -1554,10 +1524,7 @@ router.get("/me/plan-editable-trips", async (req, res) => {
   if (specificIds.length > 0) {
     // An unread editor list dropped every specific_members trip from the
     // picker without a word (census-trips §79): refuse instead.
-    const { data: editorRows, error: editorErr } = await sc
-      .from("plan_editors")
-      .select("trip_id, user_id")
-      .in("trip_id", specificIds);
+    const { data: editorRows, error: editorErr } = await sc.from("plan_editors").select("trip_id, user_id").in("trip_id", specificIds);
     if (editorErr) { req.log.error({ err: editorErr }, "me/plan-editable-trips: plan_editors unreadable"); sendError(res, "degraded_unavailable", "We could not check which trips you can edit right now. Please try again shortly."); return; }
     for (const e of editorRows ?? []) {
       const eid = (e as any).trip_id as string;
