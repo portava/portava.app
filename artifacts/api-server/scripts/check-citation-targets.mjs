@@ -600,7 +600,17 @@ import {
  * carry the `github.ref == 'refs/heads/main'` gate, with `#anchor`s so
  * doc-citations holds them from here. The retired dead target is the 716 one,
  * found only because the shift disguised it. Same rule as above. */
-export const MAX_DEAD_TARGETS = 162;
+/* RATCHETED 2026-10-03 162 -> 161 on the same lane, after merging main. The
+ * gain is #582's, not this lane's, and it is isolated by diffing the --list
+ * output across the merge: `intel-spine-liveness.md:202 ->
+ * app/settings/intel-prompts.tsx:49` stopped landing on a blank line because
+ * that screen grew. It landed on `} = useIntelPrompts();` instead — the second
+ * pointer this lane found going silently ALIVE onto a line that does not carry
+ * its claim (the first was live-db.yml:716). Both were repointed by reading
+ * the claim; this one onto line 82, the `setIntelConsent(` call the sentence
+ * is about, with an anchor. Treat a count that merely improves as unexamined:
+ * the only way to know is to diff the list. Same rule as above. */
+export const MAX_DEAD_TARGETS = 161;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);
