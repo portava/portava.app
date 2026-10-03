@@ -9,6 +9,7 @@
  * the server's §6.3 rule, not a filter here.
  */
 import React, { useCallback, useEffect, useState } from 'react';
+import { useLatestRead } from '../shared/latestRead.ts';
 import { View, Text, ActivityIndicator, StyleSheet, Pressable, TextInput, Switch, Alert } from 'react-native';
 import { StickyNote, FileText, ListChecks, Bell, Activity, CloudOff, Plus, Square, SquareCheck, Trash2, Lock } from 'lucide-react-native';
 
@@ -28,14 +29,16 @@ interface Props {
   client?: typeof api;
 }
 
-/** Read once, keep the three states apart, retry on demand. */
+/** Read once, keep the three states apart, retry on demand; the latest read wins (§79). */
 function useRead<T>(fn: () => Promise<ApiRead<T>>) {
   const [read, setRead] = useState<ApiRead<T> | undefined>(undefined);
+  const begin = useLatestRead();
   const run = useCallback(async () => {
+    const current = begin();
     setRead(undefined);
-    try { setRead(await fn()); }
-    catch (e: any) { setRead({ state: 'unavailable', detail: String(e?.message ?? 'unexpected error') }); }
-  }, [fn]);
+    try { const r = await fn(); if (current()) setRead(r); }
+    catch (e: any) { if (current()) setRead({ state: 'unavailable', detail: String(e?.message ?? 'unexpected error') }); }
+  }, [fn, begin]);
   useEffect(() => { void run(); }, [run]);
   return { read, run, setRead };
 }

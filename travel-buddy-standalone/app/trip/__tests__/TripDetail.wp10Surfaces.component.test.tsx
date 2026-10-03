@@ -129,11 +129,14 @@ jest.mock('../../../src/services/memories',   () => ({
 jest.mock('../../../src/services/events',     () => ({
   getEventsNearTrip: jest.fn().mockResolvedValue({ ok: false }),
 }));
+// The role read is mutable so the co-host's review queue can be exercised (census-trips §79).
+const mockGetTripMemberRole = jest.fn().mockResolvedValue(null);
+const mockCreateInviteLink = jest.fn();
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/services/trips',      () => ({
   updateTrip:           jest.fn(),
-  createInviteLink:     jest.fn(),
-  getTripMemberRole:    jest.fn().mockResolvedValue(null),
+  createInviteLink:     (...a: unknown[]) => mockCreateInviteLink(...a),
+  getTripMemberRole:    (...a: unknown[]) => mockGetTripMemberRole(...a),
 }));
 
 // NOTE: intentional stub — not under test here.
@@ -219,6 +222,8 @@ describe('Trip Detail — WP-10 surfaces', () => {
   beforeEach(() => {
     mockSessionValue = { isAuthed: true, configured: true, userId: 'u1' };
     mockRunLifecycleAction.mockReset();
+    mockGetTripMemberRole.mockReset().mockResolvedValue(null);
+    mockCreateInviteLink.mockReset();
   });
 
   it('mounts every collaboration surface for the owner, with the owner flag set', async () => {
@@ -242,6 +247,51 @@ describe('Trip Detail — WP-10 surfaces', () => {
     await act(async () => {});
     expect(screen.queryByTestId('wp10-join')).toBeNull();
     expect(props('wp10-ballots').isOwner).toBe(false);
+  });
+
+  it('an accepted co-host gets the review queue — the approve route already accepts them (TRIP-F06, §79)', async () => {
+    mockSessionValue = { isAuthed: true, configured: true, userId: 'someone-else' };
+    mockGetTripMemberRole.mockResolvedValue('co_host');
+    await render(<TripDetail />);
+    await act(async () => {});
+    expect(props('wp10-join').tripId).toBe('trip-abc');
+  });
+
+  it('a plain member still gets no review queue', async () => {
+    mockSessionValue = { isAuthed: true, configured: true, userId: 'someone-else' };
+    mockGetTripMemberRole.mockResolvedValue('member');
+    await render(<TripDetail />);
+    await act(async () => {});
+    expect(screen.queryByTestId('wp10-join')).toBeNull();
+  });
+
+  // §79: the owner's "Share Trip" is an invite. When the invite link could not
+  // be created it used to share the trip's public page instead, silently — a
+  // link a friend cannot join a private trip through.
+  it('owner: a failed invite-link creation shares nothing and says so', async () => {
+    const { Share } = require('react-native');
+    const shareSpy = jest.spyOn(Share, 'share').mockResolvedValue({ action: 'sharedAction' } as any);
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    mockCreateInviteLink.mockResolvedValue(null);
+    await render(<TripDetail />);
+    await act(async () => {});
+    await act(async () => { fireEvent.press(screen.getByText('Share Trip')); });
+    await act(async () => {});
+    expect(shareSpy).not.toHaveBeenCalled();
+    expect(alertSpy).toHaveBeenCalledWith('Could not create an invite link', expect.stringMatching(/nothing was shared/i));
+    shareSpy.mockRestore(); alertSpy.mockRestore();
+  });
+
+  it('owner: a created invite link is what is shared', async () => {
+    const { Share } = require('react-native');
+    const shareSpy = jest.spyOn(Share, 'share').mockResolvedValue({ action: 'sharedAction' } as any);
+    mockCreateInviteLink.mockResolvedValue({ id: 'l1', token: 'tok123', maxUses: null, expiresAt: null, createdAt: 'x', url: '/x' });
+    await render(<TripDetail />);
+    await act(async () => {});
+    await act(async () => { fireEvent.press(screen.getByText('Share Trip')); });
+    await act(async () => {});
+    expect(shareSpy).toHaveBeenCalledWith(expect.objectContaining({ url: 'travelbuddy://invite/tok123' }));
+    shareSpy.mockRestore();
   });
 
   it('"Mark trip as complete" is POST /complete through the lifecycle client with an intent key, then re-reads the trip', async () => {

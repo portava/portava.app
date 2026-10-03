@@ -189,10 +189,18 @@ export async function listMyTrips(): Promise<TripRow[]> {
     .sort((a, b) => (a.startDate ?? '').localeCompare(b.startDate ?? ''));
 }
 
+/**
+ * `null` means the read ANSWERED and found no trip this viewer may see; a read
+ * that failed THROWS (census-trips §79). It used to return `null` for both,
+ * and the trip screen renders `null` as "Trip not found — this trip may have
+ * been deleted", so its own "Couldn't load this trip / Try again" branch was
+ * unreachable. `.maybeSingle()` keeps "no row" out of `error`.
+ */
 export async function getTrip(id: string): Promise<TripRow | null> {
   if (!isSupabaseConfigured) return null;
-  const { data, error } = await supabase.from('trips').select('*').eq('id', id).single();
-  if (error || !data) return null;
+  const { data, error } = await supabase.from('trips').select('*').eq('id', id).maybeSingle();
+  if (error) throw new TripsReadUnavailableError('This trip', null);
+  if (!data) return null;
   return mapTrip(data);
 }
 
@@ -211,7 +219,10 @@ export async function getTripMemberRole(tripId: string): Promise<string | null> 
     .eq('trip_id', tripId)
     .eq('user_id', userId)
     .maybeSingle();
-  if (error || !data) return null;
+  // Unreadable is not "not a member": callers that gate on the role (a co-host
+  // managing the trip) must be able to tell an outage from a refusal (§79).
+  if (error) throw new TripsReadUnavailableError('Your role on this trip', null);
+  if (!data) return null;
   return (data as any).role as string;
 }
 

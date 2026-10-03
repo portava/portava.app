@@ -58,7 +58,6 @@
   "artifacts/api-server/src/routes/telegraph.ts::S4": 1,
   "artifacts/api-server/src/routes/trips-expansion.ts::S2": 5,
   "artifacts/api-server/src/routes/trips.ts::S2": 4,
-  "artifacts/api-server/src/routes/trips.ts::S4": 1,
   "artifacts/api-server/src/routes/trust-admin.ts::S3": 1,
   "artifacts/api-server/src/scripts/seed-demo-profile.ts::S4": 1,
   "artifacts/api-server/src/services/hiddenGems/HiddenGemVerificationService.ts::S2": 1,

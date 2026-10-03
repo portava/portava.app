@@ -32,7 +32,8 @@ const RES2_ID    = "dddddddd-dddd-dddd-dddd-dddddddddddd";
 
 // ── Fake supabase client ──────────────────────────────────────────────────────
 type Row = Record<string, any>;
-interface FakeTable { rows: Row[]; }
+/** `failReads`: every SELECT on the table resolves `{ data: null, error }`, as supabase-js does on a database error. */
+interface FakeTable { rows: Row[]; failReads?: boolean; }
 
 function makeFakeClient(tables: Record<string, FakeTable> = {}) {
   const db: Record<string, FakeTable> = {
@@ -104,6 +105,7 @@ function makeFakeClient(tables: Record<string, FakeTable> = {}) {
           table.rows = table.rows.filter((r) => !filters.every((f) => f(r)));
           return { data: null, error: null };
         }
+        if (table.failReads) return { data: null, error: { message: "connection failure", code: "08006" } };
         const rows = table.rows.filter((r) => filters.every((f) => f(r)));
         if (_single || _maybeSingle) return { data: rows[0] ?? null, error: null };
         return { data: rows, error: null };
@@ -483,6 +485,33 @@ describe("trip reservations routes", () => {
       assert.equal(r.status, c.expect, `${c.token} should get ${c.expect}`);
       if (c.expect === 200) assert.equal(r.body.reservation.title, "Renamed");
     }
+  });
+
+  it("an unreadable reservation is 503 degraded_unavailable on every per-reservation route, not 404 (census-trips §79)", async () => {
+    for (const [method, path, body] of [
+      ["PATCH", `/trips/${TRIP_ID}/reservations/${RES_ID}`, { title: "x" }],
+      ["POST", `/trips/${TRIP_ID}/reservations/${RES_ID}/confirm`, { addToPlan: false }],
+      ["POST", `/trips/${TRIP_ID}/reservations/${RES_ID}/dismiss`, {}],
+      ["DELETE", `/trips/${TRIP_ID}/reservations/${RES_ID}`, undefined],
+      ["GET", `/trips/${TRIP_ID}/reservations/${RES_ID}/history`, undefined],
+      ["POST", `/trips/${TRIP_ID}/reservations/${RES_ID}/compensation`, {}],
+    ] as const) {
+      const { client, db } = makeFakeClient(baseTables({
+        trip_reservations: { rows: [seedReservation()], failReads: true },
+      }));
+      _setTestClient(client, true);
+      const r = await req(method, path, { token: "owner-token", body });
+      assert.equal(r.status, 503, `${method} ${path}: ${JSON.stringify(r.body)}`);
+      assert.equal(r.body?.error, "degraded_unavailable");
+      assert.equal(db.trip_reservations.rows[0].status, "pending_confirm", "nothing written on a refused read");
+    }
+  });
+
+  it("control: a reservation that is not on the trip is still 404", async () => {
+    const { client } = makeFakeClient(baseTables({ trip_reservations: { rows: [] } }));
+    _setTestClient(client, true);
+    const r = await req("POST", `/trips/${TRIP_ID}/reservations/${RES_ID}/dismiss`, { token: "owner-token", body: {} });
+    assert.equal(r.status, 404);
   });
 
   it("dismiss sets status dismissed", async () => {

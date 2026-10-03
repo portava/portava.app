@@ -11,6 +11,7 @@
  * again with the SAME key, so the retry cannot count twice.
  */
 import React, { useCallback, useEffect, useState } from 'react';
+import { useLatestRead } from '../shared/latestRead.ts';
 import { View, Text, ActivityIndicator, StyleSheet, Pressable } from 'react-native';
 import { Vote, CloudOff, CheckCircle2 } from 'lucide-react-native';
 
@@ -40,11 +41,14 @@ export function TripBallotsCard({ tripId, isOwner, load = fetchTripDecisions, ca
   const [read, setRead] = useState<DecisionRead | undefined>(undefined);
   const [outcomes, setOutcomes] = useState<Record<string, Outcome>>({});
 
+  // Latest read wins: two votes' re-reads can answer out of order (§79).
+  const begin = useLatestRead();
   const run = useCallback(async () => {
+    const current = begin();
     setRead(undefined);
-    try { setRead(await load(tripId)); }
-    catch (e: any) { setRead({ state: 'unavailable', detail: String(e?.message ?? 'unexpected error') }); }
-  }, [tripId, load]);
+    try { const r = await load(tripId); if (current()) setRead(r); }
+    catch (e: any) { if (current()) setRead({ state: 'unavailable', detail: String(e?.message ?? 'unexpected error') }); }
+  }, [tripId, load, begin]);
   useEffect(() => { void run(); }, [run]);
 
   const send = useCallback(async (p: BoardProposal, intent: Intent) => {
@@ -55,9 +59,10 @@ export function TripBallotsCard({ tripId, isOwner, load = fetchTripDecisions, ca
     setOutcomes((o) => ({ ...o, [p.id]: { intent, result } }));
     // The tally and the viewer's ballot are the server's: read them again.
     if (result.state === 'recorded') {
-      try { const next = await load(tripId); if (next.state === 'ok') setRead(next); } catch { /* the recorded line stays */ }
+      const current = begin();
+      try { const next = await load(tripId); if (current() && next.state === 'ok') setRead(next); } catch { /* the recorded line stays */ }
     }
-  }, [tripId, cast, decide, load]);
+  }, [tripId, cast, decide, load, begin]);
 
   if (read === undefined) {
     return <View style={s.wrap} testID="trip-ballots-loading"><ActivityIndicator size="small" color={color.signal} style={{ margin: space.lg }} /></View>;
