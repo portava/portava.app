@@ -82,7 +82,7 @@ export interface GetLivePulseParams {
  */
 export interface LivePulseResponse {
   items: LivePulseItem[];
-  sessionId?: string;
+  sessionId?: string; /** census-discovery §118 (SW20): the reads the server could not make (a section it could not read is not absent) */ failedSources?: string[];
 }
 
 // ── Session-scoped dismiss store ──────────────────────────────────────────────
@@ -122,7 +122,7 @@ export function clearDismissedItems(): void {
 export async function getLivePulseItems(
   params: GetLivePulseParams = {},
 ): Promise<
-  | { ok: true; items: LivePulseItem[]; sessionId: string | null }
+  | { ok: true; items: LivePulseItem[]; sessionId: string | null; failedSources: string[] }
   | { ok: false; error: string }
 > {
   const base = apiBase();
@@ -154,7 +154,7 @@ export async function getLivePulseItems(
       typeof data.sessionId === 'string' && data.sessionId.length > 0
         ? data.sessionId
         : null;
-    return { ok: true, items: data.items ?? [], sessionId };
+    return { ok: true, items: data.items ?? [], sessionId, failedSources: Array.isArray(data.failedSources) ? data.failedSources.filter((x): x is string => typeof x === 'string') : [] };  // census-discovery §118 (SW20)
   } catch (err: any) {
     return { ok: false, error: err?.message ?? 'Network error' };
   }

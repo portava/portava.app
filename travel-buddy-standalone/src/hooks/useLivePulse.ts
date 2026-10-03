@@ -47,7 +47,7 @@ export interface UseLivePulseResult {
    * cross-surface mis-attribution because they report under their own surface,
    * not because a session is present — nothing here is load-bearing.
    */
-  sessionId: string | null;
+  sessionId: string | null; /** census-discovery §118 (SW20): the reads the server could not make for `items` (empty when it read everything) */ unread?: string[];
   refresh: () => void;
   dismiss: (id: string) => void;
   changeContext: (ctx: LivePulseContext) => void;
@@ -72,7 +72,7 @@ export function useLivePulse(opts: UseLivePulseOptions = {}): UseLivePulseResult
   // different batch of cards.
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null); const [unread, setUnread] = useState<string[]>([]); const fetchSeq = useRef(0);  // §118 (SW20): what the server could not read; only the latest fetch is drawn
   const [dismissedVersion, setDismissedVersion] = useState(0);
 
   // Use a ref to avoid stale closure in the timer callback
@@ -82,11 +82,11 @@ export function useLivePulse(opts: UseLivePulseOptions = {}): UseLivePulseResult
     if (paused) return;
     setLoading(true);
     setError(null);
-    const params: GetLivePulseParams = { context, citySlug, lat, lng };
-    const result = await getLivePulseItems(params);
+    const params: GetLivePulseParams = { context, citySlug, lat, lng }; const seq = ++fetchSeq.current;
+    const result = await getLivePulseItems(params); if (seq !== fetchSeq.current) return;  // census-discovery §118 (SW20): an answer for a context no longer on screen is never drawn
     setLoading(false);
     if (result.ok) {
-      setAllItems(result.items);
+      setAllItems(result.items); setUnread(result.failedSources ?? []);
       setSessionId(result.sessionId);
     } else {
       // Leave items AND sessionId untouched: on a failed refresh the previously
@@ -131,5 +131,5 @@ export function useLivePulse(opts: UseLivePulseOptions = {}): UseLivePulseResult
   // Silence the unused var warning — dismissedVersion drives re-render
   void dismissedVersion;
 
-  return { items, loading, error, sessionId, refresh, dismiss, changeContext };
+  return { items, loading, error, sessionId, refresh, dismiss, changeContext, unread };
 }
