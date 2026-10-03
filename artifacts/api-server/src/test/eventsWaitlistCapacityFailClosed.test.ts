@@ -270,6 +270,20 @@ describe("census-trust §30.6–§30.9: waitlist seating, ban delete, capacity a
     const { w, out } = await sweep({ ...sweepQueue, failOn: eventReadFails });
     assert.deepEqual(offeredTo(w.writes), []); assert.equal(out.unreadable, 1);
   });
+  // census-discovery §113 (round 16, D-W11X2-134; census-trust §30.11): the round-15 verifier's surviving mutation V9 —
+  // deleting the sweeper's `if (pick.unavailable) continue;` — also counted the freed seat as stranded ("queue exhausted")
+  // over an eligibility nobody could read. A failed read is not an ops count.
+  it("SW3b head's eligibility cannot be read → no seat is counted stranded, nobody promoted", async () => {
+    const { w, out } = await sweep({ ...sweepQueue, ev: { age_min: 18 }, failOn: ageUnreadableFor(W1) });
+    assert.deepEqual(offeredTo(w.writes), []);
+    assert.equal(out.stranded, 0, `an unreadable eligibility was counted as a stranded seat: ${JSON.stringify(out)}`);
+    assert.equal(out.promoted, 0); assert.equal(out.unreadable, 1);
+  });
+  it("SW3c CONTROL: every waitlister readable and banned → the freed seat IS stranded (the queue is exhausted)", async () => {
+    const { w, out } = await sweep({ ...sweepQueue, banned: [W1, W2] });
+    assert.deepEqual(offeredTo(w.writes), []);
+    assert.equal(out.stranded, 1, JSON.stringify(out)); assert.equal(out.unreadable, 0);
+  });
 
   // ── §30.7 the ban's waitlist delete ──────────────────────────────────────────
   const ban = () => req("t-host", "POST", `/events/${EVENT}/roles`, { userId: W1, role: "banned" });

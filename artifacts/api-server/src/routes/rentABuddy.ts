@@ -1013,7 +1013,7 @@ router.post("/rent-a-buddy/search", async (req, res) => {
   if (viewerId) {
     blockedSet = await fetchBlockedSet(serviceClient as any, viewerId);
     if (blockedSet === null) {
-      return res.json({ buddies: [], total: 0, page, perPage });
+      return res.json({ buddies: [], total: 0, page, perPage, refusal: "block_set_unreadable" });  // census-discovery §115 (DV-83, sweep SW8): fail-closed AND said — never a whole, empty marketplace
     }
   }
 

@@ -2,7 +2,7 @@
 
 *Consolidated 2026-09-28 by lane W11-P (`disc-w11-approvals`, at integration head `3fd11f858`). Census section: census-discovery §96. Register section: `## W11-P — the owner approval request, consolidated` in `docs/architecture/discovery-decision-register.md`. This page replaces lane W10-D's pack (census §83), which predated every lane after §83. §2 maps each earlier request id (`W10D-…`) and every later register entry to the actions below.*
 
-**Nothing in this page has been done.** No migration of this programme is applied to `portava-ci` or to production. Nothing is deployed, and no Discovery flag has been turned on. Every verdict below rests on controlled evidence: unit suites and a local PostgreSQL 16 harness. None of it is production evidence.
+**Nothing in this page has been done in production.** Step 0 is done: the programme's migrations were applied to `portava-ci` on 2026-09-28 and PR #528 merged (§3; `docs/ops/discovery-portava-ci-apply-plan.md` §8.8). Nothing of this programme is applied to production. Nothing is deployed, and no Discovery flag has been turned on. Every verdict below rests on controlled evidence: unit suites and a local PostgreSQL 16 harness. None of it is production evidence.
 
 **How to answer.** Each action gives the exact thing to approve. Reply per action number: "approve", "decline", or a value. The four kinds of decision the programme may not make itself are marked:
 - **consent** — real user consent or a new use of someone's data;
@@ -125,7 +125,7 @@ How the 87 open rows split:
 
 ## 3. Step 0 — the `portava-ci` apply (not a decision)
 
-**It is already authorised** (owner, 2026-09-28: *"after checking dependencies, preserving existing data and flag values, and verifying recovery and postconditions. Do not modify the intentional 2481 ledger entry."*). It is blocked only because this session has no credentials for `portava-ci` (`hwokxgbmezheskbzskfr`).
+**It is already authorised** (owner, 2026-09-28: *"after checking dependencies, preserving existing data and flag values, and verifying recovery and postconditions. Do not modify the intentional 2481 ledger entry."*). **DONE 2026-09-28** through the Supabase connector: 124 guarded statements in dependency order, ledger 680 rows, the 2481 and 3350 rows unchanged, 116 existing flag values preserved and 53 new flags seeded FALSE (`docs/ops/discovery-portava-ci-apply-plan.md` §8.8). PR #528 merged at `0d7dedb57` with every check green, live-DB included. The credential steps below are kept as the record of how it was unblocked.
 
 **What you do (one of the two):**
 1. **Preferred.** In the cloud environment's settings (the environment menu in the session's title bar, then Edit), add under API credentials, or as environment variables:
@@ -524,7 +524,7 @@ None of these changes the ranked order of the Discovery feed. Turn them on one a
 ### Action 24 — the creator ledger (P2) · production activation
 
 - **Approve**, only after question 22(a):
-  1. The C-11 answer your decision selects: `reconciliation-staging/3511_…delete_on_erasure.sql` or `…/3512_…retain_pseudonymised.sql`, both written and rehearsed (census §107) and held out of the chain. Until then `3510_creator_ledger_erasure_policy_undecided.sql` refuses every ledger deletion, so P2 + 3510 may be applied without this answer (rollout plan §1.5).
+  1. The C-11 answer your decision selects: `reconciliation-staging/3511_…delete_on_erasure.sql` or `…/3512_…retain_pseudonymised.sql`, both written and rehearsed (census §121) and held out of the chain. Until then `3510_creator_ledger_erasure_policy_undecided.sql` refuses every ledger deletion, so P2 + 3510 may be applied without this answer (rollout plan §1.5).
   2. Then P2, in order: `2901` (with the fix), `2920`, `2921`, `2922`, `2930`, `3385`, `3386`, `3387`.
   3. `creator_attribution_enabled` stays FALSE until 22(b) publishes a rule (B1) and a producer exists (B7).
 - **Unblocks:** it is a precondition of 15 rows: DC-23, DV-26, DV-56–DV-60, DV-63–DV-68, DV-70 and DV-74. None moves on the apply alone; most then need a producer or a published rule (§7).
@@ -605,7 +605,7 @@ This page does not answer these. Each gives a recommended answer and what follow
 
 ### Question 22 — money · financial
 
-- **(a) C-11** (W10D-B0; also retention). On account erasure, are a creator's earning records deleted, or retained with the direct identity removed (pseudonymised — census §107.4 shows the rows stay linkable, so not anonymous) for a statutory period?
+- **(a) C-11** (W10D-B0; also retention). On account erasure, are a creator's earning records deleted, or retained with the direct identity removed (pseudonymised — census §121.4 shows the rows stay linkable, so not anonymous) for a statutory period?
   - **Recommended: retain, pseudonymised (3512), for the period your legal advice sets** (`09` §6, §11; `04` §11). The period has no spec value, and 3512 builds no purge for it.
   - The answer selects the fix migration of action 24. Either answer can be changed at no cost before any creator row exists.
 - **(b) B1–B11.** These are W10D-B1 … W10D-B11, verbatim from census §52.8, with their spec grounds. Recommended defaults:
@@ -643,7 +643,7 @@ None of these is a new decision.
 1. A tripped stop does not turn off 3455 or 3456 (action 8), or any flag of action 10. Their recovery is a manual flag flip.
 2. Closed by §97 (W11-S): 3440, 3441, 2289, 2297, 2892, 2894, 2995 and 2893 each have a guarded `db/rollback/` file, rehearsed (apply plan §8.5).
 3. Closed by §97 (W11-S): 2901, 2921 and 2930 have rollback files; 2901's and 2921's refuse while any ledger row exists (apply plan §8.5).
-4. The C-11 fix is written as two held answers (3511 delete, 3512 retain; census §107); which one is applied waits on question 22(a). 3510 holds the choice open meanwhile.
+4. The C-11 fix is written as two held answers (3511 delete, 3512 retain; census §121); which one is applied waits on question 22(a). 3510 holds the choice open meanwhile.
 5. The 33 files added since §87 have not been through the applier from the modelled `portava-ci` baseline (apply plan §8.3).
 
 ---

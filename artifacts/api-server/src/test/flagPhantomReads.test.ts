@@ -203,7 +203,9 @@ describe("phantom feature flags — the six repaired reads", () => {
   // pattern — while resolving to nothing.
   it("COMPASS_TELEGRAPH is seeded", () => {
     assert.equal(seeded.get("COMPASS_TELEGRAPH"), "2300_phantom_feature_flag_rows.sql");
-    assert.ok(readSrc("routes/compass.ts").includes('isEnabled(sc, "COMPASS_TELEGRAPH")'));
+    // census-discovery §107 (D-W11X2-68): read strictly now (an unread COMPASS_% table is a refusal,
+    // not "off"); the read is the same bulk load, so the seeded row is what it resolves.
+    assert.ok(readSrc("routes/compass.ts").includes('readCompassFlag(sc, "COMPASS_TELEGRAPH")'));
   });
 
   // ── The two deliberate non-seeds ───────────────────────────────────────────

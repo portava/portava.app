@@ -27,7 +27,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "./database.types";
-import { normalizeLocationName } from "./canonicalLocations";
+import { normalizeLocationName } from "./canonicalLocations"; import { nearBox, applyNearBox } from "./nearBox.js";  // census-discovery §116 (sweep SW13)
 // Spec §21/§35: the map does not rebuild identity — it REQUESTS the Passport's
 // map-presence projection. That projection is batch-only by construction (the
 // per-user consumer-variant path is ~34 reads per target and this is a polling
@@ -213,7 +213,7 @@ export function freshnessBucket(updatedAtIso: string | null, now = Date.now()): 
 
 // ── Candidate cache (viewer-independent) ─────────────────────────────────────
 
-const candCache = new Map<string, { at: number; rows: MapTravelerPayload[] }>();
+const candCache = new Map<string, { at: number; rows: MapTravelerPayload[]; scanCut: boolean }>();  // §113: a cut scan stays cut while cached
 
 function cacheKey(lat: number, lng: number, radiusKm: number): string {
   return `${Math.round(lat * 20)}:${Math.round(lng * 20)}:${radiusKm}`;
@@ -246,34 +246,34 @@ async function loadCandidates(
   lat: number,
   lng: number,
   radiusKm: number,
-): Promise<MapTravelerPayload[] | null> {
+): Promise<CandidateRead | null> {
   const cutoff = new Date(Date.now() - FRESH_MAX_MS).toISOString();
-  const dLat = radiusKm / 111.32;
-  const dLng = radiusKm / (111.32 * Math.max(0.2, Math.cos((lat * Math.PI) / 180)));
+  const box = nearBox(lat, lng, radiusKm);  // census-discovery §116 (DV-83, sweep SW13): the circle's exact box (lib/nearBox)
+
 
   // last_known_at is written together with lat/lng on every position fix
   // (see routes/location.ts) — it is the honest "how fresh is this position"
   // signal. Rows without it are excluded (fail-closed).
-  // NOTE: the bbox is a naive min/max range — viewports straddling the
-  // antimeridian (±180°) will miss travelers on the far side. Accepted:
-  // queries are city-scale (≤100km) and no launch market sits on the line.
-  const { data: locsRaw, error: locErr } = await db
+  // The box wraps: a circle across the antimeridian (±180°) is read as two
+  // longitude ranges, and one that holds a pole as every longitude (§116: the
+  // naive min/max range missed the far side, and was clamped near the poles).
+  const { data: locsRaw, error: locErr } = await applyNearBox(db
     .from("user_location_state")
     .select("user_id, lat, lng, city, country, last_known_at")
     .gte("last_known_at", cutoff)
     .not("lat", "is", null)
-    .not("lng", "is", null)
-    .gte("lat", lat - dLat)
-    .lte("lat", lat + dLat)
-    .gte("lng", lng - dLng)
-    .lte("lng", lng + dLng)
-    .limit(SCAN_LIMIT);
+    .not("lng", "is", null), box, "lat", "lng")
+    // (§116 SW13: the latitude band and the longitude range(s) are the box's, applied above;
+    // they were lat ± r/111.32 and lng ± r/(111.32·max(0.2, cos lat)), which did not wrap
+    // and were narrower than the circle above ~78.5°, so a traveler inside the radius was
+    // never scanned.)
+    .order("last_known_at", { ascending: false }).limit(SCAN_LIMIT + 1);  // census-discovery §113 (DV-83, D-W11X2-129): freshest first, and one row past the cap so a cut scan is known
   // A failed read and an empty viewport are different answers. A null payload
   // WITHOUT an error is also a failed read, not an empty viewport: the rows
   // were never delivered, so this function has no basis for "nobody is here".
   if (locErr || !locsRaw) return null;
-  if (locsRaw.length === 0) return [];
-  const locs = locsRaw as LocStateRow[];
+  if (locsRaw.length === 0) return { rows: [], scanCut: false };
+  const scanCut = locsRaw.length > SCAN_LIMIT; const locs = (scanCut ? locsRaw.slice(0, SCAN_LIMIT) : locsRaw) as LocStateRow[];  // §113: eligibility runs after this cut, so the cut is carried to the answer
 
   const ids = locs.map((l) => l.user_id);
 
@@ -331,7 +331,7 @@ async function loadCandidates(
       if (norm) cityNames.add(norm);
     }
   }
-  if (eligible.length === 0) return [];
+  if (eligible.length === 0) return { rows: [], scanCut };
 
   // City centroids from the canonical location registry (one source of truth).
   // Failure here is non-fatal — the grid fallback is at least as coarse.
@@ -395,12 +395,23 @@ async function loadCandidates(
       ? a.displayName.localeCompare(b.displayName)
       : a.freshness === "live" ? -1 : 1,
   );
-  return rows;
+  return { rows, scanCut };
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-export async function listMapTravelers(
+/**
+ * The travelers for a viewport, and whether the answer is CUT, or `null` when a
+ * read failed (census-discovery §113, DV-83, D-W11X2-129).
+ *
+ * `truncated` is true when the location scan hit its cap (eligibility runs
+ * after the scan, so a sharer beyond the cap is never seen) or when the answer
+ * was sliced to MAX_RESULTS. A cut answer is still served — the rows are real
+ * and privacy-complete — but no caller may state it as the whole viewport:
+ * GET /map/travelers sends `truncated: true`, the NOW gateway does not name
+ * `travelers` as read, and /map/search reports the source `travelers_capped`.
+ */
+export async function listMapTravelersRead(
   db: SupabaseClient,
   opts: {
     viewerId: string;
@@ -410,7 +421,7 @@ export async function listMapTravelers(
     /** null = block state unknown → the layer is REFUSED, not empty. */
     blockedSet: Set<string> | null;
   },
-): Promise<MapTravelerPayload[] | null> {
+): Promise<MapTravelersRead | null> {
   // Without the block set this function cannot honour blocking, so it cannot
   // answer at all. It previously returned [], which a caller could not tell
   // from "nobody is here".
@@ -418,17 +429,17 @@ export async function listMapTravelers(
 
   const key = cacheKey(opts.lat, opts.lng, opts.radiusKm);
   const hit = candCache.get(key);
-  let rows: MapTravelerPayload[];
+  let loaded: CandidateRead;
   if (hit && Date.now() - hit.at < CAND_TTL_MS) {
-    rows = hit.rows;
+    loaded = { rows: hit.rows, scanCut: hit.scanCut };
   } else {
-    const loaded = await loadCandidates(db, opts.lat, opts.lng, opts.radiusKm);
+    const read = await loadCandidates(db, opts.lat, opts.lng, opts.radiusKm);
     // A failed read is NOT cached. Caching it would turn one transient database
     // error into CAND_TTL_MS of "nobody is anywhere near you" for every viewer
     // sharing the viewport key.
-    if (loaded === null) return null;
-    rows = loaded;
-    candCache.set(key, { at: Date.now(), rows });
+    if (read === null) return null;
+    loaded = read;
+    candCache.set(key, { at: Date.now(), rows: read.rows, scanCut: read.scanCut });
     if (candCache.size > 80) {
       const oldest = [...candCache.entries()].sort((a, b) => a[1].at - b[1].at)[0];
       if (oldest) candCache.delete(oldest[0]);
@@ -436,7 +447,19 @@ export async function listMapTravelers(
   }
 
   const blocked = opts.blockedSet;
-  return rows
-    .filter((r) => r.id !== opts.viewerId && !blocked.has(r.id))
-    .slice(0, MAX_RESULTS);
+  const visible = loaded.rows.filter((r) => r.id !== opts.viewerId && !blocked.has(r.id));
+  return {
+    travelers: visible.slice(0, MAX_RESULTS),
+    truncated: loaded.scanCut || visible.length > MAX_RESULTS,
+  };
+}
+
+/** loadCandidates' answer: the eligible rows, and whether the location scan was cut at SCAN_LIMIT (§113). */
+type CandidateRead = { rows: MapTravelerPayload[]; scanCut: boolean };
+
+/** listMapTravelersRead's answer (§113, D-W11X2-129). */
+export interface MapTravelersRead {
+  travelers: MapTravelerPayload[];
+  /** The scan hit its cap or the answer was sliced: the layer is not the whole viewport. */
+  truncated: boolean;
 }

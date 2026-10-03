@@ -413,7 +413,7 @@ function seedHomeWorld(store: Record<string, Row[]>): void {
   // `currentCity` is resolved from user_location_state, not profiles
   // (CompassProfileService reads locState.city).
   store.user_location_state = [{ user_id: USER_ID, city: "Cebu City", country: "PH" }];
-  store.events = [];
+  store.events = []; { const d = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10); store.weather_cache = [{ destination: "cebu city", date_key: `${d}:${d}`, fetched_at: new Date().toISOString(), brief_summary: "seeded", forecasts_json: [{ date: d, weatherCode: 1, summary: "Clear", maxTempC: 31, minTempC: 25, precipMm: 0 }] }]; }  // census-discovery §107 (D-W11X2-67): the forecast is SEEDED — these cases assumed an unreachable provider answers "ok", which was the defect
 }
 
 describe("C. CX-06 / CPV2-05 — Home reports availability per section", () => {

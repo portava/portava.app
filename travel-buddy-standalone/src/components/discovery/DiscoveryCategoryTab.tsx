@@ -3,8 +3,8 @@ import {
   View, Text, FlatList, Pressable, StyleSheet, RefreshControl, Switch, Animated,
 } from 'react-native';
 import { Search } from 'lucide-react-native';
-import type { DiscoveryCategory, DiscoveryContextMode, DiscoveryFilters, DiscoveryPlace } from '../../services/discovery.ts';
-import { getDiscoveryPlaces, getCachedDiscoveryPlaces } from '../../services/discovery.ts'; import { listPartialNotice, listPartialEmptyTitle, LIST_PARTIAL_EMPTY_BODY } from '../../services/discoveryCoverageNotice.ts'; import { liveClaimsUnchecked, LIVE_UNCHECKED_NOTICE } from './liveUnchecked.ts';  // census-discovery §91 (A07)
+import type { DiscoveryCategory, DiscoveryContextMode, DiscoveryFilters, DiscoveryPlace, DiscoveryAgeFilter } from '../../services/discovery.ts';
+import { getDiscoveryPlaces, getCachedDiscoveryPlaces, type DiscoveryCacheQuery } from '../../services/discovery.ts'; import { discoveryQueryOf, heldForAnotherQuery } from '../../services/discoveryQueryStamp.ts'; import { listPartialNotice, listPartialEmptyTitle, LIST_PARTIAL_EMPTY_BODY, listStaleNotice, listMoreFailedNotice } from '../../services/discoveryCoverageNotice.ts'; import { liveClaimsUnchecked, LIVE_UNCHECKED_NOTICE } from './liveUnchecked.ts';  // census-discovery §91 (A07)
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import PlaceCard from './PlaceCard.tsx';
 import { PlaceSkeletonList } from './PlaceSkeleton.tsx';
@@ -400,18 +400,18 @@ export function DiscoveryCategoryTab({
   // SWR: seed from in-memory client cache so second opens paint instantly.
   const [places, setPlaces]         = useState<DiscoveryPlace[]>(() => {
     if (!destination) return [];
-    return getCachedDiscoveryPlaces(destination, category, 10, 1, intentMode)?.places ?? [];
+    return getCachedDiscoveryPlaces(destination, category, filters.radiusKm, 1, intentMode, categoryTabCacheQuery(filters, contextMode, ageFilter, customMinAge, customMaxAge, lat, lng, userLat, userLng))?.places ?? [];  // §103 (D-W11X2-47): the whole query, as load() sends it
   });
   const [loading, setLoading]       = useState<boolean>(() => {
     if (!destination) return false;
-    return getCachedDiscoveryPlaces(destination, category, 10, 1, intentMode) === null;
+    return getCachedDiscoveryPlaces(destination, category, filters.radiusKm, 1, intentMode, categoryTabCacheQuery(filters, contextMode, ageFilter, customMinAge, customMaxAge, lat, lng, userLat, userLng)) === null;
   });
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError]           = useState<string | null>(null);
   const [page, setPage]             = useState(1);
   const [total, setTotal]           = useState(0);  const [moreRefused, setMoreRefused] = useState(false); const [partial, setPartial] = useState(false);  // DV-83: page ≥ 2 was REFUSED — see load(); §80: a page came back PARTIAL
-  const [locationNudge, setLocationNudge] = useState(false); const [liveUnchecked, setLiveUnchecked] = useState(false);  // census-discovery §91 (A07): the served page's "now" claims were withheld (meta.liveSafety)
-  const loadingMore                 = useRef(false);
+  const [locationNudge, setLocationNudge] = useState(false); const [liveUnchecked, setLiveUnchecked] = useState(false); const [refreshFailed, setRefreshFailed] = useState(false); const [moreFailed, setMoreFailed] = useState(false);  // census-discovery §91 (A07): the served page's "now" claims were withheld (meta.liveSafety); §100 (DV-83, D-W11X2-22): the last PAGE-1 read failed in transport while places stayed on screen; §101 (DV-83, D-W11X2-30): the last LOAD-MORE (page ≥ 2) failed in transport, and the footer says so
+  const loadingMore                 = useRef(false); const loadIdRef = useRef(0); const heldQueryRef = useRef<string | undefined>(undefined);  // §103 (DV-83, D-W11X2-47): the query the rows on screen were read for (undefined: not known)  // census-discovery §102 (DV-83, D-W11X2-38): the generation of the latest page-1 read — an answer for an older one never writes the screen
   const nudgeOpacity                = useRef(new Animated.Value(0)).current;
   const nudgeTimer                  = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Stores the coords that were active when the last fetch fired. */
@@ -461,9 +461,9 @@ export function DiscoveryCategoryTab({
   }, [nudgeOpacity]);
 
   const load = useCallback(async (nextPage: number, currentFilters: DiscoveryFilters, reset: boolean) => {
-    if (!destination) return;
+    if (!destination) return; const myGen = nextPage === 1 ? ++loadIdRef.current : loadIdRef.current;  // §102: a page-1 read starts a generation; a load-more belongs to the one it continues
     if (reset) setLoading(true);
-    setError(null); setMoreRefused(false);
+    setError(null); setMoreRefused(false); setMoreFailed(false); if (nextPage === 1) setRefreshFailed(false);
 
     // Read user coords from refs so this callback stays stable across GPS updates.
     // The location-change effect is the sole handler that re-fires when the user
@@ -491,14 +491,14 @@ export function DiscoveryCategoryTab({
     const res = await getDiscoveryPlaces(destination, category, requestFilters, nextPage, contextMode, ageFilter, customMinAge, customMaxAge, lat, lng, nearestUserLat, nearestUserLng);
 
     // Always clear — bootstrap guard is only needed during the async window.
-    nearestFetchPendingWithCoords.current = false;
+    nearestFetchPendingWithCoords.current = false; if (myGen !== loadIdRef.current) return;  // §102 (D-W11X2-38): superseded (radius, age filter, custom ages, a retry, a new query) — it can neither overwrite a refused or failed read nor sit under the wrong notice
 
     setLoading(false);
     setRefreshing(false);
     loadingMore.current = false;
 
-    if (!res.ok) {
-      setError(res.error);
+    if (!res.ok) { if (nextPage === 1 && heldForAnotherQuery(heldQueryRef.current, res)) { setPlaces([]); setTotal(0); setPartial(false); setLiveUnchecked(false); heldQueryRef.current = undefined; }  // §103 (DV-83, D-W11X2-47): another query's rows are never kept under THIS query's failure — it is the error state
+      setError(res.error); setRefreshFailed(nextPage === 1); setMoreFailed(nextPage > 1);  // §100 (D-W11X2-22): a failed page-1 read over places on screen is a failed REFRESH, and is said to be one; §101 (D-W11X2-30): a failed page ≥ 2 is a failed LOAD-MORE, said in the footer
       return;
     }
 
@@ -518,7 +518,7 @@ export function DiscoveryCategoryTab({
     // replace a page of genuine results already on screen with a failure card.
     if (nextPage === 1 && res.data.refusal?.coverage === 'nothing') {
       setError("We couldn't load places just now — this is on our side, not your filters.");
-      setPlaces([]);
+      setPlaces([]); heldQueryRef.current = undefined;
       setTotal(0); setPartial(false); setLiveUnchecked(false);
       return;
     }
@@ -544,7 +544,7 @@ export function DiscoveryCategoryTab({
     const filtered = applyClientFilters(res.data.places); const pagePartial = res.data.refusal?.coverage === 'partial'; setPartial((prev) => (nextPage === 1 ? pagePartial : prev || pagePartial)); // §80: page 1 decides; a later partial page keeps the line up
     setTotal(res.data.total); setLiveUnchecked((prev) => (nextPage === 1 ? false : prev) || liveClaimsUnchecked(res.data));  // §91 (A07): a new page-1 query restates it; a later page can only add it
     // Replace on page-1 (new query), append on subsequent pages (pagination).
-    setPlaces((prev) => nextPage === 1 ? filtered : [...prev, ...filtered]);
+    setPlaces((prev) => nextPage === 1 ? filtered : [...prev, ...filtered]); if (nextPage === 1) heldQueryRef.current = discoveryQueryOf(res.data);  // §103: these rows are this query's
     setPage(nextPage);
   }, [destination, category, filters, ageFilter, customMinAge, customMaxAge]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -552,13 +552,13 @@ export function DiscoveryCategoryTab({
     // SWR: immediately hydrate with the cache for the active destination/category
     // so city or tab switches never show stale content from the previous query.
     const cachedResult = destination
-      ? getCachedDiscoveryPlaces(destination, category, filters.radiusKm, 1, intentMode)
+      ? getCachedDiscoveryPlaces(destination, category, filters.radiusKm, 1, intentMode, categoryTabCacheQuery(filters, contextMode, ageFilter, customMinAge, customMaxAge, lat, lng, userLat, userLng))  // §103 (D-W11X2-47): the whole query, as load() sends it
       : null;
     if (cachedResult) {
-      setPlaces(cachedResult.places); setPartial(cachedResult.refusal?.coverage === 'partial');
+      setPlaces(cachedResult.places); heldQueryRef.current = discoveryQueryOf(cachedResult); setPartial(cachedResult.refusal?.coverage === 'partial'); setTotal(cachedResult.total);  // §101 (D-W11X2-29): the cached page's own total, so a failed refresh over it neither calls it the whole set nor blocks load-more
       setLoading(false);
     } else {
-      setPlaces([]);
+      setPlaces([]); setTotal(0); heldQueryRef.current = undefined;
     }
     setPage(1);
     load(1, filters, cachedResult === null); // reset=true (skeleton) only on miss
@@ -641,9 +641,9 @@ export function DiscoveryCategoryTab({
       {loading && places.length === 0 ? (
         <PlaceSkeletonList count={6} />
       ) : viewMode === 'map' ? (
-        <DiscoveryMapView key={destination} places={places} onSelectPlace={onSelectPlace} fallbackLat={lat} fallbackLng={lng} userLat={userLat} userLng={userLng} fallbackZoom={fallbackZoom} topInset={listTopInset} />
+        <><DiscoveryMapView key={destination} places={places} onSelectPlace={onSelectPlace} fallbackLat={lat} fallbackLng={lng} userLat={userLat} userLng={userLng} fallbackZoom={fallbackZoom} topInset={listTopInset} /><CategoryMapCoverage kind={error && places.length === 0 ? 'error' : places.length === 0 && partial ? 'partial-empty' : partial ? 'partial' : null} stale={refreshFailed && places.length > 0} error={error} topInset={listTopInset} onRetry={handleRefresh} /></>
       ) : error && places.length === 0 ? (
-        <View style={styles.center}>
+        <View style={styles.center} testID="discovery-category-error">
           <Text style={styles.emptyTitle}>Couldn't load places</Text>
           <Text style={styles.emptyDesc}>{error}</Text>
           <Pressable style={styles.retryBtn} onPress={() => load(1, filters, true)}>
@@ -660,7 +660,7 @@ export function DiscoveryCategoryTab({
       ) : (
         <FlatList
           testID="main-scroll"
-          data={places} ListHeaderComponent={partial ? <Text style={styles.emptyDesc} testID="discovery-category-partial">{listPartialNotice('places')}</Text> : null}
+          data={places} ListHeaderComponent={partial ? <><Text style={styles.emptyDesc} testID="discovery-category-partial">{listPartialNotice('places')}</Text>{refreshFailed ? <Text style={styles.emptyDesc} testID="discovery-category-stale">{`${listStaleNotice('places')} Pull to refresh.`}</Text> : null}</> : refreshFailed ? <Text style={styles.emptyDesc} testID="discovery-category-stale">{`${listStaleNotice('places')} Pull to refresh.`}</Text> : null}
           keyExtractor={(item) => item.id}
           renderItem={({ item }) => (
             <PlaceCard
@@ -713,7 +713,7 @@ export function DiscoveryCategoryTab({
                   <Text style={styles.retryText}>Try again</Text>
                 </Pressable>
               </View>
-            ) : places.length >= total && places.length > 0 ? (
+            ) : moreFailed ? (<View style={styles.moreRefused} testID="discovery-category-more-failed"><Text style={styles.emptyDesc}>{listMoreFailedNotice('places')}</Text><Pressable style={styles.retryBtn} onPress={handleLoadMore}><Text style={styles.retryText}>Try again</Text></Pressable></View>) : !refreshFailed && !error && !partial && total > 0 && places.length >= total && places.length > 0 ? (  // §101 (D-W11X2-29): the end claim only after a read that did not fail, beside no partial page, with a known total
               <Text style={styles.endText}>{places.length} places found</Text>
             ) : null
           }
@@ -807,3 +807,79 @@ const nudge = StyleSheet.create({
 });
 
 export default DiscoveryCategoryTab;
+
+// ── census-discovery §100 (lane W11-X2 round 4; DV-83, §99.8 finding 3) ──────
+//
+// D-W11X2-24: the render chain tested `viewMode === 'map'` before its error,
+// partial-empty and partial branches, so in map mode a refused page, a failed
+// read and a partial page all drew a plain map. The same states, with the
+// list's testIDs and words, sit in a banner over the map — below its filter row
+// and clear of its right-hand buttons — with the list's "Try again".
+// D-W11X2-22: a failed page-1 refresh over places on screen is said to be one.
+function CategoryMapCoverage({ kind, stale, error, topInset, onRetry }: {
+  kind: 'error' | 'partial' | 'partial-empty' | null; stale: boolean; error: string | null; topInset: number; onRetry: () => void;
+}) {
+  if (kind === null && !stale) return null;
+  return (
+    <View style={[mapCoverage.wrap, { top: topInset + 58 }]} pointerEvents="box-none">
+      <View style={mapCoverage.card}>
+        {kind === 'error' && (
+          <View testID="discovery-category-error">
+            <Text style={styles.emptyTitle}>Couldn't load places</Text>
+            <Text style={styles.emptyDesc}>{error}</Text>
+          </View>
+        )}
+        {kind === 'partial-empty' && (
+          <View testID="discovery-category-partial-empty">
+            <Text style={styles.emptyTitle}>{listPartialEmptyTitle('places')}</Text>
+            <Text style={styles.emptyDesc}>{LIST_PARTIAL_EMPTY_BODY}</Text>
+          </View>
+        )}
+        {kind === 'partial' && <Text style={styles.emptyDesc} testID="discovery-category-partial">{listPartialNotice('places')}</Text>}
+        {stale && <Text style={styles.emptyDesc} testID="discovery-category-stale">{listStaleNotice('places')}</Text>}
+        <Pressable style={[styles.retryBtn, mapCoverage.retry]} onPress={onRetry} hitSlop={6}>
+          <Text style={styles.retryText}>Try again</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+const mapCoverage = StyleSheet.create({
+  wrap: { position: 'absolute', left: 14, right: 58 },
+  card: {
+    gap: space.sm,
+    paddingVertical: space.md,
+    paddingHorizontal: space.md,
+    borderRadius: radius.md,
+    backgroundColor: color.paperRaised,
+    borderWidth: 1,
+    borderColor: color.haze,
+  },
+  retry: { alignSelf: 'center', marginTop: 0 },  // the list's own retry button (styles.retryBtn / retryText)
+});
+
+/**
+ * census-discovery §103 (DV-83, D-W11X2-47): the rest of the GET /discovery query this
+ * tab sends, for the cache read — built from the same inputs `load()` passes to
+ * `getDiscoveryPlaces`, including the nearest-sort user position it resolves the same
+ * way, so the hydrated page is the page of the query about to be asked.
+ */
+function categoryTabCacheQuery(
+  filters: DiscoveryFilters,
+  contextMode: DiscoveryContextMode | null | undefined,
+  ageFilter: DiscoveryAgeFilter | null | undefined,
+  customMinAge: number | null | undefined,
+  customMaxAge: number | null | undefined,
+  lat: number | null | undefined,
+  lng: number | null | undefined,
+  userLat: number | null | undefined,
+  userLng: number | null | undefined,
+): DiscoveryCacheQuery {
+  const { nearestUserLat, nearestUserLng } = resolveNearestFetchCoords(filters.sortBy, userLat, userLng);
+  return {
+    openNow: filters.openNow, minRating: filters.minRating, sortBy: filters.sortBy ?? null,
+    contextMode, ageFilter, customMinAge, customMaxAge, lat, lng,
+    userLat: nearestUserLat, userLng: nearestUserLng,
+  };
+}

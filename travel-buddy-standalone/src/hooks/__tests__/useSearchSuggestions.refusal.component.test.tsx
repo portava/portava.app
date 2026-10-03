@@ -86,7 +86,7 @@ describe('useSearchSuggestions — a refusal is not a cacheable empty typeahead'
     );
   });
 
-  it('OUTAGE: does not FLASH EMPTY over groups already on screen', async () => {
+  it('OUTAGE: a refusal over another query\'s groups is refused — never the empty state, nor that query\'s groups (restated, §102)', async () => {
     mockGetSearchSuggestions.mockResolvedValue({ ok: true, groups: [group('g1')] });
     const { result, rerender } = await renderHook(
       ({ q }: { q: string }) => useSearchSuggestions(q, {}),
@@ -99,9 +99,12 @@ describe('useSearchSuggestions — a refusal is not a cacheable empty typeahead'
     await waitFor(() => expect(mockGetSearchSuggestions).toHaveBeenCalledTimes(2), PAST_DEBOUNCE);
     await waitFor(() => expect(result.current.loading).toBe(false), PAST_DEBOUNCE);
 
-    // The server did not look. Emptying the panel would state, on the server's
-    // behalf, that there is nothing to find.
-    expect(result.current.groups).toHaveLength(1);
+    // The server did not look. `refused` says so, and the panel draws its
+    // "unavailable" line, never "no quick matches". RESTATED by census-discovery
+    // §102 (D-W11X2-42): the held groups were 'kopi''s answer, not 'kopit''s, so
+    // they are dropped (was toHaveLength(1)); the flash this test guards against
+    // is the EMPTY-STATE sentence, which `refused` still suppresses.
+    expect(result.current.groups).toHaveLength(0);
     expect(result.current.refused).toBe(true);
   });
 

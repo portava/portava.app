@@ -166,7 +166,7 @@ function capable(state: FakeState): any {
               }
               if (p === "like" || p === "ilike") {
                 return (col: string, pattern: string) => {
-                  const body = String(pattern).split("%").map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/_/g, ".")).join(".*");
+                  if (table === "feature_flags" && likeFail.from !== null && ++likeFail.seen > likeFail.from) return { then: (r: any, j?: any) => Promise.resolve({ data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } }).then(r, j) }; const body = String(pattern).split("%").map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/_/g, ".")).join(".*");
                   const re = new RegExp(`^${body}$`, p === "ilike" ? "i" : "");
                   const hit = tableRows.filter((r) => re.test(String(r[col] ?? "")));
                   return { then: (r: any, j?: any) => Promise.resolve({ data: hit, error: null }).then(r, j) };
@@ -223,7 +223,7 @@ describe("§79 — one ranking pipeline for GET /discovery (controlled, in-proce
     _clearPromotedScopeCache();
     _resetStopConditionsForTest();
     writes.length = 0;
-    tablesRead.length = 0;
+    tablesRead.length = 0; likeFail.from = null; likeFail.seen = 0;  // §103: the flag read heals between cases
   };
   beforeEach(async () => {
     server = createServer((() => {
@@ -489,5 +489,101 @@ describe("§79 Z0 — flags FALSE is byte-identical to the tree before them", ()
     ]);
     assert.deepEqual(Object.keys(now), Object.keys(golden));
     for (const k of Object.keys(golden)) assert.deepEqual(now[k], golden[k], `output moved for "${k}" with the flags FALSE`);
+  });
+});
+
+// ── census-discovery §103 (DV-83, W11-X2 round 7; D-W11X2-49) — a Compass batch gated by the fail-safe flag map is refused ──
+//   U-P1  3455 ON, cold path: the pipeline's COMPASS_% read fails → refused `nothing`, not an empty page
+//   U-P2  3455 OFF, the Compass-order path: refused, and nothing is stored in Cache B
+//   U-P3  3455 ON, a Cache A hit: refused there too
+//   U-C1  CONTROL: the capability flag unread reads OFF (flags.ts' posture) — every candidate served
+// Appended at the foot (its own describe, the same fixture and server as §79's) so no cited line above moves.
+
+/** §103: make the COMPASS_% flag read fail after `from` successful reads (null: never). Read by `capable` at call time. */
+const likeFail: { from: number | null; seen: number } = { from: null, seen: 0 };
+
+describe("§103 — the fail-safe Compass flag map on GET /discovery's for_you serve points (controlled, in-process)", () => {
+  let server: Server;
+  let url: string;
+  const reset = () => {
+    _clearTestCompassCache();
+    _clearTestCacheEntry(CACHE_A_FOR_YOU);
+    invalidateDiscoveryEngineModeCache();
+    invalidateLiveRankFlagCache();
+    invalidateCandidateProjectionFlagCache();
+    invalidateCompassFlagsCache();
+    invalidateOnePipelineFlagCache();
+    _clearPromotedScopeCache();
+    _resetStopConditionsForTest();
+    writes.length = 0;
+    tablesRead.length = 0;
+    likeFail.from = null; likeFail.seen = 0;
+  };
+  beforeEach(async () => {
+    server = createServer((() => {
+      const app = express();
+      app.use((req, _res, next) => { (req as any).log = pino({ level: "silent" }); next(); });
+      app.use(discoveryRouter);
+      return app;
+    })());
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+    server.unref();
+    url = `http://127.0.0.1:${(server.address() as any).port as number}`;
+    reset();
+  });
+  afterEach(async () => {
+    _setTestDbPlacesOverride(null);
+    _setTestServiceClient(null);
+    reset();
+    await new Promise<void>((r) => server.close(() => r()));
+  });
+
+  async function page(state: FakeState, opts: { category?: string; places?: DiscoveryPlace[] } = {}): Promise<Body> {
+    const category = opts.category ?? "for_you";
+    const list = opts.places ?? rows(category);
+    _setTestDbPlacesOverride(async () => list.map((p) => ({ ...p })));
+    _setTestServiceClient(capable(state));
+    const res = await fetch(`${url}/discovery?${Q}&category=${category}`, { headers: { authorization: `Bearer ${TOKEN}` } });
+    assert.equal(res.status, 200);
+    return (await res.json()) as Body;
+  }
+
+  // ── §103 (DV-83, W11-X2 round 7; D-W11X2-49): the consolidated pipeline's unreadable Compass flags ──
+  it("U-P1. 3455 ON: Compass's own COMPASS_% read FAILS inside the pipeline (the gate's cached read succeeded) → the withheld candidates are not served as an empty for_you page", async () => {
+    likeFail.from = 1;  // getFlags' read (the gate's) succeeds and is cached; runPipeline's uncached loadFlags fails → the fail-safe map
+    const res = await page(world({ forYouPde: true }));
+    const refusal = (res as unknown as { refusal?: { class: string; code: string; coverage: string; failedSources?: string[] } }).refusal;
+    assert.ok(res.places.length > 0 || refusal, `an empty page must carry a refusal: ${JSON.stringify(res)}`);
+    assert.deepEqual(refusal, { class: "transient_db", code: "compass_gate_unreadable", route: "GET /discovery", coverage: "nothing", failedSources: ["compass_flags"] });
+    assert.deepEqual(res.places, []);
+  });
+
+  it("U-P2. 3455 OFF (the Compass-order path): the same failure is refused, and the withheld page is NOT stored in Cache B", async () => {
+    likeFail.from = 1;
+    const res = await page(world({ forYouPde: false }));
+    const refusal = (res as unknown as { refusal?: { code: string; coverage: string; failedSources?: string[] } }).refusal;
+    assert.equal(refusal?.code, "compass_gate_unreadable");
+    assert.equal(refusal?.coverage, "nothing");
+    likeFail.from = null;
+    const healthy = await page(world({ forYouPde: false }));
+    assert.ok(healthy.places.length > 0, "the next healthy request is ranked afresh — no empty page was cached");
+    assert.deepEqual(servedFrom(healthy), ["compass_fresh_rank"]);
+  });
+
+  it("U-P3. 3455 ON, a Cache A hit (serve path 1): the same failure is refused there too", async () => {
+    _injectTestCacheEntry(CACHE_A_FOR_YOU, rows("for_you"));
+    likeFail.from = 1;
+    const res = await page(world({ forYouPde: true }), { places: [] });
+    const refusal = (res as unknown as { refusal?: { code: string; coverage: string } }).refusal;
+    assert.equal(refusal?.code, "compass_gate_unreadable", JSON.stringify(res));
+    assert.equal(refusal?.coverage, "nothing");
+    assert.deepEqual(res.places, []);
+  });
+
+  it("U-C1. CONTROL: every COMPASS_% read fails from the first → the capability flag reads OFF (flags.ts' documented posture) and every candidate is served, nothing withheld", async () => {
+    likeFail.from = 0;
+    const res = await page(world({ forYouPde: true }));
+    assert.equal(res.places.length, 3);
+    assert.equal((res as unknown as { refusal?: unknown }).refusal, undefined);
   });
 });

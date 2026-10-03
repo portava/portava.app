@@ -195,7 +195,7 @@ export function SearchResultCard({ result, onActionStateChange }: Props) {
   const [isWaitlisted, setIsWaitlisted] = useState(
     (result.actionState?.isWaitlisted as boolean | undefined) ?? false,
   );
-  const [rsvpToggling, setRsvpToggling] = useState(false);
+  const [rsvpToggling, setRsvpToggling] = useState(false); const attendanceUnknown = result.type === 'events' && result.actionState == null;  // census-discovery §122 (DV-83 round 23, SW29): the server could not read whether the viewer is going
 
   // ── Trip join state ────────────────────────────────────────────────────────
   // Trips have no server-side join API in the current mobile services layer.
@@ -211,7 +211,7 @@ export function SearchResultCard({ result, onActionStateChange }: Props) {
   );
   const [saveToggling, setSaveToggling] = useState(false);
 
-  const isTraveler = result.type === 'travelers' || result.type === 'buddies';
+  const isTraveler = result.type === 'travelers' || result.type === 'buddies'; const followUnknown = isTraveler && result.actionState == null;  // census-discovery §122 (DV-83 round 23, SW32): the server could not read the viewer's follow state
   const isEvent = result.type === 'events';
   const isTrip = result.type === 'trips' || result.type === 'plans';
   const isPlace = result.type === 'places' || result.type === 'hidden_gems';
@@ -259,7 +259,7 @@ export function SearchResultCard({ result, onActionStateChange }: Props) {
   // ── Event RSVP ──────────────────────────────────────────────────────────
   async function handleEventJoin() {
     if (rsvpToggling) return;
-    if (isAttending || isWaitlisted) {
+    if (isAttending || isWaitlisted || attendanceUnknown) {  // §122 (SW29): never RSVP from an unknown state; the detail reads it
       navigate();
       return;
     }
@@ -413,8 +413,15 @@ export function SearchResultCard({ result, onActionStateChange }: Props) {
 
       {/* Right — type-specific action buttons */}
 
+      {/* §122 (SW32): follow state unknown → View (opens the profile), never Follow / Request */}
+      {followUnknown && (
+        <Pressable style={styles.actionBtn} onPress={(e) => { e.stopPropagation(); navigate(); }} hitSlop={8}>
+          <Text style={styles.actionBtnText}>View</Text>
+        </Pressable>
+      )}
+
       {/* Public traveler: Follow ↔ Following */}
-      {isTraveler && !isPrivate && (
+      {isTraveler && !isPrivate && !followUnknown && (
         <Pressable
           style={[styles.actionBtn, isFollowing && styles.actionBtnActive]}
           onPress={(e) => {
@@ -441,7 +448,7 @@ export function SearchResultCard({ result, onActionStateChange }: Props) {
       )}
 
       {/* Private traveler (not yet following): Request / Requested */}
-      {isTraveler && isPrivate && !isFollowing && (
+      {isTraveler && isPrivate && !isFollowing && !followUnknown && (
         <Pressable
           style={[styles.actionBtn, isRequestSent && styles.actionBtnActive]}
           onPress={
@@ -494,7 +501,7 @@ export function SearchResultCard({ result, onActionStateChange }: Props) {
             />
           ) : (
             <Text style={(isAttending || isWaitlisted) ? styles.actionBtnActiveText : styles.actionBtnText}>
-              {isAttending ? 'Attending' : isWaitlisted ? 'Waitlisted' : 'Join'}
+              {isAttending ? 'Attending' : isWaitlisted ? 'Waitlisted' : attendanceUnknown ? 'View' : 'Join'}
             </Text>
           )}
         </Pressable>

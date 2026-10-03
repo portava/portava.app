@@ -79,7 +79,7 @@ import type { MapObject, MapObjectKind } from '../types/mapObjects.ts';
 import { compareByRenderingPriority } from '../types/mapObjects.ts';
 import { searchBuddies } from '../services/rentABuddy.ts';
 import { listEvents } from '../services/events.ts';
-import { listGems } from '../services/hiddenGems.ts';
+import { listGems } from '../services/hiddenGems.ts'; import { gemListCut, markGemListCut } from '../services/gemListCut.ts'; import { buddyPageCut, eventsPageCut, layerPageCut, markLayerPageCut } from '../features/map/layers/layerPageCut.ts'; import { viewportBoxClamped } from '../features/map/layers/viewportBoxClamped.ts';  // census-discovery §114 (sweep SW2); §115 (B12); §116 (SW14)
 import { listMyTrips } from '../services/trips.ts';
 import { listVisibleCircleLocations } from '../services/map.ts';
 // Typed so the projector call sites are checked too: an untyped row is how
@@ -283,14 +283,14 @@ async function fetchBuddies(
       : ({} as Record<string, never>);
 
   const result = await searchBuddies({ city, perPage: 50, ...coordParams });
-  if (!result.ok || !result.data) throw new Error('buddies layer unreadable');
+  if (!result.ok || !result.data || result.data.refusal != null) throw new Error('buddies layer unreadable');  // census-discovery §115 (sweep SW8): a refused (fail-closed) answer is unread, never empty
 
   const out: MapObject[] = [];
   for (const buddy of result.data.buddies) {
     const obj = projectBuddy(buddy);
     if (obj) out.push(obj);
   }
-  return out;
+  return buddyPageCut(result.data) ? markLayerPageCut(out) : out;  // census-discovery §115 (B12): page one of `total` is not the whole layer
 }
 
 async function fetchEvents(lat: number, lng: number, now: number): Promise<MapObject[]> {
@@ -314,7 +314,7 @@ async function fetchEvents(lat: number, lng: number, now: number): Promise<MapOb
     const obj = projectEventLocal(ev, now);
     if (obj) out.push(obj);
   }
-  return out;
+  return eventsPageCut(result.data) ? markLayerPageCut(out) : out;  // census-discovery §115 (B12): a cut or full page is not the whole layer
 }
 
 async function fetchGems(city: string): Promise<MapObject[]> {
@@ -324,7 +324,7 @@ async function fetchGems(city: string): Promise<MapObject[]> {
     const obj = projectGemLocal(gem);
     if (obj) out.push(obj);
   }
-  return out;
+  return gemListCut(gems) ? markGemListCut(out) : out;  // census-discovery §114 (sweep SW2): a gem page the server cut stays marked
 }
 
 async function fetchTrips(): Promise<MapObject[]> {
@@ -396,7 +396,7 @@ export interface UseMapEntitiesResult {
    * Always empty on the legacy path, where each fetcher already swallows its
    * own failure into `[]` and the distinction is unrecoverable.
    */
-  unreadLayers: ToggleableEntityType[];
+  unreadLayers: MapUnreadLayer[]; /** census-discovery §114 (DV-83, B5): the gateway's answer was one page of a longer list (`nextCursor` set) — the map is not whole; say so */ truncated: boolean;
 }
 
 export function useMapEntities(opts: {
@@ -542,7 +542,7 @@ export function useMapEntities(opts: {
     useState<UseMapEntitiesResult['liveEnrichment']>(null);
   const [stage, setStage] = useState<LoadingStage>('cached_geography');
   const [staleness, setStaleness] = useState<Staleness | null>(null);
-  const [unreadLayers, setUnreadLayers] = useState<ToggleableEntityType[]>([]);
+  const [unreadLayers, setUnreadLayers] = useState<MapUnreadLayer[]>([]); const [truncated, setTruncated] = useState(false);  // census-discovery §114 (B5)
 
   const hasLoaded = useRef(false);
 
@@ -707,7 +707,7 @@ export function useMapEntities(opts: {
       setEntities([]);
       // No layer is enabled, so no layer went unread. Leaving a stale list here
       // would keep warning about a layer the user has since switched off.
-      setUnreadLayers([]);
+      setUnreadLayers([]); setTruncated(false);
       return;
     }
 
@@ -764,7 +764,7 @@ export function useMapEntities(opts: {
     try {
       // ── 1. Try the gateway ────────────────────────────────────────────────
       let gatewayObjects: MapObject[] | null = null;
-      let gatewaySources: string[] = [];
+      let gatewaySources: string[] = []; let gatewayCut = false; let gatewayFailed = false;  // census-discovery §114 (B5): a page of several; a read that failed or was refused
       let enrichment: UseMapEntitiesResult['liveEnrichment'] = null;
 
       if (wantedKinds.length > 0 && effectiveLat != null && effectiveLng != null) {
@@ -785,10 +785,10 @@ export function useMapEntities(opts: {
         // as an empty world.
         if (res.ok && res.data.enabled) {
           gatewayObjects = res.data.objects;
-          gatewaySources = res.data.sources;
+          gatewaySources = res.data.sources; gatewayCut = res.data.nextCursor != null || res.data.places?.truncated === true || viewportBoxClamped(effectiveLat, effectiveLng, radiusKm);  // §114 (B5): page one of several is never drawn as whole; §115 (B7): nor a places read cut at its cap; §116 (SW14): nor a viewport box clamped at ±180° or a pole
           enrichment = res.data.liveEnrichment;
-        }
-      }
+        } else gatewayFailed = !res.ok || res.data.refusal != null;  // §114 (B5): a failed or refused gateway read is not the flag being off — the optional layers, which only it serves, went unread
+      } else gatewayFailed = wantedKinds.length > 0;  // census-discovery §116 (DV-83, sweep SW12): with no position the gateway was never asked — the optional layers only it serves are unread, not empty
 
       // ── 2. Roll back to the per-layer fetchers, or not at all ─────────────
       // See the header: when the gateway answered it owns EVERY layer, because
@@ -811,14 +811,14 @@ export function useMapEntities(opts: {
       ));
 
       if (!usedGateway) {
-        if (enabledLayers.includes('events') && effectiveLat != null && effectiveLng != null) {
-          attempt('events', fetchEvents(effectiveLat, effectiveLng, now));
+        if (enabledLayers.includes('events')) {  // §116 (SW12): with no position the events layer is said unread, never drawn empty
+          attempt('events', effectiveLat != null && effectiveLng != null ? fetchEvents(effectiveLat, effectiveLng, now) : layerNeedsPosition());
         }
-        if (enabledLayers.includes('gems') && city) {
-          attempt('gems', fetchGems(city));
+        if (enabledLayers.includes('gems')) {  // census-discovery §116 (DV-83, B16): a layer that cannot be read without a city is said unread, never drawn empty
+          attempt('gems', city ? fetchGems(city) : layerNeedsCity('gems'));
         }
-        if (enabledLayers.includes('buddies') && city) {
-          attempt('buddies', fetchBuddies(city, effectiveLat, effectiveLng));
+        if (enabledLayers.includes('buddies')) {  // §116 (B16)
+          attempt('buddies', city ? fetchBuddies(city, effectiveLat, effectiveLng) : layerNeedsCity('buddies'));
         }
         if (enabledLayers.includes('trips')) {
           attempt('trips', fetchTrips());
@@ -831,16 +831,16 @@ export function useMapEntities(opts: {
       // Which enabled layers the gateway did NOT name in `sources` — it read
       // them and failed, or never got to them. An empty layer for that reason
       // must never be presented as "nothing here"; it is surfaced, not refetched.
-      const gatewayUnread: ToggleableEntityType[] = usedGateway
-        ? enabledLayers.filter((l) => !gatewaySources.includes(GATEWAY_SOURCE_FOR_LAYER[l]))
-        : [];
+      const gatewayUnread: MapUnreadLayer[] = usedGateway
+        ? unreadOnGateway(enabledLayers, optionalLayersRequested({ crowdFlow, places, saved, memories, safety, meetingPoints, worldIntelligence, myCities }), gatewaySources)  // §114 (B5): the optional layers too
+        : gatewayFailed ? optionalLayersRequested({ crowdFlow, places, saved, memories, safety, meetingPoints, worldIntelligence, myCities }) : [];
 
       const settled = await Promise.all(fetches);
       const perLayer = settled.map((r) => r.objects ?? []);
       // The legacy path's half of the same signal.
-      const unread: ToggleableEntityType[] = usedGateway
+      const unread: MapUnreadLayer[] = usedGateway
         ? gatewayUnread
-        : settled.filter((r) => r.objects === null).map((r) => r.layer);
+        : [...gatewayUnread, ...settled.filter((r) => r.objects === null).map((r) => r.layer)];  // §114 (B5): gatewayUnread is safety first already
       // A settle superseded this fetch while the legacy transports were in
       // flight — discard so the newer viewport's answer is the one that paints.
       if (!current()) return;
@@ -855,7 +855,7 @@ export function useMapEntities(opts: {
       // 'mixed' is unreachable now that the gateway serves every layer this
       // hook can show: when it answers, no per-layer fetcher runs at all.
       setSource(usedGateway ? 'gateway' : 'legacy');
-      setUnreadLayers(unread);
+      setUnreadLayers(unread); setTruncated(usedGateway ? gatewayCut : settled.some((r) => r.objects !== null && (gemListCut(r.objects) || layerPageCut(r.objects))));  // §114 (SW2): the rollback path's cut gem page too; §115 (B12): and a cut buddy or events page
       setLiveEnrichment(enrichment);
       setError(null);
       hasLoaded.current = true;
@@ -949,6 +949,62 @@ export function useMapEntities(opts: {
     liveEnrichment,
     stage,
     staleness,
-    unreadLayers,
+    unreadLayers, truncated,
   };
+}
+
+// ── census-discovery §114 (DV-83 round 17, lane W11-X2; the round-16 verifier's B5) ─────────────────────────────────
+//
+// The gateway names a layer in `sources` only over a read that succeeded and was not cut at its cap (§108–§113). The
+// hook used to compare `sources` with the five toggleable layers alone, so a failed or cut read of a §16 OPTIONAL layer
+// — safety notices above all, which cannot be switched off — reached the screen as a whole, empty layer: "no hazards".
+// Every requested layer is now compared, by the name the route pushes (GATEWAY_SOURCE_FOR_OPTIONAL_LAYER), and the
+// safety layer is listed first so the screen can say it first.
+
+/** A layer the map requested and the gateway did not read: a toggleable pin layer, or a §16 optional layer by its key. */
+export type MapUnreadLayer = ToggleableEntityType | keyof typeof GATEWAY_SOURCE_FOR_OPTIONAL_LAYER;
+
+/** The §16 optional layers this load asked the gateway for, by their GATEWAY_KIND_FOR_OPTIONAL_LAYER key. */
+export function optionalLayersRequested(o: {
+  crowdFlow: boolean; places: boolean; saved: boolean; memories: boolean; safety: boolean; meetingPoints: boolean;
+  worldIntelligence: boolean; myCities: boolean;
+}): string[] {
+  const out: string[] = [];
+  if (o.safety) out.push('safety');
+  if (o.meetingPoints) out.push('meeting_point');
+  if (o.crowdFlow) out.push('crowd_flow');
+  if (o.places) out.push('relevant_places');
+  if (o.saved) out.push('saved');
+  if (o.memories) out.push('memories');
+  if (o.worldIntelligence) out.push('world_pulse', 'traveler_flow', 'city_model');
+  if (o.myCities) out.push('personal_city');
+  return out;
+}
+
+/** Every requested layer — pin or optional — whose `sources` name the gateway did not push, safety first. */
+export function unreadOnGateway(enabled: ToggleableEntityType[], optional: string[], sources: string[]): MapUnreadLayer[] {
+  const pins = enabled.filter((l) => !sources.includes(GATEWAY_SOURCE_FOR_LAYER[l]));
+  const extra = optional.filter((k) => !sources.includes(GATEWAY_SOURCE_FOR_OPTIONAL_LAYER[k]!));
+  return safetyFirst([...pins, ...extra]);
+}
+
+/** The safety layer first (a hazard read that failed is said before anything else), the rest in request order. */
+export function safetyFirst(layers: string[]): MapUnreadLayer[] {
+  return [...layers.filter((l) => l === 'safety'), ...layers.filter((l) => l !== 'safety')] as MapUnreadLayer[];
+}
+
+// ── census-discovery §116 (DV-83 round 19, lane W11-X2; the round-18 verifier's B16) ─────────────────────────────────
+//
+// The rollback path reads gems and buddies by city. With no city it skipped both, so an enabled layer was neither read
+// nor named in `unreadLayers`, and the map drew it as empty. Such a layer is now attempted as a read that failed:
+// `attempt` names it unread. Neither has a positional read — the gem list is by city only, and the buddy search's
+// position only ranks the whole population — so neither is read by coordinates instead.
+function layerNeedsCity(layer: 'gems' | 'buddies'): Promise<MapObject[]> {
+  return Promise.reject(new Error(`${layer} layer: no city to read it by`));
+}
+
+// census-discovery §116 (DV-83 round 19; sweep SW12): the events layer is read by position. With none (no parameter,
+// GPS, last-known or home location yet) it was skipped unsaid; it is now attempted as a read that failed, and named.
+function layerNeedsPosition(): Promise<MapObject[]> {
+  return Promise.reject(new Error('events layer: no position to read it by'));
 }

@@ -163,8 +163,8 @@ describe('MediaWorldShell', () => {
     await fireEvent.press(screen.getByLabelText('Visual'));
     await waitFor(() => expect(screen.getByTestId('gem-lens-visual')).toBeTruthy());
     await fireEvent.press(screen.getByLabelText('Map'));
-    // Gems-only Media Map (the gateway is off in this fixture, so it says so).
-    await waitFor(() => expect(screen.getByText('No hidden gems on the map yet')).toBeTruthy());
+    // Gems-only Media Map (the gateway is off in this fixture, so it says so — census-discovery §115, B13: the positions are unavailable, never "No hidden gems on the map yet").
+    await waitFor(() => expect(screen.getByTestId('media-map-positions-unavailable')).toBeTruthy()); expect(screen.queryByText('No hidden gems on the map yet')).toBeNull();
   });
 
   it('NOW: a "Changing now" card opens that PLACE\'s perspectives (§14 Place), not the generic single-item viewer', async () => {
@@ -203,7 +203,7 @@ describe('MediaWorldShell', () => {
   it('NOW → Map is the one Media Map and NOW → Time is the Media Timeline screen', async () => {
     await render(<Shell cityName="Da Nang" lat={16.05} lng={108.22} />);
     await fireEvent.press(screen.getByLabelText('Map'));
-    await waitFor(() => expect(screen.getByText('No perspectives on the map yet')).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId('media-map-positions-unavailable')).toBeTruthy()); expect(screen.queryByText('No perspectives on the map yet')).toBeNull();  // census-discovery §115 (B13): the NOW map includes gems, and the gateway is off in this fixture — the gem layer was never read, so this is not the empty map
     await fireEvent.press(screen.getByLabelText('Time'));
     await waitFor(() => expect(screen.getByTestId('media-timeline-screen')).toBeTruthy());
   });

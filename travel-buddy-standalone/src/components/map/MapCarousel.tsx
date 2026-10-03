@@ -1087,7 +1087,7 @@ interface MapCarouselProps {
   /** Places layer: non-null when getDiscoveryPlaces returned ok:false or threw. */
   placesError?: string | null;
   /** Places layer: true when the fetch succeeded but returned zero results. */
-  placesEmpty?: boolean;
+  placesEmpty?: boolean; /** census-discovery §115 (DV-83, sweep SW9): a layer the map did not read, or a page of several — no entity here is not "no results" */ layersNotWhole?: boolean;
   /** Places layer: called when the user taps "Retry" or "Refresh". */
   onPlacesRetry?: () => void;
   /**
@@ -1123,7 +1123,7 @@ export const MapCarousel = forwardRef<MapCarouselRef, MapCarouselProps>(
       onPassportRetry,
       placesLoading,
       placesError,
-      placesEmpty,
+      placesEmpty, layersNotWhole,
       onPlacesRetry,
       onBeforeNavigate,
       compassResults,
@@ -1303,7 +1303,7 @@ export const MapCarousel = forwardRef<MapCarouselRef, MapCarouselProps>(
         if (placesLoading)   return <PlacesLoadingCard />;
         if (placesError)     return <PlacesErrorCard onRetry={onPlacesRetry} />;
         if (placesEmpty)     return <PlacesEmptyCard onRetry={onPlacesRetry} />;
-        return <EmptyCard onFiltersPress={onFiltersPress} />;
+        return layersNotWhole ? <LayersNotWholeCard /> : <EmptyCard onFiltersPress={onFiltersPress} />;  // §115 (SW9)
       }
       return (
         <AnimatedFlatList
@@ -1702,3 +1702,16 @@ const cs = StyleSheet.create({
     flex: 1,
   },
 });
+
+// ── census-discovery §115 (DV-83 round 18, lane W11-X2; sweep SW9) ───────────────────────────────────────────────────
+// No entity survived, but the map was not read whole (a layer the gateway did not read, or a page of several; the
+// banner above says which): never "No results nearby", which claims the area is empty.
+function LayersNotWholeCard() {
+  return (
+    <View style={[cs.card, cs.emptyCard]} accessibilityRole="text" testID="map-carousel-not-whole">
+      <SlidersHorizontal size={22} color={color.mute} />
+      <Text style={cs.emptyTitle}>Couldn’t load everything here</Text>
+      <Text style={cs.emptyBody}>Some of this map couldn’t be read, so this area may not be empty.</Text>
+    </View>
+  );
+}

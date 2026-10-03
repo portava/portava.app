@@ -9377,7 +9377,7 @@ same inputs, so the same `inputHash` and the same `snapshotId`.
 - `media_pending_upload_sweep_enabled` seeded or read as ON.
 - The pending-upload scheduler leaving `src/index.ts`.
 
-- NOT-GRADED: artifacts/api-server/src/compass/CompassTools.ts — cited in §56.3 only for the fact that Compass's tools read `certifiedLayoverSnapshot`; A13's verdict rests on the surfaces that do NOT (LayoverCompassService, routes/airport.ts, the snapshot's missing entry input), which are watched.
+- Graded since §118.1 (declared not graded until then): `artifacts/api-server/src/compass/CompassTools.ts` — §118 grades its group tool's capacity statement (B22); before that it was cited in §56.3 only for the fact that Compass's tools read `certifiedLayoverSnapshot`; A13's verdict rests on the surfaces that do NOT (LayoverCompassService, routes/airport.ts, the snapshot's missing entry input), which are watched.
 - NOT-GRADED: artifacts/api-server/src/lib/deletion/deletionGraph.snapshot.json — named in §56.5 only as a generated artifact regenerated because the sweep moved into `services/`; no §56 verdict rests on it, and deletionGraph.test.ts pins it to the code.
 - NOT-GRADED: artifacts/api-server/src/lib/deletion/writeSnapshot.ts — named in §56.5 only as the generator that was run; this section changed nothing in it.
 - index.ts stays NOT-GRADED under §52's declaration and for its reason: §56.5 cites only the one line that starts the pending-upload scheduler, and that line is pinned by `mediaPendingUploadSweep.test.ts`'s wiring case, which this census watches.
@@ -10501,7 +10501,7 @@ This section moves ONE row: `DC-15` W → C. The other three are restated at W w
 - `:176`, beside `sent`: `const dismissKeys = useRef(new Map<string, string>());`.
 - `:231` `reportDismiss`: `const key = dismissKeys.current.get(itemId) ?? newClientEventId(); dismissKeys.current.set(itemId, key);`, then pass `key` as `outcomeBody`'s sixth argument. At `:243`: `if (res.ok) { dismissKeys.current.delete(itemId); invalidateDiscoveryCaches(); }`. The person's retry after a failure then carries the SAME key, so a first attempt that landed is answered `duplicate`, which is `res.ok`, and the card goes once.
 - `travel-buddy-standalone/src/services/rankEvents.ts:43#export async function recordOutcome(`: after the line that sets `session_id`, add `body.client_event_id = newClientEventId();`.
-- The call sites these cover: `PlaceCard.tsx:80` and `:531` (tap, save, dismiss), `PlaceDetailSheet.tsx:56`, `DiscoveryEventPostsRail.tsx:61`, `LivePulseCard.tsx:230`, `PlanPickerController.tsx:133`, `SaveButton.tsx:120` and `:165`, `useEventRsvp.ts:112` and `:195`.
+- The call sites these cover: `PlaceCard.tsx:80` and `:531` (tap, save, dismiss), `PlaceDetailSheet.tsx:56`, `DiscoveryEventPostsRail.tsx:61`, `LivePulseCard.tsx:230`, `PlanPickerController.tsx:133`, `SaveButton.tsx:127` and `:177`, `useEventRsvp.ts:112` and `:195`.
 
 **H2 — permission engine (census-trust's file; DV-76 P4).** `artifacts/api-server/src/services/interactionPermissions.ts:810-818`, replacing the `switch (whoCanTag)` body:
 ```ts
@@ -15263,7 +15263,7 @@ An independent verifier reproduced six defects on the production paths of this s
 |---|---|---|---|
 | A01 | W | **W** | **Nothing buildable is missing.** Sensing `:133` names eight inputs. Each is an axis of the live layer: opportunity value is computed (`artifacts/api-server/src/lib/discoveryLiveRank.ts:342#export function opportunityValueOf(`), and safety demotes behind every row (`artifacts/api-server/src/lib/discoveryLiveRank.ts:464#if (a.grade.safety.demoted !== b.grade.safety.demoted)`). The layer runs on both serve points: the cache-A serve (`artifacts/api-server/src/routes/discovery.ts:1880#const liveRanked = await withDiscoveryLiveRank(`) and the cold fetch (`artifacts/api-server/src/routes/discovery.ts:2291#const coldLiveRanked = await withDiscoveryLiveRank(`). The response states when it ran (`artifacts/api-server/src/routes/discovery.ts:1901#liveRank: { mode: liveRanked.mode, readable: liveRanked.readable`). The only gate is the flag (`artifacts/api-server/src/lib/discoveryLiveRankRead.ts:45#export const DISCOVERY_LIVE_RANK_FLAG`), which is seeded FALSE (`artifacts/api-server/src/migrations/2850_discovery_live_rank_flag.sql:39#('discovery_live_rank_enabled', false,`). IMPLEMENTATION-COMPLETE; awaits: 2850 applied to production (W10D-A1, batch P0) + the API build carrying `routes/discovery.ts` deployed (W10D-A3) + flag discovery_live_rank_enabled TRUE in production at rollout mode step M4 (W10D-A4d) + one production `GET /discovery` response whose `meta.liveRank` is present with `readable: true`. |
 | A03 | W | **W** | **Nothing buildable is missing.** All five fields are produced. `whyNow` comes from the live grade (`artifacts/api-server/src/lib/discoveryCandidate.ts:324#export function whyNowOf(`). The served sentence claims only what fired (§76). The §6 D9 ground is closed by D-W10-O-12 and D-W11A-2. The projection's gate is `artifacts/api-server/src/lib/discoveryCandidate.ts:139#export const DISCOVERY_CANDIDATE_PROJECTION_FLAG`. IMPLEMENTATION-COMPLETE; awaits: 2850 applied to production (W10D-A1) + the API build deployed (W10D-A3) + flag discovery_candidate_projection_enabled TRUE in production (2361 is already applied at FALSE; W10D-A4a, D-W10-O-13) + flag discovery_live_rank_enabled TRUE in production (W10D-A4d) + one production `GET /discovery` page, signed in, whose items carry `discoveryCandidate` with a `truthClass` and, on a live-graded row, a non-null `whyNow`. |
-| A25 | W | **W** | **Nothing buildable is missing.** The Map gateway calls Discovery's reader (`artifacts/api-server/src/routes/mapProjection.ts:1396#outcome = await readDiscoveryCandidatesForViewer(`) behind Discovery's own gate (`artifacts/api-server/src/routes/mapProjection.ts:1376#candidateFlagOn = await isFlagEnabled(sc, "discovery_candidate_projection_enabled");`). A degraded viewer read is stated, not hidden (`artifacts/api-server/src/lib/mapDiscoveryCandidates.ts:319#: degraded !== undefined && degraded.length > 0 ? "viewer_state_unreadable"`). The handler runs only when the Map is on (`artifacts/api-server/src/routes/mapProjection.ts:472#if (!(await isFlagEnabled(sc, "map_projection_enabled"))) {`). The D9 ground is closed as for A03. IMPLEMENTATION-COMPLETE; awaits: the API build carrying `routes/mapProjection.ts` deployed (W10D-A3) + flag discovery_candidate_projection_enabled TRUE in production (W10D-A4a, D-W10-O-13) + flag map_projection_enabled TRUE in production (the Map's own activation) + one production `GET /map/projection` response, signed in, whose `discoveryCandidates` report has `refusal: null` over at least one eligible place. |
+| A25 | W | **W** | **Nothing buildable is missing.** The Map gateway calls Discovery's reader (`artifacts/api-server/src/routes/mapProjection.ts:1396#outcome = await readDiscoveryCandidatesForViewer(`) behind Discovery's own gate (`artifacts/api-server/src/routes/mapProjection.ts:1376#candidateFlagOn = await isFlagEnabled(sc, "discovery_candidate_projection_enabled");`). A degraded viewer read is stated, not hidden (`artifacts/api-server/src/lib/mapDiscoveryCandidates.ts:319#: degraded !== undefined && degraded.length > 0 ? "viewer_state_unreadable"`). The handler runs only when the Map is on (`artifacts/api-server/src/routes/mapProjection.ts:472#const projectionFlag = await readFlagState(sc, "map_projection_enabled"); if (projectionFlag !== "on") {`). The D9 ground is closed as for A03. IMPLEMENTATION-COMPLETE; awaits: the API build carrying `routes/mapProjection.ts` deployed (W10D-A3) + flag discovery_candidate_projection_enabled TRUE in production (W10D-A4a, D-W10-O-13) + flag map_projection_enabled TRUE in production (the Map's own activation) + one production `GET /map/projection` response, signed in, whose `discoveryCandidates` report has `refusal: null` over at least one eligible place. |
 | DV-02 | W | **W** | **Nothing buildable is missing.** The client fetches the page as the viewer (`travel-buddy-standalone/src/services/discovery.ts:751#const lease = openDiscoveryLease(await freshToken());`). Every `GET /discovery` serve point writes through the serve log (`artifacts/api-server/src/lib/discoveryServeLog.ts:368#export async function logDiscoveryServe(`). IMPLEMENTATION-COMPLETE; awaits: the API build deployed + a client build carrying the viewer-token fetch shipped (both W10D-A3) + production `rank_events` rows with `surface='discovery'` written by a `GET /discovery` serve point after the deploy. |
 | DV-42 | W | **W** | **Nothing buildable is missing.** The client holds the intent mode as session state and sends it per request (§71). The server reads it only behind 2850 (`artifacts/api-server/src/lib/discoveryLiveRankRead.ts:75#export async function liveRankEnabled(sc: any): Promise<boolean> {`), and the long-term half is `loadPdeViewer`'s profile. With 2850 FALSE the client offers no selector (`travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryScreen.intentMode.component.test.tsx:256#describe('W1 — capability not reported`). IMPLEMENTATION-COMPLETE; awaits: 2850 applied to production (W10D-A1) + the API deployed and a client build carrying the intent-mode selector shipped (W10D-A3) + flag discovery_live_rank_enabled TRUE in production (W10D-A4d) + one production `GET /discovery` request carrying `intentMode` whose response's `meta.liveRank.mode` echoes it. |
 | DV-47 | W | **W** | **Nothing buildable is missing.** A signed-in cold fetch ranks in the request (`artifacts/api-server/src/routes/discovery.ts:2280#const outcome   = await rankForViewer(places, pdeViewer, { sc: rankSc, served: true`), and the serve log records that it did (`artifacts/api-server/src/lib/discoveryServeLog.ts:415#rankedInRequest: RANKED_IN_REQUEST.has(servePoint),`). Only an unauthenticated client kept the ranked path dark in production (§47.1), and DV-02 closed that on the branch. IMPLEMENTATION-COMPLETE; awaits: the API build deployed + the token-sending client build shipped (W10D-A3) + one production `rank_events` row with `surface='discovery'` and `features.rankedInRequest = true`. |
@@ -16569,7 +16569,7 @@ DV-83 moves W → C, and no other row changes bucket. `check:census-integrity` a
 
 Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %; both equal §98.1's.
 
-## §99 — Final-head live CI (integration): the three failures this branch owned, and the live-schema test the inbox lacked; no row changes
+### 98.10 Final-head live CI (integration; written on the branch as §99, renumbered at the follow-up integration because §99 is round 3's): the three failures this branch owned, and the live-schema test the inbox lacked; no row changes
 
 *Added 2026-09-28 on `claude/sensing-completion-20260925`, over `895cd4426`. This section is based on the `CI (live DB)` run on `7943a31ba`. Nothing was applied to `portava-ci` or production by this section's session. No row changes bucket.*
 
@@ -16594,6 +16594,1387 @@ Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. COR
 
 **Not run:** anything against `portava-ci` or production.
 
+## §99 — DV-83 round 3 (lane W11-X2): Overpass's in-body failure is a failed read, ForYouTab replays a cached partial page as partial, and DV-83 moves W → C
+
+*Written 2026-09-28 by lane W11-X2 (round 3) on `disc-w11-x2-r3`, from `a9ce69090`. It closes the two paths §98.1's verifier found, and the verifier's residual on the counts' class. Decisions are in `docs/architecture/discovery-decision-register.md`, section "W11-X2 round 3", D-W11X2-18 to D-W11X2-20. No migration and no flag: each change alters output only when Overpass did not finish a query, when the counts refuse, or when the For You tab replays a cached partial page. Every edit in a cited file is line-neutral. All evidence is controlled (in-process routes over the fake Discovery world, jest over the real ForYouTab); none of it is production evidence, and no client build carrying the change has shipped.*
+
+### 99.1 Overpass's in-body failure (§98.1 finding 1; D-W11X2-18)
+
+- **Before.** `queryOverpass` read `elements` and nothing else. Overpass answers a query that passes its `[timeout:20]`, or its memory limit, with HTTP 200, a `runtime error: …` remark, and the elements written so far: none, or a truncated set. GET /discovery served that as the city with no refusal, wrote it to Cache A and to L2 for 2 hours, and the counts answered with `Cache-Control: public, max-age=300`.
+- **Now.** The body is read before its elements (`artifacts/api-server/src/routes/discovery.ts:686#if (overpassAnswerFailed(data)) return overpassFailed();`). A remark naming an error, a remark in no Overpass form, a non-string remark, or a JSON body with no `elements` array is a failed read (`artifacts/api-server/src/routes/discovery.ts:4639#function overpassAnswerFailed(data: unknown): boolean {`). An informational `<kind> remark:` passes, and so does an empty remark. A truncated set is discarded, not served: it is quadtile-ordered and says nothing about how much is missing. The answer is §94.11's marked empty array, so the paths §94.11 wired handle it unchanged:
+  - the cold serve paths name `"overpass"` (`artifacts/api-server/src/routes/discovery.ts:2071#if (overpassReadFailed(osmPlaces)) dbFailedSources.push`);
+  - Cache A and L2 write only OSM rows that exist (`artifacts/api-server/src/routes/discovery.ts:2098#if (enrichedOsm.length > 0) {`), and the stale-L2 revalidation follows the same rule;
+  - the feed names it, and the counts refuse the category, so the public header (`artifacts/api-server/src/routes/discovery.ts:2543#res.set("Cache-Control", "public, max-age=300");`) is never reached.
+- **Which remarks count.** This is reasoned from Overpass's error-output kinds; no live Overpass answer could be fetched here. Every remark carries its kind: `runtime|static|parse|encoding error:` (the query failed, or stopped part-way) or `… remark:` (informational). Anything else fails closed. The register gives the options.
+
+### 99.2 ForYouTab's cached replay (§98.1 finding 2; D-W11X2-20)
+
+- **Before.** The SWR hydration painted a cached page with `source 'none'` and `osmPartial false`, and the incomplete notice requires `source === 'osm'` (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:396#{source === 'osm' && osmPartial && (`). The service caches a `partial` body on purpose, refusal intact (`travel-buddy-standalone/src/services/discovery.ts:765#if (!refusedEverything(refusal) && isCurrentDiscoveryScope(lease.scope)) {`). So while the refetch loaded, a cached `partial` / `["overpass"]` page showed its cards with no notice.
+- **Now.** The hydration restates the cached page's source and coverage (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:315#setSource(cachedResult && cachedResult.places.length > 0 ? 'osm' : 'none'); setOsmPartial(cachedResult?.refusal?.coverage === 'partial');`), as `DiscoveryCategoryTab`'s hydration does (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:558#setPartial(cachedResult.refusal?.coverage === 'partial');`). The first frame does too, because the tab seeds its cards from the cache in a `useState` initialiser, and the frame painted before the effect runs showed the cards with no notice (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:112#const [osmPartial, setOsmPartial] = useState(() =>`). A cached partial page with no places is the partial-empty state. The refetch then restates both values, as before.
+
+### 99.3 The counts name an Overpass-only failure as the upstream's (verifier's residual; D-W11X2-19)
+
+When every category that failed failed on its Overpass read alone, the counts now refuse with `upstream_unavailable` / `overpass_unavailable`, as GET /discovery does (D-W11X2-14). The fan-out throws a typed error (`artifacts/api-server/src/routes/discovery.ts:2500#throw new UpstreamUnavailableError(DISCOVERY_OVERPASS_SOURCE, "overpass_unavailable");`), and the class and code come from the rejections (`artifacts/api-server/src/routes/discovery.ts:4659#function countsRefusalCause(`). Any DB failure among them keeps `transient_db` and `category_counts_failed` or `category_counts_partial`. `coverage` and `failedSources` (the categories) are unchanged. §94.11's O7 is restated by this decision (`artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:168#assert.equal(body.refusal?.code, "overpass_unavailable");`). It still requires `counts: {}` and `coverage: "nothing"`.
+
+### 99.4 Tests, seen red, and mutations
+
+- **Server** (`artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts`, 27 cases; appended, and the Overpass stub is extended on its own lines):
+  - X1–X2: GET /discovery, with an empty + timeout answer and a truncated + out-of-memory answer. Each is `partial`, `["overpass"]`, `upstream_unavailable`, with no truncated row served, no Cache A entry and no L2 write, and the next healthy request reads Overpass again (`artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:222#GET /discovery, ${c.name}: partial`).
+  - X3: the feed, both forms (`artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:244#X3 the feed, ${c.name}`).
+  - X4: the counts, both forms, refused with no public header (`artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:255#X4 counts, ${c.name}`).
+  - X5: the fail-closed forms. These are a remark in no Overpass form, a JSON body with no `elements`, an informational remark followed by an error, a non-string remark, and a JSON `null` (`artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:272#X5 fail-closed, ${name}`).
+  - X6: a stale L2 hit revalidated against a truncated, remarked answer writes nothing (`artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:320#X6 a stale L2 hit revalidated`).
+  - X7: one category's Overpass read failed, so the counts are `partial`, name that category, and are `upstream_unavailable` (`artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:339#X7 one category's Overpass read failed`).
+  - Controls: C2/C3, a 200 with elements and no remark, an informational `runtime remark:` or an empty remark, is served, cached in A and L2, and counted with the public header (`artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:287#C2/C3 CONTROL: a 200 with elements and`). C4: the same stale hit against a whole answer is rewritten. C5 and C6: a DB failure among the failed categories keeps `transient_db` (`artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:360#C6 CONTROL: food failed on Overpass and nightlife`).
+  - **Red first**, against `a9ce69090`'s route (file swap, sha256-restored): 13 red, which is X1–X7 (both forms of each, all five X5 forms) and restated O7. C1–C6 and O1–O6 were green.
+- **Client** (`travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.cachedPartial.component.test.tsx`, 8 cases, the real ForYouTab):
+  - H1: a cached partial page shows `for-you-partial` while the refetch is pending (`travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.cachedPartial.component.test.tsx:165#H1 a cached partial page with places`).
+  - H2: a cached partial page with no places is `for-you-partial-empty`, never "No recommendations yet".
+  - H3: the notice follows the refetch.
+  - H0: the first frame, with effects held off for one render, already shows it (`travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.cachedPartial.component.test.tsx:194#H0 the FIRST frame`).
+  - Controls: C1, the fresh-from-network partial page shows it; C2, a cached COMPLETE page shows no notice while the refetch is pending (`travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.cachedPartial.component.test.tsx:226#C2 CONTROL: a cached COMPLETE page`); C3, no cache, no notice; C4, the first frame of a cached complete page shows no notice.
+  - **Red first**, against `a9ce69090`'s ForYouTab: H0–H3 red, C1–C4 green. H0 was also red with the hydration fix alone, which is why the first frame is seeded too.
+- **Mutations.** 21 of 21 killed. Each was applied alone, the suite run, and the file restored byte-identical (sha256 checked).
+
+| # | mutation | red |
+|---|---|---|
+| S1 | the body check not called | X1–X7 (13 cases) |
+| S2 | the remark ignored | X1–X4, X5 (unrecognised, remark-then-error, non-string), X6, X7 |
+| S3 | a body with no `elements` accepted | X5 (no elements) |
+| S4 | every remark is a failure | C3 (informational) |
+| S5 | only the prefix read | X5 (remark-then-error) |
+| S6 | a non-string remark accepted | X5 (non-string) |
+| S7 | an unrecognised remark form accepted | X5 (unrecognised) |
+| S8 | a non-object body not guarded | X5 (JSON null) |
+| S9 | an empty remark is a failure | C3 (empty remark) |
+| S10 | truncated rows kept and served | X2, X3, X4 and X6 (truncated forms), X5 (remark-then-error) |
+| K1 | counts always `transient_db` | O7, X7 |
+| K2 | counts upstream when any failure is upstream | C6 |
+| K3 | the Overpass count failure untyped | O7, X7 |
+| K4 | the upstream code not carried | O7, X7 |
+| F1 | the hydration does not restate `osmPartial` | H1, H2, H3 |
+| F2 | the hydration does not restate `source` | H1, H3 |
+| F3 | `source 'osm'` for an empty cached page | H2 |
+| F4 | every cached page marked partial | C2 |
+| F5 | the first frame's `osmPartial` not seeded | H0 |
+| F6 | the first frame's `source` not seeded | H0 |
+| F7 | the first frame marks every cached page partial | C4 |
+
+- **Existing tests.** One assertion is restated by recorded decision (O7's code, D-W11X2-19); none is weakened or removed. The other suites were run at the final tree:
+  - every server suite importing `routes/discovery.ts` (69 files, 1,200 tests): 1,199 pass. The one failure is `discoveryClientRouteE2E`'s Node 22 load failure (§76.5);
+  - the five suites that read its text: 100/100;
+  - `discoveryRefusalD11`: 74/74;
+  - the client Discovery and ForYouTab jest suites: 532/532 in 87 files;
+  - `discoveryRefusalConsumers.guard` and `discovery.feedTimeout` (node:test, `--import tsx` on Node 22 as `scripts/run-node-tests.mjs` does): 12/12.
+
+### 99.5 Checks
+
+Run after the last edit.
+
+- **`artifacts/api-server`, all clean:**
+  - `typecheck` (the whole script, both halves);
+  - `typecheck:tests`: 863 against a baseline of 863;
+  - `check:test-registration`;
+  - `check:doc-citations`, `check:citation-targets` and `check:citation-symbols`;
+  - `check:census-scope-coverage`, `check:census-freshness` and `check:census-integrity`;
+  - `check:census-row-move-labels`.
+  - Acknowledgements were appended: census-discovery, plus census-passport, -sensing, -trust and -layover for `routes/discovery.ts`, and census-telegraph for the scope script's one new path.
+- **`travel-buddy-standalone`, clean:** `typecheck`, `typecheck:tests` (173 against 173) and `node scripts/check-test-mocks.mjs`.
+- **Not run:**
+  - the full api-server `pnpm test`; the suites importing the changed route were run instead;
+  - (the client `check:all` WAS run, at `dedb540c9`: "ALL CHECKS PASSED", including `test`, `test:component`, both typechecks and `lint:orphan-tests`);
+  - the harness, since no migration was added;
+  - `check:write-path-columns`, which needs live credentials. No write payload changed, and the L2 writer is only called less often.
+
+### 99.6 DV-83, restated
+
+§98.1's two paths are closed, and so is the residual. Every clause of DV-83's criterion holds on every path found so far:
+
+1. Every consumer of a Discovery envelope that can carry `refusal` branches on `coverage`, not on `ok` alone.
+2. No refused body is written to a client cache.
+3. No refused body is rendered as an empty result.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§98.1's two paths are closed under mutation, so every clause holds on every path §94, §94.11, §98 and §99 found.** **Consumers branch on coverage.** The guard's eleven files still branch on it (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts:311#it('G2. every file that consumes a carrier`), and every list-rendering consumer names a partial answer (G7). ForYouTab now does so on its cached replay as well as on the network answer, including the first frame (`travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.cachedPartial.component.test.tsx:165#H1 a cached partial page with places`; H0, H2, H3), as `DiscoveryCategoryTab` already did. The rail names a transport failure and refetches on a pull (§94.11 U1–U3, R1). **No refused body in a client cache.** The client's three caches write no `nothing` body (§60.2, unchanged). A `partial` body is cached with its refusal and is now replayed with it. **No refused body rendered as an empty result.** A cached partial page with no places is the partial-empty state, not "No recommendations yet" (H2). **Producers, so a consumer is SENT the failure.** The feed's event-post read (E1–E5), the viewer lookup (V1–V6) and Overpass on the wire (O1–O7) are covered, and now so is Overpass's in-body failure. A timed-out or out-of-memory 200, empty or truncated, is `overpass` on GET /discovery, the feed and the counts, and is cached nowhere: Cache A, L2, the stale-L2 revalidation and the counts' public header (`artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:222#GET /discovery, ${c.name}: partial`; X3–X6). An unrecognised body fails closed (X5), and an informational remark does not (C3). The counts name an Overpass-only failure `upstream_unavailable` (X7, O7). **Not flag-gated.** Each change alters output only when a read fails or a cached page is partial. **Stated limits.** Branch only: no client build carrying ForYouTab's change has shipped. The remark forms are reasoned from Overpass's error-output kinds; no live Overpass answer was fetched. `discoveryClientRouteE2E` cannot load on Node 22 here. |
+
+**Headline.** DV-83 moves W → C. `check:census-integrity` counts **C 101 / W 85 / N 2 / X 0** over 188: CONSTRUCTED 186 / 188 = **98.9 %**, CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged.
+
+### 99.7 Left open, and what would turn this red
+
+- **Seen and not built** (A07, not DV-83). The same hydration does not restate `liveUnchecked`. A cached page whose Live claims were withheld shows its cards without the "live info couldn't be checked" line until the refetch answers. The claims themselves stay withheld, so nothing false is shown, but the line is missing for that moment. The fix is the same shape as 99.2, and it belongs to A07's row.
+- **What would turn DV-83 red again:**
+  - an Overpass 200 whose body says the query did not finish being served, cached or counted (X1–X7, S1–S10);
+  - a cached partial page replayed without its notice, on the first frame or after it (H0–H3, F1–F7);
+  - any path §94.11 lists (E1–E5, V1–V6, O1–O7, U1–U3, R1, T1, G2 and G7).
+  - An Overpass remark form this lane has not seen would fail closed, and would show as a `partial` page, not a silent one.
+
+### 99.8 Integrator: DV-83 held at W after the independent re-verification at the merged head
+
+*Integrator, 2026-09-28. §99 was merged onto the PR #528 head `895cd4426`, which carries §98.9's single auth classifier. An independent verifier then checked the merged tree, which §99 itself did not measure. It ran every probe below against that tree and restored every mutated file byte-identical (sha256).*
+
+- **Confirmed.**
+  - §98.1 finding 1: Overpass's in-body failure is a failed read on the cold path, Cache A, L2, the stale-L2 revalidation, the counts and the feed. The verifier killed 18 of 19 mutations. The survivor is an unconditional Cache A write in the counts, which the throw before it makes unreachable.
+  - §98.1 finding 2: ForYouTab's cached replay of a `partial` page. 7 of 7 mutations killed.
+  - The feed's viewer paths under D-W11X2-21. 6 of 7 mutations killed.
+- **Found: three more paths where a failed or partial read is shown as empty or complete.** Each is shown by a probe that fails against this tree.
+  1. **ForYouTab renders a transport failure as the empty state.** `travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:279#setSource(osm.ok && osm.data.refusal?.coverage === 'nothing' ? 'refused' : 'none');` handles an `ok: false` answer (network or non-2xx) by setting `source 'none'` and returning `[]`. The tab then shows "No recommendations yet", and the refetch replaces cards already hydrated from the cache, including a cached partial page and its notice. `DiscoveryCategoryTab` gives the same answer its own error state.
+  2. **The per-category counts treat a partial total as complete.** `travel-buddy-standalone/src/services/discovery.ts:824#if (refusedEverything(result.value.data.refusal)) return;` drops only `nothing` refusals. A `partial` total is counted as definitive: an Overpass-only failure over an empty DB half reads 0 and dims the tab (`travel-buddy-standalone/app/(tabs)/discovery.tsx:885#const isEmpty = !countsLoading && count !== undefined && count === 0;`), and a DB-only N is shown as the whole count.
+  3. **Map mode shows neither a refused nor a partial state.** ForYouTab's map branch (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:334#if (viewMode === 'map') {`) renders the map with no branch on the page's coverage. `DiscoveryCategoryTab`'s map branch comes before its error and partial branches.
+- **Also recorded.**
+  - D-W11X2-21's status-less-error rule has no test: a mutation reading it as a rejection survives.
+  - The feed classes an Overpass-only failure as `transient_db` / `feed_places_read_failed`, where GET /discovery and the counts say `upstream_unavailable`.
+- **Next.** A round-4 lane closes the three paths and pins the rule, with failing-first tests and mutations. The row moves only after another independent verification at that head.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | C | **W** | §99 closes §98.1's two findings; an independent verifier confirmed both under mutation at the merged head. Three consumer paths still present a failed or partial read as empty or complete (§99.8): ForYouTab's `ok: false` answer (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:279#setSource(osm.ok && osm.data.refusal?.coverage === 'nothing' ? 'refused' : 'none');`), the category counts' partial totals (`travel-buddy-standalone/src/services/discovery.ts:824#if (refusedEverything(result.value.data.refusal)) return;`), and map mode on both tabs (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:334#if (viewMode === 'map') {`). |
+
+Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
+
+## §100 — DV-83 round 4 (lane W11-X2): a failed read is its own state, a partial count is not the count, map mode states coverage, and DV-83 moves W → C
+
+*Written 2026-09-28 by lane W11-X2 (round 4) on `disc-w11-x2-r4`, from `64cd7a014`. It closes the three paths §99.8's verifier found, pins D-W11X2-21's status-less auth rule, and aligns the feed's Overpass-only class. It also closes three more consumer paths, which this round's own sweep found. Decisions are in `docs/architecture/discovery-decision-register.md`, section "W11-X2 round 4", D-W11X2-22 to D-W11X2-27.*
+
+*No migration and no new flag. Each change alters output only when a Discovery read failed in transport, answered `partial`, or is shown in map mode. The output-kinds rail sits behind its existing FALSE flag. Every edit in a cited file is line-neutral: lines are changed in place, and new code is appended at the file foot.*
+
+*All evidence is controlled: jest over the real tabs and hooks, and in-process routes over the fake Discovery world. None of it is production evidence, and no client build carrying the change has shipped.*
+
+### 100.1 A transport failure is its own state (§99.8 finding 1; D-W11X2-22)
+
+- **Before.**
+  - ForYouTab answered an `ok: false` read (network or non-2xx) with `source 'none'` and `[]`. The tab said "No recommendations yet" about a city nobody read.
+  - A failed refetch replaced cards already hydrated from the cache. A cached partial page lost its notice along with its cards.
+- **Now: the failed read changes nothing on screen.**
+  - The failed read writes nothing to `items`, `source` or `osmPartial` (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:279#if (!osm.ok) return prev;`). It records the failure instead (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:267#setLoadFailed(osm.ok ? null : osm.error);`).
+  - It keeps the live-unchecked line that the last good answer set.
+  - A rejected read is the same failure (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:283#setLoadFailed('Network error — check your connection');`).
+  - A new query starts clean (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:315#setLoadFailed(null);`).
+- **What the tab shows.**
+  - With nothing to keep: `for-you-error`. It uses `DiscoveryCategoryTab`'s words: "Couldn't load places", then the failure, then "Pull to refresh".
+  - With a page kept: that page, with its partial notice if it had one, under `for-you-stale` (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:327#const loadErrorShown = source === 'none' && !osmPartial && loadFailed !== null;`). The line reads "Couldn’t refresh just now, so these places may be out of date. Pull to refresh."
+  - The wording has one home (`travel-buddy-standalone/src/services/discoveryCoverageNotice.ts:78#export function listStaleNotice(noun: string): string {`).
+  - "No recommendations yet" is left for a complete, empty answer only.
+- **DiscoveryCategoryTab** takes the same rule.
+  - A failed page-1 refresh over places on screen used to set `error` and render nothing, because the error state requires `places.length === 0`. So a refresh that never happened looked like a fresh, complete answer.
+  - It now records the failed refresh (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:501#setRefreshFailed(nextPage === 1);`) and says so in the list header, as `discovery-category-stale`.
+  - A failed load-more draws no stale line. The list does not call itself ended either, since `places.length < total`.
+
+### 100.2 A partial per-category count is not the count (§99.8 finding 2; D-W11X2-23)
+
+- **The rule.** `getDiscoveryCategoryCounts` now drops a `partial` answer on the same line that drops a refusal (`travel-buddy-standalone/src/services/discovery.ts:824#if (result.value.data.refusal?.coverage === 'partial') return;`).
+- **Why.** A partial total counts only the sources that answered. An Overpass-only failure over an empty DB half is 0.
+- **What the badge row shows.** It already renders an absent key as no count and never dims it (`travel-buddy-standalone/app/(tabs)/discovery.tsx:885#const isEmpty = !countsLoading && count !== undefined && count === 0;`). So a partial 0 is no longer dimmed, and a DB-only N is no longer printed as the whole count.
+- **Lower bound ("N+") considered and not chosen.** The register gives the reasons.
+- **What is not affected.** A complete category, zero included, is still counted. The partial category still opens to its rows under the partial notice.
+
+### 100.3 Map mode states coverage, on both tabs (§99.8 finding 3; D-W11X2-24)
+
+The map branch on each tab used to draw a plain map for a refused, partial or failed read. The list's states now sit in a banner over the map, with the same testIDs and words and a "Try again". A map has no pull-to-refresh.
+
+- **ForYouTab** (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:334#const mapCoverage: ForYouMapCoverageKind = source === 'refused' ? 'refused'`) draws:
+  - `for-you-refused`, `for-you-error`, `for-you-partial`, `for-you-partial-empty` and `for-you-stale`;
+  - the community lane's refused, unavailable, stale or partial line, because those pins are on the same map.
+- **DiscoveryCategoryTab** (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:644#<CategoryMapCoverage kind={error && places.length === 0 ? 'error'`) draws:
+  - `discovery-category-error`, for a refusal or a transport failure. The list's error state carries the same testID (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:646#testID="discovery-category-error"`);
+  - `-partial`, `-partial-empty` and `-stale`.
+- **A complete page draws no banner.**
+
+### 100.4 D-W11X2-21's status-less rule, pinned (§99.8 "also recorded")
+
+- **The gap.** V6 covered a status-less error only under a known name (`AuthUnknownError`), which the classifier answers before it reaches the status test. So the verifier's mutation, which reads `artifacts/api-server/src/routes/discovery.ts:4612#if (typeof e.status !== "number") return true;` as `return false`, survived.
+- **The pin.** V10 was appended at the suite's tail (`artifacts/api-server/src/test/discoveryFeedEventPostsCoverage.test.ts:475#V10 no status and no known name is not a verdict`). It sends four shapes: bare, a generic name, `TypeError`, and a non-numeric status. Each must leave the viewer unresolved, with `upstream_unavailable` / `feed_viewer_unresolved`, `nothing`, `["event_posts"]` and no exposure row.
+- **The control.** C9 checks that the same kinds of error, carrying Auth's numeric 401 and its verdict code, are rejections.
+
+### 100.5 The feed's Overpass-only class (§99.8 "also recorded"; D-W11X2-25)
+
+- **The change.** When the only PLACE source that failed is Overpass, whatever the event posts did, the feed's refusal is `upstream_unavailable` / `overpass_unavailable`, as on GET /discovery and the counts (`artifacts/api-server/src/routes/discovery.ts:2759#viewerUnresolved ? "feed_viewer_unresolved"`, the same line, edited in place).
+- **Unchanged cases.**
+  - Any DB category failure keeps `transient_db` / `feed_places_read_failed`.
+  - An event-post-only failure keeps its own codes.
+- **Why it is safe.** No consumer branches on the feed's class or code: the rail reads `failedSources`.
+- **O5 restated.** §94.11's O5 is restated by this decision (`artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:148#assert.equal(body.refusal?.code, "overpass_unavailable");`), and is no weaker. O8, a mixed failure, and O9, Overpass-only, were appended at the tail.
+
+### 100.6 The sweep: three more consumer paths, closed (D-W11X2-26, D-W11X2-27)
+
+This round read every client consumer of GET /discovery, /discovery/feed, /discovery/counts, /discovery/search, /discovery/suggest, /discovery/community (and saved-ids) and the output-kinds route, looking for any `ok: false` branch that renders as empty or complete.
+
+- **Found and closed.**
+  1. `useCommunityDiscovery`.
+     - A transport failure kept the state and said nothing. With nothing held, that is a city with no traveler places. ForYouTab's own comment calls that silence the defect for a refusal.
+     - The hook now sets `unavailable` (`travel-buddy-standalone/src/hooks/useCommunityDiscovery.ts:178#setState((prev) => ({ ...prev, loading: false, unavailable: true }));`).
+     - ForYouTab renders it in the list as `for-you-community-unavailable`, or as `for-you-community-stale` over gems still held, and on the map.
+  2. `useSearchSuggestions`' transport arm.
+     - With nothing on screen the panel said "No quick matches yet". With the previous query's groups on screen, it showed them as this query's answer.
+     - The arm now raises the hook's `refused` flag, as the refusal arm already did (`travel-buddy-standalone/src/hooks/useSearchSuggestions.ts:130#setLoading(false); setRefused(true); setIncomplete(false);`). The panel renders it as "Suggestions are unavailable right now — the full search above still works."
+     - An aborted read raises nothing.
+  3. `DiscoveryOutputKindsRail`.
+     - It rendered a `network` failure and a thrown read as nothing, the same as an empty page.
+     - Both now reach its failed-read state (`travel-buddy-standalone/src/components/discovery/DiscoveryOutputKindsRail.tsx:72#setFailed(r.reason === 'unavailable'`).
+     - The rail is behind `discovery_output_kinds_enabled`, seeded FALSE. With the flag off it sends no request (O1), so the flag-off output is unchanged.
+- **Read and found sound.**
+  - `DiscoveryEventPostsRail`: a transport failure has its own state (§94.10).
+  - `app/map/index.tsx`: a transport failure is the error card.
+  - `MapSearchSheet` and `app/search.tsx`: each sets its error state on page 1. A failed load-more there keeps the cursor, so no end-of-list is claimed.
+  - `getSavedPlaceIds`: a transport failure is `unavailable` and writes no bookmark state.
+  - The `_layout.tsx` prefetch: its answers are discarded, and the service caches no `nothing` body.
+  - `getDiscoveryCategoryCountsBatch`: `{ counts: {} }` on a transport failure means every key is absent, which is "unknown" and never a zero. Its one caller is the prefetch.
+- **Out of scope.**
+  - The trending-hashtag strip reads `/api/hashtags/trending`, which is not a Discovery endpoint. It draws no empty state either way.
+  - The wikidata enrichment and the live-status read are per-place details, not result lists.
+
+### 100.7 Tests, seen red, and mutations
+
+- **Client, new suites.**
+  - `travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.failedRead.component.test.tsx` (25 cases, the real ForYouTab).
+    - T1–T9 and the controls C1, C2 and C4 (`travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.failedRead.component.test.tsx:217#T3 cached PARTIAL page, failed refetch`).
+    - Map mode: M1–M6 and C3 (`travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.failedRead.component.test.tsx:321#M1 map, refused`).
+    - The community lane: K1–K5 and C5.
+  - `travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryCategoryTab.failedRead.component.test.tsx` (12 cases): D1–D9 and C1–C3 (`travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryCategoryTab.failedRead.component.test.tsx:107#D1 map, refused`).
+  - `travel-buddy-standalone/src/hooks/__tests__/useCommunityDiscovery.failedRead.component.test.tsx` (7 cases): F1–F5, C1 and C2.
+  - `travel-buddy-standalone/src/hooks/__tests__/useSearchSuggestions.failedRead.component.test.tsx` (6 cases): S1–S4, C1 and C2.
+- **Client, existing suites extended or restated.**
+  - `travel-buddy-standalone/src/services/__tests__/discovery.refusal.component.test.tsx`: the partial-count CONTROL is restated by D-W11X2-23, and "OMITS a PARTIAL zero" is new (`travel-buddy-standalone/src/services/__tests__/discovery.refusal.component.test.tsx:270#OMITS a PARTIAL zero`).
+  - `DiscoveryOutputKindsRail.component.test.tsx`: O5's transport-failure entry is removed by D-W11X2-27, and O8–O10 are appended.
+  - The consumer guard registers the new branches and proof suites.
+- **Server.**
+  - `discoveryFeedEventPostsCoverage` V10 and C9 are appended at the tail.
+  - `discoveryOverpassFailedSource`: O5 is restated by D-W11X2-25, and O8 and O9 are appended.
+- **Red first.** Each was run at the unfixed tree, and the output is kept in the lane's scratch.
+  - ForYouTab's first 17 cases: 13 red. The 4 green were the controls C1–C4.
+  - The community-lane cases: K1–K5 red, C5 green.
+  - DiscoveryCategoryTab: 8 red, and the 3 controls green.
+  - Counts: the two partial cases red, and 29 green.
+  - Hooks: 7 red (F1–F4, S1–S3), with F5, S4 and the controls green.
+  - Output-kinds rail: O8 and O9 red.
+  - Feed class: O5 (restated) and O9 red, O8 green.
+  - V10 pins a rule already in the code, so it was green when written. Its red is SV-M1 below, the mutation §99.8 saw survive.
+  - T8, T9 and D9 were written after their fixes. Their red is C-M9, C-M10 and D-M3 below.
+  - §99.8's own six probes (P1–P6), copied in unchanged, all pass at this tree.
+- **Mutations.** 31 of 31 valid mutations killed. Each was applied alone, the suite run, and the file restored byte-identical (sha256 checked). One further mutation was discarded because it was a syntax error, and it was re-run as C-M7'. C-M6, C-M12 and D-M2 were each re-run in a stronger prop-level form (C-M6', C-M12', D-M2'); both forms were killed.
+
+| # | mutation | red |
+|---|---|---|
+| C-M1 | a failed read wipes what is on screen (no `return prev`) | T2–T5, T7, T9, M5 |
+| C-M2 | no error state | T1, T6, T8, M4, M6 |
+| C-M3 | no stale line | T2–T5, T9, M5 |
+| C-M4 | the failure not recorded | T1–T6, T9, M4–M6 |
+| C-M5 | a failure clears the live-unchecked line | T7 |
+| C-M6 / C-M6' | the map's coverage kind null (expression form / prop form) | M1 / M1–M6 |
+| C-M7' | the map banner removed | M1–M6, K3–K5 |
+| C-M8 | "No recommendations yet" beside the error state | T1, T8 |
+| C-M9 | a rejected read silent | T8 |
+| C-M10 | a new query inherits the old failure | T9 |
+| C-M11 | the community failure silent (list) | K1, K2 |
+| C-M12 / C-M12' | the community lane absent from the map (expression form / prop form) | K3 / K3–K5 |
+| D-M1 | the refresh failure not recorded | D5, D6, D9 |
+| D-M2 / D-M2' | the map's coverage kind null (expression form / prop form) | D1, D2, D7 / D1–D4, D7 |
+| D-M3 | the stale line never cleared | D9 |
+| D-M4 | a load-more failure called a refresh failure | C3 |
+| D-M5 | the map's stale line dropped | D6 |
+| D-M6 | the map banner removed | D1–D4, D6, D7 |
+| S-M1 | a partial count reported | both OMITS-PARTIAL cases |
+| H-M1 | the community `!ok` arm silent | F1, F3, F4 |
+| H-M2 | the community throw silent | F2 |
+| H-M3 | the suggest transport arm silent | S1–S3 |
+| R-M1 | the rail's network failure silent | O8 |
+| R-M2 | the rail's thrown read silent | O9 |
+| SV-M1 | a status-less error is a rejection (§99.8's survivor) | V10 |
+| SV-M2 | the feed's Overpass-only code back to `feed_places_read_failed` | O5, O9 |
+| SV-M3 | the feed's Overpass-only class back to `transient_db` | O5, O9 |
+| SV-M4 | a mixed failure called upstream | O8 |
+
+- **Existing tests.** Four assertions are restated by recorded decision:
+  - the counts CONTROL (D-W11X2-23);
+  - the Overpass suite's O5 (D-W11X2-25);
+  - the rail's O5 transport entry (D-W11X2-27);
+  - the guard's registry, which gains branches and proofs on existing lines and loses nothing.
+
+  None is weakened or removed otherwise. The other suites were run at the final tree:
+  - every server suite that imports `routes/discovery.ts`: 68 files, 1,211 tests, 1,210 pass. The one failure is `discoveryClientRouteE2E`'s known Node 22 load failure (`truncateDisplayName`, §76.5), and it is unchanged;
+  - `discoveryOverpassFailedSource` 29/29, `discoveryFeedEventPostsCoverage` 28/28, `discoveryRefusalD11` 74/74 and `discoveryRefusalExposure` 8/8;
+  - the client Discovery, service, map, search and hook jest suites: 102 files, all green;
+  - `discoveryRefusalConsumers.guard` (node:test, `--import tsx` on Node 22, as `scripts/run-node-tests.mjs` does): 8 of 8;
+  - `sharedSheetContrast.consumers`: 9 of 9. The first draft of the map banner used the §33 token `signalStrong`, and this suite caught it. The banner now reuses each tab's existing retry style.
+
+### 100.8 Checks
+
+Run after the last edit.
+
+- **`artifacts/api-server`, all clean:**
+  - `typecheck`;
+  - `typecheck:tests`: 863 against a baseline of 863;
+  - `check:test-registration`;
+  - `check:doc-citations`: 0 broken anchors, with unanchored citations at their ceiling of 6,434;
+  - `check:citation-targets`: 163. The ceiling was lowered 164 → 163, as the guard asked. Which citation's dead target retired was not isolated;
+  - `check:citation-symbols`;
+  - `check:census-integrity`, `check:census-freshness`, `check:census-scope-coverage` and `check:census-row-move-labels`;
+  - `check:enum-literals`, `check:async-handlers`, `check:discovery-query-paths` and `check:route-auth-gate`.
+- **Acknowledgements.** They were appended, with argued reasons, for:
+  - census-discovery (its files, plus the five counted files that were new to it);
+  - census-passport, -sensing, -trust and -layover, for `routes/discovery.ts`;
+  - census-map, for `services/discovery.ts`;
+  - census-input-intelligence, for `useSearchSuggestions.ts`.
+- **`travel-buddy-standalone`:** `tsc --noEmit -p .` (clean), `typecheck:tests` (173 against 173) and `check:all` (result in the lane report).
+- **Not run:**
+  - the harness, since no migration was added;
+  - `check:write-path-columns`, which needs live credentials. No write payload changed;
+  - the full api-server `pnpm test`. The 68 suites that import the changed route were run instead.
+
+### 100.9 DV-83, restated
+
+§99.8's three paths are closed, its survivor is pinned, and the sweep's three further paths are closed. Every clause of DV-83's criterion holds on every path this lane examined:
+
+1. Producers send the failure.
+2. No refused body is cached as complete.
+3. No refused body is rendered as an empty result.
+4. Consumers branch on coverage.
+
+§99.8 asks for an independent verification at the merged head before the integrator accepts the move.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§99.8's three paths are closed under mutation, its surviving mutation is pinned, and this round's sweep closed three more.** **A transport failure is never an empty result.** ForYouTab's failed read changes nothing on screen (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:279#if (!osm.ok) return prev;`). With nothing to keep it is the error state; over a cached or earlier page it keeps that page, and its partial notice, under a "couldn't refresh" line (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:327#const loadErrorShown = source === 'none' && !osmPartial && loadFailed !== null;`; T1–T9, C-M1–C-M10). `DiscoveryCategoryTab` says the same of a failed refresh (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:501#setRefreshFailed(nextPage === 1);`; D5, D9). The community hook, the suggestion hook and the output-kinds rail say a transport failure too, instead of showing the empty answer (`travel-buddy-standalone/src/hooks/useCommunityDiscovery.ts:178#setState((prev) => ({ ...prev, loading: false, unavailable: true }));`, `travel-buddy-standalone/src/hooks/useSearchSuggestions.ts:130#setLoading(false); setRefused(true); setIncomplete(false);`; F1–F5, S1–S4, O8–O9). **A partial read is never complete.** A partial count is omitted as unknown, never dimmed as 0 or printed as the whole (`travel-buddy-standalone/src/services/discovery.ts:824#if (result.value.data.refusal?.coverage === 'partial') return;`; S-M1). Map mode on both tabs states refused, failed, partial, partial-empty and stale, for both lanes (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:334#const mapCoverage: ForYouMapCoverageKind = source === 'refused' ? 'refused'`, `travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:644#<CategoryMapCoverage kind={error && places.length === 0 ? 'error'`; M1–M6, K3–K5, D1–D7). **Producers send the failure.** A status-less auth error leaves the feed's viewer unresolved (`artifacts/api-server/src/test/discoveryFeedEventPostsCoverage.test.ts:475#V10 no status and no known name is not a verdict`; SV-M1, which survived at §99.8, is now killed). The feed names an Overpass-only failure as the upstream's, as GET /discovery and the counts do (`artifacts/api-server/src/routes/discovery.ts:2759#viewerUnresolved ? "feed_viewer_unresolved"`; O5, O8, O9). Every path §94, §94.11, §98 and §99 closed still holds: their suites pass unchanged, apart from the four restatements recorded in 100.7. **Stated limits.** Controlled evidence only. No client build carrying these changes has shipped. The map banner's placement is reasoned from the map's own overlay coordinates and was not seen on a device. §99.8 asks for an independent re-verification at this head. |
+
+**Headline.** DV-83 moves W → C. `check:census-integrity` counts **C 101 / W 85 / N 2 / X 0** over 188: CONSTRUCTED 186 / 188 = **98.9 %**, CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged.
+
+### 100.10 Left open, and what would turn this red
+
+- **Seen and not built.**
+  - A failed load-more (page ≥ 2) on `DiscoveryCategoryTab` and on the search screen is still silent. Neither claims the list is complete: the footer needs `places.length >= total`, and the search cursor is kept. The next scroll asks again. It is recorded here, not graded as a DV-83 failure.
+  - §99.7's A07 note (the hydration does not restate `liveUnchecked`) is unchanged.
+- **What would turn DV-83 red again:**
+  - a failed read rendered as "No recommendations yet", or wiping a kept page (T1–T9);
+  - a partial count shown as the count (the OMITS-PARTIAL cases);
+  - a map that draws a refused, failed or partial read as a plain map (M1–M6, K3–K5, D1–D7);
+  - a hook or rail that renders a transport failure as its empty answer (F1–F5, S1–S4, O8–O9);
+  - a status-less auth error read as a rejection (V10);
+  - any path §99.6 lists.
+
+### 100.11 Integrator: DV-83 held at W after the independent re-verification at `03dfafe2b`
+
+*Integrator, 2026-09-28. §99 and §100 were merged onto `main` at `0d7dedb57`, which is `03dfafe2b`. An independent verifier then checked that tree. It ran every probe below and restored every mutated file byte-identical, checked by sha256.*
+
+- **Confirmed.**
+  - All three §99.8 findings are closed at this tree: ForYouTab's `ok: false` state, the category counts' partial totals, and map mode on both tabs. The round-3 probes P1–P6 pass, and so do new probes.
+  - D-W11X2-21's status-less rule is pinned by V10.
+  - 39 of 39 mutations are killed across ForYouTab, DiscoveryCategoryTab, the services, the hooks, the output-kinds rail and the server. Two survive the lane's own suites but are killed by the verifier's probes: the stale line over a cached partial page, and hydration dropping the partial flag.
+- **Found: four paths that break the criterion's wording, each shown by a probe that fails against this tree.**
+  1. **The search screen appends a `partial` page 2 as if complete.** On a cursor page, `travel-buddy-standalone/app/search.tsx:310#} else {` appends the rows and never reads `refusal`. The incomplete notice is set only on page 1. A page-2 `nothing` refusal and a page-2 transport failure are silent too.
+  2. **DiscoveryCategoryTab prints "N places found", the list's claim that the set has ended, on two kinds of read:**
+     - a failed read: after a failed refresh over a cached page, `total` stays at its initial 0 (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:412#const [total, setTotal]           = useState(0);`), so the footer claims the cached page is the whole set;
+     - a partial page, whenever `places.length >= total`, beside the partial notice (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:716#places.length >= total && places.length > 0 ?`).
+  3. **The output-kinds producer answers a failed read as empty.** `rankEmergingForViewer` refuses only a failed `discovery_places` read (`artifacts/api-server/src/lib/discoveryCandidates/outputKinds.ts:165#if (mat.failedReads.includes("discovery_places"))`). A failed blocks, standing or canonical-places read makes the route answer 200 with `items: []` and no error. It sits behind `discovery_output_kinds_enabled`, which is seeded FALSE.
+  4. **GET /discovery/community with no service client answers a quiet city.** `artifacts/api-server/src/routes/discovery.ts:2868#res.json({ items: [], city, total: 0 });` sends no refusal, and `useCommunityDiscovery` caches that answer for 5 minutes. §98 fixed the same class for the feed.
+- **Also found, not a literal break.**
+  - A failed load-more (page 2 and later) is silent on DiscoveryCategoryTab and search (§100.10).
+  - After a city switch, a failed community read keeps the previous city's gems under the new city's stale line. The failure is stated, but the places shown are the wrong city's.
+- **Next.** A round-5 lane closes the four paths and the two further findings, with failing-first tests and mutations. The row moves only after another independent verification.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | C | **W** | §100 closes §99.8's three paths, confirmed under mutation at `03dfafe2b` (§100.11). Four paths still present a failed or partial read as complete or empty: search's partial page 2 (`travel-buddy-standalone/app/search.tsx:310#} else {`); DiscoveryCategoryTab's "places found" footer after a failed refresh or beside a partial page (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:716#places.length >= total && places.length > 0 ?`); the output-kinds producer's ignored failed reads (`artifacts/api-server/src/lib/discoveryCandidates/outputKinds.ts:165#if (mat.failedReads.includes("discovery_places"))`); and the community route with no service client (`artifacts/api-server/src/routes/discovery.ts:2868#res.json({ items: [], city, total: 0 });`). |
+
+Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
+
+## §101 — DV-83 round 5 (lane W11-X2): cursor pages state their coverage, the end claim needs a read that did not fail, held rows belong to their city, the output kinds and the no-client arms refuse, and DV-83 moves W → C
+
+*Written 2026-09-28 by lane W11-X2 (round 5) on `disc-w11-x2-r5`, from `faeeb50bc`. It closes the four paths and the two further findings of §100.11, with the verifier's probes copied in as red tests, and the round's own sweep closes three more. Decisions are in `docs/architecture/discovery-decision-register.md`, section "W11-X2 round 5", D-W11X2-28 to D-W11X2-35.*
+
+*No migration and no new flag. Each change alters output only when a Discovery read failed, answered `partial`, belongs to another city or section, or when no service client exists. The output-kinds change sits behind its existing FALSE flag, and its flag-off 404 is pinned byte-identical. Every edit in a cited file is line-neutral: lines are changed in place, and new code is appended at a file's foot.*
+
+*All evidence is controlled: jest over the real screens, tabs and hooks, and in-process routes over fake worlds. None of it is production evidence, and no client build carrying the change has shipped.*
+
+### 101.1 A cursor page states its coverage, on search (§100.11 finding 1; D-W11X2-28, D-W11X2-30)
+
+- **Before.** The cursor arm appended page 2's rows and never read `refusal` (`travel-buddy-standalone/app/search.tsx:310#} else {`). A `partial` page 2 was shown as complete; a `nothing` page 2, a transport failure and a thrown read on page 2 were silent.
+- **Now.**
+  - A partial cursor page adds its `failedSources` to the set the incomplete notice is drawn from, so the list says it is incomplete as page 1 would (`travel-buddy-standalone/app/search.tsx:310#} else { if (res.data.refusal?.coverage === 'partial') {`).
+  - A refused, failed or thrown cursor page raises `moreFailed` (`travel-buddy-standalone/app/search.tsx:233#else setMoreFailed(true);`, `travel-buddy-standalone/app/search.tsx:255#} else setMoreFailed(true);`, `travel-buddy-standalone/app/search.tsx:318#else setMoreFailed(true);`). The footer says "Couldn’t load more results just now." with "Tap to retry", in page 1's error styles (`travel-buddy-standalone/app/search.tsx:928#testID="search-more-failed"`). The cursor is kept, so a tap or a scroll asks again; a retry or a new page-1 search clears it.
+
+### 101.2 "N places found" is claimed only after a read that did not fail (§100.11 finding 2; D-W11X2-29)
+
+- **Before.** Hydration from the cache never set `total`, so after a failed refresh over a cached page `total` stayed 0: the footer called the cached page the whole set, and load-more was refused locally. The footer was also printed beside a partial page whenever `places.length >= total`.
+- **Now.**
+  - Hydration sets the cached page's own total (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:558#setTotal(cachedResult.total);`), so load-more still asks page 2 after a failed refresh (E1).
+  - The end claim needs the last read not to have failed, no partial page in the list, and a known total (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:716#!error && !partial && total > 0 && places.length >= total && places.length > 0 ?`). `0` beside rows on screen is an unknown total, never "the end".
+
+### 101.3 A failed load-more is said, on the category tab (§100.10; D-W11X2-30)
+
+- A failed page ≥ 2 is recorded beside the page-1 `refreshFailed` (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:501#setMoreFailed(nextPage > 1);`). The footer draws "Couldn’t load more places just now." with "Try again", in the tab's existing `moreRefused` style: no new colour token (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:716#testID="discovery-category-more-failed"`). Scrolling asks again as well; a refused page 2 keeps §55's `moreRefused` footer, which does not re-ask on scroll during an outage.
+- The wording has one home (`travel-buddy-standalone/src/services/discoveryCoverageNotice.ts:89#export function listMoreFailedNotice(noun: string): string {`), and the consumer guard's G8 pins it.
+
+### 101.4 The output kinds answer a failed read as unavailable (§100.11 finding 3; D-W11X2-33)
+
+- `materialiseCandidates` records every read it could not make; `rankEmergingForViewer` now answers `unavailable` for any of them, not only `discovery_places` (`artifacts/api-server/src/lib/discoveryCandidates/outputKinds.ts:165#if (mat.failedReads.length > 0) return`). A failed blocks or standing read drops authored rows (fail closed); a failed canonical read loses canonical candidates. Either way the list was not the list.
+- The route already sends `unavailable` as 503 degraded_unavailable with the reason (`artifacts/api-server/src/routes/discoveryOutputKinds.ts:82#if (ranked.status === "unavailable" || ranked.status === "flag_off") {`), and the rail already renders its failed-read state (§100, D-W11X2-27). The envelope has no partial form, so partial is not offered.
+- Behind `discovery_output_kinds_enabled`, seeded FALSE. The flag-off 404 body is byte-identical with and without the failing reads (F1).
+
+### 101.5 GET /discovery/community with no service client is a refusal (§100.11 finding 4; D-W11X2-31)
+
+- The arm sends the D11 envelope, `upstream_unavailable` / `community_service_unavailable`, coverage `nothing`, beside the read-failure arm's padding (`artifacts/api-server/src/routes/discovery.ts:2868#sendDiscoveryRefusal(res, { items: [], city, total: 0 }, discoveryRefusal("upstream_unavailable", "community_service_unavailable"`). The old line's text is kept in its trailing comment, so §100.11's anchor still lands on the arm it describes.
+- The hook treats `nothing` as refused and never caches it; CS6 pins that with this body.
+
+### 101.6 Held community rows belong to their city (§100.11 "also found"; D-W11X2-32)
+
+- The hook now records the city its rows were read for. A read for another city starts from nothing held, while in flight and when it fails (`travel-buddy-standalone/src/hooks/useCommunityDiscovery.ts:171#const sameCity = heldCityRef.current === commCityOf(c);`). A failed read for the same city, a sort change included, keeps that city's rows under §100's stale line (§100's F3, unchanged; C1, C3, C4).
+
+### 101.7 The sweep: three more paths, closed (D-W11X2-34, D-W11X2-35)
+
+This round read every client consumer of GET /discovery, /discovery/feed, /discovery/counts, /discovery/search, /discovery/suggest, /discovery/community, saved-ids and the output-kinds route, and every Discovery route's no-client arm, looking for a failed or partial read rendered as empty or complete, cached as complete, or answered as an empty collection without a refusal.
+
+- **Found and closed.**
+  1. **The For You tab's Compass feed.** With 3455 FALSE (production's state) a signed-in viewer's For You tab is replaced by `useCompassFeed`'s items. The hook kept one feed per viewer: its AsyncStorage entry was keyed by user alone and seeded `data` on mount, a failed read kept whatever `data` held, and `CompassPicksSection` reads another section through the same hook and entry. A city switch whose Compass read failed, or a mount whose cached feed was another city's or section's, drew that feed as this city's; §100's stale line explicitly excluded Compass items. Now the hook returns `data` and `error` only for the `section:city` they were read for (`travel-buddy-standalone/src/hooks/compass/useCompassFeed.ts:83#const scoped = dataScope === scope ? data : null;`); the cache stores the scope beside the feed and replays only into it (`travel-buddy-standalone/src/services/compass.ts:1688#parsed._scope !== scope`); and the tab draws its existing stale line over a kept Compass feed whose refresh failed (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:327#compass.error != null && items.some`). One storage entry per viewer remains, so sign-out still clears it.
+  2. **GET /discovery's DB halves with no service client.** `queryDbPlaces` and `queryCanonicalPlaces` answered `[]` ("read, and empty"), so with Overpass up the anonymous page was the OSM rows alone with no refusal. They now answer `null`, the halves' own "unreadable" (`artifacts/api-server/src/routes/discovery.ts:1016#if (!sc) return null;`, `artifacts/api-server/src/routes/discovery.ts:1194#if (!sc) return null;`), which the route already names in `failedSources`.
+  3. **saved-ids with no service client** answered `{ ids: [] }` past its auth gate; it now refuses as its read-failure arm does (`artifacts/api-server/src/routes/discovery.ts:3437#saved_ids_service_unavailable`). The client already maps `nothing` to `refused`.
+- **Read and found sound.** `app/map/index.tsx`'s places layer (refusal, partial-empty and transport are the error card; partial draws a banner); the counts badge row (reset per query; partial and refused omitted, §100.2); `DiscoveryEventPostsRail` (a failure clears the posts and says so); `DiscoveryOutputKindsRail` (a failure clears the items and says so); `useSearchSuggestions` (§100); `MapSearchSheet` (one page; no cursor); the service's page cache (never holds a `nothing` body; a partial body is replayed as partial, §99); the server's Cache A and the Compass candidate cache (a request with a failed source is fingerprinted apart, §47); the trending lists (a failed eligibility or trend read is 503; a failed Trails read is named in the body); `listTrails` and the Shared Moments loaders (a failed read is `unavailable`).
+- **Recorded, not a failed read.**
+  - GET /discovery/feed's `events`, `memories` and `sections` arrays are always `[]`: they are never read, and no client reads them.
+  - While a new destination's feed read is in flight, `DiscoveryEventPostsRail` still shows the previous destination's posts; when that read fails it clears them and says so.
+- **Out of scope.** `/map/search`, `/hidden-gems*`, `/pulse*` and `/featured` are not Discovery endpoints; each carries its own coverage design.
+
+### 101.8 Tests, seen red, and mutations
+
+- **New suites.**
+  - `travel-buddy-standalone/app/__tests__/search.loadMore.component.test.tsx` (8): SP1 is the verifier's probe, unchanged (`travel-buddy-standalone/app/__tests__/search.loadMore.component.test.tsx:246#SP1 page 1 complete, page 2 PARTIAL`); SP2–SP6, C1, C2.
+  - `travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryCategoryTab.endClaim.component.test.tsx` (20): Q1–Q9 are the verifier's probes, unchanged; E1–E7, C1–C3.
+  - `travel-buddy-standalone/src/hooks/__tests__/useCommunityDiscovery.citySwitch.component.test.tsx` (10): CS1 is the verifier's probe; CS2–CS6, C1–C4.
+  - `travel-buddy-standalone/src/hooks/compass/__tests__/useCompassFeed.scope.component.test.tsx` (7): H1–H6, C1.
+  - `travel-buddy-standalone/src/services/__tests__/compass.feedCacheScope.component.test.ts` (5): S1–S4, C1.
+  - `travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.compassScope.component.test.tsx` (3): Y1, Y2, C1.
+  - `artifacts/api-server/src/test/discoveryOutputKindsFailedReads.test.ts` (11): OK-P1 and OK-P2 are the verifier's probes, re-pointed at this tree's modules; U1–U4, R1, C1–C3, F1.
+  - `artifacts/api-server/src/test/discoveryNoServiceClientRefusals.test.ts` (7): NC1 is the verifier's probe; NC2, NC3, C1, ND1, ND2, NS1. Its guard-coverage exemption follows `discoveryFeedNoServiceClient.test.ts`'s.
+- **Existing suite extended.** `discoveryRefusalConsumers.guard` registers the new branches and proofs on existing lines, and G8 pins `listMoreFailedNotice`. Nothing is removed and no assertion is restated.
+- **Red first.** Each was run at the unfixed code; the output is kept in the lane's scratch.
+  - Search: SP1–SP6 red; C1, C2 green.
+  - DiscoveryCategoryTab: Q4, Q5, Q7, Q8 and E1–E6 red (10); Q1–Q3, Q4c, Q6, Q9, E7 and C1–C3 green. Q1 and Q9 pin §100's behaviour; their red is D-M8 and D-M9 below, the two mutations that survived the lane's own round-4 suites.
+  - Community: CS1–CS3 red; CS4–CS6, C1, C2 green. C3 and C4 were written after the fix; C4's red is H-M6.
+  - Compass hook: H1–H3 and H5 red; H4, C1 green. H6 was written after the fix; its red is K-M4.
+  - Compass cache: written after the fix; its red is K-M5, which is the pre-fix behaviour.
+  - ForYouTab: Y1 red; Y2 and C1 green. Y2 pins the tab's side of the hook's new contract.
+  - Output kinds: OK-P1, OK-P2, U1–U4 and R1 red; C1–C3 and F1 green.
+  - No client: NC1, NC2, ND1, ND2 and NS1 red; NC3 and C1 green.
+- **Mutations.** 30 of 30 killed. Each was applied alone, its suite run, and the file restored byte-identical (sha256 checked).
+
+| # | mutation | red |
+|---|---|---|
+| X-M1 | a partial cursor page not raised | SP1 |
+| X-M2 | a refused cursor page silent | SP2 |
+| X-M3 | a failed cursor page silent | SP3, SP5, SP6 |
+| X-M4 | a thrown cursor page silent | SP4 |
+| X-M5 | the line not cleared by a retry | SP5 |
+| X-M6 | a new page 1 inherits the failure | SP6 |
+| X-M7 | the footer line removed | SP2–SP6 |
+| D-M8 | the list's stale line over a cached PARTIAL page removed | Q9 |
+| D-M9 | hydration drops the cached page's partial flag | Q1, Q9 |
+| D-M10 | hydration does not set `total` | E1 |
+| D-M11 | the end claim after a failed read | E2 |
+| D-M12 | the end claim beside a partial page | Q7, Q8, E6 |
+| D-M13 | the end claim on an unknown total | E3 |
+| D-M14 | a failed load-more not recorded | Q5, E4, E5 |
+| D-M15 | a failed load-more never cleared | E4, E5 |
+| D-M16 | the load-more line removed | Q5, E4, E5 |
+| H-M4 | another city's rows held | CS1–CS3 |
+| H-M5 | a fresh read does not mark its city held | C1, §100's F3 |
+| H-M6 | a cache replay does not mark its city held | C4 |
+| K-M1 | the hook returns another scope's feed | H2, H3, H5 |
+| K-M2 | the cache read unscoped | H1 |
+| K-M3 | the cache write unscoped | H1 |
+| K-M4 | the hook returns another scope's error | H6 |
+| K-M5 | the cache ignores the scope | S2–S4 |
+| Y-M1 | a failed Compass refresh over its feed silent | Y1 |
+| O-M1 | the output kinds ignore a non-place failed read | OK-P1, OK-P2, U1–U4, R1 |
+| N-M1 | the community no-client arm a quiet city | NC1, NC2 |
+| N-M2 | the curated half "read, and empty" with no client | ND1, ND2 |
+| N-M3 | the canonical half "read, and empty" with no client | ND1, ND2 |
+| N-M4 | saved-ids "you saved nothing" with no client | NS1 |
+
+- **Existing tests, run at the final tree.**
+  - Every server suite that names `routes/discovery`, `discoveryCandidates/outputKinds` or `discoveryCandidates/materialize`, plus the two new ones: 105 files, 1,982 tests, 1,981 pass. The one failure is `discoveryClientRouteE2E`'s known Node 22 load failure (`truncateDisplayName`, §76.5), unchanged.
+  - The client component suites under the Discovery components, hooks, services, search, map, Compass and shared components: 340 suites, 2,286 tests, all green.
+  - `discoveryRefusalConsumers.guard` (node:test): 8 of 8.
+
+### 101.9 Checks
+
+Run after the last edit.
+
+- **`artifacts/api-server`, all clean:**
+  - `typecheck`;
+  - `typecheck:tests`: 863 against a baseline of 863;
+  - `check:test-registration` (the two new suites are on the `test` line);
+  - `check:doc-citations`: 0 broken anchors, with unanchored citations at their ceiling of 6,434;
+  - `check:citation-targets`: 163 against a ceiling of 163; `check:citation-symbols`;
+  - `check:census-integrity` (discovery: C 101 / W 85 / N 2 / X 0 over 188), `check:census-freshness`, `check:census-scope-coverage` and `check:census-row-move-labels`;
+  - `check:enum-literals`, `check:async-handlers`, `check:discovery-query-paths`, `check:route-auth-gate`;
+  - `check:guard-coverage`: the new no-client suite names the Supabase env vars only to delete them, so it carries an exemption in `discoveryFeedNoServiceClient.test.ts`'s words (`artifacts/api-server/scripts/check-guard-coverage.mjs`).
+- **Acknowledgements.** Appended, with argued reasons, for census-discovery (its files, plus `useCompassFeed.ts`, `services/compass.ts` and the new suites); census-passport, -sensing, -trust and -layover for `routes/discovery.ts`; census-input-intelligence for `app/search.tsx`; census-compass, -trips and -sensing for `services/compass.ts`. `services/compass.ts` and the new suites join this census's CENSUS_SCOPE.
+- **`travel-buddy-standalone`:** `tsc --noEmit -p .` (clean), `typecheck:tests` (173 against 173) and `check:all` (ALL CHECKS PASSED: node tests, 705 component suites and 4,534 tests, typecheck, typecheck:tests and the lints).
+- **Not run:**
+  - the harness, since no migration was added;
+  - `check:write-path-columns`, which needs live credentials. No write payload changed;
+  - the full api-server `pnpm test`. The 105 suites that touch the changed server files were run instead.
+
+### 101.10 DV-83, restated
+
+§100.11's four paths and two further findings are closed, each with the verifier's probe red first and green now, and the sweep closed three more. Every clause of DV-83's criterion holds on every path this lane examined:
+
+1. Producers send the failure: the output kinds (`unavailable`), the community route, saved-ids and GET /discovery's DB halves with no service client.
+2. Nothing refused or partial is cached as complete: the community hook caches no refusal (CS6); the Compass feed cache replays only into its own scope.
+3. No refused body or transport failure is rendered as empty or complete: cursor pages on search and the category tab, the end claim, a city switch, and a failed Compass refresh.
+4. Consumers branch on coverage: a partial cursor page raises the incomplete notice, and the end claim reads `partial`.
+
+An independent re-verification at the merged head is owed before the integrator accepts the move, as §100.11 asks.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§100.11's four paths are closed, each with its verifier probe red first, and the round's sweep closed three more; 30 of 30 mutations killed.** **A cursor page states its coverage.** A partial page 2 raises search's incomplete notice (`travel-buddy-standalone/app/search.tsx:310#} else { if (res.data.refusal?.coverage === 'partial') {`; SP1, X-M1), and a refused, failed or thrown page 2 is said with a retry on search and on the category tab (`travel-buddy-standalone/app/search.tsx:255#} else setMoreFailed(true);`, `travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:501#setMoreFailed(nextPage > 1);`; SP2–SP6, Q5, E4, E5). **The end claim needs a read that did not fail.** Hydration sets the cached page's total, and "N places found" needs no failed read, no partial page and a known total (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:716#!error && !partial && total > 0 && places.length >= total && places.length > 0 ?`; Q4, Q7, Q8, E1–E3, E6). **Held rows belong to their city and section.** The community hook drops another city's rows (`travel-buddy-standalone/src/hooks/useCommunityDiscovery.ts:171#const sameCity = heldCityRef.current === commCityOf(c);`; CS1–CS3), and the For You tab's Compass feed is returned and replayed only for its own section and city, with a failed refresh over it said (`travel-buddy-standalone/src/hooks/compass/useCompassFeed.ts:83#const scoped = dataScope === scope ? data : null;`, `travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:327#compass.error != null && items.some`; H1–H6, S1–S4, Y1). **Producers send the failure.** Any failed materialise read makes an output kind unavailable, a 503 with its reason (`artifacts/api-server/src/lib/discoveryCandidates/outputKinds.ts:165#if (mat.failedReads.length > 0) return`; OK-P1, OK-P2, U1–U4, R1; flag-off byte-identical, F1). With no service client, the community route and saved-ids refuse and GET /discovery names its two DB halves as unread (`artifacts/api-server/src/routes/discovery.ts:2868#sendDiscoveryRefusal(res, { items: [], city, total: 0 }, discoveryRefusal("upstream_unavailable", "community_service_unavailable"`, `artifacts/api-server/src/routes/discovery.ts:1016#if (!sc) return null;`; NC1, NC2, ND1, ND2, NS1). Every path §94, §94.11, §98, §99 and §100 closed still holds: their suites pass unchanged. **Stated limits.** Controlled evidence only; no client build carrying these changes has shipped. The output kinds sit behind `discovery_output_kinds_enabled`, seeded FALSE. An independent re-verification at the merged head is owed, as §100.11 asks. |
+
+**Headline.** DV-83 moves W → C. `check:census-integrity` counts **C 101 / W 85 / N 2 / X 0** over 188: CONSTRUCTED 186 / 188 = **98.9 %**, CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged.
+
+### 101.11 Left open, and what would turn this red
+
+- **Seen and not built.** The two "recorded, not a failed read" items in 101.7. §99.7's A07 note (the hydration does not restate `liveUnchecked`) is unchanged.
+- **What would turn DV-83 red again:**
+  - a partial, refused or failed cursor page drawn as complete or silent (SP1–SP6, Q5, E4, E5);
+  - "N places found" after a failed read, beside a partial page, or on an unknown total (Q4, Q7, Q8, E1–E3, E6);
+  - another city's or section's rows presented under this one (CS1–CS3, H2, H3, H5, S2–S4);
+  - an output kind answering a failed read as `empty` or a shorter `ranked` (U1–U4, R1);
+  - a no-client arm answering an empty collection without a refusal (NC1, ND1, NS1);
+  - any path §100.10 lists.
+
+### 101.12 Integrator: DV-83 held at W after the independent re-verification at `0db25c816`
+
+*Integrator, 2026-09-29. §101 was merged at `0db25c816`. An independent verifier then checked that tree, ran every probe below and restored every mutated file byte-identical, checked by sha256. (Recorded as 101.12 because 101.11 is §101's own "Left open".)*
+
+- **Confirmed.** Every §100.11 finding and every §101.7 sweep fix is closed in behaviour; 18 of 18 lane mutations are killed; the lane's suites are green (jest 53/53, node:test 18/18). /counts, /feed, /suggest, the output kinds, the map layer, ForYouTab's OSM path, the rails and the batch counts are sound.
+- **Found: four paths that break the criterion's wording, each shown by a probe that fails against this tree.**
+  1. **Search answers a failed trip projection read as "no trips".** With `discovery_trip_projection_enabled` ON and the schema ready, `searchTrips` and `searchPlans` log the failed read and `return []` (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:871#return [];`, `artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:1010#return [];`). type=trips and type=plans answer `200 { results: [] }` (V5-T1, V5-T2); type=all and /discovery/suggest do not name `trips` in `failedSources` (V5-T3). §22.5 flagged it, and `discoveryTripProjectionConsumer.test.ts`'s "capability READY" block pins the empty 200 — that pin encodes the violation.
+  2. **GET /discovery/community silently truncates when the viewer's block or mute set cannot be read.** `submitterIsVisible` withholds every authored row (`artifacts/api-server/src/routes/discovery.ts:3048#const blocked  = viewerId ? await withMutedAuthors(sc, viewerId, await fetchBlockedSet(sc, viewerId))`) and the route answers 200 with `total: servedItems.length` and no refusal; `useCommunityDiscovery` caches that list for five minutes (V5-B1: items ["Legacy Row"], total 1, 3 of 4 rows dropped, refusal undefined).
+  3. **DiscoveryCategoryTab lets a superseded answer overwrite a refused or failed read.** `load()` has no latest-request guard (ForYouTab has `loadIdRef`), and radius, the age filter and custom ages re-run `load(1)` without a remount. V5-R3: radius 25 refused, then the radius-10 answer lands — its rows shown, the error cleared, no notice. V5-R4: the transport-failure variant puts the old rows under the "couldn't refresh" line.
+  4. **GET /discovery/wikidata/:id caches a failed read as "entity missing"** (the integrator rules it IN SCOPE: clause b). A Wikidata HTTP 200 carrying `error` (maxlag) has no `entities`, so the route answers and caches the empty enrichment for the full 24 h TTL (V5-W1: the second request is served from the cache; upstream calls 1).
+- **Possible, not proven.**
+  - `CompassPicksSection` hides itself on a failed read, drawing the screen Compass draws for "no picks here".
+  - `useSearchSuggestions` keeps the previous query's groups under the refused notice.
+  - DiscoveryCategoryTab: after a failed refresh over a cached page, a good page 2 clears `error` while `refreshFailed` stays set, so "N places found" may appear beside the stale line. Untested.
+  - `useCompassFeed`: `loading` not raised on a scope switch (the verifier's mutation V-E1 survived).
+  - V-E3 survived: a partial cursor page's `failedSources` replace rather than union. Harmless: the notice keys on non-null.
+- **Next.** A round-6 lane closes the four paths with the verifier's probes as failing-first tests, decides the possibles, and sweeps once more. The row moves only after that.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | C | **W** | §101 closes §100.11's four paths, confirmed under mutation at `0db25c816` (§101.12). Four paths still present a failed read as empty or complete: search's trip and plan projection arms (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:871#return [];`); GET /discovery/community with an unreadable block or mute set (`artifacts/api-server/src/routes/discovery.ts:3048#const blocked  = viewerId ? await withMutedAuthors(sc, viewerId, await fetchBlockedSet(sc, viewerId))`); DiscoveryCategoryTab's unguarded `load()` (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:463#const load = useCallback(async (nextPage: number, currentFilters: DiscoveryFilters, reset: boolean) => {`); and the Wikidata route's cached `missing` for an error body (`artifacts/api-server/src/routes/discovery.ts:3619#(item as { missing?: string }).missing !== undefined`). |
+
+Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
+
+## §102 — DV-83 round 6 (lane W11-X2): the trip projection arms refuse, an unreadable author set is stated, only the latest request writes the screen, an upstream error body is never a cached absence, and DV-83 moves W → C
+
+*Written 2026-09-29 by lane W11-X2 (round 6) on `disc-w11-x2-r6`, from `fedaaa06e`. It closes the four paths of §101.12, each with the verifier's probe copied in as a red test. It decides the five possibles, and the round's own sweep closes four more paths. Decisions are in `docs/architecture/discovery-decision-register.md`, section "W11-X2 round 6", D-W11X2-36 to D-W11X2-46.*
+
+*No migration and no new flag. Each change alters output only in four cases: a Discovery read failed, a safety set could not be read, an upstream answered with an error body, or an older request's answer landed after a newer one. With every read healthy, every served byte is unchanged: the 89 server suites that touch the changed files pass, and apart from the four restatements in 102.7 no existing assertion changed. Every edit in a cited file is line-neutral: lines are changed in place, and new code is appended at a file's foot.*
+
+*All evidence is controlled: in-process routes over fake worlds, and jest over the real screens, tabs, sections and hooks. None of it is production evidence, and no client build carrying the change has shipped.*
+
+### 102.1 Search: a failed trip projection read refuses by name (§101.12 finding 1; D-W11X2-36)
+
+- **Before.** With `discovery_trip_projection_enabled` ON and the schema ready, a projection read that failed after the probe passed was logged and answered `[]`. type=trips and type=plans answered `200 { results: [] }`, and type=all and GET /discovery/suggest did not name `trips`. §22.5 had flagged it, and `discoveryTripProjectionConsumer.test.ts` pinned the empty 200.
+- **Now.** Both arms throw the file's named read error. `searchTrips` does it at `artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:871#throw new DiscoverySearchReadError("trips", r.detail);`, and `searchPlans` at `artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:1010#throw new DiscoverySearchReadError("trips", r.detail);`, since the parent trips are what could not be read. The effects:
+  - a single type is refused `transient_db` / `search_failed` / `nothing`;
+  - type=all and suggest name `trips`.
+  Each line keeps its old text in a comment, so §101.12's anchors still land on the arm they describe.
+- **The pin, restated.** The "capability READY" block asserted the empty 200. That was DV-83's violation, and it now asserts the refusal. No assertion was removed: the trips, plans and thrown cases each gain `refusal.coverage === "nothing"`, and the trips case gains the code.
+
+### 102.2 An unreadable author-exclusion set is stated, not served as a checked list (§101.12 finding 2 and the sweep; D-W11X2-37)
+
+- **Before.** For a signed-in viewer whose block or mute set could not be read, `submitterIsVisible` withheld every authored row, which is the right direction (fail-closed). GET /discovery/community then answered 200 with the venue facts and `total` counting them, with no refusal, and the hook cached that list for five minutes (V5-B1). The sweep found the same silence on GET /discovery and GET /discovery/feed, because `queryDbPlaces` withheld authored rows and reported nothing. The verifier's feed probe passed only because its Overpass read had failed too, so the feed carried a partial refusal for another reason.
+- **Now.**
+  - **Community.** The route serves the rows that need no check. It refuses `partial` when any remain and `nothing` when none do, with `failedSources` `["blocks"]` and code `community_blocks_unreadable` (`artifacts/api-server/src/routes/discovery.ts:3152#sendCommunityBody(res, authorsUncheckedComm, {`). The refusal is sent only when the read held an authored row that was therefore withheld: a city of venue facts alone is complete (C2), and an anonymous caller has nothing to check (C3). A failed mute read is the same case (B3).
+  - **GET /discovery.** A curated page that withheld authored rows is marked. `loadCuratedAndCanonicalPlaces`, the one funnel of the route's four serve paths, names `blocks` (`artifacts/api-server/src/routes/discovery.ts:1307#...(authorsUnchecked(curated) ? [DISCOVERY_AUTHOR_SET_SOURCE] : [])`). The blocks-only code is `author_set_unreadable`. Cache B's context key already carries `failedSources`, so such a page is never replayed as whole.
+  - **The feed.** It names `blocks` for a withheld place row. Its event posts keep their documented fail-open posture on an unreadable block list (a Trust decision, not changed here); the change is that posts served without the check now name `blocks` too (`artifacts/api-server/src/routes/discovery.ts:2717#if ((authorsUnchecked(dbPlaces) || (postsBlocksUnread && eventPosts.length > 0))`). When nothing went out unchecked there is no refusal (EB2).
+  - **The client.** `useCommunityDiscovery` renders `partial` as incomplete and never caches `nothing`. CB1 and CB2 pin both for this body; a cached partial replays as partial, never as the whole list.
+
+### 102.3 DiscoveryCategoryTab: only the latest request writes the screen (§101.12 finding 3; D-W11X2-38)
+
+- **Before.** `load()` had no latest-request guard, and radius, the age filter and custom ages re-run `load(1)` without a remount. The verifier's two probes showed the damage. V5-R3: an older answer overwrote a refused read, putting its rows on screen with no notice. V5-R4: an older answer drew rows under a failure that belonged to the newer request.
+- **Now.** A page-1 read starts a generation, and a load-more belongs to the generation it continues (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:464#const myGen = nextPage === 1 ? ++loadIdRef.current : loadIdRef.current;`). An answer from an older generation writes nothing (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:494#if (myGen !== loadIdRef.current) return;`). A plain counter bumped by every load was rejected: a load-more during a page-1 refresh would then swallow that refresh's failure (R8).
+
+### 102.4 GET /discovery/wikidata/:id: an error body is an upstream error, and the sheet says so (§101.12 finding 4; D-W11X2-39)
+
+- **Before.** Wikidata's HTTP 200 carrying `error` (maxlag) has no `entities`. It was answered and cached for 24 h as an entity with no description, no Wikipedia link and no image (V5-W1).
+- **Now.** An `error` key, or no entity for the id, is `upstream_error` (502) and is not cached (`artifacts/api-server/src/routes/discovery.ts:3617#?.error !== undefined || !item) {`). An `error` body is not trusted even beside an entity (W3). Only Wikidata's `missing` is an absence (C1).
+- **The client.** `PlaceDetailSheet` already dropped a failed read, but silently. With no local description, the sheet looked like "Wikidata has nothing on this place". It now says "Couldn’t load more about this place just now." when, and only when, the read failed (`travel-buddy-standalone/src/components/discovery/PlaceDetailSheet.tsx:429#testID="place-sheet-wikidata-failed"`; WK1–WK3).
+
+### 102.5 The possibles, decided (§101.12; D-W11X2-40, D-W11X2-41, D-W11X2-42, D-W11X2-46)
+
+- **"N places found" beside a failed refresh: real, and closed.** E8 reproduces it. After a failed refresh over a cached page, a good page 2 reaching the total drew "2 places found" beside "Couldn’t refresh just now", a claim that the set ended, about a list whose page 1 nobody re-read. The end claim now also needs `!refreshFailed` (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:716#) : !refreshFailed && !error && !partial && total > 0`).
+- **CompassPicksSection's silent hide: in scope, and closed.** The section is on the Discovery For You tab, and on a failed read it drew exactly the screen Compass draws for "no picks here".
+  - With nothing held, a failed read now shows the header, "Couldn’t load Compass picks just now." and "Try again" (`travel-buddy-standalone/src/components/compass/CompassPicksSection.tsx:359#if (!compass.error) return null;`).
+  - A failed refresh over kept picks says they may be out of date (`travel-buddy-standalone/src/components/compass/CompassPicksSection.tsx:377#testID="compass-picks-stale"`).
+  - Compass disabled, or an answer with no picks, stays hidden (C1, C2). No new colour token.
+- **V-E1 (`useCompassFeed`'s `loading` on a scope switch): it reaches the screen, and is now killed.** With `loading` false and this scope's `data` null, the picks section hides instead of drawing its skeleton. H7 pins `loading` on a switch (`travel-buddy-standalone/src/hooks/compass/useCompassFeed.ts:60#else if (!data || dataScope !== scope) setLoading(true);`). No hook code changed.
+- **`useSearchSuggestions`' held groups: in scope, and closed.** This is the verifier's own V5-R4 shape, a stated failure over the wrong rows: the panel drew "lis"'s suggestions as "lisb"'s above "Suggestions are unavailable". Groups now belong to the text they were read for. A failed or refused read for other text holds nothing; a failure re-asking the same text keeps that text's groups; typing still never flashes empty while a read is in flight (`travel-buddy-standalone/src/hooks/useSearchSuggestions.ts:116#if (heldQueryRef.current !== trimmed) { setGroups([]); heldQueryRef.current = null; }`). Two pins that encoded §100's "keep them" rule are restated (102.7).
+- **V-E3: harmless, recorded.** The search screen draws its partial notice from `partialSources !== null` and never lists the sources, so replacing rather than unioning them changes nothing on screen.
+
+### 102.6 The sweep: four more paths, closed (D-W11X2-43, D-W11X2-44, D-W11X2-45; D-W11X2-37's feed and GET /discovery halves)
+
+This round swept for the verifier's four classes:
+- a `return []` or `?? []` on a failed read in a Discovery search, suggest or candidate producer;
+- a Discovery route that filters by an unreadable safety set and answers 200;
+- a Discovery client screen, tab or hook whose async load has no latest-request guard while its inputs change without a remount;
+- an upstream 200 carrying an error, cached as empty.
+
+- **Found and closed.**
+  1. **The owner-standing read in search.** `fetchActiveOwnerSet` failed closed to an empty set, so every owner-gated row of events, trips, plans, hidden gems, posts and circles was dropped as "not active", and the search answered an empty 200. It still serves nothing owner-gated, and now refuses by name (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:501#if (error) throw new DiscoverySearchReadError("profiles", error);`; S1–S4).
+  2. **GET /discovery and GET /discovery/feed with an unreadable author set** (102.2; D1, F1, EB1).
+  3. **The search screen's late answers.** It dropped a late answer only when its query or tab differed. A tab switched away and back, a chip or a retry re-runs the same query and tab, and the older answer then did four kinds of damage:
+     - cleared the newer partial answer's notice (SQ1);
+     - appended a superseded load-more to the new list (SQ3);
+     - drew a failure over a good answer (SQ4);
+     - ended the newer read's loading, so the empty state showed mid-read (SQ5).
+     A generation now guards it, as on the tab (`travel-buddy-standalone/app/search.tsx:200#const mySeq = !cursor ? ++searchSeqRef.current : searchSeqRef.current;`, `travel-buddy-standalone/app/search.tsx:230#if (mySeq !== searchSeqRef.current) return;`).
+  4. **Nominatim's error body.** `geocode` read `data?.[0]` from any 200, so an error object became the file's cacheable "no such place" for 24 h, and the counts answered `{ counts: {} }`. A body that is not Nominatim's array is now the upstream's outage (`artifacts/api-server/src/routes/discovery.ts:375#if (!Array.isArray(data)) throw new UpstreamUnavailableError("nominatim", "nominatim_error_body");`; N1, NC).
+- **Read and found sound.**
+  - **Producers.** Every other `return []` in `lib/discovery*` and `lib/discoveryCandidates/` is either:
+    - a genuine empty (no ids, no run, no row);
+    - a named-failure throw (`rows()` → `ReadFailed`);
+    - or an enrichment whose failure removes a label and never a row (`readAreaRows`, `canonicalCentroids`).
+  - **The search protection pass.** On an unreadable policy it hides positions and removes no row.
+  - **Client guards.** These consumers already guard, or re-run on an effect with a `cancelled` cleanup:
+    - `useCommunityDiscovery` (abort);
+    - `useSearchSuggestions` (sequence);
+    - `MapSearchSheet` (sequence);
+    - the rails and ForYouTab (`loadIdRef`);
+    - the map's places layer, the counts badge and the sheet's live status and saved state (`cancelled`).
+  - **Upstreams.** Overpass's in-body failure was closed by §99.
+- **Recorded, not changed (D-W11X2-46).**
+  - **The per-type catch-all arms in `searchCandidates.ts`.** They swallow thrown code faults, not failed reads: supabase-js resolves a failed read, and every resolved error there already throws the named error. Converting them would change the input-assistance gateway's contract, which census-input-intelligence grades.
+  - **Mention resolution.** `socialIdentity`'s `.catch(() => [])` is Input Intelligence's, not Discovery's.
+  - **Event posts' fail-open posture.** It stays a Trust decision; it is now stated on the wire.
+
+### 102.7 Tests, seen red, and mutations
+
+- **New suites.**
+  - `artifacts/api-server/src/test/discoveryAuthorSetUnreadable.test.ts` (9): B1 is the verifier's V5-B1; B2, B3, F1, D1, C1–C4.
+  - `artifacts/api-server/src/test/discoveryUpstreamErrorBody.test.ts` (7): W1 is the verifier's V5-W1; W2, W3, C1, C2, N1, NC.
+  - `travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryCategoryTab.latestRequest.component.test.tsx` (8): R3 and R4 are the verifier's V5-R3 and V5-R4; R5–R8, E8, C1.
+  - `travel-buddy-standalone/app/__tests__/search.latestRequest.component.test.tsx` (6): SQ1–SQ5, C1.
+  - `travel-buddy-standalone/src/components/compass/__tests__/CompassPicksSection.failedRead.component.test.tsx` (6): P1–P3, C1–C3.
+  - `travel-buddy-standalone/src/hooks/__tests__/useSearchSuggestions.heldQuery.component.test.tsx` (6): Q1–Q3, C1–C3.
+- **Existing suites extended.**
+  - `discoveryTripProjectionConsumer`: V5-T1–V5-T3 (the verifier's probes), T4, T5 and C1; the sweep's S1–S4 and C1.
+  - `discoveryFeedEventPostsCoverage`: EB1, EB2.
+  - `useCommunityDiscovery.citySwitch`: CB1, CB2.
+  - `useCompassFeed.scope`: H7.
+  - `PlaceDetailSheet.wikidata`: WK1–WK3.
+  - The two new server suites are on the api-server `test` line.
+- **Restated pins.** No assertion was removed; each restatement is a recorded decision.
+  1. `discoveryTripProjectionConsumer` "capability READY — a projection read that fails AFTER the probe passed". Its three cases asserted the empty 200 and now also assert `refusal.coverage === "nothing"` (D-W11X2-36).
+  2. `useSearchSuggestions.failedRead` S2. The group count changes from 1 to 0 (D-W11X2-42).
+  3. `useSearchSuggestions.refusal` "OUTAGE: does not FLASH EMPTY". The group count changes from 1 to 0, with the title and reason restated beside it (D-W11X2-42).
+  4. The block's title and case names, restated to say what they now assert.
+- **Red first.** Each was run at the unfixed code, and the output is kept in the lane's scratch.
+  - Trip projection: V5-T1–V5-T3, T4 and T5 red; C1 green.
+  - Owner standing: S1–S3 red; C1 green. S4 was written after the fix; its red is S-M2.
+  - Author set: B1–B3, F1 and D1 red; C1–C3 green. EB1 was red; EB2 green. C4 was written after the fix; its red is B-M4.
+  - Wikidata: W1 and W2 red; C1 and C2 green. W3 was written after the fix; its red is W-M2.
+  - Nominatim: N1 red; NC green.
+  - Category tab: R3–R7 and E8 red; C1 green. R8 was written after the fix; its red is R-M2.
+  - Search: SQ1 and SQ3 red; SQ2 and C1 green. SQ2 pins that a newer refusal keeps the screen, which held already. SQ4 and SQ5 were written after the fix; their red is Q-M2 and Q-M3, which is the pre-fix code on those lines.
+  - Picks: P1 and P2 red; P3 and C1–C3 green.
+  - Suggestions: Q1 and Q2 red; Q3, C1 and C2 green. C3 was written after the fix; its red is G-M4.
+  - Sheet: WK1 red; WK2 and WK3 green.
+  - `useCompassFeed` H7: green, because it pins code that was already right. Its red is K-M6, the verifier's V-E1.
+- **Mutations.** 32 of 33 are killed. Each was applied alone, its suite run, and the file restored byte-identical (sha256 checked). The one survivor, Q-M4, is equivalent (D-W11X2-46): `handleLoadMore` refuses while page 1 is loading (`travel-buddy-standalone/app/search.tsx:519#if (loadingMore || loading || !nextCursor) return;`), so a cursor run never starts while a page-1 run is in flight.
+
+| # | mutation | red |
+|---|---|---|
+| T-M1 | the trips projection failure answered `[]` | V5-T1, V5-T3, T4, T5, the restated block |
+| T-M2 | the plans parent-trip failure answered `[]` | V5-T2, T5, the restated block |
+| S-M1 | a standing read error → an empty set | S1–S3 |
+| S-M2 | a thrown standing read → an empty set | S1–S4 |
+| B-M1 | community sends no refusal | B1–B3 |
+| B-M2 | the community refusal is always `partial` | B2 |
+| B-M3 | a curated page is never marked | D1, F1 |
+| B-M4 | a curated page is marked with no authored row | C4 |
+| B-M5 | GET /discovery's funnel does not name `blocks` | D1 |
+| B-M6 | the feed does not name `blocks` | F1, EB1 |
+| B-M7 | the feed does not record its posts' unread block list | EB1 |
+| B-M8 | the feed names `blocks` with nothing unchecked served | EB2 |
+| B-M9 | GET /discovery's blocks-only code removed | D1 |
+| B-M10 | the feed's blocks-only code removed | F1, EB1 |
+| W-M1 | the Wikidata error body cached as missing | W1–W3 |
+| W-M2 | the Wikidata `error` key not checked | W3 |
+| N-M1 | a Nominatim error body read as "no such place" | N1 |
+| R-M1 | the tab has no latest-request guard | R3–R7 |
+| R-M2 | a load-more starts a generation | R8 |
+| E-M8 | the end claim beside a failed refresh | E8 |
+| Q-M1 | search has no generation guard | SQ1, SQ3 |
+| Q-M2 | a stale thrown search draws the failure | SQ4 |
+| Q-M3 | a stale page 1 ends the newer one's loading | SQ5 |
+| Q-M4 | a cursor page starts a search generation | SURVIVED — equivalent (above) |
+| P-M1 | the picks section hides a failed read | P1 |
+| P-M2 | the picks' stale line removed | P2 |
+| G-M1 | a transport failure keeps another query's groups | Q1, S2 |
+| G-M2 | a refusal keeps another query's groups | Q2, OUTAGE |
+| G-M3 | a fresh answer does not mark its query | C1 |
+| G-M4 | a cache replay does not mark its query | C3 |
+| K-M6 | V-E1: `loading` not raised on a scope switch | H7 |
+| K-M7 | the sheet does not record a failed enrichment | WK1 |
+| K-M8 | the sheet calls a missing entity a failure | WK2 |
+
+- **Existing tests, run at the final tree.**
+  - Every api-server suite that imports `routes/discovery`, `routes/discoverySearch`, `lib/inputAssistance/searchCandidates` or the input-assistance gateway, search page or social identity, plus the two new ones: 89 files, 1,600 tests, all passing, under Node v24.21.0 (the repository's pinned major).
+  - The client jest suites under `src/components/discovery`, `src/components/compass`, `src/hooks`, `src/components/search` and `app/__tests__/search*`: 128 suites, 835 tests, all green. The node:test files under the same paths run in `check:all` (102.8).
+
+### 102.8 Checks
+
+Run on the final commit.
+
+- **`artifacts/api-server`, the integrator's 24-check guard script, all exit 0:**
+  - `typecheck`, and `typecheck:tests` (863 against a baseline of 863);
+  - `check:test-registration` (the two new suites are on the `test` line);
+  - `check:census-integrity` (discovery: C 101 / W 85 / N 2 / X 0 over 188);
+  - `check:doc-citations` (RESULT clean), `check:citation-targets` (163 against a ceiling of 163) and `check:citation-symbols`;
+  - `check:census-freshness`, `check:census-scope-coverage` and `check:census-row-move-labels`;
+  - `check:migration-prefixes`, `check:production-drift`, `check:writerless-reads`, `check:schema-references`, `check:enum-literals` and `check:flag-polarity`;
+  - `check:discovery-query-paths`, `check:route-auth-gate`, `check:api-prefix`, `check:async-handlers` and `check:frozen-dir`;
+  - `check:telegraph-inventory`, `check:guard-coverage` and `check:unissued-supabase-writes`.
+- **Acknowledgements.** census-discovery's entry names §102's new and extended suites and `CompassPicksSection.tsx`, with the reason they cannot have moved a verdict silently. Every other census that counts a changed file already names it, and `check:census-freshness` passes for each. §102's new suites and `CompassPicksSection.tsx` join this census's CENSUS_SCOPE.
+- **`travel-buddy-standalone`:** `tsc --noEmit -p .` (clean), `typecheck:tests` (173 against 173) and `check:all` (ALL CHECKS PASSED): node tests 7,208, component suites 709 with 4,566 tests, typecheck, typecheck:tests and the lints.
+- **Not run:**
+  - the harness, since no migration was added;
+  - `check:write-path-columns`, which needs live credentials. No write payload changed;
+  - the full api-server `pnpm test`. The 89 suites that touch the changed server files were run instead.
+
+### 102.9 DV-83, restated
+
+§101.12's four paths are closed, each with the verifier's probe red first and green now. Of the five possibles, three were real and are closed, V-E1 is killed, and V-E3 is harmless. The sweep closed four more paths. Every clause of DV-83's criterion holds on every path this lane examined:
+
+1. **Producers send the failure.** Search's trip, plan and owner-standing arms name their source. The community route, GET /discovery and the feed state an unreadable author set. The Wikidata and Nominatim error bodies are upstream failures.
+2. **Nothing refused is cached as complete.** The Wikidata and geocode caches never hold an error body. The community hook replays a partial only as partial and never caches a `nothing`. Cache B keys a `blocks` page apart.
+3. **Nothing refused or failed is rendered as empty or complete.** Four screens now say so:
+   - the tab and search never let a superseded answer overwrite a failed or refused one;
+   - the end claim is not made beside a failed refresh;
+   - the picks section and the place sheet say a failed read;
+   - the typeahead does not draw another query's rows under its failure.
+4. **Consumers branch on coverage.** The community hook, the tab and search read `partial`, `nothing` and the transport failure. `blocks` rides on `failedSources` like every other source.
+
+An independent re-verification at the merged head is owed before the integrator accepts the move, as §101.12's process asks.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§101.12's four paths are closed, each with its verifier probe red first. The three real possibles are closed, V-E1 is killed, the sweep closed four more paths, and 32 of 33 mutations are killed (the 33rd is argued equivalent).** **Search names a failed trip read.** The projection arms throw the named read error (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:871#throw new DiscoverySearchReadError("trips", r.detail);`; V5-T1–V5-T3, T4, T5), and so does the owner-standing read (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:501#if (error) throw new DiscoverySearchReadError("profiles", error);`; S1–S4). **An unreadable author set is stated.** Community, GET /discovery and the feed refuse `partial` or `nothing` naming `blocks` whenever an authored row was withheld unchecked or event posts went out unchecked (`artifacts/api-server/src/routes/discovery.ts:3152#sendCommunityBody(res, authorsUncheckedComm, {`, `artifacts/api-server/src/routes/discovery.ts:1307#...(authorsUnchecked(curated) ? [DISCOVERY_AUTHOR_SET_SOURCE] : [])`; B1–B3, D1, F1, EB1, CB1, CB2). **Only the latest request writes the screen**, on the tab and on search (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:494#if (myGen !== loadIdRef.current) return;`, `travel-buddy-standalone/app/search.tsx:230#if (mySeq !== searchSeqRef.current) return;`; R3–R8, SQ1–SQ5). **An upstream error body is never a cached absence** (`artifacts/api-server/src/routes/discovery.ts:3617#?.error !== undefined || !item) {`, `artifacts/api-server/src/routes/discovery.ts:375#if (!Array.isArray(data)) throw new UpstreamUnavailableError("nominatim", "nominatim_error_body");`; W1–W3, N1), and the sheet says a failed read (WK1). **No failed read is drawn as empty or ended.** This holds for the end claim beside a failed refresh (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:716#) : !refreshFailed && !error && !partial && total > 0`; E8), for the Compass picks (`travel-buddy-standalone/src/components/compass/CompassPicksSection.tsx:359#if (!compass.error) return null;`; P1, P2, H7) and for the typeahead's held groups (`travel-buddy-standalone/src/hooks/useSearchSuggestions.ts:116#if (heldQueryRef.current !== trimmed) { setGroups([]); heldQueryRef.current = null; }`; Q1, Q2). Every path §94, §94.11, §98, §99, §100 and §101 closed still holds: their suites pass, with four pins restated by recorded decisions (102.7). **Stated limits.** Controlled evidence only; no client build carrying these changes has shipped. The trip projection arms run only with `discovery_trip_projection_enabled` ON (seeded FALSE). An independent re-verification at the merged head is owed. |
+
+**Headline.** DV-83 moves W → C. `check:census-integrity` counts **C 101 / W 85 / N 2 / X 0** over 188: CONSTRUCTED 186 / 188 = **98.9 %**, CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged.
+
+### 102.10 Left open, and what would turn this red
+
+- **Seen and not built.**
+  - The feed's refusal `class` for a blocks failure beside Overpass stays `transient_db`, which is the feed's existing rule. GET /discovery's class and code for `["overpass", "blocks"]` stay Overpass's (`onlyOverpassFailed` counts only the retrievals). `failedSources` names both, and consumers key on it.
+  - The per-type catch-all arms, the event posts' fail-open posture and mention resolution's `.catch(() => [])` are recorded in D-W11X2-46, not changed.
+- **What would turn DV-83 red again:**
+  - a failed trip, plan or owner-standing read answered as an empty search, or type=all or suggest not naming it (V5-T1–V5-T3, T4, T5, S1–S4);
+  - an authored row withheld for an unreadable block or mute set, or an event post served without the check, with no refusal naming `blocks` (B1–B3, D1, F1, EB1);
+  - an older answer writing the tab or the search screen over a newer one (R3–R8, SQ1–SQ5);
+  - an upstream error body answered or cached as an absence (W1–W3, N1);
+  - "N places found" beside a failed refresh (E8); the picks section hiding a failed read (P1, P2); another query's suggestion groups under a failure (Q1, Q2); a failed Wikidata read drawn as "nothing more" (WK1);
+  - any path §101.11 lists.
+
+### 102.11 Integrator: DV-83 held at W after the independent re-verification at `5f2b0e7eb`
+
+*Integrator, 2026-09-29. §102 was merged at `5f2b0e7eb`. An independent verifier then checked that tree, ran every probe below and restored every mutated file byte-identical, checked by sha256. (Recorded as 102.11 because 102.10 is §102's own "Left open".)*
+
+- **Confirmed.** Every §101.12 finding and every §102.6 sweep fix is closed in behaviour; 22 of 23 lane mutations are killed (the survivor, CM12, is off-criterion and listed below).
+- **Found: three paths that break the criterion's wording, each shown by a probe that fails against this tree.**
+  1. **DiscoveryCategoryTab shows another filter's rows under "Couldn't refresh" (clause c, wrong rows).** The client cache key holds only destination, category, radius, page and intent mode (`travel-buddy-standalone/src/services/discovery.ts:663#function _discoveryCacheKey(dest: string, cat: string, radiusKm: number, page: number, intentMode?: DiscoveryIntentMode | null): string {`). It omits the age filter, custom ages, `openNow`, `minRating`, `sortBy`, the context and the coordinates. The age filter and `openNow` re-run `load(1)` without a remount; the tab hydrates from the OLD query's cached page, and when the new query's read fails, `refreshFailed` draws those rows under the stale line. Map mode is the same. V6-K1 (age any → 21_plus, the 21_plus read fails) and V6-K2 (openNow off → on) are red; V6-K3 (same query) is the control.
+  2. **Search and suggest silently drop travelers when the real-name read fails (clause a).** `nameVisibilitySet` answers an empty set on an error or a throw (`artifacts/api-server/src/lib/publicIdentity.ts:106#if (error) return new Set();`), and the C09 filter then drops every row matched only by real name (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:583#const allowedNames = await nameVisibilitySet(sc, visible.map((p: any) => p.id as string));`). type=travelers, buddies, all and /discovery/suggest answer 200 with no refusal (V6-N1, V6-N2 red; V6-N0 control).
+  3. **A Compass section build failure on Discovery For You is hidden like "Compass disabled" (clause c; the build-error half of D-W11X2-41).** The section route's catch arm answers `200 { section: null, fallback: true, safeItems }` with no `compassEnabled` and no refusal (`artifacts/api-server/src/routes/compass.ts:778#res.json({ section: null, nextCursor: null, fallback: true, safeItems: fallback.safeItems });`). The client normalizer reads `compassEnabled: raw.compassEnabled ?? !raw.fallback` as `false`, and the section returns null before its failed-read branch, dropping `safeItems` (V6-P1, V6-P1b red; V6-PC, the disabled arm, is the control).
+- **Possible, not proven.**
+  - With `discovery_for_you_pde_enabled` ON (testing mode will turn it on), `consolidatedForYouCandidates` runs Compass's fail-closed gates; an unreadable safety or flag input may withhold candidates with no refusal.
+  - Buddies: with `discovery_buddy_launch_gate_enabled` ON, a failing `rent_buddy_enabled` read reads as "flag off" and answers an empty 200.
+  - `DiscoveryEventPostsRail.tsx` reacts only to `event_posts`, not `blocks` (a superset; Trust).
+  - `useSearchSuggestions` keys its held groups by text only, so a location change followed by a failure keeps another location's groups (the lane pinned this deliberately in its C1).
+  - CM12 survived: `PlaceDetailSheet` does not reset `wikidataFailed` on a place change, so a place with no `wikidataId` can show a false "Couldn't load more".
+- **Next.** A round-7 lane closes the three paths with the verifier's probes as failing-first tests, decides the possibles, and sweeps once more. The row moves only after that.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | C | **W** | §102 closes §101.12's four paths, confirmed under mutation at `5f2b0e7eb` (§102.11). Three paths still present a failed read as empty, complete or over the wrong rows: the client cache key that omits server-affecting parameters (`travel-buddy-standalone/src/services/discovery.ts:663#function _discoveryCacheKey(dest: string, cat: string, radiusKm: number, page: number, intentMode?: DiscoveryIntentMode | null): string {`); search's real-name visibility read answered as an empty set (`artifacts/api-server/src/lib/publicIdentity.ts:106#if (error) return new Set();`); and the Compass section route's build-error arm read as "Compass disabled" (`artifacts/api-server/src/routes/compass.ts:778#res.json({ section: null, nextCursor: null, fallback: true, safeItems: fallback.safeItems });`). |
+
+Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
+
+## §103 — DV-83 round 7 (lane W11-X2): the cache key is the query sent, the real-name read is strict, a failed Compass section is said, the fail-safe flag map refuses, and DV-83 moves W → C
+
+*Written 2026-09-29 by lane W11-X2 (round 7) on `disc-w11-x2-r7`, from `5f2b0e7eb` (§102) and `d60498cdd` (§102.11). It closes §102.11's three paths, each with the verifier's probe copied in as a red test. It decides the five possibles; two were real and are closed. The round's sweep found no further path. Decisions are in `docs/architecture/discovery-decision-register.md`, section "W11-X2 round 7", D-W11X2-47 to D-W11X2-53.*
+
+*No migration and no new flag. Each change alters output only when a Discovery read failed, a flag table could not be read, or a query changed while its rows were on screen. With every read healthy, every served byte is unchanged: the full api-server suite passes apart from two load artefacts that pass alone (103.7), and apart from the restatements in 103.7 no existing assertion changed. Every edit in a cited file is line-neutral: lines are changed in place (each keeping its old text in a `was:` comment where a citation names it), and new code is appended at a file's foot.*
+
+*All evidence is controlled: in-process routes over fake worlds, the real client service over a fake `fetch`, and jest over the real tabs, sections and hooks. None of it is production evidence, and no client build carrying the change has shipped.*
+
+### 103.1 The client cache key is the query the request sends (§102.11 finding 1; D-W11X2-47)
+
+- **Before.** `_discoveryCacheKey` held destination, category, radius, page and intent mode. A page fetched under one age filter, open-now, rating, sort, context or centre was replayed for another, and the new query's failed read drew the old query's rows under "Couldn't refresh" (V6-K1, V6-K2).
+- **Now.**
+  - **One builder.** `discoveryPlacesParams` (foot of the service, `travel-buddy-standalone/src/services/discovery.ts:1403#function discoveryPlacesParams(`) builds the query. `getDiscoveryPlaces` sends that `params` object and writes the cache under a key derived from it (`travel-buddy-standalone/src/services/discovery.ts:766#_CLIENT_CACHE.set(_discoveryCacheKey(params), { data, at: Date.now(), scope: lease.scope });`). The key is every entry of the query, with the destination normalised (`travel-buddy-standalone/src/services/discovery.ts:663#function _discoveryCacheKey(params: URLSearchParams): string {`). A parameter that reaches the URL reaches the key.
+  - **The test that fails if a parameter is not in the key.** K2 sends a request with every parameter set, then enumerates the fetched URL's own parameters. Changing any one of them must change the key. The list comes from the URL, not from the test, so a parameter added later is covered the day it is added. K1 pins that the one stored entry is the key of the URL actually fetched.
+  - **The readers.** The readers take the rest of the query as an optional sixth argument, so an existing five-argument call keeps its meaning (the no-filter query). The tab hydrates with the whole query, built from the same inputs `load()` sends (`categoryTabCacheQuery`, foot), and so does ForYouTab (`forYouCacheQuery`, foot).
+  - **Rows never sit under another query's failure.** Every page and every transport failure carries the identity of the query it was sent for, kept beside the object in a WeakMap so no body changes shape (`travel-buddy-standalone/src/services/discoveryQueryStamp.ts:30#export function discoveryQueryIdentity(params: URLSearchParams): string {`). The tab records the identity of the rows on screen. A failed page-1 read for a different identity clears them, so the tab draws its error state and never the stale line (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:500#if (!res.ok) { if (nextPage === 1 && heldForAnotherQuery(heldQueryRef.current, res)) {`). This holds even if a cache were ever to hand over the wrong page (G1–G3). Map mode draws from the same `places` and `refreshFailed`, so it follows.
+  - **The count writer.** `getDiscoveryCategoryCounts`, the cache's other writer (§102.11), goes through `getDiscoveryPlaces`, so each of its seven category pages is keyed by the query it sent.
+
+### 103.2 Search's real-name visibility read is strict (§102.11 finding 2; D-W11X2-48)
+
+- **Before.** `nameVisibilitySet` answered an empty set on an error or a throw, and search's C09 rule then dropped every traveler matched only by real name. type=travelers, buddies, all and suggest answered 200 with no refusal (V6-N1, V6-N2).
+- **Now.** C09 reads with a strict variant, `nameVisibilitySetOrNull` (foot of `artifacts/api-server/src/lib/publicIdentity.ts`, `artifacts/api-server/src/lib/publicIdentity.ts:190#if (error) return null;`). A null throws `DiscoverySearchReadError("profile_privacy_settings")` (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:583#if (allowedNames === null) throw new DiscoverySearchReadError("profile_privacy_settings", "show_real_name");`). type=travelers is refused `nothing`, and type=all and suggest name `travelers`. The posture is unchanged: nothing name-matched is served unchecked. The lenient `nameVisibilitySet` stays for its eight callers, where the set only redacts a label and drops no row.
+
+### 103.3 A failed Compass section is said, never hidden like "Compass is off" (§102.11 finding 3; D-W11X2-50)
+
+- **Before.** GET /compass/feed/section's catch arm answered `{ section: null, fallback: true, safeItems }`. The client normalizer read that as `compassEnabled: false`, and `CompassPicksSection` hid itself before its failed-read branch, dropping `safeItems` (V6-P1, V6-P1b). The sweep found the disabled arm answering an unread flag table the same way.
+- **Now.**
+  - **The server.** A failed build answers `compassEnabled: true`, `fallbackReason: "section_build_error"` and the refusal envelope: `partial` when safe items ride along, `nothing` when none do (`artifacts/api-server/src/routes/compass.ts:778#sendCompassSectionFailure(res, err instanceof CompassFlagsUnreadableError ? "compass_flags_unreadable" : "section_build_error", fallback.safeItems);`). An unread flag table (`readCompassEnabled` → null, `artifacts/api-server/src/compass/flags.ts:192#export async function readCompassEnabled(db: SupabaseClient): Promise<boolean | null> {`) answers `compass_flags_unreadable` and never `compassEnabled: false` (`artifacts/api-server/src/routes/compass.ts:633#if (enabledRead === null) { sendCompassSectionFailure(res, "compass_flags_unreadable", []); return; }`). The disabled arm, with the flags read and Compass off, is byte-identical (C1, C2).
+  - **The client.** The normalizer infers the marker from a server that predates it: a build-error arm carries `safeItems` and no `compassEnabled`, and the disabled arm carries neither (`travel-buddy-standalone/src/services/compass.ts:161#fallbackReason: raw.fallbackReason ?? (raw.fallback && raw.compassEnabled === undefined && Array.isArray(raw.safeItems) ? 'section_build_error' : undefined),`). `useCompassFeed` never caches a failure answer and never lets it replace same-scope picks (`travel-buddy-standalone/src/hooks/compass/useCompassFeed.ts:68#if (result.ok && result.data && !isCompassSectionFailure(result.data)) {`). The section hides only for Compass's own "off" (`travel-buddy-standalone/src/components/compass/CompassPicksSection.tsx:335#if (!compass.compassEnabled && !compass.loading && !isCompassSectionFailure(compass.data)) return null;`). A failure shows the failed line, or the safe items under the stale line.
+  - **Every consumer, checked.** On the client, `fetchCompassSection` has one caller, `useCompassFeed`, whose two users are `CompassPicksSection` and `ForYouTab` (the Discovery tab screen's For You tab). For `ForYouTab`, the hook's `compassEnabled` stays false for any fallback, so safe items never replace the OSM list, and kept Compass items carry the tab's stale line. `fetchCompassFeed` has no caller. The Compass home, Live and the trip heartbeat read other routes. On the server, every other `buildSection` caller already handles a thrown build (103.6).
+
+### 103.4 The fail-safe flag map refuses; it is never an empty For You page (possible 1; D-W11X2-49)
+
+- **Probed and real.** Take the case where `discovery_for_you_pde_enabled` is ON and the pipeline's COMPASS_% read resolves an error. `fetchCompassFlags` then answers `FAILSAFE_COMPASS_FLAGS`, in which every `_SAFETY_BLOCK` is engaged, so every Discovery candidate is blocked. The for_you page was served `{ places: [] }` with no refusal (U-P1). The 3455-OFF Compass-order path did the same, and also wrote the empty ranking to Cache B (U-P2). A Cache A hit did the same (U-P3).
+- **Now.**
+  - `runPipeline` reports `flagsUnreadable` only when the fail-safe map gated the batch (`artifacts/api-server/src/compass/CompassPipeline.ts:217#let flagsOk = true;`). A thrown read keeps its historical empty map and reports nothing, per `fetchCompassFlags`' own note (compassFlagsUnreadableGate C2).
+  - The Discovery gate carries it through. Both for_you serve points refuse `nothing`, with class `transient_db`, code `compass_gate_unreadable` and `failedSources: ["compass_flags"]` (`artifacts/api-server/src/routes/discovery.ts:1838#if (forYouA.source === "compass_unreadable")`, `artifacts/api-server/src/routes/discovery.ts:2106#if (forYouM.source === "compass_unreadable")`).
+  - `rankItemsForDiscovery` and `buildSection` throw `CompassFlagsUnreadableError`. The Compass-order path then refuses instead of degrading, and caches nothing (`artifacts/api-server/src/routes/discovery.ts:2254#if (err instanceof CompassFlagsUnreadableError)`).
+  - Compass's posture is kept: it fails closed, and nothing is served un-gated. Only the silence goes.
+- **Ruled, not changed.** A failed read of the capability flag `COMPASS_V1_RULE_BASED_ENABLED` reads OFF, which is `flags.ts`' documented posture. The page then serves every candidate and withholds nothing (U-C1). The profile's safety inputs (the block list and safe return) fail toward serving, so nothing is withheld. The live-intel stage fails to "no constraints", so nothing is excluded.
+
+### 103.5 The other possibles
+
+- **Buddies (possible 2; D-W11X2-51): real, and closed.** With `discovery_buddy_launch_gate_enabled` ON, a failing `rent_buddy_enabled` read made `isFlagEnabled` answer false, and every buddy was withheld as an empty 200. The flag is now read strictly (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:483#return !(await rentBuddyLaunchedOrThrow(sc));`). A failed read throws `DiscoverySearchReadError("feature_flags")`, so type=buddies is refused `nothing` and type=all and suggest name `buddies` (B1, B2). An absent row is still "not launched" (C4). `check-flag-polarity` records the direct read in `DIRECT_READS`.
+- **Suggestion groups (possible 4; D-W11X2-52): closed.** The held key was the text alone, and the device cache key left out `city`, which the request sends. The cache key now carries the city, and the held key is the cache key (`travel-buddy-standalone/src/hooks/useSearchSuggestions.ts:72#setGroups(cached.groups); heldQueryRef.current = key;`). Under a failure, another location's groups are dropped (C1, C3 restated; L1). In flight, nothing flashes empty (Q3), and returning to a city is a cache hit for its own groups (L2).
+- **CM12 (possible 5; D-W11X2-53): killed.** The sheet already resets `wikidataFailed` on a place change (`travel-buddy-standalone/src/components/discovery/PlaceDetailSheet.tsx:91#setWikidataEnrichment(null); setWikidataFailed(false);`), but no test pinned it. WK4 (the next place has no Wikidata id) and WK5 (its read is still in flight) now kill that mutation.
+- **The event-posts rail's `blocks` (possible 3; D-W11X2-53): ruled, not changed.** When the block list is unreadable, the rail shows more rows, not fewer. Whether a viewer is told that belongs to Trust's fail-open posture for event posts (D-W11X2-37), and is not a completeness question.
+
+### 103.6 The sweep
+
+Recorded in D-W11X2-53. No new break was found.
+
+- **Cache keys against their requests.**
+  - `useCommunityDiscovery`: city and sort; `type` and `limit` are constants.
+  - The live-status key: name and city.
+  - `useSearchSuggestions`: fixed in 103.5.
+  - The Compass feed: section and city. `tzOffsetMinutes` is the device clock, not a query.
+  - The Discovery cache's two writers: 103.1.
+- **Lenient empty sets that filter rows.** Only C09's was one (103.2). `readBylineFollowEdges` and `suggestionSeenCache` redact a label or admit more rows. `inactiveSubmitterIds` answers null.
+- **Flag reads that withhold rows.** Only the buddy launch gate did (103.5). Every other Discovery flag's off arm serves the pre-flag answer in full.
+- **Callers of the new throw.** The Compass home answers `unusable`, and the ask context is non-fatal. `/compass/recommendations` and `/compass/telegraph` take their existing build-failed arms; each answered the same empty list before.
+- **Seen, not changed.** `/compass/recommendations`' build-failed arm answers `[]`. Search draws it as the optional Compass rail under a zero-result search, and the Discovery answer beside it is complete. The route is Compass's and is left to census-compass (103.10).
+
+### 103.7 Tests, seen red, and mutations
+
+- **New suites.**
+  - `artifacts/api-server/src/test/discoverySearchNameVisibility.test.ts` (12): V6-N0–V6-N2 are the verifier's probes; N3–N5, B1, B2, C1–C4.
+  - `artifacts/api-server/src/test/compassSectionFailedRead.test.ts` (4): S1, S2, C1, C2.
+  - `artifacts/api-server/src/test/compassFlagsUnreadableGate.test.ts` (6): R1–R4, C1, C2.
+  - `travel-buddy-standalone/src/services/__tests__/discovery.cacheKey.test.ts` (7, node:test): K1–K6, C1.
+  - `travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryCategoryTab.cacheKey.component.test.tsx` (4): V6-K1–V6-K3 are the verifier's probes; V6-K4.
+  - `travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryCategoryTab.heldQuery.component.test.tsx` (5): G1–G3, C1, C2.
+  - `travel-buddy-standalone/src/components/compass/__tests__/CompassPicksSection.buildError.component.test.tsx` (7): V6-P1, V6-P1b and V6-PC are the verifier's probes; P2–P5.
+  - The three new server suites are on the api-server `test` line.
+- **Existing suites extended.**
+  - `discoveryOnePipeline`: U-P1–U-P3, U-C1.
+  - `useSearchSuggestions.heldQuery`: L1, L2.
+  - `PlaceDetailSheet.wikidata`: WK4, WK5.
+- **Restated pins.** No assertion was removed; each restatement is a recorded decision.
+  1. `discoverySearch` "gate ON + marketplace flag UNREADABLE". It asserted that the predicate answered `true` (withheld). It now asserts the named read error; the read-order assertion is unchanged (D-W11X2-51).
+  2. `useSearchSuggestions.heldQuery` C1. The group count changes from 1 to 0, with `refused` asserted as before (D-W11X2-52).
+  3. `useSearchSuggestions.heldQuery` C3. Its cache-replay half is kept, and its location-change half now asserts the groups dropped (D-W11X2-52).
+  4. `discoveryClientRouteE2E`: nine device-cache reads now name the query the suite fetched (`{ lat, lng }`). The four-argument read named a query the suite never sent. Every assertion is unchanged (D-W11X2-47).
+- **Red first.** Each was run at the unfixed code, and the output is kept in the lane's scratch.
+  - Category tab: V6-K1, V6-K2 and V6-K4 red; V6-K3 green. G1–G3 red; C1 and C2 green.
+  - The service key: K1–K6 red; C1 green (a control), and B1-a turns it red.
+  - Search: V6-N1 and V6-N2 red; V6-N0 green. N3–N5, B1, B2 and C1–C4 were written with the fix; their red is B2-a, B2-b and P-BUD-a.
+  - The section route: S1 and S2 red; C1 and C2 green.
+  - The picks section: V6-P1, V6-P1b and P2–P5 red; V6-PC green.
+  - The fail-safe map: U-P1–U-P3 red; U-C1 green. R1–R4 were written with the fix; their red is P-PDE-a, b, d and f.
+  - The buddy pin (restated) red.
+  - Suggestions: C1, C3, L1 and L2 red; Q1–Q3 and C2 green.
+  - Sheet: WK4 and WK5 were green at the unfixed code, because the reset was already there. Their red is CM12.
+- **Mutations.** All 25 are killed. Each was applied alone, its suites run, and the file restored byte-identical (sha256 checked).
+
+| # | mutation | red |
+|---|---|---|
+| B1-a | the key back to the five fields | K2–K4, C1, V6-K4 |
+| B1-b | one parameter (`openNow`) dropped from the key | K2–K4 |
+| B1-c | the tab keeps another query's rows under the failure | G1–G3 |
+| B1-d | the page is not stamped | K5 |
+| B1-e | the tab hydrates with the old partial query | V6-K4 |
+| B2-a | C09 back to the lenient set | V6-N1, V6-N2, N3 |
+| B2-b | the strict read answers an empty set on error | V6-N1, V6-N2, N3, N4 |
+| B3-a | the section catch arm back to the unmarked body | S1 |
+| B3-b | an unread flag table answered as disabled | S2 |
+| B3-c | `readCompassFlag` answers false for a failed load | S2 |
+| B3-d | the picks section hides a failure like Compass off | V6-P1, V6-P1b, P2, P3 |
+| B3-e | the normalizer drops the inferred marker | V6-P1, V6-P1b |
+| B3-f | the hook caches a failure as an answer | V6-P1, V6-P1b, P2–P5 |
+| P-PDE-a | the pipeline never reports the fail-safe map | R1–R4, U-P1, U-P2 (the first six reds listed) |
+| P-PDE-b | the gate drops `flagsUnreadable` | R4, U-P1, U-P3 |
+| P-PDE-c | the candidates served empty, not refused | U-P1, U-P3 |
+| P-PDE-d | the rank path no longer throws | R2, U-P2 |
+| P-PDE-e | the Compass-order catch degrades instead of refusing | U-P2 |
+| P-PDE-f | `buildSection` no longer throws | R3 |
+| P-PDE-g | serve point A does not refuse | U-P3 |
+| P-PDE-h | serve point M does not refuse | U-P1 |
+| P-BUD-a | the launch flag back to `isFlagEnabled` | B1, B2, the restated pin |
+| P-SUG-a | the cache key without the city | L1, L2 |
+| P-SUG-b | the held key back to the text | C1, C3, L1 |
+| CM12 | no `wikidataFailed` reset on a place change | WK4, WK5 |
+
+- **Existing tests, run at the final tree.**
+  - The api-server `test` script in full, under Node v24.21.0 (the repository's pinned major): 28,655 tests, 28,653 passing. The two failures are load artefacts of a shared machine, and both pass when their file is run alone: `guardReachability` CONTROL (its checker was killed by the 180 s spawn timeout; 25/25 alone) and `wallPerformance`'s round-trip ratchet (~111 against 110 under load; 6/6 alone). Neither imports a file this section changed; the guard checker scans the whole tree, this one included, and passes on it alone.
+  - The touched client suites, first alone (36 jest suites under `src/components/discovery`, `src/components/compass` and the hooks, 229 tests; and the node:test cache-key suite) and then inside `check:all` (103.8).
+
+### 103.8 Checks
+
+Run on the final commit.
+
+- **`artifacts/api-server`, the integrator's 24-check guard script (`int-guards.sh`), all exit 0:**
+  - `typecheck`, and `typecheck:tests` (863 against a baseline of 863);
+  - `check:test-registration` (the three new suites are on the `test` line);
+  - `check:census-integrity` (discovery: C 101 / W 85 / N 2 / X 0 over 188);
+  - `check:doc-citations`, `check:citation-targets` and `check:citation-symbols`;
+  - `check:census-freshness`, `check:census-scope-coverage` and `check:census-row-move-labels`;
+  - `check:migration-prefixes`, `check:production-drift`, `check:writerless-reads`, `check:schema-references`, `check:enum-literals` and `check:flag-polarity` (the new direct read is in `DIRECT_READS`);
+  - `check:discovery-query-paths`, `check:route-auth-gate`, `check:api-prefix`, `check:async-handlers` and `check:frozen-dir`;
+  - `check:telegraph-inventory`, `check:guard-coverage` and `check:unissued-supabase-writes`.
+- **Acknowledgements.** census-compass names `compass/flags.ts`, and argues its companion Compass edits in the same entry. census-highlights-memories and census-telegraph name `lib/publicIdentity.ts`: a function appended at the foot, and no cited line moved. census-discovery names the files that joined its CENSUS_SCOPE in this section: `compass/flags.ts`, `compass/CompassPipeline.ts`, `lib/publicIdentity.ts`, the two new client modules and the six new suites.
+- **`travel-buddy-standalone`:** `typecheck` (clean), `typecheck:tests` (173 against 173) and `check:all` (ALL CHECKS PASSED): node tests 7,219, component suites 712 with 4,586 tests, the web suites (4, with 12 tests), and the lints. `check-test-mocks` first flagged the verifier probes' bare jest stand-ins; each now carries the NOTE the guard asks for.
+- **Not run:**
+  - the harness, since no migration was added;
+  - `check:write-path-columns`, which needs live credentials. No write payload changed;
+  - the merge of `origin/claude/sensing-completion-20260925` that the integrator asked for before the final verification. The session's permission check refused the fetch and merge, so every result above is at this branch's own head (from `5f2b0e7eb`), not at a merged head. The integrator's notes say that branch changes only the api-server `test` line, the acknowledgement file and one test fixture (`discoveryTrendingApi`), none of which this section touches except as unions.
+
+### 103.9 DV-83, restated
+
+§102.11's three paths are closed, each with the verifier's probe red first and green now. Of the five possibles, the fail-safe map and the buddy flag were real and are closed, the suggestion key is closed, CM12 is killed, and the rail's `blocks` is ruled Trust's. The sweep found no further path. Every clause of DV-83's criterion holds on every path this lane examined:
+
+1. **Producers send the failure.** Search names an unread real-name set and an unread launch flag. For You names an unreadable Compass gate. The Compass section names a failed build and an unread flag table.
+2. **Nothing refused or partial is cached as complete.** The device cache is keyed by the whole query it sent. The Compass-order path caches no fail-safe ranking. The Compass feed hook caches no failure answer.
+3. **Nothing refused is rendered as empty, complete, or over the wrong rows.** No tab keeps another query's rows under its stale line. The picks section says a failed build. The typeahead drops another location's groups under its failure. The sheet does not carry one place's failure to the next.
+4. **Consumers branch on coverage.** The picks section and the feed hook branch on `fallbackReason` and the refusal envelope. The tab branches on the query identity beside the transport failure, and search's consumers branch on `failedSources` as before.
+
+An independent re-verification at the merged head is owed before the integrator accepts the move, as §101.12 and §102.11 ask.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§102.11's three paths are closed, each with its verifier probe red first. The two real possibles are closed, CM12 is killed, and 25 of 25 mutations are killed.** **The device cache key is the query the request sends** (`travel-buddy-standalone/src/services/discovery.ts:766#_CLIENT_CACHE.set(_discoveryCacheKey(params), { data, at: Date.now(), scope: lease.scope });`; K1–K6, a test that fails if any sent parameter is not in the key), **and no tab keeps another query's rows under its failure** (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:500#if (!res.ok) { if (nextPage === 1 && heldForAnotherQuery(heldQueryRef.current, res)) {`; V6-K1, V6-K2, V6-K4, G1–G3). **Search names an unread real-name set** (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:583#if (allowedNames === null) throw new DiscoverySearchReadError("profile_privacy_settings", "show_real_name");`; V6-N1, V6-N2, N3) **and an unread launch flag** (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:483#return !(await rentBuddyLaunchedOrThrow(sc));`; B1, B2). **A failed Compass section is said** (`artifacts/api-server/src/routes/compass.ts:778#sendCompassSectionFailure(res, err instanceof CompassFlagsUnreadableError ? "compass_flags_unreadable" : "section_build_error", fallback.safeItems);`, `travel-buddy-standalone/src/components/compass/CompassPicksSection.tsx:335#if (!compass.compassEnabled && !compass.loading && !isCompassSectionFailure(compass.data)) return null;`; S1, S2, V6-P1, V6-P1b, P2–P5). **A batch gated by the fail-safe flag map is refused, never an empty For You page** (`artifacts/api-server/src/routes/discovery.ts:1838#if (forYouA.source === "compass_unreadable")`; U-P1–U-P3, R1–R4). **Suggestion groups belong to the whole query** (`travel-buddy-standalone/src/hooks/useSearchSuggestions.ts:72#setGroups(cached.groups); heldQueryRef.current = key;`; C1, C3, L1). Every path §94 to §102 closed still holds: their suites pass, with four pins restated by recorded decisions (103.7). **Stated limits.** Controlled evidence only; no client build carrying these changes has shipped. The fail-safe arm runs only when the COMPASS_% read fails, and the buddy arm only with `discovery_buddy_launch_gate_enabled` ON (seeded FALSE). An independent re-verification at the merged head is owed. |
+
+**Headline.** DV-83 moves W → C. `check:census-integrity` counts **C 101 / W 85 / N 2 / X 0** over 188: CONSTRUCTED 186 / 188 = **98.9 %**, CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged.
+
+### 103.10 Left open, and what would turn this red
+
+- **Seen and not built.**
+  - `/compass/recommendations`' build-failed arm answers `{ recommendations: [] }`. It is Compass's route, graded by census-compass. Search draws it only as the optional rail under a zero-result search, whose own answer is complete.
+  - The event posts' fail-open posture on an unreadable block list, and whether the rail says so, stay Trust's (D-W11X2-37, D-W11X2-53).
+  - The tab-bar prefetch warms only the query it sends (no centre, no context), so it no longer paints the For You tab when the tab's own query differs (D-W11X2-47).
+- **What would turn DV-83 red again:**
+  - a request parameter that reaches the URL without reaching the device cache key (K1, K2), or a tab drawing another query's rows under its stale line (V6-K1, V6-K2, G1–G3);
+  - an unread real-name set or launch flag answered as a short or empty search (V6-N1, V6-N2, N3, B1, B2);
+  - a failed section build or an unread flag table answered, or drawn, as "Compass is off" (S1, S2, V6-P1, V6-P1b, P2, P3), or cached as picks (P5);
+  - a fail-safe-gated batch served, or cached, as an empty For You page (U-P1–U-P3);
+  - another location's suggestion groups under a failure (C1, L1), or one place's Wikidata failure on the next place (WK4, WK5);
+  - any path §102.10 lists.
+
+### 103.11 Integrator: DV-83 held at W after independent re-verification at `67d900e55`
+
+*Integrator, 2026-09-29. §103 was merged at `67d900e55`. An independent verifier then checked that tree, ran every probe below and restored every mutated file byte-identical, checked by sha256. (Recorded as 103.11 because 103.10 is §103's own "Left open".)*
+
+- **Confirmed.** Every §102.11 finding and every §103 probe fix is closed in behaviour; 17 of 20 lane mutations are killed. The three survivors (CM7, CM10, CM13) are unpinned lines, listed below.
+- **Found: three paths that break the criterion's wording, each shown by a probe that fails against this tree.**
+  1. **BK1. GET /compass/feed/section serves a section built from FAILED candidate reads as complete, and caches it (clauses a, b).** `CompassItemHydrator.ts` ignores the read error on posts, buddies, events and places, and hidden gems log and answer `[]`; `hydrateCompassItems` "never throws". The route answers `200 { sections: [{ items: [] }], fallback: false, compassEnabled: true }` with no refusal and writes it to L1 and the DB cache; `useCompassFeed` writes it to AsyncStorage. For You's picks section hides it as "no picks" (V7-S1, V7-S2 red; V7-C1 the control).
+  2. **BK2. GET /compass/recommendations answers `[]` with no refusal on a failed read, and both Discovery consumers hide it (clauses a, c, d).** The flag read fails to "off", the block check answers `{ recommendations: [], error: "block_check_failed" }` (the client ignores `error`), the traveler-profiles read ignores its error, and the build-failed catch answers `[]`. Search draws a zero-result search with no Compass rail, and For You's "Travelers You May Vibe With" row returns null (V7-R1, V7-R2, V7-T1, V7-T2 red; V7-TC the control).
+  3. **BK3. The Discover screen's trending chips keep the previous city's chips when the new city's read fails (clause c, wrong rows).** The chips are set only on a good read and never cleared on a city change (V7-H1 red).
+- **Possible, not proven.** The output-kinds and trending routes answer a failed flag READ as `404 feature_disabled`, and the output-kinds rail hides it exactly like the feature being off (the "unread flag = off" class §103 closed elsewhere).
+- **Unpinned survivors.** CM7 (ForYouTab's cache query drops `sortBy`), CM10 (the query identity ignores the age filter and open-now), CM13 (an HTTP-error failure left unstamped; only the network-error arm is pinned).
+- **Next.** A round-8 lane closes the three paths with the verifier's probes as failing-first tests, decides the possible, pins the survivors, and sweeps the Compass → Discovery seam once more. The row moves only after that.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | C | **W** | §103 closes §102.11's three paths, confirmed under mutation at `67d900e55` (§103.11). Three paths still present a failed read as empty, complete or over the wrong rows: the Compass hydrator's swallowed candidate reads, served and cached as a complete section (`artifacts/api-server/src/compass/CompassItemHydrator.ts`); `/compass/recommendations`' empty-list failure arms, drawn as an absence by search and by For You's traveler row (`artifacts/api-server/src/routes/compass.ts`); and the Discover screen's trending chips kept across a city change (`travel-buddy-standalone/app/(tabs)/discovery.tsx`). |
+
+Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
+
+## §104 — DV-83 round 8 (lane W11-X2): a failed Compass candidate read is named and never cached, /compass/recommendations refuses and its consumers say so, the trending chips follow their city, an unread rollout flag is not "off", and DV-83 moves W → C
+
+*Written 2026-09-29 by lane W11-X2 (round 8) on `disc-w11-x2-r8`, from `67d900e55` (§103) and §103.11. It closes §103.11's three breaks, each with the verifier's probe copied in as a red test. It decides the possible (real, and closed), pins the three surviving mutations, and sweeps the Compass → Discovery seam once more; the sweep closed two further paths. Decisions are in `docs/architecture/discovery-decision-register.md`, section "W11-X2 round 8", D-W11X2-54 to D-W11X2-59.*
+
+*No migration and no new flag. Each change alters output only when a read failed or a flag table could not be read, or (the trending chips) when the city changes. With every read healthy, every served byte is unchanged (S5, R3c, R4c, R6c, FK1c, FT2c, W1c, HTc). Every edit in a cited file is line-neutral: lines are changed in place, with the old text kept in a `was:` comment where a citation names it, and new code is appended at a file's foot. `src/index.ts` is untouched.*
+
+*All evidence is controlled: in-process routes over fake worlds, the real client services over a fake `fetch`, and jest over the real screens, sections and rows. None of it is production evidence, and no client build carrying the change has shipped.*
+
+### 104.1 A failed Compass candidate read is named, refused and never cached (§103.11 BK1; D-W11X2-54)
+
+- **Before.** The hydrator destructured `{ data }` alone on posts, buddies, events and places, and hidden gems answered `[]`. GET /compass/feed/section served the section built from failed reads as complete, and wrote it to L1 and the DB cache (V7-S1, V7-S2).
+- **Now.**
+  - Each candidate read throws its error; `hydrateCompassItems` still never throws, and names each failed source beside the pool it returns (`artifacts/api-server/src/compass/CompassItemHydrator.ts:447#failed.push(name);`, `artifacts/api-server/src/compass/CompassItemHydrator.ts:491#export function compassHydrationFailedSources(`). Both the city-scoped and the global posts read count (T7), each source alone is named (T5), and a thrown read is named like a resolved error (T3).
+  - The section route answers the failure arm §103 made the client say, with the rows that were read and the refusal (`partial` with rows, `nothing` without), and caches nothing (`artifacts/api-server/src/routes/compass.ts:762#if (sectionFailedSources.length === 0) void setCachedFeed`, `artifacts/api-server/src/routes/compass.ts:763#sendCompassSectionSourcesUnread(res, response, sectionFailedSources)`; V7-S1, V7-S2, S3, S4). A healthy section is cached as before (S5).
+  - The client never caches it and never lets it replace kept picks; with nothing kept, For You's picks show its rows under the incomplete line (`travel-buddy-standalone/src/components/compass/CompassPicksSection.tsx:377#isCompassSectionPartial(compass.data)`; U1–U4). ForYouTab never takes a partial Compass pool over its OSM list.
+  - **Every other caller of the hydrator and of `buildSection`.** GET /compass/feed refuses and is not cached (F1). The front-load engine does not preload a first page built from a failed read (`artifacts/api-server/src/compass/CompassFrontLoadEngine.ts:347#compassHydrationFailedSources(items_)`; H3). The Compass home's best move is `unavailable`, never "no best move", for an empty pool from failed reads (`artifacts/api-server/src/routes/compassHome.ts:451#compassHydrationFailedSources(items).length > 0 ? unusable(null)`; H2). `/compass/recommendations` refuses (104.2). The ask context and Telegraph's cards only rank what was read and claim no list; unchanged (D-W11X2-59).
+
+### 104.2 /compass/recommendations refuses on every failure arm, and every consumer says it (§103.11 BK2; D-W11X2-55)
+
+- **Before.** The flag read failed to "off", the block checks answered `{ recommendations: [], error: "block_check_failed" }` (which the client ignored), the traveler and buddy candidate reads ignored their error, and the catch answered `[]`. Search drew no rail and For You's traveler row returned null (V7-R1, V7-R2, V7-T1, V7-T2).
+- **Server.**
+  - The flag is read with `readCompassEnabled`: unread is refused `compass_flags_unreadable`; read and off keeps the old body byte for byte (`artifacts/api-server/src/routes/compass.ts:3602#const enabledRead = await readCompassEnabled(sc);`; R3, R3c).
+  - The block checks on the buddy, traveler and passport surfaces (resolved error and throw), the buddy and traveler candidate reads and the catch refuse `nothing` (`artifacts/api-server/src/routes/compass.ts:3666#if (buddyRowsErr)`, `artifacts/api-server/src/routes/compass.ts:3841#if (travelerRowsErr)`, `artifacts/api-server/src/routes/compass.ts:4421#err instanceof CompassFlagsUnreadableError ? "compass_flags_unreadable" : "recommendations_build_failed"`; V7-R2, R5, R7, R8, R10, T1, T2).
+  - The feed-based surfaces (search, for_you, map, trip, passport) refuse `partial` or `nothing` when a candidate source failed (`artifacts/api-server/src/routes/compass.ts:4418#}, recFailedSources);`; V7-R1, R4, R4b, R9).
+  - The traveler page is `partial` when a person was withheld because their discovery gate could not be read, or their projection threw (`artifacts/api-server/src/routes/compass.ts:4109#personGatesUnread(travGates)`; R6, T6). Admission stays on `.allowed` alone, so `compassPersonIdentity` 4b2 holds unchanged.
+- **Client.** One predicate, in its own module (`travel-buddy-standalone/src/services/compassRecommendationsRefusal.ts:21#export function compassRecommendationsFailed(`; M1–M4, Mc).
+  - Search's rail says a failed or partial read (`travel-buddy-standalone/app/search.tsx:305#const rFailed = !cr.ok || !cr.data || compassRecommendationsFailed(cr.data);`; CR1–CR4, CRc, CRd).
+  - For You's traveler row hides only for an answered empty list (`travel-buddy-standalone/src/components/compass/CompassTravelerRow.tsx:329#if (items.length === 0 && readState === null) return null;`; V7-T1, V7-T2, V7-TC, T3–T7).
+  - **The shared-arm clients.** The Passport tab's suggestions say a failed or partial read (PS1–PS4, PSc). The map's Ask Compass bar keeps its markers and says a refused read instead of drawing the carousel's empty state (A1, A2, Ac). The trip map's Compass pins have no "none" state and claim nothing; Rent-a-Buddy's row hides on a failure as before. Both are recorded for their owners (D-W11X2-55).
+
+### 104.3 The trending chips follow their city (§103.11 BK3; D-W11X2-57)
+
+- A city change clears the chips, and a failed or rejected read is said when there are no chips (`travel-buddy-standalone/app/(tabs)/discovery.tsx:116#setTrendingHashtags([]); setTrendingFailed(false);`, `travel-buddy-standalone/app/(tabs)/discovery.tsx:120#else setTrendingFailed(true);`; V7-H1, H2–H4).
+- The sweep found the server half: GET /hashtags/trending's city→global fallback read ignored its error and answered `200 { trending: [] }`. It now answers the route's own `db_error` (`artifacts/api-server/src/routes/hashtags.ts:203#if (fbErr)`; HT1 red at the unfixed route, HTc).
+
+### 104.4 An unread rollout flag is a failed read, not "off" (§103.11 possible; D-W11X2-56)
+
+- **Probed and real.** A failed `feature_flags` read answered `404 feature_disabled` on the output kinds and all four trending routes (FK1, FK2, FT1, FT2 red at `67d900e55`), and the output-kinds rail hides a 404 like the feature being off.
+- **Now.** Each route reads its flag strictly at its foot; unread answers `503 degraded_unavailable` / `flag_unreadable`, the rail's failed state (`artifacts/api-server/src/routes/discoveryOutputKinds.ts:62#if (kindsFlag === null) return sendError(res, "degraded_unavailable"`, `artifacts/api-server/src/routes/discoveryTrending.ts:99#if (apiFlag === null || listsFlag === null) return sendError`). An absent or off flag keeps the 404, byte for byte (FK1c, FT2c, and `discoveryOutputKindsFailedReads` F1 unchanged). `check:flag-polarity` records the three direct reads.
+- **Ruled, not changed.** An unread Discovery stop halts, and a halt returns each rollout flag's flag-off output. That is the shared stop's documented posture for every rollout reader, not a completeness claim.
+
+### 104.5 The survivors (D-W11X2-59)
+
+- **CM7** — ForYouTab's cache query without the sort: killed by Q1 and Q2 (`ForYouTab.cachedPartial`).
+- **CM10** — the query identity without the age filter and open-now: killed by G4 (`DiscoveryCategoryTab.heldQuery`), which stamps with the real identity. The suite's own identities were written by hand.
+- **CM13** — the HTTP-error failure left unstamped: killed by K7 (`discovery.cacheKey`).
+- No production code changed for these.
+
+### 104.6 The sweep of the Compass → Discovery seam
+
+Every Compass route or library a Discovery screen reads was checked for its catch arms, lenient empty sets, unread-flag-as-off and caches. It found two further paths, both closed:
+
+- **GET /compass/why (D-W11X2-58).** For You's "Why am I seeing this?" sheet showed a generic reason for a failed lookup. Now the route's failure arms carry the refusal (`artifacts/api-server/src/routes/compass.ts:1000#res.json({ explanation: "Recommendation not found or not available for your account.", refusal: discoveryRefusal(`), and the sheet says the read failed (`travel-buddy-standalone/src/hooks/compass/useCompassWhyExplanation.ts:28#setFailed(!r.ok);`; W1–W3, W1c, Y1, Y2, Yc).
+- **The trending fallback read** (104.3).
+
+The paths found sound are listed in D-W11X2-59:
+
+- the section route's settings, recent-context and fallback-mode reads, which fail toward serving;
+- `buildSection`'s ranking reads;
+- the capability flag read as off, which serves everything;
+- city confidence;
+- the traveler list's ranking and follow-label reads;
+- the non-fatal ask context and Telegraph;
+- the device caches.
+
+### 104.7 Tests, seen red, and mutations
+
+- **New suites.**
+  - `artifacts/api-server/src/test/compassCandidateSourcesUnread.test.ts` (35): V7-S1, V7-S2, V7-R1, V7-R2, V7-C1 are the verifier's probes; S3–S5, F1, R3–R10, H1–H3, T1–T7, W1, W2, W1c.
+  - `artifacts/api-server/src/test/discoveryFlagUnreadable.test.ts` (6): FK1, FK1c, FK2, FT1, FT2, FT2c.
+  - `artifacts/api-server/src/test/compassWhyNoServiceClient.test.ts` (1): W3, in its own file because it clears the Supabase env before import.
+  - `artifacts/api-server/src/test/hashtagsTrendingFallbackRead.test.ts` (2): HT1, HTc.
+  - `travel-buddy-standalone/src/components/compass/__tests__/CompassTravelerRow.failedRead.component.test.tsx` (8): V7-T1, V7-T2, V7-TC are the verifier's probes; T3–T7.
+  - `travel-buddy-standalone/app/(tabs)/__tests__/discovery.trendingCityChange.component.test.tsx` (4): V7-H1 is the verifier's probe; H2–H4. The probe's bare rerender leaves the act scope as the harness header describes, so §104's own pins run first.
+  - `travel-buddy-standalone/app/__tests__/search.compassRailFailed.component.test.tsx` (6), `travel-buddy-standalone/src/components/compass/__tests__/CompassPicksSection.sourcesUnread.component.test.tsx` (5), `travel-buddy-standalone/src/components/compass/__tests__/CompassPassportSuggestions.refusal.component.test.tsx` (5), `travel-buddy-standalone/src/components/map/__tests__/AskCompassBar.refusal.component.test.tsx` (3), `travel-buddy-standalone/src/services/__tests__/compassMatches.refusal.component.test.ts` (5), `travel-buddy-standalone/src/components/compass/__tests__/CompassWhySheet.failedRead.component.test.tsx` (3).
+  - The four new server suites are on the api-server `test` line.
+- **Existing suites extended.** `ForYouTab.cachedPartial`: Q1–Q3. `DiscoveryCategoryTab.heldQuery`: G4 (two cases). `discovery.cacheKey`: K7.
+- **Restated pins.** Both were recorded decisions, and no other assertion changed.
+  1. `discoveryTrendingApi` A3 asserted `404 feature_disabled` for an unreadable flag. It now asserts `503 flag_unreadable` (D-W11X2-56).
+  2. `discoveryTrendingLists` L-A1 had the same assertion inside its loop, restated the same way (D-W11X2-56).
+- **Red first.** Each was run at the unfixed code, and the output is kept in the lane's scratch.
+  - The server probes: V7-S1, V7-S2, V7-R1 and V7-R2 red; V7-C1 green.
+  - The client probes: V7-T1, V7-T2 and V7-H1 red; V7-TC green.
+  - The possible: FK1, FK2, FT1 and FT2 red; FK1c and FT2c green.
+  - The chips' server half: HT1 red; HTc green.
+  - Every other pin was written with its fix, and its red is the mutation that reverts that fix (below).
+- **Mutations.** 70 distinct mutations. Each was applied alone, its suites run, and the file restored byte-identical (sha256 checked).
+  - Three survived the first run. H-posts-city and H-posts-city2 each removed only one of the two posts reads' checks, and the fake failed both reads together; T7 now kills both. C-pass-catch removed the Passport suggestions' `.catch`; PS4 now kills it.
+  - All 70 are killed at the final tree.
+
+| group | mutations | red |
+|---|---|---|
+| the hydrator (each source's check, the thrown arms, the name, the stamp) | 11 | S3, S4, R4, R4b, R9, F1, H1, H3, T3–T5, T7, V7-S1, V7-S2, V7-R1 |
+| the section and the feed (cache guard, refusal, coverage) | 5 | V7-S1, V7-S2, S3, S4, F1 |
+| /compass/recommendations (flag read and arm, buddy and traveler rows, six block arms, gate, projection, traveler send, feed arm, coverage, catch) | 16 | R3–R10, T1, T2, T6, V7-R1, V7-R2 |
+| the other callers (front-load, Compass home) | 2 | H2, H3 |
+| the unread flag (output kinds ×3, trending ×2) | 5 | FK1, FK2, FT1, FT2, A3, L-A1 |
+| /compass/why (three arms; client reader, hook, sheet) | 6 | W1–W3, Y1, Y2 |
+| the client (section reasons, partial notice ×2, predicate ×2, readers ×3, row ×2, search ×3, passport ×3, Ask Compass ×2, chips ×4) | 22 | U1–U4, T3, T4, V7-T1, V7-T2, CR1–CR4, M1–M4, PS2–PS4, A1, A2, V7-H1, H2–H4 |
+| the survivors | 3 | CM7: Q1, Q2 · CM10: G4 · CM13: K7 |
+
+### 104.8 Checks
+
+Run on the final commit.
+
+- **`artifacts/api-server`, the integrator's 24-check guard script (`int-guards.sh`):** see 104.10 for the verbatim result.
+- **Suites.** The api-server node:test run over every `src/test/discovery*.test.ts` and `src/test/compass*.test.ts` plus the touched suites; the whole-repo scan `src/services/airport/__tests__/layoverSurfaceErrorBinding.test.ts`; the client's touched jest suites, `pnpm run -s check:all` and `node scripts/check-route-registry.mjs`. The results are in 104.10.
+- **Acknowledgements.** census-compass watches `routes/compass.ts`, `compass/CompassItemHydrator.ts`, `compass/CompassFrontLoadEngine.ts` and `routes/compassHome.ts`. census-media watches the hydrator. The census that grades `routes/hashtags.ts` watches it too. Each is acknowledged per file in `CENSUS_STALENESS_ACKNOWLEDGED.json`, and no verdict there moves. census-discovery's CENSUS_SCOPE gains the files this section grades.
+- **Not run.**
+  - The harness, since no migration was added.
+  - `check:write-path-columns`, which needs live credentials. No write payload changed; the change removes cache writes and adds none.
+  - `compassMemoryClientBoundary`, a live-DB suite that is not on the `test` line and refuses without CI's Supabase env. It is unrelated to this change.
+
+### 104.9 DV-83, restated
+
+§103.11's three breaks are closed, each with the verifier's probe red first and green now. The possible was real and is closed, the three survivors are pinned, and the sweep closed two more paths. Every clause of DV-83's criterion holds on every path this lane examined:
+
+1. **Producers send the refusal envelope.** The Compass section and feed name failed candidate sources. `/compass/recommendations` refuses on every failure arm, `partial` beside rows. `/compass/why` refuses its failed lookups. The output kinds and trending routes refuse an unread flag. The chips' fallback read answers its error.
+2. **Nothing refused or partial is cached as complete.** The section and the feed are written to neither L1 nor the DB cache. The front-load engine preloads no first page built from a failed read. `useCompassFeed` caches no failure answer.
+3. **Nothing refused is rendered as empty, as complete, or over the wrong rows.** For You's picks show a partial section as incomplete. Search's rail, the traveler row, the Passport suggestions and Ask Compass say a failed read. The trending chips never sit under another city. The why sheet never shows a stub as the reason.
+4. **Consumers branch on coverage.** The picks section and hook branch on `fallbackReason` and the refusal. The Compass match readers and every `/compass/recommendations` consumer branch on `refusal.coverage` through one predicate.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§103.11's three breaks are closed, each with its verifier probe red first. The possible is real and closed, CM7, CM10 and CM13 are killed, the sweep closed two more paths, and 70 of 70 mutations are killed.** **A failed Compass candidate read is named, refused and never cached** (`artifacts/api-server/src/compass/CompassItemHydrator.ts:447#failed.push(name);`, `artifacts/api-server/src/routes/compass.ts:762#if (sectionFailedSources.length === 0) void setCachedFeed`, `artifacts/api-server/src/routes/compass.ts:763#sendCompassSectionSourcesUnread(res, response, sectionFailedSources)`; V7-S1, V7-S2, S3–S5, F1, H1–H3, T3–T5, T7), **and For You's picks show it as incomplete** (`travel-buddy-standalone/src/components/compass/CompassPicksSection.tsx:377#isCompassSectionPartial(compass.data)`; U1–U4). **/compass/recommendations refuses on every failure arm** (`artifacts/api-server/src/routes/compass.ts:3602#const enabledRead = await readCompassEnabled(sc);`, `artifacts/api-server/src/routes/compass.ts:3841#if (travelerRowsErr)`, `artifacts/api-server/src/routes/compass.ts:4418#}, recFailedSources);`, `artifacts/api-server/src/routes/compass.ts:4421#err instanceof CompassFlagsUnreadableError ? "compass_flags_unreadable" : "recommendations_build_failed"`; V7-R1, V7-R2, R3–R10, T1, T2, T6), **and its consumers say it** (`travel-buddy-standalone/src/services/compassRecommendationsRefusal.ts:21#export function compassRecommendationsFailed(`, `travel-buddy-standalone/app/search.tsx:305#const rFailed = !cr.ok || !cr.data || compassRecommendationsFailed(cr.data);`, `travel-buddy-standalone/src/components/compass/CompassTravelerRow.tsx:329#if (items.length === 0 && readState === null) return null;`; V7-T1, V7-T2, T3–T7, CR1–CR4, M1–M4, PS1–PS4, A1, A2). **The trending chips follow their city** (`travel-buddy-standalone/app/(tabs)/discovery.tsx:116#setTrendingHashtags([]); setTrendingFailed(false);`, `artifacts/api-server/src/routes/hashtags.ts:203#if (fbErr)`; V7-H1, H2–H4, HT1). **An unread rollout flag is a failed read, not "off"** (`artifacts/api-server/src/routes/discoveryOutputKinds.ts:62#if (kindsFlag === null) return sendError(res, "degraded_unavailable"`, `artifacts/api-server/src/routes/discoveryTrending.ts:99#if (apiFlag === null || listsFlag === null) return sendError`; FK1, FK2, FT1, FT2). **The why sheet never shows a stub as the reason** (`artifacts/api-server/src/routes/compass.ts:1000#res.json({ explanation: "Recommendation not found or not available for your account.", refusal: discoveryRefusal(`, `travel-buddy-standalone/src/hooks/compass/useCompassWhyExplanation.ts:28#setFailed(!r.ok);`; W1–W3, Y1, Y2). Every path §94 to §103 closed still holds: their suites pass, with two pins restated by a recorded decision (104.7). **Stated limits.** Controlled evidence only; no client build carrying these changes has shipped. The output kinds and trending routes sit behind flags seeded FALSE. An independent re-verification at the merged head is owed. |
+
+**Headline.** DV-83 moves W → C. `check:census-integrity` counts **C 101 / W 85 / N 2 / X 0** over 188: CONSTRUCTED 186 / 188 = **98.9 %**, CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged.
+
+### 104.10 Left open, and what would turn this red
+
+- **Seen and not built.**
+  - The trip map's Compass alternatives have no coverage surface, and neither do its other five sources. Recorded for census-trips.
+  - Rent-a-Buddy's `CompassBuddyRow` hides on a failed read as it did before. Recorded for its owner.
+  - The Discovery stop's unread kill switch halts to each rollout flag's flag-off output. That is the shared stop's posture (104.4).
+- **What would turn DV-83 red again:**
+  - a Compass candidate read whose error is not named, or a pool built from one that is served or cached as complete (V7-S1, V7-S2, S3–S5, T3–T5, T7, F1, H3);
+  - a `/compass/recommendations` failure arm answered as an empty list with no refusal, or a consumer that draws one as an absence (V7-R1, V7-R2, R3–R10, T1, T2, T6, V7-T1, V7-T2, CR1–CR4, PS1–PS4, A1);
+  - a trending chip under another city, or a failed chips read drawn as none (V7-H1, H2–H4, HT1);
+  - an unread rollout flag answered as `feature_disabled` (FK1, FK2, FT1, FT2);
+  - a failed why lookup shown as the reason (W1–W3, Y1, Y2);
+  - any path §103.10 lists.
+
+### 104.11 Results at the final code commit (`707b44eca`)
+
+- **`int-guards.sh /home/user/wt-d9-v6`**: all 24 exit 0.
+
+```
+typecheck exit=0
+typecheck:tests exit=0
+check:test-registration exit=0
+check:census-integrity exit=0
+check:doc-citations exit=0
+check:citation-targets exit=0
+check:citation-symbols exit=0
+check:census-freshness exit=0
+check:census-scope-coverage exit=0
+check:census-row-move-labels exit=0
+check:migration-prefixes exit=0
+check:production-drift exit=0
+check:writerless-reads exit=0
+check:schema-references exit=0
+check:enum-literals exit=0
+check:flag-polarity exit=0
+check:discovery-query-paths exit=0
+check:route-auth-gate exit=0
+check:api-prefix exit=0
+check:async-handlers exit=0
+check:frozen-dir exit=0
+check:telegraph-inventory exit=0
+check:guard-coverage exit=0
+check:unissued-supabase-writes exit=0
+```
+
+  The first run, at `593852221`, had two failures: `typecheck:tests` (two new fixtures read an untyped `res.json()`) and `check:guard-coverage` (the no-client why suite names the Supabase env vars in order to delete them). `707b44eca` types both fixtures and adds the suite to `EXEMPT`, in the same shape and with the same reason as `discoveryNoServiceClientRefusals`. `typecheck:tests` is at 863 against a baseline of 863.
+- **api-server node:test** (Node v24.21.0, `SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy`). The run covers 248 files: every `src/test/discovery*.test.ts` and `src/test/compass*.test.ts`, plus `hashtags`, `hashtagsTrendingFallbackRead` and the suites that read the hydrator (`enumLiteralGuard`, `impressionLogFireAndForget`, `postPublishGatePlatformWide`, `postLocationModeRemainingReaders`, `mediaTaggedBucketLiveSchema`, `wallRouteDegradation`). Result: `ℹ tests 4510 · ℹ pass 4510 · ℹ fail 0`. Two live-DB suites are left out because they are not on the `test` line and refuse to run without CI's Supabase env (`::error::KNOWN_PROD_PROJECT_REF is empty`): `compassMemoryClientBoundary` and `discoveryPlaceWriteBoundary`.
+- **The whole-repo scan** `src/services/airport/__tests__/layoverSurfaceErrorBinding.test.ts`: `ℹ tests 5 · ℹ pass 5 · ℹ fail 0`.
+- **Client.**
+  - `pnpm run -s check:all`: `✔ ALL CHECKS PASSED`, with component suites `Test Suites: 720 passed, 720 total · Tests: 4630 passed, 4630 total` and web suites `4 passed, 12 tests`.
+  - `node scripts/check-route-registry.mjs`: "OK. All 204 screen file(s) are represented in PORTAVA_ROUTES and all 9 layout file(s) are represented in PORTAVA_LAYOUT_FILES."
+  - `typecheck` is clean, and `typecheck:tests` is at 173 against a baseline of 173.
+  - The client tree is unchanged since `37b656531`.
+
+## §105 — DV-83 round 9 (lane W11-X2): the Trail reads refuse a failed member read, the hashtag feed says a failed tab, /compass/feed and the Compass home refuse an unread flag, the why sheet takes only its latest answer, and DV-83 moves W → C
+
+### 105.1 Integrator: DV-83 held at W after independent re-verification at `d3f573530`
+
+*Integrator, 2026-09-29. §104 was merged with main (PR #534) at `d3f573530`, PR #530's head. An independent verifier then checked that tree: it re-ran every round-7 probe, wrote new ones, and restored every mutated file byte-identical, checked by sha256.*
+
+- **Confirmed.** §103.11's three breaks and its possible are closed in behaviour (V7-S1, V7-S2, V7-R1, V7-R2, V7-C1, V7-T1, V7-T2, V7-TC, V7-H1 all green). The merge touches only the map's camera fly, with no Discovery rows. 37 of 40 mutations are killed.
+- **Found: four paths that break the criterion's wording, each shown by a probe that fails against this tree.**
+  1. **BK1. The Trails read routes serve a failed member-source read as a complete Trail (clauses a, c).** `servableMembers` withholds every member of a table whose read errored and names it only in an optional `unread` set that no read caller passes (modules, trending, detail). Modules answer 200 without the member; trending answers a measured `trending: false`; detail answers "Quiet right now" over one member of two (V8-TR1, V8-TR2, V8-TR3 red; V8-TR0 the control). The pin `discoveryTrailMemberVisibility` V2 asserts the broken answer (`artifacts/api-server/src/services/trails/TrailService.ts`, `artifacts/api-server/src/routes/trails.ts`).
+  2. **BK2. The hashtag feed, which every Discover trending chip opens, serves failed tab reads as empty tabs (clauses a, c).** The people, places, trips, circles and events tabs ignore their read errors, their catches answer an empty page, and the hashtag lookup answers a failed read as `404 Hashtag not found`. The screen draws "No {tab} content yet" (V8-HF1, V8-HF2, V8-HF3 red; V8-HF0 the control) (`artifacts/api-server/src/routes/hashtags.ts`).
+  3. **BK3. GET /compass/feed answers an unread flag as "Compass off" (clause a).** The fail-safe flag map and the ignored `COMPASS_FEED_ENABLED` read both answer the flag-off bytes (V8-CF1, V8-CF2 red; V8-CF0 the control) (`artifacts/api-server/src/routes/compass.ts`).
+  4. **BK4. For You's "Why am I seeing this?" sheet can draw another card's reason over a failed read (clause c, wrong rows).** `useCompassWhyExplanation` has no latest-request guard (V8-Y1 red) (`travel-buddy-standalone/src/hooks/compass/useCompassWhyExplanation.ts`).
+- **Unpinned survivors.** SM14 (`/compass/recommendations` with zero rows forced to `partial`), SM15 (the build catch's `compass_flags_unreadable` code), SM17 (the trending route's unread lists flag behind a readable API flag).
+- **Next.** A round-9 lane closes the four paths with the verifier's probes as failing-first tests, pins the survivors, and sweeps the Discovery and Compass read surfaces for the same defect classes. The row moves only after that.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | C | **W** | §104 closes §103.11's three paths and its possible, confirmed at `d3f573530` (§105.1). Four paths still present a failed read as empty, complete or over the wrong rows: the Trails read routes' withheld unread members (`artifacts/api-server/src/services/trails/TrailService.ts`), the hashtag feed's empty tabs over failed reads (`artifacts/api-server/src/routes/hashtags.ts`), `/compass/feed`'s unread flags answered as "off" (`artifacts/api-server/src/routes/compass.ts`), and the why sheet's unguarded late answer (`travel-buddy-standalone/src/hooks/compass/useCompassWhyExplanation.ts`). Three DV-83 lines are unpinned (SM14, SM15, SM17). |
+
+Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
+
+### 105.2 Round 9: what this lane did
+
+*Written 2026-09-29 by lane W11-X2 (round 9) on `disc-w11-x2-r9`, from `d3f573530` and §105.1. It closes §105.1's four breaks, each with the verifier's probe copied in as a failing-first test. It pins the three surviving mutations and sweeps the Discovery and Compass read surfaces for the five defect classes: an ignored `error`, a catch that answers a default, an unread flag read as off, a cached refusal, and a stale answer. The sweep closed three more paths. Decisions are in `docs/architecture/discovery-decision-register.md`, section "W11-X2 round 9", D-W11X2-60 to D-W11X2-66.*
+
+*No migration and no new flag. Each change alters output only when a read failed or a flag table could not be read, or when a stale answer arrives. With every read healthy, every served byte is unchanged (TR0, TR14c, HF0, HF6, HT0, CF0, CF4, CF5, HM1c, HM3, RR3). Every edit in a cited file is line-neutral: lines are changed in place, and new code is appended at a file's foot. `src/index.ts` is untouched.*
+
+*All evidence is controlled: in-process routes over fake worlds, the real client services over a fake `fetch`, and jest over the real screens and components. None of it is production evidence, and no client build carrying the change has shipped.*
+
+### 105.3 The Trail read routes refuse a failed member read (§105.1 BK1; D-W11X2-60)
+
+- **Fix.** `servableMembers`' `unread` set now reaches every Trail READ path. The exported readers are foot wrappers that carry it (`artifacts/api-server/src/services/trails/TrailService.ts:2435#export async function getTrailModules(`, `artifacts/api-server/src/services/trails/TrailService.ts:2444#export async function trailTrending(`, `artifacts/api-server/src/services/trails/TrailService.ts:1748#const served = await servableMembers(sc, members, viewerId, nowMs, unread);`). So do the cursor page and `heldBackLists`. The routes send the same body beside the refusal envelope: `partial` when rows remain, `nothing` when none do. The refusal names ONE generic source, `trail_member_sources`, so it is no existence oracle for §64's withheld-equals-absent rule (`artifacts/api-server/src/routes/trails.ts:596#function sendTrailRead(`).
+- **Trending** answers `trending: null` over a failed member read, never a measured false.
+- **The detail route** states no count and no §12 word, and still serves the Trail row it read (`artifacts/api-server/src/routes/trails.ts:216#if (r.membersUnread) return sendTrailRead(res, "GET /v1/discovery/trails/:id"`).
+- **A privacy withhold** is not a failed read and draws no refusal (TR6).
+- **V2 restated.** `discoveryTrailMemberVisibility` V2 stopped at the empty page, which pinned the defect. It now also asserts the `nothing` refusal and the generic source; the withholding it pins is unchanged.
+- **Client.** The detail, modules and trending routes have no client consumer (D-W11X2-6). The one Trail consumer, the output-kinds rail, now branches on a refusal beside a 200: `nothing` is its failed state; `partial` keeps the rows and prints the partial line (`travel-buddy-standalone/src/services/discoveryRecommendations.ts:97#if (body.refusal && coverage !== 'partial')`, `travel-buddy-standalone/src/components/discovery/DiscoveryOutputKindsRail.tsx:70#setPartial(r.partial === true);`).
+
+### 105.4 The hashtag feed never serves a failed read as an empty tab (§105.1 BK2; D-W11X2-61)
+
+- **Server.** The five tabs' reads, their visibility reads, their catches and the feed's hashtag lookup answer `db_error` on failure, as the posts tab always did (`artifacts/api-server/src/routes/hashtags.ts:501#if (htErr) return sendFeedReadFailed(req, res, htErr, 'hashtag');`, `artifacts/api-server/src/routes/hashtags.ts:698#if (eventsErr) return sendFeedReadFailed(req, res, eventsErr, 'events');`, `artifacts/api-server/src/routes/hashtags.ts:650#} catch (err) { sendFeedReadFailed(req, res, err, 'places'); }`). A read that succeeded is unchanged, including 404 for an absent or blocked hashtag (HF6).
+- **Client.** `app/hashtag/[slug].tsx` already drew a non-2xx as its failed state, so once the server says the failure, the tab says it. The sweep of the screen found three more paths, now closed:
+  - a late tab answer wrote the screen after the viewer had moved to another tab (`travel-buddy-standalone/app/hashtag/[slug].tsx:266#if (feedReqRef.current !== myId) return;`);
+  - a 200 carrying a refusal was drawn as its rows;
+  - a failed hashtag read said "It may have been removed or blocked." Only a 404 does now (`travel-buddy-standalone/app/hashtag/[slug].tsx:242#setMetaFailed(res.status !== 404);`).
+- **Scope, argued.** `routes/hashtags.ts` is another census's route. §104 put it in this census's scope for the reads a Discover chip leads to, and §105 grades only those. The edits are line-neutral failure arms; no hashtag write, block rule or ranking weight changed.
+
+### 105.5 GET /compass/feed refuses an unread flag (§105.1 BK3; D-W11X2-62)
+
+`readCompassEnabled` and a strict read of COMPASS_FEED_ENABLED. An unread flag answers `fallbackReason: "compass_flags_unreadable"` with the refusal envelope (`nothing`, `feature_flags`) (`artifacts/api-server/src/routes/compass.ts:485#if (!enabled) { if (enabledRead === null) return sendCompassFeedFlagsUnread(res);`, `artifacts/api-server/src/routes/compass.ts:507#if (feedFlagUnread) return sendCompassFeedFlagsUnread(res);`). A flag that was READ and is off answers `{"sections":[],"nextCursor":null,"fallback":true}` exactly as before (CF4, CF5).
+
+### 105.6 The why sheet takes only its latest answer (§105.1 BK4; D-W11X2-63)
+
+A request-id ref drops any answer that is not the latest, and closing the sheet invalidates a read still in flight (`travel-buddy-standalone/src/hooks/compass/useCompassWhyExplanation.ts:26#if (reqRef.current !== myId) return null;`).
+
+### 105.7 The survivors, and the sweep (D-W11X2-64, D-W11X2-60, D-W11X2-61, D-W11X2-65, D-W11X2-66)
+
+- **The survivors.** SM14 is pinned by `compassCandidateSourcesUnread` SM14 and SM14b, SM15 by SM15 (CompassFlagsUnreadableError really thrown into the build), and SM17 by `discoveryFlagUnreadable` FT3 and FT3c. All three are killed when re-applied.
+- **The sweep closed three more paths.**
+  1. **The Trail activity read.** A failed `rank_events` read left `trending_now` and GET …/trending's list empty with no refusal. It is now refused as `trail_activity` (`artifacts/api-server/src/services/trails/TrailService.ts:700#if (!events) opts.memberUnread?.add("rank_events");`, `artifacts/api-server/src/services/trails/TrailService.ts:966#opts.activityUnread = true;`). `heldBackLists` no longer drops a refused trending list silently (`artifacts/api-server/src/services/trails/TrailService.ts:2171#if (t.refusal) return { refusal: t.refusal, lists: [], next: null };`).
+  2. **GET /hashtags/trending's ranking reads.** They decide which hashtags the chips show. A failed read is now `db_error`, where it was a re-ranked list served as complete (`artifacts/api-server/src/routes/hashtags.ts:226#if (postUsageErr) {`). This reverses D-W11X2-57's "only score; unchanged".
+  3. **GET /compass/home and CompassHome.** An unread flag table was the Compass-off body, and a failed build was a bare fallback. The home drew both, a failed fetch and a degraded projection as "nothing to show". The route now names both failures with a refusal, and the home says them (`artifacts/api-server/src/routes/compassHome.ts:343#if (enabledRead === null) { res.json(compassHomeFailure(false`, `artifacts/api-server/src/routes/compassHome.ts:379#res.json(compassHomeFailure(true, "home_build_failed"`, `travel-buddy-standalone/src/components/compass/CompassHome.tsx:36#export function isCompassHomeFailure(`).
+- **Swept and found sound, and ruled.** D-W11X2-66 records the ordering flags that fail to "off" over the same rows, the enrichment reads, and the guards already present.
+- **Left for other owners.** Two paths are not Discovery envelopes, and D-W11X2-66 names them: `app/discover.tsx`'s people search, and the Compass live, sense, autopilot, me-context and ask flag gates.
+- **Also fixed: CI's `entryWiringNotCommentedOut`.** It read round 8's comment on `artifacts/api-server/src/routes/discoveryOutputKinds.ts:41#this line used to bring in the isFlagEnabled helper` as a commented-out import. The comment is reworded in place, and the guard is unchanged.
+
+### 105.8 Tests, seen red, and mutations
+
+**Seen red first**, run against the code before each fix:
+
+| Area | Red | Controls, green |
+|---|---|---|
+| Trail member reads | TR1, TR1b, TR2, TR2b, TR3, TR4, TR5, TR7, TR8, TR9 (10) | TR0, TR6 |
+| Trail activity read | TR10, TR11, TR12 | — |
+| Output-kinds rail | RR1, RR2, OP1, OP3 | RR3, OP2 |
+| Hashtag feed tabs | HF1–HF5 (12 cases) | HF0, HF6 |
+| Hashtag trending ranking | HT1 ×3, HT2 | HT0 |
+| Hashtag screen | HS2, HS3, HS4 | — |
+| /compass/feed flags | CF1, CF2, CF3 | CF0, CF4, CF5 |
+| Why sheet | Y1, Y2 | Y3, Y4 |
+| /compass/home | HM1, HM2 | HM1c, HM3 |
+| CompassHome | CH1–CH4 | CH5, CH6 |
+
+HS1 was already green on the client: the screen already drew a non-2xx as its failed state, and the break was the server's 200.
+
+**Written against the fixed code:** SM14, SM14b, SM15, FT3, FT3c, TR13–TR16, TR14c, OP4, HS6, HSS1–HSS3, CH7 and CH8. Each is shown to bite by the mutation that removes the line it pins.
+
+**Mutations.** Each mutation was applied alone, its suites were run, and the file was restored byte-identically; the sha256 matched on all 69.
+
+- **Server, 50 of 50 killed.**
+  - Trails, T1–T25: the `unread` set on each path, each wrapper, the detail spread, the refused-trending guard, the union in `heldBackLists`, the cursor page and both "more" spreads, the activity marks on both module branches, the route helper's gate, coverage and sources, and each route's call.
+  - Hashtags, H1–H16: the lookup, each tab's error check and catch, and the three ranking reads and their catch.
+  - /compass/feed, F1–F6: each gate, the strict read and its catch, and the refusal's coverage.
+  - The round-8 survivors, re-applied: SM14, SM15 and SM17.
+  - /compass/home, CH1–CH3.
+- **Client, 19 of 19 killed.**
+  - R1–R4: the rail's service and component.
+  - S1–S7: the hashtag screen's guard, refusal branch, meta status, retry dependency, load-more reset and meta reset, plus the service's kept status.
+  - Y1, Y2: the why hook's guard and its close.
+  - H1c–H6c: CompassHome's predicate, the unread-flag arm, the catch, the failure branch, the partial line and the recovery.
+- **Three survivors in an earlier client run, removed rather than kept.** The rail's partial reset on an inactive or failed read, and the why hook's loading reset on close. Each was redundant (nothing renders it), so each was removed. The final client run is 19 of 19.
+- **Runner and logs:** the lane's `r9-muts/` scratch directory (`muts.py`, `run.py`, `summary.txt`).
+
+### 105.9 Checks
+
+- **Line-neutral in every cited file**, so every anchored citation still lands on its text: `check:doc-citations`, `check:citation-targets` and `check:citation-symbols` are clean.
+- **Scope.** §105's graded files and suites joined this census's `CENSUS_SCOPE` and are named in its acknowledgement: the hashtag screen and service, CompassHome and the new suites. The acknowledgement for every census that counts a changed file carries a §105 paragraph with its "why it cannot move a verdict": census-discovery, census-compass, census-passport, census-media, census-sensing, census-trips, census-trust and census-highlights-memories.
+- **Suites.** The four new api-server suites are on the `test` line (`check:test-registration`).
+
+### 105.10 DV-83, restated
+
+§105.1's four breaks are closed, each with the verifier's probe red first and green now. The three survivors are pinned and killed, and the sweep closed three more paths. Every clause of DV-83's criterion holds on every path this lane examined:
+
+1. **Producers send the refusal envelope.**
+   - The Trail reads name a failed member or activity read.
+   - The hashtag feed and the trending ranking answer a failed read as `db_error`.
+   - /compass/feed and /compass/home refuse an unread flag, and the home names a failed build.
+2. **Nothing refused or partial is cached as complete.** The Trail, hashtag and home routes write no cache on these arms. The home's cache already skipped a degraded or fallback payload.
+3. **Nothing refused is rendered as empty, as complete, or over the wrong rows.**
+   - The output-kinds rail says a partial or failed Trail read.
+   - The hashtag screen says a failed tab or hashtag and never shows another tab's rows.
+   - The why sheet never shows another card's reason.
+   - The Compass home says a failed or partial read.
+4. **Consumers branch on coverage.** The rail's service branches on `refusal.coverage`, the hashtag screen on the refusal, and CompassHome on `fallbackReason` and `degraded`.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§105.1's four breaks are closed, each with its verifier probe red first; SM14, SM15 and SM17 are killed; the sweep closed three more paths; 69 of 69 mutations are killed. CONTROLLED EVIDENCE ONLY — this row still awaits independent re-verification.** **The Trail read routes refuse a failed member or activity read with one generic source** (`artifacts/api-server/src/routes/trails.ts:596#function sendTrailRead(`, `artifacts/api-server/src/services/trails/TrailService.ts:2435#export async function getTrailModules(`, `artifacts/api-server/src/services/trails/TrailService.ts:700#if (!events) opts.memberUnread?.add("rank_events");`; TR0–TR16), **and the rail branches on it** (`travel-buddy-standalone/src/services/discoveryRecommendations.ts:97#if (body.refusal && coverage !== 'partial')`; RR1–RR3, OP1–OP4). **The hashtag feed and the chips' ranking never serve a failed read** (`artifacts/api-server/src/routes/hashtags.ts:698#if (eventsErr) return sendFeedReadFailed(req, res, eventsErr, 'events');`, `artifacts/api-server/src/routes/hashtags.ts:226#if (postUsageErr) {`; HF0–HF6, HT0–HT2), **and the screen says it** (`travel-buddy-standalone/app/hashtag/[slug].tsx:266#if (feedReqRef.current !== myId) return;`; HS1–HS6, HSS1–HSS3). **An unread flag is never "Compass off"** (`artifacts/api-server/src/routes/compass.ts:485#if (!enabled) { if (enabledRead === null) return sendCompassFeedFlagsUnread(res);`, `artifacts/api-server/src/routes/compassHome.ts:343#if (enabledRead === null) { res.json(compassHomeFailure(false`; CF0–CF5, HM1–HM3), **and the Compass home says a failure** (`travel-buddy-standalone/src/components/compass/CompassHome.tsx:36#export function isCompassHomeFailure(`; CH1–CH8). **The why sheet takes only its latest answer** (`travel-buddy-standalone/src/hooks/compass/useCompassWhyExplanation.ts:26#if (reqRef.current !== myId) return null;`; Y1–Y4). |
+
+**Headline.** DV-83 moves W → C. `check:census-integrity` counts **C 101 / W 85 / N 2 / X 0** over 188: CONSTRUCTED 186 / 188 = **98.9 %**, CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged. The move is on controlled evidence and awaits independent re-verification.
+
+### 105.11 Left open, and what would turn this red
+
+- **Seen and not built (other owners; D-W11X2-66).**
+  - `app/discover.tsx`'s people search draws a failed search as "No travelers found" and has no latest-request guard.
+  - The Compass live, sense, autopilot and me-context gates still read an unread flag table as "Compass off". POST /compass/ask labels the same case `compass_disabled`, although its message is already honest.
+- **Still open from §104.10.** The trip map's Compass alternatives, and Rent-a-Buddy's `CompassBuddyRow`.
+- **What would turn DV-83 red again:**
+  - a Trail read that serves a failed member or activity read with no refusal, or a refusal that names the failed table (TR0–TR16);
+  - a hashtag feed tab, lookup or trending ranking read whose failure is served as a result (HF0–HF6, HT0–HT2);
+  - a tab or hashtag screen state drawn over a failed or stale read (HS1–HS6);
+  - an unread flag answered as "Compass off" on the feed or the home (CF1–CF3, HM1);
+  - a why sheet written by a stale answer (Y1, Y2);
+  - any path §104.10 lists.
+
+### 105.12 Results at the final code commit (`ed5652624`)
+
+- **`int-guards.sh /home/user/wt-v8`**: all 24 exit 0. `typecheck:tests` is at 863 against a baseline of 863.
+
+```
+typecheck exit=0
+typecheck:tests exit=0
+check:test-registration exit=0
+check:census-integrity exit=0
+check:doc-citations exit=0
+check:citation-targets exit=0
+check:citation-symbols exit=0
+check:census-freshness exit=0
+check:census-scope-coverage exit=0
+check:census-row-move-labels exit=0
+check:migration-prefixes exit=0
+check:production-drift exit=0
+check:writerless-reads exit=0
+check:schema-references exit=0
+check:enum-literals exit=0
+check:flag-polarity exit=0
+check:discovery-query-paths exit=0
+check:route-auth-gate exit=0
+check:api-prefix exit=0
+check:async-handlers exit=0
+check:frozen-dir exit=0
+check:telegraph-inventory exit=0
+check:guard-coverage exit=0
+check:unissued-supabase-writes exit=0
+
+[exited with code 0]
+```
+
+- **api-server node:test** (Node v24.21.0, `SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy`). The run covers 257 files:
+  - every `src/test/discovery*`, `compass*`, `trail*`, `hashtag*` and `adminTrails` suite, the four new §105 suites among them;
+  - `hashtags`, `compass-home` and `entryWiringNotCommentedOut`;
+  - the hydrator's readers (`enumLiteralGuard`, `impressionLogFireAndForget`, `postPublishGatePlatformWide`, `postLocationModeRemainingReaders`, `mediaTaggedBucketLiveSchema`, `wallRouteDegradation`).
+
+  Result: `ℹ tests 4621 · ℹ pass 4621 · ℹ fail 0`. Two live-DB suites are left out, as in §104.11: `compassMemoryClientBoundary` and `discoveryPlaceWriteBoundary`.
+- **`entryWiringNotCommentedOut`** (CI's failure on #530's head) is in that run and passes 4 of 4.
+- **The whole-repo scan** `src/services/airport/__tests__/layoverSurfaceErrorBinding.test.ts`: `ℹ tests 5 · ℹ pass 5 · ℹ fail 0`.
+- **Client.**
+  - `pnpm run -s check:all`: `✔ ALL CHECKS PASSED`.
+    - Node suites: `ℹ pass 7298 · ℹ fail 0`.
+    - Component suites: `Test Suites: 759 passed, 759 total · Tests: 4843 passed, 4843 total`.
+    - Web suites: `4 passed, 12 tests`.
+    - `typecheck:tests` is at 173 against a baseline of 173.
+  - `node scripts/check-route-registry.mjs`: "OK. All 210 screen file(s) are represented in PORTAVA_ROUTES and all 9 layout file(s) are represented in PORTAVA_LAYOUT_FILES."
+
 ## §106 — People search failure honesty (lane tm-people, testing mode): a failed people search is said with Retry on every surface, and only the latest request writes; no row changes bucket
 
 *Added 2026-09-29 on `lane-tm-people`, from `f10a4ac9f`. Register section TM-P (D-TMP-1..5). Controlled evidence only: local tests with `fetch` or the Supabase client faked. Nothing was applied anywhere. No row changes bucket.*
@@ -16609,7 +17990,7 @@ None had a latest-request guard, so a slow answer for an earlier query overwrote
 - An unreadable block set answers `db_error`: `artifacts/api-server/src/routes/follows.ts:755#if (blockQueryFailed) { sendError(res, "db_error"`.
 - So does an unreadable discovery opt-out set: `artifacts/api-server/src/routes/follows.ts:768#sendError(res, "db_error", "discovery opt-outs could not be read; nothing was searched");`.
 - So does a failed follow-state read: `artifacts/api-server/src/routes/follows.ts:786#if (followerEdgesRes.error || myFollowsRes.error || pendingRequestsRes.error)`.
-- So does a failed name-visibility read: `artifacts/api-server/src/routes/follows.ts:890#const allowedNames = await readNameVisibilitySet(sc`, over `artifacts/api-server/src/lib/publicIdentity.ts:178#export async function readNameVisibilitySet(`.
+- So does a failed name-visibility read: `artifacts/api-server/src/routes/follows.ts:890#const allowedNames = await readNameVisibilitySet(sc`, over `artifacts/api-server/src/lib/publicIdentity.ts:209#export const readNameVisibilitySet`.
 - The `disable_profile_search` stop keeps its 200 and carries the refusal envelope: `artifacts/api-server/src/routes/follows.ts:691#sendDiscoveryRefusal(res, { users: [] }, discoveryRefusal("feature_disabled", "profile_search_stopped"`.
 - Every path still serves no row. A healthy body is byte-identical to the pre-fix golden: `artifacts/api-server/src/test/userSearchFailureHonesty.test.ts:186#it("G1.`.
 
@@ -16654,18 +18035,1575 @@ The survivor is the InvitePanel `.catch` arm. It is equivalent under the real se
 
 **What would turn this red.** A people-search surface rendering "none found" for `ok: false`, or writing an answer after its query changed. The seven suites above fail on either.
 
-## §107 — Creator ledger on synthetic accounts, and C-11 held open (lane creator-ledger-isolated): erasure is refused until the owner decides, both answers are built and rehearsed in their own databases, and no row changes bucket
+## §107 — DV-83 round 10 (lane W11-X2); the creator-ledger section once numbered §107 on main is §121
 
-*Added 2026-09-30 on `claude/creator-ledger-isolated-20260930`, from `b99787c81`, under the owner's decision of 2026-09-30: implement and test the ledger on isolated synthetic accounts, apply only what imposes no undecided erasure policy on real accounts or records, and keep the real-money retention policy a separate open decision. Controlled evidence only: the local PostgreSQL 16 harness (CI's "kernel SQL executed on a throwaway database" job) and two throwaway clones of it. This lane applied nothing to `portava-ci` or `travel-buddy`, turned no flag on, and published no rule. No row changes bucket.*
+### 107.1 Integrator: DV-83 held at W after independent re-verification at `ba4888f20`
 
-### 107.1 What was wrong
+*Integrator, 2026-09-29. §105 was merged with main at `ba4888f20`; `0b7141b7c` (PR #530's head) adds only an unchecked-reads allowlist fix on top. An independent verifier then checked that tree: it re-ran every round-8 and round-7 probe, wrote new ones, and restored every mutated file byte-identical, checked by sha256.*
+
+- **Confirmed.** §105.1's four breaks and round 7's three are closed in behaviour: the v8 and v7 probes re-run unchanged all pass (V8-TR0..3, V8-HF0..3, V8-CF0..2, V8-Y1, V7-S1, V7-S2, V7-R1, V7-R2, V7-C1, V7-T1, V7-T2, V7-TC, V7-H1). 43 of 46 mutations are killed.
+- **Found: five paths that break the criterion's wording, each shown by a probe that fails against this tree (13 red probes).**
+  1. **BK1. GET /compass/home says "ok" over failed reads and caches them (clauses a, b, c).** `getWhosAround` swallows its read errors, so a failed presence read is "nobody is around" with `circleActivity: "ok"`. A best move picked from a partial candidate pool is "ok", not degraded, and is cached for 45 s. A failed forecast is `weatherWindow: "ok"` with no value (V9-HC1, V9-HB1, V9-HB2, V9-HW1 red; V9-H0 the control) (`artifacts/api-server/src/routes/compassHome.ts`, `artifacts/api-server/src/compass/CompassSocialEngine.ts`, `artifacts/api-server/src/lib/weatherCache.ts`).
+  2. **BK2. GET /compass/telegraph and the Telegraph "Ask Compass" tray show a failed read as "nothing found" (clauses a, c, d).** The route serves the hydrated pool without reading its failed sources, its catch answers `{ cards: [] }`, and an unread flag table is the flag-off 404. The tray draws every failure as "Compass couldn't find relevant recommendations for this chat" (V9-TG1, V9-TG2, V9-TT1, V9-TT2 red; V9-TG0, V9-TT0 the controls) (`artifacts/api-server/src/routes/compass.ts`, `travel-buddy-standalone/src/components/CompassTelegraphTray.tsx`).
+  3. **BK3. An unread Discovery stop hides the output-kinds rail as if the feature were off (clauses a, c).** `isKillSwitchEngaged` answers a failed read as engaged, the stop gate halts, and the output-kinds route answers its flag-off `404 feature_disabled`, which the rail renders as nothing (V9-KS1 red; V9-KS0 the control) (`artifacts/api-server/src/lib/discoveryStopGate.ts`, `artifacts/api-server/src/routes/discoveryOutputKinds.ts`).
+  4. **BK4. GET /compass/city-confidence presents a failed read as a measured "thin" (clauses a, b).** Both depth reads failing answers the bytes of a city with no rows, "Limited local data for …", and the client caches it in memory and in AsyncStorage (V9-CC1 red) (`artifacts/api-server/src/compass/CompassGraphEngine.ts`, `artifacts/api-server/src/routes/compassGraph.ts`).
+  5. **BK5. GET /map/search answers an unread `map_search_enabled` with the flag-off body (clause a)** (V9-MS1 red; V9-MS0 the control) (`artifacts/api-server/src/routes/mapSearch.ts`).
+- **Rulings not honest.** D-W11X2-59's "Telegraph's cards … claim no list" (BK2) and "`getCityConfidence` fails to null, the documented neutral default" (BK4), and D-W11X2-56's ruling that the Discovery stop is "not a completeness claim" on the output-kinds route (BK3).
+- **Surviving mutations.** SM28 (`heldBackLists` dropping the trending read's unread set; reachable, shown by V9-SM28) and CM1 (a refusal with a missing or unknown coverage served as complete) are unpinned. SM23 survives and is equivalent: `readCompassEnabled` cannot reject.
+- **Next.** A round-10 lane closes the five paths with the verifier's probes as failing-first tests, pins SM28 and CM1, corrects the three rulings, and sweeps the Discovery and Compass read surfaces again. The row moves only after that.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | C | **W** | §105 closes §105.1's four paths, confirmed at `ba4888f20` (§107.1). Five paths still present a failed read as complete, empty, "off" or measured: the Compass home's presence, best-move and weather sections (`artifacts/api-server/src/routes/compassHome.ts`), the Telegraph cards and their tray (`artifacts/api-server/src/routes/compass.ts`, `travel-buddy-standalone/src/components/CompassTelegraphTray.tsx`), the output-kinds route behind an unread stop (`artifacts/api-server/src/lib/discoveryStopGate.ts`), the city-confidence "thin" (`artifacts/api-server/src/compass/CompassGraphEngine.ts`), and map search's unread flag (`artifacts/api-server/src/routes/mapSearch.ts`). Two DV-83 lines are unpinned (SM28, CM1). |
+
+Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
+
+### 107.2 Round 10: what this lane did
+
+*Written 2026-09-29 by lane W11-X2 (round 10) on `disc-w11-x2-r10`, from `0b7141b7c` and §107.1. It closes §107.1's five breaks, each with the verifier's probe copied in as a failing-first test, pins the two surviving mutations (SM23 is argued equivalent), corrects the three rulings the verifier found not honest, and sweeps the Discovery and Compass read surfaces again for the six defect classes: an ignored `error`, a catch that answers a default, an unread flag or stop read as off, a cached refusal, a stale answer, and a failed read turned into a measured-looking value. The sweep closed two more paths. Decisions are in `docs/architecture/discovery-decision-register.md`, section "W11-X2 round 10", D-W11X2-67 to D-W11X2-74. This section is §107 because a testing-mode lane took §106.*
+
+*No migration and no new flag. Each change alters output only when a read failed, a flag or stop could not be read, or a stale answer arrives. With every read healthy, every served byte is unchanged (H0, HB3, HC4, HC14c, HW3, TG0, TG1c, TG2c, TG5e, KS0, KS2, CC0, CC4, CC5, MS0, MS0b, PLc, WAc). Every edit in a cited file is line-neutral: lines are changed in place, and new code is appended at a file's foot. `src/index.ts` is untouched.*
+
+*All evidence is controlled: in-process routes over fake worlds, the real client services over a fake `fetch`, and jest over the real components. None of it is production evidence, and no client build carrying the change has shipped.*
+
+### 107.3 GET /compass/home never says "ok" over a failed read (§107.1 BK1; D-W11X2-67)
+
+- **Presence.** `getWhosAround` says `unread` when any read on its walk failed or threw, or the consent batch could not read (reason `unavailable`) or its stop was engaged or unreadable (`kill_switch`) (`artifacts/api-server/src/compass/CompassSocialEngine.ts:368#if (memberRowsErr) markPresenceUnread(unread);`, `artifacts/api-server/src/compass/CompassSocialEngine.ts:507#presenceDeniedUnread`). The home's circle section is then `unavailable`, keeping any people who were read (`artifacts/api-server/src/routes/compassHome.ts:474#return presenceUnread ? unusable(null) : sourced(null);`).
+- **Best move.** A pick from a pool with any failed candidate source is `unavailable` with its row kept, so the home is degraded and not cached (`artifacts/api-server/src/routes/compassHome.ts:454#const bestSource = compassHydrationFailedSources(items).length > 0 ? unusable : sourced;`). This corrects D-W11X2-54's "stays sourced".
+- **Weather.** `getWeatherContext` reports a failed provider read (HTTP failure, throw, a failed geocode) through an optional status; the section is `unavailable`, and "no such place" stays an answer (`artifacts/api-server/src/routes/compassHome.ts:310#if (!f) return wxStatus.failed ? unusable(null) : sourced(null);`).
+- **Client.** CompassHome says each unavailable section in its place, and marks a best move picked from partial results (`travel-buddy-standalone/src/components/compass/CompassHome.tsx:338#export const HOME_SECTION_UNREAD`).
+- **Restated world.** `compassRevocationAndAvailability` C assumed an unreachable forecast provider answers "ok"; its home world now seeds the forecast (same line, no assertion changed).
+
+### 107.4 GET /compass/telegraph and the Ask Compass tray (§107.1 BK2; D-W11X2-68)
+
+- **Server.** COMPASS_TELEGRAPH is read strictly (`artifacts/api-server/src/routes/compass.ts:4695#const telegraphRead = await readCompassFlag(sc, "COMPASS_TELEGRAPH")`); an unread table, a failed membership, thread, trip or participant read, a failed profile build and the catch answer `{ cards: [], city, refusal }` naming the source (`artifacts/api-server/src/routes/compass.ts:5028#function sendTelegraphRefused(`), and the served cards say a failed card source, `partial` beside cards (`artifacts/api-server/src/routes/compass.ts:5023#function telegraphCoverage(`). A flag READ and off keeps its 404.
+- **Client.** The reader turns any non-`partial` refusal into `ok: false` and keeps the chip on a refusal (`travel-buddy-standalone/src/services/compass.ts:2057#function telegraphRefused(`); the tray has a failed state with a retry, a partial line, and a latest-request guard (`travel-buddy-standalone/src/components/CompassTelegraphTray.tsx:89#if (!result.ok || !result.cards ||`).
+- **Guard change.** check:flag-polarity lists `readCompassFlag` as a CAP reader, as it lists `readFlagState`; `flagPhantomReads`' COMPASS_TELEGRAPH case is restated to the new read text.
+
+### 107.5 An unread Discovery stop is a failed read (§107.1 BK3; D-W11X2-69)
+
+`isKillSwitchEngaged` can say `unread` through an optional status while still answering "engaged" (`artifacts/api-server/src/lib/featureFlags.ts:167#export interface KillSwitchReadStatus`); the gate names `stop_unreadable`, never holds it for the TTL, and still halts on it (`artifacts/api-server/src/lib/discoveryStopGate.ts:85#s.kill.unread ? "stop_unreadable" : "kill_switch_engaged"`); the output-kinds route answers 503 `stop_unreadable` and keeps the 404 bytes for a stop READ and engaged (`artifacts/api-server/src/routes/discoveryOutputKinds.ts:64#const stopHalt = await discoveryStopHalt(sc);`). D-W11X2-69 revisits D-W11X2-56's ruling for every reader of the gate: only the output-kinds route hid a surface; the for_you, Cache A, rank-design, pipeline and engine-mode halts serve complete flag-off pages.
+
+### 107.6 GET /compass/city-confidence refuses a failed read (§107.1 BK4; D-W11X2-70)
+
+`getCityConfidence` reports `unread` when nothing was measured and a read failed (`artifacts/api-server/src/compass/CompassGraphEngine.ts:1705#if (!local) { if (status && (localUnread || !readable)) status.unread = true; return null; }`); the route answers 503 `city_confidence_unreadable` (`artifacts/api-server/src/routes/compassGraph.ts:111#const confStatus: CityConfidenceReadStatus`), and a city with no rows keeps its "thin" bytes. The client caches neither a 503 nor a 200 carrying a refusal (`travel-buddy-standalone/src/services/compass.ts:406#if ((body as { refusal?: unknown } | null)?.refusal != null) return { ok: false, error: 'refused' };`), and the destination badge never draws "Limited local data" over a failure. D-W11X2-59's "neutral default" is withdrawn for this route.
+
+### 107.7 GET /map/search names an unread flag (§107.1 BK5; D-W11X2-71)
+
+`readFlagState`; `unreadable` answers `enabled: false, refusal: "flag_unreadable"`, and an off or absent flag keeps the flag-off body (`artifacts/api-server/src/routes/mapSearch.ts:154#const mapSearchFlag = await readFlagState`).
+
+### 107.8 The survivors and the sweep (D-W11X2-72, D-W11X2-73, D-W11X2-74)
+
+- **Survivors.** SM28 is pinned by `discoveryTrailMemberSourceUnread` TR17, the verifier's V9-SM28 (`artifacts/api-server/src/test/discoveryTrailMemberSourceUnread.test.ts:388#it("TR17 (V9-SM28)`), and CM1 by `discoveryRecommendationsRefusal` RR4 (`travel-buddy-standalone/src/services/__tests__/discoveryRecommendationsRefusal.test.ts:53#it('RR4 (§107, CM1)`). Both are killed when re-applied. SM23 is equivalent: `readCompassEnabled` cannot reject (D-W11X2-72).
+- **The sweep closed two more paths.**
+  1. **A failed location read is never "no city".** The Compass profile carries `locationUnread` and is not cached; the hydrator names `user_location_state`, so the section route, /compass/recommendations, the home and Telegraph refuse or degrade (`artifacts/api-server/src/compass/CompassProfileService.ts:181#const locStateUnread =`, `artifacts/api-server/src/compass/CompassItemHydrator.ts:441#profile.locationUnread && !profile.currentCity ? ["user_location_state"] : []`).
+  2. **Compass's `get_whos_around` tool** says presence could not be checked instead of "no active trips" or "nobody is sharing" (`artifacts/api-server/src/compass/CompassTools.ts:1742#const { people, contextsChecked, unread }`).
+- **Swept and found sound, and left for owners.** D-W11X2-74: the preload manifest, the front-load payload, the Compass components' request guards and the client caches are sound. Left: CompassRediscover's collapse on the Compass home (tied to migration 2188's pending production press; census-highlights-memories), and GET /hashtags/trending's unbounded read, the feed's post-filter `hasMore` and /hashtags/suggestions' label reads (the hashtag product; no read fails).
+- **Allowlist.** The three `contextMemberIds` entries in `artifacts/api-server/src/scripts/UNCHECKED_READS_ALLOWLIST.json` are deleted: BK1 closed those sites.
+
+### 107.9 Tests, seen red, and mutations
+
+**Seen red first**, run against the code before each fix (logs in the lane's `r10/` scratch directory, `red-*.log`):
+
+| Area | Red | Controls, green |
+|---|---|---|
+| /compass/home | HC1, HC2, HC3, HB1, HB2, HW1, HW2 (V9-HC1, V9-HB1, V9-HB2, V9-HW1 among them) | H0, HC4, HB1b, HB3, HW3 |
+| CompassHome sections | SU1–SU5 | SUc |
+| /compass/telegraph | TG1, TG1b, TG2, TG3, TG4, TG5, TG6 (V9-TG1, V9-TG2) | TG0, TG1c, TG2c |
+| Telegraph reader and tray | TS1–TS3; TT1–TT3 (V9-TT1, V9-TT2) — the whole tray file was red, the control included, because the failed state's export did not exist yet | TS4 (see below) |
+| Output kinds behind an unread stop | KS1, KS1b, KS3, KS4 (V9-KS1) | KS0, KS2 |
+| /compass/city-confidence | CC1, CC2, CC3, CC6 (V9-CC1) | CC0, CC4, CC5 |
+| City-confidence reader | CF2 | CF1, CF3, CFc |
+| /map/search | MS1, MS1b (V9-MS1) | MS0, MS0b |
+| Sweep: location read | PL1, PL2, PL3 | PLc |
+| Sweep: who's-around tool | WA1, WA2 | WAc |
+
+CF1 and CF3 were already green on the client: a 503 was never cached, and the break was the server's 200. TS4 was green because the old reader already kept the chip for a 200; it pins that a refusal keeps it.
+
+**Written against the fixed code:** HC5–HC14c (each read on the presence walk alone, and the kept-people arm), TG5b–TG5e, KS5, TT7, TT8, TR17 (SM28), RR4 (CM1), RR5. Each is shown to bite by the mutation that removes the line it pins.
+
+**Mutations.** Each was applied alone, its suites were run, and the file was restored byte-identically; the sha256 matched on all of them. Runner and logs: the lane's `r10/muts/` and `r10/muts2/` scratch directories (`muts.py`, `run.py`, `mut-summary.txt`).
+
+- **Server, 60 applied in the main run; 57 killed.**
+  - The presence walk, S1–S14 (S12b): each marked read, both catches, the member-read throws, the consent batch's catch and denial check, both denial reasons, the `unread` spread and the marker itself.
+  - The home, H1–H8: the presence arms, the best move's source, the forecast status and its arm, the location arms, and the degraded-only cache.
+  - The forecast read, W1–W3; the profile, P1–P3; the hydrator, Y1; Telegraph's `user_location_state` card source, T13.
+  - Telegraph, T2–T12: the flag arm, each context read, the profile arm, the coverage spread, its `partial`, the card-source filter and the catch.
+  - The stop, K1–K8: the route's 503 arm and its 404 arm, the gate's third state, the TTL skip, the catch, both `unread` marks in `isKillSwitchEngaged`, and the status argument.
+  - City confidence, Z1–Z5 (Z3b); map search, MS1.
+  - The round-9 survivor SM28: killed by TR17.
+- **Survived, and settled.**
+  - **T1 and SM23 are equivalent.** Each replaces `.catch(() => null)` with `.catch(() => false)` on `readCompassFlag` / `readCompassEnabled`, which cannot reject: `fetchCompassFlags` catches everything and returns a load (D-W11X2-72).
+  - **MS2** (an absent flag served as on) survived because MS0b compared only the body's keys. MS0b now asserts `enabled: false`; re-applied as MS2r, it is killed.
+- **Client, 17 applied in the main run; 16 killed.** CM1 (the round-9 survivor, killed by RR4); the Telegraph reader C1–C4; the tray C6–C11 and C15; CompassHome C12, C13; the city-confidence reader C14.
+  - **C5** (the tray's latest-request return removed) survived: a late answer never replaced an earlier FAILED state, so TT6 could not see it. TT6b (a late failure after the newer open's cards) now pins it; re-applied as C5r, it is killed.
+- **Supplemental run, 5 of 5 killed:** the who's-around tool WA1, WA2; MS2r; C5r; and H6r (the location arm on line 252, re-applied after it was split in place to keep census-compass's `(error)` anchor).
+- **Total: 82 applied, 78 killed, 2 equivalent (T1, SM23), 2 survivors closed by a strengthened test and killed on re-application (MS2 → MS2r, C5 → C5r).** No non-equivalent survivor remains on a DV-83 line.
+
+### 107.10 Checks
+
+- **Line-neutral in every cited file**, so every anchored citation still lands on its text: `check:doc-citations`, `check:citation-targets` and `check:citation-symbols` are clean. One displaced anchor was caught and restored in place: census-compass cites `artifacts/api-server/src/routes/compassHome.ts:252#(error)`.
+- **Scope.** §107's graded files and suites joined this census's `CENSUS_SCOPE`. The acknowledgement for every census that counts a changed file carries a §107 paragraph with its "why it cannot move a verdict": census-discovery, census-compass, census-highlights-memories, census-layover, census-map, census-telegraph and census-trust.
+- **Suites.** The seven new api-server suites are on the `test` line (`check:test-registration`).
+- **Guard change.** check:flag-polarity lists `readCompassFlag` among its CAP readers (D-W11X2-68).
+- **Allowlist.** Three `contextMemberIds` entries left `UNCHECKED_READS_ALLOWLIST.json`; the checker reports no stale entry.
+
+### 107.11 DV-83, restated
+
+§107.1's five breaks are closed, each with the verifier's probe red first and green now. SM28 and CM1 are pinned and killed; SM23 is argued equivalent. The three rulings the verifier found not honest are corrected (D-W11X2-67, 68, 69, 70). The sweep closed two more paths and recorded the rest. Every clause of DV-83's criterion holds on every path this lane examined:
+
+1. **Producers send the refusal envelope or a named failure.**
+   - /compass/home marks a failed presence, candidate, location or forecast read `unavailable` (degraded).
+   - /compass/telegraph refuses a failed flag, context, profile, candidate or build read.
+   - The output kinds answer 503 `stop_unreadable` for an unread stop; /compass/city-confidence answers 503 over a failed read; /map/search names an unread flag.
+2. **Nothing refused or partial is cached as complete.** A degraded home is not cached; a profile over a failed location read is not cached; an unread stop is not held for the TTL; the client caches no refused city-confidence answer.
+3. **Nothing refused is rendered as empty, as complete, or over the wrong rows.**
+   - CompassHome says each unavailable section; the Telegraph tray says a failure with a retry and only its latest answer writes it; the destination badge draws nothing over a failure; the output-kinds rail's failed state takes the 503.
+4. **Consumers branch on coverage.** The Telegraph reader and the output-kinds reader branch on `refusal.coverage` (`partial` keeps rows; anything else is a failed read); CompassHome on `sources`.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§107.1's five breaks are closed, each with its verifier probe red first; SM28 and CM1 are killed and SM23 is argued equivalent; the sweep closed two more paths; 82 mutations: 78 killed, 2 equivalent (T1, SM23), and MS2 and C5 killed on re-application after their tests were strengthened. CONTROLLED EVIDENCE ONLY — this row still awaits independent re-verification.** **The Compass home never says "ok" over a failed read and never caches it** (`artifacts/api-server/src/compass/CompassSocialEngine.ts:507#presenceDeniedUnread`, `artifacts/api-server/src/routes/compassHome.ts:454#const bestSource = compassHydrationFailedSources(items).length > 0 ? unusable : sourced;`, `artifacts/api-server/src/routes/compassHome.ts:310#if (!f) return wxStatus.failed ? unusable(null) : sourced(null);`; H0, HC1–HC14c, HB1–HB3, HW1–HW3), **and says which section** (`travel-buddy-standalone/src/components/compass/CompassHome.tsx:338#export const HOME_SECTION_UNREAD`; SU1–SU5). **Telegraph's cards refuse and the tray says it** (`artifacts/api-server/src/routes/compass.ts:5028#function sendTelegraphRefused(`, `travel-buddy-standalone/src/components/CompassTelegraphTray.tsx:89#if (!result.ok || !result.cards ||`; TG0–TG6, TS1–TS4, TT0–TT8). **An unread stop is a failed read, still fail-closed** (`artifacts/api-server/src/routes/discoveryOutputKinds.ts:64#const stopHalt = await discoveryStopHalt(sc);`; KS0–KS5, RR5). **A failed city-confidence read is never a measured "thin"** (`artifacts/api-server/src/routes/compassGraph.ts:111#const confStatus: CityConfidenceReadStatus`; CC0–CC6, CF1–CF3). **Map search names an unread flag** (`artifacts/api-server/src/routes/mapSearch.ts:154#const mapSearchFlag = await readFlagState`; MS0–MS1b). **A failed location read is never "no city"** (`artifacts/api-server/src/compass/CompassItemHydrator.ts:441#profile.locationUnread && !profile.currentCity ? ["user_location_state"] : []`; PL1–PL3). |
+
+**Headline.** DV-83 moves W → C. `check:census-integrity` counts **C 101 / W 85 / N 2 / X 0** over 188: CONSTRUCTED 186 / 188 = **98.9 %**, CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged. The move is on controlled evidence and awaits independent re-verification.
+
+### 107.12 Left open, and what would turn this red
+
+- **Seen and not built (other owners; D-W11X2-74).**
+  - CompassRediscover's collapse on the Compass home draws a failed read as nothing; surfacing it waits on migration 2188's production press (census-highlights-memories).
+  - GET /hashtags/trending's unbounded 48 h read, the hashtag feed's post-filter `hasMore`, and /hashtags/suggestions' label reads (the hashtag product; no read fails).
+- **Still open from §105.11 and §104.10.** `app/discover.tsx`'s people search; the Compass live, sense, autopilot and me-context gates; the trip map's Compass alternatives; Rent-a-Buddy's `CompassBuddyRow`.
+- **What would turn DV-83 red again:**
+  - a home section that says "ok" over a failed read, or a degraded home that is cached (HC*, HB*, HW*, PL1, PL2);
+  - a Telegraph answer that serves a failed read as cards or as none, or a tray that says "couldn't find" over one (TG*, TS*, TT*);
+  - an unread stop answered as the feature being off (KS*);
+  - a failed city-confidence read answered or cached as a measurement (CC*, CF*);
+  - an unread map-search flag answered as off (MS1, MS1b);
+  - any path §105.11 lists.
+
+### 107.13 Results at the final code commit (`35ee01629`)
+
+- **`int-guards.sh /home/user/wt-v8`**: all 24 exit 0. `typecheck:tests` is at 863 against a baseline of 863.
+
+```
+typecheck exit=0
+typecheck:tests exit=0
+check:test-registration exit=0
+check:census-integrity exit=0
+check:doc-citations exit=0
+check:citation-targets exit=0
+check:citation-symbols exit=0
+check:census-freshness exit=0
+check:census-scope-coverage exit=0
+check:census-row-move-labels exit=0
+check:migration-prefixes exit=0
+check:production-drift exit=0
+check:writerless-reads exit=0
+check:schema-references exit=0
+check:enum-literals exit=0
+check:flag-polarity exit=0
+check:discovery-query-paths exit=0
+check:route-auth-gate exit=0
+check:api-prefix exit=0
+check:async-handlers exit=0
+check:frozen-dir exit=0
+check:telegraph-inventory exit=0
+check:guard-coverage exit=0
+check:unissued-supabase-writes exit=0
+```
+
+- **api-server node:test** (Node v24.21.0, `SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy`), 300 files: every `src/test/discovery*`, `compass*`, `trail*`, `hashtag*`, `adminTrails` and map-search suite, the seven new §107 suites among them; `hashtags`, `compass-home`, `flagPhantomReads`, `emergencyFlags`, `circle` and the presence suites (the consent batch §107 reads); the hydrator's readers; `securityCheckSuite`, `uncheckedSupabaseReads`, `entryWiringNotCommentedOut` and `layoverSurfaceErrorBinding`. Result: `ℹ tests 5284 · ℹ pass 5284 · ℹ fail 0 · ℹ cancelled 0`. The live-DB suites are left out, as in §105.12 (`compassMemoryClientBoundary`, `discoveryPlaceWriteBoundary`, and the `*Live*` suites). The run started at `7f932a2fa`; `35ee01629` only types one test's response body, and that suite was re-run on it (4 of 4).
+  - Alone: `securityCheckSuite` 17/17, `uncheckedSupabaseReads` 69/69, `entryWiringNotCommentedOut` 4/4, `layoverSurfaceErrorBinding` 5/5.
+  - `node --import tsx/esm src/scripts/checkUncheckedSupabaseReads.ts`: "no NEW in-scope read ignores its .error", no stale allowlist entry.
+- **Client.**
+  - `pnpm run -s check:all`: `✔ ALL CHECKS PASSED`.
+    - Node suites: `# tests 7362 · # pass 7362 · # fail 0`.
+    - Component suites: `Test Suites: 776 passed, 776 total · Tests: 4949 passed, 4949 total`.
+    - Web suites: `4 passed, 12 tests`.
+    - `typecheck:tests` is at 173 against a baseline of 173.
+  - `node scripts/check-route-registry.mjs`: "OK. All 217 screen file(s) are represented in PORTAVA_ROUTES and all 9 layout file(s) are represented in PORTAVA_LAYOUT_FILES."
+
+## §108 — DV-83 round 11 (lane W11-X2)
+
+### 108.1 Integrator: DV-83 held at W after independent re-verification at `8283eaaa9`
+
+*Integrator, 2026-09-29. §107 was merged with main at `8283eaaa9` (PR #530's head). An independent verifier then checked that tree: it re-ran every round-9, round-8 and round-7 probe unchanged, wrote new ones (`zz-v10-*`), and restored every mutated file byte-identical, checked by sha256. Its report is the round-10 verifier's `dv83-r10-verifier.md`.*
+
+- **Confirmed.** §107.1's five breaks, §105.1's four and round 7's three are closed in behaviour: the v9, v8 and v7 probes re-run unchanged all pass (35 server, 12 client). 53 of 54 mutations are killed.
+- **Found: six paths that break the criterion's wording, each shown by a probe that fails against this tree (10 red probes).**
+  1. **BK1. The presence walk's consent batch ignores four of its five read errors (clauses a, b).** A failed `circle_visibility_settings` read denies every target as `target_sharing_off`, and a failed `circle_presence` read allows a target with no presence row, which the walk drops. Neither reason is `unavailable`, so the walk is not marked unread: /compass/home answers `circleActivity: "ok"` and caches it, and `get_whos_around` says "Nobody … is sharing". A failed context-settings or account-state read also fails OPEN on privacy (V10-HP1, V10-HP2, V10-HP3, V10-WT1 red; V10-HP0 the control) (`artifacts/api-server/src/lib/circleAccessGuard.ts`, `artifacts/api-server/src/compass/CompassSocialEngine.ts`).
+  2. **BK2. `get_whos_around` presents a partial list as complete (clause c).** When a read failed but someone was found, the tool answers with the complete-list wording (V10-WT2 red) (`artifacts/api-server/src/compass/CompassTools.ts`).
+  3. **BK3. Telegraph serves another city's cards when the viewer's location is unread (clause c, the wrong rows).** With no trip city and a failed `user_location_state` read, the route falls through to another participant's home city, which masks the hydrator's `user_location_state` marker (V10-TC1 red; V10-TC0 the control) (`artifacts/api-server/src/routes/compass.ts`).
+  4. **BK4. The Ask Compass chip is hidden as "off" on a transport failure (clauses a, c).** `checkCompassTelegraphAvailable` answers `false` for an HTTP 5xx or a network error, so the tray's failed state cannot be reached (V10-CH1, V10-CH2 red; V10-CH0 the control) (`travel-buddy-standalone/src/services/compass.ts`).
+  5. **BK5. An armed stop over an UNREADABLE measurement answers the output kinds' flag-off 404 (clauses a, c).** The gate names every trip `stop_condition`, including a condition tripped only because its measurement could not be read (V10-SC1 red; V10-SC0 the control) (`artifacts/api-server/src/lib/discoveryStopGate.ts`, `artifacts/api-server/src/routes/discoveryOutputKinds.ts`).
+  6. **BK6. GET /hashtags/trending ranks a silently truncated read as complete (clauses a, c).** The 48 h `hashtag_usage` read has no limit, range or count; PostgREST caps it at db-max-rows with no error, and the chips are ranked over the subset (V10-HT1 red; V10-HT0 the control) (`artifacts/api-server/src/routes/hashtags.ts`).
+- **Rulings not honest.** D-W11X2-67's "every failed read on the walk" (BK1), and D-W11X2-74's ruling that /hashtags/trending's truncation is "outside DV-83's failed-read classes" (BK6): DV-83 covers a partial read.
+- **Surviving mutation.** SM6 (`CompassSocialEngine.ts`: `attendeeResult.error` dropped from the member-read throw) is reachable and unpinned: V10-SM6 is green on this tree and red under it. No round-10 suite fails `event_attendees` alone.
+- **Upheld.** CompassRediscover's collapse (by scope), the hashtag feed's `hasMore` (a pagination defect over reads that succeeded), /hashtags/suggestions (labels and ranks only), the city-confidence note over an unread platform (V10-CC7 green), and the rows owned by other lanes.
+- **Next.** A round-11 lane closes the six paths with the verifier's probes as failing-first tests, pins SM6, corrects the two rulings, rules or fixes CompassBuddyRow and the trip map's Compass alternatives (open since §104.10), and sweeps the Discovery and Compass read surfaces again. The row moves only after that.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | C | **W** | §107 closes §107.1's five paths, confirmed at `8283eaaa9` (§108.1). Six paths still present a failed or partial read as complete, empty, "off" or over the wrong rows: the presence walk's consent batch (`artifacts/api-server/src/lib/circleAccessGuard.ts`), the who's-around tool's partial list (§108.1 BK2), Telegraph's city over an unread location (`artifacts/api-server/src/routes/compass.ts`), the Ask Compass chip on a transport failure (`travel-buddy-standalone/src/services/compass.ts`), the output kinds behind an unreadable stop measurement (`artifacts/api-server/src/lib/discoveryStopGate.ts`), and the trending ranking over a truncated read (`artifacts/api-server/src/routes/hashtags.ts`). One DV-83 line is unpinned (SM6). |
+
+Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
+
+### 108.2 Round 11: what this lane did
+
+*Written 2026-09-29 by lane W11-X2 (round 11) on `disc-w11-x2-r11`, from `8283eaaa9` and §108.1. It closes §108.1's six breaks, each with the verifier's probe copied in as a failing-first test, pins the surviving mutation SM6, corrects the two rulings the verifier found not honest (D-W11X2-67's walk and D-W11X2-74's trending ruling), fixes the two consumers open since §104.10 (CompassBuddyRow and the trip map's Compass alternatives), and sweeps the Discovery and Compass read surfaces again for the six defect classes: an unchecked `.error` on a read that gates a person, card or list; a catch that answers a default; an unread flag, stop or measurement read as off; a cached refusal; an unbounded read ranked as complete (the 1000-row cap); and a failure answered with a flag-off or "nothing here" shape. The sweep closed three more paths. Decisions are in `docs/architecture/discovery-decision-register.md`, section "W11-X2 round 11", D-W11X2-75 to D-W11X2-85.*
+
+*No migration and no new flag. Each change alters output only when a read failed or was cut short, or a stop measurement could not be read. With every read healthy and complete, every served byte is unchanged (CB0, V10-HP0, WT2c, V10-TC0, TC3, V10-SC0, SC2, V10-HT0, V10-CH0, CH3, TPc, BRc, TCc, TMc, MO0, BA0, BA4c). Every edit in a cited file is line-neutral: lines are changed in place, and new code is appended at a file's foot. `src/index.ts` is untouched.*
+
+*All evidence is controlled: in-process routes over fake worlds, the real client services over a fake `fetch`, and jest over the real components. None of it is production evidence, and no client build carrying the change has shipped.*
+
+### 108.3 The consent batch refuses its own failed reads (§108.1 BK1; D-W11X2-75)
+
+- **Server.** `canViewCirclePresenceBatch` denies every accepted target as `unavailable` when its `circle_visibility_settings`, `circle_context_settings`, `user_account_states` or `circle_presence` read fails, as `canBeSeenByViewersBatch` already did for its five (`artifacts/api-server/src/lib/circleAccessGuard.ts:816#const consentUnreadable = consentBatchReadFailed(`, `artifacts/api-server/src/lib/circleAccessGuard.ts:845#if (consentUnreadable) { out.set(targetUserId, { allowed: false, reason: "unavailable" }); continue; }`). The presence walk's existing `presenceDeniedUnread` marks it, so /compass/home says `circleActivity: "unavailable"`, is not cached, and `get_whos_around` says presence could not be checked.
+- **Privacy.** A failed context-settings or account-state read no longer skips a context pause or a ban: the target is withheld (CB2, CB3; CB2c and CB3c are the read controls).
+- **D-W11X2-67 corrected**: "every failed read on the walk" now includes the batch's own reads.
+
+### 108.4 The who's-around tool says a partial list (§108.1 BK2; D-W11X2-76)
+
+With a failed read and people found, `get_whos_around` keeps the people and says the list may be incomplete (V10-WT2; WT2c is the complete-list control).
+
+### 108.5 Telegraph's city over an unread viewer location (§108.1 BK3; D-W11X2-77)
+
+With no trip city, a viewer profile that could not be built or whose location is unread refuses before the participants' cities, naming `compass_profile` or `user_location_state` (`artifacts/api-server/src/routes/compass.ts:4770#if (!cityContext && (profile === null || profile.locationUnread))`). A profile that fails once and builds on the route's second read is refused too (TC2). A viewer who shares no city keeps the participants' city (TC3).
+
+### 108.6 The Ask Compass chip survives a transport failure (§108.1 BK4; D-W11X2-80)
+
+`checkCompassTelegraphAvailable` hides the chip only for the flag read and off, a non-member (403) and an unconfigured client (`travel-buddy-standalone/src/services/compass.ts:1673#result.error !== 'forbidden' && result.error !== 'not_configured'`). An HTTP 5xx or a network error keeps it, and the tray's failed state says the failure. A refusal keeps it whatever its code, so D-W11X2-68's clause stays explicit on the same line (`travel-buddy-standalone/src/services/compass.ts:1673#|| result.refused === true;`; CH4). The edit is one line inside the function and its doc comment (PR #545 edits other lines of the file).
+
+### 108.7 An unreadable stop measurement is `stop_unreadable` (§108.1 BK5; D-W11X2-78)
+
+When every tripped condition tripped only because its measurement is unreadable, the gate answers `stop_unreadable` — a halt for every reader — and the output kinds answer their 503 (`artifacts/api-server/src/lib/discoveryStopGate.ts:80#halt = trippedOnlyUnreadable(verdict) ? "stop_unreadable" : "stop_condition";`). A condition measured over its threshold keeps `stop_condition` and the flag-off 404 bytes (SC2).
+
+### 108.8 GET /hashtags/trending reads its window to the end (§108.1 BK6; D-W11X2-79)
+
+- **Server.** No aggregate RPC or view exists for `hashtag_usage`, and none is added. Each read of the 48 h window — the window, the city→global fallback, the post-engagement read and the event-activity read — is an exact count and then pages ordered by `created_at, id` until the count is reached, capped at 20 000 rows, with `.in()` lists in chunks of 100 ids (`artifacts/api-server/src/routes/hashtags.ts:1095#async function readTrendingWindow<T>(`). A window over the cap or short of its count is ranked over what was read and served with the refusal envelope, coverage `partial` (`nothing` with no row), naming `hashtag_usage`; a failed count or page is `db_error` (`artifacts/api-server/src/routes/hashtags.ts:174#let windowIncomplete = !usageRead.complete;`, `artifacts/api-server/src/routes/hashtags.ts:1122#function sendTrending(`). The two anchored lines census-discovery cites in the route keep their text (`artifacts/api-server/src/routes/hashtags.ts:203#if (fbErr)`, `artifacts/api-server/src/routes/hashtags.ts:226#if (postUsageErr) {`).
+- **Client.** The Discover screen branches on the refusal's coverage: `partial` keeps the chips under "Trending tags may be incomplete right now."; any other refusal is the failed line (`travel-buddy-standalone/app/(tabs)/discovery.tsx:120#const coverage = trendingCoverage(`).
+- **D-W11X2-74 corrected**: DV-83 covers a partial read; the truncation was one.
+
+### 108.9 §104.10's two open consumers (D-W11X2-81)
+
+- **CompassBuddyRow** says a failed read and keeps partial picks under the incomplete line, as CompassTravelerRow does; it hides only when the read answered with no one, or the flag or the viewer's setting is off (`travel-buddy-standalone/src/components/compass/CompassBuddyRow.tsx:170#if (items.length === 0 && readState === null) return null;`).
+- **The trip map's Compass alternatives** are composed through `tripCompassRecommendations` — none over a failed or refused read, a `partial` body's rows kept — and the map says a failed or partial Compass read over the trip (`travel-buddy-standalone/app/map/index.tsx:1211#compassRecommendations: tripCompassRecommendations(compassRes),`, `travel-buddy-standalone/src/features/trips/map/tripCompassRead.ts:29#export function tripCompassReadState(`). The read state rides on the composed trip, so only the latest build writes it. The map's other five sources keep §33's posture (census-trips).
+
+### 108.10 The survivor and the sweep (D-W11X2-82, D-W11X2-83, D-W11X2-84, D-W11X2-85)
+
+- **SM6** is pinned by the verifier's V10-SM6, copied in (`artifacts/api-server/src/test/compassPresenceConsentUnread.test.ts:185#it("V10-SM6`); re-applied, it is killed.
+- **The sweep closed three more paths.**
+  1. **The /compass/recommendations predicate** took a refusal with a missing or unknown coverage for a complete answer; it is now a failed read, for every consumer (`travel-buddy-standalone/src/services/compassRecommendationsRefusal.ts:23#if (body.refusal) return body.refusal.coverage !== 'partial';`).
+  2. **`get_meetup_opportunities`** walked the presence path without the `unread` signal, and a failed reciprocity read read as "availability isn't shared both ways"; it now says a failed or partial walk and keeps everyone affected withheld (`artifacts/api-server/src/compass/CompassSocialEngine.ts:691#collectPresence(sc, viewerId, hidden, unread);  // §108: the meetup walk says a failed read`).
+  3. **The buddy arm of /compass/recommendations** ignored its availability read's error, read its buddy and availability rows without a bound, and answered `[]` over an unread location; it now names each (`artifacts/api-server/src/routes/compass.ts:3693#buddyFailed.push("rent_buddy_availability");`, `artifacts/api-server/src/routes/compass.ts:3653#if (profile.locationUnread) { sendRecommendationsRefusal(res, { recommendations: [], surface, sessionId: effectiveSessionId }, "buddy_city_unread"`). This refines D-W11X2-66's "availability … label or rank" for this arm.
+- **Upheld, recorded unchanged (D-W11X2-85).** CompassRediscover's collapse, the hashtag feed's `hasMore`, /hashtags/suggestions, the city-confidence note over an unread platform, `app/discover.tsx`'s people search, and the Compass live, sense, autopilot and me-context gates.
+- **Seen, not built (D-W11X2-85).** The emerging-trails leg of the trending explanations (behind `discovery_trending_api_enabled`, seeded FALSE); the trending ranking's post-limit block filter; the admin hashtag merge's unbounded read; GET /circle presence's wording over a withheld member; the trip map's other five sources.
+
+### 108.11 Tests, seen red, and mutations
+
+**Seen red first**, run against the code before each fix (logs in the lane's `r11/` scratch directory, `red-*.log`):
+
+| Area | Red | Controls, green |
+|---|---|---|
+| The consent batch and /compass/home | CB1–CB4, V10-HP1, V10-HP2, V10-HP3, HP4, HP5 | CB0, CB2c, CB3c, V10-HP0, V10-SM6 (green at `8283eaaa9`; it pins SM6) |
+| The who's-around tool | V10-WT1, V10-WT2 | WT2c |
+| Telegraph's city | V10-TC1, TC1b, TC2 | V10-TC0, TC3 |
+| The stop measurement | V10-SC1, SC1b, SC3 | V10-SC0, SC2 |
+| /hashtags/trending | V10-HT1, HT1b, HT2–HT6 | V10-HT0 |
+| The trending chips | TP1–TP3 | TPc |
+| The Ask Compass chip | V10-CH1, V10-CH2 | V10-CH0, CH3 (CH4, a refusal whose code reads `forbidden`, was green: the old check kept every refusal) |
+| CompassBuddyRow | BR1, BR1b, BR2 | BRc |
+| The trip map's Compass read | TC1–TC4, UC1 (against a stub of the new module that reproduced the old inline read, and the old predicate); TM1–TM3 | TCc, TMc, TMc2 |
+| Sweep: the meetup tool | MO1–MO4 | MO0 |
+| Sweep: the buddy arm | BA1–BA4 | BA0, BA4c |
+
+**Written against the fixed code:** HT7–HT11, MO5, TCw, CH4, TC4, TC5. Each is shown to bite by the mutation that removes the line it pins (B6c/B6i, B6d, B6e, B6a/B6l, B6b, S1b, C16/C17, C3b, SM28r, SM26r).
+
+**Mutations.** Each was applied alone, its pin suites were run (17 api-server suites; 7 jest suites and one node suite on the client), and the file was restored byte-identically; the sha256 matched on every one. Runner and logs: the lane's `r11/muts/` scratch directory (`muts11.py`, `run11.py`, `run11.out`).
+
+- **Server, 37 applied.** The consent batch B1a–B1f (the denial, the helper's return, each of the four reads dropped from it); the tool's partial wording B2a; Telegraph B3a–B3c; the stop gate B5a (the name), B5b (`every` → `some`); trending B6a–B6m (the window flag, each of the four reads' incompleteness mark, the count error, the page error, the loop's end, the completeness answer, the chunk mark and error, the envelope, `partial` vs `nothing`, the row cap); SM6; the meetup walk S1a–S1f; the buddy arm S2a–S2e.
+- **Client, 20 applied.** The chip C1–C3b (C3b drops the explicit refusal clause; CH4 kills it); the trending chips C4–C8b; CompassBuddyRow C9–C11; the trip map's read C12–C17; the shared predicate C18.
+- **Result: 59 applied (with SM26r and SM28r below), 58 killed, 1 equivalent.**
+  - B6b (the fallback window's incompleteness mark) survived the first run: no test failed the global fallback alone. HT11 now does; re-applied, B6b is killed. S1a was first skipped because its target text also matched `getWhosAround`'s line; re-targeted to the meetup line, it is killed.
+  - **C8b is equivalent.** It drops `setTrendingPartial(false)` from the city-change reset. The partial line renders only with `trendingHashtags.length > 0`; the reset clears the chips on the same line, and chips are written only together with `setTrendingPartial(coverage === 'partial')`, so no state can draw a stale partial line.
+- **Regression pass.** The round-10 verifier's own 54 mutations (SM1–SM42, CM1–CM12) and SM6p were re-run against this tree from a copy of its runner and suite list (the lane's `r11/v10muts/`): 51 of 54 killed, sha256 OK on every applied one.
+  - SM6 survives there only because that suite list predates V10-SM6; SM6p (which runs V10-SM6) is killed, as is SM6 in the round-11 run.
+  - CM8's target line is BK4's line now (C1–C3b cover it), so it was skipped.
+  - SM26 (Telegraph's card-source set without `user_location_state`) and SM28 (the later profile arm answering `{ cards: [] }`) survived: BK3's early refusal now answers PL3 and TG4 before the arms they remove. TC5 (the profile cache expiring between the route's two profile reads) and TC4 (a trip thread whose profile cannot be built) reach those arms directly; re-applied as SM26r and SM28r against the round-11 suites, both are killed.
+
+### 108.12 Checks
+
+- **Line-neutral in every cited file**, so every anchored citation still lands on its text: `check:doc-citations`, `check:citation-targets` and `check:citation-symbols` are clean.
+- **Scope.** `lib/circleAccessGuard.ts` joined this census's `CENSUS_SCOPE` with the hold (§108.1); CompassBuddyRow, `tripCompassRead.ts` and §108's suites join it here. The acknowledgement for every census that counts a changed file carries a §108 paragraph with its "why it cannot move a verdict": census-discovery, census-compass, census-trust, census-input-intelligence, census-trips, census-map, census-telegraph, census-highlights-memories, census-layover, census-passport, census-media and census-sensing. `compass/CompassTools.ts` stays out of this census's scope: §56.3 declares it NOT-GRADED here, so no verdict row cites it.
+- **Suites.** The five new api-server suites are on the `test` line (`check:test-registration`).
+- **Allowlist.** No entry of `UNCHECKED_READS_ALLOWLIST.json` named a site §108 closed; the checker reports no stale entry.
+- **Write-path select sites.** Every new `.select()` argument is a literal; the write-path-columns replica prints OK.
+
+### 108.13 DV-83, restated
+
+§108.1's six breaks are closed, each with the verifier's probe red first and green now. SM6 is pinned and killed. The two rulings the verifier found not honest are corrected (D-W11X2-75, D-W11X2-79). §104.10's two open consumers are fixed (D-W11X2-81), and the sweep closed three more paths. Every clause of DV-83's criterion holds on every path this lane examined:
+
+1. **Producers send the refusal envelope or a named failure.**
+   - The consent batch denies as `unavailable` over any failed read, so the walk, /compass/home and both presence tools say it.
+   - Telegraph refuses over the viewer's unread location or profile; the buddy arm refuses over an unread location and names a failed or cut read.
+   - The stop gate names an unreadable measurement; /hashtags/trending names an incomplete window.
+2. **Nothing refused or partial is cached as complete.** A home over a failed consent read is degraded and not cached (V10-HP3). No new path caches.
+3. **Nothing refused is rendered as empty, as complete, or over the wrong rows.** Telegraph never draws another city; the chip stays for the tray's failed state; the trending chips, the buddy strip and the trip map say a failed or partial read.
+4. **Consumers branch on coverage.** The Discover screen's trending chips, the trip map and every /compass/recommendations consumer (through the shared predicate, now strict on a missing or unknown coverage) branch on `refusal.coverage`.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§108.1's six breaks are closed, each with its verifier probe red first; SM6 is killed; §104.10's two open consumers are fixed; the sweep closed three more paths; 59 mutations: 58 killed, 1 equivalent (C8b). CONTROLLED EVIDENCE ONLY — this row still awaits independent re-verification.** **The consent batch denies over its own failed reads, fail closed** (`artifacts/api-server/src/lib/circleAccessGuard.ts:845#if (consentUnreadable) { out.set(targetUserId, { allowed: false, reason: "unavailable" }); continue; }`; CB1–CB4, V10-HP1..3, HP4, HP5, V10-SM6). **Telegraph never draws another city over an unread location** (`artifacts/api-server/src/routes/compass.ts:4770#if (!cityContext && (profile === null || profile.locationUnread))`; V10-TC1, TC1b, TC2, TC4, TC5). **The chip survives a transport failure** (`travel-buddy-standalone/src/services/compass.ts:1673#result.error !== 'forbidden' && result.error !== 'not_configured'`; V10-CH1, V10-CH2, CH4). **An unreadable stop measurement is a failed read, still a halt** (`artifacts/api-server/src/lib/discoveryStopGate.ts:80#halt = trippedOnlyUnreadable(verdict) ? "stop_unreadable" : "stop_condition";`; V10-SC1, SC1b, SC3). **The trending ranking reads its window to the end, and an incomplete one is `partial`** (`artifacts/api-server/src/routes/hashtags.ts:174#let windowIncomplete = !usageRead.complete;`, `travel-buddy-standalone/app/(tabs)/discovery.tsx:120#const coverage = trendingCoverage(`; V10-HT1, HT1b, HT2–HT11, TP1–TP3). **CompassBuddyRow and the trip map say a failed read** (`travel-buddy-standalone/src/components/compass/CompassBuddyRow.tsx:170#if (items.length === 0 && readState === null) return null;`, `travel-buddy-standalone/app/map/index.tsx:1211#compassRecommendations: tripCompassRecommendations(compassRes),`; BR1, BR1b, BR2, TC1–TC4, TM1–TM3). **Sweep:** a missing or unknown coverage is a failed read (`travel-buddy-standalone/src/services/compassRecommendationsRefusal.ts:23#if (body.refusal) return body.refusal.coverage !== 'partial';`; UC1), the meetup walk says a failed read (`artifacts/api-server/src/compass/CompassSocialEngine.ts:691#collectPresence(sc, viewerId, hidden, unread);  // §108: the meetup walk says a failed read`; MO1–MO5), and the buddy arm names a failed or cut read (`artifacts/api-server/src/routes/compass.ts:3693#buddyFailed.push("rent_buddy_availability");`; BA1–BA4). |
+
+**Headline.** DV-83 moves W → C. `check:census-integrity` counts **C 101 / W 85 / N 2 / X 0** over 188: CONSTRUCTED 186 / 188 = **98.9 %**, CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged. The move is on controlled evidence and awaits independent re-verification.
+
+### 108.14 Left open, and what would turn this red
+
+- **Seen and not built (other owners; D-W11X2-85).** The emerging-trails leg of GET /v1/discovery/trending/explanations (flag seeded FALSE); the trending ranking's post-limit block filter; the admin hashtag merge's unbounded read; GET /circle presence's wording over a withheld member; the trip map's other five sources.
+- **Upheld and unchanged.** CompassRediscover's collapse; the hashtag feed's `hasMore`; /hashtags/suggestions; `app/discover.tsx`'s people search; the Compass live, sense, autopilot and me-context gates.
+- **What would turn DV-83 red again:**
+  - a consent-batch read whose failure is not `unavailable`, or a presence walk or tool that says "nobody" or a complete list over one (CB*, V10-HP*, HP4, HP5, V10-WT*, MO*);
+  - a Telegraph answer drawn for another city over the viewer's unread location (V10-TC1, TC1b, TC2);
+  - a chip hidden as "off" over a transport failure (V10-CH1, V10-CH2);
+  - an unreadable stop measurement answered as the feature being off (V10-SC1, SC1b);
+  - a trending, buddy or trip-map list served as complete over a cut or failed read (V10-HT1, HT*, TP*, BA*, BR*, TC*, TM*);
+  - any path §107.12 lists.
+
+### 108.15 Results at the final code commit (`63af227d5`)
+
+- **`int-guards.sh /home/user/wt-v8`**: all 24 exit 0. `typecheck:tests` is at 863 against a baseline of 863.
+
+```
+typecheck exit=0
+typecheck:tests exit=0
+check:test-registration exit=0
+check:census-integrity exit=0
+check:doc-citations exit=0
+check:citation-targets exit=0
+check:citation-symbols exit=0
+check:census-freshness exit=0
+check:census-scope-coverage exit=0
+check:census-row-move-labels exit=0
+check:migration-prefixes exit=0
+check:production-drift exit=0
+check:writerless-reads exit=0
+check:schema-references exit=0
+check:enum-literals exit=0
+check:flag-polarity exit=0
+check:discovery-query-paths exit=0
+check:route-auth-gate exit=0
+check:api-prefix exit=0
+check:async-handlers exit=0
+check:frozen-dir exit=0
+check:telegraph-inventory exit=0
+check:guard-coverage exit=0
+check:unissued-supabase-writes exit=0
+```
+
+- **api-server node:test** (Node v24.21.0, `SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy`), 317 files: every `src/test/discovery*`, `compass*`, `trail*`, `hashtag*`, `circle*`, `adminTrails` and map-search suite, the five new §108 suites among them; `hashtags`, `flagPhantomReads`, `emergencyFlags`, the presence, meetup, block-gate, locate-friends and Telegraph shared-context suites (the consent batch §108 changes); `securityCheckSuite`, `uncheckedSupabaseReads`, `entryWiringNotCommentedOut` and `layoverSurfaceErrorBinding`. Result: `ℹ tests 5578 · ℹ suites 1237 · ℹ pass 5578 · ℹ fail 0 · ℹ cancelled 0`. The live-DB suites are left out, as in §107.13 (`compassMemoryClientBoundary`, `discoveryPlaceWriteBoundary`, `meetupRlsLive`). The run was at `fa5dd2c01`; `63af227d5` changes only one client test's file read.
+  - Alone: `securityCheckSuite` 17/17, `uncheckedSupabaseReads` 69/69, `entryWiringNotCommentedOut` 4/4, `layoverSurfaceErrorBinding` 5/5.
+  - `node --import tsx/esm src/scripts/checkUncheckedSupabaseReads.ts`: "no NEW in-scope read ignores its .error", no stale allowlist entry.
+  - The write-path-columns replica (`uacheck.mts`): `OK (117 tracked)`.
+- **Client.**
+  - `pnpm run -s check:all`: `✔ ALL CHECKS PASSED`.
+    - Node suites: `ℹ tests 7404 · ℹ pass 7404 · ℹ fail 0`.
+    - Component suites: `Test Suites: 790 passed, 790 total · Tests: 5036 passed, 5036 total`.
+    - Web suites: `4 passed, 12 tests`.
+    - `typecheck:tests` is at 173 against a baseline of 173.
+  - `node scripts/check-route-registry.mjs`: "OK. All 217 screen file(s) are represented in PORTAVA_ROUTES and all 9 layout file(s) are represented in PORTAVA_LAYOUT_FILES."
+- **The verifier's v10 probes**, copied in unchanged and deleted after: 15 of 15 server (V10-HP0..3, V10-SM6, V10-WT1, V10-WT2, V10-TC0, V10-TC1, V10-SC0, V10-SC1, V10-HT0, V10-HT1, V10-CC0, V10-CC7) and 3 of 3 client (V10-CH0..2) pass.
+
+## §109 — DV-83 round 12 (lane W11-X2)
+
+### 109.1 Integrator: DV-83 held at W after independent re-verification at `1023bc3d4`
+
+*Integrator, 2026-09-29. §108 was merged with main at `1023bc3d4` (PR #530's head). An independent verifier then checked that tree: it re-ran every round-10, round-9, round-8 and round-7 probe unchanged, wrote new ones (`zz-v11-*`), and restored every mutated file byte-identical, checked by sha256. Its report is the round-11 verifier's `dv83-r11-verifier.md`.*
+
+- **Confirmed.** §108.1's six breaks, SM6, §107.1's five, §105.1's four and round 7's three are closed in behaviour: the v10, v9, v8 and v7 probes re-run unchanged all pass (50 server, 15 client). 24 of 32 mutations are killed; of the eight survivors, seven are argued equivalent or outside DV-83.
+- **Found: two paths that break the criterion's wording, each shown by a probe that fails against this tree (6 red probes).**
+  1. **BK1. The trip page's Compass Brief never branches on coverage (clauses c, d).** `CompassTripBrief` reads GET /compass/recommendations?surface=trip as `res.ok && res.data` alone, swallows a transport failure, and hides itself whenever its list is empty. A refused (`nothing`) answer and a network error are hidden exactly like "no results"; a `partial` answer carrying only the static safety note is drawn as a complete brief; and a late answer for one trip is drawn on another trip's brief, because the effect has no latest-request guard (V11-TB1, V11-TB2, V11-TB3, V11-TB4 red; V11-TB0 the control) (`travel-buddy-standalone/src/components/TripPage.tsx`). The static consumer guard derives its carriers from `services/discovery.ts` alone, so it could not see this consumer.
+  2. **BK2. `get_circle_activity` states a failed read as a fact (clause a).** `buildStructuredCompassContext` reads `circles`, `circle_memberships` and the member handles as `{ data }` alone and catches every failure as "no circle context", so the tool answers the model "The user is not in any circles." over a failed read — the `get_whos_around` defect on the sibling tool (V11-CA1, V11-CA2 red; V11-CA0 the control) (`artifacts/api-server/src/compass/CompassStructuredContext.ts`, `artifacts/api-server/src/compass/CompassTools.ts`).
+- **Ruling not honest.** D-W11X2-82's "every /compass/recommendations consumer … reads through [the predicate]", repeated by §108.13 clause 4: the trip page's Compass Brief is a consumer and did not (BK1).
+- **Surviving mutation.** V3 (GET /hashtags/trending's page read without its `id` tie-break) is non-equivalent and sits on a DV-83 line: over rows sharing one `created_at`, LIMIT/OFFSET pages may disagree, so a skewed ranking is served as complete. V11-HTT1 is green on this tree and red under it; no round-11 fake models ties (`artifacts/api-server/src/routes/hashtags.ts`). V4, V8, V9, V10, V21, V28 and V29 are argued equivalent or outside DV-83, and C8b is confirmed equivalent.
+- **Upheld.** `readNameVisibilitySet` after the merge (V11-NV0, V11-NV1 green), and every ruling of D-W11X2-85 except the consumer claim above.
+- **Next.** A round-12 lane closes the two paths with the verifier's probes as failing-first tests, registers the Compass carriers in the static guard, pins V3, records the argued survivors, corrects the ruling, and sweeps the Discovery and Compass read surfaces again — the client consumers of Compass endpoints and the Compass tools' "nothing found" sentences in particular. The row moves only after that.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | C | **W** | §108 closes §108.1's six paths, confirmed at `1023bc3d4` (§109.1). Two paths still present a failed or partial read as empty, complete, over the wrong rows or as a fact: the trip page's Compass Brief, which never branches on coverage and has no latest-request guard (`travel-buddy-standalone/src/components/TripPage.tsx`), and `get_circle_activity`, which tells the model a failed circle read is "not in any circles" (`artifacts/api-server/src/compass/CompassStructuredContext.ts`). The surviving mutation V3 is unpinned (`artifacts/api-server/src/routes/hashtags.ts`). D-W11X2-82's "every consumer" is not honest. |
+
+Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
+
+### 109.2 Round 12: what this lane did
+
+*Written 2026-09-29 by lane W11-X2 (round 12) on `disc-w11-x2-r12`, from `1023bc3d4` and §109.1. It closes §109.1's two breaks, each with the verifier's probe copied in as a failing-first test, makes the static consumer guard see the carriers it could not, pins the surviving mutation V3, records the seven argued survivors, corrects the ruling the verifier found not honest (D-W11X2-82 and §108.13 clause 4), and sweeps the Discovery and Compass read surfaces again — the client consumers of Compass endpoints and the Compass tools' "nothing found" sentences in particular — for the seven defect classes: an unchecked `.error`; a catch that answers empty or a default; an unread flag, stop or measurement read as off; a refusal cached or rendered as empty or complete; a partial result with no incomplete line; an unbounded read ranked as complete; a stale-response race. The sweep closed four more paths. Decisions are in `docs/architecture/discovery-decision-register.md`, section "W11-X2 round 12", D-W11X2-86 to D-W11X2-91.*
+
+*No migration and no new flag. Each change alters output only when a read failed, was refused, was partial or was superseded; with every read healthy, complete and current, every served byte and every rendered brief is unchanged (V11-TB0, TB8, the `CompassTripBrief.attention` suite, V11-CA0, CAc, TTc, GRc, PDc, V11-HTT0). Every edit in a cited file is line-neutral: lines are changed in place, and new code is appended at a file's foot. `src/index.ts` is untouched.*
+
+*All evidence is controlled: in-process tools over fake worlds, the real routes over a fake client, and jest over the real component. None of it is production evidence, and no client build carrying the change has shipped.*
+
+### 109.3 The trip page's Compass Brief branches on coverage (§109.1 BK1; D-W11X2-86)
+
+- **Client.** `CompassTripBrief` composes its answer through round 11's `tripCompassRecommendations` / `tripCompassReadState` — the shared predicate (`travel-buddy-standalone/src/components/TripPage.tsx:810#if (cancelled) return; setReadState(tripCompassReadState(res)); setItems(tripCompassRecommendations(res));`). A failed, refused or unknown-coverage read is "Couldn’t load the Compass Brief just now." with Retry, never the hidden brief (`travel-buddy-standalone/src/components/TripPage.tsx:844#)}{!loading && readState === 'failed' ? (<View style={cb.loadingRow} testID="compass-brief-failed">`); a `partial` read keeps its rows — the safety note included — under `listPartialNotice('recommendations')`; an answered empty list still hides the brief (`travel-buddy-standalone/src/components/TripPage.tsx:824#if (fetched && items.length === 0 && !loading && !suppressed && readState === null) return null;`).
+- **Only the latest request writes.** The effect resets the brief on a trip change and is guarded by `cancelled`, so another trip's rows, held-back note, failure or spinner never stay, and a superseded request never ends the newer one's loading (V11-TB4, TB7, TB9–TB14).
+- **D-W11X2-82 and §108.13 clause 4 corrected**: the list of /compass/recommendations consumers was assembled by hand and missed this one; §109.4 makes it a check.
+
+### 109.4 The static guard sees every carrier (D-W11X2-87)
+
+The guard derived its carriers from `services/discovery.ts` alone. It now also derives the GET /compass/recommendations carriers from `services/compass.ts` and the GET /hashtags/trending carrier from `services/hashtag.ts`, pins them (G1), registers every consumer — 16 files, five new — with its branch, partial branch and refusal proof suite (G2–G7), and checks each consumer's branch structurally: a raw-body consumer calls the shared predicate, a matches consumer keeps a failed and a partial state over a service that still reads through `compassMatchesFromBody`, and a trending consumer reads the refusal (G9) (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts:383#it('G9.`). Against the pre-fix brief it fails G4, G7, G8 and G9; a new unregistered consumer of either carrier fails G2, G6 and G9 (mutations G2, G3).
+
+### 109.5 `get_circle_activity` and the structured context say a failed read (§109.1 BK2; D-W11X2-88)
+
+- **Server.** Each read in `buildStructuredCompassContext` checks its `.error`, and the context carries an `unread` marker (circles, circle members, bookings, stamps) only when a read failed (`artifacts/api-server/src/compass/CompassStructuredContext.ts:140#if (ownedErr || membershipsErr) markUnread(result, "circles");`, `artifacts/api-server/src/compass/CompassStructuredContext.ts:377#export interface StructuredContextUnread {`). `get_circle_activity` says membership could not be checked when nothing could be read, keeps the circles it found and says the list or the member lists may be incomplete when a later read failed (`artifacts/api-server/src/compass/CompassTools.ts:1159#: circlesUnread ? { circles: [], info: CIRCLES_UNREAD_INFO }`). /compass/ask's prompt says an unread section instead of omitting it (`artifacts/api-server/src/compass/CompassStructuredContext.ts:331#lines.push(...unreadContextLines(ctx)); return lines;`).
+- **An older test corrected.** `compass-structured-context`'s thrown-client case asserted the bare empty context; it now asserts the same sections marked unread.
+
+### 109.6 The sweep (D-W11X2-89, D-W11X2-91)
+
+- **Closed: four more paths, all Compass tools stating a failed read to the model as a fact.**
+  1. **Eight trip tools** (freedom windows, route chain, today, crew, live conditions, commitments, saved ideas, opportunities) dropped `toolGetCurrentTrip`'s "Trip context unavailable: …" and said "No active or upcoming trip." over an unread trips read; they pass it on (`artifacts/api-server/src/compass/CompassTools.ts:1364#return id ? { id } : { info: noCurrentTripInfo(current) };`).
+  2. **The search tools' priority-switch reading** said the same; it says the current trip could not be read.
+  3. **`get_group_recommendation`** read its circles and members as `{ data }` alone: a failed circle read was "not a member of a circle by that name", and a failed member read ranked for part of the group. It says the circles could not be checked, and makes no recommendation over an unread member list, fail closed (`artifacts/api-server/src/compass/CompassTools.ts:2004#if (membersErr) return { error: GROUP_MEMBERS_UNREAD_INFO };`, `artifacts/api-server/src/compass/CompassTools.ts:2020#if (tripMembersErr) return { error: GROUP_MEMBERS_UNREAD_INFO };`). The five `resolveGroupMemberIds` entries of the unchecked-reads ledger are deleted.
+  4. **`get_place_details`** answered a failed read "Place not found."; it says the place could not be read (`artifacts/api-server/src/compass/CompassTools.ts:1113#if (error) return { place: null, info: PLACE_UNREAD_INFO };`).
+- **Swept and found sound** (D-W11X2-91): AskCompassBar, CompassPassportSuggestions, CompassTravelerRow, CompassBuddyRow, the city-confidence badge, the Telegraph tray and chip, the Compass home, the search tools' own reads, and `get_travel_compatibility`'s uniform privacy answer.
+- **Ruled, not changed** (D-W11X2-91): surface=trip's `partial` over only the static tips — the tips are real content, now drawn under the incomplete line; `nothing` would drop the safety note from every consumer.
+- **Seen, not built; other owners** (D-W11X2-91): CompassStatusCard's reward card; the structured context's by-design caps; the Compass memory screens and the autopilot card.
+
+### 109.7 The survivors (D-W11X2-90)
+
+- **V3 is pinned** by V11-HTT0/HTT1, copied into `hashtagsTrendingComplete`, whose fake now models Postgres ties (`artifacts/api-server/src/test/hashtagsTrendingComplete.test.ts:228#it("V11-HTT1`); re-applied, V3 is killed.
+- **Recorded equivalent or outside DV-83**, with the verifier's reasons, each re-read against the code: V4, V8, V9, V10, V21, V28, V29 (the register gives each). **C8b** is equivalent, confirmed.
+
+### 109.8 Tests, seen red, and mutations
+
+**Seen red first**, run against the code before each fix (logs in the lane's `r12/` scratch directory, `red-*.log`):
+
+| Area | Red | Controls, green |
+|---|---|---|
+| The trip page's Compass Brief | V11-TB1, V11-TB2, V11-TB3, V11-TB4, TB5, TB6, TB9 | V11-TB0, TB7 (no failed line existed), TB8 |
+| The static guard | G4, G7, G8, G9 against the pre-fix brief | G1–G3, G5, G6 |
+| `get_circle_activity` and the context | V11-CA1, V11-CA2, CA3–CA8 | V11-CA0, CAc |
+| Sweep: the tools | TT1, TT2, GR1–GR4, PD1 | TTc, GRc, PDc |
+
+**Written against the fixed code:** TB10–TB14, CA9, GR5, GR6, V11-HTT0/HTT1 (green at `1023bc3d4`: they pin V3). Each is shown to bite by the mutation that removes the line it pins (K8a, K8b, K8c, K10, K12, S14, T15, T14b, V3).
+
+**Mutations.** Each was applied alone, its pin suites were run (13 api-server suites; `CompassTripBrief.failedRead`, `CompassTripBrief.attention` and `CompassBuddyRow.failedRead` under jest and the static guard under node on the client), and the file was restored byte-identically; the sha256 matched on every one. Runner and logs: the lane's `r12/muts/` scratch directory (`muts12.py`, `run12.py`, `run12.out`).
+
+- **Client, 19 applied.** The brief K1–K13 (the `cancelled` guard in the answer, the catch and the finally; the read state; the predicate; the hide; the failed and partial lines; each reset; the retry dependency and button; the no-trip branch; the cleanup); the guard's reach G1 (a matches carrier without `compassMatchesFromBody`), G2 and G3 (a new unregistered consumer of each carrier, created and deleted).
+- **Server, 36 applied.** The context S1–S14 (each read's mark, each catch, the prompt line and each of its sentences); the tools T1–T18 (the circle tool's three answers, the unread test, each of the eight trip sites and the switch reading, place details, the group recommendation's circle, joined, viewer-memberships, member and trip-member reads); V3.
+- **Result: 55 applied, 55 killed.** K12, S14 and T14b survived the first run; TB14, CA9 and GR6 now pin them, and re-applied they are killed. No mutation is argued equivalent.
+
+### 109.9 Checks
+
+- **Line-neutral in every cited file**, so every anchored citation still lands on its text: `check:doc-citations`, `check:citation-targets` and `check:citation-symbols` are clean. `travel-buddy-standalone/src/components/TripPage.tsx:16#import { resolveCompassTitle, formatCompassSubtitle }` and `travel-buddy-standalone/src/components/TripPage.tsx:840#<Text style={cb.attentionNote} testID="compass-brief-attention">`, and the guard's cited `it('G1.`, `it('G2.`, `it('G7.` and `it('G8.` lines, keep their text.
+- **Scope.** `TripPage.tsx` and `CompassStructuredContext.ts` joined this census's `CENSUS_SCOPE` with the hold (§109.1); §109's three new suites join it here. `compass/CompassTools.ts` stays NOT-GRADED here (§56.3), so no verdict row cites it. The acknowledgement for every census that counts a changed file carries a §109 paragraph with its "why it cannot move a verdict": census-discovery, census-trips, census-compass, census-sensing, census-input-intelligence, census-layover, census-highlights-memories, census-trust, census-telegraph and census-passport.
+- **Suites.** The two new api-server suites are on the `test` line (`check:test-registration`); the new client suite is a jest component suite, not on KNOWN_BROKEN.
+- **Allowlist.** The five `resolveGroupMemberIds` entries of `UNCHECKED_READS_ALLOWLIST.json` are deleted; the checker reports no stale entry.
+- **Write-path select sites.** No `.select()` argument changed; the write-path-columns replica prints OK.
+
+### 109.10 DV-83, restated
+
+§109.1's two breaks are closed, each with the verifier's probe red first and green now. V3 is pinned and killed; the seven argued survivors and C8b are recorded. The ruling the verifier found not honest is corrected, and the guard now checks what it only listed. The sweep closed four more paths. Every clause of DV-83's criterion holds on every path this lane examined:
+
+1. **Producers send the refusal envelope or a named failure.** The Compass tools name a failed read to the model — circle membership, the current trip, the group's circles and members, a place — instead of stating an absence.
+2. **Nothing refused or partial is cached as complete.** No path in §109 caches; no cache changed.
+3. **Nothing refused is rendered as empty, as complete, or over the wrong rows.** The trip page's brief says a failed read with Retry, a partial read under the incomplete line, and draws only its latest trip's answer.
+4. **Consumers branch on coverage.** Every consumer of a GET /compass/recommendations or GET /hashtags/trending carrier branches through the shared predicate, and the static guard derives and checks them (G1, G2, G9), not a hand-kept list.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§109.1's two breaks are closed, each with its verifier probe red first; V3 is killed; the static guard derives and checks every Compass recommendations and trending consumer; the sweep closed four more paths; 55 mutations: 55 killed. CONTROLLED EVIDENCE ONLY — this row still awaits independent re-verification.** **The trip page's Compass Brief branches on coverage and writes only its latest answer** (`travel-buddy-standalone/src/components/TripPage.tsx:810#if (cancelled) return; setReadState(tripCompassReadState(res)); setItems(tripCompassRecommendations(res));`, `travel-buddy-standalone/src/components/TripPage.tsx:844#)}{!loading && readState === 'failed' ? (<View style={cb.loadingRow} testID="compass-brief-failed">`; V11-TB1..TB4, TB5–TB14). **Every consumer is derived and checked** (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts:383#it('G9.`; G1, G2, G9). **A failed circle read is never "not in any circles"** (`artifacts/api-server/src/compass/CompassStructuredContext.ts:140#if (ownedErr || membershipsErr) markUnread(result, "circles");`, `artifacts/api-server/src/compass/CompassStructuredContext.ts:331#lines.push(...unreadContextLines(ctx)); return lines;`; V11-CA1, V11-CA2, CA3–CA9). **The trending pages are a partition over ties** (`artifacts/api-server/src/test/hashtagsTrendingComplete.test.ts:228#it("V11-HTT1`; V3 killed). **Sweep:** the trip tools, the switch reading, the group recommendation and place details say an unread read (`artifacts/api-server/src/test/compassToolsUnreadFacts.test.ts:41#it("TT1`; TT1, TT2, GR1–GR6, PD1). |
+
+**Headline.** DV-83 moves W → C. `check:census-integrity` counts **C 101 / W 85 / N 2 / X 0** over 188: CONSTRUCTED 186 / 188 = **98.9 %**, CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged. The move is on controlled evidence and awaits independent re-verification.
+
+### 109.11 Left open, and what would turn this red
+
+- **Seen and not built (other owners; D-W11X2-91).** CompassStatusCard's reward card; the structured context's by-design caps; the Compass memory screens and the autopilot card; everything §108.14 lists.
+- **Ruled and unchanged.** surface=trip's `partial` over only the static tips (D-W11X2-91); every D-W11X2-85 ruling other than D-W11X2-82's consumer claim.
+- **What would turn DV-83 red again:**
+  - a /compass/recommendations or trending consumer that renders a refusal as empty or complete, draws another request's rows, or is not registered with the guard (V11-TB*, TB5–TB14, G2, G9);
+  - a Compass tool that states a failed read as a fact — "not in any circles", "No active or upcoming trip.", "not a member of a circle by that name", "Place not found." — or recommends over a partial group (V11-CA*, CA3–CA9, TT*, GR*, PD1);
+  - a trending window whose pages over tied timestamps are served as complete (V11-HTT1);
+  - any path §108.14 lists.
+
+### 109.12 Results at the final code commit (`9c25dad5b`)
+
+The code is final at `9c25dad5b`; the census commit that follows changes only this census, the register, `CENSUS_STALENESS_ACKNOWLEDGED.json` and `CENSUS_SCOPE`, and the guards below were run again on it.
+
+- **`int-guards.sh /home/user/wt-v8`**: all 24 exit 0. `typecheck:tests` is at 863 against a baseline of 863.
+
+```
+typecheck exit=0
+typecheck:tests exit=0
+check:test-registration exit=0
+check:census-integrity exit=0
+check:doc-citations exit=0
+check:citation-targets exit=0
+check:citation-symbols exit=0
+check:census-freshness exit=0
+check:census-scope-coverage exit=0
+check:census-row-move-labels exit=0
+check:migration-prefixes exit=0
+check:production-drift exit=0
+check:writerless-reads exit=0
+check:schema-references exit=0
+check:enum-literals exit=0
+check:flag-polarity exit=0
+check:discovery-query-paths exit=0
+check:route-auth-gate exit=0
+check:api-prefix exit=0
+check:async-handlers exit=0
+check:frozen-dir exit=0
+check:telegraph-inventory exit=0
+check:guard-coverage exit=0
+check:unissued-supabase-writes exit=0
+```
+
+- **api-server node:test** (Node v24.21.0, `SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy`), 369 files: every `src/test/discovery*`, `compass*`, `trail*`, `hashtag*`, `circle*`, `adminTrails` and map-search suite, the two new §109 suites among them; the presence, meetup, block-gate, locate-friends, Telegraph, user-search, `flagPhantomReads` and `emergencyFlags` suites; `compass-structured-context`, `memoryCompassLaneRepairs` and `ageGateGroupTravel` (touched); `securityCheckSuite`, `uncheckedSupabaseReads`, `entryWiringNotCommentedOut` and `layoverSurfaceErrorBinding`. It is a superset of the round-11 verifier's 364. Result: `ℹ tests 6924 · ℹ suites 1522 · ℹ pass 6924 · ℹ fail 0 · ℹ cancelled 0`. The live-DB suites are left out (`compassMemoryClientBoundary`, `discoveryPlaceWriteBoundary`, `tripKernelLive`, `meetupRlsLive`).
+  - Alone: `securityCheckSuite` 17/17, `uncheckedSupabaseReads` 69/69, `entryWiringNotCommentedOut` 4/4, `layoverSurfaceErrorBinding` 5/5.
+  - `node --import tsx/esm src/scripts/checkUncheckedSupabaseReads.ts`: "no NEW in-scope read ignores its .error … 137 in scope (1 benign, 136 ledgered known defects: 0 FAIL-OPEN / 132 FAIL-CLOSED / 4 UNCLASSIFIED)", no stale allowlist entry (141 ledgered before; the five `resolveGroupMemberIds` sites are closed).
+  - The write-path-columns replica (`uacheck.mts`): `OK (117 tracked)`.
+- **Client.**
+  - `pnpm run -s check:all`: `✔ ALL CHECKS PASSED`.
+    - Node suites: `# tests 7491 · # pass 7491 · # fail 0`.
+    - Component suites: `Test Suites: 825 passed, 825 total · Tests: 5292 passed, 5292 total`.
+    - Web suites: `4 passed, 12 tests`.
+    - `typecheck:tests` is at 173 against a baseline of 173.
+  - `node scripts/check-route-registry.mjs`: "OK. All 231 screen file(s) are represented in PORTAVA_ROUTES and all 9 layout file(s) are represented in PORTAVA_LAYOUT_FILES."
+- **The verifiers' probes**, copied in unchanged and deleted after: server 37 of 37 (v11: V11-CA0..CA2, V11-TS0, V11-HTT0, V11-HTT1, V11-NV0, V11-NV1; v10: V10-HP0..3, V10-SM6, V10-WT1, V10-WT2, V10-TC0, V10-TC1, V10-SC0, V10-SC1, V10-HT0, V10-HT1, V10-CC0, V10-CC7; v9: V9-H0, HC1, HB1, HB2, HW1, TG0–TG2, CC1, MS0, MS1, KS0, KS1, SM28) and client 11 of 11 (V11-TB0..TB4, V10-CH0..2, V9-TT0..2).
+- **Regression: the round-11 verifier's 32 mutations** (V1–V32), re-run from a copy of its runner and pin list (the lane's `r12/v11muts/`): 25 killed, V3 among them; the seven survivors are exactly V4, V8, V9, V10, V21, V28 and V29, the set §109.7 records as equivalent or outside DV-83. The sha256 matched on all 12 mutated files.
+
+## §110 — DV-83 round 13 (lane W11-X2)
+
+### 110.1 Integrator: DV-83 held at W after independent re-verification at `202617ff7`
+
+*Integrator, 2026-09-29. §109 was merged with main (`d63780899`) at `202617ff7` (PR #530's head). An independent verifier then checked that tree: it re-ran every round-11, round-10, round-9, round-8 and round-7 probe unchanged, wrote new ones (`zz-v12-*`, and four guard-reach fixtures), and restored every mutated file byte-identical, checked by sha256. Its report is the round-12 verifier's `dv83-r12-verifier.md`.*
+
+- **Confirmed.** §109.1's two breaks, V3, and every earlier round's breaks are closed in behaviour: the v11, v10, v9, v8 and v7 probes re-run unchanged all pass (58 server, 20 client). 36 of 41 mutations are killed; S9 and H5 are argued equivalent.
+- **Found: four paths that break the criterion's wording, each shown by a probe that fails against this tree (9 red probes).**
+  1. **BK1. The Compass search tools state a failed COMPASS_% flag read as an empty catalog (clause a).** `rankToolCandidates` keeps `runPipeline`'s `results` and drops its `flagsUnreadable` marker, so `search_places`, `search_events` and `get_group_recommendation` answer "No matching …" when every candidate was withheld by the fail-safe flags (V12-SP1, V12-SE1 red; V12-SP0, V12-SE0 the controls) (`artifacts/api-server/src/compass/CompassTools.ts`).
+  2. **BK2. GET /map/search counts events it withheld unchecked as a complete source (clauses a, c).** Every event row read passes per-event gates that fail closed on a failed read — `checkEventEligibility`'s ban read and the friends-only `user_friendships` read — and the source is reported `{ refusal: null }` over them (V12-MS1, V12-MS2 red; V12-MS0 the control) (`artifacts/api-server/src/routes/mapSearch.ts`).
+  3. **BK3. The structured context's circle caps make a partial read a fact (clause a).** The membership read is an unordered `.limit(10)` over rows of any status, the `accepted` filter runs after the limit, and five circles are kept with no word that more exist, so `get_circle_activity` can say "The user is not in any circles." or serve five of six circles as the list (V12-CC1, V12-CC2 red; V12-CC0 the control) (`artifacts/api-server/src/compass/CompassStructuredContext.ts`).
+  4. **BK4. GET /circle/compass-suggestions states failed reads as facts (clause a).** Its per-context reads are `{ data }` alone: a failed presence read is "Enable location sharing" to a traveller who is sharing, and a failed meeting-point read is "No meeting point set yet" (V12-CS1, V12-CS2 red; V12-CS0 the control) (`artifacts/api-server/src/routes/circle.ts`).
+- **Rulings not honest.** D-W11X2-91's "by design" ruling on the structured context's caps (BK3), and §109.4 / §109.10's "the static guard derives and checks every Compass recommendations and trending consumer": a namespace import, a re-export, an awaited dynamic import and a second raw call site in a registered file each escape it (GH1–GH4).
+- **Surviving mutations.** H2, H3 and H4 (the `id` tie-break dropped from the trending fallback window, the post-usage read and the event-usage read) are non-equivalent and sit on DV-83 lines; the verifier's V12-HTT2–4 are green on this tree and red under them (`artifacts/api-server/src/routes/hashtags.ts`).
+- **Upheld.** surface=trip's `partial` over the static tips alone, and the D-W11X2-85 items the report lists.
+- **Next.** A round-13 lane closes the four paths with the verifier's probes as failing-first tests, pins H2–H4, closes GH1–GH4, corrects the rulings, and sweeps the Discovery and Compass read surfaces again. The row moves only after that.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | C | **W** | §109 closes §109.1's two paths, confirmed at `202617ff7` (§110.1). Four paths still present a failed or partial read as empty, complete or as a fact: the Compass search tools over an unread COMPASS_% flag read, GET /map/search's events source over unread per-event gates (`artifacts/api-server/src/routes/mapSearch.ts`), the structured context's capped, unordered circle read (`artifacts/api-server/src/compass/CompassStructuredContext.ts`), and GET /circle/compass-suggestions' unchecked reads. H2–H4 are unpinned (`artifacts/api-server/src/routes/hashtags.ts`). D-W11X2-91's cap ruling and §109's "every consumer" are not honest. |
+
+Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
+
+### 110.2 Round 13: what this lane did
+
+*Written 2026-09-29 by lane W11-X2 (round 13) on `disc-w11-x2-r13`, from `202617ff7` and §110.1. It closes §110.1's four breaks, each with the verifier's probe copied in as a failing-first test; pins H2–H4; closes the guard's four reach holes with the verifier's fixtures as failing-first tests; fixes the smaller honest states the verifier noted; settles the circle-membership status finding first (census-compass §33), because it decides BR3's predicate; corrects the rulings the verifier found not honest; and sweeps the Discovery and Compass read surfaces again for the same classes — `runPipeline`'s other consumers, `checkEventEligibility`'s callers, and bounded reads whose count or emptiness is stated as a fact. The sweep closed four more paths.*
+
+*No migration and no new flag. Each change alters output only when a read failed, was refused, was partial, was cut at a cap, or (census-compass §33) when a membership row carries the column default; with every read healthy, complete and within its cap, every served byte is unchanged (V12-SP0, V12-SE0, V12-MS0, MSb, MSd, GW0, V12-CC0, CBc, V12-CS0, CSb, FB0, FLc, EDc, CRc, AGc, HGc, TNc, SBc, SAc). Every edit in a cited file is line-neutral: lines are changed in place, and new code is appended at a file's foot. `src/index.ts` is untouched.*
+
+*All evidence is controlled: in-process tools over fake worlds, the real routes over a fake client (and, for census-compass §33, the real writer routes over an in-memory table that applies the column's real default), jest over the real component, and the static guard over an in-memory overlay. None of it is production evidence, and no client build carrying the change has shipped.*
+
+### 110.3 The Compass search tools say an unread flag read (§110.1 BK1; D-W11X2-92)
+
+`rankToolCandidates` now reads `runPipeline`'s marker and answers an EMPTY ranking that carries it (`artifacts/api-server/src/compass/CompassTools.ts:767#const { results, flagsUnreadable } = await runPipeline`), so nothing is offered and the safety gate is never skipped; `search_places`, `search_events` and `get_group_recommendation` (both branches) say Compass could not check its safety settings, never "No matching …" (V12-SP1, V12-SE1, FU1–FU3 red first; V12-SP0, V12-SE0, FUc controls).
+
+### 110.4 GET /map/search names what a gate withheld unchecked (§110.1 BK2; D-W11X2-93)
+
+`loadNearbyEvents` counts the rows its gates withheld because a check could not be read — the friends-only friendship read (`artifacts/api-server/src/routes/mapSearch.ts:114#if (friendshipErr) { withheldUnchecked++; continue; }`) and `checkEventEligibility`'s ban, verified, trust and age arms, now marked `unread` — beside the array, so healthy bodies are byte-identical. /map/search answers `refusal: "event_gates_unreadable"` with `withheldUnchecked` (`artifacts/api-server/src/routes/mapSearch.ts:252#const unchecked = nearbyEventsWithheldUnchecked(events);`); the NOW gateway stops naming the events layer and the inferred-cause report says it could not look. A failed verified read is no longer "This event is for verified users only". The Wall states no absence and is unchanged (V12-MS1, V12-MS2, MS3, MS4, GW1 red first; MS5 and GW2 written against the fixed code; V12-MS0, MSb, MSd, GW0 controls).
+
+### 110.5 Circle membership status settled first (census-compass §33; D-W11X2-94)
+
+`circle_memberships.status` defaults to 'pending' with no CHECK; its only writers never set it; nothing moves it to 'accepted'; every other reader treats the row as the membership. Compass now does too. The evidence, the production-modelling tests (joins written by the real writer routes into a table that applies the real default; CM1–CM3 red first, CM5 written after, CMc control) and what it does not reach (`public.circles` has no writer) are census-compass §33's.
+
+### 110.6 The circle reads say a capped read (§110.1 BK3; D-W11X2-95)
+
+The membership, circle and member reads are ordered and read one past their caps (`artifacts/api-server/src/compass/CompassStructuredContext.ts:137#.order("user_id", { ascending: true }).limit(CIRCLE_READ_CAP + 1),`); a longer list and the shortened display are marked (`artifacts/api-server/src/compass/CompassStructuredContext.ts:197#if (allCircles.length > CIRCLES_SHOWN) markUnread(result, "circlesTruncated");`) and said by `get_circle_activity` and the prompt; "not in any circles" is said only over a complete, error-free read. `get_group_recommendation` says a circle past its cap could not be checked and never recommends over part of a group. **D-W11X2-91's "by design" cap ruling is withdrawn** (V12-CC1, V12-CC2, CB1–CB8 red first; V12-CC0, CBc controls).
+
+### 110.7 GET /circle/compass-suggestions builds no card on a failed read (§110.1 BK4; D-W11X2-96)
+
+Every read's `.error` is bound; a card is built only over inputs that were read (`artifacts/api-server/src/routes/circle.ts:1922#if (callerPresenceRes.error || allPresenceRes.error) { failedSources.add("circle_presence"); return; }`), and the body names the rest (`circle_suggestions_unread`, partial or nothing, with `failedSources`). The home rail draws exactly the cards it is sent and states no absence; it needed no change, and `CircleCompassSuggestions.refusal` pins that (V12-CS1, V12-CS2, CS3–CS5 red first; V12-CS0, CSb controls).
+
+### 110.8 The survivors, the guard's reach, the smaller states, and the sweep (D-W11X2-97 … D-W11X2-104)
+
+- **H2, H3, H4 pinned** by the verifier's V12-HTT2..4, copied into `hashtagsTrendingComplete` (`artifacts/api-server/src/test/hashtagsTrendingComplete.test.ts:257#it("V12-HTT2`). **S9 and H5 equivalent**, the verifier's reasons re-read against the code (D-W11X2-98).
+- **The guard's reach (GH1–GH4; D-W11X2-99).** Namespace imports, re-export modules (named and export-star, chains followed), every dynamic import form, and every raw call site (G9 per site) are now derived and checked; G10 runs the verifier's fixtures through the same derivation (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts:551#it('G10 GH1`). GH1–GH4 were red first; GH0 and the type-only control green throughout. **§109.4 and §109.10's "derives and checks every … consumer" is corrected**: it was not true until this change.
+- **The smaller states (D-W11X2-97).** The bookings' buddy-handle read checks its `.error` (so §109.5's claim now holds); /compass/ask says an unread structured context instead of dropping it; Compass Home counts "N+" events tonight over a cut list; GET /hidden-gems' `tripId` and `submittedBy` branches never answer a failed read as "Trip not found", "not a member" or an empty list.
+- **Sweep, closed (four paths):**
+  1. **`buildFeed` dropped `flagsUnreadable`** (D-W11X2-100): GET /compass/feed served every candidate withheld by the fail-safe map as the feed and WROTE IT TO THE CACHE as complete; the front-load preloaded it. It now refuses (`artifacts/api-server/src/compass/CompassFeedBuilder.ts:678#if (flagsUnreadable) throw new CompassFlagsUnreadableError();`, `artifacts/api-server/src/routes/compass.ts:611#if (err instanceof CompassFlagsUnreadableError) return sendCompassFeedFlagsUnread(res);`).
+  2. **GET /events/:id** (D-W11X2-101) answered an unread gate, and a failed event read, as "not found".
+  3. **Capped tool reads** (D-W11X2-102): `search_events` and the group recommendation said "none" over a read cut at its cap.
+  4. **Served vote and review counts** (D-W11X2-103) were stated over reads PostgREST can cut at db-max-rows silently.
+- **Swept and sound; seen and left for their owners** — D-W11X2-104 lists both.
+
+### 110.9 Tests, seen red, and mutations
+
+**Seen red first**, run against the code before each fix (logs in the lane's `r13/red/` scratch directory):
+
+| Area | Red | Controls, green |
+|---|---|---|
+| The search tools over an unread flag read | V12-SP1, V12-SE1, FU1, FU2 | V12-SP0, V12-SE0, FUc |
+| /map/search and the gateway | V12-MS1, V12-MS2, MS3, MS4, GW1 | V12-MS0, MSb, MSd, GW0 |
+| Circle membership status (census-compass §33) | CM1, CM2, CM3 | CM4 (the fixture is production's), CMc |
+| The circle caps | V12-CC1, V12-CC2, CB1–CB8 | V12-CC0, CBc |
+| Compass circle suggestions | V12-CS1, V12-CS2, CS3, CS4, CS5 | V12-CS0, CSb |
+| The guard's reach | G10 GH1, GH2, GH3, GH3b, GH4 | G10 GH0, GHc |
+| The smaller states | SB1, SA1, TN1, TN2, HG1–HG3 | SBc, SAc, TNc, HGc |
+| Sweep | FB1, FB2, FL1, ED1, ED2, CR1, CR2, AG1–AG3 | FB0, FLc, EDc, CRc, AGc |
+
+**Written against the fixed code**, each shown to bite by the mutation that removes the line it pins: MS5, FU3, GW2, HG4, HG5, CM5, the stronger TN2, G10 GH3c, V12-HTT2..4, and the client `CircleCompassSuggestions.refusal` (green at HEAD: the rail already drew only what it was sent).
+
+**Mutations.** Each was applied alone, its pin suites were run, and the file was restored byte-identically; the sha256 matched on every application. Runner and logs: the lane's `r13/muts/` scratch directory (`muts13.py`, `run13.py`, `run13.out`).
+
+- **71 applied:** the tools' flag arm B1a–B1h; map search, the gateway and the eligibility gate B2a–B2j; the circle caps and the membership predicate B3a–B3s (B3i, B3j, B3o, B3p put the `accepted` filter back at each of its four sites); the suggestions route B4a–B4i; the smaller states S1–S9; the sweep W1–W10; the guard's reach G1–G6.
+- **Result: 70 killed, 1 equivalent.** B3p, S3 and G2 survived the first run; CM5, the stronger TN2 and G10 GH3c now pin them, and re-applied they are killed. **W8 is argued equivalent**: it drops `if (res.error) return false;` from `aggregateReadComplete`, but supabase-js resolves a failed read as `{ data: null, error }`, so the loop over `data ?? []` states no count either way; the arm is belt-and-braces.
+- **The round-12 verifier's 46** (`muts12.py`, re-run from a copy of its runner and pin list, with its tie probe copied in): 43 killed; the three survivors are exactly S9, H5 and H5p, the equivalents D-W11X2-98 records. H2, H3 and H4 are now killed. The sha256 matched on every application.
+- *Naming.* This round's series are B1–B4, S1–S9 (the smaller states), W1–W10 (the sweep) and G1–G6 (the guard's reach); the verifier's S-, G- and H-series are its own and are cited as the verifier's.
+
+### 110.10 Checks
+
+- **Line-neutral in every cited file**, so every anchored citation still lands on its text: `check:doc-citations`, `check:citation-targets` and `check:citation-symbols` are clean. One fold was caught and undone in its own commit: the tonight-count fix had merged two lines of `routes/compassHome.ts` into one, and the hidden-host filter line was restored (idempotent) so no cited line moved.
+- **Scope.** `routes/circle.ts` joined this census's `CENSUS_SCOPE` with the hold (§110.1); §110's new suites join it here. `compass/CompassTools.ts` and `routes/events.ts` stay NOT-GRADED here, so no verdict row cites them. The acknowledgement for every census that counts a changed file carries a §110 paragraph with its "why it cannot move a verdict".
+- **Suites.** Every new api-server suite is on the `test` line (`check:test-registration`); the new client suite is a jest component suite, not on KNOWN_BROKEN.
+- **Allowlist.** `routes/events.ts::checkEventEligibility::profiles.maybeSingle` is deleted from `UNCHECKED_READS_ALLOWLIST.json` (the verified read now binds its error); the checker reports no stale entry.
+- **Write-path select sites.** No write-path `.select()` argument changed; two read sites gained a literal `{ count: "exact" }`; the write-path-columns replica prints OK.
+
+### 110.11 DV-83, restated
+
+§110.1's four breaks are closed, each with the verifier's probe red first and green now. H2–H4 are pinned and killed; S9 and H5 are equivalent. The guard's four reach holes are closed with the verifier's fixtures red first. The two rulings the verifier found not honest are corrected (D-W11X2-91's cap ruling; §109's "every consumer"). The sweep closed four more paths. Every clause of DV-83's criterion holds on every path this lane examined:
+
+1. **Producers send the refusal envelope or a named failure.** /map/search names events withheld unchecked; the circle suggestions name their unread reads; /compass/feed refuses a feed the fail-safe map emptied; the Compass tools name an unread flag read, a capped read and a shortened circle list instead of stating an absence.
+2. **Nothing refused or partial is cached as complete.** /compass/feed no longer writes the fail-safe feed to its cache, and the front-load no longer preloads it (FB2, FL1).
+3. **Nothing refused is rendered as empty, as complete, or over the wrong rows.** The home rail draws only cards built over reads that succeeded; the map gateway stops naming a layer a gate withheld unchecked.
+4. **Consumers branch on coverage**, and the static guard derives every consumer in every import form and checks every raw call site (G1, G2, G9, G10).
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§110.1's four breaks are closed, each with its verifier probe red first; H2–H4 are killed; the guard's reach holes GH1–GH4 are closed; the sweep closed four more paths; 71 mutations: 70 killed, 1 equivalent (W8). CONTROLLED EVIDENCE ONLY — this row still awaits independent re-verification.** **An unread flag read is never an empty catalog** (Compass tools; D-W11X2-92; V12-SP1, V12-SE1, FU1–FU3). **Map search names events withheld unchecked** (`artifacts/api-server/src/routes/mapSearch.ts:114#if (friendshipErr) { withheldUnchecked++; continue; }`, `artifacts/api-server/src/routes/mapSearch.ts:252#const unchecked = nearbyEventsWithheldUnchecked(events);`; V12-MS1, V12-MS2, MS3–MS5, GW1, GW2). **A capped circle read is said, never the whole list** (`artifacts/api-server/src/compass/CompassStructuredContext.ts:197#if (allCircles.length > CIRCLES_SHOWN) markUnread(result, "circlesTruncated");`; V12-CC1, V12-CC2, CB1–CB8). **The circle suggestions build no card on a failed read** (`artifacts/api-server/src/routes/circle.ts:1922#if (callerPresenceRes.error || allPresenceRes.error) { failedSources.add("circle_presence"); return; }`; V12-CS1, V12-CS2, CS3–CS5). **The trending pages are a partition on every paged read** (`artifacts/api-server/src/test/hashtagsTrendingComplete.test.ts:257#it("V12-HTT2`). **The guard sees every consumer** (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts:551#it('G10 GH1`). **Sweep:** the Compass feed's fail-safe build is refused and never cached (`artifacts/api-server/src/compass/CompassFeedBuilder.ts:678#if (flagsUnreadable) throw new CompassFlagsUnreadableError();`), GET /events/:id, the capped tool reads, the served vote and review counts. |
+
+**Headline.** DV-83 moves W → C. `check:census-integrity` counts **C 101 / W 85 / N 2 / X 0** over 188: CONSTRUCTED 186 / 188 = **98.9 %**, CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged. The move is on controlled evidence and awaits independent re-verification.
+
+### 110.12 Left open, and what would turn this red
+
+- **Seen and not built (other owners; D-W11X2-104).** `rankToolCandidates`' unranked fallback on a thrown pipeline or a null profile (a Compass safety question); `public.circles` has no writer (census-compass §33); the SQL `in_accepted_circle`; the media world's and the call gateway's reading of an unread eligibility check; the temporal gateway's forecast over a failed events read; everything §109.11 lists.
+- **Ruled and unchanged.** surface=trip's `partial` over the static tips, and its "Some … couldn't be loaded" wording (D-W11X2-104); every D-W11X2-85 ruling the verifier upheld.
+- **Argued, not built.** `checkEventEligibility`'s staff-role read and its two-state block check (D-W11X2-93).
+- **What would turn DV-83 red again:**
+  - a Compass tool that states an unread flag read, a capped read or a shortened circle list as "none" or as the whole list (V12-SP1, V12-SE1, FU1–FU3, CR1, CR2, V12-CC1, V12-CC2, CB2–CB8);
+  - an events source, map layer or cause report that is complete over rows a gate withheld unchecked (V12-MS1, V12-MS2, MS3–MS5, GW1, GW2);
+  - a Compass circle suggestion built on a read that failed (V12-CS1, V12-CS2, CS3–CS5);
+  - a Compass feed built on the fail-safe flag map served, cached or preloaded as the feed (FB1, FB2, FL1);
+  - a consumer of a Compass or trending carrier the guard cannot see, or a raw call site that skips the predicate (G10);
+  - any path §109.11 lists.
+
+### 110.13 Results at the final code commit (`701b0a885`)
+
+The code is final at `701b0a885`; the census commit that follows changes only this census, census-compass (§33), the register, `CENSUS_STALENESS_ACKNOWLEDGED.json` and `CENSUS_SCOPE`, and the guards below were run again on it.
+
+- **`int-guards.sh /home/user/wt-v8`**: all 24 exit 0. `typecheck:tests` is at 863 against a baseline of 863.
+
+```
+typecheck exit=0
+typecheck:tests exit=0
+check:test-registration exit=0
+check:census-integrity exit=0
+check:doc-citations exit=0
+check:citation-targets exit=0
+check:citation-symbols exit=0
+check:census-freshness exit=0
+check:census-scope-coverage exit=0
+check:census-row-move-labels exit=0
+check:migration-prefixes exit=0
+check:production-drift exit=0
+check:writerless-reads exit=0
+check:schema-references exit=0
+check:enum-literals exit=0
+check:flag-polarity exit=0
+check:discovery-query-paths exit=0
+check:route-auth-gate exit=0
+check:api-prefix exit=0
+check:async-handlers exit=0
+check:frozen-dir exit=0
+check:telegraph-inventory exit=0
+check:guard-coverage exit=0
+check:unissued-supabase-writes exit=0
+```
+
+- **api-server node:test** (Node v24.21.0, `SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy`), 473 files: the round-12 verifier's 369, every `src/test/discovery*`, `compass*`, `trail*`, `hashtag*`, `circle*`, `map*`, `event*`, `wall*` and `hiddenGem*` suite, §110's eleven new suites, and `securityCheckSuite`, `uncheckedSupabaseReads`, `entryWiringNotCommentedOut` and `layoverSurfaceErrorBinding`. Result: `ℹ tests 8987 · ℹ suites 2007 · ℹ pass 8987 · ℹ fail 0 · ℹ cancelled 0`. The live-DB suites are left out (the `*LiveDb*` suites, `compassMemoryClientBoundary`, `discoveryPlaceWriteBoundary`, `tripKernelLive`, `meetupRlsLive`, `hiddenGemSelfPublish`, `hiddenGemVisitTrustBoundary`: the CI Supabase guard refuses them without live credentials, identically before and after this lane).
+  - Alone: `securityCheckSuite` 17/17, `uncheckedSupabaseReads` 69/69, `entryWiringNotCommentedOut` 4/4, `layoverSurfaceErrorBinding` 5/5.
+  - `node --import tsx/esm src/scripts/checkUncheckedSupabaseReads.ts`: "no NEW in-scope read ignores its .error … 136 in scope (1 benign, 135 ledgered known defects: 0 FAIL-OPEN / 131 FAIL-CLOSED / 4 UNCLASSIFIED)", no stale allowlist entry (136 ledgered before; the verified read is closed).
+  - The write-path-columns replica (`uacheck.mts`): `OK (117 tracked)`.
+- **Client.**
+  - `pnpm run -s check:all`: `✔ ALL CHECKS PASSED`.
+    - Node suites: `# tests 7499 · # pass 7499 · # fail 0`.
+    - Component suites: `Test Suites: 827 passed, 827 total · Tests: 5300 passed, 5300 total`.
+    - Web suites: `4 passed, 12 tests`.
+    - `typecheck:tests` is at 173 against a baseline of 173.
+  - `node scripts/check-route-registry.mjs`: "OK. All 232 screen file(s) are represented in PORTAVA_ROUTES and all 9 layout file(s) are represented in PORTAVA_LAYOUT_FILES."
+- **The verifiers' probes**, copied in unchanged and deleted after: server 53 of 53 (v12: V12-SP0/SP1/SE0/SE1, V12-MS0..2, V12-CC0..2, V12-CS0..2, V12-HTT2..4; v11: V11-CA0..CA2, V11-TS0, V11-HTT0/HTT1, V11-NV0/NV1; v10: V10-HP0..3, V10-SM6, V10-WT1, V10-WT2, V10-TC0, V10-TC1, V10-SC0, V10-SC1, V10-HT0, V10-HT1, V10-CC0, V10-CC7; v9: V9-H0, HC1, HB1, HB2, HW1, TG0–TG2, CC1, MS0, MS1, KS0, KS1, SM28) and client 11 of 11 (V11-TB0..TB4, V10-CH0..2, V9-TT0..2). On the first joint run V9-TT0 failed once with testing-library's "`render` function has not been called" on a cold jest cache; it passed alone and on the rerun of all three, 11 of 11.
+- **Regression: the round-12 verifier's 46 mutations**, re-run from a copy of its runner and pin list: 43 killed; the three survivors are exactly S9, H5 and H5p (equivalent, D-W11X2-98). The sha256 matched on every application, and `git status` was clean of source changes after both runs.
+
+## §111 — DV-83 round 14 (lane W11-X2)
+
+### 111.1 Integrator: DV-83 held at W after independent re-verification at `e11fc09b0`
+
+*Integrator, 2026-09-30. §110 is PR #530's head at `e11fc09b0` (it already contains main `d63780899`). An independent verifier checked that tree: it re-ran every round-12, round-11, round-10, round-9, round-8 and round-7 probe unchanged, wrote new ones (`zz-v13-*`, `zz-v13b-*`, and five guard-reach fixtures GH5–GH9), and restored every mutated file byte-identical, checked by sha256. Its report is the round-13 verifier's `dv83-r13-verifier.md`.*
+
+- **Confirmed.** §110.1's four breaks, H2–H4, GH1–GH4 and every earlier round's breaks are closed in behaviour: the v12, v11, v10, v9, v8 and v7 probes re-run unchanged all pass (74 server, 20 client). 34 of 42 of the verifier's own mutations are killed by the lane's pins; X18 and round 13's W8 are argued equivalent.
+- **Found: eight paths that break the criterion's wording, each shown by a probe that fails against this tree (17 red probes).**
+  1. **B1. The Compass search tools still say "none" over a read cut by a cap or a slice (clause a).** D-W11X2-102 reached two of six sites: `search_places` and the group recommendation's places branch test no cap, and `search_events` and the group events branch test the cap before a `.slice(0, limit)` that drops unchecked rows (V13-SP1, V13-SE1, V13-GP1, V13-GE1 red; V13-CT0 the control).
+  2. **B2. `checkEventEligibility` withholds an event over a failed block read or a failed staff-role read without marking it unread (clauses a, c)**, so GET /map/search's events source is complete over rows it never checked (V13-MB1, V13-MB2, V13-ST1 red; V13-MB0, V13-ST0 the controls).
+  3. **B3. GET /events/:id answers a failed route-level block read as 404 "not found" (clause a)** (V13-ED1 red; V13-ED0 the control).
+  4. **B4. GET /hidden-gems serves a gem state and confidence derived from failed aggregate reads, and answers an unread `hidden_gems_enabled` flag as `404 feature_disabled` (clause a)** (V13-GM1, V13-GF1 red; V13-GM0 the control).
+  5. **B5. The structured context serves three of an unordered `.limit(5)` bookings read as the list (clause a)** (V13-BK1 red; V13-BK0 the control).
+  6. **B6. A failed circle-list read hides the member-list sentence in the tool and the prompt (clause a)**; round 12's S9 was a correcting mutation, not an equivalent one (V13-CU1, V13-CU2 red; V13-CU0 the control).
+  7. **B7. The served vote and review counts state 0 over a failed read when the sibling read succeeded (clause a)** (V13-AM1, V13-AM2 red; V13-AM0 the control).
+  8. **B8. The temporal forecast names `events` as read over a failed or gated events read (clauses a, c)** (V13-TF1, V13-TF2 red; V13-TF0 the control).
+- **Rulings not honest.** D-W11X2-93's "argued, not built" staff-role and block rulings (B2), D-W11X2-98's "S9 equivalent" (B6), D-W11X2-99's "sees every import form and every raw call site" (GH5–GH9), D-W11X2-101 (B3), D-W11X2-102 (B1), D-W11X2-103's "states no count" (B7), and D-W11X2-104's deferral of the temporal forecast (B8).
+- **Surviving mutations.** X6, X8, X9, X17, X34, X37 and X41 are non-equivalent, sit on DV-83 lines, and are unpinned in the lane's suites; each is red under a verifier probe that is green at `e11fc09b0` (V13-CK6/8/9/17, V13-AK37/41, V13-SK34).
+- **Outside DV-83, severe (census-compass, census-trust).** At /compass/ask a failed block or mute read makes `getCompassProfile` throw; the route then passes a null profile to every tool, and `rankToolCandidates`' unranked fallback skips block and mute filtering and the COMPASS_% safety gate: a check meant to fail closed fails open. Evidence by code reading.
+- **Next.** A round-14 lane makes that path fail closed first, closes B1–B8 with the verifier's probes as failing-first tests, pins the seven survivors, closes GH5–GH9, corrects the rulings, and sweeps the Discovery and Compass read surfaces again. The row moves only after that.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | C | **W** | §110 closes §110.1's four paths, confirmed at `e11fc09b0` (§111.1). Eight paths still present a failed or partial read as empty, complete or as a fact: the Compass search tools over a read cut by a cap or a slice, `checkEventEligibility`'s two-state block and staff reads, GET /events/:id's route-level block read, GET /hidden-gems' gem projection and flag gate, the structured context's capped bookings read (`artifacts/api-server/src/compass/CompassStructuredContext.ts`), the circle-list and member-list sentences, the served vote and review counts, and the temporal forecast's events source. X6, X8, X9, X17, X34, X37 and X41 are unpinned; GH5–GH9 escape the guard. D-W11X2-93, -98, -99, -101, -102, -103 and -104 are not honest in part. |
+
+Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
+
+### 111.2 Round 14: what this lane did
+
+*Written 2026-09-30 by lane W11-X2 (round 14) on `disc-w11-x2-r14`, from `e11fc09b0` and §111.1. It first closes the safety finding outside DV-83 (census-compass §34): a Compass tool no longer offers a candidate that skipped block/mute filtering or the safety gate when the profile could not be read. It then closes §111.1's eight breaks, each with the verifier's probe copied in as a failing-first test; pins the seven survivors with the verifier's kill probes; closes the guard's five reach holes with the verifier's fixtures as failing-first tests; corrects the seven rulings the verifier found not honest; and sweeps the Discovery and Compass read surfaces again for reads with a `.limit(n)` or `.slice()` whose emptiness or count is stated, and for three-state gates read as two-state. The sweep closed five more paths.*
+
+*No migration and no new flag. Each change alters output only when a read failed, was refused, was cut at a cap or a slice, or (census-compass §34) when the profile could not be read; with every read healthy, complete and within its cap, every served byte is unchanged (PUc, PRc, V13-CT0, CS1c–CS3c, V13-MB0, ST0, ST2, MB3, ED3, FGc–FGe, CVc, CV4c, V13-GM0, GMc, GM6c, GF2, GF4, WLc, WL2c, V13-BK0, BK4, BK5, V13-CU0, CUc, V13-AM0, AMc, V13-TF0, FUc, TMUc, PWc, MOc, TCc, CFc, CPc). Every edit in a cited file is line-neutral: lines are changed in place, and new code is appended at a file's foot. `src/index.ts` is untouched.*
+
+*All evidence is controlled: in-process tools over fake worlds, the real routes over fake clients (and, for /compass/ask, a scripted model), jest over the real components, and the static guard over an in-memory overlay. None of it is production evidence, and no client build carrying the change has shipped.*
+
+### 111.3 Safety first: the Compass tools fail closed over an unread profile (census-compass §34; D-W11X2-105)
+
+A failed block or mute read makes `getCompassProfile` throw, and /compass/ask handed every tool a null profile. `rankToolCandidates` answered `null` — "offer the raw list" — for a null profile and for a thrown pipeline, so `search_places` offered rows no COMPASS_% safety gate had seen; `get_circle_activity` filtered on an empty hidden set and served a blocked member's handle; a profile synthesised from the block lists alone was ranked on. Every such path now answers an EMPTY ranking marked `unchecked` (nothing offered; the tool says it could not check), the circle tool reads its hidden set, and an unreadable hidden set is a sentence the model can say (`artifacts/api-server/src/compass/CompassTools.ts`; PU1–PU7, PR1, PR2 red first; PUc, PRc controls). The evidence and every other pipeline caller checked are census-compass §34's.
+
+### 111.4 The search tools over a read cut by a cap or a slice (§111.1 B1; D-W11X2-106)
+
+`search_places` and the group recommendation's places branch now test their `.limit(limit)` cap, and `search_events` and the group events branch count the rows their `.slice(0, limit)` dropped; over either, the tools say only the first N were checked (`artifacts/api-server/src/compass/CompassTools.ts`; V13-SP1, SE1, GP1, GE1 red first; V13-CT0, CS1c–CS3c controls).
+
+### 111.5 The event gates, three-state (§111.1 B2, B3; D-W11X2-107, -108, and the sweep's D-W11X2-109)
+
+`checkEventEligibility` reads the block three-state (`readBlockBetween`, `artifacts/api-server/src/lib/blockGuard.ts`), binds the staff-role read's error and re-runs the gates as if no staff role existed, marking what they refuse `unread`; the same treatment covers an unread `events_trust_gates_enabled`, which answered "gates off" and SKIPPED the verified, trust and age gates. GET /events/:id answers its own failed block read, and a failed visibility read in `canViewEvent`, `degraded_unavailable` — never 404, never the private wall (`artifacts/api-server/src/routes/events.ts`; V13-MB1, MB2, ST1, ED1, ED1b, FG1, FG2, CV1, CV2 red first; CV3, CV4 pinned by mutation; V13-MB0, ED0, ST0, MB3, ST2, ED3, FGc–FGe, CVc, CV4c controls).
+
+### 111.6 GET /hidden-gems (§111.1 B4; D-W11X2-110, -111)
+
+A gem projection built over a failed verifications, visits or contributions read carries `unreadSources`; GET /hidden-gems, /nearby, /:id and POST …/contribute serve no state or confidence from it and name the failure; the Wall's Live strip and context thread claim no state from it. Every flag gate in the router answers an unreadable flag 503 `flag_unreadable`. The client already reads a missing state as none and a non-2xx as its error state (`artifacts/api-server/src/services/hiddenGems/HiddenGemContributionService.ts`, `artifacts/api-server/src/routes/hiddenGems.ts`; V13-GM1, GF1, GM1b–GM6, GF1b, GF3, WL1, WL2 red first; V13-GM0, GMc, GM6c, GF2, GF4, WLc, WL2c controls).
+
+### 111.7 The structured context's bookings and member sentence (§111.1 B5, B6; D-W11X2-112, -113)
+
+The bookings read is ordered and reads one past its cap; more than read or shown is `bookingsTruncated`, said in the prompt. With the circle-list read failed, the tool and the prompt still say the member lists are unread or shortened (`artifacts/api-server/src/compass/CompassStructuredContext.ts`; V13-BK1, BK2, BK3, V13-CU1, CU2 red first; BK6, CU1b, CU2b, CU3 pin the arms; V13-BK0, BK4, BK5, V13-CU0, CUc controls). **D-W11X2-98's "S9 equivalent" is withdrawn.**
+
+### 111.8 The vote and review counts, and the temporal forecast (§111.1 B7, B8; D-W11X2-114, -115)
+
+Each count starts at 0 only when its own read was complete, and null otherwise (`artifacts/api-server/src/lib/discoveryPlaceAggregates.ts`; V13-AM1, AM2, AM1b, AM3–AM6 red first; V13-AM0, AMc controls). The temporal forecast names `events` only over a read that succeeded and withheld nothing unchecked, and states no event count over a failed one; the Time Machine says "Events couldn't be checked for this forecast" (`artifacts/api-server/src/routes/mapProjectionTemporal.ts`; V13-TF1, TF2, TF1b, TF2b, TF3, FU1, FU2, TMU1 red first; V13-TF0, FUc, TMUc controls; FU3 pins the wiring).
+
+### 111.9 The survivors, the guard's reach, and the sweep (D-W11X2-116 … D-W11X2-120)
+
+- **X6, X8, X9, X17, X34, X37, X41 pinned** by the verifier's V13-CK6/8/9/17, V13-SK34 and V13-AK37/41, copied into `compassCircleReadBounds`, `circleCompassSuggestionsUnread` and `discoveryAggregatesTruncated`; re-applied, each is killed. **X18 and W8 equivalent** (D-W11X2-120).
+- **The guard's reach (GH5–GH9; D-W11X2-116).** A comment inside a named import's braces, a baseUrl specifier, a namespace destructure, and a call through an alias or a renamed destructure are now seen (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts`, G11; GH5–GH9 red first, GH6c and GH8c controls). **D-W11X2-99 is corrected.**
+- **Sweep, closed (five paths):**
+  1. **GET /events/:id's visibility read** (D-W11X2-109; in §111.5).
+  2. **`checkEventEligibility`'s gate flag** (D-W11X2-107; in §111.5): an unread flag skipped the viewer gates.
+  3. **The presence walk** (D-W11X2-117): `get_whos_around` said "Nobody in the user's circles is sharing" while a friend on a trip past the walk's three was sharing; every cut is now marked and said (PW1–PW6, MO1 red first; PWc, MOc).
+  4. **`find_your_circle_enabled`** (D-W11X2-118): an unread flag was `404 feature_disabled` on every circle route, and the Circle screen said "Find Your Circle disabled." over any 503 (CF1, CP1, CP2 red first; CFc, CPc).
+  5. **`check_trip_conflicts`' planned items** (D-W11X2-119): an unordered `.limit(20)` served as the plan (TC1 red first; TCc).
+- **Swept and sound; seen and left for their owners** — D-W11X2-120 lists both.
+
+### 111.10 Tests, seen red, and mutations
+
+**Seen red first**, run against the code before each fix (logs in the lane's `r14/red/` scratch directory; where a fix was already committed, the test was run over HEAD's version of the source, restored by sha256):
+
+| Area | Red | Controls, green |
+|---|---|---|
+| The tools over an unread profile (census-compass §34) | PU1–PU7, PR1, PR2 | PUc, PRc |
+| Cut and sliced tool reads | V13-SP1, SE1, GP1, GE1 | V13-CT0, CS1c, CS2c, CS3c |
+| The event gates | V13-MB1, MB2, ST1, ED1, ED1b, FG1, FG2, CV1, CV2 | V13-MB0, ED0, ST0, MB3, ST2, ED3, FGc, FGd, FGe, CVc, CV4c |
+| GET /hidden-gems and the Wall's gem state | V13-GM1, GF1, GM1b, GM2–GM6, GF1b, GF3, WL1, WL2 | V13-GM0, GMc, GM6c, GF2, GF4, WLc, WL2c |
+| Bookings and the member sentence | V13-BK1, BK2, BK3, V13-CU1, CU2 | V13-BK0, BK4, BK5, V13-CU0, CUc |
+| Vote and review counts | V13-AM1, AM2, AM1b, AM3–AM6 | V13-AM0, AMc |
+| The temporal forecast | V13-TF1, TF2, TF1b, TF2b, TF3, FU1, FU2, TMU1 | V13-TF0, FUc, TMUc |
+| The guard's reach | G11 GH5, GH6, GH7, GH8, GH9 | G11 GH6c, GH8c |
+| Sweep | PW1–PW6, MO1–MO3, CF1, CP1, CP2, TC1 | PWc, MOc, MO2c, CFc, CPc, TCc |
+
+**Written against the fixed code**, each shown to bite by the mutation that removes the line it pins: CV3, CV4, BK6, CU1b, CU2b, CU3, FU3, BN1 (the ban arm's own unread marker — the verifier's X29, which the staff re-check masks when both `event_roles` reads fail), and the survivors' kill probes (V13-CK6/8/9/17, V13-SK34, V13-AK37/41, green at HEAD and red under their mutations).
+
+**Mutations.** Each was applied alone, its pin suites were run, and the file was restored byte-identically; the sha256 matched on every application, re-runs included (191 of 191 recorded applications). Runner and logs: the lane's `r14/muts/` scratch directory (`mutrun.py`, `mutrun_cmd.py`, `mut-summary.txt`).
+
+- **This round, 111 applied:** the safety fix SF1–SF12; the cut reads B1a–B1j; the event gates E1, E3–E8, E10, E11 and the visibility read CVm1–CVm5; the gem state and flags G1–G15, G17–G20; the bookings and member sentence K1–K12; the counts B7a–B7h; the forecast T1–T4 (server) and C1–C7 (client); the guard GR1–GR6; the sweep W1–W6, W7a, W7b, W8–W17 and CPm1.
+- **Result: 110 killed, 1 equivalent.** **SF2** (dropping `!profile ||` from `rankToolCandidates`' null check) is equivalent: a null profile throws inside `normalizeProfileForRanking`, and the now-closed catch answers the same `unchecked` ranking. **Not applied, argued:** removing the `rerun ?` guards in `checkEventEligibility` makes the re-check recurse without end (a structural guard, not a branch); removing `if (res.headersSent) return;` in a Hidden Gems gate double-sends after the 503 is already on the wire — the client receives the same 503, so it is equivalent at the wire.
+- **The round-13 verifier's 42** (`muts13v.py`, re-run from a copy of its runner against the lane's pins, X2, X10 and X11 re-anchored where this round changed their lines): **41 killed, 1 equivalent (X18).** X29 survived the first run — the staff re-check masked the ban arm — and is killed by BN1. **Its 8 kill re-applications** (`muts13k.py`, run against the lane's suites instead of its probes): X6k, X8k, X9k, X17k, X34k, X37k, X41k killed; X18k equivalent.
+- *Naming.* This round's series are SF, B1, E, CVm, G, K, B7, T, C, GR, W and CPm; the verifier's X-series is its own and is cited as the verifier's.
+
+### 111.11 Checks
+
+- **Line-neutral in every cited file**, so every anchored citation still lands on its text: `check:doc-citations`, `check:citation-targets` and `check:citation-symbols` are clean. Two anchors were caught and kept: the hidden-user throw's text in `refreshHiddenUsers` (the named error is thrown from its catch instead), and `get_whos_around`'s destructure (the new marker is read beside it).
+- **Scope.** This round's suites, `routes/mapProjectionTemporal.ts`, `lib/blockGuard.ts` and the client's `forecastUnread.ts` join this census's `CENSUS_SCOPE`; the safety suite joins census-compass's. `compass/CompassTools.ts` and `routes/events.ts` stay NOT-GRADED here, so no verdict row cites them. The acknowledgement for every census that counts a changed file carries a §111 paragraph with its "why it cannot move a verdict".
+- **Suites.** Every new api-server suite is on the `test` line (`check:test-registration`); the new client suites are two jest component suites and one node:test file, none on KNOWN_BROKEN; the client's `typecheck:tests` is at its baseline.
+- **Allowlist.** Seven `UNCHECKED_READS_ALLOWLIST.json` entries are deleted — `checkEventEligibility::event_roles.maybeSingle` and the six `canViewEvent` reads — because their sites now read `.error`; the checker reports no stale entry.
+- **Write-path select sites.** No write-path `.select()` argument changed; the write-path-columns replica prints OK.
+
+### 111.12 DV-83, restated
+
+§111.1's eight breaks are closed, each with the verifier's probe red first and green now. The seven survivors are pinned and killed; X18 and W8 are equivalent. The guard's five reach holes are closed with the verifier's fixtures red first. The seven rulings the verifier found not honest are corrected (D-W11X2-93's two "argued, not built" rulings, -98, -99, -101, -102, -103, and -104's forecast deferral). The sweep closed five more paths. Every clause of DV-83's criterion holds on every path this lane examined:
+
+1. **Producers send the refusal envelope or a named failure.** GET /hidden-gems names the gem-state reads that failed; the Hidden Gems and circle routes answer an unread flag `flag_unreadable`; GET /events/:id answers an unread block, staff, flag or visibility read `degraded_unavailable`; the temporal forecast names only the sources it read.
+2. **Nothing refused or partial is cached as complete.** No change here writes a cache; none of the fixed bodies is cached.
+3. **Nothing refused is rendered as empty, as complete, or over the wrong rows.** The Time Machine says an unread events layer; the Circle screen says a failed read, never "disabled"; the gem screens draw no state from a failed read and an error for a failed request.
+4. **A Compass tool never states a failed or partial read to the model as a fact.** The search tools, the group recommendation, the circle tool, the presence tools and the trip-conflict tool say what they could not check — and, outside DV-83, offer nothing they could not filter (census-compass §34).
+5. **Consumers branch on coverage**, and the static guard now sees a commented named import, a baseUrl specifier, a namespace destructure, and a call through an alias or a rename (G11).
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§111.1's eight breaks are closed, each with its verifier probe red first; X6, X8, X9, X17, X34, X37 and X41 are killed; the guard's reach holes GH5–GH9 are closed; the sweep closed five more paths; 111 mutations: 110 killed, 1 equivalent (SF2); the round-13 verifier's 42: 41 killed, X18 equivalent. CONTROLLED EVIDENCE ONLY — this row still awaits independent re-verification.** **A gem state from a failed read is not served** (`artifacts/api-server/src/services/hiddenGems/HiddenGemContributionService.ts:310#out.set(id, withUnreadSources(`; V13-GM1, GM1b–GM6, WL1, WL2). **An unread flag is never "off"** (`artifacts/api-server/src/routes/hiddenGems.ts:412#if (!gemFlagOn(res, await readFlagState(sc, "hidden_gems_enabled")))`; V13-GF1, GF1b, GF3, CF1). **A capped bookings read is said** (`artifacts/api-server/src/compass/CompassStructuredContext.ts:247#if (rows.length > BOOKINGS_SHOWN) markUnread(result, "bookingsTruncated");`; V13-BK1, BK2, BK3) and **a failed circle read keeps the member sentence** (`artifacts/api-server/src/compass/CompassStructuredContext.ts:396#if (u.circleMembers) out.push(`; V13-CU1, CU2). **Each count from its own read** (`artifacts/api-server/src/lib/discoveryPlaceAggregates.ts:117#worthItCount: aggregateReadComplete(votesRes) ? 0 : null,`; V13-AM1, AM2, AM3–AM6). **The forecast names only what it read** (`artifacts/api-server/src/routes/mapProjectionTemporal.ts:543#if (events !== null && nearbyEventsWithheldUnchecked(events) === 0`; V13-TF1, TF2, TF1b, TF2b, TF3, FU1, FU2, TMU1). **The guard sees every consumer form found** (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts:729#it('G11 GH5`). **The event gates are three-state** (`artifacts/api-server/src/lib/blockGuard.ts`; V13-MB1, MB2, ST1, ED1, FG1, FG2, CV1, CV2) and **the cut tool reads are never "none"** (V13-SP1, SE1, GP1, GE1). **Sweep:** the presence walk, `find_your_circle_enabled`, the Circle screen's 503, `check_trip_conflicts`' plan, GET /events/:id's visibility read. |
+
+**Headline.** DV-83 moves W → C. `check:census-integrity` counts **C 101 / W 85 / N 2 / X 0** over 188: CONSTRUCTED 186 / 188 = **98.9 %**, CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged. The move is on controlled evidence and awaits independent re-verification.
+
+### 111.13 Left open, and what would turn this red
+
+- **Seen and not built (other owners; D-W11X2-120).** The events list routes' per-row block reads and GET /events' and the waitlist's two-state `events_trust_gates_enabled` reads (no census grades them; the events owner and census-trust); the Wall's `wall_enabled` gates (census-wall); the media world's and the call gateway's reading of an unread eligibility check (census-media, census-telegraph); Discovery's `consolidatedForYouCandidates` degrading a thrown Compass gate to every candidate (the DV-07 degradation, recorded in census-compass §34).
+- **Recorded as inference, not established for production (D-W11X2-120).** `public.circles` has no writer in the tree, but RLS lets a signed-in client write its own circle; `in_accepted_circle` is false for every tree-written row, but RLS lets a client write `status = 'accepted'`. Production was not queried.
+- **What would turn DV-83 red again:**
+  - a Compass tool that states a read cut by a cap or a slice, a cut presence walk, a capped plan, or a shortened or unread member list as "none" or as the whole list (V13-SP1, SE1, GP1, GE1, PW1–PW6, MO1–MO3, TC1, V13-CU1, CU2);
+  - an event withheld, answered 404 or answered as the private wall over a block, staff, flag or visibility read that failed (V13-MB1, MB2, ST1, ED1, FG1, FG2, CV1, CV2);
+  - a gem state, a vote or a review count served from a failed read, or an unread flag answered as off (V13-GM1, GF1, AM1–AM6, CF1);
+  - a forecast that names a source it did not read, or a client that draws its absence (V13-TF1, TF2, FU1, TMU1);
+  - a consumer of a Compass or trending carrier the guard cannot see (G10, G11);
+  - any path §110.12 lists.
+
+### 111.14 Results at the final code commit
+
+The code is final at `f90dc3ea4`; the census commit that follows changes only this census, census-compass (§34), the register, `CENSUS_STALENESS_ACKNOWLEDGED.json` and `CENSUS_SCOPE`, and the guards below were run again on it.
+
+- **`int-guards.sh /home/user/wt-v8`**: all 24 exit 0. `typecheck:tests` is at 863 against a baseline of 863.
+
+```
+typecheck exit=0
+typecheck:tests exit=0
+check:test-registration exit=0
+check:census-integrity exit=0
+check:doc-citations exit=0
+check:citation-targets exit=0
+check:citation-symbols exit=0
+check:census-freshness exit=0
+check:census-scope-coverage exit=0
+check:census-row-move-labels exit=0
+check:migration-prefixes exit=0
+check:production-drift exit=0
+check:writerless-reads exit=0
+check:schema-references exit=0
+check:enum-literals exit=0
+check:flag-polarity exit=0
+check:discovery-query-paths exit=0
+check:route-auth-gate exit=0
+check:api-prefix exit=0
+check:async-handlers exit=0
+check:frozen-dir exit=0
+check:telegraph-inventory exit=0
+check:guard-coverage exit=0
+check:unissued-supabase-writes exit=0
+```
+
+- **api-server node:test** (Node v24.21.0, `SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy`), 419 files in five chunks of under eight minutes: every `src/test/discovery*`, `compass*`, `trail*`, `hashtag*`, `circle*`, `map*`, `event*`, `hiddenGem*`, `wall*` and `trust*` suite (§111's seven new suites among them), the touched `blockGateFailClosedGuards` and `eventsFailClosedAuthorization`, and `securityCheckSuite`, `uncheckedSupabaseReads`, `entryWiringNotCommentedOut` and `layoverSurfaceErrorBinding`. Result: `ℹ tests 7599 · ℹ suites 1732 · ℹ pass 7599 · ℹ fail 0 · ℹ cancelled 0`. The first run of the last chunk caught `check:flag-polarity` failing inside `securityCheckSuite` (the Hidden Gems gates passed a non-literal flag name to `readFlagState`); `f90dc3ea4` makes every gate's name literal, and the chunk re-ran clean. The live-DB suites that import the CI Supabase guard are left out (`compassMemoryClientBoundary`, `discoveryPlaceWriteBoundary`, `hiddenGemSelfPublish`, `hiddenGemUpdateBoundary`, `hiddenGemVisitTrustBoundary`, `mapProjectionLiveDb`, `mapProjectionPerf`, `wallFirstPageLiveDb`, `wallSessionIntentLiveDb`, `wallSessionIntentLiveDbStatus`).
+  - Alone: `securityCheckSuite` 17/17, `uncheckedSupabaseReads` 69/69, `entryWiringNotCommentedOut` 4/4, `layoverSurfaceErrorBinding` 5/5.
+  - `node --import tsx/esm src/scripts/checkUncheckedSupabaseReads.ts`: "no NEW in-scope read ignores its .error … 129 in scope (1 benign, 128 ledgered known defects: 0 FAIL-OPEN / 124 FAIL-CLOSED / 4 UNCLASSIFIED)", no stale allowlist entry (135 ledgered before; seven sites closed).
+  - The write-path-columns replica (`uacheck.mts`): `OK (117 tracked)`.
+- **Client.**
+  - `pnpm run -s check:all`: `✔ ALL CHECKS PASSED`.
+    - Node suites: `ℹ tests 7511 · ℹ pass 7511 · ℹ fail 0`.
+    - Component suites: `Test Suites: 829 passed, 829 total · Tests: 5305 passed, 5305 total`.
+    - Web suites: `4 passed, 12 tests`.
+    - `typecheck:tests` is at 173 against a baseline of 173.
+  - `node scripts/check-route-registry.mjs`: "OK. All 232 screen file(s) are represented in PORTAVA_ROUTES and all 9 layout file(s) are represented in PORTAVA_LAYOUT_FILES."
+- **The verifiers' probes**, copied in unchanged and deleted after: server 107 of 107 (v13: 33 — the `zz-v13-*` and `zz-v13b-*` probes, the kill probes among them; v12: 16; v11: 8; v10: 15; v9: 14; v8: 16; v7: 5) and client 20 of 20 in 8 suites (v11, v10, v9, v8, v7).
+- **The guard-hole fixtures**, placed alone in the tree and removed (the verifier's `run-guard-holes.sh`): GH0, GH5, GH6, GH7 each make G2 and G6 fail; GH8 and GH9 each make G9 fail; the two registered files were restored and their sha256 matched.
+- **Regression: the round-13 verifier's 42 mutations** and its 8 kill re-applications (§111.10): 48 killed, X18 and X18k equivalent. The sha256 matched on every application, and `git status` was clean of source changes after every run.
+
+## §112 — DV-83 round 15 (lane W11-X2)
+
+### 112.1 Integrator: DV-83 held at W after independent re-verification at `76e515539`
+
+*Integrator, 2026-09-30. §111 is PR #530's head at `76e515539`. An independent verifier checked that tree: it re-ran every round-13, round-12, round-11, round-10, round-9, round-8 and round-7 probe unchanged, wrote new ones (`zz-v14-*` and six guard-reach fixtures GH10–GH15), applied 38 mutations of its own, and restored every mutated file byte-identical, checked by sha256. Its report is the round-14 verifier's `dv83-r14-verifier.md`.*
+
+- **Confirmed.** §111.1's eight breaks, GH0–GH9 and every earlier round's breaks are closed in behaviour: the v13 to v7 probes re-run unchanged all pass (107 server, 20 client). The safety fix at /compass/ask holds (round 14's PU1–PU7, PR1, PR2, and the verifier's AM0–AM2 over eight tools). 37 of its 38 mutations are killed by the lane's pins; SF2 is equivalent, confirmed.
+- **Found: five paths that break the criterion's wording, each shown by a probe that fails against this tree (6 red probes).**
+  1. **B1. The temporal gateway answers a failed blocks read as an enabled, empty forecast (clauses a, c)**: 200 `{ enabled: true, sources: [], forecast: null }` with no refusal, and the client's `forecastLayersUnread` reports nothing unread, so the Time Machine draws the honest-empty state (V14-TB1, V14-TM1 red; V14-TB0, TM0 the controls).
+  2. **B2. After a failed read the Time Machine keeps the previous offset's objects and forecast (clause c)** — a failed read drawn over the wrong rows (V14-TM2 red).
+  3. **B3. The Gems screen's Layover tab says "No quick gems nearby" over a failed read (clause c)** (V14-GL1 red; V14-GL0 the control).
+  4. **B4. `useGemList` has no stale-response guard (clause c)**: a late answer for one city is held under another city's query (V14-GL2 red).
+  5. **B5. GET /hidden-gems/trip-city/:tripId answers a failed trips read `404 "Trip not found"` (clause a)** (V14-TC1 red; V14-TC0 the control).
+- **Rulings not honest.** D-W11X2-115's client leg ("the client says a forecast layer it was not sent could not be read") (B1) and D-W11X2-111's "every screen that reads them shows its error state … never an empty or 'off' one" (B3).
+- **The guard's reach.** GH10–GH15 escape it: a consumer in the app's root `components/`, a template-literal dynamic import, a local re-export from a registered file, a second raw site called through `.call` or through an object-property alias, and a second call site of a `services/discovery.ts` carrier in a registered file. No production consumer uses these forms.
+- **Outside DV-83, safety (census-compass, census-trust).** S1: a failed `user_mutes` read sends /compass/feed and /feed/section to the fallback feed, which never reads mutes, so a muted author's post is served; census-compass §34.1's "the fallback feed already degrades … when its block list cannot be read" does not cover mutes. S2: GET /events and POST /events/:id/waitlist read `events_trust_gates_enabled` two-state, so an unread flag skips the viewer gates. S3: the same two routes bind no error on the banned-role read. The three are handed to the safety lane; they are not DV-83 breaks.
+- **Next.** A round-15 lane closes B1–B5 with the verifier's probes as failing-first tests, closes GH10–GH15 with its fixtures, corrects the two rulings, and sweeps the client hooks and the Hidden Gems routes again. The row moves only after that.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | C | **W** | §111 closes §111.1's eight paths, confirmed at `76e515539` (§112.1). Five paths still present a failed read as empty or over the wrong rows: the temporal gateway's failed blocks read (`artifacts/api-server/src/routes/mapProjectionTemporal.ts`) and the client that reads it, the Time Machine's previous offset kept after a failed read, the Gems Layover tab's empty state over a failed read, `useGemList`'s stale response, and GET /hidden-gems/trip-city's failed trips read. GH10–GH15 escape the guard. D-W11X2-111 and -115 are not honest in part. |
+
+Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
+
+### 112.2 Round 15: what this lane did
+
+*Written 2026-09-30 by lane W11-X2 (round 15) on `disc-w11-x2-r15`, from `e6e80a8dd` (PR #530's head: round 14 and the merged CI slot fix #546) and §112.1. It closes §112.1's five breaks, each with the verifier's probe copied in as a failing-first test; closes the guard's six reach holes with the verifier's fixtures as failing-first tests (and a seventh it found, GH16); corrects the two rulings the verifier found not honest; and sweeps the client hooks that read a Discovery, Compass, Hidden Gems or map surface, and the Hidden Gems routes, again. The sweep closed one more path (the Discovery map's travelers layer).*
+
+*Outside DV-83, the verifier's three safety findings S1–S3 are NOT fixed here: they are the safety lane's (branch `claude/testing-mode-safety-gates-20260930`, on main; census-compass §35, census-trust §30), and merge in from main. This lane did not edit `CompassFallbackFeedBuilder.ts` or the GET /events list and waitlist handlers. census-compass §34.1's overstatement is corrected in its text (D-W11X2-128).*
+
+*No migration and no new flag. Each change alters output only when a read failed, was refused, or was overtaken by a newer read; with every read healthy and current, every served byte and every rendered screen is unchanged (V14-TB0, TBc, V14-TM0, TMc, FU4c, TMUc, V14-GL0, GLc, V14-TC0, TCc, TRc, TVc). Every edit in a cited file is line-neutral: lines are changed in place, and new code is appended at a file's foot.*
+
+*All evidence is controlled: the real routes over fake clients, jest over the real hooks and screens, and the static guard over an in-memory overlay and over fixtures placed on disk. None of it is production evidence, and no client build carrying the change has shipped.*
+
+### 112.3 The temporal gateway's failed blocks read (§112.1 B1; D-W11X2-121)
+
+The branch that answers a failed `blocks` read now names `refusal: "block_set_unreadable"`, as the NOW gateway does, and a forecast target carries `forecast: { events: null, itinerary: null, plan: null }`, so no layer is named as read and no count is stated. It keeps `enabled: true`, because on this route `enabled: false` means the producer is off and closes the Time Machine; the producer is on, and the refusal is the fact. The client's `forecastLayersUnread` reports `events` for a forecast target answered with no forecast report or with any refusal (`artifacts/api-server/src/routes/mapProjectionTemporal.ts`, `travel-buddy-standalone/src/features/map/time/forecastUnread.ts`; V14-TB1, TB2–TB4, V14-TM1, FU4, FU5 red first; V14-TB0, TBc, V14-TM0, FU4c controls). **D-W11X2-115's client leg is corrected.**
+
+### 112.4 The Time Machine's kept offset (§112.1 B2; D-W11X2-122)
+
+`useTemporalEntities` clears its objects, forecast, history and unread layers when a fetch starts ("[] while loading", its own contract) and exposes `failed` for a `!ok` answer, a rejection or a refused answer. The map screen hands "Couldn't load the map for this time" to the Time Machine ahead of the unread-layer notice, and the historical status strip says a notice as the forecast strip does (`travel-buddy-standalone/src/hooks/useTemporalEntities.ts`, `app/map/index.tsx`, `src/components/map/TimeMachineControl.tsx`; V14-TM2, TM3–TM7, FU6, TMU2 red first; TMc control).
+
+### 112.5 The Gems Layover tab and the Hidden Gems hooks (§112.1 B3, B4; D-W11X2-123, -124)
+
+`useLayoverGems` keeps an error and a refresh instead of `.catch(() => setGems([]))`, and the Layover tab renders the error with Retry, never "No quick gems nearby". `useGemList`, `useGemDetail`, `useSavedGems`, `useTripCityGems` and `useLayoverGems` carry a request id, so only the latest request writes rows, error and loading; the keyed hooks clear the previous query's rows when the query changes (`travel-buddy-standalone/src/hooks/useHiddenGems.ts`, `app/gems/index.tsx`; V14-GL1, GL2, GL3–GL8, GL9a–e, GL10 red first; V14-GL0, GLc controls). **D-W11X2-111's client leg is corrected.**
+
+### 112.6 GET /hidden-gems/trip-city (§112.1 B5; D-W11X2-125)
+
+The trips read binds its error; a failed read is `503 degraded_unavailable`, and a trip the viewer cannot read is still 404 (`artifacts/api-server/src/routes/hiddenGems.ts`, line-neutral; V14-TC1, TC2 red first; V14-TC0, TCc controls).
+
+### 112.7 The guard's reach (GH10–GH16; D-W11X2-126)
+
+The walk reads every top-level directory the app bundles (every directory not named, with its reason, as unbundled) and the root's own sources; a no-substitution template literal is a literal specifier and a computed specifier fails; a local re-export (`export { carrier as x }`, `export const x = carrier`, or of a namespace member) makes its importers consumers; G9 sees `.call`, `.apply`, an object property holding the carrier and a bound copy; a default import before the braces or before a namespace is read (GH16, found while closing the others); and every carrier call site in a registered consumer is counted and pinned (`REGISTERED_SITES`), so a second site of a `services/discovery.ts` carrier must be registered beside the branch and suite that cover it. The overlay lays a fixture only where the walk reads the disk (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts`, G12; the cited lines kept in place, new code at the foot). **D-W11X2-116 is corrected.**
+
+### 112.8 The sweep (D-W11X2-127, D-W11X2-128)
+
+- **Closed: the Discovery map's travelers layer** (D-W11X2-127). GET /map/travelers answers a failed read 5xx, but `useMapTravelers` kept a failed refresh silently and the map said "No travelers sharing here yet" over a failed first read; an in-flight flag dropped a move's read and stored the older centre's answer. The hook sets `error` on every failed read and carries a request id; the map says "Couldn't load travelers" and "· couldn't refresh" beside a kept count (`travel-buddy-standalone/src/hooks/useMapTravelers.ts`, `src/components/discovery/DiscoveryMapView.tsx`, line-neutral; TR2, TR3, TV1, TV2 red first; TR1, TRc, TVc controls).
+- **Swept and sound; seen and left for their owners** — D-W11X2-128 lists both. The Hidden Gems routes have no remaining unbound read that answers 404 or an empty list.
+
+### 112.9 Tests, seen red, and mutations
+
+**Seen red first**, run against the code before each fix (logs in the lane's `r15/red/` scratch directory; where the fix was already written, the test was run over HEAD's version of the source, restored by sha256):
+
+| Area | Red | Controls, green |
+|---|---|---|
+| The temporal gateway's failed blocks read (server) | V14-TB1, TB2, TB3, TB4 | V14-TB0, TBc |
+| The client's reading of it, and the Time Machine | V14-TM1, V14-TM2, TM3, TM4, TM5, FU4, FU5, FU6, TMU2 | V14-TM0, TMc, FU4c, TMUc |
+| The Layover tab and the Hidden Gems hooks | V14-GL1, V14-GL2, GL3–GL8 | V14-GL0, GLc |
+| GET /hidden-gems/trip-city | V14-TC1, TC2 | V14-TC0, TCc |
+| The guard's reach (G12, through the whole guard) | GH10, GH11, GH11b, GH12, GH13, GH14, GH15, GH16 | GH14c, the tree's own pass |
+| Sweep: the travelers layer | TR2, TR3, TV1, TV2 | TR1, TRc, TVc |
+
+**Written against the fixed code**, each shown to bite by the mutation that removes the line it pins: TM6, TM7 (the failed state belongs to one read), GL9a–e and GL10 (an older failure writes nothing; a new trip shows nothing of the old one), G12 GH10b (the roots and the unbundled directories), GH10c, GH12b, GH12c, GH13b, GH15b, GH15c, GH16b and GH16c (the readings the fixes added). **On disk**, the verifier's own runner placed each of GH0–GH15 alone in the tree and removed it: all sixteen are killed, the unfixtured tree passes (fail 0), and every touched registered file was restored with a matching sha256.
+
+**Mutations.** Each was applied alone, its pin suites were run, and the file was restored byte-identically; the sha256 matched on every application, re-runs included. Runner and logs: the lane's `r15/muts/` scratch directory (`run.py`, `defs.py`, `logs/`).
+
+- **69 mutations:** the temporal gateway and trip-city route S1–S8; the client's forecast reading, the Time Machine hook, the map screen and the control C1–C11, C13–C15; the Hidden Gems hooks and the Layover tab G1–G23; the travelers layer T1–T6; the guard GR1–GR18.
+- **Result: 68 killed, 1 equivalent.** **GR2** (reverting the template-literal reading in `valueImports`' dynamic-import loop) is equivalent: that loop's only output is `<dynamic>`, which the function's return filters away; the reading that counts is `otherImportForms`' (GR3, killed) and `requireUses`'. **Re-applications:** C1 and C5 were each also run under a second pin (C1j, killed; C12, which survives the node `forecastUnread` suite alone and is C5, killed by the hook suite). S8's first form broke the healthy control (a double await) and was replaced by a clean one, killed. GR1 survived its first run — the in-memory overlay added a fixture whatever the caller walked — and is killed once the overlay mirrors the caller's walk (`2011c7cf2`); GR10 and GR18 were re-run with it, killed, and every other GR mutation was re-run over the final guard.
+- *Naming.* This round's series are S, C, G, T and GR; the verifier's Y-series is its own.
+
+### 112.10 Checks
+
+- **Line-neutral in every cited file** (`routes/mapProjectionTemporal.ts`, `routes/hiddenGems.ts`, `services/mapTemporal.ts`, `app/map/index.tsx`, `components/map/TimeMachineControl.tsx`, `components/discovery/DiscoveryMapView.tsx`, `components/layover/LayoverDiscoveryCard.tsx`, and the guard's cited lines), so every anchored citation still lands on its text: `check:doc-citations`, `check:citation-targets` and `check:citation-symbols` are clean.
+- **Scope.** This round's suites and `useTemporalEntities.ts`, `useHiddenGems.ts`, `app/gems/index.tsx`, `useMapTravelers.ts`, `TimeMachineControl.tsx`, `DiscoveryMapView.tsx`, `services/mapTemporal.ts`, `LayoverDiscoveryCard.tsx` and `lib/mapTravelers.ts` (cited in §112.12) join this census's `CENSUS_SCOPE`. The acknowledgement for every census that counts a changed file (census-discovery, census-layover) carries a §112 paragraph with its "why it cannot move a verdict". One NOT-GRADED line is added, for `CompassFallbackFeedBuilder.ts` (S1's subject, the safety lane's), which no scope watches.
+- **Suites.** The two new api-server suites are on the `test` line (`check:test-registration`); the new client suites are five jest component suites, none on KNOWN_BROKEN; `check-test-mocks` is clean (each exhaustive mock carries its NOTE).
+- **Allowlist.** No `UNCHECKED_READS_ALLOWLIST.json` entry names the trip-city read (the checker's scope does not reach it), so none is deleted; the checker reports no stale entry.
+- **Write-path select sites.** No write-path `.select()` argument changed; the write-path-columns replica prints OK.
+
+### 112.11 DV-83, restated
+
+§112.1's five breaks are closed, each with the verifier's probe red first and green now. The guard's six reach holes are closed with the verifier's fixtures red first, and a seventh (GH16) with this lane's. The two rulings the verifier found not honest are corrected (D-W11X2-111's and D-W11X2-115's client legs). The sweep closed one more path. Every clause of DV-83's criterion holds on every path this lane examined:
+
+1. **Producers send the refusal envelope or a named failure.** The temporal gateway names `block_set_unreadable` and states no forecast count over a failed blocks read; GET /hidden-gems/trip-city answers a failed trips read 503.
+2. **Nothing refused or partial is cached as complete.** No change here writes a cache; none of the fixed bodies is cached.
+3. **Nothing refused is rendered as empty, as complete, or over the wrong rows.** The Time Machine says a refused or failed read and draws nothing from the previous offset; the Layover tab says a failed read with Retry; no Hidden Gems hook holds an older query's rows; the Discovery map says a failed travelers read and a failed refresh.
+4. **A Compass tool never states a failed or partial read to the model as a fact.** Unchanged this round (round 14's evidence stands, confirmed by the verifier's AM0–AM2).
+5. **Consumers branch on coverage**, and the static guard now reads every bundled root and every import and call-site form found, and pins every carrier call site in a registered consumer (G12).
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§112.1's five breaks are closed, each with its verifier probe red first; the guard's reach holes GH10–GH15 (and GH16) are closed; the sweep closed the travelers layer; 69 mutations: 68 killed, 1 equivalent (GR2). CONTROLLED EVIDENCE ONLY — this row awaits independent re-verification.** **A failed blocks read is named** (`artifacts/api-server/src/routes/mapProjectionTemporal.ts`; V14-TB1, TB2–TB4) **and read by the client** (`travel-buddy-standalone/src/features/map/time/forecastUnread.ts`; V14-TM1, FU4, FU5). **The Time Machine never draws a failed or previous offset** (`travel-buddy-standalone/src/hooks/useTemporalEntities.ts`; V14-TM2, TM3–TM7). **The Layover tab says a failed read, and no Hidden Gems hook holds a stale answer** (`travel-buddy-standalone/src/hooks/useHiddenGems.ts`; V14-GL1, GL2, GL3–GL10). **A failed trips read is not "Trip not found"** (`artifacts/api-server/src/routes/hiddenGems.ts`; V14-TC1, TC2). **The guard sees every consumer form found** (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts`; G12). **Sweep:** the Discovery map's travelers layer (`travel-buddy-standalone/src/hooks/useMapTravelers.ts`; TR2, TR3, TV1, TV2). |
+
+**Headline.** DV-83 moves W → C. `check:census-integrity` counts **C 101 / W 85 / N 2 / X 0** over 188: CONSTRUCTED 186 / 188 = **98.9 %**, CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged. The move is on controlled evidence and awaits independent re-verification.
+
+### 112.12 Left open, and what would turn this red
+
+- **Outside DV-83, handed to the safety lane (D-W11X2-128).** S1 (the Compass fallback feed ignores mutes over a failed mute read), S2 (GET /events' and the waitlist's two-state `events_trust_gates_enabled` read) and S3 (their unbound banned-role reads). Not fixed here; the fixes come from main. census-compass §34.1's overstatement is corrected in its text.
+- **Seen and not built (other owners; D-W11X2-128).** GET /hidden-gems/:id's `savedByMe`, POST /hidden-gems' canonical-place check and the share-to-thread membership read (each fails closed); `lib/mapTravelers.ts`' unmarked caps (census-map M144); the trip map's plan and saved reads, `useTripCrewMap`, the Passport map tab's nearby users and the reminders screen; the dead `getCompassGemContext`.
+- **What would turn DV-83 red again:**
+  - a temporal answer that names no refusal over a failed blocks read, or a client that draws a refused forecast as empty (V14-TB1, TB2, V14-TM1, FU4, FU5);
+  - a Time Machine, Hidden Gems or travelers hook that keeps an older or failed read's rows under a newer query (V14-TM2, TM5, V14-GL2, GL4–GL10, TR3);
+  - a Hidden Gems screen or the travelers layer that says "none" over a failed read (V14-GL1, GL3, TV1);
+  - a failed trips read answered "Trip not found" (V14-TC1, TC2);
+  - a consumer of a refusal-carrying carrier the guard cannot see, or a new carrier call site that is not registered (G12);
+  - any path §111.13 lists.
+
+### 112.13 Results at the final code commit
+
+The code is final at `2011c7cf2`; the census commit `cec71d11c` changes only this census, census-compass (§34.1's correction), the register, `CENSUS_STALENESS_ACKNOWLEDGED.json` and `CENSUS_SCOPE`, and the guards below were run on it. This paragraph is the only change after them.
+
+- **`int-guards.sh /home/user/wt-v8`**: all 24 exit 0 (typecheck, typecheck:tests, check:test-registration, check:census-integrity, check:doc-citations, check:citation-targets, check:citation-symbols, check:census-freshness, check:census-scope-coverage, check:census-row-move-labels, check:migration-prefixes, check:production-drift, check:writerless-reads, check:schema-references, check:enum-literals, check:flag-polarity, check:discovery-query-paths, check:route-auth-gate, check:api-prefix, check:async-handlers, check:frozen-dir, check:telegraph-inventory, check:guard-coverage, check:unissued-supabase-writes).
+- **api-server node:test** (Node v24.21.0, `SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy`), 420 files in ten chunks, the longest 288 s: every `src/test/discovery*`, `compass*`, `trail*`, `hashtag*`, `circle*`, `map*`, `event*`, `hiddenGem*`, `wall*` and `trust*` suite on the `test` line (§112's two new suites among them), the touched `blockGateFailClosedGuards` and `eventsFailClosedAuthorization`, and `securityCheckSuite`, `uncheckedSupabaseReads`, `entryWiringNotCommentedOut` and `layoverSurfaceErrorBinding`; the suites that import the CI Supabase guard are left out. Result: `ℹ tests 7602 · ℹ pass 7602 · ℹ fail 0 · ℹ cancelled 0`.
+  - Alone: `securityCheckSuite` 17/17, `uncheckedSupabaseReads` 69/69, `entryWiringNotCommentedOut` 4/4, `layoverSurfaceErrorBinding` 5/5.
+  - `checkUncheckedSupabaseReads`: "no NEW in-scope read ignores its .error … 129 in scope (1 benign, 128 ledgered known defects: 0 FAIL-OPEN / 124 FAIL-CLOSED / 4 UNCLASSIFIED)", no stale allowlist entry.
+  - The write-path-columns replica (`uacheck.mts`): `OK (117 tracked)`.
+- **Client.** `pnpm run -s check:all`: `✔ ALL CHECKS PASSED` (node suites `ℹ tests 7534 · ℹ pass 7534 · ℹ fail 0`; component suites `833 passed, 833 total · 5338 passed, 5338 total`; web suites `4 passed, 12 tests`; `typecheck:tests` 173 against a baseline of 173). `node scripts/check-route-registry.mjs`: "OK. All 232 screen file(s) are represented in PORTAVA_ROUTES and all 9 layout file(s) are represented in PORTAVA_LAYOUT_FILES."
+- **The verifiers' probes**, copied in unchanged and deleted after (v14, v13 with finish/, v12, v11, v10, v9; the safety lane's MU*, EG*, WG*, EB* and WB* probes left out): server 93 of 93 in 29 files, V14-TB0/TB1, V14-TC0/TC1 and V14-AM0–AM2 among them; client 17 of 17 in five suites (V14-TM0–TM2, V14-GL0–GL2, V11-TB*, V10-CH*, V9-TT*). The first joint client run reported one failure that did not recur; three further joint runs were 17 of 17.
+- **The guard-hole fixtures on disk** (the verifier's runner, copied): GH0–GH15 each placed alone and removed, all sixteen killed; the unfixtured tree passes; every touched registered file restored with a matching sha256.
+
+
+### 112.14 Merge of main (`b99787c81`: PRs #547 and #548, the safety lane) — moves nothing
+
+S1–S3, which §112 handed to the safety lane, are fixed on main (census-compass §35, census-trust §30–§30.10) and merged here. Both sides had added a "could not be read" marker to `checkEventEligibility`'s refusal: this branch's `unread: true` (§110, D-W11X2-93/107) and main's `unavailable: true` (census-trust §30.6). They are one marker now, `unread`: main's two readers of it — `eligibleWaitlisted`'s verdict check and `sendEligibilityRefusal` (waitlist accept) — read `unread`, and the waitlist sweeper's own `unavailable` result field, which is not the eligibility refusal, is unchanged. The three-state gate-flag read of §111 (D-W11X2-107) is kept in `checkEventEligibility`; main's `eventTrustGatesRun` is kept for GET /events and the waitlist, where main put it. One test of main's met this branch's answer: `eventsGateReadsFailClosed` DT1 asserted 404 for GET /events/:id over an unread gate flag, where this branch answers 503 `degraded_unavailable` (FG2: a refusal over an unread gate is not "not found"). Both withhold the event from the minor. DT1 is changed in place to assert the event body is not served, the status is 503 and the error is `degraded_unavailable`; with the unread-flag branch removed from `checkEventEligibility` (the gates skipped), DT1 goes red, and the file was restored with a matching sha256. The staff-role allowlist entry main added (`routes/events.ts::checkEventEligibility::event_roles.maybeSingle`) is not carried: this branch binds that read's error (D-W11X2-107), and the checker reports no stale entry. No verdict moves; DV-83's C remains controlled evidence awaiting independent re-verification.
+
+## §113 — DV-83 round 16 (lane W11-X2)
+
+### 113.1 Integrator: DV-83 held at W after independent re-verification at `49464f498`
+
+*Integrator, 2026-09-30. §112 is PR #530's head at `49464f498` (round 15 with main `b99787c81` merged, §112.14). An independent verifier checked that tree: it re-ran every round-14 to round-7 probe unchanged (v13 with finish/, and v14's safety probes), wrote new ones (`zz-v15-*` and seven guard-reach fixtures GH17–GH23), applied 53 mutations of its own, and restored every mutated file byte-identical, checked by sha256. Its report is the round-15 verifier's `dv83-r15-verifier.md`.*
+
+- **Confirmed.** §112.1's five breaks, GH0–GH16, S1–S3 and every earlier round's breaks are closed in behaviour: the v14 to v7 probes re-run unchanged all pass (127 server, 26 client). 50 of its 53 mutations are killed by the lane's pins; R7 and R8 (GR2, and the deletion of the loop it sits in) are equivalent, confirmed.
+- **Found: four paths that break the criterion's wording, each shown by a probe that fails against this tree (8 red probes).** All four are scans cut by an unordered cap and then stated as complete.
+  1. **B1. The Discovery map's travelers layer answers a cut scan as an empty layer (clauses a, c)**: `lib/mapTravelers.ts` reads 250 unordered rows, filters eligibility after the cut and slices to 100 with no marker; GET /map/travelers answers `200 { travelers: [] }`, the NOW gateway names `travelers` as read over 0 objects, and the map says "No travelers sharing here yet" (V15-TS1, TS2 red; TS0 the control).
+  2. **B2. The Time Machine's past arm draws a failed history read as an empty observed past (clauses a, c)**: 200 `{ sources: [], history: { available: false } }` with no refusal, the hook's `failed` stays false, and no notice is passed; in flight, the strip shows the honest-empty text because the map never reads `temporal.loading` (V15-TH1, TH3, TH4 red; TH0, TH2 the controls).
+  3. **B3. The Gems screen's Near Me says "No hidden gems found" over a capped read (clause c)**: it filters on the device the default 40-gem page, which the server ranked from an unordered 120-row scan (V15-NM1 red; NM0 the control).
+  4. **B4. `loadNearbyEvents` reads 60 unordered rows with no time window (clauses a, c)**, and its three map callers state the cut as complete: the forecast says no events, and GET /map/search says nothing matched (V15-NE1, NE2 red; NE0, NE2c the controls).
+- **Rulings not honest.** D-W11X2-122's "never draws a failed, refused or in-flight read as an empty … offset" (B2, the past arm and the in-flight strip), and D-W11X2-128's "the travelers badge can count a cut layer", which understates B1: the layer is also said to be empty.
+- **The guard's reach.** GH17–GH23 escape it: a consumer in a `.js` source, a re-export through a directory `index.tsx`, a default re-export with a default import, and a second raw site called through an array element, with optional-call syntax, as a `.then` callback, or through `Reflect.apply`. No production consumer uses these forms. D-W11X2-126's "sees every consumer form found" holds for the forms found, not these.
+- **Outside DV-83.** N1 (census-telegraph; fails closed): the call gateway maps an eligibility refusal by its text, so a failed age read becomes `age_ineligible` ("not available for your age group"). V9 (census-trust §30; not safety): deleting the sweeper's `if (pick.unavailable) continue;` survives every suite, and the pass then counts seats as stranded over an unreadable eligibility.
+- **Next.** A round-16 lane closes B1–B4 with the verifier's probes as failing-first tests, closes GH17–GH23 with its fixtures, pins N1 and V9, corrects the three rulings, and sweeps every capped read on a Discovery, map or gems path again. The row moves only after that.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | C | **W** | §112 closes §112.1's five paths, confirmed at `49464f498` (§113.1). Four paths still present a cut read as empty or complete: the Discovery map's travelers layer (`artifacts/api-server/src/lib/mapTravelers.ts`), the Time Machine's past arm over a failed history read (`artifacts/api-server/src/routes/mapProjectionTemporal.ts`), the Gems screen's Near Me over a capped page (`travel-buddy-standalone/app/gems/index.tsx`), and the map's nearby-events scan (`artifacts/api-server/src/routes/mapSearch.ts`). GH17–GH23 escape the guard. D-W11X2-122 and -128 are not honest in part. |
+
+Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
+
+### 113.2 Round 16: what this lane did
+
+*Written 2026-09-30 by lane W11-X2 (round 16) on `disc-w11-x2-r16`, from `49464f498` (PR #530's head: round 15 with main `b99787c81`) and §113.1. It closes §113.1's four breaks, each with the verifier's probe copied in as a failing-first test; closes the guard's seven reach holes GH17–GH23 with the verifier's fixtures, structurally where it can; pins the two findings outside DV-83 (N1, V9); corrects the three rulings the verifier found not honest (D-W11X2-122, -126, -128); and sweeps every `.limit(` on a Discovery, map, gems or Compass read path again. The sweep found and closed ten more paths (S1–S10).*
+
+*No migration and no new flag. Each change alters output only when a read failed, was refused, or was cut at a cap; with every read healthy, whole and within its cap, every served body is byte-identical (the `truncated`, `refusal`, `failedSources`, `capped` and `*Capped` keys appear only over a failed or cut read: V15-TS0, TSc, V15-TH0, THc, NB0, LSc, MPc, V15-NE0, NE8, SNc, MPCc, CFCc, WICc, THc, DV1c, HTc, CGc). Two behaviours change for healthy reads, by decision: GET /map/search and the NOW gateway read events that are not yet over (a forward window, D-W11X2-132), so an event that ended is no longer served; and Gems "Near Me" reads GET /hidden-gems/nearby. Every edit in a cited file is line-neutral: lines are changed in place, and new code is appended at a file's foot.*
+
+*All evidence is controlled: the real routes over fake clients, jest over the real hooks and screens, and the static guard over an in-memory overlay and over fixtures placed on disk. None of it is production evidence, and no client build carrying the change has shipped.*
+
+### 113.3 The Discovery map's travelers layer (§113.1 B1; D-W11X2-129)
+
+The scan reads freshest-first and one row past its cap; the extra row only detects the cut. `listMapTravelersRead` answers `{ travelers, truncated }` (a cut scan, or an answer sliced to 100), kept while cached. GET /map/travelers sends `truncated: true`, the NOW gateway does not name `travelers` over a cut, /map/search reports `travelers_capped`, and the Discovery map says "Couldn't check every traveler here" or "N travelers · showing some" (`artifacts/api-server/src/lib/mapTravelers.ts`, `routes/mapTravelers.ts`, `routes/mapProjection.ts`, `routes/mapSearch.ts`, `travel-buddy-standalone/src/hooks/useMapTravelers.ts`, `src/components/discovery/DiscoveryMapView.tsx`; V15-TS1, TS2, TS3–TS5, TC1–TC3, TV3–TV5 red first). **D-W11X2-128's understatement is corrected.**
+
+### 113.4 The Time Machine's past arm (§113.1 B2; D-W11X2-130)
+
+A failed history read is `refusal: "history_unreadable"` with `failedSources`; the hook treats a historical answer with no history report, or `available: false`, as failed; and the map passes `temporalNotice(temporal)`, which says a read in flight ("Loading the map for this time…") instead of the honest-empty strip (`artifacts/api-server/src/routes/mapProjectionTemporal.ts`, `travel-buddy-standalone/src/features/map/time/forecastUnread.ts`, `src/hooks/useTemporalEntities.ts`, `app/map/index.tsx`; V15-TH1, TH1b, TH1c, V15-TH3, V15-TH4 (adapted), TH3b, TH5, TH6 red first). **D-W11X2-122 is corrected.** The verifier's V15-TH4, copied in unchanged, stays red: its `notice` is a copy of the old map expression, which never reads `loading`.
+
+### 113.5 Gems "Near Me" and the discovery scan (§113.1 B3; D-W11X2-131)
+
+Near Me reads GET /hidden-gems/nearby with the viewer's position, 50 km and the category; `discoverGems` reads freshest-first and one past its cap and answers `{ ranked, truncated }`, sent as `truncated: true` on /hidden-gems and /nearby, `gems_capped` on /map/search, and not naming `gems` on the NOW gateway. The Discover tab says a cut empty answer ("Couldn't check every gem near you"), a cut list ("Showing some gems near you") and a whole empty one ("No hidden gems near you") apart (`artifacts/api-server/src/services/hiddenGems/HiddenGemDiscoveryService.ts`, `routes/hiddenGems.ts`, `travel-buddy-standalone/src/services/hiddenGems.ts`, `src/hooks/useHiddenGems.ts`, `app/gems/index.tsx`; NB1–NB3, LS1, MP1, MS1, V15-NM1, NM2–NM6 red first). The verifier's V15-NM0, copied in unchanged, fails: it mocks only `listGems`, the data path Near Me no longer uses.
+
+### 113.6 The map's nearby events (§113.1 B4; D-W11X2-132)
+
+`loadNearbyEvents` reads soonest-first and one past its cap, and marks a cut beside its answer. The NOW gateway and map search read a forward window, and the forecast its target's window; a cut is never a complete source, a stated count or "no adjacent event" (`artifacts/api-server/src/routes/mapSearch.ts`, `routes/mapProjection.ts`, `routes/mapProjectionTemporal.ts`; V15-NE1, V15-NE2, NE3–NE7, NE9 red first).
+
+### 113.7 The guard's reach (GH17–GH23; D-W11X2-133)
+
+One source predicate for the walk, the root files and the overlay; one module identity for every resolution; default imports and default re-exports read; and, in every registered consumer, every non-call reference to a carrier counted and pinned (`registeredRefs()`, empty), so a carrier reached any way but a direct call fails whatever the form (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts`, G13; the cited lines kept in place, new code at the foot). **D-W11X2-126 is corrected.** The walk and the overlay share one list of skipped directories as well, and the overlay reads the app root, so an in-memory fixture is seen exactly where a file on disk would be (GH17f, GH17i, found by the guard's own mutation run, GR4; `fecf06f1c`). The guard now takes 194 s (it took 92 s); resolution results on disk are cached for the run.
+
+### 113.8 Outside DV-83: the call gateway and the waitlist sweeper (N1, V9; D-W11X2-134)
+
+- **N1 (census-telegraph §40).** An unread event gate, and a failed events, RSVP or thrown read, is `degraded_unavailable` (503, retryable), never `age_ineligible` or "for attendees"; a failed staff-role read still admits an attendee. The call screen says "Calling couldn't be checked right now" (`artifacts/api-server/src/lib/calls/callGatewayAdapter.ts`, `lib/calls/callPermissionEngine.ts`, `travel-buddy-standalone/src/context/CallContext.tsx`; V15-CG1, CG1b–CG6, CD1 red first).
+- **V9 (census-trust §30.11).** SW3b pins the sweeper's unreadable-eligibility skip: no seat is counted stranded over a read that failed.
+
+### 113.9 The sweep (S1–S10; D-W11X2-135 … D-W11X2-138)
+
+Every `.limit(` on a Discovery, map, gems or Compass read path this lane could reach was read against the round's classes (an unordered cap, a filter after the cut, a slice with no marker), and the read surfaces again for an ignored `error`, a catch that answers empty, an unread flag treated as off, a cached refusal, a stale response, a failed read turned into a value and a loading state drawn as empty.
+
+- **Closed:** the map's safety notices (S1) and meeting points (S2); the Time Machine's cut history (S3), accepted plans and stops (S4), and the itinerary's count over a failed or cut read (S5); the NOW gateway's zone model, city geography and place index, with `no_zone_model` no longer said over a cut model (S6); the ranking's trail keys (S7); GET /hashtags/:slug's follow state and top city, the hashtag page and preview sheet (S8); the hashtag suggestions (S9); and follow / unfollow's 404 over a failed read (S10) — D-W11X2-135, -136, -137.
+- **Swept and sound; seen and left for their owners** — D-W11X2-138 lists both.
+
+### 113.10 Tests, seen red, and mutations
+
+**Seen red first**, run against the code before each fix (logs in the lane's `r16/red/` scratch directory; where the fix was already written, the test was run over HEAD's version of the source, restored by sha256):
+
+| Area | Red | Controls, green |
+|---|---|---|
+| B1 the travelers layer (server) | V15-TS1, TS2, TS3, TS4, TS5 | V15-TS0, TS6, TSc |
+| B1 the travelers layer (client) | TC1–TC3, TV3–TV5 | TCc, TVc2 |
+| B2 the past arm (server) | V15-TH1, TH1b, TH1c | V15-TH0, THc |
+| B2 the past arm (client) | V15-TH3, V15-TH4 (adapted), TH3b, TH5, TH6 | V15-TH2, TH2c |
+| B3 the discovery scan (server) | NB1–NB3, LS1, MP1, MS1 | NB0, NB4, LSc, MPc |
+| B3 Near Me (client) | V15-NM1, NM2–NM6 | V15-NM0 (adapted), NMc |
+| B4 nearby events | V15-NE1, V15-NE2, NE3–NE7, NE9 | V15-NE0, V15-NE2c, NE8 |
+| The guard's reach (G13, whole guard) | GH18–GH23 in memory; GH17 on disk; after the GR run, GH17f, GH17h, GH17i | GH21c, GH17c, GH17g, the tree's own pass |
+| N1 the call gateway | V15-CG1, CG1b–CG6, CD1 | V15-CG0, CGc, CDc |
+| Sweep S1, S2 | SN1–SN3, MPC1, MPC2 | SNc, MPCc |
+| Sweep S6 | CFC1–CFC3, WIC1 | CFCc, WICc |
+| Sweep S3–S5 | TZ1, TP1, TP2, TI1–TI3, TH1, TH2, FU9, TH7 | THc |
+| Sweep S7–S10 | DV1, HT1–HT6, HF1, HF2, TP1 | DV1c, HTc, HFc, TPc |
+
+**Written against the fixed code**, each shown to bite by the mutation that removes the line it pins: TS7, TS8 (the cached cut; the cap on the privacy reads), NB5, NM7–NM11, NE10–NE13, CG5b, SW3b (with SW3c), HF3, TP2, and G13 GH17b, GH18b, GH19b, GH21c and, making each reading load-bearing (`db446cda6`), GH17c (the control: a root build config is not walked), GH17e, GH18d, GH18e (a `.js` module, a directory index and a platform-only module, each reached by a baseUrl specifier), GH19c, GH19e (a default-exported carrier; a carrier module's own default), GH20b, GH20c and GH23b (a default import handed on as a value, at a raw site, and as a second discovery site), and, after the guard's mutation run (`fecf06f1c`), GH17g, GH18f and GH19f (GH17f, GH17h and GH17i were red first). **On disk**, the verifier's runner placed each of GH0–GH23 alone in the tree and removed it: all 24 are killed, the unfixtured tree passes (fail 0), and every touched registered file was restored with a matching sha256.
+
+**Mutations.** Each was applied alone, its pin suites were run, and the file was restored byte-identically; the sha256 matched the committed file (`git show HEAD:`) before and after every application. Runner and logs: the lane's `r16/muts/` scratch directory (`run.py`, `defs.py`, `logs/`, `summary.txt`).
+
+- **171 mutations:** travelers T1–T21; the past arm H1–H4, H5b, H6, H7, H9–H14 (H5 and H8 retired with the redundant code they touched); gems G1–G23; events E1–E18; the call gateway and the sweeper N1–N7, V9; the sweep's server W1–W47 and client X1–X8; the guard GR1–GR33 with GR2b and GR23b (GR26 retired with the lookahead it touched; GR23's line became `rootSources`, mutated as GR23b).
+- **Result: 171 killed, 0 equivalent, 0 non-equivalent survivors** on DV-83 lines and on the N1 and V9 lines. **Survivors on a first run, each closed:** T12 (the scan slice; TS8 pins the privacy reads' cap), G17 and G23 (NM10, NM11), E18 (NE13), W47 (HT6), and H5 and H8, which pinned nothing because the code they touched was redundant — the duplicate failed-sources default and the `enabled` conjunct were removed (`e9dcbd92b`) and the re-run's H5b is killed. **V9**, the round-15 verifier's survivor, is killed by SW3b. **The guard's own run** found GR4, GR20, GR23, GR25 and GR26 surviving: GR4 was a real gap (§113.7; GH17f and GH17i red first), GR23's root filter became one tested reading, `rootSources` (GH17h red first), GR20 and GR25 are pinned (GH18f, a barrel over a platform variant; GH19f, a braced own default), and GR26's `(?!type)` lookahead could never change a match and is removed (`fecf06f1c`); the re-run of GR4, GR20, GR25 and the new GR2b, GR23b, GR28–GR33 killed all eleven.
+- *Naming.* This round's series are T, H, G, E, N, V, W, X and GR; the verifier's are its own.
+
+### 113.11 Checks
+
+- **Line-neutral in every cited file** (the map routes, `lib/mapTravelers.ts`, `routes/hiddenGems.ts`, `routes/hashtags.ts`, the discovery service, the producers, the call gateway, `app/map/index.tsx`, `services/hiddenGems.ts`, and the guard's cited lines), so every anchored citation still lands on its text: `check:doc-citations`, `check:citation-targets` and `check:citation-symbols` are clean. Four files gained a line where no line is cited (`app/gems/index.tsx` is restructured; `CallContext.tsx`, `useHiddenGems.ts` and the guard's foot gain code).
+- **Scope.** This round's suites and the touched sources join this census's `CENSUS_SCOPE` or are named NOT-GRADED below; the acknowledgement for every census that counts a changed file carries a §113 paragraph with its "why it cannot move a verdict".
+- **Suites.** The new api-server suites are on the `test` line (`check:test-registration`); the new client suites are jest component suites, none on KNOWN_BROKEN; `check-test-mocks` and `check-import-extensions` are clean.
+- **Allowlist.** No `UNCHECKED_READS_ALLOWLIST.json` entry names a site this round bound (the call gateway's entries are `eventStaffRole`'s, unchanged), so none is deleted; the checker reports no stale entry.
+- **Write-path select sites.** No write-path `.select()` argument changed; the write-path-columns replica prints OK.
+
+### 113.12 DV-83, restated
+
+§113.1's four breaks are closed, each with the verifier's probe red first and green now (two of its probes, copied in unchanged, encode the old implementation: V15-TH4 mirrors the old notice expression and V15-NM0 mocks the old Near Me data path; each is adapted to the real code and green). The guard's seven reach holes are closed, on disk and in memory. The three rulings the verifier found not honest are corrected (D-W11X2-122, -126, -128). The sweep closed ten more paths. Every clause of DV-83's criterion holds on every path this lane examined:
+
+1. **Producers send the refusal envelope or a named failure.** A cut scan is `truncated`, `*_capped` or a refusal on every Discovery, map and gems route that capped a read; a failed history read is `history_unreadable`.
+2. **Nothing refused or partial is cached as complete.** The travelers' candidate cache keeps the cut mark; no other change writes a cache.
+3. **Nothing refused is rendered as empty, as complete, or over the wrong rows.** The Discovery map, the Gems Near Me tab, the Time Machine and the hashtag page say a cut or failed read; no new hook holds an older query's rows.
+4. **A Compass tool never states a failed or partial read to the model as a fact.** Unchanged this round (round 14's evidence stands); `/compass/ask`'s followed-hashtag context states no absence.
+5. **Consumers branch on coverage**, and the static guard reads every bundled script, every module form, every import form, and pins every carrier reference that is not a direct call (G13). *(Corrected in §114.4, D-W11X2-141: the walk skipped `__fixtures__` and `__mocks__`, which Metro bundles; it now skips exactly what Metro's blockList excludes.)*
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§113.1's four breaks are closed, each with its verifier probe red first; the guard's reach holes GH17–GH23 are closed on disk and in memory; the sweep closed ten more paths; 171 mutations: 171 killed, 0 equivalent. CONTROLLED EVIDENCE ONLY — this row awaits independent re-verification.** **A cut travelers scan is said** (`artifacts/api-server/src/lib/mapTravelers.ts`; V15-TS1, TS2–TS5) **and read by the map** (`travel-buddy-standalone/src/components/discovery/DiscoveryMapView.tsx`; TV3–TV5). **A failed history read is named, and an in-flight read said** (`artifacts/api-server/src/routes/mapProjectionTemporal.ts`; V15-TH1; `travel-buddy-standalone/src/features/map/time/forecastUnread.ts`; V15-TH3, TH4, TH5, TH6). **Near Me reads the server near the viewer, and a cut gem scan is said** (`travel-buddy-standalone/app/gems/index.tsx`; V15-NM1, NM2–NM6; `artifacts/api-server/src/services/hiddenGems/HiddenGemDiscoveryService.ts`; NB1–NB3). **The map's events read a window, and a cut is never complete** (`artifacts/api-server/src/routes/mapSearch.ts`; V15-NE1, NE2, NE3–NE7). **The guard pins every non-call carrier reference** (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts`; G13). **Sweep:** the map's producers and geography (`artifacts/api-server/src/routes/mapProjection.ts`; SN1–SN3, MPC1, CFC1–CFC3, WIC1), the temporal gateway's caps (TZ1, TP1, TP2, TI1–TI3, TH1, TH2) and the hashtag routes (`artifacts/api-server/src/routes/hashtags.ts`; HT1–HT6). |
+
+**Headline.** DV-83 moves W → C. `check:census-integrity` counts **C 101 / W 85 / N 2 / X 0** over 188: CONSTRUCTED 186 / 188 = **98.9 %**, CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged. The move is on controlled evidence and awaits independent re-verification.
+
+### 113.13 Left open, and what would turn this red
+
+- **Outside DV-83, handed on.** N1 is census-telegraph's (§40 records it); V9 is census-trust's (§30.11). Neither moves a row there.
+- **Seen and not built (other owners; D-W11X2-138).** The centroid lookup's per-fold cap, the hashtag feed's author-profile read, the suggestions' unlimited city-usage read, two dead gem helpers, and the admin duplicate scan.
+- **Product effect, stated.** Where a global table outgrows a cap (flow zones or cities above 2000, accepted plans above 500), the affected layer is now said to be cut or refused instead of served as whole *(corrected in §114.3, D-W11X2-139, -140: said in the JSON only, until §114 made the NOW map and the Time Machine say it)*; raising a cap, or scoping the read, is the owner's call (census-map).
+- **What would turn DV-83 red again:**
+  - a capped Discovery, map or gems read answered as empty or whole with no marker (V15-TS1, NB1, V15-NE1, SN1, CFC1, TP1, TH1);
+  - a failed history read answered without its refusal, or a client that draws it, or a read in flight, as an empty past (V15-TH1, V15-TH3, TH6);
+  - Near Me answered from a page instead of the viewer's position (NM2);
+  - a failed follow read answered "not following" (HT1, HF1);
+  - a consumer of a refusal-carrying carrier the guard cannot see, or a carrier reached by an unregistered non-call reference (G13);
+  - any path §112.12 lists.
+
+## §114 — DV-83 round 17 (lane W11-X2)
+
+### 114.1 Integrator: DV-83 held at W after independent re-verification at `1b4aa20fe`
+
+*Integrator, 2026-09-30. §113 is round 16 at `1b4aa20fe` (PR #530's head before the test-only TS8 fixture fix `678dc251e`). An independent verifier checked that tree: it re-ran every round-15 to round-7 probe unchanged (138 server, the v7–v14 client suites), wrote new ones (`zz-v16-*`, the adapted `zz-v16a-*`, and guard-reach fixtures GH24–GH32 placed on disk one at a time), applied 67 mutations of its own, and restored every mutated file byte-identical, checked by sha256. Its report is the round-16 verifier's `dv83-r16-verifier.md`.*
+
+- **Confirmed.** §113.1's four breaks (B1–B4), GH0–GH23, N1, V9 and every earlier round's breaks are closed in behaviour: the v15 to v7 probes re-run unchanged all pass, and the two v15 probes the lane said encode the old implementation (V15-TH4, V15-NM0) are green once adapted to the real code. 62 of its 67 mutations are killed by the lane's pins; H9 (`placesCut && placeIds.length === 0` in the temporal history read) is equivalent.
+- **Found: two paths that break the criterion's wording, each shown by probes that fail against this tree (9 red probes).** Both are server truth that never reaches the user.
+  1. **B5. The NOW map never says a layer the gateway did not read (clause c; safety-relevant display fail-open).** `app/map/index.tsx` never reads `useMapEntities`' `unreadLayers`; the hook computes it over the five toggleable layers only, never checks the §16 optional layers (safety notices, meeting points, crowd flow, the city layers) against `sources` (`GATEWAY_SOURCE_FOR_OPTIONAL_LAYER` is unread), and asks for `limit: 200` and drops `nextCursor`. A failed or cut safety-notice read shows the map with no hazard notice and nothing said (V16-NU1–NU4, V16-MS1 red; NU0, MS0 the controls).
+  2. **B6. The Time Machine's forecast draws a refused accepted-plan layer, an unread itinerary and a cut page as a whole forecast (clause c).** `forecastLayersUnread` reads `events` only; `temporalNotice` never reads `forecast.plan.refusal` or `forecast.itinerary`; `useTemporalEntities` asks for `limit: 200` and drops `nextCursor` (V16-FP1–FP3 red; FP0 the control).
+- **Rulings not honest.** D-W11X2-93's "the client already says a layer it did not name could not be read" is not honest (B5); D-W11X2-133 and §113.12 clause 5 ("reads every bundled script") and D-W11X2-135/-136 ("said to be cut or refused") are honest only in part.
+- **The guard's reach.** GH25, GH27 and GH28 escape it: the walk skips `__fixtures__` and `__mocks__`, but Metro's blockList excludes only `__tests__` and `*.test.*`, and `travel-buddy-standalone/src/data/discovery.ts` does `export * from '../__fixtures__/…'`, so that directory is bundled. Four guard mutations survive, each non-equivalent (R3, R5, R6, R7; fixtures GH29, GH30, GH31b, GH32).
+- **Next.** A round-17 lane closes B5 and B6 with the verifier's probes as failing-first tests, walks what Metro bundles, adds GH29–GH32 as G13 cases, corrects the rulings, and sweeps every client consumer of a gateway or temporal answer again for a marker the screen never says. The row moves only after that.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | C | **W** | §113 closes §113.1's four paths, confirmed at `1b4aa20fe` (§114.1). Two paths still present a failed or cut read as complete: the NOW map's layers over a gateway answer that does not name them (`travel-buddy-standalone/src/hooks/useMapEntities.ts`, `travel-buddy-standalone/app/map/index.tsx`) and the Time Machine's forecast over a refused plan layer, an unread itinerary or a cut page (`travel-buddy-standalone/src/features/map/time/forecastUnread.ts`). GH25, GH27 and GH28 escape the guard, and R3, R5, R6 and R7 survive it. D-W11X2-93 is not honest; D-W11X2-133, -135 and -136 are honest in part. |
+
+Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
+
+### 114.2 Round 17: what this lane did
+
+*Written 2026-09-30 by lane W11-X2 (round 17) on `disc-w11-x2-r17`, from `678dc251e` (PR #530's head: round 16 with the test-only TS8 fixture fix) and §114.1. It closes §114.1's two breaks, each with the verifier's probes copied in as failing-first tests; walks what Metro bundles, read from Metro's own blockList, so GH25, GH27 and GH28 are caught; adds the verifier's GH29–GH32 as G13 cases, so R3, R5, R6 and R7 are killed; corrects the rulings the verifier found not honest or honest in part (D-W11X2-93, -133, -135, -136, §113.12 clause 5, §113.13's product note); and sweeps every client consumer of a gateway or temporal answer for a marker the screen never says. The sweep found and closed four more paths (SW1–SW4).*
+
+*No migration and no new flag. Every change alters what is said only when a read failed, was refused, was cut at its cap or answered one page of several; with every read healthy and whole, the screens and every served body are unchanged (the controls V16-NU0, NUc, NU8c, V16-MS0, V16-FP0, FP4c, GL0, DG0, LG0, MP0, LE0, LU0). The one server change (SW4) adds `liveUnread: true` only to an object whose live claims were not read. Every edit in a cited file is line-neutral: lines are changed in place, and new code is appended at a file's foot or lives in a new module.*
+
+*All evidence is controlled: jest over the real hooks and screens, the real `enrichWithLiveClaims` over an injected reader, and the static guard over an in-memory overlay and over fixtures placed on disk. None of it is production evidence, and no client build carrying the change has shipped.*
+
+### 114.3 The NOW map and the Time Machine say what the server did not read (§114.1 B5, B6; D-W11X2-139, -140)
+
+- **B5, the NOW map (safety-relevant).** `useMapEntities` compares every requested layer with `sources` — the five pins and the §16 optional layers, by the name the route pushes (`GATEWAY_SOURCE_FOR_OPTIONAL_LAYER`, now read) — and lists safety first; a gateway read that failed or was refused names the optional layers it alone serves; an answer carrying `nextCursor` is reported `truncated` (page one holds the highest §31 tiers, safety first; the page is said, not followed). `app/map/index.tsx` reads both and draws `MapUnreadLayersBanner`: "Safety notices couldn't be checked here — hazards may not be shown" first, as an alert, then "Couldn't load … here", then "Showing only part of this area — zoom in to see everything" (`travel-buddy-standalone/src/hooks/useMapEntities.ts`, `travel-buddy-standalone/app/map/index.tsx`, `src/components/map/MapUnreadLayersBanner.tsx`, `src/features/map/layers/unreadLayersNotice.ts`; V16-NU1–NU4, NU5–NU8, V16-MS1, MS2–MS4 red first). **D-W11X2-93 is corrected.**
+- **B6, the Time Machine.** `forecastLayersUnread` reports `accepted_plan` for any plan refusal but the three off-states (`flag_off`, `no_group_key_secret`, `no_zone_model`), `itinerary` when it is null or not named, and all three over a refused forecast; the hook reports `pageCut` over `nextCursor`; `temporalNotice` says each, the cut first (`travel-buddy-standalone/src/features/map/time/forecastUnread.ts`, `src/hooks/useTemporalEntities.ts`; V16-FP1–FP3, FP4–FP7, FU10–FU12 red first). **D-W11X2-136 and §113.13's "said to be cut or refused" are corrected**, and so is D-W11X2-135's "said to be cut", which held only in the JSON until B5.
+
+### 114.4 The guard walks what Metro bundles (GH25–GH32; D-W11X2-141)
+
+`walkSkipsDir` and `isClientSource` ask `metroBlocks`, which reads the blockList's regular expressions from `metro.config.js`, so the walk and the overlay skip exactly what Metro never bundles (`__tests__/` and `*.test.*` today) and follow the config when it changes; `__fixtures__` and `__mocks__` are walked. The widened walk finds no consumer, so nothing was registered or allowlisted. GH17f now pins that those directories are walked; GH25, GH27, GH28, GH28b and GH17j were red first; the verifier's GH29, GH30, GH31b and GH32 are G13 cases (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts`; the cited lines kept in place, new code at the foot). **D-W11X2-133 and §113.12 clause 5 are corrected.**
+
+### 114.5 The sweep (SW1–SW4; D-W11X2-142, -143)
+
+Every client consumer of a gateway or temporal answer that carries `sources`, `refusal`, `truncated`, a `*_capped` source or `nextCursor` was read for whether the screen says it, and every `limit:` for a dropped `nextCursor`:
+
+- **SW1.** GET /hidden-gems' `truncated` reached no screen: `listGems` marks a cut list beside the array (`travel-buddy-standalone/src/services/gemListCut.ts`), and the Gems Discover list and the destination page say it, never "No hidden gems found" or the all-empty state over it (`src/hooks/useHiddenGems.ts`, `app/gems/index.tsx`, `travel-buddy-standalone/app/destination/[slug].tsx`).
+- **SW2.** The NOW map's rollback path keeps a cut gem page's mark and reports `truncated` (`src/hooks/useMapEntities.ts`).
+- **SW3.** The Media Map dropped the gateway's `sources` and `nextCursor`, and a gem map whose gem read failed said it was empty; it now says "Some of this map could not be read" and is never empty over it (`travel-buddy-standalone/src/features/media/hooks/useMediaMap.ts`, `src/features/media/state/mediaMapStore.ts`, `src/features/media/screens/MediaMapScreen.tsx`).
+- **SW4.** The gateway's live-claim cap was reported only as an aggregate nothing renders, and the place sheet said "No live activity has been observed here" for a place nobody read; each object past the cap, or whose read threw, carries `liveUnread`, and the sheet says "Live activity couldn't be checked for this place" (`artifacts/api-server/src/lib/mapProjection.ts`, `lib/mapObjects.ts`, `travel-buddy-standalone/src/features/map/place/livePlaceModel.ts`, `src/types/mapObjects.ts`).
+- **Swept and sound; seen and left for their owners** — D-W11X2-143 lists both. **H9** is agreed equivalent (D-W11X2-143).
+
+### 114.6 Tests, seen red, and mutations
+
+**Seen red first**, run against the code before each fix (logs in the lane's `r17/red/` scratch directory; where the fix was already written, the test was run over HEAD's version of the source, restored by sha256):
+
+| Area | Red | Controls, green |
+|---|---|---|
+| B5 the NOW map hook | V16-NU1–NU4, NU5–NU8 | V16-NU0, NUc, NU8c |
+| B5 the NOW map screen | V16-MS1, MS2–MS4 | V16-MS0, MS5 |
+| B6 the Time Machine (hook) | V16-FP1–FP3, FP4–FP7 | V16-FP0, FP4c |
+| B6 the Time Machine (rule) | FU10–FU12 | FU1–FU9 as before |
+| The guard's reach (G13) | GH17f (flipped), GH25, GH27, GH28, GH28b, GH17j | GH17g, the tree's own pass |
+| SW1 the gem list | GL1–GL4, DG1, DG2 | GL0, DG0 |
+| SW2 the rollback gems page | LG1 | LG0 |
+| SW3 the Media Map | MP1–MP4 | MP0 |
+| SW4 the live state | LE1, LE2, LU1 | LE0, LU0 |
+
+**Written against the fixed code**, each shown to bite by the mutation that removes the line it pins: NU9, MS6, FP8, FU13, GL5, and MP4's whole-gem-map case; and the verifier's guard fixtures GH29, GH30, GH31b and GH32 as G13 cases. Four existing assertions were brought to the stricter answer, never a weaker one: `forecastUnread` FU2 (its fixture now names the itinerary), FU4 and FU5, and `useTemporalEntities.failedRead` TM3 (a refused forecast read none of its three layers). **On disk**, the verifier's runner placed each of GH0–GH32 alone in the tree and removed it: see §114.10.
+
+**Mutations.** Each was applied alone, its pin suites were run, and the file was restored byte-identically; the sha256 matched the committed file (`git show HEAD:`) before and after every application. Runner and logs: the lane's `r17/muts/` scratch directory (`run.py`, `run2.py`, `defs.py`, `defs2.py`, `summary.txt`, `summary2.txt`).
+
+- **66 mutations:** the NOW map hook M1–M16 with M4b (M4 re-stated on SW2's line); the screen and its wording S1–S9; the Time Machine T1–T13; the guard R3, R5, R6, R7 (the verifier's four survivors, re-run), R8b (the skip of `__fixtures__` and `__mocks__` restored), R9–R12 (Metro's blockList read as empty, the overlay ignored, the test-file rule dropped, `node_modules` no longer skipped); the sweep G1–G7 (SW1), P1–P8 (SW3), L1–L3 (SW4) and M15, M16 (SW2).
+- **Result: 66 killed, 0 equivalent, 0 non-equivalent survivors** on DV-83 lines and on guard lines. **Survivors on a first run, each closed:** S9 (the order of the layers line and the cut line; MS6), T13 (a forecast report whose plan is null; FU13) and P8 (the gems source name; MP4's whole-gem-map case). **R3, R5, R6 and R7**, the round-16 verifier's survivors, are killed by GH29, GH30 (and GH17j), GH31b and GH32. **H9** (the verifier's) is agreed equivalent (D-W11X2-143).
+- *Naming.* This round's series are M, S, T, R, G, P and L; the verifier's are its own.
+
+### 114.7 Checks
+
+- **Line-neutral in every cited file** (`app/map/index.tsx`, `useMapEntities.ts`, `services/mapProjection.ts`, `services/hiddenGems.ts`, `lib/mapProjection.ts`, `lib/mapObjects.ts`, `types/mapObjects.ts`, `livePlaceModel.ts`, the Media Map's hook, store and screen, `useTemporalEntities.ts`, `forecastUnread.ts`, and the guard's cited lines), so every anchored citation still lands on its text: `check:doc-citations`, `check:citation-targets` and `check:citation-symbols` are clean. New code is at a file's foot or in a new module (`MapUnreadLayersBanner.tsx`, `unreadLayersNotice.ts`, `gemListCut.ts`); `useHiddenGems.ts`, `app/gems/index.tsx` and `travel-buddy-standalone/app/destination/[slug].tsx`, which no citation anchors, gain lines.
+- **Scope.** This round's suites and the touched sources join this census's `CENSUS_SCOPE`; the acknowledgement for every census that counts a changed file (discovery, map, media, sensing, input-intelligence) carries a §114 paragraph with its "why it cannot move a verdict".
+- **Suites.** The new api-server suite is on the `test` line (`check:test-registration`); the new client suites are jest component suites and node suites, none on KNOWN_BROKEN; `check-test-mocks` and `lint:orphan-tests` are clean.
+- **Allowlist.** No `UNCHECKED_READS_ALLOWLIST.json` entry changes; the checker reports no new site and no stale entry. The write-path-columns replica prints OK.
+
+### 114.8 DV-83, restated
+
+§114.1's two breaks are closed, each with the verifier's probes red first and green now (the verifier's `zz-v16-*` probes, copied in unchanged, pass; its V15-TH4 and V15-NM0 still encode the old implementation, as §113 recorded, and their adapted `zz-v16a-*` versions pass). The guard's three reach holes are caught on disk and in memory, and its four surviving mutations are killed. The rulings the verifier found not honest or honest in part are corrected (D-W11X2-93, -133, -135, -136; §113.12 clause 5 and §113.13's product note, marked in place). The sweep closed four more paths. Every clause of DV-83's criterion holds on every path this lane examined:
+
+1. **Producers send the refusal envelope or a named failure.** Unchanged in kind; one more: an object whose live claims were not read carries `liveUnread`.
+2. **Nothing refused or partial is cached as complete.** No change writes a cache; the NOW map's write-through stores only place intelligence, and a `liveUnread` object stays marked.
+3. **Nothing refused is rendered as empty, as complete, or over the wrong rows.** The NOW map says every layer the gateway did not read, safety first, and a page of several; the Time Machine says a refused plan layer, an unread itinerary and a page of several; the Gems list, the destination page and the Media Map say a cut or partial read; the place sheet never says "none observed" over a live state nobody read. Every new cut mark is cleared with the read it belongs to (NU7, NU9, FP8, GL4, GL5).
+4. **A Compass tool never states a failed or partial read to the model as a fact.** Unchanged this round (round 14's evidence stands).
+5. **Consumers branch on coverage**, and the static guard walks exactly what Metro's blockList bundles, read from `metro.config.js`, and pins every carrier reference that is not a direct call (G13).
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§114.1's two breaks are closed, each with its verifier probes red first; GH25, GH27 and GH28 are caught on disk and in memory, and R3, R5, R6 and R7 are killed; the sweep closed four more paths; 66 mutations: 66 killed, 0 equivalent (H9, the verifier's, agreed equivalent). CONTROLLED EVIDENCE ONLY — this row awaits independent re-verification.** **The NOW map says every layer the gateway did not read, safety first, and a page of several** (`travel-buddy-standalone/src/hooks/useMapEntities.ts`, `travel-buddy-standalone/app/map/index.tsx`, `travel-buddy-standalone/src/components/map/MapUnreadLayersBanner.tsx`; V16-NU1–NU4, NU5–NU8, V16-MS1, MS2–MS4). **The Time Machine says a refused plan layer, an unread itinerary and a page of several** (`travel-buddy-standalone/src/features/map/time/forecastUnread.ts`; V16-FP1–FP3, FP4–FP7, FU10–FU12). **The guard walks what Metro bundles** (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts`; G13 GH25–GH32, GH17j). **Sweep:** the cut gem list (`travel-buddy-standalone/src/services/gemListCut.ts`; GL1–GL4, DG1, DG2, LG1), the Media Map's gateway read (`travel-buddy-standalone/src/features/media/state/mediaMapStore.ts`; MP1–MP4) and the live state nobody read (`artifacts/api-server/src/lib/mapProjection.ts`, `travel-buddy-standalone/src/features/map/place/livePlaceModel.ts`; LE1, LE2, LU1). |
+
+**Headline.** DV-83 moves W → C. `check:census-integrity` counts **C 101 / W 85 / N 2 / X 0** over 188: CONSTRUCTED 186 / 188 = **98.9 %**, CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged. The move is on controlled evidence and awaits independent re-verification.
+
+### 114.9 Left open, and what would turn this red
+
+- **Seen and not built (other owners; D-W11X2-143).** Cursor-paged feeds outside Discovery (media feed, memories, collections, shared moments, engagement likers) are census-media's and census-highlights-memories'; the guide page's "contributed gems" shows the first 40 with no "more" and states no absence.
+- **Product effect, stated.** In a dense viewport the NOW gateway reads live claims for 25 objects, so most place sheets there now say "Live activity couldn't be checked for this place" rather than "No live activity has been observed here"; widening the enrichment bound, or ranking before it, is census-map's call. A NOW map answer longer than 200 objects now says "Showing only part of this area — zoom in to see everything".
+- **What would turn DV-83 red again:**
+  - a requested layer the gateway did not name, or a `nextCursor`, drawn without a word — above all the safety layer (V16-NU1, NU4, V16-MS1, MS2);
+  - a refused plan layer, an unread itinerary or a page of several drawn as a whole forecast (V16-FP1–FP3);
+  - a consumer in a directory Metro bundles that the guard does not walk, or a guard reading no test depends on (G13 GH25–GH32, GH17j);
+  - a cut gem list, a partial Media Map or an unread live state stated as empty or absent (GL1, DG1, MP2, LU1);
+  - any path §113.13 lists.
+
+### 114.10 Results at the final code commit
+
+The code is final at `53ec96888`; the census commit changes only this file, the decision register, `checkCensusFreshness.ts`' scope and the staleness acknowledgements. Node 24.21.0.
+
+- **api-server** (`node --import tsx/esm --test`, `SUPABASE_URL=http://127.0.0.1:9`): every `discovery*`, `compass*`, `trail*`, `hashtag*`, `map*`, `event*`, `hidden*`, `call*` and `gems*` suite (the touched `mapProjection`, `mapObjectsContract`, `mapProjectPlace` and the new `mapLiveEnrichmentUnread` among them), with `securityCheckSuite`, `uncheckedSupabaseReads`, `entryWiringNotCommentedOut` and `layoverSurfaceErrorBinding`: 361 files in 16 chunks, each under 5 minutes, `tests 6939 · pass 6939 · fail 0 · cancelled 0`. Seven live-DB suites that import `ciSupabaseGuard` are not run (the guard refuses them without live credentials; this lane writes to no database).
+- `checkUncheckedSupabaseReads`: no new in-scope read ignores its `.error`. The write-path-columns replica: `OK (117 tracked)`.
+- **Client:** `pnpm run -s check:all` passes on the final code — node tests `tests 7584 · pass 7584 · fail 0`; jest component suites 847 of 847 (5421 tests); the web config 4 of 4 (12 tests); typecheck, typecheck:tests and the lints clean. `check-route-registry`: OK.
+- **The guard on disk.** The verifier's runner placed each of GH0–GH32 alone in the tree and removed it: the unfixtured tree passes (fail 0), and all 34 fixtures (GH0–GH32 with GH31b) are killed; every touched registered file was restored with a matching sha256.
+- **The verifiers' probes**, copied in, run and deleted: the v7–v15 server probes pass 138 of 138; the v7–v14 client probes and the v16 probes (V16-NU0–NU4, V16-MS0, MS1, V16-FP0–FP3) pass, and the adapted `zz-v16a-*` pass; V15-TH4 and V15-NM0, copied in unchanged, still fail as §113.4 and §113.5 recorded (they encode the old implementation).
+- **Guards:** all 24 of the integrator's `int-guards.sh` exit 0.
+
+## §115 — DV-83 round 18 (lane W11-X2)
+
+### 115.1 Integrator: DV-83 held at W after independent re-verification at `e04a52d6b`
+
+*Integrator, 2026-09-30. §114 is round 17 at `e04a52d6b` (PR #530's head). An independent verifier checked that tree: it re-ran every round-15 to round-7 probe unchanged (138 of 138 server; the v7–v14 client suites), the v16 probes and their adapted `zz-v16a-*` versions, wrote new ones (`zz-v17-*`, and guard-reach fixtures GH33–GH40 placed on disk one at a time), applied 58 mutations of its own, and restored every mutated file byte-identical, checked by sha256. Its report is the round-17 verifier's `dv83-r17-verifier.md`.*
+
+- **Confirmed.** §114.1's two breaks (B5, B6), GH0–GH32 with GH31b, and every earlier round's breaks are closed in behaviour. 55 of its 58 mutations are killed by the lane's pins; R6 is harmless (it drops only a `node_modules` block the walk already skips); H9 stays equivalent (D-W11X2-143, upheld).
+- **Found: seven paths that break the criterion's wording, each shown by probes that fail against this tree (19 red probes, each group with a green control).**
+  1. **B9 (safety-relevant display fail-open). An unread `map_projection_enabled` is served as the flag-off body by both gateways** (`artifacts/api-server/src/routes/mapProjection.ts`, `artifacts/api-server/src/routes/mapProjectionTemporal.ts`: `isFlagEnabled`, false on error). The NOW map rolls back to the legacy fetchers and says nothing, so the safety layer, which only the gateway serves, is gone unsaid; the Time Machine draws the offset empty (GF1, GF2, V17-NC5 red; GF0, NC5c the controls).
+  2. **B7. The NOW gateway names `places` over a read cut at its 1000-row cap**; at zoom 6–11 the rows aggregate to one zone and no `nextCursor` is sent (GC1, V17-NC1).
+  3. **B8. It names `saved` (newest 500), `memories` (300) and `buddies` over a cut read or an unread `rent_buddy_enabled`** (`artifacts/api-server/src/lib/buddyMapRead.ts` answers `{ok:true, pins:[]}`) (GC2–GC4, V17-NC2–NC4).
+  4. **B10. The Time Machine's accepted-plan layer answers a failed `map_crowd_flow_enabled` read as `flag_off` and a failed consent read as "read, nothing predicted"** (TPU1, TPU2). D-W11X2-140's `flag_off` off-state is not honest.
+  5. **B11. A live-claim read that FAILED says "No live activity has been observed here"**: the route's reader drops the `liveClaimReadFailed` mark (LF1, LF2).
+  6. **B12. The NOW map's rollback path draws a cut buddy page and a full events page as whole layers** (`travel-buddy-standalone/src/hooks/useMapEntities.ts`; GET /events sends no cut signal and ignores `nearLat`) (V17-LC1, LC2).
+  7. **B13. The Hidden Gems map says "No hidden gems on the map yet" over a gateway that failed or refused** (`travel-buddy-standalone/src/features/media/state/mediaMapStore.ts`) (V17-MG1, MG2).
+- **Rulings not honest.** D-W11X2-139's premise (`sources` is named only over a whole read) is false (B7, B8, B9); D-W11X2-140's `flag_off` off-state is not honest (B10); D-W11X2-141 is honest for GH25–GH32 only; D-W11X2-142 is honest for SW1, for SW2 on gems only, for SW3 over a gateway that answered and for SW4 over the cap and a throw.
+- **The guard's reach.** GH33, GH34, GH36, GH37 and GH38 escape it (a `/*` or `//` inside a string, `import{…}from` with no whitespace, a namespace import spread into an object, a string-literal import name). No live file uses these shapes today. Two guard mutations survive, each non-equivalent (R3, R8; fixtures GH39, GH40).
+- **Next.** A round-18 lane closes B7–B13 with the verifier's probes as failing-first tests, catches GH33–GH40, corrects the rulings, and sweeps every named layer and every client empty state again. The row moves only after that.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | C | **W** | §114 closes §114.1's two paths, confirmed at `e04a52d6b` (§115.1). Seven paths still present a failed or cut read as complete or empty: an unread gateway flag served as off, safety-relevant (`artifacts/api-server/src/routes/mapProjection.ts`, `artifacts/api-server/src/routes/mapProjectionTemporal.ts`); cut or flag-unread layers named in `sources` (`artifacts/api-server/src/lib/buddyMapRead.ts`); the Time Machine plan layer's failed reads; a failed live-claim read; the rollback path's buddy and event pages (`travel-buddy-standalone/src/hooks/useMapEntities.ts`); and the Hidden Gems map over a failed gateway (`travel-buddy-standalone/src/features/media/state/mediaMapStore.ts`). GH33, GH34, GH36, GH37 and GH38 escape the guard, and R3 and R8 survive it. D-W11X2-139's premise and -140's `flag_off` are not honest; D-W11X2-141 and -142 are honest in part. |
+
+Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
+
+### 115.2 Round 18: what this lane did
+
+*Written 2026-09-30 by lane W11-X2 (round 18) on `disc-w11-x2-r18`, from `e04a52d6b` (PR #530's head: round 17) and §115.1. It closes §115.1's seven breaks (B7–B13), each with the verifier's probes adapted into registered tests and seen red first; makes the consumer guard read source through the TypeScript parser, so GH33–GH38 are caught, and kills R3 and R8 with the verifier's GH39 and GH40 as G13 cases; corrects the rulings the verifier found not honest or honest in part (D-W11X2-139's premise, -140's `flag_off`, -141, -142's SW2, SW3 and SW4 scope) in D-W11X2-144 to -152; and sweeps every named layer and every client empty state on the map again. The sweep found and closed five more paths (SW5–SW9).*
+
+*No migration and no new flag. Every change alters what is said only when a read failed, was refused, was cut at its cap, or answered one page of several; with every read healthy and whole, the screens and every served body are unchanged (controls GF0, GF3, GC0a–d, GC5c, TPU0–TPU0d, LF0, LF0b, LG0, EC0, EC1c, EC2c, EC3c, EN0, V17-MG0, V17-NC0, NC5o, NC6, TF0, TP0, V17-LCc, LC1c, SW5a, CL0, SB0, CA0, TL0). The server bodies gain keys only on the failed or cut arm: `refusal: "flag_unreadable"` on the flag-off body, `saves_capped` / `subjects_capped` as a producer's refusal, `liveUnread` on an object, `truncated: true` on GET /events, `refusal: "block_set_unreadable"` on the buddy search's fail-closed answer. One behaviour changes on a healthy read, as the verifier's fix asked: GET /events honours `nearLat` / `nearLng` / `nearRadiusKm`. Every edit in a cited file is line-neutral: lines are changed in place, and new code is appended at a file's foot or lives in a new module.*
+
+*All evidence is controlled: node suites over the real routes and a PostgREST-shaped double, jest over the real hooks, components and screen, and the static guard over an in-memory overlay, a temporary tree and fixtures placed on disk. None of it is production evidence, and no client build carrying the change has shipped.*
+
+### 115.3 An unread gateway flag, and a cut or flag-unread layer (§115.1 B9, B7, B8; D-W11X2-144, -145)
+
+- **B9, safety-relevant.** Both gateways read `map_projection_enabled` with `readFlagState`. An unreadable flag answers `enabled: false, refusal: "flag_unreadable"`; a flag read off (or absent) keeps the flag-off body byte for byte. The NOW map names the optional layers only the gateway serves, safety first, as an alert; the Time Machine says "Couldn't load the map for this time" (`artifacts/api-server/src/routes/mapProjection.ts`, `artifacts/api-server/src/routes/mapProjectionTemporal.ts`; GF1, GF2 red first; NC5, TF1). **D-W11X2-139's premise is corrected.**
+- **B7, B8.** `places` is not named over a read cut at MAX_PLACE_ROWS, nor `saved` or `memories` over their caps (reported as `saves_capped`, `subjects_capped`), nor `buddies` over an unread `rent_buddy_enabled`, an unknown block set or a cut scan (`artifacts/api-server/src/lib/buddyMapRead.ts`); the hook reads `places.truncated` (`travel-buddy-standalone/src/hooks/useMapEntities.ts`; GC1–GC5b, V17-NC1, NC1b red first).
+
+### 115.4 The Time Machine's plan layer and the live state (§115.1 B10, B11; D-W11X2-146, -147)
+
+- **B10.** `flag_off` is a crowd-flow flag read and off; an unread one refuses as `flag_unreadable`, and a failed consent read as `read_failed` — both outside PLAN_OFF_STATES, so "Predicted crowds couldn't be checked for this time" is said (TPU1, TPU2 red first; TP1, TP2). **D-W11X2-140's `flag_off` off-state is corrected.**
+- **B11 and SW7.** The gateway's live-claim reader throws on `liveClaimReadFailed`, and reads the Live-label gates three-state once per request, so a failed read or an unread gate marks the object `liveUnread` ("Live activity couldn't be checked for this place"); `liveLabelsServable`, shared with Compass, is unchanged (LF1, LF2, LG1 ×5 red first). **D-W11X2-142's SW4 scope is corrected.**
+
+### 115.5 The rollback path and the Hidden Gems map (§115.1 B12, B13; D-W11X2-148, -149)
+
+- **B12.** A buddy page whose `total` exceeds it and an events page the server says is cut (or that fills its limit) are marked beside the array (`travel-buddy-standalone/src/features/map/layers/layerPageCut.ts`) and reported `truncated`. GET /events adds `truncated: true` only to an answer that is not whole (a page of several, a filled rank pool, friends-only events withheld over a failed read) and honours `near*` (`artifacts/api-server/src/routes/events.ts`; EC1–EC3, EN1, EN2, V17-LC1, LC2, LC2b, LC3 red first). **D-W11X2-142's SW2 scope is corrected.**
+- **B13.** A gem map is empty only over a gateway that answered with its flag on; otherwise the positions-unavailable copy is said (`travel-buddy-standalone/src/features/media/state/mediaMapStore.ts`; V17-MG1, MG2, MG1b, MG2b, MG4 red first). **D-W11X2-142's SW3 scope is corrected.**
+
+### 115.6 The guard reads source through the TypeScript parser (GH33–GH40; D-W11X2-150)
+
+`stripComments` returns `canonicalSource`: the file parsed by the TypeScript compiler, with exactly the comment ranges the parser finds between tokens removed (never text inside a string, template, regular expression or JSX), every import and export declaration printed in one canonical form (string-literal names unquoted, one space between tokens), and every escaped identifier printed as the name it binds. The guard's readings run over that text unchanged, so G1–G13 keep their contracts, and no live file changed its reading (the whole guard: 92 of 92). A namespace used other than as `ns.member`, a destructure or a type is `<dynamic>`. `walk()` takes a root. G13 GH33, GH34, GH35b, GH36, GH37, GH38 and GH40 were red over HEAD's guard code; GH39 and GH40 kill R3 and R8 (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts`; the cited lines kept in place, new code at the foot). **D-W11X2-141 is corrected.**
+
+### 115.7 The sweep (SW5–SW9; D-W11X2-151, -152)
+
+Every `sources.push` in both gateways, every flag read two-state on a map or Discovery read surface, every error swallowed into `ok: true` on the NOW map's paths, and every empty state on the map screens was read again:
+
+- **SW5.** `city_models` and `personal_cities` are not named over the producers' own caps; the personal-city fold marks a cut (`artifacts/api-server/src/lib/mapProducers/personalCityProducer.ts`).
+- **SW6.** An unread location-sharing stop or block set is `ok: false` in `artifacts/api-server/src/lib/circleLocationsRead.ts` (still serving nobody), and the rollback friends read rejects rather than answering `[]` (`travel-buddy-standalone/src/services/map.ts`).
+- **SW7.** The Live-label gates (§115.4).
+- **SW8.** The buddy search's fail-closed empty answer names `refusal: "block_set_unreadable"` (`artifacts/api-server/src/routes/rentABuddy.ts`), and the rollback buddies layer treats it as unread.
+- **SW9.** The carousel's "No results nearby" and the city timeline's "No city trend to show" are no longer drawn over a map or a time that was not read whole (`travel-buddy-standalone/src/components/map/MapCarousel.tsx`, `travel-buddy-standalone/src/components/map/CityTimeline.tsx`, `travel-buddy-standalone/app/map/index.tsx`).
+- **Swept and sound; seen and left for their owners** — D-W11X2-152 lists both.
+
+### 115.8 Tests, seen red, and mutations
+
+**Seen red first**, run against the code before each fix (logs in the lane's `r18/red/` scratch directory; the guard cases were run over HEAD's guard code with the new cases appended, and the screen's MS7 and MS8 over HEAD's `app/map/index.tsx`, each restored by sha256):
+
+| Area | Red | Controls, green |
+|---|---|---|
+| B9 the gateways' flag | GF1, GF2 | GF0, GF3 |
+| B7, B8 the named layers | GC1–GC4, GC4b, GC5, GC5a, GC5b; V17-NC1, NC1b | GC0a–d, GC5c; V17-NC0, NC6 |
+| B10 the plan layer | TPU1, TPU2 | TPU0, TPU0b, TPU0c, TPU0d |
+| B11 the live state | LF1, LF2 | LF0, LF0b |
+| B12 the rollback path | EC1–EC3, EN1, EN2; V17-LC1, LC2, LC2b, LC3 | EC0, EC1c, EC2c, EC3c, EN0; V17-LC0, LCc, LC1c |
+| B13 the Hidden Gems map | V17-MG1, MG2, MG1b, MG2b, MG4 | V17-MG0 |
+| The guard's reach (G13) | GH33, GH34, GH35b, GH36, GH37, GH38, GH40 | GH33c, GH36c, the tree's own pass |
+| SW5 the world-intelligence caps | SW5b, SW5c, SW5d | SW5a |
+| SW6 the circle reads | CL1–CL4; `circleLocationsRead`, `mapProjectionLayers` (the stricter answer) | CL0 |
+| SW7 the Live-label gates | LG1 ×5 | LG0 |
+| SW8 the buddy search | SB1, LC4 | SB0 |
+| SW9 the empty states | CA1, TL1, TL2, MS7, MS8 | CA0, TL0 |
+
+**Written against the fixed code**, each shown to bite by the mutation that removes the line it pins: NC2–NC5, NC5o, TF0, TF1, TP0–TP2 (the clients over the fixed bodies), GH39 (R3), GH33d, GH33e (Y10), GH35c (Y5), SW5e (X44) and `mediaMapStore` §115 B13 (X40). Nine existing assertions were brought to the stricter answer, never a weaker one: `buddyMapRead`'s unreadable flag and null block set (`ok: false`, still exposing nobody) and its pin cap (`capped`), `circleLocationsRead`'s unreadable stop and unreadable block set, `mapProjectionLayers`' two circle equivalences and its null block set, and `MediaWorldShell`'s gem map and NOW map over a gateway that is off (the positions are unavailable, not the empty state; the clusters-only Places map keeps its empty state). **On disk**, the verifier's runner placed each of GH0–GH40 alone: see §115.12.
+
+**Mutations.** Each was applied alone, its pin suites were run (the server group: eleven node suites; the client group: seven jest suites and `mediaMapStore`; the guard group: the §115 G13 cases), and the file was restored byte-identically; the sha256 matched the committed file (`git show HEAD:`) before and after every application. Runner and logs: the lane's `r18/muts/` scratch directory (`run.py`, `defs.py`, `run.out`, `run2.out`, `run3.out`).
+
+- **74 mutations:** B9 X1–X4; B7 X5, X6; B8 X7–X17; B10 X18–X20 with X19b; B11 and SW7 X21–X24; B12 X25–X31b (server) and X32–X37 (client); B13 X38–X40; SW5 X41–X44; SW6 X45–X50; SW8 X51, X52; SW9 X53–X58; the guard R3 and R8 (the verifier's two survivors, re-run) and Y1–Y12 (the parser-backed reading: the old regex stripper restored, no canonical declarations, leading comment ranges only, JSX text read as trivia, escaped identifiers left, `namespaceHandedOn` dropped or inverted or its three exemptions forced, the TS-grammar fallback dropped, `walk()`'s root ignored, string-literal names left quoted).
+- **Result: 73 killed, 1 equivalent (X19), 0 non-equivalent survivors** on DV-83 lines and on guard lines. **Survivors on a first run, each closed:** X44 (the personal-city fold's own cut at the read; SW5e), Y5 (the escaped-identifier print; GH35c) and Y10 (the TS-grammar fallback; GH33e). **X19 is equivalent:** it turns B10's consent guard into `if (false)`, after which `consentRows.map` throws on the `null` a failed read resolves to, inside `readPlanArrivals`' own `try`, whose `catch` returns the same `read_failed`; X19b, which restores the old guard (a failed read left the set empty), is killed by TPU2. **R3 and R8**, the round-17 verifier's survivors, are killed by GH39 and GH40. **R6** stays harmless and **H9** equivalent (D-W11X2-152).
+- *Naming.* This round's series are X (fixes and sweep) and Y (the guard's reading); R3 and R8 keep the verifier's names.
+
+### 115.9 Checks
+
+- **Line-neutral in every cited file** (`routes/mapProjection.ts`, `routes/mapProjectionTemporal.ts`, `routes/events.ts`, `routes/rentABuddy.ts`, `lib/buddyMapRead.ts`, `lib/circleLocationsRead.ts`, `lib/mapProducers/personalCityProducer.ts`, `useMapEntities.ts`, `services/map.ts`, `services/mapProjection.ts`, `services/events.ts`, `services/rentABuddy.ts`, `mediaMapStore.ts`, `MapCarousel.tsx`, `CityTimeline.tsx`, `TimeMachineControl.tsx`, `app/map/index.tsx`, and the guard's cited lines), so every anchored citation still lands on its text: `check:doc-citations`, `check:citation-targets` and `check:citation-symbols` are clean. New code is at a file's foot or in a new module (`features/map/layers/layerPageCut.ts`).
+- **Scope.** This round's touched sources join this census's `CENSUS_SCOPE`; the acknowledgement for every census the freshness check named (discovery, map, layover, highlights-memories, media, telegraph) carries a §115 paragraph with its "why it cannot move a verdict".
+- **Suites.** The five new api-server suites are on the `test` line (`check:test-registration`); the new client suites are jest component suites, none on KNOWN_BROKEN; `lint:mocks`, `lint:imports` and `lint:orphan-tests` are clean.
+- **Allowlist.** No `UNCHECKED_READS_ALLOWLIST.json` entry changes; `checkUncheckedSupabaseReads` reports no new in-scope read that ignores its `.error`. The write-path-columns replica prints `OK (117 tracked)`.
+
+### 115.10 DV-83, restated
+
+§115.1's seven breaks are closed, each with the verifier's probes adapted into registered tests, red first and green now. The guard's five reach holes are caught on disk and in memory, and its two surviving mutations are killed. The rulings the verifier found not honest or honest in part are corrected (D-W11X2-139's premise, -140's `flag_off`, -141, -142's SW2, SW3 and SW4 scope) in D-W11X2-144 to -152. The sweep closed five more paths. Every clause of DV-83's criterion holds on every path this lane examined:
+
+1. **Producers send the refusal envelope or a named failure.** More of them now: an unread gateway flag is `refusal: "flag_unreadable"`; a cut producer names `saves_capped` / `subjects_capped`; an unread crowd-flow flag or consent read refuses the plan layer; GET /events says `truncated`; the buddy search's fail-closed answer names `block_set_unreadable`; the circle reader and the buddy reader answer `ok: false` over an unread flag, stop or block set.
+2. **Nothing refused or partial is cached as complete.** No change writes a cache.
+3. **Nothing refused is rendered as empty, as complete, or over the wrong rows.** No layer is named over a cut or an unread flag; an unread gateway flag is said, safety first, and on the Time Machine; a failed plan read is said; a failed live read or an unread live gate is "couldn't be checked"; the rollback path says a cut buddy or events page and an unread friends or buddies read; the Hidden Gems map, the carousel and the city timeline never say "nothing here" over a read that was not whole.
+4. **A Compass tool never states a failed or partial read to the model as a fact.** Unchanged this round (round 14's evidence stands); `liveLabelsServable`, which Compass shares, is unchanged.
+5. **Consumers branch on coverage**, and the static guard reads every bundled source through the TypeScript parser, so a comment, a string or a spelling can no longer hide a consumer.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§115.1's seven breaks are closed, each with its verifier probes adapted and red first; GH33–GH38 are caught on disk and in memory, and R3 and R8 are killed (GH39, GH40); the sweep closed five more paths; 74 mutations: 73 killed, 1 equivalent (X19, argued in §115.8). CONTROLLED EVIDENCE ONLY — this row awaits independent re-verification.** **An unread gateway flag is a refusal both clients say, safety first** (`artifacts/api-server/src/routes/mapProjection.ts`, `artifacts/api-server/src/routes/mapProjectionTemporal.ts`; GF1, GF2). **No layer is named over a cut or an unread flag** (`artifacts/api-server/src/lib/buddyMapRead.ts`, `travel-buddy-standalone/src/hooks/useMapEntities.ts`; GC1–GC5b, V17-NC1). **The Time Machine's plan layer and the live state say a failed read** (TPU1, TPU2, LF1, LF2, LG1). **The rollback path and GET /events say a cut page** (`artifacts/api-server/src/routes/events.ts`, `travel-buddy-standalone/src/features/map/layers/layerPageCut.ts`; EC1–EC3, EN1, EN2, V17-LC1, LC2). **The Hidden Gems map is empty only over an answered gateway** (`travel-buddy-standalone/src/features/media/state/mediaMapStore.ts`; V17-MG1, MG2). **The guard reads source through the TypeScript parser** (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts`; G13 GH33–GH40). **Sweep:** the world-intelligence caps, the circle reads, the Live-label gates, the buddy search and the map's empty states (SW5–SW9). |
+
+**Headline.** DV-83 moves W → C. `check:census-integrity` counts **C 101 / W 85 / N 2 / X 0** over 188: CONSTRUCTED 186 / 188 = **98.9 %**, CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged. The move is on controlled evidence and awaits independent re-verification.
+
+### 115.11 Left open, and what would turn this red
+
+- **Seen and not built (other owners; D-W11X2-152).** The marketplace screens do not yet read the buddy search's `refusal`; GET /rent-a-buddy/sections and the offers list keep their fail-closed empty 200; `listMyTrips` answers a missing session token with no trips; the Compass map-command parser reads `map_compass_commands_enabled` two-state; `liveLabelsServable` stays two-state for its other callers.
+- **Product effect, stated.** A NOW map over an unreadable rollout flag now says the safety layer could not be checked (it used to say nothing and draw the legacy layers). A city-band map whose places read hit its cap says "Couldn't load places here" and "Showing only part of this area". GET /events filtered by `nearLat` / `nearLng` now answers events near that point; the Media experience sources, which ask exactly that, get nearby events. A Media Map that includes gems (the Hidden Gems lens, the NOW media map, the standalone Media Map) over a gateway whose flag is off now says the positions are unavailable rather than its empty state, as the verifier's fix asked: the gem layer was never read.
+- **What would turn DV-83 red again:**
+  - a layer named in `sources` over a cut, a failed read or a flag that could not be read (GC1–GC5b, SW5b, SW5c);
+  - an unread gateway flag, crowd-flow flag, consent read, live claim or Live-label gate stated as off or empty (GF1, GF2, TPU1, TPU2, LF1, LF2, LG1);
+  - a rollback page of several, or a failed rollback read, drawn as a whole layer (V17-LC1, LC2, LC4, CL1–CL4);
+  - an empty state reached over a read that was not whole (V17-MG1, CA1, TL1);
+  - a consumer the parser-backed guard cannot see (G13 GH33–GH40);
+  - any path §114.9 lists.
+
+### 115.12 Results at the final code commit
+
+The code is final at `d1f04405f` (the api-server suites and the on-disk guard runs ran at `762efcec0`; `d1f04405f` changes one client test, `MediaWorldShell`, and the client checks ran on it); the census commit changes only this file, the decision register, `checkCensusFreshness.ts`' scope and the staleness acknowledgements. Node 24.21.0.
+
+- **api-server** (`node --import tsx/esm --test`, `SUPABASE_URL=http://127.0.0.1:9`): every `discovery*`, `compass*`, `trail*`, `hashtag*`, `map*`, `event*`, `hidden*`, `call*` and `gems*` suite, the touched suites (`buddy*`, `circle*`, `rentABuddy*`, `location*`, the five new ones among the `map*` and `event*` suites), with `securityCheckSuite`, `uncheckedSupabaseReads`, `entryWiringNotCommentedOut` and `layoverSurfaceErrorBinding`: 410 files in 16 chunks, each under 5 minutes (the longest 284 s), `tests 7865 · pass 7865 · fail 0 · cancelled 0`. Seven live-DB suites that import `ciSupabaseGuard` are not run (the guard refuses them without live credentials; this lane writes to no database).
+- `checkUncheckedSupabaseReads`: no new in-scope read ignores its `.error`. The write-path-columns replica: `OK (117 tracked)`.
+- **Client:** `pnpm run -s check:all` passes on the final code — node tests `tests 7599 · pass 7599 · fail 0`; jest component suites 853 of 853 (5461 tests); the web config 4 of 4 (12 tests); typecheck, typecheck:tests and the lints clean. `check-route-registry`: OK (232 screens, 9 layouts).
+- **The guard on disk.** The verifier's runners placed each of GH0–GH40 alone in the tree (GH31b included; GH39 as a `.test.mjs` consumer with its importer, GH40 under `__tests__` with that rule removed from `metro.config.js`) and ran the whole guard: the unfixtured tree passes (fail 0), and all 42 fixtures are killed; every touched registered file and `metro.config.js` was restored with a matching sha256.
+- **The verifiers' probes**, copied in, run and deleted: the v7–v15 and v17 server probes pass 158 of 158 (`zz-v17-gatewayFlagUnread`, `gatewayCutLayersNamed`, `temporalPlanUnread` and `liveUnreadFailedRead` among them, unchanged); of the 20 client probe suites (62 tests), 56 pass — V17-NC1, V17-LC1, LC2, V17-MG1 and MG2 unchanged among them — and 6 fail as recorded: V15-TH4 and V15-NM0 still encode the old implementation (§113.4, §113.5; their adapted `zz-v16a-*` versions pass), and V17-NC2–NC5 hand the client the bodies the gateway sent before §115 (`saved`, `memories` and `buddies` named over a cut or an unread flag; an unread gateway flag as the flag-off body), which it no longer sends; their adapted versions over the fixed bodies (`useMapEntities.gatewayCutNamed` NC2–NC5) pass.
+- **Guards:** all 24 of the integrator's `int-guards.sh` exit 0 on the census commit.
+
+## §116 — DV-83 round 19 (lane W11-X2)
+
+### 116.1 Integrator: DV-83 held at W after independent re-verification at `03a4a4378`
+
+*Integrator, 2026-09-30. §115 is round 18 at `03a4a4378` (PR #530's head). An independent verifier checked that tree: it re-ran every round-17 to round-7 probe unchanged (158 of 158 server; the v7–v17 client suites, with V17-NC2–NC5 adapted over the fixed bodies), placed GH0–GH40 and GH31b on disk one at a time (all 42 killed), wrote new probes (`zz-v18-*`) and guard-reach fixtures (GH41–GH44, GHX5, GHX6), applied 62 mutations of its own, and restored every mutated file byte-identical, checked by sha256. Its report is the round-18 verifier's `dv83-r18-verifier.md`.*
+
+- **Confirmed.** §115.1's seven breaks (B7–B13), GH0–GH40 with GH31b, and every earlier round's breaks are closed in behaviour. 58 of its 62 mutations are killed by the lane's pins; Z21 (the lane's X19) is equivalent, which upholds D-W11X2-152. None of the new breaks is safety-relevant or an authorization fail-open.
+- **Found: five paths that break the criterion's wording, each shown by probes that fail against this tree (8 red probes, each group with a green control).**
+  1. **B14. GET /events serves a failed `event_rsvps` read as a measured `goingCount: 0`**, discarding the cached count, in the list and in GET /events/city/:city (`artifacts/api-server/src/routes/events.ts`; EV2 red; EV0, EV0b, EV0c the controls).
+  2. **B15. The NOW gateway reads the Live-label gates three-state once, but each subject re-reads them two-state**; a failed re-read is an unmarked `[]`, said as "No live activity has been observed here" (`artifacts/api-server/src/routes/mapProjection.ts`, `artifacts/api-server/src/lib/liveClaimRead.ts`; LT1 red; LT0, LT0b the controls).
+  3. **B16. The NOW map's rollback path with no city neither reads nor names the gems and buddies layers** (`travel-buddy-standalone/src/hooks/useMapEntities.ts`): the Gems tab's "View on map", `/map?entry=compass` and the Wall's "See live" reach it with no city (RC1, RC2 red; RC0 the control; SC1 the reach).
+  4. **B17. The map screen hands its title to the hook as the city** (`travel-buddy-standalone/app/map/index.tsx`), so a Compass place card's venue name is read as a city and an empty gem layer is drawn whole (RC3 red; SC2 the reach).
+  5. **B18. GET /events' near filter drops in-radius events across the antimeridian and near the poles, and says nothing**: its longitude box does not wrap and `cos(lat)` is clamped at 0.2 (`artifacts/api-server/src/routes/events.ts`; EA1, EP1 red; EA0, EP0 the controls).
+- **Rulings not honest.** D-W11X2-147 is honest for a marked failed read and the route's own gate read, not for the per-subject re-read (B15); D-W11X2-148 is honest in part (not at the antimeridian or a pole, not on the rollback path with no city or a venue name, and the events tab's Near Me, which now gets near events, was not disclosed); D-W11X2-150 is honest for GH33–GH40, but the dynamic-import and `require` reading is still a regex over the canonical text.
+- **The guard's reach.** GH41–GH44 escape it (`await import (x)` and `require (x)` with a space, an escaped character in the specifier, `import /*c*/ (x)`). No live file uses these shapes today. Guard mutation X6 (a block comment removed to `''`) survives and is non-equivalent (fixture GHX6). Z27 and Z28 (GET /events' radius clamp and default) survive and are non-equivalent (NR1, NR2).
+- **Next.** A round-19 lane closes B14–B18 with the verifier's probes as failing-first tests, reads `import()` and `require()` from the syntax tree, registers NR1, NR2 and GHX6, corrects the rulings, and sweeps once more. The row moves only after that.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | C | **W** | §115 closes §115.1's seven paths, confirmed at `03a4a4378` (§116.1). Five paths still present a failed read as a measured value or empty: a failed RSVP count served as 0 and a near filter that drops events at the antimeridian and the poles (`artifacts/api-server/src/routes/events.ts`); a per-subject Live-label gate re-read that fails, unmarked (`artifacts/api-server/src/routes/mapProjection.ts`, `artifacts/api-server/src/lib/liveClaimRead.ts`); the rollback path's gems and buddies layers unread and unsaid with no city (`travel-buddy-standalone/src/hooks/useMapEntities.ts`) or read over a venue name (`travel-buddy-standalone/app/map/index.tsx`). GH41–GH44 escape the guard, and X6, Z27 and Z28 survive it. D-W11X2-147, -148 and -150 are honest in part. |
+
+Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
+
+### 116.2 Round 19: what this lane did
+
+*Written 2026-10-01 by lane W11-X2 (round 19) on `disc-w11-x2-r19`, from `03a4a4378` (PR #530's head: round 18) and §116.1. It closes §116.1's five breaks (B14–B18), each with the verifier's probes adapted into registered tests and seen red first; registers the verifier's NR1 and NR2 (Z27, Z28) and GHX6 (X6); makes the consumer guard read `import()` and `require()` from the syntax tree, so GH41–GH44 are caught and the regex path is gone; corrects D-W11X2-147, -148 and -150 in D-W11X2-153 to -158; and sweeps once more. The sweep found and closed six more paths (SW10–SW15).*
+
+*No migration and no new flag. Every change alters what is said only when a read failed, was cut, or covered part of the area asked about; with every read healthy and whole, the screens and every served body are unchanged (controls EV0c, EV0d, EA0, EP0, EB0, DT0, WS0, WS2c–WS5c, LT0, LT0b, LT2c, LT2o, RC0, RC0b, SC0, SC1, NS1c, NS3c, NS5c, NS7c, NP0, VE0, TE0, MV0, CF0, CF0b, GH33c, GH36c). Server bodies gain keys only on the failed arm: `failedSources` on GET /events, its city alias and GET /events/:id, and `crowdFlow.refusal: "flag_unreadable"`. Two behaviours change on a healthy read, both to keep rows the query dropped: every near read keeps the rows inside its radius across the antimeridian, near a pole and at the radius's edge (B18, SW13), and the map screen reads a `city` parameter rather than its title (B17). Every edit in a cited file is line-neutral: lines are changed in place, and new code is appended at a file's foot or lives in a new module (`lib/nearBox.ts`, `features/map/layers/viewportBoxClamped.ts`).*
+
+*All evidence is controlled: node suites over the real routes and PostgREST-shaped doubles, jest over the real hooks, components and screen, and the static guard over an in-memory overlay and fixtures placed on disk. None of it is production evidence, and no client build carrying the change has shipped.*
+
+### 116.3 GET /events' counts and near filter (§116.1 B14, B18; D-W11X2-153, -155)
+
+- **B14.** GET /events and GET /events/city/:city read the live `event_rsvps` count's `error`: a failed read keeps the cached `going_count` and is named in `failedSources: ["event_rsvps"]`, never served as 0 (`artifacts/api-server/src/routes/events.ts`; EV2, EV2b red first).
+- **B18.** The near box is the circle's exact extent on the 6371 km sphere `withinEventsNear` measures on: two longitude ranges across the antimeridian, every longitude over a pole, and no narrower than the radius anywhere (the 111.32 km degree dropped events just inside it, EB1). NR1–NR4b pin the radius clamp and default (EA1–EA3, EP1–EP3, EB1 red first). **D-W11X2-148 is corrected**, and the events tab's Near Me, which also got near events in round 18, is disclosed.
+
+### 116.4 The Live-label gates at every reader (§116.1 B15; D-W11X2-154)
+
+`readLiveClaims` reads the gates three-state itself (`liveLabelGatesRead`, the same reads in the same order as `liveLabelsServable`; `isFlagEnabled` takes an optional status). An unread gate answers the marked `failedLiveClaimRead()`, so a subject whose re-read failed is "Live activity couldn't be checked for this place" (`artifacts/api-server/src/lib/liveClaimRead.ts`, `artifacts/api-server/src/lib/featureFlags.ts`; LT1, LT2 ×5, LT2t red first; LT3 pins the helper to `liveLabelsServable` over all 243 gate states). `liveLabelsServable` is unchanged for Compass. **D-W11X2-147 is corrected.**
+
+### 116.5 The rollback path with no city, and the map screen's city (§116.1 B16, B17; D-W11X2-155)
+
+- **B16.** An enabled gems or buddies layer with no city is attempted as a read that failed, so it is named in `unreadLayers` (`travel-buddy-standalone/src/hooks/useMapEntities.ts`; RC1–RC3 red first).
+- **B17.** The hook, the legacy places layer, the trip map's Compass alternatives, the Ask Compass bar and the search sheet read a `city` query parameter; `title` stays the header's label (`travel-buddy-standalone/app/map/index.tsx`; SC2–SC5b red first).
+
+### 116.6 The guard reads `import()` and `require()` from the syntax tree (GH41–GH44, X6; D-W11X2-156)
+
+`moduleLoads` reads every call whose callee is the `import` keyword or the identifier `require`, and `import x = require(…)`, with the specifier's parsed value. `requireUses`, `otherImportForms`, `computedSpecifiers` and G12's reach (`unbundledReach`) read it, so the regular expressions over the text are gone (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts`; the cited lines kept in place, new code at the foot). G13 GH41, GH41b, GH42, GH43, GH44 and GH41c were red over HEAD's guard code; GHX6 (the verifier's), GHX6b and GHX6c kill X6; GH43b, GH43c and GH41r pin the new readings. The whole guard: 104 of 104 (92 at round 18, 12 new). **D-W11X2-150 is corrected.**
+
+### 116.7 The sweep (SW10–SW15; D-W11X2-153, -157, -158)
+
+Every count read on a Discovery, map, events, gems or travelers surface; every gate a route read three-state and something re-read; every screen that hands a title or a name to a reader; and every geographic box on those surfaces were read again:
+
+- **SW10.** GET /events/:id served `counts` and `waitlistCount` as 0 over a failed read; it serves the cached count or `null`, and names the read (`artifacts/api-server/src/routes/events.ts`).
+- **SW11.** Five write paths stamped `waitlist_count` (accept, leave, ban, block-user) or `review_count` and `avg_rating` from a recount that failed; they write nothing over a failed read.
+- **SW12.** With no position the NOW map named neither the gateway's optional layers nor the events layer; both are named.
+- **SW13.** GET /events/nearby, the hidden-gem proximity read, the travelers scan and `loadNearbyEvents` built B18's box; they use `artifacts/api-server/src/lib/nearBox.ts` (`artifacts/api-server/src/services/hiddenGems/HiddenGemDiscoveryService.ts`, `artifacts/api-server/src/lib/mapTravelers.ts`, `artifacts/api-server/src/routes/mapSearch.ts`).
+- **SW14.** The NOW map, the Time Machine and the media map said nothing over a viewport `bboxFromCenter` clipped at the antimeridian or a pole; each says it (`travel-buddy-standalone/src/features/map/layers/viewportBoxClamped.ts`, `travel-buddy-standalone/src/hooks/useTemporalEntities.ts`, `travel-buddy-standalone/src/features/media/hooks/useMediaMap.ts`).
+- **SW15.** The NOW gateway's crowd-flow report said `flag_off` over an unread flag; it says `flag_unreadable` (`artifacts/api-server/src/routes/mapProjection.ts`). D-W11X2-152's "operator-facing" reading of that label is corrected.
+- **Swept and sound; seen and left for their owners** — D-W11X2-158 lists both.
+
+### 116.8 Tests, seen red, and mutations
+
+**Seen red first**, run against the code before each fix (logs in the lane's `r19/red/` scratch directory; B15's cases over the code with the helper present and line 349 unchanged; B17's and the guard's over HEAD's file, restored by sha256):
+
+| Area | Red | Controls, green |
+|---|---|---|
+| B14 the RSVP count | EV2, EV2b | EV0c, EV0d |
+| B18 the near box | EA1–EA3, EP1–EP3, EB1 | EA0, EP0, EB0; NR1–NR4b |
+| B15 the Live-label gates | LT1, LT2 ×5 | LT0, LT0b, LT2c ×5, LT2o, LT3 |
+| B16 no city | RC1–RC3 | RC0, RC0b |
+| B17 the city param | SC2–SC5b | SC0, SC1 |
+| The guard's reach (G13) | GH41, GH41b, GH42, GH43, GH44, GH41c | GHX6, GHX6b, GHX6c, the tree's own pass |
+| SW10, SW11 the counts | DT1–DT3, WS1–WS5 | DT0, WS0, WS2c, WS3c, WS4c, WS5c |
+| SW12 no position | NP1 | NP0 |
+| SW13 the near reads | NS1–NS8 | NS1c, NS3c, NS5c, NS7c |
+| SW14 the clipped viewport | VE1, VE2, TE1, TE2, MV1, MV2 | VE0, TE0, MV0 |
+| SW15 the crowd-flow label | CF1 | CF0, CF0b |
+
+**Written against the fixed code**, each shown to bite by a mutation that removes what it pins: NR1–NR4b (Z27, Z28, X13, X14), LT2t (X29), NB1–NB5 (X36–X43), VB1 (Y11, Y12), GH43b (G4), GH43c (G2), GH41r (G10), GHX6b and GHX6c (G11, the verifier's X6). Two existing fixtures were brought to the new contract, never a weaker one: `projectedPlaces` and `map.placeTap` arm their places layer with the `city` param it now reads.
+
+**Mutations.** Each was applied alone to the committed file, its pin group run (the server groups: the events, live-gate, near-box and crowd-flow suites; the client groups: the hook suites and the screen suite; the guard group: the §115 and §116 G13 cases, and the whole guard where that group let one through), and the file restored byte-identically; the sha256 matched the pre-image and `git show HEAD:` after every application. Runner and logs: the lane's `r19/muts/` scratch directory (`run.py`, `defs.json`, `run.out`).
+
+- **83 mutations:** B14 X1–X5; B18 X6–X12 with the verifier's Z27 and Z28 and X13, X14; SW10 X15–X19; SW11 X20–X24; B15 X25–X33; SW15 X34, X35; SW13 X36–X50 (the lib and the four sites); B16, SW12 and SW14 Y1–Y12; B17 Y13–Y18; the guard G1–G13 (G11 is the verifier's X6).
+- **Result: 80 killed, 3 equivalent (X5, X12, X41; D-W11X2-158), 0 non-equivalent survivors** on DV-83 lines and on guard lines. **Survivors on a first run, each closed:** X33 (`liveLabelGatesRead`'s null-client answer; LT3b) and X40 (`nearBox`'s earth, which NB1 measured with the module's own constant; NB1 now draws its circle on the filters' 6371 km sphere); G5 and G12 survived the guard group alone and are killed by the whole guard (GH11, GH3b). **The verifier's survivors:** Z27 and Z28 are killed by NR1 and NR2; X6 (G11) by GHX6b and GHX6c. **Z21** stays equivalent, as upheld.
+- *Naming.* This round's series are X (server), Y (client) and G (guard); Z27 and Z28 keep the verifier's names.
+
+### 116.9 Checks
+
+- **Line-neutral in every cited file** (`routes/events.ts`, `routes/mapProjection.ts`, `routes/mapSearch.ts`, `lib/liveClaimRead.ts`, `lib/featureFlags.ts`, `lib/mapTravelers.ts`, `useMapEntities.ts`, `useTemporalEntities.ts`, `useMediaMap.ts`, `app/map/index.tsx`, and the guard's cited lines), so every anchored citation still lands on its text: `check:doc-citations`, `check:citation-targets` and `check:citation-symbols` are clean. New code is at a file's foot or in a new module. `HiddenGemDiscoveryService.ts`, which no citation anchors, lost its local box function.
+- **Scope.** This round's touched sources join this census's `CENSUS_SCOPE`; the acknowledgement for every census the freshness check named (discovery, map, media) carries a §116 paragraph with its "why it cannot move a verdict".
+- **Suites.** The new api-server suites are on the `test` line (`check:test-registration`); the new client suites are jest component suites, none on KNOWN_BROKEN.
+- **Allowlist.** No `UNCHECKED_READS_ALLOWLIST.json` entry changes; `checkUncheckedSupabaseReads` reports no new in-scope read that ignores its `.error`.
+
+### 116.10 DV-83, restated
+
+§116.1's five breaks are closed, each with the verifier's probes adapted into registered tests, red first and green now. The guard's four reach holes are caught in memory and on disk, and the three surviving mutations are killed. D-W11X2-147, -148 and -150 are corrected in D-W11X2-153 to -158. The sweep closed six more paths. Every clause of DV-83's criterion holds on every path this lane examined:
+
+1. **Producers send the refusal envelope or a named failure.** More of them now: GET /events, its city alias and the event screen name a failed count in `failedSources`; the NOW crowd-flow report says `flag_unreadable`; `readLiveClaims` marks an unread gate.
+2. **Nothing refused or partial is cached as complete.** No change writes a cache; a failed recount no longer writes a cached counter.
+3. **Nothing refused is rendered as empty, as complete, or over the wrong rows.** A failed count is never 0; a failed gate re-read is "couldn't be checked"; a layer that cannot be read without a city or a position is named; no reader takes a venue name for a city; every near read keeps the rows inside its radius; a viewport clipped at the line or a pole is said.
+4. **A Compass tool never states a failed or partial read to the model as a fact.** Unchanged this round; `liveLabelsServable` is unchanged.
+5. **Consumers branch on coverage**, and the static guard reads every module load from the syntax tree.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§116.1's five breaks are closed, each with its verifier probes adapted and red first; GH41–GH44 are caught on disk and in memory, and X6, Z27 and Z28 are killed (GHX6b, GHX6c; NR1, NR2); the sweep closed six more paths; 83 mutations: 80 killed, 3 equivalent (X5, X12, X41, argued in §116.8). CONTROLLED EVIDENCE ONLY — this row awaits independent re-verification.** **A failed RSVP count is named, never 0, and the near filter keeps every event in its radius** (`artifacts/api-server/src/routes/events.ts`; EV2, EV2b, EA1–EA3, EP1–EP3, EB1). **The Live-label gates are three-state at every claim read** (`artifacts/api-server/src/lib/liveClaimRead.ts`; LT1, LT2). **The rollback path names a layer it cannot read without a city, and the screen reads a city parameter** (`travel-buddy-standalone/src/hooks/useMapEntities.ts`, `travel-buddy-standalone/app/map/index.tsx`; RC1–RC3, SC2–SC5b). **The guard reads `import()` and `require()` from the syntax tree** (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts`; G13 GH41–GH44). **Sweep:** the event counts and stamps, the NOW map with no position or a clipped viewport, the near reads (`artifacts/api-server/src/lib/nearBox.ts`) and the crowd-flow label (SW10–SW15). |
+
+**Headline.** DV-83 moves W → C. `check:census-integrity` counts **C 101 / W 85 / N 2 / X 0** over 188: CONSTRUCTED 186 / 188 = **98.9 %**, CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged. The move is on controlled evidence and awaits independent re-verification.
+
+### 116.11 Left open, and what would turn this red
+
+- **Seen and not built (other owners; D-W11X2-158).** GET /events/nearby (no client caller) still withholds a friends-only event over a failed friendship read unsaid; places dedup's longitude window, the media feed's near boxes and the airport search box keep their unwrapped boxes; the round-18 list (D-W11X2-152) stands.
+- **Product effect, stated.** A map opened from a Compass card, the Gems tab or the Wall over a failed gateway now says "Couldn't load hidden gems / buddies here" instead of an empty layer; the legacy places layer, the trip map's Compass alternatives, the Ask Compass bar and the search sheet no longer receive a venue name as a city, and receive no city until an entry passes one. Near reads across the antimeridian, near a pole and at a radius's edge return rows they used to drop. A map near the antimeridian or above ~78.5° says "Showing only part of this area". With no position yet, the NOW map names the layers it could not ask for.
+- **What would turn DV-83 red again:**
+  - a failed count served as a measured one (EV2, EV2b, DT1–DT3) or stamped into a counter (WS1–WS5);
+  - a gate re-read that fails said as "no live activity" (LT1, LT2);
+  - a layer that cannot be read without a city or a position drawn empty (RC1–RC3, NP1), or a title read as a city (SC2–SC5b);
+  - a near read that drops rows inside its radius (EA1–EA3, EP1–EP3, EB1, NS1–NS8), or a clipped viewport drawn whole (VE1, VE2, TE1, TE2, MV1, MV2);
+  - a module load the guard cannot see (G13 GH41–GH44);
+  - any path §115.11 lists.
+
+### 116.12 Results at the final code commit
+
+The code is final at `a79807bfe` (the api-server suites, the mutations, the probes and the on-disk guard runs ran at `a628ef56d`; `a79807bfe` adds the map screen's `city` to its params type and two mock NOTE comments, and the client checks ran on it); the census commit changes only this file, the decision register, `checkCensusFreshness.ts`' scope and the staleness acknowledgements. Node 24.21.0.
+
+- **api-server** (`node --import tsx/esm --test`, `SUPABASE_URL=http://127.0.0.1:9`): every `discovery*`, `compass*`, `trail*`, `hashtag*`, `map*`, `event*`, `hidden*`, `call*` and `gems*` suite, the touched suites (`nearBox*`, the travelers, `wall*`, `liveClaim*`, the flag and census suites, `buddy*`, `circle*`, `rentABuddy*`), with `securityCheckSuite`, `uncheckedSupabaseReads`, `entryWiringNotCommentedOut` and `layoverSurfaceErrorBinding`: 477 files in 18 chunks, each under 5 minutes (the longest 283 s), `tests 8633 · pass 8633 · fail 0 · cancelled 0`. The live-DB suites that import `ciSupabaseGuard` are not run (the guard refuses them without live credentials; this lane writes to no database).
+- `checkUncheckedSupabaseReads`: no new in-scope read ignores its `.error`. The write-path-columns replica: `OK (117 tracked)`.
+- **Client:** `pnpm run -s check:all` passes on the final code — node tests `tests 7612 · pass 7612 · fail 0`; jest component suites 858 of 858 (5485 tests); the web config 4 of 4 (12 tests); typecheck, typecheck:tests (173 diagnostics, the baseline) and the lints clean. `check-route-registry`: OK (232 screens, 9 layouts).
+- **The guard on disk.** The verifier's runners placed each of GH0–GH44 (GH31b included; GH39 and GH40 as before; GH41–GH44 as their own files) and GHX5 and GHX6 alone in the tree and ran the whole guard: the unfixtured tree passes (fail 0), and all 48 fixtures are killed; every touched registered file and `metro.config.js` was restored with a matching sha256.
+- **The verifiers' probes**, copied in, run and deleted: the v7–v17 server probes and the v18 server probes (EV, EA/EP, NR, LT, unchanged) pass 172 of 173 — the one failure is `zz-v18-dumpBodies`, the verifier's helper whose ✖ prints the bodies by design. Of the 21 client probe suites (71 tests), 62 pass — V18-RC1, RC2, SC1 and the adapted v18a NC2a–NC5a among them — and 9 fail as expected: V15-TH4, V15-NM0 and V17-NC2–NC5 as §113 and §115 recorded, and three v18 probes that pin the contract §116 changed: V18-SC0 and SC2 assert that the screen hands the hook its title as the city (the defect B17 removes), and V18-RC3 hands the hook a venue name it cannot tell from a city; their adapted versions (`mapScreen.cityParam` SC0–SC5b, `useMapEntities.rollbackNoCity` RC3) pass.
+- **Guards:** all 24 of the integrator's `int-guards.sh` exit 0 on the census commit.
+
+## §117 — DV-83 round 20 (lane W11-X2)
+
+### 117.1 Integrator: DV-83 held at W after independent re-verification at `597a6c2d2`
+
+*Integrator, 2026-10-01. §116 is round 19 at `597a6c2d2`; `9376df787` (PR #530's head) adds only the featureFlags.ts follow-up that keeps `isFlagEnabled`'s fail-closed error line in the shape the cutover checker reads. An independent verifier checked that tree: it re-ran every round-18 to round-7 probe unchanged (172 of 173 server, the one failure the v18 body dumper whose ✖ is by design; the v7–v18 client suites, with the known pre-fix encodings adapted over the fixed contract), placed GH0–GH44, GH31b, GHX5 and GHX6 on disk one at a time (all 50 killed), wrote new probes (`zz-v19-*`) and guard-reach fixtures (GH45–GH49, GHP), applied 32 mutations of its own, ran the whole api-server suite (1725 files), and restored every mutated file byte-identical, checked by sha256. Its report is the round-19 verifier's `dv83-r19-verifier.md`.*
+
+- **Confirmed.** §116.1's five breaks (B14–B18), GH0–GH44 with GH31b, GHX5 and GHX6, and every earlier round's breaks are closed in behaviour. 26 of its 32 mutations are killed; V2, V3 and V7 are equivalent (floating-point equality or below fp-ulp scale) and G2 is reach-equivalent. The whole api-server suite was green but for layoverCutover's four cases, a checker false positive that `9376df787` fixes (166 of 166 with it). None of the new breaks is safety-relevant or an authorization fail-open.
+- **Found: three paths that break the criterion's wording, each shown by probes that fail against this tree (6 red probes, each group with a green control).**
+  1. **B19. GET /events/:id names a failed going read in `failedSources` but serves `goingAttendees: []` from the same failed read, and no client reads `failedSources`**, so the host dashboard says "No attendees yet"; the attendees' profiles read and the viewer's own RSVP read fail unnamed (`artifacts/api-server/src/routes/events.ts`, `travel-buddy-standalone/src/components/HostDashboardPanel.tsx`; DA2, DA3, HA1 red; DA0, HA0 the controls; DA1 the reach).
+  2. **B20. A waitlist leave whose recount fails leaves `events.waitlist_count` stale, and GET /events serves it as measured** (`artifacts/api-server/src/routes/events.ts`, `artifacts/api-server/src/lib/privacy/eventSerializers.ts`; WL1 red; WL0 the control).
+  3. **B21. GET /events' and GET /events/city/:city's live going recount is one read over up to 201 events, cut silently at PostgREST's 1000-row cap**; events past the cut are served and ranked as `goingCount: 0` (`artifacts/api-server/src/routes/events.ts`; GC1, GC2 red; GC0 the control).
+- **Rulings not honest.** D-W11X2-153 is honest in part (B19, B20, B21); D-W11X2-155 is honest in part (B18's copy of the box in `events.ts` is unpinned at the south pole and on the viewer's own side west of −180°); D-W11X2-156 is honest for GH41–GH44 only; D-W11X2-158's X12 is upheld for DV-83 but not strictly equivalent (it changes the rank pool's composition and `truncated` for rows with a latitude and no longitude).
+- **The guard's reach.** GH45–GH47 and GH49 escape it (`(require)(x)`, `require!(x)`, `(require as NodeRequire)(x)`, `(require satisfies NodeRequire)(x)`): `moduleLoads` does not look through parentheses or type assertions around the callee. No live file uses these shapes today. Mutations V8 and V9 (`events.ts`' own near box: `Math.abs(lat)` and the `west < -180` own-side range) survive and are non-equivalent (fixtures NS1, NA0).
+- **Next.** A round-20 lane closes B19–B21 with the verifier's probes as failing-first tests, makes GET /events use `lib/nearBox.ts` and registers NS1 and NA0, unwraps the guard's callee and specifier, corrects the rulings, and sweeps once more. The row moves only after that.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | C | **W** | §116 closes §116.1's five paths, confirmed at `597a6c2d2` (§117.1). Three paths still present a failed or cut read as empty or measured: an attendee list built from a failed going read and a viewer's own RSVP read that fails unnamed, which no client reads as failed (`artifacts/api-server/src/routes/events.ts`, `travel-buddy-standalone/src/components/HostDashboardPanel.tsx`); a waitlist counter left stale by a failed recount and served by the list (`artifacts/api-server/src/lib/privacy/eventSerializers.ts`); and a live going recount cut at 1000 rows and served as 0. GH45–GH47 and GH49 escape the guard, and V8 and V9 survive it. D-W11X2-153, -155 and -156 are honest in part. |
+
+Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
+
+## §121 — Creator ledger on synthetic accounts, and C-11 held open (lane creator-ledger-isolated): erasure is refused until the owner decides, both answers are built and rehearsed in their own databases, and no row changes bucket
+
+*Added 2026-09-30 on `claude/creator-ledger-isolated-20260930`, from `b99787c81`, under the owner's decision of 2026-09-30: implement and test the ledger on isolated synthetic accounts, apply only what imposes no undecided erasure policy on real accounts or records, and keep the real-money retention policy a separate open decision. Controlled evidence only: the local PostgreSQL 16 harness (CI's "kernel SQL executed on a throwaway database" job) and two throwaway clones of it. Corrected 2026-10-02: this lane applied nothing to `travel-buddy`, but it DID apply 3510 to `portava-ci` (CI database, synthetic data only) on 2026-09-30 17:17:15 UTC, as a pre-merge `manual` apply; see §121.7 item 2. It applied neither 3511 nor 3512, turned no flag on, and published no rule. C-11 is still undecided. No row changes bucket.*
+
+*RENUMBERED 2026-10-03 from §107 to §121 when `main` (#559, `924141c58`) was merged into #530: #530's DV-83 round-10 section already held §107. Every reference to "census-discovery §107" in the creator-ledger files means THIS section, including §107.x subsections, which are now §121.x. Those files are: the headers of `3510_creator_ledger_erasure_policy_undecided.sql` (which cannot be edited: its checksum is in the `portava-ci` and CI ledgers), 3511 and 3512 and their rollbacks, the `creatorLedger*` tests, and the C-11 comment in `checkCensusFreshness.ts`.*
+
+### 121.1 What was wrong
 
 - **2901 could not erase a buddy with an earning.** Its `beneficiary_user_id … ON DELETE SET NULL` runs as an UPDATE, which `rbee_no_update` refuses (§52.2 item 3).
 - **3387 answered C-11 by default.** Its cascades delete a creator's whole creator ledger when the profile is deleted. That is "delete on erasure", which the owner has not chosen.
 - **A traveller's erasure deleted the buddy's earnings (found here).** `rent_buddy_bookings.traveler_id` and `rent_buddy_earnings_entries.booking_id` both cascade. Hard-deleting a traveller therefore removes the booking and, with it, the buddy's earning entries.
 - **L15 pinned the default as correct.** It asserted that deleting the profile cascades the ledger away.
 
-### 107.2 What was built
+### 121.2 What was built
 
 | change | where |
 | --- | --- |
@@ -16679,7 +19617,7 @@ The survivor is the InvitePanel `.catch` arm. It is equivalent under the real se
 
 The two answers live in `reconciliation-staging/`, which `check:frozen-dir` allowlists for "proposals awaiting owner review/apply". Each refuses to apply beside the other, and each rollback re-installs 3510's guard with 3510's function body verbatim (`artifacts/api-server/src/test/creatorLedgerErasurePolicyShape.test.ts:72#E3. the answers exclude each other`). The owner's answer promotes one of them into the chain after 3510, with its rollback; the other is deleted.
 
-### 107.3 Why 3510 imposes no erasure policy
+### 121.3 Why 3510 imposes no erasure policy
 
 3510's only effect is that no ledger row can be deleted. It deletes nothing, rewrites nothing and changes no grant:
 - **A person with no ledger row is unaffected.** The guard is row-level, so it never fires for them (G4). A statement-level trigger would have made them undeletable (2292).
@@ -16692,7 +19630,7 @@ The two answers live in `reconciliation-staging/`, which `check:frozen-dir` allo
 - **3511 and 3512 are not safe**: each is an answer to C-11.
 - **This lane wrote nothing there.** The ordered apply is the applying lane's.
 
-### 107.4 Answer B is PSEUDONYMISED, NOT ANONYMOUS — measured, not assumed
+### 121.4 Answer B is PSEUDONYMISED, NOT ANONYMOUS — measured, not assumed
 
 After `creator_ledger_remove_identity`, no column of any of the four ledgers holds the person's id, in any case (B2 scans every column of every row). The rows are still linkable to the person, so they remain personal data (B3 pins each route):
 1. **The booking.** `booking_id`, and a Travel Partner attribution's `subject_id`, join to `rent_buddy_bookings.buddy_id`, then to `rent_buddy_profiles.user_id`, which is the person. The tombstone keeps the same profile id, and neither Rent-a-Buddy table is erased.
@@ -16704,7 +19642,7 @@ After `creator_ledger_remove_identity`, no column of any of the four ledgers hol
 
 The receipt names neither the person nor the pseudonym and carries no row count (E4). Anonymity would at least need the booking and subject links cut, free text removed and amounts coarsened. None of that is built, and none is claimed.
 
-### 107.5 Tests, seen red, and the mutations
+### 121.5 Tests, seen red, and the mutations
 
 | suite | tests | red before 3510 / the answers existed |
 | --- | ---: | --- |
@@ -16745,7 +19683,7 @@ The receipt names neither the person nor the pseudonym and carries no row count 
 
 **The survivor is equivalent, and says so.** It is 3512's final residual scan (`reconciliation-staging/3512_creator_ledger_erasure_retain_pseudonymised.sql:369#still carry the subject''s id; nothing was changed`). The substitution replaces every case-insensitive occurrence of the id in the row's JSON text before the scan runs, so the scan cannot find anything today. It is kept as the backstop for a future column type the substitution does not reach.
 
-### 107.6 Row statements — no bucket changes
+### 121.6 Row statements — no bucket changes
 
 | ID | was | now | evidence |
 |---|---|---|---|
@@ -16763,25 +19701,25 @@ The receipt names neither the person nor the pseudonym and carries no row count 
 | DV-69 | W | **W** | Unchanged: `none` is the only provider, and it answers `payouts_disabled` with no network reached (F7). AWAITS OWNER APPROVAL: W10D-B6. |
 | DC-23 | W | **W** | Unchanged. The creator's summary equals an independent SQL fold (F6). Payout eligibility is still the owner's (`07` §4). AWAITS OWNER APPROVAL: W10D-B5. |
 
-DV-61 and DV-62 are not affected by §107.
+DV-61 and DV-62 are not affected by §121.
 
-### 107.7 Integration blockers, exact
+### 121.7 Integration blockers, exact
 
 1. **Running these flows on `travel-buddy` is blocked.** That would need, together:
    - `creator_attribution_enabled` ON there, which starts the real attribution scheduler over real bookings (`index.ts` starts it at boot);
    - synthetic ledger rows in the same tables as real ones;
    - a way to remove those rows afterwards. After 3510 only a superuser can remove them, with `session_replication_role = replica`, and Supabase's `service_role` cannot.
 
-   So the flows ran in an isolated throwaway database, as the owner's decision allows. The migrations in §107.3 are the part that is safe there.
-2. **`portava-ci` gets 3510 through CI's own path, only after merge.** Its live-DB job dry-runs on a PR and applies only on `main` (`apply-migrations`, then `certify:migrations`). 3510 therefore reaches `portava-ci` at the first `main` run after this merge. Its probe runs there against a real profile, inside a block that always rolls back.
+   So the flows ran in an isolated throwaway database, as the owner's decision allows. The migrations in §121.3 are the part that is safe there.
+2. **`portava-ci` already holds 3510: a pre-merge `manual` apply, not CI's own path** (corrected 2026-10-02; the earlier text said it would arrive only after merge). Measured on `portava-ci` on 2026-10-02 by read-only SELECTs. The `schema_migration_ledger` row is `3510_creator_ledger_erasure_policy_undecided.sql`, `applied_by='manual'`, applied at 2026-09-30 17:17:15 UTC, with checksum `304dcef1…6618`, which equals the sha256 of the file. The `CL451` guard trigger is on all four ledger tables (`creator_attributions`, `creator_earning_entries`, `creator_ledger_audit_events`, `rent_buddy_earnings_entries`), and its function is not SECURITY DEFINER. There is no ledger row for 3511 or 3512. What this applies is the UNDECIDED state, not an answer: 3510 refuses every ledger deletion and chooses neither (A) nor (B) of §121.8, and nothing about the real-money retention period. CI's `main` run skips 3510 because the checksums match. Rollback stays available (`db/rollback/2026-09-30-3510-creator-ledger-erasure-policy-undecided-rollback.sql`); whether to keep 3510 on `portava-ci` or roll it back is the owner's call, and it does not decide C-11 either way.
 3. **The application's erasure does not call either answer.** Once one is promoted, `AccountDeletionService` needs one step that calls it. That step must not be added before then: on production today it would name a function that does not exist.
 4. **Hard-deleting a buddy with bookings stays impossible** under either answer. `rent_buddy_bookings.buddy_id` is NO ACTION (Rent-a-Buddy's schema, pre-existing).
 
-### 107.8 The open owner decision
+### 121.8 The open owner decision
 
 **C-11 / W10D-B0 (question 22(a)).** When a person's account is erased, are their creator and Rent-a-Buddy earning records:
 - **(A) deleted**, as whole transactions, with the erasure of their beneficiary only (`reconciliation-staging/3511_…`); or
-- **(B) retained for a statutory period**, with the direct identity replaced by a random pseudonym (`reconciliation-staging/3512_…`)? These records are pseudonymised, not anonymous (§107.4).
+- **(B) retained for a statutory period**, with the direct identity replaced by a random pseudonym (`reconciliation-staging/3512_…`)? These records are pseudonymised, not anonymous (§121.4).
 
 If B, **how long** is the period? No spec gives a value (`04` §11), and 3512 builds no purge for it. Until the owner answers, 3510 refuses every deletion and nothing is imposed. The real-money retention policy is not decided by anything in this section.
 
@@ -16790,8 +19728,545 @@ If B, **how long** is the period? No spec gives a value (`04` §11), and 3512 bu
 - 3510 deleting or rewriting a row (E2, G1–G6).
 - Either answer diverging from 3510's guard on rollback (E3).
 
+### 117.2 Round 20: what this lane did
+
+*Written 2026-10-02 by lane W11-X2 (round 20) on `disc-w11-x2-r20`, from `9376df787` (PR #530's head: round 19 plus the featureFlags.ts follow-up) and §117.1, with `7944e962a` (#530's merge of origin/main `96f6d594e`) merged in at `ca7f89881`. It closes §117.1's three breaks (B19–B21), each with the verifier's probes adapted into registered tests and seen red first; makes GET /events use `lib/nearBox.ts` and registers the verifier's NS1 and NA0 (V8, V9); makes the consumer guard look through every wrapper Babel strips around `require` and a specifier (GH45–GH49, and GH50–GH52 beside them); corrects D-W11X2-153, -155, -156 and -158 in D-W11X2-159 to -165 and records the verifier's X12 note; and sweeps once more. The sweep found and closed four more paths (SW16–SW19).*
+
+*No migration and no new flag. Every change alters what is said only when a read failed, was cut, or covered part of what was asked; with every read healthy and whole, every screen renders as before and every served body is byte-identical but for counts that were stale (controls DA0, DA0b, HA0, HA3, ED0, ED0b, CH0, UR0, WL0, WL0c, GC0, GW0, GW2c, RV0, NS0, NA2, BM0, BM0b, LC ×11, EL0, EL0b, SM0 ×5, ET0, ET0b, DE0, HP0, HP0b, XT0, XT0b, CP0, UP0). Server bodies gain keys only on the failed arm: `failedSources` naming `profiles` on GET /events/:id, and `event_rsvps` / `event_waitlist` on every events list; a failed own-state read on GET /events/:id answers 503. Three behaviours change on a healthy read, each to stop serving a value that was not measured: every events list serves the live going and waitlist counts rather than the cached columns (B20, SW18); the review recount stamps the whole count (SW19); and the NOW buddies layer keeps buddies inside its radius it used to drop (SW16). Every edit in a cited file is line-neutral: lines are changed in place, and new code is appended at a file's foot or lives in a new module (`lib/pagedRead.ts`, `lib/eventRowReads.ts`, `lib/eventAttendeesUnread.ts`, `lib/eventListMarks.ts`).*
+
+*All evidence is controlled: node suites over the real routes and PostgREST-shaped doubles (one of which, `dbMaxRows`, caps every answer and honours `.range()` as the real server does), jest over the real services, hooks, components and screens, and the static guard over an in-memory overlay. None of it is production evidence, and no client build carrying the change has shipped.*
+
+### 117.3 GET /events/:id's attendees and the viewer's own state (§117.1 B19; D-W11X2-159)
+
+GET /events/:id answers 503 `degraded_unavailable` when the viewer's own RSVP, role, waitlist place, join request or check-in cannot be read, and names a failed profiles read (`profiles`) beside `goingAttendees` or `host` (`artifacts/api-server/src/routes/events.ts`). The client reads `failedSources` (`travel-buddy-standalone/src/lib/eventAttendeesUnread.ts`): the event screen says "Couldn't load who's going", "Couldn't load the host" and "Going count unavailable"; the host Attendees tab says "Couldn't load attendees" (`travel-buddy-standalone/src/components/HostDashboardPanel.tsx`); the co-host picker says it cannot add anyone; an RSVP keeps an unread count unread. **D-W11X2-153 is corrected.**
+
+### 117.4 The counters every list serves, read whole (§117.1 B20, B21; sweep SW18, SW19; D-W11X2-160, -161)
+
+- **B20, SW18.** Every events read that serves `goingCount` and `waitlistCount` recounts them live (`liveEventCounters`, `artifacts/api-server/src/lib/eventRowReads.ts`): GET /events, its city alias and /events/nearby (B20), and eleven more (SW18). A failed or cut live read keeps the cached count and is named in `failedSources`.
+- **B21, SW19.** Every count read over RSVP, waitlist or review rows reads through `readAllPages` (`artifacts/api-server/src/lib/pagedRead.ts`): ordered pages with an exact count, so a read cut at db-max-rows is an error the failed-read arm keeps cached and names, never a cut count served, ranked or stamped.
+
+### 117.5 The near box, shared (§117.1 V8, V9; sweep SW16; D-W11X2-162)
+
+GET /events builds its box with `nearBox` + `applyNearBox` (`artifacts/api-server/src/lib/nearBox.ts`); the copy at events.ts' foot is gone, and the verifier's NS1 and NA0 are registered. The NOW buddies layer (`artifacts/api-server/src/lib/buddyMapRead.ts`) did the same: its box was narrower than the circle everywhere, did not wrap and was clamped near a pole (SW16). **D-W11X2-155 and D-W11X2-158 are corrected.**
+
+### 117.6 The guard looks through wrappers (GH45–GH52; D-W11X2-163)
+
+`moduleLoads` reads the callee and the specifier through `unwrapOuter` (parentheses, non-null, `as`, `satisfies`, angle-bracket assertions, instantiation expressions) in `travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts` (the cited lines kept in place, new code at the foot). G13 GH45–GH49 were red over HEAD's guard code; GH50, GH45c, GH51 and GH52 pin the nesting, the member case and the last two wrappers. The whole guard: 115 of 115. **D-W11X2-156 is corrected.**
+
+### 117.7 The sweep (SW16–SW19; D-W11X2-162, -160, -161, -164, -165)
+
+Every unbounded multi-row read that computes a count, a rank or a "none"; every server field such as `failedSources` and `truncated`; every write path that leaves a cached counter stale and every read that serves one; and every private copy of a geometry helper on these surfaces were read again:
+
+- **SW16.** The NOW buddies layer's own box (§117.5).
+- **SW17.** No client read GET /events' `failedSources`, and only the map read its `truncated`. `travel-buddy-standalone/src/lib/eventListMarks.ts` marks each listed event's unread counts in the list services; the cards say them "(last known)"; the events tab (`travel-buddy-standalone/app/(tabs)/events.tsx`), /events/list (`travel-buddy-standalone/app/events/list.tsx`) and the destination page (`travel-buddy-standalone/app/destination/[slug].tsx`) never say "No events" over a list that failed or was cut; the Pulse city feed (`travel-buddy-standalone/src/hooks/useCityPulse.ts`) answered a failed read `[]` in production, so Explore Today (`travel-buddy-standalone/src/components/ExploreTodaySection.tsx`) said "Nothing on the calendar" and Pulse (`travel-buddy-standalone/app/(tabs)/index.tsx`) "No plans fit your availability yet."; both now say they could not load.
+- **SW18.** Eleven more events reads served the cached counters as measured (§117.4).
+- **SW19.** The review recount stamped `review_count` and `avg_rating` from one unbounded read (§117.4).
+- **Swept and sound; seen and left for their owners** — D-W11X2-165 lists both, and records the verifier's X12 note.
+
+### 117.8 Tests, seen red, and mutations
+
+**Seen red first**, run against the code before each fix (logs in the lane's `r20/red/` scratch directory; SW16's over HEAD's `buddyMapRead.ts`, placed and restored by sha256 after a container restart had interrupted the lane before its red run was recorded):
+
+| Area | Red | Controls, green |
+|---|---|---|
+| B19 the attendees and own state | DA2–DA8, HA1, HA2, ED1–ED3 | DA0, DA0b, DA1 (the contract), HA0, HA3, ED0, ED0b |
+| B20 the stale waitlist counter | WL1–WL4c, WL0c | WL0 |
+| B21 the cut count read | GC1, GC2, GC3, GD1–GD3, GG1, GG2, GW1 | GC0, GW0 |
+| V8, V9 the near box (on the old copy) | NS1, NA0 | NS0, NA2 |
+| The guard's reach (G13) | GH45–GH49 | the tree's own pass |
+| SW16 the buddies box | BM1–BM3 | BM0, BM0b |
+| SW17 the list marks | EL1–EL3, SM1 ×5, ET1–ET3, DE1, HP1, HP2, XT1–XT6, CP1, CP2, UP1–UP3 | EL0, EL0b, SM0 ×5, ET0, ET0b, DE0, HP0, HP0b, XT0, XT0b, CP0, UP0 |
+| SW18 the counters on eleven more reads | LS ×11, LF ×11 | LC ×11 |
+| SW19 the review recount | RV1 | RV0 |
+
+**Written against the fixed code**, each shown to bite by a mutation that removes what it pins: PR1–PR9 (B21a–f, over the new `lib/pagedRead.ts`), NA1, BM4 (SW16a), GH50, GH45c, GH51, GH52 (Gu5, Gu6), CH1, CH2 (B19n), UR1 (B19o), ER1–ER4 (B21g), GW2 (B21i), RV2, RV3 (SW19-order, SW19-count), ET5 (Y11), UP4 (Y25), UP5 (Y24b), LM0–LM5 (Y4, Y5).
+
+**Mutations.** Each was applied alone, its pin group run (the server groups: the events, paged-read and near-box suites; the client groups: the screen, component, hook and service suites; the guard group: the G13 cases), and the file restored byte-identically; the sha256 matched the pre-image after every application, and `git show HEAD:` wherever the file was committed. Runner and logs: the lane's `r20/muts/` scratch directory (`mut.py`, `*.json`, one log per mutation).
+
+- **99 mutations:** V8 and V9 on the old copy (V8pre, V9pre); B19 ×15 (B19a–o, server and client); B20 ×5 (B20a–d and the nearby recount); B21 ×12 (B21a–l: `readAllPages`' every arm, the readers' order, and each call site); V8, V9 and X12 on lib/nearBox; the guard ×8 (Gu1–Gu8: each wrapper `unwrapOuter` looks through, and both call sites); SW16 ×4; SW17 ×34 (Y1–Y33, Y24b); SW18 ×13; SW19 ×3.
+- **Result: 99 killed, 0 equivalent, 0 non-equivalent survivors** on DV-83 lines and on guard lines. **Survivors on a first run, each closed:** B21i (`recountEventWaitlist` unpaged; GW2 pins it), Y24b (the no-city reset of `eventsUnread`; UP5), and SW18's run of the B20 /events/nearby line under the SW18 suite alone (it is B20's line, killed by WL3 and WL4c). **The verifier's survivors:** V8 and V9 are killed by NS1 and NA0 on the old copy and on lib/nearBox. **X12** is recorded as not strictly equivalent (D-W11X2-165) and, on lib/nearBox, killed.
+- *Naming.* This round's series are B19–B21 and V8, V9 (the verifier's names, on the fixed lines), SW16–SW19 and Y (the sweep), and Gu (the guard).
+
+### 117.9 Checks
+
+- **Line-neutral in every cited file** (`routes/events.ts`, `lib/buddyMapRead.ts`, `services/events.ts`, `travel-buddy-standalone/app/destination/[slug].tsx`, the guard's cited lines): lines changed in place, new code at a file's foot or in a new module, so `check:doc-citations`, `check:citation-targets` and `check:citation-symbols` are clean.
+- **Scope.** This round's touched sources join this census's `CENSUS_SCOPE`; the acknowledgement for every census the freshness check named carries a §117 paragraph with its "why it cannot move a verdict".
+- **Suites.** The new api-server suites are on the `test` line (`check:test-registration`); the new client suites are jest component suites or node suites under `src/`, none on KNOWN_BROKEN, none orphaned.
+- **Silent reads.** `check:silent-supabase-reads` reports no new site; no baseline count was raised.
+
+### 117.10 DV-83, restated
+
+§117.1's three breaks are closed, each with the verifier's probes adapted into registered tests, red first and green now. GH45–GH49 are caught, and V8 and V9 are killed. D-W11X2-153, -155, -156 and -158 are corrected in D-W11X2-159 to -165, which records the verifier's X12 note. The sweep closed four more paths. Every clause of DV-83's criterion holds on every path this lane examined:
+
+1. **Producers send the refusal envelope or a named failure.** GET /events/:id names a failed profiles read and refuses a failed own-state read; every events list names a live count it could not recount.
+2. **Nothing refused or partial is cached as complete.** No count read cut at db-max-rows is stamped into a counter; a failed recount writes nothing.
+3. **Nothing refused is rendered as empty, as complete, or over the wrong rows.** No screen says "No attendees yet", "No events", "Nothing on the calendar" or "No plans fit your availability" over a read that failed or was cut; an unrecounted count is "(last known)"; every near read keeps the rows inside its radius.
+4. **A Compass tool never states a failed or partial read to the model as a fact.** Unchanged this round.
+5. **Consumers branch on coverage**, and the static guard reads every module load through every wrapper the bundler strips.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§117.1's three breaks are closed, each with its verifier probes adapted and red first; GH45–GH49 are caught and V8, V9 killed (NS1, NA0); the sweep closed four more paths (SW16–SW19); 99 mutations: 99 killed, 0 equivalent (§117.8). CONTROLLED EVIDENCE ONLY — this row awaits independent re-verification.** **GET /events/:id names a failed attendee or host read and refuses a failed own-state read, and the clients read it** (`artifacts/api-server/src/routes/events.ts`, `travel-buddy-standalone/src/components/HostDashboardPanel.tsx`; DA2–DA8, HA1, HA2, ED1–ED3). **Every list recounts the drifting counters live** (`artifacts/api-server/src/lib/eventRowReads.ts`; WL1–WL4c, LS, LF). **Every count read is read whole** (`artifacts/api-server/src/lib/pagedRead.ts`; GC1–GC3, GD1–GD3, GG1, GG2, GW1, GW2, RV1). **The near box is shared** (`artifacts/api-server/src/lib/nearBox.ts`, `artifacts/api-server/src/lib/buddyMapRead.ts`; NS1, NA0, BM1–BM3). **The guard looks through every wrapper** (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts`; G13 GH45–GH52). **Every client of GET /events reads its marks** (`travel-buddy-standalone/src/lib/eventListMarks.ts`; EL1–EL3, ET1–ET3, DE1, HP1, HP2, XT1–XT6, UP1–UP3). |
+
+**Headline.** DV-83 moves W → C. `check:census-integrity` counts **C 101 / W 85 / N 2 / X 0** over 188: CONSTRUCTED 186 / 188 = **98.9 %**, CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged. The move is on controlled evidence and awaits independent re-verification.
+
+### 117.11 Left open, and what would turn this red
+
+- **Seen and not built (other owners; D-W11X2-165).** The events tab's own lists answer their own failed server reads as fewer or no events (`/events/me`, `/following`, `/circles`, `/saved`, `/search`, `/joined`); the tab now says a list that failed outright, but those reads are outside this census's graded surfaces. D-W11X2-158's list stands.
+- **Product effect, stated.** Every events list serves the live going and waitlist counts (one paged read per list, two when both are recounted); a count the server could not recount reads "12 going (last known)"; a list that failed or was cut says "Couldn't load every event"; Pulse says "Couldn't load today's events" over a failed read in production, where it said "Nothing on the calendar"; GET /events/:id answers 503 when the viewer's own state cannot be read; the NOW map shows buddies inside its radius it used to drop.
+- **What would turn DV-83 red again:**
+  - an attendee list built from a failed read, or a viewer's own state served as measured over a failed read (DA2–DA8, HA1, HA2, ED1–ED3, CH1, UR1);
+  - a cached counter served as measured on any list (WL1–WL4c, LS, LF), or a count read cut at db-max-rows served, ranked or stamped (GC1–GC3, GD1–GD3, GG1, GG2, GW1, GW2, RV1);
+  - a near read that drops rows inside its radius (NS1, NA0, BM1–BM3);
+  - a module load behind a wrapper the guard cannot see (G13 GH45–GH52);
+  - a client that says a failed or cut events list as empty or its counts as measured (EL1–EL3, SM1, ET1–ET3, ET5, DE1, HP1, HP2, XT1–XT6, CP1, CP2, UP1–UP5);
+  - any path §116.11 lists.
+
+### 117.12 Results at the final code commit
+
+The code is final at `2601e4188` (the census commit; the last code change is `9fcfd1519`, merged with #530's `496ea80e7` at `806e13260`); this subsection's commit changes only this file. Node 24.21.0.
+
+- **Guards:** all 24 of the integrator's `int-guards.sh` exit 0, and `check:silent-supabase-reads` exits 0 (no new site; 205 pre-existing sites baselined; no baseline count raised). `checkUncheckedSupabaseReads`: no new in-scope read ignores its `.error`. `checkWritePathColumns` refuses to run without a sanctioned live Supabase target, and this lane connects to no database, so it was not run.
+- **api-server, the whole suite** (`node --import tsx/esm --test`, `SUPABASE_URL=http://127.0.0.1:9`): every file on the package's `test` line but the nine live-DB suites that import `ciSupabaseGuard` — 1741 files in 22 chunks, each under 5 minutes (the longest 300 s): `tests 29801 · pass 29801 · fail 0 · cancelled 0 · skipped 0`.
+- **Client:** `pnpm run -s check:all` passes — node tests `tests 7639 · pass 7639 · fail 0`; jest component suites 869 of 869 (5540 tests); the web config 4 of 4 (12 tests); typecheck, typecheck:tests (173 diagnostics, the baseline) and the lints clean. `check-route-registry`: OK (232 screens, 9 layouts).
+- **The guard on disk.** The verifier's runner placed each of GH0–GH49 (GH31b included), GHX5 and GHX6 alone in the tree and ran the guard: the unfixtured tree passes (fail 0), and all 53 fixtures are killed; every touched registered file and `metro.config.js` was restored with a matching sha256.
+- **The verifiers' probes**, copied in, run and deleted (v7–v19, 78 files): the server probes pass 186 of 187 — the one failure is `zz-v18-dumpBodies`, the verifier's helper whose ✖ prints the bodies by design; the v18 GET /events probes' own double gained `.range()`, which B21's paged reads call (their assertions unchanged). Of the 26 client probe suites (82 tests), 73 pass — every v19 probe among them (DA2, DA3, WL1, GC1, GC2, NS1, NA0, HA1) — and 9 fail as §116.12 recorded: V15-TH4, V15-NM0, V17-NC2–NC5, V18-SC0, SC2 and RC3, each pinning a contract an earlier round changed, with an adapted version that passes.
+
+## §118 — DV-83 round 21 (lane W11-X2)
+
+### 118.1 Integrator: DV-83 held at W after independent re-verification at `0fa751d25`
+
+*Integrator, 2026-10-03. §117 is round 20; `0fa751d25` (PR #530's head) is round 20 merged with main `0fa752ece`. An independent verifier checked that tree: it re-ran every round-19 to round-7 probe unchanged (176 of 187 server: the v18 body dumper whose ✖ is by design, and ten v18 GET /events cases whose own double lacks `.range()`, which pass 11 of 11 once adapted; 73 of 82 client, the nine failures exactly the known pre-fix encodings), placed GH0–GH52, GH31b, GHX5 and GHX6 on disk one at a time (all 56 killed), wrote new probes (`zz-v20-*`) and seven fresh guard-reach fixtures (F1–F7), applied 51 mutations of its own, ran the whole api-server suite (1741 files, 29817 of 29817) and the client suites (jest 5540 of 5540, web 12 of 12, node 7639 of 7639), and restored every mutated file byte-identical, checked by sha256. Its report is the round-20 verifier's `dv83-r20-verifier.md`.*
+
+- **Confirmed.** §117.1's three breaks (B19–B21), V8 and V9, GH0–GH52 with GH31b, GHX5 and GHX6, and every earlier round's breaks are closed in behaviour. 48 of its 51 mutations are killed; G7 is equivalent (the parser never produces the partially-emitted kind). None of the new breaks is safety-relevant or an authorization fail-open: every capacity claim it found fails closed (an open seat said full).
+- **Found: seven groups of paths that break the criterion's wording, shown by 15 probes that fail against this tree, each group with a green control.**
+  1. **B22. The cached going counter is still served as measured outside `routes/events.ts`.** A leave whose recount fails leaves `events.going_count` stale; Compass's group tool tells the model no candidate fits (`not_enough_capacity_for_group`) over the cached count while a seat is open, and GET /pulse/live serves the cached `people_count`, "Full" and `is_joinable: false` (`artifacts/api-server/src/compass/CompassTools.ts`, `artifacts/api-server/src/routes/pulse.ts`; SR2, SL1 red; SR0, SL0 the controls; SR1 the reach). GET /pulse and Compass's item hydrator have the same root.
+  2. **B23. `readAllPages` is offset-paged**, so a write between two pages skips or repeats a row and the read is answered whole (`artifacts/api-server/src/lib/pagedRead.ts`; PR1, PR2 red; PR0 the control).
+  3. **B24. GET /events/:id serves the first four going travellers as `goingAttendees`, unmarked**; the host Attendees tab lists them as the attendees and the co-host picker says "Everyone going is already a co-host" over the slice (`artifacts/api-server/src/routes/events.ts`, `travel-buddy-standalone/src/components/HostDashboardPanel.tsx`; AS1, CP1, AT1 red; AS0, CP0, AT0 the controls).
+  4. **B25. The event screen says counts GET /events/:id names as unread as measured** ("7 going" over a failed going read, "3 waitlisted" or nothing over a failed waitlist read; EC1–EC3 red; EC0, EC4 the controls; WD1 the reach). D-W11X2-165's "no other route serves a field such as `failedSources` that a client renders without reading" is false.
+  5. **B26. /events/list draws whichever answer lands last** (LR1 red; LR0 the control).
+  6. **B27. The events tab's Near Me asks for the previous radius**, and a failed near read leaves the old radius's rows drawn, unsaid (NM1, NM2 red; NM0 the control).
+  7. **B28. D-W11X2-165's "seen, not built" lists are ruled in scope**: GET /events/search answers both failed reads as 200 with no events, and GET /events/following a failed follows read (SS1, FS1 red; SS0, FS0 the controls); /me, /saved, /joined and /circles have the same root.
+- **Mutation survivors.** R2 (`liveEventCounters` writes the live count only for events that have rows, so a stale cached count survives a whole, empty live read) is non-equivalent on a DV-83 line (fixture LZ1); C14 (the event screen's host-unread test drops `!e?.host`) is non-equivalent but only over-warns (fixture EC4).
+- **The guard's reach.** GH53 escapes it: `require.context('../services', false, /^\.\/compass\.ts$/)`, which Expo's Metro config enables and collects as a context dependency. No live file uses it.
+- **Rulings not honest.** D-W11X2-159 is honest for the failed reads, not the attendee list (B24, B25); D-W11X2-160 is not honest as titled (B22; R2); D-W11X2-161 is honest at every page boundary, not under concurrent writes (B23); D-W11X2-164 is honest for the list cards and empty states, not for every client of GET /events (B26, B27); D-W11X2-165's X12 is upheld, its "seen, not built" set is ruled a break for /search and /following (B28), and its "no other route" sentence is false (B25). D-W11X2-162 and -163 are honest.
+- **Next.** A round-21 lane closes B22–B28 with the verifier's probes as failing-first tests, registers LZ1 and EC4, catches GH53, corrects the rulings, and sweeps once more. The row moves only after that.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | C | **W** | §117 closes §117.1's three paths, confirmed at `0fa751d25` (§118.1). Seven groups of paths still present a failed, cut or partial read as whole or measured: the cached going counter stated as measured by Compass's group tool and GET /pulse/live (`artifacts/api-server/src/compass/CompassTools.ts`, `artifacts/api-server/src/routes/pulse.ts`); an offset-paged whole read under concurrent writes (`artifacts/api-server/src/lib/pagedRead.ts`); a four-row attendee slice said as the whole list (`artifacts/api-server/src/routes/events.ts`, `travel-buddy-standalone/src/components/HostDashboardPanel.tsx`); unread counts said as measured on the event screen; a stale answer and a stale radius drawn by two events lists; and the search and following lists answering a failed read as no events. R2 survives, and GH53 escapes the guard. D-W11X2-159, -160, -161, -164 and -165 are honest in part. |
+
+Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
+
+### 118.2 Round 21: what this lane did
+
+*Written 2026-10-03 by lane W11-X2 (round 21) on `disc-w11-x2-r21`, from `0fa751d25` (PR #530's head: round 20 merged with main `0fa752ece`) and §118.1. It closes §118.1's seven break groups (B22–B28), each with the verifier's probes adapted into registered tests and seen red first; registers the verifier's R2 fixture (LZ1) and C14 fixture (EC4); refuses `require.context` in the guard (GH53) and reads the one more load shape Metro collects (GH54); corrects D-W11X2-159, -160, -161, -164 and -165 in D-W11X2-166 to -172; and sweeps once more. The sweep found and closed four more paths (SW20–SW23).*
+
+*No migration and no new flag. Every change alters what is said only when a read failed, was cut, covered part of what was asked, or was answered for something no longer shown; with every read healthy and whole, every screen renders as before and every served body is byte-identical but for counts that were stale (controls PW0, LZ0, SR0, SL0, LP0, SP2, AS0, AS3, EC0, EC5, AV0, CP0, AT0, LR0, NM0, TR0, LU0, LV0, SS0, FS0, ME0, SV0, JN0, CI0, MW0, DS0, LD0). Server bodies gain keys only on the failed or cut arm: `goingAttendeesTruncated` / `goingAttendeesTotal` on GET /events/:id over a slice, `failedSources` on GET /pulse/live, `truncated` on GET /events/search, /following and /circles; a list's own failed read answers 503. Four behaviours change on a healthy read, each to stop serving a value that was not measured: Compass's group tool, its candidate pool, GET /pulse and GET /pulse/live count the going RSVPs live (B22); GET /events/:id's `goingCount` is the live count; a Live gem card's count is its live save count (SW21); and the event search reads at most 500 rows per term (it read every match, cut silently at 1000). Every edit in a cited file is line-neutral: lines are changed in place, and new code is appended at a file's foot or lives in a new module (`test/helpers/postgrestKeyset.ts`).*
+
+*All evidence is controlled: node suites over the real routes, services and loaders and PostgREST-shaped doubles (live tables that honour every filter, the `.or()` keyset, every order, `.range()` and db-max-rows, written between pages), jest over the real services, hooks, components and screens, and the static guard over an in-memory overlay. None of it is production evidence, and no client build carrying the change has shipped.*
+
+### 118.3 The cached going count, stated nowhere as measured (§118.1 B22, R2; D-W11X2-167)
+
+Compass's group tool, its candidate pool (`artifacts/api-server/src/compass/CompassItemHydrator.ts`), GET /pulse and GET /pulse/live (`artifacts/api-server/src/routes/pulse.ts`) count the going RSVPs live. A failed live read is no capacity fact: `get_group_recommendation` (`artifacts/api-server/src/compass/CompassTools.ts`, `eventSatisfiesGroup` in `artifacts/api-server/src/compass/CompassSocialEngine.ts`) holds a capped event back as `capacity_could_not_be_checked` and tells the model it could not check capacity; the rail serves no count and no "Full" and names `event_rsvps`. R2 is killed by the verifier's LZ1, registered. **D-W11X2-160 is corrected.**
+
+### 118.4 Paged reads, keyed (§118.1 B23; sweep SW22; D-W11X2-168)
+
+`readAllPages` (`artifacts/api-server/src/lib/pagedRead.ts`) pages a keyed read after the last row received (`keysetAfter`), so a write between two pages neither skips nor repeats a row that existed throughout; a page that repeats a row is a cut read, and an unkeyed read whose total moves is one too. Every event row read passes its key (`artifacts/api-server/src/lib/eventRowReads.ts`). The three momentum reads over `rank_events` (`artifacts/api-server/src/lib/discoveryLocalMomentum.ts`, `artifacts/api-server/src/lib/discoveryTrendExplanation.ts`, `artifacts/api-server/src/services/trails/TrailService.ts`) page newest first by `(served_at, id)` (`keysetBefore`). **D-W11X2-161 is corrected.**
+
+### 118.5 Who is going, and the counts the event screen says (§118.1 B24, B25; D-W11X2-166)
+
+GET /events/:id marks a slice of the going travellers (`goingAttendeesTruncated`, `goingAttendeesTotal`) and serves the live `goingCount` (`artifacts/api-server/src/routes/events.ts`). The host's Attendees tab (`travel-buddy-standalone/src/components/HostDashboardPanel.tsx`) says "Showing 4 of 6 going", the co-host picker (`travel-buddy-standalone/src/components/events/EventCohostsPanel.tsx`) never says everyone going is a co-host over a slice, and the event screen (`travel-buddy-standalone/app/event/[id].tsx`) says an unread going or waitlist count as last known (`travel-buddy-standalone/src/lib/eventAttendeesUnread.ts`). C14's fixture EC4 is registered. **D-W11X2-159 is corrected.**
+
+### 118.6 Lists drawn over the right rows (§118.1 B26, B27; sweep SW23; D-W11X2-169)
+
+/events/list (`travel-buddy-standalone/app/events/list.tsx`), the events tab's load and its Near Me read (`travel-buddy-standalone/app/(tabs)/events.tsx`), the destination page (`travel-buddy-standalone/app/destination/[slug].tsx`), the layover discovery card (`travel-buddy-standalone/src/components/layover/LayoverDiscoveryCard.tsx`) and the Live Pulse hook apply an answer only if no later load has started; Near Me asks the radius chosen, and a failed near read clears the old rows and says so. **D-W11X2-164 is corrected.**
+
+### 118.7 The tab's lists, the search and the Live rail (§118.1 B28; sweep SW20, SW21; D-W11X2-170)
+
+The events tab's own lists and GET /events/search answer 503 over a read of their own that failed and `truncated` over an event withheld over a failed read or a search pool filled; the tab says a list that failed beside those it drew. GET /pulse/live names every read it could not make, and counts a gem's saves live; the rail (`travel-buddy-standalone/src/components/LivePulseRail.tsx`, `travel-buddy-standalone/src/hooks/useLivePulse.ts`, `travel-buddy-standalone/src/services/livePulse.ts`) says them. **D-W11X2-165 is corrected.**
+
+### 118.8 The guard refuses `require.context` (GH53, GH54; D-W11X2-171)
+
+`moduleLoads` reads a member call on the global `require` (`requireMember`, at the foot of `travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts`): `require.context(…)` is refused as a load the guard cannot resolve, whatever its spelling, and `require.unstable_importMaybeSync(x)` is an import of `x`. The whole guard: 120 of 120.
+
+### 118.9 The sweep (SW20–SW23; D-W11X2-170, -168, -169, -172)
+
+Every read of a cached counter on these surfaces; every offset-paged read answered whole; every client list that reloads when a parameter changes; every server list on these surfaces that answered a failed read as fewer or no rows; and every call shape Metro collects as a load were read again:
+
+- **SW20.** GET /pulse/live's sections ignored their read errors; each is named (§118.7).
+- **SW21.** A Live gem card stated the cached `save_count` (§118.7).
+- **SW22.** The three momentum reads paged `rank_events` newest first by offset (§118.4).
+- **SW23.** The destination page and the layover discovery card drew a previous city's late answer (§118.6).
+- **Ruled, sound, and left for their owners** — D-W11X2-172.
+
+### 118.10 Tests, seen red, and mutations
+
+**Seen red first**, run against the code before each fix (logs in the lane's `r21/red/` scratch directory; where a fix landed before its red run was recorded, HEAD's file was placed and restored by sha256):
+
+| Area | Red | Controls, green |
+|---|---|---|
+| B22 the cached going count | SR2–SR4, SL1–SL4, CH1, CH2, SP1 | SR0, SL0, SP2 (SR1 the reach) |
+| B23 the paged read under writes | PW1–PW6 | PW0 |
+| B24 the attendee slice | AS1, AS2, GC1, CP1, CP2, AT1, AT2 | AS0, AS3, AS4, CP0, AT0 |
+| B25 the event screen's counts | EC1–EC3, AV1, AV2 | EC0, EC5, AV0 (WD1 the reach) |
+| B26 /events/list, the tab's load | LR1, TR1 | LR0, TR0 |
+| B27 Near Me | NM1–NM3 | NM0 |
+| B28 the tab's lists and the search | SS1–SS4, FS1, FS2, OW1, ME1, ME2, SV1, JN1, CI1, LU1 | SS0, FS0, ME0, SV0, JN0, CI0, LU0 |
+| The guard's reach (G13) | GH53, GH53b–e, GH54 | GH53f |
+| SW20 the Live rail | LP1–LP8, LV1–LV5 | LP0, LV0 |
+| SW21 the gem count | LP9, LP10 | LP0 |
+| SW22 the momentum reads | MW1–MW4 | MW0 |
+| SW23 the destination page, the layover card | DS1, LD1 | DS0, LD0 |
+
+**Registered from the verifier's fixtures**: LZ0–LZ2 (R2), EC4 (C14). **Written against the fixed code**, each shown to bite by a mutation that removes what it pins: PW7 (K8), AS5 (EV3), SS5 (EV6), and PW5's refusal reason (K2).
+
+**Mutations.** Each was applied alone, its pin group run (the server group: 24 suites — the paged, events, Live and Compass suites and the momentum suites; the client group: 14 jest suites — the screen, component, hook and service suites; the guard group: the G13 GH41–GH54 cases and the tree as it is), and the file restored byte-identically; the sha256 matched `git show HEAD:` before every application and after every restore. Runner and logs: the lane's `r21/muts/` scratch directory (`run.py`, `defs.py`, one log per mutation, `summary.txt`).
+
+- **90 mutations:** B23 ×11 (K1–K11: `readAllPages`' keyed arm, the cursor, the key order, each reader's key) and R2; B22 ×24 (CT1–CT3, CS1, CH3, CH4, PL1–PL18: each live recount, each unread capacity arm, each named read, the gem count); B24/B28 server ×16 (EV1–EV16); SW22 ×5 (MO1–MO5); client ×27 (CL1–CL26: the slice, the counts, every request sequence, the near radius, the unread notes; C14); the guard ×6 (G10–G15).
+- **Result: 88 killed, 2 equivalent, 0 non-equivalent survivors** on DV-83 lines and on guard lines. **Equivalent:** CL2 (the client's `goingAttendeesTruncated` branch removed): the client's own comparison of `counts.going` with the travellers listed is the route's marking rule over the same body, so it reads every marked body the same way. G14 (the refusal message without the site list): Node 24's assertion appends its own diff, which names the site. **Survivors on a first run, each closed:** K2 and K8 (PW5's reason, PW7), EV3 (AS5), EV6 (SS5). **The verifier's survivors:** R2 is killed by LZ1; C14 by EC4.
+- *Naming.* This round's series are B22–B28, R2, C14 and GH53 (the verifier's names), SW20–SW23 (the sweep), GH54, and K, CT, CS, CH, PL, EV, MO, CL, G (the mutations).
+
+### 118.11 Checks
+
+- **Line-neutral in every cited file** (`routes/events.ts`, `routes/pulse.ts`, `compass/CompassTools.ts`, `compass/CompassSocialEngine.ts`, `compass/CompassItemHydrator.ts`, `lib/pagedRead.ts`, `lib/eventRowReads.ts`, the momentum readers, the client screens and the guard's cited lines): lines changed in place, new code at a file's foot or in a new module, so `check:doc-citations`, `check:citation-targets` and `check:citation-symbols` are clean.
+- **Scope.** This round's touched sources join this census's `CENSUS_SCOPE`; the acknowledgement for every census the freshness check named carries a §118 paragraph with its "why it cannot move a verdict".
+- **Suites.** The new api-server suites are on the `test` line (`check:test-registration`); the new client suites are jest component suites, none on KNOWN_BROKEN, none orphaned.
+- **Silent reads.** `check:silent-supabase-reads` reports no new site; two baseline counts were lowered for the sites this round fixed (`routes/pulse.ts` S2 16 → 8, `routes/events.ts` S4 2 → 1); none was raised.
+
+### 118.12 DV-83, restated
+
+§118.1's seven break groups are closed, each with the verifier's probes adapted into registered tests, red first and green now. R2 and C14 are killed by the verifier's fixtures, registered. GH53 is caught, and GH54 beside it. D-W11X2-159, -160, -161, -164 and -165 are corrected in D-W11X2-166 to -172. The sweep closed four more paths. Every clause of DV-83's criterion holds on every path this lane examined:
+
+1. **Producers send the refusal envelope or a named failure.** GET /pulse/live names every read it could not make; GET /events/:id marks a slice; the tab's lists and the search refuse a read of their own that failed, and mark a list an unread read cut.
+2. **Nothing refused or partial is cached as complete.** No paged read answers whole over a page a concurrent write shifted; no cached counter is stated as a count.
+3. **Nothing refused is rendered as empty, as complete, or over the wrong rows.** No screen says "Everyone going is already a co-host", a slice as the attendees, an unread count as measured, "No live plans right now" over an unread read, or another filter's, radius's or city's answer under the one on screen.
+4. **A Compass tool never states a failed or partial read to the model as a fact.** `get_group_recommendation` says it could not check capacity over an unread going count, never that no event has room.
+5. **Consumers branch on coverage**, and the static guard refuses every load shape Metro collects that it cannot resolve.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§118.1's seven break groups are closed, each with its verifier probes adapted and red first; R2 and C14 are killed by the verifier's fixtures (LZ1, EC4); GH53 and GH54 are caught; the sweep closed four more paths (SW20–SW23); 90 mutations: 88 killed, 2 equivalent, 0 non-equivalent survivors (§118.10). CONTROLLED EVIDENCE ONLY — this row awaits independent re-verification.** **No cached going count is stated as measured** (`artifacts/api-server/src/compass/CompassTools.ts`, `artifacts/api-server/src/routes/pulse.ts`, `artifacts/api-server/src/compass/CompassItemHydrator.ts`; SR2–SR4, SL1–SL4, CH1, CH2, LZ1). **Every paged read pages by key** (`artifacts/api-server/src/lib/pagedRead.ts`, `artifacts/api-server/src/lib/discoveryLocalMomentum.ts`; PW1–PW7, MW1–MW4). **A slice of who is going is said as one, and an unread count as last known** (`artifacts/api-server/src/routes/events.ts`, `travel-buddy-standalone/src/components/HostDashboardPanel.tsx`, `travel-buddy-standalone/app/event/[id].tsx`; AS1, AS2, AS5, CP1, CP2, AT1, AT2, EC1–EC3, AV1, AV2). **Every list draws only the answer to what it shows** (`travel-buddy-standalone/app/events/list.tsx`, `travel-buddy-standalone/app/(tabs)/events.tsx`; LR1, TR1, NM1–NM3, DS1, LD1, LV5). **The tab's lists, the search and the Live rail refuse or name a read they could not make** (SS1–SS5, FS1, FS2, OW1, ME1, ME2, SV1, JN1, CI1, LU1, LP1–LP10, LV1–LV4). **The guard refuses `require.context`** (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts`; G13 GH53–GH54). |
+
+**Headline.** DV-83 moves W → C. `check:census-integrity` counts **C 101 / W 85 / N 2 / X 0** over 188: CONSTRUCTED 186 / 188 = **98.9 %**, CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged. The move is on controlled evidence and awaits independent re-verification.
+
+### 118.13 Left open, and what would turn this red
+
+- **Ruled, and left for their owners (D-W11X2-172).** `CompassSocialEngine.contextMemberIds`' unbounded reads (a residual: it states who is around, never a count, and a longer walk is said); `cityConfidenceWindowedReads`' offset paging (behind a flag seeded FALSE; its keyed paging is owed before the flag moves); GET /admin's events list (the admin console); `CompassGraphEngine`'s offset support reads (census-compass); POST/DELETE /posts/:id/save's `count ?? 0` stamp (census-media); `isSaved` and the ranking terms over a failed enrichment read.
+- **Product effect, stated.** Compass's group tool, its candidate pool, GET /pulse and GET /pulse/live read the going RSVPs (one paged read per request); a Live gem card's count is its live save count (one head count per gem shown); the event search reads at most 500 rows per term and says a deeper page is not whole; the tab's own lists answer 503 over a read they could not make; GET /pulse/live may carry `failedSources`; the host's tab says "Showing 4 of 6 going"; the event screen says an unread count as last known.
+- **What would turn DV-83 red again:**
+  - a cached counter stated as a count or a capacity anywhere (SR2–SR4, SL1–SL4, CH1, CH2, SP1, LP9, LZ1);
+  - a paged read answered whole over a page a write shifted, or a server that ignored the cursor (PW1–PW7, MW1–MW4);
+  - a slice of who is going said as the whole list, or an unread count said as measured (AS1, AS2, AS5, CP1, CP2, AT1, AT2, EC1–EC3, AV1, AV2);
+  - a list drawn from a previous filter's, radius's, context's or city's answer (LR1, TR1, NM1–NM3, LV5, DS1, LD1);
+  - a list's own failed read answered as fewer or no events, or a failed read on the Live rail unnamed (SS1–SS5, FS1, FS2, OW1, ME1, ME2, SV1, JN1, CI1, LU1, LP1–LP10, LV1–LV4);
+  - a `require.context` or `require.unstable_importMaybeSync` the guard cannot see (G13 GH53–GH54);
+  - any path §117.11 lists.
+
+### 118.14 Results at the final code commit
+
+The code is final at `8a08dda63` (a NOTE comment on one test's stand-in, which the mock check asks for); the last change to a source file is `e85e1fdd2`, and the census and register are `218126cae`. This subsection's commit changes only this file. `origin/main` (`0fa752ece`) is already in the branch, so no merge was needed. Node 24.21.0.
+
+- **Guards:** all 24 of the integrator's `int-guards.sh` exit 0, and `check:silent-supabase-reads` exits 0 (no new site; 196 pre-existing sites baselined; two counts lowered, none raised). `checkUncheckedSupabaseReads`: no new in-scope read ignores its `.error`. The uacheck replica prints OK (117 tracked). `checkWritePathColumns` refuses to run without a sanctioned live Supabase target, and this lane connects to no database, so it was not run.
+- **api-server, the whole suite** (`node --import tsx/esm --test`, `SUPABASE_URL=http://127.0.0.1:9`): every file on the package's `test` line but the nine live-DB suites that import `ciSupabaseGuard` — 1748 files in 22 chunks, each under 5 minutes (the longest 297 s): `tests 29885 · pass 29885 · fail 0 · cancelled 0 · skipped 0`.
+- **Client:** `pnpm run -s check:all` passes — node tests `tests 7646 · pass 7646 · fail 0`; jest component suites 876 of 876 (5575 tests); the web config 4 of 4 (12 tests); typecheck, typecheck:tests (173 diagnostics, the baseline) and the lints clean. `check-route-registry`: OK (232 screens, 9 layouts).
+- **The guard on disk.** The verifier's runner placed each of GH0–GH52 (GH31b included), GHX5, GHX6, its fresh shapes F1–F7, GH53 (F7) and GH54 alone in the tree and ran the guard: the unfixtured tree passes (fail 0), and all 65 fixtures are killed; every touched registered file and `metro.config.js` was restored with a matching sha256.
+- **The verifiers' probes**, copied in, run and deleted (v7–v20): the server probes pass 200 of 215. The failures are `zz-v18-dumpBodies` (its ✖ prints the bodies by design), the ten v18 GET /events cases whose double lacks `.range()` (their v18c adaptations pass 11 of 11), and four v20 cases whose doubles lack what this round's reads now call: PR0–PR2 (no `.or()`, the keyset cursor) and SL0 (no `.range()`, the live recount). With the double completed and the assertions unchanged (`zz-v20a-*`), all eight v20 server cases pass. Of the 30 client probe suites (96 tests), 86 pass; the ten failures are the nine §117.12 recorded (V15-TH4, V15-NM0, V17-NC2–NC5, V18-SC0, SC2 and RC3, each pinning a contract an earlier round changed, with an adapted version that passes) and v20's AT1, whose regular expression holds two literal backspace bytes (U+0008) where word boundaries (`\b6\b`) were meant: it can match only "more", "not all" or "couldn't". Read as written with `\b`, AT1 passes against "Showing 4 of 6 going", and the registered AT1 and AT2 pin that sentence.
+
+## §119 — DV-83 round 22 (lane W11-X2)
+
+### 119.1 Integrator: DV-83 held at W after independent re-verification at `0cb20f42f`
+
+*Integrator, 2026-10-03. §118 is round 21; `0cb20f42f` is PR #530's head (round 21, CI 29 of 29). An independent verifier checked that tree: it re-ran every round-20 to round-7 probe (208 of 223 server: the v18 body dumper whose ✖ is by design, and fourteen v18 and v20 cases whose own doubles lack `.range()` or `.or()`, whose adapted copies pass; 86 of 96 client, the failures the nine known pre-fix encodings and v20's AT1, whose regular expression holds literal backspace bytes and passes once repaired), placed GH0–GH54, GH31b, GHX5, GHX6 and F1–F7 on disk one at a time (all 65 killed), wrote new probes (`zz-v21-*`), applied 34 mutations of its own, ran the whole api-server suite (1748 files, 29885 of 29885) and the client suites (jest 5575 of 5575, web 12 of 12, node 7646 of 7646), and restored every mutated file byte-identical, checked by sha256. Its report is the round-21 verifier's `dv83-r21-verifier.md`.*
+
+- **Confirmed.** §118.1's seven break groups (B22–B28), R2, C14, GH53 and GH54, and every earlier round's breaks are closed in behaviour. No new guard hole: 65 of 65 fixtures killed. None of the new breaks is an authorization fail-open; two touch safety-adjacent display (B31, B34).
+- **Found: six groups of paths that break the criterion's wording, shown by 11 probes that fail against this tree, each beside a green control.**
+  1. **B29. The host's Attendees tab states the four-row slice as the whole list whenever another read is named under `event_rsvps` or `profiles`**, although the body itself carries `goingAttendeesTruncated: true` and `goingAttendeesTotal: 6` (`travel-buddy-standalone/src/lib/eventAttendeesUnread.ts`, `travel-buddy-standalone/src/components/HostDashboardPanel.tsx`; AN1, AN2 red; AN0 the control; AU1, AU2 the reach).
+  2. **B30. The events tab leaves the previous filter's rows drawn when the read for the chip now on screen fails** (Upcoming, Tomorrow, This Weekend), the class §118 fixed for Near Me only (`travel-buddy-standalone/app/(tabs)/events.tsx`; FF1, FF2 red; FF0 the control).
+  3. **B31. The NOW map's Live Pulse card never reads `failedSources`**: with `safe_return_sessions` unread it headlines an event and says nothing, and it keeps a previous camera's items after a failed read (`travel-buddy-standalone/app/map/index.tsx`; MP1 red; MP0 the control). Safety-adjacent display: an active Safe Return session can drop out of the card's headline, unsaid.
+  4. **B32. GET /events/following and GET /events/circles answer a pool their per-viewer filter emptied as the end of the list** (`events: []`, `cursor: null`, no `truncated`), so an open event past the pool is never read (`artifacts/api-server/src/routes/events.ts`; PC1, PC2 red; PC0 the control).
+  5. **B33. GET /events serves the viewer's own state over a failed read as measured**: `myRsvp: null`, `myWaitlistPosition: null` and `isSaved: false` at 200, nothing named; D-W11X2-170 ruled the same class a break on /following, /circles and /saved, and round 19 on GET /events/:id (B19) (`artifacts/api-server/src/routes/events.ts`; OS1, OS2, OS4 red; OS0, OS3 the controls).
+  6. **B34. Compass's candidate pool offers a full event as open over a failed live going read**: the hydrator states no attendee count, and the eligibility engine reads the missing count as 0, unnamed (`artifacts/api-server/src/compass/CompassEligibilityEngine.ts`, `artifacts/api-server/src/compass/CompassItemHydrator.ts`; CE1 red; CE0 the control). Safety-adjacent: a capacity gate opened over an unread count; the RSVP route still enforces capacity.
+- **Mutation survivors.** 23 of its 34 mutations survive on DV-83 lines, each failing in the DV-83 direction and each confirmed by a fixture green at this head and red under the mutation: V5 (the going read's keyset cursor columns out of order with its `ORDER BY`, `artifacts/api-server/src/lib/eventRowReads.ts`; every pinned world gives later events larger user ids), V7–V14 (the `truncated` marks and the 503s on /search, /circles, /following, /me and /saved), V18–V25 (GET /pulse/live: joinable over an unread count, a gem answer with no count read as 0, five section names; `artifacts/api-server/src/routes/pulse.ts`), V26 (R2 again, in the hydrator) and V28–V32 (the client's request-sequence guards on the category rows, the destination gems and posts and the layover card's closed window, and Near Me's "not whole and empty" message). V1, V4, V16, V17 and V34 are equivalent or fail closed.
+- **Rulings not honest.** D-W11X2-166 is not honest for the Attendees tab (B29); D-W11X2-167 not for the Compass pool (B34; V18, V19, V26); D-W11X2-168 is honest for the shipped column order but under-pinned (V5); D-W11X2-169 is incomplete (B30; V28, V30–V32); D-W11X2-170 is not honest as stated (B31–B33; V7–V14, V21–V25). D-W11X2-172's saved_count sentence is not true for the wishlist's OSM place save (`artifacts/api-server/src/routes/wishlist.ts`), a lost write on a ranking counter, recorded and not counted; `CompassSocialEngine.contextMemberIds` and `CompassGraphEngine`'s offset-paged support reads are inside DV-83 in principle and were not counted this round. D-W11X2-171 is honest.
+- **Next.** A round-22 lane closes B29–B34 with the verifier's probes as failing-first tests, registers the 23 survivors' fixtures, closes the two residuals and the wishlist write, corrects the rulings, and sweeps once more. The row moves only after that.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | C | **W** | §118 closes §118.1's seven break groups, confirmed at `0cb20f42f` (§119.1). Six groups of paths still present a failed, cut or partial read as whole, measured or over the wrong rows: a slice of who is going said as the whole list beside another named read (`travel-buddy-standalone/src/lib/eventAttendeesUnread.ts`, `travel-buddy-standalone/src/components/HostDashboardPanel.tsx`); a previous filter's rows drawn under a chip whose read failed (`travel-buddy-standalone/app/(tabs)/events.tsx`); the NOW map's Live Pulse card ignoring `failedSources`, the Safe Return headline among them (`travel-buddy-standalone/app/map/index.tsx`); /following and /circles answering an emptied pool as the end, and GET /events serving the viewer's own state over a failed read as measured (`artifacts/api-server/src/routes/events.ts`); Compass's candidate pool offering a full event as open over an unread count (`artifacts/api-server/src/compass/CompassEligibilityEngine.ts`). 23 mutations survive on DV-83 lines. D-W11X2-166, -167, -169 and -170 are honest in part. |
+
+Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
+
+### 119.2 Round 22: what this lane did
+
+*Written 2026-10-03 by lane W11-X2 (round 22) on `disc-w11-x2-r22`, from `0cb20f42f` (PR #530's head: round 21) and §119.1. It closes §119.1's six break groups (B29–B34), each with the verifier's probes adapted into registered tests and seen red first; registers the verifier's fixtures for its 23 surviving mutations (V5, V7–V14, V18–V26, V28–V32), each green at the fixed head and red under its mutation; closes the two residuals D-W11X2-172 left inside DV-83 (`CompassSocialEngine.contextMemberIds`, `CompassGraphEngine`'s offset-paged support reads) and the wishlist's lost saved_count write; corrects D-W11X2-166, -167, -169, -170 and -172 in D-W11X2-173 to -179; and sweeps once more. The sweep found and closed four more paths (SW24–SW27). Main (`db657b73b`, #563) is merged in.*
+
+*No migration and no new flag. Every change alters what is said only when a read failed, was cut, or was answered for something no longer shown; with every read healthy and whole, every screen renders as before and every served body is byte-identical (controls AN0, AU0, FF0, MP0, PA0, PC0, PC3, PC4, OS0, OS3, OC0, ON0, CE0, CE3, CM0, CM3, KG0, SC0, SC3, CS0, PF0, PF3, PD0, PD2, KC0, SB0, CR0, NU0, GS0, PS0, LI0). Server bodies gain keys only on a failed or cut arm: `truncated` and a cursor on /following and /circles over a full pool their filter emptied, `failedSources` on GET /pulse over a fail-closed empty feed; GET /events, its city alias and /events/nearby answer 503 over a failed read of the viewer's own state. Two behaviours change on a healthy read: /following and /circles order their pool by `(starts_at, id)` and answer the cursor `<starts_at>|<id>` (an earlier server's cursor is read as before), and a save writes the measured number of savers to `saved_count` rather than snapshot + 1. Every edit in a cited file is line-neutral: lines are changed in place, and new code is appended at a file's foot or lives in a new module (`travel-buddy-standalone/src/features/map/pulse/pulseCardAnswer.ts`).*
+
+*All evidence is controlled: node suites over the real routes, services and loaders and PostgREST-shaped doubles (live tables that honour every filter, the `.or()` keyset, every order, `.range()`, the exact count and db-max-rows, written between pages), and jest over the real services, hooks, components and screens. None of it is production evidence, and no client build carrying the change has shipped.*
+
+### 119.3 A slice of who is going, said beside any other named read (§119.1 B29; D-W11X2-173)
+
+`attendeesListCut` (`travel-buddy-standalone/src/lib/eventAttendeesUnread.ts`) sets the route's slice mark aside only when the going list itself could not be read (`goingListUnread`), never because the full RSVP count read or the host's profile read is named beside it; the host's Attendees tab (`travel-buddy-standalone/src/components/HostDashboardPanel.tsx`) says "Showing 4 of 6 going". **D-W11X2-166 is corrected.**
+
+### 119.4 No list keeps an earlier read's rows over a failed one (§119.1 B30; sweep SW25; D-W11X2-176)
+
+The events tab (`travel-buddy-standalone/app/(tabs)/events.tsx`) clears Upcoming, Tomorrow, This Weekend, Following, Circles, the Saved section, "Your drafts" and the invites banner over a failed read, and says it; the drafts and invites reads count among the lists it says it could not load. The saved bookmarks keep their last answer. **D-W11X2-169 is corrected.**
+
+### 119.5 The NOW map's Live Pulse card says what /pulse/live could not read (§119.1 B31; D-W11X2-177)
+
+The map screen (`travel-buddy-standalone/app/map/index.tsx`) reads GET /pulse/live through `pulseCardAnswer`; the card (`travel-buddy-standalone/src/components/map/LivePulseCard.tsx`) says "Couldn't check your Safe Return sessions", "Some live updates couldn't be loaded" or "Couldn't load live updates here", also when nothing is left to headline, and a failed read keeps no earlier camera's items.
+
+### 119.6 The events lists: an emptied pool is not the end, and the viewer's own state is never served over a failed read (§119.1 B32, B33; sweep SW24; D-W11X2-177)
+
+GET /events/following and /circles (`artifacts/api-server/src/routes/events.ts`) answer `truncated: true` and a cursor over a full pool their filter emptied, and page by `(starts_at, id)`. GET /events, its city alias and /events/nearby answer 503 `degraded_unavailable` over a failed read of the viewer's own RSVP or waitlist place, and GET /events over a failed saved-events read. **D-W11X2-170 is corrected.**
+
+### 119.7 Compass's pool never offers a capped event as open over an unread count (§119.1 B34; D-W11X2-174)
+
+`runEligibilityCheck` (`artifacts/api-server/src/compass/CompassEligibilityEngine.ts`) holds a capped event whose going count could not be read back as `capacity_could_not_be_checked`, and the hydrator (`artifacts/api-server/src/compass/CompassItemHydrator.ts`) names `event_rsvps` for a pool holding one. **D-W11X2-167 is corrected.**
+
+### 119.8 The verifier's 23 survivors, pinned (D-W11X2-174 to -177)
+
+Each fixture is registered and is green at the fixed head and red under its mutation: V5 (`eventRowReadsKeysetColumns` KC1, KC2: worlds whose later events' travellers sort below the earlier event's), V7–V14 (`eventsWithheldUnsaid`), V18–V25 (`livePulseMarksPinned`), V26 (`compassPoolCapacityUnread` CE2), V28, V29 (`Events.sequenceAndNearUnread`), V30, V31 (`destination.gemsPostsRace`) and V32 (`LayoverDiscoveryCard.closedWindow`). **D-W11X2-168 is pinned.**
+
+### 119.9 The residuals D-W11X2-172 left inside DV-83, closed (D-W11X2-175, -178)
+
+- **The presence walk's members.** `contextMemberIds` (`artifacts/api-server/src/compass/CompassSocialEngine.ts`) asks each of its two reads for the exact count and reads a read the server cut at its row cap whole, by key; a failed page fails it, and the walk says it could not check.
+- **The graph's support reads.** `readAllPages` (`artifacts/api-server/src/compass/CompassGraphEngine.ts`) takes each page after the last key received; a page with more rows than asked, a row without its key, or a row the cursor already passed is not read whole; every support read selects its key.
+- **saved_count.** Both save paths (`artifacts/api-server/src/routes/wishlist.ts`, `artifacts/api-server/src/routes/discovery.ts`) write the measured number of savers, so a lost or raced write is repaired by the next save. **D-W11X2-172 is corrected.**
+
+### 119.10 The sweep (SW24–SW27; D-W11X2-176, -177, -178, -179)
+
+Every `?? 0` or `?? false` over a count, capacity or own-state value; every server list on these surfaces that answers a filtered pool; every client screen that redraws on a refetch or reads `failedSources`; and every keyed or ordered read a test world might not vary were read again:
+
+- **SW24.** /following and /circles paged by `starts_at` alone, skipping an event that starts at the same instant as the last one served, and never reaching an undated event past the first page (§119.6).
+- **SW25.** The events tab's Following, Circles, Saved, drafts and invites kept an earlier read's rows over a failed refresh (§119.4).
+- **SW26.** POST /discovery/community/:placeId/save lost a saved_count write for good when its update failed after the save row had committed (§119.9).
+- **SW27.** GET /pulse (`artifacts/api-server/src/routes/pulse.ts`) answered a failed block or crew-follows read as an empty feed, unnamed; it keeps its fail-closed answer, names `blocks` or `user_follows`, and the client (`travel-buddy-standalone/src/services/pulse.ts`) treats such a body as a failed load.
+- **Swept and sound, and left for their owners** — D-W11X2-179. The three `rank_events` momentum reads were mutated with their key columns swapped (RK1–RK3); the existing suites kill each.
+
+### 119.11 Tests, seen red, and mutations
+
+**Seen red first**, run against the code before each fix (logs in the lane's `r22/red/` scratch directory; for B32 and B33, HEAD's `routes/events.ts` and `lib/pagedRead.ts` were placed over the working copy and restored by sha256):
+
+| Area | Red | Controls, green |
+|---|---|---|
+| B29 the attendee slice | AN1, AN2, AN3, GL1 | AN0, AN4, AN5 (AU0–AU2 the reach) |
+| B30 the tab's sections | FF1, FF2, FF3 | FF0 |
+| B31 the map card | MP1, MP2, MP3, PA (the module) | MP0 |
+| B32 the emptied pool | PC1, PC2 | PC0, PC3 |
+| B33 the viewer's own state | OS1, OS2, OS4, OS5, OC1, OC2, ON1, ON2, EV2c | OS0, OS3, OC0, ON0 |
+| B34 the Compass pool | CE1, CE4 | CE0, CE3 |
+| The presence walk's members | CM1, CM2, CM4 | CM0, CM3 |
+| The graph's support reads | KG1, KG3 | KG0, KG2 |
+| saved_count, the wishlist | SC1, SC2, SC4 | SC0, SC3 |
+| SW24 the pool cursor | PT1, PT2 | PT3 |
+| SW25 the tab's own lists | FF6, FF7, FF8 | — |
+| SW26 the community save | CS1, CS2, CS3 | CS0 |
+| SW27 GET /pulse | PF1, PF2, PD1 | PF0, PF3, PD0, PD2 |
+
+**Registered from the verifier's fixtures** (green at the fixed head, red under their mutation): KC0–KC2, SB0, SB1, CB1, CE1, FE1, FV1, ME3, SV2, SC1, PJ1, PJ2, PG1, PB1, PA1, PC1, PP1, PK1, CE2, CR0, CR1, NU0, NU1, GS0, GS1, PS0, PS1, LI0, LI1, AU0–AU2. **Written against the fixed code**, each shown to bite by the mutation it pins: PC4 (R32g), FF4 (R30a), FF5 (R30e), FF9 (RT4), KG0's examined count and KG4 (RG4, RG3).
+
+**Mutations.** Each was applied alone, its pin group run (the fixture's suite and its nearest neighbours: node over the real routes and services, jest over the real screens), and the file restored byte-identically; the sha256 matched `git show HEAD:` before every application and after every restore, and each PRE sha256 was written to the lane's progress notes before the mutation was applied. Runner and logs: the lane's `r22/muts/` scratch directory (`run.py`, `defs.py`, one log per mutation, `summary.txt`).
+
+- **91 mutations:** the verifier's 23 survivors (V5, V7–V14, V18–V26, V28–V32), re-applied over the registered fixtures; B34 ×4 (R34a–d); B33 ×7 (R33a–g); B32 and SW24 ×11 (R32a–k); B29 ×5 (R29a–e); B30 ×5 (R30a–e); B31 ×8 (R31a–h); the residuals ×14 (RS1–RS4, RG1–RG6, RW1–RW4); the momentum keys ×3 (RK1–RK3); SW25 ×5 (RT1–RT5); SW26 ×3 (RC1–RC3); SW27 ×3 (RP1–RP3).
+- **Result: 91 killed, 0 equivalent, 0 non-equivalent survivors** on DV-83 lines. **Survivors on a first run, each closed:** R32g (PC4), R30a (FF4), R30e (FF5), RG3 and RG4 (KG4, KG0), RT4 (FF9). The verifier's five equivalent or fail-closed mutations (V1, V4, V16, V17, V34) stand as it ruled them. No guard line changed this round.
+- *Naming.* This round's series are B29–B34, V5–V32 and AN, AU, FF, MP, PC, OS, CE, KC, SB, PJ, CR, GS, LI (the verifier's names, kept), SW24–SW27 (the sweep), and R29–R34, RS, RG, RW, RK, RT, RC, RP (the mutations).
+
+### 119.12 Checks
+
+- **Line-neutral in every cited file** (`routes/events.ts`, `routes/pulse.ts`, `routes/discovery.ts`, `routes/wishlist.ts`, `compass/CompassEligibilityEngine.ts`, `compass/CompassItemHydrator.ts`, `compass/CompassSocialEngine.ts`, `compass/CompassGraphEngine.ts`, `lib/pagedRead.ts`, and the client's `eventAttendeesUnread.ts`, `(tabs)/events.tsx`, `map/index.tsx`, `map/LivePulseCard.tsx`, `services/pulse.ts`): lines changed in place, new code at a file's foot or in a new module, so `check:doc-citations`, `check:citation-targets` and `check:citation-symbols` are clean.
+- **Scope and freshness.** This census's `CENSUS_SCOPE` gains the files §119 grades that it did not watch (`compass/CompassEligibilityEngine.ts`, the map's `LivePulseCard.tsx`, `pulseCardAnswer.ts`, the client's `services/pulse.ts`). The acknowledgements for census-discovery and census-compass name them with a §119 paragraph; census-map's names the card, `pulseCardAnswer.ts` and their suites, census-layover's the closed-window suite, each with its "why it cannot move a verdict".
+- **Suites.** The new api-server suites are on the `test` line (`check:test-registration`); the new client suites are jest component suites or node suites under `src/`, none on KNOWN_BROKEN, none orphaned.
+- **Silent reads.** `check:silent-supabase-reads` reports no new site; two baseline counts were lowered for the sites this round fixed (`routes/events.ts` S2 8 → 7, B33; `routes/pulse.ts` S4 3 → 2, SW27); none was raised.
+
+### 119.13 DV-83, restated
+
+§119.1's six break groups are closed, each with the verifier's probes adapted into registered tests, red first and green now. The verifier's 23 surviving mutations are killed by its fixtures, registered. The two residuals D-W11X2-172 left inside DV-83 and the saved_count write are closed. D-W11X2-166, -167, -169, -170 and -172 are corrected in D-W11X2-173 to -179; D-W11X2-168 is pinned. The sweep closed four more paths. Every clause of DV-83's criterion holds on every path this lane examined:
+
+1. **Producers send the refusal envelope or a named failure.** The events lists refuse a failed read of the viewer's own state and mark a pool their filter emptied; GET /pulse names the read it could not make; Compass's pool names an unread going count.
+2. **Nothing refused or partial is cached as complete.** No keyed read pages on columns out of order with its `ORDER BY` unseen; the presence walk and the graph read whole or say they could not; no saved_count keeps a lost write.
+3. **Nothing refused is rendered as empty, as complete, or over the wrong rows.** No screen says a slice as the attendees beside another named read, an earlier filter's or load's rows under the one on screen, or a map card headline over a section it could not read, unsaid.
+4. **A Compass tool never states a failed or partial read to the model as a fact.** A capped event over an unread count is never offered as open, and `get_whos_around` never says "Nobody … is sharing" over a member read the server cut.
+5. **Consumers branch on coverage**, and the static guard is unchanged (65 of 65 fixtures killed, §119.15).
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§119.1's six break groups are closed, each with its verifier probes adapted and red first; the verifier's 23 surviving mutations are killed by its fixtures, registered; the two residuals and the saved_count write are closed; the sweep closed four more paths (SW24–SW27); 91 mutations: 91 killed, 0 non-equivalent survivors (§119.11). CONTROLLED EVIDENCE ONLY — this row awaits independent re-verification.** **A slice of who is going is said beside any other named read** (`travel-buddy-standalone/src/lib/eventAttendeesUnread.ts`; AN1–AN3, GL1). **No section keeps an earlier read's rows over a failed one** (`travel-buddy-standalone/app/(tabs)/events.tsx`; FF1–FF9). **The NOW map's card says what it could not read** (`travel-buddy-standalone/app/map/index.tsx`, `travel-buddy-standalone/src/components/map/LivePulseCard.tsx`; MP1–MP3, PA0–PA4). **The events lists never end at an emptied pool, never skip a tie, and never serve the viewer's own state over a failed read** (`artifacts/api-server/src/routes/events.ts`; PC1, PC2, PC4, PT1–PT3, OS1–OS5, OC1, OC2, ON1, ON2, EV2c). **Compass's pool holds a capped event back over an unread count** (`artifacts/api-server/src/compass/CompassEligibilityEngine.ts`; CE1, CE4). **Every keyed read is pinned, and the presence walk and the graph page by key** (`artifacts/api-server/src/compass/CompassSocialEngine.ts`, `artifacts/api-server/src/compass/CompassGraphEngine.ts`; KC1, KC2, CM1, CM2, CM4, KG1, KG3, KG4). **GET /pulse names a fail-closed empty feed, and saved_count is measured** (`artifacts/api-server/src/routes/pulse.ts`, `artifacts/api-server/src/routes/wishlist.ts`, `artifacts/api-server/src/routes/discovery.ts`; PF1, PF2, PD1, SC1, SC2, SC4, CS1–CS3). |
+
+**Headline.** DV-83 moves W → C. `check:census-integrity` counts **C 101 / W 85 / N 2 / X 0** over 188: CONSTRUCTED 186 / 188 = **98.9 %**, CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged. The move is on controlled evidence and awaits independent re-verification.
+
+### 119.14 Left open, and what would turn this red
+
+- **Left for their owners (D-W11X2-179).** GET /pulse shows a post the viewer hid when its `post_hides` read fails (it shows more, never says there is less); GET /admin's events list; POST/DELETE /posts/:id/save's `count ?? 0`; `cityConfidenceWindowedReads` (flag seeded FALSE). The co-host picker says it cannot add anyone whenever `event_rsvps` or `profiles` is named: an over-refusal, never a statement that everyone going is a co-host.
+- **Product effect, stated.** GET /events, its city alias and /events/nearby answer 503 when the viewer's own state cannot be read; /following and /circles may answer `truncated` with a cursor and an empty page; the events tab clears a section whose read failed; the NOW map's card can carry one line saying what it could not read; GET /pulse may carry `failedSources` on its empty answer; contextMemberIds asks for an exact count (and pages only past the row cap); the graph's support reads page by key; each save of a place counts its savers.
+- **What would turn DV-83 red again:**
+  - a slice of who is going said as the whole list beside a named read (AN1–AN3, GL1);
+  - a section drawn from an earlier filter's or load's read over a failed one (FF1–FF9);
+  - the map card headlining over a section it could not read, unsaid, or keeping a failed read's predecessor (MP1–MP3, PA2);
+  - a full pool the filter emptied answered as the end, a tie skipped, or the viewer's own state served over a failed read (PC1, PC2, PC4, PT1, PT2, OS1–OS5, OC1, OC2, ON1, ON2, EV2c);
+  - a capped event offered as open over an unread count (CE1, CE4);
+  - a keyed read on columns out of order with its `ORDER BY`, a member read cut at the row cap, or a support read by offset (KC1, KC2, CM1, CM2, CM4, KG1, KG3, KG4);
+  - a fail-closed empty feed unnamed, or a lost saved_count write kept (PF1, PF2, PD1, SC1, SC2, SC4, CS1–CS3);
+  - any of the verifier's fixtures (V5–V32) failing, or any path §118.13 lists.
+
+### 119.15 Results at the final code commit
+
+The code is final at `b2d0f1bba` (the silent-reads baseline lowered for SW27's site); the last change to a source file is `3240d6898`, `origin/main` (`db657b73b`) is merged at `2ddc9d869`, and the census and register are `458477c27`. This subsection's commit changes only this file. Node 24.21.0.
+
+- **Guards:** all 24 of the integrator's `int-guards.sh` exit 0, and `check:silent-supabase-reads` exits 0 (no new site; 194 pre-existing sites baselined; two counts lowered, none raised). `checkUncheckedSupabaseReads`: no new in-scope read ignores its `.error`. The uacheck replica prints OK (117 tracked). `check:census-integrity` reads **C 101 / W 85 / N 2 / X 0** over 188. `checkWritePathColumns` refuses to run without a sanctioned live Supabase target, and this lane connects to no database, so it was not run.
+- **api-server, the whole suite** (`node --import tsx/esm --test --test-concurrency=2`, `SUPABASE_URL=http://127.0.0.1:9`): every file on the package's `test` line but the nine live-DB suites that import `ciSupabaseGuard` — 1761 files in 26 chunks, each under 8 minutes (the longest 362 s): `tests 29958 · pass 29958 · fail 0 · cancelled 0`.
+- **Client:** `pnpm run -s check:all` passes — node tests `tests 7653 · pass 7653 · fail 0`; jest component suites 883 of 883 (5609 tests); the web config 4 of 4 (12 tests); typecheck, typecheck:tests (173 diagnostics, the baseline) and the lints clean. `check-route-registry`: OK (232 screens, 9 layouts).
+- **The guard on disk.** The verifier's runner placed each of GH0–GH54 (GH31b included), GHX5, GHX6 and its fresh shapes F1–F7 alone in the tree and ran the guard: the unfixtured tree passes (fail 0), and all 65 fixtures are killed; every touched registered file and `metro.config.js` was restored with a matching sha256 (14 of 14).
+- **The verifiers' probes**, copied in, run and deleted (v7–v21, 106 files): the server probes pass 240 of 256. The failures are `zz-v18-dumpBodies` (by design), the ten v18 GET /events cases whose double lacks `.range()` (their v18c adaptations pass), v20's PR0–PR2 and SL0 (their doubles lack `.or()` and `.range()`; the v20a adaptations pass), and v18c's EV2, which fails every `event_rsvps` read, the viewer's own among them, and now receives B33's 503 (`eventsCountsUnreadAndNearEdges` EV2c pins that refusal; its EV2 fails the live recount alone and passes). Of 37 client probe suites (118 tests), 108 pass; the ten failures are the nine §117.12 recorded (V15-TH4, V15-NM0, V17-NC2–NC5, V18-SC0, SC2 and RC3) and v20's AT1, whose regular expression holds literal backspace bytes (§118.14). Every round-21 probe passes: AN0–AN2, FF0–FF2, MP0, MP1, PC0–PC2, OS0–OS4, CE0–CE2, AU0–AU2 and the fixtures for the 23 survivors.
+
+### 119.16 Integrator: DV-83 held at W after independent re-verification at `e09cbf42f`
+
+*Integrator, 2026-10-03. `e09cbf42f` is PR #530's head (round 22). An independent verifier checked that tree: it re-ran every round-21 to round-7 probe (240 of 256 server, 108 of 118 client, the failures the known pre-fix encodings and doubles), placed GH0–GH54, GH31b, GHX5, GHX6 and F1–F7 on disk one at a time (all 65 killed), wrote new probes (`zz-v22-*`), applied 26 mutations of its own, ran the whole api-server suite (1761 files, 29958 of 29958) and the client suites (jest 5609 of 5609, web 12 of 12, node 7653 of 7653), and restored every mutated file byte-identical, checked by sha256. Its report is the round-22 verifier's `dv83-r22-verifier.md`.*
+
+- **Confirmed.** §119.1's six break groups (B29–B34) and every earlier round's breaks are closed in behaviour. No new guard hole: 65 of 65 fixtures killed.
+- **Found: six groups of paths that break the criterion's wording, shown by 10 probes that fail against this tree, each beside a green control.**
+  1. **B35. The events tab's bookmarks come only from page 1 of a saved read, kept over a failed one**, never from the `isSaved` GET /events serves (`travel-buddy-standalone/app/(tabs)/events.tsx`; BK1, BK2 red; BK0 the control).
+  2. **B36. GET /discovery/community and GET /pulse serve the viewer's own saved state over a failed read as measured** (`isSaved: false`, `savedByMe: false`, nothing named), as GET /hidden-gems/:id does (`artifacts/api-server/src/routes/discovery.ts`, `artifacts/api-server/src/routes/pulse.ts`; CSU1, CSU2, PS1 red; CS0, PS0 the controls).
+  3. **B37. GET /compass/telegraph withholds a capped event over an unread going count and says nothing**: its coverage filter drops the `event_rsvps` name round 22's B34 fix added (`artifacts/api-server/src/routes/compass.ts`; TE1 red; TE0 the control). A regression from round 22.
+  4. **B38. GET /events/near-trip/:tripId answers its own failed reads as facts**: a failed trip read is 200 `events: []`, a failed membership read is 403 (`artifacts/api-server/src/routes/events.ts`; NT1, NT2 red; NT0 the control).
+  5. **B39. The Live Pulse rail, collapsed, states the previous city's plans after the read for the city on screen failed** (`travel-buddy-standalone/src/hooks/useLivePulse.ts`, `travel-buddy-standalone/src/components/LivePulseRail.tsx`; LR1 red; LR0 the control).
+  6. **B40. GET /pulse serves a post the viewer hid when its `post_hides` read fails**, with no failed source named (`artifacts/api-server/src/routes/pulse.ts`; PH1 red; PH0 the control). Ruled inside DV-83, and a safety fail-open.
+- **Mutation survivors.** 5 of its 26 mutations survive on DV-83 lines, each confirmed by a fixture green at this head and red under the mutation: X1–X3 (the undated arms of the events keyset cursor, `artifacts/api-server/src/routes/events.ts`; the shared test helper orders NULL first, so no lane world can hold an undated row past page 1), X7 (the NOW map's rejected live read made a whole, empty answer, `travel-buddy-standalone/app/map/index.tsx`) and X19 (a failed saved read left out of the events tab's failure line). X10 is equivalent.
+- **Rulings not honest.** D-W11X2-174 is honest for the pool, not for Telegraph (B37); D-W11X2-176 is not honest for the bookmarks (B35, X19); D-W11X2-177 is incomplete (B38, B39; X1–X3, X7); D-W11X2-179's own-state sweep missed B36. The five items §119.14 left open are ruled: `post_hides` is inside DV-83 (B40); the admin events list, the posts save count and `cityConfidenceWindowedReads` (while its flag is FALSE) are outside; the co-host picker fails closed and is not a break.
+- **Next.** A round-23 lane fixes B40 first, then closes B35–B39 with the verifier's probes as failing-first tests, registers the five survivors' fixtures, corrects the rulings, and sweeps once more. The row moves only after that.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | C | **W** | §119 closes §119.1's six break groups, confirmed at `e09cbf42f` (§119.16). Six groups of paths still present a failed or partial read as complete or measured: the events tab's bookmarks drawn from page 1 of a saved read, kept over a failed one (`travel-buddy-standalone/app/(tabs)/events.tsx`); the viewer's own saved state served over a failed read, and a hidden post served when the hide read fails (`artifacts/api-server/src/routes/discovery.ts`, `artifacts/api-server/src/routes/pulse.ts`); Telegraph withholding a capped event unsaid (`artifacts/api-server/src/routes/compass.ts`); GET /events/near-trip/:tripId answering failed reads as empty or forbidden (`artifacts/api-server/src/routes/events.ts`); the collapsed Live Pulse rail stating the previous city's plans (`travel-buddy-standalone/src/hooks/useLivePulse.ts`). 5 mutations survive on DV-83 lines. D-W11X2-174, -176, -177 and -179 are honest in part. |
+
+Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
+
+## §122 — DV-83 round 23 (lane W11-X2)
+
+### 122.1 Round 23: what this lane did
+
+*Written 2026-10-03 by lane W11-X2 (round 23) on `disc-w11-x2-r23`, from `e09cbf42f` (PR #530's head: round 22) and §119.16. §120 is #549's and §121 is the creator ledger; neither is DV-83. It closes §119.16's six break groups (B35–B40), B40 (a safety fail-open) first, each with the verifier's probes adapted into registered tests and seen red first; registers the verifier's fixtures for its five non-equivalent survivors (X1–X3, X7, X19) and corrects the shared test helper that hid three of them; corrects D-W11X2-174, -176, -177 and -179 in D-W11X2-180 to -188; records the verifier's scope rulings; and sweeps once more, closing five more paths (SW28–SW32).*
+
+*No migration and no new flag. Every change alters what is said only when a read failed or was answered for a context no longer shown, with one declared exception: the events lists now serve the viewer's own saved state measured (`isSaved` on GET /events/following, /circles, /me, /saved and GET /events/:id, and GET /events counting `event_saves` beside the event collections it already read), because the events tab's bookmark is drawn from it (§122.2). Server bodies otherwise gain keys only on a failed arm: `failedSources` (`post_hides`, `post_saves`, `collections`, `collection_items`, `hidden_gem_saves`, `viewer`, `event_saves`), `truncated` on three events lists, a `null` own-state field.*
+
+*All evidence is controlled: node suites over the real routes, services and loaders and PostgREST-shaped doubles, and jest over the real services, hooks, components and screens. None of it is production evidence, and no client build carrying the change has shipped.*
+
+### 122.2 B40 first: GET /pulse never serves a post the viewer hid over a failed hide read (D-W11X2-180)
+
+GET /pulse (`artifacts/api-server/src/routes/pulse.ts`) read `post_hides` with no error bound inside a best-effort catch and took the empty set as the viewer's whole hide list. A failed or thrown hide read now fails closed exactly as the block read does: `posts: []` and `failedSources: ["post_hides"]`, which the client already says as a feed it could not load. **A safety fail-open, closed. D-W11X2-179's "left for their owners" is corrected: `post_hides` is inside DV-83.**
+
+### 122.3 B35: the events tab's bookmarks are each list's measured `isSaved` (D-W11X2-181)
+
+The tab (`travel-buddy-standalone/app/(tabs)/events.tsx`) drew every bookmark from page 1 of GET /events/saved, kept over a failed read. It now draws each card's own `isSaved`; only the viewer's own taps sit beside it, reverted when the write fails; a card with no measured state is "Couldn't check if saved" and is not a toggle (`travel-buddy-standalone/src/components/cards/EventCard.tsx`); a failed saved read is said ("Couldn't load your saved events."). The lists had to measure it from the store the bookmark writes: GET /events read only event collections, and /following, /circles and /me served no saved state. `viewerSavedEventIds` (`artifacts/api-server/src/routes/events.ts`, at its foot) reads `event_saves` and the viewer's event collections; /following, /circles and /me serve `isSaved` from it and answer 503 when either read fails, as they do over the viewer's own RSVP; /saved marks its events saved; GET /events counts `event_saves` beside its collections. **D-W11X2-176's bookmark sentence is corrected.**
+
+### 122.4 B36: the viewer's own saved state is never served over a failed read (D-W11X2-182)
+
+- **GET /pulse** serves `savedByMe: null` on every post and names `post_saves` when the save read fails or throws; the posts are served. The client keeps such a feed (an own-state source alone is not a failed feed, `travel-buddy-standalone/src/services/pulse.ts`), carries the null, and PulseFeedCard hands every bookmark `savedUnknown`, which `travel-buddy-standalone/src/components/SaveButton.tsx` draws as "Couldn't check if saved", not a toggle; the viewer's own save (the cache, or a collection picked from the long press) ends it.
+- **GET /discovery/community** (`artifacts/api-server/src/routes/discovery.ts`) serves `isSaved: null` and names `collections` or `collection_items`.
+- **GET /hidden-gems/:id** (`artifacts/api-server/src/routes/hiddenGems.ts`) serves `savedByMe: null` and names `hidden_gem_saves`, or `viewer` when a token was presented and no viewer resolved; the gem screen (`travel-buddy-standalone/app/gems/[id].tsx`) says "Couldn't check if saved" and does not toggle. **D-W11X2-128's exclusion and D-W11X2-179's own-state sweep are corrected.**
+
+### 122.5 B37: Telegraph says a capped event it withheld over an unread count (D-W11X2-183)
+
+`TELEGRAPH_CARD_SOURCES` (`artifacts/api-server/src/routes/compass.ts`) gains `event_rsvps`: B34's `capacity_could_not_be_checked` can withhold an event card, so the name round 22's hydrator adds reaches the tray's refusal. **The audit.** Every other consumer of `compassHydrationFailedSources` counts every name (the feed, the sections, recommendations, the front-load, compassHome); the only other name filter over failed sources is Compass Sense's signal list, which this lane does not touch; the client tray branches on the refusal, whatever it names. **D-W11X2-174 is corrected for Telegraph.**
+
+### 122.6 B38 and SW28: the events lists that still answered a failed read as a fact (D-W11X2-184)
+
+GET /events/near-trip/:tripId binds its `trip_members` and `trips` errors and answers 503 `degraded_unavailable` (it answered 403 "Must be a trip member" and 200 `events: []`). **SW28.** Near-trip, GET /events/city/:city and GET /events/nearby withheld an event over a failed block, friendship or eligibility read and served the rest as the whole list; they now read the block pair with `readBlockBetween`, bind the friendship error and keep an unread eligibility verdict, and answer `truncated: true`, as /search, /following and /circles do (§118 B28).
+
+### 122.7 B39 and SW31: no hook keeps another context's items over a failed read (D-W11X2-185)
+
+`useLivePulse` (`travel-buddy-standalone/src/hooks/useLivePulse.ts`) keeps its cards while a new context's read is in flight and clears them, their unread names and their session when that read fails; a failed refresh of the same context keeps them. The rail's collapsed header (`travel-buddy-standalone/src/components/LivePulseRail.tsx`) says "Couldn't load live plans" whenever the latest read failed. **SW31.** `usePulseFeed` (`travel-buddy-standalone/src/hooks/usePulseFeed.ts`), the home tab's For You feed, kept a previous city's posts above its error footer on a failed or rejected read; it now clears them the same way.
+
+### 122.8 The verifier's survivors, pinned (D-W11X2-186)
+
+- **X1–X3, and the helper.** `sortByOrders` (`artifacts/api-server/src/test/helpers/postgrestKeyset.ts`) sorted NULL first ascending, so no lane world could hold an undated event behind a dated one. It now takes supabase-js's `nullsFirst` and defaults it as PostgreSQL does (NULLS LAST ascending, NULLS FIRST descending); `eventsPoolCut`'s double passes the option through. The verifier's UD0/UD1 are registered over it (`eventsUndatedPaging`); `postgrestKeysetNullOrder` pins the helper.
+- **X7.** The verifier's MT1 is registered (`mapScreen.pulseCardThrown`): a rejected /pulse/live read is said.
+- **X19.** The verifier's SV9 is registered (`Events.savedState`).
+- **X10** stands as the verifier ruled it (equivalent).
+
+### 122.9 The sweep (SW28–SW32; D-W11X2-187)
+
+Every own-state field on a Discovery-adjacent route served over an unbound error, every coverage or source allow-list, every client hook that keeps items across a context change, and every cursor arm that can skip a NULL key were read again:
+
+- **SW28** — §122.6. **SW31** — §122.7.
+- **SW29.** Discovery search's event results (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts`) served `isAttending: false` over a failed RSVP read. The row is still served with its venue gate closed (the search safety contract), with `actionState: null`; `travel-buddy-standalone/src/components/search/SearchResultCard.tsx` draws it "View" and never RSVPs from it.
+- **SW30.** The event screen (`travel-buddy-standalone/app/event/[id].tsx`) drew its bookmark from `!!body.isSaved`, a field GET /events/:id never served: every saved event was "not saved" on its own screen. The route serves it through `viewerSavedEventIds`, `null` with `event_saves` named over a failed read; the screen says "Couldn't check if saved" and does not toggle.
+- **SW32.** Discovery search's traveller and buddy results served `isFollowing` / `isRequestSent` false over a failed follow or pending-request read. The privacy rule is unchanged (a failed follow read still locks a private account); `actionState` is `null` and the card draws "View".
+- **Swept and sound.** The remaining silent sites in the graded routes are ranking signals (follows and interests boosts), notifications, the featured badge and Pulse's place cards. Every keyset cursor on these surfaces other than the events cursor pages by a column the query already restricts to non-null (`served_at` under `.gte`) or a key column. The allow-list audit is §122.5.
+- **Left for their owners** — D-W11X2-188.
+
+### 122.10 Tests, seen red, and mutations
+
+**Seen red first**, against the code before each fix (the lane's `r23/red.log`):
+
+| Area | Red | Controls, green |
+|---|---|---|
+| B40 hidden posts | PH1, PH2 | PH0, PH3 |
+| B36 GET /pulse saved state | PS1, PS2; PSC0, PSC2, SU0, SU1, SU4, PC0 | PS0, PS3; PSC1, PSC3, SU2, SU3, PC1, PC2 |
+| B36 community, hidden gem | CSU1–CSU3; GS1, GS4; GD0, GD1, GD2 | CS0, CS4; GS0, GS2, GS3; GD0c, GD2c |
+| B37 Telegraph | TE1 | TE0 |
+| B38, SW28 events lists | NT1, NT2; WB, WF, WE on near-trip, the city alias and /nearby | NT0, NT3; WC on each |
+| B39 the rail | LR1, LR2, LR3 | LR0, LR4, LR5 |
+| B35 the bookmarks | every `eventsListsSavedState` case; BK1, BK2, BK4, BK5 | BK0, BK3, BK6, SV9 |
+| X1–X3 the helper | NK0–NK3, UD0, UD1 | NK4 |
+| SW29, SW32 search | SE1, SR0; SF1, SF2, SR3, SR4 | SE0, SE2, SR1, SR2; SF0, SF3, SR5 |
+| SW30 the event screen | ED0–ED2, ES0–ES2 | — |
+| SW31 the For You feed | PF1 | PF0, PF2, PF3 |
+
+**Mutations.** Each was applied alone, its pin group run, and the file restored byte-identically; each PRE sha256 was written to the lane's progress notes before the mutation was applied and each restore was checked against it (the lane's `r23/mut.py`, `r23/muts/`, `r23/mut-summary.txt`).
+
+- **103 mutations on the final code:** B40 ×5 (M1–M4, M98: the silent-schema-error guard's pin on the new fail-closed marker); B36 ×27 (M5–M29, M30b, M32); B37 ×1 (M33); B38 and SW28 ×14 (M34–M47); B39 ×6 (M48b–M51c, M52); B35 ×23 (M53–M75); the helper ×2 (M76, M77); SW29 ×4 (M78–M81); SW30 ×6 (M82–M87); SW31 ×4 (M88–M91); SW32 ×6 (M92–M97); the verifier's X1, X2, X3, X7, X19 re-applied over the registered fixtures.
+- **Result: 102 killed, 1 equivalent, 0 non-equivalent survivors** on DV-83 lines. **M21 is equivalent:** it drops GET /discovery/community's `viewerId && !commSc` arm, which the route never reaches (it refuses `community_service_unavailable` when `getServiceClient()` is null, before any read). **Survivors on a first run, each closed:** M30/M31 (two redundant guards on the gem screen's bookmark; one removed, M30b kills the other) and M51c (LR5 written). Six earlier mutations (M30, M31, M48–M51) ran against code later changed and are superseded by M30b and M48b–M51c. No guard line changed this round.
+- *Naming.* B35–B40, X1–X19 and the probe ids PH, PS, CSU, TE, NT, LR, BK, SV, UD, MT are the verifier's, kept; SW28–SW32 are the sweep; M1–M97 the mutations.
+
+### 122.11 Checks
+
+- **Line-neutral in every cited file:** lines changed in place, new code at a file's foot (`viewerSavedEventIds`) or in a new module; census-media's two anchors on the hide read follow its new text. `check:doc-citations`, `check:citation-targets` and `check:citation-symbols` are clean.
+- **Suites.** The new api-server suites are on the `test` line; the new client suites are jest component suites.
+- **The silent-schema-error guard.** `silentSchemaErrorCatches`' allowlist argued GET /pulse's hide read best-effort; that entry is gone and the site is pinned under its FIXED_SITES by the fail-closed log marker (M98). **Silent reads.** `check:silent-supabase-reads` reports no new site; baseline counts were lowered for the sites this round fixed (`routes/pulse.ts` S2 8 → 6 and S4 2 → 1, `routes/discovery.ts` S2 2 → 1, `lib/inputAssistance/searchCandidates.ts` S4 1 → 0, its entry removed); none was raised, none added.
+
+### 122.12 DV-83, restated
+
+§119.16's six break groups are closed, each with the verifier's probes adapted into registered tests, red first and green now; its five non-equivalent survivors are killed by its fixtures, registered, over a helper that now orders NULL keys as PostgreSQL does. The sweep closed five more paths. Every clause of DV-83's criterion holds on every path this lane examined:
+
+1. **Producers send the refusal envelope or a named failure.** GET /pulse names a hide or save read it could not make; the community list, the gem detail and the event detail name the viewer's own saved state; Telegraph names an unread going count; the events lists refuse or mark a read they could not make.
+2. **Nothing refused or partial is cached as complete.** Unchanged; no new cache.
+3. **Nothing refused is rendered as empty, as complete, or over the wrong rows.** No bookmark says "not saved", no search result "Follow", "Request" or "Join", over a read that failed; no rail, card or feed draws another context's items over a failed read.
+4. **A Compass tool never states a failed or partial read to the model as a fact.** Unchanged since §119.13; the Telegraph tray now says the event it withheld.
+5. **Consumers branch on coverage**, and the static guard is unchanged.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§119.16's six break groups are closed, each with its verifier probes adapted and red first; the verifier's five non-equivalent survivors are killed by its fixtures, registered; the sweep closed five more paths (SW28–SW32); 103 mutations: 102 killed, 1 equivalent, 0 non-equivalent survivors (§122.10). CONTROLLED EVIDENCE ONLY — this row awaits independent re-verification.** **A hidden post is never served over a failed hide read** (`artifacts/api-server/src/routes/pulse.ts`; PH1, PH2). **The viewer's own saved state is measured or said unknown** (`artifacts/api-server/src/routes/pulse.ts`, `artifacts/api-server/src/routes/discovery.ts`, `artifacts/api-server/src/routes/hiddenGems.ts`, `artifacts/api-server/src/routes/events.ts`, `travel-buddy-standalone/src/components/SaveButton.tsx`, `travel-buddy-standalone/app/(tabs)/events.tsx`, `travel-buddy-standalone/app/event/[id].tsx`; PS1, CSU1–CSU3, GS1, GS4, BK1, BK2, BK4, ED1, ES1). **Telegraph says a withheld event** (`artifacts/api-server/src/routes/compass.ts`; TE1). **Every events list refuses or marks a read it could not make** (`artifacts/api-server/src/routes/events.ts`; NT1, NT2, WB, WF, WE). **No hook keeps another context's items over a failed read** (`travel-buddy-standalone/src/hooks/useLivePulse.ts`, `travel-buddy-standalone/src/hooks/usePulseFeed.ts`; LR1–LR3, PF1, PF3). **Undated events past the first page are read** (`artifacts/api-server/src/routes/events.ts`; UD0, UD1). **Search states no own state over a failed read** (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts`; SE1, SF1, SF2). |
+
+**Headline.** DV-83 moves W → C. `check:census-integrity` counts **C 101 / W 85 / N 2 / X 0** over 188: CONSTRUCTED 186 / 188 = **98.9 %**, CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged. The move is on controlled evidence and awaits independent re-verification.
+
+### 122.13 Left open, and what would turn this red
+
+- **The verifier's scope rulings, recorded (D-W11X2-188).** `post_hides` is inside DV-83 and was a safety fail-open (closed, §122.2); GET /admin's events list is outside (the admin console); POST/DELETE /posts/:id/save's `count ?? 0` is outside (census-media's counter write); `cityConfidenceWindowedReads` is outside while its flag is seeded FALSE; the co-host picker fails closed and is not a break.
+- **Left for their owners (D-W11X2-188).** GET /users/search, the people search of `app/discover.tsx` (lane tm-people, §106; this lane was told not to touch it), serves `isFollowing` from a follows read whose error it does not bind. The media feeds' own state (`routes/posts.ts`, `routes/memories.ts`, `routes/highlights.ts`, the gems feed hook) is census-media's. The known unresolved-viewer path on GET /discovery/community (§94.11, D-W11X2-15) is unchanged.
+- **Product effect, stated.** GET /events/following, /circles and /me answer 503 when the viewer's saved state cannot be read, as they do over the viewer's own RSVP; near-trip answers 503 over a failed trip or membership read; the city alias, /nearby and near-trip may answer `truncated`; GET /pulse may answer an empty feed naming `post_hides`; bookmarks may say "Couldn't check if saved"; search results may say "View".
+- **What would turn DV-83 red again:** a hidden post served over a failed hide read (PH1, PH2); an own saved, attending or following state served or drawn as measured over a failed read (PS1, PS2, PSC0, PSC2, SU0, SU1, SU4, PC0, CSU1–CSU3, GS1, GS4, GD0–GD2, BK1, BK2, BK4–BK6, ED1, ES1, SE1, SR0, SF1, SF2, SR3, SR4); Telegraph withholding an event unsaid (TE1); a list answering a failed read as a fact or a withheld event as the whole list (NT1, NT2, WB, WF, WE); another context's items drawn over a failed read (LR1–LR3, PF1, PF3); an undated event never read (UD0, UD1); any path §119.14 lists.
+
+### 122.14 Results at the final code commit
+
+The code is final at `09af86a78` (the silent-schema-error guard's allowlist entry for GET /pulse's hide read moved to FIXED_SITES, M98); the last change to a source file is `2b136ee13` (SW32) with its baseline line `168b77377`, and the census and register are `b76a24cc2`. `origin/main` (`db657b73b`) was fetched and is already an ancestor (merged in round 22 at `2ddc9d869`); no migration was added. Node 24.21.0.
+
+- **Guards:** all 24 of the integrator's `int-guards.sh` exit 0, and `check:silent-supabase-reads` exits 0 (no new site; 189 pre-existing sites baselined; four counts lowered and one entry removed, none raised or added). `checkUncheckedSupabaseReads`: no new in-scope read ignores its `.error`. The uacheck replica prints OK (117 tracked). `check:census-integrity` reads **C 101 / W 85 / N 2 / X 0** over 188. `checkWritePathColumns` refuses to run without a sanctioned live Supabase target, and this lane connects to no database, so it was not run.
+- **api-server, the whole suite** (`node --import tsx/esm --test --test-concurrency=2`, `SUPABASE_URL=http://127.0.0.1:9`): every file on the package's `test` line but the nine live-DB suites that import `ciSupabaseGuard` — 1772 files in 30 chunks, each under 8 minutes (the longest 305 s): `tests 30029 · pass 30029 · fail 0 · cancelled 0`. The first pass failed one test, `silentSchemaErrorCatches` Rule 1 (the allowlist entry B40 made stale); `09af86a78` fixes it and its chunk was re-run green.
+- **Client:** `pnpm run -s check:all` passes — node tests `tests 7653 · pass 7653 · fail 0`; jest component suites 893 of 893 (5657 tests); the web config 4 of 4 (12 tests); typecheck, typecheck:tests (173 diagnostics, the baseline) and the lints clean. `check-route-registry`: OK (232 screens, 9 layouts).
+- **The guard on disk.** The verifier's runner placed each of GH0–GH54 (GH31b included), GHX5, GHX6 and F1–F7 alone in the tree and ran the guard: the unfixtured tree passes (fail 0), and all 65 fixtures are killed; every touched registered file and `metro.config.js` was restored with a matching sha256 (14 of 14).
+- **The verifiers' probes**, copied in, run and deleted (v7–v22): the server probes pass 255 of 271; the failures are the sixteen §119.15 recorded (`zz-v18-dumpBodies` by design, the ten v18 GET /events cases whose double lacks `.range()`, v18c's EV2, v20's PR0–PR2 and SL0), and every v22 server probe passes (PH0, PH1, PS0, PS1, CS0, CSU1, CSU2, TE0, TE1, NT0–NT2, UD0, UD1, TR0). Of 40 client probe suites (125 tests), 115 pass; the ten failures are the nine §117.12 recorded and v20's AT1 (§118.14), and every v22 client probe passes (BK0–BK2, SV9, LR0, LR1, MT1).
+
 ## Cited, not graded (check:census-scope-coverage)
 
+- NOT-GRADED: artifacts/api-server/src/test/helpers/postgrestKeyset.ts — §118.2 names it only as the shared test machinery that lets a PostgREST-shaped double answer a keyset page (the `.or()` cursor and every `.order()`); no verdict rests on it, and the suites that use it are watched.
+- NOT-GRADED: artifacts/api-server/src/lib/calls/callGatewayAdapter.ts — §113.8 names it for N1, outside DV-83: census-telegraph §40 records the call gateway's unread-gate outcome, and no Discovery verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/lib/calls/callPermissionEngine.ts — §113.8 names it only because its gateway type gained the `degraded_unavailable` reason for N1 (census-telegraph §40); no Discovery verdict rests on it.
+- NOT-GRADED: travel-buddy-standalone/src/context/CallContext.tsx — §113.8 names its call-screen copy for N1 (census-telegraph §40); no Discovery verdict rests on it.
+- NOT-GRADED: travel-buddy-standalone/app/discover.tsx — §105.11 names it only as a path seen and not built, left for its owner, and §106 records Find Travelers' failed-search state and generation guard: it is the social people search over services/follows.ts, not a Discovery envelope, and no Discovery row or DV-83 verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/services/airport/__tests__/layoverSurfaceErrorBinding.test.ts — §104.8 names it only as the integrator's whole-repo scan, run on the final commit; no DV-83 verdict rests on its content.
 - NOT-GRADED: artifacts/api-server/src/lib/capability/prerequisitesCore.ts — §93.8 names its function-granular gate boundary as why the Compass KNOWN entry was struck; it is the prerequisite checker's own machinery, and no Discovery verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/flagSchemaPrerequisites.test.ts — §93.5 cites it only as the checker's own suite, run after the KNOWN entry was struck; no Discovery verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/helpers/supabaseConformance.ts — §86.13 cites it only as the file that registers `fakeTrailRulesDb` as a contract Subject; it is shared test machinery (the Supabase contract harness), and no Discovery verdict rests on it.
@@ -16802,14 +20277,12 @@ If B, **how long** is the period? No spec gives a value (`04` §11), and 3512 bu
 - NOT-GRADED: artifacts/api-server/src/compass/CompassLiveConstraints.ts — §57.4 cites its environment gate to show the Compass serve points' only safety is Compass's own; census-compass and census-sensing S66 grade it, and no §57 verdict rests on it.
 - NOT-GRADED: travel-buddy-standalone/src/services/rankEvents.ts — §62.7 H1 names it as a place the client lane adds `client_event_id`; no §62 verdict rests on it, and nothing in the tree calls `recordOutcome` today.
 - NOT-GRADED: travel-buddy-standalone/src/components/PlanPickerController.tsx — §62.7 H1 lists it as an outcome call site the client hunk covers; DV-79 and DC-09 grade its trip_add report, and §62 grades nothing in it.
-- NOT-GRADED: travel-buddy-standalone/src/components/SaveButton.tsx — §62.7 H1 lists it as a Pulse outcome call site the client hunk covers; no Discovery verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/lib/placeIdBridge.ts — §62.3 cites it only to show that a `db/` uuid names one of two tables, which is why the debug sample writes no `content_id` for it; no verdict rests on the bridge.
 - NOT-GRADED: artifacts/api-server/src/routes/messaging.ts — §62.4 names it as one of five callers of `processTagging`, each passing the service client; the finding is about `tags`' writers, and census-telegraph grades this route.
 - NOT-GRADED: travel-buddy-standalone/src/hooks/useEventRsvp.ts — §62.7 H1 lists its rsvp and join reports as outcome call sites the client hunk covers; they report on the events surface, and no Discovery verdict rests on them.
 - NOT-GRADED: artifacts/api-server/src/routes/profile.ts — §63.2 names its PATCH /me/profile as one of the two writers of `profiles.tag_permission`, validated with the same four-value `z.enum`; the fact bounds H2's vocabulary, and no Discovery verdict rests on the profile route.
 - NOT-GRADED: artifacts/api-server/src/routes/friends.ts — §63.2 cites it only for the fact that accepting a friend request writes no follow row, which is why H2's `interacted` admits a friendship; no Discovery verdict rests on the friends route.
 - NOT-GRADED: artifacts/api-server/src/routes/telegraph.ts — §63.2 names its AI @mention filter as one of the server's readings of `interacted`; census-telegraph grades this route, and no §63 verdict rests on it.
-- NOT-GRADED: artifacts/api-server/src/routes/events.ts — §64.2 quotes its read rules (`canViewEvent`, `checkEventEligibility`, the `/events` feed, `link-circle`) as the rules a Trail's event members reuse; census-discovery grades none of its routes, and §64's E1–E4 and TV1–TV2 pin the Trail's copy of the rule, so a change there turns a test red rather than aging a verdict.
 - NOT-GRADED: artifacts/api-server/src/migrations/2033_rls_hardening.sql — §64.2 quotes `events_public_read` as the public-read rule the Trail copies; TV1 compares the Trail with that policy on the harness, and no verdict rests on the migration itself.
 - NOT-GRADED: artifacts/api-server/src/migrations/2334_route_plan_crew_visibility.sql — §64.2 quotes `route_plans_member_select` as one of three readers of the trip-crew rule; TV3 compares the Trail with it on the harness.
 - NOT-GRADED: artifacts/api-server/src/lib/http.ts — §64 reuses `requireTripMember` from it unchanged, by import; it is the Trips lane's definition of an accepted crew member, and TV3 pins the Trail's use of it.
@@ -16835,18 +20308,19 @@ If B, **how long** is the period? No spec gives a value (`04` §11), and 3512 bu
 - NOT-GRADED: travel-buddy-standalone/src/components/MemoriesTab.tsx — §76.3 cites the memory modal's free-text City field, to show the fold matches user-typed text; no Discovery row grades the modal.
 - NOT-GRADED: travel-buddy-standalone/src/utils/identity.ts — §76.5 cites the export §68.7 said was missing, to show that the E2E suite's local load failure comes from Node 22 and not from the tree. §82.7 also names it, as the cause of that same `discoveryClientRouteE2E` failure; §84.7 names it for that same failure too. §76.5's measurement is the correct cause (the suite passes 13/13 on Node 24, which CI uses). No Discovery verdict rests on the identity helpers, and neither section changed them.
 - NOT-GRADED: travel-buddy-standalone/src/platform/input-assistance/data/cities.ts — §76.3 names it only to say it reads the centroid name tables and not the fold; census-input-intelligence grades it.
-- NOT-GRADED: artifacts/api-server/src/routes/pulse.ts — §78.9 H3 gives the one-line spread that lets Pulse rank on its own `01` §9 objective, and §91.2 cites that spread as integrated; DV-09's Pulse leg rests on discoveryIntegrationHooks.test.ts's served-impression case (watched), not on the route's text, and census-trips and census-trust grade the route.
+- Graded since §118.1 (declared not graded until then): `artifacts/api-server/src/routes/pulse.ts` — §118 grades GET /pulse and GET /pulse/live's served going counts and capacity (B22); before that §78.9 H3 gives the one-line spread that lets Pulse rank on its own `01` §9 objective, and §91.2 cites that spread as integrated; DV-09's Pulse leg rests on discoveryIntegrationHooks.test.ts's served-impression case (watched), not on the route's text, and census-trips and census-trust grade the route.
 - NOT-GRADED: artifacts/api-server/src/test/mediaProcessingWorker.test.ts — §90 names it only to record a load-sensitive hang in a full local run (it passes 42 of 42 alone); census-media grades the worker, and no Discovery verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/migrationApplyOrder.test.ts — §95.7 cites it only as the applier's own suite, run to show 3495 and 3496 are appliable (BEGIN before any `$pre$` block); it is shared migration machinery, and no Discovery verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/entryWiringNotCommentedOut.test.ts — §90 names it as the regression test for entry wiring hidden inside line comments (DC-07's scheduler, DV-74's admin router); it guards the entry files, and no Discovery verdict rests on its text.
 - NOT-GRADED: artifacts/api-server/src/test/nodeRuntimePin.test.ts — §98 names it only as merged from the parallel session. It checks the suite's Node major against .replit and is CI machinery, so no Discovery verdict rests on it.
 - NOT-GRADED: travel-buddy-standalone/src/features/discovery/communityByline.test.ts — §98 names it only as merged from the parallel session. It unit-tests the byline's privacy rule through the identity chain on any Node, and no verdict in this census rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/authSignupStatusNoClient.test.ts — §98.6 names it only as the precedent for discoveryFeedNoServiceClient.test.ts's guard-coverage exemption (clear the Supabase env, then import); it tests the auth signup-status route, and no Discovery verdict rests on it.
-- NOT-GRADED: artifacts/api-server/src/test/authorizationContractGuard.test.ts — §99 names it only as the contract evaluator's self-test, run after the contract's four entries were brought to the applied migrations; it guards shared authorization machinery, and no Discovery verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/authorizationContractGuard.test.ts — §98.10 names it only as the contract evaluator's self-test, run after the contract's four entries were brought to the applied migrations; it guards shared authorization machinery, and no Discovery verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/routes/follows.ts — §106 records the GET /users/search failure-honesty fix; that route is the follows router's people search, not a Discovery envelope, and no Discovery verdict rests on it (census-passport watches the file).
-- NOT-GRADED: artifacts/api-server/src/lib/publicIdentity.ts — §106 cites only the readNameVisibilitySet export the people search now uses; the display-name rule is census-trust's and census-wall's to grade.
 - NOT-GRADED: artifacts/api-server/src/test/userSearchFailureHonesty.test.ts — §106's server evidence for a surface no Discovery row grades.
 - NOT-GRADED: travel-buddy-standalone/src/services/follows.ts — §106 cites the people-search service line that reads a refusal or a list-less 200 as a failed read; no Discovery verdict rests on the follows service.
-- NOT-GRADED: travel-buddy-standalone/app/discover.tsx — §106 records Find Travelers' failed-search state and generation guard; the screen is the follows people search, and no Discovery row grades it.
 - NOT-GRADED: travel-buddy-standalone/app/close-friends.tsx — §106 cites the exact-handle match (D-TMP-4); Close Friends is not a Discovery surface.
 - NOT-GRADED: travel-buddy-standalone/app/__tests__/discover.searchFailureHonesty.component.test.tsx — §106's client evidence for a surface no Discovery row grades.
+- NOT-GRADED: artifacts/api-server/src/compass/CompassFallbackFeedBuilder.ts — §112.1 and §112.2 name it only as the subject of the round-14 verifier's S1 (the fallback feed ignores mutes), handed to the safety lane (census-compass §35) and not edited here; no Discovery verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/routes/memories.ts — §122.13 names its own-state fields (`likedByMe`, `savedByMe`) only as census-media's, left for that owner; no Discovery verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/routes/highlights.ts — §122.13 names its `likedByMe` only as census-media's, left for that owner; no Discovery verdict rests on it.

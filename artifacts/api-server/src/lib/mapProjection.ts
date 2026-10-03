@@ -1113,7 +1113,7 @@ export async function enrichWithLiveClaims(
   });
 
   const take = eligible.slice(0, Math.max(0, max));
-  const out = objects.slice();
+  const out = objects.slice(); for (const i of eligible.slice(take.length)) out[i] = { ...out[i]!, liveUnread: true };  // census-discovery §114 (DV-83, sweep SW4): a subject past the cap was not read, and says so
   let enriched = 0;
 
   await Promise.all(
@@ -1125,7 +1125,7 @@ export async function enrichWithLiveClaims(
         claims = await read(subjectId);
       } catch {
         // Fail-closed: an unreadable claim is no claim, never a stale one.
-        return;
+        out[i] = { ...out[i]!, liveUnread: true }; return;  // §114 (SW4): and it is said unread, never "none observed"
       }
       if (claims.length === 0) return;
       // Contextual evidence is derived only for a subject that HAS claims — the

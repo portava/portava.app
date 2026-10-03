@@ -22,13 +22,13 @@ import { Router } from "express";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
-import { isCompassEnabled } from "../compass/flags.js";
+import { readCompassEnabled } from "../compass/flags.js"; import { discoveryRefusal } from "../lib/discoveryRefusal.js";  // census-discovery §105 (D-W11X2-65) — was: import of isCompassEnabled (the fail-safe map)
 import { getCompassProfile } from "../compass/CompassProfileService.js";
 import { buildCompassContext, defaultSignals } from "../compass/CompassContextEngine.js";
-import { hydrateCompassItems } from "../compass/CompassItemHydrator.js";
+import { hydrateCompassItems, compassHydrationFailedSources } from "../compass/CompassItemHydrator.js";
 import { buildSection } from "../compass/CompassFeedBuilder.js";
 import { getWhosAround } from "../compass/CompassSocialEngine.js";
-import { getWeatherContext } from "../lib/weatherCache.js";
+import { getWeatherContext, type WeatherReadStatus } from "../lib/weatherCache.js";
 import type { CompassProfile } from "../compass/types.js";
 import {
   localHourFor,
@@ -249,10 +249,10 @@ async function fetchUpcomingEvents(
     const { data, error } = await q.limit(limit * 3);
     // A read that errored is not an empty calendar. Both still surface as no
     // events; only one of them is a fact about the world.
-    if (error) return unusable([]);
+    if (error) return unusable([]); if (profile?.locationUnread && !profile.currentCity) return unusable([]);  // census-discovery §107 (D-W11X2-73): events for no city are not this viewer's events
     const hidden = hiddenUserIds(profile);
-    return sourced(((data ?? []) as any[])
-      .filter((e) => !hidden.has(e.host_id as string))
+    const readRows = (data ?? []) as any[]; const visibleRows = readRows.filter((e) => !hidden.has(e.host_id as string)); return sourced(withMoreThanShown(visibleRows.length > limit || readRows.length >= limit * 3, visibleRows  // census-discovery §110 (D-W11X2-97): a list cut by the slice or by the read's cap says so
+      .filter((e) => !hidden.has(e.host_id as string))  // (already filtered into visibleRows above; kept so no cited line moves)
       .slice(0, limit)
       .map((e) => ({
         id: String(e.id),
@@ -261,7 +261,7 @@ async function fetchUpcomingEvents(
         country: (e.country as string | null) ?? null,
         startsAt: (e.starts_at as string | null) ?? null,
         category: (e.category as string | null) ?? null,
-      })));
+      }))));
   } catch {
     return unusable([]);
   }
@@ -279,10 +279,10 @@ function buildTonightVibe(events: HomeEvent[]): { headline: string; events: Home
     if (c) counts.set(c, (counts.get(c) ?? 0) + 1);
   }
   const top = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
-  const headline =
-    events.length === 1
+  const n = moreThanShown(events) ? `${events.length}+` : String(events.length); const headline =  // §110 (D-W11X2-97): counted before the cut, or said to be more
+    n === "1"
       ? `1 event on tonight`
-      : `${events.length} events on tonight${top ? ` — ${top} leads the night` : ""}`;
+      : `${n} events on tonight${top ? ` — ${top} leads the night` : ""}`;
   return { headline, events: events.slice(0, 4) };
 }
 
@@ -301,13 +301,13 @@ async function fetchWeatherWindow(profile: CompassProfile | null): Promise<Sourc
   const city = profile?.currentCity;
   // No city is an authorized empty result, not an outage: there is nothing to
   // forecast for, and the traveller can fix it by setting a city.
-  if (!city) return sourced(null);
+  if (!city) return profile?.locationUnread ? unusable(null) : sourced(null);  // census-discovery §107 (D-W11X2-73): an UNREAD city is not "no city set"
   try {
     const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1_000).toISOString().slice(0, 10);
-    const wx = await getWeatherContext(city, tomorrow, tomorrow);
+    const wxStatus: WeatherReadStatus = {}; const wx = await getWeatherContext(city, tomorrow, tomorrow, wxStatus);
     const f = wx?.forecasts?.find((d) => d.date === tomorrow) ?? wx?.forecasts?.[0];
     // The provider answered with no usable day — reachable, but nothing to say.
-    if (!f) return sourced(null);
+    if (!f) return wxStatus.failed ? unusable(null) : sourced(null);  // census-discovery §107 (D-W11X2-67): a failed forecast read is not "no usable day"
     const rainy = f.precipMm > 2 || f.weatherCode >= 51;
     const headline = rainy
       ? `${f.summary} tomorrow — plan an indoor window`
@@ -339,8 +339,8 @@ router.get("/compass/home", asyncHandler(async (req, res) => {
     return;
   }
 
-  const enabled = await isCompassEnabled(sc).catch(() => false);
-  if (!enabled) {
+  const enabledRead = await readCompassEnabled(sc).catch(() => null); const enabled = enabledRead === true;  // census-discovery §105 (DV-83, D-W11X2-65): null = the flag table could not be read, never "off"
+  if (!enabled) { if (enabledRead === null) { res.json(compassHomeFailure(false, "compass_flags_unreadable", "feature_flags")); return; }  // §105: only a flag that was READ and is off answers the off body below
     res.json({ compassEnabled: false, fallback: true });
     return;
   }
@@ -376,7 +376,7 @@ router.get("/compass/home", asyncHandler(async (req, res) => {
     res.json(payload);
   } catch (err) {
     req.log.error({ err }, "compass/home: build failed, returning fallback");
-    res.json({ compassEnabled: true, fallback: true });
+    res.json(compassHomeFailure(true, "home_build_failed", "compass_home"));  // census-discovery §105 (D-W11X2-65) — was: { compassEnabled: true, fallback: true }, naming nothing
   }
 }));
 
@@ -448,11 +448,11 @@ export async function buildCompassHomeProjection(
         (async () => {
           try {
             const items = await hydrateCompassItems(sc, profile);
-            if (items.length === 0) return sourced(null);
+            if (items.length === 0) return compassHydrationFailedSources(items).length > 0 ? unusable(null) : sourced(null);  // census-discovery §104 (DV-83, D-W11X2-54): an empty pool from a failed read is not "no best move"
             const result = await buildSection("for_you", items, profile, context, sc, null);
             const top: any = result.section?.items?.[0] ?? null;
-            if (!top?.item) return sourced(null);
-            return sourced({
+            const bestSource = compassHydrationFailedSources(items).length > 0 ? unusable : sourced; if (!top?.item) return bestSource(null);  // census-discovery §107 (DV-83, D-W11X2-67): a best move from a partial pool is not "ok" (so the home is degraded and not cached)
+            return bestSource({
               id: String(top.item.id),
               type: String(top.item.type ?? ""),
               title: (top.item.title as string | undefined) ?? null,
@@ -470,9 +470,9 @@ export async function buildCompassHomeProjection(
         // Circle activity — Phase 9 who's-around, consent-gated per target
         (async () => {
           try {
-            const { people } = await getWhosAround(sc, userId, hiddenUserIds(profile));
-            if (people.length === 0) return sourced(null);
-            return sourced({
+            const { people, unread: presenceUnread } = await getWhosAround(sc, userId, hiddenUserIds(profile));
+            if (people.length === 0) return presenceUnread ? unusable(null) : sourced(null);  // census-discovery §107 (D-W11X2-67): a failed presence read is not "nobody is around"
+            return (presenceUnread ? unusable : sourced)({
               people: people.slice(0, 5).map((p: any) => ({
                 label: p.label,
                 handle: p.handle ?? null,
@@ -530,3 +530,24 @@ export async function buildCompassHomeProjection(
 }
 
 export default router;
+
+// ── census-discovery §105 (DV-83 round 9 sweep, lane W11-X2, D-W11X2-65): GET /compass/home's failures ──
+// An unread COMPASS_% table answered the Compass-off bytes (`isCompassEnabled` answers the
+// fail-safe map, where unread is "off"), and a failed build answered a bare fallback. Both
+// now carry `fallbackReason` and the Discovery refusal envelope, as the section, feed and
+// recommendations routes do; CompassHome says them. A flag that was READ and is off keeps
+// `{ compassEnabled: false, fallback: true }` byte for byte.
+function compassHomeFailure(compassEnabled: boolean, reason: "compass_flags_unreadable" | "home_build_failed", source: string) {
+  return {
+    compassEnabled, fallback: true, fallbackReason: reason,
+    refusal: discoveryRefusal("transient_db", reason, "GET /compass/home", "nothing", [source]),
+  };
+}
+
+// ── census-discovery §110 (DV-83 round 13, lane W11-X2, D-W11X2-97): "N events on tonight" is never a cut list's length ──
+// `fetchUpcomingEvents` reads `limit * 3` rows, drops hidden hosts and keeps `limit`, and the headline
+// counted what was kept: a city with 12 events tonight said 8. A list cut by the slice, or read to its
+// row cap, is marked here (beside the array, so the served list is unchanged) and counted "N+".
+const MORE_THAN_SHOWN = new WeakSet<object>();
+function withMoreThanShown<T extends object>(more: boolean, list: T): T { if (more) MORE_THAN_SHOWN.add(list); return list; }
+function moreThanShown(list: object): boolean { return MORE_THAN_SHOWN.has(list); }

@@ -4105,6 +4105,138 @@ What would turn this red: an unread settings row answered as `passive` or writte
 read as 0; a live tick delivering over an unread row; a panel that renders a 503 or a partial check as a
 clean result.
 
+## §33 — 2026-09-29: Compass reads a circle membership as every other surface does; `circle_memberships.status` has no writer (lane W11-X2, round 13) — MOVES NOTHING
+
+Lane W11-X2 (round 13), branch `disc-w11-x2-r13` from `202617ff7`. `head_commit` is **NOT** re-declared: this records a
+finding and a build. The round-12 DV-83 verifier noted it beside its breaks (census-discovery §110.1), outside DV-83's
+failed-or-partial clause: every read here SUCCEEDED, and the answer was still false. Register: census-discovery's
+D-W11X2-94 (Compass has no register of its own). Controlled evidence only — node:test over the real writer routes and
+the real Compass tools, over an in-memory table that applies the column's real default.
+
+### 33.1 The finding
+
+- **The column.** `circle_memberships.status` is `text NOT NULL DEFAULT 'pending'`, with no CHECK on its values
+  (`artifacts/api-server/baseline/20260819_baseline_structure.sql:4448#status text DEFAULT 'pending'::text NOT NULL,`; the table's only CHECK is
+  `user_id <> other_id`). Loaded into PostgreSQL 16 and written the way PostgREST writes an upsert, a join lands as
+  `status = 'pending'`, and a second upsert of the same pair leaves it so.
+- **The writers.** The only two writers upsert `{ user_id, other_id, created_at }` and never name `status`:
+  `artifacts/api-server/src/routes/friends.ts:872#.upsert({ user_id: (inv as any).owner_id, other_id: user.id, created_at: now });` (POST /circle-invites/:inviteId/accept,
+  whose banner says it is the only place a membership row is created) and
+  `artifacts/api-server/src/routes/requests.ts:531#const { error: cmUpsertErr } = await sc.from("circle_memberships").upsert(` (POST /me/requests/circle_invite/:id/accept).
+  No SQL function, trigger or client write sets it; nothing moves a row to `accepted`.
+- **What 'pending' means.** Nothing. The invite/accept flow's states (pending, accepted, declined, cancelled) live on
+  `circle_invites`; a membership row is written only AFTER an accept, so every row is an accepted join. The column is a
+  leftover of an older "mutually accepted pair" design.
+- **What the rest of the app treats as a member.** The row. The circle chat sync, circle locations, the memory read
+  policy, meetups, locate-friends, messaging permissions, posts, stories, highlights and GET /circles/:owner/members all
+  test for the row and never read `status`.
+- **Compass alone filtered on it** — `(status ?? "accepted") === "accepted"` in the structured context's joined circles
+  and member lists and in `get_group_recommendation`'s joined circles and members. Every real join was therefore
+  invisible to `get_circle_activity`, /compass/ask's prompt and `get_group_recommendation`: a joiner was "not in any
+  circles", an owner's circle had no members, and a named joined circle was "not a member of a circle by that name" —
+  each from a read that succeeded. Every earlier fixture wrote `status: "accepted"`, so no suite saw it.
+
+### 33.2 The change
+
+The Compass readers use the predicate the rest of the app uses: the row is the membership
+(`artifacts/api-server/src/compass/CompassStructuredContext.ts:144#census-compass §33 (D-W11X2-94): no`,
+`artifacts/api-server/src/compass/CompassTools.ts:1983#census-compass §33 (D-W11X2-94): no`). `status` is still selected and simply not
+consulted. No writer, no data and no migration changed, and no database but the local test one was touched.
+
+**Tests, red first.** `artifacts/api-server/src/test/compassCircleMembershipPredicate.test.ts` writes each join through the
+REAL writer route into a table that applies the column's real default (CM4 pins that the rows are `pending`, as in
+production): CM1 (the joiner's `get_circle_activity`), CM2 (the owner's member list, tool and prompt) and CM3
+(`get_group_recommendation` through the second writer) were red before and green after; CMc (another viewer's row, and
+no row at all) was green throughout. Mutations B3i, B3j, B3o and B3p (the `accepted` filter put back at each of the four
+sites) are killed (census-discovery §110.9).
+
+### 33.3 What this does not reach, and what is left
+
+- **`public.circles` has no writer.** Compass takes circle NAMES from `public.circles`, which nothing in the tree writes
+  (check:writerless-reads classifies it dead-lane: "the product's actual Circle is the pair table"). The fixtures here
+  seed a named circle by hand — the one part of this world production does not have. On production data the circle
+  tools therefore still find no named circle and say "The user is not in any circles." from a successful read of an
+  empty table. Closing that needs a product ruling: derive Compass's circles from the pair table (the viewer's own
+  circle and each owner's circle the viewer joined), or retire the named-circle readers. Not built here.
+- **The SQL `in_accepted_circle`.** It requires two mutual `accepted` rows, which no writer produces, so it is always
+  false on production data. It feeds `can_see_location` and one of the two permissive `highlights` SELECT policies (the
+  other tests the row). Other owners (census-trust, census-highlights-memories); recorded, not changed.
+
+**MOVES NOTHING.** No census-compass row grades the circle tools' membership predicate. What would turn this red: a Compass reader that
+filters `circle_memberships` on `status` again while no writer sets it (CM1–CM3).
+
+## §34 — 2026-09-30: no Compass tool offers a candidate that skipped block/mute filtering or the safety gate; a check meant to fail closed no longer fails open (lane W11-X2, round 14) — MOVES NOTHING
+
+Lane W11-X2 (round 14), branch `disc-w11-x2-r14` from `e11fc09b0`. `head_commit` is **NOT** re-declared: this records a
+safety finding and its fix. The round-13 DV-83 verifier found it by code reading beside its breaks (census-discovery
+§111.1) and upheld it as outside DV-83: nothing here is a failed read stated as a fact — it is a failed read that turned a
+fail-closed check into a fail-open one. Register: census-discovery's D-W11X2-105 (Compass has no register of its own).
+census-trust does not grade Compass's block, mute or safety-gate enforcement (its only Compass item is the `verified`
+badge flag, §14.7 item 4), so nothing is recorded there. Controlled evidence only — node:test over the real tools and the
+real /compass/ask route, over fake clients.
+
+### 34.1 The finding
+
+- **The trigger.** `getCompassProfile` throws when a `blocks` or `user_mutes` read fails — deliberately ("refuse to build
+  the profile rather than serve one that can leak", `artifacts/api-server/src/compass/CompassProfileService.ts`).
+- **The route.** /compass/ask catches that throw around its structured-context block, leaves `guardProfile` null, and
+  hands the null to the tool loop, so every tool call of that turn runs with no profile
+  (`artifacts/api-server/src/routes/compass.ts`).
+- **The tools, before this change.**
+  - `rankToolCandidates` answered `null` for a null profile and for a pipeline that threw, and `applyToolRanking` reads
+    `null` as "unranked: offer the raw list". `search_places` therefore offered catalog rows no COMPASS_% safety gate
+    had seen (`ranked: false`), over a turn whose block read had just failed (PR1).
+  - `get_circle_activity` built its filter from an EMPTY hidden set when the profile was null, so a member the viewer
+    had blocked was served by handle (PU4, PU5).
+  - `refreshHiddenUsers` over a null profile re-read the lists and, when they read, SYNTHESISED a profile from them
+    alone; `search_events` and `get_group_recommendation` then ranked on it, with the pipeline's safe-return hold
+    (`safeReturnActive`) and age read off a profile that carried neither (PU2, PU3, PR2).
+  - When that re-read failed too, the tool answered "Tool execution failed.", which tells the model nothing it can say
+    (PU6).
+- **Every other caller of the pipeline was checked.** `buildFeed`, `buildSection`, `rankItemsForDiscovery` and
+  `compassEligibleForDiscovery` take a profile the caller already built (a thrown profile read fails the request — **not
+  at GET /compass/feed and /feed/section, which catch it and serve the fallback feed; see the correction below**); the
+  testing sandbox passes no client. None has an unranked fallback. Discovery's `consolidatedForYouCandidates` degrades a
+  thrown Compass gate to every candidate (`compass_failed`) — the DV-07 degradation, which serves the same catalog places
+  the Compass-off path serves, with no author to block; recorded, not changed. The fallback feed
+  (`buildFallbackFeed`) already degrades to the static safety tools when its block list cannot be read.
+- **Correction (census-discovery §112.1, register D-W11X2-128; the round-14 verifier's S1).** The two sentences above
+  overstated this section's coverage. They are true of BLOCKS only. The fallback feed reads `blocks` and never
+  `user_mutes`, and `buildSafeProfile` carries no muted ids, so when a failed mute read makes `getCompassProfile` throw,
+  GET /compass/feed and /feed/section catch it and serve the fallback feed with a muted author's content in it (and the
+  fallback-mode path ignores mutes over healthy reads). This section's fix did not reach that path. The code fix is the
+  safety lane's (census-compass §35, on main); this lane changed nothing in `CompassFallbackFeedBuilder.ts`.
+
+### 34.2 The change
+
+- **No profile, no ranking — never the raw list.** `rankToolCandidates` answers an EMPTY ranking marked `unchecked` for
+  a null profile, for a profile synthesised from the lists alone, and for a pipeline that threw; nothing is offered,
+  and `search_places`, `search_events` and `get_group_recommendation` say "Compass could not check the user's profile,
+  block and mute lists or its safety gate right now (a read failed), so nothing was offered … do not say there are
+  none" (`artifacts/api-server/src/compass/CompassTools.ts`, the `rankToolCandidates` lines in place; the helpers at the
+  foot).
+- **The hidden set is read, never empty.** `get_circle_activity` re-reads the block and mute lists when it has no
+  profile, as the social tools already did.
+- **An unreadable hidden set is a named refusal.** `refreshHiddenUsers` throws `HiddenUsersUnreadableError`; the
+  dispatcher answers it `{ unchecked: true, info: "The user's block and mute lists could not be read right now, so
+  Compass could not check who may be shown and nothing involving other people was offered …" }`.
+- **Healthy turns are unchanged.** With the profile read, every tool ranks and answers exactly as before (PUc, PRc).
+
+**Tests, red first.** `artifacts/api-server/src/test/compassAskProfileUnreadFailClosed.test.ts`: PU1–PU7 over the tools
+and PR1, PR2 over the real /compass/ask route (a scripted model calls the tool; the tool result it is handed is
+asserted) were red before and green after; PUc and PRc were green throughout. Two suites that called a search tool with a
+null profile to test something else (`compass-live-intel`'s confidence labels, `deadLiteralRepairs`' enum literal)
+now pass a profile, and `compassCensusGates`' no-snapshot case asserts the new refusal sentence instead of "Tool
+execution failed." (still closed: no people).
+
+**Mutations.** SF1–SF12, each applied alone and restored byte-identically (sha256): 11 killed; SF2 (dropping `!profile
+||` from the null check) is equivalent — a null profile throws inside `normalizeProfileForRanking`, and the now-closed
+catch answers the same `unchecked` ranking.
+
+**MOVES NOTHING.** No census-compass row grades the tools' fail-closed behaviour over an unread profile. What would turn
+this red: a Compass tool that offers a candidate, or a member, over a turn whose profile or block and mute lists could not
+be read (PU1–PU7, PR1, PR2).
+
 ## §35 — 2026-09-30: a muted author never reaches the fallback feed, and a failed mute read serves no user content (safety lane, S1) — NO VERDICT MOVES
 
 Safety lane, branch `claude/testing-mode-safety-gates-20260930` cut from `main` at `cd9a11d92`.
@@ -4223,4 +4355,7 @@ from an empty hidden set.
 - NOT-GRADED: travel-buddy-standalone/src/features/live/liveApi.ts — §32.2 cites only the line that keeps a 5xx body so a 503 can name its sources; no Compass verdict rests on the helper.
 - NOT-GRADED: travel-buddy-standalone/src/features/live/__tests__/senseCheckHonesty.component.test.tsx — §32.3's suite for the Sense panel and the auto-check; no verdict rests on it.
 - NOT-GRADED: travel-buddy-standalone/src/components/compass/__tests__/CompassLive.checkHonesty.component.test.tsx — §32.3's suite for the live card; no verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/routes/friends.ts — §33.1 cites its circle-invite accept only as one of the two writers of `circle_memberships`, to show it never sets `status`; no census-compass row grades the friends routes.
+- NOT-GRADED: artifacts/api-server/src/routes/requests.ts — §33.1 cites its circle-invite accept only as the second writer of `circle_memberships`, for the same fact; no census-compass row grades the requests routes.
+- NOT-GRADED: artifacts/api-server/baseline/20260819_baseline_structure.sql — §33.1 cites the `circle_memberships` CREATE TABLE only for the column's default and the absence of a CHECK on it; the baseline is the schema of record, not a surface this census grades.
 - NOT-GRADED: artifacts/api-server/src/test/compassFallbackMutes.test.ts — §35.5's controlled evidence for the fallback mute fix and the `get_circle_activity` null-profile fix; no Compass verdict moves on it, and CR-04/CTG-02 keep the evidence they already cite.

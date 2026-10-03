@@ -37,7 +37,7 @@ import { fetchUserTimezone, localHourFor, nowUtcInstant } from "../lib/localTime
 const logger = rootLogger.child({ service: "CompassFrontLoadEngine" });
 import { buildFeed } from "./CompassFeedBuilder.js";
 import { buildCompassContext, defaultSignals } from "./CompassContextEngine.js";
-import { hydrateCompassItems } from "./CompassItemHydrator.js";
+import { hydrateCompassItems, compassHydrationFailedSources } from "./CompassItemHydrator.js";
 import { getCachedFeed, setCachedFeed } from "./CompassCacheEngine.js";
 import { fetchCompassFlags } from "./flags.js";
 
@@ -344,7 +344,7 @@ async function loadTier1(
     try {
       const signals = defaultSignals(profile, localHour);
       const context = buildCompassContext(profile, signals);
-      const items_  = await hydrateCompassItems(db, profile);
+      const items_  = await hydrateCompassItems(db, profile); if (compassHydrationFailedSources(items_).length > 0) throw new Error("compass_sources_unread");  // census-discovery §104 (DV-83, D-W11X2-54): a page built from a failed read is not preloaded as the first page; the client asks the feed itself
       let   feed    = await buildFeed(items_, profile, context, db, null);
       // Cellular: strip video items from the first feed page (no video previews on cellular)
       if (isCellular && feed && typeof feed === 'object' && Array.isArray((feed as any).items)) {

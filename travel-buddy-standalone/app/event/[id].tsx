@@ -77,7 +77,7 @@ import { PlaceInfoSection } from '../../src/components/place/PlaceInfoSection';
 import { getVenueInfoByCoords, clearVenueInfoCache, getCanonicalPlace, type VenueContactInfo } from '../../src/services/places';
 import type { CanonicalPlace } from '../../src/types/canonicalPlace';
 import { canonicalUrl } from '../../src/constants/canonicalUrl';
-import { readFeedSession } from '../../src/lib/feedAttribution.ts';
+import { readFeedSession } from '../../src/lib/feedAttribution.ts'; import { attendeesUnread, hostUnread, goingCountUnread, waitlistCountUnread } from '../../src/lib/eventAttendeesUnread.ts';  // census-discovery §117 (B19); §118 (B25)
 
 /**
  * Composes the location subtitle line, avoiding a duplicated city when
@@ -161,7 +161,7 @@ export default function EventDetailScreen() {
   const [error, setError] = useState<string | null>(null);
   const [showDashboard, setShowDashboard] = useState(false);
   const [showRsvpMenu, setShowRsvpMenu] = useState(false);
-  const [isSaved, setIsSaved] = useState(false);
+  const [isSaved, setIsSaved] = useState<boolean | null>(false);  // census-discovery §122 (DV-83 round 23, SW30): null = GET /events/:id could not read it
   const [saveLoading, setSaveLoading] = useState(false);
   const [addingToTrip, setAddingToTrip] = useState(false);
   const [addedToTrip, setAddedToTrip] = useState(false);
@@ -216,7 +216,7 @@ export default function EventDetailScreen() {
         });
       } else {
         setEvent(res.data ?? null);
-        setIsSaved(!!(res.data as any)?.isSaved);
+        setIsSaved(typeof (res.data as any)?.isSaved === 'boolean' ? (res.data as any).isSaved : null);  // §122 (SW30): never !!undefined ("not saved")
         // Hydrate pending-request state from backend truth on every load/refresh
         setHasPendingRequest(res.data?.myJoinRequestStatus === 'pending');
       }
@@ -506,7 +506,7 @@ export default function EventDetailScreen() {
 
   // ── Save ───────────────────────────────────────────────────────────────────
   async function handleSaveToggle() {
-    if (!event) return;
+    if (!event || isSaved === null) return;  // §122 (SW30): an unknown saved state is not a toggle
     setSaveLoading(true);
     const optimistic = !isSaved;
     setIsSaved(optimistic);
@@ -564,7 +564,7 @@ export default function EventDetailScreen() {
       ActionSheetIOS.showActionSheetWithOptions(
         {
           options: [
-            isSaved ? 'Remove from saved' : 'Save event',
+            isSaved === null ? "Couldn't check if saved" : isSaved ? 'Remove from saved' : 'Save event',
             'Share event',
             'Find Your Circle',
             'Circle sharing settings',
@@ -584,7 +584,7 @@ export default function EventDetailScreen() {
       );
     } else {
       Alert.alert(event.title, undefined, [
-        { text: isSaved ? 'Remove from saved' : 'Save event', onPress: handleSaveToggle },
+        { text: isSaved === null ? "Couldn't check if saved" : isSaved ? 'Remove from saved' : 'Save event', onPress: handleSaveToggle },
         { text: 'Share event', onPress: handleShare },
         { text: 'Find Your Circle', onPress: goToCirclePresence },
         { text: 'Circle sharing settings', onPress: goToCircleSettings },
@@ -747,7 +747,7 @@ export default function EventDetailScreen() {
                 />
               )}
               {event && !isHost && (
-                <Pressable style={styles.headerBtn} onPress={handleSaveToggle} disabled={saveLoading} hitSlop={8}>
+                <Pressable style={styles.headerBtn} onPress={handleSaveToggle} disabled={saveLoading} hitSlop={8} accessibilityRole="button" accessibilityLabel={isSaved === null ? "Couldn't check if saved" : isSaved ? 'Remove from saved' : 'Save event'}>
                   {saveLoading
                     ? <ActivityIndicator size="small" color={color.mute} />
                     : isSaved
@@ -905,8 +905,8 @@ export default function EventDetailScreen() {
             <View style={styles.metaRow}>
               <Users size={14} color={color.mute} />
               <Text style={styles.meta}>
-                {event.counts?.going ?? 0} going{event.maxAttendees ? ` · ${event.maxAttendees} max` : ''}
-                {(event.waitlistCount ?? 0) > 0 ? ` · ${event.waitlistCount} waitlisted` : ''}
+                {event.counts?.going == null ? 'Going count unavailable' : `${event.counts.going} going${goingCountUnread(event) ? ' (last known)' : ''}`}{event.maxAttendees ? ` · ${event.maxAttendees} max` : ''}{/* census-discovery §118 (B25): a count the route could not read is said as last known */}
+                {waitlistCountUnread(event) ? ((event.waitlistCount ?? 0) > 0 ? ` · ${event.waitlistCount} waitlisted (last known)` : ' · waitlist unavailable') : (event.waitlistCount ?? 0) > 0 ? ` · ${event.waitlistCount} waitlisted` : ''}
               </Text>
             </View>
 
@@ -959,7 +959,7 @@ export default function EventDetailScreen() {
             {/* Live voice room entry (visible only inside the event context) */}
             <EventVoiceRoomCard eventId={event.id} /><EventCheckInCard event={event} onCheckedIn={refreshLoad} />
 
-            {/* Host */}
+            {hostUnread(event) ? <Text style={styles.meta} testID="event-host-unread">Couldn't load the host</Text> : null}{/* Host — §117 (B19) */}
             {event.host && (
               <Pressable
                 style={styles.hostRow}
@@ -973,7 +973,7 @@ export default function EventDetailScreen() {
               </Pressable>
             )}
 
-            {/* Attendee strip */}
+            {attendeesUnread(event) && (event.goingAttendees?.length ?? 0) === 0 ? <Text style={styles.meta} testID="event-attendees-unread">Couldn't load who's going</Text> : null}{/* Attendee strip — census-discovery §117 (B19): a failed read is said, never nobody */}
             {(event.goingAttendees?.length ?? 0) > 0 && (
               <View style={styles.attendeeRow}>
                 {(event.goingAttendees ?? []).slice(0, 5).map((a) => (
@@ -981,9 +981,9 @@ export default function EventDetailScreen() {
                     <UserAvatarButton userId={a.id} handle={a.handle} avatarUrl={a.avatarUrl} size={32} />
                   </View>
                 ))}
-                {(event.counts?.going ?? 0) > 5 && (
+                {!goingCountUnread(event) && (event.counts?.going ?? 0) > Math.min(5, event.goingAttendees?.length ?? 0) && (  /* §118 (B24, B25): the travellers not shown, over a count that was read */
                   <View style={[styles.avatarOverlap, styles.avatarMore]}>
-                    <Text style={styles.avatarMoreText}>+{(event.counts?.going ?? 0) - 5}</Text>
+                    <Text style={styles.avatarMoreText}>+{(event.counts?.going ?? 0) - Math.min(5, event.goingAttendees?.length ?? 0)}</Text>
                   </View>
                 )}
               </View>

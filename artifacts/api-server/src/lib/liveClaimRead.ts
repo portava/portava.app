@@ -29,7 +29,7 @@
  * substitutes a historical pattern for an observation — that distinction is what
  * SOURCE_CLASSES and mayRenderAsLive() exist to protect.
  */
-import { isFlagEnabled, isKillSwitchEngaged } from "./featureFlags.js";
+import { isFlagEnabled, isKillSwitchEngaged, type KillSwitchReadStatus } from "./featureFlags.js";
 import {
   confidenceBand,
   mayRenderAsLive,
@@ -346,7 +346,7 @@ export async function readLiveClaims(
   // The global Live-label gates (flag chain + kill switch + pilot master switch),
   // in ONE place so this compute path and the cache-serve path in placeLiving.ts
   // cannot drift. Fail-closed: any missing flag or an engaged kill switch → [].
-  if (!(await liveLabelsServable(sc))) return [];
+  const gates = await liveLabelGatesRead(sc); if (gates !== "open") return gates === "unread" ? failedLiveClaimRead() : [];  // census-discovery §116 (DV-83, B15): an unread gate is a FAILED read, marked; a closed one stays []
 
   const now = opts.now ?? new Date();
 
@@ -667,4 +667,24 @@ function carryLiveClaimReadFailure<T extends object>(from: object, to: T): T {
  */
 export function liveClaimReadFailed(result: readonly unknown[]): boolean {
   return _failedLiveClaimReads.has(result);
+}
+
+// ── census-discovery §116 (DV-83 round 19, lane W11-X2; the round-18 verifier's B15) ─────────────────────────────────
+//
+// readLiveClaims asked liveLabelsServable, which answers false both for a gate read and closed and for one whose read
+// FAILED, and returned an unmarked [] for both — so a subject whose gate re-read failed reached the NOW map's place
+// sheet as "No live activity has been observed here", even though the route had read the gates three-state once
+// (§115 SW7). liveLabelGatesRead makes the same reads, in the same order, through the same readers, and says which:
+// "unread" when the first gate that is not open could not be read. readLiveClaims answers failedLiveClaimRead() for it,
+// the same [] marked. liveLabelsServable, which Compass and its other callers read, is unchanged.
+export async function liveLabelGatesRead(sc: any): Promise<"open" | "closed" | "unread"> {
+  if (!sc) return "closed";
+  const st: KillSwitchReadStatus = {};
+  const shut = (): "closed" | "unread" => (st.unread ? "unread" : "closed");
+  if (!(await isFlagEnabled(sc, "intel_live_label_crowd", st))) return shut();
+  if (!(await isFlagEnabled(sc, "intel_claim_projection_crowd", st))) return shut();
+  if (!(await isFlagEnabled(sc, "intel_capture_quick_signal", st))) return shut();
+  if (await isKillSwitchEngaged(sc, "disable_intel_live_labels", st)) return shut();
+  if (!(await isFlagEnabled(sc, "intel_limited_live", st))) return shut();
+  return "open";
 }

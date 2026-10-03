@@ -42,7 +42,7 @@ import { randomUUID } from "node:crypto";
 import { isTruthClass } from "../lib/truthClass.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CompassItem, CompassProfile } from "./types.js";
-import { stripCoordinateFields, wrapUgc, buildStructuredCompassContext } from "./CompassStructuredContext.js";
+import { stripCoordinateFields, wrapUgc, buildStructuredCompassContext, type StructuredContextUnread } from "./CompassStructuredContext.js";
 import { proposalContractPayload } from "../domain/trips/contracts/TripProposalContract.js";
 import { isAcceptedTripMember, canEditPlan, TripAccessUnavailableError } from "../lib/http.js";
 import { buildTripCompassProjection } from "../domain/trips/projections/TripCompassProjection.js";
@@ -120,7 +120,7 @@ import {
   resolvePassportViewerContext,
   type PassportViewerContext,
 } from "../services/passport/PassportProjectionService.js";
-import { getActiveWindows } from "../services/passport/OpenToPlansService.js";
+import { getActiveWindows } from "../services/passport/OpenToPlansService.js"; import { liveEventCounters } from "../lib/eventRowReads.js";  // census-discovery §118 (B22)
 import { readGroupBlockExclusions, exclusionsUnavailable, type ExclusionSet } from "../lib/exclusionSet.js";
 
 import { getTrustProfileResult } from "../services/trust/TrustScoreService.js";
@@ -713,9 +713,9 @@ async function refreshHiddenUsers(
     }
     const base =
       profile ?? ({ userId, blockedUserIds: [], blockerUserIds: [], mutedUserIds: [] } as unknown as CompassProfile);
-    return { ...base, blockedUserIds, blockerUserIds, mutedUserIds };
+    const refreshed = { ...base, blockedUserIds, blockerUserIds, mutedUserIds }; return profile ? refreshed : markSynthesized(refreshed);  // census-compass §34 (census-discovery §111, D-W11X2-105): fails closed: a profile made of the block lists alone is never ranked on
   } catch (err) {
-    if (!profile) throw err; // no snapshot to fall back to: closed, not empty
+    if (!profile) throw new HiddenUsersUnreadableError(err); // no snapshot to fall back to: closed, not empty — census-compass §34 (D-W11X2-105): a named refusal the dispatcher says, not "Tool execution failed"
     return profile; // fail safe to the snapshot — never widen visibility
   }
 }
@@ -760,11 +760,11 @@ async function rankToolCandidates(
   items: CompassItem[],
   circleMemoryTags?: Set<string>,
 ): Promise<Map<string, ToolRankEntry> | null> {
-  if (!profile || items.length === 0) return null;
+  if (items.length === 0) return null; if (!profile || isSynthesizedProfile(profile)) return uncheckedRanking();  // census-compass §34 (census-discovery §111, D-W11X2-105): fails closed: no profile is never "unranked: offer the raw list"
   try {
     const p = normalizeProfileForRanking(profile);
     const context = buildCompassContext(p, defaultSignals(p));
-    const { results } = await runPipeline(items, p, context, sc, undefined, circleMemoryTags);
+    const { results, flagsUnreadable } = await runPipeline(items, p, context, sc, undefined, circleMemoryTags); if (flagsUnreadable) return flagsUnreadRanking();  // census-discovery §110 (DV-83, D-W11X2-92): what the fail-safe flag map withheld is not "no match" — an EMPTY map (nothing offered, the gate is never skipped) that says so
     // A successful pipeline run with zero survivors means every candidate was
     // intentionally gated out (safety/eligibility/kill-switch) — honour that
     // with an EMPTY ranking map so the tool returns no candidates. Raw
@@ -780,7 +780,7 @@ async function rankToolCandidates(
     });
     return map;
   } catch {
-    return null;
+    return uncheckedRanking();  // census-compass §34 (census-discovery §111, D-W11X2-105): fails closed: a thrown pipeline never skips the safety gate
   }
 }
 
@@ -951,7 +951,7 @@ async function resolveTripAttention(sc: SupabaseClient, userId: string, tripIdAr
   if (!tripId) {
     const current: any = await toolGetCurrentTrip(sc, userId);
     tripId = current?.trip?.id ?? null;
-    if (!tripId) return attentionNotConsulted(null, "No active or upcoming trip; the priority switch was not consulted.");
+    if (!tripId) return attentionNotConsulted(null, currentTripUnread(current) ? "The user's current trip could not be read; the priority switch was not consulted." : "No active or upcoming trip; the priority switch was not consulted.");  // census-discovery §109 (D-W11X2-89)
   }
   return readTripAttention(sc, tripId, userId);
 }
@@ -1018,7 +1018,7 @@ async function toolSearchPlaces(
   const withheldDetail = safeHeld.withheld > 0 ? safeHeld.detail : held.detail;
   return safeHeld.kept.length > 0
     ? { candidates: safeHeld.kept, ranked: ranking !== null, attention: wire, safetyAttention: safetyWire }
-    : { candidates: [], attention: wire, safetyAttention: safetyWire, info: withheldTotal > 0 ? `No candidates offered: ${withheldDetail}` : "No matching places found in the catalog." };
+    : { candidates: [], attention: wire, safetyAttention: safetyWire, info: rankingUnchecked(ranking) ? TOOL_SAFETY_UNCHECKED_INFO : rankingFlagsUnread(ranking) ? TOOL_FLAGS_UNREAD_INFO : withheldTotal > 0 ? `No candidates offered: ${withheldDetail}` : rows.length >= limit ? cappedReadInfo(limit, "places in the catalog") : "No matching places found in the catalog." };  // §110 (D-W11X2-92)
 }
 
 async function toolSearchEvents(
@@ -1099,7 +1099,7 @@ async function toolSearchEvents(
   const withheldDetail = safeHeld.withheld > 0 ? safeHeld.detail : held.detail;
   return safeHeld.kept.length > 0
     ? { candidates: safeHeld.kept, ranked: ranking !== null, attention: wire, safetyAttention: safetyWire }
-    : { candidates: [], attention: wire, safetyAttention: safetyWire, info: withheldTotal > 0 ? `No candidates offered: ${withheldDetail}` : "No matching upcoming public events found." };
+    : { candidates: [], attention: wire, safetyAttention: safetyWire, info: rankingUnchecked(ranking) ? TOOL_SAFETY_UNCHECKED_INFO : rankingFlagsUnread(ranking) ? TOOL_FLAGS_UNREAD_INFO : withheldTotal > 0 ? `No candidates offered: ${withheldDetail}` : ((data ?? []) as any[]).filter((e) => !hidden.has(e.host_id as string)).length > limit ? cappedReadInfo(limit, "upcoming public events") : ((data ?? []) as any[]).length >= limit * 2 ? cappedReadInfo(limit * 2, "upcoming public events") : "No matching upcoming public events found." };  // §110 (D-W11X2-92, D-W11X2-102): an unread flag read, or a read cut at its cap, is not "none"
 }
 
 async function toolGetPlaceDetails(sc: SupabaseClient, args: Record<string, unknown>): Promise<unknown> {
@@ -1110,7 +1110,7 @@ async function toolGetPlaceDetails(sc: SupabaseClient, args: Record<string, unkn
     .select(PLACE_SAFE_COLUMNS + ", secondary_categories, place_type")
     .eq("id", placeId)
     .maybeSingle();
-  if (error || !data) return { place: null, info: "Place not found." };
+  if (error) return { place: null, info: PLACE_UNREAD_INFO }; if (!data) return { place: null, info: "Place not found." };  // census-discovery §109 (D-W11X2-89): a failed read is not "not found"
   const p = data as any;
 
   // Phase 8 — live open-now lookup at tool time (weather-cache pattern:
@@ -1153,10 +1153,10 @@ async function toolGetCircleActivity(
   // members filtered out and names UGC-wrapped.
   const effProfile: CompassProfile =
     profile ?? ({ userId, blockedUserIds: [], blockerUserIds: [], mutedUserIds: [] } as unknown as CompassProfile);
-  const structured = await buildStructuredCompassContext(sc, effProfile);
+  const structured = await buildStructuredCompassContext(sc, effProfile); const circlesUnread = structured.unread?.circles === true, membersUnread = structured.unread?.circleMembers === true;  // census-discovery §109 (DV-83, D-W11X2-88): a failed circle read is never "not in any circles"
   return structured.circles.length > 0
-    ? { circles: structured.circles }
-    : { circles: [], info: "The user is not in any circles." };
+    ? { circles: structured.circles, ...(circlesUnread ? { info: circlesPartialInfo(structured.unread) } : membersUnread ? { info: CIRCLE_MEMBERS_PARTIAL_INFO } : {}), ...circleListBoundsInfo(structured.unread) }  // census-discovery §110 (D-W11X2-95): a longer list than read or shown is said
+    : circlesUnread ? { circles: [], info: CIRCLES_UNREAD_INFO } : structured.unread?.circlesTruncated ? { circles: [], info: CIRCLES_TRUNCATED_EMPTY_INFO } : { circles: [], info: "The user is not in any circles." };  // §110: "not in any circles" only over a complete read
 }
 
 async function toolCheckTripConflicts(
@@ -1211,11 +1211,11 @@ async function toolCheckTripConflicts(
     .gte("day_date", startDate)
     .lte("day_date", endDate)
     .is("removed_at", null)
-    .limit(20);
+    .order("day_date", { ascending: true }).limit(PLANNED_ITEMS_READ_CAP + 1);  // census-discovery §111 (D-W11X2-119): ordered, one past the cap
   // Unbound before, like the three selection reads above: an unreadable plan
   // became an empty `plannedItems`, which reads as "those days are free".
   if (itemsErr) itemsUnread = true;
-  else for (const i of (items ?? []) as any[]) {
+  else for (const i of ((items ?? []) as any[]).slice(0, PLANNED_ITEMS_READ_CAP)) {
     conflictItems.push({ tripId: i.trip_id, title: wrapUgc(String(i.title ?? "")), dayDate: i.day_date });
   }
 
@@ -1227,7 +1227,7 @@ async function toolCheckTripConflicts(
       destination_city: t.destinationCity, start_date: t.startDate, end_date: t.endDate, status: t.status,
     })),
     plannedItems: conflictItems,
-    ...(itemsUnread ? { info: "The overlapping trips are real, but their planned items could not be read — the empty list is unread, not empty." } : {}),
+    ...(itemsUnread ? { info: "The overlapping trips are real, but their planned items could not be read — the empty list is unread, not empty." } : ((items ?? []) as any[]).length > PLANNED_ITEMS_READ_CAP ? { info: PLANNED_ITEMS_CUT_INFO } : {}),  // §111 (D-W11X2-119)
   };
 }
 
@@ -1250,7 +1250,7 @@ export async function toolGetFreedomWindows(sc: SupabaseClient, userId: string, 
   } else {
     const current: any = await toolGetCurrentTrip(sc, userId);
     trip = current?.trip ?? null;
-    if (!trip) return { windows: [], info: "No active or upcoming trip." };
+    if (!trip) return { windows: [], info: noCurrentTripInfo(current) };  // census-discovery §109 (D-W11X2-89): an unread trip is not "no trip"
   }
   const built = await buildTripFreedomProjection(sc, trip.id);
   if (!built.ok) return { windows: [], info: built.reason === "FEATURE_DISABLED" ? `Freedom windows are not enabled: ${built.message}` : `Freedom windows unavailable: ${built.message}` };
@@ -1290,7 +1290,7 @@ export async function toolGetRouteChain(sc: SupabaseClient, userId: string, args
   } else {
     const current: any = await toolGetCurrentTrip(sc, userId);
     id = current?.trip?.id ?? null;
-    if (!id) return { chain: null, info: "No active or upcoming trip." };
+    if (!id) return { chain: null, info: noCurrentTripInfo(current) };  // census-discovery §109 (D-W11X2-89): an unread trip is not "no trip"
   }
   const built = await buildTripRouteChainProjection(sc, id);
   if (!built.ok) return { chain: null, info: built.reason === "FEATURE_DISABLED" ? `The route chain is not enabled: ${built.message}` : `Route chain unavailable (${built.reason}): ${built.message}` };
@@ -1324,7 +1324,7 @@ export async function toolGetLiveConditions(sc: SupabaseClient, userId: string, 
   } else {
     const current: any = await toolGetCurrentTrip(sc, userId);
     id = current?.trip?.id ?? null;
-    if (!id) return { pulse: null, info: "No active or upcoming trip." };
+    if (!id) return { pulse: null, info: noCurrentTripInfo(current) };  // census-discovery §109 (D-W11X2-89): an unread trip is not "no trip"
   }
   const built = await buildTripPulseProjection(sc, id, userId);
   if (!built.ok) return { pulse: null, info: built.reason === "FEATURE_DISABLED" ? `Trip Pulse is not enabled: ${built.message}` : `Trip Pulse unavailable (${built.reason}): ${built.message}` };
@@ -1361,7 +1361,7 @@ async function resolveMemberTrip(sc: SupabaseClient, userId: string, args: Recor
   }
   const current: any = await toolGetCurrentTrip(sc, userId);
   const id = current?.trip?.id ?? null;
-  return id ? { id } : { info: "No active or upcoming trip." };
+  return id ? { id } : { info: noCurrentTripInfo(current) };  // census-discovery §109 (D-W11X2-89): an unread trip is not "no trip"
 }
 
 /** §12.1 getCommitments(tripId) — trip_commitments (2761), under the operational-projections gate that owns that table. */
@@ -1549,7 +1549,7 @@ export async function toolGetTodayState(sc: SupabaseClient, userId: string, args
   } else {
     const current: any = await toolGetCurrentTrip(sc, userId);
     id = current?.trip?.id ?? null;
-    if (!id) return { today: null, info: "No active or upcoming trip." };
+    if (!id) return { today: null, info: noCurrentTripInfo(current) };  // census-discovery §109 (D-W11X2-89): an unread trip is not "no trip"
   }
   const built = await buildTripTodayProjection(sc, id, userId);
   if (!built.ok) return { today: null, info: built.reason === "FEATURE_DISABLED" ? `Today is not enabled: ${built.message}` : `Today unavailable (${built.reason}): ${built.message}` };
@@ -1591,7 +1591,7 @@ export async function toolGetCrewState(sc: SupabaseClient, userId: string, args:
   } else {
     const current: any = await toolGetCurrentTrip(sc, userId);
     id = current?.trip?.id ?? null;
-    if (!id) return { crew: null, info: "No active or upcoming trip." };
+    if (!id) return { crew: null, info: noCurrentTripInfo(current) };  // census-discovery §109 (D-W11X2-89): an unread trip is not "no trip"
   }
   if (!(await isKernelFlagEnabled(sc, "trip_crew_map_enabled"))) {
     return { crew: null, info: "The crew map is not enabled (trip_crew_map_enabled is off); no crew was read." };
@@ -1739,16 +1739,16 @@ async function toolWhosAround(
   profile: CompassProfile | null,
   userId: string,
 ): Promise<unknown> {
-  const { people, contextsChecked } = await getWhosAround(sc, userId, hiddenUserIds(profile));
+  const whosRead = await getWhosAround(sc, userId, hiddenUserIds(profile)); const truncated = whosRead.truncated; const { people, contextsChecked, unread } = whosRead; if (unread && people.length === 0) return { people: [], info: WHOS_AROUND_UNREAD_INFO };  // census-discovery §107 (DV-83, D-W11X2-73): a failed presence read is neither "no active trips" nor "nobody is sharing"
   if (contextsChecked === 0) {
     return { people: [], info: "The user has no active trips or upcoming events with a circle to check." };
   }
   return people.length > 0
     ? {
         people,
-        info: "Only people who opted in to sharing appear, at the granularity they chose. Location is approximate only — never precise.",
+        info: unread ? WHOS_AROUND_PARTIAL_INFO : truncated ? WHOS_AROUND_CUT_INFO : "Only people who opted in to sharing appear, at the granularity they chose. Location is approximate only — never precise.",  // census-discovery §108 (DV-83, D-W11X2-76): a read failed, so the list may be incomplete
       }
-    : { people: [], info: "Nobody in the user's circles is sharing their presence right now." };
+    : { people: [], info: truncated ? WHOS_AROUND_CUT_EMPTY_INFO : "Nobody in the user's circles is sharing their presence right now." };  // census-discovery §111 (DV-83, D-W11X2-117): "nobody" only over a walk that was not cut
 }
 
 /**
@@ -1765,9 +1765,9 @@ async function toolMeetupOpportunities(
   profile: CompassProfile | null,
   userId: string,
 ): Promise<unknown> {
-  const { opportunities, contextsChecked, withheldForPrivacy } =
+  const { opportunities, contextsChecked, withheldForPrivacy, unread, truncated } =
     await getMeetupOpportunities(sc, userId, hiddenUserIds(profile));
-  if (contextsChecked === 0) {
+  if (unread && opportunities.length === 0) return { opportunities: [], withheldForPrivacy, info: MEETUP_UNREAD_INFO }; if (contextsChecked === 0) {  // census-discovery §108 (DV-83, D-W11X2-83): a failed read is neither "no trips", "nobody sharing" nor "not shared both ways"
     return { opportunities: [], withheldForPrivacy: 0, info: "The user has no active trips or upcoming events with a circle to check." };
   }
   if (opportunities.length === 0) {
@@ -1777,13 +1777,13 @@ async function toolMeetupOpportunities(
       info:
         withheldForPrivacy > 0
           ? "Nobody can be offered as a meetup right now — a meetup needs BOTH people to be sharing presence with each other. Say that availability isn't shared both ways; never say who, and never guess why."
-          : "Nobody in the user's circles is sharing a current presence to build a meetup on.",
+          : truncated ? MEETUP_CUT_EMPTY_INFO : "Nobody in the user's circles is sharing a current presence to build a meetup on.",  // census-discovery §111 (DV-83, D-W11X2-117)
     };
   }
   return {
     opportunities,
     withheldForPrivacy,
-    info: "Each occasion exists only because both people are sharing presence with each other. Location is approximate only — repeat the `where` string exactly and never propose a place the result did not name.",
+    info: unread ? MEETUP_PARTIAL_INFO : truncated ? MEETUP_CUT_INFO : "Each occasion exists only because both people are sharing presence with each other. Location is approximate only — repeat the `where` string exactly and never propose a place the result did not name.",  // §108: a read failed, so the list may be incomplete
   };
 }
 
@@ -1975,17 +1975,17 @@ async function resolveGroupMemberIds(
 ): Promise<{ memberIds: string[]; groupLabel: string; circleOwnerId: string | null } | { error: string }> {
   if (circleName) {
     // Circles the user owns, or belongs to (circle_memberships: user_id = owner).
-    const [{ data: owned }, { data: memberships }] = await Promise.all([
-      sc.from("circles").select("id, name, owner_id").eq("owner_id", userId).limit(25),
-      sc.from("circle_memberships").select("user_id, status").eq("other_id", userId).limit(25),
+    const [{ data: owned, error: ownedErr }, { data: memberships, error: membershipsErr }] = await Promise.all([  // census-discovery §109 (D-W11X2-89): each read's error is read
+      sc.from("circles").select("id, name, owner_id").eq("owner_id", userId).order("id", { ascending: true }).limit(GROUP_CIRCLE_READ_CAP + 1),  // census-discovery §110 (D-W11X2-95): ordered, one past the cap
+      sc.from("circle_memberships").select("user_id, status").eq("other_id", userId).order("user_id", { ascending: true }).limit(GROUP_CIRCLE_READ_CAP + 1),
     ]);
-    const joinedOwnerIds = ((memberships ?? []) as any[])
-      .filter((m) => (m.status ?? "accepted") === "accepted")
+    const joinedOwnerIds = ((memberships ?? []) as any[]).slice(0, GROUP_CIRCLE_READ_CAP)
+      // census-compass §33 (D-W11X2-94): no `status` filter — a row IS the membership, as on every other surface; no writer sets status
       .map((m) => m.user_id as string);
-    let joined: any[] = [];
+    let joined: any[] = []; let circlesUnread = Boolean(ownedErr || membershipsErr); let circlesTruncated = ((owned ?? []) as any[]).length > GROUP_CIRCLE_READ_CAP || ((memberships ?? []) as any[]).length > GROUP_CIRCLE_READ_CAP;
     if (joinedOwnerIds.length > 0) {
-      const { data } = await sc.from("circles").select("id, name, owner_id").in("owner_id", joinedOwnerIds).limit(25);
-      joined = (data ?? []) as any[];
+      const { data, error: joinedErr } = await sc.from("circles").select("id, name, owner_id").in("owner_id", joinedOwnerIds).order("id", { ascending: true }).limit(GROUP_CIRCLE_READ_CAP + 1);
+      joined = (data ?? []) as any[]; if (joinedErr) circlesUnread = true; if (joined.length > GROUP_CIRCLE_READ_CAP) circlesTruncated = true;
     }
     const wanted = circleName.trim().toLowerCase();
     const circle = [...((owned ?? []) as any[]), ...joined].find(
@@ -1993,17 +1993,17 @@ async function resolveGroupMemberIds(
     );
     // Cross-circle probing defense: circles the user is not in are indistinguishable
     // from circles that don't exist.
-    if (!circle) return { error: "The user is not a member of a circle by that name." };
+    if (!circle) return { error: circlesUnread ? GROUP_CIRCLES_UNREAD_INFO : circlesTruncated ? GROUP_CIRCLES_TRUNCATED_INFO : "The user is not a member of a circle by that name." };  // §109: a failed read is not "not a member"
 
     const ownerId = String(circle.owner_id);
-    const { data: members } = await sc
+    const { data: members, error: membersErr } = await sc
       .from("circle_memberships")
       .select("other_id, status")
       .eq("user_id", ownerId)
-      .limit(100);
-    const ids = new Set<string>([ownerId, userId]);
-    for (const m of (members ?? []) as any[]) {
-      if ((m.status ?? "accepted") === "accepted") ids.add(String(m.other_id));
+      .order("other_id", { ascending: true }).limit(GROUP_MEMBER_READ_CAP + 1);  // §110 (D-W11X2-95): one past the cap
+    if (membersErr) return { error: GROUP_MEMBERS_UNREAD_INFO }; const ids = new Set<string>([ownerId, userId]);  // §109: never a recommendation over a partial group
+    if (((members ?? []) as any[]).length > GROUP_MEMBER_READ_CAP) return { error: GROUP_MEMBERS_TRUNCATED_INFO }; for (const m of (members ?? []) as any[]) {  // §110: never a recommendation over part of the group
+      ids.add(String(m.other_id));  // census-compass §33 (D-W11X2-94): a row IS the membership — no writer sets status
     }
     return { memberIds: [...ids], groupLabel: wrapUgc(String(circle.name ?? "Circle")), circleOwnerId: ownerId };
   }
@@ -2011,13 +2011,13 @@ async function resolveGroupMemberIds(
   // Default: current/upcoming trip members.
   const current: any = await toolGetCurrentTrip(sc, userId);
   const trip = current?.trip;
-  if (!trip) return { error: "No circle name given and the user has no active or upcoming trip group." };
-  const { data: members } = await sc
+  if (!trip) return { error: currentTripUnread(current) ? `${String(current.info)} No group recommendation was made: this is NOT "no trip group".` : "No circle name given and the user has no active or upcoming trip group." };  // §109
+  const { data: members, error: tripMembersErr } = await sc
     .from("trip_members")
     .select("user_id, role, status")
     .eq("trip_id", trip.id)
     .in("role", ["owner", "co_host", "member", "viewer"]);
-  const ids = new Set<string>([userId]);
+  if (tripMembersErr) return { error: GROUP_MEMBERS_UNREAD_INFO }; const ids = new Set<string>([userId]);  // §109: never a recommendation over a partial group
   for (const m of (members ?? []) as any[]) {
     if (m.status == null || m.status === "accepted") ids.add(String(m.user_id));
   }
@@ -2118,7 +2118,7 @@ async function toolGroupRecommendation(
   const agg = aggregateGroupPreferences(members);
   const viewerProfile: CompassProfile =
     profile ?? ({ userId, blockedUserIds: [], blockerUserIds: [], mutedUserIds: [] } as unknown as CompassProfile);
-  const groupProfile = buildGroupRankingProfile(viewerProfile, agg, blockUnionIds);
+  const groupProfile = buildGroupRankingProfile(viewerProfile, agg, blockUnionIds); if (isSynthesizedProfile(viewerProfile)) markSynthesized(groupProfile);  // census-compass §34 (census-discovery §111, D-W11X2-105): fails closed: a group profile built on a synthesised viewer is never ranked on
   const excluded = new Set<string>([...hidden, ...blockUnionIds]);
 
   // Phase 6 circle memories → group ranking. Membership-gated inside the
@@ -2132,7 +2132,7 @@ async function toolGroupRecommendation(
     : (viewerProfile.currentCity ?? null);
 
   let candidates: any[] = [];
-  let groupConstraintsApplied: string[] = [];
+  let groupConstraintsApplied: string[] = []; let flagsUnread = false; let unchecked = false; let readCapped = 0; let goingUnread = false;  // census-discovery §110 (D-W11X2-92, D-W11X2-102); §118 (B22): the live going read failed
 
   if (kind === "events") {
     const cutoff = new Date(Date.now() - 2 * 3600_000).toISOString();
@@ -2151,17 +2151,17 @@ async function toolGroupRecommendation(
       q = q.or(`title.ilike.${pat},description.ilike.${pat}`);
     }
     if (city) q = q.ilike("city", sqlPattern(city));
-    const { data, error } = await q.limit(limit * 3);
-    if (error) return { candidates: [], info: "Event search unavailable right now." };
+    const { data, error } = await q.limit(limit * 3); if (((data ?? []) as any[]).length >= limit * 3) readCapped = limit * 3;  // §110 (D-W11X2-102): more may exist past the cap
+    if (error) return { candidates: [], info: "Event search unavailable right now." }; goingUnread = (await liveEventCounters(sc, (data ?? []) as any[], { going: true })).length > 0;  // census-discovery §118 (B22): capacity is judged on the live going count, never the cached counter a failed recount leaves stale
 
     const constrained: any[] = [];
     for (const e of (data ?? []) as any[]) {
       if (excluded.has(String(e.host_id))) continue; // blocked by anyone in the group
-      const fit = eventSatisfiesGroup({ ...e, requires_verification: e.verified_only === true }, agg);
+      const fit = eventSatisfiesGroup({ ...e, requires_verification: e.verified_only === true, going_unread: goingUnread }, agg);
       if (!fit.ok) { if (fit.reason) groupConstraintsApplied.push(fit.reason); continue; }
       constrained.push(e);
     }
-    const visible = constrained.slice(0, limit);
+    const visible = constrained.slice(0, limit); if (constrained.length > limit) readCapped = limit;  // census-discovery §111 (DV-83, D-W11X2-106): a read cut by its cap, or rows a slice dropped, are never "none"
     const rankItems: CompassItem[] = visible.map((e) => ({
       id:            String(e.id),
       type:          "event",
@@ -2170,7 +2170,7 @@ async function toolGroupRecommendation(
       eventStartsAt: e.starts_at ?? null,
       authorId:      e.host_id ? String(e.host_id) : undefined,
     } as CompassItem));
-    const ranking = await rankToolCandidates(sc, groupProfile, rankItems, circleMemoryTags);
+    const ranking = await rankToolCandidates(sc, groupProfile, rankItems, circleMemoryTags); flagsUnread = rankingFlagsUnread(ranking); unchecked = rankingUnchecked(ranking);
     candidates = applyToolRanking(
       visible.map((e) => ({
         id:          e.id,
@@ -2192,7 +2192,7 @@ async function toolGroupRecommendation(
     if (city) q = q.ilike("city", sqlPattern(city));
     const { data, error } = await q.limit(limit);
     if (error) return { candidates: [], info: "Place search unavailable right now." };
-    const rows = (data ?? []) as any[];
+    const rows = (data ?? []) as any[]; if (rows.length >= limit) readCapped = limit;  // census-discovery §111 (DV-83, D-W11X2-106): a read cut by its cap, or rows a slice dropped, are never "none"
     const rankItems: CompassItem[] = rows.map((p) => ({
       id:           String(p.id),
       type:         "suggestion",
@@ -2201,7 +2201,7 @@ async function toolGroupRecommendation(
       qualityScore: typeof p.rating === "number" ? p.rating * 2 : undefined,
       savedCount:   Number(p.saved_count ?? 0),
     } as CompassItem));
-    const ranking = await rankToolCandidates(sc, groupProfile, rankItems, circleMemoryTags);
+    const ranking = await rankToolCandidates(sc, groupProfile, rankItems, circleMemoryTags); flagsUnread = rankingFlagsUnread(ranking); unchecked = rankingUnchecked(ranking);
     candidates = applyToolRanking(
       rows.map((p) => ({
         ...p,
@@ -2235,7 +2235,7 @@ async function toolGroupRecommendation(
         candidates: [],
         group: { label: group.groupLabel, size: agg.size, memberHandles },
         groupConstraintsApplied: [...new Set(groupConstraintsApplied)],
-        info: "No candidates satisfy the whole group's constraints right now.",
+        info: unchecked ? TOOL_SAFETY_UNCHECKED_INFO : flagsUnread ? TOOL_FLAGS_UNREAD_INFO : readCapped > 0 ? cappedReadInfo(readCapped, kind === "events" ? "events for the whole group" : "places for the whole group") : groupConstraintsApplied.includes("capacity_could_not_be_checked") ? GROUP_CAPACITY_UNREAD_INFO : "No candidates satisfy the whole group's constraints right now.",  // §110 (D-W11X2-92): an unread flag read is not "no candidates"; §118 (B22): nor is an unread going count
       };
 }
 
@@ -2352,7 +2352,7 @@ export async function executeCompassTool(
       // Phase 9 social tools below) — a just-blocked host must not surface.
       case "search_events":        raw = await toolSearchEvents(sc, userId, await refreshHiddenUsers(sc, userId, profile), args); break;
       case "get_place_details":    raw = await toolGetPlaceDetails(sc, args); break;
-      case "get_circle_activity":  raw = await toolGetCircleActivity(sc, profile ?? await refreshHiddenUsers(sc, userId, null), userId); break;  // census-compass §35: with NO profile (the ask route's profile read failed) it named muted and blocked members from an EMPTY hidden set; it now reads the set, and an unreadable one throws (closed)
+      case "get_circle_activity":  raw = await toolGetCircleActivity(sc, profile ?? await refreshHiddenUsers(sc, userId, null), userId); break;  // census-compass §34 and §35 (census-discovery §111, D-W11X2-105): with NO profile (the ask route's profile read failed) it named muted and blocked members from an EMPTY hidden set; it now reads the set, and an unreadable one throws (closed)
       case "check_trip_conflicts": raw = await toolCheckTripConflicts(sc, userId, args); break;
       case "get_freedom_windows":  raw = await toolGetFreedomWindows(sc, userId, args); break;
       case "get_route_chain":      raw = await toolGetRouteChain(sc, userId, args); break;
@@ -2413,7 +2413,7 @@ export async function executeCompassTool(
     //
     // ONLY that class. An unexpected throw is still "Tool execution failed",
     // because calling a real crash temporary would be the opposite error.
-    if (err instanceof TripAccessUnavailableError) {
+    if (err instanceof HiddenUsersUnreadableError) return { unchecked: true, info: HIDDEN_USERS_UNREAD_INFO }; if (err instanceof TripAccessUnavailableError) {
       return {
         error:
           "That trip's records are unreadable right now — this is temporary and is NOT a statement " +
@@ -2424,3 +2424,156 @@ export async function executeCompassTool(
     return { error: "Tool execution failed.", detail: err instanceof Error ? err.message.slice(0, 200) : "unknown" };
   }
 }
+
+// census-discovery §107 sweep (DV-83 round 10, D-W11X2-73): what get_whos_around tells the model when a
+// presence read FAILED (getWhosAround's `unread`) and nobody could be shown. Appended so no cited line moves.
+const WHOS_AROUND_UNREAD_INFO = "Circle presence could not be checked right now (a read failed). Say it could not be checked; do not say nobody is around or that the user has no trips.";
+
+/** census-discovery §108 (DV-83 round 11, D-W11X2-76): people were found, but a presence read on the walk failed, so the list is partial. */
+const WHOS_AROUND_PARTIAL_INFO = "Only people who opted in to sharing appear, at the granularity they chose. Location is approximate only — never precise. Some circles could not be checked right now (a read failed), so this list may be incomplete: say so, and do not say these are the only people around.";
+
+/** census-discovery §108 (DV-83 round 11, D-W11X2-83): a read on the meetup walk or its reciprocity check failed, and no occasion could be built. */
+const MEETUP_UNREAD_INFO = "Meetup availability could not be checked right now (a read failed). Say it could not be checked; do not say nobody is sharing, that the user has no trips, or that the sharing is one-way.";
+/** census-discovery §108 (D-W11X2-83): occasions were found, but a read failed, so the list is partial. */
+const MEETUP_PARTIAL_INFO = "Each occasion exists only because both people are sharing presence with each other. Location is approximate only — repeat the `where` string exactly and never propose a place the result did not name. Some circles could not be checked right now (a read failed), so this list may be incomplete: say so.";
+
+// census-discovery §109 (DV-83 round 12, D-W11X2-88): get_circle_activity over a failed circle read — the
+// WHOS_AROUND_UNREAD_INFO rule on the sibling tool. The circles found are kept; the model is told what could not be checked.
+const CIRCLES_UNREAD_INFO = "Circle membership could not be checked right now (a read failed). Say it could not be checked; do not say the user is in no circles.";
+const CIRCLES_PARTIAL_INFO = "Some of the user's circles could not be checked right now (a read failed), so this list may be incomplete: say so, and do not say these are all of the user's circles.";
+const CIRCLE_MEMBERS_PARTIAL_INFO = "The circles are listed, but their member lists could not be read in full right now (a read failed): do not say a circle has no other members.";
+
+// census-discovery §109 (DV-83 round 12, D-W11X2-89): the sweep of the tools' "nothing found" sentences. Eight trip
+// tools and the search tools' priority-switch reading resolve the current trip through `toolGetCurrentTrip`, which says
+// "Trip context unavailable: …" when the user's trips could not be read — and each dropped that and told the model
+// "No active or upcoming trip.". A group recommendation over an unread circle or member list was "not a member" or a
+// ranking over a partial group, and an unread place was "Place not found.".
+function currentTripUnread(current: unknown): boolean {
+  const info = (current as { trip?: unknown; info?: unknown } | null)?.info;
+  return typeof info === "string" && info.startsWith("Trip context unavailable");
+}
+function noCurrentTripInfo(current: unknown): string {
+  return currentTripUnread(current)
+    ? `${String((current as { info: string }).info)} The user's trips could not be read: say so, and do not say the user has no trip.`
+    : "No active or upcoming trip.";
+}
+const GROUP_CIRCLES_UNREAD_INFO = "The user's circles could not be read right now (a read failed), so no group recommendation was made. Say it could not be checked; do not say the user is not in that circle.";
+const GROUP_MEMBERS_UNREAD_INFO = "The group's members could not be read right now (a read failed), so no group recommendation was made: a recommendation over part of the group could ignore a member's constraints.";
+const PLACE_UNREAD_INFO = "The place's details could not be read right now (a read failed). Say so; do not say the place does not exist.";
+
+// ── census-discovery §110 (DV-83 round 13, lane W11-X2, D-W11X2-92): an unread COMPASS_% flag read is not an empty catalog ──
+//
+// `runPipeline` reads the COMPASS_% flags uncached; a failed read answers the fail-safe map, which
+// engages every `COMPASS_<TYPE>_SAFETY_BLOCK`, and says so with `flagsUnreadable` (§103). The tools
+// read "zero survivors" as "every candidate intentionally gated out" and told the model "No matching
+// …". The ranking now carries the unread state as an EMPTY map — nothing is offered, and the safety
+// gate is never skipped (no fallback to the unranked list) — and each tool says it could not check.
+
+const TOOL_FLAGS_UNREAD_INFO = "Compass could not check its safety settings right now (a read failed), so nothing was offered. Say the catalog could not be checked; do not say there are none.";
+
+/** An empty ranking (every candidate withheld) that says the flag read failed. */
+function flagsUnreadRanking(): Map<string, ToolRankEntry> {
+  return Object.assign(new Map<string, ToolRankEntry>(), { flagsUnread: true as const });
+}
+
+/** True when the ranking is the empty one `flagsUnreadRanking` builds. */
+function rankingFlagsUnread(ranking: Map<string, ToolRankEntry> | null): boolean {
+  return ranking !== null && (ranking as { flagsUnread?: boolean }).flagsUnread === true;
+}
+
+// ── census-discovery §110 (DV-83 round 13, lane W11-X2, D-W11X2-95): a capped circle read is never the whole list ──
+
+const GROUP_CIRCLE_READ_CAP = 25;
+const GROUP_MEMBER_READ_CAP = 100;
+const CIRCLES_TRUNCATED_INFO = "The user is in more circles than Compass reads at once, so this is not the whole list: say so, and do not say these are all of the user's circles.";
+const CIRCLES_TRUNCATED_EMPTY_INFO = "Compass could not check all of the user's circle memberships at once, so it cannot say the user is in no circles. Say it could not be checked in full.";
+const CIRCLE_MEMBERS_TRUNCATED_INFO = "The member lists are shortened (a circle has more members than listed): do not say a circle has only these members.";
+const GROUP_CIRCLES_TRUNCATED_INFO = "The user is in more circles than Compass reads at once and that circle was not among those read, so no group recommendation was made. Say it could not be checked; do not say the user is not in that circle.";
+const GROUP_MEMBERS_TRUNCATED_INFO = "The circle has more members than Compass reads at once, so no group recommendation was made: a recommendation over part of the group could ignore a member's constraints.";
+
+/** The info for a circle list longer than read or shown. A failed circle read's own sentence already says the list may be incomplete. */
+function circleListBoundsInfo(u: StructuredContextUnread | undefined): { info?: string } {
+  if (!u || u.circles || !(u.circlesTruncated || u.circleMembersTruncated)) return {};
+  const parts = [
+    u.circlesTruncated ? CIRCLES_TRUNCATED_INFO : null,
+    u.circleMembers ? CIRCLE_MEMBERS_PARTIAL_INFO : u.circleMembersTruncated ? CIRCLE_MEMBERS_TRUNCATED_INFO : null,
+  ].filter((x): x is string => x !== null);
+  return { info: parts.join(" ") };
+}
+
+// ── census-discovery §110 (DV-83 round 13, lane W11-X2, D-W11X2-102): a read cut at its cap is not "none" ──
+// search_events reads `limit * 2` rows and drops hidden hosts; get_group_recommendation reads `limit * 3`
+// and drops what fails a member's constraint. When the read reached its cap and nothing survived, "No
+// matching …" was stated over rows never read.
+
+/** The answer when a capped read had no survivor: only the first `n` were checked. */
+function cappedReadInfo(n: number, what: string): string {
+  return `None of the first ${n} matching ${what} Compass checked could be offered; there may be more it did not read. Say none could be shown from what was checked, not that there are none.`;
+}
+
+// ── census-compass §34 (census-discovery §111, DV-83 round 14, lane W11-X2, D-W11X2-105): no tool offers a candidate that skipped block/mute filtering or the safety gate ──
+//
+// At /compass/ask a failed `blocks` or `user_mutes` read makes `getCompassProfile` throw (it fails
+// closed), and the route hands `null` to every tool. `rankToolCandidates` answered `null` for a null
+// profile and for a thrown pipeline, and `applyToolRanking` reads `null` as "unranked: offer the raw
+// list" — so the search tools offered rows no safety gate had seen; `get_circle_activity` filtered on an
+// EMPTY hidden set; and `refreshHiddenUsers` built a profile from the block lists alone, which the
+// pipeline ranked on with an invented safe-return state and age. Each is now an EMPTY ranking marked
+// `unchecked` (nothing is offered, and the tool says it could not check), a read hidden set, or a
+// named refusal.
+
+const TOOL_SAFETY_UNCHECKED_INFO = "Compass could not check the user's profile, block and mute lists or its safety gate right now (a read failed), so nothing was offered. Say the results could not be checked; do not say there are none.";
+const HIDDEN_USERS_UNREAD_INFO = "The user's block and mute lists could not be read right now, so Compass could not check who may be shown and nothing involving other people was offered. Say it could not be checked; do not say there is nobody or nothing.";
+
+/** Profiles made up from the block and mute lists alone (the ask-time profile could not be read). */
+const SYNTHESIZED_PROFILES = new WeakSet<object>();
+function markSynthesized<T extends object>(profile: T): T {
+  SYNTHESIZED_PROFILES.add(profile);
+  return profile;
+}
+function isSynthesizedProfile(profile: CompassProfile | null): boolean {
+  return profile !== null && SYNTHESIZED_PROFILES.has(profile);
+}
+
+/** An empty ranking (every candidate withheld) that says the profile or the pipeline could not be read. */
+function uncheckedRanking(): Map<string, ToolRankEntry> {
+  return Object.assign(new Map<string, ToolRankEntry>(), { unchecked: true as const });
+}
+function rankingUnchecked(ranking: Map<string, ToolRankEntry> | null): boolean {
+  return ranking !== null && (ranking as { unchecked?: boolean }).unchecked === true;
+}
+
+/** `refreshHiddenUsers` could not read the lists and had no snapshot: the dispatcher says so. */
+class HiddenUsersUnreadableError extends Error {
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : "hidden-user lists unavailable and no snapshot to fall back to");
+    this.name = "HiddenUsersUnreadableError";
+  }
+}
+
+// ── census-discovery §111 (DV-83 round 14, lane W11-X2, D-W11X2-113): a failed circle-list read never hides the member-list sentence ──
+// With `u.circles` set, `get_circle_activity` said only that the LIST may be incomplete, and
+// `circleListBoundsInfo` adds nothing then, so an owned circle served with no handles over a failed member
+// read (or eight of nine) reached the model with nothing saying its members were unread or shortened.
+function circlesPartialInfo(u: StructuredContextUnread | undefined): string {
+  const members = u?.circleMembers ? CIRCLE_MEMBERS_PARTIAL_INFO : u?.circleMembersTruncated ? CIRCLE_MEMBERS_TRUNCATED_INFO : null;
+  return members ? `${CIRCLES_PARTIAL_INFO} ${members}` : CIRCLES_PARTIAL_INFO;
+}
+
+// ── census-discovery §111 (DV-83 round 14, lane W11-X2, D-W11X2-117, D-W11X2-119): a cut walk or a capped list is said ──
+// The presence walk checks three trips, three going events, five contexts, twenty members per context and twenty
+// people (CompassSocialEngine marks every cut `truncated`); "nobody is sharing" is said only over a walk that was
+// not cut. `check_trip_conflicts`' planned items were an unordered `.limit(20)` served as the plan.
+const WHOS_AROUND_CUT_EMPTY_INFO = "Compass checked only some of the user's trips and circles (it reads a few at a time), and nobody there is sharing their presence. Say nobody could be found in the circles checked; do not say nobody is around.";
+const WHOS_AROUND_CUT_INFO = "Only people who opted in to sharing appear, at the granularity they chose. Location is approximate only — never precise. Compass checked only some of the user's trips and circles, so this is not everyone who may be around: say so.";
+const MEETUP_CUT_EMPTY_INFO = "Compass checked only some of the user's trips and circles (it reads a few at a time), and nobody there is sharing a current presence to build a meetup on. Say none could be found in the circles checked; do not say there is nobody.";
+const MEETUP_CUT_INFO = "Each occasion exists only because both people are sharing presence with each other. Location is approximate only — repeat the `where` string exactly and never propose a place the result did not name. Compass checked only some of the user's trips and circles, so these are not all the occasions: say so.";
+const PLANNED_ITEMS_READ_CAP = 20;
+const PLANNED_ITEMS_CUT_INFO = "These are not all of the planned items on the overlapping trips in that range (there are more than Compass reads at once): do not say these are all of them, or that a day without one listed is free.";
+
+// ── census-discovery §118 (DV-83 round 21, lane W11-X2, B22): an unread going count is no capacity fact ──
+// `get_group_recommendation` judged "room for the whole group" on the cached `events.going_count`, which a failed recount
+// leaves stale by design, and told the model "No candidates satisfy the whole group's constraints right now." with
+// `not_enough_capacity_for_group` while a seat was open. It recounts live; when that read fails, a capped event is held
+// back as `capacity_could_not_be_checked`, and this is what the model is told when nothing else could be offered.
+const GROUP_CAPACITY_UNREAD_INFO = "Compass could not check how many people are going to the events it found (a read failed), so it could not tell which have room for the whole group and offered none of those. Say capacity could not be checked; do not say no event has room or that there are none.";

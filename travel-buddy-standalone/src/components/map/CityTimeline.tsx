@@ -63,10 +63,10 @@ export interface CityTimelineProps {
   tz?: string;
   style?: StyleProp<ViewStyle>;
   /** Hide the axis end labels in very tight layouts. */
-  compact?: boolean;
+  compact?: boolean; /** census-discovery §115 (DV-83, sweep SW9): the read behind the timeline was not whole — an empty strip is not "no trend" */ notWhole?: boolean;
 }
 
-export function CityTimeline({ timeline, tz, style, compact = false }: CityTimelineProps) {
+export function CityTimeline({ timeline, tz, style, compact = false, notWhole = false }: CityTimelineProps) {
   if (!timeline) return null;
 
   const start = Date.parse(timeline.horizonStartsAt);
@@ -100,7 +100,7 @@ export function CityTimeline({ timeline, tz, style, compact = false }: CityTimel
         {empty && (
           <View style={s.emptyOverlay} pointerEvents="none">
             <Text style={s.emptyText} numberOfLines={1}>
-              {timeline.qualifyingObjects > 0
+              {notWhole ? 'City trend couldn’t be checked here' : timeline.qualifyingObjects > 0  /* census-discovery §115 (SW9) */
                 ? 'Not enough confirmed signal for a city trend yet'
                 : 'No city trend to show'}
             </Text>

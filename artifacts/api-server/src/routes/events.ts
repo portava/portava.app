@@ -189,8 +189,8 @@ import { getServiceClient } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
 import { detectAndStoreLanguage, invalidateContentTranslations } from "../services/contentTranslation.js";
 import { nameVisibilitySet, sanitizeIdentity } from "../lib/publicIdentity.js";
-import { isFlagEnabled, isKillSwitchEngaged } from "../lib/featureFlags.js"; import { readFlagState } from "../lib/capability/schemaCapability.js";  // census-trust §30: eventTrustGatesRun
-import { isBlockedBetween } from "../lib/blockGuard.js";
+import { isFlagEnabled, isKillSwitchEngaged } from "../lib/featureFlags.js";
+import { isBlockedBetween, readBlockBetween } from "../lib/blockGuard.js"; import { readFlagState } from "../lib/capability/schemaCapability.js";  // census-discovery §111 (DV-83, D-W11X2-107)
 import {
   decideEventTransition,
   eventTransitionRefusalMessage,
@@ -219,7 +219,7 @@ import {
 } from "../services/trust/TrustEventService.js";
 import { rankCandidates } from "../lib/portavaRank.js";
 import type { RankCandidate, ViewerContext } from "../lib/portavaRank.js";
-import { logImpression } from "../lib/rankLog.js";
+import { logImpression } from "../lib/rankLog.js"; import { nearBox, applyNearBox, type NearBox } from "../lib/nearBox.js"; import { readGoingRsvpsForEvents, readEventRsvps, readEventWaitlist, liveEventCounters, readEventRatings } from "../lib/eventRowReads.js";  // census-discovery §116 (sweep SW13); §117 (B21, SW19)
 import { getDisplayTrustScores, getTrustProfileResult } from "../services/trust/TrustScoreService.js";
 import {
   toPrivateEventPreview,
@@ -340,11 +340,11 @@ async function isBlocked(sc: any, userA: string, userB: string): Promise<boolean
 
 /** Get going_count for event — `null` when event_rsvps cannot be read (census-trust §30.8: was 0, so every capacity check admitted) */
 async function getGoingCount(sc: any, eventId: string): Promise<number | null> {
-  const { data, error } = await sc
-    .from("event_rsvps")
-    .select("user_id")
-    .eq("event_id", eventId)
-    .eq("status", "going");
+  const { data, error } = await readEventRsvps(
+    sc,
+    eventId,
+    { status: "going" },
+  );  // census-discovery §117 (DV-83, B21): read whole — a read cut at db-max-rows is null here, never a cut count
   return error ? null : ((data as any[]) ?? []).length;
 }
 
@@ -485,7 +485,7 @@ function sendWaitlistUnavailable(req: any, res: any, eventId: string, where: str
  * count alone.
  */
 async function recountEventWaitlist(sc: any, eventId: string, req: any, extra?: Record<string, unknown>): Promise<void> {
-  const { data: rows, error } = await sc.from("event_waitlist").select("user_id").eq("event_id", eventId);
+  const { data: rows, error } = await readEventWaitlist(sc, eventId);  // census-discovery §117 (B21): read whole
   if (error) {
     req.log?.warn({ err: error, eventId }, "waitlist recount failed; leaving events.waitlist_count unchanged");
     return;
@@ -666,29 +666,29 @@ async function promoteNextWaitlisted(sc: any, eventId: string, req?: any): Promi
 // any user from joining through a back-door that bypasses server-side gates.
 
 type EligibilityOk   = { ok: true };
-type EligibilityFail = { ok: false; errorCode: string; message: string; unavailable?: true };  // census-trust §30.6: `unavailable` = a gate input could not be read — a statement about the read, not the user
+type EligibilityFail = { ok: false; errorCode: string; message: string; /** census-discovery §110 (D-W11X2-93): present only when a check could not be READ — the refusal is not a verdict about the viewer */ unread?: true };
 
 export async function checkEventEligibility(
   sc: any,
   ev: any,            // full events row (must include host_id, age_min, age_max, trust_score_min, verified_only)
-  userId: string,
+  userId: string, rerun?: "staff" | "flag",  // census-discovery §111 (D-W11X2-107): set only on the re-check after an unread staff read or gate flag
 ): Promise<EligibilityOk | EligibilityFail> {
   // Event host always has full access — bypass all viewer gates
   if (userId === ev.host_id) return { ok: true };
 
   // Check if user is a co_host or moderator — they also bypass viewer gates
-  const { data: staffRole } = await sc
+  const { data: staffRole, error: staffErr } = rerun ? { data: null, error: null } : await sc
     .from("event_roles")
     .select("role")
     .eq("event_id", ev.id)
     .eq("user_id", userId)
     .in("role", ["co_host", "moderator"])
     .maybeSingle();
-  if (staffRole) return { ok: true };
+  if (staffRole) return { ok: true }; if (staffErr) return eligibilityUnread(await checkEventEligibility(sc, ev, userId, "staff"));  // census-discovery §111 (DV-83, D-W11X2-107): a staff role would have bypassed every gate below, so a refusal over an unread staff read is not a verdict
 
   // Block check
-  if (await isBlocked(sc, userId, ev.host_id)) {
-    return { ok: false, errorCode: "forbidden", message: "Cannot join this event" };
+  const blockRead = await readBlockBetween(sc, userId, ev.host_id); if (blockRead.blocked) {  // census-discovery §111 (DV-83, D-W11X2-107): three-state
+    return blockRead.unread ? { ok: false, errorCode: "forbidden", message: EVENT_ACCESS_UNAVAILABLE_MESSAGE, unread: true } : { ok: false, errorCode: "forbidden", message: "Cannot join this event" };
   }
   // Ban check. FAIL CLOSED, for the same reason as the trust_profiles read
   // below: supabase-js RESOLVES on a database error, so discarding `error` here
@@ -704,15 +704,15 @@ export async function checkEventEligibility(
     .eq("role", "banned")
     .maybeSingle();
   if (bannedErr) {
-    return { ok: false, errorCode: "forbidden", message: "Event access check is temporarily unavailable", unavailable: true };
+    return { ok: false, errorCode: "forbidden", message: "Event access check is temporarily unavailable", unread: true };
   }
   if (bannedRole) return { ok: false, errorCode: "forbidden", message: "You are banned from this event" };
 
   // Trust / age / verified gates
-  const trustGatesEnabled = await eventTrustGatesRun(sc);  // census-trust §30: an UNREAD flag keeps the gates on (was two-state: unread = "gates off")
+  const trustGatesFlag = rerun === "flag" ? "on" : await readFlagState(sc, "events_trust_gates_enabled"); if (trustGatesFlag === "unreadable") return eligibilityUnread(await checkEventEligibility(sc, ev, userId, "flag")); const trustGatesEnabled = trustGatesFlag === "on";  // census-discovery §111 (DV-83, D-W11X2-107): an unread gate flag is not "gates off" — the gates run, and what they refuse is unread
   if (trustGatesEnabled) {
     if (ev.verified_only) {
-      const { data: profile, error: profileErr } = await sc.from("profiles").select("verified").eq("id", userId).maybeSingle(); if (profileErr) return { ok: false, errorCode: "forbidden", message: "Verification check is temporarily unavailable for this event", unavailable: true };  // census-trust §30.6: a failed read is not "unverified"
+      const { data: profile, error: verifiedErr } = await sc.from("profiles").select("verified").eq("id", userId).maybeSingle(); if (verifiedErr) return { ok: false, errorCode: "forbidden", message: "Verification check is temporarily unavailable for this event", unread: true };  // §110 (D-W11X2-93): a failed read is not "not verified"
       if (!(profile as any)?.verified) {
         return { ok: false, errorCode: "forbidden", message: "This event is for verified users only" };
       }
@@ -729,7 +729,7 @@ export async function checkEventEligibility(
       // gate evaluates) from "could not read" (gate refuses).
       const tpRead = await getTrustProfileResult(sc, userId);
       if (tpRead.state === "unavailable") {
-        return { ok: false, errorCode: "forbidden", message: "Trust check is temporarily unavailable for this event", unavailable: true };
+        return { ok: false, errorCode: "forbidden", message: "Trust check is temporarily unavailable for this event", unread: true };
       }
       const score = (tpRead.state === "ok" ? tpRead.profile.overall_score : null) ?? TRUST_SCORE_WHEN_NO_PROFILE;
       if (score < ev.trust_score_min) {
@@ -745,7 +745,7 @@ export async function checkEventEligibility(
       // read that failed. The seam answers all three cases distinctly.
       const gateAge = await resolveGateAge(sc, userId);
       if (gateAge.state === "unreadable") {
-        return { ok: false, errorCode: "forbidden", message: AGE_CHECK_UNAVAILABLE_MESSAGE, unavailable: true };
+        return { ok: false, errorCode: "forbidden", message: AGE_CHECK_UNAVAILABLE_MESSAGE, unread: true };
       }
       if (gateAge.state === "verified_minor") {
         return { ok: false, errorCode: "forbidden", message: AGE_NOT_VERIFIED_ADULT_MESSAGE };
@@ -1013,7 +1013,7 @@ router.get("/events", async (req, res) => {
   const category = (req.query.category as string) ?? null;
 
   const dateFrom = (req.query.dateFrom as string) ?? null;
-  const dateTo   = (req.query.dateTo as string) ?? null;
+  const dateTo   = (req.query.dateTo as string) ?? null; const near = eventsNearFilter(req.query);  // census-discovery §115 (DV-83, B12): nearLat/nearLng/nearRadiusKm are honoured, never ignored
 
   // Fetch a larger candidate pool so the ranker has meaningful diversity to
   // work with — the final page slice happens after rankCandidates().
@@ -1035,12 +1035,12 @@ router.get("/events", async (req, res) => {
     .in("state", state === "all" ? BROWSE_STATES : [state])
     .in("visibility", ["public", "friends_only"])
     .order("starts_at", { ascending: true, nullsFirst: false })
-    .limit(RANK_POOL_SIZE);
+    .limit(RANK_POOL_SIZE + 1);  // census-discovery §115 (B12): one row past the pool, so a pool cut at its cap is known (the pool itself is unchanged)
 
   if (city)     query = query.ilike("city", `%${city}%`);
   if (category) query = query.eq("category", category);
   if (dateFrom) query = query.gte("starts_at", dateFrom);
-  if (dateTo)   query = query.lte("starts_at", dateTo);
+  if (dateTo)   query = query.lte("starts_at", dateTo); if (near) query = eventsNearQuery(query, near);  // §115 (B12); census-discovery §116 (B18): the box wraps the antimeridian and opens over a pole
 
   const { data: events, error } = await query;
 
@@ -1051,7 +1051,7 @@ router.get("/events", async (req, res) => {
   // staff bypass, ban, and trust/age/verified gates) but with a fixed number of
   // queries regardless of page size — important now that city is optional and
   // the default feed can return a full unfiltered page.
-  const rows = (events as any[]) ?? [];
+  const poolCut = ((events as any[]) ?? []).length > RANK_POOL_SIZE; const rows = ((events as any[]) ?? []).slice(0, RANK_POOL_SIZE).filter((e: any) => !near || withinEventsNear(e, near));  // census-discovery §115 (B12): the pool as before; a cut pool is said
   const otherHostIds = [...new Set(rows.map((e: any) => e.host_id as string))].filter((h) => h !== user.id);
 
   // Blocks in either direction. Both queries discarded `error`, so an
@@ -1076,14 +1076,14 @@ router.get("/events", async (req, res) => {
     rows.filter((e: any) => e.visibility === "friends_only" && e.host_id !== user.id)
         .map((e: any) => e.host_id as string),
   )];
-  const friendHosts = new Set<string>();
+  const friendHosts = new Set<string>(); let friendsUnread = false;  // census-discovery §115 (B12): a friends-only event withheld over a failed friendships read is said
   if (friendsOnlyHosts.length > 0) {
     const [f1, f2] = await Promise.all([
       sc.from("user_friendships").select("user_b").eq("user_a", user.id).in("user_b", friendsOnlyHosts),
       sc.from("user_friendships").select("user_a").eq("user_b", user.id).in("user_a", friendsOnlyHosts),
     ]);
     for (const f of (((f1 as any).data as any[]) ?? [])) friendHosts.add(f.user_b as string);
-    for (const f of (((f2 as any).data as any[]) ?? [])) friendHosts.add(f.user_a as string);
+    for (const f of (((f2 as any).data as any[]) ?? [])) friendHosts.add(f.user_a as string); if ((f1 as any).error || (f2 as any).error) friendsUnread = true;
   }
 
   // Viewer's roles across the listed events (staff bypass / banned)
@@ -1097,18 +1097,18 @@ router.get("/events", async (req, res) => {
   // — otherwise the Pulse card and the detail screen can show two different
   // numbers for the same event. Overwrite the cached column with a live
   // per-event count before ranking/formatting.
-  if (allEventIds.length > 0) {
-    const { data: liveGoingRows } = await sc
-      .from("event_rsvps")
-      .select("event_id")
-      .in("event_id", allEventIds)
-      .eq("status", "going");
+  let goingUnread = false; const waitlistUnread = await liveEventCounters(sc, rows, { waitlist: true }); if (allEventIds.length > 0) {  // census-discovery §116 (DV-83, B14): a failed live count is named, never served as 0; §117 (B20): the waitlist is recounted live too
+    const { data: liveGoingRows, error: liveGoingErr } = await readGoingRsvpsForEvents(
+      sc,
+      allEventIds,
+    );  // census-discovery §117 (DV-83, B21): read whole — a read cut at db-max-rows is an error here, so the cached
+        // going_count stays and the read is named, never a cut 0 that is served and ranked
     const liveGoingCounts = new Map<string, number>();
     for (const r of ((liveGoingRows as any[]) ?? [])) {
       const eid = r.event_id as string;
       liveGoingCounts.set(eid, (liveGoingCounts.get(eid) ?? 0) + 1);
     }
-    for (const ev of rows) {
+    if (liveGoingErr || !Array.isArray(liveGoingRows)) goingUnread = true; else for (const ev of rows) {  // §116 (B14): the cached going_count stays
       (ev as any).going_count = liveGoingCounts.get(ev.id as string) ?? 0;
     }
   }
@@ -1204,7 +1204,7 @@ router.get("/events", async (req, res) => {
     const [rsvpResult, waitlistResult] = await Promise.all([
       sc.from("event_rsvps").select("event_id, status").eq("user_id", user.id).in("event_id", eventIds),
       sc.from("event_waitlist").select("event_id, position").eq("user_id", user.id).in("event_id", eventIds),
-    ]);
+    ]); if ((rsvpResult as any).error || (waitlistResult as any).error) { req.log?.error({ err: (rsvpResult as any).error ?? (waitlistResult as any).error }, "list events: the viewer's own RSVP or waitlist read failed — refusing"); sendError(res, "degraded_unavailable", EVENT_LIST_UNAVAILABLE); return; }  // census-discovery §119 (DV-83 round 22, B33): never "not going" or "not waitlisted" on every card
     for (const r of ((rsvpResult as any).data as any[]) ?? []) {
       rsvpMap[(r as any).event_id as string] = (r as any).status as string;
     }
@@ -1216,23 +1216,23 @@ router.get("/events", async (req, res) => {
   // Batch-fetch saved state for this user across these events
   let savedEventIds = new Set<string>();
   if (eventIds.length > 0) {
-    try {
-      const { data: userCols } = await sc
+    try { const { data: evSaves, error: evSavesErr } = await sc.from("event_saves").select("event_id").eq("user_id", user.id).in("event_id", eventIds); if (evSavesErr) throw evSavesErr; for (const s of (evSaves ?? []) as any[]) savedEventIds.add(s.event_id as string);  // census-discovery §122 (DV-83 round 23, B35): the store the events bookmark writes counts too
+      const { data: userCols, error: userColsErr } = await sc
         .from("collections")
         .select("id")
-        .eq("owner_id", user.id);
+        .eq("owner_id", user.id); if (userColsErr) throw userColsErr;  // §119 (B33)
       const colIds = ((userCols ?? []) as any[]).map((c) => c.id as string);
       if (colIds.length > 0) {
-        const { data: savedItems } = await sc
+        const { data: savedItems, error: savedItemsErr } = await sc
           .from("collection_items")
           .select("entity_id")
           .eq("entity_type", "event")
           .in("collection_id", colIds)
-          .in("entity_id", eventIds);
+          .in("entity_id", eventIds); if (savedItemsErr) throw savedItemsErr;  // §119 (B33)
         for (const s of (savedItems ?? []) as any[]) savedEventIds.add(s.entity_id as string);
       }
-    } catch {
-      // non-fatal — isSaved defaults to false
+    } catch (err) {
+      req.log?.error({ err }, "list events: the viewer's saved events read failed — refusing"); sendError(res, "degraded_unavailable", EVENT_LIST_UNAVAILABLE); return;  // census-discovery §119 (DV-83 round 22, B33): never isSaved false on every card over a failed read
     }
   }
 
@@ -1333,7 +1333,7 @@ router.get("/events", async (req, res) => {
     })),
     page,
     limit,
-    sessionId,
+    sessionId, ...(poolCut || friendsUnread || rankedEvents.length > offset + limit ? { truncated: true as const } : {}), ...(goingUnread || waitlistUnread.length > 0 ? { failedSources: [...(goingUnread ? ["event_rsvps"] : []), ...waitlistUnread] } : {}),  // census-discovery §115 (DV-83, B12): an answer that is not the whole list says so; a whole one is byte-identical; §116 (B14): a failed count read is named
   });
 });
 
@@ -1376,19 +1376,19 @@ router.get("/events/city/:city", async (req, res) => {
   const { data: events, error } = await query;
   if (error) { req.log.error({ err: error }, "city events"); sendError(res, "db_error", error.message); return; }
 
-  const filtered: any[] = [];
+  const filtered: any[] = []; let withheldUnread = false;  // census-discovery §122 (DV-83 round 23, SW28): an event withheld over a failed read is said, as /search says it (§118 B28)
   for (const ev of (events as any[]) ?? []) {
-    if (await isBlocked(sc, user.id, (ev as any).host_id)) continue;
+    { const blk = await readBlockBetween(sc, user.id, (ev as any).host_id); if (blk.unread) withheldUnread = true; if (blk.blocked) continue; }  // §122 (SW28)
     if ((ev as any).visibility === "friends_only" && (ev as any).host_id !== user.id) {
-      const { data: friendship } = await sc
+      const { data: friendship, error: friendshipErr } = await sc
         .from("user_friendships")
         .select("user_a")
         .or(`and(user_a.eq.${user.id},user_b.eq.${(ev as any).host_id}),and(user_b.eq.${user.id},user_a.eq.${(ev as any).host_id})`)
-        .maybeSingle();
+        .maybeSingle(); if (friendshipErr) withheldUnread = true;  // §122 (SW28)
       if (!friendship) continue;
     }
     const elig = await checkEventEligibility(sc, ev as any, user.id);
-    if (!elig.ok) continue;
+    if (!elig.ok) { if ((elig as any).unread) withheldUnread = true; continue; }  // §122 (SW28): a verdict that could not be read
     filtered.push(ev);
   }
 
@@ -1399,7 +1399,7 @@ router.get("/events/city/:city", async (req, res) => {
     const [cityRsvpResult, cityWaitlistResult] = await Promise.all([
       sc.from("event_rsvps").select("event_id, status").eq("user_id", user.id).in("event_id", cityEventIds),
       sc.from("event_waitlist").select("event_id, position").eq("user_id", user.id).in("event_id", cityEventIds),
-    ]);
+    ]); if ((cityRsvpResult as any).error || (cityWaitlistResult as any).error) { req.log?.error({ err: (cityRsvpResult as any).error ?? (cityWaitlistResult as any).error }, "city events: the viewer's own RSVP or waitlist read failed — refusing"); sendError(res, "degraded_unavailable", EVENT_LIST_UNAVAILABLE); return; }  // §119 (B33)
     for (const r of ((cityRsvpResult as any).data as any[]) ?? []) {
       cityRsvpMap[(r as any).event_id as string] = (r as any).status as string;
     }
@@ -1411,18 +1411,18 @@ router.get("/events/city/:city", async (req, res) => {
   // BUG AY fix: same cached-vs-live going_count drift as the main list
   // endpoint — recompute from event_rsvps so this alias never disagrees
   // with the detail screen either.
-  if (cityEventIds.length > 0) {
-    const { data: liveGoingRows } = await sc
-      .from("event_rsvps")
-      .select("event_id")
-      .in("event_id", cityEventIds)
-      .eq("status", "going");
+  let cityGoingUnread = false; const cityWaitlistUnread = await liveEventCounters(sc, filtered, { waitlist: true }); if (cityEventIds.length > 0) {  // census-discovery §116 (DV-83, B14): the same on the city alias; §117 (B20): and the waitlist
+    const { data: liveGoingRows, error: liveGoingErr } = await readGoingRsvpsForEvents(
+      sc,
+      cityEventIds,
+    );  // census-discovery §117 (DV-83, B21): read whole, the same on the city alias
+        // (a cut read keeps the cached going_count and is named)
     const liveGoingCounts = new Map<string, number>();
     for (const r of ((liveGoingRows as any[]) ?? [])) {
       const eid = (r as any).event_id as string;
       liveGoingCounts.set(eid, (liveGoingCounts.get(eid) ?? 0) + 1);
     }
-    for (const ev of filtered) {
+    if (liveGoingErr || !Array.isArray(liveGoingRows)) cityGoingUnread = true; else for (const ev of filtered) {  // §116 (B14): the cached going_count stays
       (ev as any).going_count = liveGoingCounts.get(ev.id as string) ?? 0;
     }
   }
@@ -1434,7 +1434,7 @@ router.get("/events/city/:city", async (req, res) => {
       myWaitlistPosition: cityWaitlistPositionMap[e.id] ?? null,
     })),
     page,
-    limit,
+    limit, ...(cityGoingUnread || cityWaitlistUnread.length > 0 ? { failedSources: [...(cityGoingUnread ? ["event_rsvps"] : []), ...cityWaitlistUnread] } : {}), ...(withheldUnread ? { truncated: true as const } : {}),  // §116 (B14); §117 (B20); §122 (SW28)
   });
 });
 
@@ -1457,52 +1457,52 @@ router.get("/events/nearby", async (req, res) => {
     sendError(res, "invalid_payload", "lat and lng query params are required"); return;
   }
 
-  // ~1 degree latitude ≈ 111 km; longitude offset varies by lat
-  const latDelta = radiusKm / 111;
-  const lngDelta = radiusKm / (111 * Math.cos((lat * Math.PI) / 180));
+  // The query box around the point: lib/nearBox (census-discovery §116, DV-83 sweep SW13).
+  const box = nearBox(lat, lng, radiusKm);
+
 
   const page   = Math.max(1, parseInt((req.query.page as string) ?? "1"));
   const limit  = Math.min(50, Math.max(1, parseInt((req.query.limit as string) ?? "20")));
   const offset = (page - 1) * limit;
 
-  const { data: events, error } = await sc
+  const { data: events, error } = await applyNearBox(sc
     .from("events")
     .select("*")
     .not("state", "in", '("draft","cancelled","archived")')
-    .in("visibility", ["public","friends_only"])
-    .gte("location_lat", lat - latDelta)
-    .lte("location_lat", lat + latDelta)
-    .gte("location_lng", lng - lngDelta)
-    .lte("location_lng", lng + lngDelta)
+    .in("visibility", ["public","friends_only"]), box, "location_lat", "location_lng")
+    // census-discovery §116 (sweep SW13): the circle's exact box replaces the four bounds that stood here — lat ± r/111 and
+    // lng ± r/(111·cos lat), which did not wrap at the antimeridian: two longitude ranges across it now, and every
+    // longitude when the circle holds a pole. The box still only prefilters: this route lists what falls in it, as
+    // before.
     .order("starts_at", { ascending: true, nullsFirst: false })
     .range(offset, offset + limit - 1);
 
   if (error) { req.log.error({ err: error }, "nearby events"); sendError(res, "db_error", error.message); return; }
 
-  const filtered: any[] = [];
+  const filtered: any[] = []; let withheldUnread = false;  // census-discovery §122 (DV-83 round 23, SW28): an event withheld over a failed read is said, as /search says it (§118 B28)
   for (const ev of (events as any[]) ?? []) {
-    if (await isBlocked(sc, user.id, (ev as any).host_id)) continue;
+    { const blk = await readBlockBetween(sc, user.id, (ev as any).host_id); if (blk.unread) withheldUnread = true; if (blk.blocked) continue; }  // §122 (SW28)
     if ((ev as any).visibility === "friends_only" && (ev as any).host_id !== user.id) {
-      const { data: friendship } = await sc
+      const { data: friendship, error: friendshipErr } = await sc
         .from("user_friendships")
         .select("user_a")
         .or(`and(user_a.eq.${user.id},user_b.eq.${(ev as any).host_id}),and(user_b.eq.${user.id},user_a.eq.${(ev as any).host_id})`)
-        .maybeSingle();
+        .maybeSingle(); if (friendshipErr) withheldUnread = true;  // §122 (SW28)
       if (!friendship) continue;
     }
     const elig = await checkEventEligibility(sc, ev as any, user.id);
-    if (!elig.ok) continue;
+    if (!elig.ok) { if ((elig as any).unread) withheldUnread = true; continue; }  // §122 (SW28): a verdict that could not be read
     filtered.push(ev);
   }
 
-  const nearbyEventIds = filtered.map((e: any) => e.id as string);
+  const nearbyEventIds = filtered.map((e: any) => e.id as string); const nearbyCountsUnread = await liveEventCounters(sc, filtered);  // census-discovery §117 (DV-83, B20): both cached counters recounted live; a failed read keeps the cached one, named
   let nearbyRsvpMap: Record<string, string> = {};
   let nearbyWaitlistPositionMap: Record<string, number> = {};
   if (nearbyEventIds.length > 0) {
     const [nearbyRsvpResult, nearbyWaitlistResult] = await Promise.all([
       sc.from("event_rsvps").select("event_id, status").eq("user_id", user.id).in("event_id", nearbyEventIds),
       sc.from("event_waitlist").select("event_id, position").eq("user_id", user.id).in("event_id", nearbyEventIds),
-    ]);
+    ]); if ((nearbyRsvpResult as any).error || (nearbyWaitlistResult as any).error) { req.log?.error({ err: (nearbyRsvpResult as any).error ?? (nearbyWaitlistResult as any).error }, "nearby events: the viewer's own RSVP or waitlist read failed — refusing"); sendError(res, "degraded_unavailable", EVENT_LIST_UNAVAILABLE); return; }  // §119 (B33)
     for (const r of ((nearbyRsvpResult as any).data as any[]) ?? []) {
       nearbyRsvpMap[(r as any).event_id as string] = (r as any).status as string;
     }
@@ -1518,7 +1518,7 @@ router.get("/events/nearby", async (req, res) => {
       myWaitlistPosition: nearbyWaitlistPositionMap[e.id] ?? null,
     })),
     page,
-    limit,
+    limit, ...(nearbyCountsUnread.length > 0 ? { failedSources: nearbyCountsUnread } : {}), ...(withheldUnread ? { truncated: true as const } : {}),  // §117 (B20); §122 (SW28)
   });
 });
 
@@ -1541,44 +1541,44 @@ router.get("/events/search", async (req, res) => {
 
   // Fetch without DB-level pagination so friendship/block filtering produces a
   // consistent result set before we slice — DB range + post-filter double-slices.
-  const { data: byTitle } = await sc
+  const { data: byTitle, error: byTitleErr } = await sc
     .from("events")
     .select("*")
     .not("state", "in", '("draft","cancelled","archived")')
     .in("visibility", ["public","friends_only"])
     .ilike("title", `%${q}%`)
-    .order("starts_at", { ascending: true, nullsFirst: false });
+    .order("starts_at", { ascending: true, nullsFirst: false }).limit(EVENTS_SEARCH_POOL + 1);  // census-discovery §118 (B28): bounded, one row past the pool so a cut read is known
 
-  const { data: byCity } = await sc
+  const { data: byCity, error: byCityErr } = await sc
     .from("events")
     .select("*")
     .not("state", "in", '("draft","cancelled","archived")')
     .in("visibility", ["public","friends_only"])
     .ilike("city", `%${q}%`)
-    .order("starts_at", { ascending: true, nullsFirst: false });
+    .order("starts_at", { ascending: true, nullsFirst: false }).limit(EVENTS_SEARCH_POOL + 1);
 
-  // Merge, dedupe, enforce friendship + block + eligibility — then paginate
+  if (byTitleErr || byCityErr) { req.log?.error({ err: byTitleErr ?? byCityErr }, "event search: a search read failed — refusing"); sendError(res, "degraded_unavailable", EVENT_LIST_UNAVAILABLE); return; } let searchCut = ((byTitle as any[]) ?? []).length > EVENTS_SEARCH_POOL || ((byCity as any[]) ?? []).length > EVENTS_SEARCH_POOL;  // census-discovery §118 (DV-83 round 21, B28): a failed search is not "no events", a cut one says so. Merge, dedupe, enforce friendship + block + eligibility — then paginate
   const seen = new Set<string>();
   const merged: any[] = [];
   for (const ev of [...((byTitle as any[]) ?? []), ...((byCity as any[]) ?? [])]) {
     if (seen.has((ev as any).id)) continue;
     seen.add((ev as any).id);
-    if (await isBlocked(sc, user.id, (ev as any).host_id)) continue;
+    { const blk = await readBlockBetween(sc, user.id, (ev as any).host_id); if (blk.unread) searchCut = true; if (blk.blocked) continue; }  // §118 (B28): withheld over a failed block read, and said
     if ((ev as any).visibility === "friends_only" && (ev as any).host_id !== user.id) {
-      const { data: friendship } = await sc
+      const { data: friendship, error: friendshipErr } = await sc
         .from("user_friendships")
         .select("user_a")
         .or(`and(user_a.eq.${user.id},user_b.eq.${(ev as any).host_id}),and(user_b.eq.${user.id},user_a.eq.${(ev as any).host_id})`)
-        .maybeSingle();
+        .maybeSingle(); if (friendshipErr) searchCut = true;  // §118 (B28)
       if (!friendship) continue;
     }
     const elig = await checkEventEligibility(sc, ev as any, user.id);
-    if (!elig.ok) continue;
+    if (!elig.ok) { if ((elig as any).unread) searchCut = true; continue; }
     merged.push(ev);
   }
 
   // Single pagination step after full merge+filter
-  res.json({ events: merged.slice(offset, offset + limit).map((e: any) => formatEvent(e, user.id)), page, limit, q });
+  const searchPage = merged.slice(offset, offset + limit); const searchCountsUnread = await liveEventCounters(sc, searchPage); res.json({ events: searchPage.map((e: any) => formatEvent(e, user.id)), page, limit, q, ...countsUnreadKey(searchCountsUnread), ...(searchCut ? { truncated: true as const } : {}) });  // census-discovery §117 (DV-83, sweep SW18): the cached counters recounted live; a failed read keeps them, named
 });
 
 // ── GET /api/events/me ────────────────────────────────────────────────────────
@@ -1602,18 +1602,18 @@ router.get("/events/me", async (req, res) => {
     sc.from("event_rsvps").select("event_id")
       .eq("user_id", user.id)
       .eq("status", "going"),
-  ]);
+  ]); if ((hostedResult as any).error || (rsvpResult as any).error) { req.log?.error({ err: (hostedResult as any).error ?? (rsvpResult as any).error }, "my events: a read failed — refusing"); sendError(res, "degraded_unavailable", EVENT_LIST_UNAVAILABLE); return; }  // census-discovery §118 (DV-83 round 21, B28): a failed read is not "no events"
 
   const hosted = ((hostedResult as any).data ?? []) as any[];
   const rsvpIds = (((rsvpResult as any).data ?? []) as any[]).map((r: any) => r.event_id as string);
 
   let attending: any[] = [];
   if (rsvpIds.length > 0) {
-    const { data: ev } = await sc.from("events").select("*")
+    const { data: ev, error: attendingErr } = await sc.from("events").select("*")
       .in("id", rsvpIds)
       .not("state", "in", '("cancelled","archived")')
       .order("starts_at", { ascending: true, nullsFirst: false })
-      .limit(limit);
+      .limit(limit); if (attendingErr) { req.log?.error({ err: attendingErr }, "my events: attending read failed — refusing"); sendError(res, "degraded_unavailable", EVENT_LIST_UNAVAILABLE); return; }  // §118 (B28)
     attending = (ev as any[]) ?? [];
   }
 
@@ -1622,11 +1622,11 @@ router.get("/events/me", async (req, res) => {
 
   // All events here are ones the viewer hosts or attends → always participant view.
   // Include myRsvp so the response matches the EventListItem contract used by list cards.
-  const goingSet = new Set(rsvpIds);
-  res.json({
+  const goingSet = new Set(rsvpIds); const meCountsUnread = await liveEventCounters(sc, combined);  // census-discovery §117 (DV-83, sweep SW18): the cached counters recounted live; a failed read keeps them, named
+  const meSaved = await viewerSavedEventIds(sc, user.id, combined.map((e: any) => e.id as string)); if (!meSaved) { req.log?.error("my events: the viewer's saved read failed — refusing"); sendError(res, "degraded_unavailable", EVENT_LIST_UNAVAILABLE); return; } res.json({ ...countsUnreadKey(meCountsUnread),  // census-discovery §122 (B35)
     events: combined.map((e: any) => ({
       ...formatEvent(e, user.id, { goingRsvp: true }),
-      myRsvp: goingSet.has(e.id as string) ? "going" : null,
+      myRsvp: goingSet.has(e.id as string) ? "going" : null, isSaved: meSaved.has(e.id as string),
     })),
   });
 });
@@ -1655,7 +1655,7 @@ router.get("/events/hosting", async (req, res) => {
   const { data: events, error } = await query;
   if (error) { req.log.error({ err: error }, "hosting events"); sendError(res, "db_error", error.message); return; }
 
-  res.json({ events: ((events as any[]) ?? []).map((e: any) => formatEvent(e, user.id, { goingRsvp: true })), page, limit });
+  const hostingCountsUnread = await liveEventCounters(sc, (events as any[]) ?? []); res.json({ events: ((events as any[]) ?? []).map((e: any) => formatEvent(e, user.id, { goingRsvp: true })), page, limit, ...countsUnreadKey(hostingCountsUnread) });  // census-discovery §117 (DV-83, sweep SW18): the cached counters recounted live; a failed read keeps them, named
 });
 
 // ── GET /api/events/joined ────────────────────────────────────────────────────
@@ -1672,8 +1672,8 @@ router.get("/events/joined", async (req, res) => {
   const limit  = Math.min(50, Math.max(1, parseInt((req.query.limit as string) ?? "20")));
   const offset = (page - 1) * limit;
 
-  const { data: rsvps } = await sc.from("event_rsvps").select("event_id")
-    .eq("user_id", user.id).eq("status", "going");
+  const { data: rsvps, error: rsvpsErr } = await sc.from("event_rsvps").select("event_id")
+    .eq("user_id", user.id).eq("status", "going"); if (rsvpsErr) { req.log?.error({ err: rsvpsErr }, "joined events: RSVP read failed — refusing"); sendError(res, "degraded_unavailable", EVENT_LIST_UNAVAILABLE); return; }  // census-discovery §118 (DV-83 round 21, B28)
 
   const ids = ((rsvps as any[]) ?? []).map((r: any) => r.event_id as string);
   if (ids.length === 0) { res.json({ events: [], page, limit }); return; }
@@ -1686,7 +1686,7 @@ router.get("/events/joined", async (req, res) => {
 
   if (error) { req.log.error({ err: error }, "joined events"); sendError(res, "db_error", error.message); return; }
 
-  res.json({ events: ((events as any[]) ?? []).map((e: any) => formatEvent(e, user.id, { goingRsvp: true })), page, limit });
+  const joinedCountsUnread = await liveEventCounters(sc, (events as any[]) ?? []); res.json({ events: ((events as any[]) ?? []).map((e: any) => formatEvent(e, user.id, { goingRsvp: true })), page, limit, ...countsUnreadKey(joinedCountsUnread) });  // census-discovery §117 (DV-83, sweep SW18): the cached counters recounted live; a failed read keeps them, named
 });
 
 // ── GET /api/events/circles ───────────────────────────────────────────────────
@@ -1706,10 +1706,10 @@ router.get("/events/circles", async (req, res) => {
   // Step 1 — Fetch all circle IDs the viewer belongs to (member or owner).
   // Live table is circle_memberships(user_id = circle owner, other_id = member,
   // status, created_at); a circle's id is its owner's user id.
-  const { data: memberRows } = await sc
+  const { data: memberRows, error: memberRowsErr } = await sc
     .from("circle_memberships")
     .select("user_id")
-    .eq("other_id", user.id);
+    .eq("other_id", user.id); if (memberRowsErr) { req.log?.error({ err: memberRowsErr }, "circle events: membership read failed — refusing"); sendError(res, "degraded_unavailable", EVENT_LIST_UNAVAILABLE); return; }  // census-discovery §118 (DV-83 round 21, B28)
 
   // The viewer always belongs to their own circle (owner has no self-membership row).
   const circleIds = [...new Set([
@@ -1723,10 +1723,10 @@ router.get("/events/circles", async (req, res) => {
     .select("*")
     .in("circle_id", circleIds)
     .not("state", "in", '("cancelled","archived","draft")')
-    .order("starts_at", { ascending: true, nullsFirst: false })
+    .order("starts_at", { ascending: true, nullsFirst: false }).order("id", { ascending: true })  // census-discovery §119 (DV-83 round 22, sweep): a total order, so events that start together are paged, never skipped
     .limit(limit * 3); // over-fetch to allow for post-filter attrition
 
-  if (cursor) query = query.gt("starts_at", cursor);
+  if (cursor) query = eventsAfterCursor(query, cursor);  // §119: after (starts_at, id); an earlier server's cursor as before
 
   const { data: events, error } = await query;
   if (error) { req.log.error({ err: error }, "circle events"); sendError(res, "db_error", error.message); return; }
@@ -1736,14 +1736,14 @@ router.get("/events/circles", async (req, res) => {
   //   • invite_only: viewer must be host, a circle member is allowed since
   //     the event is explicitly scoped to the circle they belong to
   //   • age / trust / verified-profile eligibility
-  const filtered: any[] = [];
+  const filtered: any[] = []; let circlesCut = false;  // §118 (B28): an event withheld over a failed read is said
   for (const ev of (events as any[]) ?? []) {
     if (filtered.length >= limit) break;
     // Block check — skip events whose host the viewer has blocked or vice versa
-    if (await isBlocked(sc, user.id, (ev as any).host_id)) continue;
+    { const blk = await readBlockBetween(sc, user.id, (ev as any).host_id); if (blk.unread) circlesCut = true; if (blk.blocked) continue; }
     // Eligibility gate (age / trust / verified)
     const elig = await checkEventEligibility(sc, ev as any, user.id);
-    if (!elig.ok) continue;
+    if (!elig.ok) { if ((elig as any).unread) circlesCut = true; continue; }
     filtered.push(ev);
   }
 
@@ -1760,24 +1760,24 @@ router.get("/events/circles", async (req, res) => {
   const filteredIds = filtered.map((e: any) => e.id as string);
   let rsvpMap: Record<string, string> = {};
   if (filteredIds.length > 0) {
-    const { data: rsvps } = await sc
+    const { data: rsvps, error: rsvpsErr } = await sc
       .from("event_rsvps")
       .select("event_id, status")
       .eq("user_id", user.id)
-      .in("event_id", filteredIds);
+      .in("event_id", filteredIds); if (rsvpsErr) { req.log?.error({ err: rsvpsErr }, "circle events: own RSVP read failed — refusing"); sendError(res, "degraded_unavailable", EVENT_LIST_UNAVAILABLE); return; }  // §118 (B28): never "not going" on every card
     for (const r of (rsvps as any[]) ?? []) rsvpMap[(r as any).event_id as string] = (r as any).status as string;
   }
 
-  const nextCursor = filtered.length === limit
-    ? (filtered[filtered.length - 1].starts_at ?? null)
-    : null;
+  const circlesPool = (events as any[]) ?? []; const circlesPoolCut = filtered.length < limit && circlesPool.length >= limit * 3; const nextCursor = filtered.length === limit  // census-discovery §119 (DV-83 round 22, B32): a full pool the filter emptied is not the end
+    ? eventsCursorOf(filtered[filtered.length - 1])
+    : circlesPoolCut ? eventsCursorOf(circlesPool[circlesPool.length - 1]) : null; const circleCountsUnread = await liveEventCounters(sc, filtered);  // census-discovery §117 (DV-83, sweep SW18): the cached counters recounted live; a failed read keeps them, named
 
-  res.json({
+  const circleSaved = await viewerSavedEventIds(sc, user.id, filteredIds); if (!circleSaved) { req.log?.error("circle events: the viewer's saved read failed — refusing"); sendError(res, "degraded_unavailable", EVENT_LIST_UNAVAILABLE); return; } res.json({ ...countsUnreadKey(circleCountsUnread),  // census-discovery §122 (B35)
     events: filtered.map((e: any) => ({
       ...formatEvent(e, user.id, { hostProfile: hpMap[e.host_id as string] }),
-      myRsvp: rsvpMap[e.id as string] ?? null,
+      myRsvp: rsvpMap[e.id as string] ?? null, isSaved: circleSaved.has(e.id as string),
     })),
-    cursor: nextCursor,
+    cursor: nextCursor, ...(circlesCut || circlesPoolCut ? { truncated: true as const } : {}),  // §119 (B32)
   });
 });
 
@@ -1795,10 +1795,10 @@ router.get("/events/saved", async (req, res) => {
   const limit  = Math.min(50, Math.max(1, parseInt((req.query.limit as string) ?? "20")));
   const offset = (page - 1) * limit;
 
-  const { data: saves } = await sc.from("event_saves").select("event_id")
+  const { data: saves, error: savesErr } = await sc.from("event_saves").select("event_id")
     .eq("user_id", user.id)
     .order("saved_at", { ascending: false })
-    .range(offset, offset + limit - 1);
+    .range(offset, offset + limit - 1); if (savesErr) { req.log?.error({ err: savesErr }, "saved events: saves read failed — refusing"); sendError(res, "degraded_unavailable", EVENT_LIST_UNAVAILABLE); return; }  // census-discovery §118 (DV-83 round 21, B28)
 
   const ids = ((saves as any[]) ?? []).map((r: any) => r.event_id as string);
   if (ids.length === 0) { res.json({ events: [], page, limit }); return; }
@@ -1807,17 +1807,17 @@ router.get("/events/saved", async (req, res) => {
   if (error) { req.log.error({ err: error }, "saved events"); sendError(res, "db_error", error.message); return; }
 
   // For saved events, determine per-event whether viewer is a participant (going/maybe or host)
-  const { data: savedRsvps } = await sc.from("event_rsvps").select("event_id, status")
-    .eq("user_id", user.id).in("event_id", ids);
+  const { data: savedRsvps, error: savedRsvpsErr } = await sc.from("event_rsvps").select("event_id, status")
+    .eq("user_id", user.id).in("event_id", ids); if (savedRsvpsErr) { req.log?.error({ err: savedRsvpsErr }, "saved events: own RSVP read failed — refusing"); sendError(res, "degraded_unavailable", EVENT_LIST_UNAVAILABLE); return; }  // §118 (B28)
   const savedRsvpSet = new Set<string>(
     ((savedRsvps as any[]) ?? [])
       .filter((r: any) => r.status === "going" || r.status === "maybe")
       .map((r: any) => r.event_id as string),
-  );
+  ); const savedCountsUnread = await liveEventCounters(sc, (events as any[]) ?? []);  // census-discovery §117 (DV-83, sweep SW18): the cached counters recounted live; a failed read keeps them, named
 
-  res.json({
+  res.json({ ...countsUnreadKey(savedCountsUnread),
     events: ((events as any[]) ?? []).map((e: any) =>
-      formatEvent(e, user.id, { goingRsvp: savedRsvpSet.has(e.id as string) }),
+      ({ ...formatEvent(e, user.id, { goingRsvp: savedRsvpSet.has(e.id as string) }), isSaved: true }),  // census-discovery §122 (B35): every event this list reads is in event_saves
     ),
     page,
     limit,
@@ -1860,9 +1860,9 @@ router.get("/events/invites", async (req, res) => {
     const { data: profiles } = await sc.from("profiles").select("id, handle, name, avatar_url").in("id", inviterIds);
     const allowedNames = await nameVisibilitySet(sc, inviterIds);
     for (const p of (profiles as any[]) ?? []) inviterMap[p.id as string] = sanitizeIdentity(p, allowedNames, user.id);
-  }
+  } const inviteCountsUnread = await liveEventCounters(sc, Object.values(eventMap));  // census-discovery §117 (DV-83, sweep SW18): the cached counters recounted live; a failed read keeps them, named
 
-  res.json({
+  res.json({ ...countsUnreadKey(inviteCountsUnread),
     invites: inviteRows.map((inv: any) => ({
       id:        inv.id,
       eventId:   inv.event_id,
@@ -1907,9 +1907,9 @@ router.get("/events/requests", async (req, res) => {
   if (eventIds.length > 0) {
     const { data: evs } = await sc.from("events").select("*").in("id", eventIds);
     for (const e of (evs as any[]) ?? []) eventMap[e.id as string] = e;
-  }
+  } const requestCountsUnread = await liveEventCounters(sc, Object.values(eventMap));  // census-discovery §117 (DV-83, sweep SW18): the cached counters recounted live; a failed read keeps them, named
 
-  res.json({
+  res.json({ ...countsUnreadKey(requestCountsUnread),
     requests: reqRows.map((r: any) => ({
       id:       r.id,
       eventId:  r.event_id,
@@ -2249,7 +2249,7 @@ router.get("/events/share-link/:token/preview", async (req, res) => {
   const previewIsParticipant =
     (ev as any).host_id === previewUser.id ||
     (["going","maybe"].includes((previewRsvp as any)?.status ?? ""));
-  res.json({ event: formatEvent(ev as any, previewUser.id, { goingRsvp: previewIsParticipant }), shareToken: token });
+  const previewCountsUnread = await liveEventCounters(sc, [ev]); res.json({ event: formatEvent(ev as any, previewUser.id, { goingRsvp: previewIsParticipant }), shareToken: token, ...countsUnreadKey(previewCountsUnread) });  // census-discovery §117 (DV-83, sweep SW18): the cached counters recounted live; a failed read keeps them, named
 });
 
 // ── GET /api/events/near-trip/:tripId ────────────────────────────────────────
@@ -2268,15 +2268,15 @@ router.get("/events/near-trip/:tripId", async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
   // Caller must be an accepted trip member
-  const { data: mem } = await sc.from("trip_members").select("role")
-    .eq("trip_id", tripId).eq("user_id", user.id).maybeSingle();
+  const { data: mem, error: memErr } = await sc.from("trip_members").select("role")
+    .eq("trip_id", tripId).eq("user_id", user.id).maybeSingle(); if (memErr) { req.log?.error({ err: memErr }, "near-trip events: the membership read failed — refusing"); sendError(res, "degraded_unavailable", EVENT_LIST_UNAVAILABLE); return; }  // census-discovery §122 (DV-83 round 23, B38): never "not a member" over a failed read
   if (!mem || !["owner", "member"].includes((mem as any).role)) {
     sendError(res, "forbidden", "Must be a trip member to see nearby events"); return;
   }
 
-  const { data: trip } = await sc.from("trips")
+  const { data: trip, error: tripErr } = await sc.from("trips")
     .select("destination_city, start_date, end_date")
-    .eq("id", tripId).maybeSingle();
+    .eq("id", tripId).maybeSingle(); if (tripErr) { req.log?.error({ err: tripErr }, "near-trip events: the trip read failed — refusing"); sendError(res, "degraded_unavailable", EVENT_LIST_UNAVAILABLE); return; }  // §122 (B38): never `events: []` over a failed read
   if (!trip || !(trip as any).destination_city) {
     res.json({ events: [] }); return;
   }
@@ -2299,16 +2299,16 @@ router.get("/events/near-trip/:tripId", async (req, res) => {
   const { data: events, error } = await query;
   if (error) { req.log.error({ err: error }, "near-trip events"); sendError(res, "db_error", error.message); return; }
 
-  const filtered: any[] = [];
+  const filtered: any[] = []; let withheldUnread = false;  // census-discovery §122 (DV-83 round 23, SW28): an event withheld over a failed read is said, as /search says it (§118 B28)
   for (const ev of (events as any[]) ?? []) {
-    if (await isBlocked(sc, user.id, (ev as any).host_id)) continue;
+    { const blk = await readBlockBetween(sc, user.id, (ev as any).host_id); if (blk.unread) withheldUnread = true; if (blk.blocked) continue; }  // §122 (SW28)
     // Enforce friends_only: viewer must be friends with the host
     if ((ev as any).visibility === "friends_only" && (ev as any).host_id !== user.id) {
-      const { data: friendship } = await sc
+      const { data: friendship, error: friendshipErr } = await sc
         .from("user_friendships")
         .select("user_a")
         .or(`and(user_a.eq.${user.id},user_b.eq.${(ev as any).host_id}),and(user_b.eq.${user.id},user_a.eq.${(ev as any).host_id})`)
-        .maybeSingle();
+        .maybeSingle(); if (friendshipErr) withheldUnread = true;  // §122 (SW28)
       if (!friendship) continue;
     }
     // Same eligibility gate the sibling browse routes apply (ban / trust /
@@ -2317,11 +2317,11 @@ router.get("/events/near-trip/:tripId", async (req, res) => {
     // they tap it — the list and the detail view disagreed about who may see
     // the event.
     const elig = await checkEventEligibility(sc, ev as any, user.id);
-    if (!elig.ok) continue;
+    if (!elig.ok) { if ((elig as any).unread) withheldUnread = true; continue; }  // §122 (SW28): a verdict that could not be read
     filtered.push(ev);
   }
 
-  res.json({ events: filtered.map((e) => formatEvent(e, user.id)), tripId, city });
+  const nearTripCountsUnread = await liveEventCounters(sc, filtered); res.json({ events: filtered.map((e) => formatEvent(e, user.id)), tripId, city, ...countsUnreadKey(nearTripCountsUnread), ...(withheldUnread ? { truncated: true as const } : {}) });  // census-discovery §117 (DV-83, sweep SW18): the cached counters recounted live; a failed read keeps them, named
 });
 
 // ── GET /api/events/:id ───────────────────────────────────────────────────────
@@ -2342,8 +2342,8 @@ router.get("/events/following", async (req, res) => {
   const limit  = Math.min(50, Math.max(1, parseInt((req.query.limit as string) ?? "20")));
   const cursor = (req.query.cursor as string) ?? null;
 
-  const { data: followRows } = await sc
-    .from("user_follows").select("following_id").eq("follower_id", user.id);
+  const { data: followRows, error: followRowsErr } = await sc
+    .from("user_follows").select("following_id").eq("follower_id", user.id); if (followRowsErr) { req.log?.error({ err: followRowsErr }, "following events: follows read failed — refusing"); sendError(res, "degraded_unavailable", EVENT_LIST_UNAVAILABLE); return; }  // census-discovery §118 (DV-83 round 21, B28)
   const hostIds = [...new Set(((followRows as any[]) ?? []).map((r: any) => r.following_id as string))];
   if (hostIds.length === 0) { res.json({ events: [], cursor: null }); return; }
 
@@ -2352,20 +2352,20 @@ router.get("/events/following", async (req, res) => {
     .select("*")
     .in("host_id", hostIds)
     .not("state", "in", '("cancelled","archived","draft")')
-    .order("starts_at", { ascending: true, nullsFirst: false })
+    .order("starts_at", { ascending: true, nullsFirst: false }).order("id", { ascending: true })  // census-discovery §119 (DV-83 round 22, sweep): a total order
     .limit(limit * 3);
-  if (cursor) query = query.gt("starts_at", cursor);
+  if (cursor) query = eventsAfterCursor(query, cursor);  // §119: after (starts_at, id); an earlier server's cursor as before
 
   const { data: events, error } = await query;
   if (error) { req.log.error({ err: error }, "following events"); sendError(res, "db_error", error.message); return; }
 
-  const filtered: any[] = [];
+  const filtered: any[] = []; let followingCut = false;  // §118 (B28): an event withheld over a failed read is said
   for (const ev of (events as any[]) ?? []) {
     if (filtered.length >= limit) break;
-    if (!await canViewEvent(sc, ev as any, user.id)) continue;
-    if (await isBlocked(sc, user.id, (ev as any).host_id)) continue;
+    { const vr = { unread: false }; if (!await canViewEvent(sc, ev as any, user.id, vr)) { if (vr.unread) followingCut = true; continue; } }
+    { const blk = await readBlockBetween(sc, user.id, (ev as any).host_id); if (blk.unread) followingCut = true; if (blk.blocked) continue; }
     const elig = await checkEventEligibility(sc, ev as any, user.id);
-    if (!elig.ok) continue;
+    if (!elig.ok) { if ((elig as any).unread) followingCut = true; continue; }
     filtered.push(ev);
   }
 
@@ -2380,19 +2380,19 @@ router.get("/events/following", async (req, res) => {
   const filteredIds = filtered.map((e: any) => e.id as string);
   const rsvpMap: Record<string, string> = {};
   if (filteredIds.length > 0) {
-    const { data: rsvps } = await sc
-      .from("event_rsvps").select("event_id, status").eq("user_id", user.id).in("event_id", filteredIds);
+    const { data: rsvps, error: rsvpsErr } = await sc
+      .from("event_rsvps").select("event_id, status").eq("user_id", user.id).in("event_id", filteredIds); if (rsvpsErr) { req.log?.error({ err: rsvpsErr }, "following events: own RSVP read failed — refusing"); sendError(res, "degraded_unavailable", EVENT_LIST_UNAVAILABLE); return; }  // §118 (B28): never "not going" on every card
     for (const r of (rsvps as any[]) ?? []) rsvpMap[(r as any).event_id as string] = (r as any).status as string;
   }
 
-  const nextCursor = filtered.length === limit ? (filtered[filtered.length - 1].starts_at ?? null) : null;
+  const followingPool = (events as any[]) ?? []; const followingPoolCut = filtered.length < limit && followingPool.length >= limit * 3; const nextCursor = filtered.length === limit ? eventsCursorOf(filtered[filtered.length - 1]) : followingPoolCut ? eventsCursorOf(followingPool[followingPool.length - 1]) : null; const followingCountsUnread = await liveEventCounters(sc, filtered);  // census-discovery §117 (DV-83, sweep SW18): the cached counters recounted live; a failed read keeps them, named
 
-  res.json({
+  const followingSaved = await viewerSavedEventIds(sc, user.id, filteredIds); if (!followingSaved) { req.log?.error("following events: the viewer's saved read failed — refusing"); sendError(res, "degraded_unavailable", EVENT_LIST_UNAVAILABLE); return; } res.json({ ...countsUnreadKey(followingCountsUnread),  // census-discovery §122 (B35)
     events: filtered.map((e: any) => ({
       ...formatEvent(e, user.id, { hostProfile: hpMap[e.host_id as string] }),
-      myRsvp: rsvpMap[e.id as string] ?? null,
+      myRsvp: rsvpMap[e.id as string] ?? null, isSaved: followingSaved.has(e.id as string),
     })),
-    cursor: nextCursor,
+    cursor: nextCursor, ...(followingCut || followingPoolCut ? { truncated: true as const } : {}),  // census-discovery §119 (DV-83 round 22, B32): a full pool the filter emptied is not the end
   });
 });
 
@@ -2407,12 +2407,12 @@ router.get("/events/:id", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: ev } = await sc.from("events").select("*").eq("id", id).maybeSingle();
+  const { data: ev, error: evErr } = await sc.from("events").select("*").eq("id", id).maybeSingle(); if (evErr) { sendError(res, "degraded_unavailable", "We could not load this event right now. Please try again shortly."); return; }  // census-discovery §110 (D-W11X2-101): a failed read is not "Event not found"
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
 
   // Block check FIRST — blocking overrides all other relationships.
   // A blocked user must never access even the minimal preview.
-  if (await isBlocked(sc, user.id, (ev as any).host_id)) {
+  const detailBlock = await readBlockBetween(sc, user.id, (ev as any).host_id); if (detailBlock.unread) { sendError(res, "degraded_unavailable", EVENT_ACCESS_UNAVAILABLE_DETAIL); return; } if (detailBlock.blocked) {  // census-discovery §111 (DV-83, D-W11X2-108): a failed block read is not "not found"
     sendError(res, "not_found", "Event not found or access denied"); return;
   }
 
@@ -2423,7 +2423,7 @@ router.get("/events/:id", async (req, res) => {
   // private-wall screen instead of a generic "not found" error.
   // Public events that the viewer still cannot access (e.g. eligibility gate)
   // remain a 404 to avoid probing event existence.
-  if (!await canViewEvent(sc, ev as any, user.id)) {
+  const viewRead = { unread: false }; if (!await canViewEvent(sc, ev as any, user.id, viewRead)) { if (viewRead.unread) { sendError(res, "degraded_unavailable", EVENT_ACCESS_UNAVAILABLE_DETAIL); return; }  // census-discovery §111 (DV-83, D-W11X2-109): a failed visibility read is not the private wall
     const evVis = (ev as any).visibility as string | null ?? "public";
     if (evVis !== "public") {
       // Non-public event: return locked sentinel — no title/venue/dates exposed.
@@ -2436,7 +2436,7 @@ router.get("/events/:id", async (req, res) => {
 
   // Viewer eligibility gates (age / trust / verified) — same rules as RSVP.
   const readElig = await checkEventEligibility(sc, ev as any, user.id);
-  if (!readElig.ok) {
+  if (!readElig.ok) { if (readElig.unread) { sendError(res, "degraded_unavailable", readElig.message); return; }  // §110 (D-W11X2-101): a gate that could not be read is not "not found"
     sendError(res, "not_found", "Event not found or access denied"); return;
   }
 
@@ -2445,21 +2445,21 @@ router.get("/events/:id", async (req, res) => {
     sc.from("event_waitlist").select("position, offer_expires_at").eq("event_id", id).eq("user_id", user.id).maybeSingle(),
     sc.from("event_roles").select("role").eq("event_id", id).eq("user_id", user.id).maybeSingle(),
     sc.from("event_attendee_states").select("*").eq("event_id", id).eq("user_id", user.id).maybeSingle(),
-    sc.from("event_rsvps").select("user_id, status").eq("event_id", id).in("status", ["going", "maybe"]),
+    readEventRsvps(sc, id, { statuses: ["going", "maybe"] }),  // census-discovery §117 (B21): read whole, never cut at db-max-rows
     sc.from("profiles").select("id, handle, name, avatar_url").eq("id", (ev as any).host_id).maybeSingle(),
     sc.from("event_join_requests").select("status").eq("event_id", id).eq("user_id", user.id).maybeSingle(),
-  ]);
+  ]); if ([rsvpResult, waitlistResult, roleResult, attendeeResult, joinReqResult].some((r: any) => Boolean(r?.error))) { req.log?.error({ eventId: id }, "event detail: the viewer's own state unreadable — refusing"); sendError(res, "degraded_unavailable", "Your RSVP and place at this event could not be checked. Please try again."); return; }  // census-discovery §117 (DV-83, B19): a failed own-state read is never "not RSVP'd"
 
-  const goingData = (goingResult as any).data ?? [];
+  const goingFailed = Boolean((goingResult as any).error); const goingData = (goingResult as any).data ?? [];  // census-discovery §116 (DV-83, sweep SW10): a failed count read is named, never a measured 0
   const counts = {
-    going:      goingData.filter((r: any) => r.status === "going").length,
-    maybe:      goingData.filter((r: any) => r.status === "maybe").length,
+    going:      goingFailed ? ((ev as any).going_count ?? null) : goingData.filter((r: any) => r.status === "going").length,
+    maybe:      goingFailed ? null : goingData.filter((r: any) => r.status === "maybe").length,
     interested: 0,
     cant_go:    0,
   };
 
   // Full RSVP counts
-  const { data: allRsvps } = await sc.from("event_rsvps").select("status").eq("event_id", id);
+  const { data: allRsvps, error: allRsvpsErr } = await readEventRsvps(sc, id); if (allRsvpsErr) { (counts as any).interested = null; (counts as any).cant_go = null; }  // §116 (SW10)
   for (const r of (allRsvps as any[]) ?? []) {
     if (r.status === "interested") counts.interested++;
     if (r.status === "cant_go") counts.cant_go++;
@@ -2476,20 +2476,20 @@ router.get("/events/:id", async (req, res) => {
   const isParticipant = viewerRole === "host" || viewerRole === "co_host" ||
     viewerRsvpStatus === "going" || viewerRsvpStatus === "maybe";
 
-  let goingProfiles: any[] = [];
+  let goingProfiles: any[] = []; let profilesFailed = false;  // §117 (B19): a failed profiles read is named, never an unnamed []
   if (isParticipant && goingAvatars.length > 0) {
-    const { data: gp } = await sc.from("profiles").select("id, handle, name, avatar_url").in("id", goingAvatars);
+    const { data: gp, error: gpErr } = await sc.from("profiles").select("id, handle, name, avatar_url").in("id", goingAvatars); if (gpErr) profilesFailed = true;
     const allowedGoing = await nameVisibilitySet(sc, goingAvatars);
     goingProfiles = ((gp as any[]) ?? []).map((p) => sanitizeIdentity(p, allowedGoing, user.id));
   }
 
-  const { data: waitlistData } = await sc
-    .from("event_waitlist")
-    .select("user_id")
-    .eq("event_id", id);
-  const waitlistCount = ((waitlistData as any[]) ?? []).length;
+  const { data: waitlistData, error: waitlistErr } = await readEventWaitlist(
+    sc,
+    id,
+  );  // census-discovery §117 (B21): read whole, never cut at db-max-rows
+  const waitlistCount = waitlistErr ? ((ev as any).waitlist_count ?? null) : ((waitlistData as any[]) ?? []).length;  // §116 (SW10): the cached count over a failed read
 
-  const hpRaw = (hostResult as any).data;
+  const hpRaw = (hostResult as any).data; if ((hostResult as any).error) profilesFailed = true;  // §117 (B19): host null over a failed read is named
   const hostAllowed = await nameVisibilitySet(sc, [(ev as any).host_id]);
   const hp = sanitizeIdentity(hpRaw, hostAllowed, user.id);
   const host = hp ? {
@@ -2499,16 +2499,16 @@ router.get("/events/:id", async (req, res) => {
     avatarUrl: hp.avatar_url ?? null,
   } : null;
 
-  const myRole = (ev as any).host_id === user.id ? "host" : ((roleResult as any).data?.role ?? null);
+  const myRole = (ev as any).host_id === user.id ? "host" : ((roleResult as any).data?.role ?? null); const detailSaved = await viewerSavedEventIds(sc, user.id, [id]);  // census-discovery §122 (DV-83 round 23, SW30): the viewer's own saved state, measured or named
 
   // Use the explicit AuthorizedEventView serializer — field gates for coords,
   // priceUrl, and safetyNotes are applied server-side, not client-side.
   res.json({
-    ...toAuthorizedEventView(ev as any, user.id, { goingRsvp: isParticipant }),
+    ...toAuthorizedEventView({ ...(ev as any), going_count: counts.going ?? (ev as any).going_count }, user.id, { goingRsvp: isParticipant }),  // census-discovery §118 (DV-83 round 21): `goingCount` is the live count beside counts.going, never the cached counter (the cached one only over a failed read, named)
     host,
     counts,
-    waitlistCount,
-    myRsvp: (rsvpResult as any).data?.status ?? null,
+    waitlistCount, ...(goingFailed || allRsvpsErr || waitlistErr || profilesFailed || !detailSaved ? { failedSources: [...(goingFailed || allRsvpsErr ? ["event_rsvps"] : []), ...(waitlistErr ? ["event_waitlist"] : []), ...(profilesFailed ? ["profiles"] : []), ...(!detailSaved ? ["event_saves"] : [])] } : {}),  // §116 (SW10); §117 (B19): profiles too
+    myRsvp: (rsvpResult as any).data?.status ?? null, isSaved: detailSaved ? detailSaved.has(id) : null,  // §122 (SW30)
     myJoinRequestStatus: (joinReqResult as any).data?.status ?? null,
     myWaitlistPosition: (waitlistResult as any).data?.position ?? null,
     myWaitlistOfferExpiresAt: (waitlistResult as any).data?.offer_expires_at ?? null,
@@ -2518,7 +2518,7 @@ router.get("/events/:id", async (req, res) => {
     // controlled by the isParticipant gate above).
     goingAttendees: goingProfiles.map((p: any) => ({
       id: p.id, handle: p.handle ?? null, displayName: p.name ?? null, avatarUrl: p.avatar_url ?? null,
-    })),
+    })), ...(isParticipant && !goingFailed && (counts.going ?? 0) > goingProfiles.length ? { goingAttendeesTruncated: true, goingAttendeesTotal: counts.going } : {}),  // census-discovery §118 (DV-83 round 21, B24): the list is a slice (the first four going), said so; a whole list gains no key
   });
 });
 
@@ -3351,10 +3351,10 @@ router.post("/events/:id/waitlist/accept", async (req, res) => {
   await sc.from("event_waitlist").delete().eq("event_id", id).eq("user_id", user.id);
   await syncEventState(sc, id);
   const goingNow = await getGoingCount(sc, id);
-  const { data: wlAfterAccept } = await sc.from("event_waitlist").select("user_id").eq("event_id", id);
+  const { data: wlAfterAccept, error: wlAfterAcceptErr } = await readEventWaitlist(sc, id);  // §117 (B21): read whole
   await sc.from("events").update({
     going_count: goingNow ?? undefined,  // census-trust §30.8: unread → the column is left alone (JSON drops undefined), never 0
-    waitlist_count: ((wlAfterAccept as any[]) ?? []).length,
+    waitlist_count: wlAfterAcceptErr ? undefined : ((wlAfterAccept as any[]) ?? []).length,  // census-discovery §116 (sweep SW11): unread → the column is left alone, never 0
   }).eq("id", id);
   await syncAttendee(sc, id, user.id, "going");
 
@@ -3434,10 +3434,10 @@ router.delete("/events/:id/waitlist", async (req, res) => {
 
   await sc.from("event_waitlist").delete().eq("event_id", id).eq("user_id", user.id);
   // Recompute waitlist_count so UI stays accurate
-  const { data: wlRemaining } = await sc.from("event_waitlist").select("user_id").eq("event_id", id);
+  const { data: wlRemaining, error: wlRemainingErr } = await readEventWaitlist(sc, id);  // §117 (B21): read whole
   await sc
     .from("events")
-    .update({ waitlist_count: ((wlRemaining as any[]) ?? []).length, updated_at: new Date().toISOString() })
+    .update({ waitlist_count: wlRemainingErr ? undefined : ((wlRemaining as any[]) ?? []).length, updated_at: new Date().toISOString() })  // §116 (SW11): unread → left alone, never 0
     .eq("id", id);
   res.json({ ok: true });
 });
@@ -3699,10 +3699,10 @@ router.post("/events/:id/roles", async (req, res) => {
     ({ error: banWlDelErr } = await sc.from("event_waitlist").delete().eq("event_id", id).eq("user_id", targetId)); if (banWlDelErr) req.log?.error({ err: banWlDelErr, eventId: id, targetId }, "ban: waitlist row could not be removed");
     await syncEventState(sc, id);
     const going = await getGoingCount(sc, id);
-    const { data: wlAfterBan } = await sc.from("event_waitlist").select("user_id").eq("event_id", id);
+    const { data: wlAfterBan, error: wlAfterBanErr } = await readEventWaitlist(sc, id);  // §117 (B21): read whole
     await sc.from("events").update({
       going_count: going ?? undefined,  // census-trust §30.8: unread → the column is left alone, never 0
-      waitlist_count: ((wlAfterBan as any[]) ?? []).length,
+      waitlist_count: wlAfterBanErr ? undefined : ((wlAfterBan as any[]) ?? []).length,  // §116 (SW11): unread → left alone, never 0
     }).eq("id", id);
     await syncAttendee(sc, id, targetId, null);
 
@@ -4315,15 +4315,15 @@ async function isTripEventMember(sc: any, tripId: string, userId: string): Promi
   return true;
 }
 
-async function canViewEvent(sc: any, ev: any, userId: string): Promise<boolean> {
+async function canViewEvent(sc: any, ev: any, userId: string, unreadOut?: { unread: boolean }): Promise<boolean> {  // census-discovery §111 (D-W11X2-109): `unreadOut` learns that a `false` rests on a failed read
   if (ev.host_id === userId) return true;
 
   // Staff (cohost/moderator) always have access
-  const { data: staffRole } = await sc
+  const { data: staffRole, error: staffRoleErr } = await sc
     .from("event_roles").select("role")
     .eq("event_id", ev.id).eq("user_id", userId)
     .maybeSingle();
-  if (staffRole && ["co_host", "moderator"].includes((staffRole as any).role)) return true;
+  if (staffRole && ["co_host", "moderator"].includes((staffRole as any).role)) return true; if (staffRoleErr && unreadOut) unreadOut.unread = true;  // census-discovery §111 (DV-83, D-W11X2-109): a read that could have made this true failed
 
   // A non-live event (draft/cancelled/archived) is visible only to its host and
   // staff (both already returned true above) — regardless of visibility. Without
@@ -4333,18 +4333,18 @@ async function canViewEvent(sc: any, ev: any, userId: string): Promise<boolean> 
 
   if (ev.visibility === "public") return true;
   if (ev.visibility === "friends_only") {
-    const { data: friendship } = await sc
+    const { data: friendship, error: friendshipErr } = await sc
       .from("user_friendships")
       .select("user_a")
       .or(`and(user_a.eq.${userId},user_b.eq.${ev.host_id}),and(user_b.eq.${userId},user_a.eq.${ev.host_id})`)
       .maybeSingle();
-    if (friendship) return true;
+    if (friendship) return true; if (friendshipErr && unreadOut) unreadOut.unread = true;  // census-discovery §111 (DV-83, D-W11X2-109): a read that could have made this true failed
     // friends_only: also allow existing attendees/role holders to see the event
     const [rsvp, role] = await Promise.all([
       sc.from("event_rsvps").select("status").eq("event_id", ev.id).eq("user_id", userId).maybeSingle(),
       sc.from("event_roles").select("role").eq("event_id", ev.id).eq("user_id", userId).maybeSingle(),
     ]);
-    return !!(rsvp as any).data || !!(role as any).data;
+    if (unreadOut && ((rsvp as any).error || (role as any).error)) unreadOut.unread = true; return !!(rsvp as any).data || !!(role as any).data;
   }
   if (ev.visibility === "circle") {
     // Must be a member of the linked circle
@@ -4361,7 +4361,7 @@ async function canViewEvent(sc: any, ev: any, userId: string): Promise<boolean> 
     sc.from("event_rsvps").select("status").eq("event_id", ev.id).eq("user_id", userId).maybeSingle(),
     sc.from("event_roles").select("role").eq("event_id", ev.id).eq("user_id", userId).maybeSingle(),
   ]);
-  return !!(rsvp as any).data || !!(role as any).data;
+  if (unreadOut && ((rsvp as any).error || (role as any).error)) unreadOut.unread = true; return !!(rsvp as any).data || !!(role as any).data;
 }
 
 async function createEventChatThread(sc: any, eventId: string, title: string, hostId: string): Promise<string | null> {
@@ -4538,14 +4538,14 @@ router.post("/events/:id/reviews", async (req, res) => {
   }
 
   // Recompute average rating
-  const { data: allRatings } = await sc
-    .from("event_reviews")
-    .select("rating")
-    .eq("event_id", id);
+  const { data: allRatings, error: allRatingsErr } = await readEventRatings(sc, id);  // census-discovery §117 (sweep SW19): every rating, read whole; a cut read is an error
+  // It was one unbounded read of this event's ratings, which PostgREST cut silently at
+  // db-max-rows: past 1000 reviews the count was stamped 1000, and the average was that
+  // of whichever rows came back.
   const avg = allRatings && (allRatings as any[]).length > 0
     ? Math.round(((allRatings as any[]).reduce((s: number, r: any) => s + r.rating, 0) / (allRatings as any[]).length) * 10) / 10
     : parsed.data.rating;
-  await sc.from("events").update({ avg_rating: avg, review_count: ((allRatings as any[]) ?? []).length }).eq("id", id);
+  if (!allRatingsErr) await sc.from("events").update({ avg_rating: avg, review_count: ((allRatings as any[]) ?? []).length }).eq("id", id);  // §116 (SW11): a failed ratings read writes neither the count nor the average
 
   res.status(201).json({
     id:        (review as any).id,
@@ -6169,8 +6169,8 @@ router.post("/events/:id/block-user/:userId", async (req, res) => {
 
   await syncEventState(sc, id);
   const going = await getGoingCount(sc, id);
-  const { data: wlAfter } = await sc.from("event_waitlist").select("user_id").eq("event_id", id);
-  await sc.from("events").update({ going_count: going ?? undefined, waitlist_count: ((wlAfter as any[]) ?? []).length }).eq("id", id);
+  const { data: wlAfter, error: wlAfterErr } = await readEventWaitlist(sc, id);  // §117 (B21): read whole
+  await sc.from("events").update({ going_count: going ?? undefined, waitlist_count: wlAfterErr ? undefined : ((wlAfter as any[]) ?? []).length }).eq("id", id);  // §116 (SW11): unread → left alone, never 0
   await syncAttendee(sc, id, userId, null);
 
   await logEventActivity(sc, id, user.id, "user_blocked", { targetUserId: userId });
@@ -6953,6 +6953,22 @@ async function withAuthorIdentity(sc: any, rows: any[], viewerId: string): Promi
   return rows.map((r) => ({ ...r, author: map[r.author_id] ?? null }));
 }
 
+// ── census-discovery §111 (DV-83 round 14, lane W11-X2, D-W11X2-107, D-W11X2-108): an eligibility refusal over a read that failed is not a verdict ──
+//
+// `checkEventEligibility`'s block check was two-state (`isBlockedBetween` answers `true` on a failed read),
+// its staff-role read bound no error, and its `events_trust_gates_enabled` read answered "gates off" on a
+// failed read. So an event was withheld over a FAILED read as a verdict ("Cannot join this event", "verified
+// users only"), and an unread gate flag skipped the viewer gates. The block read is now three-state; after an
+// unread staff read or gate flag the gates are run again as if staff were absent and the flag on, and
+// whatever they refuse is marked `unread` (the caller says it could not check; it states nothing).
+const EVENT_ACCESS_UNAVAILABLE_MESSAGE = "Event access check is temporarily unavailable";
+const EVENT_ACCESS_UNAVAILABLE_DETAIL = "We could not check this event's access right now. Please try again shortly.";
+
+/** A refusal given without a read the verdict depends on: kept (fail-closed), and marked as not a verdict. */
+function eligibilityUnread(result: EligibilityOk | EligibilityFail): EligibilityOk | EligibilityFail {
+  return result.ok ? result : { ok: false, errorCode: result.errorCode, message: EVENT_ACCESS_UNAVAILABLE_MESSAGE, unread: true };
+}
+
 /**
  * census-trust §30 — do the viewer gates (verified / trust / age) run?
  *
@@ -7000,7 +7016,7 @@ export async function eligibleWaitlisted(
     if (ids.length >= want) break;
     const verdict = await checkEventEligibility(sc, ev, userId);
     if (verdict.ok) { ids.push(userId); continue; }
-    if (verdict.unavailable) return { ids, unavailable: true, message: verdict.message };
+    if (verdict.unread) return { ids, unavailable: true, message: verdict.message };
   }
   return { ids, unavailable: false, message: null };
 }
@@ -7040,7 +7056,7 @@ async function pickEligibleWaitlisted(sc: any, eventId: string, head: { user_id:
 
 /** An eligibility refusal at waitlist accept: 503 when the gate could not read its inputs, else the gate's own refusal. */
 function sendEligibilityRefusal(req: any, res: any, eventId: string, elig: EligibilityFail): void {
-  if (elig.unavailable) {
+  if (elig.unread) {
     req.log?.warn?.({ eventId }, "waitlist accept: eligibility unreadable — not seated, offer left in place");
     sendError(res, "degraded_unavailable", "We could not check your place at this event right now. Please try again shortly.");
     return;
@@ -7065,4 +7081,108 @@ function safetySummaryFailedSources(req: any, eventId: string, reads: Record<str
   if (failed.length === 0) return {};
   req.log?.error?.({ eventId, failed }, "safety summary: lists unreadable — reported as null, not empty");
   return { failedSources: failed };
+}
+
+// ── census-discovery §115 (DV-83 round 18, lane W11-X2; the round-17 verifier's B12) ─────────────────────────────────
+//
+// GET /events ignored `nearLat` / `nearLng` / `nearRadiusKm`, so the NOW map's rollback path drew page one of events
+// from anywhere as its nearby layer. A request carrying both coordinates is filtered to located events within the
+// radius (a bbox in the query, the great-circle distance after it); one without them is unchanged.
+
+interface EventsNear { lat: number; lng: number; radiusKm: number; box: NearBox }
+
+function eventsNearFilter(q: Record<string, unknown>): EventsNear | null {
+  const lat = Number(q.nearLat); const lng = Number(q.nearLng);
+  if (q.nearLat == null || q.nearLng == null || !Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+  const r = Number(q.nearRadiusKm);
+  const radiusKm = Number.isFinite(r) && r > 0 ? Math.min(r, 500) : 25;
+  return { lat, lng, radiusKm, box: nearBox(lat, lng, radiusKm) };  // census-discovery §117 (V8, V9): lib/nearBox's box, the one NB1/NB2 pin
+}
+
+function withinEventsNear(e: { location_lat?: unknown; location_lng?: unknown }, near: EventsNear): boolean {
+  const lat = typeof e.location_lat === "number" ? e.location_lat : Number.NaN;
+  const lng = typeof e.location_lng === "number" ? e.location_lng : Number.NaN;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const a = Math.sin(toRad(lat - near.lat) / 2) ** 2 + Math.cos(toRad(near.lat)) * Math.cos(toRad(lat)) * Math.sin(toRad(lng - near.lng) / 2) ** 2;
+  return 2 * 6371 * Math.asin(Math.min(1, Math.sqrt(a))) <= near.radiusKm;
+}
+
+// ── census-discovery §116 (DV-83 round 19, lane W11-X2; the round-18 verifier's B18) and §117 (round 20; V8, V9) ──────
+//
+// The near box was built as lng ± dLng with no wrap at the 180th meridian, with cos(lat) clamped at 0.2 (narrower than
+// the radius above ~78.5°), and at 111.32 km per degree while withinEventsNear measures on a 6371 km earth — so events
+// inside the radius were dropped in the query, unsaid. Round 19 fixed it with a copy of lib/nearBox's box here, which
+// was unpinned at the south pole (V8) and on the viewer's own side west of -180° (V9). GET /events now applies
+// lib/nearBox itself (`nearBox` in eventsNearFilter, `applyNearBox` here): one box for every near read, pinned by NB1/NB2
+// and, through this route, by EA1–EP3, NS1 and NA0. withinEventsNear still decides.
+
+function eventsNearQuery(query: any, near: EventsNear): any {
+  return applyNearBox(query, near.box, "location_lat", "location_lng");
+}
+
+/**
+ * census-discovery §117 (DV-83 round 20, sweep SW18): the body key for the cached counters a list could not recount
+ * live — `{ failedSources: [...] }` naming `event_rsvps` and/or `event_waitlist`, or `{}` when every recount answered,
+ * so a healthy body is unchanged.
+ */
+function countsUnreadKey(unread: string[]): { failedSources?: string[] } {
+  return unread.length > 0 ? { failedSources: unread } : {};
+}
+
+// ── census-discovery §118 (DV-83 round 21, lane W11-X2; the round-20 verifier's B28) ─────────────────────────────────
+// The events tab's own lists (/me, /joined, /circles, /saved, /following) and GET /events/search answered a read they
+// could not make as fewer or no events, and the tab said "No events yet". A list's own read that fails now answers 503
+// with this message; an event withheld because a block, friendship, visibility or eligibility read failed, or a search
+// read that filled its pool, makes the answer `truncated: true`.
+const EVENT_LIST_UNAVAILABLE = "We could not load these events right now. Please try again shortly.";
+/** Rows each event-search read gathers before it is a cut read (one more is asked for, so the cut is known). */
+const EVENTS_SEARCH_POOL = 500;
+
+// ── census-discovery §119 (DV-83 round 22, lane W11-X2; the round-21 verifier's B32, and sweep) ──────────────────────
+// GET /events/following and /circles page their pool by a cursor. It was the last event's `starts_at` alone, read back
+// with `starts_at > cursor`, so an event starting at the same instant as the last one served (events start on the
+// hour) was skipped by the next page, unsaid, and an undated event past the first page was never read (`null > x` is
+// not true). The pool is now ordered by `(starts_at, id)` (undated last, as before) and the cursor is that pair:
+// `<starts_at>|<id>`, or `|<id>` for an undated event. A cursor an earlier server answered (no `|`) is read as before.
+import { pgrstValue } from "../lib/pagedRead.js";  // appended at the foot so no cited line above moves; ESM hoists imports
+
+/** The cursor after this event: `<starts_at>|<id>`, `|<id>` when it has no start time. */
+function eventsCursorOf(ev: any): string | null {
+  return ev && typeof ev.id === "string" ? `${ev.starts_at ?? ""}|${ev.id}` : null;
+}
+
+/** Narrow an events read ordered by `(starts_at, id)`, undated last, to the events after `cursor`. */
+function eventsAfterCursor(q: any, cursor: string): any {
+  const bar = cursor.lastIndexOf("|");
+  if (bar < 0) return q.gt("starts_at", cursor);  // an earlier server's cursor: the start time alone, read as before
+  const ts = cursor.slice(0, bar); const id = pgrstValue(cursor.slice(bar + 1));
+  if (ts === "") return q.is("starts_at", null).gt("id", cursor.slice(bar + 1));  // past every dated event: the undated ones, by id
+  return q.or(`starts_at.gt.${pgrstValue(ts)},and(starts_at.eq.${pgrstValue(ts)},id.gt.${id}),starts_at.is.null`);
+}
+
+// ── census-discovery §122 (DV-83 round 23, lane W11-X2; §119.16 B35) ─────────────────────────────────────────────────
+// The viewer's own saved state for an events list: the events the viewer saved with the events bookmark
+// (`event_saves`, what POST/DELETE /events/:id/save write and GET /events/saved lists) or put in one of their
+// collections (`collection_items`, entity_type "event", what GET /events already read). `null` when any of the reads
+// failed or threw: the caller refuses rather than serve `isSaved: false` ("not saved") over a read it could not make.
+async function viewerSavedEventIds(sc: any, userId: string, eventIds: readonly string[]): Promise<Set<string> | null> {
+  const ids = [...new Set(eventIds)];
+  const saved = new Set<string>();
+  if (ids.length === 0) return saved;
+  try {
+    const { data: saves, error: savesErr } = await sc.from("event_saves").select("event_id").eq("user_id", userId).in("event_id", ids);
+    if (savesErr) return null;
+    for (const r of (saves ?? []) as any[]) saved.add(String(r.event_id));
+    const { data: cols, error: colsErr } = await sc.from("collections").select("id").eq("owner_id", userId);
+    if (colsErr) return null;
+    const colIds = ((cols ?? []) as any[]).map((c) => String(c.id));
+    if (colIds.length === 0) return saved;
+    const { data: items, error: itemsErr } = await sc.from("collection_items").select("entity_id").eq("entity_type", "event").in("collection_id", colIds).in("entity_id", ids);
+    if (itemsErr) return null;
+    for (const r of (items ?? []) as any[]) saved.add(String(r.entity_id));
+    return saved;
+  } catch {
+    return null;
+  }
 }

@@ -30,7 +30,7 @@ const SRC = resolve(__dir, "..");
  * to call each one. A caller absent from this list is a bypass.
  */
 const READERS: Record<string, { approved: Record<string, string> }> = {
-  listMapTravelers: {
+  listMapTravelersRead: {  // census-discovery §113 (D-W11X2-129): the reader that also says a cut scan; listMapTravelers is gone
     approved: {
       "lib/mapTravelers.ts": "defines it",
       "routes/mapProjection.ts": "the gateway (§19)",

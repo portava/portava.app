@@ -18,25 +18,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { scoreGemForRanking } from "../../lib/hiddenGemState.js";
-
-/**
- * Lat/lng bounding box for a radius around a point (mirrors lib/mapTravelers).
- * A generous superset of the true circle — the haversine pass below still makes
- * the exact circular cut, so a slightly-too-wide box never changes results,
- * it only bounds how many rows the DB returns.
- */
-function radiusBoundingBox(lat: number, lng: number, radiusKm: number): {
-  minLat: number; maxLat: number; minLng: number; maxLng: number;
-} {
-  const dLat = radiusKm / 111.32;
-  const dLng = radiusKm / (111.32 * Math.max(0.2, Math.cos((lat * Math.PI) / 180)));
-  return {
-    minLat: Number((lat - dLat).toFixed(5)),
-    maxLat: Number((lat + dLat).toFixed(5)),
-    minLng: Number((lng - dLng).toFixed(5)),
-    maxLng: Number((lng + dLng).toFixed(5)),
-  };
-}
+import { nearBox, nearBoxTerms } from "../../lib/nearBox.js";
 
 /**
  * Compute a single gem's discovery score (higher = better rank).
@@ -80,7 +62,7 @@ export interface RankedGem {
 export async function discoverGems(
   db: SupabaseClient,
   opts: DiscoverGemsOptions = {},
-): Promise<RankedGem[]> {
+): Promise<GemDiscovery> {
   // Proximity path: bound the fetch to a lat/lng box so we don't pull the whole
   // active table and radius-filter in JS. Without this, a global /nearby query
   // fetched up to 300 status-only rows in unspecified order — which could BOTH
@@ -119,14 +101,14 @@ export async function discoverGems(
     .eq("status", "active");
 
   if (proximityBounded) {
-    const b = radiusBoundingBox(opts.userLat!, opts.userLng!, opts.radiusKm!);
-    q = q.or(
-      `and(latitude.gte.${b.minLat},latitude.lte.${b.maxLat},longitude.gte.${b.minLng},longitude.lte.${b.maxLng}),` +
-      `and(approx_latitude.gte.${b.minLat},approx_latitude.lte.${b.maxLat},approx_longitude.gte.${b.minLng},approx_longitude.lte.${b.maxLng})`,
-    );
+    // census-discovery §116 (DV-83, sweep SW13): the circle's exact box (lib/nearBox), on the exact and the approximate
+    // coordinates alike — two longitude ranges across the antimeridian, every longitude over a pole. It was a box clamped
+    // at cos(lat) 0.2 that did not wrap, so gems inside the radius were dropped before the haversine pass below.
+    const box = nearBox(opts.userLat!, opts.userLng!, opts.radiusKm!);
+    q = q.or([...nearBoxTerms(box, "latitude", "longitude"), ...nearBoxTerms(box, "approx_latitude", "approx_longitude")].join(","));
   }
 
-  q = q.limit(Math.min((opts.limit ?? 60) * 3, 300)); // over-fetch for client-side ranking
+  const scanCap = Math.min((opts.limit ?? 60) * 3, 300); q = q.order("updated_at", { ascending: false }).limit(scanCap + 1); // over-fetch for client-side ranking — census-discovery §113 (DV-83, D-W11X2-131): freshest first, and one row past the cap so a cut scan is known
 
   if (opts.city)     q = q.ilike("city", opts.city);
   if (opts.neighborhood) q = q.ilike("neighborhood", opts.neighborhood);
@@ -139,7 +121,7 @@ export async function discoverGems(
   const { data, error } = await q;
   if (error) throw error;
 
-  const gems = data ?? [];
+  const scanCut = (data ?? []).length > scanCap; const gems = (data ?? []).slice(0, scanCap);  // §113: the radius filter and the slice run after this cut, so the cut is carried to the answer
   const vibeTags = opts.vibeTags ?? [];
 
   // Score + optional proximity filter
@@ -156,7 +138,7 @@ export async function discoverGems(
   ranked.sort((a, b) => b.score - a.score);
 
   const start = opts.offset ?? 0;
-  return ranked.slice(start, start + (opts.limit ?? 40));
+  return { ranked: ranked.slice(start, start + (opts.limit ?? 40)), truncated: scanCut || ranked.length > start + (opts.limit ?? 40) };  // §113 (D-W11X2-131): a cut scan or a sliced list is said
 }
 
 /**
@@ -170,7 +152,7 @@ export async function findNearbyGems(
   lng: number,
   radiusKm: number,
   opts: Pick<DiscoverGemsOptions, "city" | "category" | "limit"> = {},
-): Promise<RankedGem[]> {
+): Promise<GemDiscovery> {
   return discoverGems(db, {
     ...opts,
     userLat: lat,
@@ -189,7 +171,7 @@ export async function getPersonalisedRecommendations(
   userId: string,
   city?: string,
   limit = 20,
-): Promise<RankedGem[]> {
+): Promise<GemDiscovery> {
   // Collect user's vibe-tag preferences from saved/visited gems
   const { data: savedRows } = await db
     .from("hidden_gem_saves")
@@ -208,4 +190,14 @@ export async function getPersonalisedRecommendations(
     vibeTags: Array.from(preferredTags),
     limit,
   });
+}
+
+/**
+ * A discovery answer (census-discovery §113, DV-83, D-W11X2-131): the ranked page, and whether it is CUT — the
+ * scan hit its cap (the radius filter runs after the scan, so a gem beyond the cap is never seen) or the ranked list
+ * was sliced to `limit`. A cut answer is served, but no caller may state it as the whole answer.
+ */
+export interface GemDiscovery {
+  ranked: RankedGem[];
+  truncated: boolean;
 }

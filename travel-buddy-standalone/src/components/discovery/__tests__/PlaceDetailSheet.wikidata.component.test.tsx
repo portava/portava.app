@@ -37,7 +37,7 @@ jest.mock('react-native', () => {
 
 import React from 'react';
 import { Linking } from 'react-native';
-import { render, fireEvent, waitFor } from '@testing-library/react-native';
+import { render, fireEvent, waitFor, act } from '@testing-library/react-native';
 import { PlaceDetailSheet } from '../PlaceDetailSheet.tsx';
 import type { DiscoveryPlace } from '../../../services/discovery.ts';
 import { getWikidataEnrichment } from '../../../services/discovery.ts';
@@ -318,3 +318,60 @@ describe('PlaceDetailSheet — Wikidata enrichment (description fallback)', () =
     });
   });
 });
+
+// ── census-discovery §102 (DV-83 round 6, D-W11X2-39) ─────────────────────────
+// `getWikidataEnrichment` answers null for a failed read (a 502 from the route,
+// which since §102 includes Wikidata's 200-with-error, a network failure, bad
+// JSON) and an enrichment object — all-null for an entity Wikidata reports
+// missing — for a read that happened. A failed read is said; it is never the
+// same screen as "Wikidata has nothing more on this place".
+describe('PlaceDetailSheet — a failed Wikidata read is said (DV-83, §102)', () => {
+  afterEach(() => jest.clearAllMocks());
+
+  it('WK1 the enrichment read failed → "couldn\'t load more" line', async () => {
+    mockGetWikidataEnrichment.mockResolvedValueOnce(null);
+    const { findByTestId } = await mountSheet({ ...BASE_PLACE, description: null, wikidataId: 'Q243' });
+    const line = await findByTestId('place-sheet-wikidata-failed');
+    expect(line.props.children).toBe('Couldn’t load more about this place just now.');
+  });
+
+  it('WK2 CONTROL an entity Wikidata reports missing → no failure line', async () => {
+    mockGetWikidataEnrichment.mockResolvedValueOnce({ description: null, wikipediaUrl: null, commonsImageUrl: null });
+    const { queryByTestId, getByTestId } = await mountSheet({ ...BASE_PLACE, description: null, wikidataId: 'Q244' });
+    await waitFor(() => expect(mockGetWikidataEnrichment).toHaveBeenCalledWith('Q244'));
+    await waitFor(() => expect(getByTestId('place-sheet-wikidata')).toBeTruthy());
+    expect(queryByTestId('place-sheet-wikidata-failed')).toBeNull();
+  });
+
+  it('WK3 CONTROL no wikidataId → no read, no failure line', async () => {
+    const { queryByTestId } = await mountSheet({ ...BASE_PLACE, wikidataId: null });
+    expect(mockGetWikidataEnrichment).not.toHaveBeenCalled();
+    expect(queryByTestId('place-sheet-wikidata-failed')).toBeNull();
+  });
+
+  // §103 (DV-83, W11-X2 round 7): the verifier's CM12 mutation (no reset of `wikidataFailed` on a place change)
+  // survived §102. A failure belongs to the place whose read failed: the next place — with no Wikidata id, or
+  // with a read still in flight — is not told "couldn't load more".
+  it('WK4 a failed read for one place is not carried to the next place (no wikidataId)', async () => {
+    mockGetWikidataEnrichment.mockResolvedValueOnce(null);
+    const utils = await mountSheet({ ...BASE_PLACE, description: null, wikidataId: 'Q243' });
+    await utils.findByTestId('place-sheet-wikidata-failed');
+    await act(async () => {
+      utils.rerender(<PlaceDetailSheet place={{ ...BASE_PLACE, id: 'place-wiki-2', description: null, wikidataId: null }} visible onClose={jest.fn()} onAddToPlan={jest.fn()} />);
+    });
+    expect(utils.queryByTestId('place-sheet-wikidata-failed')).toBeNull();
+  });
+
+  it('WK5 nor to the next place whose own read is still in flight', async () => {
+    mockGetWikidataEnrichment.mockResolvedValueOnce(null);
+    const utils = await mountSheet({ ...BASE_PLACE, description: null, wikidataId: 'Q243' });
+    await utils.findByTestId('place-sheet-wikidata-failed');
+    mockGetWikidataEnrichment.mockImplementationOnce(() => new Promise(() => {}));
+    await act(async () => {
+      utils.rerender(<PlaceDetailSheet place={{ ...BASE_PLACE, id: 'place-wiki-3', description: null, wikidataId: 'Q999' }} visible onClose={jest.fn()} onAddToPlan={jest.fn()} />);
+    });
+    expect(mockGetWikidataEnrichment).toHaveBeenLastCalledWith('Q999');
+    expect(utils.queryByTestId('place-sheet-wikidata-failed')).toBeNull();
+  });
+});
+

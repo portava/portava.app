@@ -17,7 +17,7 @@ async function freshToken(): Promise<string | null> {
   }
 }
 
-async function apiGet<T>(path: string): Promise<{ ok: boolean; data?: T; error?: string }> {
+async function apiGet<T>(path: string): Promise<{ ok: boolean; data?: T; error?: string; status?: number }> {  // census-discovery §105 (DV-83): the status, so a failed read is not read as "not found"
   const token = await freshToken();
   if (!token) return { ok: false, error: 'Not authenticated' };
   try {
@@ -26,7 +26,7 @@ async function apiGet<T>(path: string): Promise<{ ok: boolean; data?: T; error?:
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      return { ok: false, error: serviceFailure('hashtag', res, (body as any)?.message, 'Could not complete that request.') };
+      return { ok: false, status: res.status, error: serviceFailure('hashtag', res, (body as any)?.message, 'Could not complete that request.') };
     }
     return { ok: true, data: (await res.json()) as T };
   } catch (err) {
@@ -96,7 +96,7 @@ export interface HashtagMeta {
   slug: string;
   name: string;
   usageCount: number;
-  isFollowing: boolean;
+  isFollowing: boolean | null;  // census-discovery §113 (D-W11X2-137): null = the follow read failed; `topCity` is null over a cut or failed tally too
   /** Most-active city for this hashtag in the last 30 days (null if no geo-tagged usage). */
   topCity: string | null;
   createdAt: string;
@@ -202,7 +202,7 @@ export async function getTrendingHashtags(
 ) {
   const qs = new URLSearchParams({ scope });
   if (city) qs.set('city_id', city);
-  return apiGet<{ trending: TrendingHashtag[]; scope: string; city: string | null }>(
+  return apiGet<{ trending: TrendingHashtag[]; scope: string; city: string | null; /** census-discovery §108 (D-W11X2-79): a window read incompletely */ refusal?: { coverage?: 'nothing' | 'partial' | string; code?: string } | null }>(
     `/api/hashtags/trending?${qs}`,
   );
 }

@@ -115,7 +115,7 @@ export default function CirclePresenceScreen() {
 
         if (
           !membersRes.ok &&
-          (membersRes.error === 'feature_disabled' || membersRes.status === 503)
+          membersRes.error === 'feature_disabled'  /* census-discovery §111 (D-W11X2-118): a 503 is a read that failed (degraded_unavailable, or an unread flag) — the retryable error below, never "disabled" — was: || membersRes.status === 503 */
         ) {
           setScreenState('feature_disabled');
           loadingRef.current = false;

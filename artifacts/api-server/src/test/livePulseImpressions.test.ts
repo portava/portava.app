@@ -398,6 +398,7 @@ function makeClient(
       overlaps: (_c: string, _v: any) => b,
       order: (_col: string, _opts?: any) => b,
       limit: (_n: number) => b,
+      range: (_a: number, _z: number) => b, // census-discovery §118 (B22): the live going recount pages with .range(); one page here
       is: (col: string, val: any) => {
         filtered = filtered.filter((r) => (val === null ? r[col] == null : r[col] === val));
         return b;

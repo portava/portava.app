@@ -206,3 +206,19 @@ test('selectMediaMapModel: layers toggle what is drawn; selection resolves to th
   assert.equal(m.gemZones.length, 0);
   assert.equal(m.positioned.length, 1);
 });
+
+// census-discovery §115 (DV-83 round 18, B13): a gem map is EMPTY only over a gateway that answered with its flag on;
+// a clusters-only map with no clusters is empty whatever the positions did (its counts were read whole, and there is
+// nothing to place).
+test('§115 B13: the empty state follows the gateway for a gem map, and the counts for a clusters-only map', () => {
+  const none = { ok: true as const, data: [] };
+  for (const positions of [{ ok: false as const, reason: 'map_failed' as const }, { ok: false as const, reason: 'no_location' as const }, { ok: true as const, enabled: false, objects: [] }]) {
+    const gem = mediaMapReducer(INITIAL_MEDIA_MAP_STATE, { type: 'load_result', clusters: none, positions, expectGems: true });
+    assert.equal(gem.status, 'ready', `a gem map over ${JSON.stringify(positions)} is not empty`);
+    assert.notEqual(selectMediaMapModel(gem).positionsUnavailable, null);
+    const counts = mediaMapReducer(INITIAL_MEDIA_MAP_STATE, { type: 'load_result', clusters: none, positions });
+    assert.equal(counts.status, 'empty', `a clusters-only map with no clusters is empty over ${JSON.stringify(positions)}`);
+  }
+  const answered = mediaMapReducer(INITIAL_MEDIA_MAP_STATE, { type: 'load_result', clusters: none, positions: { ok: true, enabled: true, objects: [] }, expectGems: true });
+  assert.equal(answered.status, 'empty', 'a gem map over a whole gateway answer with nothing in view is honestly empty');
+});

@@ -39,7 +39,7 @@ import {
   sharedItems,
 } from "../services/passport/PassportConsumerProjections.js";
 import { allowDiscoveryPersonCard } from "../services/passport/PassportConsumerAccess.js";
-import { isCompassEnabled, isEnabled } from "../compass/flags.js";
+import { isCompassEnabled, isEnabled, readCompassEnabled, readCompassFlag } from "../compass/flags.js"; import { discoveryRefusal } from "../lib/discoveryRefusal.js";
 import { isFlagEnabled as isPlatformFlagEnabled } from "../lib/featureFlags.js";
 import { buildCompassHomeProjection } from "./compassHome.js";
 import {
@@ -76,9 +76,9 @@ import {
   buildModeWeightingLines,
 } from "../compass/CompassStructuredContext.js";
 import { buildDestinationContextLines } from "../compass/CompassGraphEngine.js";
-import { buildFeed, buildSection, SECTION_NAMES, type SectionName, type FeedPage } from "../compass/CompassFeedBuilder.js";
+import { buildFeed, buildSection, SECTION_NAMES, type SectionName, type FeedPage, CompassFlagsUnreadableError } from "../compass/CompassFeedBuilder.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { hydrateCompassItems } from "../compass/CompassItemHydrator.js";
+import { hydrateCompassItems, compassHydrationFailedSources } from "../compass/CompassItemHydrator.js";
 import {
   buildFrontLoadPayload,
   buildPreloadManifest,
@@ -481,8 +481,8 @@ router.get("/compass/feed", async (req, res) => {
     return;
   }
 
-  const enabled = await isCompassEnabled(sc);
-  if (!enabled) {
+  const enabledRead = await readCompassEnabled(sc); const enabled = enabledRead === true;  // census-discovery §105 (DV-83, D-W11X2-62): null = the flag table could not be read — was: isCompassEnabled (the fail-safe map, where unread is "off")
+  if (!enabled) { if (enabledRead === null) return sendCompassFeedFlagsUnread(res);  // §105: an unread flag is a failed read, never the off body below
     res.json({
       sections:  [],
       nextCursor: null,
@@ -492,19 +492,19 @@ router.get("/compass/feed", async (req, res) => {
   }
 
   // Check COMPASS_FEED_ENABLED flag
-  let feedEnabled = false;
+  let feedEnabled = false; let feedFlagUnread = false;  // census-discovery §105 (DV-83, D-W11X2-62): the feed flag is read STRICTLY
   try {
-    const { data } = await sc
+    const { data, error: feedFlagErr } = await sc
       .from("feature_flags")
       .select("enabled")
       .eq("flag", "COMPASS_FEED_ENABLED")
       .maybeSingle();
-    feedEnabled = Boolean((data as any)?.enabled);
+    feedFlagUnread = Boolean(feedFlagErr); feedEnabled = !feedFlagErr && Boolean((data as any)?.enabled);
   } catch (err) {
-    req.log?.warn({ err }, "Compass feed: COMPASS_FEED_ENABLED flag lookup failed — degrading to empty feed");
+    feedFlagUnread = true; req.log?.warn({ err }, "Compass feed: COMPASS_FEED_ENABLED flag lookup failed — degrading to empty feed");
   }
 
-  if (!feedEnabled) {
+  if (feedFlagUnread) return sendCompassFeedFlagsUnread(res); if (!feedEnabled) {  // §105: only a flag that was READ and is off answers the off body
     res.json({ sections: [], nextCursor: null, fallback: true });
     return;
   }
@@ -567,7 +567,7 @@ router.get("/compass/feed", async (req, res) => {
       settings.use_location === false && settings.use_chosen_city === false
         ? { ...profile, currentCity: null as string | null }
         : profile;
-    const items = await hydrateCompassItems(sc, hydrateProfile);
+    const items = await hydrateCompassItems(sc, hydrateProfile); const feedFailedSources = compassHydrationFailedSources(items);  // census-discovery §104 (DV-83, D-W11X2-54): a pool built from a failed read is never cached or served as complete
 
     // Apply type-based candidate gates driven by settings toggles.
     const excludeTypes = new Set<string>();
@@ -605,10 +605,10 @@ router.get("/compass/feed", async (req, res) => {
     }
 
     // Write-through: cache the result (fire-and-forget — never blocks response)
-    void setCachedFeed(sc, user.id, cacheKey, "feed", enrichedFeed);
-    res.json(enrichedFeed);
+    if (feedFailedSources.length === 0) void setCachedFeed(sc, user.id, cacheKey, "feed", enrichedFeed);
+    res.json(feedFailedSources.length === 0 ? enrichedFeed : compassFeedSourcesUnreadBody(enrichedFeed, feedFailedSources));
   } catch (err) {
-    req.log.error({ err }, "compass/feed: build failed, using fallback");
+    if (err instanceof CompassFlagsUnreadableError) return sendCompassFeedFlagsUnread(res); req.log.error({ err }, "compass/feed: build failed, using fallback");  // §110 (D-W11X2-100): the pipeline's own flag read failed — the §105 refusal, never the fallback feed
     const profile = await getCompassProfile(sc, user.id).catch(() => null);
     const result  = await buildFallbackFeed(sc, user.id, profile, "build_error");
     res.json(result);
@@ -628,9 +628,9 @@ router.get("/compass/feed/section/:section", async (req, res) => {
     return;
   }
 
-  const enabled = await isCompassEnabled(sc);
+  const enabledRead = await readCompassEnabled(sc); const enabled = enabledRead === true;  // census-discovery §103 (D-W11X2-50): null = the flag table could not be read
   if (!enabled) {
-    res.json({ section: null, nextCursor: null, fallback: true, compassEnabled: false });
+    if (enabledRead === null) { sendCompassSectionFailure(res, "compass_flags_unreadable", []); return; } res.json({ section: null, nextCursor: null, fallback: true, compassEnabled: false });  // census-discovery §103 (DV-83, D-W11X2-50): "disabled" only when the flags were READ; an unread flag table is a failed read, not an off switch
     return;
   }
 
@@ -690,7 +690,7 @@ router.get("/compass/feed/section/:section", async (req, res) => {
       sectionSettings.use_location === false && sectionSettings.use_chosen_city === false
         ? { ...profile, currentCity: null as string | null }
         : profile;
-    const items = await hydrateCompassItems(sc, sectionHydrateProfile);
+    const items = await hydrateCompassItems(sc, sectionHydrateProfile); const sectionFailedSources = compassHydrationFailedSources(items);  // census-discovery §104 (DV-83, D-W11X2-54)
 
     // Apply type-gate and session-suppression filters (same logic as /feed)
     const sectionExcludeTypes = new Set<string>();
@@ -759,8 +759,8 @@ router.get("/compass/feed/section/:section", async (req, res) => {
     };
 
     // Write-through: cache the result (fire-and-forget)
-    void setCachedFeed(sc, user.id, cacheKey, "section", response);
-    res.json(response);
+    if (sectionFailedSources.length === 0) void setCachedFeed(sc, user.id, cacheKey, "section", response);  // census-discovery §104 (DV-83, D-W11X2-54): never L1, never the DB cache
+    if (sectionFailedSources.length > 0) sendCompassSectionSourcesUnread(res, response, sectionFailedSources); else res.json(response);
   } catch (err) {
     // On unhandled error, return section-schema fields + safe fallback content.
     // `section: null` is the consistent fallback signal; `safeItems` carries
@@ -775,7 +775,7 @@ router.get("/compass/feed/section/:section", async (req, res) => {
       req.log?.error({ err: fallbackErr, userId: user.id }, "compass/feed/section: fallback feed build itself failed — returning empty safeItems");
       return { safeItems: [] };
     });
-    res.json({ section: null, nextCursor: null, fallback: true, safeItems: fallback.safeItems });
+    sendCompassSectionFailure(res, err instanceof CompassFlagsUnreadableError ? "compass_flags_unreadable" : "section_build_error", fallback.safeItems);  // census-discovery §103 (DV-83, D-W11X2-50): the build failed, and the body says so — was: res.json({ section: null, nextCursor: null, fallback: true, safeItems: fallback.safeItems });
   }
 });
 
@@ -973,7 +973,7 @@ router.get("/compass/why/:recommendationId", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) {
     // Service client unavailable — return generic rather than accepting client data
-    res.json({ explanation: "Based on your travel preferences and recent activity." });
+    res.json({ explanation: "Based on your travel preferences and recent activity.", refusal: discoveryRefusal("transient_db", "why_unavailable", "GET /compass/why/:recommendationId", "nothing", ["service_client"]) });  // census-discovery §104 (DV-83, D-W11X2-58): a stub, not the explanation
     return;
   }
 
@@ -997,7 +997,7 @@ router.get("/compass/why/:recommendationId", async (req, res) => {
 
     if (rowErr) {
       req.log?.warn({ err: rowErr, userId: user.id }, "compass/why: served-recommendation lookup unavailable; denying");
-      res.json({ explanation: "Recommendation not found or not available for your account." });
+      res.json({ explanation: "Recommendation not found or not available for your account.", refusal: discoveryRefusal("transient_db", "why_unavailable", "GET /compass/why/:recommendationId", "nothing", ["compass_served_recommendations"]) });  // census-discovery §104 (DV-83, D-W11X2-58): the lookup failed; it did not find nothing
       return;
     }
 
@@ -1055,7 +1055,7 @@ router.get("/compass/why/:recommendationId", async (req, res) => {
     res.json({ explanation: templateExplanation });
   } catch (err) {
     req.log.error({ err }, "compass/why: resolution failed");
-    res.json({ explanation: "Based on your travel preferences and recent activity." });
+    res.json({ explanation: "Based on your travel preferences and recent activity.", refusal: discoveryRefusal("transient_db", "why_unavailable", "GET /compass/why/:recommendationId", "nothing", ["compass_why"]) });  // census-discovery §104 (DV-83, D-W11X2-58)
   }
 });
 
@@ -1607,7 +1607,7 @@ router.post("/compass/ask", async (req, res) => {
     modeWeightingLines = buildModeWeightingLines(ctx.contextState, intentMode);
     const structured = await buildStructuredCompassContext(sc, effProfile);
     structuredLines  = formatStructuredContextLines(structured);
-  } catch { /* non-fatal — proceed without structured context */ }
+  } catch { structuredLines = [STRUCTURED_CONTEXT_UNREAD_LINE]; /* census-discovery §110 (DV-83, D-W11X2-97): the section is said to be unread, not dropped — was: non-fatal — proceed without structured context */ }
 
   const locLine = locationCtx?.currentCity
     ? `${locationCtx.currentCity}${locationCtx.currentCountry ? `, ${locationCtx.currentCountry}` : ""}`
@@ -3599,9 +3599,9 @@ router.get("/compass/recommendations", async (req, res) => {
   );
 
   // Feature-flag gate — silently return empty list when Compass is off.
-  const enabled = await isCompassEnabled(sc);
+  const enabledRead = await readCompassEnabled(sc); const enabled = enabledRead === true;  // census-discovery §104 (DV-83, D-W11X2-55): null = the flag table could not be read
   if (!enabled) {
-    res.json({ recommendations: [], surface });
+    if (enabledRead === null) sendRecommendationsRefusal(res, { recommendations: [], surface }, "compass_flags_unreadable", ["feature_flags"]); else res.json({ recommendations: [], surface });  // census-discovery §104 (DV-83, D-W11X2-55): "off" only when the flags were READ
     return;
   }
 
@@ -3630,7 +3630,7 @@ router.get("/compass/recommendations", async (req, res) => {
           .select("blocked_id, blocker_id")
           .or(`blocker_id.eq.${user.id},blocked_id.eq.${user.id}`);
         if (blkErr) {
-          res.json({ recommendations: [], surface, error: "block_check_failed" });
+          sendRecommendationsRefusal(res, { recommendations: [], surface, error: "block_check_failed" }, "block_check_failed", ["blocks"]);  // census-discovery §104 (DV-83, D-W11X2-55)
           return;
         }
         for (const bRow of (blkRows ?? []) as any[]) {
@@ -3638,7 +3638,7 @@ router.get("/compass/recommendations", async (req, res) => {
           if (bRow.blocked_id === user.id) buddyBlockedIds.add(bRow.blocker_id);
         }
       } catch {
-        res.json({ recommendations: [], surface, error: "block_check_failed" });
+        sendRecommendationsRefusal(res, { recommendations: [], surface, error: "block_check_failed" }, "block_check_failed", ["blocks"]);  // census-discovery §104 (DV-83, D-W11X2-55)
         return;
       }
 
@@ -3650,22 +3650,22 @@ router.get("/compass/recommendations", async (req, res) => {
       // city; Compass must agree, or it advertises buddies the directory
       // (correctly) says don't exist here. No effectiveCity => no
       // recommendations, matching the directory's "enter a city" state.
-      if (!effectiveCity) {
+      if (!effectiveCity) { if (profile.locationUnread) { sendRecommendationsRefusal(res, { recommendations: [], surface, sessionId: effectiveSessionId }, "buddy_city_unread", ["user_location_state"]); return; }  // census-discovery §108 (DV-83, D-W11X2-84): an UNREAD location is not "no city", so never "no buddies"
         res.json({ recommendations: [], surface, sessionId: effectiveSessionId });
         return;
       }
 
-      const { data: buddyRows } = await sc
+      const { data: buddyRows, error: buddyRowsErr, count: buddyRowsCount } = await sc
         .from("rent_buddy_profiles")
         .select(
           "id, user_id, display_name, city, country, categories, languages, " +
           "hourly_rate_usd, status, verified, average_rating, review_count, " +
           "cover_photo_url, admin_status, risk_hold",
-        )
+        { count: "exact" })  // census-discovery §108 (D-W11X2-84): db-max-rows cuts this read silently — the count says so
         .eq("status", "active")
-        .ilike("city", effectiveCity);
+        .ilike("city", effectiveCity); if (buddyRowsErr) { sendRecommendationsRefusal(res, { recommendations: [], surface, sessionId: effectiveSessionId }, "buddy_read_failed", ["rent_buddy_profiles"]); return; }  // census-discovery §104 (DV-83, D-W11X2-55)
 
-      const ADULT_CATS = new Set(["escort", "adult", "dating", "romantic", "sexual"]);
+      const ADULT_CATS = new Set(["escort", "adult", "dating", "romantic", "sexual"]); const buddyFailed: string[] = typeof buddyRowsCount === "number" && buddyRowsCount > (buddyRows ?? []).length ? ["rent_buddy_profiles"] : [];  // §108: a cut read is ranked, but served as partial
 
       // Pre-filter candidates before availability lookup
       const candidateBuddies = ((buddyRows ?? []) as any[]).filter((b) =>
@@ -3684,13 +3684,13 @@ router.get("/compass/recommendations", async (req, res) => {
         const nowDate     = new Date(nowMs);
         const todayStr    = nowDate.toISOString().slice(0, 10);
         const nextWeekStr = new Date(nowDate.getTime() + 7 * 86_400_000).toISOString().slice(0, 10);
-        const { data: availRows } = await sc
+        const { data: availRows, error: availErr, count: availCount } = await sc
           .from("rent_buddy_availability")
-          .select("buddy_id, date")
+          .select("buddy_id, date", { count: "exact" })
           .in("buddy_id", candidateBuddies.map((b: any) => b.id))
           .eq("is_available", true)
           .gte("date", todayStr)
-          .lte("date", nextWeekStr);
+          .lte("date", nextWeekStr); if (availErr || (typeof availCount === "number" && availCount > (availRows ?? []).length)) buddyFailed.push("rent_buddy_availability");  // census-discovery §108 (DV-83, D-W11X2-84): a failed or cut availability read decides the rank and the badge — said, never "not available"
         for (const r of (availRows ?? []) as any[]) {
           if (r.date === todayStr) {
             availMap.set(r.buddy_id, "available_today");
@@ -3779,7 +3779,7 @@ router.get("/compass/recommendations", async (req, res) => {
       }));
 
       void logCompassImpression(buddyRecommendations, user.id, effectiveSessionId);
-      res.json({ recommendations: buddyRecommendations, surface, sessionId: effectiveSessionId });
+      sendRecommendations(res, { recommendations: buddyRecommendations, surface, sessionId: effectiveSessionId }, buddyFailed);  // §108 (D-W11X2-84): `partial` beside the picks when a read failed or was cut
       return;
     }
 
@@ -3804,7 +3804,7 @@ router.get("/compass/recommendations", async (req, res) => {
           .select("blocked_id, blocker_id")
           .or(`blocker_id.eq.${user.id},blocked_id.eq.${user.id}`);
         if (blkErr) {
-          res.json({ recommendations: [], surface, error: "block_check_failed" });
+          sendRecommendationsRefusal(res, { recommendations: [], surface, error: "block_check_failed" }, "block_check_failed", ["blocks"]);  // census-discovery §104 (DV-83, D-W11X2-55)
           return;
         }
         for (const bRow of (blkRows ?? []) as any[]) {
@@ -3812,7 +3812,7 @@ router.get("/compass/recommendations", async (req, res) => {
           if (bRow.blocked_id === user.id) travBlockedIds.add(bRow.blocker_id);
         }
       } catch {
-        res.json({ recommendations: [], surface, error: "block_check_failed" });
+        sendRecommendationsRefusal(res, { recommendations: [], surface, error: "block_check_failed" }, "block_check_failed", ["blocks"]);  // census-discovery §104 (DV-83, D-W11X2-55)
         return;
       }
 
@@ -3830,7 +3830,7 @@ router.get("/compass/recommendations", async (req, res) => {
       // wider than the page, which cannot afford a per-person projection.
       // `verified` is in that set as a +10 ranking term only; the verified BADGE
       // the client renders comes from the projection, never from this column.
-      const { data: travelerRows } = await sc
+      const { data: travelerRows, error: travelerRowsErr } = await sc
         .from("profiles")
         .select(
           "id, home_city, spoken_languages, interests, verified, " +
@@ -3838,7 +3838,7 @@ router.get("/compass/recommendations", async (req, res) => {
         )
         .neq("id", user.id)
         .in("account_status", ["active"])
-        .limit(50);
+        .limit(50); if (travelerRowsErr) { sendRecommendationsRefusal(res, { recommendations: [], surface, sessionId: effectiveSessionId }, "traveler_read_failed", ["profiles"]); return; }  // census-discovery §104 (DV-83, D-W11X2-55)
 
       // Pre-filter blocked users to obtain candidate IDs for batch signal queries
       const travCandidates = ((travelerRows ?? []) as any[]).filter((p) => !travBlockedIds.has(p.id));
@@ -4106,13 +4106,13 @@ router.get("/compass/recommendations", async (req, res) => {
       const travGates = await Promise.all(
         intentPool.map((s) => allowDiscoveryPersonCard(sc, s.id)),
       );
-      const topTravSlice = intentPool.filter((_, i) => travGates[i].allowed).slice(0, limit);
+      const topTravSlice = intentPool.filter((_, i) => travGates[i].allowed).slice(0, limit); const travFailedSources: string[] = personGatesUnread(travGates) ? ["profile_privacy_settings"] : [];  // census-discovery §104 (DV-83, D-W11X2-55): a person withheld UNCHECKED makes the page partial
 
       const travCards = await Promise.all(
         topTravSlice.map((s) =>
           buildConsumerProjection(sc, "discovery_card", s.id, user.id, { nowMs })
             .catch((err: unknown) => {
-              req.log.warn({ err, userId: s.id }, "compass traveler card projection failed");
+              req.log.warn({ err, userId: s.id }, "compass traveler card projection failed"); if (!travFailedSources.includes("passport_projection")) travFailedSources.push("passport_projection");
               return null;
             }),
         ),
@@ -4185,7 +4185,7 @@ router.get("/compass/recommendations", async (req, res) => {
       });
 
       void logCompassImpression(travelerRecommendations, user.id, effectiveSessionId);
-      res.json({ recommendations: travelerRecommendations, surface, sessionId: effectiveSessionId });
+      sendRecommendations(res, { recommendations: travelerRecommendations, surface, sessionId: effectiveSessionId }, travFailedSources);  // census-discovery §104 (DV-83, D-W11X2-55)
       return;
     }
 
@@ -4204,7 +4204,7 @@ router.get("/compass/recommendations", async (req, res) => {
     // the k-anonymity aggregation, so it can only reorder what a user may
     // already see, never widen it.
     if (temporaryIntent) context.temporaryIntent = temporaryIntent;
-    const items   = await hydrateCompassItems(sc, effectiveProfile as typeof profile);
+    const items   = await hydrateCompassItems(sc, effectiveProfile as typeof profile); const recFailedSources = compassHydrationFailedSources(items);  // census-discovery §104 (DV-83, D-W11X2-55)
 
     // Choose section and type whitelist by surface
     const sectionName: SectionName =
@@ -4287,7 +4287,7 @@ router.get("/compass/recommendations", async (req, res) => {
           .eq("blocker_id", user.id);
         if (blocksErr) {
           req.log.warn({ err: blocksErr }, "compass/recommendations: block-list fetch failed; returning empty");
-          res.json({ recommendations: [], surface });
+          sendRecommendationsRefusal(res, { recommendations: [], surface }, "block_check_failed", ["blocks"]);  // census-discovery §104 (DV-83, D-W11X2-55)
           return;
         }
         blockedIds = new Set<string>();
@@ -4296,7 +4296,7 @@ router.get("/compass/recommendations", async (req, res) => {
         }
       } catch (err) {
         req.log.warn({ err }, "compass/recommendations: block-list fetch threw; returning empty");
-        res.json({ recommendations: [], surface });
+        sendRecommendationsRefusal(res, { recommendations: [], surface }, "block_check_failed", ["blocks"]);  // census-discovery §104 (DV-83, D-W11X2-55)
         return;
       }
 
@@ -4412,13 +4412,13 @@ router.get("/compass/recommendations", async (req, res) => {
     }
 
     void logCompassImpression(recommendations, user.id, effectiveSessionId);
-    res.json({
+    sendRecommendations(res, {
       recommendations, surface, sessionId: effectiveSessionId,
       ...(tripAttention ? { attention: attentionOnTheWire(tripAttention, attentionWithheld) } : {}),
-    });
+    }, recFailedSources);  // census-discovery §104 (DV-83, D-W11X2-55)
   } catch (err) {
     req.log.error({ err }, "compass/recommendations: build failed");
-    res.json({ recommendations: [], surface });
+    sendRecommendationsRefusal(res, { recommendations: [], surface }, err instanceof CompassFlagsUnreadableError ? "compass_flags_unreadable" : "recommendations_build_failed", [err instanceof CompassFlagsUnreadableError ? "feature_flags" : "compass_recommendations"]);  // census-discovery §104 (DV-83, D-W11X2-55) — was: res.json({ recommendations: [], surface });
   }
 });
 
@@ -4692,8 +4692,8 @@ router.get("/compass/telegraph", async (req, res) => {
   }
 
   // Feature flag gate
-  const telegraphEnabled = await isEnabled(sc, "COMPASS_TELEGRAPH").catch(() => false);
-  if (!telegraphEnabled) {
+  const telegraphRead = await readCompassFlag(sc, "COMPASS_TELEGRAPH").catch(() => null); const telegraphEnabled = telegraphRead === true;  // census-discovery §107 (DV-83, D-W11X2-68): null = the COMPASS_% table could not be read — was: isEnabled(...).catch(() => false), the fail-safe map
+  if (!telegraphEnabled) { if (telegraphRead === null) return sendTelegraphRefused(res, null, "compass_flags_unreadable", ["feature_flags"]);  // §107: only a flag that was READ and is off answers the off 404 below
     sendError(res, "feature_disabled", "compass_telegraph feature is not enabled");
     return;
   }
@@ -4718,7 +4718,7 @@ router.get("/compass/telegraph", async (req, res) => {
   const { threadId } = parsed.data;
 
   // Verify caller is an active member of the thread
-  const { data: membership } = await sc
+  const { data: membership, error: membershipErr } = await sc
     .from("message_thread_members")
     .select("user_id")
     .eq("thread_id", threadId)
@@ -4726,14 +4726,14 @@ router.get("/compass/telegraph", async (req, res) => {
     .is("left_at", null)
     .maybeSingle();
 
-  if (!membership) {
+  if (membershipErr) return sendTelegraphRefused(res, null, "telegraph_context_unread", ["message_thread_members"]); if (!membership) {  // §107: a failed membership read is not "Not a member"
     sendError(res, "forbidden", "Not a member of this thread");
     return;
   }
 
   try {
     // Load all active thread participants
-    const { data: memberRows } = await sc
+    const { data: memberRows, error: memberRowsErr } = await sc
       .from("message_thread_members")
       .select("user_id")
       .eq("thread_id", threadId)
@@ -4747,35 +4747,35 @@ router.get("/compass/telegraph", async (req, res) => {
     let cityContext: string | null = null;
     let tripId: string | null = null;
 
-    const { data: threadRow } = await sc
+    const { data: threadRow, error: threadErr } = await sc
       .from("message_threads")
       .select("thread_type, trip_id")
       .eq("id", threadId)
       .maybeSingle();
 
-    tripId = (threadRow as any)?.trip_id ?? null;
+    if (threadErr) return sendTelegraphRefused(res, null, "telegraph_context_unread", ["message_threads"]); tripId = (threadRow as any)?.trip_id ?? null;  // §107: an unread thread row leaves the cards' city unknown
 
     if (tripId) {
-      const { data: tripRow } = await sc
+      const { data: tripRow, error: tripErr } = await sc
         .from("trips")
         .select("destination_city")
         .eq("id", tripId)
         .maybeSingle();
-      cityContext = (tripRow as any)?.destination_city ?? null;
+      if (tripErr) return sendTelegraphRefused(res, null, "telegraph_context_unread", ["trips"]); cityContext = (tripRow as any)?.destination_city ?? null;
     }
 
     // Fallback: use viewer's Compass profile city, or participants' cities
     if (!cityContext) {
       const profile = await getCompassProfile(sc, user.id).catch(() => null);
-      cityContext = profile?.currentCity ?? null;
+      cityContext = profile?.currentCity ?? null; if (!cityContext && (profile === null || profile.locationUnread)) return sendTelegraphRefused(res, null, profile === null ? "telegraph_profile_unread" : "telegraph_context_unread", [profile === null ? "compass_profile" : "user_location_state"]);  // census-discovery §108 (DV-83, D-W11X2-77): the viewer's own city outranks the participants' — unread, it is not "no city", so never another participant's city instead
     }
 
-    if (!cityContext && participantIds.length > 0) {
-      const { data: profileRows } = await sc
+    if (!cityContext && memberRowsErr) return sendTelegraphRefused(res, null, "telegraph_context_unread", ["message_thread_members"]); if (!cityContext && participantIds.length > 0) {
+      const { data: profileRows, error: profileRowsErr } = await sc
         .from("profiles")
         .select("home_city")
         .in("id", participantIds.filter((id) => id !== user.id));
-      const cities = ((profileRows as any[]) ?? [])
+      if (profileRowsErr) return sendTelegraphRefused(res, null, "telegraph_context_unread", ["profiles"]); const cities = ((profileRows as any[]) ?? [])
         .map((r: any) => r.home_city as string | null)
         .filter(Boolean);
       cityContext = cities[0] ?? null;
@@ -4789,7 +4789,7 @@ router.get("/compass/telegraph", async (req, res) => {
 
     if (!effectiveProfile) {
       // Return empty gracefully when profile is unavailable
-      res.json({ cards: [], city: cityContext });
+      sendTelegraphRefused(res, cityContext, "telegraph_profile_unread", ["compass_profile"]);  // census-discovery §107 (D-W11X2-68): the profile could not be built — was: { cards: [], city }, "no suggestions"
       return;
     }
 
@@ -4847,11 +4847,11 @@ router.get("/compass/telegraph", async (req, res) => {
     });
 
     req.log?.info({ userId: user.id, threadId, cardCount: cards.length, city: cityContext }, "compass/telegraph: served");
-    res.json({ cards, city: cityContext });
+    res.json({ cards, city: cityContext, ...telegraphCoverage(rawItems, cards.length) });  // census-discovery §107 (DV-83, D-W11X2-68): a failed card source is said — `partial` beside cards, `nothing` without
   } catch (err) {
     req.log?.error({ err }, "compass/telegraph: build failed");
     // Always fail open — return empty cards rather than an error
-    res.json({ cards: [], city: null });
+    sendTelegraphRefused(res, null, "telegraph_build_failed", ["compass_telegraph"]);  // §107 — was: { cards: [], city: null }, "fail open" as "no suggestions"
   }
 });
 
@@ -4906,3 +4906,130 @@ router.get("/compass/people/:userId/passport", async (req, res) => {
 });
 
 export default router;
+
+// ── census-discovery §103 (DV-83, D-W11X2-50): the section route's failed reads ──
+//
+// GET /compass/feed/section is read by Discovery's For You tab (CompassPicksSection,
+// ForYouTab). Its build-error arm used to answer `{ section: null, fallback: true,
+// safeItems }` with no `compassEnabled`, which the client read as "Compass is
+// disabled" and hid: a failed build drawn exactly like "no picks here". An unread
+// COMPASS_% flag table did the same through the disabled arm, because `getFlags`
+// answers the fail-safe map, in which COMPASS_ENABLED is absent (off); the route now
+// reads the flag with `readCompassEnabled`, whose `null` is that failed load.
+//
+// Both now answer the section envelope plus a marker and the refusal envelope:
+// `fallbackReason` names the failure, `refusal.coverage` is `partial` when safe items
+// ride along and `nothing` when none do. The disabled arm (flags read, Compass off)
+// is unchanged and stays hidden.
+function sendCompassSectionFailure(res: import("express").Response, reason: "section_build_error" | "compass_flags_unreadable", safeItems: unknown[]): void {
+  res.json({
+    section: null,
+    nextCursor: null,
+    fallback: true,
+    ...(reason === "section_build_error" ? { compassEnabled: true } : {}),
+    fallbackReason: reason,
+    safeItems,
+    refusal: discoveryRefusal(
+      "transient_db",
+      reason,
+      "GET /compass/feed/section",
+      safeItems.length > 0 ? "partial" : "nothing",
+      [reason === "section_build_error" ? "compass_section" : "feature_flags"],
+    ),
+  });
+}
+
+// ── census-discovery §104 (DV-83, D-W11X2-54, D-W11X2-55): the Compass reads Discovery shows ──
+//
+// A Compass pool is built from five candidate reads (CompassItemHydrator). When one
+// FAILED, the section and the feed were served, and cached, as complete: For You's
+// picks hid an empty section as "no picks here". The section now answers the failure
+// arm the client already says (§103): `fallback: true`, `compassEnabled: true`,
+// `fallbackReason: "compass_sources_unread"`, the sections that WERE read, and the
+// refusal envelope (`partial` with rows, `nothing` without). It is cached nowhere.
+// The full feed carries the refusal and is not cached either.
+function sendCompassSectionSourcesUnread(
+  res: import("express").Response,
+  response: { sections: Array<{ items?: readonly unknown[] }>; nextCursor: unknown },
+  failedSources: readonly string[],
+): void {
+  const served = response.sections.reduce((n, s) => n + (s.items?.length ?? 0), 0);
+  res.json({
+    ...response,
+    fallback: true,
+    compassEnabled: true,
+    fallbackReason: "compass_sources_unread",
+    safeItems: [],
+    refusal: discoveryRefusal("transient_db", "compass_sources_unread", "GET /compass/feed/section", served > 0 ? "partial" : "nothing", [...failedSources]),
+  });
+}
+
+function compassFeedSourcesUnreadBody<P extends object>(page: P, failedSources: readonly string[]): P & { refusal: ReturnType<typeof discoveryRefusal> } {
+  const sections = (page as { sections?: Array<{ items?: readonly unknown[] }> }).sections ?? [];
+  const served = sections.reduce((n, s) => n + (s.items?.length ?? 0), 0);
+  return { ...page, refusal: discoveryRefusal("transient_db", "compass_sources_unread", "GET /compass/feed", served > 0 ? "partial" : "nothing", [...failedSources]) };
+}
+
+// GET /compass/recommendations is read by two Discovery screens: search's Compass
+// rail under a zero-result search (surface=search) and For You's "Travelers You May
+// Vibe With" row (surface=traveler). The trip map and the Passport tab share its
+// arms. Every failure arm answered `{ recommendations: [] }`, the body a city with
+// nothing to suggest gets. A failure now carries the refusal envelope: `nothing` when
+// the read that fills the list failed (the flag table, the block list, the candidate
+// table, a failed build), and `partial` beside the rows that were read when a
+// candidate source or a per-person check failed. With every read healthy the body is
+// byte-identical: `sendRecommendations` answers the same object.
+function sendRecommendationsRefusal(res: import("express").Response, body: Record<string, unknown>, code: string, failedSources: readonly string[]): void {
+  res.json({ ...body, refusal: discoveryRefusal("transient_db", code, "GET /compass/recommendations", "nothing", [...failedSources]) });
+}
+
+function sendRecommendations(res: import("express").Response, body: { recommendations: readonly unknown[] } & Record<string, unknown>, failedSources: readonly string[]): void {
+  if (failedSources.length === 0) { res.json(body); return; }
+  res.json({ ...body, refusal: discoveryRefusal("transient_db", "compass_sources_unread", "GET /compass/recommendations", body.recommendations.length > 0 ? "partial" : "nothing", [...failedSources]) });
+}
+
+// The traveler list ADMITS on `.allowed` alone (compassPersonIdentity 4b2): a gate that
+// could not be read denies exactly like "not discoverable". This reads a denial's reason
+// only to NAME the page partial (someone was withheld unchecked), never to admit anyone.
+function personGatesUnread(gates: ReadonlyArray<{ allowed: true } | { allowed: false; reason: string }>): boolean {
+  return gates.some((g) => g.allowed === false && g.reason === "check_failed");
+}
+
+// ── census-discovery §105 (DV-83 round 9, lane W11-X2, D-W11X2-62): GET /compass/feed's unread flags ──
+// The feed read COMPASS_ENABLED through `isCompassEnabled` (the fail-safe map: an unread
+// table is "off") and COMPASS_FEED_ENABLED with its error ignored, so an unread flag answered
+// the flag-off bytes with no refusal. §103/§104 fixed the section route and
+// /compass/recommendations the same way; this is the feed's arm of that rule. A flag that
+// was READ and is off still answers `{ sections: [], nextCursor: null, fallback: true }`.
+function sendCompassFeedFlagsUnread(res: import("express").Response): void {
+  res.json({
+    sections: [],
+    nextCursor: null,
+    fallback: true,
+    fallbackReason: "compass_flags_unreadable",
+    refusal: discoveryRefusal("transient_db", "compass_flags_unreadable", "GET /compass/feed", "nothing", ["feature_flags"]),
+  });
+}
+
+// ── census-discovery §107 (DV-83 round 10, lane W11-X2, D-W11X2-68): GET /compass/telegraph refuses ──
+// The Telegraph "Ask Compass" tray drew every failure of this route as "Compass couldn't find
+// relevant recommendations for this chat": the hydrated pool was served without reading
+// `compassHydrationFailedSources` (D-W11X2-54's contract for every caller that serves the pool),
+// the catch answered `{ cards: [], city: null }`, a failed profile read `{ cards: [] }`, and an
+// unread COMPASS_% table the flag-off 404. Each now carries the Discovery refusal envelope beside
+// the same body. Only the three tables a Telegraph card can come from are counted: posts and buddy
+// profiles are never cards (TELEGRAPH_SURFACE_TYPES), so their failure changes no card.
+const TELEGRAPH_CARD_SOURCES: ReadonlySet<string> = new Set(["events", "discovery_places", "hidden_gems", "user_location_state", "event_rsvps"]);  // census-discovery §122 (DV-83 round 23, B37): `event_rsvps` withholds a capped event card (B34's capacity_could_not_be_checked), so it is a card source
+function telegraphCoverage(rawItems: unknown[], cardCount: number) {
+  const failed = compassHydrationFailedSources(rawItems as Parameters<typeof compassHydrationFailedSources>[0]).filter((s) => TELEGRAPH_CARD_SOURCES.has(s)).sort();
+  if (failed.length === 0) return {};
+  return { refusal: discoveryRefusal("transient_db", "telegraph_sources_unread", "GET /compass/telegraph", cardCount > 0 ? "partial" : "nothing", failed) };
+}
+function sendTelegraphRefused(res: import("express").Response, city: string | null, code: string, sources: string[]): void {
+  res.json({ cards: [], city, refusal: discoveryRefusal("transient_db", code, "GET /compass/telegraph", "nothing", sources) });
+}
+
+// ── census-discovery §110 (DV-83 round 13, lane W11-X2, D-W11X2-97): /compass/ask never drops the structured context silently ──
+// A thrown profile read (a failed blocks or mutes read fails `getCompassProfile` closed) dropped the whole
+// circles / bookings / passport block with no line, so the model answered as if the user had none.
+const STRUCTURED_CONTEXT_UNREAD_LINE = "The user's circles, buddy bookings and passport history could not be read right now: do not say the user has none of them.";

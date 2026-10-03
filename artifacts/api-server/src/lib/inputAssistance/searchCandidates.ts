@@ -44,7 +44,7 @@ import {
   type CanonicalRow,
 } from "../canonicalLocations";
 import type { SensitivityLevel } from "../../services/hiddenGems/HiddenGemPrivacyGuard.js";
-import { nameVisibilitySet } from "../publicIdentity";
+import { nameVisibilitySetOrNull } from "../publicIdentity";
 import { buildListIdentityProjections } from "../../services/passport/PassportConsumerProjections.js";
 // The canonical author-side block rule for a `discovery_places` row. Shared with
 // routes/discovery.ts (which re-exports it) rather than re-implemented here —
@@ -480,14 +480,14 @@ async function buddyLaunchGateActive(sc: any): Promise<boolean> {
  */
 export async function buddiesWithheldByLaunchGate(sc: any): Promise<boolean> {
   if (!(await buddyLaunchGateActive(sc))) return false;
-  return !(await isFlagEnabled(sc, RENT_BUDDY_LAUNCH_FLAG));
+  return !(await rentBuddyLaunchedOrThrow(sc));  // census-discovery §103 (DV-83, D-W11X2-51): still withheld when unread — and now SAID — was: return !(await isFlagEnabled(sc, RENT_BUDDY_LAUNCH_FLAG));
 }
 
 // ── Owner account-status guard ─────────────────────────────────────────────────
 //
 // Fetches the set of IDs (from a candidate owner/host list) that have an
 // active account. Used to exclude content from suspended/banned/deleted owners.
-// Fails closed (returns empty set) on DB errors to prevent leaking owner-gated content.
+// Fails closed on DB errors (nothing owner-gated is served) and, since census-discovery §102, refuses by name rather than returning an empty set that read as "no results".
 
 async function fetchActiveOwnerSet(sc: any, ownerIds: string[]): Promise<Set<string>> {
   if (ownerIds.length === 0) return new Set();
@@ -498,10 +498,10 @@ async function fetchActiveOwnerSet(sc: any, ownerIds: string[]): Promise<Set<str
       .in("id", ownerIds)
       .in("account_status", ["active"]);
     // Fail-closed: unknown owner status → treat all as inactive (exclude content)
-    if (error) return new Set();
+    if (error) throw new DiscoverySearchReadError("profiles", error);  // census-discovery §102 (DV-83, D-W11X2-43): still fail-closed — nothing served — and now SAID, never "no results"
     return new Set<string>((data ?? []).map((p: any) => p.id as string));
-  } catch {
-    return new Set();  // fail-closed: prefer exclusion over leaking suspended-owner content
+  } catch (err) {
+    throw err instanceof DiscoverySearchReadError ? err : new DiscoverySearchReadError("profiles", err);  // §102: a thrown standing read is the same unread gate, refused by name
   }
 }
 
@@ -580,7 +580,7 @@ async function searchTravelers(
     // showing their real name. Hidden names must not be searchable/matchable —
     // if the query matched only the (hidden) name, drop the row so searching
     // someone's name cannot reveal it belongs to them.
-    const allowedNames = await nameVisibilitySet(sc, visible.map((p: any) => p.id as string));
+    const allowedNames = await nameVisibilitySetOrNull(sc, visible.map((p: any) => p.id as string)); if (allowedNames === null) throw new DiscoverySearchReadError("profile_privacy_settings", "show_real_name");  // census-discovery §103 (DV-83, D-W11X2-48): C09 FILTERS by this set, so an unread set names its source instead of dropping every name-matched traveler — was: const allowedNames = await nameVisibilitySet(sc, visible.map((p: any) => p.id as string));
     const qLower = q.toLowerCase();
     const nameSafe = visible.filter((p: any) => {
       if (p.id === userId) return true;                 // viewer never redacted
@@ -592,7 +592,7 @@ async function searchTravelers(
     if (nameSafe.length === 0) return [];
 
     const visibleIds = nameSafe.map((p: any) => p.id as string);
-    const [{ data: followEdges }, { data: pendingRequests }, { data: friendsAsA }, { data: friendsAsB }] = await Promise.all([
+    const [{ data: followEdges, error: followEdgesErr }, { data: pendingRequests, error: pendingRequestsErr }, { data: friendsAsA }, { data: friendsAsB }] = await Promise.all([
       sc.from("user_follows")
         .select("following_id")
         .eq("follower_id", userId)
@@ -609,7 +609,7 @@ async function searchTravelers(
       sc.from("user_friendships").select("user_b").eq("user_a", userId).in("user_b", visibleIds),
       sc.from("user_friendships").select("user_a").eq("user_b", userId).in("user_a", visibleIds),
     ]);
-    const followingSet = new Set<string>((followEdges ?? []).map((e: any) => e.following_id as string));
+    const followingSet = new Set<string>((followEdges ?? []).map((e: any) => e.following_id as string)); const followStateUnread = Boolean(followEdgesErr || pendingRequestsErr);  // census-discovery §122 (DV-83 round 23, SW32): the privacy rule still fails closed; the stated own state goes
     const pendingSet = new Set<string>((pendingRequests ?? []).map((e: any) => e.recipient_id as string));
     const friendSet = new Set<string>([
       ...(friendsAsA ?? []).map((e: any) => e.user_b as string),
@@ -654,7 +654,7 @@ async function searchTravelers(
           ? null
           : [(p.home_city as string | null), (p.home_country as string | null)].filter(Boolean).join(", ") || null,
         matchedReason: null,
-        actionState: isPrivate
+        actionState: followStateUnread ? null : isPrivate  // §122 (SW32): never "not following" / "not requested" over a failed read
           ? { isFollowing, isRequestSent: pendingSet.has(p.id as string) }
           : { isFollowing },
         privacyState: { isPrivate },
@@ -744,12 +744,12 @@ async function searchEvents(
     if (activeRows.length === 0) return [];
 
     const eventIds = activeRows.map((e: any) => e.id as string);
-    const { data: rsvpRows } = await sc
+    const { data: rsvpRows, error: rsvpRowsErr } = await sc
       .from("event_rsvps")
       .select("event_id")
       .eq("user_id", userId)
       .eq("status", "going")
-      .in("event_id", eventIds);
+      .in("event_id", eventIds);  // census-discovery §122 (DV-83 round 23, SW29): a failed read leaves the venue gate closed (attendingSet empty) and the attendance unknown (actionState null), never "not going"
     const attendingSet = new Set<string>((rsvpRows ?? []).map((r: any) => r.event_id as string));
 
     const mapped: SearchResult[] = activeRows.map((e: any): SearchResult => {
@@ -774,7 +774,7 @@ async function searchEvents(
       fallbackInitials: initials((e.title as string) ?? ""),
       locationPreview: [(e.city as string | null), (e.country as string | null)].filter(Boolean).join(", ") || null,
       matchedReason: null,
-      actionState: { isAttending: attendingSet.has(e.id as string) },
+      actionState: rsvpRowsErr ? null : { isAttending: attendingSet.has(e.id as string) },  // §122 (SW29)
       privacyState: { isPublic: true },
       accessState: { canAccess: true },
       destinationRoute: `/event/${e.id as string}`,
@@ -836,7 +836,7 @@ function leadWithTripFit(rows: SearchResult[]): SearchResult[] {
  *   Discovery no longer states the visibility rule; it consumes
  *   `discoverable`. A read that fails AFTER the probe passed
  *   (TRIP_PROJECTION_UNAVAILABLE — a transient error, a revoked grant, a
- *   schema-cache lag) is `[]`, never a crash and never a leak; the capability
+ *   schema-cache lag) is a refusal naming `trips` (§102), never a crash, never a leak, never `[]`; the capability
  *   decides the branch, so there is no silent fallback that would hide it.
  *   The owner's non-member privacy toggles then apply to a searcher; see
  *   lib/discoveryTripProjectionConsumer.ts for why that is accepted.
@@ -867,8 +867,8 @@ async function searchTrips(
         limit: fetchLimit,
       });
       if (!r.ok) {
-        logger.warn({ reason: r.reason, detail: r.detail }, "trip discovery projection unavailable; trips search returns nothing");
-        return [];
+        logger.warn({ reason: r.reason, detail: r.detail }, "trip discovery projection unavailable; trips search refuses (census-discovery §102, D-W11X2-36)");
+        throw new DiscoverySearchReadError("trips", r.detail); // DV-83 §102: was `return [];`, an outage answered as "no trips match"
       }
       const { accepted, rejected } = acceptTripDiscoveryProjections(r.projections);
       if (rejected > 0) logger.warn({ rejected }, "trip discovery projections of an unreadable schema version dropped");
@@ -1003,11 +1003,11 @@ async function searchPlans(
     if (gate.source === "projection") {
       // Not filtered by discoverability in SQL: the by-id reader returns the
       // owner's own private trip too, and tripDiscoveryAdmits — Trips' rule,
-      // not restated here — decides per viewer. A failed read is `[]`.
+      // not restated here — decides per viewer. A failed read refuses (§102), never `[]`.
       const r = await readTripDiscoveryProjections(sc, tripIds);
       if (!r.ok) {
-        logger.warn({ reason: r.reason, detail: r.detail }, "trip discovery projection unavailable; plans search returns nothing");
-        return [];
+        logger.warn({ reason: r.reason, detail: r.detail }, "trip discovery projection unavailable; plans search refuses (census-discovery §102, D-W11X2-36)");
+        throw new DiscoverySearchReadError("trips", r.detail); // DV-83 §102: was `return [];` — the parent trips are unreadable, so no plan can be admitted: say so, never "no plans match"
       }
       const { accepted, rejected } = acceptTripDiscoveryProjections(r.projections);
       if (rejected > 0) logger.warn({ rejected }, "trip discovery projections of an unreadable schema version dropped");
@@ -2604,3 +2604,25 @@ export class DiscoverySearchReadError extends Error {
 // Declared above without `export` because they were route-internal; named here
 // rather than edited in place, so the moved lines stay the route's text.
 export { FAN_SOURCES, searchAll, decodeCursor, encodeCursor };
+
+/**
+ * census-discovery §103 (DV-83, D-W11X2-51): the marketplace launch flag as a READ.
+ *
+ * With the launch gate on, buddies are withheld unless `rent_buddy_enabled` is TRUE.
+ * `isFlagEnabled` answers `false` for a failed read too (the platform reader cannot tell
+ * an error from "off"; `getFlagRow` cannot either — it answers null for both an error and
+ * an absent row), so an unread flag withheld every buddy and the search answered "no
+ * buddies". Withholding stays; the silence goes: a failed read throws the file's named
+ * error, which the route refuses (type=buddies) or names (type=all, suggest).
+ * An ABSENT row is still "not launched" (absence of a launch is not a launch).
+ */
+async function rentBuddyLaunchedOrThrow(sc: any): Promise<boolean> {
+  try {
+    const { data, error } = await sc.from("feature_flags").select("enabled").eq("flag", RENT_BUDDY_LAUNCH_FLAG).maybeSingle();
+    if (error) throw new DiscoverySearchReadError("feature_flags", error);
+    return Boolean((data as any)?.enabled);
+  } catch (err) {
+    throw err instanceof DiscoverySearchReadError ? err : new DiscoverySearchReadError("feature_flags", err);
+  }
+}
+

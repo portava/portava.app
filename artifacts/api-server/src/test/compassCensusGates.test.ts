@@ -150,10 +150,10 @@ describe("A. get_travel_compatibility trust floor — unreadable trust_profiles 
 // ── B. refreshHiddenUsers without a snapshot fails CLOSED ────────────────────
 
 describe("B. social tools with NO profile snapshot — a failed hidden-user read closes the tool, never empties the set", () => {
-  it("profile null + blocks unreadable → the tool call fails (no empty hidden set is ever used)", async () => {
+  it("profile null + blocks unreadable → the tool call is refused and says so (no empty hidden set is ever used)", async () => {
     const sc = makeClient(socialDb(), { blocks: { message: "connection reset" } });
     const result: any = await executeCompassTool(sc, ALICE_ID, null, "get_whos_around", {});
-    assert.equal(result.error, "Tool execution failed.");
+    assert.equal(result.people, undefined); assert.equal(result.unchecked, true); assert.match(result.info, /could not check/i);  // census-compass §34 (D-W11X2-105): still closed (no people), and now a sentence the model can say, not "Tool execution failed."
   });
 
   it("profile null + reads fine → the tool proceeds (nothing to fall back to, nothing failed)", async () => {

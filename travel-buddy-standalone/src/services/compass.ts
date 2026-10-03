@@ -158,7 +158,7 @@ function normalizeSectionResponse(raw: any): CompassFeedResponse {
     sections,
     nextCursor:    raw.nextCursor ?? null,
     fallback:      raw.fallback ?? false,
-    fallbackReason: raw.fallbackReason ?? undefined,
+    fallbackReason: raw.fallbackReason ?? (raw.fallback && raw.compassEnabled === undefined && Array.isArray(raw.safeItems) ? 'section_build_error' : undefined),  // census-discovery §103 (DV-83, D-W11X2-50): a server without the marker still answers its build-error arm with `safeItems` and no `compassEnabled`; the disabled arm carries neither
     compassEnabled: raw.compassEnabled ?? !raw.fallback,
     safeItems:     (raw.safeItems ?? []).map((fi: any): CompassFeedItem => {
       const inner = fi.item ?? fi;
@@ -225,7 +225,7 @@ export async function fetchCompassWhy(
   try {
     const r = await authedFetch(`/api/compass/why/${encodeURIComponent(recommendationId)}`);
     if (!r.ok) return { ok: false, error: `http_${r.status}` };
-    const body = await r.json();
+    const body = await r.json(); if (body?.refusal?.coverage === 'nothing') return { ok: false, error: body.refusal.code ?? 'refused' };  // census-discovery §104 (DV-83, D-W11X2-58): a failed lookup is not an explanation
     return {
       ok: true,
       explanation:    body.explanation ?? 'Based on your travel preferences.',
@@ -403,7 +403,7 @@ async function fetchCityConfidenceFromNetwork(
     const r = await authedFetch(`/api/compass/city-confidence?city=${encodeURIComponent(city.trim())}`);
     if (!r.ok) return { ok: false, error: `http_${r.status}` };
     const body = await r.json();
-    const data = body as CityConfidence;
+    if ((body as { refusal?: unknown } | null)?.refusal != null) return { ok: false, error: 'refused' }; const data = body as CityConfidence;  // census-discovery §107 (DV-83, D-W11X2-70): a refused read is never cached (memory or AsyncStorage) nor drawn as "Limited local data"
     const at = Date.now();
     _cityConfidenceCache.set(cacheKey, { data, at });
     persistCityConfidence(cacheKey, data, at);
@@ -992,7 +992,7 @@ export interface CompassBriefAttention {
 
 export interface CompassRecommendationsResponse {
   recommendations: CompassRecommendation[];
-  surface: string;
+  surface: string; refusal?: CompassRecommendationsRefusal | null; error?: string;  // census-discovery §104 (DV-83, D-W11X2-55): a failed read's refusal envelope; `error` is an older server's marker
   /** Present only on the trip surface. */
   attention?: CompassBriefAttention;
 }
@@ -1534,7 +1534,7 @@ export interface CompassBuddyMatchesResult {
   ok: boolean;
   data?: CompassBuddyResult[];
   disabled?: boolean;
-  error?: string;
+  error?: string; partial?: boolean;  // census-discovery §104 (DV-83, D-W11X2-55)
 }
 
 export async function fetchCompassBuddyMatches(params: {
@@ -1551,7 +1551,7 @@ export async function fetchCompassBuddyMatches(params: {
     if (!r.ok) return { ok: false, error: `http_${r.status}` };
     const body = await r.json();
     if (body.disabled) return { ok: true, data: [], disabled: true };
-    return { ok: true, data: (body.recommendations ?? []) as CompassBuddyResult[] };
+    return compassMatchesFromBody<CompassBuddyResult>(body);  // census-discovery §104 (DV-83, D-W11X2-55) — was: return { ok: true, data: (body.recommendations ?? []) as CompassBuddyResult[] };
   } catch {
     return { ok: false, error: 'network_error' };
   }
@@ -1586,7 +1586,7 @@ export interface CompassTravelerMatchesResult {
   ok: boolean;
   data?: CompassTravelerResult[];
   disabled?: boolean;
-  error?: string;
+  error?: string; partial?: boolean;  // census-discovery §104 (DV-83, D-W11X2-55)
 }
 
 export async function fetchCompassTravelerMatches(params: {
@@ -1603,7 +1603,7 @@ export async function fetchCompassTravelerMatches(params: {
     if (!r.ok) return { ok: false, error: `http_${r.status}` };
     const body = await r.json();
     if (body.disabled) return { ok: true, data: [], disabled: true };
-    return { ok: true, data: (body.recommendations ?? []) as CompassTravelerResult[] };
+    return compassMatchesFromBody<CompassTravelerResult>(body);  // census-discovery §104 (DV-83, D-W11X2-55) — was: return { ok: true, data: (body.recommendations ?? []) as CompassTravelerResult[] };
   } catch {
     return { ok: false, error: 'network_error' };
   }
@@ -1627,7 +1627,7 @@ export interface CompassTelegraphResult {
   cards?:       CompassTelegraphCard[];
   city?:        string | null;
   flagDisabled?: boolean;
-  error?:       string;
+  error?:       string; /** census-discovery §107 (D-W11X2-68): the route refused (a failed read) — the chip stays, the tray says it. */ refused?: true; /** §107: a card source failed; the cards are real, the list may be incomplete. */ partial?: true;
 }
 
 /**
@@ -1652,11 +1652,11 @@ export async function fetchCompassTelegraphCards(
       return { ok: false, error: r.status === 403 ? 'forbidden' : `http_${r.status}` };
     }
     if (!r.ok) return { ok: false, error: `http_${r.status}` };
-    const body = await r.json();
+    const body = await r.json(); const refused = telegraphRefused(body); if (refused) return refused;  // census-discovery §107 (DV-83, D-W11X2-68): a refusal is a failed read, never a complete (or empty) card list
     return {
       ok:    true,
       cards: (body.cards ?? []) as CompassTelegraphCard[],
-      city:  body.city ?? null,
+      city:  body.city ?? null, ...(body?.refusal?.coverage === 'partial' ? { partial: true as const } : {}),
     };
   } catch {
     return { ok: false, error: 'network_error' };
@@ -1665,19 +1665,19 @@ export async function fetchCompassTelegraphCards(
 
 /**
  * Lightweight flag check: returns true when COMPASS_TELEGRAPH is enabled for
- * this thread. Returns false when the flag is off or on any network/auth error.
+ * this thread. Returns false only when the flag was READ and is off, for a non-member, or with no client.
  * Use this to gate the Ask Compass chip without loading full card data.
  */
 export async function checkCompassTelegraphAvailable(threadId: string): Promise<boolean> {
   const result = await fetchCompassTelegraphCards(threadId);
-  return result.ok && !result.flagDisabled;
+  return (!result.flagDisabled && result.error !== 'forbidden' && result.error !== 'not_configured') || result.refused === true;  // census-discovery §107/§108 (D-W11X2-68, D-W11X2-80): a refusal, a 5xx or a network error is not "off" — the chip stays and the tray says the failure
 }
 
 // ── AsyncStorage helpers ──────────────────────────────────────────────────────
 
 const FEED_CACHE_PREFIX = 'compass_feed_cache:';
 
-export async function getCachedFeed(userId: string): Promise<CompassFeedResponse | null> {
+export async function getCachedFeed(userId: string, scope?: string): Promise<CompassFeedResponse | null> {
   const store = getStorage();
   if (!store) return null;
   try {
@@ -1685,18 +1685,18 @@ export async function getCachedFeed(userId: string): Promise<CompassFeedResponse
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     // Expire cache after 30 minutes
-    if (Date.now() - (parsed._cachedAt ?? 0) > 30 * 60 * 1000) return null;
+    if (Date.now() - (parsed._cachedAt ?? 0) > 30 * 60 * 1000) return null; if (scope !== undefined && parsed._scope !== scope) return null;  // census-discovery §101 (D-W11X2-34): a feed is replayed only into the section:city it was read for
     return parsed.feed ?? null;
   } catch {
     return null;
   }
 }
 
-export async function setCachedFeed(userId: string, feed: CompassFeedResponse): Promise<void> {
+export async function setCachedFeed(userId: string, feed: CompassFeedResponse, scope?: string): Promise<void> {
   const store = getStorage();
   if (!store) return;
   try {
-    await store.setItem(`${FEED_CACHE_PREFIX}${userId}`, JSON.stringify({ feed, _cachedAt: Date.now() }));
+    await store.setItem(`${FEED_CACHE_PREFIX}${userId}`, JSON.stringify({ feed, _cachedAt: Date.now(), ...(scope !== undefined ? { _scope: scope } : {}) }));
   } catch {
     // ignore storage errors
   }
@@ -1822,7 +1822,7 @@ export interface CompassHomePerson {
 
 export interface CompassHomeResponse {
   compassEnabled: boolean;
-  fallback:       boolean;
+  fallback:       boolean; /** census-discovery §105 (D-W11X2-65): why a fallback is a FAILURE (`compass_flags_unreadable`, `home_build_failed`); absent when Compass was read and is off. */ fallbackReason?: string; /** §105: true when a section's source could not be read (`sources[k] === 'unavailable'`). */ degraded?: boolean; /** census-discovery §107 (D-W11X2-67): per section, whether its source could be read. */ sources?: Partial<Record<CompassHomeSection, 'ok' | 'unavailable'>>;
   timeOfDay?:     'morning' | 'afternoon' | 'evening' | 'night';
   contextState?:  string;
   city?:          string | null;
@@ -2040,4 +2040,22 @@ export async function postMemoryReset(
   } catch {
     return { ok: false, error: 'network_error' };
   }
+}
+
+// ── census-discovery §104 (DV-83, D-W11X2-55): the route's refusal, read in its own module ──
+import { compassMatchesFromBody, type CompassRecommendationsRefusal } from './compassRecommendationsRefusal.ts';
+export { compassRecommendationsFailed, type CompassRecommendationsRefusal } from './compassRecommendationsRefusal.ts';
+
+/** census-discovery §107 (DV-83 round 10, D-W11X2-67): the five sections GET /compass/home reports a source for. */
+export type CompassHomeSection = 'bestNextMove' | 'circleActivity' | 'startingSoon' | 'tonightVibe' | 'weatherWindow';
+
+/**
+ * census-discovery §107 (DV-83 round 10, D-W11X2-68): GET /compass/telegraph's refusal envelope.
+ * `partial` keeps its cards (and is marked); any other coverage — `nothing`, missing or unknown —
+ * is a failed read, never a complete or empty list.
+ */
+function telegraphRefused(body: unknown): CompassTelegraphResult | null {
+  const refusal = (body as { refusal?: { coverage?: unknown; code?: unknown } | null } | null)?.refusal;
+  if (!refusal || refusal.coverage === 'partial') return null;
+  return { ok: false, refused: true, error: typeof refusal.code === 'string' ? refusal.code : 'refused' };
 }

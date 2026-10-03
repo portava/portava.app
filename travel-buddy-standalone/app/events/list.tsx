@@ -25,7 +25,7 @@ import { EventDiscoveryCard } from '../../src/components/EventDiscoveryCard';
 import { EventComposerSheet } from '../../src/components/EventComposerSheet';
 import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
-import { usePlainBottomInset } from '../../src/hooks/useBottomInset';
+import { usePlainBottomInset } from '../../src/hooks/useBottomInset'; import { eventListNotWhole } from '../../src/lib/eventListMarks';  // census-discovery §117 (SW17)
 
 type DatePreset = 'all' | 'today' | 'tomorrow' | 'weekend' | 'next7';
 
@@ -66,11 +66,11 @@ export default function EventsScreen() {
   const [stateFilter, setStateFilter] = useState<EventState | 'all'>('open');
   const [cityFilter, setCityFilter] = useState(initialCity);
   const [datePreset, setDatePreset] = useState<DatePreset>(initialDatePreset);
-  const [showCreate, setShowCreate] = useState(false);
+  const [showCreate, setShowCreate] = useState(false); const [notWhole, setNotWhole] = useState(false); const loadSeq = useRef(0);  // §117 (SW17): GET /events said the list is not whole; §118 (B26): only the latest load's answer is drawn
 
   const load = useCallback(async () => {
     if (!configured || !isAuthed) { setLoading(false); return; }
-    setLoading(true);
+    setLoading(true); const seq = ++loadSeq.current;  // census-discovery §118 (DV-83 round 21, B26): a later load supersedes this one
     setError(null);
     const dateRange = datePresetToRange(datePreset);
     const res = await listEvents({
@@ -78,9 +78,9 @@ export default function EventsScreen() {
       state: stateFilter,
       city: cityFilter.trim() || undefined,
       limit: 30,
-    });
+    }); if (seq !== loadSeq.current) return;  // §118 (B26): an answer for a filter no longer on screen is never drawn
     if (!res.ok) setError(res.message ?? 'Failed to load events');
-    else setEvents(res.data?.events ?? []);
+    else { setEvents(res.data?.events ?? []); setNotWhole(eventListNotWhole(res.data)); }
     setLoading(false);
   }, [configured, isAuthed, stateFilter, cityFilter, datePreset]);
 
@@ -192,9 +192,9 @@ export default function EventsScreen() {
       ) : events.length === 0 ? (
         <View style={styles.emptyState}>
           <CalendarX size={40} color={color.faint} />
-          <Text style={styles.emptyTitle}>No events found</Text>
+          <Text style={styles.emptyTitle}>{notWhole ? "Couldn't load every event" : 'No events found'}</Text>
           <Text style={styles.emptySub}>
-            Try a different city or filter, or create your own event.
+            {notWhole ? 'Some events couldn\'t be checked just now. Pull down to try again.' : 'Try a different city or filter, or create your own event.'}
           </Text>
           <Pressable style={styles.emptyBtn} onPress={() => setShowCreate(true)}>
             <Plus size={16} color={color.onInk} />
@@ -213,7 +213,7 @@ export default function EventsScreen() {
               onRsvp={(status) => handleRsvp(ev.id, status)}
               onPress={() => router.push(`/event/${ev.id}` as any)}
             />
-          ))}
+          ))}{notWhole ? <Text style={styles.emptySub}>More events may exist than are shown here</Text> : null}
         </ScrollView>
       )}
 

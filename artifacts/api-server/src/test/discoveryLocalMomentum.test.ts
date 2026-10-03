@@ -11,6 +11,7 @@
  * Run: node --import tsx/esm --test src/test/discoveryLocalMomentum.test.ts
  */
 import { describe, it, beforeEach } from "node:test";
+import { logicFilter } from "./helpers/postgrestKeyset.js";  // census-discovery §118 (SW22)
 import assert from "node:assert/strict";
 import {
   computeLocalMomentum, loadLocalMomentum, _resetLocalMomentumCacheForTest,
@@ -139,7 +140,7 @@ function fakeClient(
 ) {
   let reads = 0;
   let capturedIn: string[] | null = null;
-  let capturedRanges: Array<[number, number]> = [];
+  let capturedRanges: Array<[number, number]> = []; const capturedCursors: string[] = [];  // census-discovery §118 (SW22): the keyset cursor each page asked after
   let capturedOrders: Array<{ col: string; asc: boolean }> = [];
   let sawLimit = false;
   const dbMaxRows = opts.dbMaxRows ?? Infinity;
@@ -147,11 +148,12 @@ function fakeClient(
   const client = {
     from(table: string) {
       assert.equal(table, "rank_events");
-      const orders: Array<{ col: string; asc: boolean }> = [];
+      const orders: Array<{ col: string; asc: boolean }> = []; const preds: Array<(r: Record<string, unknown>) => boolean> = [];
       let from = 0;
       let to = Infinity;
       const q: any = {
         select: () => q, eq: () => q, neq: () => q, gte: () => q,
+        or: (expr: string) => { const p = logicFilter(expr); assert.ok(p, `unmodelled .or(${expr})`); preds.push(p); capturedCursors.push(expr); return q; },  // §118 (SW22): the keyset cursor, as PostgREST reads it
         limit: (_n: number) => { sawLimit = true; return q; },
         order: (col: string, o?: { ascending?: boolean }) => {
           const rec = { col, asc: o?.ascending !== false };
@@ -166,7 +168,7 @@ function fakeClient(
         then: (resolve: (v: { data: MomentumRow[]; error: null }) => unknown, reject?: (e: unknown) => unknown) => {
           reads += 1;
           if (rows instanceof Error) return Promise.reject(rows).then(resolve, reject);
-          const sorted = [...rows];
+          const sorted = [...rows].filter((r) => preds.every((p) => p(r as unknown as Record<string, unknown>)));
           for (const o of [...orders].reverse()) {
             sorted.sort((x, y) => {
               const a = String((x as any)[o.col] ?? "");
@@ -187,7 +189,7 @@ function fakeClient(
     client,
     reads: () => reads,
     capturedIn: () => capturedIn,
-    ranges: () => capturedRanges,
+    ranges: () => capturedRanges, cursors: () => capturedCursors,
     orders: () => capturedOrders,
     sawLimit: () => sawLimit,
   };
@@ -265,10 +267,13 @@ describe("loadLocalMomentum — the window is bounded deliberately, never silent
       "the server's silent cap and called a 1000-row sample the 30-day window.",
     );
     assert.deepEqual(
-      f.ranges(), [[0, 999], [1000, 1999], [2000, 2999]],
+      f.ranges(), [[0, 999], [0, 999], [0, 999]],
       "each page must ask for an EXPLICIT range — that is the only thing that " +
-      "distinguishes 'the corpus ended' from 'the server truncated me'",
+      "distinguishes 'the corpus ended' from 'the server truncated me' (census-discovery §118, SW22: " +
+      "the range a page asks is AFTER the last row received, never an offset a concurrent serve shifts)",
     );
+    assert.equal(f.cursors().length, 2, "pages 2 and 3 each ask for the rows after the last row received");
+    assert.ok(f.cursors().every((c) => /^served_at\.lt\..+,and\(served_at\.eq\..+,id\.lt\..+\)$/.test(c)), f.cursors().join(" | "));
   });
 
   it("asks for a stable TOTAL order, so which rows survive is defined", async () => {

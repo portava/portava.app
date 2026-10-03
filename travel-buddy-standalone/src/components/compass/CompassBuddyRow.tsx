@@ -4,8 +4,8 @@
  * Shows up to 4 Compass-recommended buddies above the category grid on the
  * Rent a Buddy search screen. Self-hides when:
  *   - show_buddy_recommendations is false in compass_settings
- *   - the API returns 0 results
- *   - loading fails
+ *   - the API answers with 0 results
+ * A failed read is SAID (census-discovery §108, D-W11X2-81), never the hidden strip.
  *
  * Tapping a card routes to /(rent-a-buddy)/buddy/[id].
  */
@@ -22,7 +22,7 @@ import {
   fetchCompassBuddyMatches,
   type CompassBuddyResult,
 } from '../../services/compass.ts';
-import { resolveCompassTitle } from '../../utils/compassFormat.ts';
+import { resolveCompassTitle } from '../../utils/compassFormat.ts'; import { listPartialNotice } from '../../services/discoveryCoverageNotice.ts';
 
 interface Props {
   city?: string | null;
@@ -128,12 +128,12 @@ function BuddyCard({ item }: { item: CompassBuddyResult }) {
 
 export function CompassBuddyRow({ city, headerSuffix }: Props) {
   const [loading, setLoading] = useState(true);
-  const [items, setItems] = useState<CompassBuddyResult[]>([]);
+  const [items, setItems] = useState<CompassBuddyResult[]>([]); const [readState, setReadState] = useState<'failed' | 'partial' | null>(null);  // census-discovery §108 (DV-83, D-W11X2-81): a failed or partial read is said, never the "no picks" silence
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      setLoading(true);
+      setLoading(true); setReadState(null);
       // Settings gate — skip buddy API call if setting is off
       const settingsRes = await fetchCompassSettings();
       if (!cancelled && settingsRes.ok && settingsRes.data?.show_buddy_recommendations === false) {
@@ -143,7 +143,7 @@ export function CompassBuddyRow({ city, headerSuffix }: Props) {
 
       const res = await fetchCompassBuddyMatches({ city, limit: 4 });
       if (!cancelled) {
-        setItems((res.ok && !res.disabled) ? (res.data ?? []) : []);
+        setItems((res.ok && !res.disabled) ? (res.data ?? []) : []); setReadState(!res.ok ? 'failed' : (!res.disabled && res.partial) ? 'partial' : null);
         setLoading(false);
       }
     })();
@@ -167,7 +167,7 @@ export function CompassBuddyRow({ city, headerSuffix }: Props) {
     );
   }
 
-  if (items.length === 0) return null;
+  if (items.length === 0 && readState === null) return null;  // §108: hidden only when the read ANSWERED with no one (or the flag is off)
 
   return (
     <View style={s.wrap}>
@@ -175,12 +175,12 @@ export function CompassBuddyRow({ city, headerSuffix }: Props) {
         <Sparkles size={13} color={color.signal} />
         <Text style={s.headerText}>Compass Picks</Text>
         <Text style={s.headerSub}>{headerSuffix ?? '· matched for you'}</Text>
-      </View>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.strip}>
+      </View>{readState ? (<Text style={{ color: color.mute, fontSize: 12, paddingHorizontal: space.lg, marginBottom: space.sm }} testID={`compass-buddies-${readState}`}>{readState === 'failed' ? COMPASS_BUDDIES_FAILED : listPartialNotice('buddies')}</Text>) : null}
+      {items.length > 0 ? (<ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.strip}>
         {items.map((item) => (
           <BuddyCard key={item.id} item={item} />
         ))}
-      </ScrollView>
+      </ScrollView>) : null}
     </View>
   );
 }
@@ -337,3 +337,6 @@ const s = StyleSheet.create({
     fontStyle: 'italic',
   },
 });
+
+// census-discovery §108 (DV-83, D-W11X2-81): the buddy read failed (transport, or refused `nothing`).
+const COMPASS_BUDDIES_FAILED = 'Couldn\u2019t load Compass picks just now.';

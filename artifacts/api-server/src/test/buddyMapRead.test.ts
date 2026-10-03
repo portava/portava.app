@@ -414,7 +414,7 @@ describe("buddy search extraction is behaviour-preserving", () => {
       searchState({ feature_flags: { error: { message: "flags down" } } }),
     );
     assert.equal(route.status, 403);
-    assert.ok(direct.ok && direct.pins.length === 0);
+    assert.ok(!direct.ok && direct.stage === "flag", "census-discovery §115 (B8): exposes nobody AND says the flag was unread");
   });
 
   it("neither path emits a private buddy field", async () => {
@@ -492,7 +492,7 @@ describe("the map read narrows, and only narrows", () => {
       narrowedIds: ["b1"],
       blockedSet: null,
     });
-    assert.ok(direct.ok && direct.pins.length === 0);
+    assert.ok(!direct.ok && direct.stage === "blocks", "census-discovery §115: exposes nobody AND says the block set was unread");
   });
 
   it("drops a buddy with no meetup base rather than inventing a city pin", async () => {
@@ -538,7 +538,7 @@ describe("the map read narrows, and only narrows", () => {
       blockedSet: new Set(),
       maxPins: 2,
     });
-    assert.ok(capped.ok && capped.pins.length === 2);
+    assert.ok(capped.ok && capped.pins.length === 2 && capped.capped === true);
   });
 
   it("never geocodes: the reader makes no outbound call for an un-pinned buddy", async () => {

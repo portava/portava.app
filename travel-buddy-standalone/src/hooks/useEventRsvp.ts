@@ -124,7 +124,7 @@ export function useEventRsvp(
         myRsvp: status,
         counts: {
           ...e.counts,
-          going: status === 'going' ? e.counts.going + 1
+          going: e.counts.going == null ? null : status === 'going' ? e.counts.going + 1  // census-discovery §117 (B19): an unread count stays unread
             : e.myRsvp === 'going' ? e.counts.going - 1
             : e.counts.going,
         },

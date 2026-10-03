@@ -168,21 +168,21 @@ export interface CircleMemberLocation {
  * opted out of circle sharing (schema default = true, so a missing prefs row
  * means consented). Reads are done server-side to bypass the user_location_state
  * RLS policy which restricts each user to their own row.
- * Returns an empty array on any error.
+ * REJECTS on any failed read (census-discovery §115, DV-83 sweep SW6): its one caller, the NOW map's rollback path, says a layer whose fetcher rejected — never "no friends here".
  */
 export async function listVisibleCircleLocations(): Promise<CircleMemberLocation[]> {
   if (!isSupabaseConfigured) return [];
   const token = await authToken();
-  if (!token) return [];
+  if (!token) throw new Error('circle locations unread: no session token');
 
   try {
     const res = await fetch(`${apiBase()}/api/me/circle-locations`, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    if (!res.ok) return [];
+    if (!res.ok) throw new Error(`circle locations unread (${res.status})`);
     const json = await res.json();
-    return Array.isArray(json.locations) ? json.locations : [];
-  } catch {
-    return [];
-  }
+    if (Array.isArray(json?.locations)) return json.locations;
+  } catch (err) {
+    throw err instanceof Error ? err : new Error('circle locations unread');
+  } throw new Error('circle locations unread: no list');
 }

@@ -599,14 +599,14 @@ describe("capability NOT ready: the flag is ON over production's schema — lega
   });
 });
 
-describe("capability READY — a projection read that fails AFTER the probe passed is [] : no crash, no leak", () => {
+describe("capability READY — a projection read that fails AFTER the probe passed is a REFUSAL (coverage nothing), no crash, no leak — census-discovery §102 restates this pin: the empty 200 it asserted was DV-83's violation", () => {
   const READ_ERROR: Answer = { data: null, error: { code: "42501", message: "permission denied for table trips" } };
 
-  it("trips: probe ready, search read errors → 200 with results [] and no trip id in the body", async () => {
+  it("trips: probe ready, search read errors → 200 refusal, coverage nothing, results [] and no trip id in the body", async () => {
     setup(baseState(true), PROBE_OK_BUT_READ_FAILS(READ_ERROR));
     const { status, body } = await search("trips");
     assert.equal(status, 200);
-    assert.deepEqual(body.results, []);
+    assert.deepEqual(body.results, []); assert.equal(body.refusal?.coverage, "nothing"); assert.equal(body.refusal?.code, "search_failed");
     assert.equal(body.hasMore, false);
     const json = JSON.stringify(body);
     for (const id of [...EXPECTED_TRIP_IDS, ...NEVER_TRIP_IDS]) assert.equal(json.includes(id), false, id);
@@ -616,22 +616,22 @@ describe("capability READY — a projection read that fails AFTER the probe pass
     assert.deepEqual(readDiscoveryTripSourceDecisions().map((d) => [d.source, d.reason]), [["projection", "ready"]]);
   });
 
-  it("plans: the same — every plan withheld, none leaked from an unreadable parent", async () => {
+  it("plans: the same — every plan withheld AND refused, none leaked from an unreadable parent", async () => {
     setup(baseState(true), PROBE_OK_BUT_READ_FAILS(READ_ERROR));
     const { status, body } = await search("plans", "belem");
     assert.equal(status, 200);
-    assert.deepEqual(body.results, []);
+    assert.deepEqual(body.results, []); assert.equal(body.refusal?.coverage, "nothing");
     const json = JSON.stringify(body);
     for (const id of [...EXPECTED_PLAN_IDS, ...NEVER_PLAN_IDS]) assert.equal(json.includes(id), false, id);
   });
 
-  it("a THROWN client on the projection read (probe already passed) is the same []", async () => {
+  it("a THROWN client on the projection read (probe already passed) is the same refusal", async () => {
     setup(baseState(true), PROBE_OK_BUT_READ_FAILS("throw"));
     const t = await search("trips");
-    assert.deepEqual(t.body.results, []);
+    assert.deepEqual(t.body.results, []); assert.equal(t.body.refusal?.coverage, "nothing");
     setup(baseState(true), PROBE_OK_BUT_READ_FAILS("throw"));
     const p = await search("plans", "belem");
-    assert.deepEqual(p.body.results, []);
+    assert.deepEqual(p.body.results, []); assert.equal(p.body.refusal?.coverage, "nothing");
   });
 });
 
@@ -792,3 +792,111 @@ describe("lib/discoveryTripProjectionConsumer — the units", () => {
 function sansExposure(rows: any[]): any[] {
   return (rows ?? []).map(({ recommendationId: _rid, ...rest }: any) => rest);
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// DV-83 round 6 (census-discovery §102, D-W11X2-36). The verifier's probes
+// V5-T1..V5-T3 at 0db25c816, copied in: with the capability READY, a
+// projection read that fails after the probe passed answered
+// `200 { results: [] }` for type=trips and type=plans, and type=all / suggest
+// did not name the source. A failed read is a refusal that names it.
+describe("DV-83 round 6: a failed trip projection read is a refusal, never an empty search", () => {
+  const READ_ERROR: Answer = { data: null, error: { code: "42501", message: "permission denied for table trips" } };
+  const get = async (path: string): Promise<{ status: number; body: any }> => {
+    const r = await fetch(`${base}${path}`, { headers: { Authorization: `Bearer ${ME_TOK}` } });
+    return { status: r.status, body: await r.json() };
+  };
+
+  it("V5-T1 type=trips: the failed projection read refuses with coverage nothing, and serves no trip", async () => {
+    setup(baseState(true), PROBE_OK_BUT_READ_FAILS(READ_ERROR));
+    const { status, body } = await search("trips");
+    assert.equal(status, 200);
+    assert.deepEqual(body.results, []);
+    assert.equal(body.refusal?.coverage, "nothing", JSON.stringify(body));
+    assert.equal(body.refusal?.code, "search_failed");
+  });
+
+  it("V5-T2 type=plans: the failed parent-trip projection read refuses with coverage nothing", async () => {
+    setup(baseState(true), PROBE_OK_BUT_READ_FAILS(READ_ERROR));
+    const { status, body } = await search("plans", "belem");
+    assert.equal(status, 200);
+    assert.deepEqual(body.results, []);
+    assert.equal(body.refusal?.coverage, "nothing", JSON.stringify(body));
+  });
+
+  it("V5-T3 type=all: trips and plans are named in failedSources", async () => {
+    setup(baseState(true), PROBE_OK_BUT_READ_FAILS(READ_ERROR));
+    const { body } = await get(`/discovery/search?q=${encodeURIComponent("lisbon")}&type=all`);
+    const failed: string[] = body.refusal?.failedSources ?? [];
+    assert.ok(failed.includes("trips"), JSON.stringify(body.refusal));
+    for (const id of [...EXPECTED_TRIP_IDS, ...NEVER_TRIP_IDS]) assert.equal(JSON.stringify(body.results).includes(id), false, id);
+  });
+
+  it("T4 suggest: trips is named in failedSources", async () => {
+    setup(baseState(true), PROBE_OK_BUT_READ_FAILS(READ_ERROR));
+    const { body } = await get(`/discovery/suggest?q=${encodeURIComponent("lisbon")}`);
+    const failed: string[] = body.refusal?.failedSources ?? [];
+    assert.ok(failed.includes("trips"), JSON.stringify(body.refusal));
+  });
+
+  it("T5 a THROWN projection read refuses too, on both types", async () => {
+    setup(baseState(true), PROBE_OK_BUT_READ_FAILS("throw"));
+    assert.equal((await search("trips")).body.refusal?.coverage, "nothing");
+    setup(baseState(true), PROBE_OK_BUT_READ_FAILS("throw"));
+    assert.equal((await search("plans", "belem")).body.refusal?.coverage, "nothing");
+  });
+
+  it("C1 control: a healthy projection read is a plain 200 with no refusal", async () => {
+    setup(baseState(true));
+    const { status, body } = await search("trips");
+    assert.equal(status, 200);
+    assert.equal(body.refusal, undefined);
+    assertExpectedTrips(body);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// DV-83 round 6 sweep (census-discovery §102, D-W11X2-43). `fetchActiveOwnerSet`
+// failed CLOSED to an empty set on an unreadable `profiles` read — every
+// owner-gated row dropped as "not active", and the search answered
+// `200 { results: [] }`: the owner-standing filter could not be applied, and
+// the answer said nothing matched. It still fails closed; now it also says so.
+describe("DV-83 round 6 sweep: an unreadable owner-standing read is a refusal, never an empty search", () => {
+  const STANDING_FAILS: Override = (table, select) =>
+    table === "profiles" && select === "id" ? { data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } } : undefined;
+
+  it("S1 type=trips (legacy path): the standing read fails → refusal nothing, no trip served", async () => {
+    setup(baseState("absent"), STANDING_FAILS);
+    const { status, body } = await search("trips");
+    assert.equal(status, 200);
+    assert.deepEqual(body.results, []);
+    assert.equal(body.refusal?.coverage, "nothing", JSON.stringify(body));
+  });
+
+  it("S2 type=plans: the same", async () => {
+    setup(baseState("absent"), STANDING_FAILS);
+    const { body } = await search("plans", "belem");
+    assert.deepEqual(body.results, []);
+    assert.equal(body.refusal?.coverage, "nothing", JSON.stringify(body));
+  });
+
+  it("S3 type=all: trips is named in failedSources", async () => {
+    setup(baseState("absent"), STANDING_FAILS);
+    const r = await fetch(`${base}/discovery/search?q=lisbon&type=all`, { headers: { Authorization: `Bearer ${ME_TOK}` } });
+    const body: any = await r.json();
+    assert.ok((body.refusal?.failedSources ?? []).includes("trips"), JSON.stringify(body.refusal));
+  });
+
+  it("S4 a THROWN standing read refuses the same way", async () => {
+    setup(baseState("absent"), (table, select) => (table === "profiles" && select === "id" ? "throw" : undefined));
+    const { body } = await search("trips");
+    assert.deepEqual(body.results, []);
+    assert.equal(body.refusal?.coverage, "nothing", JSON.stringify(body));
+  });
+
+  it("C1 control: a readable standing read is a plain 200 with the expected trips", async () => {
+    setup(baseState("absent"));
+    const { body } = await search("trips");
+    assert.equal(body.refusal, undefined);
+    assertExpectedTrips(body);
+  });
+});

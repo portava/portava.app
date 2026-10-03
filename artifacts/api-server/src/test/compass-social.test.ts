@@ -102,6 +102,7 @@ function makeClient(db: Db) {
       not: () => b,
       order: () => b,
       limit: (n: number) => { filtered = filtered.slice(0, n); return b; },
+      range: () => b, // census-discovery §118 (B22): the live going recount pages with .range(); one page here
       maybeSingle: () => Promise.resolve({ data: filtered[0] ?? null, error: null }),
       single: () => Promise.resolve({ data: filtered[0] ?? null, error: filtered[0] ? null : { message: "no rows" } }),
       then: (resolve: any) => resolve({ data: filtered, error: null }),
@@ -449,6 +450,8 @@ function groupFixture(): Db {
     { id: "ev-agegate",  title: "Casino Night",      city: "Cebu", starts_at: soon, category: "nightlife", host_id: CARA_ID, state: "published", visibility: "public", max_attendees: 30, going_count: 0, age_min: 35,   verified_only: false },
     { id: "ev-blocked",  title: "Rooftop Party",     city: "Cebu", starts_at: soon, category: "nightlife", host_id: EVE_ID,  state: "published", visibility: "public", max_attendees: 30, going_count: 0, age_min: null, verified_only: false },
   ];
+  // census-discovery §118 (B22): the group tool counts the going RSVPs live, so the world holds the rows its counters claim
+  db.event_rsvps = [...["ev-open", "ev-full"].flatMap((id) => [0, 1, 2].map((i) => ({ event_id: id, user_id: `u-${id}-${i}`, status: "going" })))];
   return db;
 }
 

@@ -196,7 +196,7 @@ export function derivePersonalCities(
   }
 
   // Deterministic: city key order, so paging is stable across requests.
-  for (const key of [...acc.keys()].sort().slice(0, MAX_PERSONAL_CITIES)) {
+  if (acc.size > MAX_PERSONAL_CITIES) report.capped = true; for (const key of [...acc.keys()].sort().slice(0, MAX_PERSONAL_CITIES)) {  // census-discovery §115 (DV-83, sweep SW5): cities past the fold were never considered
     const e = acc.get(key) as CityAccumulator;
     const { lat, lng } = e.city.centroid ?? ({} as { lat?: number; lng?: number });
     if (!finite(lat) || !finite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
@@ -281,7 +281,7 @@ export async function readPersonalCityPins(
 
   const rows = data as PassportStampRowLike[];
   const derived = derivePersonalCities(rows, cities, { bbox: opts.bbox });
-  derived.report.capped = rows.length >= MAX_PERSONAL_STAMP_ROWS;
+  derived.report.capped = derived.report.capped || rows.length >= MAX_PERSONAL_STAMP_ROWS;  // §115 (SW5): the fold's own cut is kept
   return { ok: true, pins: derived.pins, report: derived.report };
 }
 

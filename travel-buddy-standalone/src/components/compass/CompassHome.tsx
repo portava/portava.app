@@ -23,9 +23,20 @@ import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import {
   fetchCompassHome,
   type CompassHomeResponse,
-  type CompassHomeEvent,
+  type CompassHomeEvent, type CompassHomeSection,
 } from '../../services/compass.ts';
 import { CompassRediscover } from './CompassRediscover.tsx';
+import { listPartialEmptyTitle, listPartialNotice, LIST_PARTIAL_EMPTY_BODY } from '../../services/discoveryCoverageNotice.ts';
+
+/**
+ * census-discovery §105 (DV-83 round 9 sweep, D-W11X2-65): a fallback that is a FAILURE — the
+ * build failed (Compass on, fallback) or the flag table could not be read. Compass READ and off
+ * (`compassEnabled: false` with no reason) is not one, and stays silent as before.
+ */
+export function isCompassHomeFailure(d: Pick<CompassHomeResponse, 'compassEnabled' | 'fallback' | 'fallbackReason'>): boolean {
+  return d.fallback === true && (d.compassEnabled === true || d.fallbackReason === 'compass_flags_unreadable');
+}
+const HOME_NOUN = 'Compass suggestions';
 
 // ── Six core actions — each prefills a grounded intent into the chat flow ─────
 
@@ -112,6 +123,7 @@ export function CompassHome({
 }) {
   const [home, setHome] = useState<CompassHomeResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);  // §105: a failed read is said, never silence
   const loadedAt = useRef(0);
   const inFlight = useRef(false);
   const onRefreshedRef = useRef(onRefreshed);
@@ -123,12 +135,15 @@ export function CompassHome({
     inFlight.current = true;
     fetchCompassHome()
       .then((r) => {
-        if (r.ok && r.data) {
+        if (r.ok && r.data && !isCompassHomeFailure(r.data)) {
           setHome(r.data);
+          setFailed(false);
           loadedAt.current = Date.now();
+        } else {
+          setFailed(true);  // §105: kept cards (if any) stay, and the failure is said beside them
         }
       })
-      .catch(() => {})
+      .catch(() => { setFailed(true); })
       .finally(() => {
         inFlight.current = false;
         setLoading(false);
@@ -196,7 +211,18 @@ export function CompassHome({
         <ActivityIndicator size="small" color={color.signal} style={{ marginVertical: space.lg }} />
       ) : null}
 
-      {/* Best next move */}
+      {failed ? (
+        <View style={s.notice} testID="compass-home-failed">
+          <Text style={s.noticeText}>{listPartialEmptyTitle(HOME_NOUN)}</Text>
+          <Text style={s.noticeText}>{LIST_PARTIAL_EMPTY_BODY}</Text>
+        </View>
+      ) : showData && home?.degraded ? (
+        <View style={s.notice} testID="compass-home-partial">
+          <Text style={s.noticeText}>{listPartialNotice(HOME_NOUN)}</Text>
+        </View>
+      ) : null}
+
+      {/* Best next move */}{showData ? <SectionUnread home={home} section="bestNextMove" /> : null}
       {showData && home?.bestNextMove ? (
         <Pressable style={({ pressed }) => [s.card, pressed && { opacity: 0.85 }]} onPress={bestMoveTap}>
           <SectionTitle icon={<Sparkles size={13} color={color.signal} />} label="Best next move" />
@@ -215,7 +241,7 @@ export function CompassHome({
         <CompassRediscover city={home.city} collapseWhenEmpty />
       ) : null}
 
-      {/* Circle activity */}
+      {/* Circle activity */}{showData ? <SectionUnread home={home} section="circleActivity" /> : null}
       {showData && home?.circleActivity?.people?.length ? (
         <Pressable
           style={({ pressed }) => [s.card, pressed && { opacity: 0.85 }]}
@@ -232,7 +258,7 @@ export function CompassHome({
         </Pressable>
       ) : null}
 
-      {/* Starting soon */}
+      {/* Starting soon */}{showData ? <SectionUnread home={home} section="startingSoon" /> : null}
       {showData && home?.startingSoon?.length ? (
         <View style={s.card}>
           <SectionTitle icon={<CalendarClock size={13} color={color.signal} />} label="Starting soon" />
@@ -240,7 +266,7 @@ export function CompassHome({
         </View>
       ) : null}
 
-      {/* Tonight's vibe (evening/night only, server-gated) */}
+      {/* Tonight's vibe (evening/night only, server-gated) */}{showData ? <SectionUnread home={home} section="tonightVibe" /> : null}
       {showData && home?.tonightVibe ? (
         <View style={s.card}>
           <SectionTitle icon={<Moon size={13} color={color.signal} />} label="Tonight's vibe" />
@@ -249,7 +275,7 @@ export function CompassHome({
         </View>
       ) : null}
 
-      {/* Tomorrow's weather window */}
+      {/* Tomorrow's weather window */}{showData ? <SectionUnread home={home} section="weatherWindow" /> : null}
       {showData && home?.weatherWindow ? (
         <Pressable
           style={({ pressed }) => [s.card, pressed && { opacity: 0.85 }]}
@@ -280,6 +306,8 @@ export function CompassHome({
 // ── Styles ────────────────────────────────────────────────────────────────────
 
 const s = StyleSheet.create({
+  notice:          { marginTop: space.md, gap: space.xs },
+  noticeText:      { ...t.small, color: color.mute, textAlign: 'center' },
   wrap:            { gap: space.md },
   hero:            { alignItems: 'center', gap: 4, paddingTop: space.lg, paddingBottom: space.sm },
   heroTitle:       { ...t.heading, color: color.ink, textAlign: 'center' },
@@ -300,3 +328,28 @@ const s = StyleSheet.create({
   askHint:         { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingVertical: space.sm },
   askHintText:     { ...t.small, color: color.mute },
 });
+
+// ── census-discovery §107 (DV-83 round 10, lane W11-X2, D-W11X2-67): which section could not be read ──
+// The server marks a section `unavailable` when its source could not be read — the circle's
+// presence reads, the forecast provider, a best move picked from a partial candidate pool. A
+// missing card is otherwise drawn exactly like an empty one ("nobody is around", "no forecast"),
+// so each unread section says so in its own place. A best move that WAS picked, but from a pool
+// with a failed source, keeps its card and says it was picked from partial results.
+export const HOME_SECTION_UNREAD = {
+  bestNextMove:        'Couldn’t pick a best move right now — some suggestions couldn’t be loaded.',
+  bestNextMovePartial: 'Picked from partial results — some suggestions couldn’t be loaded.',
+  circleActivity:      'Couldn’t check who’s around right now.',
+  startingSoon:        'Couldn’t load events starting soon.',
+  tonightVibe:         'Couldn’t load tonight’s events.',
+  weatherWindow:       'Couldn’t load tomorrow’s forecast.',
+} as const;
+
+function SectionUnread({ home, section }: { home: CompassHomeResponse | null; section: CompassHomeSection }) {
+  if (home?.sources?.[section] !== 'unavailable') return null;
+  const text = section === 'bestNextMove' && home.bestNextMove ? HOME_SECTION_UNREAD.bestNextMovePartial : HOME_SECTION_UNREAD[section];
+  return (
+    <View style={s.notice} testID={`compass-home-unread-${section}`}>
+      <Text style={s.noticeText}>{text}</Text>
+    </View>
+  );
+}

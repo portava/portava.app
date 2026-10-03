@@ -33,7 +33,7 @@ import {
   isLivePulseDismissed,
   isLivePulseDismissible,
 } from '../../services/livePulse.ts';
-import type { LivePulseItem } from '../../services/livePulse.ts';
+import type { LivePulseItem } from '../../services/livePulse.ts'; import { pulseUnreadText } from '../../features/map/pulse/pulseCardAnswer.ts';  // census-discovery §119 (B31)
 
 // Matches AskCompassBar's chrome so the two floating surfaces read as one system.
 const BRAND_BG = '#0A3D4A';
@@ -54,7 +54,7 @@ export interface LivePulseCardProps {
   /** Called after a dismissible card is dismissed, so the caller can refresh. */
   onDismiss?: (item: LivePulseItem) => void;
   /** Bottom inset so the card clears the safe area / action rail. */
-  bottomInset?: number;
+  bottomInset?: number; /** census-discovery §119 (DV-83 round 22, B31): the sections GET /pulse/live could not read (pulseCardAnswer); the card says so */ failedSources?: readonly string[];
 }
 
 export function LivePulseCard({
@@ -62,14 +62,14 @@ export function LivePulseCard({
   resolveGeo,
   onDeepLink,
   onDismiss,
-  bottomInset = 0,
+  bottomInset = 0, failedSources = [],
 }: LivePulseCardProps) {
   const item = useMemo(
     () => selectHeadlinePulseItem(items ?? [], (i) => isLivePulseDismissed(i.id)),
     [items],
   );
 
-  if (!item) return null;
+  if (!item) return pulseUnreadText(failedSources) ? <PulseUnreadOnly failedSources={failedSources} bottomInset={bottomInset} /> : null;  // §119 (B31): an answer with nothing to headline over a section it could not read is not "nothing"
 
   const isSafety = item.item_type === 'safe_return';
   const dismissible = isLivePulseDismissible(item);
@@ -125,7 +125,7 @@ export function LivePulseCard({
               <Text style={s.subtitle} numberOfLines={1}>
                 {item.subtitle}
               </Text>
-            ) : null}
+            ) : null}{pulseUnreadText(failedSources) ? <Text style={s.subtitle} numberOfLines={2} testID="live-pulse-card-unread">{pulseUnreadText(failedSources)}</Text> : null}{/* census-discovery §119 (B31): a section the card could not read is said, never left out of "the most important change" unsaid */}
 
             {reasons.length > 0 && (
               <View style={s.reasonRow}>
@@ -261,3 +261,15 @@ const s = StyleSheet.create({
     justifyContent: 'center',
   },
 });
+
+// ── census-discovery §119 (DV-83 round 22, lane W11-X2; the round-21 verifier's B31) ──────────────────────────────────
+/** The card when nothing can be headlined but a section (or the whole read) could not be read: it says so. */
+function PulseUnreadOnly({ failedSources, bottomInset }: { failedSources: readonly string[]; bottomInset: number }) {
+  return (
+    <View style={[s.wrap, { paddingBottom: Math.max(bottomInset, space.md) }]} pointerEvents="box-none">
+      <View style={s.card} accessibilityRole="text">
+        <Text style={s.subtitle} numberOfLines={2} testID="live-pulse-card-unread">{pulseUnreadText(failedSources)}</Text>
+      </View>
+    </View>
+  );
+}

@@ -513,3 +513,43 @@ describe("meeting_point through GET /api/map/projection", () => {
     assert.equal(r.body.protection.suppressed, 1);
   });
 });
+
+// ── census-discovery §113 (DV-83 round 16 sweep, D-W11X2-135): a meeting-point scan cut at its cap ─────────────
+//
+// readMeetingPoints read MAX_MEETING_POINT_ROWS (200) of the viewer's trips' meeting points in the viewport with no
+// order, and the projection's skips (private, expired) ran after the cut; the gateway named the layer with no refusal.
+describe("§113: meeting points over an item scan cut at its cap (D-W11X2-135)", () => {
+  const privateOnes = (n: number) => Array.from({ length: n }, (_v: unknown, i: number) => item({ id: `item-private-${i}`, source_type: "manual", source_id: null, location_is_private: true, starts_at: realIso(30), ends_at: realIso(120) }));
+  let app: ProjectionApp | null = null;
+  beforeEach(() => { _clearProtectedZoneCache(); _clearFlowZoneCache(); });
+  afterEach(async () => { if (app) await app.close(); app = null; });
+
+  it("MPC1 200 private items ahead of the visible one → the read says it was cut, and the gateway does not name the layer", async () => {
+    const state = gatewayWorld({ trip_plan_items: [...privateOnes(200), item({ starts_at: realIso(30), ends_at: realIso(120) })] });
+    const r = await readMeetingPoints(client(state), VIEWER, { bbox: BBOX, now: Date.now() });
+    assert.ok(r.ok);
+    if (!r.ok) return;
+    assert.equal((r.report as any).capped, true, JSON.stringify(r.report));
+    app = await startRouterApp(mapProjectionRouter, state, { token: TOKEN, userId: VIEWER });
+    const g = await app.projection(`bbox=${BBOX_STR}&zoom=14&kinds=meeting_point`);
+    assert.equal(g.body.sources.includes("meeting_points"), false, JSON.stringify(g.body.sources));
+    assert.equal(g.body.producers.meeting_point.refusal, "items_capped");
+  });
+  it("MPC2 the scan asks for the soonest items first", async () => {
+    const c: any = client(world());
+    const from = c.from.bind(c); const orders: unknown[] = [];
+    c.from = (t: string) => { const q = from(t); if (t === "trip_plan_items") { const o = q.order.bind(q); q.order = (col: string, opt: unknown) => { orders.push([col, opt]); return o(col, opt); }; } return q; };
+    await readMeetingPoints(c, VIEWER, { bbox: BBOX, now: NOW });
+    assert.deepEqual(orders, [["starts_at", { ascending: true }]]);
+  });
+  it("MPCc CONTROL: 199 private and the visible one (200) → a whole read, no mark, the layer named", async () => {
+    const state = gatewayWorld({ trip_plan_items: [...privateOnes(199), item({ starts_at: realIso(30), ends_at: realIso(120) })] });
+    const r = await readMeetingPoints(client(state), VIEWER, { bbox: BBOX, now: Date.now() });
+    assert.ok(r.ok);
+    if (!r.ok) return;
+    assert.equal("capped" in r.report, false);
+    app = await startRouterApp(mapProjectionRouter, state, { token: TOKEN, userId: VIEWER });
+    const g = await app.projection(`bbox=${BBOX_STR}&zoom=14&kinds=meeting_point`);
+    assert.deepEqual(g.body.producers.meeting_point, { refusal: null, collected: 1 });
+  });
+});

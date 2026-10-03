@@ -115,10 +115,9 @@ const ALLOWED: Record<string, { sites: number; reason: string }> = {
       "wrong, but visible to the one person who can tell it is wrong, recoverable by hiding again, and with no cross-user " +
       "exposure: nothing here decides what OTHER people may see.",
   },
-  "routes/pulse.ts::post_hides": {
-    sites: 1,
-    reason: "Same read, same reasoning, on the Pulse feed: the viewer's own hide list, no cross-user exposure.",
-  },
+  // `routes/pulse.ts::post_hides` stood here ("the viewer's own hide list, no cross-user exposure"). census-discovery
+  // §122 (DV-83 round 23, B40) rules it a safety fail-open on a graded Discovery surface: GET /pulse now fails closed
+  // over a failed hide read and names `post_hides`, so the entry is gone and the site is pinned under FIXED_SITES.
 };
 
 /** Every .ts file under src/, excluding tests, scripts, migrations and baselines. */
@@ -372,6 +371,14 @@ const FIXED_SITES: Array<{ file: string; markers: string[]; reason: string }> = 
       "Branches 3a-3g resolve which entity publishes an object. A rejected read reads exactly like 'nothing references it', " +
       "so the branch falls through and access is denied with no trace — the deny is safe and is kept, but it must not be " +
       "indistinguishable from a policy deny. The file's own urlForms comment records that incident from the outside.",
+  },
+  {
+    file: "routes/pulse.ts",
+    markers: ["hide list unknown — returning empty feed (fail-closed)"],
+    reason:
+      "census-discovery §122 (DV-83 round 23, B40): GET /pulse's post_hides read bound no error and took a failed read as " +
+      "'you hid nothing', serving posts the viewer had hidden. It now fails closed, as the block read does, naming " +
+      "post_hides; the marker pins that posture, so a revert to best-effort changes the text and trips this rule.",
   },
 ];
 

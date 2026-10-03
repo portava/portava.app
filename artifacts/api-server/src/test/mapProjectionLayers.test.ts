@@ -344,7 +344,7 @@ describe("circle-locations extraction is behaviour-preserving", () => {
       "block read failure",
       circleState({ blocks: { error: { message: "blocks down" } } }),
     );
-    assert.ok(d.ok && d.locations.length === 0);
+    assert.ok(!d.ok && d.stage === "blocks", "census-discovery §115 (SW6): nobody served, and said unread — never an empty circle");
   });
 
   it("agrees when the emergency stop is engaged", async () => {
@@ -360,7 +360,7 @@ describe("circle-locations extraction is behaviour-preserving", () => {
       "kill switch unreadable",
       circleState({ feature_flags: { error: { message: "flags down" } } }),
     );
-    assert.ok(d.ok && d.locations.length === 0);
+    assert.ok(!d.ok && d.stage === "kill_switch", "census-discovery §115 (SW6): the stop engages (nobody served) AND the read is said unread");
   });
 
   it("agrees on mixed consent across several members", async () => {
@@ -486,7 +486,7 @@ describe("circle-locations extraction is behaviour-preserving", () => {
     // to every people-bearing source. `null` must keep its fail-closed meaning.
     const client = makeClient(circleState());
     const withNull = await readCircleLocations(client as any, USER, { blockedSet: null });
-    assert.deepEqual(withNull, { ok: true, locations: [] });
+    assert.deepEqual(withNull, { ok: false, stage: "blocks", message: "block state could not be read" });  // §115 (SW6): `null` keeps its fail-closed meaning, and is a failed read
 
     const withBlocked = await readCircleLocations(client as any, USER, {
       blockedSet: new Set([MEM_A]),

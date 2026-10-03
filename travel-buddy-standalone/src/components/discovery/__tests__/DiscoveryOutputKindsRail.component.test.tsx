@@ -77,8 +77,7 @@ describe('DiscoveryOutputKindsRail (§94)', () => {
   for (const [name, answer] of [
     ['an empty page', { ok: true, kind: 'trails', rankedBy: 'pde', items: [] }],
     ['a 404 (flag off at the server)', { ok: false, reason: 'disabled' }],
-    ['a transport failure', { ok: false, reason: 'network' }],
-  ] as const) {
+  ] as const) {  // §100 (D-W11X2-27): 'a transport failure' LEFT this list — a network failure is a failed read, not silence; O8 below pins it
     it(`O5 ${name} renders nothing`, async () => {
       mockFlags = { discovery_output_kinds_enabled: true };
       mockGet.mockResolvedValue(answer);
@@ -119,5 +118,42 @@ describe('DiscoveryOutputKindsRail (§94)', () => {
     await r.rerender(<DiscoveryOutputKindsRail kind="trails" destination="Miami" enabled refreshKey={2} />);
     expect(await r.findByTestId('discovery-output-kind-trails-unavailable')).toBeTruthy();
     expect(mockGet.mock.calls.length).toBeGreaterThan(afterFirst);
+  });
+});
+
+// census-discovery §100 (lane W11-X2 round 4; DV-83, the round's adversarial
+// sweep), register D-W11X2-27. O5 used to list "a transport failure" among the
+// answers that render nothing, beside an empty page and a 404. An empty page
+// is an answer and a 404 is the server's flag; a transport failure is neither —
+// it is a read that did not happen, and rendering it as the empty page's
+// silence is DV-83's defect. The event rail made the same move in §94.10
+// (D-W11X2-11): its transport failure has its own testID and the refused
+// sentence. This rail's failed-read state already exists (O4); a transport
+// failure, answered or thrown, now reaches it.
+describe('DiscoveryOutputKindsRail — a transport failure is a failed read, not silence (§100, D-W11X2-27)', () => {
+  it('O8 a transport failure (network) is the unavailable state, never nothing', async () => {
+    mockFlags = { discovery_output_kinds_enabled: true };
+    mockGet.mockResolvedValue({ ok: false, reason: 'network' });
+    const { findByTestId, queryByText } = await render(<DiscoveryOutputKindsRail kind="trails" destination="Miami" enabled />);
+    expect(await findByTestId('discovery-output-kind-trails-unavailable')).toBeTruthy();
+    expect(queryByText('Some trails couldn’t be loaded just now')).not.toBeNull();
+  });
+
+  it('O9 a THROWN read is the same failure', async () => {
+    mockFlags = { discovery_output_kinds_enabled: true };
+    mockGet.mockRejectedValue(new Error('socket hang up'));
+    const { findByTestId } = await render(<DiscoveryOutputKindsRail kind="shared_moments" destination="Miami" enabled />);
+    expect(await findByTestId('discovery-output-kind-shared_moments-unavailable')).toBeTruthy();
+  });
+
+  it('O10 CONTROL: signed out and not configured still render nothing (not a failed read)', async () => {
+    mockFlags = { discovery_output_kinds_enabled: true };
+    for (const reason of ['signed_out', 'not_configured', 'invalid'] as const) {
+      mockGet.mockResolvedValue({ ok: false, reason });
+      const { toJSON, unmount } = await render(<DiscoveryOutputKindsRail kind="trails" destination="Miami" enabled />);
+      await new Promise((r) => setTimeout(r, 10));
+      expect(toJSON()).toBeNull();
+      unmount();
+    }
   });
 });

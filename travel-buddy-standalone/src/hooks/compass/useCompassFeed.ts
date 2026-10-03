@@ -5,7 +5,7 @@ import {
   setCachedFeed,
   type CompassFeedResponse,
 } from '../../services/compass.ts';
-import { useSession } from '../../context/SessionContext.tsx';
+import { useSession } from '../../context/SessionContext.tsx'; import { isCompassSectionFailure } from './compassSectionFailure.ts';
 
 interface UseCompassFeedOptions {
   section?: string;
@@ -37,19 +37,19 @@ export function useCompassFeed({
   enabled = true,
 }: UseCompassFeedOptions = {}): UseCompassFeedResult {
   const { userId, isAuthed } = useSession();
-  const [data, setData]           = useState<CompassFeedResponse | null>(null);
+  const [data, setData]           = useState<CompassFeedResponse | null>(null); const scope = `${section}:${(city ?? '').toLowerCase().trim()}`; const [dataScope, setDataScope] = useState<string | null>(null);  // census-discovery §101 (DV-83, D-W11X2-34): a feed belongs to the section and city it was read for, and is returned for that scope only
   const [loading, setLoading]     = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [error, setError]         = useState<string | null>(null);
+  const [error, setError]         = useState<string | null>(null); const [errorScope, setErrorScope] = useState<string | null>(null);
   const loadIdRef = useRef(0);
 
   // Serve cached feed immediately on mount
   useEffect(() => {
     if (!userId) return;
-    getCachedFeed(userId).then((cached) => {
-      if (cached) setData(cached);
+    getCachedFeed(userId, scope).then((cached) => {
+      if (cached) { setData(cached); setDataScope(scope); }
     }).catch(() => {});
-  }, [userId]);
+  }, [userId, scope]);
 
   const load = useCallback(async (isRefresh = false) => {
     if (!isAuthed || !enabled) return;
@@ -57,7 +57,7 @@ export function useCompassFeed({
     const stale = () => loadIdRef.current !== myId;
 
     if (isRefresh) setRefreshing(true);
-    else if (!data) setLoading(true);
+    else if (!data || dataScope !== scope) setLoading(true);
 
     const result = await fetchCompassSection(section, { city: city ?? undefined });
 
@@ -65,14 +65,14 @@ export function useCompassFeed({
     setLoading(false);
     setRefreshing(false);
 
-    if (result.ok && result.data) {
-      setData(result.data);
+    if (result.ok && result.data && !isCompassSectionFailure(result.data)) {  // census-discovery §103 (DV-83, D-W11X2-50): a build or flag-read failure is not an answer — never cached, never over kept picks
+      setData(result.data); setDataScope(scope);
       setError(null);
-      if (userId) setCachedFeed(userId, result.data).catch(() => {});
+      if (userId) setCachedFeed(userId, result.data, scope).catch(() => {});
     } else {
-      setError(result.error ?? 'unknown');
+      setError(result.error ?? (result.ok ? result.data?.fallbackReason ?? 'unknown' : 'unknown')); setErrorScope(scope); if (result.ok && result.data && (!data || dataScope !== scope)) { setData(result.data); setDataScope(scope); }  // §101: kept data stays (same scope only); the failure is returned beside it. §103: with nothing kept, a failed section's safe items are held (uncached) for the section to show under its failure
     }
-  }, [isAuthed, enabled, section, city, userId, data]);
+  }, [isAuthed, enabled, section, city, userId, data, dataScope, scope]);
 
   useEffect(() => {
     load(false);
@@ -80,16 +80,16 @@ export function useCompassFeed({
 
   const refresh = useCallback(() => load(true), [load]);
 
-  return {
-    data,
+  const scoped = dataScope === scope ? data : null;  // §101 (D-W11X2-34): never another city's or section's feed
+  return { data: scoped,
     loading,
     refreshing,
-    fallback:       data?.fallback ?? false,
+    fallback:       scoped?.fallback ?? false,
     // Treat missing compassEnabled as disabled when the response is a fallback —
     // the section route omits the field on disabled/error paths, so this prevents
     // the client from treating a fallback response as "enabled" and waiting forever.
-    compassEnabled: data?.fallback ? false : (data?.compassEnabled !== false),
-    error,
+    compassEnabled: scoped?.fallback ? false : (scoped?.compassEnabled !== false),
+    error: errorScope === scope ? error : null,
     refresh,
   };
 }

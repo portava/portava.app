@@ -200,7 +200,7 @@ baseline, the extended freeze guard (§5 Step 1), or the inverse auditor
 (§5 Step 5). Those remain separate, larger pieces of work the packet
 describes but does not ask this session to build.
 
-## C-11 answers — held here until the owner chooses (added 2026-09-30, census-discovery §107)
+## C-11 answers — held here until the owner chooses (added 2026-09-30, census-discovery §121)
 
 Not reconciliation proposals: the two mutually exclusive answers to owner
 question C-11 / W10D-B0 (what happens to a person's creator and Rent-a-Buddy

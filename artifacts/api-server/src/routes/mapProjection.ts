@@ -109,10 +109,10 @@ import { Router } from "express";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
-import { isFlagEnabled } from "../lib/featureFlags.js";
+import { isFlagEnabled, isKillSwitchEngaged, type KillSwitchReadStatus } from "../lib/featureFlags.js"; import { readFlagState } from "../lib/capability/schemaCapability.js";  // census-discovery §115 (B9, SW7)
 import { checkRateLimit } from "../lib/rateLimit.js";
 import { fetchBlockedSet } from "../lib/blocks.js";
-import { listMapTravelers } from "../lib/mapTravelers.js";
+import { listMapTravelersRead } from "../lib/mapTravelers.js";
 import { readCircleLocations } from "../lib/circleLocationsRead.js";
 import { readBuddyMapPins } from "../lib/buddyMapRead.js";
 import { readTripStopLayer, type TripLayerReport } from "../lib/mapProjectionTripRead.js";
@@ -121,8 +121,8 @@ import { DISCOVERY_CANDIDATE_PROJECTION_FLAG, readDiscoveryCandidatesForViewer }
 import { foldDiscoveryCandidates, refusedDiscoveryCandidates, selectDiscoveryCandidateRows, type DiscoveryCandidateReport } from "../lib/mapDiscoveryCandidates.js";
 import { findNearbyGems } from "../services/hiddenGems/HiddenGemDiscoveryService.js";
 import { applyGemPrivacyBatch } from "../services/hiddenGems/HiddenGemPrivacyGuard.js";
-import { readLiveClaims, toLiveClaimEnvelope } from "../lib/liveClaimRead.js";
-import { loadNearbyEvents } from "./mapSearch.js";
+import { readLiveClaims, toLiveClaimEnvelope, liveClaimReadFailed } from "../lib/liveClaimRead.js";  // census-discovery §115 (B11)
+import { loadNearbyEvents, nearbyEventsWithheldUnchecked, nearbyEventsScanCut, forwardEventsWindow } from "./mapSearch.js";  // §113 (D-W11X2-132)
 import { aggregateForViewport, bboxContains, deriveCrowdFlow, type BBox } from "../lib/mapAggregation.js";
 import { applyProtection, type ProtectedZone } from "../lib/protectedLocations.js";
 import { clearProtectedZoneCache, loadActiveProtectedZones } from "../lib/protectedZoneStore.js";
@@ -262,9 +262,9 @@ async function loadFlowZones(sc: any, nowMs: number): Promise<FlowZone[] | null>
     .from("geo_zones")
     .select("id, name, zone_type, center_lat, center_lng, radius_meters, polygon_geojson")
     .in("zone_type", FLOW_ZONE_TYPES as string[])
-    .limit(MAX_FLOW_ZONE_ROWS);
+    .limit(MAX_FLOW_ZONE_ROWS + 1);  // census-discovery §113 (D-W11X2-135): one past the cap so a cut is known
   if (error || !Array.isArray(data)) return null;
-  const zones = parseFlowZones(data as any[]);
+  const zones = parseFlowZones(data as any[]); if (data.length > MAX_FLOW_ZONE_ROWS) CAPPED.add(zones);  // §113: the viewport is chosen AFTER this cut
   _flowZoneCache = { zones, at: nowMs };
   return zones;
 }
@@ -297,9 +297,9 @@ async function loadCityZones(sc: any, nowMs: number): Promise<CityGeographyParse
     .from("geo_zones")
     .select("id, name, zone_type, center_lat, center_lng, radius_meters, polygon_geojson")
     .eq("zone_type", "city")
-    .limit(MAX_CITY_ZONE_ROWS);
+    .limit(MAX_CITY_ZONE_ROWS + 1);  // §113 (D-W11X2-135)
   if (error || !Array.isArray(data)) return null;
-  const parsed = parseCityGeographies(data as any[]);
+  const parsed = parseCityGeographies(data as any[]); if (data.length > MAX_CITY_ZONE_ROWS) CAPPED.add(parsed);  // §113: the viewport is chosen AFTER this cut
   _cityZoneCache = { parsed, at: nowMs };
   return parsed;
 }
@@ -329,9 +329,9 @@ async function loadViewportPlaces(sc: any, bbox: BBox): Promise<any[] | null> {
     .lte("latitude", bbox.north)
     .gte("longitude", bbox.west)
     .lte("longitude", bbox.east)
-    .limit(MAX_INDEXED_PLACES);
+    .limit(MAX_INDEXED_PLACES + 1);  // §113 (D-W11X2-135)
   if (error || !Array.isArray(data)) return null;
-  return data as any[];
+  const rows = data as any[]; if (data.length > MAX_INDEXED_PLACES) CAPPED.add(rows); return rows;  // §113: a cut index is marked
 }
 
 /**
@@ -376,7 +376,7 @@ interface CrowdFlowReport {
     zones: number;
     ambiguousNames: number;
     indexedPlaces: number;
-    placeIndexFailed: boolean;
+    placeIndexFailed: boolean; /** census-discovery §113 (D-W11X2-135): present only when the zone model / the place index was cut at its cap */ zonesCapped?: true; placeIndexCapped?: true;
   };
   transitions: number;
   published: number;
@@ -431,7 +431,7 @@ interface ProducerReports {
  */
 interface WorldIntelligenceReport {
   refusal: WorldIntelligenceRefusal | null;
-  cityModelGeography: { cities: number; ambiguousKeys: number; unusable: number } | null;
+  cityModelGeography: { cities: number; ambiguousKeys: number; unusable: number; /** §113: present only when cut at its cap */ capped?: true } | null;
   worldPulse: WorldPulseReport | null;
   travelerFlow: TravelerFlowReport | null;
   cityModels: CityModelReport | null;
@@ -469,9 +469,9 @@ router.get(
     // Fail-soft: an unknown or disabled flag yields an explicitly empty,
     // explicitly disabled envelope — the client keeps its legacy per-layer path
     // rather than rendering a blank map.
-    if (!(await isFlagEnabled(sc, "map_projection_enabled"))) {
+    const projectionFlag = await readFlagState(sc, "map_projection_enabled"); if (projectionFlag !== "on") {  // census-discovery §115 (DV-83, B9): an UNREAD flag is a refusal the client says (safety first), never the flag-off body
       res.json({
-        enabled: false,
+        enabled: false, ...(projectionFlag === "unreadable" ? { refusal: "flag_unreadable" } : {}),
         objects: [],
         viewport: null,
         total: 0,
@@ -597,16 +597,16 @@ router.get(
           // is what drives `unreadLayers` in useMapEntities — so a failed read
           // reported as a successful empty one is the exact defect every other
           // layer in this route was already fixed for.
-          const travelers = await listMapTravelers(sc, {
+          const read = await listMapTravelersRead(sc, {
             viewerId: user.id,
             lat,
             lng,
             radiusKm,
             blockedSet,
           }).catch(() => null);
-          if (travelers === null) return;
-          for (const t of travelers) collected.push(projectTraveler(t));
-          sources.push("travelers");
+          if (read === null) return;
+          for (const t of read.travelers) collected.push(projectTraveler(t));
+          if (!read.truncated) sources.push("travelers");  // census-discovery §113 (DV-83, D-W11X2-129): a cut scan or slice is not named as read — the client says the layer is not whole
         })(),
       );
     }
@@ -619,7 +619,7 @@ router.get(
           // yield [] and still push "gems", so a viewer whose gem privacy could
           // not be resolved was told, authoritatively, that there are no gems
           // here — and the client then did not fall back.
-          const ranked = await findNearbyGems(sc, lat, lng, radiusKm, { limit: 100 }).catch(() => null);
+          const found = await findNearbyGems(sc, lat, lng, radiusKm, { limit: 100 }).catch(() => null); const ranked = found === null ? null : found.ranked;  // census-discovery §113 (D-W11X2-131)
           if (ranked === null) return;
           const notBlocked = ranked.filter(
             (r: any) => !r.gem?.submitted_by || !blockedSet.has(r.gem.submitted_by),
@@ -633,7 +633,7 @@ router.get(
           safe.forEach((g: any, i: number) =>
             collected.push(projectGem(g, notBlocked[i]?.distanceKm ?? null)),
           );
-          sources.push("gems");
+          if (!found!.truncated) sources.push("gems");  // §113 (DV-83, D-W11X2-131): a cut gem scan is not named as read
         })(),
       );
     }
@@ -648,7 +648,7 @@ router.get(
     let eventsOnce: Promise<any[] | null> | null = null;
     const loadEventsOnce = (): Promise<any[] | null> => {
       if (!eventsOnce) {
-        eventsOnce = loadNearbyEvents(sc, user.id, lat, lng, radiusKm, blockedSet).catch(() => null);
+        eventsOnce = loadNearbyEvents(sc, user.id, lat, lng, radiusKm, blockedSet, { window: forwardEventsWindow(nowMs) }).catch(() => null);  // census-discovery §113 (D-W11X2-132): events not yet over
       }
       return eventsOnce;
     };
@@ -665,7 +665,7 @@ router.get(
           const events = await loadEventsOnce();
           if (events === null) return;
           for (const ev of events) collected.push(projectEvent(ev, nowMs));
-          sources.push("events");
+          if (nearbyEventsWithheldUnchecked(events) === 0 && !nearbyEventsScanCut(events)) sources.push("events");  // census-discovery §110 (DV-83, D-W11X2-93): a layer whose rows a gate withheld UNCHECKED is not named as read — the client says it could not be read in full
         })(),
       );
     }
@@ -694,8 +694,8 @@ router.get(
           if (!read) { producers.meeting_point = { refusal: "read_threw", collected: 0 }; return; }
           if (!read.ok) { producers.meeting_point = { refusal: read.reason, collected: 0 }; return; }
           for (const p of read.points) collected.push(p);
-          producers.meeting_point = { refusal: null, collected: read.points.length };
-          sources.push("meeting_points");
+          producers.meeting_point = { refusal: read.report.capped ? "items_capped" : null, collected: read.points.length };  // census-discovery §113 (D-W11X2-135)
+          if (!read.report.capped) sources.push("meeting_points");
         })(),
       );
     }
@@ -710,8 +710,8 @@ router.get(
           if (!read) { producers.memory = { refusal: "read_threw", collected: 0 }; return; }
           if (!read.ok) { producers.memory = { refusal: read.reason, collected: 0 }; return; }
           for (const p of read.pins) collected.push(p);
-          producers.memory = { refusal: null, collected: read.pins.length };
-          sources.push("memories");
+          producers.memory = { refusal: read.report.capped > 0 ? "subjects_capped" : null, collected: read.pins.length };  // census-discovery §115 (DV-83, B8): a cut read is reported
+          if (!(read.report.capped > 0)) sources.push("memories");  // §115 (B8): never named over subjects past the cap
         })(),
       );
     }
@@ -727,8 +727,8 @@ router.get(
           if (!read) { producers.safety_notice = { refusal: "read_threw", collected: 0 }; return; }
           if (!read.ok) { producers.safety_notice = { refusal: read.reason, collected: 0 }; return; }
           for (const n of read.notices) collected.push(n);
-          producers.safety_notice = { refusal: null, collected: read.notices.length };
-          sources.push("safety");
+          producers.safety_notice = { refusal: read.report.capped ? "snapshots_capped" : null, collected: read.notices.length };  // census-discovery §113 (D-W11X2-135)
+          if (!read.report.capped) sources.push("safety");
         })(),
       );
     }
@@ -741,8 +741,8 @@ router.get(
           if (!read) { producers.saved_place = { refusal: "read_threw", collected: 0 }; return; }
           if (!read.ok) { producers.saved_place = { refusal: read.reason, collected: 0 }; return; }
           for (const p of read.pins) collected.push(p);
-          producers.saved_place = { refusal: null, collected: read.pins.length };
-          sources.push("saved");
+          producers.saved_place = { refusal: read.report.capped ? "saves_capped" : null, collected: read.pins.length };  // census-discovery §115 (DV-83, B8): a cut read is reported
+          if (!read.report.capped) sources.push("saved");  // §115 (B8): never named over saves past the cap
         })(),
       );
     }
@@ -781,7 +781,7 @@ router.get(
           // buddies here" and "we could not tell".
           if (!read || !read.ok) return;
           for (const b of read.pins) collected.push(projectBuddy(b));
-          sources.push("buddies");
+          if (!read.capped) sources.push("buddies");  // census-discovery §115 (DV-83, B8): never named over a cut scan (an unread flag is ok:false above)
         })(),
       );
     }
@@ -834,7 +834,7 @@ router.get(
             collected.push(obj);
           }
           placesReport.report = { rows: read.rows.length, projected, truncated: read.truncated };
-          sources.push("places");
+          if (!read.truncated) sources.push("places");  // census-discovery §115 (DV-83, B7): a read cut at MAX_PLACE_ROWS is never named whole
         })(),
       );
     }
@@ -875,8 +875,8 @@ router.get(
           // question worth answering for this layer. CROWD_FLOW_FLAG is still
           // imported and pinned by CROWD_FLOW_FLAG_PIN below, so the literal
           // and the constant cannot drift apart silently.
-          if (!(await isFlagEnabled(sc, "map_crowd_flow_enabled"))) {
-            report.refusal = "flag_off";
+          const flowFlag = await readFlagState(sc, "map_crowd_flow_enabled"); if (flowFlag !== "on") {  // census-discovery §116 (DV-83, sweep SW15): read three-state, as the Time Machine reads it (§115 B10)
+            report.refusal = flowFlag === "unreadable" ? "flag_unreadable" : "flag_off";  // an unread flag is not the layer being off
             return;
           }
 
@@ -892,7 +892,7 @@ router.get(
             // Without a zone model the producer refuses rather than falling
             // back to a coordinate, which is the behaviour we want; say so
             // rather than reporting an empty layer.
-            report.refusal = "no_zone_model";
+            report.refusal = CAPPED.has(allZones) ? "zone_model_capped" : "no_zone_model";  // §113 (D-W11X2-135): a cut model is not an absent one
             return;
           }
 
@@ -906,7 +906,7 @@ router.get(
             // silently shrinks the layer. "0 places indexed because the read
             // failed" and "0 places indexed because there are none here" are
             // different facts and are reported as different facts.
-            placeIndexFailed: placeRows === null,
+            placeIndexFailed: placeRows === null, ...(CAPPED.has(allZones) ? { zonesCapped: true as const } : {}), ...(placeRows !== null && CAPPED.has(placeRows) ? { placeIndexCapped: true as const } : {}),  // §113
           };
 
           // §10 "inferred cause". The hypotheses are proposed from the events
@@ -920,7 +920,7 @@ router.get(
           const events = await loadEventsOnce();
           const causes = deriveEventCauseHypotheses(events ?? [], zones, { now: nowMs });
           report.inferredCause.events = causes.considered;
-          report.inferredCause.eventsReadFailed = events === null;
+          report.inferredCause.eventsReadFailed = events === null || nearbyEventsWithheldUnchecked(events) > 0 || nearbyEventsScanCut(events);  // §110 (D-W11X2-93): an event withheld unchecked could be the adjacent one
           report.inferredCause.hypotheses = causes.hypotheses.length;
 
           // read → derive → attach cause. Every gate below is the producer's
@@ -954,7 +954,7 @@ router.get(
 
           // A refusal means we never looked, so the layer must not appear in
           // `sources` claiming an empty answer it did not obtain.
-          if (produced.refusal === null) sources.push("crowd_flow");
+          if (produced.refusal === null && !report.zoneModel.zonesCapped && !report.zoneModel.placeIndexCapped) sources.push("crowd_flow");  // §113 (D-W11X2-135): not over a cut model
         })(),
       );
     }
@@ -975,7 +975,7 @@ router.get(
 
     // Attach already-computed live claims. Bounded and REPORTED — a capped
     // enrichment must never read as "no live intelligence here".
-    const enrichment = await enrichWithLiveClaims(
+    const liveGatesUnread = await liveLabelGatesUnread(sc); const enrichment = await enrichWithLiveClaims(  // census-discovery §115 (DV-83, sweep SW7): the Live-label gates, read three-state once
       objects,
       async (subjectId) => {
         // NO CAST. The previous `as unknown as LiveClaimLike[]` here is what let
@@ -987,7 +987,7 @@ router.get(
         // envelope ever diverges again this line, and the pin in lib/mapProjection,
         // both go red.
         const claims = await readLiveClaims(sc, subjectId);
-        return claims.map(toLiveClaimEnvelope);
+        if (liveGatesUnread || liveClaimReadFailed(claims)) throw new Error("live_claims_unread"); return claims.map(toLiveClaimEnvelope);  // census-discovery §115 (DV-83, B11): a FAILED read (marked, not thrown) is unread (SW4's throw arm), never "no claim"
       },
       {
         now: nowMs,
@@ -1126,13 +1126,13 @@ router.get(
           report.cityModelGeography = {
             cities: cityParse.cities.length,
             ambiguousKeys: cityParse.ambiguousKeys,
-            unusable: cityParse.unusable,
+            unusable: cityParse.unusable, ...(CAPPED.has(cityParse) ? { capped: true as const } : {}),  // census-discovery §113 (D-W11X2-135)
           };
           // The city model is grown by one viewport on each side, exactly as
           // §10's flow zones are, so a city→city edge whose MIDPOINT is on
           // screen still has both endpoints in the model.
           const near = expandBbox(bbox);
-          const viewportCities = cityParse.cities.filter((c) =>
+          const cityCut = CAPPED.has(cityParse); const viewportCities = cityParse.cities.filter((c) =>  // §113: a cut geography names no city layer
             bboxContains(near, c.centroid.lat, c.centroid.lng),
           );
 
@@ -1171,7 +1171,7 @@ router.get(
               for (const e of flow.edges) produced.push(e);
               // A refusal means we never looked, so the layer must not appear
               // in `sources` claiming an empty answer it did not obtain.
-              if (flow.report.refusal === null) sources.push("traveler_flow");
+              if (flow.report.refusal === null && !cityCut) sources.push("traveler_flow");
             }
           }
 
@@ -1199,7 +1199,7 @@ router.get(
             } else {
               report.cityModels = read.report;
               for (const m of read.models) produced.push(m);
-              sources.push("city_models");
+              if (!cityCut && !read.report.capped) sources.push("city_models");  // census-discovery §115 (DV-83, sweep SW5): nor over models read for only part of the viewport's cities
             }
           }
 
@@ -1224,7 +1224,7 @@ router.get(
             } else {
               report.personalCities = read.report;
               for (const p of read.pins) produced.push(p);
-              sources.push("personal_cities");
+              if (!cityCut && !read.report.capped) sources.push("personal_cities");  // census-discovery §115 (DV-83, sweep SW5): nor over a cut stamp read or fold
             }
           }
 
@@ -1503,3 +1503,26 @@ export default router;
 const DISCOVERY_CANDIDATE_FLAG_PIN: "discovery_candidate_projection_enabled" =
   DISCOVERY_CANDIDATE_PROJECTION_FLAG;
 void DISCOVERY_CANDIDATE_FLAG_PIN;
+
+// census-discovery §113 (DV-83 round 16, D-W11X2-135): the geography and place reads that hit their cap. A mark beside the
+// value (so a cached value stays marked, and a whole read's value and every body built from it are unchanged).
+const CAPPED = new WeakSet<object>();
+
+// ── census-discovery §115 (DV-83 round 18, lane W11-X2; sweep SW7): the Live-label gates, read three-state ─────────────
+//
+// readLiveClaims opens only when lib/liveClaimRead.liveLabelsServable's flag chain, kill switch and pilot switch allow
+// it, and answers an UNMARKED [] when they do not — so a gate whose read FAILED reached the place sheet as "No live
+// activity has been observed here". liveLabelsServable is shared with Compass and keeps its two-state answer; this
+// route reads the same gates three-state once per request, and an unread gate marks every enriched object `liveUnread`.
+// A gate read and closed is the Live feature being off, and stays "no claim".
+async function liveLabelGatesUnread(sc: any): Promise<boolean> {
+  const flags = await Promise.all([
+    readFlagState(sc, "intel_live_label_crowd"),
+    readFlagState(sc, "intel_claim_projection_crowd"),
+    readFlagState(sc, "intel_capture_quick_signal"),
+    readFlagState(sc, "intel_limited_live"),
+  ]);
+  const stop: KillSwitchReadStatus = {};
+  await isKillSwitchEngaged(sc, "disable_intel_live_labels", stop);
+  return flags.includes("unreadable") || stop.unread === true;
+}

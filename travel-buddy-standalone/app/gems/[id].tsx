@@ -368,7 +368,7 @@ export default function GemDetailScreen() {
           <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
             <Ionicons name="arrow-back" size={22} color="#E8F0FE" />
           </TouchableOpacity>
-          <TouchableOpacity onPress={toggleSave} style={styles.saveBtn}>
+          <TouchableOpacity onPress={savedByMe === null ? undefined : toggleSave} accessibilityRole="button" accessibilityLabel={savedByMe === null ? "Couldn't check if saved" : savedByMe ? 'Unsave' : 'Save'} style={styles.saveBtn}>{/* census-discovery §122 (B36): an unread save state is said, never drawn as "not saved" */}
             <Ionicons
               name={savedByMe ? 'bookmark' : 'bookmark-outline'}
               size={22}

@@ -45,10 +45,10 @@ import { Router } from "express";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
-import { isFlagEnabled } from "../lib/featureFlags.js";
+import { isFlagEnabled } from "../lib/featureFlags.js"; import { readFlagState } from "../lib/capability/schemaCapability.js";  // census-discovery §115 (B9, B10)
 import { checkRateLimit } from "../lib/rateLimit.js";
 import { fetchBlockedSet } from "../lib/blocks.js";
-import { loadNearbyEvents } from "./mapSearch.js";
+import { loadNearbyEvents, nearbyEventsWithheldUnchecked, nearbyEventsScanCut, forecastEventsWindow } from "./mapSearch.js";  // §113 (D-W11X2-132)
 import { applyProtection, type ProtectedZone } from "../lib/protectedLocations.js";
 import { aggregateForViewport, bboxContains, type BBox } from "../lib/mapAggregation.js";
 import { deriveGroupKey, type GroupIdentity } from "../lib/intelGroupKey.js";
@@ -143,9 +143,9 @@ async function loadFlowZones(sc: any, nowMs: number): Promise<FlowZone[] | null>
     .from("geo_zones")
     .select("id, name, zone_type, center_lat, center_lng, radius_meters, polygon_geojson")
     .in("zone_type", FLOW_ZONE_TYPES as string[])
-    .limit(MAX_FLOW_ZONE_ROWS);
+    .limit(MAX_FLOW_ZONE_ROWS + 1);  // §113 (D-W11X2-136): one past the cap so a cut is known
   if (error || !Array.isArray(data)) return null;
-  const zones = parseFlowZones(data as any[]);
+  const zones = parseFlowZones(data as any[]); if (data.length > MAX_FLOW_ZONE_ROWS) TEMPORAL_CAPPED.add(zones);  // the viewport is chosen AFTER this cut
   _flowZoneCache = { zones, at: nowMs };
   return zones;
 }
@@ -180,8 +180,8 @@ export type PlanArrivalRefusal =
   | "flag_off"
   | "no_group_key_secret"
   | "zone_read_failed"
-  | "no_zone_model"
-  | "read_failed";
+  | "no_zone_model" | "flag_unreadable"  // census-discovery §115 (DV-83, B10): an UNREAD crowd-flow flag is a failed read, never the off-state `flag_off`
+  | "read_failed" | "zone_model_capped" | "plans_capped" | "stops_capped";  // census-discovery §113 (D-W11X2-136): a read cut at its cap is not a whole one
 
 interface PlanArrivalReadResult {
   arrivals: PlanArrival[];
@@ -218,7 +218,7 @@ async function readPlanArrivals(
 
   // A LITERAL, not a constant: check:flag-polarity resolves flag arguments
   // statically. The same flag §10 crowd flow rides, for the same reason.
-  if (!(await isFlagEnabled(sc, "map_crowd_flow_enabled"))) return empty("flag_off");
+  const crowdFlowFlag = await readFlagState(sc, "map_crowd_flow_enabled"); if (crowdFlowFlag === "unreadable") return empty("flag_unreadable"); if (crowdFlowFlag !== "on") return empty("flag_off");  // §115 (B10): `flag_off` only for a flag read and off
 
   // Probe the group-key derivation with the real function rather than re-reading
   // the env here — lib/intelGroupKey is the one authority on what a valid secret
@@ -233,7 +233,7 @@ async function readPlanArrivals(
   if (allZones === null) return empty("zone_read_failed");
   const near = expandBbox(bbox);
   const zones = allZones.filter((z) => bboxContains(near, z.centroid.lat, z.centroid.lng));
-  if (zones.length === 0) return empty("no_zone_model");
+  if (TEMPORAL_CAPPED.has(allZones)) return empty("zone_model_capped", zones.length); if (zones.length === 0) return empty("no_zone_model");  // §113: a cut model is not an absent one
   const model = buildFlowZoneModel(zones);
 
   try {
@@ -245,8 +245,8 @@ async function readPlanArrivals(
       .select("id, trip_id, accepted_by_user_id, accepted_at, status")
       .eq("status", "active")
       .not("accepted_at", "is", null)
-      .limit(MAX_ACCEPTED_PLANS);
-    if (planErr || !Array.isArray(planRows)) return empty("read_failed", zones.length);
+      .limit(MAX_ACCEPTED_PLANS + 1);  // §113 (D-W11X2-136)
+    if (planErr || !Array.isArray(planRows)) return empty("read_failed", zones.length); if (planRows.length > MAX_ACCEPTED_PLANS) return empty("plans_capped", zones.length);  // a cut cohort is never stated
 
     const plans = (planRows as any[]).filter(
       (p) => p && p.accepted_by_user_id && p.accepted_at && p.status === "active",
@@ -254,7 +254,7 @@ async function readPlanArrivals(
     if (plans.length === 0) return empty(null, zones.length);
 
     // Consent, per accepter — enabled AND not withdrawn. A consent-read FAILURE
-    // leaves the set EMPTY (it can shrink a cohort, never inflate one).
+    // refuses the layer (`read_failed`): an unread cohort is never "nothing predicted" (§115, B10).
     const actorIds = [...new Set(plans.map((p) => String(p.accepted_by_user_id)))];
     let consented = new Set<string>();
     const { data: consentRows, error: consentErr } = await sc
@@ -263,7 +263,7 @@ async function readPlanArrivals(
       .in("user_id", actorIds)
       .eq("enabled", true)
       .is("withdrawn_at", null);
-    if (!consentErr && Array.isArray(consentRows)) {
+    if (consentErr || !Array.isArray(consentRows)) return empty("read_failed", zones.length); {  // census-discovery §115 (DV-83, B10): a failed consent read used to leave the set EMPTY and name the layer
       consented = new Set((consentRows as any[]).map((r) => String(r.user_id)));
     }
     const consentedPlans = plans.filter((p) => consented.has(String(p.accepted_by_user_id)));
@@ -277,8 +277,8 @@ async function readPlanArrivals(
       .select("id, route_plan_id, structured_location, planned_arrival_time, planned_departure_time")
       .in("route_plan_id", planIds)
       .not("planned_arrival_time", "is", null)
-      .limit(2_000);
-    if (stopErr || !Array.isArray(stopRows)) return empty("read_failed", zones.length);
+      .limit(2_001);  // §113 (D-W11X2-136)
+    if (stopErr || !Array.isArray(stopRows)) return empty("read_failed", zones.length); if (stopRows.length > 2_000) return empty("stops_capped", zones.length);
 
     const arrivals: PlanArrival[] = [];
     for (const stop of stopRows as any[]) {
@@ -333,8 +333,8 @@ async function loadViewerItineraryStops(sc: any, viewerId: string): Promise<any[
     .select("id")
     .eq("owner_user_id", viewerId)
     .in("status", ["draft", "active"])
-    .limit(200);
-  if (planErr || !Array.isArray(planRows)) return null;
+    .limit(201);  // §113 (D-W11X2-136): one past, so a cut list is unread rather than a count
+  if (planErr || !Array.isArray(planRows) || planRows.length > 200) return null;
   const planIds = (planRows as any[]).map((p) => String(p.id));
   if (planIds.length === 0) return [];
 
@@ -343,8 +343,8 @@ async function loadViewerItineraryStops(sc: any, viewerId: string): Promise<any[
     .select("id, title, structured_location, planned_arrival_time, planned_departure_time")
     .in("route_plan_id", planIds)
     .not("planned_arrival_time", "is", null)
-    .limit(500);
-  if (stopErr || !Array.isArray(stops)) return null;
+    .limit(501);  // §113
+  if (stopErr || !Array.isArray(stops) || stops.length > 500) return null;
   return stops as any[];
 }
 
@@ -355,14 +355,14 @@ const MAX_HISTORY_VERSIONS = 2_000;
 
 interface HistoryRead {
   rows: SnapshotVersionRow[] | null;
-  placesById: Map<string, HistoricalPlaceGeometry>;
+  placesById: Map<string, HistoricalPlaceGeometry>; /** census-discovery §113 (DV-83, D-W11X2-130): the read that failed, when rows is null */ failed?: string[]; /** §113 (D-W11X2-136): a read cut at its cap */ truncated?: true;
 }
 
 /**
  * Read the snapshot versions covering the target instant for the places in the
  * viewport, plus the geometry needed to place them. `rows: null` signals a read
  * FAILURE (place or version read), which projectHistory turns into
- * `available: false` — the honest "we could not read history", distinct from
+ * `available: false` and the route's `history_unreadable` refusal (§113), distinct from
  * "there is no history yet" (rows: []).
  */
 async function readHistory(sc: any, bbox: BBox, target: TemporalTarget): Promise<HistoryRead> {
@@ -380,9 +380,9 @@ async function readHistory(sc: any, bbox: BBox, target: TemporalTarget): Promise
     .lte("latitude", bbox.north)
     .gte("longitude", bbox.west)
     .lte("longitude", bbox.east)
-    .limit(MAX_HISTORY_PLACES);
-  if (placeErr || !Array.isArray(placeRows)) return { rows: null, placesById };
-
+    .limit(MAX_HISTORY_PLACES + 1);  // §113 (D-W11X2-136): one past the cap so a cut is known
+  if (placeErr || !Array.isArray(placeRows)) return { rows: null, placesById, failed: ["places"] };
+  const placesCut = placeRows.length > MAX_HISTORY_PLACES;
   for (const p of placeRows as any[]) {
     const lat = Number(p.latitude);
     const lng = Number(p.longitude);
@@ -391,7 +391,7 @@ async function readHistory(sc: any, bbox: BBox, target: TemporalTarget): Promise
     }
   }
   const placeIds = [...placesById.keys()];
-  if (placeIds.length === 0) return { rows: [], placesById };
+  if (placeIds.length === 0) return { rows: [], placesById, ...(placesCut ? { truncated: true as const } : {}) };
 
   const atIso = new Date(target.at).toISOString();
   const { data: versionRows, error: versionErr } = await sc
@@ -401,10 +401,10 @@ async function readHistory(sc: any, bbox: BBox, target: TemporalTarget): Promise
     .eq("privacy_eligible", true)
     .lte("observed_at", atIso)
     .gte("expires_at", atIso)
-    .limit(MAX_HISTORY_VERSIONS);
-  if (versionErr || !Array.isArray(versionRows)) return { rows: null, placesById };
-
-  return { rows: versionRows as SnapshotVersionRow[], placesById };
+    .limit(MAX_HISTORY_VERSIONS + 1);  // §113 (D-W11X2-136)
+  if (versionErr || !Array.isArray(versionRows)) return { rows: null, placesById, failed: ["intel_state_snapshot_versions"] };
+  const cut = placesCut || versionRows.length > MAX_HISTORY_VERSIONS;
+  return { rows: versionRows as SnapshotVersionRow[], placesById, ...(cut ? { truncated: true as const } : {}) };
 }
 
 // ── The route ─────────────────────────────────────────────────────────────────
@@ -426,9 +426,9 @@ router.get(
     const nowMs = Date.now();
     const generatedAt = new Date(nowMs).toISOString();
 
-    if (!(await isFlagEnabled(sc, "map_projection_enabled"))) {
+    const projectionFlag = await readFlagState(sc, "map_projection_enabled"); if (projectionFlag !== "on") {  // census-discovery §115 (DV-83, B9): an UNREAD flag is a refusal the Time Machine says, never the flag-off body
       res.json({
-        enabled: false,
+        enabled: false, ...(projectionFlag === "unreadable" ? { refusal: "flag_unreadable" } : {}),
         objects: [],
         viewport: null,
         target: null,
@@ -497,7 +497,7 @@ router.get(
     const blockedSet = await fetchBlockedSet(sc, user.id);
     if (blockedSet === null) {
       res.json({
-        enabled: true,
+        enabled: true, refusal: "block_set_unreadable",  // census-discovery §112 (DV-83, D-W11X2-121): a failed blocks read is named, as the NOW gateway names it — never an empty forecast
         objects: [],
         viewport: { bbox, zoom },
         target: { at: new Date(target.at).toISOString(), mode: target.mode },
@@ -506,7 +506,7 @@ router.get(
         sources: [],
         aggregation: null,
         protection: null,
-        forecast: null,
+        forecast: target.mode === "forecast" ? { events: null, itinerary: null, plan: null } : null,  // §112 (D-W11X2-121): no layer read, no count stated
         history: null,
         generatedAt,
       });
@@ -516,13 +516,13 @@ router.get(
     const collected: (MapObject | null)[] = [];
     const sources: string[] = [];
     let forecastReport:
-      | { events: number; itinerary: number; plan: { published: number; withheld: number; refusal: PlanArrivalRefusal | null; refusals: Record<string, string> } }
+      | { events: number | null; itinerary: number | null; plan: { published: number; withheld: number; refusal: PlanArrivalRefusal | null; refusals: Record<string, string> } }
       | null = null;
-    let historyReport: { available: boolean; covering: number } | null = null;
+    let historyReport: { available: boolean; covering: number; truncated?: true } | null = null; let historyUnread: string[] | null = null;  // §113 (D-W11X2-130): the history sources a failed read could not read
 
     if (target.mode === "forecast" && wantKind("prediction")) {
       const [events, itineraryStops, planRead] = await Promise.all([
-        loadNearbyEvents(sc, user.id, lat, lng, radiusKm, blockedSet).catch(() => [] as any[]),
+        loadNearbyEvents(sc, user.id, lat, lng, radiusKm, blockedSet, { window: forecastEventsWindow(target) }).catch(() => null),  // census-discovery §111 (DV-83, D-W11X2-115): a failed read is null, never []
         loadViewerItineraryStops(sc, user.id).catch(() => null),
         readPlanArrivals(sc, target, nowMs, bbox).catch(
           (): PlanArrivalReadResult => ({ arrivals: [], refusal: "read_failed", zones: 0 }),
@@ -540,15 +540,15 @@ router.get(
       );
       for (const o of forecast.objects) collected.push(o);
 
-      sources.push("events");
+      if (events !== null && nearbyEventsWithheldUnchecked(events) === 0 && !nearbyEventsScanCut(events)) sources.push("events");  // §111 (D-W11X2-115): named only over a read that succeeded and withheld nothing unchecked — was unconditional
       if (itineraryStops !== null) sources.push("itinerary");
       // A refusal means we never assembled a cohort, so the layer must not claim
       // an empty answer it did not obtain.
       if (planRead.refusal === null) sources.push("accepted_plan");
 
       forecastReport = {
-        events: forecast.events,
-        itinerary: forecast.itinerary,
+        events: events === null || nearbyEventsScanCut(events) ? null : forecast.events,  // §113 (D-W11X2-132): no count over a cut scan either  // §111 (D-W11X2-115): no count over a failed read
+        itinerary: itineraryStops === null ? null : forecast.itinerary,  // §113 (D-W11X2-136): no count over a failed or cut read
         plan: {
           published: forecast.plan.published,
           withheld: forecast.plan.withheld,
@@ -564,8 +564,8 @@ router.get(
       );
       const history = projectHistory(read.rows, read.placesById, target);
       for (const o of history.objects) collected.push(o);
-      if (history.available) sources.push("history");
-      historyReport = { available: history.available, covering: history.covering };
+      if (history.available && !read.truncated) sources.push("history");  // §113 (D-W11X2-136): a cut history is not named as read
+      historyReport = { available: history.available, covering: history.covering, ...(read.truncated ? { truncated: true as const } : {}) }; if (!history.available) historyUnread = read.failed ?? ["places", "intel_state_snapshot_versions"];  // §113 (D-W11X2-130): a failed read is named, never only `available: false`
     }
 
     // §19 order: shape → drop the unservable → filter kinds → §24 → §31 → rank → page.
@@ -665,7 +665,7 @@ router.get(
     const { page, nextCursor } = paginate(ranked, cursor, limit);
 
     res.json({
-      enabled: true,
+      enabled: true, ...(historyUnread ? { refusal: "history_unreadable", failedSources: historyUnread } : {}),  // census-discovery §113 (DV-83, D-W11X2-130): the past arm names a failed history read
       objects: page,
       viewport: { bbox, zoom, center: { lat, lng }, radiusKm },
       target: {
@@ -690,8 +690,8 @@ router.get(
       // Null unless this was a forecast request. Counts + the accepted_plan
       // refusal, so "no predicted crowds" is never ambiguous with broken wiring.
       forecast: forecastReport,
-      // Null unless this was a historical request. `available: false` is the
-      // honest "no history yet" the client renders instead of an empty map.
+      // Null unless this was a historical request. `available: false` means the
+      // history read FAILED (with `history_unreadable`, §113); "no history yet" is available: true, covering: 0.
       history: historyReport,
       generatedAt,
     });
@@ -699,3 +699,7 @@ router.get(
 );
 
 export default router;
+
+// census-discovery §113 (DV-83 round 16, D-W11X2-136): a flow-zone model cut at its cap — a mark beside the (cached)
+// value, so a whole read's value is unchanged.
+const TEMPORAL_CAPPED = new WeakSet<object>();

@@ -59,8 +59,8 @@
  * caller can tell "no buddies here" from "we could not tell".
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { isFlagEnabled } from "./featureFlags.js";
-import { haversineKm } from "./canonicalLocations.js";
+import { readFlagState } from "./capability/schemaCapability.js";  // census-discovery §115 (DV-83, B8): the buddy flag is read three-state
+import { haversineKm } from "./canonicalLocations.js"; import { nearBox, applyNearBox } from "./nearBox.js";  // census-discovery §117 (DV-83, sweep SW16)
 
 // ── Field exposure — the single definition ────────────────────────────────────
 
@@ -166,17 +166,17 @@ export function hasMeetupBase(r: Record<string, unknown>): boolean {
 export type BuddyMapPin = NonNullable<ReturnType<typeof mapBuddyPublicProfile>>;
 
 /** Which read failed, so the caller can log it and leave the layer unreported. */
-export type BuddyMapReadStage = "profiles";
+export type BuddyMapReadStage = "profiles" | "flag" | "blocks";  // §115 (B8): an unread flag or block set is a failed read, never an empty marketplace
 
 export type BuddyMapPinsResult =
-  | { ok: true; pins: BuddyMapPin[] }
+  | { ok: true; pins: BuddyMapPin[]; /** census-discovery §115 (B8): the bbox scan or the pin cap cut the read — the layer is not whole */ capped?: true }
   | { ok: false; stage: BuddyMapReadStage; message: string };
 
 export interface BuddyMapPinsOptions {
   lat: number;
   lng: number;
   radiusKm: number;
-  /** null = block state unknown → fail-closed empty result. */
+  /** null = block state unknown → a failed read (`ok: false`, stage `blocks`), never an empty result (§115). */
   blockedSet: Set<string> | null;
   /** Hard cap on emitted pins. */
   maxPins?: number;
@@ -187,8 +187,8 @@ export const BUDDY_SCAN_LIMIT = 500;
 /** How many pins may reach the projection from one viewport. */
 export const MAX_BUDDY_PINS = 200;
 
-/** Degrees of latitude per km — the same constant the traveler bbox scan uses. */
-const KM_PER_DEGREE_LAT = 111.32;
+/** census-discovery §117 (SW16): the viewport prefilter is lib/nearBox's box (the traveler scan's since §116 SW13); */
+/** this module keeps no km-per-degree constant of its own. */
 
 export async function readBuddyMapPins(
   sc: SupabaseClient | any,
@@ -197,47 +197,47 @@ export async function readBuddyMapPins(
 ): Promise<BuddyMapPinsResult> {
   // 1. The marketplace's own feature gate. `isFlagEnabled` is the shared
   //    fail-closed reader of the SAME `rent_buddy_enabled` row that
-  //    requireRentBuddyEnabled reads; an absent row, a disabled row or an
-  //    unreadable table all mean "no buddies", which is what the route's 403
-  //    means on the wire.
-  if (!(await isFlagEnabled(sc, "rent_buddy_enabled"))) return { ok: true, pins: [] };
+  //    requireRentBuddyEnabled reads; an absent or disabled row means "no
+  //    buddies" (the route's 403). An UNREADABLE row is a failed read (§115, B8):
+  //    it exposes nobody and is never named as a whole, empty layer.
+  const buddyFlag = await readFlagState(sc, "rent_buddy_enabled"); if (buddyFlag === "unreadable") return { ok: false, stage: "flag", message: "rent_buddy_enabled could not be read" }; if (buddyFlag !== "on") return { ok: true, pins: [] };
 
   // 2. Fail-closed blocks. Unknown block state → nobody, never "no blocks".
   const blocked = opts.blockedSet;
-  if (blocked === null) return { ok: true, pins: [] };
+  if (blocked === null) return { ok: false, stage: "blocks", message: "block state unknown" };  // §115: exposes nobody, and is not an empty marketplace
 
-  // 4. Viewport prefilter. A naive min/max bbox, exactly like lib/mapTravelers'
-  //    candidate scan — and with the same accepted limitation: a viewport
-  //    straddling ±180° misses the far side. The gateway rejects antimeridian
-  //    viewports upstream (parseBbox), so that case cannot arrive here.
-  const dLat = opts.radiusKm / KM_PER_DEGREE_LAT;
-  const dLng =
-    opts.radiusKm / (KM_PER_DEGREE_LAT * Math.max(0.2, Math.cos((opts.lat * Math.PI) / 180)));
+  // 4. Viewport prefilter: the circle's exact box on haversineKm's 6371 km
+  //    sphere (lib/nearBox) — two longitude ranges when the circle crosses the
+  //    180th meridian, every longitude when it holds a pole. It replaces
+  //    lat ± r/111.32, lng ± r/(111.32·max(0.2, cos lat)), which was narrower
+  const box = nearBox(opts.lat, opts.lng, opts.radiusKm);  // than the circle everywhere,
+  //    did not wrap, and dropped buddies inside the radius while the layer was
+  //    still named whole (census-discovery §117, DV-83 sweep SW16).
 
   // 3. The marketplace's visibility predicate, unchanged: status AND
   //    admin_status must both be 'active'. Ordering matches the search
   //    endpoint's default so the cap keeps the same buddies it would.
-  const { data, error } = await sc
+  const { data, error } = await applyNearBox(sc
     .from("rent_buddy_profiles")
     .select(BUDDY_PUBLIC_COLUMNS)
     .eq("status", "active")
     .eq("admin_status", "active")
     .not("meetup_base_lat", "is", null)
-    .not("meetup_base_lng", "is", null)
-    .gte("meetup_base_lat", opts.lat - dLat)
-    .lte("meetup_base_lat", opts.lat + dLat)
-    .gte("meetup_base_lng", opts.lng - dLng)
-    .lte("meetup_base_lng", opts.lng + dLng)
+    .not("meetup_base_lng", "is", null),
+    box,
+    "meetup_base_lat",
+    "meetup_base_lng",
+  )  // §117 (SW16): the box is still in the query, ahead of the scan cap
     .order("review_count", { ascending: false })
     .limit(BUDDY_SCAN_LIMIT);
 
   if (error) return { ok: false, stage: "profiles", message: error.message };
 
   const maxPins = opts.maxPins ?? MAX_BUDDY_PINS;
-  const pins: BuddyMapPin[] = [];
+  const pins: BuddyMapPin[] = []; let capped = (data ?? []).length >= BUDDY_SCAN_LIMIT;  // census-discovery §115 (B8): a scan that filled its cap was cut
 
   for (const raw of (data ?? []) as any[]) {
-    if (pins.length >= maxPins) break;
+    if (pins.length >= maxPins) { capped = true; break; }  // §115 (B8): rows past the pin cap were never read
     // A buddy the viewer blocked in either direction is not on their map. The
     // marketplace search has no block filter at all (see the note below); this
     // is an ADDITIONAL narrowing the map layer applies, matching every other
@@ -262,7 +262,7 @@ export async function readBuddyMapPins(
     if (pin) pins.push(pin);
   }
 
-  return { ok: true, pins };
+  return capped ? { ok: true, pins, capped: true } : { ok: true, pins };
 }
 
 /**

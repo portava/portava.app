@@ -118,6 +118,7 @@ function makeClient(state: FakeState = {}, callerUserId = ALICE_ID) {
       or: (_f: string) => b,
       order: (_col: string, _opts?: any) => b,
       limit: (_n: number) => b,
+      range: (_a: number, _z: number) => b, // census-discovery §118 (B22): the live going recount pages with .range(); one page here
       is: (col: string, val: any) => {
         filtered = filtered.filter((r) => (val === null ? r[col] == null : r[col] === val));
         return b;
@@ -664,6 +665,8 @@ describe("GET /api/pulse/live", () => {
         going_count: 50,
         max_attendees: 50, // at capacity
       }],
+      // census-discovery §118 (B22): the rail counts the going RSVPs live, so a full event's world holds them
+      event_rsvps: Array.from({ length: 50 }, (_, i) => ({ event_id: "ev-0015-0000-0000-000000000001", user_id: `u-full-${i}`, status: "going" })),
     }), true);
 
     const { body } = await req(app, "/api/pulse/live");

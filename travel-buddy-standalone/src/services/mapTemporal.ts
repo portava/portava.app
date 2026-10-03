@@ -44,20 +44,20 @@ export interface TemporalTargetInfo {
 
 /** The forecast report — counts + the accepted_plan refusal, never ambiguous. */
 export interface TemporalForecastReport {
-  events: number;
-  itinerary: number;
+  events: number | null;  // census-discovery §111 (D-W11X2-115): null = the events read failed
+  itinerary: number | null;  // §112 (D-W11X2-121): null = nothing was read (a refused forecast)
   plan: {
     published: number;
     withheld: number;
     refusal: string | null;
     refusals: Record<string, string>;
-  };
+  } | null;  // §112 (D-W11X2-121): null = nothing was read (a refused forecast)
 }
 
-/** The history report — `available:false` is the honest "no history yet". */
+/** The history report — `available:false` is a FAILED history read (census-discovery §113); "no history yet" is available: true, covering: 0. */
 export interface TemporalHistoryReport {
   available: boolean;
-  covering: number;
+  covering: number; /** census-discovery §113 (D-W11X2-136): present only when the history read was cut at its cap */ truncated?: true;
 }
 
 export interface MapTemporalEnvelope {
@@ -72,7 +72,7 @@ export interface MapTemporalEnvelope {
   forecast: TemporalForecastReport | null;
   /** Present only for a historical request. */
   history: TemporalHistoryReport | null;
-  generatedAt: string;
+  generatedAt: string; /** census-discovery §112 (D-W11X2-121): the server refused this read (`block_set_unreadable`, `protection_unreadable`; §113: `history_unreadable`) */ refusal?: string | null; /** §113 (D-W11X2-130): the tables a failed history read could not read */ failedSources?: string[];
 }
 
 export type MapTemporalResult =

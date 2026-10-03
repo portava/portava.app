@@ -230,11 +230,11 @@ describe("A — signed-in only, behind a fail-closed flag, bounded input", () =>
     assert.deepEqual(db.reads.filter((t) => t === "rank_events" || t === "place_momentum"), []);
   });
 
-  it("A3. an unreadable flag reads OFF (fail-closed)", async () => {
+  it("A3. an unreadable flag is a failed read, still fail-closed: 503 flag_unreadable, never the off 404 (§104, D-W11X2-56)", async () => {
     withDb(SEED(), { erroring: ["feature_flags"] });
     const r = await get(R.trending, USER);
-    assert.equal(r.status, 404);
-    assert.equal(r.body.error, "feature_disabled");
+    assert.equal(r.status, 503);  // census-discovery §104 (DV-83, D-W11X2-56): restated — was 404; nothing is served either way
+    assert.equal(r.body.error, "degraded_unavailable"); assert.equal(r.body.reason, "flag_unreadable");  // was: assert.equal(r.body.error, "feature_disabled");
   });
 
   it("A4. revocation, both directions: ON answers, OFF refuses on the very next request, ON again answers identically", async () => {

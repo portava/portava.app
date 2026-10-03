@@ -61,3 +61,32 @@ export async function isBlockedBetween(
   recordTelegraphMetric("block_enforcement_failures", "ok");
   return blocked;
 }
+
+// ── census-discovery §111 (DV-83 round 14, lane W11-X2, D-W11X2-107): the same check, three-state ──
+//
+// `isBlockedBetween` answers `true` for both "blocked" and "could not read", which is the right answer for
+// a guard that only has to deny. A caller that tells the viewer WHY it denied — "not found", "cannot join",
+// a map source reported complete — must tell the two apart, so this reads the same row the same way and
+// says which. It is still fail-closed: `blocked` is true whenever `unread` is.
+export interface BlockRead {
+  blocked: boolean;
+  /** The blocks read failed: `blocked` is the fail-closed answer, not a fact about the pair. */
+  unread: boolean;
+}
+export async function readBlockBetween(sc: any, userA: string, userB: string): Promise<BlockRead> {
+  if (!userA || !userB) return { blocked: false, unread: false };
+  const { data, error } = await sc
+    .from("blocks")
+    .select("blocker_id")
+    .or(`and(blocker_id.eq.${userA},blocked_id.eq.${userB}),and(blocker_id.eq.${userB},blocked_id.eq.${userA})`)
+    .limit(1);
+  if (error) {
+    recordTelegraphMetric("block_enforcement_failures", "violation");
+    recordTelegraphMetric("blocked_direct_deliveries", "unknown");
+    return { blocked: true, unread: true };
+  }
+  recordTelegraphMetric("blocked_direct_deliveries", "ok");
+  recordTelegraphMetric("block_enforcement_failures", "ok");
+  return { blocked: Array.isArray(data) && data.length > 0, unread: false };
+}
+

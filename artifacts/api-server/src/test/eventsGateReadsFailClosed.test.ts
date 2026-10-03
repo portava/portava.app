@@ -162,9 +162,9 @@ describe("census-trust §30: events viewer gates fail closed on a failed read", 
     assert.equal(writes(s, "event_rsvps"), 0, `an unread gate flag RSVP'd a minor to an 18+ event: ${r.status} ${r.text.slice(0, 300)}`);
     assert.equal(r.status, 403, r.text);
   });
-  it("DT1 GET /events/:id, the gate flag read FAILS → the 18+ event is not served to the minor", async () => {
-    world({ failOn: flagFails }); const r = await req("GET", `/events/${EVENT}`);
-    assert.equal(r.status, 404, `an unread gate flag served an 18+ event to a minor: ${r.status} ${r.text.slice(0, 300)}`);
+  it("DT1 GET /events/:id, the gate flag read FAILS → the 18+ event is not served to the minor (503 degraded_unavailable: a refusal over an unread gate, not a 'not found' verdict — census-discovery §111, D-W11X2-107)", async () => {
+    world({ failOn: flagFails }); const r = await req("GET", `/events/${EVENT}`); assert.ok(!/"title"|"age_min"/.test(r.text), `the 18+ event body reached the minor: ${r.text.slice(0, 300)}`);
+    assert.equal(r.status, 503, `an unread gate flag served an 18+ event to a minor: ${r.status} ${r.text.slice(0, 300)}`); assert.equal(JSON.parse(r.text).error, "degraded_unavailable", r.text);
   });
 
   // ── POST /events/:id/invites/:inviteId/accept (sweep: the events read decides whether the gate runs) ──

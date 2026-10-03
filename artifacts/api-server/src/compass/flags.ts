@@ -180,3 +180,31 @@ export async function isEnabled(db: SupabaseClient, flag: string): Promise<boole
 export async function isCompassEnabled(db: SupabaseClient): Promise<boolean> {
   return isEnabled(db, "COMPASS_ENABLED");
 }
+
+/**
+ * census-discovery §103 (DV-83, D-W11X2-50): COMPASS_ENABLED as a READ, not a
+ * default. `true`/`false` when the flags were read (from the fresh cache or a
+ * load that succeeded); `null` when the load FAILED, where `isCompassEnabled`
+ * answers `false` from the fail-safe map. A caller that would tell a user
+ * "Compass is off" uses this, so an unread flag table is never that answer.
+ * Same cache, same single query: a failed load is still never cached.
+ */
+export async function readCompassEnabled(db: SupabaseClient): Promise<boolean | null> {
+  return readCompassFlag(db, "COMPASS_ENABLED");
+}
+
+/**
+ * census-discovery §103 (DV-83, D-W11X2-49): any COMPASS_% flag as a READ —
+ * `null` when the load failed, where `isEnabled` answers `false` from the
+ * fail-safe map. Same cache, same single query; a failed load is never cached.
+ */
+export async function readCompassFlag(db: SupabaseClient, flag: string): Promise<boolean | null> {
+  if (_cache && Date.now() - _cache.cachedAt < CACHE_TTL_MS) return _cache.flags[flag] ?? false;
+  const load = await fetchCompassFlags(db);
+  // A RESOLVED error is the database failure the fail-safe map answers: unread. A THROW is a
+  // client that is not a PostgREST builder (fetchCompassFlags' own note) and keeps its historical
+  // empty map, so it keeps its historical answer here too.
+  if (!load.ok) return load.flags === FAILSAFE_COMPASS_FLAGS ? null : (load.flags[flag] ?? false);
+  _cache = { flags: load.flags, cachedAt: Date.now() };
+  return load.flags[flag] ?? false;
+}
