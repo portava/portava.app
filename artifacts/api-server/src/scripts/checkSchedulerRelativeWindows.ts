@@ -115,7 +115,7 @@
  *
  *   governed       the window is genuinely not the hazard at this site, and
  *                  the entry says which OTHER mechanism covers the gap.
- *   known_defect   a real relative window nobody has fixed. `note` must start
+ *   known_defect   a real relative window nobody has fixed. `reason` must start
  *                  `LOSES-DATA:` or `UNCLASSIFIED:`, the same device as
  *                  UNCHECKED_READS_ALLOWLIST.json's ledger: the guard lands
  *                  green and can then only ever shrink.
@@ -387,7 +387,7 @@ export const ALLOWLIST: readonly AllowEntry[] = [
       "truncated with `.slice(0, 10)`, so the band is compared date-to-date. Simulated minute by minute, a trip " +
       "starting 2026-10-09 is selected from 2026-10-07T22:00Z through 2026-10-09T01:59Z, contiguously: 28 hours, " +
       "not 4. That is outage-scale, not quiet-night-scale — the fifteen-minute idle suspend cannot reach it, the " +
-      "54-hour stall of 2026-10-02 would have. `reminder_sent_at IS NULL` keeps the work pending but nothing " +
+      "54-hour stall of 2026-09-30 would have. `reminder_sent_at IS NULL` keeps the work pending but nothing " +
       "ever looks outside the band. recoverStaleClaims does not cover it: that sweep requires `reminder_sent_at " +
       "IS NOT NULL`, which is exactly what never happened here.",
   },

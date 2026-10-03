@@ -569,11 +569,11 @@ router.get("/healthz/schedulers", (_req, res) => {
   // Everything above is about the jobs this endpoint can see. `index.ts`
   // starts far more than that, and an aggregate over a subset reads exactly
   // like an aggregate over the whole: "overall: healthy" over eleven jobs,
-  // while forty-six others could have stopped hours ago and left nothing to
+  // while forty-five others could have stopped hours ago and left nothing to
   // read. So the body says what it is NOT looking at, next to the verdict
   // rather than in a document somebody has to find.
   //
-  // This deliberately does NOT change the status code. Forty-six unobservable
+  // This deliberately does NOT change the status code. Forty-five unobservable
   // jobs is a standing property of the deployment, not an incident, and a
   // probe that answers 503 forever is a probe that gets muted — the same
   // reasoning that keeps `never_ran` at 200. It is a disclosure, not an alarm.
