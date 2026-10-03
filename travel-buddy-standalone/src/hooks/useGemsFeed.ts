@@ -41,9 +41,9 @@ export interface GemsFeedItem {
   }>;
   stats: {
     viewCount: number;
-    likeCount: number;
-    saveCount: number;
-    commentCount: number;
+    likeCount: number | null;
+    saveCount: number | null;
+    commentCount: number | null;
   };
   location: {
     name: string | null;
@@ -56,10 +56,10 @@ export interface GemsFeedItem {
     lng: number | null;
   } | null;
   viewerState: {
-    hasLiked: boolean;
-    hasSaved: boolean;
-    isFollowingCreator: boolean;
-    hasFollowRequestPending: boolean;
+    hasLiked: boolean | null;
+    hasSaved: boolean | null;
+    isFollowingCreator: boolean | null;
+    hasFollowRequestPending: boolean | null;
   };
   /**
    * §16 Hidden Gem Intelligence projections. Optional: the media gems-feed only

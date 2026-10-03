@@ -52,7 +52,7 @@ import { color, layout, type as typeTokens } from '../../theme/tokens.ts';
 import { StampIcon } from './StampIcon.tsx';
 import { useStampAnimation } from '../../hooks/useStampAnimation.ts';
 import { useStamp, type UseStampReturn } from '../../hooks/useStamp.ts';
-import { useStampAnimationContext } from '../../context/StampAnimationContext.tsx';
+import { useStampAnimationContext } from '../../context/StampAnimationContext.tsx'; import { stepCount, UNREAD_COUNT_MARK } from '../../lib/unreadCount.ts';
 import type { StampTheme } from './PortavaInkStamp.tsx';
 
 // ---------------------------------------------------------------------------
@@ -62,7 +62,7 @@ import type { StampTheme } from './PortavaInkStamp.tsx';
 export interface StampButtonProps {
   entityType: string;
   entityId: string;
-  initialCount?: number;
+  initialCount?: number | null; // null = the server could not read it (census-media §47); drawn as the mark
   initialIsStamped?: boolean;
   /**
    * Thematic variant passed through to the ink-stamp overlay seal rendered by
@@ -136,7 +136,7 @@ export function StampButton({
   // is provided the visual state reflects its current values, not the
   // initialIsStamped/initialCount defaults (which default to false/0).
   const [visualIsStamped, setVisualIsStamped] = useState(apiIsStamped);
-  const [visualCount,     setVisualCount    ] = useState(apiCount);
+  const [visualCount,     setVisualCount    ] = useState<number | null>(apiCount);
 
   // Keep a ref to the latest API state so `onComplete` can apply rollbacks
   // without stale closure values.
@@ -191,7 +191,7 @@ export function StampButton({
       // Card-local mode: no screen-level travel — flip state immediately
       // and let the caller play its own contained burst animation.
       setVisualIsStamped(nextStamped);
-      setVisualCount(prev => nextStamped ? prev + 1 : Math.max(0, prev - 1));
+      setVisualCount(prev => stepCount(prev, nextStamped));
       if (nextStamped) onLocalBurst?.();
       return;
     }
@@ -214,7 +214,7 @@ export function StampButton({
         onImpact: () => {
           // Visual state flips HERE — at the moment of stamp impact.
           setVisualIsStamped(nextStamped);
-          setVisualCount(prev => nextStamped ? prev + 1 : Math.max(0, prev - 1));
+          setVisualCount(prev => stepCount(prev, nextStamped));
         },
 
         onComplete: () => {
@@ -263,13 +263,13 @@ export function StampButton({
             <StampIcon size={iconSize} active={visualIsStamped} {...(tone === 'onDark' && !visualIsStamped ? { color: color.onInk } : {})} />
           </View>
 
-          {visualCount > 0 && (
+          {(visualCount === null || visualCount > 0) && (
             <Animated.View style={countStyle as AnimatedStyle<ViewStyle>}>
               <Text
                 style={tone === 'onDark' ? [s.count, onDark.count] : [s.count, visualIsStamped && s.countActive]}
                 numberOfLines={1}
               >
-                {visualCount}
+                {visualCount ?? UNREAD_COUNT_MARK}
               </Text>
             </Animated.View>
           )}
