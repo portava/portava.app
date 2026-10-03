@@ -745,41 +745,45 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
   // gateway answers 403 to CONNECT — so the end-to-end round trip through a
   // running app has NOT been observed, and the row stays `W`.
 
-  // ── Story retention (2998): declared here, applied nowhere yet ────────────
-  story_purge_queue: {
-    classification: "unapplied",
-    note:
-      "Migration 2998_story_retention.sql, which this tree declares. Not " +
-      "'unmerged-pr': that classification is for a table whose migration is on " +
-      "some OTHER branch, and this check correctly refuses it for a file it can " +
-      "see. APPLIED to portava-ci on 2026-09-23 at 00:20:26 UTC by the main " +
-      "push run (ledger row applied_by='ci' with a real sha256), and still " +
-      "ABSENT FROM PRODUCTION, which is why this entry stays and still counts " +
-      "against the must-reach-zero total. Production applies do not happen in " +
-      "CI: the applier refuses the production ref outright. It is the durable " +
-      "retry record for the hourly retention job — a row outlives a partial " +
-      "purge so the storage object path is not lost when the database row goes " +
-      "first. " +
-      "WHAT HOLDS THE JOB OFF PRODUCTION, corrected: an earlier version of this " +
-      "note said the job must not be enabled while this entry stands, and other " +
-      "comments read that as enforcement. It is not. " +
-      "startStoryRetentionScheduler() is called unconditionally at boot " +
-      "(index.ts:201), so on a deployment without 2998 the job DOES run. What " +
-      "makes that safe is a property of the pass, verified by reading it rather " +
-      "than assumed: enqueueDueStories filters .not('deleted_at','is',null), " +
-      "PostgREST errors on the absent column, and `throw deletedErr` aborts the " +
-      "pass BEFORE purgeExpiredEngagement can delete anything. The tick records " +
-      "the failure and purges nothing. That is an ordering dependency, not a " +
-      "guard: reorder those two calls and the engagement purge runs with no " +
-      "ledger behind it. " +
-      "Rehearsed against production's real structure " +
-      "(baseline/20260819_baseline_structure.sql replayed to head on a " +
-      "throwaway PostgreSQL 16, sql/rehearsals/2998_*.sql, including a negative " +
-      "control that disables the deleted_at trigger and confirms the clock then " +
-      "stops being set, and one that drops the archive disjunct and confirms a " +
-      "capped row is missed). Strike this off in the same change that applies " +
-      "2998 to PRODUCTION and refreshes the two production snapshots.",
-  },
+  // ── STRUCK OFF 2026-10-03: story_purge_queue (2998) now EXISTS in production ─
+  //
+  // 2998_story_retention.sql was applied to PRODUCTION on 2026-09-25 at
+  // 07:54:12 UTC by the owner. Its entry here still read "still ABSENT FROM
+  // PRODUCTION", which is the exact false claim this ratchet exists to prevent,
+  // and it was failing the check: appliedAfterSnapshot() already excuses the
+  // table, because production-applied-migrations.json carries
+  // 2998_story_retention at version 20260925075412 and the tables snapshot
+  // (20260922) predates it, so struckOff fired on a table the repository was
+  // still calling unapplied.
+  //
+  // VERIFIED BY OBJECT, NOT BY LEDGER. The table's presence was read from
+  // production's own catalog on 2026-10-03 — pg_class/pg_namespace for
+  // nspname='public', relname='story_purge_queue' → one row, relkind='r',
+  // relrowsecurity=true, 0 policies. A ledger row is not evidence on its own in
+  // this project: 2160 carries an applied_by='backfill' row while its grants
+  // were never revoked in production, so the apply behind that row never
+  // happened. The excuse mechanism above keys off ledger rows and would excuse
+  // such a table wrongly; this strike-off does not rely on it.
+  //
+  // PRESERVED FROM THE ENTRY, because it is a real property of the job and not
+  // a fact about drift: startStoryRetentionScheduler() is called
+  // unconditionally at boot (index.ts:201), so on a deployment without 2998 the
+  // job DOES run, and what made that safe was an ORDERING DEPENDENCY rather than
+  // a guard — enqueueDueStories filters .not('deleted_at','is',null),
+  // PostgREST errors on the absent column, and `throw deletedErr` aborts the
+  // pass before purgeExpiredEngagement can delete anything. Reorder those two
+  // calls and the engagement purge runs with no durable retry record behind it.
+  // That dependency is now moot on production, which has the column; it is
+  // written down here so it is not rediscovered the hard way on a fresh
+  // database.
+  //
+  // STILL ON THE RATCHET, correctly: telegraph_outbox (2810). The same catalog
+  // read on 2026-10-03 found NO row for it, so 2810 is genuinely unapplied.
+  // Strike it off in the change that follows 2810 reaching production — and
+  // note that it will start failing this check the moment a
+  // production-applied-migrations.json row for 2810 is added with a version
+  // later than the tables snapshot's capture date, whether or not the snapshot
+  // itself is refreshed.
 
   // ── The anti-differencing gate's durable memory (3110): declared, unapplied ─
   sensing_published_aggregates: {
