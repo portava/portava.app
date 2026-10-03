@@ -210,6 +210,27 @@ env:
   # one case the allowlist cannot — someone setting CI_SUPABASE_PROJECT_REF to
   # production. If production ever moves, update this value.
   KNOWN_PROD_PROJECT_REF: 'ajrurzioarfkagpuxfnb'
+  # THE DATABASE JOBS, by their exact display `name:` — the ONE place the slot
+  # learns which jobs of a run touch the shared CI project. A run RELEASES the
+  # slot once every job named here is listed in its current attempt and has
+  # concluded (any conclusion), so a run whose only remaining work is the
+  # verdict job — which may sit in GitHub's runner queue for many minutes —
+  # stops blocking everybody else. Measured 2026-10-03: run 37128138124 held
+  # the slot from 14:42:46Z with only its queued verdict left, and other runs'
+  # verify steps timed out (exit 75) behind it. See the CLAIM ANNOTATION in
+  # .github/scripts/live-db-acquire-slot.sh.
+  #
+  # Defined at WORKFLOW level so the queue job and every verify step read the
+  # same list. Omitting a database job here would release a run that is still
+  # using the database; ciWorkflowArchitecture.test.ts therefore asserts this
+  # equals the jobs that `needs: live-db-slot` and can reach the database, and
+  # REQUIRED_CREDENTIAL_JOBS in assert-ci-scripts.mjs. Rename a job, rename it
+  # here. A name that matches nothing fails CLOSED (the run is never released).
+  LIVE_DB_SLOT_DB_JOBS: |-
+    schema drift · apply migrations, certify, then audit vs live (needs credentials)
+    live DB · RLS + role/is_official write boundaries (needs credentials)
+    api-server · check:all + live_pulse gate (needs credentials)
+    post-media revocation · before-proof, apply, after-proof
 
 jobs:
   # ───────────────────────────────────────────────────────────────────────────
