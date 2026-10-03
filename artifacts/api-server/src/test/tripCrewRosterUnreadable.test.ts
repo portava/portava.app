@@ -75,8 +75,14 @@ interface State {
   trips?: any[];
   tripMembers?: any[];
   crewSessions?: any[];
+  /** trust_restrictions rows (census-trust §31's gate cases). */
+  trustRestrictions?: any[];
   /** Tables whose reads RESOLVE with an error — the real supabase-js shape. */
   errorTables?: string[];
+  /** Per-table override of the resolved error (default: a coded PGRST999). */
+  errorFor?: Record<string, { code: string; message: string }>;
+  /** Every table a write was ISSUED against, in order. */
+  writes?: string[];
 }
 
 function makeClient(state: State = {}) {
@@ -89,19 +95,20 @@ function makeClient(state: State = {}) {
     if (table === "trips") return state.trips ?? [];
     if (table === "trip_members") return state.tripMembers ?? [];
     if (table === "trip_crew_location_sessions") return state.crewSessions ?? [];
+    if (table === "trust_restrictions") return state.trustRestrictions ?? [];
     return [];
   }
 
   function builder(table: string) {
     const failing = errorOn.includes(table);
-    const err = { message: `relation "${table}" is unavailable`, code: "PGRST999" };
+    const err = state.errorFor?.[table] ?? { message: `relation "${table}" is unavailable`, code: "PGRST999" };
     const filters: Array<(r: any) => boolean> = [];
     let _maybe = false;
     let pendingWrite = false;
 
     const b: any = {
       select() { return b; },
-      insert() { pendingWrite = true; return b; },
+      insert() { pendingWrite = true; state.writes?.push(table); return b; },
       update() { pendingWrite = true; return b; },
       upsert() { pendingWrite = true; return b; },
       delete() { pendingWrite = true; return b; },
@@ -321,5 +328,78 @@ describe("crew location — an unreadable roster is not a verdict about the memb
     const r = await req("GET", `/api/trips/${TRIP_ID}/crew/live-shares`);
     assert.equal(r.status, 200);
     assert.deepEqual(r.body.liveShares, []);
+  });
+});
+
+// ── census-trust §31 — the live-share gate must not grant on an UNREAD restriction ──
+//
+// `location_plan_join` ("cannot join location-based plans") gates the START of
+// a live LOCATION broadcast to a trip's crew. getRestrictionState used to keep
+// this type — and private_plan_access — OPEN on a degraded read ("low-risk
+// actions stay open"), so with trust_restrictions unreadable a restricted user
+// started broadcasting their position to the group: the exact harm the
+// restriction exists to prevent, granted by a read that never answered. The
+// gate now refuses with the retryable 503 the hosting gate already uses, and
+// never with the restriction message (that would accuse an unrestricted user).
+describe("crew live-share start — an unread trust restriction is not 'no restriction' (census-trust §31)", () => {
+  const START = { duration: "1h", visibilityLevel: "nearby", allowedMemberIds: [MEMBER_ID] };
+
+  it("T1. CONTROL — a readable, empty trust_restrictions lets an accepted member start sharing", async () => {
+    const writes: string[] = [];
+    set(makeClient({ flags: FLAGS, trips: TRIPS, tripMembers: MEMBERS, trustRestrictions: [], writes }));
+    const r = await req("POST", `/api/trips/${TRIP_ID}/crew/live-share/start`, START);
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.ok(writes.includes("trip_crew_location_sessions"), "the share was written");
+  });
+
+  it("T2. CONTROL — an ACTIVE location_plan_join restriction refuses with 403 trust_restriction", async () => {
+    const writes: string[] = [];
+    set(makeClient({
+      flags: FLAGS, trips: TRIPS, tripMembers: MEMBERS, writes,
+      trustRestrictions: [{ user_id: USER_ID, restriction_type: "location_plan_join" }],
+    }));
+    const r = await req("POST", `/api/trips/${TRIP_ID}/crew/live-share/start`, START);
+    assert.equal(r.status, 403);
+    assert.equal(r.body.error, "trust_restriction");
+    assert.ok(!writes.includes("trip_crew_location_sessions"), "a restricted user's share is not written");
+  });
+
+  it("T3. an UNREADABLE trust_restrictions answers 503 — no share is started, and nobody is told they are restricted", async () => {
+    const writes: string[] = [];
+    set(makeClient({
+      flags: FLAGS, trips: TRIPS, tripMembers: MEMBERS, writes,
+      errorTables: ["trust_restrictions"],
+      errorFor: { trust_restrictions: { code: "57014", message: "canceling statement due to statement timeout" } },
+    }));
+    const r = await req("POST", `/api/trips/${TRIP_ID}/crew/live-share/start`, START);
+    assert.notEqual(r.status, 201, "an unread restriction state must not start a location broadcast");
+    assert.equal(r.status, 503);
+    assert.equal(r.body.error, "degraded_unavailable");
+    assert.notEqual(r.body.error, "trust_restriction", "an outage is not a restriction on this person");
+    assert.ok(!writes.includes("trip_crew_location_sessions"), "no session row may be written on an undecided gate");
+  });
+
+  it("T4. a COLUMN-drift error (42703 '… does not exist') is an unread state too — 503, not a started share", async () => {
+    const writes: string[] = [];
+    set(makeClient({
+      flags: FLAGS, trips: TRIPS, tripMembers: MEMBERS, writes,
+      errorTables: ["trust_restrictions"],
+      errorFor: { trust_restrictions: { code: "42703", message: "column trust_restrictions.lifted_at does not exist" } },
+    }));
+    const r = await req("POST", `/api/trips/${TRIP_ID}/crew/live-share/start`, START);
+    assert.equal(r.status, 503, JSON.stringify(r.body));
+    assert.equal(r.body.error, "degraded_unavailable");
+    assert.ok(!writes.includes("trip_crew_location_sessions"));
+  });
+
+  it("T5. CONTROL — a genuinely ABSENT table (42P01, never migrated) still means 'no restriction exists': the share starts", async () => {
+    const writes: string[] = [];
+    set(makeClient({
+      flags: FLAGS, trips: TRIPS, tripMembers: MEMBERS, writes,
+      errorTables: ["trust_restrictions"],
+      errorFor: { trust_restrictions: { code: "42P01", message: 'relation "public.trust_restrictions" does not exist' } },
+    }));
+    const r = await req("POST", `/api/trips/${TRIP_ID}/crew/live-share/start`, START);
+    assert.equal(r.status, 201, JSON.stringify(r.body));
   });
 });
