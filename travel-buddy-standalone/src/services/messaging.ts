@@ -410,7 +410,7 @@ export async function getMyThreads(): Promise<MsgResult<{ threads: ThreadSummary
   return apiGet('/api/me/threads');
 }
 
-export async function getUnreadCounts(): Promise<MsgResult<{ messages: number; notifications: number; meetups: number; newHighlights: number }>> {
+export async function getUnreadCounts(): Promise<MsgResult<{ messages: number; notifications: number; meetups: number; newHighlights: number; /** buckets the server could NOT count — their numbers are placeholders */ degraded?: Array<'messages' | 'notifications' | 'meetups' | 'newHighlights'> }>> {
   return apiGet('/api/me/unread-counts');
 }
 
