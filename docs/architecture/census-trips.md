@@ -9655,3 +9655,155 @@ diff; **Simulate** / **Impact** check one change; **Send as proposals** is the o
   through the crew map (GPS mocks on two devices).
 - Red if: a checkpoint read failure renders as "no open checkpoints"; a kernel refusal renders as
   done; replan proposes without being asked; a refused projection renders as a free day.
+
+## §79 The tester's trip flow tells a failed read from an empty one — create, invite, join, vote, Today — 2026-10-03
+
+*Written 2026-10-03 by the Trips lane (branch `claude/lane-trips-20261003`, cut from `main` at
+`db657b73b`). `head_commit` is **NOT** re-declared. **No verdict letter moves**: the rows this pass
+touches were already graded on what the server builds, and nothing here is a hosted apply, a flag
+or production evidence. Every piece of evidence below is **controlled** (node and jest suites with
+a faked database or `fetch`, and the local harness), never production.*
+
+### §79.1 The non-`C` rows, classified for this pass
+
+Read mechanically from `CENSUS_INTEGRITY_DUMP=ALL` (last statement per row): **320 C · 128 W ·
+3 N · 0 CANNOT-VERIFY**. The `W` classes are §68.2's, with §69.2's and §76's overrides, and the
+recount reproduces §76.3 exactly: **OWNER 102 · BOTH 24 · BRANCH 0 · NEITHER 1 · unclassified 1**.
+
+| class for this pass | rows | count |
+| --- | --- | --- |
+| code-actionable now | none — BRANCH is 0 (§73.1, held by §74 and §76) | 0 |
+| built; awaits a hosted apply, a flag or production evidence | the 102 OWNER rows; TR116, TR150, TR153, TR290 (§75's code half); TR229 (§70.5); TR174 | 108 |
+| owner decision | TR1, TR435 (`APPEAL_RESTORE_SEMANTICS`); TR128, TR267, TR341, TR412 (Routes API key and spend); TR261, TR437 (deleting `route_plans`' optimizer after the gate flip); TR173 (`locate_friends_enabled` and the re-scope) | 9 |
+| needs a schema change, then the owner's apply | TR33, TR92, TR93, TR77, TR152, TR256, TR378, TR408, TR425, TR440 | 10 |
+| external | TR176, TR178, TR340 (N: map tiles, Bluetooth proximity, relay metadata); TR427 (NEITHER) | 4 |
+
+Because no census row is code-actionable, this pass worked the testing-mode flow — create a trip,
+invite and join, vote and decide, see Today — and DV-83's defect classes in the Trips reads.
+
+### §79.2 What was built
+
+**The join flow's reads (server).** Each read below dropped supabase-js's `error`, so a database
+failure became a sentence about the trip:
+- **accept / decline invite** answered 404 "No invitation found" — an answer the app does not
+  retry. Now 503 `degraded_unavailable`:
+  `artifacts/api-server/src/routes/trips.ts:1310#accept invite: invitation unreadable` and
+  `artifacts/api-server/src/routes/trips.ts:1424#decline invite: invitation unreadable`.
+- **invitable-users** dropped four errors. An unread crew roster offered the trip's own crew as
+  people to invite; an unread friend list (either direction) or profile read said "nobody to invite".
+  All refuse: `artifacts/api-server/src/routes/trips.ts:630#const rosterErr` and
+  `artifacts/api-server/src/routes/trips.ts:661#if (profilesErr)`. The roster also counted only
+  owner and member, so a **co-host was offered an invite to their own trip**; it now uses
+  requireTripMember's rule (`artifacts/api-server/src/routes/trips.ts:648#const groupMemberIds`).
+- **plan-editable-trips** dropped every `specific_members` trip from the "add to a trip" picker when
+  `plan_editors` was unreadable: `artifacts/api-server/src/routes/trips.ts:1528#if (editorErr)`.
+- **pending invites' `memberCount`** counted owner and member and never read status. It now counts
+  the accepted crew, and an unreadable count stays null:
+  `artifacts/api-server/src/routes/trips.ts:719#const { data: memberCountData, error: memberCountErr }`.
+- **a reservation** that could not be read answered 404 "Reservation not found" on six routes:
+  `artifacts/api-server/src/routes/tripReservations.ts:119#We could not read this reservation`.
+
+**The co-host's review queue (TRIP-F06, §77.6's open item).** `GET /trips/join-requests` listed the
+owner's trips only, while `canManageJoinRequests` lets an accepted co-host approve. It now lists
+owned and accepted-co-hosted trips, and an unreadable co-host roster refuses rather than serving the
+owner's half (`artifacts/api-server/src/routes/trips-expansion.ts:376#const accepted = (coHosted`).
+The trip page mounts the queue for a co-host
+(`travel-buddy-standalone/app/trip/[id].tsx:606#memberRole === 'co_host') ? <JoinRequestsList`).
+
+**The client's failure states.**
+- `getTrip` and `getTripMemberRole` returned `null` for a failed read, and the trip screen renders
+  `null` as "Trip not found — this trip may have been deleted"; its own "Couldn't load this trip /
+  Try again" branch was unreachable. Both now throw on a failed read and keep `null` for a read that
+  found nothing (`travel-buddy-standalone/src/services/trips.ts:202#throw new TripsReadUnavailableError('This trip'`,
+  `travel-buddy-standalone/src/services/trips.ts:224#throw new TripsReadUnavailableError('Your role`).
+  The edit screen no longer swallows the role read, so an outage is not "Only the trip owner can
+  edit" to a co-host (`travel-buddy-standalone/app/trip/edit.tsx:93#const role = await getTripMemberRole(id);`).
+- The members sheet said "1 member · No members yet." and "No friends left to invite." out of failed
+  requests, and spun forever on a thrown `getTrip`. It now says it could not load, with Try again
+  (`travel-buddy-standalone/src/components/TripMembersSheet.tsx:230#Couldn't load the members.`,
+  `travel-buddy-standalone/src/components/TripMembersSheet.tsx:290#Couldn't load your friends.`).
+- **Create trip:** a multi-city stop that did not save was ignored, and a stop request that threw
+  printed a network error under the form for a trip that already existed, which invites a second tap
+  and a duplicate trip. Each stop is now tried on its own; the trip opens and the unsaved stops are
+  named (`travel-buddy-standalone/app/trip/new.tsx:289#const unsavedStops`).
+- **Share Trip** (owner only) fell back, silently, to the trip's page URL when the invite link could
+  not be created: a link a friend cannot join a private trip through. It now shares nothing and says
+  so (`travel-buddy-standalone/app/trip/[id].tsx:268#Could not create an invite link`).
+
+**Stale responses.** The trip cards drew whichever answer arrived last. Two votes' re-reads that
+answered out of order dropped the second ballot; a note added while the first list read was out
+vanished; a card whose trip id changed drew the previous trip. A card now applies a response only
+while no later read has begun and it is still mounted
+(`travel-buddy-standalone/src/features/trips/shared/latestRead.ts:33#export function useLatestRead`). This is
+applied in four places:
+- the ballots card (`travel-buddy-standalone/src/features/trips/planning/TripBallotsCard.tsx:45#const begin = useLatestRead`);
+- Today (`travel-buddy-standalone/src/features/trips/today/TripTodayCard.tsx:49#const begin = useLatestRead`);
+- the decisions card (`travel-buddy-standalone/src/features/trips/planning/TripDecisionsCard.tsx:87#const begin = useLatestRead`);
+- the shared-content tabs (`travel-buddy-standalone/src/features/trips/sharedContent/TripSharedContentSection.tsx:35#const begin = useLatestRead`).
+
+### §79.3 Tests, red first, and mutations
+
+| suite | red before | after |
+| --- | --- | --- |
+| `artifacts/api-server/src/test/tripJoinFlowReadFailures.test.ts` (new, registered) | 9 | 17/17 |
+| `tripReservations.test.ts` +2 | six routes 404 | 17/17 |
+| `tripInvitesPending.test.ts` #7 | `3 !== 4` | 7/7 |
+| `trips.readFailure.component.test.ts` (new) | 2 | 7/7 |
+| `tripEdit.readFailure.component.test.tsx` (new) | 1 at HEAD | 3/3 |
+| `TripMembersSheet.readFailure.component.test.tsx` (new) | 5 | 8/8 |
+| `TripDetail.wp10Surfaces` +4 | co-host queue, share failure | 7/7 |
+| `TripCreate.partialStops.component.test.tsx` (new) | 2 | 3/3 |
+| `features/trips/shared/__tests__/latestRead.component.test.tsx` (new) | 3 | 7/7 |
+
+**Mutations.** 45 were applied one at a time. Before each, the file's sha256 was recorded; after the
+run it was restored and verified byte-identical.
+- Server: M1–M15, plus M3b and a re-run on the line-neutral form.
+- Client: C1–C13, R1–R7, N1–N4 and S2.
+
+**One equivalent survivor:** S1, re-adding the page-URL fallback after the early return, which
+cannot be reached. Three mutants survived at first (M3b, C10, R2/R7) and were killed by a sharper
+test: a single friendship direction, the circle sheet, the ballots card's trip change, and
+`onAttention` after unmount.
+
+**Wider runs:**
+- every suite importing the three routers: 750/750;
+- trip component suites: 24/24 files, 113 tests;
+- trip node suites: 142/142;
+- the 17 trip database suites on the lane's local harness: 69/69, none skipped.
+  The local database carries the kernel (`trip_kernel_execute`); this is controlled evidence of
+  the kernel path, not production.
+
+### §79.4 Anchors repaired in place
+
+The latest-read guard moved six census-trips anchors. They are repaired in place, as §73.6 did,
+and listed here so the repair can be audited:
+- TripTodayCard: 42→43, 176→183, 67→74 and 151→158;
+- TripBallotsCard: 39→40;
+- TripSharedContentSection: 339→342.
+
+The server edits are line-neutral per handler, so no anchor in another census moved.
+
+### §79.5 What is still open, and why
+
+- **The rest of the BOTH column** waits on schema changes and the owner's apply. None is built
+  here; see §79.1.
+- **Fire-and-forget push blocks** stay unconverted (9 S2 sites in `routes/trips.ts` and
+  `routes/trips-expansion.ts`). This is the rule the trips-expansion header already states.
+  One of them, the legacy PATCH-to-completed path, also feeds `trip_crew_participation`
+  contributions from an unread roster. The app now completes through POST `/complete` (§77),
+  so this path is legacy; it is recorded here, not fixed.
+- **`/trips/me`** reads `trip_members` without a bound and passes the ids to `.in()`. A user with
+  more than 1,000 memberships would be cut off. No writer sets a non-accepted status today, and
+  the read must stay the same as `countUserTrips`, so it is recorded here and not changed alone.
+- **The offline bundle's `myArrivalState`** is read without its error. Nothing in the client
+  renders it.
+
+### §79.6 Tally — unchanged
+
+| BUILT-AND-CORRECT | **320** |
+|---|---|
+| BUILT-BUT-WRONG | **128** |
+| NOT-BUILT | **3** |
+| CANNOT-VERIFY | **0** |
+| **CONSTRUCTED%** = (C+W)/451 | **448 / 451 = 99.3 %** |
+| **CORRECT%** = C/451 | **320 / 451 = 70.9 %** |
