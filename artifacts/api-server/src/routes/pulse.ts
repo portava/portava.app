@@ -130,10 +130,10 @@ router.get("/pulse", async (req, res) => {
   // For crew tab we need the followed-user IDs first
   let crewIds: string[] | null = null;
   if (tab === "crew") {
-    const { data: followRows } = await client
+    const { data: followRows, error: followRowsErr } = await client
       .from("user_follows")
       .select("following_id")
-      .eq("follower_id", user.id);
+      .eq("follower_id", user.id); if (followRowsErr) { res.json({ posts: [], total: 0, tab, failedSources: ["user_follows"] }); return; }  // census-discovery §119 (DV-83 round 22, sweep): a failed follows read is not "you follow nobody"
     crewIds = (followRows as any[] ?? []).map((r: any) => r.following_id);
     if (crewIds.length === 0) {
       res.json({ posts: [], total: 0, tab });
@@ -239,7 +239,7 @@ router.get("/pulse", async (req, res) => {
 
   if (blockFetchFailed) {
     req.log.warn({ userId: user.id }, "pulse: block-state unknown — returning empty feed (fail-closed)");
-    res.json({ posts: [], total: 0, tab });
+    res.json({ posts: [], total: 0, tab, failedSources: ["blocks"] });  // census-discovery §119 (DV-83 round 22, sweep): fail-closed, and said — never an empty feed unnamed
     return;
   }
 
