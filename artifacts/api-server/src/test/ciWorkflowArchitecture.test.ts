@@ -483,6 +483,13 @@ describe("CI architecture — a re-run cannot inherit somebody else's slot", () 
      *  second boundary, the case a real 1-second-resolution clock hits only
      *  occasionally. */
     tickingClock?: boolean;
+    /** Make the first N listing calls answer the way a rate-limited
+     *  `gh api --jq` actually answers: the REST error body on STDOUT, exit 1.
+     *  Measured on run 37113934334 job 111186609364, 2026-10-03. */
+    apiRefusals?: number;
+    /** Ceiling for the refusal backoff, so a test does not really sleep for
+     *  the production default. */
+    pollMaxSeconds?: number;
   }) => {
     const dir = mkdtempSync(join(tmpdir(), "portava-slot-"));
     writeFileSync(join(dir, "listing.txt"), opts.listing ?? "");
@@ -495,11 +502,25 @@ describe("CI architecture — a re-run cannot inherit somebody else's slot", () 
         { mode: 0o755 },
       );
     }
+    const calls = JSON.stringify(join(dir, "listing-calls"));
     writeFileSync(
       join(dir, "gh"),
       "#!/usr/bin/env bash\n" +
         // `gh api .../actions/workflows/<id>/runs...` -> the listing.
         'if [[ "$*" == *"/actions/workflows/"* ]]; then\n' +
+        `  n=$(cat ${calls} 2>/dev/null || echo 0); n=$((n + 1)); echo $n > ${calls}\n` +
+        `  if [ "$n" -le ${opts.apiRefusals ?? 0} ]; then\n` +
+        // The real shape: an error object on stdout, non-zero exit. Nothing
+        // here is a run listing, and nothing here says the database is free.
+        "    cat <<'J'\n" +
+        "{\n" +
+        '"message": "API rate limit exceeded for installation ID 1.",\n' +
+        '"documentation_url": "https://docs.github.com/en/rest/using-the-rest-api/getting-started-with-the-rest-api#rate-limiting",\n' +
+        '"status": "403"\n' +
+        "}\n" +
+        "J\n" +
+        "    exit 1\n" +
+        "  fi\n" +
         `  cat ${JSON.stringify(join(dir, "listing.txt"))}\n` +
         "  exit 0\n" +
         "fi\n" +
@@ -520,10 +541,17 @@ describe("CI architecture — a re-run cannot inherit somebody else's slot", () 
         LIVE_DB_SLOT_ROLE: opts.role,
         LIVE_DB_SLOT_TIMEOUT_SECONDS: String(opts.timeoutSeconds ?? 1),
         LIVE_DB_SLOT_POLL_SECONDS: "1",
+        LIVE_DB_SLOT_POLL_MAX_SECONDS: String(opts.pollMaxSeconds ?? 2),
       },
     });
+    let emitted = "";
+    try {
+      emitted = readFileSync(join(dir, "out"), "utf8");
+    } catch {
+      emitted = "";
+    }
     rmSync(dir, { recursive: true, force: true });
-    return { code: r.status, out: `${r.stdout}${r.stderr}` };
+    return { code: r.status, out: `${r.stdout}${r.stderr}`, emitted };
   };
 
   it("EXECUTES fail-closed: a verify that cannot prove the slot exits 75", () => {
@@ -580,6 +608,98 @@ describe("CI architecture — a re-run cannot inherit somebody else's slot", () 
     });
     assert.equal(contended.code, 75, `a contended verify must still exit 75. Got ${contended.code}:\n${contended.out}`);
     assert.match(contended.out, /holder=33967153487/, "it must have asked once before timing out");
+  });
+
+  /**
+   * Measured 2026-10-03 on run 37113934334 job 111186609364. Its last 340
+   * seconds were spent re-asking a rate-limited API every 20s, and the job's
+   * final error told the reader to re-run because "the attempt starts at the
+   * BACK of the queue" — a cause it had no evidence for. Three sessions spent
+   * a morning on queue arithmetic because of that sentence. The refusal has to
+   * name itself.
+   */
+  it("EXECUTES fail-closed on a refused API, and names the 403 instead of blaming the queue", () => {
+    const r = runSlotScript({
+      role: "verify",
+      runId: "37113934334",
+      listing: "2026-10-03T09:42:05Z 37113934334\n",
+      apiRefusals: 99,
+      timeoutSeconds: 3,
+    });
+    assert.equal(r.code, 75, `a job that never got a listing must exit 75. Got ${r.code}:\n${r.out}`);
+    assert.match(
+      r.out, /REFUSED the run listing \(HTTP 403, rate limit\)/,
+      "the poll must say the API refused it, and say why",
+    );
+    assert.match(r.out, /refused ALL/, "the final error must attribute the failure to the API, not to a queue");
+    assert.doesNotMatch(
+      r.out, /BACK of the queue/,
+      "a job that never saw a listing must not advise a re-run as though it had been queued",
+    );
+    assert.doesNotMatch(r.out, /holder=/, "it cannot name a holder it never learned");
+    assert.match(
+      r.emitted, /live_db_slot_api_refusals=\d+\/\d+/,
+      "the refusal count must reach the telemetry, or the next reader is back to reading a 600-line log",
+    );
+  });
+
+  it("backs off while the API refuses, rather than polling it at a fixed interval", () => {
+    // A fixed interval under a rate limit is self-defeating: every waiting lane
+    // keeps spending the budget that none of them can get an answer without.
+    const r = runSlotScript({
+      role: "verify",
+      runId: "37113934334",
+      listing: "2026-10-03T09:42:05Z 37113934334\n",
+      apiRefusals: 99,
+      timeoutSeconds: 5,
+      pollMaxSeconds: 2,
+    });
+    const waits = [...r.out.matchAll(/Backing off (\d+)s/g)].map((m) => Number(m[1]));
+    assert.ok(waits.length >= 3, `expected several refused polls, saw ${waits.length}:\n${r.out}`);
+    assert.deepEqual(
+      waits.slice(0, 3), [1, 2, 2],
+      `the interval must grow and then hold at the ceiling, got ${JSON.stringify(waits)}`,
+    );
+  });
+
+  it("never backs off past the budget it promised to wait", () => {
+    // The deadline is only checked at the top of the loop, so an unclamped
+    // backoff reports a wait longer than the stated one — in a job whose
+    // purpose is to report that number honestly.
+    const r = runSlotScript({
+      role: "verify",
+      runId: "37113934334",
+      listing: "2026-10-03T09:42:05Z 37113934334\n",
+      apiRefusals: 99,
+      timeoutSeconds: 5,
+      pollMaxSeconds: 60,
+    });
+    const waits = [...r.out.matchAll(/Backing off (\d+)s/g)].map((m) => Number(m[1]));
+    const slept = waits.reduce((a, b) => a + b, 0);
+    assert.ok(
+      slept <= 5,
+      `the backoff slept ${slept}s against a 5s budget (${JSON.stringify(waits)}), so the ceiling ` +
+        "is not clamped to the time remaining",
+    );
+    assert.ok(waits.every((w) => w <= 5), `no single sleep may exceed the budget: ${JSON.stringify(waits)}`);
+  });
+
+  it("does not blame the API when the API answered and the queue was the wait", () => {
+    // The mixed case, which is what both measured runs actually were: real
+    // queue wait behind a named holder, and a refusal only at the end.
+    const r = runSlotScript({
+      role: "queue",
+      runId: "37113934334",
+      listing: "2026-10-03T09:42:05Z 37113934334\n2026-10-03T09:18:27Z 37112598597\n",
+      apiRefusals: 1,
+      timeoutSeconds: 4,
+    });
+    assert.equal(r.code, 75, `still fail-closed. Got ${r.code}:\n${r.out}`);
+    assert.match(r.out, /holder=37112598597/, "once the API answered, the holder must be named");
+    assert.doesNotMatch(
+      r.out, /refused ALL/,
+      "a run that did get an answer was queued, and saying otherwise is the same error in reverse",
+    );
   });
 
   it("refuses an unknown role rather than defaulting to something permissive", () => {

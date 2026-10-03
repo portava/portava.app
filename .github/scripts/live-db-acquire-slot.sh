@@ -144,6 +144,43 @@ TIMEOUT="${LIVE_DB_SLOT_TIMEOUT_SECONDS:-$DEFAULT_TIMEOUT}"
 POLL="${LIVE_DB_SLOT_POLL_SECONDS:-20}"
 ATTEMPT="${GITHUB_RUN_ATTEMPT:-1}"
 
+# ── WHEN THE API REFUSES TO ANSWER ───────────────────────────────────────────
+#
+# Measured 2026-10-03 on run 37113934334 job 111186609364. The listing call
+# below came back as a REST error body, not a listing:
+#
+#   { "message": "API rate limit exceeded ...",
+#     "documentation_url": ".../getting-started-with-the-rest-api#rate-limiting",
+#     "status": "403" }
+#
+# That body was piped into the decider, which refused it as unparseable (exit
+# 3, correctly — a listing we cannot read is not proof the database is free).
+# The loop then logged "empty or unusable", slept a FIXED 20s, and asked again,
+# for 1211s, until the cap. Three things were wrong with that, none of them in
+# the decider:
+#
+#   1. Nothing said "403". The log blamed the queue — the timeout error even
+#      advised re-running because "the attempt starts at the BACK of the
+#      queue" — so the morning's diagnosis was slot starvation and lane count,
+#      which is not what happened at all.
+#   2. A fixed poll interval under a rate limit makes the rate limit worse.
+#      Each iteration costs one listing call plus one jobs call per older run,
+#      every waiting lane pays it in parallel, and past exhaustion NO lane can
+#      prove a claim — so each one burns its whole budget and fails closed.
+#      More waiters exhaust the quota faster. The queue poisons itself.
+#   3. The annotation calls were spent on a listing already known to be junk.
+#
+# So: back off exponentially while the API is refusing, skip the annotation and
+# the decider on those polls (there is nothing to decide from), and name the
+# refusal in the log and in the final error. THIS DOES NOT RELAX MUTUAL
+# EXCLUSION. A refused poll still never counts as "the slot is free"; the loop
+# still ends in exit 75 having certified nothing. It fails closed more slowly
+# and says why.
+POLL_MAX="${LIVE_DB_SLOT_POLL_MAX_SECONDS:-300}"
+SLEEP_FOR="$POLL"
+API_REFUSALS=0
+POLLS=0
+
 # ── CLAIM ANNOTATION ─────────────────────────────────────────────────────────
 #
 # A run FORFEITS the slot when its dedicated queue job — the one named below —
@@ -263,7 +300,11 @@ while :; do
   NOW="$(date +%s)"
   ELAPSED=$(( NOW - START ))
   if [ "$ASKED" -eq 1 ] && [ "$ELAPSED" -ge "$TIMEOUT" ]; then
-    if [ "$ROLE" = "verify" ]; then
+    if [ "$API_REFUSALS" -eq "$POLLS" ]; then
+      # Never once got an answer. Saying "the queue is long" here would be a
+      # guess, and the guess cost three sessions a morning.
+      echo "::error::live-db slot: the Actions API refused ALL ${POLLS} run-listing requests over ${ELAPSED}s (most recently: ${WHY:-unknown}). This job never learned who holds the shared database, so it has certified NOTHING and is failing closed. This is NOT a queue backlog and re-running will not shorten it — the request budget is the shared resource that ran out. Reduce the number of live-DB lanes running at once, or wait for the rate limit to reset."
+    elif [ "$ROLE" = "verify" ]; then
       echo "::error::live-db slot: this job waited ${ELAPSED}s and could NOT prove that run ${GITHUB_RUN_ID} attempt ${ATTEMPT} holds the shared database. It has certified NOTHING and is failing rather than running against a database another run is mutating. If this is a partial re-run (\`gh run rerun --failed\`), re-run the whole workflow instead — a re-run does not re-execute the queue job, so the attempt starts at the BACK of the queue."
     else
       echo "::error::live-db slot: waited ${ELAPSED}s without acquiring the shared database. This run has certified NOTHING. It is NOT a pass — re-run it when the queue drains."
@@ -278,21 +319,55 @@ while :; do
     emit "live_db_slot=timeout"
     emit "live_db_slot_wait_seconds=${ELAPSED}"
     emit "live_db_slot_attempt=${ATTEMPT}"
+    # Additive, so live-db-verdict.sh and the telemetry artifact keep reading
+    # the same three keys they always did. This one separates "the queue was
+    # long" from "the API never answered", which the wait duration alone cannot.
+    emit "live_db_slot_api_refusals=${API_REFUSALS}/${POLLS}"
     exit 75
   fi
 
   # Every in-progress/queued run of this workflow, `<started> <id>` per line.
+  # No `|| echo ""` here: that discarded gh's exit status, which is the one
+  # unambiguous signal that the API refused us rather than answered us.
   RAW_RUNS="$(gh api --paginate \
             "repos/${GITHUB_REPOSITORY}/actions/workflows/${WF_ID}/runs?per_page=100" \
             --jq '.workflow_runs[] | select(.status == "in_progress" or .status == "queued") | "\(.run_started_at // .created_at) \(.id)"' \
-          2>/dev/null || echo "")"
+          2>/dev/null)"
+  GH_RC=$?
+  POLLS=$(( POLLS + 1 ))
+  ASKED=1
+
+  # A non-zero exit, or an error body on stdout, means we were refused. Both are
+  # checked: the exit code is authoritative, and the body names the reason.
+  if [ "$GH_RC" -ne 0 ] || printf '%s' "$RAW_RUNS" | grep -q '"status": *"[45][0-9][0-9]"'; then
+    API_REFUSALS=$(( API_REFUSALS + 1 ))
+    WHY="exit ${GH_RC}"
+    if printf '%s' "$RAW_RUNS" | grep -qi 'rate.limit'; then
+      WHY="HTTP 403, rate limit"
+    elif printf '%s' "$RAW_RUNS" | grep -q '"status": *"[45][0-9][0-9]"'; then
+      WHY="HTTP $(printf '%s' "$RAW_RUNS" | sed -n 's/.*"status": *"\([45][0-9][0-9]\)".*/\1/p' | head -1)"
+    fi
+    # Never sleep past the budget. The deadline is checked at the top of the
+    # loop, so an unclamped backoff would overshoot the job's stated wait by up
+    # to POLL_MAX — a 1200s verify budget reporting 1500s of waiting, which is
+    # the kind of number this script exists to report honestly.
+    WAIT_NOW="$SLEEP_FOR"
+    REMAIN=$(( TIMEOUT - ELAPSED ))
+    [ "$REMAIN" -lt 1 ] && REMAIN=1
+    [ "$WAIT_NOW" -gt "$REMAIN" ] && WAIT_NOW="$REMAIN"
+    echo "live-db slot [${ROLE}]: the Actions API REFUSED the run listing (${WHY}) — this says nothing about who holds the database. Waited ${ELAPSED}s/${TIMEOUT}s, ${API_REFUSALS} of ${POLLS} polls refused. Backing off ${WAIT_NOW}s."
+    sleep "$WAIT_NOW"
+    SLEEP_FOR=$(( SLEEP_FOR * 2 ))
+    [ "$SLEEP_FOR" -gt "$POLL_MAX" ] && SLEEP_FOR="$POLL_MAX"
+    continue
+  fi
+  SLEEP_FOR="$POLL"
 
   # Annotate each line with whether that run still has a CLAIM on the slot. See
   # live-db-slot-decide.sh's header for why a run can be the oldest and still
   # hold nothing. Runs newer than this one are left unannotated (`held` by
   # default): they cannot block us, so spending an API call on them is waste.
   RUNS="$(annotate_claims "$RAW_RUNS")"
-  ASKED=1
 
   DECISION="$(printf '%s\n' "$RUNS" | bash "$DECIDE" 2>&1)"
   RC=$?
@@ -315,7 +390,7 @@ while :; do
     3)
       # We are in-progress ourselves, so an unusable list means the API is not
       # telling us the truth. Do not treat "I cannot see" as "nobody is there".
-      echo "live-db slot [${ROLE}]: run listing was empty or unusable while this run is in progress — retrying in ${POLL}s"
+      echo "live-db slot [${ROLE}]: the listing parsed but was empty or unusable while this run is in progress — retrying in ${SLEEP_FOR}s"
       printf '%s\n' "$DECISION" | sed 's/^/  /'
       ;;
     *)
@@ -325,5 +400,5 @@ while :; do
       ;;
   esac
 
-  sleep "$POLL"
+  sleep "$SLEEP_FOR"
 done
