@@ -242,11 +242,11 @@ function EventsTabScreen() {
     if (myRes.ok) { setMyEvents(rawMy); setMyEventsError(false); }
     else { setMyEventsError(true); setMyEvents([]); }
 
-    if (mainRes.ok) setTodayEvents(dedupedToday); setListsNotWhole([mainRes, tomorrowRes, weekendRes, followRes, circleRes, savedRes, myRes].some((r) => !r.ok || eventListNotWhole(r.data))); setListsFailed([mainRes, tomorrowRes, weekendRes, followRes, circleRes, savedRes, myRes].some((r) => !r.ok));  // census-discovery §117 (SW17): an empty tab over a failed or cut list is not "No events yet"
-    if (tomorrowRes.ok) setTomorrowEvents(dedupedTomorrow);
-    if (weekendRes.ok) setWeekendEvents(dedupedWeekend);
-    if (followRes.ok) setFollowingEvents(dedupedFollowing);
-    if (circleRes.ok) setCircleEvents(dedupedCircle);
+    setTodayEvents(mainRes.ok ? dedupedToday : []); setListsNotWhole([mainRes, tomorrowRes, weekendRes, followRes, circleRes, savedRes, myRes].some((r) => !r.ok || eventListNotWhole(r.data))); setListsFailed([mainRes, tomorrowRes, weekendRes, followRes, circleRes, savedRes, myRes].some((r) => !r.ok));  // census-discovery §117 (SW17): an empty tab over a failed or cut list is not "No events yet"
+    setTomorrowEvents(tomorrowRes.ok ? dedupedTomorrow : []);  // census-discovery §119 (DV-83 round 22, B30): a section whose read failed is cleared, never the last filter's rows; the failure is said (error / lists-unread note)
+    setWeekendEvents(weekendRes.ok ? dedupedWeekend : []);  // §119 (B30)
+    setFollowingEvents(followRes.ok ? dedupedFollowing : []);  // §119 (B30, sweep)
+    setCircleEvents(circleRes.ok ? dedupedCircle : []);  // §119 (B30, sweep)
     if (savedRes.ok) {
       const evs = savedRes.data?.events ?? [];
       setSavedEvents(evs);
