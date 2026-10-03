@@ -14,7 +14,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { scanWindow, readWatermark, commitWatermark } from "../lib/schedulerWatermark.js";
+import { scanWindow, readWatermark, commitWatermark, COMMIT_LAG_MS } from "../lib/schedulerWatermark.js";
 
 const T0 = 1_700_000_000_000;
 const HOUR = 60 * 60 * 1_000;
@@ -27,8 +27,47 @@ describe("scanWindow — the span", () => {
       watermark: null, now: new Date(T0), defaultLookbackMs: HOUR, maxCatchupMs: 7 * DAY,
     });
     assert.equal(w.since.getTime(), T0 - HOUR);
-    assert.equal(w.through.getTime(), T0);
+    assert.equal(w.through.getTime(), T0 - COMMIT_LAG_MS, "the mark stays a minute behind the clock — see COMMIT_LAG_MS");
     assert.equal(w.capped, false);
+  });
+
+  it("the committed mark stays behind the clock, so a row written during the pass is not skipped", () => {
+    // `through` is this container's clock and `created_at` is the database's.
+    // Committing `now` declares covered both the rows still inside an open
+    // transaction and, worse, everything inside whatever clock skew exists
+    // between the two machines — a loss on every pass, not just after a gap.
+    const w = scanWindow({
+      watermark: new Date(T0 - 6 * HOUR), now: new Date(T0), defaultLookbackMs: HOUR, maxCatchupMs: 7 * DAY,
+    });
+    assert.equal(T0 - w.through.getTime(), COMMIT_LAG_MS, "exactly the lag, not approximately");
+    assert.ok(w.through.getTime() < T0, "a mark at `now` is the bug");
+
+    // The next pass therefore starts inside the span this one already read,
+    // which is the safe direction: the lag is scanned twice, never zero times.
+    const next = scanWindow({
+      watermark: w.through, now: new Date(T0 + HOUR), defaultLookbackMs: HOUR, maxCatchupMs: 7 * DAY,
+    });
+    assert.ok(next.since.getTime() < T0, "the next pass re-reads the lag rather than starting after it");
+  });
+
+  it("the span is never inverted by the lag, even for a pass that runs immediately after one", () => {
+    // A tick arriving within the lag of the previous commit would otherwise be
+    // handed `through` before `since`.
+    const justCommitted = T0 - 5_000;
+    const w = scanWindow({
+      watermark: new Date(justCommitted), now: new Date(T0), defaultLookbackMs: HOUR, maxCatchupMs: 7 * DAY,
+    });
+    assert.equal(w.since.getTime(), justCommitted);
+    assert.equal(w.through.getTime(), justCommitted, "clamped to `since`; committing it is a no-op");
+    assert.ok(w.through.getTime() >= w.since.getTime());
+  });
+
+  it("the lag is a rounding error against the narrowest window any caller scans", () => {
+    // The tightest caller is the compass geotag-farming detector: a one-hour
+    // window scanned hourly. A lag anywhere near that width would turn every
+    // pass into a near-total re-scan.
+    assert.ok(COMMIT_LAG_MS > 0, "a zero lag is the defect");
+    assert.ok(COMMIT_LAG_MS <= HOUR / 30, `COMMIT_LAG_MS=${COMMIT_LAG_MS} is too wide for a one-hour window`);
   });
 
   it("THE FIX: a mark from before a 54-hour gap makes the next scan cover the gap, not the last hour", () => {

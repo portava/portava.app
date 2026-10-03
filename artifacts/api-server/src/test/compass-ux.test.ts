@@ -1477,6 +1477,8 @@ function emptyTables(
 // one-hour window from a 54-hour one.
 
 const WM_NOW   = new Date("2026-03-15T12:00:00.000Z");
+import { COMMIT_LAG_MS } from "../lib/schedulerWatermark.js";
+
 const WM_HOUR  = 60 * 60 * 1_000;
 const JOB_GEO   = "compass_abuse_geotag_farming";
 const JOB_HASH  = "compass_abuse_hashtag_spam";
@@ -1675,8 +1677,14 @@ describe("CompassAbuseDefenseEngine — a suspended hour is scanned late, not ne
 
     // All three advanced, to the pass's `through` and not to a fresh clock.
     assert.deepEqual(commits.map((c) => c.job).sort(), [JOB_AVAIL, JOB_GEO, JOB_HASH]);
-    for (const c of commits) assert.equal(c.through.toISOString(), WM_NOW.toISOString());
-    assert.equal(store.get(JOB_GEO)!.toISOString(), WM_NOW.toISOString());
+    // `through` trails the pass's clock by the shared COMMIT_LAG_MS, so a row
+    // written during the pass — or inside any skew between this container's
+    // clock and the database's — is re-read next pass rather than declared
+    // covered. What matters here is that it is the PASS's instant and not a
+    // fresh clock read taken at commit time.
+    const expectedThrough = new Date(WM_NOW.getTime() - COMMIT_LAG_MS).toISOString();
+    for (const c of commits) assert.equal(c.through.toISOString(), expectedThrough);
+    assert.equal(store.get(JOB_GEO)!.toISOString(), expectedThrough);
   });
 
   it("a failed watermark READ does not widen the window and commits nothing", async () => {

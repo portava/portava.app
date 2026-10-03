@@ -90,7 +90,17 @@ const CAROL = "cccccccc-0000-4000-8000-000000000003";
 const THREAD = "dddddddd-0000-4000-8000-00000000000d";
 
 const NOW = Date.now();
+import { COMMIT_LAG_MS } from "../lib/schedulerWatermark.js";
+
 const min = (n: number) => new Date(NOW + n * 60_000).toISOString();
+
+/**
+ * What a pass at `at` actually commits: COMMIT_LAG_MS behind its own clock, so
+ * a row written during the pass — or inside any clock skew between this
+ * container and the database — is re-read next pass instead of skipped. The
+ * next pass's `since` is therefore this, not the previous pass's `now`.
+ */
+const committedAt = (at: number) => new Date(at - COMMIT_LAG_MS).toISOString();
 
 function env(kind: string, payload: unknown) {
   return JSON.stringify({ kind, envelopeVersion: "1", payload });
@@ -706,7 +716,7 @@ describe("the sweep runs, and a broken run does not look like an idle one", () =
     const r2 = await tickOnce({ client: c, now: new Date(NOW + 60_000) });
     await settle();
     assert.equal(r2.locationExpired, 0);
-    assert.equal(r2.window!.since, new Date(NOW).toISOString());
+    assert.equal(r2.window!.since, committedAt(NOW), "it resumes from the committed mark, which trails NOW by the commit lag");
   });
 
   it("a FAILED tick moves lastRunAt but NOT lastSuccessAt, and counts", async () => {
@@ -808,7 +818,7 @@ describe("§13.2 location.expired — the watermark is DURABLE across a restart"
       "the window did not actually reach the share; it was emitted for some other reason",
     );
     assert.equal(r.watermark.committed, true);
-    assert.equal(wm.at!.toISOString(), new Date(NOW).toISOString());
+    assert.equal(wm.at!.toISOString(), committedAt(NOW), "the stored mark trails the pass clock by the commit lag");
   });
 
   it("the NEXT boot resumes from the committed row and re-emits nothing", async () => {
@@ -828,7 +838,7 @@ describe("§13.2 location.expired — the watermark is DURABLE across a restart"
     await settle();
 
     assert.equal(r.watermark.source, "stored");
-    assert.equal(r.window!.since, new Date(NOW).toISOString(), "the second boot must start where the first ended");
+    assert.equal(r.window!.since, committedAt(NOW), "the second boot must start where the first ended");
     assert.equal(r.window!.capped, false, "a one-minute gap is not a capped catch-up");
     assert.equal(countDistinct("location.expired"), 0, "the already-emitted share came back");
   });
@@ -979,7 +989,7 @@ describe("§13.2 location.expired — the watermark is DURABLE across a restart"
     deliveries = [];
     const r2 = await tickOnce({ client: c, now: new Date(NOW + 60_000) });
     await settle();
-    assert.equal(r2.window!.since, new Date(NOW).toISOString());
+    assert.equal(r2.window!.since, committedAt(NOW));
     assert.equal(countDistinct("location.expired"), 0);
   });
 

@@ -54,10 +54,57 @@ import { logger } from "./logger.js";
 
 const TABLE = "scheduler_watermarks";
 
+/**
+ * How far behind the caller's clock a committed mark stays. ONE MINUTE.
+ *
+ * ── WHY A MARK AT `now` SKIPS ROWS ──────────────────────────────────────────
+ * `through` is the caller's clock; `created_at` is the DATABASE's clock, set by
+ * `now()` inside the inserting transaction. Two independent things make those
+ * disagree, and both skip rows permanently in exactly the shape this module
+ * exists to close:
+ *
+ *  1. SNAPSHOT VISIBILITY. A transaction that stamped `created_at = T` before
+ *     our SELECT's snapshot but commits after it is invisible to the scan even
+ *     though T < our `now`. Committing `now` declares T covered, and no later
+ *     pass asks about T again. The width is however long that writer's
+ *     transaction stays open.
+ *
+ *  2. CLOCK SKEW, which is the worse one because it is not a race. If this
+ *     container's clock runs ahead of the database's by δ, then every pass
+ *     commits a mark δ in the database's future and the next pass starts after
+ *     rows that were still to be written. That loses δ of work on EVERY pass,
+ *     quietly and forever — the per-tick version of the outage bug.
+ *
+ * ── WHY THE FIX BELONGS HERE AND NOT IN A CALLER ────────────────────────────
+ * "Commit `through`" has to stay a true statement, or the next caller wired up
+ * against this module will reasonably commit its own `now` and reopen the hole.
+ * So the lag is applied to the value handed out, not subtracted at the commit:
+ * every caller gets it by using the module as documented, and none of them has
+ * to know this hazard exists.
+ *
+ * ── WHAT IT COSTS, AND WHY A MINUTE ─────────────────────────────────────────
+ * It costs a re-scan of the last minute on the following pass. The callers all
+ * read to the present with no upper bound, so that minute is scanned twice and
+ * never zero times, and all of them write deduped or idempotent results — the
+ * same asymmetry rule 1 above is resolved on. A minute is wide enough to cover
+ * ordinary in-flight transactions and the clock skew a container and a hosted
+ * database realistically carry, and small enough to be a rounding error against
+ * the narrowest window any caller uses (one hour, scanned hourly).
+ *
+ * It is not a substitute for a watermark being committed only after success,
+ * and it does not make an unsynchronised clock safe — skew wider than this is
+ * still skew. It removes the systematic per-pass loss, not the possibility.
+ */
+export const COMMIT_LAG_MS = 60 * 1_000;
+
 export interface ScanWindow {
   /** Scan from here (exclusive or inclusive is the caller's existing choice). */
   since: Date;
-  /** Scan to here. Also the value to commit if, and only if, the pass succeeds. */
+  /**
+   * The value to commit if, and only if, the pass succeeds — and deliberately
+   * a little behind the caller's `now`, see COMMIT_LAG_MS. Callers read to the
+   * present and commit only this, so the lag is re-scanned rather than skipped.
+   */
   through: Date;
   /** True when `since` was pulled forward by `maxCatchupMs` — work older than this window is NOT covered. */
   capped: boolean;
@@ -99,7 +146,16 @@ export function scanWindow(opts: {
     capped = true;
   }
 
-  return { since: new Date(sinceMs), through: now, capped };
+  // `capped` stays measured against `now`, not against `through`: the scan does
+  // read to the present, and what the cap left out is what is older than
+  // `since`.
+  //
+  // `through` never precedes `since`. A pass running within COMMIT_LAG_MS of
+  // the previous commit would otherwise be handed an inverted span; committing
+  // `since` instead is a no-op the monotonic clamp below already tolerates.
+  const throughMs = Math.max(nowMs - COMMIT_LAG_MS, sinceMs);
+
+  return { since: new Date(sinceMs), through: new Date(throughMs), capped };
 }
 
 /**
