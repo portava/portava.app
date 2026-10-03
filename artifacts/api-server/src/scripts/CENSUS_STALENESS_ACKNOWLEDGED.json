@@ -1657,6 +1657,7 @@
         "artifacts/api-server/src/test/db/trailsAttachIntegrity.db.test.ts",
         "artifacts/api-server/src/test/db/trailsProposalRace.db.test.ts",
         "artifacts/api-server/src/test/db/telegraphUnsend.db.test.ts",
+        "artifacts/api-server/src/test/db/telegraphUnsendConcurrency.db.test.ts",
         "artifacts/api-server/src/test/db/trailsMemberVisibility.db.test.ts",
         "artifacts/api-server/src/test/db/placeMomentumFeatureVersion.db.test.ts",
         "artifacts/api-server/src/services/airport/LayoverNotificationService.ts",
