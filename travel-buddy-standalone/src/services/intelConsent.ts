@@ -37,16 +37,58 @@ async function authedFetch(path: string, opts: RequestInit = {}): Promise<Respon
   });
 }
 
-/** Read the current consent state, or null if unavailable (treated as not-granted). */
-export async function getIntelConsent(): Promise<IntelConsentState | null> {
-  if (!isSupabaseConfigured || !apiBase()) return null;
+/**
+ * The consent read, with "could not read it" kept apart from "not granted".
+ *
+ * WHY THIS EXISTS BESIDE getIntelConsent. getIntelConsent folds every failure
+ * into `null`, which hasValidConsent reads as "not granted" — correct for the
+ * callers that only need to know whether they may capture (the sensing
+ * installer, the outcome-consent bit at boot): an unknown consent must not
+ * capture. It is WRONG for the screens that SHOW consent. The server says so in
+ * as many words (routes/intel.ts GET /v1/intel/consent): an unreadable consent
+ * row must not render as "you have never consented", because the toggle would
+ * then re-stamp a consent the person already gave. The Quick Signal screen and
+ * Settings did exactly that — a 500, a dropped connection or a malformed body
+ * put a person who HAD consented in front of the first-use consent gate. Those
+ * screens read this, and render an outage as an outage with a retry.
+ */
+export type IntelConsentRead =
+  | { status: 'ok'; state: IntelConsentState }
+  | { status: 'unreadable'; reason: 'not_configured' | 'http' | 'network' | 'malformed'; httpStatus?: number };
+
+function isConsentState(v: unknown): v is IntelConsentState {
+  if (!v || typeof v !== 'object') return false;
+  const o = v as Record<string, unknown>;
+  return typeof o.enabled === 'boolean' && typeof o.currentDisclosureVersion === 'string';
+}
+
+export async function readIntelConsent(): Promise<IntelConsentRead> {
+  if (!isSupabaseConfigured || !apiBase()) return { status: 'unreadable', reason: 'not_configured' };
+  let res: Response;
   try {
-    const res = await authedFetch(`${INTEL_BASE}/consent`);
-    if (!res.ok) return null;
-    return (await res.json()) as IntelConsentState;
+    res = await authedFetch(`${INTEL_BASE}/consent`);
   } catch {
-    return null;
+    return { status: 'unreadable', reason: 'network' };
   }
+  if (!res.ok) return { status: 'unreadable', reason: 'http', httpStatus: res.status };
+  try {
+    const body: unknown = await res.json();
+    // A body that is not a consent state is not a "no": it is an answer this
+    // build cannot read, and showing the first-use gate over it is the defect.
+    return isConsentState(body) ? { status: 'ok', state: body } : { status: 'unreadable', reason: 'malformed' };
+  } catch {
+    return { status: 'unreadable', reason: 'malformed' };
+  }
+}
+
+/**
+ * Read the current consent state, or null if unavailable — FAIL-CLOSED, for
+ * callers deciding whether they may capture. A screen that DISPLAYS consent
+ * must use readIntelConsent instead (see above).
+ */
+export async function getIntelConsent(): Promise<IntelConsentState | null> {
+  const read = await readIntelConsent();
+  return read.status === 'ok' ? read.state : null;
 }
 
 /**

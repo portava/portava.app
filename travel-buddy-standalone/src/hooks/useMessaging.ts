@@ -630,12 +630,12 @@ export function useUnreadCounts() {
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
 
   const refresh = useCallback(async () => {
-    const res = await getUnreadCounts();
-    if (res.ok && res.data) {
-      setMessages(res.data.messages ?? 0);
-      setNotifications(res.data.notifications ?? 0);
-      setMeetups(res.data.meetups ?? 0);
-      setNewHighlights(res.data.newHighlights ?? 0);
+    const res = await getUnreadCounts(); // `degraded` names a bucket the server could NOT count: keep what was last measured for it, never a false zero (TELEGRAPH lane 2026-10-03)
+    if (res.ok && res.data) { const unknown = new Set(res.data.degraded ?? []);
+      if (!unknown.has('messages')) setMessages(res.data.messages ?? 0);
+      if (!unknown.has('notifications')) setNotifications(res.data.notifications ?? 0);
+      if (!unknown.has('meetups')) setMeetups(res.data.meetups ?? 0);
+      if (!unknown.has('newHighlights')) setNewHighlights(res.data.newHighlights ?? 0);
     }
   }, []);
 

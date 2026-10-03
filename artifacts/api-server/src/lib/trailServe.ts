@@ -74,9 +74,21 @@
  *      then its declared dependency
  *      intel_capture_quick_signal) → "flag_off"        (nothing is read)
  *   3. blocked set unreadable    → "blocks_unreadable" (AT-10 cannot be honoured, so nothing is shown)
- *   4. observation read fails    → "read_failed"
- * A consent-read failure empties the cohort (parity with lib/crowdFlowProducer)
- * rather than refusing, because it can only shrink the result.
+ *   4. observation read fails    → "read_failed" (on ANY page — see below)
+ *   5. consent unreadable        → "consent_unreadable"
+ * A consent-read failure used to EMPTY the cohort and answer `refusal: null`
+ * with `anyDroppedIneligible: true` — "these rows had no consent" — because an
+ * empty answer can only shrink the result. It is still empty, but that bit is
+ * the operator's only view of consent coverage, and an outage reported on it as
+ * a coverage fact is a failed read presented as an answer (DV-83). Consent is
+ * read through lib/intelConsent.readConsentedContributors, the shape-aware
+ * reader the projection aggregator and crowdFlowProducer already use: a raw
+ * `user_id IN (actor ids)` read finds nobody once 3002 stores rotating
+ * contributor tokens in actor_id, which would empty every cohort silently.
+ *
+ * The next_move read is keyset-paged (lib/keysetRead): an unscoped read spans
+ * every origin, and a single read is cut at the server's 1000-row cap with no
+ * error — a cohort past row 1000 was simply not counted.
  *
  * Counting follows lib/trailFollowup.aggregateNextMoves exactly: a row without a
  * certified group key is DROPPED (`droppedUngrouped`), never counted as a
@@ -97,8 +109,10 @@ import {
   type OriginDestAggregate,
 } from "./trailFollowup.js";
 import { logger } from "./logger.js";
+import { readAllByIdKeyset } from "./keysetRead.js";
+import { readConsentedContributors } from "./intelConsent.js";
 
-export type TrailReadRefusal = "no_service_client" | "flag_off" | "blocks_unreadable" | "read_failed";
+export type TrailReadRefusal = "no_service_client" | "flag_off" | "blocks_unreadable" | "read_failed" | "consent_unreadable";
 
 /**
  * A bucket that CLEARED the §13 cohort floor, enumerated field by field.
@@ -289,38 +303,34 @@ export async function readTrailMovement(
   const nowIso = new Date(nowMs).toISOString();
 
   try {
-    let query = sc
-      .from("intel_observations")
-      .select("actor_id, subject_id, value, group_key, observed_at, expires_at")
-      .eq("claim_type", "experience.next_move")
-      .in("moderation_state", PILOT_CLAIMABLE_MODERATION_STATES as unknown as string[])
-      .gte("observed_at", sinceIso);
-    if (typeof opts.originId === "string" && opts.originId !== "") query = query.eq("subject_id", opts.originId);
-    const { data, error } = await query;
-    if (error || !data) {
-      logger.warn({ err: error }, "trailServe: next_move read failed");
+    const originId = typeof opts.originId === "string" && opts.originId !== "" ? opts.originId : null;
+    const read = await readAllByIdKeyset(() => {
+      let query = sc
+        .from("intel_observations")
+        .select("id, actor_id, subject_id, value, group_key, observed_at, expires_at")
+        .eq("claim_type", "experience.next_move")
+        .in("moderation_state", PILOT_CLAIMABLE_MODERATION_STATES as unknown as string[])
+        .gte("observed_at", sinceIso);
+      if (originId !== null) query = query.eq("subject_id", originId);
+      return query;
+    });
+    if (!read.ok) {
+      logger.warn({ err: read.error }, "trailServe: next_move read failed");
       return empty("read_failed");
     }
 
-    const fresh = (data as any[]).filter((o) => !o.expires_at || o.expires_at > nowIso);
+    const fresh = read.rows.filter((o) => !o.expires_at || o.expires_at > nowIso);
 
     // D4 consent parity with system promotion (2174) and lib/crowdFlowProducer: an
-    // actor who withdrew consent must not keep inflating a cohort. Fail-soft to EMPTY.
+    // actor who withdrew consent must not keep inflating a cohort. An UNREADABLE
+    // consent answer is a refusal, never "nobody consented" (see the docstring).
     const actorIds = [...new Set(fresh.map((o) => o.actor_id).filter((id) => typeof id === "string" && id !== ""))];
-    let consented = new Set<string>();
-    if (actorIds.length > 0) {
-      const { data: consentRows, error: consentErr } = await sc
-        .from("intel_contribution_consent")
-        .select("user_id")
-        .in("user_id", actorIds)
-        .eq("enabled", true)
-        .is("withdrawn_at", null);
-      if (consentErr) {
-        logger.warn({ err: consentErr }, "trailServe: consent read failed; cohort empty");
-      } else {
-        consented = new Set(((consentRows as any[]) ?? []).map((r) => r.user_id as string));
-      }
+    const consentAnswer = await readConsentedContributors(sc, actorIds);
+    if (!consentAnswer.ok) {
+      logger.warn({ reason: consentAnswer.reason, detail: consentAnswer.detail }, "trailServe: consent unreadable; refusing");
+      return empty("consent_unreadable");
     }
+    const consented = consentAnswer.consented;
 
     let droppedIneligible = 0;
     const rows: NextMoveRow[] = [];

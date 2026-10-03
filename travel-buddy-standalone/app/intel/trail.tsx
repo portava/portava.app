@@ -27,9 +27,11 @@ import { VisibilityPicker } from '../../src/components/intel/VisibilityPicker';
 import { DisclosureControl } from '../../src/components/intel/DisclosureControl';
 import { SuppressedNotice } from '../../src/components/intel/IntelBits';
 import { useIntelPrompts } from '../../src/hooks/useIntelPrompts';
-import { getCurrentGps } from '../../src/services/location';
+import { getCurrentGps, reverseGeocodeToPlace } from '../../src/services/location';
 import { fetchCityNeighborhoods } from '../../src/services/neighborhoods';
 import { submitTrailMovement, makeIdempotencyKey } from '../../src/services/intelCapture';
+import { TravelButton } from '../../src/components/primitives';
+import { intelWriteErrorCopy } from '../../src/lib/intel/captureErrors';
 import {
   DEFAULT_VISIBILITY,
   VISIBILITY_META,
@@ -57,25 +59,41 @@ export default function TrailScreen() {
   // only), plus any names passed in as a route param. NEVER coordinates, never a
   // free-text field. Fail-soft to whatever the param supplied.
   const [areas, setAreas] = useState<string[]>(() => parseAreasParam(params.areas));
+  // WHY the list is what it is. The area read needs a CITY, and the screen's one
+  // launcher (Quick Signal) passes none — so this used to fetch nothing, ever,
+  // and say "No nearby areas to choose from yet" to every tester, with nothing
+  // to tap. That sentence also covered location denied and every failed read.
+  // It is now said only when the server ANSWERED with no areas.
+  const [areaLoad, setAreaLoad] = useState<'loading' | 'ready' | 'no_location' | 'unavailable' | 'none'>('loading');
+  const [areaAttempt, setAreaAttempt] = useState(0);
   const [busyArea, setBusyArea] = useState<string | null>(null);
   const [sentArea, setSentArea] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const keyRef = useRef<{ area: string; key: string } | null>(null);
 
   useEffect(() => {
-    if (!captureEnabled || !trailEnabled || !city) return;
+    if (!captureEnabled || !trailEnabled) return;
     let alive = true;
-    getCurrentGps()
-      .then(async (gps) => {
-        if (!gps.granted || gps.lat == null || gps.lng == null) return;
-        const res = await fetchCityNeighborhoods(city, gps.lat, gps.lng);
-        if (!alive || !res?.areas) return;
-        const names = res.areas.map((a) => a.name).filter((n) => typeof n === 'string' && n.length > 0 && n.length <= 120);
-        setAreas((prev) => [...new Set([...prev, ...names])]);
-      })
-      .catch(() => {});
+    setAreaLoad('loading');
+    (async () => {
+      const gps = await getCurrentGps();
+      if (!alive) return;
+      if (!gps.granted || gps.lat == null || gps.lng == null) { setAreaLoad('no_location'); return; }
+      // The city is the route's when it was passed, else the device fix's own.
+      // Only the city NAME is used, to ask for its areas — the fix itself never
+      // leaves this screen except as those two numbers the area route needs.
+      const cityName = city ?? (await reverseGeocodeToPlace(gps.lat, gps.lng))?.city ?? null;
+      if (!alive) return;
+      if (typeof cityName !== 'string' || cityName.trim() === '') { setAreaLoad('unavailable'); return; }
+      const res = await fetchCityNeighborhoods(cityName, gps.lat, gps.lng);
+      if (!alive) return;
+      if (!res || !Array.isArray(res.areas)) { setAreaLoad('unavailable'); return; }
+      const names = res.areas.map((a) => a.name).filter((n) => typeof n === 'string' && n.length > 0 && n.length <= 120);
+      setAreas((prev) => [...new Set([...prev, ...names])]);
+      setAreaLoad(names.length > 0 ? 'ready' : 'none');
+    })().catch(() => { if (alive) setAreaLoad('unavailable'); });
     return () => { alive = false; };
-  }, [captureEnabled, trailEnabled, city]);
+  }, [captureEnabled, trailEnabled, city, areaAttempt]);
 
   const submit = useCallback(
     async (area: string) => {
@@ -99,9 +117,7 @@ export default function TrailScreen() {
         setError(
           res.code === 'feature_disabled'
             ? 'The Trail follow-up is turned off right now.'
-            : res.error === 'not_configured'
-              ? 'Not connected.'
-              : 'Could not send — tap to retry.',
+            : intelWriteErrorCopy(res, 'send').message,
         );
       }
     },
@@ -165,6 +181,17 @@ export default function TrailScreen() {
                 A coarse area only — never your exact location. Shared at the visibility you chose above.
               </Text>
             </>
+          ) : areaLoad === 'loading' ? (
+            <Text style={styles.footnote} testID="intel-trail-areas-loading">Finding nearby areas…</Text>
+          ) : areaLoad === 'no_location' ? (
+            <Text style={styles.footnote} testID="intel-trail-areas-no-location">
+              Turn on location to see the areas near you. Only a coarse area is ever sent, never where you are.
+            </Text>
+          ) : areaLoad === 'unavailable' ? (
+            <View style={{ gap: space.sm }} testID="intel-trail-areas-unavailable">
+              <Text style={styles.footnote}>Couldn’t load the areas near you. Nothing has been sent.</Text>
+              <TravelButton label="Try again" variant="secondary" onPress={() => setAreaAttempt((n) => n + 1)} />
+            </View>
           ) : (
             <Text style={styles.footnote}>
               No nearby areas to choose from yet. Your next stop is shared as a coarse area, never a precise place.
