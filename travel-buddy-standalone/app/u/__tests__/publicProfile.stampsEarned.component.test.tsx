@@ -133,11 +133,11 @@ jest.mock('../../../src/hooks/useNavBarCollapse', () => ({
   NavBarFiller:           () => null,
 }));
 
-// NOTE: intentionally exhaustive — calls stamps analytics service.
 const mockMilestone = jest.fn(() => ({
   activeMilestone: null, sparkle: false, inkRing: false,
   confetti: false, onDismiss: jest.fn(),
 }));
+// NOTE: intentionally exhaustive — calls stamps analytics service; the spy records the count it is fed.
 jest.mock('../../../src/hooks/useMilestoneCelebration', () => ({
   useMilestoneCelebration: (...args: unknown[]) => mockMilestone(...(args as [])),
 }));
