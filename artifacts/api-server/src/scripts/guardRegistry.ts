@@ -715,6 +715,27 @@ export const GUARDS: readonly GuardEntry[] = [
     reach: { kind: "check-all", script: "check:census-integrity" },
   },
   {
+    checker: "src/scripts/checkSchedulerCoverage.ts",
+    inspects: {
+      countPattern: "(\\d+) schedulers started",
+      unit: "background schedulers index.ts starts at boot",
+    },
+    responsibility:
+      "The registry in lib/schedulerCoverage.ts is EXACTLY the set of schedulers index.ts starts, and " +
+      "each row's claim about how that scheduler's health can be known is true of the tree: every job " +
+      "name it says /healthz/schedulers reports is a real literal in routes/health.ts and every such " +
+      "literal is claimed once, and every job_health key it says is written really is written by the " +
+      "owning file while every non-test writer of job_health is claimed.",
+    // It is a DENOMINATOR guard, not a liveness one. It cannot tell whether any
+    // scheduler is actually running — nothing in-process can, which is the
+    // defect that made it necessary — so a pass means only that the published
+    // count of unobservable jobs has not quietly drifted. The number it
+    // protects is the one /healthz/schedulers discloses next to its verdict, so
+    // a scheduler added without a row would otherwise silently enlarge the
+    // invisible set while the endpoint kept reporting the old figure.
+    reach: { kind: "check-all", script: "check:scheduler-coverage" },
+  },
+  {
     checker: "src/scripts/checkMemoryCertification.ts",
     inspects: {
       countPattern: "fixtures (\\d+) certified",
