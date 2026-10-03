@@ -35,7 +35,7 @@ import { ensureCallMediaPermissions } from '../../src/services/callPermissions';
 import { CallHistoryMessage } from '../../src/components/calls/CallHistoryMessage';
 import { canShowThreadCallButtons, threadCallContextType } from '../../src/components/calls/callEntryGating';
 import { getBooking } from '../../src/services/rentABuddy';
-import { useThreadMessages, useLanguageSettings, useOutgoingRequestStatus, markThreadRead } from '../../src/hooks/useMessaging';
+import { useThreadMessages, useLanguageSettings, useOutgoingRequestStatus } from '../../src/hooks/useMessaging';
 import { useTrip } from '../../src/hooks/useBackend';
 import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t, avatar, icon } from '../../src/theme/tokens';
@@ -65,13 +65,13 @@ import { useThreadRecap } from '../../src/features/telegraph/memory/useThreadRec
 import { saveMessageAsMemoryDraft, draftSavedMessage } from '../../src/features/telegraph/memory/memoryApi.ts';
 import {
   unsendMessage,
-  deriveReceiptState,
-  deriveSeenBy,
   canOfferUnsend,
   receiptLabel,
-  DELIVERED_UNAVAILABLE_CLIENT,
   type MessageReceipt,
 } from '../../src/features/telegraph/lifecycle/lifecycleApi.ts';
+import { useThreadReadState } from '../../src/features/telegraph/lifecycle/useThreadReadState.ts';
+import { OwnMessageStatusRow } from '../../src/features/telegraph/lifecycle/OwnMessageStatusRow.tsx';
+import { useReaderAvatars } from '../../src/features/telegraph/lifecycle/useReaderAvatars.ts'; import type { OwnMessageStatus } from '../../src/features/telegraph/lifecycle/readState.ts';
 import { headerSubtitle } from '../../src/features/telegraph/header/headerAxes.ts';
 import { useConversationHeader } from '../../src/features/telegraph/header/useConversationHeader.ts';
 import { ComposerPlusMenu } from '../../src/features/telegraph/composer/ComposerPlusMenu.tsx'; import { VoiceRecorderSheet } from '../../src/features/telegraph/voice/VoiceRecorderSheet.tsx'; // one line: census-telegraph cites this file at :253, :270, :844, :869, :1624, :1831, :1947, :1958, :2089, :2094, :2114, :2172, :2227, :2269 and :2376.
@@ -744,7 +744,7 @@ function MessageBubble({
   isGroupThread,
   onLongPress,
   receiptState,
-  receiptSeenBy,
+  // (receiptSeenBy is folded into receiptState: an OwnMessageStatus carries its own count)
   readerAvatars,
   dismissedAiMsgIds,
   onDismissAiCard,
@@ -764,9 +764,9 @@ function MessageBubble({
   defaultShowOriginal: boolean;
   isGroupThread: boolean;
   onLongPress?: () => void;
-  receiptState?: 'sent' | 'read' | null;
-  /** §7.3's "Seen by N" for a group. Null renders the plain "Seen". */
-  receiptSeenBy?: number | null;
+  /** §7.3 / §30A.15 — Sent, Delivered (observed live), Seen / Seen by N, "they were offline" or
+   *  "read status unavailable"; see useThreadReadState. The count travels inside the status. */
+  receiptState?: OwnMessageStatus | null;
   /** Up to 3 avatar URIs of group members who've read past this message. */
   readerAvatars?: string[];
   dismissedAiMsgIds?: Set<string>;
@@ -1079,12 +1079,12 @@ function MessageBubble({
           <Text style={styles.deliverySending}>Sending…</Text>
         </View>
       )}
-      {mine && deliveryStatus === 'sent' && !receiptState && (
-        <View style={styles.deliveryRow}>
-          <Check size={11} color={color.signal} />
-          <Text style={styles.deliverySent}>Sent</Text>
-        </View>
-      )}
+      {/* The plain "Sent" row that stood here is one of OwnMessageStatusRow's states now (below):
+          a message the server accepted says "Sent" there, and only until more is known —
+          "Delivered" when the server saw a recipient's connection take it, "Seen" when a read
+          lands. Drawing it here as well would put two status lines under one message. A
+          message still on its way, or refused, keeps the two rows on either side of this note.
+          (TELEGRAPH lane, 2026-10-03.) */}
       {mine && deliveryStatus === 'failed' && (
         <Pressable style={styles.deliveryRow} onPress={onRetry} hitSlop={8}>
           <AlertCircle size={11} color="#EF4444" />
@@ -1092,25 +1092,25 @@ function MessageBubble({
         </Pressable>
       )}
 
-      {/* Read receipt — shown on every confirmed own message */}
+      {/* §7.3 / §30A.15 — what is known about this message, and nothing more:
+          • Sent — the server accepted it;
+          • Delivered — the server saw a recipient's open connection take it. Observed live on
+            this device and not stored, so it is shown only for messages sent while watching;
+          • Seen / Seen by N — a recipient's read marker has passed it;
+          • "they were offline" — when it was sent, the one recipient had no open connection.
+            Said in the past tense: the server will not send the receipt again when they return;
+          • "read status unavailable" — the receipts could not be read. This used to render as
+            "Sent", a claim that nobody had read the message which nobody had measured.
+          Receipts come from GET /threads/:id/receipts and are re-read the moment the server
+          says a read landed (useThreadReadState), instead of from a copy read once on open
+          that never refreshed. The two states that report something NOT known are drawn
+          muted, so neither can be mistaken for a confident tick. Nothing here is shown for a
+          message whose receipt has not been read yet: a blank is not a claim, and "Sent" on
+          an already-read message would be one. */}
       {mine && receiptState && deliveryStatus !== 'sending' && deliveryStatus !== 'failed' && (
-        <View style={styles.receiptRow}>
-          {/* §7.3: Sent or Seen. There is no DELIVERED to report. */}
-          {receiptState === 'read' ? (
-            <>
-              <CheckCheck size={11} color={color.signal} />
-              <Text style={styles.receiptSent}>
-                {receiptSeenBy && receiptSeenBy > 1 ? `Seen by ${receiptSeenBy}` : 'Seen'}
-              </Text>
-            </>
-          ) : (
-            <>
-              <Check size={11} color={color.signal} />
-              <Text style={styles.receiptSent}>Sent</Text>
-            </>
-          )}
-        </View>
+        <OwnMessageStatusRow status={receiptState} isGroup={isGroupThread} />
       )}
+
 
       {/* Group reader avatar chips — up to 3 members who've read past this message */}
       {mine && readerAvatars && readerAvatars.length > 0 && deliveryStatus !== 'sending' && deliveryStatus !== 'failed' && (
@@ -1242,8 +1242,8 @@ export default function TelegraphThread() {
   const [showTranslationSheet, setShowTranslationSheet] = useState(false);
   // DM profile for richer header
   const [dmProfile, setDmProfile] = useState<{ name: string | null; avatarUrl: string | null; handle: string | null; city: string | null } | null>(null);
-  // Other party's last_read_at for DM read receipts
-  const [dmOtherLastRead, setDmOtherLastRead] = useState<string | null>(null);
+  // DM receipts come from useThreadReadState (server receipts, re-read when a read lands); this
+  // used to hold the other party's last_read_at, read once when the thread opened and never again.
   // Member count for trip/circle threads
   const [memberCount, setMemberCount] = useState<number | null>(null);
   const listRef = useRef<FlatList>(null);
@@ -1395,19 +1395,19 @@ export default function TelegraphThread() {
       });
   }, [threadType, otherUserId]);
 
-  // Fetch other party's last_read_at for DM read receipts
-  useEffect(() => {
-    if ((threadType !== 'direct' && threadType !== 'rent_buddy_booking') || !id || !otherUserId) return;
-    supabase
-      .from('message_thread_members')
-      .select('last_read_at')
-      .eq('thread_id', id)
-      .eq('user_id', otherUserId)
-      .maybeSingle()
-      .then(({ data }) => {
-        if (data) setDmOtherLastRead((data as any).last_read_at ?? null);
-      });
-  }, [threadType, id, otherUserId]);
+  // §7.2 / §7.3 / §30A.15 — SEEN is marked with the newest message actually on screen, only while
+  // this screen is focused and the app is in the foreground (POST /threads/:id/seen), and receipts
+  // for the caller's own messages are read from the server and re-read the moment a read lands.
+  // This replaced a direct `message_thread_members` read of the other party's last_read_at taken
+  // once on open (never refreshed, and "Sent" whenever it failed) and a mount-time markThreadRead
+  // (so a message that arrived while you watched stayed unread, and its sender saw "Sent").
+  const readState = useThreadReadState({ threadId: id ?? null, messages, viewerId: userId });
+  // Faces for the reader chips. Decorative: a failed profile read draws no chips and never
+  // changes what the receipt says.
+  const readerAvatarUrl = useReaderAvatars(
+    isDirect ? [] : messages.flatMap((m) => readState.readersFor(m)),
+  );
+
 
   // Fetch member count for trip / circle threads
   useEffect(() => {
@@ -1434,11 +1434,11 @@ export default function TelegraphThread() {
       .then(({ data }) => setIsAcceptedMember(Boolean(data)));
   }, [id, threadType, userId]);
 
-  // Mark thread as read when the user opens it. Fire-and-forget.
-  useEffect(() => {
-    if (!id) return;
-    markThreadRead(id).catch(() => {});
-  }, [id]);
+  // Seen is no longer stamped here on mount. A mount is not a read: the first page may not
+  // have rendered, the app may be in the background, and nothing newer was ever marked after
+  // it. useThreadReadState (above) marks the newest RENDERED message while the screen is
+  // focused and the app is in the foreground, and again whenever a newer one appears.
+  // (TELEGRAPH lane, 2026-10-03.)
 
   // E-2: fetch is_e2ee flag once per thread open.
   useEffect(() => {
@@ -1598,103 +1598,103 @@ export default function TelegraphThread() {
   }, [hasInput, sendAnim]);
 
 
-  // Group-thread member reads — fetched once per thread to drive reader avatar chips.
-  const [groupMemberReads, setGroupMemberReads] = useState<
-    { userId: string; lastReadAt: string | null; avatarUrl: string | null }[]
-  >([]);
+  // ── §7.3 / §30A.15: the helpers the list and the long-press sheet consume ──────────────────
+  //
+  // Each is a thin view of `readState` (useThreadReadState, declared with the other thread
+  // reads above). Until 2026-10-03 they derived receipts here from two copies of
+  // `last_read_at` that this screen read itself — the other party's for a direct chat, every
+  // member's for a group — each read ONCE, when the thread opened. Three things followed, and
+  // all three were visible to anyone testing two phones side by side:
+  //
+  //   • a message read while its sender watched said "Sent" until the sender left the thread
+  //     and came back, although the server publishes `read.updated` the moment a read lands;
+  //   • a read that FAILED left the copy empty, and every message said "Sent" — a claim that
+  //     nobody had read it, which nobody had measured;
+  //   • the copy bypassed the server's own receipts route, which applies the §14.3 window and
+  //     reports only who read the CALLER's messages.
+  //
+  // What is shown now comes from `GET /threads/:id/receipts`, re-read when the server says a
+  // read happened, with a failed read kept DISTINCT ("read status unavailable"). A SEEN
+  // receipt survives a later failed read, because the read marker only ever moves forward;
+  // a SENT one does not, because it may already be out of date.
+  //
+  // DELIVERED — the history, kept because it is why the word is rationed. This screen once
+  // FABRICATED it. The group branch was `ageSecs > 3 ? 'delivered' : 'sent'` — a double tick
+  // shown because three seconds had elapsed — and the direct branch returned 'delivered'
+  // whenever the other party's last_read_at was older than the message. Nothing on this
+  // deployment stores a delivery signal: there is no per-device acknowledgement and no
+  // `lastDeliveredSequence` column, which is why `services/telegraph/unsend.ts` returns
+  // `delivered: null` with a reason instead of a boolean. A tick that says "Delivered" on a
+  // timer is a claim about the recipient's device that nobody measured, so it was removed.
+  // It returns ONLY as an observation: the realtime bus sends the SENDER `message.delivered`
+  // when a recipient's open connection took the event (census §28, T178). It is shown for
+  // messages whose receipt this device saw arrive, and for nothing else — it is not stored,
+  // so a message sent before this screen opened carries Sent or Seen and never Delivered.
+  //
+  // DIRECT vs GROUP. A direct chat says "Seen"; a group says "Seen by N" when more than one
+  // person could read it — §7.3's two shapes, decided in `ownMessageStatusLabel`. A message
+  // whose receipt has not been read yet shows NOTHING rather than "Sent", because "Sent"
+  // under a message somebody has already read is exactly the claim this replaced.
+
+  /** The status line under one of the caller's own messages; null for anyone else's. */
+  const receiptForMsg = useCallback(
+    (msg: Message): OwnMessageStatus | null => readState.statusFor(msg),
+    [readState],
+  );
+
   /**
-   * Telegraph §7.3 — the per-message receipt, derived from measured reads.
-   *
-   * THIS USED TO FABRICATE "DELIVERED". The group branch was
-   * `ageSecs > 3 ? 'delivered' : 'sent'` — a double tick shown because three
-   * seconds had elapsed — and the direct branch returned 'delivered' whenever
-   * the other party's last_read_at was older than the message. Nothing on this
-   * deployment produces a delivery signal of any kind: there is no per-device
-   * acknowledgement and no `lastDeliveredSequence` column, which is exactly why
-   * `services/telegraph/unsend.ts` returns `delivered: null` with a reason
-   * instead of a boolean. A tick that says "Delivered" on a timer is a claim
-   * about the recipient's device that nobody measured.
-   *
-   * So DELIVERED is gone from this surface. What remains is what the server can
-   * actually see: SEEN, when a recipient's `last_read_at` has passed the
-   * message, and SENT otherwise — §7.4's own predicate, and the same one the
-   * unsend window uses.
+   * The receipt for the long-press sheet, which offers Unsend only while nobody has seen the
+   * message (canOfferUnsend). Null when it is not known — never a guessed SENT: a guessed SENT
+   * would offer Unsend on a message that may already have been read. The server would refuse
+   * it, but the sheet would have promised something it could not do.
    */
-  const receiptForMsg = useCallback((msg: Message): 'sent' | 'read' | null => {
-    return deriveReceiptState(
-      isDirect
-        ? { createdAt: msg.createdAt, otherLastReadAt: dmOtherLastRead }
-        : { createdAt: msg.createdAt, memberReads: groupMemberReads },
-    );
-  }, [isDirect, dmOtherLastRead, groupMemberReads]);
-
-  /** §7.3's "Seen by N" for a group; null for a direct chat, which says "Seen". */
-  const seenByForMsg = useCallback((msg: Message): number | null => {
-    if (isDirect) return null;
-    return deriveSeenBy(msg.createdAt, groupMemberReads);
-  }, [isDirect, groupMemberReads]);
+  const receiptForLongPress = useCallback(
+    (msg: Message): MessageReceipt | null => readState.receiptFor(msg),
+    [readState],
+  );
 
   /**
-   * The same receipt in the shape §7.3's helpers take, for the long-press sheet.
-   *
-   * `delivered` is null here for the same reason it is null on the wire: this
-   * deployment has no delivery signal, and the sheet must not invent one either.
+   * Reader chips: up to three faces of members who have read past this message — groups
+   * only, because a direct chat's "Seen" already names its one reader. Faces resolve through
+   * useReaderAvatars; a member with no face is simply not drawn, and the count in the status
+   * line still says how many read it.
    */
-  const receiptForLongPress = useCallback((msg: Message): MessageReceipt => {
-    const state = receiptForMsg(msg);
-    const seenBy = isDirect
-      ? (state === 'read' ? 1 : 0)
-      : (deriveSeenBy(msg.createdAt, groupMemberReads) ?? 0);
-    return {
-      messageId: msg.id,
-      status: state === 'read' ? 'SEEN' : 'SENT',
-      delivered: null,
-      deliveredUnavailableReason: DELIVERED_UNAVAILABLE_CLIENT,
-      seenBy,
-      seenByUserIds: [],
-      recipientCount: isDirect ? 1 : groupMemberReads.length,
-    };
-  }, [isDirect, groupMemberReads, receiptForMsg]);
-
-
-  useEffect(() => {
-    if (isDirect || !id) { setGroupMemberReads([]); return; }
-    let active = true;
-    (async () => {
-      const { data: members } = await supabase
-        .from('message_thread_members')
-        .select('user_id, last_read_at')
-        .eq('thread_id', id)
-        .is('left_at', null)
-        .neq('user_id', userId ?? '');
-      if (!active || !members || members.length === 0) return;
-      const ids = (members as any[]).map((m) => m.user_id as string);
-      const { data: profs } = await supabase
-        .from('profiles')
-        .select('id, avatar_url')
-        .in('id', ids);
-      if (!active) return;
-      const avatarMap = new Map(((profs ?? []) as any[]).map((p) => [p.id as string, p.avatar_url as string | null]));
-      setGroupMemberReads(
-        (members as any[]).map((m) => ({
-          userId: m.user_id as string,
-          lastReadAt: (m.last_read_at as string | null) ?? null,
-          avatarUrl: avatarMap.get(m.user_id as string) ?? null,
-        })),
-      );
-    })();
-    return () => { active = false; };
-  }, [id, isDirect, userId]);
-
-  // Derive up to 3 reader avatar URIs for a given message (group threads only).
   const readerAvatarsForMsg = useCallback((msg: Message): string[] => {
-    if (isDirect || !msg.createdAt) return [];
-    return groupMemberReads
-      .filter((m) => m.lastReadAt !== null && new Date(m.lastReadAt) >= new Date(msg.createdAt))
+    if (isDirect) return [];
+    return readState
+      .readersFor(msg)
       .slice(0, 3)
-      .map((m) => m.avatarUrl)
+      .map((uid) => readerAvatarUrl(uid))
       .filter((u): u is string => !!u);
-  }, [isDirect, groupMemberReads]);
+  }, [isDirect, readState, readerAvatarUrl]);
+
+  // What this block deliberately no longer does:
+  //   • read `message_thread_members` from the client. Three of the six §24 client bypass
+  //     reads the observability ratchet counted (TELEGRAPH_OBSERVABILITY_BASELINE.json) were
+  //     these receipt copies — this screen's two and the trip chat's one — and they are gone;
+  //   • invent a receipt for a message the receipts route did not answer for. The route
+  //     answers for the newest 100 of the caller's messages; older ones carry no status line;
+  //   • count the caller's own read as a reader. The server's receipts never include the
+  //     sender, and `read.updated` is published to everyone EXCEPT the person who read;
+  //   • stamp "seen" on mount. See the note where markThreadRead used to be called.
+  //
+  // How the pieces are verified: src/features/telegraph/__tests__/useThreadReadState
+  // .component.test.ts drives the hook through focus, background, a read event, a delivery
+  // receipt and a failed receipts read, and readState.component.test.ts pins the statuses and
+  // their words. This screen cannot be mounted under jest-expo (see
+  // unsupportedPayload.component.test.tsx), so its wiring is held by those tests and by the
+  // telegraph-slos ratchet, which goes red if a raw `message_thread_members` read returns.
+  // The two routes the hook calls are pinned server-side by
+  // artifacts/api-server/src/test/telegraphLifecycle.test.ts.
+  //
+  // The seen marker, for completeness: POST /threads/:id/seen names a MESSAGE, the server
+  // refuses one outside the caller's §14.3 window or already deleted, and the marker never
+  // moves backwards — so a stale screen cannot un-read anything, and a fresh one cannot read
+  // ahead of what it was shown. A successful mark asks every mounted unread badge to re-read
+  // its counts (broadcastUnreadCounts) instead of waiting for its next 15-second tick.
+  //
+  // (TELEGRAPH lane, 2026-10-03. This block keeps its line count so the lines
+  // census-telegraph.md and census-input-intelligence.md cite below it stay where they are.)
 
   // Handle delete for me from the action sheet
   const handleDeleteForMe = useCallback(async (msgId: string) => {
@@ -2220,7 +2220,7 @@ export default function TelegraphThread() {
                   setActionMsgReceipt(mine ? receiptForLongPress(m) : null);
                 }}
                 receiptState={mine ? receiptForMsg(m) : null}
-                receiptSeenBy={mine ? seenByForMsg(m) : null}
+                /* receiptSeenBy: the count travels inside receiptState (an OwnMessageStatus) now */
                 readerAvatars={mine ? readerAvatarsForMsg(m) : undefined}
                 dismissedAiMsgIds={dismissedAiMsgIds}
                 onDismissAiCard={(msgId) => setDismissedAiMsgIds((prev) => new Set([...prev, msgId]))}

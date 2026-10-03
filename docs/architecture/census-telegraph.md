@@ -115,7 +115,7 @@ the entire v1.1 production-completion addendum. The messenger is a solid
    This is a live privacy divergence, not a missing feature.
 2. **`saved_messages` is write-only.** Both client surfaces offer "Save"
    (`travel-buddy-standalone/app/messages/[id].tsx:2227`,
-   `src/components/GroupChatScreen.tsx:1064`), the server persists it
+   `src/components/GroupChatScreen.tsx:988`), the server persists it
    (`routes/messaging.ts:4361#from('saved_messages').upsert(`) — and **nothing in the repository ever reads the
    table back.** Settled by reading call sites, not by grepping `from("…")`:
    the only other reference anywhere is the account-deletion cascade
@@ -644,7 +644,7 @@ Backend paths relative to `artifacts/api-server/src/`; client paths to
 | --- | --- | --- | --- |
 | T117 | `MemoryNoteShare` contract | N | No Memory Note type, table, route or renderer. |
 | T118 | A Memory Note is shareable/saveable/actionable without exposing the sender's canonical private Memory graph | N `∅` | Unguarded absence — no Memory Note exists to leak through. |
-| T119 | A user may explicitly save a message, voice note, place share or media item as a private Memory draft | W | **Persists into a hole.** Both client surfaces offer it (`app/messages/[id].tsx:2227`, `components/GroupChatScreen.tsx:1064`) and the server upserts (`routes/messaging.ts:2673-2710`), but **nothing reads `saved_messages` back** — settled by reading call sites, not greps: the only other references in the entire repository are the deletion cascade (`lib/deletionDispositions.ts:432`) and the RLS ledger (`scripts/rlsDispositions.ts:429`). There is no saved-messages route and no screen. It also lands in `saved_messages`, not in `memories`, so it is not a Memory draft. |
+| T119 | A user may explicitly save a message, voice note, place share or media item as a private Memory draft | W | **Persists into a hole.** Both client surfaces offer it (`app/messages/[id].tsx:2227`, `components/GroupChatScreen.tsx:988`) and the server upserts (`routes/messaging.ts:2673-2710`), but **nothing reads `saved_messages` back** — settled by reading call sites, not greps: the only other references in the entire repository are the deletion cascade (`lib/deletionDispositions.ts:432`) and the RLS ledger (`scripts/rlsDispositions.ts:429`). There is no saved-messages route and no screen. It also lands in `saved_messages`, not in `memories`, so it is not a Memory draft. |
 | T120 | Telegraph never automatically converts whole conversations into Memories | N `∅` | Unguarded absence. No conversation→Memory path exists, and nothing would refuse one. |
 | T121 | End-of-night recap surface | N | Nothing. |
 | T122 | Recap derived from confirmed session context and shared references — an invitation to curate, not automatic historical truth | N `∅` | No recap to be wrong about. |
@@ -1341,7 +1341,7 @@ depends on DDL no database has would stay W however good the code was.
   in a tree that has two of them:
   `travel-buddy-standalone/app/messages/[id].tsx:2089#SharedContextRail` (direct
   and booking threads) and
-  `travel-buddy-standalone/src/components/GroupChatScreen.tsx:815#SharedContextRail`
+  `travel-buddy-standalone/src/components/GroupChatScreen.tsx:740#SharedContextRail`
   (trip and circle threads).
 - **§11.2 row 5, the part that is easy to get wrong.** A critical change
   (a plan cancelled, a start time moved) is promoted until acknowledged, and
@@ -1375,7 +1375,7 @@ depends on DDL no database has would stay W however good the code was.
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| T13 | N | **C** | **Rail at the top of each conversation showing mutually relevant objects** — The component exists and is mounted on BOTH conversation surfaces — `travel-buddy-standalone/app/messages/[id].tsx:2089#SharedContextRail` and `travel-buddy-standalone/src/components/GroupChatScreen.tsx:815#SharedContextRail` — between the header and the message list, fed by a mounted route (`routes/index.ts:190#telegraphSharedContextRouter`). What would turn this red (P24): a third conversation surface appearing without it; nothing pins that. |
+| T13 | N | **C** | **Rail at the top of each conversation showing mutually relevant objects** — The component exists and is mounted on BOTH conversation surfaces — `travel-buddy-standalone/app/messages/[id].tsx:2089#SharedContextRail` and `travel-buddy-standalone/src/components/GroupChatScreen.tsx:740#SharedContextRail` — between the header and the message list, fed by a mounted route (`routes/index.ts:190#telegraphSharedContextRouter`). What would turn this red (P24): a third conversation surface appearing without it; nothing pins that. |
 | T14 | N | **C** | **Eligibility: created by me, joined/saved/attended by them** — `relationshipFor` reads the source object's own owner column and returns `CREATED_BY_ME_JOINED_BY_THEM` when the viewer created it and a conversation counterpart joined (`services/telegraph/sharedContext.ts:344#resolveSharedTrips`, `:405#resolveSharedMeetups`, `:467#resolveSharedEvents`). Asserted against a trip Alice owns and Bob joined, `test/telegraphSharedContext.test.ts:498`. |
 | T15 | N | **C** | **Eligibility: created by them, joined/saved/attended by me** — Same resolver, the other branch — asserted against a meetup Bob created and Alice accepted, `test/telegraphSharedContext.test.ts:498`. |
 | T16 | N | **C** | **Eligibility: both members of the same Trip, Plan, Crew, Event or booking** — Four resolvers, four canonical membership tables: `trip_members` (the crew table — a trip's crew IS `trip_members`; `circle_memberships` is a personal address book, not a shared crew, and is deliberately not read), `meetup_invites` (Plan), `event_attendees` (Event), `rent_buddy_bookings` (booking). `services/telegraph/sharedContext.ts:521#resolveSharedBookings` is the booking one. |
@@ -1529,7 +1529,7 @@ and it was being violated on every thread that had ever carried a card.
   (`travel-buddy-standalone/src/features/telegraph/sharing/PortavaObjectMessage.tsx:28#PortavaObjectMessage`)
   is the new kind, dispatched on both conversation surfaces
   (`travel-buddy-standalone/app/messages/[id].tsx:869#PortavaObjectMessage`,
-  `travel-buddy-standalone/src/components/GroupChatScreen.tsx:847#PortavaObjectMessage`).
+  `travel-buddy-standalone/src/components/GroupChatScreen.tsx:772#PortavaObjectMessage`).
 
 ### 10.6 §5 row moves
 
@@ -2359,7 +2359,7 @@ never reports an absence.
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| T73 | W | **W** | **Direct: Sent/Delivered/Seen. Groups: "Seen by N"** — unchanged verdict, corrected evidence. §10.22 cited a label function; the derivation is now MOUNTED on both chat surfaces (`travel-buddy-standalone/src/features/telegraph/lifecycle/lifecycleApi.ts:167#export function deriveReceiptState`, used at `travel-buddy-standalone/app/messages/[id].tsx:1624#deriveReceiptState` and `travel-buddy-standalone/src/components/GroupChatScreen.tsx:579#deriveReceiptState`), with "Seen by N" derived for groups (`travel-buddy-standalone/src/features/telegraph/lifecycle/lifecycleApi.ts:192#export function deriveSeenBy`). Still W, and now for a cleaner reason: two of three, because **DELIVERED cannot be reported and is no longer claimed**. |
+| T73 | W | **W** | **Direct: Sent/Delivered/Seen. Groups: "Seen by N"** — unchanged verdict, corrected evidence. §10.22 cited a label function; the derivation is now MOUNTED on both chat surfaces (`travel-buddy-standalone/src/features/telegraph/lifecycle/lifecycleApi.ts:167#export function deriveReceiptState`, used since 2026-10-03 only inside `travel-buddy-standalone/src/features/telegraph/lifecycle/useThreadReadState.ts:232#deriveReceiptState`, the hook both screens mount at `travel-buddy-standalone/app/messages/[id].tsx:1404#useThreadReadState` and `travel-buddy-standalone/src/components/GroupChatScreen.tsx:546#useThreadReadState` — see §41), with "Seen by N" derived for groups (`travel-buddy-standalone/src/features/telegraph/lifecycle/lifecycleApi.ts:192#export function deriveSeenBy`). Still W, and now for a cleaner reason: two of three, because **DELIVERED cannot be reported and is no longer claimed**. |
 
 **T69 is re-derived and stays W, but its evidence changes.** The census said
 "Two of six states … no DELIVERED concept anywhere". That was true of the
