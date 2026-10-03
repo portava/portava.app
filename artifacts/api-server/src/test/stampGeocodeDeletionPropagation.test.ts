@@ -1385,16 +1385,23 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
     // Build a sweep client where:
     //   - Pass 1 (corrected_at) succeeds with no rows.
     //   - Pass 2 (deleted_at)   returns a DB error.
-    //   - Any delete() call is tracked and should never happen.
+    //   - Pass 2's keyed delete() is tracked and should never happen.
+    //   - Pass 3's reclaim is tracked separately: it is independent of Pass 2,
+    //     so a Pass 2 error must not stop it. `lt` has to exist on the chain for
+    //     that to be observable at all — without it the reclaim throws into the
+    //     sweep's own catch and this test would pass while proving nothing.
     let deleteCallCount = 0;
+    let reclaimCallCount = 0;
     let sweepQueryCount = 0;
     const errorSweepClient: SupabaseClient = {
       from(_table: string) {
         let isDelete = false;
+        let isReclaim = false;
         const chain: any = {
           select() { return chain; },
           eq() { return chain; },
           gte() { return chain; },
+          lt(col: string) { if (col === "deleted_at") isReclaim = true; return chain; },
           not() { return chain; },
           delete() { isDelete = true; return chain; },
           in(_col: string, _keys: string[]) {
@@ -1404,6 +1411,11 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
           },
           then(resolve: (v: any) => void) {
             if (isDelete) {
+              if (isReclaim) {
+                reclaimCallCount++;
+                resolve({ data: [], error: null });
+                return;
+              }
               // Should never be reached.
               deleteCallCount++;
               resolve({ error: null });
@@ -1441,6 +1453,11 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
     // The hard-delete must never have been issued.
     assert.equal(deleteCallCount, 0,
       "cleanup hard-delete must not be called when the tombstone query returned an error");
+
+    // Pass 3 is not downstream of Pass 2: an error reading tombstones must not
+    // also forfeit the reclaim of ones that aged out of the look-back long ago.
+    assert.equal(reclaimCallCount, 1,
+      "aged-tombstone reclaim still runs after Pass 2 errors");
   });
 
   it("sweep evicts and cleans up on the second cycle after the deleted_at query recovers from an error", async () => {
@@ -3368,6 +3385,159 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
       "tombstone store is empty after cycle 2 — hard-delete succeeded on retry");
   });
 
+  it("reclaims a tombstone that aged out of the one-hour look-back — the leak a missed sweep used to create", async () => {
+    // THE DEFECT THIS PINS
+    // ====================
+    // Pass 2 can only see tombstones via `gte("deleted_at", now - 1h)`. If no
+    // sweep runs while a tombstone sits inside that hour, the row ages out of
+    // the window and Pass 2 can never see it again. Nothing else in the tree
+    // reclaims it: `writeDbCache`'s upsert clears `deleted_at` rather than
+    // removing the row, and the admin routes are the only other writers. So the
+    // row leaked permanently.
+    //
+    // That is not an exotic failure. The host suspends after fifteen idle
+    // minutes, so an hour with no tick is an ordinary quiet night.
+    //
+    // This test presents exactly that row — tombstoned well over a day ago,
+    // invisible to Pass 2 — and asserts it is reclaimed by age.
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    const TOMBSTONED_AT = new Date(T0 - 40 * 60 * 60 * 1_000).toISOString(); // 40h ago
+    let reclaimPredicate: { column: string; before: string } | null = null;
+    let pass2SawRows = false;
+    const store = new Map<string, string>([["kyoto", TOMBSTONED_AT]]);
+
+    const agedTombstoneClient: SupabaseClient = {
+      from(table: string) {
+        assert.equal(table, "city_country_geocode_cache", "unexpected table");
+        let isDelete = false;
+        let gteColumn = "";
+        let ltColumn = "";
+        let ltValue = "";
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          gte(col: string, _v: string) { gteColumn = col; return chain; },
+          lt(col: string, v: string) { ltColumn = col; ltValue = v; return chain; },
+          not() { return chain; },
+          delete() { isDelete = true; return chain; },
+          in() { return chain; },
+          async maybeSingle() { return { data: null, error: null }; },
+          upsert() { return Promise.resolve({ error: null }); },
+          then(resolve: (v: any) => void) {
+            if (isDelete && ltColumn === "deleted_at") {
+              // The reclaim. Honour its predicate rather than deleting blindly,
+              // so the test proves the cutoff is an age floor and not "delete
+              // every tombstone".
+              reclaimPredicate = { column: ltColumn, before: ltValue };
+              const cutoff = new Date(ltValue).getTime();
+              const removed: Array<{ city_key: string }> = [];
+              for (const [key, at] of [...store]) {
+                if (new Date(at).getTime() < cutoff) {
+                  store.delete(key);
+                  removed.push({ city_key: key });
+                }
+              }
+              resolve({ data: removed, error: null });
+              return;
+            }
+            if (isDelete) { resolve({ data: [], error: null }); return; }
+            if (gteColumn === "deleted_at") {
+              // Pass 2 — the 40h-old tombstone is outside the one-hour window,
+              // so the real query would return nothing. Model that faithfully.
+              pass2SawRows = false;
+              resolve({ data: [], error: null });
+              return;
+            }
+            resolve({ data: [], error: null }); // Pass 1 — nothing corrected
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+
+    _setGeocodeDbClientForTests(agedTombstoneClient);
+    await _runCorrectionSweepForTests();
+
+    assert.equal(pass2SawRows, false,
+      "pre-condition: the aged tombstone is invisible to Pass 2's one-hour look-back");
+    assert.ok(reclaimPredicate !== null,
+      "the sweep must issue an age-based reclaim, not only the keyed Pass 2 delete");
+    assert.equal(reclaimPredicate!.column, "deleted_at",
+      "reclaim selects by tombstone age");
+
+    // The cutoff must be an age FLOOR in the past, never 'now' — a reclaim that
+    // deleted fresh tombstones would race the cross-instance eviction signal
+    // Pass 2 depends on.
+    const cutoffMs = new Date(reclaimPredicate!.before).getTime();
+    assert.ok(cutoffMs < T0,
+      `reclaim cutoff must be in the past, got ${reclaimPredicate!.before}`);
+    assert.ok(T0 - cutoffMs > 60 * 60 * 1_000,
+      "reclaim cutoff must be older than the one-hour eviction window so it cannot race propagation");
+
+    assert.equal(store.has("kyoto"), false,
+      "the aged tombstone is reclaimed — without this the row leaks forever");
+  });
+
+  it("does NOT reclaim a tombstone that is still inside the eviction window", async () => {
+    // The complement of the test above, and the reason the cutoff is a floor
+    // rather than `now`: a tombstone only minutes old is still doing its job as
+    // the cross-instance eviction signal. Reclaiming it early would strand a
+    // warm stale entry on any instance that had not yet swept.
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    const FRESH = new Date(T0 - 5 * 60 * 1_000).toISOString(); // 5 minutes ago
+    const store = new Map<string, string>([["osaka", FRESH]]);
+
+    const freshTombstoneClient: SupabaseClient = {
+      from(_table: string) {
+        let isDelete = false;
+        let gteColumn = "";
+        let ltColumn = "";
+        let ltValue = "";
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          gte(col: string) { gteColumn = col; return chain; },
+          lt(col: string, v: string) { ltColumn = col; ltValue = v; return chain; },
+          not() { return chain; },
+          delete() { isDelete = true; return chain; },
+          in() { return chain; },
+          async maybeSingle() { return { data: null, error: null }; },
+          upsert() { return Promise.resolve({ error: null }); },
+          then(resolve: (v: any) => void) {
+            if (isDelete && ltColumn === "deleted_at") {
+              const cutoff = new Date(ltValue).getTime();
+              const removed: Array<{ city_key: string }> = [];
+              for (const [key, at] of [...store]) {
+                if (new Date(at).getTime() < cutoff) {
+                  store.delete(key);
+                  removed.push({ city_key: key });
+                }
+              }
+              resolve({ data: removed, error: null });
+              return;
+            }
+            if (isDelete) { resolve({ data: [], error: null }); return; }
+            // Pass 2 keyed delete is not under test here; both selects are empty
+            // because this test only cares about what the reclaim does NOT touch.
+            void gteColumn;
+            resolve({ data: [], error: null });
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+
+    _setGeocodeDbClientForTests(freshTombstoneClient);
+    await _runCorrectionSweepForTests();
+
+    assert.equal(store.has("osaka"), true,
+      "a 5-minute-old tombstone must survive the reclaim — it is still the eviction signal");
+  });
+
   it("sweep issues no hard-delete and does not evict the cache when Pass 2 returns an empty array", async () => {
     // Scenario: the sweep runs, Pass 1 finds no corrected rows, and Pass 2 finds
     // no tombstoned rows (empty array). The guard `tombstoned.length > 0` must
@@ -3384,20 +3554,29 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
     }));
 
     // Build a minimal DB client: both sweep passes return empty arrays.
-    // If delete() is ever called the test fails immediately.
+    // If Pass 2's keyed delete() is ever called the test fails immediately.
+    //
+    // Pass 3's reclaim is counted separately. It deletes aged tombstones by age
+    // alone (`.lt("deleted_at", …)`) rather than by key, so it issues its
+    // statement on every sweep whatever Pass 2 found — that is the whole point
+    // of it, since the rows it reclaims are exactly the ones Pass 2's one-hour
+    // look-back can no longer see. Folding it into deleteCallCount would make
+    // this test assert the opposite of the behaviour it wants.
     let deleteCallCount = 0;
+    let reclaimCallCount = 0;
     let sweepQueryCount = 0;
     const emptyPassClient: SupabaseClient = {
       from(_table: string) {
         let isDelete = false;
+        let isReclaim = false;
         const chain: any = {
           select() { return chain; },
           eq() { return chain; },
           gte() { return chain; },
+          lt(col: string) { if (col === "deleted_at") isReclaim = true; return chain; },
           not() { return chain; },
           delete() {
             isDelete = true;
-            deleteCallCount++;
             return chain;
           },
           in() { return chain; },
@@ -3416,7 +3595,12 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
           },
           upsert() { return Promise.resolve({ error: null }); },
           then(resolve: (v: any) => void) {
-            if (isDelete) { resolve({ error: null }); return; }
+            if (isDelete) {
+              if (isReclaim) reclaimCallCount++;
+              else deleteCallCount++;
+              resolve({ data: [], error: null });
+              return;
+            }
             // Both Pass 1 and Pass 2 return empty — no corrected or tombstoned rows.
             sweepQueryCount++;
             resolve({ data: [], error: null });
