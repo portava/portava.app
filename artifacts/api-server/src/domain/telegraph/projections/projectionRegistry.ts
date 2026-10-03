@@ -148,13 +148,15 @@ export const TELEGRAPH_PROJECTION_BYPASSES: readonly ProjectionBypass[] = [
     table: "message_thread_members",
     censusRow: "T295",
     note:
-      "FOUR reads, not the two the census recorded — re-derived by enumeration " +
-      "rather than by reading the screen top to bottom. (1) the other party's " +
-      "last_read_at for DM read receipts; (2) a member count; (3) the 'permission " +
-      "gate: accepted thread members only', whose result decides what the screen " +
-      "offers; (4) the group roster plus their last_read_at, for group receipts. " +
-      "All four belong behind the ConversationProjection's missing permissions " +
-      "block (PRJ-02); (3) is the one that recomputes an authorization decision.",
+      "TWO reads remain of the four this entry used to list: (2) a member count, " +
+      "and (3) the 'permission gate: accepted thread members only', whose result " +
+      "decides what the screen offers — the one that recomputes an authorization " +
+      "decision. Both belong behind the ConversationProjection's missing " +
+      "permissions block (PRJ-02). The receipt reads, (1) the other party's " +
+      "last_read_at and (4) the group roster's, were removed by the TELEGRAPH lane " +
+      "on 2026-10-03: receipts now come from GET /threads/:id/receipts through " +
+      "useThreadReadState, which the server windows and scopes to the caller's own " +
+      "messages, and which a read that FAILED cannot turn into a silent \"Sent\".",
   },
   {
     file: "travel-buddy-standalone/app/messages/[id].tsx",
@@ -166,15 +168,5 @@ export const TELEGRAPH_PROJECTION_BYPASSES: readonly ProjectionBypass[] = [
       "and refuses a plaintext body in an E2EE thread, so the client read is an " +
       "affordance and not the gate — but it is a second copy of a decision the " +
       "projection should carry.",
-  },
-  {
-    file: "travel-buddy-standalone/src/components/GroupChatScreen.tsx",
-    table: "message_thread_members",
-    censusRow: "T295",
-    note:
-      "The group screen reads the roster and every member's last_read_at to build " +
-      "read receipts client-side. Not in the census's count, and the same class: " +
-      "a receipt projection the server does not build, so the client joins the " +
-      "raw table to build it.",
   },
 ];

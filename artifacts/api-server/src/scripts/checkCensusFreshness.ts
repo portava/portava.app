@@ -781,7 +781,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/layoverScenarioMatrix.test.ts",
     // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): L169 and L267 cite `app/trip/[id].tsx`, which the guard resolves to the legacy repo-root mock (113 lines); the trip screen whose lines they cite is travel-buddy-standalone's, so both are watched rather than one chosen.
     "travel-buddy-standalone/app/trip/[id].tsx",
-    "app/trip/[id].tsx",
+    "app/trip/[id].tsx", "travel-buddy-standalone/src/lib/__tests__/layoverPlanCache.component.test.ts", // WIDENED 2026-10-03 by the LAYOVER lane, line-neutral (this file is cited by line): census-layover §48.2 moves L154 N -> W on this suite
   ],
   "census-highlights-memories.md": [
     // ── ADDED 2026-09-22 by the INTEGRATING lane. THIS HALF IS THIS PASS'S OWN

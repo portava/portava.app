@@ -225,9 +225,9 @@ export interface AbortResult {
   cancelledStopIds: string[];
   /** Every effect that ran, successful or not. Failures are NOT swallowed. */
   effects: AbortEffect[];
-  /** Empty, with a reason: no crew storage exists on this tree. */
+  /** Empty, with a reason: crews exist (2984), but telling one is a disclosure the owner has not enabled (L144, §48). */
   crewNotified: string[];
-  crewNotifyUnavailableReason: "no_crew_storage" | null;
+  crewNotifyUnavailableReason: "crew_notify_not_enabled" | null;
   statusApplied: boolean;
 }
 
@@ -380,7 +380,7 @@ export async function abortToAirport(
     cancelledStopIds: cancelled.ids,
     effects,
     crewNotified: [],
-    crewNotifyUnavailableReason: "no_crew_storage",
+    crewNotifyUnavailableReason: "crew_notify_not_enabled", // §48 — was "no_crew_storage", false since 2984
     statusApplied,
   };
 }
