@@ -204,13 +204,13 @@ describe("§12 the twelve deterministic tools", () => {
     assert.deepEqual(LAYOVER_TOOL_SCHEMAS.map((t) => t.function.name), [...LAYOVER_TOOL_NAMES]);
   });
 
-  it("every tool answers, and the two with no data source say UNAVAILABLE by name", () => {
+  it("every tool answers; replan says UNAVAILABLE by name, getCrewCandidates refuses until its read is handed over (§48)", () => {
     for (const name of LAYOVER_TOOL_NAMES) {
       const r = runLayoverTool(name, CTX);
       assert.equal(r.tool, name);
       if (name === "getCrewCandidates") {
         assert.equal(r.ok, false);
-        assert.equal((r as any).reason, "no_crew_storage");
+        assert.equal((r as any).reason, "crew_candidates_not_read"); // §48: CTX hands no crew read; "no_crew_storage" was false since 2984
       } else if (name === "replan") {
         assert.equal(r.ok, false);
         assert.equal((r as any).reason, "no_event_driven_replanner");
