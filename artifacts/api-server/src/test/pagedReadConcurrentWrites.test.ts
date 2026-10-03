@@ -25,6 +25,8 @@
  *   PW4  one event's RSVPs (readEventRsvps), a traveller joins ahead of the cursor between pages → no row read twice
  *   PW5  a server that ignores the cursor (answers the first rows again) → a cut read, never a row answered twice
  *   PW6  an unkeyed read whose total changes between pages → a cut read (PAGED_READ_CUT)
+ *   PW7  a server that applies the cursor INCLUSIVELY (the last row again at the head of the next page) → a cut read on
+ *        the second page, never that row counted twice
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -45,7 +47,7 @@ function table(): Row[] {
 const key = (r: { event_id: string; user_id: string }) => `${r.event_id}|${r.user_id}`;
 
 /** A PostgREST-shaped double over a LIVE table; `between(page, t)` runs after page `page` is served. */
-function client(t: Row[], between: (page: number, t: Row[]) => void, o: { ignoreCursor?: boolean } = {}) {
+function client(t: Row[], between: (page: number, t: Row[]) => void, o: { ignoreCursor?: boolean; inclusive?: boolean } = {}) {
   let served = 0;
   return {
     from(name: string) {
@@ -57,7 +59,7 @@ function client(t: Row[], between: (page: number, t: Row[]) => void, o: { ignore
         in: (c: string, v: string[]) => { preds.push((r: any) => v.includes(r[c])); return q; },
         eq: (c: string, v: string) => { preds.push((r: any) => r[c] === v); return q; },
         gt: (c: string, v: string) => { if (!o.ignoreCursor) preds.push((r: any) => r[c] > v); return q; },
-        or: (expr: string) => { const p = logicFilter(expr); assert.ok(p, `unmodelled .or(${expr})`); if (!o.ignoreCursor) preds.push(p as any); return q; },
+        or: (expr: string) => { const p = logicFilter(o.inclusive ? expr.replace(/\.gt\./g, ".gte.") : expr); assert.ok(p, `unmodelled .or(${expr})`); if (!o.ignoreCursor) preds.push(p as any); return q; },
         order: (col: string, opts?: { ascending?: boolean }) => { orders.push({ col, asc: opts?.ascending !== false }); return q; },
         range: (a: number, b: number) => { rng = [a, b]; return q; },
         then(res: any, rej: any) {
@@ -115,6 +117,14 @@ describe("census-discovery §118 (B23): a paged read under a write between two p
     const keys = (read.data ?? []).map(key);
     assert.ok(read.error !== null || keys.length === new Set(keys).size, JSON.stringify({ rows: keys.length, distinct: new Set(keys).size }));
     assert.equal(read.error?.code, PAGED_READ_CUT, JSON.stringify(read.error));
+    assert.match(read.error!.message, /repeated a row/, "refused at the second page for the row it repeats, not later for its size");
+  });
+  it("PW7 a server that applies the cursor inclusively → a cut read on the second page, never that row counted twice", async () => {
+    let pages = 0;
+    const c = client(table(), () => { pages++; }, { inclusive: true });
+    const read = await readGoingRsvpsForEvents(c, [E1, E2]);
+    assert.equal(read.error?.code, PAGED_READ_CUT, JSON.stringify({ error: read.error, rows: read.data?.length }));
+    assert.equal(pages, 2);
   });
   it("PW6 an unkeyed read whose total changes between pages → a cut read", async () => {
     let n = 1500; const calls: number[] = [];

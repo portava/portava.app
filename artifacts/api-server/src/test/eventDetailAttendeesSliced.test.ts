@@ -14,6 +14,7 @@
  *   AS2  a going viewer's view, 6 going → the same mark (the strip is the same slice)
  *   AS3  a viewer who is not a participant → no list and no mark (the list is participant-scoped)
  *   AS4  the going read FAILS → no slice mark (the list is named unread instead: failedSources event_rsvps)
+ *   AS5  the host's view, 5 going → one more going than listed is a slice too
  *   GC1  cached going_count 9, 6 going → goingCount 6 (the live count), counts.going 6
  *   WD1  REACH (the verifier's): the waitlist read FAILS, cached 3 → waitlistCount 3 beside failedSources [event_waitlist]
  */
@@ -65,6 +66,10 @@ describe("census-discovery §118 (B24): GET /events/:id says when its attendee l
     assert.equal(r.status, 200, r.text);
     assert.equal("goingAttendeesTruncated" in r.body, false, r.text);
     assert.ok((r.body.failedSources ?? []).includes("event_rsvps"), r.text);
+  });
+  it("AS5 the host's view, 5 going → the body says the list is a slice of 5", async () => {
+    setup(5); const r = await detail("t-host");
+    assert.deepEqual({ listed: r.body.goingAttendees.length, cut: r.body.goingAttendeesTruncated, total: r.body.goingAttendeesTotal }, { listed: 4, cut: true, total: 5 });
   });
   it("GC1 cached going_count 9, 6 going → goingCount 6 beside counts.going 6", async () => {
     setup(6, { goingCount: 9 }); const r = await detail("t-host");

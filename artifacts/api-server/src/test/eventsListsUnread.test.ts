@@ -14,6 +14,7 @@
  *   SS2  one search read FAILS → 503 (half a search is not the search)
  *   SS3  a friends-only match whose friendship read FAILS → withheld, and the answer says it is not whole
  *   SS4  the search reads are bounded: a read that fills its pool says the answer is not whole
+ *   SS5  a page past the pool is empty and says the answer is not whole (the read stops at the pool, never past it)
  *   FS0  CONTROL (the verifier's): the follows read answers → the followed host's event is listed
  *   FS1  (the verifier's) the follows read FAILS → 503, never `{ events: [] }`
  *   FS2  a followed host's event whose block read FAILS → withheld, and the answer says it is not whole
@@ -68,6 +69,17 @@ describe("census-discovery §118 (B28): GET /events/search never answers an unre
     const r = await get("/events/search?q=rooftop&limit=5");
     assert.equal(r.status, 200, r.text);
     assert.equal(r.body.truncated, true, seen(r));
+  });
+});
+
+describe("census-discovery §118 (B28): GET /events/search reads at most its pool", () => {
+  after(() => _setTestClient(null as any, false));
+  it("SS5 600 matches, the page past the pool → no events, not whole", async () => {
+    const more = Array.from({ length: 599 }, (_, i) => ({ id: `99999999-9999-4999-8999-${String(i).padStart(12, "0")}`, host_id: HOST, title: `Rooftop ${i}`, state: "open", visibility: "public", city: "Lisbon", starts_at: "2030-01-01T00:00:00.000Z", going_count: 0, waitlist_count: 0, verified_only: false }));
+    world({ ev: { state: "open" }, moreEvents: more });
+    const r = await get("/events/search?q=rooftop&page=12&limit=50");
+    assert.equal(r.status, 200, r.text);
+    assert.deepEqual({ events: r.body.events.length, truncated: r.body.truncated }, { events: 0, truncated: true });
   });
 });
 
