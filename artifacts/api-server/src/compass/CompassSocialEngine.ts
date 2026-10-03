@@ -418,8 +418,8 @@ async function contextMemberIds(
       .map((r) => r.user_id as string);
   }
   const [rsvpResult, attendeeResult] = await Promise.all([
-    sc.from("event_rsvps").select("user_id").eq("event_id", ctx.id).eq("status", "going"),
-    sc.from("event_attendees").select("user_id").eq("event_id", ctx.id),
+    eventMemberRows(sc, "event_rsvps", ctx.id, true),  // census-discovery §119 (DV-83 round 22, residual): a read the server cut at its row cap is read whole, by key
+    eventMemberRows(sc, "event_attendees", ctx.id, false),  // §119: the same
   ]);
   if (rsvpResult.error || attendeeResult.error) throw rsvpResult.error ?? attendeeResult.error; const going = new Set(((rsvpResult.data ?? []) as any[]).map((r) => r.user_id as string));
   const att = new Set(((attendeeResult.data ?? []) as any[]).map((r) => r.user_id as string));
@@ -833,3 +833,17 @@ function presenceDeniedUnread(reason: string | undefined): boolean { return reas
 // never checked. Marked here; `get_whos_around` and `get_meetup_opportunities` say it.
 function markPresenceCut(unread: PresenceUnread | undefined): void { if (unread) unread.cut = true; }
 
+// ── census-discovery §119 (DV-83 round 22, lane W11-X2; the round-21 verifier's residual, D-W11X2-172) ──────────────
+// contextMemberIds read an event's going RSVPs and checked-in attendees in one unbounded read each. PostgREST caps an
+// answer at its db-max-rows (1000) and says nothing, so at a bigger event the travellers past the cap were dropped and
+// the walk said "nobody is sharing" over them. Each read now asks for the exact count; when the server answered fewer
+// rows than it counted, the read is read whole, paged by `user_id` (lib/pagedRead), and a page that fails fails it —
+// collectPresence then says the context could not be checked. A whole answer (or one without a count) is used as before.
+import { readAllPages as readAllRows, keysetAfter } from "../lib/pagedRead.js";  // appended at the foot so no cited line above moves; ESM hoists imports
+
+async function eventMemberRows(sc: SupabaseClient, table: "event_rsvps" | "event_attendees", eventId: string, goingOnly: boolean): Promise<{ data: unknown[] | null; error: unknown }> {
+  const base = () => { const q = sc.from(table).select("user_id", { count: "exact" }).eq("event_id", eventId); return goingOnly ? q.eq("status", "going") : q; };
+  const first = (await base()) as { data: unknown[] | null; error: unknown; count?: number | null };
+  if (first.error || !Array.isArray(first.data) || typeof first.count !== "number" || first.data.length >= first.count) return { data: first.data ?? null, error: first.error ?? null };
+  return readAllRows((from, to, after) => keysetAfter(base(), ["user_id"], after as Record<string, unknown> | null).order("user_id").range(from, to), { key: (r: any) => [String(r.user_id)] });
+}
