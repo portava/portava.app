@@ -19822,6 +19822,16 @@ Every unbounded multi-row read that computes a count, a rank or a "none"; every 
   - a client that says a failed or cut events list as empty or its counts as measured (EL1–EL3, SM1, ET1–ET3, ET5, DE1, HP1, HP2, XT1–XT6, CP1, CP2, UP1–UP5);
   - any path §116.11 lists.
 
+### 117.12 Results at the final code commit
+
+The code is final at `2601e4188` (the census commit; the last code change is `9fcfd1519`, merged with #530's `496ea80e7` at `806e13260`); this subsection's commit changes only this file. Node 24.21.0.
+
+- **Guards:** all 24 of the integrator's `int-guards.sh` exit 0, and `check:silent-supabase-reads` exits 0 (no new site; 205 pre-existing sites baselined; no baseline count raised). `checkUncheckedSupabaseReads`: no new in-scope read ignores its `.error`. `checkWritePathColumns` refuses to run without a sanctioned live Supabase target, and this lane connects to no database, so it was not run.
+- **api-server, the whole suite** (`node --import tsx/esm --test`, `SUPABASE_URL=http://127.0.0.1:9`): every file on the package's `test` line but the nine live-DB suites that import `ciSupabaseGuard` — 1741 files in 22 chunks, each under 5 minutes (the longest 300 s): `tests 29801 · pass 29801 · fail 0 · cancelled 0 · skipped 0`.
+- **Client:** `pnpm run -s check:all` passes — node tests `tests 7639 · pass 7639 · fail 0`; jest component suites 869 of 869 (5540 tests); the web config 4 of 4 (12 tests); typecheck, typecheck:tests (173 diagnostics, the baseline) and the lints clean. `check-route-registry`: OK (232 screens, 9 layouts).
+- **The guard on disk.** The verifier's runner placed each of GH0–GH49 (GH31b included), GHX5 and GHX6 alone in the tree and ran the guard: the unfixtured tree passes (fail 0), and all 53 fixtures are killed; every touched registered file and `metro.config.js` was restored with a matching sha256.
+- **The verifiers' probes**, copied in, run and deleted (v7–v19, 78 files): the server probes pass 186 of 187 — the one failure is `zz-v18-dumpBodies`, the verifier's helper whose ✖ prints the bodies by design; the v18 GET /events probes' own double gained `.range()`, which B21's paged reads call (their assertions unchanged). Of the 26 client probe suites (82 tests), 73 pass — every v19 probe among them (DA2, DA3, WL1, GC1, GC2, NS1, NA0, HA1) — and 9 fail as §116.12 recorded: V15-TH4, V15-NM0, V17-NC2–NC5, V18-SC0, SC2 and RC3, each pinning a contract an earlier round changed, with an adapted version that passes.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/lib/calls/callGatewayAdapter.ts — §113.8 names it for N1, outside DV-83: census-telegraph §40 records the call gateway's unread-gate outcome, and no Discovery verdict rests on it.
