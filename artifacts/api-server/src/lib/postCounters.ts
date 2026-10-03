@@ -135,3 +135,36 @@ export async function loadPostEngagement(
   }
   return out;
 }
+
+/**
+ * As recountPostCounter, for a Hidden Gem's saves. POST and DELETE
+ * /media/:id/save write `hidden_gem_saves` for a gem and never moved
+ * `hidden_gems.save_count` — the Media tab's Gems feed saves through that
+ * route — and HiddenGemService.saveGem records that "nothing recomputes
+ * save_count from hidden_gem_saves, so a lost increment is permanent", where
+ * an under-count keeps a crowded gem reading as hidden. This recount is exact
+ * (a HEAD count) and is written only when it was read; an unread count is
+ * `null` and names `hidden_gem_saves`.
+ */
+export async function recountGemSaves(
+  sc: any,
+  gemId: string,
+  log?: PostCounterLog,
+): Promise<{ count: number | null; failed: FailedSources }> {
+  const failed = new FailedSources(log, "gem save recount");
+  const count = known(
+    await exactCount(sc.from("hidden_gem_saves").select("gem_id", { count: "exact", head: true }).eq("gem_id", gemId)),
+    failed,
+    "hidden_gem_saves",
+  );
+  if (count !== null) {
+    const { error } = await sc.from("hidden_gems").update({ save_count: count }).eq("id", gemId);
+    if (error) {
+      log?.error?.(
+        { err: error, gemId, measured: count },
+        "hidden_gems.save_count write refused — the cached counter is stale; the measured count is still answered",
+      );
+    }
+  }
+  return { count, failed };
+}

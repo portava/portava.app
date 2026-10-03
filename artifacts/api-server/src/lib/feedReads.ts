@@ -113,27 +113,48 @@ export type KeyedPage = (
   pageSize: number,
 ) => PromiseLike<{ data?: unknown; error?: unknown; count?: number | null }>;
 
+/** The plain read of the same rows: no order, no limit, `{ count: "exact" }` — one request when the answer fits. */
+export type FirstRead = () => PromiseLike<{ data?: unknown; error?: unknown; count?: number | null }>;
+
 /**
- * Read EVERY row a keyed read matches, one page at a time, never a page
- * PostgREST cut.
+ * Read EVERY row a keyed read matches, never a page PostgREST cut.
  *
- * The caller's page function orders by the key, narrows to rows after `after`
- * and asks for `{ count: "exact" }`, so each page carries how many rows remain
- * from its cursor on. Paging stops only when a page holds all that remain, so a
- * server whose max-rows is BELOW the page size is paged through rather than
- * taken as the end. A page with no count falls back to "a short page is the
- * last". Any error fails the whole read; a page that is not an array, that
- * repeats a key already read, that comes back empty while rows remain, or a
- * read past `maxRows`, is a CUT read — answered as a failure, never as the rows
- * gathered so far.
+ * With `opts.first`, the rows are first read the plain way — one request, no
+ * order and no limit, with `{ count: "exact" }` — exactly the request the
+ * callers made before, so a set under the row cap still costs one round trip.
+ * That answer is taken only when it is provably whole: its count says no row
+ * was left out (or, with no count in the answer, it is shorter than a page).
+ * Otherwise — the count says rows were cut — the read starts again by key.
+ *
+ * Keyed paging: the page function orders by the key, narrows to rows after
+ * `after` and asks for `{ count: "exact" }`, so each page carries how many rows
+ * remain from its cursor on. Paging stops only when a page holds all that
+ * remain, so a server whose max-rows is BELOW the page size is paged through
+ * rather than taken as the end. A page with no count falls back to "a short
+ * page is the last". Any error fails the whole read; a page that is not an
+ * array, that repeats a key already read, that comes back empty while rows
+ * remain, or a read past `maxRows`, is a CUT read — answered as a failure, never
+ * as the rows gathered so far.
  */
 export async function readWhole<T>(
   page: KeyedPage,
   key: (row: T) => string,
-  opts: { pageSize?: number; maxRows?: number } = {},
+  opts: { pageSize?: number; maxRows?: number; first?: FirstRead } = {},
 ): Promise<Read<T[]>> {
   const pageSize = opts.pageSize ?? WHOLE_READ_PAGE_SIZE;
   const maxRows = opts.maxRows ?? WHOLE_READ_MAX_ROWS;
+  if (opts.first) {
+    const res = await opts.first();
+    if (res?.error) return { ok: false, error: issue(res.error) };
+    if (!Array.isArray(res?.data)) return cut("the read answered without rows");
+    const rows = res.data as T[];
+    const total = typeof res.count === "number" ? res.count : null;
+    if (total !== null ? rows.length >= total : rows.length < pageSize) {
+      if (rows.length > maxRows) return cut(`more than ${maxRows} rows`);
+      return { ok: true, value: rows };
+    }
+    // Cut (or not provably whole): read again, by key, from the start.
+  }
   const out: T[] = [];
   let after: string | null = null;
   for (;;) {
@@ -174,17 +195,11 @@ export async function countRowsPerId(
   const unique = [...new Set(ids)];
   const counts = new Map<string, number>(unique.map((id) => [id, 0]));
   if (unique.length === 0) return { ok: true, value: counts };
+  const base = () => scope(sc.from(table).select(`id, ${idColumn}`, { count: "exact" }).in(idColumn, unique));
   const rows = await readWhole<Record<string, unknown>>(
-    (after, size) => {
-      let q = scope(
-        sc.from(table).select(`id, ${idColumn}`, { count: "exact" }).in(idColumn, unique),
-      )
-        .order("id", { ascending: true })
-        .limit(size);
-      if (after !== null) q = q.gt("id", after);
-      return q;
-    },
+    (after, size) => afterKey(base().order("id", { ascending: true }).limit(size), "id", after),
     (r) => String(r.id),
+    { first: base },
   );
   if (!rows.ok) return rows;
   for (const r of rows.value) {
@@ -210,15 +225,11 @@ export async function viewerRowIds(
 ): Promise<Read<Set<string>>> {
   const unique = [...new Set(ids)];
   if (unique.length === 0) return { ok: true, value: new Set() };
+  const base = () => scope(sc.from(table).select(idColumn, { count: "exact" }).in(idColumn, unique));
   const rows = await readWhole<Record<string, unknown>>(
-    (after, size) => {
-      let q = scope(sc.from(table).select(idColumn, { count: "exact" }).in(idColumn, unique))
-        .order(idColumn, { ascending: true })
-        .limit(size);
-      if (after !== null) q = q.gt(idColumn, after);
-      return q;
-    },
+    (after, size) => afterKey(base().order(idColumn, { ascending: true }).limit(size), idColumn, after),
     (r) => String(r[idColumn]),
+    { first: base },
   );
   if (!rows.ok) return rows;
   return { ok: true, value: new Set(rows.value.map((r) => String(r[idColumn]))) };
@@ -235,15 +246,11 @@ export async function readWholeColumn(
   column: string,
   scope: (q: any) => any,
 ): Promise<Read<string[]>> {
+  const base = () => scope(sc.from(table).select(column, { count: "exact" }));
   const rows = await readWhole<Record<string, unknown>>(
-    (after, size) => {
-      let q = scope(sc.from(table).select(column, { count: "exact" }))
-        .order(column, { ascending: true })
-        .limit(size);
-      if (after !== null) q = q.gt(column, after);
-      return q;
-    },
+    (after, size) => afterKey(base().order(column, { ascending: true }).limit(size), column, after),
     (r) => String(r[column]),
+    { first: base },
   );
   if (!rows.ok) return rows;
   return { ok: true, value: rows.value.map((r) => String(r[column])) };
@@ -261,6 +268,37 @@ export async function exactCount(
   if (res?.error) return { ok: false, error: issue(res.error) };
   if (typeof res?.count !== "number") return { ok: false, error: { message: "the count read answered without a count" } };
   return { ok: true, value: res.count };
+}
+
+/**
+ * Exact counts per id by one HEAD count each (Postgres counts; the row cap does
+ * not apply), at most `concurrency` at a time — for a table with no single
+ * unique key to page by (`hidden_gem_saves` is keyed by user and gem). A page
+ * holds at most a few dozen ids. Any failed count fails the whole read: a page
+ * of counts with one missing is not a page of counts.
+ */
+export async function exactCountsPerId(
+  sc: any,
+  table: string,
+  idColumn: string,
+  ids: readonly string[],
+  scope: (q: any) => any = (q) => q,
+  concurrency = 8,
+): Promise<Read<Map<string, number>>> {
+  const unique = [...new Set(ids)];
+  const out = new Map<string, number>();
+  for (let i = 0; i < unique.length; i += concurrency) {
+    const batch = unique.slice(i, i + concurrency);
+    const counts = await Promise.all(
+      batch.map((id) => exactCount(scope(sc.from(table).select(idColumn, { count: "exact", head: true }).eq(idColumn, id)))),
+    );
+    for (let j = 0; j < batch.length; j++) {
+      const c = counts[j];
+      if (!c.ok) return c;
+      out.set(batch[j], c.value);
+    }
+  }
+  return { ok: true, value: out };
 }
 
 /** A Read in the `{ data, error }` shape PostgREST callers already branch on. */

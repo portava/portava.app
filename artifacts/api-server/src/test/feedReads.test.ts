@@ -16,6 +16,10 @@
  *        limit, Prefer count=exact — and gathers every row over several pages
  *   FR9  viewerRowIds / readWholeColumn / exactCount: failure is { ok: false }
  *   FR10 FailedSources names each source once and spreads to {} when healthy
+ *   FR11 with a plain first read: a whole answer (count == rows) is ONE request
+ *   FR12 with a plain first read: a cut answer (rows < count) is read again by key
+ *   FR13 with a plain first read and no count: short is whole; a full page is not
+ *   FR14 with a plain first read: its error fails the read
  *
  * Run: node --import tsx/esm --test src/test/feedReads.test.ts
  */
@@ -228,6 +232,49 @@ describe("the real supabase-js client pages by key (census-media §47)", () => {
   it("FR8 — a resolved PostgREST error through the real client fails the read", async () => {
     const o = makeOracle({ tables: { content_stamps: [] }, failReads: { content_stamps: { code: "57014", message: "canceling statement" } } });
     const r = await countRowsPerId(o.client, "content_stamps", "entity_id", [pad(1)], (q) => q.eq("entity_type", "post"));
+    assert.equal(r.ok, false);
+  });
+});
+
+describe("readWhole with a plain first read (census-media §47)", () => {
+  const rows = (n: number) => Array.from({ length: n }, (_, i) => ({ id: pad(i + 1) }));
+
+  it("FR11 — a whole first answer is one request, and no keyed page is asked", async () => {
+    let keyed = 0;
+    const r = await readWhole(async () => { keyed++; return { data: [], error: null, count: 0 }; }, (x: any) => x.id, {
+      first: async () => ({ data: rows(40), error: null, count: 40 }),
+    });
+    assert.equal(r.ok ? r.value.length : -1, 40);
+    assert.equal(keyed, 0);
+  });
+
+  it("FR12 — a cut first answer (1,000 of 1,700) is read again by key, exactly", async () => {
+    const all = rows(1_700);
+    const t = servedTable(all, { cap: 1_000 });
+    const r = await readWhole(t.page, (x: any) => x.id, {
+      first: async () => ({ data: all.slice(0, 1_000), error: null, count: 1_700 }),
+    });
+    assert.equal(r.ok ? r.value.length : -1, 1_700);
+    assert.deepEqual(t.pages, [null, pad(1_000)], "keyed paging restarts from the first key");
+  });
+
+  it("FR13 — no count: a short first answer is whole; a full one is not trusted", async () => {
+    const short = await readWhole(async () => { throw new Error("must not page"); }, (x: any) => x.id, {
+      first: async () => ({ data: rows(10), error: null }),
+    });
+    assert.equal(short.ok ? short.value.length : -1, 10);
+    const all = rows(1_200);
+    const t = servedTable(all, { cap: 1_000 });
+    const full = await readWhole(t.page, (x: any) => x.id, {
+      first: async () => ({ data: all.slice(0, 1_000), error: null }),
+    });
+    assert.equal(full.ok ? full.value.length : -1, 1_200);
+  });
+
+  it("FR14 — an error on the first read fails the read", async () => {
+    const r = await readWhole(async () => ({ data: [], error: null, count: 0 }), (x: any) => x.id, {
+      first: async () => ({ data: null, error: { message: "boom" } }),
+    });
     assert.equal(r.ok, false);
   });
 });
