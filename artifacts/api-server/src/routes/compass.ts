@@ -5019,7 +5019,7 @@ function sendCompassFeedFlagsUnread(res: import("express").Response): void {
 // unread COMPASS_% table the flag-off 404. Each now carries the Discovery refusal envelope beside
 // the same body. Only the three tables a Telegraph card can come from are counted: posts and buddy
 // profiles are never cards (TELEGRAPH_SURFACE_TYPES), so their failure changes no card.
-const TELEGRAPH_CARD_SOURCES: ReadonlySet<string> = new Set(["events", "discovery_places", "hidden_gems", "user_location_state"]);
+const TELEGRAPH_CARD_SOURCES: ReadonlySet<string> = new Set(["events", "discovery_places", "hidden_gems", "user_location_state", "event_rsvps"]);  // census-discovery §122 (DV-83 round 23, B37): `event_rsvps` withholds a capped event card (B34's capacity_could_not_be_checked), so it is a card source
 function telegraphCoverage(rawItems: unknown[], cardCount: number) {
   const failed = compassHydrationFailedSources(rawItems as Parameters<typeof compassHydrationFailedSources>[0]).filter((s) => TELEGRAPH_CARD_SOURCES.has(s)).sort();
   if (failed.length === 0) return {};
