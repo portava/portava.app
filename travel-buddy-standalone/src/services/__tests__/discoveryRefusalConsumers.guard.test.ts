@@ -1821,3 +1821,17 @@ function unwrapOuter(e: ts.Expression): ts.Expression {
     else return e;
   }
 }
+
+// ── census-discovery §117 (DV-83 round 20, lane W11-X2): the two wrappers GH45–GH50 did not draw ───────────────────
+//
+// `unwrapOuter` also looks through an angle-bracket assertion (`(<any>require)(x)`, legal in a .ts file, which the
+// guard parses as TS when TSX cannot) and an instantiation expression (`(require<any>)(x)`); Babel strips both, so
+// Metro bundles a plain `require(x)`. GH51 and GH52 pin them, so neither reading can be dropped unseen.
+describe("DV-83 guard reach — the angle-bracket and instantiation wrappers (§117)", () => {
+  it('G13 GH51: (<any>require)(x) in a .ts source is a require of x', () => {
+    assert.deepEqual(moduleLoads("const m = (<any>require)('../services/compass.ts');\nexport default m;\n").map((d) => [d.kind, d.spec]), [['require', '../services/compass.ts']]);
+  });
+  it('G13 GH52: (require<any>)(x) is a require of x', () => {
+    assert.deepEqual(moduleLoads("const m = (require<any>)('../services/compass.ts');\nexport default m;\n").map((d) => [d.kind, d.spec]), [['require', '../services/compass.ts']]);
+  });
+});
