@@ -57,6 +57,7 @@ import { invalidateRankDesignFlagCache, loadRankDesignFlags, ALL_RANK_DESIGN_FLA
 import { surfaceObjectiveOptions } from "../lib/discoveryRankDesigns.js";
 import { invalidateDiscoveryModifiersFlagCache } from "../lib/discoveryModifiers.js";
 import { loadPipelineFlags, PIPELINE_FLAGS_OFF } from "../lib/discoveryCandidates/pipelineFlags.js";
+import { discoveryStopHalt, unlessDiscoveryStopped } from "../lib/discoveryStopGate.js";
 import { rankForViewer, type PdePlace, type PdeViewer } from "../lib/discoveryPde.js";
 import { withDiscoveryNegativeFeedback, type RankingInput } from "../services/ranking/DiscoveryRankingService.js";
 import {
@@ -410,5 +411,42 @@ describe("§97 — §85's pipeline flags read OFF while the stop is tripped", ()
   it("C4c. CONTROL: flag ON + stop clear — the route serves", async () => {
     const on = await kinds(true);
     assert.equal(on.status, 200, on.body);
+  });
+});
+
+describe("§97 — the stop's state with no service client", () => {
+  /**
+   * `discoveryStopHalt` read the manual stop through `sc ? await isKillSwitchEngaged(sc, …) : false`,
+   * which treated the two halves of one fact oppositely: an unreadable
+   * `feature_flags` ENGAGED the stop (isKillSwitchEngaged's inverted failure
+   * polarity) while an absent client DISENGAGED it. `lib/discoveryEngineMode.ts`
+   * already took the other decision for the engine mode — `no_client` resolves
+   * to legacy — so the gate extracted to generalise that halt disagreed with it.
+   *
+   * Latent rather than live, and these cases say which: no present caller can
+   * reach it (see the comment at the fix), so what is asserted here is the
+   * gate's own contract, not a served page that changes.
+   */
+  afterEach(() => { resetAll(); });
+
+  it("N1. no client halts, named `no_client` and not `kill_switch_engaged`", async () => {
+    assert.equal(await discoveryStopHalt(null), "no_client");
+    assert.equal(await discoveryStopHalt(undefined), "no_client");
+  });
+
+  it("N2. a flag that reads ON is served OFF when the stop's state cannot be established", async () => {
+    assert.equal(await unlessDiscoveryStopped(null, true), false);
+  });
+
+  it("C-N. CONTROL: a client we do have, stop clear, leaves an ON flag ON", async () => {
+    const db = makeFakeCandidateDb({ feature_flags: [] });
+    assert.equal(await discoveryStopHalt(db), null);
+    assert.equal(await unlessDiscoveryStopped(db, true), true);
+  });
+
+  it("C-N2. CONTROL: the halt is not a latch — `no_client` for one call does not stop the next", async () => {
+    assert.equal(await discoveryStopHalt(null), "no_client");
+    const db = makeFakeCandidateDb({ feature_flags: [] });
+    assert.equal(await discoveryStopHalt(db), null);
   });
 });
