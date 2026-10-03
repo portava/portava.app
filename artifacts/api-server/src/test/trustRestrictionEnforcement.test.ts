@@ -91,22 +91,47 @@ describe("every declared restriction type has an enforcement point", () => {
   });
 });
 
-describe("the two new gates do not invent a degraded branch the service does not have", () => {
-  it("the fail-CLOSED branch closes hosting and messaging while LEAVING the two low-risk types open", () => {
+// ── census-trust §31 — an UNREAD restriction state grants none of the four ──
+//
+// Until 2026-10-03 the fail-CLOSED branch closed hosting and messaging and LEFT
+// private_plan_access and location_plan_join OPEN ("low-risk actions"), and the
+// two gates below were written to rely on that: no degraded branch, because the
+// flag could not be false on a degraded read. Neither type is low-risk —
+// location_plan_join gates the start of a live LOCATION broadcast to a crew —
+// and an unread restriction state must never grant access. So the branch now
+// closes all four, and each gate must answer that state with the retryable
+// refusal, BEFORE its restriction message (which would accuse an unrestricted
+// user of being restricted). The behaviour is driven end to end in
+// tripCrewRosterUnreadable.test.ts (T1-T5) and tripInviteRespond.test.ts (15-17).
+describe("a degraded restriction read refuses every join, and both join gates say so retryably", () => {
+  it("the fail-CLOSED branch closes ALL FOUR restriction types", () => {
     const svc = read("../services/trust/TrustRestrictionService.ts");
-    // Asserted in CODE, not in prose. The first version of this test matched the
-    // comment that says "Low-risk actions … stay open" — and since `read` now
-    // blanks comments, that assertion was checking nothing but its own
-    // documentation. The claim the two gates depend on is a set of literal
-    // return values, so those are what is read.
-    const closed = svc.slice(svc.indexOf("failing closed on hosting/messaging") - 400);
+    // Asserted in CODE, not in prose: `read` blanks comments, and the claim the
+    // two gates depend on is a set of literal return values.
+    const closed = svc.slice(svc.indexOf("failing closed on every restriction type") - 400);
     const branch = closed.slice(closed.indexOf("return {"), closed.indexOf("degradedReason:") + 60);
     assert.match(branch, /canHost:\s*false/, "hosting must fail CLOSED");
     assert.match(branch, /canMessage:\s*false/, "messaging must fail CLOSED");
-    assert.match(
-      branch, /canJoinPrivatePlans:\s*true/,
-      "private_plan_access stays OPEN on a degraded read — which is why its gate carries no fail_closed branch",
-    );
-    assert.match(branch, /canJoinLocationPlans:\s*true/, "location_plan_join likewise");
+    assert.match(branch, /canJoinPrivatePlans:\s*false/, "private_plan_access must fail CLOSED");
+    assert.match(branch, /canJoinLocationPlans:\s*false/, "location_plan_join must fail CLOSED");
   });
+
+  for (const [label, file, marker, flag] of [
+    ["accept-invite (private_plan_access)", "../routes/trips.ts", 'router.post("/trips/:tripId/accept-invite"', "canJoinPrivatePlans"],
+    ["live-share start (location_plan_join)", "../routes/tripCrewLocation.ts", 'router.post("/trips/:tripId/crew/live-share/start"', "canJoinLocationPlans"],
+  ] as const) {
+    it(`${label}: a fail_closed read is answered degraded_unavailable BEFORE the restriction message`, () => {
+      const h = handler(read(file), marker);
+      const gate = h.indexOf(flag);
+      assert.notEqual(gate, -1, `${label}: the gate is gone`);
+      const degraded = h.indexOf('degradedReason === "fail_closed"');
+      assert.notEqual(degraded, -1, `${label}: no fail_closed branch — a degraded read would read as a restriction`);
+      const restricted = h.indexOf("trust_restriction", gate);
+      assert.ok(
+        degraded < restricted,
+        `${label}: the degraded branch must run before the restriction message, or an outage accuses the user`,
+      );
+      assert.match(h.slice(degraded, restricted), /degraded_unavailable/, `${label}: the degraded answer is the retryable code`);
+    });
+  }
 });
