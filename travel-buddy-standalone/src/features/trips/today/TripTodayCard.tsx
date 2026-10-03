@@ -18,6 +18,7 @@
  * as a quiet day: an empty card and a clean card look the same.
  */
 import React, { useCallback, useEffect, useState } from 'react';
+import { useLatestRead } from '../shared/latestRead.ts';
 import { View, Text, ActivityIndicator, StyleSheet, Pressable } from 'react-native';
 import { AlertTriangle, CloudOff, Compass, Navigation } from 'lucide-react-native';
 
@@ -43,17 +44,23 @@ export function TripTodayCard({ tripId, load = fetchTripToday, onAttention, star
   const [read, setRead] = useState<TodayRead | undefined>(undefined);
   const [navNote, setNavNote] = useState<string | null>(null);
 
+  // Latest read wins: a slower answer for a previous trip id or an earlier
+  // read must not be drawn — nor steer §17.2's switch — over a newer one (§79).
+  const begin = useLatestRead();
   const run = useCallback(async () => {
+    const current = begin();
     setRead(undefined);
     try {
       const r = await load(tripId);
+      if (!current()) return;
       setRead(r);
       onAttention?.(r.state === 'ok' ? r.today.attention.mode : null);
     } catch (e: any) {
+      if (!current()) return;
       setRead({ state: 'unavailable', detail: String(e?.message ?? 'unexpected error') });
       onAttention?.(null);
     }
-  }, [tripId, load, onAttention]);
+  }, [tripId, load, onAttention, begin]);
 
   useEffect(() => { void run(); }, [run]);
 

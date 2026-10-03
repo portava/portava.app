@@ -90,7 +90,7 @@ export default function EditTrip() {
       if (tr.ownerId !== userId) {
         // Co-hosts can manage trip settings too (same permission model as
         // trip/[id].tsx's isOwnerOrCohost checks) — only block true outsiders.
-        const role = await getTripMemberRole(id).catch(() => null);
+        const role = await getTripMemberRole(id); // an unreadable role is 'Could not load', not 'not the owner' (§79)
         if (role !== 'co_host') { setNotOwner(true); setLoading(false); return; }
       }
       setTitle(tr.title ?? '');
