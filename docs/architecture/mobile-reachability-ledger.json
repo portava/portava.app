@@ -127,8 +127,8 @@
       ]
     },
     {
-      "fn": "addMemoryItemFromUrl() @ src/services/memories.ts:286",
-      "callSite": "src/services/memories.ts:295",
+      "fn": "addMemoryItemFromUrl() @ src/services/memories.ts:287",
+      "callSite": "src/services/memories.ts:296",
       "routes": [
         "/api/memories/:id/items"
       ]
@@ -413,8 +413,8 @@
       ]
     },
     {
-      "fn": "createMemory() @ src/services/memories.ts:134",
-      "callSite": "src/services/memories.ts:139",
+      "fn": "createMemory() @ src/services/memories.ts:135",
+      "callSite": "src/services/memories.ts:140",
       "routes": [
         "/api/memories"
       ]
@@ -866,8 +866,8 @@
       ]
     },
     {
-      "fn": "getUserMemories() @ src/services/memories.ts:262",
-      "callSite": "src/services/memories.ts:270",
+      "fn": "getUserMemories() @ src/services/memories.ts:263",
+      "callSite": "src/services/memories.ts:271",
       "routes": [
         "/api/users/:userId/memories"
       ]
@@ -942,8 +942,8 @@
       ]
     },
     {
-      "fn": "likeMemory() @ src/services/memories.ts:421",
-      "callSite": "src/services/memories.ts:424",
+      "fn": "likeMemory() @ src/services/memories.ts:422",
+      "callSite": "src/services/memories.ts:425",
       "routes": [
         "/api/memories/:id/like"
       ]
@@ -1338,8 +1338,8 @@
       ]
     },
     {
-      "fn": "unlikeMemory() @ src/services/memories.ts:433",
-      "callSite": "src/services/memories.ts:436",
+      "fn": "unlikeMemory() @ src/services/memories.ts:434",
+      "callSite": "src/services/memories.ts:437",
       "routes": [
         "/api/memories/:id/like"
       ]
@@ -1456,8 +1456,8 @@
       ]
     },
     {
-      "fn": "uploadMemoryMedia() @ src/services/memories.ts:86",
-      "callSite": "src/services/memories.ts:97",
+      "fn": "uploadMemoryMedia() @ src/services/memories.ts:87",
+      "callSite": "src/services/memories.ts:98",
       "routes": [
         "/api/media/:id",
         "/api/media/upload"
@@ -15224,8 +15224,8 @@
           ]
         },
         {
-          "callSite": "src/services/memories.ts:97",
-          "clientFn": "uploadMemoryMedia() @ src/services/memories.ts:86",
+          "callSite": "src/services/memories.ts:98",
+          "clientFn": "uploadMemoryMedia() @ src/services/memories.ts:87",
           "via": [
             "literal"
           ],
@@ -16166,8 +16166,8 @@
           ]
         },
         {
-          "callSite": "src/services/memories.ts:97",
-          "clientFn": "uploadMemoryMedia() @ src/services/memories.ts:86",
+          "callSite": "src/services/memories.ts:98",
+          "clientFn": "uploadMemoryMedia() @ src/services/memories.ts:87",
           "via": [
             "literal"
           ],
@@ -16483,13 +16483,13 @@
         "GET",
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/memories.ts:445",
+      "handler": "artifacts/api-server/src/routes/memories.ts:446",
       "handlerCount": 2,
       "classification": "WIRED",
       "chain": [
         {
-          "callSite": "src/services/memories.ts:139",
-          "clientFn": "createMemory() @ src/services/memories.ts:134",
+          "callSite": "src/services/memories.ts:140",
+          "clientFn": "createMemory() @ src/services/memories.ts:135",
           "via": [
             "literal"
           ],
@@ -16497,8 +16497,8 @@
           "screens": []
         },
         {
-          "callSite": "src/services/memories.ts:210",
-          "clientFn": "getMemoryFeed() @ src/services/memories.ts:198",
+          "callSite": "src/services/memories.ts:211",
+          "clientFn": "getMemoryFeed() @ src/services/memories.ts:199",
           "via": [
             "literal"
           ],
@@ -16519,13 +16519,13 @@
         "GET",
         "PATCH"
       ],
-      "handler": "artifacts/api-server/src/routes/memories.ts:725",
+      "handler": "artifacts/api-server/src/routes/memories.ts:726",
       "handlerCount": 3,
       "classification": "WIRED",
       "chain": [
         {
-          "callSite": "src/services/memories.ts:178",
-          "clientFn": "getMemory() @ src/services/memories.ts:173",
+          "callSite": "src/services/memories.ts:179",
+          "clientFn": "getMemory() @ src/services/memories.ts:174",
           "via": [
             "literal"
           ],
@@ -16539,8 +16539,8 @@
           ]
         },
         {
-          "callSite": "src/services/memories.ts:388",
-          "clientFn": "updateMemory() @ src/services/memories.ts:382",
+          "callSite": "src/services/memories.ts:389",
+          "clientFn": "updateMemory() @ src/services/memories.ts:383",
           "via": [
             "literal"
           ],
@@ -16552,8 +16552,8 @@
           ]
         },
         {
-          "callSite": "src/services/memories.ts:409",
-          "clientFn": "deleteMemory() @ src/services/memories.ts:406",
+          "callSite": "src/services/memories.ts:410",
+          "clientFn": "deleteMemory() @ src/services/memories.ts:407",
           "via": [
             "literal"
           ],
@@ -16571,13 +16571,13 @@
       "methods": [
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/memories.ts:914",
+      "handler": "artifacts/api-server/src/routes/memories.ts:1013",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
         {
-          "callSite": "src/services/memories.ts:295",
-          "clientFn": "addMemoryItemFromUrl() @ src/services/memories.ts:286",
+          "callSite": "src/services/memories.ts:296",
+          "clientFn": "addMemoryItemFromUrl() @ src/services/memories.ts:287",
           "via": [
             "literal"
           ],
@@ -16585,8 +16585,8 @@
           "screens": []
         },
         {
-          "callSite": "src/services/memories.ts:328",
-          "clientFn": "addMemoryItem() @ src/services/memories.ts:316",
+          "callSite": "src/services/memories.ts:329",
+          "clientFn": "addMemoryItem() @ src/services/memories.ts:317",
           "via": [
             "literal"
           ],
@@ -16604,13 +16604,13 @@
       "methods": [
         "DELETE"
       ],
-      "handler": "artifacts/api-server/src/routes/memories.ts:960",
+      "handler": "artifacts/api-server/src/routes/memories.ts:1068",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
         {
-          "callSite": "src/services/memories.ts:357",
-          "clientFn": "deleteMemoryItem() @ src/services/memories.ts:351",
+          "callSite": "src/services/memories.ts:358",
+          "clientFn": "deleteMemoryItem() @ src/services/memories.ts:352",
           "via": [
             "literal"
           ],
@@ -16629,13 +16629,13 @@
         "DELETE",
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/memories.ts:1117",
+      "handler": "artifacts/api-server/src/routes/memories.ts:1225",
       "handlerCount": 2,
       "classification": "WIRED",
       "chain": [
         {
-          "callSite": "src/services/memories.ts:424",
-          "clientFn": "likeMemory() @ src/services/memories.ts:421",
+          "callSite": "src/services/memories.ts:425",
+          "clientFn": "likeMemory() @ src/services/memories.ts:422",
           "via": [
             "literal"
           ],
@@ -16643,8 +16643,8 @@
           "screens": []
         },
         {
-          "callSite": "src/services/memories.ts:436",
-          "clientFn": "unlikeMemory() @ src/services/memories.ts:433",
+          "callSite": "src/services/memories.ts:437",
+          "clientFn": "unlikeMemory() @ src/services/memories.ts:434",
           "via": [
             "literal"
           ],
@@ -16659,7 +16659,7 @@
         "DELETE",
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/memories.ts:1185",
+      "handler": "artifacts/api-server/src/routes/memories.ts:1293",
       "handlerCount": 2,
       "classification": "DEAD ENDPOINT",
       "chain": []
@@ -16669,7 +16669,7 @@
       "methods": [
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/memories.ts:1244",
+      "handler": "artifacts/api-server/src/routes/memories.ts:1352",
       "handlerCount": 1,
       "classification": "DEAD ENDPOINT",
       "chain": []
@@ -16679,7 +16679,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "artifacts/api-server/src/routes/memories.ts:1025",
+      "handler": "artifacts/api-server/src/routes/memories.ts:1133",
       "handlerCount": 1,
       "classification": "DEAD ENDPOINT",
       "chain": []
@@ -16689,7 +16689,7 @@
       "methods": [
         "PATCH"
       ],
-      "handler": "artifacts/api-server/src/routes/memories.ts:1071",
+      "handler": "artifacts/api-server/src/routes/memories.ts:1179",
       "handlerCount": 1,
       "classification": "DEAD ENDPOINT",
       "chain": []
@@ -26437,13 +26437,13 @@
         "GET",
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/memories.ts:1256",
+      "handler": "artifacts/api-server/src/routes/memories.ts:1364",
       "handlerCount": 2,
       "classification": "WIRED",
       "chain": [
         {
-          "callSite": "src/services/memories.ts:226",
-          "clientFn": "createTripMemory() @ src/services/memories.ts:221",
+          "callSite": "src/services/memories.ts:227",
+          "clientFn": "createTripMemory() @ src/services/memories.ts:222",
           "via": [
             "literal"
           ],
@@ -26455,8 +26455,8 @@
           ]
         },
         {
-          "callSite": "src/services/memories.ts:248",
-          "clientFn": "getTripMemory() @ src/services/memories.ts:243",
+          "callSite": "src/services/memories.ts:249",
+          "clientFn": "getTripMemory() @ src/services/memories.ts:244",
           "via": [
             "literal"
           ],
@@ -27923,13 +27923,13 @@
       "methods": [
         "GET"
       ],
-      "handler": "artifacts/api-server/src/routes/memories.ts:1407",
+      "handler": "artifacts/api-server/src/routes/memories.ts:1515",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
         {
-          "callSite": "src/services/memories.ts:270",
-          "clientFn": "getUserMemories() @ src/services/memories.ts:262",
+          "callSite": "src/services/memories.ts:271",
+          "clientFn": "getUserMemories() @ src/services/memories.ts:263",
           "via": [
             "literal"
           ],

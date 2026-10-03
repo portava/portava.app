@@ -388,10 +388,10 @@ Full per-route detail, including the resolved chain for each wired route, is in
 | GET | `/api/media/:id/comments` | `artifacts/api-server/src/routes/mediaFeed.ts:2305` |
 | POST | `/api/media/:id/view` | `artifacts/api-server/src/routes/mediaFeed.ts:1849` |
 | GET | `/api/media/file/:bucket/*path` | `artifacts/api-server/src/routes/mediaFile.ts:139` |
-| DELETE, POST | `/api/memories/:id/save` | `artifacts/api-server/src/routes/memories.ts:1185` |
-| POST | `/api/memories/:id/share` | `artifacts/api-server/src/routes/memories.ts:1244` |
-| GET | `/api/memories/:id/tags` | `artifacts/api-server/src/routes/memories.ts:1025` |
-| PATCH | `/api/memories/:id/tags/:userId` | `artifacts/api-server/src/routes/memories.ts:1071` |
+| DELETE, POST | `/api/memories/:id/save` | `artifacts/api-server/src/routes/memories.ts:1293` |
+| POST | `/api/memories/:id/share` | `artifacts/api-server/src/routes/memories.ts:1352` |
+| GET | `/api/memories/:id/tags` | `artifacts/api-server/src/routes/memories.ts:1133` |
+| PATCH | `/api/memories/:id/tags/:userId` | `artifacts/api-server/src/routes/memories.ts:1179` |
 | GET | `/api/og/:type/:id` | `artifacts/api-server/src/routes/og.ts:373` |
 | GET | `/api/og/:type/:id/image.png` | `artifacts/api-server/src/routes/og.ts:462` |
 | GET | `/api/passport/:userId/journeys` | `artifacts/api-server/src/routes/passport.ts:1554` |

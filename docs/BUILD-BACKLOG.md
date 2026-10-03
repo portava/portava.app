@@ -115,7 +115,7 @@ Format: `- [lane] file:line — what is wrong, and what the user sees.`
   `NarrativeDerivative` at `:457`), NOT in
   `domain/telegraph/projections/projectionRegistry.ts`, which is a different
   180-line file.
-- [hm] `artifacts/api-server/src/routes/memories.ts:2599` — `GET
+- [hm] `artifacts/api-server/src/routes/memories.ts:2707` — `GET
   /memories/:id`'s sibling reads in `routes/highlights.ts` still discard
   `viewedRows`, `avatar_url` and `profileRows` on the two proactive feeds
   (census §O.4's own "what this did NOT find"). Engagement and identity, not
