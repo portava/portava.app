@@ -946,11 +946,16 @@ describe("getRestrictionState degraded-read semantics", () => {
   });
 
   it("missing-table TUPLE fails OPEN, flags degraded, and reports on warn only", async () => {
-    // All three shapes the shared classifier recognises for this same table.
+    // The shapes that mean the TABLE ITSELF is absent — and only those. Postgres
+    // answers an absent relation with 42P01; PostgREST answers a table it cannot
+    // find in its schema cache with PGRST205; a code-less error is read by the
+    // exact Postgres wording and nothing looser. (Until 2026-10-03 this list
+    // also held PGRST204 and a PGRST500 whose text said "DOES NOT EXIST" — the
+    // next case says why each of those is now a fail-CLOSED read.)
     const missingTableErrors = [
       { code: "42P01", message: 'relation "trust_restrictions" does not exist' },
-      { code: "PGRST204", message: "schema cache miss" },
-      { code: "PGRST500", message: "Table trust_restrictions DOES NOT EXIST in schema" },
+      { code: "PGRST205", message: "Could not find the table 'public.trust_restrictions' in the schema cache" },
+      { code: "", message: 'relation "public.trust_restrictions" does not exist' },
     ];
 
     for (const error of missingTableErrors) {
@@ -981,7 +986,44 @@ describe("getRestrictionState degraded-read semantics", () => {
     }
   });
 
-  it("transient-failure TUPLE fails CLOSED on hosting/messaging, flags degraded, reports on error only", async () => {
+  // ── An error that MENTIONS "does not exist" is not an absent table ─────────
+  //
+  // The classifier used to answer "missing table" for PGRST204 and for ANY
+  // message containing "does not exist". PGRST204 is PostgREST's COLUMN-not-
+  // found code; Postgres says "column trust_restrictions.lifted_at does not
+  // exist" (42703) for a dropped or renamed column, and "operator does not
+  // exist: …" (42883) for a type drift in the expires_at filter. Every one of
+  // those was read as "the feature was never migrated" and answered FAIL-OPEN:
+  // every restriction in the system stopped being enforced, logged at warn, for
+  // as long as the drift lasted. A table that EXISTS but cannot be read is the
+  // definition of an unread restriction state, so each of these now fails
+  // CLOSED on all four types.
+  it("a COLUMN, operator or other coded 'does not exist' error is NOT an absent table — fails CLOSED on all four types", async () => {
+    const notAbsentTable = [
+      { code: "PGRST204", message: "Could not find the 'lifted_at' column of 'trust_restrictions' in the schema cache" },
+      { code: "42703", message: "column trust_restrictions.lifted_at does not exist" },
+      { code: "42883", message: "operator does not exist: timestamp with time zone > text" },
+      { code: "PGRST500", message: "Table trust_restrictions DOES NOT EXIST in schema" },
+      { code: "", message: "TypeError: fetch failed" },
+    ];
+    for (const error of notAbsentTable) {
+      const db = makeRestrictionQueryClient({ kind: "tuple", data: null, error });
+      const { result: state, warns, errors } = await captureTrustLogs(() =>
+        getRestrictionState(db, USER_A),
+      );
+      const tag = `${error.code || "(no code)"} ${error.message}`;
+      assert.equal(state.canHost, false, `${tag}: hosting must fail CLOSED`);
+      assert.equal(state.canMessage, false, `${tag}: messaging must fail CLOSED`);
+      assert.equal(state.canJoinPrivatePlans, false, `${tag}: private_plan_access must fail CLOSED`);
+      assert.equal(state.canJoinLocationPlans, false, `${tag}: location_plan_join must fail CLOSED`);
+      assert.equal(state.degraded, true, tag);
+      assert.equal(state.degradedReason, "fail_closed", `${tag}: an unread table is not a never-migrated one`);
+      assert.equal(errors.length, 1, `${tag}: an unenforceable restriction state is an ERROR`);
+      assert.equal(warns.length, 0, `${tag}: not the missing-table warn`);
+    }
+  });
+
+  it("transient-failure TUPLE fails CLOSED on ALL FOUR types, flags degraded, reports on error only", async () => {
     const error = { code: "57014", message: "canceling statement due to statement timeout" };
     const db = makeRestrictionQueryClient({ kind: "tuple", data: null, error });
     const { result: state, warns, errors } = await captureTrustLogs(() =>
@@ -990,8 +1032,12 @@ describe("getRestrictionState degraded-read semantics", () => {
 
     assert.equal(state.canHost, false, "high-risk action fails closed on a DB error");
     assert.equal(state.canMessage, false, "high-risk action fails closed on a DB error");
-    assert.equal(state.canJoinPrivatePlans, true, "low-risk actions stay open");
-    assert.equal(state.canJoinLocationPlans, true, "low-risk actions stay open");
+    // These two used to stay OPEN ("low-risk actions"). They are not low-risk:
+    // location_plan_join gates the start of a live LOCATION broadcast to a
+    // trip's crew, and private_plan_access gates joining a private trip. An
+    // unread restriction state must not grant either.
+    assert.equal(state.canJoinPrivatePlans, false, "an unread restriction state never grants a private-plan join");
+    assert.equal(state.canJoinLocationPlans, false, "an unread restriction state never grants a live location share");
     assert.deepEqual(state.activeRestrictions, []);
     assert.equal(state.degraded, true);
     assert.equal(
@@ -1028,8 +1074,8 @@ describe("getRestrictionState degraded-read semantics", () => {
 
     assert.equal(state.canHost, false);
     assert.equal(state.canMessage, false);
-    assert.equal(state.canJoinPrivatePlans, true);
-    assert.equal(state.canJoinLocationPlans, true);
+    assert.equal(state.canJoinPrivatePlans, false);
+    assert.equal(state.canJoinLocationPlans, false);
     assert.equal(state.degraded, true);
     assert.equal(state.degradedReason, "fail_closed", "a thrown failure is still a fail_closed guess");
     assert.equal(errors.length, 1);

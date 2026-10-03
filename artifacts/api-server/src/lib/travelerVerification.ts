@@ -234,11 +234,13 @@ export function applyVerifiedAgeSignal(
 /**
  * Read the user's decided verification results.
  *
- * Deliberately a plain `select/eq/order/limit` list read: no `.not()` filter, so
- * the undecided rows arrive too and `verifiedAgeSignalFromRows` — which is pure
- * and directly testable — makes the whole decision. A thrown client (a table the
- * caller's Supabase client cannot address at all) is `verificationUnreadable`,
- * not "clean".
+ * The first read is a plain `select/eq/order/limit` list read: no `.not()`
+ * filter, so the undecided rows arrive too and `verifiedAgeSignalFromRows` —
+ * which is pure and directly testable — makes the whole decision. Only when that
+ * page is FULL and holds no decided row does a second, `.not("is_over_18", "is",
+ * null)` read fetch the newest decided one (census-trust §31), and its answer
+ * goes through the same pure function. A thrown client (a table the caller's
+ * Supabase client cannot address at all) is `verificationUnreadable`, not "clean".
  */
 export async function readVerifiedAgeSignal(db: any, userId: string): Promise<VerifiedAgeSignal> {
   try {
@@ -248,16 +250,42 @@ export async function readVerifiedAgeSignal(db: any, userId: string): Promise<Ve
       .eq("user_id", userId)
       .order("created_at", { ascending: false })
       .limit(VERIFIED_AGE_SCAN_LIMIT);
+    if (!error && windowIsFullAndUndecided(data)) {
+      // census-trust §31. A FULL window with no decided row does not say "no
+      // decided row": the newest one may sit just past it. Undecided sessions
+      // are cheap to create (a verified minor only has to open 50 more), and
+      // reading "nothing decided in the newest 50" as "nothing decided" handed
+      // every 18+ gate back to the typed birthday. Ask for the newest DECIDED
+      // row directly; a failure here is an outage like any other.
+      const older = await db
+        .from("identity_verifications")
+        .select(VERIFIED_AGE_COLUMNS)
+        .eq("user_id", userId)
+        .not("is_over_18", "is", null)
+        .order("created_at", { ascending: false })
+        .limit(1);
+      return verifiedAgeSignalFromRows(older?.data as any, older?.error ?? null);
+    }
     return verifiedAgeSignalFromRows(data as any, error);
   } catch (err) {
     return verifiedAgeSignalFromRows(null, err ?? new Error("identity_verifications read threw"));
   }
 }
 
+/** True when the scan returned a full page and none of it is a decided result. */
+function windowIsFullAndUndecided(rows: unknown): boolean {
+  return (
+    Array.isArray(rows) &&
+    rows.length >= VERIFIED_AGE_SCAN_LIMIT &&
+    !rows.some((r: any) => typeof r?.["is_over_18"] === "boolean")
+  );
+}
+
 /**
  * How many of a user's verification rows are read to find the newest decided
  * one. `routes/verification.ts` rate-limits session creation to 3 per user per
- * 24h, so 50 rows is well over two weeks of maximum-rate attempts and the
- * newest decided row is inside it in every realistic case.
+ * 24h (in memory, per process), so 50 rows is over two weeks of maximum-rate
+ * attempts. It is a page size, not a guarantee: a full page with no decided row
+ * is followed by a direct read for the newest decided one (census-trust §31).
  */
 const VERIFIED_AGE_SCAN_LIMIT = 50;

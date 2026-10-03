@@ -221,13 +221,15 @@ export function SettingsRow({
 }
 
 export function ToggleRow({
-  title, subtitle, value, onValueChange, disabled,
+  title, subtitle, value, onValueChange, disabled, switchTestID,
 }: {
   title: string;
   subtitle?: string;
   value: boolean;
   onValueChange: (v: boolean) => void;
   disabled?: boolean;
+  /** testID for the Switch itself, so a test can read its value and disabled state. */
+  switchTestID?: string;
 }) {
   return (
     <SettingsRow
@@ -238,6 +240,7 @@ export function ToggleRow({
           value={value}
           onValueChange={onValueChange}
           disabled={disabled}
+          testID={switchTestID}
           trackColor={{ true: PP.inkLight, false: PP.paperShadow }}
           thumbColor="#FFFFFF"
         />

@@ -29,6 +29,7 @@ import { usePlanPicker } from '../../src/components/PlanPickerController';
 import { RichText } from '../../src/components/RichText';
 import { color, space, radius, type as t, shadow, avatar } from '../../src/theme/tokens';
 import { addMeetupToCalendar } from '../../src/services/calendar';
+import { ageRefusalPresentation } from '../../src/lib/ageRefusal';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 import { NavBarFiller } from '../../src/hooks/useNavBarCollapse';
 
@@ -355,16 +356,23 @@ export default function MeetupScreen() {
     if (!id || actioning) return;
     setActioning(`rsvp_${status}`);
     const res = await rsvpMeetup(id, status);
+    // census-trust §31 (TV-5b): every age refusal the server sends is NAMED —
+    // including `not_verified_adult`, the verified-minor refusal, which used to
+    // reach this screen only as an unlabelled "Cannot join" alert.
+    const age = !res.ok ? ageRefusalPresentation(res.reason, res.message, 'meetup') : null;
     if (res.ok && res.data) {
       setMeetup((prev) => prev ? { ...prev, myRsvp: res.data!.status, counts: res.data!.counts } : prev);
-    } else if (!res.ok && res.reason === 'dob_missing') {
+    } else if (age) {
+      const action = age.action;
       Alert.alert(
-        'Date of birth required',
-        'This meetup has an age limit. Add your date of birth to your profile to join.',
-        [
-          { text: 'Not now', style: 'cancel' },
-          { text: 'Go to profile', onPress: () => router.push('/profile/edit' as any) },
-        ],
+        age.title,
+        age.body,
+        action
+          ? [
+              { text: 'Not now', style: 'cancel' },
+              { text: action.label, onPress: () => router.push(action.route as any) },
+            ]
+          : undefined,
       );
     } else {
       Alert.alert('Cannot join', res.message ?? 'Could not RSVP');

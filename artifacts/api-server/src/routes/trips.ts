@@ -1324,12 +1324,8 @@ router.post("/trips/:tripId/accept-invite", async (req, res) => {
   // IS joining a private plan; a public trip is not one, so the restriction does
   // not touch it.
   //
-  // The degraded branch is deliberately absent here, and that is not an
-  // oversight: getRestrictionState fails OPEN for this type on purpose
-  // (TrustRestrictionService:207-214, "Low-risk actions (private_plan_access,
-  // location_plan_join) stay open"), so canJoinPrivatePlans is `true` on an
-  // unreadable read and this gate cannot fire on a degraded one. The hosting
-  // gate above needs its degraded branch because hosting fails CLOSED.
+  // census-trust §31: a DEGRADED read refuses this type too (it used to stay OPEN
+  // as "low-risk"), so it is answered retryably here, never as a restriction.
   const { data: tripVis, error: tripVisErr } = await client
     .from("trips").select("visibility").eq("id", tripId).maybeSingle();
   if (tripVisErr) {
@@ -1339,6 +1335,10 @@ router.post("/trips/:tripId/accept-invite", async (req, res) => {
   const isPrivatePlan = ["private", "invite"].includes(String((tripVis as any)?.visibility ?? "private"));
   if (isPrivatePlan) {
     const inviteTrust = await getRestrictionState(client, user.id);
+    if (inviteTrust.degradedReason === "fail_closed") {
+      sendError(res, "degraded_unavailable", "We could not verify your permissions right now. Please try again shortly.");
+      return;
+    }
     if (!inviteTrust.canJoinPrivatePlans) {
       res.status(403).json({
         error: "trust_restriction",
