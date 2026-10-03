@@ -72,7 +72,7 @@ import { LivePulseCard } from '../../src/components/map/LivePulseCard.tsx';
 import { MapHeader, mapHeaderStackOffset } from '../../src/components/map/MapHeader.tsx';
 import { MapFilterChips, MAP_FILTER_CHIPS_HEIGHT } from '../../src/components/map/MapFilterChips.tsx';
 import { homeVisibleObjects, homeChipCounts } from '../../src/features/map/home/homeFilters.ts';
-import { getLivePulseItems, type LivePulseItem } from '../../src/services/livePulse.ts';
+import { getLivePulseItems, type LivePulseItem } from '../../src/services/livePulse.ts'; import { pulseCardAnswer } from '../../src/features/map/pulse/pulseCardAnswer.ts';  // census-discovery §119 (B31)
 import { OptimizeTodaySheet } from '../../src/components/map/OptimizeTodaySheet.tsx';
 import {
   tripToMapObjects,
@@ -1313,7 +1313,7 @@ function FullScreenMapScreenInner() {
   // card itself decides WHICH item is most important, via the pure
   // selectHeadlinePulseItem, so that choice is deterministic and testable rather
   // than baked into this screen.
-  const [pulseItems, setPulseItems] = useState<LivePulseItem[]>([]);
+  const [pulseItems, setPulseItems] = useState<LivePulseItem[]>([]); const [pulseUnread, setPulseUnread] = useState<string[]>([]);  // census-discovery §119 (DV-83 round 22, B31): what /pulse/live could not read
   useEffect(() => {
     if (mode === 'passport') return;
     let cancelled = false;
@@ -1334,7 +1334,7 @@ function FullScreenMapScreenInner() {
         lng: query.lng,
         citySlug: query.citySlug,
       }).catch(() => null);
-      if (!cancelled && res && res.ok) setPulseItems(res.items);
+      if (!cancelled) { const a = pulseCardAnswer(res); setPulseItems(a.items); setPulseUnread(a.unread); }  // §119 (B31): failedSources reach the card; a failed read keeps no earlier camera's items, and is said
     })();
     return () => { cancelled = true; };
   }, [mode, machine.mode, cameraCenter]);
@@ -2739,9 +2739,9 @@ function FullScreenMapScreenInner() {
           surfaces use — rather than this screen inventing its own routing.
           Hidden while a Compass query or a selection already owns the bottom
           of the screen; §3 says cards must not permanently consume the viewport. */}
-      {pulseItems.length > 0 && !compassQuery && !selectedObject ? (
+      {(pulseItems.length > 0 || pulseUnread.length > 0) && !compassQuery && !selectedObject ? (  /* §119 (B31) */
         <LivePulseCard
-          items={pulseItems}
+          items={pulseItems} failedSources={pulseUnread}
           bottomInset={insets.bottom + 96}
           onDeepLink={(deepLink, item) => {
             if (deepLink.mode) dispatchMapEvent({ type: 'ENTER_MODE', mode: deepLink.mode });
