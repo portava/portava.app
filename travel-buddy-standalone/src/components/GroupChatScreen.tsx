@@ -646,9 +646,9 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
           style={styles.headerIconBtn}
           accessibilityLabel={threadMuted ? 'Unmute thread' : 'Mute thread'}
           onPress={async () => {
-            const next = !threadMuted;
-            const res = await muteThread(id, next);
-            if (res.ok) setThreadMuted(next);
+            const next = !threadMuted; const tid = thread?.id; // the THREAD id: `id` is the trip/circle id, so this used to mute nothing
+            const res = tid ? await muteThread(tid, next) : { ok: false as const, message: 'This conversation is not open yet.' };
+            if (res.ok) setThreadMuted(next); else Alert.alert(next ? 'Could not mute' : 'Could not unmute', res.message ?? 'Nothing was changed. Please try again.');
           }}
         >
           <VolumeX size={18} color={threadMuted ? color.signal : color.mute} />

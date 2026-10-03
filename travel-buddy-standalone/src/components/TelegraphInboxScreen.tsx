@@ -24,7 +24,7 @@ import { useScreenTiming } from '../hooks/useScreenTiming.ts';
 import type { ThreadSummary, MessageRequest } from '../services/messaging.ts';
 import { circleCardInboxPreview } from './CircleStatusCardMessage.logic';
 import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity.ts';
-import { originLabel } from '../features/telegraph/lib/requestOriginLabel.ts'; import { TelegraphConnectionBanner } from '../features/telegraph/connection/TelegraphConnectionBanner.tsx';
+import { originLabel } from '../features/telegraph/lib/requestOriginLabel.ts'; import { blockFailedCopy } from '../features/telegraph/messageActions/messageActionRules.ts'; import { TelegraphConnectionBanner } from '../features/telegraph/connection/TelegraphConnectionBanner.tsx';
 import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
 import { errorCopy } from '../lib/errorCopy.ts'; import { typedKindPreviewLabel } from '../features/telegraph/inbox/typedPreviewLabels.ts'; // one line, on purpose: census-telegraph cites this file at :33, :222, :226 and :457.
 // Telegraph §21 — object-aware, authorization-scoped message search. A
@@ -99,7 +99,7 @@ function navigateToThread(item: ThreadSummary) {
         ? primaryIdentityText({ name: otherForTitle.name, handle: otherForTitle.handle })
         : (isRentBuddy ? 'Buddy Booking' : ''))
     : (item.title ?? '');
-  const params = new URLSearchParams({ title, threadType: item.threadType });
+  const params = new URLSearchParams({ title, threadType: item.threadType }); if (item.mutedAt) params.set('muted', '1'); // the thread opens showing the mute the server holds
   if (item.tripId) params.set('contextId', item.tripId);
   else if (item.circleOwnerId) params.set('contextId', item.circleOwnerId);
   else if (isRentBuddy && (item as any).bookingId) params.set('contextId', (item as any).bookingId);
@@ -710,8 +710,8 @@ function RequestCard({
           style: 'destructive',
           onPress: async () => {
             setBlocking(true);
-            await blockUser(request.sender!.id);
-            await onDecline(); // remove from list after block
+            const blocked = await blockUser(request.sender!.id); // a block that failed must not look like one
+            if (blocked.ok) await onDecline(); else Alert.alert('Could not block', blockFailedCopy(blocked.error)); // decline only once blocked
             setBlocking(false);
           },
         },

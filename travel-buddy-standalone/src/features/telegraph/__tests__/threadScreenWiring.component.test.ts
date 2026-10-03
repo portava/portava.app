@@ -41,3 +41,32 @@ describe('read state — both screens use the shared hook, and read nothing them
     expect(group).not.toMatch(/deriveReceiptState\(/);
   });
 });
+
+describe('thread controls — each acts on what the server answered', () => {
+  it('the trip chat mutes the THREAD, not the trip or circle id it was opened with', () => {
+    expect(group).not.toMatch(/muteThread\(id, next\)/);
+    expect(group).toMatch(/const tid = thread\?\.id;[\s\S]{0,200}muteThread\(tid, next\)/);
+  });
+
+  it('every mute toggle flips only on success, and says so on failure', () => {
+    for (const src of [dm, group]) {
+      expect(src).not.toMatch(/await muteThread\([^)]*\);\s*setThread(Is)?Muted\(next\);/);
+    }
+    expect((dm.match(/if \(r\.ok\) setThreadIsMuted\(next\); else Alert\.alert\(/g) ?? []).length).toBe(2);
+    expect(group).toMatch(/if \(res\.ok\) setThreadMuted\(next\); else Alert\.alert\(/);
+  });
+
+  it('leaving (and deleting for me) navigates away only once the server let you go', () => {
+    expect(dm).not.toMatch(/await leaveThread\(id \?\? ''\);\s*router\.replace\('\/messages'\);/);
+    expect((dm.match(/if \(left\.ok\) router\.replace\('\/messages'\); else Alert\.alert\(/g) ?? []).length).toBe(2);
+  });
+
+  it('a conversation report says whether it was filed', () => {
+    expect(dm).not.toMatch(/onReport=\{async \(reason: string\) => \{\s*await reportThread\(id \?\? '', reason\);\s*\}\}/);
+    expect(dm).toMatch(/const r = await reportThread\(id \?\? '', reason\); Alert\.alert\(r\.ok \? 'Report submitted' : 'Report not sent'/);
+  });
+
+  it('the thread screen starts from the mute state the inbox read from the server', () => {
+    expect(dm).toMatch(/useState\(muted === '1'\)/);
+  });
+});

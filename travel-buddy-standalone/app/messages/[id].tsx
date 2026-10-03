@@ -81,7 +81,7 @@ import { TelegraphRecommendationCard } from '../../src/components/TelegraphRecom
 import type { TelegraphSuggestion, MeetupPrefill } from '../../src/services/telegraphChat';
 import { blockUser } from '../../src/services/blocks';
 import { sendFeedback } from '../../src/services/intelligence';
-import { MessageReportSheet } from '../../src/features/telegraph/messageActions/MessageReportSheet.tsx'; import { ThreadActionSheets } from '../../src/features/telegraph/messageActions/ThreadActionSheets.tsx'; import { canEditMessage, canViewEditHistory } from '../../src/features/telegraph/messageActions/messageActionRules.ts'; import { CancelRequestButton } from '../../src/features/telegraph/requests/CancelRequestButton.tsx'; // WP-08, one line: see ThreadActionSheets for why
+import { MessageReportSheet } from '../../src/features/telegraph/messageActions/MessageReportSheet.tsx'; import { ThreadActionSheets } from '../../src/features/telegraph/messageActions/ThreadActionSheets.tsx'; import { canEditMessage, canViewEditHistory, blockFailedCopy } from '../../src/features/telegraph/messageActions/messageActionRules.ts'; import { CancelRequestButton } from '../../src/features/telegraph/requests/CancelRequestButton.tsx'; // WP-08, one line: see ThreadActionSheets for why
 import { TripWishlistPicker, type AddToTripPayload } from '../../src/components/discovery/TripWishlistPicker';
 import { TranslationSettingsSheet } from '../../src/components/TranslationSettingsSheet';
 import { MentionInput, type MentionInputHandle } from '../../src/components/MentionInput';
@@ -1201,7 +1201,7 @@ interface MeetupSheetCtx {
 }
 
 export default function TelegraphThread() {
-  const { id, title, threadType, contextId, otherUserId } = useLocalSearchParams<{ id: string; title?: string; threadType?: string; contextId?: string; otherUserId?: string }>();
+  const { id, title, threadType, contextId, otherUserId, muted } = useLocalSearchParams<{ id: string; title?: string; threadType?: string; contextId?: string; otherUserId?: string; muted?: string }>();
   const insets = useSafeAreaInsets();
   const { userId } = useSession();
   const { messages, loading, error, sending, send, reload, typingUserIds, notifyTyping, retrySend } = useThreadMessages(id ?? null);
@@ -1222,7 +1222,7 @@ export default function TelegraphThread() {
   const [blockingUser, setBlockingUser] = useState(false);
   const [showSafetySheet, setShowSafetySheet] = useState(false);
   const [hideAiSuggestions, setHideAiSuggestions] = useState(false);
-  const [threadIsMuted, setThreadIsMuted] = useState(false);
+  const [threadIsMuted, setThreadIsMuted] = useState(muted === '1'); // the inbox passes the server's mutedAt; it used to start "unmuted" always
   // E-2: whether the thread uses end-to-end encryption
   const [isE2ee, setIsE2ee] = useState(false);
   const [showCompassTray, setShowCompassTray] = useState(false);
@@ -1266,9 +1266,9 @@ export default function TelegraphThread() {
           style: 'destructive',
           onPress: async () => {
             setBlockingUser(true);
-            await blockUser(otherUserId);
+            const blocked = await blockUser(otherUserId); // a block that failed must not look like one
             setBlockingUser(false);
-            router.replace('/messages');
+            if (blocked.ok) router.replace('/messages'); else Alert.alert('Could not block', blockFailedCopy(blocked.error));
           },
         },
       ],
@@ -1991,8 +1991,8 @@ export default function TelegraphThread() {
               accessibilityLabel={threadIsMuted ? 'Unmute thread' : 'Mute thread'}
               onPress={async () => {
                 const next = !threadIsMuted;
-                await muteThread(id ?? '', next);
-                setThreadIsMuted(next);
+                const r = await muteThread(id ?? '', next); // the icon shows what the server holds, not what was asked
+                if (r.ok) setThreadIsMuted(next); else Alert.alert(next ? 'Could not mute' : 'Could not unmute', r.message ?? 'Nothing was changed. Please try again.');
               }}
             >
               <VolumeX size={18} color={threadIsMuted ? color.signal : color.mute} />
@@ -2554,33 +2554,33 @@ export default function TelegraphThread() {
         isMuted={threadIsMuted}
         onToggleMute={async () => {
           const next = !threadIsMuted;
-          await muteThread(id ?? '', next);
-          setThreadIsMuted(next);
+          const r = await muteThread(id ?? '', next); // the toggle shows what the server holds, not what was asked
+          if (r.ok) setThreadIsMuted(next); else Alert.alert(next ? 'Could not mute' : 'Could not unmute', r.message ?? 'Nothing was changed. Please try again.');
         }}
         hideAiSuggestions={hideAiSuggestions}
         onToggleHideAi={toggleHideAiSuggestions}
         onBlock={isDirect && otherUserId ? async () => {
           setShowSafetySheet(false);
           setBlockingUser(true);
-          await blockUser(otherUserId);
+          const blocked = await blockUser(otherUserId); // a block that failed must not look like one
           setBlockingUser(false);
-          router.replace('/messages');
+          if (blocked.ok) router.replace('/messages'); else Alert.alert('Could not block', blockFailedCopy(blocked.error));
         } : undefined}
         onLeave={!isDirect ? async () => {
           await clearTelegraphSuggestionsCache(id ?? '');
-          await leaveThread(id ?? '');
-          router.replace('/messages');
+          const left = await leaveThread(id ?? ''); // leave the screen only once the server has let you go
+          if (left.ok) router.replace('/messages'); else Alert.alert('Could not leave', left.message ?? 'You are still in this conversation. Please try again.');
         } : undefined}
         onDeleteForMe={isDirect ? async () => {
           // Direct threads only: leaving a DM removes it from your inbox
           // without affecting the other person. Group threads already have
           // "Leave group" — a second identical destructive item was misleading.
           await clearTelegraphSuggestionsCache(id ?? '');
-          await leaveThread(id ?? '');
-          router.replace('/messages');
+          const left = await leaveThread(id ?? ''); // remove it only once the server has
+          if (left.ok) router.replace('/messages'); else Alert.alert('Could not delete', left.message ?? 'The conversation is still in your inbox. Please try again.');
         } : undefined}
         onReport={async (reason: string) => {
-          await reportThread(id ?? '', reason);
+          const r = await reportThread(id ?? '', reason); Alert.alert(r.ok ? 'Report submitted' : 'Report not sent', r.ok ? 'Thank you — our team will review this conversation.' : (r.message ?? 'Nothing was filed. Please try again.'));
         }}
       />
 
@@ -2599,7 +2599,7 @@ export default function TelegraphThread() {
             else Alert.alert('Error', r.message ?? 'Could not save message.');
           });
         }}
-        onUnsent={() => { void reload(); }} onEdit={(m) => setEditingMsg(m)} onHistory={(m) => setHistoryMsg(m)} canEdit={canEditMessage(actionMsg, actionMsgMine, isE2ee)} blockLabel={isDirect && otherUserId ? 'Block this person' : undefined} onBlockSender={isDirect && otherUserId ? () => { void (async () => { setBlockingUser(true); await blockUser(otherUserId); setBlockingUser(false); router.replace('/messages'); })(); } : undefined}
+        onUnsent={() => { void reload(); }} onEdit={(m) => setEditingMsg(m)} onHistory={(m) => setHistoryMsg(m)} canEdit={canEditMessage(actionMsg, actionMsgMine, isE2ee)} blockLabel={isDirect && otherUserId ? 'Block this person' : undefined} onBlockSender={isDirect && otherUserId ? () => { void (async () => { setBlockingUser(true); const blocked = await blockUser(otherUserId); setBlockingUser(false); if (blocked.ok) router.replace('/messages'); else Alert.alert('Could not block', blockFailedCopy(blocked.error)); })(); } : undefined}
         receipt={actionMsgReceipt}
       />
 
