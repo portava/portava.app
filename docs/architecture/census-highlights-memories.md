@@ -988,7 +988,7 @@ not touched, queried or altered.
 | Four statuses | `artifacts/api-server/src/services/memoryCertification/chaos.ts:77#ChaosStatus` | `TOLERATED` / `BROKEN` / **`PARTIAL`** / `NO_SURFACE`. `PARTIAL` exists because two scenarios have one certifiable half and one absent half, and both "pass" and "skip" would be false. |
 | The deterministic world | `artifacts/api-server/src/services/memoryCertification/world.ts:97#CertificationWorld` and `:228#certificationClient` | No clock, no randomness, no network. `certificationClient` implements the narrow `ClientLike` slice `derivativeRegistry.ts` declares, resolving with `{ data, error }` exactly as supabase-js does, so the REAL `deriveProjection`, `rebuildProjection`, `projectionStaleness`, `revokeDerivativesForMemory` and `searchMemories` run against it. |
 | The report | `artifacts/api-server/src/services/memoryCertification/runCertification.ts:216#runCertification`, rendered at `:256#formatCertificationReport` | Byte-identical across runs, carrying the six engine versions §25 says a replay must be attributed to. A test asserts the rendering contains no timestamp and no duration, because a report that cannot be diffed is not a replay. |
-| The wiring | `artifacts/api-server/src/scripts/checkMemoryCertification.ts:42#async`, `artifacts/api-server/package.json:55#check:memory-certification`, `artifacts/api-server/scripts/run-all-checks.sh:192#run_check`, `artifacts/api-server/src/scripts/guardRegistry.ts:718#checker` | It runs in `check:all`. `run-all-checks.sh` goes from 25 passed to **26**; the five exit-2 checks are unchanged (they need live credentials this pass must not supply). |
+| The wiring | `artifacts/api-server/src/scripts/checkMemoryCertification.ts:42#async`, `artifacts/api-server/package.json:55#check:memory-certification`, `artifacts/api-server/scripts/run-all-checks.sh:192#run_check`, `artifacts/api-server/src/scripts/guardRegistry.ts:747#checker` | It runs in `check:all`. `run-all-checks.sh` goes from 25 passed to **26**; the five exit-2 checks are unchanged (they need live credentials this pass must not supply). |
 
 #### A real defect the suite found, and the production fix
 
@@ -1531,7 +1531,7 @@ named exactly which files to look at; this is what was found.
 from `014a25d5`. It was merged into `claude/sweet-fermat-fmx7up` at `d4be8e952` — 141 commits
 further on. `head_commit` stays `254e1876`, which is legitimate under the checker's stated
 rule ("ANCESTOR-OF-HEAD, not ancestor-of-main") because the merge commit makes it one, and
-`live-db.yml:421#fetch-depth` clones deep enough for CI to resolve it. **It is still
+`live-db.yml:440#fetch-depth` clones deep enough for CI to resolve it. **It is still
 pre-squash**, so the owner follow-up B.1 already records — re-declare at the squash when this
 lands — is unchanged and still owed.
 

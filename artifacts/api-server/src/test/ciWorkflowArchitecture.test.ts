@@ -483,6 +483,23 @@ describe("CI architecture — a re-run cannot inherit somebody else's slot", () 
      *  second boundary, the case a real 1-second-resolution clock hits only
      *  occasionally. */
     tickingClock?: boolean;
+    /** Make the first N listing calls answer the way a rate-limited
+     *  `gh api --jq` actually answers: the REST error body on STDOUT, exit 1.
+     *  Measured on run 37113934334 job 111186609364, 2026-10-03. */
+    apiRefusals?: number;
+    /** Ceiling for the refusal backoff, so a test does not really sleep for
+     *  the production default. */
+    pollMaxSeconds?: number;
+    /** Serve the fixture listing for BOTH status queries, reproducing a run
+     *  that moved queued -> in_progress between the two calls. */
+    bothStatuses?: boolean;
+    /** Refuse with NOTHING on stdout and this one line on stderr, which is how
+     *  `gh api --jq` answers an HTTP error it could not parse a body out of:
+     *  the filter never runs, so stdout is empty and the only account of the
+     *  cause is the summary line. Run 37122355417 refused twelve times and the
+     *  script printed `exit 1` twelve times, because it was reading the stream
+     *  that was empty and discarding the one that was not. */
+    refusalStderr?: string;
   }) => {
     const dir = mkdtempSync(join(tmpdir(), "portava-slot-"));
     writeFileSync(join(dir, "listing.txt"), opts.listing ?? "");
@@ -495,11 +512,37 @@ describe("CI architecture — a re-run cannot inherit somebody else's slot", () 
         { mode: 0o755 },
       );
     }
+    const calls = JSON.stringify(join(dir, "listing-calls"));
+    const asked = JSON.stringify(join(dir, "asked-urls"));
     writeFileSync(
       join(dir, "gh"),
       "#!/usr/bin/env bash\n" +
+        `printf '%s\\n' "$*" >> ${asked}\n` +
         // `gh api .../actions/workflows/<id>/runs...` -> the listing.
+        // The script asks per status, so the stub answers per status: the
+        // fixture listing stands in for the in-progress runs, and `queued`
+        // comes back empty, as it would for a queue of running jobs.
+        'if [[ "$*" == *"status=queued"* ]]; then\n' +
+        (opts.bothStatuses ? `  cat ${JSON.stringify(join(dir, "listing.txt"))}\n` : "") +
+        "  exit 0\n" +
+        "fi\n" +
         'if [[ "$*" == *"/actions/workflows/"* ]]; then\n' +
+        `  n=$(cat ${calls} 2>/dev/null || echo 0); n=$((n + 1)); echo $n > ${calls}\n` +
+        `  if [ "$n" -le ${opts.apiRefusals ?? 0} ]; then\n` +
+        // Two real shapes, both exiting non-zero and neither saying the
+        // database is free: an error object on stdout, or an empty stdout with
+        // one summary line on stderr.
+        (opts.refusalStderr
+          ? `    printf '%s\\n' ${JSON.stringify(opts.refusalStderr)} >&2\n`
+          : "    cat <<'J'\n" +
+            "{\n" +
+            '"message": "API rate limit exceeded for installation ID 1.",\n' +
+            '"documentation_url": "https://docs.github.com/en/rest/using-the-rest-api/getting-started-with-the-rest-api#rate-limiting",\n' +
+            '"status": "403"\n' +
+            "}\n" +
+            "J\n") +
+        "    exit 1\n" +
+        "  fi\n" +
         `  cat ${JSON.stringify(join(dir, "listing.txt"))}\n` +
         "  exit 0\n" +
         "fi\n" +
@@ -520,10 +563,23 @@ describe("CI architecture — a re-run cannot inherit somebody else's slot", () 
         LIVE_DB_SLOT_ROLE: opts.role,
         LIVE_DB_SLOT_TIMEOUT_SECONDS: String(opts.timeoutSeconds ?? 1),
         LIVE_DB_SLOT_POLL_SECONDS: "1",
+        LIVE_DB_SLOT_POLL_MAX_SECONDS: String(opts.pollMaxSeconds ?? 2),
       },
     });
+    let emitted = "";
+    try {
+      emitted = readFileSync(join(dir, "out"), "utf8");
+    } catch {
+      emitted = "";
+    }
+    let askedUrls: string[] = [];
+    try {
+      askedUrls = readFileSync(join(dir, "asked-urls"), "utf8").split("\n").filter(Boolean);
+    } catch {
+      askedUrls = [];
+    }
     rmSync(dir, { recursive: true, force: true });
-    return { code: r.status, out: `${r.stdout}${r.stderr}` };
+    return { code: r.status, out: `${r.stdout}${r.stderr}`, emitted, askedUrls };
   };
 
   it("EXECUTES fail-closed: a verify that cannot prove the slot exits 75", () => {
@@ -580,6 +636,281 @@ describe("CI architecture — a re-run cannot inherit somebody else's slot", () 
     });
     assert.equal(contended.code, 75, `a contended verify must still exit 75. Got ${contended.code}:\n${contended.out}`);
     assert.match(contended.out, /holder=33967153487/, "it must have asked once before timing out");
+  });
+
+  /**
+   * Measured 2026-10-03 on run 37113934334 job 111186609364. Its last 340
+   * seconds were spent re-asking a rate-limited API every 20s, and the job's
+   * final error told the reader to re-run because "the attempt starts at the
+   * BACK of the queue" — a cause it had no evidence for. Three sessions spent
+   * a morning on queue arithmetic because of that sentence. The refusal has to
+   * name itself.
+   */
+  /**
+   * The request budget, which is the resource that actually ran out on
+   * 2026-10-03. The listing used to `--paginate` the workflow's whole run
+   * history and filter client-side: `--jq` filters each page without stopping
+   * the walk, so one poll cost ceil(2919/100) = 30 requests, every 20s, from
+   * every waiting lane, against a per-REPOSITORY budget. No amount of backoff
+   * fixes that, because the budget is gone before the first 403 arrives.
+   */
+  it("asks the API to filter by status instead of walking the whole run history", () => {
+    const r = runSlotScript({
+      role: "verify",
+      runId: "33967153487",
+      listing: "2026-09-05T12:49:56Z 33967153487\n",
+    });
+    assert.equal(r.code, 0, `the oldest active run must still be let through. Got ${r.code}:\n${r.out}`);
+
+    const listings = r.askedUrls.filter((u) => u.includes("/actions/workflows/"));
+    assert.ok(listings.length > 0, "the script asked for no run listing at all");
+    for (const url of listings) {
+      assert.match(
+        url, /[?&]status=(in_progress|queued)\b/,
+        `an unfiltered run listing paginates the entire workflow history (2919 runs = 30 requests ` +
+          `per poll). Ask the API to filter: ${url}`,
+      );
+    }
+    // Both statuses, or the queue is only half visible.
+    assert.ok(
+      listings.some((u) => u.includes("status=in_progress")) && listings.some((u) => u.includes("status=queued")),
+      `both in_progress and queued must be asked for, got: ${JSON.stringify(listings)}`,
+    );
+
+    // Two calls are not one atomic snapshot, and the order decides whether a
+    // run can fall through the gap between them. Runs only move queued ->
+    // in_progress, so `queued` must be asked FIRST: a run queued at the first
+    // call is seen there, one already running is seen by the second. Reversed,
+    // a run that starts between the calls is listed by NEITHER — and a missed
+    // run is how this script concludes a held database is free.
+    const firstQueued = listings.findIndex((u) => u.includes("status=queued"));
+    const firstRunning = listings.findIndex((u) => u.includes("status=in_progress"));
+    assert.ok(
+      firstQueued < firstRunning,
+      `queued must be asked before in_progress, or a run starting mid-poll is listed by neither: ` +
+        `${JSON.stringify(listings)}`,
+    );
+  });
+
+  it("de-duplicates a run that the two status calls both returned", () => {
+    // The price of the safe order: a run that starts between the calls appears
+    // twice. It cannot make the slot look free — the oldest is still the
+    // oldest — but it inflates `active=`, and humans read that number when
+    // deciding whether to push another branch.
+    const r = runSlotScript({
+      role: "queue",
+      runId: "37113934334",
+      // The stub serves this listing for BOTH statuses, so every run is
+      // returned twice, exactly as a mid-poll transition would.
+      listing: "2026-10-03T09:42:05Z 37113934334\n2026-10-03T09:18:27Z 37112598597\n",
+      bothStatuses: true,
+      timeoutSeconds: 2,
+    });
+    assert.match(
+      r.out, /holder=37112598597, 2 active/,
+      `two distinct runs must count as 2 active, not 4. Got:\n${r.out}`,
+    );
+  });
+
+  it("EXECUTES fail-closed on a refused API, and names the 403 instead of blaming the queue", () => {
+    const r = runSlotScript({
+      role: "verify",
+      runId: "37113934334",
+      listing: "2026-10-03T09:42:05Z 37113934334\n",
+      apiRefusals: 99,
+      timeoutSeconds: 3,
+    });
+    assert.equal(r.code, 75, `a job that never got a listing must exit 75. Got ${r.code}:\n${r.out}`);
+    assert.match(
+      r.out, /REFUSED the run listing \(HTTP 403, rate limit\)/,
+      "the poll must say the API refused it, and say why",
+    );
+    assert.match(r.out, /refused ALL/, "the final error must attribute the failure to the API, not to a queue");
+    assert.doesNotMatch(
+      r.out, /BACK of the queue/,
+      "a job that never saw a listing must not advise a re-run as though it had been queued",
+    );
+    assert.doesNotMatch(r.out, /holder=/, "it cannot name a holder it never learned");
+    assert.match(
+      r.emitted, /live_db_slot_api_refusals=\d+\/\d+/,
+      "the refusal count must reach the telemetry, or the next reader is back to reading a 600-line log",
+    );
+  });
+
+  it("quotes gh's own account of a refusal, rather than reporting a bare exit code", () => {
+    // The first version of this fix named the right CATEGORY and not the cause.
+    // Run 37122355417 waited 2700s and printed `(exit 1)` on all twelve polls:
+    // stdout was empty, so the body-detector never fired, and the one line that
+    // said what had happened went to a stream the script dropped. A number is
+    // not a diagnosis — whoever reads the next timeout needs the reason.
+    const r = runSlotScript({
+      role: "verify",
+      runId: "37122355417",
+      listing: "2026-10-03T12:17:54Z 37122355417\n",
+      apiRefusals: 99,
+      refusalStderr: "gh: Resource not accessible by integration (HTTP 403)",
+      timeoutSeconds: 3,
+    });
+    assert.equal(r.code, 75, `a job that never got a listing must exit 75. Got ${r.code}:\n${r.out}`);
+    assert.match(
+      r.out, /Resource not accessible by integration \(HTTP 403\)/,
+      `the refusal must carry gh's own words. Got:\n${r.out}`,
+    );
+    assert.doesNotMatch(
+      r.out, /REFUSED the run listing \(exit 1\) —? ?this says/,
+      "a bare exit code is what sent the last reader back to the logs with nothing",
+    );
+    assert.match(r.out, /refused ALL/, "the final error must still blame the API, not a queue");
+  });
+
+  it("classifies a rate limit it can only see on stderr", () => {
+    // The rate-limit body carries no `status` key, and with `--jq` it may not
+    // reach stdout at all. A detector that reads one stream and one key calls
+    // the commonest refusal "exit 1" — which is what run 37122355417 printed
+    // twelve times while the cause sat one redirect away.
+    const r = runSlotScript({
+      role: "verify",
+      runId: "37122355417",
+      listing: "2026-10-03T12:17:54Z 37122355417\n",
+      apiRefusals: 99,
+      refusalStderr: "gh: API rate limit exceeded for installation ID 1. (HTTP 403)",
+      timeoutSeconds: 3,
+    });
+    assert.equal(r.code, 75, `must still fail closed. Got ${r.code}:\n${r.out}`);
+    assert.match(
+      r.out, /REFUSED the run listing \(HTTP 403, rate limit/,
+      `a rate limit visible only on stderr must still be named one. Got:\n${r.out}`,
+    );
+  });
+
+  it("declares every slot diagnostic the script emits as a job output", () => {
+    // A value written to $GITHUB_OUTPUT that the job does not declare goes
+    // nowhere. The script learned to emit the refusal count, the holders and
+    // the undecided-poll count, and for one run it emitted all three into a
+    // void: run 37122355417's telemetry recorded a 2700s wait and said nothing
+    // about why, because `live-db-slot` declared only slot/waited/attempt. The
+    // reason sat in a 600-line log instead of the artifact built to carry it.
+    const script = readFileSync(resolve(REPO_ROOT, ".github/scripts/live-db-acquire-slot.sh"), "utf8");
+    const emitted = [...script.matchAll(/emit "(live_db_slot[a-z_]*)=/g)].map((m) => m[1]);
+    assert.ok(emitted.length >= 6, `expected the script to emit several slot facts, found ${emitted.length}`);
+
+    const jobStart = liveDb.indexOf("\n  live-db-slot:\n");
+    assert.ok(jobStart !== -1, "live-db.yml no longer defines a live-db-slot job");
+    const outStart = liveDb.indexOf("\n    outputs:\n", jobStart);
+    const outEnd = liveDb.indexOf("\n    steps:\n", jobStart);
+    assert.ok(
+      outStart !== -1 && outEnd !== -1 && outStart < outEnd,
+      "live-db-slot has no outputs: block before its steps:",
+    );
+    const outputs = liveDb.slice(outStart, outEnd);
+
+    const undeclared = [...new Set(emitted)].filter((k) => !outputs.includes(k));
+    assert.deepEqual(
+      undeclared, [],
+      `live-db-slot emits ${undeclared.join(", ")} but does not declare them as job outputs, ` +
+        "so nothing downstream — the telemetry artifact, the step summary, the verdict — can read them",
+    );
+  });
+
+  it("backs off while the API refuses, rather than polling it at a fixed interval", () => {
+    // A fixed interval under a rate limit is self-defeating: every waiting lane
+    // keeps spending the budget that none of them can get an answer without.
+    //
+    // The budget is deliberately far larger than the three waits measured here.
+    // At 5s it was not: each poll spends real time spawning two `gh` calls, so
+    // the remaining budget fell under the ceiling by the third poll and the
+    // clamp — correct behaviour, pinned by its own test below — rewrote the
+    // very numbers this test reads. That made a timing-sensitive test out of a
+    // question about growth. 12s leaves seconds of slack, so a failure here
+    // means the backoff stopped growing.
+    const r = runSlotScript({
+      role: "verify",
+      runId: "37113934334",
+      listing: "2026-10-03T09:42:05Z 37113934334\n",
+      apiRefusals: 99,
+      timeoutSeconds: 12,
+      pollMaxSeconds: 2,
+    });
+    const waits = [...r.out.matchAll(/Backing off (\d+)s/g)].map((m) => Number(m[1]));
+    assert.ok(waits.length >= 3, `expected several refused polls, saw ${waits.length}:\n${r.out}`);
+    assert.deepEqual(
+      waits.slice(0, 3), [1, 2, 2],
+      `the interval must grow and then hold at the ceiling, got ${JSON.stringify(waits)}`,
+    );
+  });
+
+  it("never backs off past the budget it promised to wait", () => {
+    // The deadline is only checked at the top of the loop, so an unclamped
+    // backoff reports a wait longer than the stated one — in a job whose
+    // purpose is to report that number honestly.
+    const r = runSlotScript({
+      role: "verify",
+      runId: "37113934334",
+      listing: "2026-10-03T09:42:05Z 37113934334\n",
+      apiRefusals: 99,
+      timeoutSeconds: 5,
+      pollMaxSeconds: 60,
+    });
+    const waits = [...r.out.matchAll(/Backing off (\d+)s/g)].map((m) => Number(m[1]));
+    const slept = waits.reduce((a, b) => a + b, 0);
+    assert.ok(
+      slept <= 5,
+      `the backoff slept ${slept}s against a 5s budget (${JSON.stringify(waits)}), so the ceiling ` +
+        "is not clamped to the time remaining",
+    );
+    assert.ok(waits.every((w) => w <= 5), `no single sleep may exceed the budget: ${JSON.stringify(waits)}`);
+  });
+
+  /**
+   * Measured 2026-10-03 on run 37117788717 (#564): 135 polls over 2710s, every
+   * one of them `the run listing is empty`, no 403 body anywhere, no holder
+   * ever named, and `Actions: read` present in the token's permissions. A
+   * listing that omits the asking run cannot be true while that run is in
+   * progress — and the error still called it a queue backlog and advised a
+   * re-run.
+   */
+  it("says so when no poll ever named a holder, instead of calling it a backlog", () => {
+    const r = runSlotScript({
+      role: "queue",
+      runId: "37117788717",
+      listing: "",
+      timeoutSeconds: 3,
+    });
+    assert.equal(r.code, 75, `still fail-closed. Got ${r.code}:\n${r.out}`);
+    assert.match(
+      r.out, /NOT ONE named a holder/,
+      "the error must say the job never established a queue position",
+    );
+    assert.match(
+      r.out, /NOT a queue backlog/,
+      "it must not advise re-running when a drained queue would change nothing",
+    );
+    assert.doesNotMatch(
+      r.out, /re-run it when the queue drains/,
+      "that is the one piece of advice this failure cannot support",
+    );
+    assert.match(
+      r.emitted, /live_db_slot_undecided=[1-9]/,
+      "the undecidable-poll count must reach the telemetry",
+    );
+  });
+
+  it("does not blame the API when the API answered and the queue was the wait", () => {
+    // The mixed case, which is what both measured runs actually were: real
+    // queue wait behind a named holder, and a refusal only at the end.
+    const r = runSlotScript({
+      role: "queue",
+      runId: "37113934334",
+      listing: "2026-10-03T09:42:05Z 37113934334\n2026-10-03T09:18:27Z 37112598597\n",
+      apiRefusals: 1,
+      timeoutSeconds: 4,
+    });
+    assert.equal(r.code, 75, `still fail-closed. Got ${r.code}:\n${r.out}`);
+    assert.match(r.out, /holder=37112598597/, "once the API answered, the holder must be named");
+    assert.doesNotMatch(
+      r.out, /refused ALL/,
+      "a run that did get an answer was queued, and saying otherwise is the same error in reverse",
+    );
   });
 
   it("refuses an unknown role rather than defaulting to something permissive", () => {
