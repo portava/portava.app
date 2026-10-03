@@ -20,6 +20,7 @@
  *   PC2 (/circles): the same (the verifier's PC2)
  *   PC3 CONTROL (/following, limit 2): the viewer is banned from the only 2 events (the pool of 6 is not full) → the
  *       end: `events: []`, no cursor, no `truncated`
+ *   PC4 CONTROL (/circles): the same → the end, unmarked
  *   PT1 (/following, limit 1): two events start at the same instant → page 1 lists one, page 2 the other, never skipped
  *   PT2 (/circles): the same
  *   PT3 (/following): an earlier server's cursor (the start time alone) is read as before
@@ -85,11 +86,13 @@ describe("census-discovery §119 (B32): a pool the per-viewer filter emptied is 
       assert.deepEqual(r2.events, [evs[3].id], r2.text);
     });
   }
-  it("PC3 CONTROL (/following, limit 2): the pool is not full and the filter empties it → the end, unmarked", async () => {
-    const evs = [ev(1), ev(2)]; setup(evs, [evs[0].id, evs[1].id]);
-    const r = await get("/events/following?limit=2");
-    assert.deepEqual({ status: r.status, events: r.events, cursor: r.cursor, truncated: r.truncated }, { status: 200, events: [], cursor: null, truncated: null }, r.text);
-  });
+  for (const [id, path] of [["PC3", "/events/following?limit=2"], ["PC4", "/events/circles?limit=2"]] as const) {
+    it(`${id} CONTROL (${path.split("?")[0]}, limit 2): the pool is not full and the filter empties it → the end, unmarked`, async () => {
+      const evs = [ev(1), ev(2)]; setup(evs, [evs[0].id, evs[1].id]);
+      const r = await get(path);
+      assert.deepEqual({ status: r.status, events: r.events, cursor: r.cursor, truncated: r.truncated }, { status: 200, events: [], cursor: null, truncated: null }, r.text);
+    });
+  }
 });
 
 describe("census-discovery §119 (sweep): /following and /circles page by (starts_at, id), never skipping events that start together", () => {

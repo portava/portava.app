@@ -13,6 +13,9 @@
  *       ROCK is, beside the lists-unread note
  *   FF3 (sweep) Following answers a hosted event; the next load's Following read FAILS → it is not drawn as the
  *       current list; the lists-unread note says a list failed
+ *   FF4 Upcoming alone answers OLD under "All" (Tomorrow and This Weekend are empty, so nothing dedups it away); tap
+ *       "Music", the Upcoming read FAILS → OLD is not drawn; the failure is said
+ *   FF5 (sweep) FF3 for Circles
  */
 import React from 'react';
 import { render, waitFor, fireEvent, act } from '@testing-library/react-native';
@@ -108,6 +111,7 @@ function lists() {
 const ROCK = 'Rock night (Music)';
 const OLD = 'Any-category picnic (not Music)';
 const FOLLOWED = 'A followed host\'s supper club';
+const CIRCLED = 'A circle\'s harbour swim';
 async function filterFails(mode: 'ok' | 'allFail' | 'weekendFail') {
   lists();
   (svc.listEvents as jest.Mock).mockImplementation((p: { category?: string; limit?: number; startsAfter?: string; startsBefore?: string; nearRadiusKm?: number }) => {
@@ -159,5 +163,30 @@ describe('census-discovery §119 (B30): a failed read for the chip on screen nev
     await act(async () => {}); await act(async () => {});
     expect((svc.listFollowingEvents as jest.Mock).mock.calls.length).toBeGreaterThan(1);
     expect({ followedDrawn: r.queryAllByText(FOLLOWED).length > 0, note: r.queryAllByText(/Failed to load events|couldn't be loaded|Couldn't load every event/).length > 0 }).toEqual({ followedDrawn: false, note: true });
+  });
+  it('FF4 Upcoming alone answers OLD; under "Music" the Upcoming read FAILS → OLD is not drawn; the failure is said', async () => {
+    lists();
+    const upcoming = (p: { dateTo?: string; limit?: number }) => p.limit === 10 && p.dateTo === undefined;
+    (svc.listEvents as jest.Mock).mockImplementation((p: any) => (upcoming(p) && p.category !== 'Music' ? ok({ events: [event('ev-old', OLD)] }) : ok({ events: [] })));
+    const r = await render(<EventsTab />);
+    await waitFor(() => expect(r.queryAllByText(OLD).length).toBeGreaterThan(0));
+    (svc.listEvents as jest.Mock).mockImplementation((p: any) => (upcoming(p) ? Promise.resolve({ ok: false, message: 'HTTP 503' }) : ok({ events: [] })));
+    await act(async () => { fireEvent.press(r.getByLabelText('Filters')); });
+    await act(async () => { fireEvent.press(r.getByText('Music')); });
+    await act(async () => {}); await act(async () => {});
+    expect({ oldDrawn: r.queryAllByText(OLD).length > 0, said: r.queryAllByText(/Failed to load events|couldn't be loaded|Couldn't load every event/).length > 0 }).toEqual({ oldDrawn: false, said: true });
+  });
+  it('FF5 (sweep) the next load\'s Circles read FAILS → the earlier Circles rows are not drawn; the failure is said', async () => {
+    lists();
+    (svc.listEvents as jest.Mock).mockImplementation((p: { category?: string; limit?: number }) => (p.limit === 10 && p.category !== 'Music' ? ok({ events: [event('ev-old', OLD)] }) : ok({ events: [] })));
+    (svc.listCircleEvents as jest.Mock).mockImplementation(() => ok({ events: [event('ev-cir', CIRCLED)] }));
+    const r = await render(<EventsTab />);
+    await waitFor(() => expect(r.queryAllByText(CIRCLED).length).toBeGreaterThan(0));
+    (svc.listCircleEvents as jest.Mock).mockImplementation(() => Promise.resolve({ ok: false, message: 'HTTP 503' }));
+    await act(async () => { fireEvent.press(r.getByLabelText('Filters')); });
+    await act(async () => { fireEvent.press(r.getByText('Music')); });
+    await act(async () => {}); await act(async () => {});
+    expect((svc.listCircleEvents as jest.Mock).mock.calls.length).toBeGreaterThan(1);
+    expect({ circledDrawn: r.queryAllByText(CIRCLED).length > 0, note: r.queryAllByText(/Failed to load events|couldn't be loaded|Couldn't load every event/).length > 0 }).toEqual({ circledDrawn: false, note: true });
   });
 });
