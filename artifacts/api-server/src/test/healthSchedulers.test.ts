@@ -44,6 +44,11 @@ import { readFileSync } from "node:fs";
 import express, { type Express } from "express";
 
 import { reconcileInviteSlots } from "../lib/inviteSlotReconciler.js";
+import {
+  hydrateStoryRetentionStatus,
+  _resetStoryRetentionStatus,
+  STORY_RETENTION_STALE_AFTER_MS,
+} from "../lib/storyRetentionScheduler.js";
 import healthRouter from "../routes/health.js";
 
 const PATH = "/api/healthz/schedulers";
@@ -253,5 +258,80 @@ describe("the eight previously-unreadable getters are actually wired in", () => 
     ]) {
       assert.ok(src.includes(getter), `health.ts must read ${getter} — it had no other caller in the tree`);
     }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * STALENESS — the condition that made this endpoint lie for two days.
+ *
+ * Production's `storyRetention` job last succeeded, then the host stopped
+ * running the process altogether: every job_health row froze at
+ * 2026-09-30T15:30:36Z. `consecutiveFailures` is a counter in a process, so a
+ * process that is not ticking — or a replacement process that never ticked —
+ * carries a zero, and `lastSuccessAt` was non-null because a pass HAD once
+ * succeeded. Both of the endpoint's tests therefore passed and it answered
+ * `healthy`, with 200, about a purge that had not run for days.
+ *
+ * The clock is the one signal a stopped job cannot launder, so these cases
+ * drive the real classifier through the real route with nothing but the age of
+ * the persisted success changed.
+ */
+function hydratedFrom(lastRunAt: string, lastSuccessAt: string | null): any {
+  return {
+    from: () => ({
+      select: () => ({
+        eq: () => ({
+          maybeSingle: () =>
+            Promise.resolve({ data: { last_run_at: lastRunAt, last_success_at: lastSuccessAt }, error: null }),
+        }),
+      }),
+    }),
+  };
+}
+
+describe("a job that has not succeeded within its cadence is not healthy", () => {
+  after(() => { _resetStoryRetentionStatus(); });
+
+  it("a success older than the stale window reports stale, and the route answers 503", async () => {
+    _resetStoryRetentionStatus();
+    const old = new Date(Date.now() - (STORY_RETENTION_STALE_AFTER_MS + 60_000)).toISOString();
+    await hydrateStoryRetentionStatus(hydratedFrom(old, old));
+
+    const r = await get(base, PATH);
+
+    const job = (r.body.jobs as any[]).find((j) => j.job === "storyRetention");
+    assert.ok(job, "storyRetention must be reported at all");
+    assert.equal(job.status, "stale", `expected stale, got ${job.status} with lastSuccessAt ${job.lastSuccessAt}`);
+    assert.equal(job.consecutiveFailures, 0, "the point is that nothing had failed — the job simply stopped");
+    assert.equal(r.body.overall, "stale");
+    assert.equal(r.body.staleCount, 1);
+    // The exact code, never merely `!== 200`: an operator's probe must learn
+    // the purge is behind without parsing the body.
+    assert.equal(r.status, 503);
+  });
+
+  it("CONTROL: a success inside the window is healthy, so the verdict is the age and not a constant", async () => {
+    _resetStoryRetentionStatus();
+    const fresh = new Date(Date.now() - 60_000).toISOString();
+    await hydrateStoryRetentionStatus(hydratedFrom(fresh, fresh));
+
+    const r = await get(base, PATH);
+
+    const job = (r.body.jobs as any[]).find((j) => j.job === "storyRetention");
+    assert.equal(job.status, "healthy", `a minute-old success must be healthy, got ${job.status}`);
+    assert.equal(r.body.staleCount, 0);
+  });
+
+  it("an attempt with NO success is still never_ran, not stale — the two are different answers", async () => {
+    _resetStoryRetentionStatus();
+    const old = new Date(Date.now() - (STORY_RETENTION_STALE_AFTER_MS + 60_000)).toISOString();
+    await hydrateStoryRetentionStatus(hydratedFrom(old, null));
+
+    const r = await get(base, PATH);
+
+    const job = (r.body.jobs as any[]).find((j) => j.job === "storyRetention");
+    assert.equal(job.status, "never_ran", "a job that has never succeeded has nothing to be stale against");
   });
 });
