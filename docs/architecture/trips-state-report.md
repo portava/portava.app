@@ -20,7 +20,7 @@ being collapsed into one number.** The standing rule this repository works under
 | **TESTED** | Full api-server suite, run 30 on `991c59c8b`'s tree: **18,506 / 18,506, 0 fail, 0 skipped, 0 cancelled** (the §53 scheduler case that used to end as `cancelledByParent` is fixed in the test, `8fe9e4bf6`). Every database suite on a replica rebuilt from the production baseline through the whole chain (2093 → 2803): **89 / 89, 0 skipped**. Client `check:all` under Node 24: exit 0. CI on `66a0ea468`: every verdict green except the live-DB one, which aggregates only the schema-drift audit (see "After merge" below) | `pnpm test` (run 30); `scripts/local-db/up.sh` + `run-tests.sh`; CI run `34706918422` (CI), `34706918620` (unwired), `34706918503` (live DB) |
 | **MERGED** | `014a25d5` on `main` (PR #481). **PR #482 is open and DRAFT** (`mergeable_state: clean`, base `main`); **PR #483 is open and READY FOR REVIEW at `66a0ea468`**, stacked on #482 — none of this session's work is merged | `git merge-base --is-ancestor 014a25d5 origin/main`; PR #482 / #483 state read 2026-09-12 |
 | **DEPLOYED** | **portava-ci only.** Production has received **nothing** from Batch C | `apply-migrations`: 109 proven applied on `hwokxgbmezheskbzskfr` |
-| **CERTIFIED** | **NO.** `certify:migrations` fails at stage 1 (ledger parity) on `main` on three `applied_by=manual` rows (2311 / 2320 / 2325), which the owner has ruled are not to be deleted; on a PR the certification step does not run at all (`live-db.yml:818#migrations — certify the apply landed`, main-only) | run `34430889373`, `check:migration-ledger`; job `103588798041` on `66a0ea468` (step skipped) |
+| **CERTIFIED** | **NO.** `certify:migrations` fails at stage 1 (ledger parity) on `main` on three `applied_by=manual` rows (2311 / 2320 / 2325), which the owner has ruled are not to be deleted; on a PR the certification step does not run at all (`live-db.yml:839#migrations — certify the apply landed`, main-only) | run `34430889373`, `check:migration-ledger`; job `103588798041` on `66a0ea468` (step skipped) |
 
 ### The one cancelled suite, named rather than rounded away
 
@@ -65,8 +65,8 @@ merged branch can show.
 ### A limit on every "green PR" claim in this repository
 
 `db:apply-migrations` and `certify:migrations` are gated on
-`github.ref == 'refs/heads/main'` (`live-db.yml:793#migrations — apply to the sanctioned CI project`,
-`live-db.yml:818#migrations — certify the apply landed`). A pull request
+`github.ref == 'refs/heads/main'` (`live-db.yml:814#migrations — apply to the sanctioned CI project`,
+`live-db.yml:839#migrations — certify the apply landed`). A pull request
 runs the **dry run** and skips both. So a PR reporting 27 of 27 green has **not**
 run the certification gate — that first executes on the push build *after* a
 merge. Merging is part of the test here.
@@ -79,8 +79,8 @@ Read from `live-db.yml` and from the schema-drift job on `66a0ea468`
 (`103588798041`), 2026-09-12.
 
 **On a pull request** the schema-drift job runs the dry run and the audits and
-skips the apply and the certification (`live-db.yml:793#migrations — apply to the sanctioned CI project`,
-`live-db.yml:818#migrations — certify the apply landed` —
+skips the apply and the certification (`live-db.yml:814#migrations — apply to the sanctioned CI project`,
+`live-db.yml:839#migrations — certify the apply landed` —
 `github.ref == 'refs/heads/main'`). On `66a0ea468`:
 
 | step | result | what it says |

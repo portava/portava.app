@@ -1486,8 +1486,8 @@ unchanged from the day this entry was opened.
 ### Why no pull request can catch this, which is worth knowing before the next green is believed
 
 `db:apply-migrations` and `certify:migrations` are gated on
-`github.ref == 'refs/heads/main'` (`live-db.yml:793#migrations — apply to the sanctioned CI project` and
-`live-db.yml:818#migrations — certify the apply landed`). A PR's
+`github.ref == 'refs/heads/main'` (`live-db.yml:814#migrations — apply to the sanctioned CI project` and
+`live-db.yml:839#migrations — certify the apply landed`). A PR's
 `schema-drift` job runs the **dry run** and then skips both. So #481 was
 truthfully 27 of 27 green and that green **never covered this gate** — the first
 execution of `certify:migrations` against a change is the push build after it
