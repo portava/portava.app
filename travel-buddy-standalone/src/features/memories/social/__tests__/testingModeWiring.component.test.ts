@@ -29,8 +29,15 @@ it('HM-F14: the profile Memories tab mounts ProfileMemoryAlbums for the viewed p
 });
 
 it('HM-F15: the Trip Memory section links to the trip recap', () => {
-  const src = read('app/trip/[id].tsx');
-  const section = src.slice(src.indexOf('function TripMemorySection'));
+  // RESTATED 2026-10-03 (lane highlights, census §AB): the section moved
+  // verbatim out of the trip screen into its own module. The trip screen must
+  // still MOUNT it, and the module must still carry the link.
+  const screen = read('app/trip/[id].tsx');
+  expect(screen).toMatch(/import \{ TripMemorySection \} from '..\/..\/src\/features\/memories\/TripMemorySection\.tsx';/);
+  expect(screen).toContain('<TripMemorySection');
+  const src = read('src/features/memories/TripMemorySection.tsx');
+  const section = src.slice(src.indexOf('export function TripMemorySection'));
+  expect(src.indexOf('export function TripMemorySection')).toBeGreaterThanOrEqual(0);
   // Rendered whenever the trip has a Memory — the recap's own route decides who may read it.
   expect(section).toContain('{memory ? <Pressable testID="trip-open-recap"');
   expect(section).toContain('router.push(`/trip/${tripId}/recap` as any)');

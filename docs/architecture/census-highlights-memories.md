@@ -6565,7 +6565,9 @@ All of this is controlled evidence: fakes and component tests, never production.
 | `PassportHighlightsStrip.unreadable` | 2 | 1 |
 | `passport.ownHighlightsUnreadable` | 2 | 2 |
 
-**Mutations:** 40 applied, each alone, each restored by sha256. All 40 were killed (S1–S5, C1–C6, V1–V4, VS1–VS4, R1–R3, P1–P3, A1–A3, ST1–ST3).
+**Restated:** `testingModeWiring` HM-F15 read the recap link from `function TripMemorySection` inside the trip screen. It now asserts that the trip screen imports and mounts the moved module, and that the module still carries the link. It was seen red on the move, then green.
+
+**Mutations:** 42 applied, each alone, each restored by sha256. All 42 were killed (S1–S5, C1–C6, V1–V4, VS1–VS4, R1–R3, P1–P3, A1–A3, ST1–ST3, W1–W2).
 
 ### §AB.4 Why no verdict moves
 
