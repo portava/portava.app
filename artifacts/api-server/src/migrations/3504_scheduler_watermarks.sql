@@ -1,4 +1,4 @@
--- 3511_scheduler_watermarks.sql
+-- 3504_scheduler_watermarks.sql
 -- A durable "processed through" mark per background scheduler, so a scheduler
 -- that asks "what happened since last time" survives the process dying.
 --
