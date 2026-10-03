@@ -27,7 +27,7 @@ import { IntelConsentGate } from '../../src/components/intel/IntelConsentGate';
 import { TravelButton } from '../../src/components/primitives';
 import { useIntelPrompts } from '../../src/hooks/useIntelPrompts';
 import { getCurrentGps } from '../../src/services/location';
-import { getIntelConsent, hasValidConsent, type IntelConsentState } from '../../src/services/intelConsent';
+import { readIntelConsent, hasValidConsent, type IntelConsentRead } from '../../src/services/intelConsent';
 import {
   QUICK_SIGNAL_PROMPTS,
   QUICK_SIGNAL_CONTEXTS,
@@ -98,8 +98,11 @@ export default function QuickSignalScreen() {
   const [disclosure, setDisclosure] = useState<CommercialDisclosure | null>(null);
   // D4 Intelligence Contributions consent. `undefined` = still loading; the server
   // is authoritative and enforces regardless, so this only gates the UI so we show
-  // the disclosure/consent surface before the first capture.
-  const [consent, setConsent] = useState<IntelConsentState | null | undefined>(undefined);
+  // the disclosure/consent surface before the first capture. An UNREADABLE answer
+  // is its own state: it is not "never consented", and showing the first-use gate
+  // over it would ask a person who already agreed to agree again.
+  const [consentRead, setConsentRead] = useState<IntelConsentRead | undefined>(undefined);
+  const [consentAttempt, setConsentAttempt] = useState(0);
   const [lastObservation, setLastObservation] = useState<{ id: string; claimType: string; value: unknown } | null>(null);
   const timeLabel = useMemo(
     () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -121,15 +124,17 @@ export default function QuickSignalScreen() {
     };
   }, []);
 
-  // Load the authoritative consent state once, when capture is otherwise available.
+  // Load the authoritative consent state when capture is otherwise available, and
+  // again on Retry. `alive` drops a read that a newer one (or unmount) superseded.
   useEffect(() => {
     if (!captureEnabled || !subjectId) return;
     let alive = true;
-    getIntelConsent()
-      .then((state) => { if (alive) setConsent(state); })
-      .catch(() => { if (alive) setConsent(null); });
+    setConsentRead(undefined);
+    readIntelConsent()
+      .then((read) => { if (alive) setConsentRead(read); })
+      .catch(() => { if (alive) setConsentRead({ status: 'unreadable', reason: 'network' }); });
     return () => { alive = false; };
-  }, [captureEnabled, subjectId]);
+  }, [captureEnabled, subjectId, consentAttempt]);
 
   const venueQuestions: PromptQuestion[] = useMemo(
     () => (venue ? VENUE_QUESTION_SETS[venue].arrival : [contextQuestion(context)]),
@@ -215,15 +220,33 @@ export default function QuickSignalScreen() {
         />
       </View>
     );
-  } else if (consent === undefined) {
+  } else if (consentRead === undefined) {
     // Consent state still loading — show the private-location context, no prompts yet.
     body = <PrivateLocationBadge placeName={subjectName} verified={verified} timeLabel={timeLabel} />;
-  } else if (!hasValidConsent(consent)) {
+  } else if (consentRead.status === 'unreadable') {
+    // We could not find out. Not the consent gate (that would re-ask someone who
+    // may have agreed), and not the prompts (the server would refuse them).
+    body = (
+      <View style={styles.emptyCard} testID="intel-consent-unreadable">
+        <Text style={styles.emptyTitle}>
+          {consentRead.reason === 'not_configured' ? 'Not connected' : 'Couldn’t check your sharing setting'}
+        </Text>
+        <Text style={styles.emptyBody}>
+          {consentRead.reason === 'not_configured'
+            ? 'This build isn’t connected to Portava, so signals can’t be sent.'
+            : 'We couldn’t reach Portava to see whether you’ve turned on Intelligence Contributions. Nothing has been sent.'}
+        </Text>
+        {consentRead.reason === 'not_configured' ? null : (
+          <TravelButton label="Try again" variant="secondary" onPress={() => setConsentAttempt((n) => n + 1)} />
+        )}
+      </View>
+    );
+  } else if (!hasValidConsent(consentRead.state)) {
     // First use (or after withdrawal): require explicit consent before any capture.
     body = (
       <IntelConsentGate
-        disclosureVersion={consent?.currentDisclosureVersion ?? null}
-        onAllow={(state) => setConsent(state)}
+        disclosureVersion={consentRead.state.currentDisclosureVersion ?? null}
+        onAllow={(state) => setConsentRead({ status: 'ok', state })}
         onNotNow={() => { if (router.canGoBack()) router.back(); }}
       />
     );
