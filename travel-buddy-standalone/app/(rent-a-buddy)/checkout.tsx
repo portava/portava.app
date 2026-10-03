@@ -184,7 +184,7 @@ export default function RentABuddyCheckout() {
   // must be able to press it again without rebuilding the whole form.
   // census-trust TV-2a.
   const [actionableRefusal, setActionableRefusal] =
-    useState<{ body: string; action: BookingRefusalAction } | null>(null);
+    useState<{ body: string; action: BookingRefusalAction } | null>(null); const [ineligibleReason, setIneligibleReason] = useState<string | null>(null); // census-trust §31 (TV-5b): an age refusal, persistent, no retry
 
   const location = zoneIndex != null ? PUBLIC_ZONES[zoneIndex] : customZone;
 
@@ -268,8 +268,8 @@ export default function RentABuddyCheckout() {
         setUnavailableReason(refusal.body);
         return;
       }
-      // Genuine failure — still routed through the classifier so no raw error
-      // code can reach the user.
+      if (refusal.kind === 'ineligible') { setIneligibleReason(refusal.body); return; } // census-trust §31 (TV-5b)
+      // Genuine failure — routed through the classifier so no raw error code can reach the user.
       Alert.alert('Booking failed', refusal.body);
       return;
     }
@@ -340,6 +340,19 @@ export default function RentABuddyCheckout() {
                 <Text style={styles.refusalActionText}>{actionableRefusal.action.label}</Text>
                 <ChevronRight size={14} color={color.onInk} />
               </Pressable>
+            </View>
+          </View>
+        )}
+
+        {/* census-trust §31 (TV-5b): a requirement this account does not meet — an
+            age refusal. Persistent, with no action and no retry: no screen clears
+            it and trying again changes nothing. */}
+        {ineligibleReason && (
+          <View style={styles.unavailableBanner} accessibilityRole="alert" testID="booking-ineligible-banner">
+            <Info size={15} color={color.deep} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.unavailableTitle}>Age requirement</Text>
+              <Text style={styles.unavailableBody}>{ineligibleReason}</Text>
             </View>
           </View>
         )}
