@@ -1327,3 +1327,129 @@ describe("CI architecture — the coverage detector is repo-wide, not per-branch
     );
   });
 });
+
+/**
+ * CI architecture — the two strings the coverage detector identifies its
+ * target by, pinned the way the three verdict contexts above are pinned.
+ *
+ * WHY. `.github/scripts/assert-live-db-coverage.sh` asks its question about one
+ * named workflow and one named job, and it finds them BY THOSE NAMES:
+ *
+ *   WORKFLOW_NAME   = 'CI (live DB)'
+ *   GATE_JOB_PREFIX = 'api-server · check:all + live_pulse gate'
+ *
+ * Neither is derived, and neither can be: they are the published identities —
+ * what appears in a pull request's check list and what a required status check
+ * is matched against — and a derived assertion would simply follow a rename and
+ * prove nothing. Exactly the reasoning in the VERDICTS block above.
+ *
+ * The two halves fail DIFFERENTLY if a rename is not mirrored here, and that
+ * asymmetry is the reason this block exists:
+ *
+ *   * WORKFLOW_NAME is fail-closed. An unresolvable name exits 1 with "could
+ *     not resolve the workflow id", verified by fixture in
+ *     src/test/liveDbCoverageFetcher.test.ts. Loud.
+ *
+ *   * GATE_JOB_PREFIX is NOT. The lookup is `select(.name | startswith(...))`
+ *     and a miss is normalised to `gate=unknown` — a legitimate state for a run
+ *     whose gate job was skipped out of the job list, so it cannot be made
+ *     fatal without flagging PRs that are fine. A rename therefore degrades the
+ *     (b) half of the question to `unknown` for EVERY pull request, silently,
+ *     while the check stays green. That is the shape of defect this whole lane
+ *     is about, so the rename is caught here instead.
+ *
+ * Both separators are U+00B7 MIDDLE DOT, written as an escape so a copy-paste
+ * through a lossy editor cannot substitute a hyphen or an ASCII dot and leave
+ * the file looking right.
+ */
+describe("CI architecture — the live-DB coverage detector's target names are pinned", () => {
+  const FETCHER_PATH = resolve(REPO_ROOT, ".github/scripts/assert-live-db-coverage.sh");
+  const fetcher = existsSync(FETCHER_PATH) ? readFileSync(FETCHER_PATH, "utf8") : "";
+
+  /** `name:` of live-db.yml — the workflow whose absence is being detected. */
+  const WORKFLOW_NAME = "CI (live DB)";
+  /** The leading segment of the gate job's `name:`; the published name adds
+   *  " (needs credentials)", which is prose rather than identity. */
+  const GATE_JOB_PREFIX = "api-server · check:all + live_pulse gate";
+
+  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+  it("the detector exists (nothing below means anything if it does not)", () => {
+    assert.ok(
+      fetcher.length > 0,
+      `${FETCHER_PATH} is missing. The live-DB coverage detector is the only thing that ` +
+        "observes a pull request whose head SHA got no `CI (live DB)` run at all — an " +
+        "absence that renders as nothing in the check list, not as a grey or red entry.",
+    );
+  });
+
+  it("WORKFLOW_NAME is the literal 'CI (live DB)'", () => {
+    assert.match(
+      fetcher, new RegExp(`^WORKFLOW_NAME='${esc(WORKFLOW_NAME)}'$`, "m"),
+      `assert-live-db-coverage.sh no longer sets WORKFLOW_NAME to exactly ` +
+        `${JSON.stringify(WORKFLOW_NAME)}. That string is how the detector finds the workflow ` +
+        "whose runs it counts; it is resolved through the Actions API by `name:`, not by " +
+        "filename or numeric id. If the workflow was renamed, change it in live-db.yml, in " +
+        "this script, in the required-status-check settings and in this literal — all four, in " +
+        "one change.",
+    );
+  });
+
+  it("WORKFLOW_NAME is live-db.yml's actual `name:` — the two cannot drift apart", () => {
+    assert.match(
+      liveDb, new RegExp(`^name: ${esc(WORKFLOW_NAME)}$`, "m"),
+      `live-db.yml's \`name:\` is not exactly ${JSON.stringify(WORKFLOW_NAME)}, so the ` +
+        "coverage detector is looking for a workflow that no longer exists under that name. " +
+        "Its lookup fails closed, so this is a red build rather than a false green — but it " +
+        "reds on every run until both sides are changed together.",
+    );
+  });
+
+  it("GATE_JOB_PREFIX is the literal 'api-server · check:all + live_pulse gate'", () => {
+    assert.match(
+      fetcher, new RegExp(`^GATE_JOB_PREFIX='${esc(GATE_JOB_PREFIX)}'$`, "m"),
+      `assert-live-db-coverage.sh no longer sets GATE_JOB_PREFIX to exactly ` +
+        `${JSON.stringify(GATE_JOB_PREFIX)}. Unlike WORKFLOW_NAME this one does NOT fail ` +
+        "closed: a prefix that matches no job is normalised to `gate=unknown`, which is also " +
+        "the legitimate reading for a run whose gate job was skipped out of its job list. So a " +
+        "stale prefix reports `unknown` for every pull request while the check stays green — " +
+        "the (b) half of the question answered by nothing at all.",
+    );
+  });
+
+  it("GATE_JOB_PREFIX actually prefixes the job name live-db.yml declares", () => {
+    const m = /^ {4}name: (api-server · check:all.*)$/m.exec(liveDb);
+    assert.ok(
+      m,
+      "live-db.yml declares no job whose `name:` begins 'api-server · check:all'. That job is " +
+        "the live-database certification itself; GATE_JOB_PREFIX in " +
+        ".github/scripts/assert-live-db-coverage.sh is matched against it with " +
+        "`startswith()`, and a prefix matching nothing degrades to `gate=unknown` without " +
+        "failing. Re-derive both.",
+    );
+    assert.ok(
+      m[1].startsWith(GATE_JOB_PREFIX),
+      `the gate job publishes as ${JSON.stringify(m[1])}, which does not start with ` +
+        `${JSON.stringify(GATE_JOB_PREFIX)}. \`startswith()\` therefore matches nothing and ` +
+        "the detector's (b) half silently reports `unknown` for every pull request. Update the " +
+        "prefix in assert-live-db-coverage.sh and this literal together.",
+    );
+  });
+
+  it("both separators are U+00B7 MIDDLE DOT, in the script and in the workflow", () => {
+    // Pinned explicitly because the three characters are visually
+    // indistinguishable at a glance and two of them break the match silently.
+    for (const [what, text] of [
+      ["GATE_JOB_PREFIX in assert-live-db-coverage.sh", /^GATE_JOB_PREFIX='api-server (.) check:all/m.exec(fetcher)?.[1]],
+      ["the gate job's `name:` in live-db.yml", /^ {4}name: api-server (.) check:all/m.exec(liveDb)?.[1]],
+    ] as const) {
+      assert.equal(
+        text, "·",
+        `${what} does not use U+00B7 MIDDLE DOT as its separator (got ` +
+          `${text === undefined ? "no match at all" : `U+${text.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}`}). ` +
+          "U+00B7, U+2022 BULLET and a plain ASCII '.' all look alike here, and the job name " +
+          "is matched as a byte string.",
+      );
+    }
+  });
+});
