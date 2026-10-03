@@ -83,6 +83,26 @@ export interface InspectionProof {
   unit: string;
   /** Set ONLY when zero is a proved expected state, with the proof. */
   zeroIsProved?: string;
+  /**
+   * Arguments checkGuardReachability must invoke this checker with.
+   *
+   * REQUIRED for a checker whose DEFAULT mode writes the artifact it gates.
+   * Proving such a guard looked by running it bare does not prove anything —
+   * it REPAIRS the drift the guard exists to report, and every later gate in
+   * the same `check:all` then compares a file that was just regenerated. That
+   * is not a theory: on main at 0fa752ece the committed Phase 0 inventory read
+   * `25 of 681 migration files` against a tree of 682, and CI reported
+   * `check:telegraph-inventory PASSED` because check:guard-reachability
+   * (run-all-checks.sh:141) had rewritten the file 67 seconds before the gate
+   * (run-all-checks.sh:456) read it. Migration 3510 had arrived without a
+   * regeneration and nothing could see it.
+   *
+   * So the proof runs the GATE, not the writer: `["--check"]`. A failing gate
+   * is still handled the way every other failing guard is — reported as
+   * unreadable rather than counted — and the gate's own step in check:all is
+   * what goes red.
+   */
+  args?: readonly string[];
 }
 
 export interface GuardEntry {
@@ -652,9 +672,18 @@ export const GUARDS: readonly GuardEntry[] = [
   {
     checker: "src/scripts/tripWritePathInventory.ts",
     inspects: {
-      countPattern: "(\\d+)",
-      unit: "lines of the generated inventory block compared (exit 0 when the document's block is the tree's)",
-      zeroIsProved: "The check prints no count on a pass — it prints PASSED when the document's generated block equals a fresh render, and lists the added/removed lines when it does not. Zero drift is the pass; the test src/test/tripWritePathInventory.test.ts asserts the same equality in-process and that a synthetic drift is reported line by line.",
+      countPattern: "(\\d+) inventory block line\\(s\\) compared",
+      unit: "inventory block lines compared against the document",
+      // MUST stay --check: bare, this script rewrites
+      // docs/architecture/trips-phase0-inventory.md. See InspectionProof.args.
+      //
+      // `zeroIsProved` used to live here, because the pass line carried no
+      // number at all. It no longer needs to: the --check pass now reports how
+      // many block lines it compared, so this guard proves it looked the same
+      // way every other one does. A declared escape that is no longer needed is
+      // a licence nobody is using, and it is removed rather than left lying
+      // around.
+      args: ["--check"],
     },
     responsibility:
       "docs/architecture/trips-phase0-inventory.md's generated block (tables, kernel commands, issuers, direct write paths, /trips routes, modules) equals the tree's; an undocumented write path is red (Trips spec §24 Phase 0; census-trips TR434).",
@@ -914,6 +943,10 @@ export const GUARDS: readonly GuardEntry[] = [
     inspects: {
       countPattern: "(\\d+) inventory lines re-derived",
       unit: "inventory lines re-derived and compared",
+      // MUST stay --check. The default mode of this script WRITES the inventory,
+      // so proving the guard by running it bare repairs the drift instead of
+      // reading it, and the gate below can then only pass. See InspectionProof.args.
+      args: ["--check"],
     },
   },
   {

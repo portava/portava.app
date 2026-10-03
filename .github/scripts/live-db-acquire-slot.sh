@@ -144,6 +144,62 @@ TIMEOUT="${LIVE_DB_SLOT_TIMEOUT_SECONDS:-$DEFAULT_TIMEOUT}"
 POLL="${LIVE_DB_SLOT_POLL_SECONDS:-20}"
 ATTEMPT="${GITHUB_RUN_ATTEMPT:-1}"
 
+# ── WHEN THE API REFUSES TO ANSWER ───────────────────────────────────────────
+#
+# Measured 2026-10-03 on run 37113934334 job 111186609364. The listing call
+# below came back as a REST error body, not a listing:
+#
+#   { "message": "API rate limit exceeded ...",
+#     "documentation_url": ".../getting-started-with-the-rest-api#rate-limiting",
+#     "status": "403" }
+#
+# That body was piped into the decider, which refused it as unparseable (exit
+# 3, correctly — a listing we cannot read is not proof the database is free).
+# The loop then logged "empty or unusable", slept a FIXED 20s, and asked again,
+# for 1211s, until the cap. Three things were wrong with that, none of them in
+# the decider:
+#
+#   1. Nothing said "403". The log blamed the queue — the timeout error even
+#      advised re-running because "the attempt starts at the BACK of the
+#      queue" — so the morning's diagnosis was slot starvation and lane count,
+#      which is not what happened at all.
+#   2. A fixed poll interval under a rate limit makes the rate limit worse.
+#      Each iteration costs one listing call plus one jobs call per older run,
+#      every waiting lane pays it in parallel, and past exhaustion NO lane can
+#      prove a claim — so each one burns its whole budget and fails closed.
+#      More waiters exhaust the quota faster. The queue poisons itself.
+#   3. The annotation calls were spent on a listing already known to be junk.
+#
+# So: back off exponentially while the API is refusing, skip the annotation and
+# the decider on those polls (there is nothing to decide from), and name the
+# refusal in the log and in the final error. THIS DOES NOT RELAX MUTUAL
+# EXCLUSION. A refused poll still never counts as "the slot is free"; the loop
+# still ends in exit 75 having certified nothing. It fails closed more slowly
+# and says why.
+# 60s, not the 300s this first shipped with. Measured on run 37122355417: a
+# 2700s wait at a 300s ceiling asked only TWELVE times, so a cause that cleared
+# at minute 20 would not have been noticed for five more. The ceiling exists to
+# stop a refused poller making exhaustion worse, and with the listing down to
+# two server-filtered requests (and no annotation calls on a refused poll) that
+# costs ~2 requests a minute — cheap enough to keep asking.
+POLL_MAX="${LIVE_DB_SLOT_POLL_MAX_SECONDS:-60}"
+SLEEP_FOR="$POLL"
+API_REFUSALS=0
+POLLS=0
+# Distinct holders seen across the parsed polls, oldest sighting first. A
+# timeout that names them says "I queued behind these runs"; one that names
+# none says "I never saw a queue", and the two want different responses.
+HOLDERS_SEEN=""
+# Polls where the decider could not reach a verdict at all (exit 3): an empty
+# listing, or one that does not contain this run. Counted apart from the API
+# refusals above, because the two have different remedies and NEITHER of them
+# is "re-run when the queue drains". Measured 2026-10-03 on run 37117788717,
+# which polled 135 times over 2710s and got `the run listing is empty` every
+# single time, with no 403 body and no holder ever named: a listing that omits
+# the asking run cannot be true while that run is in progress, and the old
+# timeout error called it a queue backlog anyway.
+UNDECIDED=0
+
 # ── CLAIM ANNOTATION ─────────────────────────────────────────────────────────
 #
 # A run FORFEITS the slot when its dedicated queue job — the one named below —
@@ -312,6 +368,11 @@ emit() {
   echo "$1" >> "${GITHUB_OUTPUT:-/dev/null}"
 }
 
+# One file, truncated per poll, so a refusal can quote gh's own words. Keeping
+# stderr was the difference between "exit 1" and a cause.
+GH_STDERR="$(mktemp)"
+trap 'rm -f "$GH_STDERR"' EXIT
+
 # The clock starts HERE, not at the top of the script: the budget is named
 # "how long am I willing to WAIT for the database", and the workflow-id lookup
 # above is setup, not waiting. Starting it earlier meant a slow first API call
@@ -331,55 +392,171 @@ while :; do
   NOW="$(date +%s)"
   ELAPSED=$(( NOW - START ))
   if [ "$ASKED" -eq 1 ] && [ "$ELAPSED" -ge "$TIMEOUT" ]; then
-    if [ "$ROLE" = "verify" ]; then
+    if [ "$API_REFUSALS" -eq "$POLLS" ]; then
+      # Never once got an answer. Saying "the queue is long" here would be a
+      # guess, and the guess cost three sessions a morning.
+      echo "::error::live-db slot: the Actions API refused ALL ${POLLS} run-listing requests over ${ELAPSED}s (most recently: ${WHY:-unknown}). This job never learned who holds the shared database, so it has certified NOTHING and is failing closed. This is NOT a queue backlog and re-running will not shorten it — the request budget is the shared resource that ran out. Reduce the number of live-DB lanes running at once, or wait for the rate limit to reset."
+    elif [ -z "$HOLDERS_SEEN" ]; then
+      # Polls happened, none of them ever produced a queue position. Whatever
+      # went wrong, a backlog is not it, and re-running changes nothing.
+      echo "::error::live-db slot: ${POLLS} polls over ${ELAPSED}s and NOT ONE named a holder, so this job never established a queue position and has certified NOTHING. ${API_REFUSALS} refused by the Actions API (${WHY:-n/a}), ${UNDECIDED} returned a listing that did not account for this run — which cannot be true while this job is running. This is NOT a queue backlog; re-running it will not shorten anything. Treat it as an Actions API fault and check the request budget for this repository."
+    elif [ "$API_REFUSALS" -gt 0 ] || [ "$UNDECIDED" -gt 0 ]; then
+      # The mixed case, which is what every run measured on 2026-10-03 actually
+      # was. Give BOTH numbers, so nobody has to read 554 log lines to find out
+      # which phase the budget went on.
+      echo "::error::live-db slot: waited ${ELAPSED}s without acquiring the shared database, and this run has certified NOTHING. ${POLLS} polls: $(( POLLS - API_REFUSALS - UNDECIDED )) queued behind ${HOLDERS_SEEN}, ${API_REFUSALS} refused by the Actions API (${WHY:-n/a}), ${UNDECIDED} answered with a listing that did not account for this run. Part queue, part Actions API — re-running helps only the first part."
+    elif [ "$ROLE" = "verify" ]; then
       echo "::error::live-db slot: this job waited ${ELAPSED}s and could NOT prove that run ${GITHUB_RUN_ID} attempt ${ATTEMPT} holds the shared database. It has certified NOTHING and is failing rather than running against a database another run is mutating. If this is a partial re-run (\`gh run rerun --failed\`), re-run the whole workflow instead — a re-run does not re-execute the queue job, so the attempt starts at the BACK of the queue."
     else
       echo "::error::live-db slot: waited ${ELAPSED}s without acquiring the shared database. This run has certified NOTHING. It is NOT a pass — re-run it when the queue drains."
     fi
+    # THE WAIT IS THE FINDING, so record it on this path too. Only the
+    # acquired path used to emit it, which left `outputs.waited` EMPTY exactly
+    # when the duration was the whole story: live-db-verdict printed
+    # "waited=?s", and the telemetry artifact — whose stated purpose is the two
+    # facts the Actions API cannot reconstruct afterwards, how long THIS run
+    # waited and whether it got the database — recorded "queue_wait_seconds":
+    # "null". Measured on run 37111083339: 2721s of waiting, reported as "?".
     emit "live_db_slot=timeout"
+    emit "live_db_slot_wait_seconds=${ELAPSED}"
+    emit "live_db_slot_attempt=${ATTEMPT}"
+    # Additive, so live-db-verdict.sh and the telemetry artifact keep reading
+    # the same three keys they always did. This one separates "the queue was
+    # long" from "the API never answered", which the wait duration alone cannot.
+    emit "live_db_slot_api_refusals=${API_REFUSALS}/${POLLS}"
+    emit "live_db_slot_holders=${HOLDERS_SEEN}"
+    emit "live_db_slot_undecided=${UNDECIDED}"
     exit 75
   fi
 
   # Every in-progress/queued run of this workflow, `<started> <id> <attempt>`
   # per line. The attempt is the run's CURRENT one, which a release must match.
   #
-  # FILTERED SERVER-SIDE, ONE STATUS AT A TIME (measured 2026-10-03). The
-  # listing used to page through the workflow's WHOLE run history
-  # (`runs?per_page=100` with --paginate) and filter in jq. With hundreds of
-  # completed runs that is several API calls per poll, every POLL seconds, in
-  # every waiting job; with ~12 runs queued the repository hit GitHub's rate
-  # limit, every call returned 403, the error was swallowed into an empty
-  # listing, and every waiter timed out having certified nothing (PRs #570–#579,
-  # 09:40–12:15 UTC). `?status=` returns only the runs the decider can use.
+  # ASK THE SERVER TO FILTER. This used to walk the workflow's ENTIRE run
+  # history with `--paginate` and select the active ones client-side, which is
+  # what exhausted the request budget in the first place: `--jq` filters each
+  # page without stopping the walk, so one poll cost ceil(total/100) requests.
+  # Measured 2026-10-03: live-db.yml has 2919 runs, so that was 30 requests per
+  # poll, every 20s, from every waiting lane, against a budget that is per
+  # REPOSITORY. The backoff below cannot prevent that — exhaustion arrives
+  # before the first 403 does.
   #
-  # ALL OR NOTHING. If either status query fails the listing is EMPTY, which the
-  # decider refuses (exit 3) — never a listing with the in-progress half missing,
-  # which would let a waiter believe it is the oldest while another run holds the
-  # database.
+  # #583 measured the consequence from the other end, on the same day: with
+  # ~12 runs queued the repository hit GitHub's rate limit, every call returned
+  # 403, the error was swallowed into an empty listing, and every waiter timed
+  # out having certified nothing (PRs #570-#579, 09:40-12:15 UTC).
   #
-  # QUEUED FIRST. A run that moves queued -> in_progress between the two queries
-  # is then seen by the second; asked the other way round it would be seen by
-  # neither. A run seen by both is listed once, at its earliest timestamp.
+  # `?status=` is applied by the API across all runs, so this is strictly more
+  # precise than the walk it replaces, not a bounded approximation of it: it
+  # CANNOT miss an older holder, however long that holder has been running.
+  # Measured the same day: status=in_progress returned total_count 8 and
+  # status=queued returned 4 — the whole queue, in two requests instead of 30.
+  #
+  # ORDER MATTERS, and it is the one way two calls can be worse than one. The
+  # calls are not a single atomic snapshot, so a run that changes status
+  # between them could fall through the gap — and a MISSED run is how this
+  # script concludes a database is free when it is not. Runs only ever move
+  # queued -> in_progress, so asking for `queued` FIRST makes a miss
+  # impossible: a run queued at the first call is seen there, and one already
+  # in progress by then is seen by the second. The reverse order has a real
+  # hole (queued at call one's instant, in progress by call two's, listed by
+  # neither). The cost of this order is that a run transitioning mid-poll can
+  # appear TWICE, which is why the ids are de-duplicated below — a double
+  # listing cannot make the slot look free, but it does inflate `active=`, and
+  # that number is read by humans deciding whether to push.
+  #
+  # No `|| echo ""` here: that discarded gh's exit status, which is the one
+  # unambiguous signal that the API refused us rather than answered us. Each
+  # status keeps `--paginate` because correctness needs every page OF THE
+  # FILTERED SET, which is the queue depth, not the run history.
+  RAW_RUNS=""
+  GH_RC=0
+  : > "$GH_STDERR"
+  for RUN_STATUS in queued in_progress; do
+    STATUS_PAGE="$(gh api --paginate \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/${WF_ID}/runs?status=${RUN_STATUS}&per_page=100" \
+              --jq '.workflow_runs[] | select(.status == "in_progress" or .status == "queued") | "\(.run_started_at // .created_at) \(.id) \(.run_attempt // "")"' \
+            2>>"$GH_STDERR")"
+    STATUS_RC=$?
+    # Either call failing means we do not have the queue. Fail closed: keep the
+    # non-zero status so the refusal branch below owns this poll.
+    [ "$STATUS_RC" -ne 0 ] && GH_RC="$STATUS_RC"
+    RAW_RUNS="${RAW_RUNS}${STATUS_PAGE}"$'\n'
+  done
+  # Sorted by timestamp, then first sighting of each run id wins, so a run that
+  # transitioned mid-poll is kept at its EARLIEST timestamp whatever order the
+  # answers arrived in (#583). Lines that do not parse are passed through
+  # untouched, because the decider must still refuse them.
   RAW_RUNS="$(
-    listing=""
-    for st in queued in_progress; do
-      if ! part="$(gh api --paginate \
-            "repos/${GITHUB_REPOSITORY}/actions/workflows/${WF_ID}/runs?status=${st}&per_page=100" \
-            --jq '.workflow_runs[] | select(.status == "in_progress" or .status == "queued") | "\(.run_started_at // .created_at) \(.id) \(.run_attempt // "")"' \
-            2>/dev/null)"; then
-        exit 0
-      fi
-      listing="${listing}${part}"$'\n'
-    done
-    printf '%s' "$listing" | sed '/^[[:space:]]*$/d' | sort -k1,1 | awk '!seen[$2]++'
+    # Malformed lines first, untouched and never sorted: a sentinel inside the
+    # sort key would be a line the API could forge. The decider must refuse
+    # these, so it should meet them before anything else.
+    printf '%s\n' "$RAW_RUNS" | awk 'NF > 0 && NF < 2'
+    printf '%s\n' "$RAW_RUNS" | awk 'NF >= 2' | LC_ALL=C sort -k1,1 | awk '!seen[$2]++'
   )"
+  POLLS=$(( POLLS + 1 ))
+  ASKED=1
+
+  # A non-zero exit, or an error body on stdout, means we were refused. Both are
+  # checked: the exit code is authoritative, and the body names the reason.
+  # ALL OR NOTHING (#583). If either query failed we do not have the queue, so
+  # the half-listing is dropped HERE rather than relying on the `continue`
+  # below staying where it is. A listing missing its in-progress half would let
+  # this run believe it is the oldest while another one holds the database.
+  # The text is kept in GH_BODY, because the classifier needs the error body.
+  GH_BODY="$RAW_RUNS"
+  [ "$GH_RC" -ne 0 ] && RAW_RUNS=""
+
+  if [ "$GH_RC" -ne 0 ] || printf '%s' "$GH_BODY" | grep -q '"status": *"[45][0-9][0-9]"'; then
+    API_REFUSALS=$(( API_REFUSALS + 1 ))
+    # Why we were refused, in descending order of specificity. The exit code
+    # alone is NOT an answer: run 37122355417 reported `exit 1` on all twelve
+    # of its polls over 2700s, and a number is not a diagnosis.
+    #
+    # What went wrong there was not the detector but the plumbing: the listing
+    # call ended `2>/dev/null`, and with `--jq` the filter does not run on an
+    # HTTP error, so stdout was empty too. Both greps below ran against an
+    # empty string, and the job log contains no `gh:` line at all — the reason
+    # was discarded at the call site, so which refusal it was is STILL unknown.
+    #
+    # So read both streams and match all three shapes a reason arrives in:
+    # `rate.limit` in prose (GitHub's rate-limit body has NO `status` key, so a
+    # code-only detector misses the commonest refusal), a `"status": "4xx"`
+    # field, and gh's own one-line `... (HTTP 4xx)` summary.
+    GH_SAID="$(tr -d '\r' < "$GH_STDERR" | grep -v '^[[:space:]]*$' | head -1 | cut -c1-200)"
+    GH_ANY="$(printf '%s\n' "$GH_BODY"; tr -d '\r' < "$GH_STDERR")"
+    WHY="exit ${GH_RC}"
+    if printf '%s' "$GH_ANY" | grep -qi 'rate.limit'; then
+      WHY="HTTP 403, rate limit"
+    elif printf '%s' "$GH_ANY" | grep -q '"status": *"[45][0-9][0-9]"'; then
+      WHY="HTTP $(printf '%s' "$GH_ANY" | sed -n 's/.*"status": *"\([45][0-9][0-9]\)".*/\1/p' | head -1)"
+    elif printf '%s' "$GH_ANY" | grep -qE '\(HTTP [45][0-9][0-9]\)'; then
+      WHY="HTTP $(printf '%s' "$GH_ANY" | sed -n 's/.*(HTTP \([45][0-9][0-9]\)).*/\1/p' | head -1)"
+    fi
+    if [ -n "$GH_SAID" ]; then
+      WHY="${WHY} — gh said: ${GH_SAID}"
+    fi
+    # Never sleep past the budget. The deadline is checked at the top of the
+    # loop, so an unclamped backoff would overshoot the job's stated wait by up
+    # to POLL_MAX — a 1200s verify budget reporting 1500s of waiting, which is
+    # the kind of number this script exists to report honestly.
+    WAIT_NOW="$SLEEP_FOR"
+    REMAIN=$(( TIMEOUT - ELAPSED ))
+    [ "$REMAIN" -lt 1 ] && REMAIN=1
+    [ "$WAIT_NOW" -gt "$REMAIN" ] && WAIT_NOW="$REMAIN"
+    echo "live-db slot [${ROLE}]: the Actions API REFUSED the run listing (${WHY}) — this says nothing about who holds the database. Waited ${ELAPSED}s/${TIMEOUT}s, ${API_REFUSALS} of ${POLLS} polls refused. Backing off ${WAIT_NOW}s."
+    sleep "$WAIT_NOW"
+    SLEEP_FOR=$(( SLEEP_FOR * 2 ))
+    [ "$SLEEP_FOR" -gt "$POLL_MAX" ] && SLEEP_FOR="$POLL_MAX"
+    continue
+  fi
+  SLEEP_FOR="$POLL"
 
   # Annotate each line with whether that run still has a CLAIM on the slot. See
   # live-db-slot-decide.sh's header for why a run can be the oldest and still
   # hold nothing. Runs newer than this one are left unannotated (`held` by
   # default): they cannot block us, so spending an API call on them is waste.
   RUNS="$(annotate_claims "$RAW_RUNS")"
-  ASKED=1
 
   DECISION="$(printf '%s\n' "$RUNS" | bash "$DECIDE" 2>&1)"
   RC=$?
@@ -393,6 +570,14 @@ while :; do
       emit "live_db_slot=acquired"
       emit "live_db_slot_wait_seconds=${ELAPSED}"
       emit "live_db_slot_attempt=${ATTEMPT}"
+      # Also on the SUCCESS path. A run that queued 738s behind two named
+      # holders and then acquired is the case where these matter most: the wait
+      # is real, nothing is broken, and the only way to tell that apart from a
+      # refused poller is to say who was ahead. An acquisition that reports a
+      # long wait and no holder is a finding, not a queue.
+      emit "live_db_slot_api_refusals=${API_REFUSALS}/${POLLS}"
+      emit "live_db_slot_holders=${HOLDERS_SEEN}"
+      emit "live_db_slot_undecided=${UNDECIDED}"
       exit 0
       ;;
     1)
@@ -400,12 +585,19 @@ while :; do
       ACTIVE="$(printf '%s\n' "$DECISION" | sed -n 's/^active=//p')"
       FORF="$(printf '%s\n' "$DECISION" | sed -n 's/^forfeited=//p')"
       REL="$(printf '%s\n' "$DECISION" | sed -n 's/^released=//p')"
+      if [ -n "$HOLDER" ]; then
+        case ",${HOLDERS_SEEN}," in
+          *",${HOLDER},"*) : ;;
+          *) HOLDERS_SEEN="${HOLDERS_SEEN:+${HOLDERS_SEEN},}${HOLDER}" ;;
+        esac
+      fi
       echo "live-db slot [${ROLE}]: waiting ${ELAPSED}s/${TIMEOUT}s — holder=${HOLDER:-?}, ${ACTIVE:-?} active, ${FORF:-0} forfeited, ${REL:-0} released"
       ;;
     3)
       # We are in-progress ourselves, so an unusable list means the API is not
       # telling us the truth. Do not treat "I cannot see" as "nobody is there".
-      echo "live-db slot [${ROLE}]: run listing was empty or unusable while this run is in progress — retrying in ${POLL}s"
+      UNDECIDED=$(( UNDECIDED + 1 ))
+      echo "live-db slot [${ROLE}]: the listing parsed but does not account for this run, which cannot be true while this job is running — the API answered, and its answer is wrong. Retrying in ${SLEEP_FOR}s"
       printf '%s\n' "$DECISION" | sed 's/^/  /'
       ;;
     *)
@@ -415,5 +607,5 @@ while :; do
       ;;
   esac
 
-  sleep "$POLL"
+  sleep "$SLEEP_FOR"
 done
