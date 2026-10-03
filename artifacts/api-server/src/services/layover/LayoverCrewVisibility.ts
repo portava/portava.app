@@ -32,6 +32,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../../lib/logger.js";
 import { readBlockExclusions } from "../../lib/exclusionSet.js";
 import {
+  activeCrewForUser,
+  crewMembers,
   liveMembersOfCrews,
   openCrewsInCity,
   type CrewAdmission,
@@ -140,5 +142,112 @@ export function blockAdmission(db: SupabaseClient, joinerId: string): CrewAdmiss
       return "unknown";
     }
     return memberIds.some((id) => blocked.ids.has(id)) ? "refuse" : "admit";
+  };
+}
+
+/**
+ * What the §12 Compass tool `getCrewCandidates` may tell the model about crews
+ * for one traveller — census-layover L110, §48.
+ *
+ * The tool used to answer `unavailable: "no_crew_storage"` for everybody, a
+ * reason that stopped being true when 2984 created the crew tables. It now
+ * answers from the same reads the crew card makes, under the same rules:
+ *
+ *   - the crews OFFERED are `openCrewsVisibleTo`'s, so a crew with somebody in
+ *     a block relation with the asker never reaches the model;
+ *   - ANY failed read (membership, crew, members, blocks) is `ok: false`. The
+ *     route hands that to the tool as a reason, never as an empty list: an
+ *     empty roster from a failed read is "nobody is meeting here", and an
+ *     unfiltered one could put a blocked person in the answer;
+ *   - no traveller's user id or session id is in the result. Crews are named
+ *     by what the card shows — title, meeting point, size, expiry — because
+ *     whatever is handed to the model can end up in its sentence.
+ *
+ * `city` is the route's `crewCityFor(airport, session)`; null means the
+ * airport's city is unknown, which is an ANSWER (`reason: "city_unknown"`),
+ * exactly as `GET /:id/crew` serves it.
+ */
+export type CompassCrewCandidates =
+  | {
+      ok: true;
+      value:
+        | {
+            inCrew: true;
+            crew: {
+              title: string;
+              meetingPointLabel: string | null;
+              expiresAt: string;
+              memberCount: number;
+              maxMembers: number;
+              youAreOwner: boolean;
+            };
+            candidates: [];
+          }
+        | {
+            inCrew: false;
+            city: string | null;
+            candidates: Array<{
+              crewId: string;
+              title: string;
+              meetingPointLabel: string | null;
+              maxMembers: number;
+              expiresAt: string;
+            }>;
+            reason: "city_unknown" | null;
+          };
+    }
+  | { ok: false; reason: "layover_crew_unreadable" };
+
+export async function compassCrewCandidates(
+  db: SupabaseClient,
+  viewerId: string,
+  city: string | null,
+  nowIso: string,
+): Promise<CompassCrewCandidates> {
+  const unreadable = { ok: false, reason: "layover_crew_unreadable" } as const;
+
+  const mine = await activeCrewForUser(db, viewerId, nowIso);
+  if (!mine.ok) return unreadable;
+  if (mine.value) {
+    const { crew, membership } = mine.value;
+    const members = await crewMembers(db, crew.id);
+    if (!members.ok) return unreadable;
+    return {
+      ok: true,
+      value: {
+        inCrew: true,
+        crew: {
+          title: crew.title,
+          meetingPointLabel: crew.meetingPointLabel,
+          expiresAt: crew.expiresAt,
+          // The crew's size is published whole on the crew card too: everybody
+          // in it is bound by its deadline, seen or not (`publishedCrewSolution`).
+          memberCount: members.value.length,
+          maxMembers: crew.maxMembers,
+          youAreOwner: membership.role === "owner",
+        },
+        candidates: [],
+      },
+    };
+  }
+
+  if (!city) return { ok: true, value: { inCrew: false, city: null, candidates: [], reason: "city_unknown" } };
+
+  const open = await openCrewsVisibleTo(db, viewerId, city, nowIso);
+  if (!open.ok) return unreadable;
+  return {
+    ok: true,
+    value: {
+      inCrew: false,
+      city,
+      candidates: open.value.map((c) => ({
+        crewId: c.id,
+        title: c.title,
+        meetingPointLabel: c.meetingPointLabel,
+        maxMembers: c.maxMembers,
+        expiresAt: c.expiresAt,
+      })),
+      reason: null,
+    },
   };
 }

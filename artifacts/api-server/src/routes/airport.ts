@@ -101,7 +101,7 @@ import {
 // OFFERED, whether they may JOIN one, and which crewmates the solver may NAME —
 // one module, shared with the Compass crew tool so the two cannot disagree.
 // `readBlockExclusions` scopes the member-card block read to the crew itself.
-import { blockAdmission, openCrewsVisibleTo, publishedCrewSolution } from "../services/layover/LayoverCrewVisibility.js";
+import { blockAdmission, compassCrewCandidates, openCrewsVisibleTo, publishedCrewSolution } from "../services/layover/LayoverCrewVisibility.js";
 import { readBlockExclusions } from "../lib/exclusionSet.js";
 import { safetyLabel, type TravelTimeSource } from "../services/airport/LayoverSafetyEngine.js";
 // §10 the traveller observation channel (census L82). The DECISION rules live
@@ -1197,7 +1197,7 @@ router.post("/airport/sessions/:id/compass", async (req, res) => {
   // nothing to do here" and "your plan fits" out of a connection reset
   // (census L294, census L47).
   const recsRead = await getRecommendations(sc, session.id);
-  const stopsRead = await loadStops(sc, session.id);
+  const stopsRead = await loadStops(sc, session.id); const crewRead = await compassCrewCandidates(sc, user.id, crewCityFor(airport, session), new Date().toISOString()); // §48 L110: block-cleared, as GET /:id/crew; a failed read travels as a reason
   const answer = await answerLayoverQuestion(sc, {
     question: parsed.data.question,
     session, snapshot: await consumerLayoverSnapshot(sc, airport, session, Date.now()), // census-discovery §81: null (flag off) keeps the legacy certification below
@@ -1205,7 +1205,7 @@ router.post("/airport/sessions/:id/compass", async (req, res) => {
     recommendations: recsRead.ok ? (recsRead.recommendations as unknown as Array<Record<string, unknown>>) : undefined,
     recommendationsUnavailableReason: recsRead.ok ? null : "layover_recommendations_unreadable",
     stops: stopsRead.ok ? stopsRead.stops : undefined,
-    stopsUnavailableReason: stopsRead.ok ? null : "layover_plan_stops_unreadable",
+    stopsUnavailableReason: stopsRead.ok ? null : "layover_plan_stops_unreadable", crew: crewRead,
   });
 
   await emitLayoverEvent(sc, session.id, user.id, "compass_question_asked", {
