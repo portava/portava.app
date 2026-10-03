@@ -43,6 +43,7 @@
  */
 
 import { logger } from "./logger.js";
+import { isTableAbsentError } from "./tableAbsence.js";
 
 export type VisibilityLevel = "full" | "followers_only" | "limited_preview" | "blocked" | "unavailable";
 
@@ -127,10 +128,11 @@ export const RESTRICTED_PRIVACY_SETTINGS: Readonly<PrivacySettings> = Object.fre
  * `column "x" does not exist` cannot sneak through it either.
  */
 function isTableMissingErr(e: any): boolean {
-  if (!e) return false;
-  if (e.code === "42P01" || e.code === "PGRST205") return true;
-  const msg = String(e.message ?? "").toLowerCase();
-  return msg.includes("relation") && msg.includes("does not exist");
+  // lib/tableAbsence: a code, when present, decides. The message probe alone
+  // still read a code-bearing 42703 worded `column "state" of relation
+  // "user_account_states" does not exist` as an absent table — and skipped the
+  // ban/suspension state that table holds.
+  return isTableAbsentError(e);
 }
 
 /**
