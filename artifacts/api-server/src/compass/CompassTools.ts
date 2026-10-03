@@ -120,7 +120,7 @@ import {
   resolvePassportViewerContext,
   type PassportViewerContext,
 } from "../services/passport/PassportProjectionService.js";
-import { getActiveWindows } from "../services/passport/OpenToPlansService.js";
+import { getActiveWindows } from "../services/passport/OpenToPlansService.js"; import { liveEventCounters } from "../lib/eventRowReads.js";  // census-discovery §118 (B22)
 import { readGroupBlockExclusions, exclusionsUnavailable, type ExclusionSet } from "../lib/exclusionSet.js";
 
 import { getTrustProfileResult } from "../services/trust/TrustScoreService.js";
@@ -2132,7 +2132,7 @@ async function toolGroupRecommendation(
     : (viewerProfile.currentCity ?? null);
 
   let candidates: any[] = [];
-  let groupConstraintsApplied: string[] = []; let flagsUnread = false; let unchecked = false; let readCapped = 0;  // census-discovery §110 (D-W11X2-92, D-W11X2-102)
+  let groupConstraintsApplied: string[] = []; let flagsUnread = false; let unchecked = false; let readCapped = 0; let goingUnread = false;  // census-discovery §110 (D-W11X2-92, D-W11X2-102); §118 (B22): the live going read failed
 
   if (kind === "events") {
     const cutoff = new Date(Date.now() - 2 * 3600_000).toISOString();
@@ -2152,12 +2152,12 @@ async function toolGroupRecommendation(
     }
     if (city) q = q.ilike("city", sqlPattern(city));
     const { data, error } = await q.limit(limit * 3); if (((data ?? []) as any[]).length >= limit * 3) readCapped = limit * 3;  // §110 (D-W11X2-102): more may exist past the cap
-    if (error) return { candidates: [], info: "Event search unavailable right now." };
+    if (error) return { candidates: [], info: "Event search unavailable right now." }; goingUnread = (await liveEventCounters(sc, (data ?? []) as any[], { going: true })).length > 0;  // census-discovery §118 (B22): capacity is judged on the live going count, never the cached counter a failed recount leaves stale
 
     const constrained: any[] = [];
     for (const e of (data ?? []) as any[]) {
       if (excluded.has(String(e.host_id))) continue; // blocked by anyone in the group
-      const fit = eventSatisfiesGroup({ ...e, requires_verification: e.verified_only === true }, agg);
+      const fit = eventSatisfiesGroup({ ...e, requires_verification: e.verified_only === true, going_unread: goingUnread }, agg);
       if (!fit.ok) { if (fit.reason) groupConstraintsApplied.push(fit.reason); continue; }
       constrained.push(e);
     }
@@ -2235,7 +2235,7 @@ async function toolGroupRecommendation(
         candidates: [],
         group: { label: group.groupLabel, size: agg.size, memberHandles },
         groupConstraintsApplied: [...new Set(groupConstraintsApplied)],
-        info: unchecked ? TOOL_SAFETY_UNCHECKED_INFO : flagsUnread ? TOOL_FLAGS_UNREAD_INFO : readCapped > 0 ? cappedReadInfo(readCapped, kind === "events" ? "events for the whole group" : "places for the whole group") : "No candidates satisfy the whole group's constraints right now.",  // §110 (D-W11X2-92): an unread flag read is not "no candidates"
+        info: unchecked ? TOOL_SAFETY_UNCHECKED_INFO : flagsUnread ? TOOL_FLAGS_UNREAD_INFO : readCapped > 0 ? cappedReadInfo(readCapped, kind === "events" ? "events for the whole group" : "places for the whole group") : groupConstraintsApplied.includes("capacity_could_not_be_checked") ? GROUP_CAPACITY_UNREAD_INFO : "No candidates satisfy the whole group's constraints right now.",  // §110 (D-W11X2-92): an unread flag read is not "no candidates"; §118 (B22): nor is an unread going count
       };
 }
 
@@ -2570,3 +2570,10 @@ const MEETUP_CUT_EMPTY_INFO = "Compass checked only some of the user's trips and
 const MEETUP_CUT_INFO = "Each occasion exists only because both people are sharing presence with each other. Location is approximate only — repeat the `where` string exactly and never propose a place the result did not name. Compass checked only some of the user's trips and circles, so these are not all the occasions: say so.";
 const PLANNED_ITEMS_READ_CAP = 20;
 const PLANNED_ITEMS_CUT_INFO = "These are not all of the planned items on the overlapping trips in that range (there are more than Compass reads at once): do not say these are all of them, or that a day without one listed is free.";
+
+// ── census-discovery §118 (DV-83 round 21, lane W11-X2, B22): an unread going count is no capacity fact ──
+// `get_group_recommendation` judged "room for the whole group" on the cached `events.going_count`, which a failed recount
+// leaves stale by design, and told the model "No candidates satisfy the whole group's constraints right now." with
+// `not_enough_capacity_for_group` while a seat was open. It recounts live; when that read fails, a capped event is held
+// back as `capacity_could_not_be_checked`, and this is what the model is told when nothing else could be offered.
+const GROUP_CAPACITY_UNREAD_INFO = "Compass could not check how many people are going to the events it found (a read failed), so it could not tell which have room for the whole group and offered none of those. Say capacity could not be checked; do not say no event has room or that there are none.";

@@ -292,7 +292,7 @@ export function buildGroupRankingProfile(
 export function eventSatisfiesGroup(
   ev: {
     max_attendees?: number | null;
-    going_count?: number | null;
+    going_count?: number | null; /** census-discovery §118 (DV-83 round 21, B22): the live going read failed, so `going_count` is no fact */ going_unread?: boolean;
     age_min?: number | null;
     requires_verification?: boolean | null;
   },
@@ -300,8 +300,8 @@ export function eventSatisfiesGroup(
 ): { ok: boolean; reason?: string } {
   const cap = ev.max_attendees ?? null;
   if (cap !== null) {
-    const going = Number(ev.going_count ?? 0);
-    if (cap - going < agg.size) return { ok: false, reason: "not_enough_capacity_for_group" };
+    const going = ev.going_unread === true ? null : Number(ev.going_count ?? 0);  // §118 (B22): an unread count is never a capacity fact
+    if (going === null) return { ok: false, reason: "capacity_could_not_be_checked" }; if (cap - going < agg.size) return { ok: false, reason: "not_enough_capacity_for_group" };
   }
   const ageMin = ev.age_min ?? null;
   if (ageMin !== null && ageMin > 0) {

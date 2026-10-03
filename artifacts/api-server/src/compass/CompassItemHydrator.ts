@@ -237,15 +237,15 @@ async function fetchEvents(
     const eventIds = rawEvents.map((e: any) => e.id as string);
     const rsvpCount = new Map<string, number>();
 
-    if (followingSet.size > 0) {
-      const { data: rsvpRows } = await db
-        .from("event_rsvps")
-        .select("event_id, user_id")
-        .in("event_id", eventIds)
-        .eq("status", "going");
+    const goingRead = await readGoingRsvpsForEvents(db, eventIds); const goingLive = new Map<string, number>();  // census-discovery §118 (DV-83 round 21, B22): every going RSVP, read whole
+    const goingUnread = goingRead.error !== null || !Array.isArray(goingRead.data);  // a failed read states no attendee count (never the cached counter) and no friend going, which only ranks
+    {
+      const rsvpRows = goingUnread ? [] : goingRead.data;
+      // `currentAttendees` is the live count of these rows; the cached `events.going_count` drifts (a failed recount leaves it stale by design).
+
 
       for (const rsvp of (rsvpRows ?? []) as any[]) {
-        if (followingSet.has(rsvp.user_id as string)) {
+        goingLive.set(rsvp.event_id, (goingLive.get(rsvp.event_id) ?? 0) + 1); if (followingSet.has(rsvp.user_id as string)) {
           rsvpCount.set(rsvp.event_id, (rsvpCount.get(rsvp.event_id) ?? 0) + 1);
         }
       }
@@ -259,7 +259,7 @@ async function fetchEvents(
       authorId:             event.host_id ?? undefined,
       city:                 event.city ?? null,
       capacity:             event.max_attendees ?? undefined,
-      currentAttendees:     event.going_count ?? undefined,
+      currentAttendees:     goingUnread ? undefined : (goingLive.get(String(event.id)) ?? 0),  // §118 (B22): the live count, or none
       visibilityScope:      "public",
       qualityScore:         6,
       createdAt:            event.starts_at,
@@ -464,7 +464,7 @@ export async function hydrateCompassItems(
 }
 
 // census-media §43 — appended at the tail so no cited line above moves; ESM hoists imports.
-import { postPlaceMark } from "../lib/postPlaceDisclosure.js";
+import { postPlaceMark } from "../lib/postPlaceDisclosure.js"; import { readGoingRsvpsForEvents } from "../lib/eventRowReads.js";  // census-discovery §118 (B22)
 
 // ── census-discovery §104 (DV-83, D-W11X2-54): a failed candidate read is NAMED ──
 //
