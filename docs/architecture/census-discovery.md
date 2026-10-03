@@ -19858,8 +19858,114 @@ The code is final at `2601e4188` (the census commit; the last code change is `9f
 
 Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
 
+### 118.2 Round 21: what this lane did
+
+*Written 2026-10-03 by lane W11-X2 (round 21) on `disc-w11-x2-r21`, from `0fa751d25` (PR #530's head: round 20 merged with main `0fa752ece`) and §118.1. It closes §118.1's seven break groups (B22–B28), each with the verifier's probes adapted into registered tests and seen red first; registers the verifier's R2 fixture (LZ1) and C14 fixture (EC4); refuses `require.context` in the guard (GH53) and reads the one more load shape Metro collects (GH54); corrects D-W11X2-159, -160, -161, -164 and -165 in D-W11X2-166 to -172; and sweeps once more. The sweep found and closed four more paths (SW20–SW23).*
+
+*No migration and no new flag. Every change alters what is said only when a read failed, was cut, covered part of what was asked, or was answered for something no longer shown; with every read healthy and whole, every screen renders as before and every served body is byte-identical but for counts that were stale (controls PW0, LZ0, SR0, SL0, LP0, SP2, AS0, AS3, EC0, EC5, AV0, CP0, AT0, LR0, NM0, TR0, LU0, LV0, SS0, FS0, ME0, SV0, JN0, CI0, MW0, DS0, LD0). Server bodies gain keys only on the failed or cut arm: `goingAttendeesTruncated` / `goingAttendeesTotal` on GET /events/:id over a slice, `failedSources` on GET /pulse/live, `truncated` on GET /events/search, /following and /circles; a list's own failed read answers 503. Four behaviours change on a healthy read, each to stop serving a value that was not measured: Compass's group tool, its candidate pool, GET /pulse and GET /pulse/live count the going RSVPs live (B22); GET /events/:id's `goingCount` is the live count; a Live gem card's count is its live save count (SW21); and the event search reads at most 500 rows per term (it read every match, cut silently at 1000). Every edit in a cited file is line-neutral: lines are changed in place, and new code is appended at a file's foot or lives in a new module (`test/helpers/postgrestKeyset.ts`).*
+
+*All evidence is controlled: node suites over the real routes, services and loaders and PostgREST-shaped doubles (live tables that honour every filter, the `.or()` keyset, every order, `.range()` and db-max-rows, written between pages), jest over the real services, hooks, components and screens, and the static guard over an in-memory overlay. None of it is production evidence, and no client build carrying the change has shipped.*
+
+### 118.3 The cached going count, stated nowhere as measured (§118.1 B22, R2; D-W11X2-167)
+
+Compass's group tool, its candidate pool (`artifacts/api-server/src/compass/CompassItemHydrator.ts`), GET /pulse and GET /pulse/live (`artifacts/api-server/src/routes/pulse.ts`) count the going RSVPs live. A failed live read is no capacity fact: `get_group_recommendation` (`artifacts/api-server/src/compass/CompassTools.ts`, `eventSatisfiesGroup` in `artifacts/api-server/src/compass/CompassSocialEngine.ts`) holds a capped event back as `capacity_could_not_be_checked` and tells the model it could not check capacity; the rail serves no count and no "Full" and names `event_rsvps`. R2 is killed by the verifier's LZ1, registered. **D-W11X2-160 is corrected.**
+
+### 118.4 Paged reads, keyed (§118.1 B23; sweep SW22; D-W11X2-168)
+
+`readAllPages` (`artifacts/api-server/src/lib/pagedRead.ts`) pages a keyed read after the last row received (`keysetAfter`), so a write between two pages neither skips nor repeats a row that existed throughout; a page that repeats a row is a cut read, and an unkeyed read whose total moves is one too. Every event row read passes its key (`artifacts/api-server/src/lib/eventRowReads.ts`). The three momentum reads over `rank_events` (`artifacts/api-server/src/lib/discoveryLocalMomentum.ts`, `artifacts/api-server/src/lib/discoveryTrendExplanation.ts`, `artifacts/api-server/src/services/trails/TrailService.ts`) page newest first by `(served_at, id)` (`keysetBefore`). **D-W11X2-161 is corrected.**
+
+### 118.5 Who is going, and the counts the event screen says (§118.1 B24, B25; D-W11X2-166)
+
+GET /events/:id marks a slice of the going travellers (`goingAttendeesTruncated`, `goingAttendeesTotal`) and serves the live `goingCount` (`artifacts/api-server/src/routes/events.ts`). The host's Attendees tab (`travel-buddy-standalone/src/components/HostDashboardPanel.tsx`) says "Showing 4 of 6 going", the co-host picker (`travel-buddy-standalone/src/components/events/EventCohostsPanel.tsx`) never says everyone going is a co-host over a slice, and the event screen (`travel-buddy-standalone/app/event/[id].tsx`) says an unread going or waitlist count as last known (`travel-buddy-standalone/src/lib/eventAttendeesUnread.ts`). C14's fixture EC4 is registered. **D-W11X2-159 is corrected.**
+
+### 118.6 Lists drawn over the right rows (§118.1 B26, B27; sweep SW23; D-W11X2-169)
+
+/events/list (`travel-buddy-standalone/app/events/list.tsx`), the events tab's load and its Near Me read (`travel-buddy-standalone/app/(tabs)/events.tsx`), the destination page (`travel-buddy-standalone/app/destination/[slug].tsx`), the layover discovery card (`travel-buddy-standalone/src/components/layover/LayoverDiscoveryCard.tsx`) and the Live Pulse hook apply an answer only if no later load has started; Near Me asks the radius chosen, and a failed near read clears the old rows and says so. **D-W11X2-164 is corrected.**
+
+### 118.7 The tab's lists, the search and the Live rail (§118.1 B28; sweep SW20, SW21; D-W11X2-170)
+
+The events tab's own lists and GET /events/search answer 503 over a read of their own that failed and `truncated` over an event withheld over a failed read or a search pool filled; the tab says a list that failed beside those it drew. GET /pulse/live names every read it could not make, and counts a gem's saves live; the rail (`travel-buddy-standalone/src/components/LivePulseRail.tsx`, `travel-buddy-standalone/src/hooks/useLivePulse.ts`, `travel-buddy-standalone/src/services/livePulse.ts`) says them. **D-W11X2-165 is corrected.**
+
+### 118.8 The guard refuses `require.context` (GH53, GH54; D-W11X2-171)
+
+`moduleLoads` reads a member call on the global `require` (`requireMember`, at the foot of `travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts`): `require.context(…)` is refused as a load the guard cannot resolve, whatever its spelling, and `require.unstable_importMaybeSync(x)` is an import of `x`. The whole guard: 120 of 120.
+
+### 118.9 The sweep (SW20–SW23; D-W11X2-170, -168, -169, -172)
+
+Every read of a cached counter on these surfaces; every offset-paged read answered whole; every client list that reloads when a parameter changes; every server list on these surfaces that answered a failed read as fewer or no rows; and every call shape Metro collects as a load were read again:
+
+- **SW20.** GET /pulse/live's sections ignored their read errors; each is named (§118.7).
+- **SW21.** A Live gem card stated the cached `save_count` (§118.7).
+- **SW22.** The three momentum reads paged `rank_events` newest first by offset (§118.4).
+- **SW23.** The destination page and the layover discovery card drew a previous city's late answer (§118.6).
+- **Ruled, sound, and left for their owners** — D-W11X2-172.
+
+### 118.10 Tests, seen red, and mutations
+
+**Seen red first**, run against the code before each fix (logs in the lane's `r21/red/` scratch directory; where a fix landed before its red run was recorded, HEAD's file was placed and restored by sha256):
+
+| Area | Red | Controls, green |
+|---|---|---|
+| B22 the cached going count | SR2–SR4, SL1–SL4, CH1, CH2, SP1 | SR0, SL0, SP2 (SR1 the reach) |
+| B23 the paged read under writes | PW1–PW6 | PW0 |
+| B24 the attendee slice | AS1, AS2, GC1, CP1, CP2, AT1, AT2 | AS0, AS3, AS4, CP0, AT0 |
+| B25 the event screen's counts | EC1–EC3, AV1, AV2 | EC0, EC5, AV0 (WD1 the reach) |
+| B26 /events/list, the tab's load | LR1, TR1 | LR0, TR0 |
+| B27 Near Me | NM1–NM3 | NM0 |
+| B28 the tab's lists and the search | SS1–SS4, FS1, FS2, OW1, ME1, ME2, SV1, JN1, CI1, LU1 | SS0, FS0, ME0, SV0, JN0, CI0, LU0 |
+| The guard's reach (G13) | GH53, GH53b–e, GH54 | GH53f |
+| SW20 the Live rail | LP1–LP8, LV1–LV5 | LP0, LV0 |
+| SW21 the gem count | LP9, LP10 | LP0 |
+| SW22 the momentum reads | MW1–MW4 | MW0 |
+| SW23 the destination page, the layover card | DS1, LD1 | DS0, LD0 |
+
+**Registered from the verifier's fixtures**: LZ0–LZ2 (R2), EC4 (C14). **Written against the fixed code**, each shown to bite by a mutation that removes what it pins: PW7 (K8), AS5 (EV3), SS5 (EV6), and PW5's refusal reason (K2).
+
+**Mutations.** Each was applied alone, its pin group run (the server group: 24 suites — the paged, events, Live and Compass suites and the momentum suites; the client group: 14 jest suites — the screen, component, hook and service suites; the guard group: the G13 GH41–GH54 cases and the tree as it is), and the file restored byte-identically; the sha256 matched `git show HEAD:` before every application and after every restore. Runner and logs: the lane's `r21/muts/` scratch directory (`run.py`, `defs.py`, one log per mutation, `summary.txt`).
+
+- **90 mutations:** B23 ×11 (K1–K11: `readAllPages`' keyed arm, the cursor, the key order, each reader's key) and R2; B22 ×24 (CT1–CT3, CS1, CH3, CH4, PL1–PL18: each live recount, each unread capacity arm, each named read, the gem count); B24/B28 server ×16 (EV1–EV16); SW22 ×5 (MO1–MO5); client ×27 (CL1–CL26: the slice, the counts, every request sequence, the near radius, the unread notes; C14); the guard ×6 (G10–G15).
+- **Result: 88 killed, 2 equivalent, 0 non-equivalent survivors** on DV-83 lines and on guard lines. **Equivalent:** CL2 (the client's `goingAttendeesTruncated` branch removed): the client's own comparison of `counts.going` with the travellers listed is the route's marking rule over the same body, so it reads every marked body the same way. G14 (the refusal message without the site list): Node 24's assertion appends its own diff, which names the site. **Survivors on a first run, each closed:** K2 and K8 (PW5's reason, PW7), EV3 (AS5), EV6 (SS5). **The verifier's survivors:** R2 is killed by LZ1; C14 by EC4.
+- *Naming.* This round's series are B22–B28, R2, C14 and GH53 (the verifier's names), SW20–SW23 (the sweep), GH54, and K, CT, CS, CH, PL, EV, MO, CL, G (the mutations).
+
+### 118.11 Checks
+
+- **Line-neutral in every cited file** (`routes/events.ts`, `routes/pulse.ts`, `compass/CompassTools.ts`, `compass/CompassSocialEngine.ts`, `compass/CompassItemHydrator.ts`, `lib/pagedRead.ts`, `lib/eventRowReads.ts`, the momentum readers, the client screens and the guard's cited lines): lines changed in place, new code at a file's foot or in a new module, so `check:doc-citations`, `check:citation-targets` and `check:citation-symbols` are clean.
+- **Scope.** This round's touched sources join this census's `CENSUS_SCOPE`; the acknowledgement for every census the freshness check named carries a §118 paragraph with its "why it cannot move a verdict".
+- **Suites.** The new api-server suites are on the `test` line (`check:test-registration`); the new client suites are jest component suites, none on KNOWN_BROKEN, none orphaned.
+- **Silent reads.** `check:silent-supabase-reads` reports no new site; two baseline counts were lowered for the sites this round fixed (`routes/pulse.ts` S2 16 → 8, `routes/events.ts` S4 2 → 1); none was raised.
+
+### 118.12 DV-83, restated
+
+§118.1's seven break groups are closed, each with the verifier's probes adapted into registered tests, red first and green now. R2 and C14 are killed by the verifier's fixtures, registered. GH53 is caught, and GH54 beside it. D-W11X2-159, -160, -161, -164 and -165 are corrected in D-W11X2-166 to -172. The sweep closed four more paths. Every clause of DV-83's criterion holds on every path this lane examined:
+
+1. **Producers send the refusal envelope or a named failure.** GET /pulse/live names every read it could not make; GET /events/:id marks a slice; the tab's lists and the search refuse a read of their own that failed, and mark a list an unread read cut.
+2. **Nothing refused or partial is cached as complete.** No paged read answers whole over a page a concurrent write shifted; no cached counter is stated as a count.
+3. **Nothing refused is rendered as empty, as complete, or over the wrong rows.** No screen says "Everyone going is already a co-host", a slice as the attendees, an unread count as measured, "No live plans right now" over an unread read, or another filter's, radius's or city's answer under the one on screen.
+4. **A Compass tool never states a failed or partial read to the model as a fact.** `get_group_recommendation` says it could not check capacity over an unread going count, never that no event has room.
+5. **Consumers branch on coverage**, and the static guard refuses every load shape Metro collects that it cannot resolve.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§118.1's seven break groups are closed, each with its verifier probes adapted and red first; R2 and C14 are killed by the verifier's fixtures (LZ1, EC4); GH53 and GH54 are caught; the sweep closed four more paths (SW20–SW23); 90 mutations: 88 killed, 2 equivalent, 0 non-equivalent survivors (§118.10). CONTROLLED EVIDENCE ONLY — this row awaits independent re-verification.** **No cached going count is stated as measured** (`artifacts/api-server/src/compass/CompassTools.ts`, `artifacts/api-server/src/routes/pulse.ts`, `artifacts/api-server/src/compass/CompassItemHydrator.ts`; SR2–SR4, SL1–SL4, CH1, CH2, LZ1). **Every paged read pages by key** (`artifacts/api-server/src/lib/pagedRead.ts`, `artifacts/api-server/src/lib/discoveryLocalMomentum.ts`; PW1–PW7, MW1–MW4). **A slice of who is going is said as one, and an unread count as last known** (`artifacts/api-server/src/routes/events.ts`, `travel-buddy-standalone/src/components/HostDashboardPanel.tsx`, `travel-buddy-standalone/app/event/[id].tsx`; AS1, AS2, AS5, CP1, CP2, AT1, AT2, EC1–EC3, AV1, AV2). **Every list draws only the answer to what it shows** (`travel-buddy-standalone/app/events/list.tsx`, `travel-buddy-standalone/app/(tabs)/events.tsx`; LR1, TR1, NM1–NM3, DS1, LD1, LV5). **The tab's lists, the search and the Live rail refuse or name a read they could not make** (SS1–SS5, FS1, FS2, OW1, ME1, ME2, SV1, JN1, CI1, LU1, LP1–LP10, LV1–LV4). **The guard refuses `require.context`** (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts`; G13 GH53–GH54). |
+
+**Headline.** DV-83 moves W → C. `check:census-integrity` counts **C 101 / W 85 / N 2 / X 0** over 188: CONSTRUCTED 186 / 188 = **98.9 %**, CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged. The move is on controlled evidence and awaits independent re-verification.
+
+### 118.13 Left open, and what would turn this red
+
+- **Ruled, and left for their owners (D-W11X2-172).** `CompassSocialEngine.contextMemberIds`' unbounded reads (a residual: it states who is around, never a count, and a longer walk is said); `cityConfidenceWindowedReads`' offset paging (behind a flag seeded FALSE; its keyed paging is owed before the flag moves); GET /admin's events list (the admin console); `CompassGraphEngine`'s offset support reads (census-compass); POST/DELETE /posts/:id/save's `count ?? 0` stamp (census-media); `isSaved` and the ranking terms over a failed enrichment read.
+- **Product effect, stated.** Compass's group tool, its candidate pool, GET /pulse and GET /pulse/live read the going RSVPs (one paged read per request); a Live gem card's count is its live save count (one head count per gem shown); the event search reads at most 500 rows per term and says a deeper page is not whole; the tab's own lists answer 503 over a read they could not make; GET /pulse/live may carry `failedSources`; the host's tab says "Showing 4 of 6 going"; the event screen says an unread count as last known.
+- **What would turn DV-83 red again:**
+  - a cached counter stated as a count or a capacity anywhere (SR2–SR4, SL1–SL4, CH1, CH2, SP1, LP9, LZ1);
+  - a paged read answered whole over a page a write shifted, or a server that ignored the cursor (PW1–PW7, MW1–MW4);
+  - a slice of who is going said as the whole list, or an unread count said as measured (AS1, AS2, AS5, CP1, CP2, AT1, AT2, EC1–EC3, AV1, AV2);
+  - a list drawn from a previous filter's, radius's, context's or city's answer (LR1, TR1, NM1–NM3, LV5, DS1, LD1);
+  - a list's own failed read answered as fewer or no events, or a failed read on the Live rail unnamed (SS1–SS5, FS1, FS2, OW1, ME1, ME2, SV1, JN1, CI1, LU1, LP1–LP10, LV1–LV4);
+  - a `require.context` or `require.unstable_importMaybeSync` the guard cannot see (G13 GH53–GH54);
+  - any path §117.11 lists.
+
 ## Cited, not graded (check:census-scope-coverage)
 
+- NOT-GRADED: artifacts/api-server/src/test/helpers/postgrestKeyset.ts — §118.2 names it only as the shared test machinery that lets a PostgREST-shaped double answer a keyset page (the `.or()` cursor and every `.order()`); no verdict rests on it, and the suites that use it are watched.
 - NOT-GRADED: artifacts/api-server/src/lib/calls/callGatewayAdapter.ts — §113.8 names it for N1, outside DV-83: census-telegraph §40 records the call gateway's unread-gate outcome, and no Discovery verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/lib/calls/callPermissionEngine.ts — §113.8 names it only because its gateway type gained the `degraded_unavailable` reason for N1 (census-telegraph §40); no Discovery verdict rests on it.
 - NOT-GRADED: travel-buddy-standalone/src/context/CallContext.tsx — §113.8 names its call-screen copy for N1 (census-telegraph §40); no Discovery verdict rests on it.

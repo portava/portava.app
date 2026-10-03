@@ -4686,6 +4686,11 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // census-discovery §118 (lane W11-X2, round 21): the files §118 grades.
     "artifacts/api-server/src/compass/CompassTools.ts",  // §118 grades the group tool's capacity statement over an unread count (B22)
     "artifacts/api-server/src/routes/pulse.ts",  // §118 grades GET /pulse and /pulse/live's going counts and capacity (B22)
+    "travel-buddy-standalone/app/event/[id].tsx",  // §118 grades the event screen's unread counts and its "+N" (B24, B25)
+    "travel-buddy-standalone/src/components/events/EventCohostsPanel.tsx",  // §118 grades the co-host picker over a slice (B24)
+    "travel-buddy-standalone/src/components/LivePulseRail.tsx",  // §118 grades the Live rail over an unread read (SW20)
+    "travel-buddy-standalone/src/hooks/useLivePulse.ts",  // §118 grades the Live hook's unread reads and request order (SW20)
+    "travel-buddy-standalone/src/services/livePulse.ts",  // §118 grades how the Live service carries failedSources (SW20)
     "travel-buddy-standalone/src/hooks/__tests__/useMapEntities.unreadOptional.component.test.tsx",
     "travel-buddy-standalone/src/hooks/__tests__/useMapEntities.legacyGemsCut.component.test.tsx",
     "travel-buddy-standalone/app/map/__tests__/mapScreen.unreadLayers.component.test.tsx",
