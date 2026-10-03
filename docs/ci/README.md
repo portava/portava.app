@@ -985,9 +985,33 @@ key on `mergeable_state`: a PR whose head landed while it was still mergeable
 KEEPS that run and goes `dirty` later when `main` moves, which is why #521,
 #54, #52 and #549 are all `dirty` and all have a live-DB run at their head:
 #521 and #54 green, #549 red and therefore visible, and #52's from the
-`push` trigger that predates the narrowing. What is missing is a run for a commit **pushed while the PR was
-already `dirty`**. The question to ask of a head sha is therefore whether a
-`CI (live DB)` run exists for it at all, and then whether
+`push` trigger that predates the narrowing. What is missing is a run for a
+commit whose merge ref could not be built at the moment it was pushed — and
+that includes **the push that creates the conflict itself**, where nothing
+outside the PR changes at all.
+
+PR #560 is that variant, measured 2026-10-03. `main`'s tip `db657b73b` was
+committed at 05:58:30Z and was still the tip hours later, so it never moved
+between the two pushes below:
+
+- `02b75c4d6` (pushed 09:26:39Z) got `CI (live DB)` run 37113087273, and
+  `git merge-tree db657b73b 02b75c4d6` exits 0.
+- `39d842aa5` (pushed 09:42:40Z) got `CI` and `Unwired checks (probation)` on
+  the `push` event, both green, and **no `CI (live DB)` run of any kind**.
+  `git merge-tree db657b73b 39d842aa5` exits 1 with a content conflict in
+  `artifacts/api-server/package.json`.
+
+The commit's own one-line edit to that file's `test` script is the whole
+cause: against an unmoved base, the head before it merged clean and the head
+after it did not. The branch had been behind `main` since `0fa752ece` and was
+certified in that state, so "merge `main` promptly" would in fact have avoided
+this collision — but nothing told the author it was now required, and nothing
+told them certification had stopped. A PR can go from certified to silently
+uncertified on one of its own pushes, with no event anywhere saying so, and
+the author's next signal is three green checks.
+
+The question to ask of a head sha is therefore whether a `CI (live DB)` run
+exists for it at all, and then whether
 `api-server · check:all + live_pulse gate` reached a conclusion of its own —
 not whether a verdict is red, because a superseded run's verdict job reports
 failure and looks the same as a real one.
