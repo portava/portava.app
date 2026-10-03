@@ -32,7 +32,7 @@ const POSTGREST_IMPLICIT_CAP = 1000;
 
 function makeDb(cfg: {
   flags: Record<string, boolean>; claims?: any[]; observations?: any[]; confirmations?: any[];
-  policies?: any[]; snapshots?: any[]; errorTable?: string; withdrawnActors?: string[];
+  policies?: any[]; snapshots?: any[]; errorTable?: string; withdrawnActors?: string[]; evidence?: any[];
   // Inject an error on a specific PAGINATED page of `table`, but only once the
   // window has advanced to (or past) `minOffset` — lets a test succeed on page 1
   // and fail on a later page, proving a PARTIAL read expires nothing.
@@ -73,11 +73,11 @@ function makeDb(cfg: {
     let op: "select" | "upsert" | "update" | "insert" = "select"; let payload: any = null;
     const eqs: [string, any][] = []; const gts: [string, any][] = [];
     let inF: [string, any[]] | null = null; let lim = Infinity; let rangeF: [number, number] | null = null;
-    let orderF: [string, boolean] | null = null; let cols = "";
+    let orderF: [string, boolean] | null = null; let cols = ""; let wantCount = false;
     // Observations default to moderation_state 'allowed' (explicit values override),
     // so fixtures that don't care about moderation still pass the aggregator's
     // pilot-claimable .in() filter; a fixture can set 'blocked'/'removed' to test exclusion.
-    const src = (): any[] => (({ intel_claims: cfg.claims, intel_observations: (cfg.observations ?? []).map((o: any) => ({ moderation_state: "allowed", ...o })), intel_confirmations: cfg.confirmations, freshness_policies: cfg.policies, intel_state_snapshots: snaps, intel_contribution_consent: consentRows } as any)[table] ?? []);
+    const src = (): any[] => (({ intel_claims: cfg.claims, intel_observations: (cfg.observations ?? []).map((o: any) => ({ moderation_state: "allowed", ...o })), intel_confirmations: cfg.confirmations, freshness_policies: cfg.policies, intel_state_snapshots: snaps, intel_contribution_consent: consentRows, intel_evidence: cfg.evidence } as any)[table] ?? []);
     const match = (r: any) =>
       eqs.every(([c, v]) => r[c] === v)
       && gts.every(([c, v]) => r[c] != null && r[c] > v)
@@ -132,10 +132,12 @@ function makeDb(cfg: {
         updates.push({ table, ids, patch: payload });
         return { data: null, error: null };
       }
-      return { data: rows(), error: null };
+      // `count: "exact"` reports the size of the WHOLE filtered set, which is
+      // how a reader learns that the rows it was handed were capped.
+      return wantCount ? { data: rows(), error: null, count: src().filter(match).length } : { data: rows(), error: null };
     };
     const b: any = {
-      select(c?: string) { cols = String(c ?? ""); return b; },
+      select(c?: string, o?: { count?: string }) { cols = String(c ?? ""); wantCount = !!o?.count; return b; },
       upsert(row: any) { op = "upsert"; payload = row; return Promise.resolve(run()); },
       insert(row: any) { op = "insert"; payload = row; return Promise.resolve(run()); },
       update(patch: any) { op = "update"; payload = patch; return b; },
@@ -255,6 +257,40 @@ describe("intelProjection aggregator — assembleClaimInput (real evidence)", ()
     evidenceCase("intel_contribution_consent", "a consent read that FAILED is not a consent that was refused");
     evidenceCase("intel_evidence", "this one failed OPEN — no clustering means MORE independent groups");
     evidenceCase("intel_confirmations", "zero stances reads as 'nobody disagreed', not as 'we could not look'");
+
+    // DV-83: a read the server CUT is not a read that failed — it resolves with
+    // no error and 1000 rows — and it is not the cohort either. The aggregator
+    // filters freshness in memory over EVERY observation ever stored for the
+    // (subject, claim type), so a busy venue passes 1000 long before its fresh
+    // cohort does; the server then hands back an arbitrary 1000 and the actor
+    // count, the plurality value and the §11 gate are all computed on a sample.
+    const cohort = (n: number) => Array.from({ length: n }, (_, i) => ({
+      id: `oc-${String(i).padStart(5, "0")}`, actor_id: `ac-${i}`, subject_id: "place-dn-1", claim_type: "crowd.level",
+      presence_level: "P0", source_class: "firsthand_unverified", expires_at: null, observed_at: OBSERVED, group_key: `g-${i}`,
+    }));
+    it("intel_observations: a cohort read CUT at the server's row cap withholds the claim", async () => {
+      const db = makeDb({ flags: {}, observations: cohort(1200), confirmations: [], policies: [{ claim_type: "crowd.level", ttl_seconds: 2700, note: null }], serverMaxRows: 1000 });
+      const input = await assembleClaimInput(db as any, claim, NOW);
+      assert.equal(input.evidenceComplete, false, "1000 of 1200 observations were scored as the whole cohort");
+    });
+    it("intel_confirmations: a stance read CUT at the server's row cap withholds the claim", async () => {
+      const confirmations = Array.from({ length: 1200 }, (_, i) => ({ claim_id: "c1", stance: i < 1000 ? "agree" : "disagree" }));
+      const db = makeDb({ flags: {}, observations: cohort(3), confirmations, policies: [{ claim_type: "crowd.level", ttl_seconds: 2700, note: null }], serverMaxRows: 1000 });
+      const input = await assembleClaimInput(db as any, claim, NOW);
+      assert.equal(input.evidenceComplete, false, "the 200 disagreements past the cap were read as 'nobody disagreed'");
+    });
+    it("intel_evidence: an independence-evidence read CUT at the cap withholds — the rows past it are the shared media that collapse a crew", async () => {
+      const evidence = Array.from({ length: 1200 }, (_, i) => ({ observation_id: `oc-0000${i % 3}`, evidence_kind: "media", media_asset_id: `m-${i}`, detail: {} }));
+      const db = makeDb({ flags: {}, observations: cohort(3), confirmations: [], evidence, policies: [{ claim_type: "crowd.level", ttl_seconds: 2700, note: null }], serverMaxRows: 1000 });
+      const input = await assembleClaimInput(db as any, claim, NOW);
+      assert.equal(input.evidenceComplete, false);
+    });
+    it("a cohort and stance set UNDER the cap are complete under the same server rules — the guard is the cut, not the size", async () => {
+      const confirmations = Array.from({ length: 999 }, () => ({ claim_id: "c1", stance: "agree" }));
+      const db = makeDb({ flags: {}, observations: cohort(999), confirmations, policies: [{ claim_type: "crowd.level", ttl_seconds: 2700, note: null }], serverMaxRows: 1000 });
+      const input = await assembleClaimInput(db as any, claim, NOW);
+      assert.equal(input.evidenceComplete, true);
+    });
 
     it("with every table readable the same fixture is evidenceComplete — so the flag is the error, not the fixture", async () => {
       const db = makeDb({

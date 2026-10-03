@@ -145,6 +145,17 @@ export interface ClaimRow {
 }
 
 /**
+ * Did the server hand back FEWER rows than the filter matched? `count` is the
+ * exact size PostgREST reports when asked (`{ count: "exact" }`); a response cut
+ * at db-max-rows still resolves with no error, so this is the only way to tell
+ * a sample from the set. A count the client did not get (a driver that omits
+ * it) proves nothing either way and is not treated as a cut.
+ */
+function wasCut(rows: unknown, count: unknown): boolean {
+  return typeof count === "number" && Array.isArray(rows) && count > rows.length;
+}
+
+/**
  * Assemble the ProjectionInput for one active claim by gathering its real
  * evidence: distinct fresh observers, confirmation stances, strongest presence
  * and source class, evidence presence, and freshness. All reads are fail-soft —
@@ -166,16 +177,28 @@ export async function assembleClaimInput(sc: SupabaseClient, claim: ClaimRow, no
   // rather than to "fail soft to a low input": the gate's refusal is itself
   // written, so a low input publishes "no live intelligence" over a venue that
   // has some.
+  //
+  // A CUT READ IS THE FIFTH LIE, and the only one that resolves with no error.
+  // The cohort read below takes every observation ever stored for the (subject,
+  // claim type) — freshness is filtered in memory — and the stance read every
+  // confirmation of the claim. PostgREST cuts any response at db-max-rows (1000
+  // on hosted) without an error, so past that the actor count, the plurality
+  // value and the §11 group gate were computed on an arbitrary sample and
+  // projected as the cohort. Both reads now ask for the exact size of the set
+  // and withhold when they were handed less of it (`wasCut`).
   let evidenceComplete = true;
-  const { data: obs, error: obsErr } = await sc
+  const { data: obs, error: obsErr, count: obsCount } = await sc
     .from("intel_observations")
-    .select("id, actor_id, presence_level, source_class, expires_at, group_key, observed_at, value")
+    .select("id, actor_id, presence_level, source_class, expires_at, group_key, observed_at, value", { count: "exact" })
     .eq("subject_id", claim.subject_id)
     .eq("claim_type", claim.claim_type)
     .in("moderation_state", PILOT_CLAIMABLE_MODERATION_STATES as unknown as string[]);
   if (obsErr) {
     evidenceComplete = false;
     logger.warn({ err: obsErr, claim: claim.id }, "intelProjectionAggregator: observation cohort read failed; claim will be withheld");
+  } else if (wasCut(obs, obsCount)) {
+    evidenceComplete = false;
+    logger.warn({ claim: claim.id, rows: (obs as any[]).length, count: obsCount }, "intelProjectionAggregator: observation cohort read was cut at the server row cap; claim will be withheld");
   }
   const freshObsAll = ((obs as any[]) ?? []).filter((o) => !o.expires_at || o.expires_at > nowIso);
 
@@ -236,9 +259,9 @@ export async function assembleClaimInput(sc: SupabaseClient, claim: ClaimRow, no
   const mediaByObs = new Map<string, Set<string>>();
   const sourceByObs = new Map<string, Set<string>>();
   if (obsIds.length > 0) {
-    const { data: evidence, error: evidenceErr } = await sc
+    const { data: evidence, error: evidenceErr, count: evidenceCount } = await sc
       .from("intel_evidence")
-      .select("observation_id, evidence_kind, media_asset_id, detail")
+      .select("observation_id, evidence_kind, media_asset_id, detail", { count: "exact" })
       .in("observation_id", obsIds);
     if (evidenceErr) {
       // THIS ONE FAILED OPEN, not closed. With the maps empty, reporters who
@@ -251,6 +274,11 @@ export async function assembleClaimInput(sc: SupabaseClient, claim: ClaimRow, no
       // independent.
       evidenceComplete = false;
       logger.warn({ err: evidenceErr, claim: claim.id }, "intelProjectionAggregator: independence-evidence read failed; claim will be withheld");
+    } else if (wasCut(evidence, evidenceCount)) {
+      // Fails open the same way: the shared assets past the cap are exactly the
+      // ones that would have collapsed reporters into one cluster.
+      evidenceComplete = false;
+      logger.warn({ claim: claim.id, rows: (evidence as any[]).length, count: evidenceCount }, "intelProjectionAggregator: independence-evidence read was cut at the server row cap; claim will be withheld");
     }
     for (const e of ((evidence as any[]) ?? [])) {
       const oid = e.observation_id;
@@ -336,13 +364,19 @@ export async function assembleClaimInput(sc: SupabaseClient, claim: ClaimRow, no
     !cohortMayCountAsConsensus && mayCountAsConsensus(sourceClass) ? "sponsored" : sourceClass;
 
   // Confirmation stances for this claim.
-  const { data: confs, error: confsErr } = await sc.from("intel_confirmations").select("stance").eq("claim_id", claim.id);
+  const { data: confs, error: confsErr, count: confsCount } = await sc
+    .from("intel_confirmations").select("stance", { count: "exact" }).eq("claim_id", claim.id);
   if (confsErr) {
     // Zero rows scores agreement 0.5 (neutral) AND makes confirmationConflict
     // false — i.e. an unreadable confirmations table reads as "nobody disagreed",
     // which is the cohort-conflict signal switched off rather than fail-closed.
     evidenceComplete = false;
     logger.warn({ err: confsErr, claim: claim.id }, "intelProjectionAggregator: confirmation-stance read failed; claim will be withheld");
+  } else if (wasCut(confs, confsCount)) {
+    // The same signal switched off by a sample: the stances past the cap — any
+    // disagreement among them — were never counted.
+    evidenceComplete = false;
+    logger.warn({ claim: claim.id, rows: (confs as any[]).length, count: confsCount }, "intelProjectionAggregator: confirmation-stance read was cut at the server row cap; claim will be withheld");
   }
   let agrees = 0, disagrees = 0;
   for (const c of ((confs as any[]) ?? [])) {
