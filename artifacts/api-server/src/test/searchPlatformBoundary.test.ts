@@ -142,9 +142,25 @@ describe("search platform boundary (census-discovery §70, A08 reason 1)", () =>
     assert.match(routeSrc, /from "\.\.\/lib\/inputAssistance\/searchCandidates\.js"/);
   });
 
-  it("B4: the gateway takes dispatchSearch from the platform module", () => {
+  it("B4: the gateway takes its dispatcher from the platform module", () => {
     const gw = readFileSync(path.join(LIB, "inputAssistance", "gateway.ts"), "utf8");
-    assert.match(gw, /import \{[^}]*\bdispatchSearch\b[^}]*\} from '\.\/searchCandidates'/);
+    // Either dispatcher satisfies the boundary this test exists to defend: both
+    // are the platform module's, and `dispatchSearch` is a thin wrapper over
+    // `dispatchSearchWithCoverage` that drops the coverage. Backlog A1 moved the
+    // gateway onto the coverage-carrying form so a degraded source can be
+    // reported instead of silently read as a complete answer; the thing B4
+    // guards — that the gateway does not grow a searcher of its own — is
+    // unchanged, and the next assertion is what holds it to a platform export.
+    const imported = gw.match(
+      /import \{([^}]*)\} from '\.\/searchCandidates'/,
+    );
+    assert.ok(imported, "the gateway does not import from './searchCandidates' at all");
+    const names = imported[1].split(",").map((n) => n.trim().replace(/^type\s+/, ""));
+    const dispatchers = names.filter((n) => /^dispatchSearch(WithCoverage)?$/.test(n));
+    assert.notDeepEqual(
+      dispatchers, [],
+      `the gateway imports no platform dispatcher from './searchCandidates' — it imports: ${names.join(", ")}`,
+    );
     const platform = readFileSync(path.join(SRC, PLATFORM_REL), "utf8");
     assert.match(platform, /^export async function dispatchSearch\(/m);
     assert.match(platform, /^async function dispatchOne\(/m);

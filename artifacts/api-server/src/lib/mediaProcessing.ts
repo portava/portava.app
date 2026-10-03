@@ -64,9 +64,9 @@ export function sniffMedia(buf: Buffer): SniffResult | null {
     if (brand.startsWith("hei") || brand.startsWith("mif")) {
       return { kind: "image", mime: "image/heic", ext: "heic" };
     }
-    if (brand.startsWith("qt")) {
-      return { kind: "video", mime: "video/quicktime", ext: "mov" };
-    }
+    // Past the still-image brands the KIND comes from the TRACKS, not the brand:
+    if (isoAudioOnly(buf)) return null; // see "ISO-BMFF AUDIO" at the foot of this file
+    if (brand.startsWith("qt")) return { kind: "video", mime: "video/quicktime", ext: "mov" };
     return { kind: "video", mime: "video/mp4", ext: "mp4" };
   }
   return null;
@@ -425,4 +425,71 @@ export async function makeVideoPoster(input: Buffer, maxDim: number): Promise<Pr
     .jpeg({ quality: 80, mozjpeg: true })
     .toBuffer({ resolveWithObject: true });
   return { buffer: data, width: info.width, height: info.height, mime: "image/jpeg", ext: "jpg" };
+}
+
+/**
+ * ── ISO-BMFF AUDIO IS NOT VIDEO ─────────────────────────────────────────────
+ * The audio-only half of `sniffMedia`'s `ftyp` branch, appended HERE and not
+ * written inline for the reason the voice sniffer above gives: censuses cite
+ * this module by line (`census-media.md` anchors `makeVideoPoster` at :421,
+ * `census-wall.md` anchors `THUMBNAIL_DIM` at :118 and `FEED_DIM` at :150, and
+ * `check:doc-citations` enforces the anchors on the exact line). Forty lines of
+ * reasoning inserted at line 70 would repoint every one of them. The branch
+ * above therefore changed by a net zero lines and the reasoning lives here.
+ *
+ * THE DEFECT. `sniffMedia` used to answer `video/mp4` for ANY generic `ftyp`
+ * brand, so an audio-only MP4 — an `.m4a` recording — was labelled a video:
+ * stored under a `.mp4` name, given the 100 MB video ceiling rather than an
+ * image-sized one, published with `media_type: "video"`, and rendered by a
+ * player with no picture. The bytes were never the problem; the brand was being
+ * asked a question it cannot answer. `isom` / `mp42` / `M4A ` are written for
+ * audio-only output by the same muxers that write them for video (Android's
+ * `MediaMuxer` does exactly this — see "HOW IT DECIDES, AND WHY NOT BY THE
+ * `ftyp` BRAND" above `sniffVoiceAudio`), and a brand is four bytes of
+ * self-description that anyone can write.
+ *
+ * So the TRACKS decide, by the same rule `sniffVoiceAudio` already applies:
+ * one `vide` track makes it video whatever the brand says, and tracks that are
+ * all `soun` make it audio whatever the brand says. The rule is applied to the
+ * QuickTime brand too, because an audio-only `.mov` is the same file with a
+ * different brand, and the brand's remaining job — naming the container of
+ * something already established not to be audio — is unchanged.
+ *
+ * AUDIO IS REFUSED, NOT RETURNED AS A THIRD `SniffedKind`. `sniffMedia` answers
+ * one question — "may these bytes be stored as post, memory, story or postcard
+ * media" — and audio may not: `ALLOWED_MEDIA_MIME` admits image and video only
+ * and `MEDIA_SIZE_LIMITS` has no audio ceiling to enforce, so a third kind
+ * would widen every surface that reads them. That is the decision recorded
+ * above `sniffVoiceAudio`, and this change does not reopen it: the shared part
+ * is the track walk, not the kind. Audio is still admitted by one route, via
+ * `sniffVoiceAudio`, which returns `audio/mp4` / `.m4a` for exactly these bytes
+ * — the only audio mime and extension this module can establish from an
+ * ISO-BMFF header, and the reason none is invented here. So the honest answer
+ * from THIS sniffer is null, and the callers' existing fail-closed refusal
+ * applies unchanged, now for an accurate reason.
+ *
+ * WHEN THE TRACKS CANNOT BE READ. `isoTrackHandlers` returns null when there is
+ * no `moov` in the buffer, or when no track yields an `hdlr`. This function then
+ * returns false and the caller keeps answering `video/mp4` — the one judgement
+ * here that is not fail-closed, so here is why it is not.
+ *
+ * The buffer is not always the whole file. `routes/postcards.ts` verifies a
+ * completed signed-URL video upload from a 64-byte `Range: bytes=0-63` probe,
+ * which cannot contain a `moov` for ANY file, audio or video. Refusing an
+ * unreadable `moov` would reject every video on that transport, so at that call
+ * site "cannot read the tracks" cannot mean "refuse" without breaking the
+ * product. The fail-closed guarantee is kept where the bytes are complete:
+ * that same path re-runs `verifyUploadedBytes` over the fully downloaded object
+ * before the row is marked ready, and every other caller passes the whole
+ * buffer — so an audio-only upload is still refused, by this rule, before it is
+ * published. What this function must never do is CLAIM an audio-only verdict it
+ * has not established; it only ever subtracts the case it can prove, and says
+ * "not established" the rest of the time.
+ */
+function isoAudioOnly(buf: Buffer): boolean {
+  const handlers = isoTrackHandlers(buf);
+  if (!handlers) return false; // tracks unreadable — not established; see above
+  // `isoTrackHandlers` never returns an empty array, so this cannot be
+  // vacuously true: a file with no readable track took the line above.
+  return handlers.every((h) => h === "soun");
 }

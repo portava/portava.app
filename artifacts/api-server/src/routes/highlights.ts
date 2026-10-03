@@ -39,6 +39,7 @@ import {
   type ControlWriteFailure,
 } from "../services/highlights/highlightControlWrites.js";
 import { executeRevocation } from "../services/highlights/highlightRevocation.js";
+import { fanOutCacheEviction } from "../services/highlights/highlightCacheFanout.js";
 import {
   readProjectionInputs,
   filterProjectable,
@@ -72,7 +73,7 @@ import {
   dispatchMemoryCommand,
   type CommandOutcome,
 } from "../services/memory/MemoryDomainService.js";
-import { nameVisibilitySet, presentedName } from "../lib/publicIdentity";
+import { presentedName, readNameVisibilitySet } from "../lib/publicIdentity";
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -385,6 +386,82 @@ function gateEngagement(
     sendError(res, "not_found", "Highlight not found");
   }
   return false;
+}
+
+/* ============================================================================
+ * Supplementary feed reads — DEGRADE, but never in silence (#A6)
+ *
+ * A proactive feed assembles its page from a primary read (the Highlights
+ * themselves, whose failure refuses) plus SUPPLEMENTARY reads: engagement
+ * counts, the viewer's own viewed/liked sets, and the author profiles. Every
+ * one of those used to be taken as `(<read>.data ?? [])`.
+ *
+ * supabase-js RESOLVES on a database error, so `.data` is `null` and `?? []`
+ * turns an outage into a legitimate-looking zero: a Highlight with 400 views
+ * served as "0 views", a liked Highlight served with an empty heart, an author
+ * served as `null`. Unlike the five defects in
+ * src/test/highlightsReadFailures.test.ts, these are NOT permission or
+ * integrity answers and must NOT become refusals — a profile lookup that
+ * failed is no reason to take down a feed. §21's rule here is the opposite of
+ * the fail-closed one: degrade.
+ *
+ * What was missing was not the degrade. It was the RECORD of it. A silently
+ * degraded page is indistinguishable from a quiet one, so nothing could ever
+ * tell an operator that `highlight_likes` had been unreadable for an hour.
+ * This logs through the same `req.log.error({ err, … }, "highlights: …")`
+ * channel every other failure on this surface uses, naming what failed and
+ * what the page therefore says instead.
+ * ==========================================================================*/
+
+type SupplementaryRead = {
+  /** The resolved supabase-js result. `null` for a read that was not issued. */
+  readonly read: { readonly error?: unknown } | null | undefined;
+  /** The table/purpose, for the log line. */
+  readonly what: string;
+  /** What the page shows BECAUSE the read failed. */
+  readonly degradesTo: string;
+};
+
+function logDegradedReads(
+  log: { error: (obj: unknown, msg: string) => void } | undefined,
+  where: string,
+  reads: readonly SupplementaryRead[],
+): void {
+  for (const r of reads) {
+    const err = r.read?.error;
+    if (!err) continue;
+    log?.error(
+      { err, where, read: r.what, degradedTo: r.degradesTo },
+      `highlights: ${where} ${r.what} read failed — degrading rather than refusing (${r.degradesTo})`,
+    );
+  }
+}
+
+/**
+ * The display-name gate, with its failure SAID.
+ *
+ * `nameVisibilitySet` swallows: it answers the empty set both for "nobody has
+ * opted in" and for "profile_privacy_settings could not be read". The empty
+ * set is the right DEGRADE — it withholds real names, which is the private
+ * direction — but it is also indistinguishable from the opt-in state, so a
+ * broken privacy-settings read showed up as every name on the page vanishing
+ * and nothing else. `readNameVisibilitySet` is the same query in the same lib
+ * with a reportable result (`null` on failure); this keeps the withholding
+ * behaviour and logs the reason.
+ */
+async function nameVisibilityOrLog(
+  sc: any,
+  userIds: Array<string | null | undefined>,
+  log: { error: (obj: unknown, msg: string) => void } | undefined,
+  where: string,
+): Promise<Set<string>> {
+  const allowed = await readNameVisibilitySet(sc, userIds);
+  if (allowed) return allowed;
+  log?.error(
+    { where, read: "profile_privacy_settings", degradedTo: "every real name withheld" },
+    `highlights: ${where} display-name visibility read failed — degrading rather than refusing (every real name withheld)`,
+  );
+  return new Set<string>();
 }
 
 /* ============================================================================
@@ -1064,6 +1141,16 @@ router.get("/users/:userId/highlights", async (req, res) => {
     client.from("highlight_likes").select("highlight_id").eq("user_id", user.id).in("highlight_id", highlightIds),
   ]);
 
+  // #A6 — these four are SUPPLEMENTARY: a failed count degrades the page to a
+  // zero, it does not refuse it. Said out loud so a degraded page is not
+  // indistinguishable from a quiet one. See logDegradedReads.
+  logDegradedReads(req.log, "GET /users/:userId/highlights", [
+    { read: viewRows,   what: "highlight_views count",       degradesTo: "viewCount 0" },
+    { read: likeRows,   what: "highlight_likes count",       degradesTo: "likeCount 0" },
+    { read: viewedRows, what: "viewer's own highlight_views", degradesTo: "viewedByMe false" },
+    { read: likedRows,  what: "viewer's own highlight_likes", degradesTo: "likedByMe false" },
+  ]);
+
   const viewCountMap: Record<string, number> = {};
   const likeCountMap: Record<string, number> = {};
   for (const r of viewRows.data ?? []) viewCountMap[(r as any).highlight_id] = (viewCountMap[(r as any).highlight_id] ?? 0) + 1;
@@ -1075,9 +1162,17 @@ router.get("/users/:userId/highlights", async (req, res) => {
   const sc = getServiceClient();
   let author: any = null;
   if (sc) {
-    const { data: p } = await sc.from("profiles").select("id, handle, name, avatar_url").eq("id", targetId).maybeSingle();
+    const authorRead = await sc.from("profiles").select("id, handle, name, avatar_url").eq("id", targetId).maybeSingle();
+    // `const { data: p }` alone made an unreadable `profiles` table and a
+    // profile that does not exist the same thing: `author: null`. Still
+    // `author: null` — a profile read is no reason to take down a profile's
+    // highlights — but no longer silent.
+    logDegradedReads(req.log, "GET /users/:userId/highlights", [
+      { read: authorRead, what: "author profiles", degradesTo: "author null" },
+    ]);
+    const p = authorRead.data;
     if (p) {
-      const allowedNames = await nameVisibilitySet(sc, [targetId]);
+      const allowedNames = await nameVisibilityOrLog(sc, [targetId], req.log, "GET /users/:userId/highlights");
       author = { id: (p as any).id, handle: (p as any).handle, name: presentedName(p as any, (p as any).id === user.id || allowedNames.has((p as any).id)), avatarUrl: (p as any).avatar_url ?? null };
     }
   }
@@ -1330,6 +1425,16 @@ router.get("/highlights/active", async (req, res) => {
     sc.from("profiles").select("id, handle, name, avatar_url").in("id", ownerIds),
   ]);
 
+  // #A6 — the five supplementary reads of the proactive feed. A profile read
+  // that failed must not take the feed down, and must not be invisible.
+  logDegradedReads(req.log, "GET /highlights/active", [
+    { read: viewRows,    what: "highlight_views count",        degradesTo: "viewCount 0" },
+    { read: likeRows,    what: "highlight_likes count",        degradesTo: "likeCount 0" },
+    { read: viewedRows,  what: "viewer's own highlight_views",  degradesTo: "viewedByMe false" },
+    { read: likedRows,   what: "viewer's own highlight_likes",  degradesTo: "likedByMe false" },
+    { read: profileRows, what: "author profiles",               degradesTo: "author null" },
+  ]);
+
   const viewCountMap: Record<string, number> = {};
   const likeCountMap: Record<string, number> = {};
   for (const r of viewRows.data ?? []) viewCountMap[(r as any).highlight_id] = (viewCountMap[(r as any).highlight_id] ?? 0) + 1;
@@ -1337,7 +1442,7 @@ router.get("/highlights/active", async (req, res) => {
   const viewedSet = new Set<string>((viewedRows.data ?? []).map((r: any) => r.highlight_id as string));
   const likedSet = new Set<string>((likedRows.data ?? []).map((r: any) => r.highlight_id as string));
 
-  const allowedNames = await nameVisibilitySet(sc, ownerIds);
+  const allowedNames = await nameVisibilityOrLog(sc, ownerIds, req.log, "GET /highlights/active");
   const profileMap: Record<string, any> = {};
   for (const p of profileRows.data ?? []) {
     profileMap[(p as any).id] = { id: (p as any).id, handle: (p as any).handle, name: presentedName(p as any, (p as any).id === user.id || allowedNames.has((p as any).id)), avatarUrl: (p as any).avatar_url ?? null };
@@ -1726,14 +1831,30 @@ router.put("/highlights/resurfacing-controls", async (req, res) => {
     return;
   }
 
-  // Fire-and-forget by contract: CompassCacheEngine.invalidate "logs but never
-  // throws". A privacy control that was STORED must not be reported as failed
-  // because a cache eviction did not land, so this does not gate the 200.
-  // CEILING, recorded rather than hidden: this evicts the SETTER's cache. A
-  // control that suppresses `public_projection` on somebody else's cached view
-  // is not reached by it — see docs/BUILD-BACKLOG.md.
-  await invalidateCompassCache(getServiceClient(), user.id, "highlight_privacy_control_changed");
+  // #A9 — FAN-OUT, not just the setter. KEEP_PRIVATE_FOREVER suppresses
+  // `public_projection`, which is a statement about what OTHER viewers see, and
+  // evicting only `user.id` left every other viewer served from their own
+  // cached Compass feed until its TTL ran out. highlightCacheFanout derives the
+  // audience from the same visibility rule `canViewHighlight` used to serve it.
+  //
+  // It still does not gate the 200: a privacy control that was STORED must not
+  // be reported as failed because a cache eviction did not land. What it does
+  // instead is SAY what the eviction achieved. The report's strongest word is
+  // `l1_evicted_persisted_unverifiable`, because CompassCacheEngine.invalidate
+  // returns void and swallows the persisted delete — see that module's header
+  // and highlightRevocation.ts's `cached_narrative` outcome, which records the
+  // identical limit.
+  const eviction = await fanOutCacheEviction({
+    sc: getServiceClient(),
+    control: set.value.control,
+    subjectId: set.value.subjectId,
+    ownerId: user.id,
+    reason: "highlight_privacy_control_changed",
+    invalidate: (userId, reason) => invalidateCompassCache(getServiceClient(), userId, reason),
+    log: req.log,
+  });
   res.status(200).json({
+    cacheEviction: eviction,
     control: set.value.control,
     subjectType: set.value.subjectType,
     subjectId: set.value.subjectId,
@@ -1761,14 +1882,32 @@ router.delete("/highlights/resurfacing-controls", async (req, res) => {
     return;
   }
 
-  // Fire-and-forget by contract: CompassCacheEngine.invalidate "logs but never
-  // throws". A privacy control that was STORED must not be reported as failed
-  // because a cache eviction did not land, so this does not gate the 200.
-  // CEILING, recorded rather than hidden: this evicts the SETTER's cache. A
-  // control that suppresses `public_projection` on somebody else's cached view
-  // is not reached by it — see docs/BUILD-BACKLOG.md.
-  await invalidateCompassCache(getServiceClient(), user.id, "highlight_privacy_control_changed");
-  res.status(200).json({ cleared: cleared.value.cleared });
+  // #A9 — the same fan-out on the way back OUT. Clearing KEEP_PRIVATE_FOREVER
+  // re-admits the Highlight to other people's projections, so the stale
+  // entries that must go are again theirs and not only the setter's. Passing
+  // the control through means a control with no cross-viewer effect reports
+  // `reachesOtherViewers: false` rather than being silently fanned out.
+  //
+  // `cleared.value.cleared` is the AUTHORISATION here, and it has to be: the
+  // DELETE's selector is unchecked user input, and `clearResurfacingControl`
+  // scopes its delete to `owner_id = user.id` without verifying the subject.
+  // A row really was removed only when this caller had set that control, which
+  // setting required owning the Highlight. Fanning out on a subject that
+  // cleared nothing would let anyone name a stranger's Highlight and read its
+  // viewer set back out of `cacheEviction.audience`. (highlightCacheFanout
+  // refuses an unowned subject on its own as well; this keeps the route from
+  // asking in the first place.)
+  const eviction = await fanOutCacheEviction({
+    sc: getServiceClient(),
+    control,
+    fanOut: cleared.value.cleared,
+    subjectId: typeof subjectId === "string" ? subjectId : "",
+    ownerId: user.id,
+    reason: "highlight_privacy_control_changed",
+    invalidate: (userId, reason) => invalidateCompassCache(getServiceClient(), userId, reason),
+    log: req.log,
+  });
+  res.status(200).json({ cleared: cleared.value.cleared, cacheEviction: eviction });
 });
 
 /** Read one Highlight's §10 projection policy. Owner-only. */
@@ -1848,11 +1987,20 @@ router.put("/highlights/:id/projection-policy", async (req, res) => {
   }
 
   // Fire-and-forget by contract: CompassCacheEngine.invalidate "logs but never
-  // throws". A privacy control that was STORED must not be reported as failed
-  // because a cache eviction did not land, so this does not gate the 200.
-  // CEILING, recorded rather than hidden: this evicts the SETTER's cache. A
-  // control that suppresses `public_projection` on somebody else's cached view
-  // is not reached by it — see docs/BUILD-BACKLOG.md.
+  // throws". A policy that was STORED must not be reported as failed because a
+  // cache eviction did not land, so this does not gate the 200.
+  //
+  // CEILING, STILL OPEN HERE, recorded rather than hidden: this evicts the
+  // SETTER's cache only. A §10 consent withdrawal (SHARE refused) withholds
+  // from other people's projections exactly as §11's KEEP_PRIVATE_FOREVER
+  // does, so it has the same fan-out defect #A9 names. The machinery now
+  // exists — services/highlights/highlightCacheFanout.ts — but it is keyed on
+  // a §11 CONTROL, and a §10 policy patch is a different subject whose
+  // cross-viewer effect depends on which consent dimensions moved. Wiring it
+  // without that derivation would report a fan-out whose audience was not
+  // derived from the thing that changed, which is the overclaim that module
+  // exists to refuse. Named here so the next reader sees it as unfinished
+  // rather than as settled.
   await invalidateCompassCache(getServiceClient(), user.id, "highlight_privacy_control_changed");
   res.status(200).json({
     highlightId: saved.value.highlightId,
@@ -2373,10 +2521,19 @@ router.get("/highlights/:id/viewers", async (req, res) => {
     sc.from("highlight_likes").select("user_id").eq("highlight_id", id).in("user_id", viewerIds),
   ]);
 
+  // #A6 — the viewer LIST itself is `.error`-checked above and refuses; these
+  // two decorate it. A failed profiles read leaves a viewer as a bare id and a
+  // failed likes read shows `liked: false` for a viewer who did like it —
+  // degrade, not refuse, but recorded.
+  logDegradedReads(req.log, "GET /highlights/:id/viewers", [
+    { read: profileRows, what: "viewer profiles",       degradesTo: "handle/name null" },
+    { read: likeRows,    what: "highlight_likes of the viewer set", degradesTo: "liked false" },
+  ]);
+
   const profileMap: Record<string, any> = {};
   for (const p of profileRows.data ?? []) profileMap[(p as any).id] = p;
   const likedSet = new Set<string>((likeRows.data ?? []).map((r: any) => r.user_id as string));
-  const allowedNames = await nameVisibilitySet(sc, viewerIds);
+  const allowedNames = await nameVisibilityOrLog(sc, viewerIds, req.log, "GET /highlights/:id/viewers");
 
   const viewers = (viewRows ?? []).map((r: any) => {
     const p = profileMap[r.viewer_id] ?? {};
@@ -2828,6 +2985,19 @@ router.get("/highlights/following-feed", async (req, res) => {
     sc.from("profiles").select("id, handle, name, avatar_url").in("id", ownerIds),
   ]);
 
+  // #A6 — same five, same posture. NOTE the asymmetry that makes the profile
+  // read worth logging loudest here: the grouping below DROPS a user whose
+  // profile is missing (`.filter((g) => g.profile !== null)`), so an unreadable
+  // `profiles` table does not merely strip names from this feed — it empties
+  // it, and answered `{ users: [] }` without a word.
+  logDegradedReads(req.log, "GET /highlights/following-feed", [
+    { read: viewRows2,   what: "highlight_views count",       degradesTo: "viewCount 0" },
+    { read: likeRows2,   what: "highlight_likes count",       degradesTo: "likeCount 0" },
+    { read: viewedRows2, what: "viewer's own highlight_views", degradesTo: "viewedByMe false" },
+    { read: likedRows2,  what: "viewer's own highlight_likes", degradesTo: "likedByMe false" },
+    { read: profileRows, what: "author profiles",              degradesTo: "every author dropped from the feed" },
+  ]);
+
   const viewCountMap: Record<string, number> = {};
   const likeCountMap: Record<string, number> = {};
   for (const r of viewRows2.data ?? []) viewCountMap[(r as any).highlight_id] = (viewCountMap[(r as any).highlight_id] ?? 0) + 1;
@@ -2835,7 +3005,7 @@ router.get("/highlights/following-feed", async (req, res) => {
   const viewedSet = new Set<string>((viewedRows2.data ?? []).map((r: any) => r.highlight_id as string));
   const likedSet = new Set<string>((likedRows2.data ?? []).map((r: any) => r.highlight_id as string));
 
-  const allowedNames = await nameVisibilitySet(sc, ownerIds);
+  const allowedNames = await nameVisibilityOrLog(sc, ownerIds, req.log, "GET /highlights/following-feed");
   const profileMap: Record<string, any> = {};
   for (const p of profileRows.data ?? []) {
     profileMap[(p as any).id] = {

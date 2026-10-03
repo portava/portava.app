@@ -36,9 +36,10 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  startApp, call, fixtureTables, highlight, listIds, feedIds,
-  VIEWER, OWNER, H_PUB, H_MINE, FUTURE,
+  startApp, call, fixtureTables, highlight, listIds, feedIds, makeFakeClient,
+  VIEWER, OWNER, H_PUB, H_MINE, H_ARCH, FUTURE,
 } from "./highlightsSpecHarness.js";
+import { _setTestClient } from "../lib/http.js";
 import {
   describeHighlightLifetime,
   describeHighlightLifecycle,
@@ -400,5 +401,201 @@ describe("§4 / §5 description is stored-or-unknown, never inferred", () => {
       archived_at: null, expires_at: FUTURE,
     });
     assert.equal(d.provenance, "out_of_machine");
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * A7 — the SQL expiry predicate itself, pinned
+ *
+ * Every assertion above about expiry observes the RESPONSE, and the response is
+ * what `isHighlightActive`/`canViewHighlight` produced from the rows the query
+ * returned. So deleting `.or(NOT_EXPIRED())` from a read — or making it a
+ * tautology — changes nothing any of them can see: the app-side filter removes
+ * the expired row and the suite stays green while the database hands the
+ * process every expired Highlight it owns. That is the recorded "mutation C",
+ * and it is a real production difference (unbounded rows over the wire from
+ * PostgREST, and an RLS-only read path that no longer agrees with the app).
+ *
+ * These tests therefore observe the rows the QUERY returned, BEFORE any
+ * app-side filtering, by recording the chain the route built against the same
+ * fake store. `isHighlightActive` cannot make one of them pass.
+ *
+ * `routes/highlights.ts:145` is the predicate under test:
+ *     expires_at.is.null,expires_at.gt.<now>
+ * and `:983` (profile), `:1183` (/highlights/active) and `:2709`
+ * (following-feed) are its three call sites.
+ * ════════════════════════════════════════════════════════════════════════*/
+
+const H_SQL_EXPIRED = "30000000-0000-4000-8000-0000000000dd";
+
+interface RecordedQuery {
+  table: string;
+  ops: Array<{ op: string; args: unknown[] }>;
+  rows: any[] | null;
+  settled: boolean;
+}
+
+/**
+ * Replace the app's client with one that records, per chain, the operators the
+ * route asked for and the rows the store answered with.
+ *
+ * It wraps `makeFakeClient` rather than reimplementing it, so the filter
+ * semantics under observation are exactly the ones every other test in this
+ * suite runs against — including `or()`, which that harness parses.
+ */
+function recordQueries(tables: Record<string, any[]>): RecordedQuery[] {
+  const queries: RecordedQuery[] = [];
+  const base = makeFakeClient(tables) as any;
+  const client = {
+    auth: base.auth,
+    from(table: string) {
+      const rec: RecordedQuery = { table, ops: [], rows: null, settled: false };
+      queries.push(rec);
+      const capture = (p: Promise<any>) =>
+        p.then((res: any) => {
+          rec.settled = true;
+          rec.rows = Array.isArray(res?.data) ? res.data : res?.data == null ? null : [res.data];
+          return res;
+        });
+      const wrap = (target: any): any =>
+        new Proxy(target, {
+          get(t: any, prop: string | symbol) {
+            const v = t[prop];
+            if (typeof v !== "function") return v;
+            if (prop === "then") {
+              // `await query` lands here. Resolve the chain ourselves so the
+              // result is recorded whatever the caller does with it.
+              return (onOk: any, onErr: any) =>
+                capture(new Promise((res, rej) => v.call(t, res, rej))).then(onOk, onErr);
+            }
+            return (...args: any[]) => {
+              rec.ops.push({ op: String(prop), args });
+              const out = v.apply(t, args);
+              if (out === t) return wrap(t);
+              if (out && typeof out.then === "function") return capture(out);
+              return out;
+            };
+          },
+        });
+      return wrap(base.from(table));
+    },
+  };
+  _setTestClient(client as any, true);
+  return queries;
+}
+
+/**
+ * The ids the SQL returned for the projected Highlight read of this request.
+ *
+ * The projected list reads are the only `highlights` selects that ask for
+ * `media_url`; the single-row access lookup at `routes/highlights.ts:540` and
+ * `probeHighlightObject`'s column probe do not, so neither is mistaken for one.
+ *
+ * It FAILS rather than answers when it cannot find exactly one such read or
+ * that read never settled — a check that cannot establish its result must fail,
+ * and "no query was recorded" must never read as "the SQL excluded the row".
+ */
+function sqlReturnedIds(queries: RecordedQuery[]): Set<string> {
+  const reads = queries.filter(
+    (q) =>
+      q.table === "highlights" &&
+      q.ops.some((o) => o.op === "select" && typeof o.args[0] === "string" && (o.args[0] as string).includes("media_url")) &&
+      !q.ops.some((o) => ["insert", "update", "upsert", "delete"].includes(o.op)),
+  );
+  assert.equal(
+    reads.length, 1,
+    `expected exactly one projected highlights read to observe, recorded ${reads.length} — this check cannot establish its result`,
+  );
+  assert.ok(reads[0].settled, "the projected highlights read never resolved — nothing to observe");
+  assert.ok(Array.isArray(reads[0].rows), "the projected highlights read returned no row array — nothing to observe");
+  return new Set((reads[0].rows as any[]).map((r) => r.id as string));
+}
+
+function sqlFixture(): Record<string, any[]> {
+  const t = fixtureTables();
+  // PERMANENT: the NULL-blindness trap. `expires_at > now` is NULL for this
+  // row, and NULL is not TRUE, so a predicate without the `is.null` branch
+  // drops it in SQL.
+  t.highlights.push(highlight(H_PERM, VIEWER, { expires_at: null, lifetime_class: "PERMANENT" }));
+  // Long expired. H_MINE, already in the fixture, is the unexpired control.
+  t.highlights.push(highlight(H_SQL_EXPIRED, VIEWER, { expires_at: "2020-01-01T00:00:00.000Z" }));
+  return t;
+}
+
+describe("A7 the SQL expiry predicate is pinned, not just the app-side filter", () => {
+  it("the profile read's QUERY excludes the expired row and keeps the permanent one", async () => {
+    const t = sqlFixture();
+    const app = await startApp({ tables: t });
+    const queries = recordQueries(t);
+    try {
+      const r = await call(app, "GET", `/api/users/${VIEWER}/highlights`, VIEWER);
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      const fromSql = sqlReturnedIds(queries);
+      // Positive control: the predicate is doing work, not matching everything.
+      assert.ok(fromSql.has(H_MINE), "an unexpired Highlight must survive the SQL predicate");
+      assert.ok(
+        fromSql.has(H_PERM),
+        "SQL dropped the PERMANENT Highlight — `expires_at.is.null` is missing from the predicate",
+      );
+      assert.ok(
+        !fromSql.has(H_SQL_EXPIRED),
+        "SQL returned an EXPIRED Highlight — the expiry predicate is absent or tautological, and only the app-side filter is hiding it",
+      );
+    } finally { await app.close(); }
+  });
+
+  it("GET /highlights/active's QUERY excludes the expired row and keeps the permanent one", async () => {
+    const t = sqlFixture();
+    const app = await startApp({ tables: t });
+    const queries = recordQueries(t);
+    try {
+      const r = await call(app, "GET", "/api/highlights/active", VIEWER);
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      const fromSql = sqlReturnedIds(queries);
+      assert.ok(fromSql.has(H_MINE), "an unexpired Highlight must survive the SQL predicate");
+      assert.ok(fromSql.has(H_PERM), "SQL dropped the PERMANENT Highlight on /highlights/active");
+      assert.ok(!fromSql.has(H_SQL_EXPIRED), "SQL returned an EXPIRED Highlight on /highlights/active");
+    } finally { await app.close(); }
+  });
+
+  it("the following-feed's QUERY excludes the expired row and keeps the permanent one", async () => {
+    const t = sqlFixture();
+    const app = await startApp({ tables: t });
+    const queries = recordQueries(t);
+    try {
+      const r = await call(app, "GET", "/api/highlights/following-feed", VIEWER);
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      const fromSql = sqlReturnedIds(queries);
+      assert.ok(fromSql.has(H_MINE), "an unexpired Highlight must survive the SQL predicate");
+      assert.ok(fromSql.has(H_PERM), "SQL dropped the PERMANENT Highlight on the following feed");
+      assert.ok(!fromSql.has(H_SQL_EXPIRED), "SQL returned an EXPIRED Highlight on the following feed");
+    } finally { await app.close(); }
+  });
+
+  it("the recorder sees the SQL filter and not the app-side one — the control that makes the three above mean something", async () => {
+    // If this suite could not tell the two apart, the three tests above would
+    // be the defect they exist to catch. So: ARCHIVED rows are filtered in SQL
+    // (`.is("archived_at", null)`) while CIRCLE_ONLY visibility for a
+    // non-member is filtered app-side by `canViewHighlight`. A recorder that
+    // observed the response would miss both distinctions; one that observes the
+    // query sees H_ARCH gone and the circle-only row still present.
+    const t = fixtureTables();
+    t.highlights.push(highlight("30000000-0000-4000-8000-0000000000ee", OWNER, { visibility: "circle_only" }));
+    const app = await startApp({ tables: t });
+    const queries = recordQueries(t);
+    try {
+      const r = await call(app, "GET", "/api/highlights/active", VIEWER);
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      const fromSql = sqlReturnedIds(queries);
+      assert.ok(!fromSql.has(H_ARCH), "archived is a SQL filter — the recorder must see it applied");
+      assert.ok(
+        fromSql.has("30000000-0000-4000-8000-0000000000ee"),
+        "an unviewable circle_only row must still be IN the SQL result — otherwise this recorder is observing the app-side filter",
+      );
+      assert.ok(
+        !listIds(r.body).has("30000000-0000-4000-8000-0000000000ee"),
+        "and the app-side filter must be the thing that removes it from the response",
+      );
+    } finally { await app.close(); }
   });
 });
