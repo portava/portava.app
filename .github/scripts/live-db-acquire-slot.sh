@@ -273,10 +273,37 @@ while :; do
   fi
 
   # Every in-progress/queued run of this workflow, `<started> <id>` per line.
-  RAW_RUNS="$(gh api --paginate \
-            "repos/${GITHUB_REPOSITORY}/actions/workflows/${WF_ID}/runs?per_page=100" \
+  #
+  # FILTERED SERVER-SIDE, ONE STATUS AT A TIME (measured 2026-10-03). The
+  # listing used to page through the workflow's WHOLE run history
+  # (`runs?per_page=100` with --paginate) and filter in jq. With hundreds of
+  # completed runs that is several API calls per poll, every POLL seconds, in
+  # every waiting job; with ~12 runs queued the repository hit GitHub's rate
+  # limit, every call returned 403, the error was swallowed into an empty
+  # listing, and every waiter timed out having certified nothing (PRs #570–#579,
+  # 09:40–12:15 UTC). `?status=` returns only the runs the decider can use.
+  #
+  # ALL OR NOTHING. If either status query fails the listing is EMPTY, which the
+  # decider refuses (exit 3) — never a listing with the in-progress half missing,
+  # which would let a waiter believe it is the oldest while another run holds the
+  # database.
+  #
+  # QUEUED FIRST. A run that moves queued -> in_progress between the two queries
+  # is then seen by the second; asked the other way round it would be seen by
+  # neither. A run seen by both is listed once, at its earliest timestamp.
+  RAW_RUNS="$(
+    listing=""
+    for st in queued in_progress; do
+      if ! part="$(gh api --paginate \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/${WF_ID}/runs?status=${st}&per_page=100" \
             --jq '.workflow_runs[] | select(.status == "in_progress" or .status == "queued") | "\(.run_started_at // .created_at) \(.id)"' \
-          2>/dev/null || echo "")"
+            2>/dev/null)"; then
+        exit 0
+      fi
+      listing="${listing}${part}"$'\n'
+    done
+    printf '%s' "$listing" | sed '/^[[:space:]]*$/d' | sort -k1,1 | awk '!seen[$2]++'
+  )"
 
   # Annotate each line with whether that run still has a CLAIM on the slot. See
   # live-db-slot-decide.sh's header for why a run can be the oldest and still

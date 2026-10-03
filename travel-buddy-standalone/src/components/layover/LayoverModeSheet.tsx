@@ -90,6 +90,21 @@ export function LayoverModeSheet({ visible, onClose, onSessionCreated, tripId, i
   const [airport, setAirport]         = useState<AirportProfile | null>(null);
   const [searching, setSearching]     = useState(false);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /**
+   * census-layover L294 (C2) — what the LAST search said when it was not a
+   * list: a search that failed (or found the mode switched off) is not a
+   * search that matched nothing, and the two used to render as the same empty
+   * box. `noMatchFor` is the query a MEASURED empty answer was for.
+   */
+  const [searchProblem, setSearchProblem] = useState<string | null>(null);
+  const [noMatchFor, setNoMatchFor]       = useState<string | null>(null);
+  /**
+   * Every keystroke takes a new ticket; an answer is applied only if its
+   * ticket is still the newest. Without it a slow answer to "TP" landing after
+   * the fast answer to "TPE" replaced the list the traveller was reading with
+   * matches for a query they had already typed past.
+   */
+  const searchTicket = useRef(0);
 
   // Times (airport-local wall time)
   const [arrDate, setArrDate] = useState<string | null>(null);
@@ -113,18 +128,28 @@ export function LayoverModeSheet({ visible, onClose, onSessionCreated, tripId, i
   // Debounced airport autocomplete
   useEffect(() => {
     if (searchTimer.current) clearTimeout(searchTimer.current);
+    // Any answer still in flight belongs to a query that is no longer current.
+    const ticket = ++searchTicket.current;
+    setSearching(false);
+    setSearchProblem(null);
+    setNoMatchFor(null);
     const q = query.trim();
     if (airport && query.startsWith(airport.iataCode)) return; // selection label, not a query
     if (q.length < 2) { setResults([]); return; }
     searchTimer.current = setTimeout(async () => {
       setSearching(true);
-      try {
-        setResults(await searchAirports(q));
-      } catch (err) {
-        console.warn('[LayoverModeSheet] airport search failed:', err);
+      const found = await searchAirports(q);
+      if (ticket !== searchTicket.current) return; // a newer query owns the list
+      setSearching(false);
+      if (!found.ok) {
         setResults([]);
-      } finally {
-        setSearching(false);
+        setSearchProblem(found.message);
+      } else if (!found.featureEnabled) {
+        setResults([]);
+        setSearchProblem('Layover Mode is not yet enabled. Check back soon!');
+      } else {
+        setResults(found.airports);
+        setNoMatchFor(found.airports.length === 0 ? q : null);
       }
     }, 280);
     return () => { if (searchTimer.current) clearTimeout(searchTimer.current); };
@@ -199,16 +224,24 @@ export function LayoverModeSheet({ visible, onClose, onSessionCreated, tripId, i
       };
 
       const result = await createLayoverSession(payload);
+      if (!result.ok) {
+        // census-layover L294 (C2) — the SERVER's sentence, for every refusal.
+        // "This layover has already departed — set a departure time in the
+        // future" is not a reason to try again, and used to be shown as one;
+        // `feature_disabled` ("Airport / Layover Mode is not yet enabled") used
+        // to be matched against a thrown string that could never contain its
+        // code. The server owns the wording, so there is no second copy here.
+        setError(result.message);
+        return;
+      }
       onClose();
       onSessionCreated?.(result.session.id, result.safeReturnSuggested);
       router.push(`/layover/${result.session.id}` as any);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : '';
-      if (msg.includes('feature_disabled') || msg.includes('not yet enabled')) {
-        setError('Layover Mode is not yet enabled. Check back soon!');
-      } else {
-        setError('Could not start your layover. Please try again.');
-      }
+      // `createLayoverSession` resolves in every case; this is the belt to that
+      // braces, so a future throw cannot leave the button spinning.
+      console.warn('[LayoverModeSheet] create threw:', err);
+      setError('Could not start your layover. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -249,6 +282,18 @@ export function LayoverModeSheet({ visible, onClose, onSessionCreated, tripId, i
                 ? <Pressable onPress={clearAirport} hitSlop={8}><X size={16} color={color.faint} /></Pressable>
                 : null}
           </View>
+
+          {searchProblem && !airport ? (
+            <View style={styles.errorBox} testID="layover-airport-search-failed">
+              <AlertCircle size={14} color="#C62828" />
+              <Text style={styles.errorText}>{searchProblem}</Text>
+            </View>
+          ) : null}
+          {noMatchFor && !airport && results.length === 0 ? (
+            <Text style={styles.tzNote} testID="layover-airport-no-match">
+              No airports match &ldquo;{noMatchFor}&rdquo;. Try the city or the three-letter code.
+            </Text>
+          ) : null}
 
           {results.length > 0 && !airport && (
             <View style={styles.resultsBox}>

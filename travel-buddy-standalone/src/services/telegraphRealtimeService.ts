@@ -27,6 +27,10 @@ export type TelegraphEventType =
   | 'typing.started'
   | 'typing.stopped'
   | 'read.updated'
+  /** §13.2: which of the caller's messages a reader's seen-advance crossed (POST /threads/:id/seen). */
+  | 'message.seen'
+  /** §13.2: a recipient's open connection took one of the caller's messages — sent to the SENDER only. */
+  | 'message.delivered'
   | 'request.created'
   | 'request.accepted'
   | 'request.declined'

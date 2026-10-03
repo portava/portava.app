@@ -119,7 +119,7 @@ describe("§16 L151-L155 — every unavailable capability says so by name", () =
     assert.deepEqual(b.route, { available: false, value: null, reason: "no_routing_provider" });
     assert.deepEqual(b.mapGeometry, { available: false, value: null, reason: "no_envelope_geometry" });
     assert.deepEqual(b.flightStatus, { available: false, value: null, reason: "no_flight_feed" });
-    assert.deepEqual(b.crewMeetingPoint, { available: false, value: null, reason: "no_crew_storage" });
+    assert.deepEqual(b.crewMeetingPoint, { available: false, value: null, reason: "crew_not_read" }); // §48: no crew read handed over; "no_crew_storage" was false since 2984
     assert.deepEqual(b.translationPhrases, { available: false, value: null, reason: "no_phrase_catalogue" });
   });
 
